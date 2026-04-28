@@ -4,6 +4,14 @@
 {% import "components/problem.html" as problem with context %}
 {% import "components/user.html" as user with context %}
 {% block content %}
+<section style="margin: 0 0 1.5rem; padding: 1.25rem 1rem; border: 1px solid #e5e7eb; border-radius: 10px; background: #f8fafc;">
+  <h1 style="margin: 0 0 0.5rem; font-size: 1.75rem; line-height: 1.2;">开始你的编程训练</h1>
+  <p style="margin: 0 0 1rem; color: #475569;">从一道题开始，记录每一次 AC 的进步。</p>
+  <div>
+    <a href="/p" class="button rounded primary" style="margin-right: 0.5rem;">开始刷题</a>
+    <a href="/training" class="button rounded">查看题单</a>
+  </div>
+</section>
 <div class="row">
   {% for column in contents %}
     <div class="large-{{ column.width }} columns">
