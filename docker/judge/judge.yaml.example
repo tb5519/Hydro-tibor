@@ -1,0 +1,7 @@
+hosts:
+  localhost:
+    type: hydro
+    server_url: ${HYDRO_JUDGE_SERVER_URL}
+    uname: ${HYDRO_JUDGE_USERNAME}
+    password: ${HYDRO_JUDGE_PASSWORD}
+    detail: full

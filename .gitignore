@@ -66,3 +66,6 @@ __*
 
 packages/*/public/assets
 node_modules.*
+
+# Local judge config (contains credentials)
+docker/judge/judge.yaml

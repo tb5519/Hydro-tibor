@@ -1,0 +1,35 @@
+FROM node:22
+
+ARG TARGETARCH
+ARG GO_JUDGE_VERSION=1.9.4
+
+COPY ./install/docker/judge/entrypoint.sh /root/entrypoint.sh
+
+RUN apt-get -qq update && \
+    apt-get install -y \
+    gcc \
+    python3 \
+    g++ \
+    fp-compiler \
+    openjdk-17-jdk-headless \
+    php-cli \
+    rustc \
+    ghc \
+    libjavascriptcoregtk-4.0-bin \
+    golang \
+    ruby \
+    mono-runtime \
+    mono-mcs && \
+    chmod +x /root/entrypoint.sh && \
+    ln -s /usr/local/bin/node /usr/bin/node
+
+RUN yarn global add pm2 @hydrooj/hydrojudge && \
+    case "${TARGETARCH}" in \
+      amd64) GO_JUDGE_ARCH="linux_amd64v3" ;; \
+      arm64) GO_JUDGE_ARCH="linux_arm64" ;; \
+      *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    wget "https://github.com/criyle/go-judge/releases/download/v${GO_JUDGE_VERSION}/go-judge_${GO_JUDGE_VERSION}_${GO_JUDGE_ARCH}" -O /usr/bin/sandbox && \
+    chmod +x /usr/bin/sandbox
+
+ENTRYPOINT ["/root/entrypoint.sh"]

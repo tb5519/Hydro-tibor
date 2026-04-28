@@ -1,0 +1,27 @@
+services:
+  judge:
+    build:
+      context: .
+      dockerfile: docker/judge/Dockerfile.dev
+    restart: unless-stopped
+    privileged: true
+    depends_on:
+      hydro:
+        condition: service_started
+      mongo:
+        condition: service_healthy
+    environment:
+      # Optional runtime controls for judge process behavior.
+      NODE_ENV: production
+    volumes:
+      - ./docker/judge/judge.yaml:/root/.hydro/judge.yaml:ro
+      - ./docker/judge/mount.yaml:/root/.hydro/mount.yaml:ro
+    # Reduce chance that judge affects other workloads.
+    cpus: ${HYDRO_JUDGE_CPUS:-2}
+    mem_limit: ${HYDRO_JUDGE_MEM_LIMIT:-2g}
+    pids_limit: ${HYDRO_JUDGE_PIDS_LIMIT:-512}
+    logging:
+      driver: json-file
+      options:
+        max-size: ${HYDRO_JUDGE_LOG_MAX_SIZE:-10m}
+        max-file: ${HYDRO_JUDGE_LOG_MAX_FILE:-3}
