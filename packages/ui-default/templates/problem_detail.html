@@ -42,6 +42,7 @@
     <meta property="og:description" content="{{ renderredContent|problemPreview|truncate(100, true) }}" />
   {% endblock %}
 {% endif %}
+<div class="ui-v2-problem-detail">
 <div class="row" data-sticky-parent>
   <div class="medium-9 columns">
     <div class="section">
@@ -138,9 +139,10 @@
       </div></div>
     </div>
   </div>
-  <div class="medium-3 columns"><div data-sticky="large">
+  <div class="medium-3 columns"><div class="ui-v2-problem-aside" data-sticky="large">
     {% include "partials/problem_sidebar.html" %}
   </div></div>
+</div>
 </div>
 <div style="display:none" class="outer-loader-container"><div class="loader"></div></div>
 <div class="scratchpad-container" style="display:none">

@@ -1,0 +1,451 @@
+// UI v2 foundation — presentation tokens + scoped layout polish.
+// Keep overrides conservative: prefer variables + light reskin of existing Hydro classes.
+
+:root
+  --ui-v2-bg: #f1f5f9
+  --ui-v2-surface: #ffffff
+  --ui-v2-surface-muted: #f8fafc
+  --ui-v2-border: #e2e8f0
+  --ui-v2-border-strong: #cbd5e1
+  --ui-v2-text: #0f172a
+  --ui-v2-text-muted: #64748b
+  --ui-v2-accent: #2563eb
+  --ui-v2-accent-soft: #eff6ff
+  --ui-v2-radius: 14px
+  --ui-v2-radius-sm: 10px
+  --ui-v2-shadow: 0 12px 40px rgba(15, 23, 42, 0.08)
+  --ui-v2-shadow-sm: 0 4px 14px rgba(15, 23, 42, 0.06)
+
+html.page--homepage,
+html.page--problem_main,
+html.page--problem_detail
+  .main
+    background: var(--ui-v2-bg)
+    padding-top: rem(48px)
+    padding-bottom: rem(48px)
+
+// ----- Navigation (sitewide, minimal chrome) -----
+html.layout--basic .nav
+  background: rgba(255, 255, 255, 0.92)
+  backdrop-filter: blur(10px)
+  border-bottom: 1px solid var(--ui-v2-border)
+  box-shadow: none
+
+html.layout--basic .nav .nav__item
+  border-radius: rem(8px)
+  margin: rem(6px 2px)
+  padding: rem(0 14px 3px)
+  color: var(--ui-v2-text)
+
+html.layout--basic .nav .nav__item:hover
+  background: var(--ui-v2-surface-muted)
+  border-top-color: transparent
+
+html.layout--basic .nav .nav__item.nav--active
+  background: var(--ui-v2-accent-soft)
+  border-top-color: transparent
+  color: var(--ui-v2-accent)
+
+html.layout--basic .nav .nav__item--round
+  border-color: var(--ui-v2-accent)
+  color: var(--ui-v2-accent)
+
+html.layout--basic .nav .nav__item--round:hover
+  background: var(--ui-v2-accent)
+  color: #fff
+
+// ----- Shared: cards, tables, form controls -----
+html.page--problem_main,
+html.page--problem_detail,
+html.page--homepage
+  .section
+    border: 1px solid var(--ui-v2-border)
+    border-radius: var(--ui-v2-radius)
+    background: var(--ui-v2-surface)
+    box-shadow: var(--ui-v2-shadow-sm)
+    overflow: hidden
+
+  .section__header
+    background: linear-gradient(180deg, var(--ui-v2-surface-muted) 0%, var(--ui-v2-surface) 100%)
+    border-bottom: 1px solid var(--ui-v2-border)
+
+  .section__title
+    color: var(--ui-v2-text)
+    font-weight: 600
+
+  .data-table
+    border-radius: 0
+    border: none
+
+  .data-table thead
+    background: var(--ui-v2-surface-muted)
+
+  .data-table th,
+  .data-table td
+    border-color: var(--ui-v2-border)
+
+  .search
+    border: 1px solid var(--ui-v2-border)
+    border-radius: var(--ui-v2-radius-sm)
+    background: var(--ui-v2-surface-muted)
+    padding: rem(4px 8px)
+
+  .search input[type="text"]
+    border-radius: var(--ui-v2-radius-sm)
+    border: 1px solid transparent
+    background: var(--ui-v2-surface)
+
+  .search-sort
+    border-radius: var(--ui-v2-radius-sm)
+
+  .button.rounded.primary,
+  .btn.primary
+    background: var(--ui-v2-accent)
+    border-color: var(--ui-v2-accent)
+
+  .problem__tag-item
+    border-radius: rem(999px)
+    border: 1px solid var(--ui-v2-border)
+    background: var(--ui-v2-surface-muted)
+    color: var(--ui-v2-text-muted)
+
+// ----- Homepage -----
+.page--homepage .ui-v2-home
+  max-width: rem(1200px)
+  margin: 0 auto
+  padding: 0 rem(12px)
+
+.page--homepage .ui-v2-home__hero
+  border-radius: var(--ui-v2-radius)
+  background: linear-gradient(135deg, #ffffff 0%, #f8fafc 18%, #eff6ff 45%, #e0f2fe 78%, #dbeafe 100%)
+  border: 1px solid rgba(148, 163, 184, 0.35)
+  color: var(--ui-v2-text)
+  padding: rem(28px 28px 32px)
+  margin-bottom: rem(22px)
+  box-shadow: var(--ui-v2-shadow-sm)
+  min-height: rem(280px)
+  display: flex
+  align-items: stretch
+
+.page--homepage .ui-v2-home__hero-inner
+  display: grid
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr)
+  gap: rem(28px 32px)
+  align-items: center
+  width: 100%
+
+  +below(rupture.desktop-cutoff)
+    grid-template-columns: 1fr
+    gap: rem(20px)
+
+.page--homepage .ui-v2-home__hero-text
+  min-width: 0
+
+.page--homepage .ui-v2-home__hero-actions
+  display: flex
+  flex-wrap: wrap
+  gap: rem(10px)
+  margin-top: rem(22px)
+
+.page--homepage .ui-v2-home__hero-actions .button.rounded
+  border: 1px solid var(--ui-v2-border-strong)
+  background: #fff
+  color: var(--ui-v2-text)
+  backdrop-filter: none
+
+.page--homepage .ui-v2-home__hero-actions .button.rounded:hover
+  background: var(--ui-v2-surface-muted)
+  border-color: var(--ui-v2-accent)
+
+.page--homepage .ui-v2-home__hero-actions .button.rounded.primary
+  background: var(--ui-v2-accent)
+  color: #fff
+  border-color: var(--ui-v2-accent)
+
+.page--homepage .ui-v2-home__hero-actions .button.rounded.primary:hover
+  background: #1d4ed8
+  border-color: #1d4ed8
+  color: #fff
+
+.page--homepage .ui-v2-home__hero-visual
+  display: flex
+  align-items: center
+  justify-content: center
+  min-height: rem(220px)
+
+  +below(rupture.desktop-cutoff)
+    min-height: rem(180px)
+
+.page--homepage .ui-v2-home__hero-panel
+  position: relative
+  width: 100%
+  max-width: rem(300px)
+  aspect-ratio: 1.12
+  border-radius: var(--ui-v2-radius-sm)
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.75) 0%, rgba(239, 246, 255, 0.55) 55%, rgba(224, 242, 254, 0.4) 100%)
+  border: 1px solid rgba(148, 163, 184, 0.28)
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 rem(10px) rem(28px) rgba(15, 23, 42, 0.06)
+  overflow: hidden
+  opacity: 0.92
+
+.page--homepage .ui-v2-home__hero-code
+  position: absolute
+  left: 50%
+  top: 50%
+  transform: translate(-50%, -52%)
+  font-size: rem(44px)
+  font-weight: 700
+  font-family: var(--code-font-family, ui-monospace, monospace)
+  letter-spacing: rem(-2px)
+  color: rgba(37, 99, 235, 0.16)
+  text-shadow: none
+
+.page--homepage .ui-v2-home__hero-dot
+  position: absolute
+  border-radius: rem(8px)
+  background: rgba(37, 99, 235, 0.08)
+  border: 1px solid rgba(37, 99, 235, 0.1)
+  box-shadow: none
+  opacity: 0.65
+
+.page--homepage .ui-v2-home__hero-dot--1
+  width: rem(44px)
+  height: rem(44px)
+  left: 12%
+  top: 18%
+  animation: ui-v2-float 5s ease-in-out infinite
+
+.page--homepage .ui-v2-home__hero-dot--2
+  width: rem(28px)
+  height: rem(28px)
+  right: 14%
+  top: 26%
+  animation: ui-v2-float 6s ease-in-out 0.5s infinite
+
+.page--homepage .ui-v2-home__hero-dot--3
+  width: rem(36px)
+  height: rem(36px)
+  right: 18%
+  bottom: 16%
+  animation: ui-v2-float 5.5s ease-in-out 1s infinite
+
+@keyframes ui-v2-float
+  0%, 100%
+    transform: translateY(0)
+  50%
+    transform: translateY(rem(-8px))
+
+.page--homepage .ui-v2-home__eyebrow
+  margin: 0 0 rem(8px)
+  font-size: rem(12px)
+  letter-spacing: 0.12em
+  text-transform: uppercase
+  color: #64748b
+  opacity: 1
+
+.page--homepage .ui-v2-home__title
+  margin: 0 0 rem(12px)
+  font-size: clamp(rem(28px), 4vw, rem(40px))
+  line-height: 1.16
+  font-weight: 800
+  max-width: rem(560px)
+  color: #0c1429
+  letter-spacing: rem(-0.5px)
+
+.page--homepage .ui-v2-home__subtitle
+  margin: 0
+  font-size: rem(17px)
+  line-height: 1.6
+  color: #475569
+  max-width: rem(520px)
+  opacity: 1
+
+.page--homepage .ui-v2-home__quick
+  display: grid
+  grid-template-columns: repeat(4, minmax(0, 1fr))
+  gap: rem(14px)
+  margin-bottom: rem(24px)
+
+  +below(rupture.desktop-cutoff)
+    grid-template-columns: repeat(2, minmax(0, 1fr))
+
+.page--homepage .ui-v2-home__card
+  display: block
+  padding: rem(16px 16px 18px)
+  border-radius: var(--ui-v2-radius-sm)
+  background: linear-gradient(180deg, var(--ui-v2-surface) 0%, var(--ui-v2-surface-muted) 100%)
+  border: 1px solid var(--ui-v2-border)
+  box-shadow: var(--ui-v2-shadow-sm)
+  text-decoration: none
+  color: var(--ui-v2-text)
+  transition: box-shadow 0.12s ease, border-color 0.12s ease
+  position: relative
+  overflow: hidden
+
+.page--homepage .ui-v2-home__card::before
+  content: ''
+  position: absolute
+  left: 0
+  top: 0
+  width: 100%
+  height: rem(3px)
+  background: linear-gradient(90deg, var(--ui-v2-accent), #38bdf8)
+  opacity: 0.85
+
+.page--homepage .ui-v2-home__card:hover
+  box-shadow: 0 rem(8px) rem(24px) rgba(15, 23, 42, 0.07)
+  border-color: rgba(37, 99, 235, 0.22)
+
+.page--homepage .ui-v2-home__card-icon
+  display: block
+  font-size: rem(22px)
+  line-height: 1
+  margin-bottom: rem(8px)
+
+.page--homepage .ui-v2-home__card-label
+  display: block
+  font-size: rem(11px)
+  font-weight: 600
+  letter-spacing: 0.06em
+  text-transform: uppercase
+  color: var(--ui-v2-text-muted)
+  margin-bottom: rem(2px)
+
+.page--homepage .ui-v2-home__card-title
+  display: block
+  font-size: rem(17px)
+  font-weight: 700
+  margin-bottom: rem(6px)
+
+.page--homepage .ui-v2-home__card-desc
+  display: block
+  font-size: rem(12px)
+  line-height: 1.45
+  color: var(--ui-v2-text-muted)
+
+.page--homepage .ui-v2-home__body .row
+  margin-left: rem(-6px)
+  margin-right: rem(-6px)
+
+.page--homepage .ui-v2-home__body .columns
+  padding-left: rem(6px)
+  padding-right: rem(6px)
+
+// ----- Problem list -----
+.page--problem_main .ui-v2-page-head
+  margin-bottom: rem(20px)
+  padding: rem(22px 24px 24px)
+  border-radius: var(--ui-v2-radius)
+  border: 1px solid var(--ui-v2-border)
+  background: var(--ui-v2-surface)
+  box-shadow: var(--ui-v2-shadow-sm)
+
+.page--problem_main .ui-v2-page-head__title
+  margin: 0 0 rem(6px)
+  font-size: rem(24px)
+  font-weight: 700
+  color: var(--ui-v2-text)
+
+.page--problem_main .ui-v2-page-head__subtitle
+  margin: 0
+  font-size: rem(14px)
+  line-height: 1.5
+  color: var(--ui-v2-text-muted)
+
+.page--problem_main .ui-v2-problem-main .section.display-mode
+  overflow: visible
+
+.page--problem_main .ui-v2-problem-main .section.display-mode > .section__body.no-padding:first-of-type
+  padding: rem(14px 16px) !important
+  border-bottom: 1px solid var(--ui-v2-border)
+  background: var(--ui-v2-surface-muted)
+
+.page--problem_main .ui-v2-problem-main .section.display-mode > .section__body.no-padding:last-of-type
+  padding-top: rem(4px) !important
+  background: var(--ui-v2-surface)
+
+.page--problem_main .ui-v2-problem-main .data-table tbody tr
+  transition: background 0.1s ease
+
+.page--problem_main .ui-v2-problem-main .data-table tbody tr:hover
+  background: var(--ui-v2-accent-soft)
+
+.page--problem_main .ui-v2-problem-main .medium-3 .section.side
+  border-radius: var(--ui-v2-radius-sm)
+
+.page--problem_main .widget--category-filter__tag
+  border-radius: rem(999px)
+
+// ----- Problem detail -----
+.page--problem_detail .ui-v2-problem-detail > .row > .medium-9 > .section:first-child
+  margin-bottom: rem(14px)
+
+.page--problem_detail .problem-content-container
+  border-radius: var(--ui-v2-radius-sm)
+  border: 1px solid var(--ui-v2-border)
+  background: var(--ui-v2-surface)
+
+.page--problem_detail .medium-3 .section
+  margin-bottom: rem(12px)
+
+// ----- Problem detail: sidebar as action cards -----
+.page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar
+  padding: rem(6px 0 4px)
+
+.page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .section__header
+  padding: rem(14px 16px 10px)
+  margin: 0
+  border-bottom: 1px solid var(--ui-v2-border)
+  background: linear-gradient(180deg, var(--ui-v2-surface-muted) 0%, var(--ui-v2-surface) 100%)
+
+.page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .section__title
+  font-size: rem(16px)
+
+.page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar > div
+  padding: rem(12px 12px 14px)
+
+.page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu
+  padding: 0
+
+.page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu__item
+  margin-bottom: rem(6px)
+
+.page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu__link,
+.page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu__item button.menu__link
+  display: block
+  width: 100%
+  text-align: left
+  border-radius: var(--ui-v2-radius-sm)
+  border: 1px solid var(--ui-v2-border)
+  background: var(--ui-v2-surface-muted)
+  padding: rem(10px 12px)
+  margin: 0
+  line-height: 1.35
+  transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease
+
+.page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu__link:hover,
+.page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu__item button.menu__link:hover
+  background: #fff
+  border-color: var(--ui-v2-border-strong)
+  text-decoration: none
+
+.page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu__link.highlight,
+.page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu__link.active
+  border-color: rgba(37, 99, 235, 0.45)
+  background: var(--ui-v2-accent-soft)
+  color: var(--ui-v2-accent)
+
+.page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu__link.disabled
+  opacity: 0.55
+
+.page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu__seperator
+  height: rem(8px)
+  margin: rem(4px) 0
+  border: none
+  background: transparent
+
+@media (prefers-reduced-motion: reduce)
+  .page--homepage .ui-v2-home__hero-dot--1,
+  .page--homepage .ui-v2-home__hero-dot--2,
+  .page--homepage .ui-v2-home__hero-dot--3
+    animation: none

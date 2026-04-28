@@ -4,27 +4,70 @@
 {% import "components/problem.html" as problem with context %}
 {% import "components/user.html" as user with context %}
 {% block content %}
-<section style="margin: 0 0 1.5rem; padding: 1.25rem 1rem; border: 1px solid #e5e7eb; border-radius: 10px; background: #f8fafc;">
-  <h1 style="margin: 0 0 0.5rem; font-size: 1.75rem; line-height: 1.2;">开始你的编程训练</h1>
-  <p style="margin: 0 0 1rem; color: #475569;">从一道题开始，记录每一次 AC 的进步。</p>
-  <div>
-    <a href="/p" class="button rounded primary" style="margin-right: 0.5rem;">开始刷题</a>
-    <a href="/training" class="button rounded">查看题单</a>
-  </div>
-</section>
-<div class="row">
-  {% for column in contents %}
-    <div class="large-{{ column.width }} columns">
-      {% for s in column.sections %}
-        {% if templateExists("partials/homepage/" + s[0] + ".html") %}
-          {% set payload = s[1] %}
-          {% include "partials/homepage/" + s[0] + ".html" %}
-        {% else %}
-          {% set payload = _("Template {0} not found.").format(s[0]) %}
-          {% include "partials/homepage/error.html" %}
-        {% endif %}
+<div class="ui-v2-home">
+  <header class="ui-v2-home__hero">
+    <div class="ui-v2-home__hero-inner">
+      <div class="ui-v2-home__hero-text">
+        <p class="ui-v2-home__eyebrow">Training</p>
+        <h1 class="ui-v2-home__title">开始你的编程训练</h1>
+        <p class="ui-v2-home__subtitle">从一道题开始，记录每一次 AC 的进步。</p>
+        <div class="ui-v2-home__hero-actions">
+          <a class="button rounded primary" href="{{ url('problem_main') }}">开始刷题</a>
+          <a class="button rounded" href="{{ url('training_main') }}">查看题单</a>
+        </div>
+      </div>
+      <div class="ui-v2-home__hero-visual" aria-hidden="true">
+        <div class="ui-v2-home__hero-panel">
+          <span class="ui-v2-home__hero-code">&lt;/&gt;</span>
+          <span class="ui-v2-home__hero-dot ui-v2-home__hero-dot--1"></span>
+          <span class="ui-v2-home__hero-dot ui-v2-home__hero-dot--2"></span>
+          <span class="ui-v2-home__hero-dot ui-v2-home__hero-dot--3"></span>
+        </div>
+      </div>
+    </div>
+  </header>
+  <nav class="ui-v2-home__quick" aria-label="quick">
+    <a class="ui-v2-home__card" href="{{ url('problem_main') }}">
+      <span class="ui-v2-home__card-icon" aria-hidden="true">📚</span>
+      <span class="ui-v2-home__card-label">{{ _('Problems') }}</span>
+      <span class="ui-v2-home__card-title">题库</span>
+      <span class="ui-v2-home__card-desc">系统刷题，夯实基础</span>
+    </a>
+    <a class="ui-v2-home__card" href="{{ url('training_main') }}">
+      <span class="ui-v2-home__card-icon" aria-hidden="true">🎯</span>
+      <span class="ui-v2-home__card-label">{{ _('Training') }}</span>
+      <span class="ui-v2-home__card-title">训练</span>
+      <span class="ui-v2-home__card-desc">按主题闯关，循序渐进</span>
+    </a>
+    <a class="ui-v2-home__card" href="{{ url('contest_main') }}">
+      <span class="ui-v2-home__card-icon" aria-hidden="true">🏆</span>
+      <span class="ui-v2-home__card-label">{{ _('Contest') }}</span>
+      <span class="ui-v2-home__card-title">比赛</span>
+      <span class="ui-v2-home__card-desc">模拟挑战，检验水平</span>
+    </a>
+    <a class="ui-v2-home__card" href="{{ url('ranking') }}">
+      <span class="ui-v2-home__card-icon" aria-hidden="true">📈</span>
+      <span class="ui-v2-home__card-label">{{ _('Ranking') }}</span>
+      <span class="ui-v2-home__card-title">排名</span>
+      <span class="ui-v2-home__card-desc">记录成长，看见进步</span>
+    </a>
+  </nav>
+  <div class="ui-v2-home__body">
+    <div class="row">
+      {% for column in contents %}
+        <div class="large-{{ column.width }} columns">
+          {% for s in column.sections %}
+            {% if templateExists("partials/homepage/" + s[0] + ".html") %}
+              {% set payload = s[1] %}
+              {% include "partials/homepage/" + s[0] + ".html" %}
+            {% else %}
+              {% set payload = _("Template {0} not found.").format(s[0]) %}
+              {% include "partials/homepage/error.html" %}
+            {% endif %}
+          {% endfor %}
+        </div>
       {% endfor %}
     </div>
-  {% endfor %}
+  </div>
 </div>
 {% endblock %}

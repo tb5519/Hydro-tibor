@@ -24,6 +24,7 @@ import 'vj/misc/section.styl';
 import 'vj/misc/nothing.styl';
 import 'vj/components/editor/cmeditor.styl';
 import './dark.styl';
+import 'vj/misc/ui-v2-foundation.styl';
 import './bp6-compat.css';
 
 // load all page stylesheets
