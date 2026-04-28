@@ -200,6 +200,25 @@ docker compose -f docker-compose.yml -f docker-compose.judge.yml logs --tail=200
    - 若为架构问题，复核 `docker/judge/Dockerfile.dev` 与当前平台匹配；
    - 若为资源问题，调低并复核 `HYDRO_JUDGE_CPUS` / `HYDRO_JUDGE_MEM_LIMIT` / `HYDRO_JUDGE_PIDS_LIMIT`。
 
+9. 最终验收记录（阶段 2B/2C）
+   - 之前出现“正确代码 0 分”的原因：该次提交语言误选为 `bash`；
+   - 该问题不是 Python 运行环境缺失，也不是 judge 链路故障；
+   - Python 正确语言下的最终验收结果如下：
+     - AC 提交 ID：`69f09f391022913a2e53daf2`，语言：`py.py3`，结果：`status 1`，`score 100`
+     - AC 再次提交 ID：`69f09f851022913a2e53db0d`，语言：`py.py3`，结果：`status 1`，`score 100`
+     - WA 提交 ID：`69f09fa41022913a2e53db1d`，语言：`py.py3`，结果：`status 2`，`score 0`，日志要点：`Read 4, expect 2/3`
+
+10. 操作提醒
+   - 提交 Python 代码时必须选择 `Python 3 / py.py3`；
+   - 不要把 `bash` 语言记录误认为 Python 评测失败；
+   - 查看结果时请按提交 ID 精确核对。
+
+11. 本地链路结论
+   - 本地 judge 已完成构建、启动、认证、连接 Hydro；
+   - 已完成 A+B 正确代码 AC 验证；
+   - 已完成 A+B 错误代码 WA 验证；
+   - 本地最小评测链路通过。
+
 ## 七、资源限制说明
 
 `docker-compose.judge.yml` 已提供以下可调项（通过 `.env` 覆盖）：
