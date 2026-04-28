@@ -1,0 +1,17 @@
+# Hydro 本地开发镜像：Node 22 + corepack（Yarn Berry 在 entrypoint 中按版本激活）。
+FROM node:22-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl git netcat-openbsd python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
+
+WORKDIR /workspace
+
+COPY docker/entrypoint-dev.sh /usr/local/bin/entrypoint-dev.sh
+RUN chmod +x /usr/local/bin/entrypoint-dev.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint-dev.sh"]
+CMD ["corepack", "yarn", "debug"]

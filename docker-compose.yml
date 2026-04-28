@@ -1,0 +1,50 @@
+# 本地开发：Hydro Web + MongoDB（无 judge）。代码 bind 到 /workspace，数据用命名卷。
+# 复制 .env.example 为 .env 后：docker compose up --build
+name: hydro-dev
+
+services:
+  mongo:
+    image: mongo:7-jammy
+    restart: unless-stopped
+    volumes:
+      - hydro_dev_mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 25s
+
+  hydro:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    working_dir: /workspace
+    environment:
+      HOME: /data/hydro
+      DEV: "on"
+      NODE_ENV: development
+      DEFAULT_STORE_PATH: /data/file/hydro
+      HYDRO_MONGODB_URL: ${HYDRO_MONGODB_URL:-mongodb://mongo:27017/hydro}
+      HYDRO_ADDONS_JSON: ${HYDRO_ADDONS_JSON}
+      HYDRO_MONGO_HOST: mongo
+      HYDRO_FILE_STORAGE: /data/file
+      YARN_ENABLE_INLINE_BUILDS: ${YARN_ENABLE_INLINE_BUILDS:-1}
+    volumes:
+      - .:/workspace
+      - hydro_dev_hydro_home:/data/hydro
+      - hydro_dev_uploads:/data/file
+      - hydro_dev_node_modules:/workspace/node_modules
+    ports:
+      - "${HYDRO_HTTP_PORT:-8888}:8888"
+    command: ["corepack", "yarn", "debug"]
+
+volumes:
+  hydro_dev_mongo_data:
+  hydro_dev_hydro_home:
+  hydro_dev_uploads:
+  hydro_dev_node_modules:

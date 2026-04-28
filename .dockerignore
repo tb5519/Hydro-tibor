@@ -1,0 +1,13 @@
+.git
+.github
+**/.git
+node_modules
+**/node_modules
+.env
+.build
+dist
+*.log
+.cache
+coverage
+.nyc_output
+docker-data

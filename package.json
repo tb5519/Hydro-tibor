@@ -27,7 +27,9 @@
         "start": "packages/hydrooj/bin/hydrooj.js",
         "postinstall": "node build/prepare.js",
         "gen-patch": "node -r @hydrooj/register build/gen-patch.ts",
-        "hydrooj": "./node_modules/.bin/hydrooj"
+        "hydrooj": "./node_modules/.bin/hydrooj",
+        "docker:dev": "docker compose up --build",
+        "docker:down": "docker compose down"
     },
     "version": "1.0.0",
     "license": "AGPL-3.0-only",

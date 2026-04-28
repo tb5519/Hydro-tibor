@@ -24,6 +24,46 @@ LANG=zh . <(curl https://hydro.ac/setup.sh)
 相关文档若说明的不够详细，请提交 Pull Request 或联系开发组说明。  
 bug 和功能建议请在 Issues 提出。  
 
+### Docker 开发（Web + MongoDB）
+
+在仓库根目录执行 `cp .env.example .env`，按需修改端口等变量后运行 `docker compose up --build`（或 `yarn docker:dev`）。  
+依赖在容器内通过 **Corepack + Yarn Berry** 安装（`corepack yarn install`）；若 `package.json` 未声明 `packageManager`，开发镜像默认使用 `yarn@4.9.1`。  
+MongoDB、Hydro 配置目录、上传目录与 `node_modules` 使用 **Docker 命名卷**，与源码目录分离；`hydro` 服务 `restart: "no"`，避免失败后无限重启刷屏。  
+若日志出现 `Couldn't find any versions for "@hydrooj/..." that matches "workspace:^"`，说明实际跑的是 Yarn 1 或未走 workspace 安装路径，请确认入口为 `corepack yarn` 且已执行 `corepack prepare`。评测机（hydrojudge）未包含在本编排中，需后续单独接入。
+
+若 `yarn` 长时间卡在 Link step，可先观察容器是否仍在工作（CPU/内存/IO）：
+
+```sh
+docker stats
+```
+
+为便于排查，开发入口会在安装前输出 `node/yarn` 版本、当前目录、`node_modules` 状态、`.yarn/install-state.gz` 与 `node_modules/.yarn-state.yml`。  
+容器内安装使用 `corepack yarn install --inline-builds`；`YARN_ENABLE_INLINE_BUILDS=1` 已默认开启，用于让构建输出更实时（更适合容器日志）。
+
+如果你想先一次性安装依赖，再启动服务：
+
+```sh
+docker compose run --rm hydro corepack yarn install --inline-builds
+docker compose up
+```
+
+依赖已完整安装后，可临时跳过安装加速启动（仅在确认依赖完整时使用）：
+
+```sh
+HYDRO_SKIP_YARN_INSTALL=1 docker compose up
+```
+
+若要重装依赖但保留 Mongo 数据，可只删除依赖卷后重新安装：
+
+```sh
+docker compose down
+docker volume ls | rg hydro_dev_node_modules
+# 将上一步查到的依赖卷名替换到下面命令
+docker volume rm <node_modules_volume_name>
+docker compose run --rm hydro corepack yarn install --inline-builds
+docker compose up
+```
+
 ## 系统特点
 
 ### 模块化设计，插件系统，功能热插拔

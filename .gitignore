@@ -25,6 +25,7 @@ globalConfig.json
 .pnp.*
 
 # Config Files
+.env
 /config.yaml
 /config.json
 yarn.lock
