@@ -1,6 +1,10 @@
 {% if domain.bulletin %}
-  <div class="section">
-    <div class="section__body typo richmedia">
+  <div class="section ui-v2-home-panel ui-v2-home-panel--bulletin">
+    <div class="section__header">
+      <h1 class="section__title">欢迎来到训练中心</h1>
+    </div>
+    <p class="ui-v2-home-panel__lead">在这里选择题目、完成训练、记录每一次提交。</p>
+    <div class="section__body typo richmedia ui-v2-home-bulletin-source">
       {{ domain.bulletin|markdown|safe }}
     </div>
   </div>

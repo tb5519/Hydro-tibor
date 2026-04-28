@@ -331,6 +331,88 @@ html.page--homepage
   padding-left: rem(6px)
   padding-right: rem(6px)
 
+// ----- Homepage lower panels (learning layout) -----
+.page--homepage .ui-v2-home__panels
+  align-items: flex-start
+
+.page--homepage .ui-v2-home__col--main,
+.page--homepage .ui-v2-home__col--side
+  display: flex
+  flex-direction: column
+  gap: rem(16px)
+
+.page--homepage .ui-v2-home__body .section
+  margin-bottom: 0
+
+.page--homepage .ui-v2-home__body .section__header
+  padding: rem(14px 18px 12px)
+
+.page--homepage .ui-v2-home__body .section__title
+  font-size: rem(17px)
+  font-weight: 700
+  letter-spacing: rem(-0.2px)
+
+.page--homepage .ui-v2-home__body .section:hover
+  box-shadow: var(--ui-v2-shadow)
+
+.page--homepage .ui-v2-home-panel--bulletin .section__header
+  border-bottom: 1px solid var(--ui-v2-border)
+  background: linear-gradient(180deg, #fff 0%, var(--ui-v2-surface-muted) 100%)
+
+.page--homepage .ui-v2-home-panel__lead
+  margin: 0
+  padding: rem(12px 18px 0)
+  font-size: rem(14px)
+  line-height: 1.55
+  color: var(--ui-v2-text-muted)
+
+.page--homepage .ui-v2-home-bulletin-source
+  margin: 0 rem(14px) rem(14px)
+  padding: rem(12px 14px)
+  max-height: rem(220px)
+  overflow-y: auto
+  font-size: rem(13px)
+  line-height: 1.55
+  color: #64748b
+  background: var(--ui-v2-surface-muted)
+  border: 1px solid var(--ui-v2-border)
+  border-radius: var(--ui-v2-radius-sm)
+
+.page--homepage .ui-v2-home-bulletin-source h1,
+.page--homepage .ui-v2-home-bulletin-source h2,
+.page--homepage .ui-v2-home-bulletin-source h3
+  font-size: rem(14px) !important
+  margin: rem(8px) 0 rem(4px) !important
+  color: #64748b !important
+  font-weight: 600 !important
+
+.page--homepage .ui-v2-home-bulletin-source p,
+.page--homepage .ui-v2-home-bulletin-source li
+  font-size: rem(13px)
+  color: #64748b
+
+.page--homepage .ui-v2-home__col--side .section.side
+  margin-bottom: 0
+
+.page--homepage .ui-v2-home__col--side .section__body
+  padding: rem(12px 16px 16px)
+
+.page--homepage .ui-v2-home__col--main .page--training_main,
+.page--homepage .ui-v2-home__col--main .page--contest_main,
+.page--homepage .ui-v2-home__col--main .page--homework_main,
+.page--homepage .ui-v2-home__col--main .page--discussion_main
+  transition: box-shadow 0.12s ease, border-color 0.12s ease
+
+.page--homepage .ui-v2-home__col--main .page--training_main:hover,
+.page--homepage .ui-v2-home__col--main .page--contest_main:hover,
+.page--homepage .ui-v2-home__col--main .page--homework_main:hover,
+.page--homepage .ui-v2-home__col--main .page--discussion_main:hover
+  border-color: rgba(37, 99, 235, 0.2)
+
+  +mobile()
+    &:hover
+      border-color: var(--ui-v2-border)
+
 // ----- Problem list -----
 .page--problem_main .ui-v2-page-head
   margin-bottom: rem(20px)

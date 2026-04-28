@@ -53,9 +53,9 @@
     </a>
   </nav>
   <div class="ui-v2-home__body">
-    <div class="row">
+    <div class="row ui-v2-home__panels">
       {% for column in contents %}
-        <div class="large-{{ column.width }} columns">
+        <div class="large-{{ column.width }} columns{% if column.width >= 7 %} ui-v2-home__col--main{% else %} ui-v2-home__col--side{% endif %}">
           {% for s in column.sections %}
             {% if templateExists("partials/homepage/" + s[0] + ".html") %}
               {% set payload = s[1] %}
