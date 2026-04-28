@@ -128,6 +128,29 @@ else
     printf '%s' "$CURRENT_INSTALL_META" > "$INSTALL_META_FILE"
 fi
 
+UI_PUBLIC_DIR="/workspace/packages/ui-default/public"
+NEED_UI_PRODUCTION_BUILD="0"
+
+if [ ! -f "${UI_PUBLIC_DIR}/default.theme.js" ]; then
+    NEED_UI_PRODUCTION_BUILD="1"
+fi
+if ! ls "${UI_PUBLIC_DIR}"/hydro-*.js >/dev/null 2>&1; then
+    NEED_UI_PRODUCTION_BUILD="1"
+fi
+if ! ls "${UI_PUBLIC_DIR}"/theme-*.css >/dev/null 2>&1; then
+    NEED_UI_PRODUCTION_BUILD="1"
+fi
+if [ -f "${UI_PUBLIC_DIR}/default.theme.js" ] && grep -q "module.hot.data" "${UI_PUBLIC_DIR}/default.theme.js"; then
+    NEED_UI_PRODUCTION_BUILD="1"
+fi
+
+if [ "$NEED_UI_PRODUCTION_BUILD" = "1" ]; then
+    echo "UI production assets missing or dev-HMR assets detected, running corepack yarn build:ui:production..."
+    corepack yarn build:ui:production
+else
+    echo "UI production assets found, skipping build:ui:production."
+fi
+
 if [ "${HYDRO_SET_SERVER_HOST:-1}" = "1" ]; then
     echo "Ensuring Hydro server.host is 0.0.0.0 for Docker port mapping..."
     if ! corepack yarn hydrooj cli system set server.host 0.0.0.0; then
