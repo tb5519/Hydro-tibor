@@ -31,28 +31,45 @@ html.layout--basic .nav
   border-bottom: 1px solid var(--ui-v2-border)
   box-shadow: none
 
-html.layout--basic .nav .nav__item
-  border-radius: rem(8px)
-  margin: rem(6px 2px)
-  padding: rem(0 14px 3px)
-  color: var(--ui-v2-text)
+// Desktop only: underline active + light hover (mobile slideout unchanged)
++above(rupture.desktop-cutoff)
+  html.layout--basic .nav a.nav__item:not(.nav__item--round):not(:has(.nav__logo))
+    border-radius: 0
+    margin: 0 rem(2px)
+    padding: rem(0 12px 2px)
+    line-height: rem($nav-item-height - 6)
+    border-top: rem(3px) solid transparent
+    border-bottom: rem(2px) solid transparent
+    color: var(--ui-v2-text)
+    transition: color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease
 
-html.layout--basic .nav .nav__item:hover
-  background: var(--ui-v2-surface-muted)
-  border-top-color: transparent
+    &:hover:not(.nav--active)
+      background: rgba(239, 246, 255, 0.55)
+      border-top-color: transparent
+      color: var(--ui-v2-text)
 
-html.layout--basic .nav .nav__item.nav--active
-  background: var(--ui-v2-accent-soft)
-  border-top-color: transparent
-  color: var(--ui-v2-accent)
+    &.nav--active
+      background: transparent
+      border-top-color: transparent
+      border-bottom-color: transparent
+      color: var(--ui-v2-accent)
+      box-shadow: inset 0 rem(-2px) 0 0 var(--ui-v2-accent)
 
-html.layout--basic .nav .nav__item--round
-  border-color: var(--ui-v2-accent)
-  color: var(--ui-v2-accent)
+    &.nav--active:before
+      box-shadow: none
 
-html.layout--basic .nav .nav__item--round:hover
-  background: var(--ui-v2-accent)
-  color: #fff
+    &.nav--active:hover
+      background: rgba(239, 246, 255, 0.45)
+      color: var(--ui-v2-accent)
+      box-shadow: inset 0 rem(-2px) 0 0 var(--ui-v2-accent)
+
+  html.layout--basic .nav .nav__item--round
+    border-color: var(--ui-v2-accent)
+    color: var(--ui-v2-accent)
+
+  html.layout--basic .nav .nav__item--round:hover
+    background: var(--ui-v2-accent)
+    color: #fff
 
 // ----- Shared: cards, tables, form controls -----
 html.page--problem_main,
