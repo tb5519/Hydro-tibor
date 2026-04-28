@@ -30,6 +30,7 @@ bug 和功能建议请在 Issues 提出。
 依赖在容器内通过 **Corepack + Yarn Berry** 安装（`corepack yarn install`）；若 `package.json` 未声明 `packageManager`，开发镜像默认使用 `yarn@4.9.1`。  
 MongoDB、Hydro 配置目录、上传目录与 `node_modules` 使用 **Docker 命名卷**，与源码目录分离；`hydro` 服务 `restart: "no"`，避免失败后无限重启刷屏。  
 若日志出现 `Couldn't find any versions for "@hydrooj/..." that matches "workspace:^"`，说明实际跑的是 Yarn 1 或未走 workspace 安装路径，请确认入口为 `corepack yarn` 且已执行 `corepack prepare`。评测机（hydrojudge）未包含在本编排中，需后续单独接入。
+本地接入评测机（judge）请参考 `JUDGE_RUNBOOK.md`（采用叠加 compose，不破坏默认 Web + Mongo 开发链路）。
 
 若 `yarn` 长时间卡在 Link step，可先观察容器是否仍在工作（CPU/内存/IO）：
 
