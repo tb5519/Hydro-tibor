@@ -3,12 +3,12 @@
 {% extends "layout/basic.html" %}
 {% block content %}
   <div class="ui-v2-problem-main">
-  <header class="ui-v2-page-head">
-    <h1 class="ui-v2-page-head__title">{{ _('problem_main') }}</h1>
-    <p class="ui-v2-page-head__subtitle">探索题目，提升你的算法能力。</p>
-  </header>
   <div class="row">
     <div class="medium-9 columns">
+      <header class="ui-v2-page-head">
+        <h1 class="ui-v2-page-head__title">{{ _('problem_main') }}</h1>
+        <p class="ui-v2-page-head__subtitle">探索题目，提升你的算法能力。</p>
+      </header>
       <div class="section display-mode">
         <div class="section__body no-padding">
           <form method="get" id="searchForm" action="{{ url('problem_main') }}">

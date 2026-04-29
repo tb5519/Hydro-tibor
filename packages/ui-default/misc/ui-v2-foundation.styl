@@ -431,26 +431,28 @@ html.page--homepage
       border-color: var(--ui-v2-border)
 
 // ----- Problem list (/p) -----
-.page--problem_main .ui-v2-page-head
-  margin-bottom: rem(20px)
-  padding: rem(24px 26px 26px)
-  border-radius: var(--ui-v2-radius)
+// Compact page head: only main column, no hero-style strip
+.page--problem_main .ui-v2-problem-main .medium-9 > .ui-v2-page-head
+  margin: 0 0 rem(16px)
+  padding: rem(18px 22px 20px)
+  border-radius: var(--ui-v2-radius-sm)
   border: 1px solid var(--ui-v2-border)
   background: var(--ui-v2-surface)
-  box-shadow: var(--ui-v2-shadow-sm), inset 0 rem(3px) 0 0 rgba(37, 99, 235, 0.22)
+  box-shadow: var(--ui-v2-shadow-sm)
+  text-align: left
 
-.page--problem_main .ui-v2-page-head__title
-  margin: 0 0 rem(8px)
-  font-size: rem(26px)
+.page--problem_main .ui-v2-problem-main .medium-9 > .ui-v2-page-head__title
+  margin: 0 0 rem(4px)
+  font-size: rem(22px)
   font-weight: 700
   color: var(--ui-v2-text)
-  letter-spacing: rem(-0.3px)
+  letter-spacing: rem(-0.2px)
 
-.page--problem_main .ui-v2-page-head__subtitle
+.page--problem_main .ui-v2-problem-main .medium-9 > .ui-v2-page-head__subtitle
   margin: 0
-  max-width: rem(520px)
-  font-size: rem(15px)
-  line-height: 1.55
+  max-width: rem(560px)
+  font-size: rem(14px)
+  line-height: 1.5
   color: var(--ui-v2-text-muted)
 
 .page--problem_main .ui-v2-problem-main .section.display-mode
@@ -523,6 +525,20 @@ html.page--homepage
   padding: rem(8px 0 0) !important
   background: var(--ui-v2-surface)
 
+.page--problem_main .ui-v2-problem-main .section__table-container
+  position: relative
+  z-index: 1
+
+.page--problem_main .ui-v2-problem-main .section__table-header
+  z-index: 100
+  overflow: visible
+
+.page--problem_main .ui-v2-problem-main .section__table-header th::before,
+.page--problem_main .ui-v2-problem-main .section__table-header th::after,
+.page--problem_main .ui-v2-problem-main .section__table-header thead::before,
+.page--problem_main .ui-v2-problem-main .section__table-header thead::after
+  pointer-events: none
+
 .page--problem_main .ui-v2-problem-main .data-table thead th
   font-size: rem(12px)
   font-weight: 600
@@ -534,6 +550,13 @@ html.page--homepage
 
 .page--problem_main .ui-v2-problem-main .data-table thead
   background: var(--ui-v2-surface-muted)
+
+// th 不要用 flex（会破坏 table 列宽/命中区）；float 控件须在 DOM 中先于块级标题
+.page--problem_main .ui-v2-problem-main th.col--name
+  overflow: visible
+  position: relative
+  z-index: 5
+  vertical-align: middle
 
 .page--problem_main .ui-v2-problem-main .data-table tbody td
   padding: rem(13px 12px)
@@ -554,17 +577,17 @@ html.page--homepage
   color: var(--ui-v2-text-muted)
 
 .page--problem_main .ui-v2-problem-main .col--problem-name,
-.page--problem_main .ui-v2-problem-main .col--name
+.page--problem_main .ui-v2-problem-main td.col--name
   font-weight: 500
   color: var(--ui-v2-text)
 
 .page--problem_main .ui-v2-problem-main .col--problem-name a,
-.page--problem_main .ui-v2-problem-main .col--name a
+.page--problem_main .ui-v2-problem-main td.col--name a
   color: var(--ui-v2-text)
   text-decoration: none
 
 .page--problem_main .ui-v2-problem-main .col--problem-name a:hover,
-.page--problem_main .ui-v2-problem-main .col--name a:hover
+.page--problem_main .ui-v2-problem-main td.col--name a:hover
   color: var(--ui-v2-accent)
 
 .page--problem_main .ui-v2-problem-main .problem__tag-item
@@ -584,11 +607,12 @@ html.page--homepage
   font-weight: 600
   color: var(--ui-v2-text)
 
+// 原生为 span.toggle-tag；勿用 a(href)，以免与全局链接/pjax 行为冲突
 .page--problem_main .ui-v2-problem-main .toggle-tag
-  font-size: rem(11px)
-  font-weight: 600
-  color: var(--ui-v2-accent)
-  opacity: 0.9
+  position: relative
+  z-index: 7
+  pointer-events: auto
+  cursor: pointer
 
 .page--problem_main .ui-v2-problem-main .medium-3 .section.side
   border-radius: var(--ui-v2-radius-sm)
