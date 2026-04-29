@@ -12,6 +12,7 @@
       <div class="section display-mode">
         <div class="section__body no-padding">
           <form method="get" id="searchForm" action="{{ url('problem_main') }}">
+            <div class="ui-v2-problem-toolbar">
             <div class="search">
               <input name="q" type="text" value="{{ qs }}" placeholder="{{ _('Search') }}">
               {% include "partials/problem_stat.html" %}
@@ -23,6 +24,7 @@
               <button type="submit">
                 <span class="icon icon-search"></span>
               </button>
+            </div>
             </div>
           </form>
         </div>
