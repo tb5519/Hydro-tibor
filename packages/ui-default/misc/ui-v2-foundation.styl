@@ -430,23 +430,27 @@ html.page--homepage
     &:hover
       border-color: var(--ui-v2-border)
 
-// ----- Problem list -----
-.page--problem_main .ui-v2-page-head
-  margin-bottom: rem(20px)
-  padding: rem(22px 24px 24px)
-  border-radius: var(--ui-v2-radius)
+// ----- Problem list (/p) -----
+// Compact page head: only main column, no hero-style strip
+.page--problem_main .ui-v2-problem-main .medium-9 > .ui-v2-page-head
+  margin: 0 0 rem(16px)
+  padding: rem(18px 22px 20px)
+  border-radius: var(--ui-v2-radius-sm)
   border: 1px solid var(--ui-v2-border)
   background: var(--ui-v2-surface)
   box-shadow: var(--ui-v2-shadow-sm)
+  text-align: left
 
-.page--problem_main .ui-v2-page-head__title
-  margin: 0 0 rem(6px)
-  font-size: rem(24px)
+.page--problem_main .ui-v2-problem-main .medium-9 > .ui-v2-page-head__title
+  margin: 0 0 rem(4px)
+  font-size: rem(22px)
   font-weight: 700
   color: var(--ui-v2-text)
+  letter-spacing: rem(-0.2px)
 
-.page--problem_main .ui-v2-page-head__subtitle
+.page--problem_main .ui-v2-problem-main .medium-9 > .ui-v2-page-head__subtitle
   margin: 0
+  max-width: rem(560px)
   font-size: rem(14px)
   line-height: 1.5
   color: var(--ui-v2-text-muted)
@@ -455,22 +459,222 @@ html.page--homepage
   overflow: visible
 
 .page--problem_main .ui-v2-problem-main .section.display-mode > .section__body.no-padding:first-of-type
-  padding: rem(14px 16px) !important
+  padding: rem(16px 18px 18px) !important
+  border-bottom: 1px solid var(--ui-v2-border)
+  background: linear-gradient(180deg, var(--ui-v2-surface-muted) 0%, var(--ui-v2-surface) 100%)
+
+.page--problem_main .ui-v2-problem-main .ui-v2-problem-toolbar
+  border-radius: var(--ui-v2-radius-sm)
+  border: 1px solid var(--ui-v2-border)
+  background: var(--ui-v2-surface)
+  padding: rem(6px 8px)
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9)
+
+.page--problem_main .ui-v2-problem-main .ui-v2-problem-toolbar .search
+  border: none
+  border-radius: var(--ui-v2-radius-sm)
+  background: var(--ui-v2-surface-muted)
+  padding: rem(4px 6px)
+  min-height: rem(44px)
+  align-items: center
+
+.page--problem_main .ui-v2-problem-main .ui-v2-problem-toolbar .search > input[type="text"]
+  height: rem(36px)
+  padding: rem(0 12px)
+  font-size: rem(14px)
+
+.page--problem_main .ui-v2-problem-main .ui-v2-problem-toolbar .search > button
+  height: rem(36px)
+  width: rem(40px)
+  border: 1px solid var(--ui-v2-accent)
+  background: var(--ui-v2-accent)
+  color: #fff
+  border-radius: 0 var(--ui-v2-radius-sm) var(--ui-v2-radius-sm) 0
+
+.page--problem_main .ui-v2-problem-main .ui-v2-problem-toolbar .search > button:hover
+  background: #1d4ed8
+  border-color: #1d4ed8
+
+.page--problem_main .ui-v2-problem-main .ui-v2-problem-toolbar .search-sort
+  position: absolute
+  top: 50%
+  transform: translateY(-50%)
+  right: rem(40px)
+  height: rem(34px)
+  border: 1px solid var(--ui-v2-border)
+  border-radius: var(--ui-v2-radius-sm)
+  background: var(--ui-v2-surface)
+  padding: 0 rem(8px)
+  font-size: rem(13px)
+  color: var(--ui-v2-text)
+
+.page--problem_main .ui-v2-problem-main .ui-v2-problem-toolbar .search > .ui-v2-problem-stat
+  position: absolute
+  top: 50%
+  transform: translateY(-50%)
+  right: rem(168px)
+  font-size: rem(13px)
+  color: var(--ui-v2-text-muted)
+
+.page--problem_main .ui-v2-problem-main .ui-v2-problem-toolbar .search > .ui-v2-problem-stat p
+  margin: 0
+  line-height: 1.35
+  white-space: nowrap
+
+.page--problem_main .ui-v2-problem-main .section.display-mode > .section__body.no-padding:last-of-type
+  padding: rem(8px 0 0) !important
+  background: var(--ui-v2-surface)
+
+.page--problem_main .ui-v2-problem-main .section__table-container
+  position: relative
+  z-index: 1
+
+.page--problem_main .ui-v2-problem-main .section__table-header
+  z-index: 100
+  overflow: visible
+
+.page--problem_main .ui-v2-problem-main .section__table-header th::before,
+.page--problem_main .ui-v2-problem-main .section__table-header th::after,
+.page--problem_main .ui-v2-problem-main .section__table-header thead::before,
+.page--problem_main .ui-v2-problem-main .section__table-header thead::after
+  pointer-events: none
+
+.page--problem_main .ui-v2-problem-main .data-table thead th
+  font-size: rem(12px)
+  font-weight: 600
+  color: var(--ui-v2-text-muted)
+  letter-spacing: rem(0.02em)
+  padding: rem(14px 12px)
   border-bottom: 1px solid var(--ui-v2-border)
   background: var(--ui-v2-surface-muted)
 
-.page--problem_main .ui-v2-problem-main .section.display-mode > .section__body.no-padding:last-of-type
-  padding-top: rem(4px) !important
-  background: var(--ui-v2-surface)
+.page--problem_main .ui-v2-problem-main .data-table thead
+  background: var(--ui-v2-surface-muted)
+
+// th 不要用 flex（会破坏 table 列宽/命中区）；float 控件须在 DOM 中先于块级标题
+.page--problem_main .ui-v2-problem-main th.col--name
+  overflow: visible
+  position: relative
+  z-index: 5
+  vertical-align: middle
+
+.page--problem_main .ui-v2-problem-main .data-table tbody td
+  padding: rem(13px 12px)
+  vertical-align: middle
+  font-size: rem(14px)
 
 .page--problem_main .ui-v2-problem-main .data-table tbody tr
-  transition: background 0.1s ease
+  transition: background 0.12s ease, box-shadow 0.12s ease
 
 .page--problem_main .ui-v2-problem-main .data-table tbody tr:hover
-  background: var(--ui-v2-accent-soft)
+  background: #f1f5f9
+  box-shadow: inset rem(3px) 0 0 0 rgba(37, 99, 235, 0.35)
+
+.page--problem_main .ui-v2-problem-main .col--pid
+  font-variant-numeric: tabular-nums
+  font-weight: 600
+  font-size: rem(13px)
+  color: var(--ui-v2-text-muted)
+
+.page--problem_main .ui-v2-problem-main .col--problem-name,
+.page--problem_main .ui-v2-problem-main td.col--name
+  font-weight: 500
+  color: var(--ui-v2-text)
+
+.page--problem_main .ui-v2-problem-main .col--problem-name a,
+.page--problem_main .ui-v2-problem-main td.col--name a
+  color: var(--ui-v2-text)
+  text-decoration: none
+
+.page--problem_main .ui-v2-problem-main .col--problem-name a:hover,
+.page--problem_main .ui-v2-problem-main td.col--name a:hover
+  color: var(--ui-v2-accent)
+
+.page--problem_main .ui-v2-problem-main .problem__tag-item
+  font-size: rem(11px)
+  padding: rem(2px 8px)
+  border-color: var(--ui-v2-border)
+  background: #fff
+  color: var(--ui-v2-text-muted)
+
+.page--problem_main .ui-v2-problem-main .col--ac-tried
+  font-variant-numeric: tabular-nums
+  font-size: rem(13px)
+  color: var(--ui-v2-text-muted)
+
+.page--problem_main .ui-v2-problem-main .col--difficulty
+  font-size: rem(13px)
+  font-weight: 600
+  color: var(--ui-v2-text)
+
+// 原生为 span.toggle-tag；勿用 a(href)，以免与全局链接/pjax 行为冲突
+.page--problem_main .ui-v2-problem-main .toggle-tag
+  position: relative
+  z-index: 7
+  pointer-events: auto
+  cursor: pointer
 
 .page--problem_main .ui-v2-problem-main .medium-3 .section.side
   border-radius: var(--ui-v2-radius-sm)
+  margin-bottom: rem(14px)
+  box-shadow: var(--ui-v2-shadow-sm)
+
+.page--problem_main .ui-v2-problem-main .medium-3 .section.side:last-child
+  margin-bottom: 0
+
+.page--problem_main .ui-v2-problem-main .medium-3 .section.side .section__header
+  padding: rem(12px 16px 10px)
+
+.page--problem_main .ui-v2-problem-main .medium-3 .section.side .section__title
+  font-size: rem(15px)
+  font-weight: 700
+  letter-spacing: rem(-0.2px)
+
+.page--problem_main .ui-v2-problem-main .medium-3 .section__body
+  padding: rem(12px 14px 16px)
+
+.page--problem_main .ui-v2-problem-main .medium-3 .group-list__item
+  margin-bottom: rem(16px)
+  padding-bottom: rem(14px)
+  border-bottom: 1px solid var(--ui-v2-border)
+
+.page--problem_main .ui-v2-problem-main .medium-3 .group-list__item:last-child
+  margin-bottom: 0
+  padding-bottom: 0
+  border-bottom: none
+
+.page--problem_main .ui-v2-problem-main .medium-3 .group-list__item .section__title
+  margin: 0 0 rem(8px)
+  font-size: rem(14px)
+
+.page--problem_main .ui-v2-problem-main .medium-3 .group-list__item .section__title a
+  color: var(--ui-v2-text)
+  text-decoration: none
+
+.page--problem_main .ui-v2-problem-main .medium-3 .group-list__item .section__title a:hover
+  color: var(--ui-v2-accent)
+
+.page--problem_main .ui-v2-problem-main .medium-3 .chip-list
+  margin: 0
+  padding: 0
+
+.page--problem_main .ui-v2-problem-main .medium-3 .chip-list__item
+  margin: rem(0 6px 8px 0)
+
+.page--problem_main .ui-v2-problem-main .medium-3 .chip-list__item .typo-a
+  display: inline-block
+  padding: rem(4px 10px)
+  border-radius: rem(999px)
+  border: 1px solid var(--ui-v2-border)
+  background: var(--ui-v2-surface-muted)
+  font-size: rem(12px)
+  color: var(--ui-v2-text-muted)
+  text-decoration: none
+
+.page--problem_main .ui-v2-problem-main .medium-3 .chip-list__item .typo-a:hover
+  border-color: rgba(37, 99, 235, 0.35)
+  color: var(--ui-v2-accent)
+  background: #fff
 
 .page--problem_main .widget--category-filter__tag
   border-radius: rem(999px)
