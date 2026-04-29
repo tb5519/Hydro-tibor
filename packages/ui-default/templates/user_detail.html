@@ -22,6 +22,12 @@
                 {{ udoc['uname'] }}
                 {% if handler.user.hasPerm(perm.PERM_VIEW_USER_PRIVATE_INFO) and udoc.displayName %}<small>({{ udoc['displayName'] }})</small>{% endif %}
               </h1>
+              {% if udoc.badge %}
+                {% set _badge = udoc.badge.split('#') %}
+                <div class="ui-v2-user-detail-badge-row">
+                  <a href="/badge/{{ _badge[0] }}" class="user-profile-badge v-center ui-v2-user-detail-badge" style="background-color:#{{ _badge[2] }}{% if _badge[3] %};color:#{{ _badge[3] }}{% endif %}" {% if _badge[4] %}data-tooltip="{{ _badge[4] }}"{% endif %}>{{ _badge[1] }}</a>
+                </div>
+              {% endif %}
               <p>
                 {{ _('UID') }}: {{ udoc['_id'] }},
                 {{ _('Registered at') }} {{ datetimeSpan(udoc['regat'])|safe }},
