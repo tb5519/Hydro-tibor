@@ -474,16 +474,28 @@ html.page--homepage
   border: none
   border-radius: var(--ui-v2-radius-sm)
   background: var(--ui-v2-surface-muted)
-  padding: rem(4px 6px)
+  padding: rem(8px 10px)
   min-height: rem(44px)
+  display: flex
+  flex-wrap: wrap
   align-items: center
+  gap: rem(10px) rem(16px)
+  position: relative
+  width: 100%
 
 .page--problem_main .ui-v2-problem-main .ui-v2-problem-toolbar .search > input[type="text"]
+  order: 1
+  flex: 1 1 rem(160px)
+  min-width: rem(120px)
+  width: auto
+  max-width: 100%
   height: rem(36px)
   padding: rem(0 12px)
   font-size: rem(14px)
 
 .page--problem_main .ui-v2-problem-main .ui-v2-problem-toolbar .search > button
+  order: 1
+  flex: 0 0 auto
   height: rem(36px)
   width: rem(40px)
   border: 1px solid var(--ui-v2-accent)
@@ -496,10 +508,11 @@ html.page--homepage
   border-color: #1d4ed8
 
 .page--problem_main .ui-v2-problem-main .ui-v2-problem-toolbar .search-sort
-  position: absolute
-  top: 50%
-  transform: translateY(-50%)
-  right: rem(40px)
+  position: static
+  transform: none
+  order: 1
+  flex: 0 0 auto
+  min-width: rem(112px)
   height: rem(34px)
   border: 1px solid var(--ui-v2-border)
   border-radius: var(--ui-v2-radius-sm)
@@ -509,12 +522,17 @@ html.page--homepage
   color: var(--ui-v2-text)
 
 .page--problem_main .ui-v2-problem-main .ui-v2-problem-toolbar .search > .ui-v2-problem-stat
-  position: absolute
-  top: 50%
-  transform: translateY(-50%)
-  right: rem(168px)
+  position: static
+  transform: none
+  order: 0
+  flex: 0 0 100%
+  width: 100%
+  box-sizing: border-box
   font-size: rem(13px)
   color: var(--ui-v2-text-muted)
+  margin: 0 0 rem(8px) 0
+  padding: 0 0 rem(10px) 0
+  border-bottom: 1px solid var(--ui-v2-border)
 
 .page--problem_main .ui-v2-problem-main .ui-v2-problem-toolbar .search > .ui-v2-problem-stat p
   margin: 0
@@ -802,6 +820,12 @@ html.page--homepage
 
 .page--problem_detail .problem-content-container .problem-content
   padding: rem(4px 0 20px)
+
+// Scratchpad 左栏：题面挂入 .scratchpad__problem，与详情页容器选择器脱钩；在面板层补水平留白（仅 mode--scratchpad）。
+.mode--scratchpad .scratchpad__problem
+  box-sizing: border-box
+  padding-left: rem(16px)
+  padding-right: rem(12px)
 
 .page--problem_detail .ui-v2-problem-statement
   max-width: rem(720px)

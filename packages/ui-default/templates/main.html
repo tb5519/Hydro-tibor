@@ -57,7 +57,9 @@
       {% for column in contents %}
         <div class="large-{{ column.width }} columns{% if column.width >= 7 %} ui-v2-home__col--main{% else %} ui-v2-home__col--side{% endif %}">
           {% for s in column.sections %}
-            {% if templateExists("partials/homepage/" + s[0] + ".html") %}
+            {% if s[0] == "hitokoto" %}
+              {# 前端不渲染「一言」区块；配置与后端数据不变 #}
+            {% elif templateExists("partials/homepage/" + s[0] + ".html") %}
               {% set payload = s[1] %}
               {% include "partials/homepage/" + s[0] + ".html" %}
             {% else %}
