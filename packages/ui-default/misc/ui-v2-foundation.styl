@@ -19,7 +19,7 @@
 html.page--homepage,
 html.page--problem_main,
 html.page--problem_detail
-  .main
+  > body > .main
     background: var(--ui-v2-bg)
     padding-top: rem(48px)
     padding-bottom: rem(48px)
@@ -693,37 +693,38 @@ html.page--homepage
 
 // ----- Problem detail: sidebar as action cards -----
 .page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar
-  padding: rem(6px 0 4px)
+  padding: rem(4px 0 2px)
 
 .page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .section__header
-  padding: rem(14px 16px 10px)
+  padding: rem(10px 14px 8px)
   margin: 0
   border-bottom: 1px solid var(--ui-v2-border)
   background: linear-gradient(180deg, var(--ui-v2-surface-muted) 0%, var(--ui-v2-surface) 100%)
 
 .page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .section__title
-  font-size: rem(16px)
+  font-size: rem(15px)
 
 .page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar > div
-  padding: rem(12px 12px 14px)
+  padding: rem(8px 10px 10px)
 
 .page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu
   padding: 0
 
 .page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu__item
-  margin-bottom: rem(6px)
+  margin-bottom: rem(4px)
 
 .page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu__link,
 .page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu__item button.menu__link
   display: block
   width: 100%
   text-align: left
-  border-radius: var(--ui-v2-radius-sm)
+  border-radius: rem(8px)
   border: 1px solid var(--ui-v2-border)
   background: var(--ui-v2-surface-muted)
-  padding: rem(10px 12px)
+  padding: rem(7px 10px)
   margin: 0
-  line-height: 1.35
+  font-size: rem(13px)
+  line-height: 1.4
   transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease
 
 .page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu__link:hover,
@@ -742,10 +743,196 @@ html.page--homepage
   opacity: 0.55
 
 .page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu__seperator
-  height: rem(8px)
-  margin: rem(4px) 0
+  height: rem(6px)
+  margin: rem(2px) 0
   border: none
   background: transparent
+
+// Scratchpad 仍为侧栏首要强操作，略大于普通项
+.page--problem_detail .ui-v2-problem-aside .section.side.section--problem-sidebar .menu__link.highlight
+  padding: rem(8px 11px)
+  font-size: rem(13px)
+
+// ----- Problem detail: hero title + meta chips -----
+.page--problem_detail .ui-v2-problem-detail-hero .section__header
+  padding: rem(18px 20px 12px)
+  border-bottom: 1px solid var(--ui-v2-border)
+  background: linear-gradient(180deg, var(--ui-v2-surface-muted) 0%, var(--ui-v2-surface) 100%)
+
+.page--problem_detail .ui-v2-problem-detail-hero .section__title
+  font-size: rem(22px)
+  font-weight: 700
+  letter-spacing: rem(-0.3px)
+  line-height: 1.35
+  color: var(--ui-v2-text)
+  margin: 0
+
+.page--problem_detail .ui-v2-problem-detail-meta
+  padding: rem(14px 18px 16px)
+
+.page--problem_detail .ui-v2-problem-detail-meta .problem__tags
+  display: flex
+  flex-wrap: wrap
+  align-items: center
+  gap: rem(8px)
+  margin: 0
+  padding: 0
+  list-style: none
+
+.page--problem_detail .ui-v2-problem-detail-meta .problem__tag-item
+  margin: 0
+  border-radius: rem(999px)
+  border: 1px solid var(--ui-v2-border)
+  background: var(--ui-v2-surface-muted)
+  font-size: rem(12px)
+  font-weight: 500
+  color: var(--ui-v2-text-muted)
+  padding: rem(5px 12px)
+  line-height: 1.35
+  min-height: 0
+
+.page--problem_detail .ui-v2-problem-detail-meta .problem__tag-item.interactive:hover
+  border-color: rgba(37, 99, 235, 0.35)
+  color: var(--ui-v2-accent)
+  background: #fff
+
+// ----- Problem detail: statement body + samples -----
+.page--problem_detail .problem-content-container
+  box-shadow: var(--ui-v2-shadow-sm)
+
+.page--problem_detail .problem-content-container .problem-content
+  padding: rem(4px 0 20px)
+
+.page--problem_detail .ui-v2-problem-statement
+  max-width: rem(720px)
+  margin: 0 auto
+  padding: rem(18px 20px 24px)
+  font-size: rem(15px)
+  line-height: 1.7
+
+.page--problem_detail .ui-v2-problem-statement > *:first-child
+  margin-top: 0
+
+.page--problem_detail .ui-v2-problem-statement p
+  margin: rem(0 0 10px)
+  line-height: 1.72
+
+.page--problem_detail .ui-v2-problem-statement h1,
+.page--problem_detail .ui-v2-problem-statement h2,
+.page--problem_detail .ui-v2-problem-statement h3,
+.page--problem_detail .ui-v2-problem-statement h4
+  margin: rem(16px 0 8px)
+  font-weight: 700
+  color: var(--ui-v2-text)
+  letter-spacing: rem(-0.2px)
+
+.page--problem_detail .ui-v2-problem-statement h1:first-child,
+.page--problem_detail .ui-v2-problem-statement h2:first-child,
+.page--problem_detail .ui-v2-problem-statement h3:first-child
+  margin-top: 0
+
+.page--problem_detail .ui-v2-problem-statement pre
+  margin: rem(10px 0 14px)
+  padding: rem(10px 12px)
+  border-radius: var(--ui-v2-radius-sm)
+  border: 1px solid var(--ui-v2-border)
+  background: var(--ui-v2-surface-muted)
+  overflow-x: auto
+  font-size: rem(13px)
+  line-height: 1.55
+
+.page--problem_detail .ui-v2-problem-statement pre code
+  font-family: Menlo, Monaco, Consolas, 'Courier New', monospace
+  background: transparent
+  border: none
+  padding: 0
+
+.page--problem_detail .ui-v2-problem-statement :not(pre) > code
+  padding: rem(2px 5px)
+  border-radius: rem(4px)
+  background: var(--ui-v2-surface-muted)
+  border: 1px solid var(--ui-v2-border)
+  font-size: rem(12px)
+
+.page--problem_detail .ui-v2-problem-statement blockquote.note,
+.page--problem_detail .ui-v2-problem-statement blockquote.warn
+  margin: rem(10px 0)
+  border-radius: var(--ui-v2-radius-sm)
+  border-left-width: rem(4px)
+
+.page--problem_detail .ui-v2-problem-detail .section__tab-header-wrapper
+  border-bottom: 1px solid var(--ui-v2-border)
+  background: var(--ui-v2-surface-muted)
+
+// 题面语言 tab：去掉上游粉色顶边 + 圆角弧线感，改为轻量选中（底边强调 + 浅底）
+.page--problem_detail .ui-v2-problem-detail .section__tab-header-item
+  margin-right: rem(4px)
+  padding: rem(8px 14px 10px)
+  font-weight: 500
+  font-size: rem(13px)
+  border: none
+  border-bottom: 2px solid transparent
+  border-radius: 0
+  background: transparent
+  color: var(--ui-v2-text-muted) !important
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease
+
+.page--problem_detail .ui-v2-problem-detail .section__tab-header-item:hover
+  border-top: none !important
+  border-bottom-color: rgba(37, 99, 235, 0.28)
+  background: rgba(255, 255, 255, 0.55)
+  color: var(--ui-v2-text) !important
+
+.page--problem_detail .ui-v2-problem-detail .section__tab-header-item.tab--active
+  border-top: none !important
+  border-bottom: 2px solid var(--ui-v2-accent)
+  background: rgba(239, 246, 255, 0.85)
+  color: var(--ui-v2-accent) !important
+  font-weight: 600
+
+// ----- Problem detail: aside secondary cards -----
+.page--problem_detail .ui-v2-problem-aside > .section.side:not(.section--problem-sidebar)
+  border-radius: var(--ui-v2-radius-sm)
+  border: 1px solid var(--ui-v2-border)
+  background: var(--ui-v2-surface)
+  box-shadow: var(--ui-v2-shadow-sm)
+  overflow: hidden
+
+.page--problem_detail .ui-v2-problem-aside > .section.side:not(.section--problem-sidebar) .section__header
+  padding: rem(12px 16px 10px)
+  background: linear-gradient(180deg, var(--ui-v2-surface-muted) 0%, var(--ui-v2-surface) 100%)
+  border-bottom: 1px solid var(--ui-v2-border)
+
+.page--problem_detail .ui-v2-problem-aside > .section.side:not(.section--problem-sidebar) .section__body
+  padding: rem(14px 16px 16px)
+  font-size: rem(13px)
+  color: var(--ui-v2-text-muted)
+
+.page--problem_detail .ui-v2-problem-aside > .section.side:not(.section--problem-sidebar) .section__body a
+  color: var(--ui-v2-accent)
+
+// ----- Problem detail: primary submit row（较普通项略突出，整体收敛） -----
+.page--problem_detail .ui-v2-problem-aside .ui-v2-sidebar-submit a.menu__link,
+.page--problem_detail .ui-v2-problem-aside .ui-v2-sidebar-submit a.menu__link.disabled,
+.page--contest_detail_problem .ui-v2-problem-aside .ui-v2-sidebar-submit a.menu__link,
+.page--homework_detail_problem .ui-v2-problem-aside .ui-v2-sidebar-submit a.menu__link
+  font-weight: 600
+  font-size: rem(13px)
+  padding: rem(8px 11px)
+
+.page--problem_detail .ui-v2-problem-aside .ui-v2-sidebar-submit a.menu__link:not(.disabled),
+.page--contest_detail_problem .ui-v2-problem-aside .ui-v2-sidebar-submit a.menu__link:not(.disabled),
+.page--homework_detail_problem .ui-v2-problem-aside .ui-v2-sidebar-submit a.menu__link:not(.disabled)
+  border-color: rgba(37, 99, 235, 0.55)
+  background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)
+  color: var(--ui-v2-accent)
+
+.page--problem_detail .ui-v2-problem-aside .ui-v2-sidebar-submit a.menu__link:not(.disabled):hover,
+.page--contest_detail_problem .ui-v2-problem-aside .ui-v2-sidebar-submit a.menu__link:not(.disabled):hover,
+.page--homework_detail_problem .ui-v2-problem-aside .ui-v2-sidebar-submit a.menu__link:not(.disabled):hover
+  border-color: var(--ui-v2-accent)
+  background: #fff
+  color: #1d4ed8
 
 @media (prefers-reduced-motion: reduce)
   .page--homepage .ui-v2-home__hero-dot--1,

@@ -45,7 +45,7 @@
 <div class="ui-v2-problem-detail">
 <div class="row" data-sticky-parent>
   <div class="medium-9 columns">
-    <div class="section">
+    <div class="section ui-v2-problem-detail-hero">
       <div class="section__header">
         <h1 class="section__title">
           {% if rdoc %}
@@ -89,7 +89,7 @@
           </div>
         {% endif %}
       </div>
-      <div class="section__body">
+      <div class="section__body ui-v2-problem-detail-meta">
         <ul class="problem__tags">
           {% if not tdoc %}
             <span class="problem__tag-item">{{ _('ID') }}: {{ pdoc.docId }}</span>
