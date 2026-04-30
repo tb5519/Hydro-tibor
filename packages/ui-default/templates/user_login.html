@@ -1,9 +1,89 @@
 {% extends "layout/immersive.html" %}
 {% block content %}
-<div class="row"><div class="columns">
-  <div class="immersive--content immersive--center">
-    <h1>{{ _('Login') }}</h1>
-    <form method="POST">
+<style>
+/* 仅登录页：双栏欢迎 + 卡片表单，不影响其它 immersive 页面 */
+.ui-v2-login-landing {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: clamp(1.25rem, 3.5vw, 2.75rem) 0.75rem 2.5rem;
+}
+.ui-v2-login-landing__hero {
+  padding: 0.25rem 0 1.5rem;
+}
+@media (min-width: 64em) {
+  .ui-v2-login-landing__hero {
+    padding: 0.75rem 1rem 1rem 0;
+    min-height: 260px;
+  }
+}
+.ui-v2-login-landing__eyebrow {
+  margin: 0 0 0.45rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.88);
+}
+.ui-v2-login-landing__title {
+  margin: 0 0 0.65rem;
+  font-size: clamp(1.35rem, 2.6vw, 1.85rem);
+  font-weight: 700;
+  line-height: 1.28;
+  color: #fff;
+}
+.ui-v2-login-landing__lead {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.65;
+  color: rgba(255, 255, 255, 0.92);
+  max-width: 28rem;
+}
+.ui-v2-login-landing__panel {
+  background: rgba(255, 255, 255, 0.97);
+  border-radius: 14px;
+  box-shadow: 0 14px 42px rgba(15, 23, 42, 0.16);
+  padding: 1.65rem 1.45rem 1.45rem;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+}
+.ui-v2-login-landing__panel h1 {
+  text-align: left !important;
+  margin: 0 0 1.25rem !important;
+  font-size: 1.32rem !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+}
+.ui-v2-login-landing__panel label.inverse.material.textbox,
+.ui-v2-login-landing__panel label.inverse.material.checkbox {
+  color: #334155 !important;
+}
+.ui-v2-login-landing__panel label.inverse.material.checkbox {
+  font-weight: 500;
+}
+.ui-v2-login-landing__panel .text-center.supplementary.inverse a {
+  color: #2563eb !important;
+}
+.ui-v2-login-landing__panel .text-center.supplementary.inverse a:hover {
+  text-decoration: underline;
+}
+.ui-v2-login-landing__panel a.expanded.rounded.button.inverse {
+  background: #f8fafc !important;
+  color: #0f172a !important;
+  border: 1px solid #e2e8f0 !important;
+}
+.ui-v2-login-landing__panel a.expanded.rounded.button.inverse:hover {
+  background: #fff !important;
+  border-color: #cbd5e1 !important;
+}
+</style>
+<div class="ui-v2-login-landing row expanded" data-ui-v2-login>
+  <div class="small-12 large-5 columns ui-v2-login-landing__hero">
+    <p class="ui-v2-login-landing__eyebrow">编程训练平台</p>
+    <h2 class="ui-v2-login-landing__title">欢迎来到编程训练平台</h2>
+    <p class="ui-v2-login-landing__lead">从一道题开始，记录每一次 AC 的进步。</p>
+  </div>
+  <div class="small-12 large-6 large-offset-1 columns end">
+    <div class="ui-v2-login-landing__panel">
+      <h1>{{ _('Login') }}</h1>
+      <form method="POST">
       {% if model.system.get('server.login') %}
       <div class="row"><div class="columns">
         <label class="inverse material textbox">
@@ -18,7 +98,7 @@
         </label>
       </div></div>
       <div class="row"><div class="columns">
-        <label class="inverse material checkbox" style="color:#fff;">
+        <label class="inverse material checkbox">
           <input type="checkbox" name="rememberme" class="checkbox">{{ _('Remember me') }}
         </label>
       </div></div>
@@ -41,6 +121,7 @@
         </div>
       </div></div>
     </form>
+    </div>
   </div>
-</div></div>
+</div>
 {% endblock %}
