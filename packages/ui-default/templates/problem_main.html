@@ -2,6 +2,102 @@
 {% import "components/problem.html" as problem with context %}
 {% extends "layout/basic.html" %}
 {% block content %}
+  <style id="hotfix-problem-toolbar-inline">
+    /* 模板级热修复：无需 build，确保桌面端搜索栏同一行 */
+    .page--problem_main .ui-v2-problem-toolbar {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      padding: 0.75rem 0.9rem 0.9rem;
+    }
+    .page--problem_main .ui-v2-problem-toolbar .ui-v2-problem-stat {
+      position: static;
+      margin: 0;
+      order: 0;
+    }
+    .page--problem_main .ui-v2-problem-toolbar .ui-v2-problem-stat p {
+      margin: 0;
+      font-size: 0.95rem;
+      color: #475569;
+    }
+    .page--problem_main .ui-v2-problem-toolbar .search {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      width: 100%;
+      position: static;
+      flex-wrap: nowrap;
+    }
+    .page--problem_main .ui-v2-problem-toolbar .search > input[name="q"] {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: 38px;
+      padding: 0 0.75rem;
+      border: 1px solid #dbe3ee;
+      border-radius: 10px;
+      background: #ffffff;
+      color: #0f172a;
+      outline: none;
+      box-shadow: none;
+    }
+    .page--problem_main .ui-v2-problem-toolbar .search > input[name="q"]::placeholder {
+      color: #94a3b8;
+      opacity: 1;
+    }
+    .page--problem_main .ui-v2-problem-toolbar .search > input[name="q"]:focus {
+      border-color: #93c5fd;
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.14);
+    }
+    .page--problem_main .ui-v2-problem-toolbar .search > .search-sort {
+      position: static;
+      flex: 0 0 160px;
+      width: 160px;
+      min-width: 160px;
+      height: 38px;
+      border: 1px solid #dbe3ee;
+      border-radius: 10px;
+      background: #ffffff;
+      color: #334155;
+      padding: 0 0.65rem;
+      cursor: pointer;
+    }
+    .page--problem_main .ui-v2-problem-toolbar .search > button[type="submit"] {
+      flex: 0 0 56px;
+      width: 56px;
+      min-width: 56px;
+      height: 38px;
+      border: 1px solid #dbe3ee;
+      border-radius: 10px;
+      background: #f8fafc;
+      color: #334155;
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .page--problem_main .ui-v2-problem-toolbar .search > button[type="submit"]:hover {
+      background: #eff6ff;
+      border-color: #bfdbfe;
+      color: #1d4ed8;
+    }
+    @media (max-width: 40em) {
+      .page--problem_main .ui-v2-problem-toolbar .search {
+        flex-wrap: wrap;
+      }
+      .page--problem_main .ui-v2-problem-toolbar .search > input[name="q"],
+      .page--problem_main .ui-v2-problem-toolbar .search > .search-sort {
+        flex: 1 1 100%;
+        width: 100%;
+        min-width: 0;
+      }
+      .page--problem_main .ui-v2-problem-toolbar .search > button[type="submit"] {
+        flex: 0 0 auto;
+        width: 56px;
+      }
+    }
+  </style>
   <div class="ui-v2-problem-main">
   <div class="row">
     <div class="medium-9 columns">
@@ -13,9 +109,9 @@
         <div class="section__body no-padding">
           <form method="get" id="searchForm" action="{{ url('problem_main') }}">
             <div class="ui-v2-problem-toolbar">
+            {% include "partials/problem_stat.html" %}
             <div class="search">
               <input name="q" type="text" value="{{ qs }}" placeholder="{{ _('Search') }}">
-              {% include "partials/problem_stat.html" %}
               <select name="sort" class="search-sort">
                 {%- for sortType in ["default", "recent"] -%}
                   <option value="{{ sortType }}" {{ "selected" if sort == sortType else "" }}>{{ _('sort::' + sortType) }}</option>

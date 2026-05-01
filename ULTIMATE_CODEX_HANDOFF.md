@@ -412,11 +412,24 @@ docker compose restart hydro
 
 ## 十六、题库页工具条 inline hotfix
 
-- **问题**：服务器 `/p`「题数 / 排序 / 搜索」挤压。
-- **手段**：在服务器 `packages/ui-default/templates/problem_main.html` 插入  
-  `<style id="hotfix-problem-toolbar-inline">...</style>`
-- **备份**：`/root/hydro-deploy-backup/problem_main-before-inline-toolbar-hotfix-*.html`
-- **性质**：**临时**；正式应回收到源码或稳定样式 + **本地 build** 上线。
+- **问题**：服务器 `/p` 出现「搜索框独占一行，题数/排序/按钮在下一行」。
+- **最终目标**：
+  - 题目数量（`{0} problems`）独立显示在搜索区域上方；
+  - 桌面端第二行保持：`输入框 + 默认排序 + 搜索按钮` 同一行；
+  - 输入框边界清晰、浅色、焦点柔和蓝色光圈；
+  - 移动端允许换行，避免挤压。
+- **方案**：在 `packages/ui-default/templates/problem_main.html` 使用模板级  
+  `<style id="hotfix-problem-toolbar-inline">...</style>` 进行修复。
+- **部署特性**：模板改动，服务器 **不需要 build:ui**。
+- **服务器最小发布命令**：
+
+```bash
+cd /www/hydro-tibor
+git pull --ff-only origin master
+docker compose restart hydro
+```
+
+- **禁止**：不要服务器 build；不要 `docker compose up -d --build`；不要 `down -v`；不要 `system prune`；不要动 Mongo/judge/ClassFlow。
 
 ---
 
