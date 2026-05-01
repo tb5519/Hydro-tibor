@@ -202,27 +202,6 @@
 .dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main .supplementary.text-center a:hover {
   color: #2563eb !important;
 }
-.dialog.dialog--signin.dialog--signin-v2 .dialog--signin-v2__register {
-  position: relative;
-  z-index: 1;
-  margin: 0.45rem 0 0;
-  padding-top: 0.45rem;
-  border-top: 1px solid rgba(241, 245, 249, 0.95);
-  text-align: center;
-  font-size: 0.875rem;
-  color: #64748b;
-  line-height: 1.45;
-}
-.dialog.dialog--signin.dialog--signin-v2 .dialog--signin-v2__register .dialog--signin-v2__register-link {
-  margin-left: 0.15rem;
-  font-weight: 600;
-  color: #2563eb !important;
-  text-decoration: none;
-}
-.dialog.dialog--signin.dialog--signin-v2 .dialog--signin-v2__register .dialog--signin-v2__register-link:hover {
-  color: #1d4ed8 !important;
-  text-decoration: underline;
-}
 .theme--dark .dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main {
   background: #fff !important;
   color: #0f172a;
@@ -234,10 +213,6 @@
 .theme--dark .dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main label.textbox.material input {
   color: #0f172a !important;
   background: #fff !important;
-}
-.theme--dark .dialog.dialog--signin.dialog--signin-v2 .dialog--signin-v2__register {
-  border-top-color: #e2e8f0;
-  color: #64748b;
 }
 </style>
 <div class="dialog dialog--signin dialog--signin-v2" style="display:none">
@@ -284,11 +259,6 @@
             <a {% if not model.system.get('smtp.user') %}data-lostpass href="#"{% else %}href="{{ url('user_lostpass') }}"{% endif %}>{{ _('Forgot password or username?') }}</a>
           </div>
         </div></div>
-        {% if model.system.get('server.login') and handler.user.hasPriv(PRIV.PRIV_REGISTER_USER) %}
-        <div class="dialog--signin-v2__register">
-          {{ _('还没有账户？') }}<a href="{{ url('user_register') }}" class="dialog--signin-v2__register-link">{{ _('现在注册') }}</a>
-        </div>
-        {% endif %}
       </form>
     </div>
   </div>
