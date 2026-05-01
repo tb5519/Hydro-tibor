@@ -10,16 +10,6 @@
       gap: 0.5rem;
       padding: 0.75rem 0.9rem 0.9rem;
     }
-    .page--problem_main .ui-v2-problem-toolbar .ui-v2-problem-stat {
-      position: static;
-      margin: 0;
-      order: 0;
-    }
-    .page--problem_main .ui-v2-problem-toolbar .ui-v2-problem-stat p {
-      margin: 0;
-      font-size: 0.95rem;
-      color: #475569;
-    }
     .page--problem_main .ui-v2-problem-toolbar .search {
       display: flex;
       align-items: center;
@@ -66,21 +56,22 @@
       width: 56px;
       min-width: 56px;
       height: 38px;
-      border: 1px solid #dbe3ee;
+      border: 1px solid #3b82f6;
       border-radius: 10px;
-      background: #f8fafc;
-      color: #334155;
+      background: #3b82f6;
+      color: #ffffff;
       cursor: pointer;
       font-size: 1rem;
       line-height: 1;
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      box-shadow: 0 1px 2px rgba(59, 130, 246, 0.22);
     }
     .page--problem_main .ui-v2-problem-toolbar .search > button[type="submit"]:hover {
-      background: #eff6ff;
-      border-color: #bfdbfe;
-      color: #1d4ed8;
+      background: #2563eb;
+      border-color: #1d4ed8;
+      color: #ffffff;
     }
     @media (max-width: 40em) {
       .page--problem_main .ui-v2-problem-toolbar .search {
@@ -109,7 +100,6 @@
         <div class="section__body no-padding">
           <form method="get" id="searchForm" action="{{ url('problem_main') }}">
             <div class="ui-v2-problem-toolbar">
-            {% include "partials/problem_stat.html" %}
             <div class="search">
               <input name="q" type="text" value="{{ qs }}" placeholder="{{ _('Search') }}">
               <select name="sort" class="search-sort">

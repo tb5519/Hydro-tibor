@@ -7,7 +7,7 @@
   {{ nothing.render('Sorry, there are no problems in the problem set.') }}
 {% else %}
   {{ paginator.render(page, ppcount, position='top', add_qs=utils.buildQueryString(q=qs, sort='' if sort == 'default' else sort)) }}
-  <table class="data-table hide-problem-tag">
+  <table class="data-table">
     <colgroup>
       <col class="col--checkbox display-mode-hide">
       <col class="col--pid display-mode-hide">

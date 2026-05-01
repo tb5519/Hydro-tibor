@@ -414,7 +414,8 @@ docker compose restart hydro
 
 - **问题**：服务器 `/p` 出现「搜索框独占一行，题数/排序/按钮在下一行」。
 - **最终目标**：
-  - 题目数量（`{0} problems`）独立显示在搜索区域上方；
+  - 搜索框、默认排序、搜索按钮在桌面端同一行；
+  - 题目数量提示可按运营需求显示/隐藏（当前版本为隐藏）；
   - 桌面端第二行保持：`输入框 + 默认排序 + 搜索按钮` 同一行；
   - 输入框边界清晰、浅色、焦点柔和蓝色光圈；
   - 移动端允许换行，避免挤压。
@@ -430,6 +431,16 @@ docker compose restart hydro
 ```
 
 - **禁止**：不要服务器 build；不要 `docker compose up -d --build`；不要 `down -v`；不要 `system prune`；不要动 Mongo/judge/ClassFlow。
+
+### 当前已落实（最新）
+
+- `packages/ui-default/templates/problem_main.html`
+  - 搜索工具条改为桌面端同一行布局（输入框 + 排序 + 搜索按钮）。
+  - 搜索按钮使用更清晰的浅蓝主色（非过深蓝色），hover 为略深蓝。
+  - 移除题数提示渲染（不再显示 `X 道题` 文案）。
+- `packages/ui-default/templates/partials/problem_list.html`
+  - 去掉表格默认 `hide-problem-tag`，改为**默认显示标签列**。
+  - 仍保留“显示标签/隐藏标签”切换能力（仅默认态从隐藏改为显示）。
 
 ---
 
