@@ -1,5 +1,6 @@
 {% extends "layout/immersive.html" %}
 {% block content %}
+{% set platform_name = ((handler.domain|default({ui:[]})).ui.name|default(model.system.get('server.name'))) or 'Hydro' %}
 <style>
 /* 登录页：居中极简；仅本页；覆盖 immersive 山峰底图 */
 html.page--user_login.layout--immersive #panel {
@@ -259,7 +260,7 @@ html.page--user_login.layout--immersive #panel .footer .footer__extra-link-item 
 }
 </style>
 <div class="ui-login-c">
-  <p class="ui-login-c__kicker">编程训练平台</p>
+  <p class="ui-login-c__kicker">{{ _('欢迎来到 {0}').format(platform_name) }}</p>
   <h2 class="ui-login-c__title">欢迎回来，继续你的训练</h2>
   <p class="ui-login-c__lead">从一道题开始，记录每一次 AC 的进步。</p>
   <ul class="ui-login-c__tags" aria-label="平台特点">

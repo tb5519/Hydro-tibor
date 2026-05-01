@@ -1,21 +1,255 @@
-<div class="dialog dialog--signin" style="display:none">
+{% set platform_name = ((handler.domain|default({ui:[]})).ui.name|default(model.system.get('server.name'))) or 'Hydro' %}
+<style>
+/* 弹窗登录：单卡片 .dialog--signin-v2，仅覆盖本弹窗 */
+.dialog.dialog--signin.dialog--signin-v2 {
+  background: rgba(15, 23, 42, 0.32) !important;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog__content {
+  position: relative;
+  width: min(calc(100vw - 2rem), 440px);
+  max-width: 440px;
+  min-width: 0;
+  margin: 0 auto;
+  padding: 0 !important;
+  border-radius: 18px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow:
+    0 12px 32px rgba(15, 23, 42, 0.1),
+    0 0 0 1px rgba(15, 23, 42, 0.035);
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main {
+  position: relative;
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 1.35rem 1.35rem 1rem !important;
+  box-sizing: border-box;
+  background: #fff !important;
+  box-shadow: none !important;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #e8f4fc 0%, #bfdbfe 50%, #e8f4fc 100%);
+  opacity: 0.75;
+  pointer-events: none;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main::after {
+  content: '</>';
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 1.85rem;
+  font-weight: 600;
+  line-height: 1;
+  color: rgba(148, 163, 184, 0.035);
+  pointer-events: none;
+  user-select: none;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__close-container {
+  position: absolute;
+  right: 0.35rem !important;
+  top: 0.35rem !important;
+  z-index: 2;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__close-container a.dialog--signin-v2__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin: 0;
+  padding: 0;
+  border-radius: 8px;
+  font-size: 1.125rem;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0;
+  color: #94a3b8 !important;
+  text-decoration: none;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__close-container a.dialog--signin-v2__close:hover {
+  color: #64748b !important;
+  background: rgba(148, 163, 184, 0.12);
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin-v2__kicker {
+  margin: 0 0 0.28rem;
+  padding-right: 2.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  color: #a8b4c4;
+  line-height: 1.35;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__title {
+  margin: 0 0 0.22rem;
+  padding-right: 2.25rem;
+  text-align: left !important;
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: #0f172a !important;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__note {
+  margin: 0 0 1rem;
+  padding-right: 0.35rem;
+  text-align: left !important;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  color: #64748b !important;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main .row {
+  margin-bottom: 0.58rem;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main .row:last-child {
+  margin-bottom: 0;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main label.textbox.material {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #475569;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main label.textbox.material input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 0.28rem;
+  min-height: 42px;
+  height: 42px;
+  padding: 0 0.75rem !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 11px !important;
+  background: #fff !important;
+  font-size: 0.875rem;
+  color: #0f172a !important;
+  line-height: 1.25;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main label.textbox.material input:hover:enabled {
+  border-color: #cbd5e1 !important;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main label.textbox.material input:focus {
+  outline: none !important;
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.14);
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main label.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #334155;
+  cursor: pointer;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main label.checkbox input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: #2563eb;
+  cursor: pointer;
+}
+.dialog.dialog--signin.dialog--signin-v2 input[name="login_submit"].button.primary {
+  display: block !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  margin-top: 0.08rem;
+  height: 44px !important;
+  min-height: 44px !important;
+  padding: 0 0.85rem !important;
+  line-height: 44px !important;
+  font-weight: 600 !important;
+  font-size: 1rem !important;
+  border-radius: 12px !important;
+  background: #2563eb !important;
+  border: 1px solid #1d4ed8 !important;
+  box-shadow: none !important;
+}
+.dialog.dialog--signin.dialog--signin-v2 input[name="login_submit"].button.primary:hover {
+  background: #1d4ed8 !important;
+  border-color: #1e40af !important;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main .columns .expanded.rounded.button:not(.primary) {
+  display: block;
+  width: 100% !important;
+  box-sizing: border-box;
+  min-height: 40px;
+  line-height: 1.25;
+  padding-top: 0.55rem !important;
+  padding-bottom: 0.55rem !important;
+  border-radius: 11px !important;
+  font-size: 0.875rem !important;
+  font-weight: 600;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main .supplementary.text-center {
+  margin-top: 0.05rem;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main .supplementary.text-center a {
+  font-size: 0.875rem;
+  color: #64748b !important;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main .supplementary.text-center a:hover {
+  color: #2563eb !important;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin-v2__register {
+  position: relative;
+  z-index: 1;
+  margin: 0.45rem 0 0;
+  padding-top: 0.45rem;
+  border-top: 1px solid rgba(241, 245, 249, 0.95);
+  text-align: center;
+  font-size: 0.875rem;
+  color: #64748b;
+  line-height: 1.45;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin-v2__register .dialog--signin-v2__register-link {
+  margin-left: 0.15rem;
+  font-weight: 600;
+  color: #2563eb !important;
+  text-decoration: none;
+}
+.dialog.dialog--signin.dialog--signin-v2 .dialog--signin-v2__register .dialog--signin-v2__register-link:hover {
+  color: #1d4ed8 !important;
+  text-decoration: underline;
+}
+.theme--dark .dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main {
+  background: #fff !important;
+  color: #0f172a;
+}
+.theme--dark .dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main label.textbox.material,
+.theme--dark .dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main label.checkbox {
+  color: #334155;
+}
+.theme--dark .dialog.dialog--signin.dialog--signin-v2 .dialog--signin__main label.textbox.material input {
+  color: #0f172a !important;
+  background: #fff !important;
+}
+.theme--dark .dialog.dialog--signin.dialog--signin-v2 .dialog--signin-v2__register {
+  border-top-color: #e2e8f0;
+  color: #64748b;
+}
+</style>
+<div class="dialog dialog--signin dialog--signin-v2" style="display:none">
   <div class="dialog__content">
-    {% if model.system.get('server.login') and handler.user.hasPriv(PRIV.PRIV_REGISTER_USER) %}
-    <div class="dialog--signin__bg">
-      <div class="dialog--signin__side">
-        <h1>{{ _("Don't have an account?") }}</h1>
-        <p>{{ _('By signing up a {0} universal account, you can submit code and join discussions in all online judging services provided by us.').format((handler.domain|default({ui:[]})).ui.name|default(model.system.get('server.name'))) }}</p>
-        <div><a href="{{ url('user_register') }}" class="inverse rounded button">{{ _('Sign Up Now') }}</a></div>
-      </div>
-    </div>
-    {% endif %}
     <div class="dialog--signin__main">
       <form action="{{ url('user_login') }}" method="post">
         <div class="dialog--signin__close-container supplementary">
-          <a name="dialog--signin__close" href="javascript:;">{{ _('CLOSE') }}</a>
+          <a name="dialog--signin__close" class="dialog--signin-v2__close" href="javascript:;" title="{{ _('关闭') }}" aria-label="{{ _('关闭') }}">×</a>
         </div>
-        <h1 class="dialog--signin__title">{{ _('SIGN IN') }}</h1>
-        <p class="dialog--signin__note">{{ _('Using your {0} universal account').format(model.system.get('server.name')) }}</p>
+        <p class="dialog--signin-v2__kicker">&lt;/&gt; {{ platform_name }}</p>
+        <h1 class="dialog--signin__title">{{ _('登录') }}</h1>
+        <p class="dialog--signin__note">{{ _('使用你的账号继续训练') }}</p>
         {% if model.system.get('server.login') %}
         <div class="row"><div class="columns">
           <label class="material textbox">
@@ -50,6 +284,11 @@
             <a {% if not model.system.get('smtp.user') %}data-lostpass href="#"{% else %}href="{{ url('user_lostpass') }}"{% endif %}>{{ _('Forgot password or username?') }}</a>
           </div>
         </div></div>
+        {% if model.system.get('server.login') and handler.user.hasPriv(PRIV.PRIV_REGISTER_USER) %}
+        <div class="dialog--signin-v2__register">
+          {{ _('还没有账户？') }}<a href="{{ url('user_register') }}" class="dialog--signin-v2__register-link">{{ _('现在注册') }}</a>
+        </div>
+        {% endif %}
       </form>
     </div>
   </div>
