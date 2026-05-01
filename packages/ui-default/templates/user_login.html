@@ -1,127 +1,313 @@
 {% extends "layout/immersive.html" %}
 {% block content %}
 <style>
-/* 仅登录页：双栏欢迎 + 卡片表单，不影响其它 immersive 页面 */
-.ui-v2-login-landing {
-  max-width: 1040px;
+/* 登录页：居中极简；仅本页；覆盖 immersive 山峰底图 */
+html.page--user_login.layout--immersive #panel {
+  position: relative;
+  background: linear-gradient(165deg, #e8f2fc 0%, #eef0fb 48%, #f2eef8 100%) !important;
+  background-size: cover !important;
+}
+html.page--user_login.layout--immersive #panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.44;
+  background-image: linear-gradient(rgba(100, 116, 139, 0.075) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(100, 116, 139, 0.075) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+/* 极淡大号符号感（非可读文案） */
+html.page--user_login.layout--immersive #panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.055;
+  background-repeat: no-repeat;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 120'%3E%3Ctext x='10' y='80' font-size='72' fill='%2364748b' font-family='system-ui,sans-serif' font-weight='600'%3E%26lt;/%26gt;%3C/text%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 100'%3E%3Ctext x='20' y='70' font-size='64' fill='%2364748b' font-family='system-ui,sans-serif'%3E%7B%7D%3C/text%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 80'%3E%3Ctext x='10' y='58' font-size='48' fill='%2364748b' font-family='monospace'%3E01%3C/text%3E%3C/svg%3E");
+  background-size: 200px 120px, 160px 100px, 120px 80px;
+  background-position: 6% 42%, 78% 18%, 88% 78%;
+}
+html.page--user_login.layout--immersive #panel .main {
+  position: relative;
+  z-index: 1;
+}
+
+/* 登录页底部 footer：覆盖 immersive 白字，在浅底上可读 */
+html.page--user_login.layout--immersive #panel .footer {
+  color: #64748b !important;
+  position: relative;
+  z-index: 1;
+}
+html.page--user_login.layout--immersive #panel .footer a,
+html.page--user_login.layout--immersive #panel .footer a:visited,
+html.page--user_login.layout--immersive #panel .footer a:active {
+  color: #475569 !important;
+}
+html.page--user_login.layout--immersive #panel .footer a:hover {
+  color: #1e293b !important;
+}
+html.page--user_login.layout--immersive #panel .footer .footer__extra-link-item span {
+  color: inherit !important;
+}
+
+.ui-login-c {
+  box-sizing: border-box;
+  max-width: 560px;
   margin: 0 auto;
-  padding: clamp(1.25rem, 3.5vw, 2.75rem) 0.75rem 2.5rem;
+  padding: clamp(0.85rem, 2.8vw, 1.65rem) 1rem clamp(1.35rem, 4vw, 2.35rem);
+  min-height: calc(100vh - 180px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
 }
-.ui-v2-login-landing__hero {
-  padding: 0.25rem 0 1.5rem;
-}
-@media (min-width: 64em) {
-  .ui-v2-login-landing__hero {
-    padding: 0.75rem 1rem 1rem 0;
-    min-height: 260px;
+@media (min-width: 40em) {
+  .ui-login-c {
+    margin-top: clamp(-3rem, -6vw, -1.875rem);
   }
 }
-.ui-v2-login-landing__eyebrow {
-  margin: 0 0 0.45rem;
-  font-size: 0.78rem;
-  letter-spacing: 0.1em;
+.ui-login-c__kicker {
+  margin: 0 0 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.88);
+  color: #64748b;
 }
-.ui-v2-login-landing__title {
-  margin: 0 0 0.65rem;
-  font-size: clamp(1.35rem, 2.6vw, 1.85rem);
-  font-weight: 700;
-  line-height: 1.28;
-  color: #fff;
+.ui-login-c__title {
+  margin: 0 0 0.5rem;
+  font-size: clamp(1.38rem, 3.5vw, 1.82rem);
+  font-weight: 800;
+  line-height: 1.24;
+  letter-spacing: -0.02em;
+  color: #1e293b;
+  max-width: 26rem;
 }
-.ui-v2-login-landing__lead {
+@media (min-width: 40em) {
+  .ui-login-c__title {
+    white-space: nowrap;
+    max-width: none;
+  }
+}
+@media (max-width: 39.9375em) {
+  .ui-login-c__title {
+    white-space: normal;
+    max-width: 22rem;
+  }
+}
+.ui-login-c__lead {
+  margin: 0 auto;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: #64748b;
+  max-width: 24rem;
+}
+.ui-login-c__tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.4rem 0.5rem;
+  margin: 0.85rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.ui-login-c__tags li {
   margin: 0;
-  font-size: 1rem;
-  line-height: 1.65;
-  color: rgba(255, 255, 255, 0.92);
-  max-width: 28rem;
 }
-.ui-v2-login-landing__panel {
-  background: rgba(255, 255, 255, 0.97);
-  border-radius: 14px;
-  box-shadow: 0 14px 42px rgba(15, 23, 42, 0.16);
-  padding: 1.65rem 1.45rem 1.45rem;
-  border: 1px solid rgba(255, 255, 255, 0.55);
+.ui-login-c__tag {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #334155;
+  padding: 0.24rem 0.52rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(100, 116, 139, 0.28);
 }
-.ui-v2-login-landing__panel h1 {
+.ui-login-c__badge {
+  margin: 0.65rem 0 0.45rem;
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #64748b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  padding: 0.2rem 0.45rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(203, 213, 225, 0.55);
+}
+.ui-login-c__card {
+  width: 100%;
+  max-width: min(460px, 100%);
+  margin: clamp(0.65rem, 1.8vw, 1.1rem) auto 0;
+  box-sizing: border-box;
+  text-align: left;
+  background: #fff;
+  border-radius: 20px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 20px 52px rgba(15, 23, 42, 0.1), 0 6px 16px rgba(15, 23, 42, 0.05);
+  padding: 1.65rem 1.5rem 1.5rem;
+}
+.ui-login-c__card h1 {
   text-align: left !important;
-  margin: 0 0 1.25rem !important;
-  font-size: 1.32rem !important;
+  margin: 0 0 1.1rem !important;
+  font-size: 1.28rem !important;
   font-weight: 700 !important;
   color: #0f172a !important;
 }
-.ui-v2-login-landing__panel label.inverse.material.textbox,
-.ui-v2-login-landing__panel label.inverse.material.checkbox {
+.ui-login-c__card label.inverse.material.textbox,
+.ui-login-c__card label.inverse.material.checkbox {
   color: #334155 !important;
 }
-.ui-v2-login-landing__panel label.inverse.material.checkbox {
+.ui-login-c__card label.inverse.material.checkbox {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 0.5rem !important;
   font-weight: 500;
+  margin-top: 0.35rem !important;
+  margin-bottom: 0.1rem !important;
+  cursor: pointer;
 }
-.ui-v2-login-landing__panel .text-center.supplementary.inverse a {
+/* rememberme：清晰可见（不改 name） */
+.ui-login-c__card label.inverse.material.checkbox input[type="checkbox"][name="rememberme"] {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  width: 1.125rem !important;
+  height: 1.125rem !important;
+  min-width: 1.125rem !important;
+  min-height: 1.125rem !important;
+  margin: 0 !important;
+  flex-shrink: 0;
+  border: 2px solid #94a3b8 !important;
+  border-radius: 4px !important;
+  background: #fff !important;
+  cursor: pointer;
+}
+.ui-login-c__card label.inverse.material.checkbox input[type="checkbox"][name="rememberme"]:hover {
+  border-color: #64748b !important;
+}
+.ui-login-c__card label.inverse.material.checkbox input[type="checkbox"][name="rememberme"]:focus {
+  outline: none !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.28) !important;
+  border-color: #3b82f6 !important;
+}
+.ui-login-c__card label.inverse.material.checkbox input[type="checkbox"][name="rememberme"]:checked {
+  background-color: #3b82f6 !important;
+  border-color: #2563eb !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23ffffff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.2l2.8 2.8L12.5 4'/%3E%3C/svg%3E") !important;
+  background-size: 11px 11px !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+}
+.ui-login-c__card label.inverse.material.textbox {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 0.35rem !important;
+  margin-bottom: 0.1rem !important;
+}
+.ui-login-c__card label.inverse.material.textbox input[type="text"],
+.ui-login-c__card label.inverse.material.textbox input[type="password"] {
+  border: 1px solid #cbd5e1 !important;
+  border-radius: 10px !important;
+  padding: 0.62rem 0.85rem !important;
+  background: #fff !important;
+  color: #0f172a !important;
+  box-shadow: none !important;
+}
+.ui-login-c__card label.inverse.material.textbox input[type="text"]:focus,
+.ui-login-c__card label.inverse.material.textbox input[type="password"]:focus {
+  border-color: #93c5fd !important;
+  outline: none !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+.ui-login-c__card input[name="login_submit"].inverse.expanded.rounded.primary.button {
+  min-height: 2.65rem !important;
+  border-radius: 10px !important;
+  font-weight: 600 !important;
+  background: #3b82f6 !important;
+  border: 1px solid #2563eb !important;
+  color: #fff !important;
+}
+.ui-login-c__card input[name="login_submit"].inverse.expanded.rounded.primary.button:hover {
+  background: #2563eb !important;
+  border-color: #1d4ed8 !important;
+}
+.ui-login-c__card .text-center.supplementary.inverse a {
   color: #2563eb !important;
 }
-.ui-v2-login-landing__panel .text-center.supplementary.inverse a:hover {
+.ui-login-c__card .text-center.supplementary.inverse a:hover {
   text-decoration: underline;
 }
-.ui-v2-login-landing__panel a.expanded.rounded.button.inverse {
+.ui-login-c__card a.expanded.rounded.button.inverse {
   background: #f8fafc !important;
   color: #0f172a !important;
   border: 1px solid #e2e8f0 !important;
 }
-.ui-v2-login-landing__panel a.expanded.rounded.button.inverse:hover {
+.ui-login-c__card a.expanded.rounded.button.inverse:hover {
   background: #fff !important;
   border-color: #cbd5e1 !important;
 }
 </style>
-<div class="ui-v2-login-landing row expanded" data-ui-v2-login>
-  <div class="small-12 large-5 columns ui-v2-login-landing__hero">
-    <p class="ui-v2-login-landing__eyebrow">编程训练平台</p>
-    <h2 class="ui-v2-login-landing__title">欢迎来到编程训练平台</h2>
-    <p class="ui-v2-login-landing__lead">从一道题开始，记录每一次 AC 的进步。</p>
-  </div>
-  <div class="small-12 large-6 large-offset-1 columns end">
-    <div class="ui-v2-login-landing__panel">
-      <h1>{{ _('Login') }}</h1>
-      <form method="POST">
-      {% if model.system.get('server.login') %}
+<div class="ui-login-c">
+  <p class="ui-login-c__kicker">编程训练平台</p>
+  <h2 class="ui-login-c__title">欢迎回来，继续你的训练</h2>
+  <p class="ui-login-c__lead">从一道题开始，记录每一次 AC 的进步。</p>
+  <ul class="ui-login-c__tags" aria-label="平台特点">
+    <li><span class="ui-login-c__tag">在线训练</span></li>
+    <li><span class="ui-login-c__tag">算法题单</span></li>
+    <li><span class="ui-login-c__tag">记录 AC</span></li>
+  </ul>
+  <p class="ui-login-c__badge" aria-hidden="true">&lt;/&gt; Python · C++ · OJ</p>
+  <div class="ui-login-c__card">
+    <h1>{{ _('Login') }}</h1>
+    <form method="POST">
+    {% if model.system.get('server.login') %}
+    <div class="row"><div class="columns">
+      <label class="inverse material textbox">
+        {{ _('Username') }}
+        <input name="uname" type="text" autofocus autocomplete="username webauthn">
+      </label>
+    </div></div>
+    <div class="row"><div class="columns">
+      <label class="inverse material textbox">
+        {{ _('Password') }}
+        <input name="password" type="password">
+      </label>
+    </div></div>
+    <div class="row"><div class="columns">
+      <label class="inverse material checkbox">
+        <input type="checkbox" name="rememberme" class="checkbox">{{ _('Remember me') }}
+      </label>
+    </div></div>
+    <div class="row"><div class="columns">
+      <input type="hidden" name="tfa" value="">
+      <input type="hidden" name="authnChallenge" value="">
+      <div class="text-center">
+        <input type="submit" value="{{ _('Login') }}" name="login_submit" class="inverse expanded rounded primary button">
+      </div>
+    </div></div>
+    {% endif %}
+    {%- for v in handler.loginMethods -%}
       <div class="row"><div class="columns">
-        <label class="inverse material textbox">
-          {{ _('Username') }}
-          <input name="uname" type="text" autofocus autocomplete="username webauthn">
-        </label>
+        <a href="{{ url('user_oauth', type=v.id) }}" class="expanded rounded button inverse">{{ _(v.text) }}</a>
       </div></div>
-      <div class="row"><div class="columns">
-        <label class="inverse material textbox">
-          {{ _('Password') }}
-          <input name="password" type="password">
-        </label>
-      </div></div>
-      <div class="row"><div class="columns">
-        <label class="inverse material checkbox">
-          <input type="checkbox" name="rememberme" class="checkbox">{{ _('Remember me') }}
-        </label>
-      </div></div>
-      <div class="row"><div class="columns">
-        <input type="hidden" name="tfa" value="">
-        <input type="hidden" name="authnChallenge" value="">
-        <div class="text-center">
-          <input type="submit" value="{{ _('Login') }}" name="login_submit" class="inverse expanded rounded primary button">
-        </div>
-      </div></div>
-      {% endif %}
-      {%- for v in handler.loginMethods -%}
-        <div class="row"><div class="columns">
-          <a href="{{ url('user_oauth', type=v.id) }}" class="expanded rounded button inverse">{{ _(v.text) }}</a>
-        </div></div>
-      {%- endfor -%}
-      <div class="row"><div class="columns">
-        <div class="text-center supplementary inverse">
-          <a href="{{ url('user_lostpass') }}">{{ _('Forgot password or username?') }}</a>
-        </div>
-      </div></div>
+    {%- endfor -%}
+    <div class="row"><div class="columns">
+      <div class="text-center supplementary inverse">
+        <a href="{{ url('user_lostpass') }}">{{ _('Forgot password or username?') }}</a>
+      </div>
+    </div></div>
     </form>
-    </div>
   </div>
 </div>
 {% endblock %}
