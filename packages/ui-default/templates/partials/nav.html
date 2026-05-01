@@ -6,11 +6,29 @@
 </li>
 {%- endmacro -%}
 
+<style>
+.nav__logo--text {
+  min-width: 88px;
+  max-width: 180px;
+  overflow: hidden;
+  color: #3b82f6;
+  font-size: 21px;
+  font-weight: 800;
+  line-height: 30px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav__logo--text:hover {
+  color: #2563eb;
+}
+</style>
+
 <nav class="nav slideout-menu" id="menu">
   <div class="row"><div class="columns clearfix">
     <ol class="nav__list nav__list--main clearfix">
       <li class="nav__list-item">
-        <a href="/"><img class="nav__logo" src="{{ ctx.setting.get('ui-default.nav_logo_dark') }}"></a>
+        <a href="/" class="nav__logo nav__logo--text">{{ model.system.get('server.name') or 'Hydro' }}</a>
       </li>
       {%- for item in overrideNav|default(ui.getNodes('Nav')) -%}{% if item.checker(handler) %}
         {{ nav_item(item) }}
