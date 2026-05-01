@@ -1,0 +1,615 @@
+{% import "components/user.html" as user with context %}
+{% extends "manage_base.html" %}
+{% block manage_content %}
+<style>
+.training-dashboard-shell {
+  margin: -12px;
+  padding: 24px;
+  border-radius: 18px;
+  background: #f4f7fb;
+  color: #0f172a;
+}
+
+.training-dashboard-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.training-dashboard-hero h1 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 28px;
+  line-height: 1.2;
+}
+
+.training-dashboard-hero p {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.training-dashboard-pill {
+  flex: 0 0 auto;
+  border: 1px solid #dbe7f3;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: #ffffff;
+  color: #3b82f6;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.training-dashboard-note {
+  margin: 0 0 18px;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  padding: 10px 13px;
+  background: #eff6ff;
+  color: #475569;
+  font-size: 13px;
+}
+
+.training-dashboard-card {
+  border: 1px solid #e5edf5;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+}
+
+.training-dashboard-card + .training-dashboard-card,
+.training-dashboard-grid + .training-dashboard-card {
+  margin-top: 18px;
+}
+
+.training-dashboard-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid #edf2f7;
+  padding: 16px 18px;
+}
+
+.training-dashboard-card__title {
+  margin: 0;
+  color: #0f172a;
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.training-dashboard-card__subtitle {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.training-dashboard-chart {
+  padding: 14px 18px 18px;
+}
+
+.training-dashboard-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 10px;
+}
+
+.training-dashboard-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.training-dashboard-legend__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.training-dashboard-chart__canvas {
+  position: relative;
+  min-height: 280px;
+  overflow: hidden;
+  border: 1px solid #edf2f7;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.training-dashboard-svg {
+  display: block;
+  width: 100%;
+  height: 280px;
+}
+
+.training-dashboard-empty {
+  color: #64748b;
+  text-align: center;
+}
+
+.training-dashboard-chart__empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  color: #64748b;
+  font-size: 14px;
+  pointer-events: none;
+}
+
+.training-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.training-dashboard-table-wrap {
+  overflow-x: auto;
+}
+
+.training-dashboard-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 720px;
+}
+
+.training-dashboard-table th,
+.training-dashboard-table td {
+  border-bottom: 1px solid #edf2f7;
+  padding: 12px 11px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.training-dashboard-table th {
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.training-dashboard-table td {
+  color: #1e293b;
+  font-size: 13px;
+}
+
+.training-dashboard-table tbody tr.is-top td {
+  background: #fff7ed;
+}
+
+.training-dashboard-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.training-dashboard-table .number {
+  text-align: center;
+}
+
+.training-dashboard-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-weight: 800;
+}
+
+.training-dashboard-table tr.is-top .training-dashboard-rank {
+  background: #f97316;
+  color: #ffffff;
+}
+
+.training-dashboard-detail {
+  min-width: 1040px;
+}
+
+.training-dashboard-detail-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #edf2f7;
+  padding: 12px 16px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.training-dashboard-detail-footer .pager {
+  margin: 0;
+}
+
+.training-dashboard-client-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.training-dashboard-page-button {
+  min-width: 30px;
+  height: 30px;
+  border: 1px solid #d8e2ee;
+  border-radius: 8px;
+  padding: 0 9px;
+  background: #ffffff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.training-dashboard-page-button.is-active {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.training-dashboard-page-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.training-dashboard-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+}
+
+.training-dashboard-filters {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.training-dashboard-input,
+.training-dashboard-select {
+  height: 34px;
+  border: 1px solid #d8e2ee;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.training-dashboard-input {
+  width: 180px;
+  padding: 0 11px;
+}
+
+.training-dashboard-select {
+  width: 150px;
+  padding: 0 9px;
+}
+
+.training-dashboard-button {
+  height: 34px;
+  border: 0;
+  border-radius: 9px;
+  padding: 0 14px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.training-dashboard-time {
+  color: #475569;
+}
+
+@media screen and (max-width: 1000px) {
+  .training-dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media screen and (max-width: 640px) {
+  .training-dashboard-shell {
+    margin: -8px;
+    padding: 14px;
+  }
+
+  .training-dashboard-hero,
+  .training-dashboard-card__header,
+  .training-dashboard-detail-footer,
+  .training-dashboard-toolbar {
+    display: block;
+  }
+
+  .training-dashboard-pill,
+  .training-dashboard-filters {
+    margin-top: 12px;
+  }
+
+  .training-dashboard-input,
+  .training-dashboard-select,
+  .training-dashboard-button {
+    width: 100%;
+  }
+}
+</style>
+
+<div class="training-dashboard-shell">
+  <div class="training-dashboard-hero">
+    <div>
+      <h1 data-heading>{{ _('学员训练数据看板') }}</h1>
+      <p>{{ _('查看学员提交、AC、活跃和进步趋势。') }}</p>
+    </div>
+    <div class="training-dashboard-pill">{{ _('只读统计') }}</div>
+  </div>
+
+  <div class="training-dashboard-note">
+    {{ _('新增 AC 题数按学员首次 AC 题目统计，重复 AC 不重复计入。') }}
+  </div>
+
+  <section class="training-dashboard-card">
+    <div class="training-dashboard-card__header">
+      <div>
+        <h2 class="training-dashboard-card__title">{{ _('最近 30 天训练趋势') }}</h2>
+        <div class="training-dashboard-card__subtitle">{{ _('每日提交、AC、新增 AC 题和活跃学员变化') }}</div>
+      </div>
+    </div>
+    <div class="training-dashboard-chart">
+      <div class="training-dashboard-legend">
+        {% for item in chart.series %}
+        <span class="training-dashboard-legend__item">
+          <span class="training-dashboard-legend__dot" style="background: {{ item.color }}"></span>
+          {% if item.key == 'submitCount' %}{{ _('提交数') }}{% endif %}
+          {% if item.key == 'acCount' %}{{ _('AC 数') }}{% endif %}
+          {% if item.key == 'newAcceptedProblemCount' %}{{ _('新增 AC 题数') }}{% endif %}
+          {% if item.key == 'activeUserCount' %}{{ _('活跃学员数') }}{% endif %}
+        </span>
+        {% endfor %}
+      </div>
+      <div class="training-dashboard-chart__canvas">
+        <svg class="training-dashboard-svg" viewBox="0 0 {{ chart.width }} {{ chart.height }}" role="img" aria-label="{{ _('最近 30 天训练趋势') }}">
+          <rect x="0" y="0" width="{{ chart.width }}" height="{{ chart.height }}" fill="transparent"></rect>
+          {% for tick in chart.yTicks %}
+          <line x1="{{ chart.plot.left }}" y1="{{ tick.y }}" x2="{{ chart.plot.right }}" y2="{{ tick.y }}" stroke="#e5edf5" stroke-width="1"></line>
+          <text x="{{ chart.plot.left - 10 }}" y="{{ tick.y + 4 }}" text-anchor="end" fill="#94a3b8" font-size="11">{{ tick.value }}</text>
+          {% endfor %}
+          <line x1="{{ chart.plot.left }}" y1="{{ chart.plot.top }}" x2="{{ chart.plot.left }}" y2="{{ chart.plot.bottom }}" stroke="#cbd5e1" stroke-width="1"></line>
+          <line x1="{{ chart.plot.left }}" y1="{{ chart.plot.bottom }}" x2="{{ chart.plot.right }}" y2="{{ chart.plot.bottom }}" stroke="#cbd5e1" stroke-width="1"></line>
+          {% for label in chart.xLabels %}
+          <text x="{{ label.x }}" y="{{ chart.plot.bottom + 25 }}" text-anchor="middle" fill="#94a3b8" font-size="11">{{ label.label }}</text>
+          {% endfor %}
+          {% for item in chart.series %}
+          <polyline points="{{ item.points }}" fill="none" stroke="{{ item.color }}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
+          {% endfor %}
+        </svg>
+        {% if not chart.hasData %}
+        <div class="training-dashboard-chart__empty">{{ _('暂无训练数据，等待学员提交后将显示趋势。') }}</div>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  <div class="training-dashboard-grid">
+    <section class="training-dashboard-card">
+      <div class="training-dashboard-card__header">
+        <div>
+          <h2 class="training-dashboard-card__title">{{ _('最近一周进步最快') }}</h2>
+          <div class="training-dashboard-card__subtitle">{{ _('按最近 7 天新增 AC 题数排序') }}</div>
+        </div>
+      </div>
+      <div class="training-dashboard-table-wrap">
+        <table class="training-dashboard-table">
+          <thead>
+            <tr>
+              <th>{{ _('排名') }}</th>
+              <th>{{ _('用户') }}</th>
+              <th class="number">{{ _('新增 AC') }}</th>
+              <th class="number">{{ _('提交') }}</th>
+              <th class="number">{{ _('AC') }}</th>
+              <th class="number">{{ _('AC 率') }}</th>
+              <th class="number">{{ _('活跃天数') }}</th>
+              <th>{{ _('最近提交') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in fastest7 %}
+            <tr class="{% if loop.index == 1 %}is-top{% endif %}">
+              <td><span class="training-dashboard-rank">{{ loop.index }}</span></td>
+              <td>{{ user.render_inline(udict[row.uid], modbadge=false) }}</td>
+              <td class="number">{{ row.newAc7 }}</td>
+              <td class="number">{{ row.submit7 }}</td>
+              <td class="number">{{ row.ac7 }}</td>
+              <td class="number">{{ row.acRate7 }}%</td>
+              <td class="number">{{ row.activeDays7 }}</td>
+              <td class="training-dashboard-time">{% if row.lastActive %}{{ datetimeSpan(row.lastActive, false)|safe }}{% else %}-{% endif %}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8" class="training-dashboard-empty">{{ _('暂无数据') }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="training-dashboard-card">
+      <div class="training-dashboard-card__header">
+        <div>
+          <h2 class="training-dashboard-card__title">{{ _('最近一个月进步最快') }}</h2>
+          <div class="training-dashboard-card__subtitle">{{ _('按最近 30 天新增 AC 题数排序') }}</div>
+        </div>
+      </div>
+      <div class="training-dashboard-table-wrap">
+        <table class="training-dashboard-table">
+          <thead>
+            <tr>
+              <th>{{ _('排名') }}</th>
+              <th>{{ _('用户') }}</th>
+              <th class="number">{{ _('新增 AC') }}</th>
+              <th class="number">{{ _('提交') }}</th>
+              <th class="number">{{ _('AC') }}</th>
+              <th class="number">{{ _('AC 率') }}</th>
+              <th class="number">{{ _('活跃天数') }}</th>
+              <th>{{ _('最近提交') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in fastest30 %}
+            <tr class="{% if loop.index == 1 %}is-top{% endif %}">
+              <td><span class="training-dashboard-rank">{{ loop.index }}</span></td>
+              <td>{{ user.render_inline(udict[row.uid], modbadge=false) }}</td>
+              <td class="number">{{ row.newAc30 }}</td>
+              <td class="number">{{ row.submit30 }}</td>
+              <td class="number">{{ row.ac30 }}</td>
+              <td class="number">{{ row.acRate30 }}%</td>
+              <td class="number">{{ row.activeDays30 }}</td>
+              <td class="training-dashboard-time">{% if row.lastActive %}{{ datetimeSpan(row.lastActive, false)|safe }}{% else %}-{% endif %}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8" class="training-dashboard-empty">{{ _('暂无数据') }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <section class="training-dashboard-card">
+    <div class="training-dashboard-card__header">
+      <div class="training-dashboard-toolbar">
+        <div>
+          <h2 class="training-dashboard-card__title">{{ _('学员明细表') }}</h2>
+          <div class="training-dashboard-card__subtitle">{{ _('每页显示 10 名当前域已加入学员') }}</div>
+        </div>
+        <form method="get" class="training-dashboard-filters">
+          <input name="q" class="training-dashboard-input" value="{{ q }}" placeholder="{{ _('搜索用户名') }}">
+          <select name="sort" class="training-dashboard-select">
+            <option value="newAc30"{% if sort == 'newAc30' %} selected{% endif %}>{{ _('新增 AC') }}</option>
+            <option value="submit30"{% if sort == 'submit30' %} selected{% endif %}>{{ _('提交数') }}</option>
+            <option value="acRate30"{% if sort == 'acRate30' %} selected{% endif %}>{{ _('AC 率') }}</option>
+            <option value="lastActive"{% if sort == 'lastActive' %} selected{% endif %}>{{ _('最近活跃') }}</option>
+          </select>
+          <button type="submit" class="training-dashboard-button">{{ _('筛选') }}</button>
+        </form>
+      </div>
+    </div>
+    <div class="training-dashboard-table-wrap">
+      <table class="training-dashboard-table training-dashboard-detail">
+        <thead>
+          <tr>
+            <th>{{ _('用户名') }}</th>
+            <th class="number">{{ _('总提交') }}</th>
+            <th class="number">{{ _('总 AC') }}</th>
+            <th class="number">{{ _('总通过题数') }}</th>
+            <th class="number">{{ _('7 天提交') }}</th>
+            <th class="number">{{ _('7 天 AC') }}</th>
+            <th class="number">{{ _('7 天新增 AC') }}</th>
+            <th class="number">{{ _('30 天提交') }}</th>
+            <th class="number">{{ _('30 天 AC') }}</th>
+            <th class="number">{{ _('30 天新增 AC') }}</th>
+            <th>{{ _('最近活跃') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr class="training-dashboard-detail-row">
+            <td>{{ user.render_inline(udict[row.uid], modbadge=false) }}</td>
+            <td class="number">{{ row.totalSubmit }}</td>
+            <td class="number">{{ row.totalAc }}</td>
+            <td class="number">{{ row.totalAcceptedProblems }}</td>
+            <td class="number">{{ row.submit7 }}</td>
+            <td class="number">{{ row.ac7 }}</td>
+            <td class="number">{{ row.newAc7 }}</td>
+            <td class="number">{{ row.submit30 }}</td>
+            <td class="number">{{ row.ac30 }}</td>
+            <td class="number">{{ row.newAc30 }}</td>
+            <td class="training-dashboard-time">{% if row.lastActive %}{{ datetimeSpan(row.lastActive, false)|safe }}{% else %}-{% endif %}</td>
+          </tr>
+          {% else %}
+          <tr class="training-dashboard-detail-empty-row"><td colspan="11" class="training-dashboard-empty">{{ _('暂无数据') }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="training-dashboard-detail-footer">
+      <div id="training-dashboard-detail-page-info">{{ _('正在分页...') }}</div>
+      <div id="training-dashboard-detail-pager" class="training-dashboard-client-pager"></div>
+    </div>
+  </section>
+</div>
+<script>
+(function () {
+  var pageSize = 10;
+  var rows = Array.prototype.slice.call(document.querySelectorAll('.training-dashboard-detail-row'));
+  var emptyRow = document.querySelector('.training-dashboard-detail-empty-row');
+  var info = document.getElementById('training-dashboard-detail-page-info');
+  var pager = document.getElementById('training-dashboard-detail-pager');
+  var currentPage = 1;
+  var totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+
+  function makeButton(label, page, disabled, active) {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'training-dashboard-page-button' + (active ? ' is-active' : '');
+    button.textContent = label;
+    button.disabled = disabled;
+    button.addEventListener('click', function () {
+      if (!disabled) render(page);
+    });
+    return button;
+  }
+
+  function pageNumbers() {
+    var pages = [];
+    var start = Math.max(1, currentPage - 2);
+    var end = Math.min(totalPages, currentPage + 2);
+    if (end - start < 4) {
+      start = Math.max(1, end - 4);
+      end = Math.min(totalPages, start + 4);
+    }
+    for (var i = start; i <= end; i += 1) pages.push(i);
+    return pages;
+  }
+
+  function render(page) {
+    currentPage = Math.min(Math.max(page, 1), totalPages);
+    if (!rows.length) {
+      if (emptyRow) emptyRow.style.display = '';
+      if (info) info.textContent = '{{ _("暂无匹配学员") }}';
+      if (pager) pager.innerHTML = '';
+      return;
+    }
+    if (emptyRow) emptyRow.style.display = 'none';
+    var start = (currentPage - 1) * pageSize;
+    var end = Math.min(start + pageSize, rows.length);
+    rows.forEach(function (row, index) {
+      row.style.display = index >= start && index < end ? '' : 'none';
+    });
+    if (info) info.textContent = '{{ _("显示") }} ' + (start + 1) + '-' + end + ' / ' + rows.length;
+    if (!pager) return;
+    pager.innerHTML = '';
+    pager.appendChild(makeButton('{{ _("pager_first") }}', 1, currentPage === 1, false));
+    pager.appendChild(makeButton('{{ _("pager_previous") }}', currentPage - 1, currentPage === 1, false));
+    pageNumbers().forEach(function (pageNumber) {
+      pager.appendChild(makeButton(String(pageNumber), pageNumber, false, pageNumber === currentPage));
+    });
+    pager.appendChild(makeButton('{{ _("pager_next") }}', currentPage + 1, currentPage === totalPages, false));
+    pager.appendChild(makeButton('{{ _("pager_last") }}', totalPages, currentPage === totalPages, false));
+  }
+
+  render(1);
+}());
+</script>
+{% endblock %}

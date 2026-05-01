@@ -478,6 +478,7 @@ manage_dashboard: 控制面板
 manage_join_applications: 加域申请
 manage_module: 管理模块
 manage_setting: 系统设置
+manage_training_dashboard: 学员训练数据看板
 manage_user_import: 导入用户
 manage: 管理
 Manage: 管理
