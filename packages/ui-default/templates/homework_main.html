@@ -1,20 +1,96 @@
 {% extends "layout/basic.html" %}
 {% block content %}
 {{ set(UiContext, 'docs', calendar) }}
+<style>
+  @media screen and (max-width: 767px) {
+    .page--homework_main .homework-main-header {
+      align-items: stretch !important;
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 12px !important;
+      height: auto !important;
+      min-height: 0 !important;
+      overflow: visible !important;
+      padding: 18px 20px 16px !important;
+    }
+
+    .page--homework_main .homework-main-title {
+      clear: both !important;
+      display: block !important;
+      float: none !important;
+      font-size: 24px !important;
+      line-height: 1.2 !important;
+      margin: 0 !important;
+      width: 100% !important;
+    }
+
+    .page--homework_main .homework-main-tools {
+      align-items: stretch !important;
+      clear: both !important;
+      display: flex !important;
+      flex-direction: column !important;
+      float: none !important;
+      gap: 10px !important;
+      margin: 0 !important;
+      position: static !important;
+      right: auto !important;
+      top: auto !important;
+      width: 100% !important;
+    }
+
+    .page--homework_main .homework-main-view {
+      align-items: center !important;
+      display: flex !important;
+      gap: 6px !important;
+      white-space: nowrap !important;
+      width: 100% !important;
+    }
+
+    .page--homework_main .homework-main-view select[name="homework_display"] {
+      flex: 0 0 auto !important;
+      max-width: 130px !important;
+    }
+
+    .page--homework_main .homework-main-filter {
+      display: grid !important;
+      gap: 8px !important;
+      grid-template-columns: minmax(0, 1fr) 88px !important;
+      margin: 0 !important;
+      width: 100% !important;
+    }
+
+    .page--homework_main .homework-main-filter input[name="q"] {
+      grid-column: 1 / -1 !important;
+      min-width: 0 !important;
+      width: 100% !important;
+    }
+
+    .page--homework_main .homework-main-filter select[name="group"],
+    .page--homework_main .homework-main-filter button {
+      min-width: 0 !important;
+      width: 100% !important;
+    }
+
+    .page--homework_main .homework-main-create {
+      text-align: center !important;
+      width: 100% !important;
+    }
+  }
+</style>
 <div class="row">
   <div class="medium-12 columns">
     <div class="section">
-      <div class="section__header">
-        <h1 class="section__title">{{ _('All Homeworks') }}</h1>
-        <div class="section__tools">
-          <span class="nojs--hide">
+      <div class="section__header homework-main-header">
+        <h1 class="section__title homework-main-title">{{ _('All Homeworks') }}</h1>
+        <div class="section__tools homework-main-tools">
+          <span class="nojs--hide homework-main-view">
             {{ _('View') }}:
             <select class="inline compact select" name="homework_display">
               <option value="calendar">{{ _('Calendar View') }}</option>
               <option value="list" selected>{{ _('List View') }}</option>
             </select>
           </span>
-          <form method="get" class="filter-form" name="filter-form">
+          <form method="get" class="filter-form homework-main-filter" name="filter-form">
             <input type="text" class="inline compact textbox" name="q" value="{{ q }}" placeholder="{{ _('Search homeworks...') }}">
             <select class="inline compact select" name="group">
               <option value=""{% if not group %} selected{% endif %}>{{ _('All') }}</option>
@@ -30,7 +106,7 @@
             </button>
           </form>
         {% if handler.user.hasPerm(perm.PERM_CREATE_HOMEWORK) %}
-          <a class="compact button" href="{{ url('homework_create') }}">{{ _('Create Homework') }}</a>
+          <a class="compact button homework-main-create" href="{{ url('homework_create') }}">{{ _('Create Homework') }}</a>
         {% endif %}
         </div>
       </div>
