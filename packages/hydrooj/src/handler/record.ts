@@ -374,7 +374,9 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
             if (this.includePretest && this.tid && isPretestRecord && this.tdoc?.pids?.length && !this.tdoc.pids.includes(rdoc.pid)) return;
             if (!this.all) {
                 if (!rdoc.contest && this.tid) return;
-                if (rdoc.contest && ![this.tid, ...(this.includePretest ? [record.RECORD_PRETEST.toHexString()] : [])].includes(rdoc.contest.toString())) return;
+                const allowedContests = [this.tid];
+                if (this.includePretest || this.pretest) allowedContests.push(record.RECORD_PRETEST.toHexString());
+                if (rdoc.contest && !allowedContests.includes(rdoc.contest.toString())) return;
                 if (this.tid && !isPretestRecord) {
                     if (rdoc.uid !== this.user._id && !contest.canShowRecord.call(this, this.tdoc, true)) return;
                     if (rdoc.uid === this.user._id && !contest.canShowSelfRecord.call(this, this.tdoc, true)) return;
