@@ -1,11 +1,26 @@
 {% import "components/home.html" as home with context %}
 {% import "components/problem.html" as problem with context %}
+{% import "components/user.html" as user with context %}
 {% extends "layout/basic.html" %}
 {% block content %}
 {{ set(UiContext, 'udoc', udoc) }}
 <style>
   .user-profile-bg {
     background-image: url("{{ udoc.backgroundImage }}"), url("/components/profile/backgrounds/1.jpg");
+  }
+
+  .ui-v2-user-detail-badge-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 8px 0 10px;
+  }
+
+  .ui-v2-user-detail-badge-row .user-profile-badge--custom {
+    border-radius: 999px;
+    font-size: 12px;
+    line-height: 1.7;
+    padding: 0 8px;
   }
 </style>
 <div class="row">
@@ -22,10 +37,9 @@
                 {{ udoc['uname'] }}
                 {% if handler.user.hasPerm(perm.PERM_VIEW_USER_PRIVATE_INFO) and udoc.displayName %}<small>({{ udoc['displayName'] }})</small>{% endif %}
               </h1>
-              {% if udoc.badge %}
-                {% set _badge = udoc.badge.split('#') %}
+              {% if (udoc.ownedBadges and udoc.ownedBadges.length) or udoc.badge %}
                 <div class="ui-v2-user-detail-badge-row">
-                  <a href="/badge/{{ _badge[0] }}" class="user-profile-badge v-center ui-v2-user-detail-badge" style="background-color:#{{ _badge[2] }}{% if _badge[3] %};color:#{{ _badge[3] }}{% endif %}" {% if _badge[4] %}data-tooltip="{{ _badge[4] }}"{% endif %}>{{ _badge[1] }}</a>
+                  {{ user.render_custom_badges(udoc) }}
                 </div>
               {% endif %}
               <p>

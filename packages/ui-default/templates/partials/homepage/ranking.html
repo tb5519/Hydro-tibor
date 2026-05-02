@@ -1,4 +1,61 @@
 {% if payload.length %}
+  <style>
+    .homepage-ranking-user {
+      align-items: center;
+      display: inline-flex;
+      gap: 4px;
+      max-width: 100%;
+      min-width: 0;
+      white-space: nowrap;
+    }
+
+    .homepage-ranking-user__badges {
+      align-items: center;
+      display: inline-flex;
+      gap: 4px;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .homepage-ranking-user__badge {
+      border-radius: 999px;
+      font-size: 11px;
+      line-height: 1.65;
+      max-width: 104px;
+      overflow: hidden;
+      padding: 0 7px;
+      position: relative;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .homepage-ranking-user__badge:not(.user-profile-badge--more) {
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, .42), 0 0 12px rgba(59, 130, 246, .22);
+      isolation: isolate;
+    }
+
+    .homepage-ranking-user__badge:not(.user-profile-badge--more)::after {
+      animation: homepage-ranking-badge-shine 3.2s ease-in-out infinite;
+      background: linear-gradient(115deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0) 38%, rgba(255, 255, 255, .72) 50%, rgba(255, 255, 255, 0) 62%, rgba(255, 255, 255, 0) 100%);
+      border-radius: inherit;
+      content: '';
+      inset: 0;
+      pointer-events: none;
+      position: absolute;
+      transform: translateX(-120%);
+      z-index: 1;
+    }
+
+    @keyframes homepage-ranking-badge-shine {
+      0%, 42% {
+        transform: translateX(-120%);
+      }
+
+      62%, 100% {
+        transform: translateX(120%);
+      }
+    }
+  </style>
   <div class="section">
     <div class="section__header">
       <h1 class="section__title">{{ _('Ranking') }}</h1>
@@ -25,7 +82,12 @@
               {% set udoc = udict[uid] %}
               <tr>
                 <td class="col--rank">{{ loop.index }}</td>
-                <td class="col--user">{{ user.render_inline(udoc, levelbadge=false) }}</td>
+                <td class="col--user">
+                  <span class="homepage-ranking-user">
+                    {{ user.render_inline(udoc, badge=false, levelbadge=false) }}
+                    <span class="homepage-ranking-user__badges">{{ user.render_custom_badges(udoc, 4, 'homepage-ranking-user__badge') }}</span>
+                  </span>
+                </td>
                 <td class="col--rp">{{ udoc.rp|default(0)|round(0) }}</td>
                 <td class="col--bio">{{ udoc.bio|default('')|truncate(64, true)|markdownInline|safe }}</td>
               </tr>

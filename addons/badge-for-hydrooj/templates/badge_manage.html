@@ -12,8 +12,7 @@
     {% if not ddocs.length %}
     {{ nothing.render('Sorry, there are no badges.') }}
     {% else %}
-    <div class="section__table-container">
-      <table class="data-table section__table-heade">
+      <table class="data-table">
         <colgroup>
           <col class="col--id">
           <col class="col--title">
@@ -44,7 +43,6 @@
         </tbody>
       </table>
       {{ paginator.render(page, dpcount) }}
-    </div>
     {% endif %}
   </div>
 </div>

@@ -43,3 +43,87 @@
   </span>
 {% endif %}
 {% endmacro %}
+
+{% macro render_custom_badge_item(badge, extra_class='') %}
+<a href="{{ badge.href }}" class="user-profile-badge v-center user-profile-badge--custom {{ extra_class }}" style="background-color:{{ badge.backgroundColor }}{% if badge.fontColor %};color:{{ badge.fontColor }}{% endif %}"{% if badge.tooltip %} title="{{ badge.tooltip }}" data-tooltip="{{ badge.tooltip }}"{% endif %}>{{ badge.displayName }}</a>
+{% endmacro %}
+
+{% macro render_selected_custom_badge(udoc, extra_class='') %}
+{% if udoc and udoc.badge %}
+  {% set _badge = udoc.badge.split('#') %}
+  {% if _badge|length >= 4 %}
+    <a href="/badge/{{ _badge[0] }}" class="user-profile-badge v-center user-profile-badge--custom {{ extra_class }}" style="background-color:#{{ _badge[2] }}{% if _badge[3] %};color:#{{ _badge[3] }}{% endif %}"{% if _badge[4] %} title="{{ _badge[4] }}" data-tooltip="{{ _badge[4] }}"{% endif %}>{{ _badge[1] }}</a>
+  {% elif _badge|length == 3 %}
+    {% set _mid = _badge[1]|default('') %}
+    {% set _strip = _mid|replace('0','')|replace('1','')|replace('2','')|replace('3','')|replace('4','')|replace('5','')|replace('6','')|replace('7','')|replace('8','')|replace('9','')|replace('a','')|replace('b','')|replace('c','')|replace('d','')|replace('e','')|replace('f','')|replace('A','')|replace('B','')|replace('C','')|replace('D','')|replace('E','')|replace('F','') %}
+    {% if _strip|length == 0 and _mid|length >= 3 and _mid|length <= 8 %}
+      <span class="user-profile-badge v-center user-profile-badge--custom {{ extra_class }}" style="background-color:#{{ _badge[1] }}{% if _badge[2] %};color:#{{ _badge[2] }}{% endif %}">{{ _badge[0] }}</span>
+    {% else %}
+      <a href="/badge/{{ _badge[0] }}" class="user-profile-badge v-center user-profile-badge--custom {{ extra_class }}" style="background-color:#{{ _badge[2] }}">{{ _badge[1] }}</a>
+    {% endif %}
+  {% elif _badge|length == 2 %}
+    <span class="user-profile-badge v-center user-profile-badge--custom {{ extra_class }}" style="background-color:#{{ _badge[1] }}">{{ _badge[0] }}</span>
+  {% else %}
+    <span class="user-profile-badge v-center user-profile-badge--custom {{ extra_class }}">{{ _badge[0]|default(udoc.badge) }}</span>
+  {% endif %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_custom_badges(udoc, limit=0, extra_class='') %}
+{% set badges = [] %}
+{% if udoc and udoc.ownedBadges %}
+  {% set badges = udoc.ownedBadges %}
+{% endif %}
+{% if badges|length %}
+  {% if limit %}
+    {% set visibleBadges = badges.slice(0, limit) %}
+  {% else %}
+    {% set visibleBadges = badges %}
+  {% endif %}
+  {% for badge in visibleBadges %}
+    {{ render_custom_badge_item(badge, extra_class) }}
+  {% endfor %}
+  {% if limit and badges|length > limit %}
+    <span class="user-profile-badge v-center user-profile-badge--custom user-profile-badge--more {{ extra_class }}" title="{% for badge in badges.slice(limit) %}{{ badge.displayName }}{% if not loop.last %}, {% endif %}{% endfor %}">+{{ badges|length - limit }}</span>
+  {% endif %}
+{% else %}
+  {{ render_selected_custom_badge(udoc, extra_class) }}
+{% endif %}
+{% endmacro %}
+
+{% macro render_short_badges(udoc, modbadge=true, levelbadge=true) %}
+{% if udoc %}
+  {% if levelbadge and udoc.level %}
+    {% set level = udoc.level %}
+    <a class="user-profile-badge v-center badge--lv{{ level }}" href="{{ url('user_detail', uid=udoc._id) }}" data-tooltip="{{ _('LV '+ level) }}: Top {{ model.builtin.LEVELS[level]|default('N/A') }}%">{{ _('LV '+ level) }}</a>
+  {% endif %}
+  {% if modbadge %}
+    {% if udoc.hasPriv(PRIV.PRIV_MOD_BADGE) %}
+      <span class="user-profile-badge v-center badge--su" data-tooltip="{{ _('SuperUser') }}">SU</span>
+    {% elif udoc.hasPerm(perm.PERM_MOD_BADGE) %}
+      <span class="user-profile-badge v-center badge--mod" data-tooltip="{{ _('Moderator') }}">MOD</span>
+    {% endif %}
+  {% endif %}
+{% endif %}
+{% endmacro %}
+
+{% macro render_ranking(udoc) %}
+{% if udoc %}
+<div class="ranking-user">
+  <div class="ranking-user__main">
+    <img class="small user-profile-avatar v-center ranking-user__avatar" loading="lazy" src="{{ avatarUrl(udoc.avatar|default('')) }}" width="24" height="24">
+    <a class="user-profile-name ranking-user__name uname--lv{{ udoc.level|default(0) }}" href="{{ url('user_detail', uid=udoc._id) }}">
+      {% if handler.user.hasPerm(perm.PERM_VIEW_DISPLAYNAME) and udoc.displayName and udoc.displayName != udoc.uname %}
+        {{ udoc.displayName }} ({{ udoc.uname }})
+      {% else %}
+        {{ udoc.uname }}
+      {% endif %}
+    </a>
+    <span class="ranking-user__short-badges">{{ render_short_badges(udoc) }}</span>
+    <span class="ranking-user__custom-badges">{{ render_custom_badges(udoc, 4, 'ranking-user__badge') }}</span>
+  </div>
+</div>
+{% else %}
+  {{ render_inline(udoc) }}
+{% endif %}
+{% endmacro %}

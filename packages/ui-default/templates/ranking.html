@@ -1,7 +1,174 @@
 {% extends "layout/basic.html" %}
 {% import "components/paginator.html" as paginator with context %}
 {% import "components/nothing.html" as nothing with context %}
+{% import "components/user.html" as user with context %}
 {% block content %}
+<style>
+  .ranking-table {
+    min-width: 1120px;
+  }
+
+  .ranking-table .col--user {
+    min-width: 470px;
+    width: 43%;
+  }
+
+  .ranking-table td.col--user {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .ranking-user {
+    min-width: 450px;
+  }
+
+  .ranking-user__main {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  .ranking-user__avatar {
+    flex: 0 0 auto;
+  }
+
+  .ranking-user__name {
+    display: inline-block;
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+
+  .ranking-user__short-badges {
+    align-items: center;
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 4px;
+  }
+
+  .ranking-user__custom-badges {
+    align-items: center;
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 4px;
+    margin-left: 2px;
+  }
+
+  .ranking-user__badge {
+    border-radius: 999px;
+    font-size: 11px;
+    line-height: 1.65;
+    max-width: 112px;
+    overflow: hidden;
+    padding: 0 7px;
+    position: relative;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ranking-user__badge:not(.user-profile-badge--more) {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, .42), 0 0 12px rgba(59, 130, 246, .22);
+    isolation: isolate;
+  }
+
+  .ranking-user__badge:not(.user-profile-badge--more)::after {
+    animation: ranking-badge-shine 3.2s ease-in-out infinite;
+    background: linear-gradient(115deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0) 38%, rgba(255, 255, 255, .72) 50%, rgba(255, 255, 255, 0) 62%, rgba(255, 255, 255, 0) 100%);
+    border-radius: inherit;
+    content: '';
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+    transform: translateX(-120%);
+    z-index: 1;
+  }
+
+  @keyframes ranking-badge-shine {
+    0%, 42% {
+      transform: translateX(-120%);
+    }
+
+    62%, 100% {
+      transform: translateX(120%);
+    }
+  }
+
+  .ranking-user__badge.user-profile-badge--more {
+    background: #eef4fb;
+    color: #476176;
+  }
+
+  @media screen and (max-width: 767px) {
+    .ranking-table {
+      min-width: 0;
+      table-layout: fixed;
+      width: 100%;
+    }
+
+    .section__table-container {
+      overflow-x: hidden;
+    }
+
+    .ranking-table .col--rank {
+      width: 64px;
+    }
+
+    .ranking-table .col--user {
+      min-width: 0;
+      width: auto;
+    }
+
+    .ranking-table col.col--rp,
+    .ranking-table col.col--detail,
+    .ranking-table col.col--ac,
+    .ranking-table col.col--bio {
+      display: none;
+    }
+
+    .ranking-table th.col--rp,
+    .ranking-table td.col--rp,
+    .ranking-table th.col--detail,
+    .ranking-table td.col--detail,
+    .ranking-table th.col--ac,
+    .ranking-table td.col--ac,
+    .ranking-table th.col--bio,
+    .ranking-table td.col--bio {
+      display: none;
+    }
+
+    .ranking-user {
+      max-width: 100%;
+      min-width: 0;
+    }
+
+    .ranking-user__main {
+      overflow: hidden;
+    }
+
+    .ranking-user__name {
+      flex: 0 1 auto;
+      max-width: 92px;
+    }
+
+    .ranking-user__short-badges {
+      gap: 2px;
+    }
+
+    .ranking-user__custom-badges {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .ranking-user__badge {
+      max-width: 88px;
+    }
+  }
+</style>
 <div class="row">
   <div class="medium-12 columns">
     <div class="section">
@@ -13,7 +180,7 @@
             {% endif %}
           {{ nothing.render('Sorry, there are no users in this domain.') }}
           {% else %}
-          <table class="data-table">
+          <table class="data-table ranking-table">
             <colgroup>
               <col class="col--rank">
               <col class="col--user">
@@ -44,7 +211,7 @@
               {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
               <tr>
                 <td class="col--rank">{{ handler.user.rank|default('-') }}</td>
-                <td class="col--user">{{ user.render_inline(handler.user) }}</td>
+                <td class="col--user">{{ user.render_ranking(handler.user) }}</td>
                 <td class="col--rp">{{ handler.user.rp|default(0)|round(0) }}</td>
                 {% for key, def in model.rp %}
                   {% if not def.hidden %}
@@ -58,7 +225,7 @@
               {%- for udoc in udocs -%}
               <tr>
                 <td class="col--rank">{{ (page - 1) * model.system.get('pagination.ranking') + loop.index }}</td>
-                <td class="col--user">{{ user.render_inline(udoc) }}</td>
+                <td class="col--user">{{ user.render_ranking(udoc) }}</td>
                 <td class="col--rp">{{ udoc.rp|default(0)|round(0) }}</td>
                 {% for key, def in model.rp %}
                   {% if not def.hidden %}

@@ -33,6 +33,41 @@ import {
 } from '../service/server';
 import { camelCase, md5 } from '../utils';
 
+function normalizeBadgeColor(color: string, fallback: string) {
+    const value = `${color || fallback}`;
+    return value.startsWith('#') ? value : `#${value}`;
+}
+
+async function attachOwnedBadges(ctx: Context, udocs: any[]) {
+    const uids = Array.from(new Set(udocs.filter(Boolean).map((udoc) => udoc._id).filter((uid) => typeof uid === 'number')));
+    for (const udoc of udocs) {
+        if (udoc) udoc.ownedBadges = [];
+    }
+    if (!uids.length) return;
+    const userBadges = await ctx.db.collection('userBadge').find({ owner: { $in: uids } }).sort({ badgeId: 1 }).toArray();
+    const badgeIds = Array.from(new Set(userBadges.map((doc: any) => doc.badgeId).filter((badgeId) => typeof badgeId === 'number')));
+    if (!badgeIds.length) return;
+    const badges = await ctx.db.collection('badge').find({ _id: { $in: badgeIds } }).toArray();
+    const badgeMap = new Map(badges.map((badge: any) => [badge._id, badge]));
+    const ownedBadges: Record<number, any[]> = {};
+    for (const doc of userBadges as any[]) {
+        const badge = badgeMap.get(doc.badgeId) as any;
+        if (!badge) continue;
+        ownedBadges[doc.owner] ||= [];
+        ownedBadges[doc.owner].push({
+            id: badge._id,
+            displayName: badge.short || `${badge._id}`,
+            backgroundColor: normalizeBadgeColor(badge.backgroundColor, 'e5edf5'),
+            fontColor: normalizeBadgeColor(badge.fontColor, '1f2937'),
+            tooltip: badge.title || badge.short || `${badge._id}`,
+            href: `/badge/${badge._id}`,
+        });
+    }
+    for (const udoc of udocs) {
+        if (udoc) udoc.ownedBadges = ownedBadges[udoc._id] || [];
+    }
+}
+
 export class HomeHandler extends Handler {
     uids = new Set<number>();
 
@@ -169,6 +204,7 @@ export class HomeHandler extends Handler {
             });
         }
         const udict = await user.getList(domainId, Array.from(this.uids));
+        await attachOwnedBadges(this.ctx, Object.values(udict));
         this.response.template = 'main.html';
         this.response.body = {
             contents,
