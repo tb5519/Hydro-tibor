@@ -22,6 +22,30 @@
 .nav__logo--text:hover {
   color: #2563eb;
 }
+
+@media screen and (max-width: 767px) {
+  .nav.slideout-menu {
+    background: #1d1f20;
+  }
+
+  .nav.slideout-menu .nav__logo.nav__logo--text {
+    border-left: 3px solid transparent;
+    color: #fff;
+    display: block;
+    font-size: 20px;
+    height: auto;
+    line-height: 42px;
+    margin: 0;
+    max-width: none;
+    min-width: 0;
+    padding: 0 20px 3px 20px;
+  }
+
+  .nav.slideout-menu .nav__logo.nav__logo--text:hover {
+    background: rgba(255, 255, 255, .10);
+    color: #fff;
+  }
+}
 </style>
 
 <nav class="nav slideout-menu" id="menu">

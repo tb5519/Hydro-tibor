@@ -103,10 +103,17 @@
   }
 
   @media screen and (max-width: 767px) {
+    .section__table-container,
+    .section__table-header {
+      max-width: 100% !important;
+      overflow-x: hidden !important;
+      width: 100% !important;
+    }
+
     .ranking-table {
-      min-width: 0;
-      table-layout: fixed;
-      width: 100%;
+      min-width: 0 !important;
+      table-layout: fixed !important;
+      width: 100% !important;
     }
 
     .section__table-container {
@@ -115,6 +122,14 @@
 
     .ranking-table .col--rank {
       width: 64px;
+    }
+
+    .ranking-table col.col--rank {
+      width: 64px !important;
+    }
+
+    .ranking-table col.col--user {
+      width: auto !important;
     }
 
     .ranking-table .col--user {
@@ -127,6 +142,7 @@
     .ranking-table col.col--ac,
     .ranking-table col.col--bio {
       display: none;
+      width: 0 !important;
     }
 
     .ranking-table th.col--rp,
@@ -137,7 +153,20 @@
     .ranking-table td.col--ac,
     .ranking-table th.col--bio,
     .ranking-table td.col--bio {
-      display: none;
+      border: 0 !important;
+      display: none !important;
+      padding: 0 !important;
+      width: 0 !important;
+    }
+
+    .ranking-table th.col--rank,
+    .ranking-table td.col--rank {
+      width: 64px !important;
+    }
+
+    .ranking-table th.col--user,
+    .ranking-table td.col--user {
+      width: auto !important;
     }
 
     .ranking-user {
