@@ -6,6 +6,7 @@
   + (("&tid=" + filterTid) if filterTid else "")
   + (("&uidOrName=" + filterUidOrName) if filterUidOrName else "")
   + (("&pid=" + filterPid) if filterPid else "")
+  + ("&includePretest=1" if filterIncludePretest else "")
   + ("&all=1" if all else "")
   + ("&allDomain=1" if allDomain else "")
 ) }}
@@ -41,7 +42,7 @@
                 <input name="tid" type="text" class="textbox" value="{{ filterTid }}">
               </label>
             </div>
-            <div class="medium-3 columns">
+            <div class="medium-2 columns">
               <label>
                 {{ _('By Language') }}
               </label>
@@ -49,7 +50,7 @@
                 <option value="">{{ _('All Languages') }}</option>
               </select>
             </div>
-            <div class="medium-3 columns">
+            <div class="medium-2 columns">
               <label>
                 {{ _('By Status') }}
               </label>
@@ -58,6 +59,15 @@
                 {%- for k,v in utils.status.STATUS_TEXTS -%}
                 <option value="{{k}}" {% if filterStatus == k %}selected{% else %}{% endif %}>{{v}}</option>
                 {%- endfor -%}
+              </select>
+            </div>
+            <div class="medium-2 columns">
+              <label>
+                {{ _('By Type') }}
+              </label>
+              <select class="compact select" name="includePretest">
+                <option value="" {% if not filterIncludePretest %}selected{% endif %}>{{ _('Formal Submissions Only') }}</option>
+                <option value="1" {% if filterIncludePretest %}selected{% endif %}>{{ _('Include Pretests') }}</option>
               </select>
             </div>
           </div>
@@ -111,6 +121,7 @@
               + (('&lang=' + filterLang) if filterLang else '')
               + (('&status=' + filterStatus) if filterStatus else '')
               + (('&pid=' + filterPid) if filterPid else '')
+              + ('&includePretest=1' if filterIncludePretest else '')
               + ('&all=1' if all else '')
               + ('&allDomain=1' if allDomain else '') }}">{{ _('pager_next') }}</a>
           </li>

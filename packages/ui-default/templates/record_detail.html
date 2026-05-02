@@ -1,6 +1,7 @@
 {% import "components/problem.html" as problem with context %}
 {% extends "layout/basic.html" %}
 {% block content %}
+{% set _isPretest = isPretestRecord or (rdoc.contest and rdoc.contest.toString() == '000000000000000000000000') %}
 {% if typeof(rdoc['status']) === 'number' and not rev %}
   {{ set(UiContext, 'socketUrl', "record-detail-conn?domainId=" + rdoc.domainId + "&rid=" + rdoc._id) }}
 {% endif %}
@@ -25,13 +26,26 @@
       </div>
     </div>
     {% endif %}
+    {% if _isPretest and rdoc.input and rdoc.input.length %}
+    <div class="section">
+      <div class="section__header">
+        <h1 class="section__title">{{ _('Pretest Data') }}</h1>
+      </div>
+      <div class="section__body">
+        {% for input in rdoc.input %}
+        <h2 class="section__title">{{ _('Input') }} #{{ loop.index }}</h2>
+        <pre><code>{{ input }}</code></pre>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
   </div>
   <div class="medium-3 columns">
     <div class="section side">
       <div class="section__header">
         <h1 class="section__title">{{ _('Information') }}</h1>
       </div>
-    {% if handler.user.hasPerm(perm.PERM_REJUDGE) and not rdoc.files.hack %}
+    {% if handler.user.hasPerm(perm.PERM_REJUDGE) and not rdoc.files.hack and not _isPretest %}
       <div class="section__body no-padding">
         <ol class="menu">
           <li class="menu__item">

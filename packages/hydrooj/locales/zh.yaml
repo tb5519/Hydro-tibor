@@ -113,6 +113,7 @@ Bulletin: 公告
 By clicking the button, you will become a member of the domain {0}.: 点击按钮，您将成为域 {0} 的成员。
 By Contest: 由比赛
 By Problem: 由题目
+By Type: 由类型
 By Username / UID: 由用户名或 UID
 Calculate rp of a domain, or all domains: 计算用户的 RP
 Calendar View: 日历视图
@@ -352,6 +353,7 @@ Field {0} or {1} validation failed.: 字段 {0} 或 {1} 验证失败。
 Field {0} validation failed. ({2}): 字段 {0} 验证失败。 ({2})
 Field {0} validation failed.: 字段 {0} 验证失败。
 Filter: 过滤
+Formal Submissions Only: 仅正式递交
 Footer: 页脚
 Forgot Password and/or Username: 忘记密码和/或用户名
 Forgot password or username?: 忘记密码或者用户名？
@@ -603,6 +605,7 @@ Pretest Data: 自测数据
 Pretest Your Code: 使用自定义数据测试
 Pretest: 自测
 Pretest?: 自测?
+Include Pretests: 包含自测
 Preview: 预览
 Print: 打印
 Privacy: 隐私

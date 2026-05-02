@@ -24,6 +24,13 @@ import { buildProjection, Time } from '../utils';
 import { ContestDetailBaseHandler } from './contest';
 import { postJudge } from './judge';
 
+function canViewAllPretestRecords(udoc: { hasPriv(priv: number): boolean, hasPerm(perm: bigint): boolean }) {
+    return udoc.hasPriv(PRIV.PRIV_EDIT_SYSTEM)
+        || udoc.hasPriv(PRIV.PRIV_MANAGE_ALL_DOMAIN)
+        || udoc.hasPriv(PRIV.PRIV_READ_RECORD_CODE)
+        || udoc.hasPerm(PERM.PERM_READ_RECORD_CODE);
+}
+
 export class RecordListHandler extends ContestDetailBaseHandler {
     @param('page', Types.PositiveInt, true)
     @param('pid', Types.ProblemId, true)
@@ -32,19 +39,27 @@ export class RecordListHandler extends ContestDetailBaseHandler {
     @param('lang', Types.String, true)
     @param('status', Types.Int, true)
     @param('fullStatus', Types.Boolean)
+    @param('includePretest', Types.Boolean)
     @param('all', Types.Boolean)
     @param('allDomain', Types.Boolean)
     @param('stat', Types.Boolean)
     async get(
         domainId: string, page = 1, pid?: string | number, tid?: ObjectId,
         uidOrName?: string, lang?: string, status?: number, full = false,
-        all = false, allDomain = false, stat = false,
+        includePretest = false, all = false, allDomain = false, stat = false,
     ) {
         const notification = [];
         let tdoc = null;
         let invalid = false;
         this.response.template = 'record_main.html';
-        const q: Filter<RecordDoc> = { contest: tid };
+        const canViewAllPretest = canViewAllPretestRecords(this.user);
+        const hasExplicitPretestFilter = Object.prototype.hasOwnProperty.call(this.request.query, 'includePretest');
+        if (!hasExplicitPretestFilter && canViewAllPretest) includePretest = true;
+        const q: Filter<RecordDoc> = includePretest && !canViewAllPretest
+            ? { $or: [{ contest: tid || null }, { contest: record.RECORD_PRETEST, uid: this.user._id }] } as Filter<RecordDoc>
+            : includePretest
+                ? { contest: { $in: [tid || null, record.RECORD_PRETEST] } } as Filter<RecordDoc>
+                : { contest: tid };
         if (full) uidOrName = this.user._id.toString();
         if (uidOrName) {
             const udoc = await user.getById(domainId, +uidOrName)
@@ -76,6 +91,8 @@ export class RecordListHandler extends ContestDetailBaseHandler {
             const pdoc = await problem.get(domainId, pid);
             if (pdoc) q.pid = pdoc.docId;
             else invalid = true;
+        } else if (includePretest && tid && tdoc?.pids?.length) {
+            q.pid = { $in: tdoc.pids } as any;
         }
         if (lang) q.lang = lang;
         if (typeof status === 'number') q.status = status;
@@ -88,6 +105,11 @@ export class RecordListHandler extends ContestDetailBaseHandler {
             this.checkPriv(PRIV.PRIV_MANAGE_ALL_DOMAIN);
             delete q.contest;
             q._id = { $gt: Time.getObjectID(new Date(Date.now() - 10 * Time.week)) };
+        }
+        if ((all || allDomain) && !canViewAllPretest) {
+            if (includePretest) {
+                q.$or = [{ contest: { $ne: record.RECORD_PRETEST } }, { contest: record.RECORD_PRETEST, uid: this.user._id }];
+            } else q.contest = { $ne: record.RECORD_PRETEST } as any;
         }
         let cursor = record.getMulti(allDomain ? '' : domainId, q).sort('_id', -1);
         if (!full) cursor = cursor.project(buildProjection(record.PROJECTION_LIST));
@@ -121,6 +143,7 @@ export class RecordListHandler extends ContestDetailBaseHandler {
             filterUidOrName: uidOrName,
             filterLang: lang,
             filterStatus: status,
+            filterIncludePretest: includePretest,
             notification,
         };
         if (this.user.hasPriv(PRIV.PRIV_VIEW_JUDGE_STATISTICS) && stat) {
@@ -159,6 +182,7 @@ export class RecordDetailHandler extends ContestDetailBaseHandler {
     // eslint-disable-next-line consistent-return
     async get(domainId: string, rid: ObjectId, download = false, rev?: ObjectId) {
         let rdoc = this.rdoc;
+        const isPretestRecord = rdoc.contest?.toHexString() === record.RECORD_PRETEST.toHexString();
         const allRev = await record.collHistory.find({ rid }).project({ _id: 1, judgeAt: 1 }).sort({ _id: -1 }).toArray();
         const allRevs: Record<string, Date> = Object.fromEntries(allRev.map((i) => [i._id.toString(), i.judgeAt]));
         if (rev && allRevs[rev.toString()]) {
@@ -166,7 +190,11 @@ export class RecordDetailHandler extends ContestDetailBaseHandler {
         }
         let canViewDetail = true;
         if (rdoc.contest?.toString().startsWith('0'.repeat(23))) {
-            if (rdoc.uid !== this.user._id) throw new PermissionError(PERM.PERM_READ_RECORD_CODE);
+            let canViewGeneratedRecord = rdoc.uid === this.user._id;
+            canViewGeneratedRecord ||= isPretestRecord && canViewAllPretestRecords(this.user);
+            canViewGeneratedRecord ||= this.user.hasPriv(PRIV.PRIV_READ_RECORD_CODE);
+            canViewGeneratedRecord ||= this.user.hasPerm(PERM.PERM_READ_RECORD_CODE);
+            if (!canViewGeneratedRecord) throw new PermissionError(PERM.PERM_READ_RECORD_CODE);
         } else if (rdoc.contest) {
             this.tdoc = await contest.get(domainId, rdoc.contest);
             let canView = this.user.own(this.tdoc);
@@ -188,6 +216,7 @@ export class RecordDetailHandler extends ContestDetailBaseHandler {
         ]);
 
         let canViewCode = rdoc.uid === this.user._id;
+        canViewCode ||= isPretestRecord && canViewAllPretestRecords(this.user);
         canViewCode ||= this.user.hasPriv(PRIV.PRIV_READ_RECORD_CODE);
         canViewCode ||= this.user.hasPerm(PERM.PERM_READ_RECORD_CODE);
         canViewCode ||= this.user.hasPerm(PERM.PERM_READ_RECORD_CODE_ACCEPT) && self?.status === STATUS.STATUS_ACCEPTED;
@@ -203,10 +232,12 @@ export class RecordDetailHandler extends ContestDetailBaseHandler {
             rdoc.code = '';
             rdoc.files = {};
             rdoc.compilerTexts = [];
+            rdoc.input = [];
         } else if (download) return await this.download();
+        if (isPretestRecord && typeof rdoc.input === 'string') rdoc.input = [rdoc.input];
         this.response.template = 'record_detail.html';
         this.response.body = {
-            udoc, rdoc: canViewDetail ? rdoc : pick(rdoc, ['_id', 'lang', 'code']), pdoc, tdoc: this.tdoc, rev, allRevs,
+            udoc, rdoc: canViewDetail ? rdoc : pick(rdoc, ['_id', 'lang', 'code']), pdoc, tdoc: this.tdoc, rev, allRevs, isPretestRecord,
         };
     }
 
@@ -260,6 +291,7 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
     pid: number;
     status: number;
     pretest = false;
+    includePretest = false;
     tdoc: Tdoc;
     applyProjection = false;
     noTemplate = false;
@@ -271,12 +303,13 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
     @param('uidOrName', Types.UidOrName, true)
     @param('status', Types.Int, true)
     @param('pretest', Types.Boolean)
+    @param('includePretest', Types.Boolean)
     @param('all', Types.Boolean)
     @param('allDomain', Types.Boolean)
     @param('noTemplate', Types.Boolean, true)
     async prepare(
         domainId: string, tid?: ObjectId, pid?: string | number, uidOrName?: string,
-        status?: number, pretest = false, all = false, allDomain = false, noTemplate = false,
+        status?: number, pretest = false, includePretest = false, all = false, allDomain = false, noTemplate = false,
     ) {
         if (tid) {
             this.tdoc = await contest.get(domainId, tid);
@@ -290,13 +323,16 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
         if (pretest) {
             this.pretest = true;
             this.uid = this.user._id;
-        } else if (uidOrName) {
-            let udoc = await user.getById(domainId, +uidOrName);
-            if (udoc) this.uid = udoc._id;
-            else {
-                udoc = await user.getByUname(domainId, uidOrName);
+        } else {
+            if (includePretest) this.includePretest = true;
+            if (uidOrName) {
+                let udoc = await user.getById(domainId, +uidOrName);
                 if (udoc) this.uid = udoc._id;
-                else throw new UserNotFoundError(uidOrName);
+                else {
+                    udoc = await user.getByUname(domainId, uidOrName);
+                    if (udoc) this.uid = udoc._id;
+                    else throw new UserNotFoundError(uidOrName);
+                }
             }
         }
         if (this.uid !== this.user._id) this.checkPerm(PERM.PERM_VIEW_RECORD);
@@ -330,12 +366,16 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
     @subscribe('record/change')
     async onRecordChange(rdoc: RecordDoc) {
         if (!this.allDomain) {
+            const isPretestRecord = rdoc.contest?.toHexString() === record.RECORD_PRETEST.toHexString();
             if (rdoc.domainId !== this.args.domainId) return;
             if (!this.pretest && typeof rdoc.input === 'string') return;
+            if (!this.pretest && isPretestRecord && !this.includePretest) return;
+            if (!this.pretest && isPretestRecord && rdoc.uid !== this.user._id && !canViewAllPretestRecords(this.user)) return;
+            if (this.includePretest && this.tid && isPretestRecord && this.tdoc?.pids?.length && !this.tdoc.pids.includes(rdoc.pid)) return;
             if (!this.all) {
                 if (!rdoc.contest && this.tid) return;
-                if (rdoc.contest && ![this.tid, '000000000000000000000000'].includes(rdoc.contest.toString())) return;
-                if (this.tid && rdoc.contest?.toString() !== '0'.repeat(24)) {
+                if (rdoc.contest && ![this.tid, ...(this.includePretest ? [record.RECORD_PRETEST.toHexString()] : [])].includes(rdoc.contest.toString())) return;
+                if (this.tid && !isPretestRecord) {
                     if (rdoc.uid !== this.user._id && !contest.canShowRecord.call(this, this.tdoc, true)) return;
                     if (rdoc.uid === this.user._id && !contest.canShowSelfRecord.call(this, this.tdoc, true)) return;
                 }
@@ -409,6 +449,8 @@ export class RecordDetailConnectionHandler extends ConnectionHandler {
         ]);
 
         this.canViewCode = rdoc.uid === this.user._id;
+        this.canViewCode ||= rdoc.contest?.toHexString() === record.RECORD_PRETEST.toHexString()
+            && canViewAllPretestRecords(this.user);
         this.canViewCode ||= this.user.hasPriv(PRIV.PRIV_READ_RECORD_CODE);
         this.canViewCode ||= this.user.hasPerm(PERM.PERM_READ_RECORD_CODE);
         this.canViewCode ||= this.user.hasPerm(PERM.PERM_READ_RECORD_CODE_ACCEPT) && self?.status === STATUS.STATUS_ACCEPTED;
@@ -452,6 +494,7 @@ export class RecordDetailConnectionHandler extends ConnectionHandler {
                 ...rdoc,
                 code: '',
                 compilerTexts: [],
+                input: [],
             };
         }
         if (![STATUS.STATUS_WAITING, STATUS.STATUS_JUDGING, STATUS.STATUS_COMPILING, STATUS.STATUS_FETCHED].includes(rdoc.status)) {
