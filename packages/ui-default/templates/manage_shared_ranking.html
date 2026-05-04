@@ -1,0 +1,192 @@
+{% extends "manage_base.html" %}
+{% block manage_content %}
+<style>
+.ranking-setting {
+  margin: -12px;
+  padding: 24px;
+  border-radius: 18px;
+  background: #f4f7fb;
+  color: #0f172a;
+}
+
+.ranking-setting__hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.ranking-setting__hero h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.2;
+}
+
+.ranking-setting__hero p {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.ranking-setting__pill {
+  flex: 0 0 auto;
+  border: 1px solid #dbe7f3;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: #ffffff;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ranking-setting__card {
+  border: 1px solid #e5edf5;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+}
+
+.ranking-setting__body {
+  padding: 18px;
+}
+
+.ranking-setting__options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.ranking-setting__option {
+  display: block;
+  min-height: 138px;
+  border: 1px solid #dbe7f3;
+  border-radius: 14px;
+  padding: 16px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.ranking-setting__option.is-active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  box-shadow: inset 0 0 0 1px #2563eb;
+}
+
+.ranking-setting__option input {
+  margin-right: 8px;
+}
+
+.ranking-setting__option-title {
+  color: #0f172a;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.ranking-setting__option-desc {
+  margin: 10px 0 0 25px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.ranking-setting__notice {
+  margin: 16px 0 0;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  padding: 10px 13px;
+  background: #eff6ff;
+  color: #475569;
+  font-size: 13px;
+}
+
+.ranking-setting__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.ranking-setting__button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 18px;
+  background: #2563eb;
+  color: #fff;
+  font-weight: 800;
+}
+
+@media screen and (max-width: 768px) {
+  .ranking-setting {
+    margin: 0 -1rem;
+    padding: 16px;
+    border-radius: 0;
+  }
+
+  .ranking-setting__hero {
+    display: block;
+  }
+
+  .ranking-setting__pill {
+    display: inline-flex;
+    margin-top: 12px;
+  }
+
+  .ranking-setting__options {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
+
+<div class="ranking-setting">
+  <div class="ranking-setting__hero">
+    <div>
+      <h1>{{ _('排行榜设置') }}</h1>
+      <p>{{ _('选择普通用户打开排行榜时看到单域排名，还是所有域合并后的排名。') }}</p>
+    </div>
+    <div class="ranking-setting__pill">
+      {% if mode == 'all' %}
+        {{ _('当前：所有域排行榜') }}
+      {% else %}
+        {{ _('当前：单域排行榜') }}
+      {% endif %}
+    </div>
+  </div>
+
+  <form method="post" class="ranking-setting__card">
+    <div class="ranking-setting__body">
+      <div class="ranking-setting__options">
+        <label class="ranking-setting__option {% if mode != 'all' %}is-active{% endif %}">
+          <span class="ranking-setting__option-title">
+            <input type="radio" name="mode" value="single" {% if mode != 'all' %}checked{% endif %}>
+            {{ _('单域排行榜') }}
+          </span>
+          <p class="ranking-setting__option-desc">
+            {{ _('保持 Hydro 原有排行榜逻辑。用户在当前域点击“排名”时，只看到当前域的 RP 排名，不影响原有排序。') }}
+          </p>
+        </label>
+
+        <label class="ranking-setting__option {% if mode == 'all' %}is-active{% endif %}">
+          <span class="ranking-setting__option-title">
+            <input type="radio" name="mode" value="all" {% if mode == 'all' %}checked{% endif %}>
+            {{ _('所有域排行榜') }}
+          </span>
+          <p class="ranking-setting__option-desc">
+            {{ _('用户点击“排名”时，看到所有域合并后的学员排名。合并排名复用 Hydro 原始 RP 公式，按所有域题目、比赛和调整项重新计算统一 RP，不简单叠加各域 RP，也不把 AC 数当作 RP。') }}
+          </p>
+        </label>
+      </div>
+
+      <div class="ranking-setting__notice">
+        {{ _('该设置只改变 /ranking 的展示数据来源和所有域模式的统一 RP 展示口径；统一 RP 为只读实时计算并带短缓存，不写提交记录，不改变判题、题目、badge、训练数据看板或 Mongo 数据结构。') }}
+      </div>
+
+      <div class="ranking-setting__actions">
+        <button type="submit" class="ranking-setting__button">{{ _('保存设置') }}</button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}

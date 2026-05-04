@@ -1,5 +1,141 @@
 {% extends "manage_base.html" %}
 {% block manage_content %}
+<style>
+.script-console {
+  margin: -12px;
+  padding: 24px;
+  background: #f4f7fb;
+}
+
+.script-console__hero {
+  margin-bottom: 18px;
+}
+
+.script-console__hero h1 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 28px;
+  line-height: 1.2;
+}
+
+.script-console__hero p {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.script-console__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.script-card {
+  border: 1px solid #e5edf5;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, .06);
+}
+
+.script-card__body {
+  padding: 16px;
+}
+
+.script-card__title {
+  margin: 0;
+  color: #0f172a;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.script-card__desc {
+  min-height: 44px;
+  margin: 8px 0 14px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.script-card__fields {
+  display: grid;
+  gap: 10px;
+}
+
+.script-card__fields label {
+  color: #475569;
+  font-size: 13px;
+}
+
+.script-card__fields .textbox {
+  margin-top: 5px;
+}
+
+.script-card__checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.script-card__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.script-card__button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 9px;
+  padding: 0 15px;
+  background: #2563eb;
+  color: #fff;
+  font-weight: 800;
+}
+
+.script-card__button--danger {
+  background: #dc2626;
+}
+
+.script-card__button--neutral {
+  background: #475569;
+}
+
+.script-console__advanced {
+  border: 1px solid #e5edf5;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, .06);
+  overflow: hidden;
+}
+
+.script-console__advanced summary {
+  cursor: pointer;
+  padding: 15px 18px;
+  color: #0f172a;
+  font-weight: 800;
+}
+
+.script-console__advanced .section {
+  margin: 0;
+  border: 0;
+  box-shadow: none;
+}
+
+@media screen and (max-width: 768px) {
+  .script-console {
+    margin: 0 -1rem;
+    padding: 16px;
+  }
+
+  .script-console__grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
+
 <div style="display: none" class="dialog__body--run-script">
   <div>
     <div class="row"><div class="columns">
@@ -15,42 +151,163 @@
     </div>
   </div>
 </div>
-<div class="section">
-  <div class="section__header">
-    <h1 class="section__title">{{ _('Scripts') }}</h1>
-    <div class="section__tools">
-      <a class="tool-button" href="{{ url('wiki_help', anchor='script') }}"><span class="icon icon-help"></span> {{ _("What's script?") }}</a>
+
+<div class="script-console">
+  <div class="script-console__hero">
+    <h1>{{ _('脚本管理') }}</h1>
+    <p>{{ _('常用维护操作可以直接填写表单运行；高级脚本仍保留原始参数入口。') }}</p>
+  </div>
+
+  <div class="script-console__grid">
+    {% if scripts.rp %}
+    <form method="post" class="script-card script-action" data-action="rp">
+      <input type="hidden" name="id" value="rp">
+      <input type="hidden" name="args" value="{}">
+      <div class="script-card__body">
+        <h2 class="script-card__title">{{ _('重算排行榜 RP') }}</h2>
+        <p class="script-card__desc">{{ _('重新计算指定域的 RP 和排名。域 ID 留空时会重算所有域。') }}</p>
+        <div class="script-card__fields">
+          <label>
+            {{ _('域 ID') }}
+            <input class="textbox" name="domainIdInput" type="text" placeholder="例如 C0001；留空表示所有域">
+          </label>
+        </div>
+        <div class="script-card__actions">
+          <button class="script-card__button" type="submit">{{ _('运行') }}</button>
+        </div>
+      </div>
+    </form>
+    {% endif %}
+
+    {% if scripts.problemStat %}
+    <form method="post" class="script-card script-action" data-action="problemStat">
+      <input type="hidden" name="id" value="problemStat">
+      <input type="hidden" name="args" value="{}">
+      <div class="script-card__body">
+        <h2 class="script-card__title">{{ _('重算题目 / 学员统计') }}</h2>
+        <p class="script-card__desc">{{ _('根据评测记录重新统计题目提交、通过数，以及学员提交、通过题数。') }}</p>
+        <div class="script-card__checks">
+          <label><input type="checkbox" name="pdoc" checked> {{ _('题目统计') }}</label>
+          <label><input type="checkbox" name="udoc" checked> {{ _('学员统计') }}</label>
+        </div>
+        <div class="script-card__actions">
+          <button class="script-card__button" type="submit">{{ _('运行') }}</button>
+        </div>
+      </div>
+    </form>
+    {% endif %}
+
+    {% if scripts.storageUsage %}
+    <form method="post" class="script-card script-action" data-action="storageUsage">
+      <input type="hidden" name="id" value="storageUsage">
+      <input type="hidden" name="args" value="{}">
+      <div class="script-card__body">
+        <h2 class="script-card__title">{{ _('检查题目文件占用') }}</h2>
+        <p class="script-card__desc">{{ _('统计题目文件体积，帮助定位占用空间较大的题目数据。') }}</p>
+        <div class="script-card__actions">
+          <button class="script-card__button script-card__button--neutral" type="submit">{{ _('运行') }}</button>
+        </div>
+      </div>
+    </form>
+    {% endif %}
+
+    {% if scripts.cleanUserEffect %}
+    <form method="post" class="script-card script-action" data-action="cleanUserEffect" data-confirm="{{ _('该操作会清理该用户的提交、域成员、消息和 Token，并取消权限。确定继续吗？') }}">
+      <input type="hidden" name="id" value="cleanUserEffect">
+      <input type="hidden" name="args" value="{}">
+      <div class="script-card__body">
+        <h2 class="script-card__title">{{ _('清理用户影响') }}</h2>
+        <p class="script-card__desc">{{ _('用于彻底清理指定 UID 的历史影响。执行前务必确认已经备份。') }}</p>
+        <div class="script-card__fields">
+          <label>
+            UID
+            <input class="textbox" name="uidInput" type="number" min="2" required placeholder="例如 4">
+          </label>
+        </div>
+        <div class="script-card__actions">
+          <button class="script-card__button script-card__button--danger" type="submit">{{ _('清理') }}</button>
+        </div>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+
+  <details class="script-console__advanced">
+    <summary>{{ _('高级脚本列表') }}</summary>
+    <div class="section">
+      <div class="section__header">
+        <h1 class="section__title">{{ _('Scripts') }}</h1>
+        <div class="section__tools">
+          <a class="tool-button" href="{{ url('wiki_help', anchor='script') }}"><span class="icon icon-help"></span> {{ _("What's script?") }}</a>
+        </div>
+      </div>
+      <div class="section__body no-padding">
+        {{ noscript_note.render() }}
+        <table class="data-table">
+          <colgroup>
+            <col class="col--id">
+            <col class="col--desc">
+            <col class="col--action">
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="col--id">{{ _('ID') }}</th>
+              <th class="col--desc">{{ _('Description') }}</th>
+              <th class="col--action">{{ _('Action') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+          {%- for id, script in scripts -%}
+          {% if not script.hidden %}
+            <tr>
+              <td class="col--id">{{ id }}</td>
+              <td class="col--desc">{{ _(script.description|default(_('None'))) }}</td>
+              <td class="col--action">
+                <a class="typo-a" href="javascript: window.runScript('{{ id }}')">{{ _('Run') }}</a>
+              </td>
+            </tr>
+          {% endif %}
+          {%- endfor -%}
+          </tbody>
+        </table>
+      </div>
     </div>
-  </div>
-  <div class="section__body no-padding">
-    {{ noscript_note.render() }}
-    <table class="data-table">
-      <colgroup>
-        <col class="col--id">
-        <col class="col--desc">
-        <col class="col--action">
-      </colgroup>
-      <thead>
-        <tr>
-          <th class="col--id">{{ _('ID') }}</th>
-          <th class="col--desc">{{ _('Description') }}</th>
-          <th class="col--action">{{ _('Action') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-      {%- for id, script in scripts -%}
-      {% if not script.hidden %}
-        <tr>
-          <td class="col--id">{{ id }}</td>
-          <td class="col--desc">{{ _(script.description|default(_('None'))) }}</td>
-          <td class="col--action">
-            <a class="typo-a" href="javascript: window.runScript('{{ id }}')">{{ _('Run') }}</a>
-          </td>
-        </tr>
-      {% endif %}
-      {%- endfor -%}
-      </tbody>
-    </table>
-  </div>
+  </details>
 </div>
+
+<script>
+(function () {
+  function setArgs(form, args) {
+    form.querySelector('[name="args"]').value = JSON.stringify(args);
+  }
+
+  document.querySelectorAll('.script-action').forEach(function (form) {
+    form.addEventListener('submit', function (ev) {
+      var action = form.getAttribute('data-action');
+      var args = {};
+      if (action === 'rp') {
+        var domainId = form.querySelector('[name="domainIdInput"]').value.trim();
+        if (domainId) args.domainId = domainId;
+      } else if (action === 'problemStat') {
+        args.pdoc = form.querySelector('[name="pdoc"]').checked;
+        args.udoc = form.querySelector('[name="udoc"]').checked;
+      } else if (action === 'cleanUserEffect') {
+        var uid = Number(form.querySelector('[name="uidInput"]').value);
+        if (!uid || uid <= 1) {
+          ev.preventDefault();
+          alert('{{ _("请输入有效 UID。") }}');
+          return;
+        }
+        args.uid = uid;
+      }
+      var message = form.getAttribute('data-confirm');
+      if (message && !confirm(message)) {
+        ev.preventDefault();
+        return;
+      }
+      setArgs(form, args);
+    });
+  });
+})();
+</script>
 {% endblock %}

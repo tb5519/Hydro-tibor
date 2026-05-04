@@ -50,6 +50,7 @@ manage_config: System Configurations
 manage_dashboard: System
 manage_module: Module Management
 manage_script: Scripts
+manage_shared_ranking: Ranking Settings
 manage_setting: System Settings
 manage_training_dashboard: Student Training Dashboard
 manage_user_import: Import Users

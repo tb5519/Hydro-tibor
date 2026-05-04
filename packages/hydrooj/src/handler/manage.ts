@@ -91,6 +91,7 @@ class SystemDashboardHandler extends SystemHandler {
     }
 }
 
+const RANKING_MODES = ['single', 'all'];
 const TRAINING_DASHBOARD_SORTS = ['newAc30', 'submit30', 'acRate30', 'lastActive'];
 
 type TrainingRangeStats = {
@@ -418,6 +419,21 @@ class SystemTrainingDashboardHandler extends SystemHandler {
     }
 }
 
+class SystemSharedRankingHandler extends SystemHandler {
+    async get() {
+        this.response.template = 'manage_shared_ranking.html';
+        this.response.body = {
+            mode: system.get('ranking.mode') === 'all' ? 'all' : 'single',
+        };
+    }
+
+    @param('mode', Types.Range(RANKING_MODES))
+    async post(domainId: string, mode: string) {
+        await system.set('ranking.mode', mode);
+        this.back();
+    }
+}
+
 class SystemScriptHandler extends SystemHandler {
     async get() {
         this.response.template = 'manage_script.html';
@@ -682,7 +698,9 @@ export const inject = ['setting', 'check'];
 export async function apply(ctx) {
     ctx.Route('manage', '/manage', SystemMainHandler);
     ctx.Route('manage_dashboard', '/manage/dashboard', SystemDashboardHandler);
+    ctx.Route('manage_shared_ranking', '/manage/shared-ranking', SystemSharedRankingHandler);
     ctx.Route('manage_training_dashboard', '/manage/training-dashboard', SystemTrainingDashboardHandler);
+    ctx.injectUI('ControlPanel', 'manage_shared_ranking', { before: 'manage_training_dashboard' });
     ctx.injectUI('ControlPanel', 'manage_training_dashboard', { before: 'manage_script' });
     ctx.Route('manage_script', '/manage/script', SystemScriptHandler);
     ctx.Route('manage_setting', '/manage/setting', SystemSettingHandler);

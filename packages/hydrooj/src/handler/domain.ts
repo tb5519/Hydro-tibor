@@ -17,6 +17,7 @@ import * as oplog from '../model/oplog';
 import { DOMAIN_SETTINGS, DOMAIN_SETTINGS_BY_KEY } from '../model/setting';
 import system from '../model/system';
 import user from '../model/user';
+import { RpTypes } from '../script/rating';
 import {
     Handler, Mutation, param, post, Query, query, requireSudo, Types,
 } from '../service/server';
@@ -57,16 +58,180 @@ async function attachOwnedBadges(ctx: Context, udocs: any[]) {
     }
 }
 
+function cloneUserForDisplay(udoc: any) {
+    if (!udoc) return udoc;
+    return Object.assign(Object.create(Object.getPrototypeOf(udoc)), udoc);
+}
+
+type SharedRankingRow = {
+    uid: number;
+    totalRp: number;
+    totalAccept: number;
+    totalSubmit: number;
+    maxLevel: number;
+    rpInfo: Record<string, number>;
+    rank?: number;
+    udoc?: any;
+};
+
+type SharedRankingCache = {
+    key: string;
+    expiresAt: number;
+    rows: SharedRankingRow[];
+};
+
+const SHARED_RANKING_CACHE_TTL = 5 * 60 * 1000;
+let sharedRankingCache: SharedRankingCache | null = null;
+
+function createRpDict(base: number) {
+    return new Proxy({} as Dictionary<number>, {
+        get(self, key) {
+            if (typeof key !== 'string') return self[key as any];
+            return self[key] ?? base;
+        },
+    });
+}
+
+async function getSharedRankingSnapshot() {
+    const domains = await domain.getMulti().project<{ _id: string }>({ _id: 1 }).toArray();
+    const domainIds = domains.map((ddoc) => ddoc._id).filter(Boolean).sort();
+    const cacheKey = domainIds.join('\n');
+    if (sharedRankingCache?.key === cacheKey && sharedRankingCache.expiresAt > Date.now()) return sharedRankingCache.rows;
+
+    const dudocs = await domain.collUser.find({
+        uid: { $gt: 1 },
+        join: true,
+    }).project({
+        uid: 1,
+        rp: 1,
+        nAccept: 1,
+        nSubmit: 1,
+        level: 1,
+    }).toArray();
+    const merged = new Map<number, SharedRankingRow>();
+    for (const dudoc of dudocs) {
+        if (!merged.has(dudoc.uid)) {
+            merged.set(dudoc.uid, {
+                uid: dudoc.uid,
+                totalRp: 0,
+                totalAccept: 0,
+                totalSubmit: 0,
+                maxLevel: 0,
+                rpInfo: {},
+            });
+        }
+        const row = merged.get(dudoc.uid)!;
+        row.totalAccept += dudoc.nAccept || 0;
+        row.totalSubmit += dudoc.nSubmit || 0;
+        row.maxLevel = Math.max(row.maxLevel, dudoc.level || 0);
+    }
+
+    for (const type in RpTypes) {
+        const result = createRpDict(RpTypes[type].base);
+        await RpTypes[type].run(domainIds, result, async () => {});
+        for (const uidText in result) {
+            const uid = +uidText;
+            const row = merged.get(uid);
+            if (!row) continue;
+            const value = result[uidText] || 0;
+            row.rpInfo[type] = value;
+            row.totalRp += value;
+        }
+    }
+
+    const rows = Array.from(merged.values())
+        .filter((row) => row.totalRp > 0)
+        .map((row) => {
+            row.totalRp = Math.max(0, row.totalRp);
+            return row;
+        })
+        .sort((a, b) => (
+            b.totalRp - a.totalRp
+            || b.totalAccept - a.totalAccept
+            || a.totalSubmit - b.totalSubmit
+            || a.uid - b.uid
+        ));
+    rows.forEach((row, index) => { row.rank = index + 1; });
+    sharedRankingCache = {
+        key: cacheKey,
+        expiresAt: Date.now() + SHARED_RANKING_CACHE_TTL,
+        rows,
+    };
+    return rows;
+}
+
+async function getSharedRankingRows(ctx: Context, currentUser: any, currentDomainId: string, page: number, pageSize: number) {
+    const rows = (await getSharedRankingSnapshot()).map((row) => ({ ...row, rpInfo: { ...row.rpInfo } }));
+
+    const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
+    const uids = Array.from(new Set([
+        ...pagedRows.map((row) => row.uid),
+        ...rows.filter((row) => row.uid === currentUser?._id).map((row) => row.uid),
+    ]));
+    const rawUdict = await user.getList(currentDomainId, uids);
+    const udict = {};
+    for (const uid in rawUdict) udict[uid] = cloneUserForDisplay(rawUdict[uid]);
+    const displayCurrentUser = cloneUserForDisplay(currentUser);
+    await attachOwnedBadges(ctx, [displayCurrentUser, ...Object.values(udict)]);
+    for (const row of rows) {
+        const udoc = udict[row.uid];
+        if (!udoc) continue;
+        udoc.rp = row.totalRp;
+        udoc.nAccept = row.totalAccept;
+        udoc.nSubmit = row.totalSubmit;
+        udoc.rank = row.rank;
+        udoc.level = row.maxLevel || udoc.level || 0;
+        udoc.rpInfo = row.rpInfo;
+        row.udoc = udoc;
+    }
+    const currentRow = rows.find((row) => row.uid === currentUser?._id);
+    if (currentRow) {
+        displayCurrentUser.rp = currentRow.totalRp;
+        displayCurrentUser.nAccept = currentRow.totalAccept;
+        displayCurrentUser.nSubmit = currentRow.totalSubmit;
+        displayCurrentUser.rank = currentRow.rank;
+        displayCurrentUser.level = currentRow.maxLevel || displayCurrentUser.level || 0;
+        displayCurrentUser.rpInfo = currentRow.rpInfo;
+    }
+    return {
+        udocs: pagedRows.map((row) => row.udoc).filter(Boolean),
+        upcount: Math.floor((rows.length + pageSize - 1) / pageSize),
+        ucount: rows.length,
+        currentUser: displayCurrentUser,
+    };
+}
+
 class DomainRankHandler extends Handler {
     @query('page', Types.PositiveInt, true)
     async get(domainId: string, page = 1) {
+        if (system.get('ranking.mode') === 'all') {
+            const pageSize = system.get('pagination.ranking') || 100;
+            const {
+                udocs, upcount, ucount, currentUser,
+            } = await getSharedRankingRows(this.ctx, this.user, domainId, page, pageSize);
+            this.user = currentUser;
+            this.response.template = 'ranking.html';
+            this.response.body = {
+                udocs, upcount, ucount, page, rankingMode: 'all',
+            };
+            return;
+        }
         const [dudocs, upcount, ucount] = await this.paginate(
             domain.getMultiUserInDomain(domainId, { uid: { $gt: 1 }, rp: { $gt: 0 }, join: true }).sort({ rp: -1 }),
             page,
             'ranking',
         );
         const udict = await user.getList(domainId, dudocs.map((dudoc) => dudoc.uid));
-        const udocs = dudocs.map((i) => udict[i.uid]);
+        const udocs = dudocs.map((dudoc) => {
+            const udoc = udict[dudoc.uid];
+            udoc.rp = dudoc.rp;
+            udoc.nAccept = dudoc.nAccept;
+            udoc.nSubmit = dudoc.nSubmit;
+            udoc.rank = dudoc.rank;
+            udoc.level = dudoc.level;
+            udoc.rpInfo = dudoc.rpInfo || udoc.rpInfo || {};
+            return udoc;
+        });
         await attachOwnedBadges(this.ctx, [this.user, ...udocs]);
         this.response.template = 'ranking.html';
         this.response.body = {
