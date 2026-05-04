@@ -14,6 +14,7 @@ import {
 import { DomainDoc, Setting } from '../interface';
 import avatar, { validate } from '../lib/avatar';
 import * as mail from '../lib/mail';
+import { getSharedRankingSnapshot, SharedRankingRow } from '../lib/shared_ranking';
 import { verifyTFA } from '../lib/verifyTFA';
 import BlackListModel from '../model/blacklist';
 import { PERM, PRIV } from '../model/builtin';
@@ -70,6 +71,7 @@ async function attachOwnedBadges(ctx: Context, udocs: any[]) {
 
 export class HomeHandler extends Handler {
     uids = new Set<number>();
+    rankingRows = new Map<number, SharedRankingRow>();
 
     collectUser(uids: number[]) {
         for (const uid of uids) this.uids.add(uid);
@@ -146,6 +148,13 @@ export class HomeHandler extends Handler {
 
     async getRanking(domainId: string, limit = 50) {
         if (!this.user.hasPerm(PERM.PERM_VIEW_RANKING)) return [];
+        if (system.get('ranking.mode') === 'all') {
+            const rows = (await getSharedRankingSnapshot()).slice(0, limit);
+            const uids = rows.map((row) => row.uid);
+            this.rankingRows = new Map(rows.map((row) => [row.uid, row]));
+            this.collectUser(uids);
+            return uids;
+        }
         const dudocs = await domain.getMultiUserInDomain(domainId, { uid: { $gt: 1 }, rp: { $gt: 0 } })
             .sort({ rp: -1 }).project({ uid: 1 }).limit(limit).toArray();
         const uids = dudocs.map((dudoc) => dudoc.uid);
@@ -204,6 +213,16 @@ export class HomeHandler extends Handler {
             });
         }
         const udict = await user.getList(domainId, Array.from(this.uids));
+        for (const [uid, row] of this.rankingRows) {
+            if (!udict[uid]) continue;
+            udict[uid] = Object.assign(Object.create(Object.getPrototypeOf(udict[uid])), udict[uid]);
+            udict[uid].rp = row.totalRp;
+            udict[uid].nAccept = row.totalAccept;
+            udict[uid].nSubmit = row.totalSubmit;
+            udict[uid].rank = row.rank;
+            udict[uid].level = row.maxLevel || udict[uid].level || 0;
+            udict[uid].rpInfo = row.rpInfo;
+        }
         await attachOwnedBadges(this.ctx, Object.values(udict));
         this.response.template = 'main.html';
         this.response.body = {
