@@ -30,13 +30,13 @@
     box-shadow: -8px 0 24px rgba(15, 23, 42, .16);
     display: none;
     height: auto;
-    left: 0;
+    left: auto;
     min-height: calc(100vh - 62px);
     overflow-y: auto;
     position: fixed;
     right: 0;
     top: 62px;
-    width: 100vw;
+    width: min(72vw, 280px);
     -webkit-overflow-scrolling: touch;
     z-index: 100001;
   }
@@ -52,7 +52,8 @@
   }
 
   .slideout-open .slideout-overlay {
-    display: none !important;
+    background: rgba(15, 23, 42, .18);
+    display: block !important;
   }
 
   .slideout-open .header--mobile {
