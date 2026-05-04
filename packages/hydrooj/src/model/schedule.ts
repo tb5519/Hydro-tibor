@@ -10,6 +10,7 @@ import RecordModel from './record';
 
 const logger = new Logger('model/schedule');
 const coll = db.collection('schedule');
+const PRETEST_RECORD_RETENTION_DAYS = 30;
 
 async function getFirst(query: Filter<Schedule>) {
     if (process.env.CI) return null;
@@ -69,7 +70,13 @@ export async function apply(ctx: Context) {
                 logger.warn('task.daily for date %s skipped', task.executeAfter.toISOString());
                 return;
             }
-            await RecordModel.coll.deleteMany({ contest: { $in: [RecordModel.RECORD_PRETEST, RecordModel.RECORD_GENERATE] } });
+            await Promise.all([
+                RecordModel.coll.deleteMany({ contest: RecordModel.RECORD_GENERATE }),
+                RecordModel.coll.deleteMany({
+                    contest: RecordModel.RECORD_PRETEST,
+                    _id: { $lt: Time.getObjectID(moment().add(-PRETEST_RECORD_RETENTION_DAYS, 'days')) },
+                }),
+            ]);
             pref.record = Date.now() - start;
             start = Date.now();
             await global.Hydro.script.rp?.run(pref, new Logger('task/rp').debug);
