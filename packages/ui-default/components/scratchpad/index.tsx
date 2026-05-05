@@ -84,10 +84,11 @@ export default function ScratchpadContainer() {
       payload: target,
     });
   };
+  const ideMode = !!UiContext.ideMode;
 
   return (
     <Allotment onChange={handleChangeSize}>
-      <Allotment.Pane visible={Object.keys(pages).length > 1} minSize={50} maxSize={50}>
+      <Allotment.Pane visible={!ideMode && Object.keys(pages).length > 1} minSize={50} maxSize={50}>
         <div className="scratchpad__tablist">
           {Object.keys(pages).map((key) => {
             const Component = pages[key].icon;
@@ -103,7 +104,7 @@ export default function ScratchpadContainer() {
           })}
         </div>
       </Allotment.Pane>
-      <Allotment.Pane visible={!!ui.activePage}>
+      <Allotment.Pane visible={!ideMode && !!ui.activePage}>
         <div className="scratchpad__problem">
           {Object.keys(pages).map((key) => {
             const Component = pages[key].component;

@@ -3,12 +3,12 @@ import { i18n } from 'vj/utils';
 
 export default function reducer(state = {
   pretest: {
-    visible: UiContext.pdoc.config?.type === 'default'
+    visible: UiContext.ideMode ? true : UiContext.pdoc.config?.type === 'default'
       ? localStorage.getItem('scratchpad/pretest') === 'true'
       : false,
   },
   records: {
-    visible: UiContext.canViewRecord && localStorage.getItem('scratchpad/records') === 'true',
+    visible: !UiContext.ideMode && UiContext.canViewRecord && localStorage.getItem('scratchpad/records') === 'true',
     isLoading: false,
   },
   settings: {
@@ -19,7 +19,7 @@ export default function reducer(state = {
   pretestWaitSec: 0,
   submitWaitSec: 0,
   lastTick: 0,
-  activePage: 'problem',
+  activePage: UiContext.ideMode ? '' : 'problem',
   pendingCommand: '',
 }, action: any = {}) {
   switch (action.type) {

@@ -1,0 +1,144 @@
+{% set page_name = "problem_detail" %}
+{% extends "layout/basic.html" %}
+{% block content %}
+<script>
+{{ set(UiContext, {
+  problemId: 'IDE',
+  problemNumId: hostPdoc.docId,
+  codeLang: ideCodeLang,
+  codeTemplate: handler.user.codeTemplate,
+  ideMode: true,
+  canViewRecord: false,
+  pdoc: {
+    domainId: handler.args.domainId,
+    docId: -1,
+    pid: 'IDE',
+    title: '在线IDE',
+    config: hostPdoc.config
+  },
+  postSubmitUrl: url('problem_submit', pid=hostPdoc.docId),
+  getSubmissionsUrl: '',
+  getRecordDetailUrl: '',
+  pretestConnUrl: "record-conn?pretest=1&uidOrName=" + handler.user._id + "&pid=" + hostPdoc.docId + "&domainId=" + handler.args.domainId
+}) }}
+document.body.classList.add('online-ide-mode');
+localStorage.setItem('scratchpad/pretest', 'true');
+localStorage.setItem('scratchpad/records', 'false');
+(function () {
+  var allowedLangs = {{ ideAllowedLangs|json|safe }};
+  var cacheKey = {{ handler.user._id|json|safe }} + '/' + UiContext.pdoc.domainId + '/' + UiContext.pdoc.docId;
+  var langKey = cacheKey + '#lang';
+  var cachedLang = localStorage.getItem(langKey);
+  if (allowedLangs.length && cachedLang && allowedLangs.indexOf(cachedLang) < 0) {
+    localStorage.setItem(langKey, UiContext.codeLang);
+  }
+})();
+</script>
+<style>
+.online-ide-seed {
+  min-height: calc(100vh - 120px);
+}
+.online-ide-seed .section {
+  border: 0;
+  box-shadow: none;
+}
+.online-ide-seed .problem-content {
+  min-height: 260px;
+  color: #64748b;
+}
+body.online-ide-mode .scratchpad-container {
+  background: #fff;
+}
+body.online-ide-mode .scratchpad__tablist,
+body.online-ide-mode .scratchpad__problem {
+  display: none !important;
+}
+body.online-ide-mode .scratchpad__toolbar__submit,
+body.online-ide-mode [name="problem-sidebar__quit-scratchpad"] {
+  display: none !important;
+}
+body.online-ide-mode .scratchpad-container [class*="splitViewView"]:has(.scratchpad__tablist),
+body.online-ide-mode .scratchpad-container [class*="splitViewView"]:has(.scratchpad__problem) {
+  display: none !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+}
+body.online-ide-mode .scratchpad-container [class*="splitViewView"]:has(.scratchpad__toolbar) {
+  left: 0 !important;
+  width: 100% !important;
+}
+body.online-ide-mode .scratchpad-container [class*="sash-container"] {
+  display: none !important;
+}
+</style>
+<div class="online-ide-seed">
+  <div class="section">
+    <div class="problem-content-container">
+      <div class="problem-content">
+        <h1>在线IDE</h1>
+        <p>正在打开在线代码编辑器。</p>
+      </div>
+    </div>
+  </div>
+  <a name="problem-sidebar__open-scratchpad" href="javascript:;" style="display:none"></a>
+</div>
+<div style="display:none" class="outer-loader-container"><div class="loader"></div></div>
+<div class="scratchpad-container" style="display:none">
+  <div style="display:none" class="loader-container"><div class="loader"></div></div>
+  <div id="scratchpad" style="opacity:0"></div>
+</div>
+<script>
+(function () {
+  var attempts = 0;
+  function findPane(el) {
+    while (el && el !== document.body) {
+      if (String(el.className || '').indexOf('splitViewView') >= 0) return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+  function tuneIdeLayout() {
+    var seed = document.querySelector('.online-ide-seed');
+    if (seed && document.body.classList.contains('mode--scratchpad')) seed.style.display = 'none';
+    document.querySelectorAll('.scratchpad__tablist, .scratchpad__problem').forEach(function (el) {
+      var pane = findPane(el);
+      el.style.display = 'none';
+      if (pane) {
+        pane.style.display = 'none';
+        pane.style.width = '0px';
+        pane.style.minWidth = '0px';
+        pane.style.maxWidth = '0px';
+      }
+    });
+    var toolbar = document.querySelector('.scratchpad__toolbar');
+    var editorPane = toolbar && findPane(toolbar);
+    if (editorPane) {
+      editorPane.style.left = '0px';
+      editorPane.style.width = '100%';
+      editorPane.style.right = '0px';
+    }
+    document.querySelectorAll('.scratchpad-container [class*="sash-container"]').forEach(function (el) {
+      el.style.display = 'none';
+    });
+    window.dispatchEvent(new Event('resize'));
+  }
+  function openScratchpad() {
+    var trigger = document.querySelector('[name="problem-sidebar__open-scratchpad"]');
+    if (trigger) {
+      trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    }
+    tuneIdeLayout();
+    if (document.body.classList.contains('mode--scratchpad')) {
+      [100, 300, 700, 1200].forEach(function (delay) {
+        window.setTimeout(tuneIdeLayout, delay);
+      });
+      return;
+    }
+    if (attempts++ < 50) window.setTimeout(openScratchpad, 100);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', openScratchpad);
+  else openScratchpad();
+})();
+</script>
+{% endblock %}

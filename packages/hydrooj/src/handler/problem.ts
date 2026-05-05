@@ -20,7 +20,7 @@ import {
     ProblemNotFoundError, RecordNotFoundError, SolutionNotFoundError, ValidationError,
 } from '../error';
 import {
-    ProblemDoc, ProblemSearchOptions, ProblemStatusDoc, RecordDoc, User,
+    DomainDoc, ProblemDoc, ProblemSearchOptions, ProblemStatusDoc, RecordDoc, User,
 } from '../interface';
 import { PERM, PRIV, STATUS } from '../model/builtin';
 import * as contest from '../model/contest';
@@ -289,6 +289,93 @@ export class ProblemRandomHandler extends Handler {
         if (!pid) throw new NoProblemError();
         this.response.body = { pid };
         this.response.redirect = this.url('problem_detail', { pid });
+    }
+}
+
+export class OnlineIdeHandler extends Handler {
+    getAllowedLangs(pdoc: ProblemDoc, ddoc: DomainDoc | null) {
+        if (!pdoc || typeof pdoc.config === 'string') return [];
+        const limits = [];
+        if (pdoc.config.langs?.length) limits.push(pdoc.config.langs);
+        if (ddoc?.langs) limits.push(ddoc.langs.split(',').map((i) => i.trim()).filter((i) => i));
+        const needHiddenLangs = flattenDeep(limits).length;
+        const baseLangs = Object.keys(setting.langs).filter((i) =>
+            (needHiddenLangs ? !setting.langs[i].remote : !setting.langs[i].remote && !setting.langs[i].hidden)
+            && !setting.langs[i].disabled);
+        return ['objective', 'submit_answer'].includes(pdoc.config.type) ? ['_'] : intersection(baseLangs, ...limits);
+    }
+
+    pickCodeLang(pdoc: ProblemDoc, ddoc: DomainDoc | null) {
+        const langs = this.getAllowedLangs(pdoc, ddoc);
+        const preferred = [this.user.codeLang, 'py.py3', 'cc.cc14', 'cc.cc17', 'cc.cc20', 'cc.cc11', 'cc'];
+        return preferred.find((lang) => lang && langs.includes(lang)) || langs[0] || this.user.codeLang || 'py.py3';
+    }
+
+    async findHostPdoc(domainId: string, problemQuery: Filter<ProblemDoc>) {
+        const ddoc = await domain.get(domainId);
+        const pdocs = await problem.getMulti(domainId, problemQuery, ['docId'])
+            .sort({ sort: 1, docId: 1 }).limit(200).toArray();
+        const isRunnable = (pdoc: ProblemDoc | null) => !!(pdoc
+            && !pdoc.reference
+            && typeof pdoc.config !== 'string'
+            && pdoc.config?.type === 'default'
+            && pdoc.data?.length);
+        let pdoc: ProblemDoc | null = null;
+        let score = -1;
+        for (const doc of pdocs) {
+            // eslint-disable-next-line no-await-in-loop
+            const fullPdoc = await problem.get(domainId, doc.docId);
+            if (!isRunnable(fullPdoc)) continue;
+            const langs = this.getAllowedLangs(fullPdoc, ddoc);
+            if (!langs.length) continue;
+            const currentScore = langs.includes(this.user.codeLang) ? 4
+                : langs.includes('py.py3') ? 3
+                    : !fullPdoc.config?.langs?.length ? 2 : 1;
+            if (currentScore > score) {
+                pdoc = fullPdoc;
+                score = currentScore;
+                if (currentScore >= 4) break;
+            }
+        }
+        return pdoc;
+    }
+
+    async get() {
+        const domainId = this.args.domainId;
+        const problemQuery = buildQuery(this.user);
+        await this.ctx.parallel('problem/list', problemQuery, this);
+        const pdoc = await this.findHostPdoc(domainId, problemQuery);
+        if (!pdoc && domainId === 'system') {
+            const dudict = await domain.getDictUserByDomainId(this.user._id);
+            let domainIds = Object.keys(dudict).filter((id) => id !== 'system');
+            if (this.user.hasPriv(PRIV.PRIV_VIEW_ALL_DOMAIN)) {
+                const allDomains = await domain.getMulti({ _id: { $ne: 'system' } })
+                    .project<{ _id: string }>({ _id: 1 }).toArray();
+                domainIds = Array.from(new Set([...domainIds, ...allDomains.map((ddoc) => ddoc._id)]));
+            }
+            for (const target of domainIds) {
+                // eslint-disable-next-line no-await-in-loop
+                if (await this.findHostPdoc(target, problemQuery)) {
+                    this.response.redirect = this.url('online_ide', { domainId: target });
+                    return;
+                }
+            }
+        }
+        if (!pdoc) throw new NoProblemError();
+        const ddoc = await domain.get(domainId);
+        if (typeof pdoc.config === 'string') throw new NoProblemError();
+        const ideAllowedLangs = this.getAllowedLangs(pdoc, ddoc);
+        const hostPdoc = {
+            ...pdoc,
+            config: {
+                ...pdoc.config,
+                langs: ideAllowedLangs,
+            },
+        };
+        this.response.template = 'online_ide.html';
+        this.response.body.hostPdoc = hostPdoc;
+        this.response.body.ideAllowedLangs = ideAllowedLangs;
+        this.response.body.ideCodeLang = this.pickCodeLang(pdoc, ddoc);
     }
 }
 
@@ -1064,6 +1151,7 @@ declare module '@hydrooj/framework' {
 export async function apply(ctx: Context) {
     ctx.Route('problem_main', '/p', ProblemMainHandler, PERM.PERM_VIEW_PROBLEM);
     ctx.Route('problem_random', '/problem/random', ProblemRandomHandler, PERM.PERM_VIEW_PROBLEM);
+    ctx.Route('online_ide', '/ide', OnlineIdeHandler, PERM.PERM_SUBMIT_PROBLEM);
     ctx.Route('problem_detail', '/p/:pid', ProblemDetailHandler);
     ctx.Route('problem_submit', '/p/:pid/submit', ProblemSubmitHandler, PERM.PERM_SUBMIT_PROBLEM);
     ctx.Route('problem_hack', '/p/:pid/hack/:rid', ProblemHackHandler, PERM.PERM_SUBMIT_PROBLEM);

@@ -106,6 +106,51 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
       if (langInfo.validAs && !langInfo.hidden) canUsePretest = true;
     }
     if (langInfo?.pretest === false) canUsePretest = false;
+    if (UiContext.ideMode) {
+      return (
+        <Toolbar>
+          <ToolbarItem>
+            <select
+              className="select"
+              disabled={this.props.isPosting}
+              value={this.props.editorLang}
+              onChange={(ev) => this.props.setEditorLanguage(ev.target.value)}
+            >
+              {_.map(availableLangs, (val, key) => (
+                <option value={key} key={key}>{val.display}</option>
+              ))}
+            </select>
+          </ToolbarItem>
+          {canUsePretest && (
+            <ToolbarButton
+              disabled={this.props.isPosting || this.props.isRunning || !!this.props.pretestWaitSec}
+              className="scratchpad__toolbar__pretest"
+              onClick={() => this.props.postPretest(this.props)}
+              data-global-hotkey="f9"
+              data-tooltip="运行代码 (F9)"
+            >
+              <Icon name="debug" />
+              {' '}
+              运行代码
+              {' '}
+              {this.props.pretestWaitSec ? `(${this.props.pretestWaitSec}s)` : '(F9)'}
+            </ToolbarButton>
+          )}
+          {canUsePretest && (
+            <ToolbarButton
+              activated={this.props.pretestVisible}
+              onClick={() => this.props.togglePanel('pretest')}
+              data-global-hotkey="alt+p"
+              data-tooltip={`${i18n('Toggle Pretest Panel')} (Alt+P)`}
+            >
+              <Icon name="edit" />
+              {' '}
+              {i18n('Pretest')}
+            </ToolbarButton>
+          )}
+        </Toolbar>
+      );
+    }
     return (
       <Toolbar>
         {canUsePretest && (
