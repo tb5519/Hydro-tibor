@@ -884,6 +884,243 @@ html.page--homepage
   border-radius: var(--ui-v2-radius-sm)
   border-left-width: rem(4px)
 
+// ----- Objective problem: clearer question and answer UI -----
+.page--problem_detail .ui-v2-problem-statement label.radiobox[class*="objective_"]:not(.objective-option)
+  display: flex
+  align-items: flex-start
+  gap: rem(8px)
+  max-width: rem(620px)
+  min-height: rem(40px)
+  margin: rem(8px 0)
+  padding: rem(8px 12px)
+  border: 1px solid var(--ui-v2-border)
+  border-radius: rem(10px)
+  background: #fff
+  color: var(--ui-v2-text-muted)
+  line-height: 1.55
+  cursor: pointer
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease
+
+.page--problem_detail .ui-v2-problem-statement label.radiobox[class*="objective_"]:not(.objective-option):hover
+  border-color: rgba(37, 99, 235, 0.38)
+  background: #f8fbff
+  color: var(--ui-v2-text)
+
+.page--problem_detail .ui-v2-problem-statement label.radiobox[class*="objective_"]:not(.objective-option):has(input:checked)
+  border-color: rgba(37, 99, 235, 0.72)
+  background: #eff6ff
+  color: var(--ui-v2-text)
+  box-shadow: 0 0 0 rem(3px) rgba(37, 99, 235, 0.08)
+
+.page--problem_detail .ui-v2-problem-detail .section__body > .contest-problems:has(a[href*="#p"])
+  display: grid
+  grid-template-columns: repeat(auto-fill, minmax(34px, 1fr))
+  gap: rem(8px)
+  margin: rem(4px 6px 14px) !important
+  padding: rem(12px)
+  border: 1px solid var(--ui-v2-border)
+  border-radius: rem(12px)
+  background: #fff
+
+.page--problem_detail .ui-v2-problem-detail .section__body > .contest-problems:has(a[href*="#p"]) a
+  display: inline-flex
+  align-items: center
+  justify-content: center
+  width: auto
+  height: rem(34px)
+  margin: 0
+  border: 1px solid var(--ui-v2-border-strong)
+  border-radius: rem(8px)
+  background: var(--ui-v2-surface-muted)
+  color: var(--ui-v2-text-muted)
+  font-size: rem(13px)
+  font-weight: 600
+  text-decoration: none
+
+.page--problem_detail .ui-v2-problem-detail .section__body > .contest-problems:has(a[href*="#p"]) a:hover
+  border-color: rgba(37, 99, 235, 0.45)
+  color: var(--ui-v2-accent)
+
+.page--problem_detail .ui-v2-problem-detail .section__body > .contest-problems:has(a[href*="#p"]) a.pending
+  border-color: rgba(37, 99, 235, 0.68)
+  background: #eff6ff
+  color: var(--ui-v2-accent)
+
+.objective-problem-mode .ui-v2-problem-statement
+  max-width: rem(820px)
+  padding: rem(24px 28px 30px)
+
+.objective-problem-mode .objective-question-title
+  margin-top: rem(22px)
+  padding-top: rem(16px)
+  border-top: 1px solid var(--ui-v2-border)
+  color: var(--ui-v2-text)
+  font-weight: 600
+
+.objective-problem-mode .objective-question-title:first-child
+  margin-top: 0
+  padding-top: 0
+  border-top: none
+
+.objective-problem-mode .objective-options
+  list-style: none
+  display: grid
+  gap: rem(8px)
+  margin: rem(10px 0 20px)
+  padding: 0
+
+.objective-problem-mode .objective-option
+  display: block
+  margin: 0
+  cursor: pointer
+  user-select: none
+
+.objective-problem-mode .objective-option input
+  position: absolute
+  opacity: 0
+  pointer-events: none
+
+.objective-problem-mode .objective-choice-body
+  display: flex
+  align-items: flex-start
+  gap: rem(10px)
+  min-height: rem(44px)
+  padding: rem(9px 12px)
+  border: 1px solid var(--ui-v2-border)
+  border-radius: rem(10px)
+  background: #fff
+  color: var(--ui-v2-text-muted)
+  line-height: 1.6
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease
+
+.objective-problem-mode .objective-option:hover .objective-choice-body
+  border-color: rgba(37, 99, 235, 0.38)
+  background: #f8fbff
+  color: var(--ui-v2-text)
+
+.objective-problem-mode .objective-choice-letter
+  flex: 0 0 auto
+  display: inline-flex
+  align-items: center
+  justify-content: center
+  width: rem(28px)
+  height: rem(28px)
+  margin-top: rem(1px)
+  border: 1px solid var(--ui-v2-border-strong)
+  border-radius: 999px
+  background: var(--ui-v2-surface-muted)
+  color: var(--ui-v2-text-muted)
+  font-weight: 700
+  line-height: 1
+
+.objective-problem-mode .objective-choice-text
+  min-width: 0
+  padding-top: rem(1px)
+
+.objective-problem-mode .objective-option input:checked + .objective-choice-body
+  border-color: rgba(37, 99, 235, 0.72)
+  background: #eff6ff
+  color: var(--ui-v2-text)
+  box-shadow: 0 0 0 rem(3px) rgba(37, 99, 235, 0.08)
+
+.objective-problem-mode .objective-option input:checked + .objective-choice-body .objective-choice-letter
+  border-color: var(--ui-v2-accent)
+  background: var(--ui-v2-accent)
+  color: #fff
+
+.objective-problem-mode .objective-free-answer
+  display: block
+  max-width: rem(560px)
+  margin: rem(10px 0 20px)
+
+.objective-problem-mode .objective-free-answer .textbox
+  width: 100%
+  border-radius: rem(8px)
+  border-color: var(--ui-v2-border)
+  padding: rem(9px 11px)
+
+.objective-problem-mode .ui-v2-problem-statement > input[type="submit"].button
+  min-width: rem(160px)
+  height: rem(42px)
+  margin-top: rem(12px)
+
+.objective-problem-mode .objective-nav-card
+  margin: rem(4px 6px 14px)
+  padding: rem(12px)
+  border: 1px solid var(--ui-v2-border)
+  border-radius: rem(12px)
+  background: #fff
+
+.objective-problem-mode .objective-nav-title
+  margin-bottom: rem(10px)
+  color: var(--ui-v2-text)
+  font-size: rem(13px)
+  font-weight: 700
+
+.objective-problem-mode .objective-nav-grid
+  display: grid
+  grid-template-columns: repeat(auto-fill, minmax(34px, 1fr))
+  gap: rem(8px)
+  margin: 0 !important
+
+.objective-problem-mode .objective-nav-item
+  display: inline-flex
+  align-items: center
+  justify-content: center
+  height: rem(34px)
+  border: 1px solid var(--ui-v2-border-strong)
+  border-radius: rem(8px)
+  background: var(--ui-v2-surface-muted)
+  color: var(--ui-v2-text-muted)
+  font-size: rem(13px)
+  font-weight: 600
+  text-decoration: none
+
+.objective-problem-mode .objective-nav-item:hover
+  border-color: rgba(37, 99, 235, 0.45)
+  color: var(--ui-v2-accent)
+
+.objective-problem-mode .objective-nav-item.is-answered
+  border-color: rgba(37, 99, 235, 0.68)
+  background: #eff6ff
+  color: var(--ui-v2-accent)
+
+.objective-problem-mode .objective-nav-legend
+  display: flex
+  gap: rem(12px)
+  margin-top: rem(10px)
+  color: var(--ui-v2-text-muted)
+  font-size: rem(12px)
+
+.objective-problem-mode .objective-nav-dot
+  display: inline-block
+  width: rem(8px)
+  height: rem(8px)
+  margin-right: rem(4px)
+  border: 1px solid var(--ui-v2-border-strong)
+  border-radius: 999px
+  background: var(--ui-v2-surface-muted)
+
+.objective-problem-mode .objective-nav-dot--answered
+  border-color: var(--ui-v2-accent)
+  background: var(--ui-v2-accent)
+
+@media screen and (max-width: 768px)
+  .objective-problem-mode .ui-v2-problem-statement
+    max-width: none
+    padding: rem(18px 16px 24px)
+
+  .objective-problem-mode .objective-question-title
+    margin-top: rem(18px)
+    padding-top: rem(14px)
+
+  .objective-problem-mode .objective-choice-body
+    gap: rem(8px)
+    padding: rem(9px 10px)
+
+  .objective-problem-mode .objective-nav-card
+    margin: rem(4px 0 12px)
+
 .page--problem_detail .ui-v2-problem-detail .section__tab-header-wrapper
   border-bottom: 1px solid var(--ui-v2-border)
   background: var(--ui-v2-surface-muted)

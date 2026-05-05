@@ -191,6 +191,8 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
 
   async function loadObjective() {
     $('.outer-loader-container').show();
+    document.documentElement.classList.add('objective-problem-mode');
+    document.body.classList.add('objective-problem-mode');
     const ans = {};
     const pids = [];
     let cnt = 0;
@@ -204,16 +206,17 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
         cnt++;
         const id = info.replace(/\{\{ (input|select|multiselect|textarea)\((\d+(-\d+)?)\) \}\}/, '$2');
         pids.push(id);
+        $(e).addClass('objective-question-title').attr('data-objective-id', id);
         if (type === 'input') {
           $(e).html($(e).html().replace(info, tpl`
-            <div class="objective_${id} medium-3" id="p${id}" style="display: inline-block;">
-              <input type="text" name="${id}" class="textbox objective-input">
+            <div class="objective_${id} objective-free-answer medium-3" id="p${id}">
+              <input type="text" name="${id}" class="textbox objective-input" placeholder="${i18n('Answer')}">
             </div>
           `));
         } else if (type === 'textarea') {
           $(e).html($(e).html().replace(info, tpl`
-            <div class="objective_${id} medium-6" id="p${id}">
-              <textarea name="${id}" class="textbox objective-input"></textarea>
+            <div class="objective_${id} objective-free-answer medium-6" id="p${id}">
+              <textarea name="${id}" class="textbox objective-input" placeholder="${i18n('Answer')}"></textarea>
             </div>
           `));
         } else {
@@ -222,11 +225,16 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
             return;
           }
           $(e).html($(e).html().replace(info, ''));
+          $(e).next('ul').addClass(`objective-options objective-options--${type === 'select' ? 'single' : 'multi'}`);
           $(e).next('ul').children().each((j, ele) => {
+            const letter = String.fromCharCode(65 + j);
             $(ele).after(tpl`
-              <label class="objective_${id} radiobox" id="p${id}">
-                <input type="${type === 'select' ? 'radio' : 'checkbox'}" name="${id}" class="objective-input" value="${String.fromCharCode(65 + j)}">
-                ${String.fromCharCode(65 + j)}. ${{ templateRaw: true, html: ele.innerHTML }}
+              <label class="objective_${id} radiobox objective-option" id="p${id}">
+                <input type="${type === 'select' ? 'radio' : 'checkbox'}" name="${id}" class="objective-input" value="${letter}">
+                <span class="objective-choice-body">
+                  <span class="objective-choice-letter">${letter}</span>
+                  <span class="objective-choice-text">${{ templateRaw: true, html: ele.innerHTML }}</span>
+                </span>
               </label>
             `);
             $(ele).remove();
@@ -264,10 +272,17 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
         };
       }, [update]);
       return <>
-        <div className="contest-problems" style={{ margin: '1em' }}>
-          {pids.map((i) => <a href={`#p${i}`} key={i} className={ans[i] ? 'pending ' : ''}>
+        <div className="objective-nav-card">
+          <div className="objective-nav-title">答题卡</div>
+          <div className="contest-problems objective-nav-grid">
+            {pids.map((i) => <a href={`#p${i}`} key={i} className={ans[i] ? 'pending objective-nav-item is-answered' : 'objective-nav-item'}>
             <span className="id">{i}</span>
-          </a>)}
+            </a>)}
+          </div>
+          <div className="objective-nav-legend">
+            <span><i className="objective-nav-dot objective-nav-dot--answered" /> 已答</span>
+            <span><i className="objective-nav-dot" /> 未答</span>
+          </div>
         </div>
         <li className="menu__item">
           <button className="menu__link" onClick={clearAns}>
@@ -295,22 +310,30 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
       setUpdate?.((v) => v + 1);
     }
 
+    function setAnswer(name: string, value: string | string[]) {
+      if (Array.isArray(value)) {
+        if (value.length) ans[name] = value;
+        else delete ans[name];
+      } else if (value) ans[name] = value;
+      else delete ans[name];
+      setUpdate?.((v) => v + 1);
+    }
+
     if (cnt) {
       await loadAns();
       $('.problem-content .typo').append(document.getElementsByClassName('nav__item--round').length
         ? `<input type="submit" disabled class="button rounded primary disabled" value="${i18n('Login to Submit')}" />`
         : `<input type="submit" class="button rounded primary" value="${i18n('Submit')}" />`);
       $('.objective-input[type!=checkbox]').on('input', (e: JQuery.TriggeredEvent<HTMLInputElement>) => {
-        ans[e.target.name] = e.target.value;
+        setAnswer(e.target.name, e.target.value);
         saveAns();
       });
       $('input.objective-input[type=checkbox]').on('input', (e: JQuery.TriggeredEvent<HTMLInputElement>) => {
+        const current = Array.isArray(ans[e.target.name]) ? ans[e.target.name] : [];
         if (e.target.checked) {
-          ans[e.target.name] ||= [];
-          ans[e.target.name].push(e.target.value);
-          ans[e.target.name] = [...new Set(ans[e.target.name])].sort((a: string, b: string) => a.charCodeAt(0) - b.charCodeAt(0));
+          setAnswer(e.target.name, [...new Set([...current, e.target.value])].sort((a: string, b: string) => a.charCodeAt(0) - b.charCodeAt(0)));
         } else {
-          ans[e.target.name] = ans[e.target.name].filter((v) => v !== e.target.value);
+          setAnswer(e.target.name, current.filter((v) => v !== e.target.value));
         }
         saveAns();
       });
