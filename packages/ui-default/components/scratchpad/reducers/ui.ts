@@ -21,6 +21,7 @@ export default function reducer(state = {
   lastTick: 0,
   activePage: UiContext.ideMode ? '' : 'problem',
   pendingCommand: '',
+  formalSubmitRids: [],
 }, action: any = {}) {
   switch (action.type) {
     case 'SCRATCHPAD_UI_SET_VISIBILITY': {
@@ -83,6 +84,9 @@ export default function reducer(state = {
             ...state.records,
             visible: true,
           },
+          formalSubmitRids: action.payload?.rid
+            ? [...state.formalSubmitRids, action.payload.rid]
+            : state.formalSubmitRids,
           isPosting: false,
           submitWaitSec: 8,
         } : {

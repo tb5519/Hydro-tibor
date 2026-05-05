@@ -44,7 +44,8 @@ export function getNodes(name: UIInjectableFields) {
 }
 
 inject('Nav', 'homepage', { prefix: 'homepage' });
-inject('Nav', 'problem_main', { prefix: 'problem' }, PERM.PERM_VIEW_PROBLEM);
+inject('Nav', 'problem_main', { prefix: 'problem', excludePrefix: 'problem_mistake' }, PERM.PERM_VIEW_PROBLEM);
+inject('Nav', 'problem_mistake', { prefix: 'problem_mistake', before: 'training_main' }, PERM.PERM_VIEW_PROBLEM, PRIV.PRIV_USER_PROFILE);
 inject('Nav', 'training_main', { prefix: 'training' }, PERM.PERM_VIEW_TRAINING);
 inject('Nav', 'contest_main', { prefix: 'contest' }, PERM.PERM_VIEW_CONTEST);
 inject('Nav', 'homework_main', { prefix: 'homework' }, PERM.PERM_VIEW_HOMEWORK);

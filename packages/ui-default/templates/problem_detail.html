@@ -6,7 +6,11 @@
   problemNumId: pdoc.docId,
   codeLang: handler.user.codeLang,
   codeTemplate: handler.user.codeTemplate,
-  pdoc: pdoc
+  pdoc: pdoc,
+  isMistakeSupported: isMistakeSupported,
+  canUseMistake: canUseMistake,
+  showMistakePrompt: showMistakePrompt,
+  firstFormalRecordStatus: firstFormalStatus
 }) }}
 {% if tdoc %}
   {{ set(UiContext, 'tdoc', tdoc) }}
@@ -43,6 +47,107 @@
   {% endblock %}
 {% endif %}
 <div class="ui-v2-problem-detail">
+{% if canUseMistake %}
+<style>
+  .problem-mistake-float {
+    background: rgba(255, 255, 255, .96);
+    border: 1px solid #dbe4ef;
+    border-radius: 10px;
+    bottom: 5.5rem;
+    box-shadow: 0 16px 36px rgba(15, 23, 42, .16);
+    color: #475569;
+    max-width: 18rem;
+    padding: .9rem 1rem;
+    position: fixed;
+    right: 1.2rem;
+    z-index: 20;
+  }
+  .problem-mistake-float--hidden {
+    display: none;
+  }
+  .problem-mistake-float__title {
+    color: #0f172a;
+    font-size: .95rem;
+    font-weight: 800;
+    margin-bottom: .35rem;
+  }
+  .problem-mistake-float__text {
+    font-size: .82rem;
+    line-height: 1.45;
+    margin-bottom: .7rem;
+  }
+  .problem-mistake-float__form {
+    margin: 0;
+  }
+  .problem-mistake-float__button {
+    background: #2563eb;
+    border: 0;
+    border-radius: 8px;
+    color: #fff;
+    cursor: pointer;
+    display: inline-flex;
+    font-size: .86rem;
+    font-weight: 800;
+    line-height: 1;
+    padding: .6rem .8rem;
+  }
+  .problem-mistake-float__button.secondary {
+    background: #0f766e;
+  }
+  @media (max-width: 40em) {
+    .problem-mistake-float {
+      bottom: 4.8rem;
+      left: 1rem;
+      max-width: none;
+      right: 1rem;
+    }
+  }
+  body.mode--scratchpad .problem-mistake-float {
+    bottom: var(--problem-mistake-bottom, 15.8rem);
+    left: var(--problem-mistake-left, calc(50vw + 1rem));
+    max-width: 14rem;
+    padding: .75rem .8rem;
+    right: auto;
+    z-index: 60;
+  }
+  body.mode--scratchpad .problem-mistake-float__title {
+    font-size: .86rem;
+    margin-bottom: .45rem;
+  }
+  body.mode--scratchpad .problem-mistake-float__text {
+    display: none;
+  }
+  body.mode--scratchpad .problem-mistake-float__button {
+    font-size: .78rem;
+    padding: .5rem .65rem;
+  }
+  @media (max-width: 40em) {
+    body.mode--scratchpad .problem-mistake-float {
+      bottom: var(--problem-mistake-bottom, 8.5rem);
+      left: 1rem;
+      max-width: none;
+      right: 1rem;
+    }
+  }
+</style>
+<div class="problem-mistake-float{{ '' if showMistakePrompt else ' problem-mistake-float--hidden' }}" data-mistake-state="{{ mistakeDoc.status if mistakeDoc else '' }}">
+  {% if mistakeDoc and mistakeDoc.status != 'mastered' %}
+    <div class="problem-mistake-float__title">已加入错题集</div>
+    <div class="problem-mistake-float__text">复盘完成后可以标记已掌握。</div>
+    <form class="problem-mistake-float__form" method="post" action="{{ url('problem_detail', pid=pdoc.docId) }}">
+      <input type="hidden" name="operation" value="master_mistake">
+      <button class="problem-mistake-float__button secondary" type="submit">标记已掌握</button>
+    </form>
+  {% else %}
+    <div class="problem-mistake-float__title">{{ '已掌握本题' if mistakeDoc and mistakeDoc.status == 'mastered' else '需要之后复盘？' }}</div>
+    <div class="problem-mistake-float__text">遇到卡点、问过老师，或想之后再练，可以加入错题集。</div>
+    <form class="problem-mistake-float__form" method="post" action="{{ url('problem_detail', pid=pdoc.docId) }}">
+      <input type="hidden" name="operation" value="add_mistake">
+      <button class="problem-mistake-float__button" type="submit">{{ '重新加入错题集' if mistakeDoc and mistakeDoc.status == 'mastered' else '加入错题集' }}</button>
+    </form>
+  {% endif %}
+</div>
+{% endif %}
 <div class="row" data-sticky-parent>
   <div class="medium-9 columns">
     <div class="section ui-v2-problem-detail-hero">

@@ -22,10 +22,11 @@ import {
 import {
     DomainDoc, ProblemDoc, ProblemSearchOptions, ProblemStatusDoc, RecordDoc, User,
 } from '../interface';
-import { PERM, PRIV, STATUS } from '../model/builtin';
+import { NORMAL_STATUS, PERM, PRIV, STATUS } from '../model/builtin';
 import * as contest from '../model/contest';
 import * as discussion from '../model/discussion';
 import domain from '../model/domain';
+import * as mistake from '../model/mistake';
 import * as oplog from '../model/oplog';
 import problem from '../model/problem';
 import record from '../model/record';
@@ -276,6 +277,38 @@ export class ProblemMainHandler extends Handler {
     }
 }
 
+export class ProblemMistakeHandler extends Handler {
+    @param('page', Types.PositiveInt, true)
+    @param('status', Types.Range(['review', 'mastered', 'all']), true)
+    async get(domainId: string, page = 1, status: 'review' | 'mastered' | 'all' = 'review') {
+        const mistakeQuery: Filter<mistake.MistakeDoc> = { uid: this.user._id };
+        if (status !== 'all') mistakeQuery.status = status;
+        const [mdocs, ppcount, mcount] = await this.paginate(
+            mistake.getMulti(domainId, mistakeQuery).sort({ updatedAt: -1, _id: -1 }),
+            page,
+            'problem',
+        );
+        const pids = mdocs.map((mdoc) => mdoc.pid);
+        const [pdict, psdict] = await Promise.all([
+            problem.getList(domainId, pids, this.user._id, false, problem.PROJECTION_LIST, true),
+            problem.getListStatus(domainId, this.user._id, pids),
+        ]);
+        const visibleMdocs = mdocs.filter((mdoc) => pdict[mdoc.pid]);
+        this.response.template = 'problem_mistake.html';
+        this.response.body = {
+            page,
+            ppcount,
+            mcount,
+            mdocs: visibleMdocs,
+            pdict,
+            psdict,
+            status,
+            page_name: 'problem_mistake',
+            title: this.translate('problem_mistake'),
+        };
+    }
+}
+
 export class ProblemRandomHandler extends Handler {
     @param('q', Types.Content, true)
     async get(domainId: string, qs = '') {
@@ -438,10 +471,41 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             solution.count(domainId, { parentId: this.pdoc.docId }),
             discussion.count(domainId, { parentId: this.pdoc.docId }),
         ]);
+        const isProgrammingProblem = !!this.pdoc.config && typeof this.pdoc.config === 'object'
+            && !['objective', 'submit_answer'].includes(this.pdoc.config.type);
+        const canUseMistake = !tid && isProgrammingProblem && this.user.hasPerm(PERM.PERM_SUBMIT_PROBLEM);
+        const mistakeDoc = canUseMistake
+            ? await mistake.get(domainId, this.user._id, this.pdoc.docId)
+            : null;
+        let firstFormalStatus: STATUS | null = null;
+        if (canUseMistake) {
+            const formalRecordQuery = {
+                uid: this.user._id,
+                pid: this.pdoc.docId,
+                status: { $in: NORMAL_STATUS },
+                input: { $exists: false },
+                $or: [
+                    { contest: { $exists: false } },
+                    { contest: null },
+                    { contest: { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] } },
+                ],
+            };
+            const firstSubmit = await record.getMulti(domainId, formalRecordQuery)
+                .project({ _id: 1, status: 1 })
+                .sort({ _id: 1 })
+                .limit(1)
+                .next();
+            firstFormalStatus = firstSubmit?.status ?? null;
+        }
         this.response.body = {
             pdoc: this.pdoc,
             udoc: this.udoc,
             psdoc: tid ? null : this.psdoc,
+            mistakeDoc,
+            isMistakeSupported: isProgrammingProblem,
+            canUseMistake,
+            firstFormalStatus,
+            showMistakePrompt: false,
             title: this.pdoc.title,
             solutionCount: scnt,
             discussionCount: dcnt,
@@ -544,6 +608,21 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
     async postStar(domainId: string, star: boolean) {
         await problem.setStar(domainId, this.pdoc.docId, this.user._id, star);
         this.back({ star });
+    }
+
+    async postAddMistake() {
+        this.checkPerm(PERM.PERM_SUBMIT_PROBLEM);
+        if (!this.pdoc.config || typeof this.pdoc.config !== 'object' || ['objective', 'submit_answer'].includes(this.pdoc.config.type)) {
+            throw new ValidationError('type');
+        }
+        await mistake.add(this.args.domainId, this.user._id, this.pdoc.docId, 'manual');
+        this.back();
+    }
+
+    async postMasterMistake() {
+        this.checkPerm(PERM.PERM_SUBMIT_PROBLEM);
+        await mistake.master(this.args.domainId, this.user._id, this.pdoc.docId);
+        this.back();
     }
 }
 
@@ -1150,6 +1229,7 @@ declare module '@hydrooj/framework' {
 
 export async function apply(ctx: Context) {
     ctx.Route('problem_main', '/p', ProblemMainHandler, PERM.PERM_VIEW_PROBLEM);
+    ctx.Route('problem_mistake', '/mistakes', ProblemMistakeHandler, PRIV.PRIV_USER_PROFILE, PERM.PERM_VIEW_PROBLEM);
     ctx.Route('problem_random', '/problem/random', ProblemRandomHandler, PERM.PERM_VIEW_PROBLEM);
     ctx.Route('online_ide', '/ide', OnlineIdeHandler, PERM.PERM_SUBMIT_PROBLEM);
     ctx.Route('problem_detail', '/p/:pid', ProblemDetailHandler);

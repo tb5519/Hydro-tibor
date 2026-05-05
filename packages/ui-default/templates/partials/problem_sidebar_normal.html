@@ -58,6 +58,27 @@
         <span class="icon icon-send"></span> {{ _('No Permission to Submit') }}
       </a></li>
     {% endif %}
+    {% if page_name == 'problem_detail' and canUseMistake %}
+      {% if mistakeDoc and mistakeDoc.status != 'mastered' %}
+        <li class="menu__item scratchpad--hide">
+          <form method="post" action="{{ url('problem_detail', pid=pdoc.docId) }}">
+            <input type="hidden" name="operation" value="master_mistake">
+            <button type="submit" class="menu__link">
+              <span class="icon icon-check"></span> 标记已掌握
+            </button>
+          </form>
+        </li>
+      {% else %}
+        <li class="menu__item scratchpad--hide">
+          <form method="post" action="{{ url('problem_detail', pid=pdoc.docId) }}">
+            <input type="hidden" name="operation" value="add_mistake">
+            <button type="submit" class="menu__link">
+              <span class="icon icon-flag"></span> 加入错题集
+            </button>
+          </form>
+        </li>
+      {% endif %}
+    {% endif %}
     {% if handler.user.hasPerm(perm.PERM_REJUDGE_PROBLEM) %}
       <li class="menu__item">
         <form method="post" action="{{ url('problem_detail', pid=pdoc.docId) }}">

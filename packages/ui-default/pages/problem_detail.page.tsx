@@ -1,3 +1,4 @@
+import { NORMAL_STATUS, STATUS } from '@hydrooj/common';
 import $ from 'jquery';
 import yaml from 'js-yaml';
 import React from 'react';
@@ -109,6 +110,124 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   let renderReact = null;
   let unmountReact = null;
   const extender = new ProblemPageExtender();
+  const normalStatuses = new Set(NORMAL_STATUS);
+  const recordPretestId = '000000000000000000000000';
+  const recordGenerateId = '000000000000000000000001';
+  let firstFormalRecordStatus = Number.isFinite(+UiContext.firstFormalRecordStatus)
+    ? +UiContext.firstFormalRecordStatus
+    : null;
+  let sawCurrentWrongFormalRecord = false;
+
+  function getScratchpadCacheKey() {
+    let cacheKey = `${UserContext._id}/${UiContext.pdoc.domainId}/${UiContext.pdoc.docId}`;
+    if (UiContext.tdoc?._id) cacheKey += `@${UiContext.tdoc._id}`;
+    return cacheKey;
+  }
+
+  function prepareScratchpadRepractice() {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('reset_code') !== '1') return;
+    (window as any).__HYDRO_RESET_SCRATCHPAD_CODE__ = true;
+    localStorage.removeItem(getScratchpadCacheKey());
+    url.searchParams.delete('reset_code');
+    url.searchParams.delete('scratchpad');
+    window.history.replaceState(window.history.state, '', url.toString());
+  }
+
+  function updateMistakePromptPosition() {
+    const prompt = document.querySelector<HTMLElement>('.problem-mistake-float');
+    if (!prompt) return;
+    if (!document.body.classList.contains('mode--scratchpad')) {
+      prompt.style.removeProperty('--problem-mistake-left');
+      prompt.style.removeProperty('--problem-mistake-bottom');
+      return;
+    }
+    const editorElement = document.querySelector<HTMLElement>('.monaco-editor')
+      || document.querySelector<HTMLElement>('.splitpane-fill')
+      || document.querySelector<HTMLElement>('.scratchpad__toolbar');
+    const editorRect = editorElement?.getBoundingClientRect();
+    if (editorRect && editorRect.width > 0) {
+      prompt.style.setProperty('--problem-mistake-left', `${Math.max(12, editorRect.left + 12)}px`);
+    }
+
+    const panelTitles = Array.from(document.querySelectorAll<HTMLElement>('.scratchpad__panel-title'))
+      .filter((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+    const recordsTitle = panelTitles.find((element) => {
+      const text = (element.textContent || '').trim().toLowerCase();
+      return text.includes('评测记录') || text.includes('record');
+    }) || panelTitles[panelTitles.length - 1];
+    const recordsRect = recordsTitle?.getBoundingClientRect();
+    if (recordsRect && recordsRect.top > 0 && recordsRect.top < window.innerHeight) {
+      prompt.style.setProperty('--problem-mistake-bottom', `${Math.max(72, window.innerHeight - recordsRect.top + 8)}px`);
+    }
+  }
+
+  function revealMistakePrompt() {
+    updateMistakePromptPosition();
+    $('.problem-mistake-float').removeClass('problem-mistake-float--hidden');
+  }
+
+  function getRecordId(rdoc) {
+    const id = rdoc?._id;
+    if (!id) return '';
+    if (typeof id === 'string') return id;
+    if (id.$oid) return id.$oid;
+    if (id.toHexString) return id.toHexString();
+    return `${id}`;
+  }
+
+  function getRecordContestId(rdoc) {
+    const contest = rdoc?.contest;
+    if (!contest) return '';
+    if (typeof contest === 'string') return contest;
+    if (contest.$oid) return contest.$oid;
+    if (contest.toHexString) return contest.toHexString();
+    return `${contest}`;
+  }
+
+  function isFormalRecord(rdoc, store) {
+    if (!rdoc) return false;
+    const contestId = getRecordContestId(rdoc);
+    if (contestId === recordGenerateId) return false;
+    if (contestId === recordPretestId) return false;
+    if (Object.hasOwn(rdoc, 'input')) return false;
+    const pretestRid = store.getState()?.pretest?.rid;
+    if (rdoc._id && pretestRid && getRecordId(rdoc) === pretestRid) return false;
+    return true;
+  }
+
+  function getFirstKnownFormalRecordStatus(store) {
+    const records = Object.values(store.getState()?.records?.items || {})
+      .filter((rdoc) => {
+        const status = +rdoc?.status;
+        return normalStatuses.has(status as STATUS) && isFormalRecord(rdoc, store);
+      })
+      .sort((a, b) => getRecordId(a).localeCompare(getRecordId(b)));
+    return records.length ? +records[0].status : null;
+  }
+
+  function handleMistakePromptRecordPush(store, rdoc) {
+    if (!UiContext.isMistakeSupported || !UiContext.canUseMistake) return;
+    const $prompt = $('.problem-mistake-float');
+    if (!$prompt.length || !$prompt.hasClass('problem-mistake-float--hidden')) return;
+    if ($prompt.attr('data-mistake-state')) return;
+    if (!isFormalRecord(rdoc, store)) return;
+    const pushedStatus = +rdoc?.status;
+    if (!normalStatuses.has(pushedStatus as STATUS)) return;
+    if (pushedStatus !== STATUS.STATUS_ACCEPTED) {
+      sawCurrentWrongFormalRecord = true;
+      if (firstFormalRecordStatus === null) firstFormalRecordStatus = pushedStatus;
+      return;
+    }
+    const firstKnownStatus = getFirstKnownFormalRecordStatus(store);
+    if (firstKnownStatus !== null) firstFormalRecordStatus = firstKnownStatus;
+    if (sawCurrentWrongFormalRecord || (firstFormalRecordStatus !== null && firstFormalRecordStatus !== STATUS.STATUS_ACCEPTED)) {
+      revealMistakePrompt();
+    }
+  }
 
   async function handleClickDownloadProblem() {
     await downloadProblemSet([UiContext.problemNumId], UiContext.pdoc.title);
@@ -152,6 +271,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
         type: 'SCRATCHPAD_RECORDS_PUSH',
         payload: msg,
       });
+      handleMistakePromptRecordPush(store, msg.rdoc);
     };
 
     renderReact = () => {
@@ -172,9 +292,11 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   async function enterScratchpadMode() {
     if (progress) return;
     progress = true;
+    prepareScratchpadRepractice();
     await extender.extend();
     await loadReact();
     renderReact();
+    setTimeout(updateMistakePromptPosition, 0);
     await scratchpadFadeIn();
     progress = false;
   }
@@ -385,9 +507,13 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     $('span.tags').css('display', 'inline-block');
   });
   $('[name="problem-sidebar__download"]').on('click', handleClickDownloadProblem);
+  $(window).on('resize', updateMistakePromptPosition);
+  $('#scratchpad').on('vjScratchpadRelayout', updateMistakePromptPosition);
   if (UiContext.pdoc.config?.type === 'objective') {
     loadObjective();
     $(document).on('vjContentNew', loadObjective);
+  } else if (new URL(window.location.href).searchParams.get('scratchpad') === '1') {
+    enterScratchpadMode();
   }
 });
 

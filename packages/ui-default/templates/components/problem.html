@@ -2,7 +2,7 @@
 {%- if not invalid -%}
   {% set _linkArgs = { pid:pdoc.pid|default(pdoc.docId) } %}
   {% if tdoc %}{{ set(_linkArgs, 'query', {tid:tdoc.docId}) }}{% endif %}
-  <a href="{{ url('problem_detail', _linkArgs) }}"{% if small %} data-tooltip="{{ pdoc.title }}"{% endif %}>
+  <a href="{{ url('problem_detail', _linkArgs) }}" data-no-instant{% if small %} data-tooltip="{{ pdoc.title }}"{% endif %}>
 {%- endif -%}
 {% if show_pid %}
 <b>{%- if tdoc and alphabetic -%}{{ utils.getAlphabeticId(tdoc.pids.indexOf(pdoc.docId)) }}
