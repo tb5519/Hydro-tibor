@@ -275,6 +275,374 @@
 })();
 </script>
 {% endif %}
+{% if pdoc.config.type == 'objective' %}
+<style>
+  .objective-problem-mode .ui-v2-problem-statement {
+    max-width: 820px;
+    padding: 24px 28px 30px;
+  }
+  .objective-problem-mode .objective-question-title {
+    margin-top: 22px;
+    padding-top: 16px;
+    border-top: 1px solid var(--ui-v2-border, #dbe4ef);
+    color: var(--ui-v2-text, #0f172a);
+    font-weight: 600;
+  }
+  .objective-problem-mode .objective-question-title:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+  }
+  .objective-problem-mode .objective-options {
+    display: grid;
+    gap: 8px;
+    margin: 10px 0 20px;
+    padding: 0;
+    list-style: none;
+  }
+  .objective-problem-mode .objective-option,
+  .objective-problem-mode .ui-v2-problem-statement label.radiobox[class*="objective_"] {
+    display: block;
+    margin: 0;
+    cursor: pointer;
+    user-select: none;
+  }
+  .objective-problem-mode .objective-option input,
+  .objective-problem-mode .ui-v2-problem-statement label.radiobox[class*="objective_"] > input.objective-input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .objective-problem-mode .objective-choice-body {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    min-height: 44px;
+    padding: 9px 12px;
+    border: 1px solid var(--ui-v2-border, #dbe4ef);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--ui-v2-text-muted, #64748b);
+    line-height: 1.6;
+    transition: color .15s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease;
+  }
+  .objective-problem-mode .objective-option:hover .objective-choice-body,
+  .objective-problem-mode .ui-v2-problem-statement label.radiobox[class*="objective_"]:hover .objective-choice-body {
+    border-color: rgba(37, 99, 235, .38);
+    background: #f8fbff;
+    color: var(--ui-v2-text, #0f172a);
+  }
+  .objective-problem-mode .objective-choice-letter {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    margin-top: 1px;
+    border: 1px solid var(--ui-v2-border-strong, #cbd5e1);
+    border-radius: 999px;
+    background: var(--ui-v2-surface-muted, #f8fafc);
+    color: var(--ui-v2-text-muted, #64748b);
+    font-weight: 700;
+    line-height: 1;
+  }
+  .objective-problem-mode .objective-choice-text {
+    min-width: 0;
+    padding-top: 1px;
+  }
+  .objective-problem-mode .objective-option input:checked + .objective-choice-body,
+  .objective-problem-mode .ui-v2-problem-statement label.radiobox[class*="objective_"] > input.objective-input:checked + .objective-choice-body {
+    border-color: rgba(37, 99, 235, .72);
+    background: #eff6ff;
+    color: var(--ui-v2-text, #0f172a);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, .08);
+  }
+  .objective-problem-mode .objective-option input:checked + .objective-choice-body .objective-choice-letter,
+  .objective-problem-mode .ui-v2-problem-statement label.radiobox[class*="objective_"] > input.objective-input:checked + .objective-choice-body .objective-choice-letter {
+    border-color: var(--ui-v2-accent, #2563eb);
+    background: var(--ui-v2-accent, #2563eb);
+    color: #fff;
+  }
+  .objective-problem-mode .objective-free-answer {
+    display: block !important;
+    max-width: 560px;
+    margin: 10px 0 20px;
+  }
+  .objective-problem-mode .objective-free-answer .textbox {
+    width: 100%;
+    padding: 9px 11px;
+    border-color: var(--ui-v2-border, #dbe4ef);
+    border-radius: 8px;
+  }
+  .objective-problem-mode .ui-v2-problem-statement > input[type="submit"].button {
+    min-width: 160px;
+    height: 42px;
+    margin-top: 12px;
+  }
+  .objective-problem-mode .objective-nav-card {
+    margin: 4px 6px 14px;
+    padding: 12px;
+    border: 1px solid var(--ui-v2-border, #dbe4ef);
+    border-radius: 12px;
+    background: #fff;
+  }
+  .objective-problem-mode .objective-nav-title {
+    margin-bottom: 10px;
+    color: var(--ui-v2-text, #0f172a);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .objective-problem-mode .objective-nav-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+    gap: 8px;
+    margin: 0 !important;
+  }
+  .objective-problem-mode .objective-nav-item,
+  .objective-problem-mode #problem-navigation .contest-problems a[href*="#p"] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 34px;
+    border: 1px solid var(--ui-v2-border-strong, #cbd5e1);
+    border-radius: 8px;
+    background: var(--ui-v2-surface-muted, #f8fafc);
+    color: var(--ui-v2-text-muted, #64748b);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .objective-problem-mode .objective-nav-item:hover,
+  .objective-problem-mode #problem-navigation .contest-problems a[href*="#p"]:hover {
+    border-color: rgba(37, 99, 235, .45);
+    color: var(--ui-v2-accent, #2563eb);
+  }
+  .objective-problem-mode .objective-nav-item.is-answered,
+  .objective-problem-mode #problem-navigation .contest-problems a[href*="#p"].is-answered,
+  .objective-problem-mode #problem-navigation .contest-problems a[href*="#p"].pending {
+    border-color: rgba(37, 99, 235, .68);
+    background: #eff6ff;
+    color: var(--ui-v2-accent, #2563eb);
+  }
+  .objective-problem-mode .objective-nav-legend {
+    display: flex;
+    gap: 12px;
+    margin-top: 10px;
+    color: var(--ui-v2-text-muted, #64748b);
+    font-size: 12px;
+  }
+  .objective-problem-mode .objective-nav-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 4px;
+    border: 1px solid var(--ui-v2-border-strong, #cbd5e1);
+    border-radius: 999px;
+    background: var(--ui-v2-surface-muted, #f8fafc);
+  }
+  .objective-problem-mode .objective-nav-dot--answered {
+    border-color: var(--ui-v2-accent, #2563eb);
+    background: var(--ui-v2-accent, #2563eb);
+  }
+  @media screen and (max-width: 768px) {
+    .objective-problem-mode .ui-v2-problem-statement {
+      max-width: none;
+      padding: 18px 16px 24px;
+    }
+    .objective-problem-mode .objective-question-title {
+      margin-top: 18px;
+      padding-top: 14px;
+    }
+    .objective-problem-mode .objective-choice-body {
+      gap: 8px;
+      padding: 9px 10px;
+    }
+    .objective-problem-mode .objective-nav-card {
+      margin: 4px 0 12px;
+    }
+  }
+</style>
+<script>
+(function () {
+  window.__HYDRO_OBJECTIVE_INLINE__ = 'objective-ui-fallback-v1';
+
+  var normalizeTimer = null;
+
+  function toArray(list) {
+    return Array.prototype.slice.call(list || []);
+  }
+
+  function cssEscape(value) {
+    if (window.CSS && CSS.escape) return CSS.escape(value);
+    return String(value).replace(/["\\]/g, '\\$&');
+  }
+
+  function trimChoicePrefix(text, letter) {
+    if (!letter) return text;
+    return text.replace(new RegExp('^\\s*' + cssEscape(letter) + '\\s*[.．、:]?\\s*'), '');
+  }
+
+  function addObjectiveModeClass() {
+    document.documentElement.classList.add('objective-problem-mode');
+    document.body.classList.add('objective-problem-mode');
+  }
+
+  function removeObjectiveModeClass() {
+    document.documentElement.classList.remove('objective-problem-mode');
+    document.body.classList.remove('objective-problem-mode');
+  }
+
+  function isObjectivePage() {
+    return !!(window.UiContext
+      && UiContext.pdoc
+      && UiContext.pdoc.config
+      && UiContext.pdoc.config.type === 'objective');
+  }
+
+  function normalizeChoiceLabel(label) {
+    if (!label || label.querySelector('.objective-choice-body')) return;
+    var input = label.querySelector('input.objective-input');
+    if (!input) return;
+
+    label.classList.add('objective-option');
+    var letter = input.value || '';
+    var body = document.createElement('span');
+    var marker = document.createElement('span');
+    var text = document.createElement('span');
+
+    body.className = 'objective-choice-body';
+    marker.className = 'objective-choice-letter';
+    marker.textContent = letter;
+    text.className = 'objective-choice-text';
+
+    toArray(label.childNodes).forEach(function (node) {
+      if (node === input) return;
+      if (node.nodeType === Node.TEXT_NODE) {
+        var value = trimChoicePrefix(node.textContent || '', letter);
+        if (value) text.appendChild(document.createTextNode(value));
+      } else {
+        text.appendChild(node);
+      }
+    });
+
+    body.appendChild(marker);
+    body.appendChild(text);
+    label.innerHTML = '';
+    label.appendChild(input);
+    label.appendChild(body);
+  }
+
+  function normalizeFreeAnswer(block) {
+    if (!block) return;
+    if (!block.querySelector('input.objective-input, textarea.objective-input')) return;
+    if (block.tagName === 'LABEL') return;
+    block.classList.add('objective-free-answer');
+    block.style.display = '';
+  }
+
+  function normalizeOptionLists() {
+    toArray(document.querySelectorAll('.problem-content .typo ul')).forEach(function (list) {
+      if (!list.querySelector('label.radiobox[class*="objective_"]')) return;
+      list.classList.add('objective-options');
+      if (!list.classList.contains('objective-options--single') && !list.classList.contains('objective-options--multi')) {
+        var first = list.querySelector('input.objective-input');
+        list.classList.add(first && first.type === 'checkbox' ? 'objective-options--multi' : 'objective-options--single');
+      }
+    });
+  }
+
+  function markQuestionTitles() {
+    var statement = document.querySelector('.problem-content .typo');
+    if (!statement) return;
+    toArray(statement.children).forEach(function (element) {
+      if (element.classList.contains('objective-question-title')) return;
+      if (element.querySelector('.objective-free-answer')) {
+        element.classList.add('objective-question-title');
+        return;
+      }
+      var next = element.nextElementSibling;
+      if (next && next.matches('ul.objective-options')) element.classList.add('objective-question-title');
+    });
+  }
+
+  function updateObjectiveNavState() {
+    var nav = document.getElementById('problem-navigation');
+    if (!nav) return;
+
+    toArray(nav.querySelectorAll('a[href*="#p"]')).forEach(function (link) {
+      var href = link.getAttribute('href') || '';
+      var id = href.slice(href.indexOf('#p') + 2);
+      if (!id) return;
+      var selector = '.objective_' + cssEscape(id) + ' input.objective-input, .objective_' + cssEscape(id) + ' textarea.objective-input';
+      var inputs = toArray(document.querySelectorAll(selector));
+      var answered = inputs.some(function (input) {
+        if (input.type === 'checkbox' || input.type === 'radio') return input.checked;
+        return !!input.value;
+      });
+      link.classList.add('objective-nav-item');
+      link.classList.toggle('is-answered', answered || link.classList.contains('pending'));
+    });
+  }
+
+  function normalizeNavigation() {
+    var nav = document.getElementById('problem-navigation');
+    if (!nav || nav.querySelector('.objective-nav-card')) {
+      updateObjectiveNavState();
+      return;
+    }
+
+    var grid = nav.querySelector('.contest-problems');
+    if (!grid) return;
+    grid.classList.add('objective-nav-grid');
+
+    var card = document.createElement('div');
+    var title = document.createElement('div');
+    var legend = document.createElement('div');
+    card.className = 'objective-nav-card';
+    title.className = 'objective-nav-title';
+    title.textContent = '答题卡';
+    legend.className = 'objective-nav-legend';
+    legend.innerHTML = '<span><i class="objective-nav-dot objective-nav-dot--answered"></i>已答</span><span><i class="objective-nav-dot"></i>未答</span>';
+
+    grid.parentNode.insertBefore(card, grid);
+    card.appendChild(title);
+    card.appendChild(grid);
+    card.appendChild(legend);
+    updateObjectiveNavState();
+  }
+
+  function normalizeObjectiveUi() {
+    if (!isObjectivePage()) {
+      removeObjectiveModeClass();
+      return;
+    }
+    addObjectiveModeClass();
+    toArray(document.querySelectorAll('.problem-content .typo label.radiobox[class*="objective_"]')).forEach(normalizeChoiceLabel);
+    toArray(document.querySelectorAll('.problem-content .typo [class*="objective_"]')).forEach(normalizeFreeAnswer);
+    normalizeOptionLists();
+    markQuestionTitles();
+    normalizeNavigation();
+  }
+
+  function scheduleNormalize() {
+    if (normalizeTimer) window.clearTimeout(normalizeTimer);
+    normalizeTimer = window.setTimeout(normalizeObjectiveUi, 80);
+  }
+
+  if (!window.__HYDRO_OBJECTIVE_INLINE_BOUND__) {
+    window.__HYDRO_OBJECTIVE_INLINE_BOUND__ = true;
+    document.addEventListener('input', scheduleNormalize);
+    document.addEventListener('change', scheduleNormalize);
+    document.addEventListener('DOMContentLoaded', scheduleNormalize);
+    var observer = new MutationObserver(scheduleNormalize);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    window.setInterval(normalizeObjectiveUi, 1200);
+  }
+  scheduleNormalize();
+})();
+</script>
+{% endif %}
 <div class="row" data-sticky-parent>
   <div class="medium-9 columns">
     <div class="section ui-v2-problem-detail-hero">
