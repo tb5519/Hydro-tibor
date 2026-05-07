@@ -204,37 +204,61 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     return true;
   }
 
-  function getFirstKnownFormalRecordStatus(store) {
-    const records = (Object.values(store.getState()?.records?.items || {}) as any[])
+  function isCurrentFormalSubmitRecord(store, rdoc) {
+    const recordId = getRecordId(rdoc);
+    if (!recordId) return false;
+    return (store.getState()?.ui?.formalSubmitRids || [])
+      .some((rid) => getRecordId({ _id: rid }) === recordId);
+  }
+
+  function getKnownFormalRecords(store) {
+    return (Object.values(store.getState()?.records?.items || {}) as any[])
       .filter((rdoc) => {
         const status = +rdoc?.status;
         return normalStatuses.has(status as STATUS) && isFormalRecord(rdoc, store);
       })
       .sort((a, b) => getRecordId(a).localeCompare(getRecordId(b)));
-    return records.length ? +records[0].status : null;
   }
 
-  function handleMistakePromptRecordPush(store, rdoc) {
+  function maybeRevealMistakePrompt(store, rdoc = null) {
     if (!UiContext.isMistakeSupported || !UiContext.canUseMistake) return;
     const $prompt = $('.problem-mistake-float');
     if (!$prompt.length || !$prompt.hasClass('problem-mistake-float--hidden')) return;
     if ($prompt.attr('data-mistake-state')) return;
-    if (!isFormalRecord(rdoc, store)) return;
-    const pushedStatus = +rdoc?.status;
-    if (!normalStatuses.has(pushedStatus as STATUS)) return;
-    if (pushedStatus !== STATUS.STATUS_ACCEPTED) {
-      hasWrongFormalRecord = true;
-      sawCurrentWrongFormalRecord = true;
-      if (firstFormalRecordStatus === null) firstFormalRecordStatus = pushedStatus;
-      return;
+
+    if (rdoc && isFormalRecord(rdoc, store)) {
+      const pushedStatus = +rdoc.status;
+      if (normalStatuses.has(pushedStatus as STATUS)) {
+        if (pushedStatus !== STATUS.STATUS_ACCEPTED) {
+          hasWrongFormalRecord = true;
+          sawCurrentWrongFormalRecord = true;
+        }
+        if (firstFormalRecordStatus === null) firstFormalRecordStatus = pushedStatus;
+      }
     }
-    const firstKnownStatus = getFirstKnownFormalRecordStatus(store);
-    if (firstKnownStatus !== null) firstFormalRecordStatus = firstKnownStatus;
-    if (
+
+    const records = getKnownFormalRecords(store);
+    if (!records.length) return;
+    if (firstFormalRecordStatus === null) firstFormalRecordStatus = +records[0].status;
+
+    const latestRecord = records[records.length - 1];
+    const latestStatus = +latestRecord.status;
+    if (latestStatus !== STATUS.STATUS_ACCEPTED) return;
+
+    const latestId = getRecordId(latestRecord);
+    const hasKnownWrongBeforeLatest = records.some((record) => {
+      const recordStatus = +record.status;
+      const recordId = getRecordId(record);
+      return recordStatus !== STATUS.STATUS_ACCEPTED
+        && (!latestId || !recordId || recordId.localeCompare(latestId) < 0);
+    });
+    const latestIsCurrentSubmit = isCurrentFormalSubmitRecord(store, latestRecord);
+    if (latestIsCurrentSubmit && (
       sawCurrentWrongFormalRecord
       || hasWrongFormalRecord
+      || hasKnownWrongBeforeLatest
       || (firstFormalRecordStatus !== null && firstFormalRecordStatus !== STATUS.STATUS_ACCEPTED)
-    ) {
+    )) {
       revealMistakePrompt();
     }
   }
@@ -262,7 +286,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
         type: 'SCRATCHPAD_RECORDS_PUSH',
         payload: { rdoc },
       });
-      handleMistakePromptRecordPush(store, rdoc);
+      maybeRevealMistakePrompt(store, rdoc);
 
       const status = +rdoc.status;
       if (normalStatuses.has(status as STATUS) || status === STATUS.STATUS_CANCELED) {
@@ -275,6 +299,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     store.subscribe(() => {
       const rids = store.getState()?.ui?.formalSubmitRids || [];
       rids.forEach((rid) => watchFormalSubmitRecord(store, WebSocket, rid));
+      maybeRevealMistakePrompt(store);
     });
   }
 
@@ -314,13 +339,13 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     // @ts-ignore
     window.store = store;
     const sock = new WebSocket(UiContext.ws_prefix + UiContext.pretestConnUrl);
-    sock.onmessage = (message) => {
-      const msg = JSON.parse(message.data);
+    sock.onmessage = (message, data) => {
+      const msg = JSON.parse(data || message.data);
       store.dispatch({
         type: 'SCRATCHPAD_RECORDS_PUSH',
         payload: msg,
       });
-      handleMistakePromptRecordPush(store, msg.rdoc);
+      maybeRevealMistakePrompt(store, msg.rdoc);
     };
     watchFormalSubmitRecords(store, WebSocket);
 
