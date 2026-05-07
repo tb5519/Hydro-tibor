@@ -148,6 +148,132 @@
     </form>
   {% endif %}
 </div>
+<script>
+(function () {
+  window.__HYDRO_MISTAKE_PROMPT_INLINE__ = 'live-ac-records-v1';
+
+  var sawWrongRecord = false;
+  var scanTimer = null;
+
+  function getPrompt() {
+    return document.querySelector('.problem-mistake-float');
+  }
+
+  function isScratchpadMode() {
+    return document.body.classList.contains('mode--scratchpad')
+      || document.documentElement.classList.contains('mode--scratchpad');
+  }
+
+  function isVisible(element) {
+    if (!element) return false;
+    var rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function textIncludesAny(text, values) {
+    for (var i = 0; i < values.length; i++) {
+      if (text.indexOf(values[i]) >= 0) return true;
+    }
+    return false;
+  }
+
+  function updateMistakePromptPosition() {
+    var prompt = getPrompt();
+    if (!prompt) return;
+    if (!isScratchpadMode()) {
+      prompt.style.removeProperty('--problem-mistake-left');
+      prompt.style.removeProperty('--problem-mistake-bottom');
+      return;
+    }
+
+    var editor = document.querySelector('.monaco-editor')
+      || document.querySelector('.scratchpad__editor')
+      || document.querySelector('.scratchpad__toolbar');
+    if (editor && isVisible(editor)) {
+      var editorRect = editor.getBoundingClientRect();
+      prompt.style.setProperty('--problem-mistake-left', Math.max(12, editorRect.left + 12) + 'px');
+    }
+
+    var panels = Array.prototype.slice.call(document.querySelectorAll('.scratchpad__panel-title, .section__title'));
+    var recordsTitle = null;
+    for (var i = 0; i < panels.length; i++) {
+      var panelText = (panels[i].textContent || '').toLowerCase();
+      if (isVisible(panels[i]) && (panelText.indexOf('评测记录') >= 0 || panelText.indexOf('records') >= 0)) {
+        recordsTitle = panels[i];
+        break;
+      }
+    }
+    if (!recordsTitle) {
+      var recordsTable = document.querySelector('.scratchpad__records__table');
+      recordsTitle = recordsTable && recordsTable.closest('.scratchpad__panel');
+    }
+    if (recordsTitle && isVisible(recordsTitle)) {
+      var recordsRect = recordsTitle.getBoundingClientRect();
+      if (recordsRect.top > 0 && recordsRect.top < window.innerHeight) {
+        prompt.style.setProperty('--problem-mistake-bottom', Math.max(72, window.innerHeight - recordsRect.top + 8) + 'px');
+      }
+    }
+  }
+
+  function getRowStatus(row) {
+    var detail = row.querySelector('.col--detail');
+    var text = (row.textContent || '').toUpperCase().replace(/\s+/g, ' ');
+
+    if (detail && detail.classList.contains('pass')) return 'AC';
+    if (detail && detail.classList.contains('fail')) return 'WRONG';
+    if (/(WA|TLE|MLE|RTE)\s*:\s*[1-9]/.test(text)) return 'WRONG';
+    if (textIncludesAny(text, ['WRONG ANSWER', 'TIME LIMIT', 'MEMORY LIMIT', 'RUNTIME ERROR', 'COMPILE ERROR'])) return 'WRONG';
+    if (/AC\s*:\s*[1-9]/.test(text)) return 'AC';
+    if (textIncludesAny(text, ['ACCEPTED'])) return 'AC';
+    return '';
+  }
+
+  function revealMistakePrompt() {
+    var prompt = getPrompt();
+    if (!prompt) return;
+    if (prompt.getAttribute('data-mistake-state')) return;
+    if (!prompt.classList.contains('problem-mistake-float--hidden')) return;
+    updateMistakePromptPosition();
+    prompt.classList.remove('problem-mistake-float--hidden');
+  }
+
+  function scanScratchpadRecords() {
+    if (!isScratchpadMode()) return;
+    updateMistakePromptPosition();
+
+    var rows = Array.prototype.slice.call(document.querySelectorAll('.scratchpad__records__table tbody tr'));
+    rows = rows.filter(isVisible);
+    if (!rows.length) return;
+
+    var statuses = [];
+    for (var i = 0; i < rows.length; i++) {
+      var status = getRowStatus(rows[i]);
+      if (status) statuses.push(status);
+    }
+    if (!statuses.length) return;
+
+    if (statuses.indexOf('WRONG') >= 0) sawWrongRecord = true;
+    if (sawWrongRecord && statuses[0] === 'AC') revealMistakePrompt();
+  }
+
+  function scheduleScan() {
+    if (scanTimer) window.clearTimeout(scanTimer);
+    scanTimer = window.setTimeout(scanScratchpadRecords, 80);
+  }
+
+  var observer = new MutationObserver(scheduleScan);
+  observer.observe(document.documentElement, {
+    attributes: true,
+    characterData: true,
+    childList: true,
+    subtree: true,
+  });
+  window.addEventListener('resize', updateMistakePromptPosition);
+  document.addEventListener('DOMContentLoaded', scheduleScan);
+  window.setInterval(scanScratchpadRecords, 1000);
+  scheduleScan();
+})();
+</script>
 {% endif %}
 <div class="row" data-sticky-parent>
   <div class="medium-9 columns">
