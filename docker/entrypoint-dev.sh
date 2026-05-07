@@ -129,7 +129,53 @@ else
 fi
 
 UI_PUBLIC_DIR="/workspace/packages/ui-default/public"
+UI_BUILD_META_FILE="${UI_PUBLIC_DIR}/.hydro-ui-build-meta"
 NEED_UI_PRODUCTION_BUILD="0"
+CURRENT_UI_BUILD_META="$(node <<'NODE'
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const root = '/workspace';
+const hash = crypto.createHash('sha256');
+const includePaths = [
+  'package.json',
+  'yarn.lock',
+  'packages/ui-default',
+];
+const ignoredDirs = new Set(['node_modules', 'public', '.cache', 'coverage']);
+
+function addFile(file) {
+  const rel = path.relative(root, file);
+  hash.update(rel);
+  hash.update('\0');
+  hash.update(fs.readFileSync(file));
+  hash.update('\0');
+}
+
+function walk(target) {
+  if (!fs.existsSync(target)) return;
+  const stat = fs.statSync(target);
+  if (stat.isFile()) {
+    addFile(target);
+    return;
+  }
+  if (!stat.isDirectory()) return;
+  const entries = fs.readdirSync(target).sort();
+  for (const entry of entries) {
+    if (ignoredDirs.has(entry)) continue;
+    walk(path.join(target, entry));
+  }
+}
+
+for (const item of includePaths) walk(path.join(root, item));
+process.stdout.write(hash.digest('hex'));
+NODE
+)"
+PREV_UI_BUILD_META=""
+if [ -f "$UI_BUILD_META_FILE" ]; then
+    PREV_UI_BUILD_META="$(cat "$UI_BUILD_META_FILE" 2>/dev/null || true)"
+fi
 
 if [ ! -f "${UI_PUBLIC_DIR}/default.theme.js" ]; then
     NEED_UI_PRODUCTION_BUILD="1"
@@ -143,12 +189,18 @@ fi
 if [ -f "${UI_PUBLIC_DIR}/default.theme.js" ] && grep -q "module.hot.data" "${UI_PUBLIC_DIR}/default.theme.js"; then
     NEED_UI_PRODUCTION_BUILD="1"
 fi
+if [ "$CURRENT_UI_BUILD_META" != "$PREV_UI_BUILD_META" ]; then
+    echo "Detected UI source change, running production UI build."
+    NEED_UI_PRODUCTION_BUILD="1"
+fi
 
 if [ "$NEED_UI_PRODUCTION_BUILD" = "1" ]; then
     echo "UI production assets missing or dev-HMR assets detected, running corepack yarn build:ui:production..."
     corepack yarn build:ui:production
+    mkdir -p "$UI_PUBLIC_DIR"
+    printf '%s' "$CURRENT_UI_BUILD_META" > "$UI_BUILD_META_FILE"
 else
-    echo "UI production assets found, skipping build:ui:production."
+    echo "UI production assets and source meta unchanged, skipping build:ui:production."
 fi
 
 if [ "${HYDRO_SET_SERVER_HOST:-1}" = "1" ]; then
