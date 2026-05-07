@@ -116,6 +116,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   let firstFormalRecordStatus = Number.isFinite(+UiContext.firstFormalRecordStatus)
     ? +UiContext.firstFormalRecordStatus
     : null;
+  let hasWrongFormalRecord = !!UiContext.hasWrongFormalRecord;
   let sawCurrentWrongFormalRecord = false;
 
   function getScratchpadCacheKey() {
@@ -190,17 +191,20 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
 
   function isFormalRecord(rdoc, store) {
     if (!rdoc) return false;
+    const recordId = getRecordId(rdoc);
+    const state = store.getState();
     const contestId = getRecordContestId(rdoc);
     if (contestId === recordGenerateId) return false;
-    if (contestId === recordPretestId) return false;
     if (Object.hasOwn(rdoc, 'input')) return false;
-    const pretestRid = store.getState()?.pretest?.rid;
-    if (rdoc._id && pretestRid && getRecordId(rdoc) === pretestRid) return false;
+    const pretestRid = state?.pretest?.rid;
+    if (recordId && pretestRid && recordId === pretestRid) return false;
+    if (recordId && (state?.ui?.formalSubmitRids || []).some((rid) => getRecordId({ _id: rid }) === recordId)) return true;
+    if (contestId === recordPretestId) return false;
     return true;
   }
 
   function getFirstKnownFormalRecordStatus(store) {
-    const records = Object.values(store.getState()?.records?.items || {})
+    const records = (Object.values(store.getState()?.records?.items || {}) as any[])
       .filter((rdoc) => {
         const status = +rdoc?.status;
         return normalStatuses.has(status as STATUS) && isFormalRecord(rdoc, store);
@@ -218,13 +222,18 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     const pushedStatus = +rdoc?.status;
     if (!normalStatuses.has(pushedStatus as STATUS)) return;
     if (pushedStatus !== STATUS.STATUS_ACCEPTED) {
+      hasWrongFormalRecord = true;
       sawCurrentWrongFormalRecord = true;
       if (firstFormalRecordStatus === null) firstFormalRecordStatus = pushedStatus;
       return;
     }
     const firstKnownStatus = getFirstKnownFormalRecordStatus(store);
     if (firstKnownStatus !== null) firstFormalRecordStatus = firstKnownStatus;
-    if (sawCurrentWrongFormalRecord || (firstFormalRecordStatus !== null && firstFormalRecordStatus !== STATUS.STATUS_ACCEPTED)) {
+    if (
+      sawCurrentWrongFormalRecord
+      || hasWrongFormalRecord
+      || (firstFormalRecordStatus !== null && firstFormalRecordStatus !== STATUS.STATUS_ACCEPTED)
+    ) {
       revealMistakePrompt();
     }
   }

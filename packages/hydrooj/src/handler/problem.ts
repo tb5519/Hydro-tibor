@@ -478,6 +478,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             ? await mistake.get(domainId, this.user._id, this.pdoc.docId)
             : null;
         let firstFormalStatus: STATUS | null = null;
+        let hasWrongFormalRecord = false;
         if (canUseMistake) {
             const formalRecordQuery = {
                 uid: this.user._id,
@@ -487,15 +488,28 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
                 $or: [
                     { contest: { $exists: false } },
                     { contest: null },
-                    { contest: { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] } },
+                    { contest: { $ne: record.RECORD_GENERATE } },
                 ],
             };
-            const firstSubmit = await record.getMulti(domainId, formalRecordQuery)
-                .project({ _id: 1, status: 1 })
-                .sort({ _id: 1 })
-                .limit(1)
-                .next();
+            const wrongFormalRecordQuery = {
+                ...formalRecordQuery,
+                status: {
+                    $in: NORMAL_STATUS.filter((status) => status !== STATUS.STATUS_ACCEPTED),
+                },
+            };
+            const [firstSubmit, wrongSubmit] = await Promise.all([
+                record.getMulti(domainId, formalRecordQuery)
+                    .project({ _id: 1, status: 1 })
+                    .sort({ _id: 1 })
+                    .limit(1)
+                    .next(),
+                record.getMulti(domainId, wrongFormalRecordQuery)
+                    .project({ _id: 1 })
+                    .limit(1)
+                    .next(),
+            ]);
             firstFormalStatus = firstSubmit?.status ?? null;
+            hasWrongFormalRecord = !!wrongSubmit;
         }
         this.response.body = {
             pdoc: this.pdoc,
@@ -505,6 +519,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             isMistakeSupported: isProgrammingProblem,
             canUseMistake,
             firstFormalStatus,
+            hasWrongFormalRecord,
             showMistakePrompt: false,
             title: this.pdoc.title,
             solutionCount: scnt,
