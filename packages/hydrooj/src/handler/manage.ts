@@ -5,7 +5,7 @@ import moment from 'moment-timezone';
 import { omit } from 'lodash';
 import Schema from 'schemastery';
 import {
-    CannotEditSuperAdminError, NotLaunchedByPM2Error, UserNotFoundError, ValidationError,
+    CannotEditSuperAdminError, NotLaunchedByPM2Error, UserNotFoundError, ValidationError, VerifyPasswordError,
 } from '../error';
 import { Logger } from '../logger';
 import { PERM, PRIV, STATUS } from '../model/builtin';
@@ -13,7 +13,8 @@ import domain from '../model/domain';
 import record from '../model/record';
 import * as setting from '../model/setting';
 import system from '../model/system';
-import user from '../model/user';
+import token from '../model/token';
+import user, { User as HydroUser } from '../model/user';
 import {
     ConnectionHandler, Handler, param, requireSudo, Types,
 } from '../service/server';
@@ -656,6 +657,56 @@ class SystemUserImportHandler extends SystemHandler {
 const Priv = omit(PRIV, ['PRIV_DEFAULT', 'PRIV_NEVER', 'PRIV_NONE', 'PRIV_ALL']);
 const allPriv = Math.sum(Object.values(Priv));
 
+async function getManageTargetUser(domainId: string, query: string) {
+    const q = query.trim();
+    if (!q) return null;
+    const uid = /^\d+$/.test(q) ? +q : null;
+    if (uid !== null) return user.getById(domainId, uid);
+    return user.getByUname(domainId, q);
+}
+
+function checkPasswordResetTarget(udoc: HydroUser) {
+    if (isPasswordResetProtectedTarget(udoc)) throw new CannotEditSuperAdminError();
+}
+
+function isPasswordResetProtectedTarget(udoc: HydroUser) {
+    return udoc._id <= 1 || udoc.priv === -1 || udoc.priv === allPriv;
+}
+
+class SystemUserManagementHandler extends SystemHandler {
+    async prepare() {
+        this.checkPriv(PRIV.PRIV_ALL);
+    }
+
+    @requireSudo
+    @param('q', Types.Content, true)
+    @param('reset', Types.Int, true)
+    async get(domainId: string, q = '', reset = 0) {
+        const target = q.trim() ? await getManageTargetUser(domainId, q) : null;
+        this.response.template = 'manage_user_management.html';
+        this.response.body = {
+            q,
+            target,
+            canResetTarget: target ? !isPasswordResetProtectedTarget(target) : false,
+            reset,
+        };
+    }
+
+    @requireSudo
+    @param('uid', Types.Int)
+    @param('password', Types.Password)
+    @param('verifyPassword', Types.Password)
+    async postResetPassword(domainId: string, uid: number, password: string, verifyPassword: string) {
+        if (password !== verifyPassword) throw new VerifyPasswordError();
+        const target = await user.getById(domainId, uid);
+        if (!target) throw new UserNotFoundError(uid);
+        checkPasswordResetTarget(target);
+        await user.setPassword(uid, password);
+        await token.delByUid(uid);
+        this.response.redirect = this.url('manage_user_management', { query: { q: uid, reset: uid } });
+    }
+}
+
 class SystemUserPrivHandler extends SystemHandler {
     @requireSudo
     @param('extraIgnore', Types.NumericArray, true)
@@ -705,6 +756,8 @@ export async function apply(ctx) {
     ctx.Route('manage_script', '/manage/script', SystemScriptHandler);
     ctx.Route('manage_setting', '/manage/setting', SystemSettingHandler);
     ctx.Route('manage_config', '/manage/config', SystemConfigHandler);
+    ctx.Route('manage_user_management', '/manage/users', SystemUserManagementHandler);
+    ctx.injectUI('ControlPanel', 'manage_user_management', { before: 'manage_user_import', icon: 'user' }, PRIV.PRIV_ALL);
     ctx.Route('manage_user_import', '/manage/userimport', SystemUserImportHandler);
     ctx.Route('manage_user_priv', '/manage/userpriv', SystemUserPrivHandler);
     ctx.Connection('manage_check', '/manage/check-conn', SystemCheckConnHandler);

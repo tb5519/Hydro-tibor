@@ -1,0 +1,142 @@
+{% import "components/user.html" as user %}
+{% extends "manage_base.html" %}
+{% block manage_content %}
+<style>
+  .manage-user-tools {
+    display: grid;
+    gap: 1rem;
+  }
+  .manage-user-tools__search {
+    display: flex;
+    gap: .6rem;
+    align-items: flex-end;
+    max-width: 40rem;
+  }
+  .manage-user-tools__search .textbox {
+    flex: 1 1 auto;
+  }
+  .manage-user-tools__note {
+    color: #64748b;
+    font-size: .86rem;
+    line-height: 1.5;
+  }
+  .manage-user-tools__success {
+    border: 1px solid #bbf7d0;
+    border-radius: 8px;
+    background: #f0fdf4;
+    color: #166534;
+    padding: .7rem .85rem;
+  }
+  .manage-user-tools__warning {
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    background: #fffbeb;
+    color: #92400e;
+    padding: .7rem .85rem;
+  }
+  .manage-user-tools__form {
+    max-width: 32rem;
+  }
+  .manage-user-tools__form .textbox {
+    width: 100%;
+  }
+  .manage-user-tools__actions {
+    display: flex;
+    gap: .6rem;
+    align-items: center;
+  }
+  @media (max-width: 40em) {
+    .manage-user-tools__search {
+      display: block;
+    }
+    .manage-user-tools__search .button {
+      margin-top: .6rem;
+      width: 100%;
+    }
+  }
+</style>
+<div class="section">
+  <div class="section__header">
+    <h1 class="section__title">{{ _('用户管理') }}</h1>
+  </div>
+  <div class="section__body manage-user-tools">
+    {% if reset %}
+      <div class="manage-user-tools__success">{{ _('密码已重置。') }}</div>
+    {% endif %}
+    <form method="get" action="{{ url('manage_user_management') }}" class="manage-user-tools__search">
+      <label>
+        <div>{{ _('按 UID 或用户名查找学员') }}</div>
+        <input class="textbox" name="q" value="{{ q }}" placeholder="{{ _('例如：26 或 李白') }}" autocomplete="off">
+      </label>
+      <button class="rounded primary button" type="submit">
+        <span class="icon icon-search"></span>{{ _('查找') }}
+      </button>
+    </form>
+    <div class="manage-user-tools__note">
+      {{ _('此页面需要 sudo 验证。只能重置普通学员账号密码，不能重置 UID 1 或超级管理员账号。') }}
+    </div>
+  </div>
+</div>
+
+{% if q and not target %}
+<div class="section">
+  <div class="section__body">
+    <div class="manage-user-tools__warning">{{ _('未找到用户。') }}</div>
+  </div>
+</div>
+{% endif %}
+
+{% if target %}
+<div class="section">
+  <div class="section__header">
+    <h1 class="section__title">{{ _('重置学员密码') }}</h1>
+  </div>
+  <div class="section__body manage-user-tools">
+    <table class="data-table">
+      <colgroup>
+        <col class="col--uid">
+        <col class="col--user">
+        <col>
+        <col>
+      </colgroup>
+      <thead>
+        <tr>
+          <th>{{ _('UID') }}</th>
+          <th>{{ _('Username') }}</th>
+          <th>{{ _('Email') }}</th>
+          <th>{{ _('Privilege') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>{{ target._id }}</td>
+          <td>{{ user.render_inline(target) }}</td>
+          <td>{{ target.mail }}</td>
+          <td>{{ target.priv }}</td>
+        </tr>
+      </tbody>
+    </table>
+    {% if not canResetTarget %}
+      <div class="manage-user-tools__warning">{{ _('该账号是系统账号或超级管理员，不能在这里重置密码。') }}</div>
+    {% else %}
+      <form method="post" class="manage-user-tools__form">
+        <input type="hidden" name="operation" value="reset_password">
+        <input type="hidden" name="uid" value="{{ target._id }}">
+        <label>
+          <div>{{ _('新密码') }}</div>
+          <input class="textbox" type="password" name="password" autocomplete="new-password" required>
+        </label>
+        <label>
+          <div>{{ _('确认新密码') }}</div>
+          <input class="textbox" type="password" name="verifyPassword" autocomplete="new-password" required>
+        </label>
+        <div class="manage-user-tools__actions">
+          <button class="rounded primary button" type="submit">{{ _('重置密码') }}</button>
+          <span class="manage-user-tools__note">{{ _('提交后该学员需要使用新密码登录。') }}</span>
+        </div>
+      </form>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

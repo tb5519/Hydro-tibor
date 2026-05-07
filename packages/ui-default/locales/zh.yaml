@@ -568,6 +568,7 @@ manage_script: 脚本管理
 manage_setting: 系统设置
 manage_shared_ranking: 排行榜设置
 manage_training_dashboard: 学员训练数据看板
+manage_user_management: 用户管理
 manage_user_priv: 用户权限
 manage: 管理
 Manage: 管理
