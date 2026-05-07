@@ -118,6 +118,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     : null;
   let hasWrongFormalRecord = !!UiContext.hasWrongFormalRecord;
   let sawCurrentWrongFormalRecord = false;
+  const watchedFormalSubmitRids = new Set<string>();
 
   function getScratchpadCacheKey() {
     let cacheKey = `${UserContext._id}/${UiContext.pdoc.domainId}/${UiContext.pdoc.docId}`;
@@ -238,6 +239,45 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     }
   }
 
+  function getRecordDetailConnUrl(recordId: string) {
+    const query = new URLSearchParams({
+      domainId: UiContext.pdoc.domainId,
+      rid: recordId,
+      noTemplate: '1',
+    });
+    return `record-detail-conn?${query.toString()}`;
+  }
+
+  function watchFormalSubmitRecord(store, WebSocket, rid) {
+    const recordId = getRecordId({ _id: rid });
+    if (!recordId || watchedFormalSubmitRids.has(recordId)) return;
+    watchedFormalSubmitRids.add(recordId);
+
+    const sock = new WebSocket(UiContext.ws_prefix + getRecordDetailConnUrl(recordId));
+    sock.onmessage = (message, data) => {
+      const msg = JSON.parse(data || message.data);
+      const rdoc = msg.rdoc;
+      if (!rdoc) return;
+      store.dispatch({
+        type: 'SCRATCHPAD_RECORDS_PUSH',
+        payload: { rdoc },
+      });
+      handleMistakePromptRecordPush(store, rdoc);
+
+      const status = +rdoc.status;
+      if (normalStatuses.has(status as STATUS) || status === STATUS.STATUS_CANCELED) {
+        setTimeout(() => sock.close(), 1000);
+      }
+    };
+  }
+
+  function watchFormalSubmitRecords(store, WebSocket) {
+    store.subscribe(() => {
+      const rids = store.getState()?.ui?.formalSubmitRids || [];
+      rids.forEach((rid) => watchFormalSubmitRecord(store, WebSocket, rid));
+    });
+  }
+
   async function handleClickDownloadProblem() {
     await downloadProblemSet([UiContext.problemNumId], UiContext.pdoc.title);
   }
@@ -282,6 +322,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
       });
       handleMistakePromptRecordPush(store, msg.rdoc);
     };
+    watchFormalSubmitRecords(store, WebSocket);
 
     renderReact = () => {
       const root = createRoot($('#scratchpad').get(0));

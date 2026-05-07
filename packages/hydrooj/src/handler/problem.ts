@@ -10,7 +10,9 @@ import { nanoid } from 'nanoid';
 import sanitize from 'sanitize-filename';
 import Schema from 'schemastery';
 import parser from '@hydrooj/utils/lib/search';
-import { randomstring, sortFiles, streamToBuffer } from '@hydrooj/utils/lib/utils';
+import {
+    randomstring, sortFiles, streamToBuffer, Time,
+} from '@hydrooj/utils/lib/utils';
 import type { Context } from '../context';
 import {
     BadRequestError, ContestNotAttendedError, ContestNotEndedError, ContestNotFoundError, ContestNotLiveError,
@@ -479,6 +481,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             : null;
         let firstFormalStatus: STATUS | null = null;
         let hasWrongFormalRecord = false;
+        let showMistakePrompt = false;
         if (canUseMistake) {
             const formalRecordQuery = {
                 uid: this.user._id,
@@ -497,10 +500,15 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
                     $in: NORMAL_STATUS.filter((status) => status !== STATUS.STATUS_ACCEPTED),
                 },
             };
-            const [firstSubmit, wrongSubmit] = await Promise.all([
+            const [firstSubmit, latestSubmit, wrongSubmit] = await Promise.all([
                 record.getMulti(domainId, formalRecordQuery)
                     .project({ _id: 1, status: 1 })
                     .sort({ _id: 1 })
+                    .limit(1)
+                    .next(),
+                record.getMulti(domainId, formalRecordQuery)
+                    .project({ _id: 1, status: 1 })
+                    .sort({ _id: -1 })
                     .limit(1)
                     .next(),
                 record.getMulti(domainId, wrongFormalRecordQuery)
@@ -510,6 +518,11 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             ]);
             firstFormalStatus = firstSubmit?.status ?? null;
             hasWrongFormalRecord = !!wrongSubmit;
+            const latestSubmitAt = latestSubmit?._id?.getTimestamp?.().getTime() || 0;
+            showMistakePrompt = !mistakeDoc
+                && hasWrongFormalRecord
+                && latestSubmit?.status === STATUS.STATUS_ACCEPTED
+                && Date.now() - latestSubmitAt <= 10 * Time.minute;
         }
         this.response.body = {
             pdoc: this.pdoc,
@@ -520,7 +533,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             canUseMistake,
             firstFormalStatus,
             hasWrongFormalRecord,
-            showMistakePrompt: false,
+            showMistakePrompt,
             title: this.pdoc.title,
             solutionCount: scnt,
             discussionCount: dcnt,
