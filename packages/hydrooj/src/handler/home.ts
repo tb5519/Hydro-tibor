@@ -220,7 +220,7 @@ export class HomeHandler extends Handler {
             udict[uid].nAccept = row.totalAccept;
             udict[uid].nSubmit = row.totalSubmit;
             udict[uid].rank = row.rank;
-            udict[uid].level = row.maxLevel || udict[uid].level || 0;
+            udict[uid].level = row.level;
             udict[uid].rpInfo = row.rpInfo;
         }
         await attachOwnedBadges(this.ctx, Object.values(udict));

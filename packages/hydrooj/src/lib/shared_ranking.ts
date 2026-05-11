@@ -1,5 +1,6 @@
 import { Dictionary } from 'lodash';
 import domain from '../model/domain';
+import { LEVELS } from '../model/builtin';
 import { RpTypes } from '../script/rating';
 
 export type SharedRankingRow = {
@@ -7,7 +8,7 @@ export type SharedRankingRow = {
     totalRp: number;
     totalAccept: number;
     totalSubmit: number;
-    maxLevel: number;
+    level: number;
     rpInfo: Record<string, number>;
     rank?: number;
 };
@@ -30,6 +31,25 @@ function createRpDict(base: number) {
     });
 }
 
+function getLevelByRank(rank: number, count: number) {
+    for (let i = 0; i < LEVELS.length; i++) {
+        if (
+            rank <= (LEVELS[i] * count) / 100
+            && (i === LEVELS.length - 1 || rank > (LEVELS[i + 1] * count) / 100)
+        ) return i;
+    }
+    return 0;
+}
+
+function assignRanksAndLevels(rows: SharedRankingRow[]) {
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rank = i + 1;
+        row.rank = rank;
+        row.level = getLevelByRank(rank, rows.length);
+    }
+}
+
 export async function getSharedRankingSnapshot() {
     const domains = await domain.getMulti().project<{ _id: string }>({ _id: 1 }).toArray();
     const domainIds = domains.map((ddoc) => ddoc._id).filter(Boolean).sort();
@@ -43,7 +63,6 @@ export async function getSharedRankingSnapshot() {
         uid: 1,
         nAccept: 1,
         nSubmit: 1,
-        level: 1,
     }).toArray();
     const merged = new Map<number, SharedRankingRow>();
     for (const dudoc of dudocs) {
@@ -53,14 +72,13 @@ export async function getSharedRankingSnapshot() {
                 totalRp: 0,
                 totalAccept: 0,
                 totalSubmit: 0,
-                maxLevel: 0,
+                level: 0,
                 rpInfo: {},
             });
         }
         const row = merged.get(dudoc.uid)!;
         row.totalAccept += dudoc.nAccept || 0;
         row.totalSubmit += dudoc.nSubmit || 0;
-        row.maxLevel = Math.max(row.maxLevel, dudoc.level || 0);
     }
 
     for (const type in RpTypes) {
@@ -88,7 +106,7 @@ export async function getSharedRankingSnapshot() {
             || a.totalSubmit - b.totalSubmit
             || a.uid - b.uid
         ));
-    rows.forEach((row, index) => { row.rank = index + 1; });
+    assignRanksAndLevels(rows);
     sharedRankingCache = {
         key: cacheKey,
         expiresAt: Date.now() + SHARED_RANKING_CACHE_TTL,

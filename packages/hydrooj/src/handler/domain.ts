@@ -86,7 +86,7 @@ async function getSharedRankingRows(ctx: Context, currentUser: any, currentDomai
         udoc.nAccept = row.totalAccept;
         udoc.nSubmit = row.totalSubmit;
         udoc.rank = row.rank;
-        udoc.level = row.maxLevel || udoc.level || 0;
+        udoc.level = row.level;
         udoc.rpInfo = row.rpInfo;
         row.udoc = udoc;
     }
@@ -96,7 +96,7 @@ async function getSharedRankingRows(ctx: Context, currentUser: any, currentDomai
         displayCurrentUser.nAccept = currentRow.totalAccept;
         displayCurrentUser.nSubmit = currentRow.totalSubmit;
         displayCurrentUser.rank = currentRow.rank;
-        displayCurrentUser.level = currentRow.maxLevel || displayCurrentUser.level || 0;
+        displayCurrentUser.level = currentRow.level;
         displayCurrentUser.rpInfo = currentRow.rpInfo;
     }
     return {
