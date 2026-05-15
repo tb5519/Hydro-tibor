@@ -24,6 +24,9 @@ import {
 import {
     DomainDoc, ProblemDoc, ProblemSearchOptions, ProblemStatusDoc, RecordDoc, User,
 } from '../interface';
+import {
+    appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
+} from '../lib/record_visibility';
 import { NORMAL_STATUS, PERM, PRIV, STATUS } from '../model/builtin';
 import * as contest from '../model/contest';
 import * as discussion from '../model/discussion';
@@ -751,6 +754,7 @@ export class ProblemHackHandler extends ProblemDetailHandler {
         this.rdoc = await record.get(domainId, rid);
         if (!this.rdoc || this.rdoc.pid !== this.pdoc.docId
             || this.rdoc.contest?.toString() !== tid?.toString()) throw new RecordNotFoundError(domainId, rid);
+        if (!(await canViewRecordOwner(this.user, this.rdoc.uid))) throw new RecordNotFoundError(domainId, rid);
         if (tid) {
             if (this.tdoc.rule !== 'codeforces') throw new HackFailedError('This contest is not hackable.');
             if (!contest.isOngoing(this.tdoc, this.tsdoc)) throw new ContestNotLiveError(this.tdoc.docId);
@@ -1164,11 +1168,13 @@ export class ProblemStatisticsHandler extends ProblemDetailHandler {
     @param('page', Types.PositiveInt, true)
     async get(domainId: string, sort = 'time', direction: 1 | -1 = 1, lang?: string, page = 1) {
         if (this.tdoc) throw new ContestNotEndedError();
+        const recordQuery = {
+            pid: this.pdoc.docId,
+            ...lang ? { lang } : {},
+        };
+        appendHiddenSuperAdminFilter(recordQuery, await getHiddenSuperAdminUids(this.user));
         const [rsdocs, pcount, rscount] = await this.paginate(
-            record.getMultiStat(domainId, {
-                pid: this.pdoc.docId,
-                ...lang ? { lang } : {},
-            }, record.STAT_QUERY[sort][Math.max(direction, 0)]),
+            record.getMultiStat(domainId, recordQuery, record.STAT_QUERY[sort][Math.max(direction, 0)]),
             page,
             'record',
         );

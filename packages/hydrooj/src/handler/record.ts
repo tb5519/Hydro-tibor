@@ -8,6 +8,9 @@ import {
     ProblemNotFoundError, RecordNotFoundError, UserNotFoundError,
 } from '../error';
 import { RecordDoc, Tdoc } from '../interface';
+import {
+    appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
+} from '../lib/record_visibility';
 import { PERM, PRIV, STATUS } from '../model/builtin';
 import * as contest from '../model/contest';
 import problem, { ProblemDoc } from '../model/problem';
@@ -111,6 +114,7 @@ export class RecordListHandler extends ContestDetailBaseHandler {
                 q.$or = [{ contest: { $ne: record.RECORD_PRETEST } }, { contest: record.RECORD_PRETEST, uid: this.user._id }];
             } else q.contest = { $ne: record.RECORD_PRETEST } as any;
         }
+        appendHiddenSuperAdminFilter(q, await getHiddenSuperAdminUids(this.user));
         let cursor = record.getMulti(allDomain ? '' : domainId, q).sort('_id', -1);
         if (!full) cursor = cursor.project(buildProjection(record.PROJECTION_LIST));
         const limit = full ? 10 : system.get('pagination.record');
@@ -159,6 +163,7 @@ export class RecordDetailHandler extends ContestDetailBaseHandler {
     async prepare(domainId: string, rid: ObjectId) {
         this.rdoc = await record.get(domainId, rid);
         if (!this.rdoc) throw new RecordNotFoundError(rid);
+        if (!(await canViewRecordOwner(this.user, this.rdoc.uid))) throw new RecordNotFoundError(rid);
         if (this.rdoc.uid !== this.user._id) this.checkPerm(PERM.PERM_VIEW_RECORD);
     }
 
@@ -295,6 +300,7 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
     tdoc: Tdoc;
     applyProjection = false;
     noTemplate = false;
+    hiddenSuperAdminUids: number[] = [];
     queue: Map<string, () => Promise<any>> = new Map();
     throttleQueueClear: () => void;
 
@@ -351,6 +357,7 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
             this.checkPriv(PRIV.PRIV_MANAGE_ALL_DOMAIN);
             this.allDomain = true;
         }
+        this.hiddenSuperAdminUids = await getHiddenSuperAdminUids(this.user);
         this.noTemplate = noTemplate;
         this.throttleQueueClear = throttle(this.queueClear, 100, { trailing: true });
     }
@@ -365,6 +372,7 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
 
     @subscribe('record/change')
     async onRecordChange(rdoc: RecordDoc) {
+        if (this.hiddenSuperAdminUids.includes(rdoc.uid)) return;
         if (!this.allDomain) {
             const isPretestRecord = rdoc.contest?.toHexString() === record.RECORD_PRETEST.toHexString();
             if (rdoc.domainId !== this.args.domainId) return;
@@ -435,6 +443,7 @@ export class RecordDetailConnectionHandler extends ConnectionHandler {
     async prepare(domainId: string, rid: ObjectId, noTemplate = false) {
         const rdoc = await record.get(domainId, rid);
         if (!rdoc) return;
+        if (!(await canViewRecordOwner(this.user, rdoc.uid))) throw new RecordNotFoundError(rid);
         if (rdoc.contest && ![record.RECORD_GENERATE, record.RECORD_PRETEST].some((i) => i.toHexString() === rdoc.contest.toHexString())) {
             this.tdoc = await contest.get(domainId, rdoc.contest);
             let canView = this.user.own(this.tdoc);
