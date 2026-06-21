@@ -28,7 +28,7 @@ interface RpDef {
 const { log, max, min } = Math;
 const AUTO_DIFFICULTY_PRIOR_SUBMIT = 30;
 const AUTO_DIFFICULTY_PRIOR_ACCEPT_RATE = 0.45;
-const PROBLEM_RP_DIFFICULTY_WEIGHT = 0.30;
+const PROBLEM_RP_DIFFICULTY_WEIGHT = 0.20;
 
 export function getProblemRpDifficulty(pdoc: { difficulty?: number, nSubmit?: number, nAccept?: number }) {
     const fixedDifficulty = +pdoc.difficulty;
