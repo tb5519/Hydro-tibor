@@ -82,7 +82,7 @@ export async function getSharedRankingSnapshot() {
     }
 
     for (const type in RpTypes) {
-        if (RpTypes[type].hidden) continue;
+        if (type !== 'problem') continue;
         const result = createRpDict(RpTypes[type].base);
         await RpTypes[type].run(domainIds, result, async () => {});
         for (const uidText in result) {

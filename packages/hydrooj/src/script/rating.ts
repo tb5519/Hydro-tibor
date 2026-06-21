@@ -28,8 +28,7 @@ interface RpDef {
 const { log, max, min } = Math;
 const AUTO_DIFFICULTY_PRIOR_SUBMIT = 30;
 const AUTO_DIFFICULTY_PRIOR_ACCEPT_RATE = 0.45;
-const PROBLEM_RP_SOLVED_LOG_WEIGHT = 50.5;
-const PROBLEM_RP_DIFFICULTY_WEIGHT = 0.04;
+const PROBLEM_RP_SOLVED_LOG_WEIGHT = 52;
 
 export function getProblemRpDifficulty(pdoc: { difficulty?: number, nSubmit?: number, nAccept?: number }) {
     const fixedDifficulty = +pdoc.difficulty;
@@ -57,18 +56,15 @@ export const RpTypes: Record<string, RpDef> = {
                         score: { $gt: 0 },
                     },
                 );
-                const difficulty = getProblemRpDifficulty(pdoc);
                 let psdoc;
                 while (psdoc = await cursor.next()) {
                     const scoreRatio = min(psdoc.score, 100) / 100;
                     solved[psdoc.uid] += scoreRatio;
-                    udict[psdoc.uid] += scoreRatio * difficulty;
                 }
             }
-            for (const key in udict) {
-                const difficultyRp = max(0, min(udict[key], log(udict[key]) / log(1.03)));
+            for (const key in solved) {
                 const solvedRp = log(solved[key] + 1) * PROBLEM_RP_SOLVED_LOG_WEIGHT;
-                udict[key] = max(0, solvedRp + difficultyRp * PROBLEM_RP_DIFFICULTY_WEIGHT);
+                udict[key] = max(0, solvedRp);
             }
         },
         hidden: false,
