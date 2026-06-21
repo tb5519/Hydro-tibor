@@ -28,6 +28,7 @@ interface RpDef {
 const { log, max, min } = Math;
 const AUTO_DIFFICULTY_PRIOR_SUBMIT = 30;
 const AUTO_DIFFICULTY_PRIOR_ACCEPT_RATE = 0.45;
+const PROBLEM_RP_DIFFICULTY_WEIGHT = 0.45;
 
 export function getProblemRpDifficulty(pdoc: { difficulty?: number, nSubmit?: number, nAccept?: number }) {
     const fixedDifficulty = +pdoc.difficulty;
@@ -44,6 +45,7 @@ export const RpTypes: Record<string, RpDef> = {
         async run(domainIds, udict, report) {
             const problems = await problem.getMulti('', { domainId: { $in: domainIds }, nAccept: { $gt: 0 }, hidden: false }).toArray();
             if (problems.length) await report({ message: `Found ${problems.length} problems in ${domainIds[0]}` });
+            const solved = Counter();
             for (const pdoc of problems) {
                 const cursor = problem.getMultiStatus(
                     pdoc.domainId,
@@ -55,13 +57,17 @@ export const RpTypes: Record<string, RpDef> = {
                     },
                 );
                 const difficulty = getProblemRpDifficulty(pdoc);
-                const p = difficulty / 100;
                 let psdoc;
                 while (psdoc = await cursor.next()) {
-                    udict[psdoc.uid] += min(psdoc.score, 100) * p;
+                    const scoreRatio = min(psdoc.score, 100) / 100;
+                    solved[psdoc.uid] += scoreRatio;
+                    udict[psdoc.uid] += scoreRatio * difficulty;
                 }
             }
-            for (const key in udict) udict[key] = max(0, min(udict[key], log(udict[key]) / log(1.03)));
+            for (const key in udict) {
+                const difficultyRp = max(0, min(udict[key], log(udict[key]) / log(1.03)));
+                udict[key] = max(0, solved[key] + difficultyRp * PROBLEM_RP_DIFFICULTY_WEIGHT);
+            }
         },
         hidden: false,
         base: 0,
