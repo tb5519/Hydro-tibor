@@ -26,6 +26,18 @@ interface RpDef {
 }
 
 const { log, max, min } = Math;
+const AUTO_DIFFICULTY_PRIOR_SUBMIT = 30;
+const AUTO_DIFFICULTY_PRIOR_ACCEPT_RATE = 0.45;
+
+export function getProblemRpDifficulty(pdoc: { difficulty?: number, nSubmit?: number, nAccept?: number }) {
+    const fixedDifficulty = +pdoc.difficulty;
+    if (fixedDifficulty > 0) return fixedDifficulty;
+    const nSubmit = Math.max(0, Math.floor(+pdoc.nSubmit || 0));
+    const nAccept = Math.max(0, Math.floor(+pdoc.nAccept || 0));
+    const smoothedSubmit = nSubmit + AUTO_DIFFICULTY_PRIOR_SUBMIT;
+    const smoothedAccept = nAccept + AUTO_DIFFICULTY_PRIOR_SUBMIT * AUTO_DIFFICULTY_PRIOR_ACCEPT_RATE;
+    return difficultyAlgorithm(smoothedSubmit, smoothedAccept) || 5;
+}
 
 export const RpTypes: Record<string, RpDef> = {
     problem: {
@@ -42,7 +54,7 @@ export const RpTypes: Record<string, RpDef> = {
                         score: { $gt: 0 },
                     },
                 );
-                const difficulty = +pdoc.difficulty || difficultyAlgorithm(pdoc.nSubmit, pdoc.nAccept) || 5;
+                const difficulty = getProblemRpDifficulty(pdoc);
                 const p = difficulty / 100;
                 let psdoc;
                 while (psdoc = await cursor.next()) {
