@@ -1,0 +1,217 @@
+{% import "components/user.html" as user %}
+{% extends "manage_base.html" %}
+{% block manage_content %}
+<style>
+  .lottery-admin {
+    display: grid;
+    gap: 1rem;
+  }
+  .lottery-admin__note {
+    color: #64748b;
+    font-size: .86rem;
+    line-height: 1.5;
+  }
+  .lottery-admin__success {
+    border: 1px solid #bbf7d0;
+    border-radius: 8px;
+    background: #f0fdf4;
+    color: #166534;
+    padding: .7rem .85rem;
+  }
+  .lottery-admin__warning {
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    background: #fffbeb;
+    color: #92400e;
+    padding: .7rem .85rem;
+  }
+  .lottery-admin__grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .75rem;
+  }
+  .lottery-admin__grid .textbox {
+    width: 100%;
+  }
+  .lottery-admin__prize {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: .85rem;
+    background: #fff;
+  }
+  .lottery-admin__prize-title {
+    margin-bottom: .7rem;
+    color: #0f172a;
+    font-weight: 700;
+  }
+  .lottery-admin__actions,
+  .lottery-admin__search {
+    display: flex;
+    gap: .6rem;
+    align-items: flex-end;
+  }
+  .lottery-admin__search .textbox {
+    min-width: 22rem;
+  }
+  @media (max-width: 56em) {
+    .lottery-admin__grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 40em) {
+    .lottery-admin__grid,
+    .lottery-admin__actions,
+    .lottery-admin__search {
+      display: block;
+    }
+    .lottery-admin__search .textbox,
+    .lottery-admin__search .button,
+    .lottery-admin__actions .button {
+      width: 100%;
+      margin-top: .6rem;
+    }
+  }
+</style>
+
+<div class="section">
+  <div class="section__header">
+    <h1 class="section__title">{{ _('积分抽奖') }}</h1>
+  </div>
+  <div class="section__body lottery-admin">
+    {% if saved %}
+      <div class="lottery-admin__success">{{ _('抽奖配置已保存。') }}</div>
+    {% endif %}
+    <form method="post" class="lottery-admin">
+      <input type="hidden" name="operation" value="save_config">
+      <label>
+        <input type="checkbox" name="enabled"{% if config.enabled %} checked{% endif %}>
+        {{ _('开启首页积分抽奖') }}
+      </label>
+      <label>
+        <div>{{ _('每次抽奖消耗积分') }}</div>
+        <input class="textbox" type="number" min="0" step="1" name="cost" value="{{ config.cost }}" required>
+      </label>
+      <div class="lottery-admin__note">
+        {{ _('概率按权重计算。例如两个奖品概率分别填 1 和 3，则第二个奖品约为第一个的 3 倍。奖品图片填写可访问的图片 URL。') }}
+      </div>
+      {% for prize in prizeSlots %}
+        <div class="lottery-admin__prize">
+          <div class="lottery-admin__prize-title">{{ _('奖品') }} {{ loop.index }}</div>
+          <div class="lottery-admin__grid">
+            <label>
+              <div>{{ _('奖品名称') }}</div>
+              <input class="textbox" name="prize{{ loop.index0 }}Name" value="{{ prize.name }}" autocomplete="off">
+            </label>
+            <label>
+              <div>{{ _('奖品图片 URL') }}</div>
+              <input class="textbox" name="prize{{ loop.index0 }}Image" value="{{ prize.image }}" autocomplete="off">
+            </label>
+            <label>
+              <div>{{ _('奖品概率权重') }}</div>
+              <input class="textbox" type="number" min="0" step="0.01" name="prize{{ loop.index0 }}Probability" value="{{ prize.probability }}">
+            </label>
+            <label>
+              <div>{{ _('中奖额外加积分') }}</div>
+              <input class="textbox" type="number" min="0" step="1" name="prize{{ loop.index0 }}PointDelta" value="{{ prize.pointDelta }}">
+            </label>
+          </div>
+        </div>
+      {% endfor %}
+      <div class="lottery-admin__actions">
+        <button class="rounded primary button" type="submit">{{ _('保存抽奖配置') }}</button>
+        <span class="lottery-admin__note">{{ _('此配置保存后首页立即按新规则抽奖。') }}</span>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section__header">
+    <h1 class="section__title">{{ _('学员抽奖积分') }}</h1>
+  </div>
+  <div class="section__body lottery-admin">
+    {% if added %}
+      <div class="lottery-admin__success">{{ _('已给学员增加积分。') }}</div>
+    {% endif %}
+    <form method="get" action="{{ url('manage_lottery') }}" class="lottery-admin__search">
+      <label>
+        <div>{{ _('按 UID 或用户名查找学员') }}</div>
+        <input class="textbox" name="q" value="{{ q }}" placeholder="{{ _('例如：26 或 李白') }}" autocomplete="off">
+      </label>
+      <button class="rounded primary button" type="submit">
+        <span class="icon icon-search"></span>{{ _('查找') }}
+      </button>
+    </form>
+    {% if q and not target %}
+      <div class="lottery-admin__warning">{{ _('未找到用户。') }}</div>
+    {% endif %}
+    {% if target %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>{{ _('UID') }}</th>
+            <th>{{ _('Username') }}</th>
+            <th>{{ _('当前抽奖积分') }}</th>
+            <th>{{ _('操作') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>{{ target._id }}</td>
+            <td>{{ user.render_inline(target) }}</td>
+            <td>{{ targetPoints }}</td>
+            <td>
+              {% if canAddTarget %}
+                <form method="post" class="lottery-admin__actions">
+                  <input type="hidden" name="operation" value="add_points">
+                  <input type="hidden" name="q" value="{{ q }}">
+                  <input class="textbox" type="number" min="1" step="1" name="points" placeholder="{{ _('增加积分') }}" required>
+                  <button class="rounded primary button" type="submit">{{ _('加积分') }}</button>
+                </form>
+              {% else %}
+                <span class="lottery-admin__warning">{{ _('系统账号或超级管理员账号不能在这里加积分。') }}</span>
+              {% endif %}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+</div>
+
+<div class="section">
+  <div class="section__header">
+    <h1 class="section__title">{{ _('最近抽奖记录') }}</h1>
+  </div>
+  <div class="section__body">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>{{ _('时间') }}</th>
+          <th>{{ _('学员') }}</th>
+          <th>{{ _('消耗积分') }}</th>
+          <th>{{ _('奖品') }}</th>
+          <th>{{ _('中奖加积分') }}</th>
+          <th>{{ _('抽奖后积分') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for log in logRows %}
+          <tr>
+            <td>{{ datetimeSpan(log.createdAt, false)|safe }}</td>
+            <td>{{ user.render_inline(log.udoc) }}</td>
+            <td>{{ log.cost }}</td>
+            <td>{{ log.prize.name }}</td>
+            <td>{{ log.pointDelta }}</td>
+            <td>{{ log.points }}</td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="6">{{ _('暂无抽奖记录。') }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

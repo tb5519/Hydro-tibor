@@ -14,6 +14,9 @@ import {
 import { DomainDoc, Setting } from '../interface';
 import avatar, { validate } from '../lib/avatar';
 import * as mail from '../lib/mail';
+import {
+    getPointLotteryConfig, pickPointLotteryPrize, POINT_LOTTERY_POINTS_FIELD, publicPointLotteryPrize,
+} from '../lib/point_lottery';
 import { getSharedRankingSnapshot, SharedRankingRow } from '../lib/shared_ranking';
 import { verifyTFA } from '../lib/verifyTFA';
 import BlackListModel from '../model/blacklist';
@@ -224,11 +227,72 @@ export class HomeHandler extends Handler {
             udict[uid].rpInfo = row.rpInfo;
         }
         await attachOwnedBadges(this.ctx, Object.values(udict));
+        const pointLotteryConfig = getPointLotteryConfig();
+        const pointLotteryUser = this.user.hasPriv(PRIV.PRIV_USER_PROFILE)
+            ? await domain.collUser.findOne(
+                { domainId, uid: this.user._id },
+                { projection: { [POINT_LOTTERY_POINTS_FIELD]: 1 } },
+            )
+            : null;
         this.response.template = 'main.html';
         this.response.body = {
             contents,
             udict,
             domain: this.domain,
+            pointLottery: {
+                enabled: pointLotteryConfig.enabled,
+                cost: pointLotteryConfig.cost,
+                points: Math.max(0, Math.floor(+pointLotteryUser?.[POINT_LOTTERY_POINTS_FIELD] || 0)),
+                canDraw: this.user.hasPriv(PRIV.PRIV_USER_PROFILE),
+                prizes: pointLotteryConfig.prizes.map(publicPointLotteryPrize),
+            },
+        };
+    }
+}
+
+class PointLotteryDrawHandler extends Handler {
+    async post({ domainId }) {
+        const fail = (message: string) => {
+            this.response.body = { ok: false, error: { message } };
+        };
+        const config = getPointLotteryConfig();
+        if (!config.enabled) return fail('积分抽奖未开启。');
+        const prize = pickPointLotteryPrize(config);
+        if (!prize) return fail('抽奖奖品未配置。');
+
+        const query: any = { domainId, uid: this.user._id };
+        if (config.cost > 0) query[POINT_LOTTERY_POINTS_FIELD] = { $gte: config.cost };
+        const pointDelta = prize.pointDelta - config.cost;
+        const update: any = {
+            $inc: { [POINT_LOTTERY_POINTS_FIELD]: pointDelta },
+            $setOnInsert: { domainId, uid: this.user._id },
+        };
+        const result = await domain.collUser.findOneAndUpdate(
+            query,
+            update,
+            {
+                upsert: config.cost === 0,
+                returnDocument: 'after',
+                includeResultMetadata: true,
+            },
+        );
+        const dudoc = result.value;
+        if (!dudoc) return fail('积分不足，无法抽奖。');
+        const points = Math.max(0, Math.floor(+dudoc[POINT_LOTTERY_POINTS_FIELD] || 0));
+        await this.ctx.db.collection('lottery.draw').insertOne({
+            domainId,
+            uid: this.user._id,
+            cost: config.cost,
+            prize: publicPointLotteryPrize(prize),
+            pointDelta: prize.pointDelta,
+            points,
+            createdAt: new Date(),
+        });
+        this.response.body = {
+            ok: true,
+            prize: publicPointLotteryPrize(prize),
+            cost: config.cost,
+            points,
         };
     }
 }
@@ -673,6 +737,7 @@ class HomeMessagesHandler extends Handler {
 export const inject = { geoip: { required: false }, oauth: {} };
 export function apply(ctx: Context) {
     ctx.Route('homepage', '/', HomeHandler);
+    ctx.Route('point_lottery_draw', '/lottery/draw', PointLotteryDrawHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_security', '/home/security', HomeSecurityHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('user_changemail_with_code', '/home/changeMail/:code', UserChangemailWithCodeHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_settings', '/home/settings/:category', HomeSettingsHandler, PRIV.PRIV_USER_PROFILE);

@@ -1,0 +1,84 @@
+import system from '../model/system';
+
+export const POINT_LOTTERY_CONFIG_KEY = 'pointLottery.config';
+export const POINT_LOTTERY_POINTS_FIELD = 'lotteryPoints';
+
+export interface PointLotteryPrize {
+    name: string;
+    image: string;
+    probability: number;
+    pointDelta: number;
+}
+
+export interface PointLotteryConfig {
+    enabled: boolean;
+    cost: number;
+    prizes: PointLotteryPrize[];
+}
+
+export const DEFAULT_POINT_LOTTERY_CONFIG: PointLotteryConfig = {
+    enabled: false,
+    cost: 10,
+    prizes: [],
+};
+
+function toNumber(value: any, fallback = 0) {
+    const number = +value;
+    return Number.isFinite(number) ? number : fallback;
+}
+
+export function normalizePointLotteryConfig(raw: any): PointLotteryConfig {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const prizes = Array.isArray(source.prizes) ? source.prizes : [];
+    return {
+        enabled: source.enabled === true || source.enabled === 'on' || source.enabled === 'true',
+        cost: Math.max(0, Math.floor(toNumber(source.cost, DEFAULT_POINT_LOTTERY_CONFIG.cost))),
+        prizes: prizes.map((prize) => ({
+            name: `${prize?.name || ''}`.trim(),
+            image: `${prize?.image || ''}`.trim(),
+            probability: Math.max(0, toNumber(prize?.probability, 0)),
+            pointDelta: Math.max(0, Math.floor(toNumber(prize?.pointDelta, 0))),
+        })).filter((prize) => prize.name && prize.probability > 0),
+    };
+}
+
+export function getPointLotteryConfig() {
+    return normalizePointLotteryConfig(system.get(POINT_LOTTERY_CONFIG_KEY));
+}
+
+export function buildPointLotteryConfigFromForm(args: any): PointLotteryConfig {
+    const prizes: PointLotteryPrize[] = [];
+    for (let i = 0; i < 10; i++) {
+        prizes.push({
+            name: args[`prize${i}Name`],
+            image: args[`prize${i}Image`],
+            probability: toNumber(args[`prize${i}Probability`], 0),
+            pointDelta: toNumber(args[`prize${i}PointDelta`], 0),
+        });
+    }
+    return normalizePointLotteryConfig({
+        enabled: args.enabled,
+        cost: args.cost,
+        prizes,
+    });
+}
+
+export function pickPointLotteryPrize(config: PointLotteryConfig) {
+    const total = config.prizes.reduce((sum, prize) => sum + prize.probability, 0);
+    if (total <= 0) return null;
+    let roll = Math.random() * total;
+    for (const prize of config.prizes) {
+        roll -= prize.probability;
+        if (roll <= 0) return prize;
+    }
+    return config.prizes[config.prizes.length - 1];
+}
+
+export function publicPointLotteryPrize(prize: PointLotteryPrize) {
+    return {
+        name: prize.name,
+        image: prize.image,
+        probability: prize.probability,
+        pointDelta: prize.pointDelta,
+    };
+}

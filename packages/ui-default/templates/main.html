@@ -14,6 +14,7 @@
         <div class="ui-v2-home__hero-actions">
           <a class="button rounded primary" href="{{ url('problem_main') }}">开始刷题</a>
           <a class="button rounded" href="{{ url('online_ide') }}">在线IDE</a>
+          <button class="button rounded ui-v2-home__lottery-trigger" type="button" data-point-lottery-open>积分抽奖</button>
         </div>
       </div>
       <div class="ui-v2-home__hero-visual" aria-hidden="true">
@@ -26,6 +27,28 @@
       </div>
     </div>
   </header>
+  <div class="point-lottery" data-point-lottery hidden>
+    <div class="point-lottery__shade" data-point-lottery-close></div>
+    <section class="point-lottery__panel" role="dialog" aria-modal="true" aria-label="积分抽奖">
+      <button class="point-lottery__close" type="button" data-point-lottery-close aria-label="关闭">×</button>
+      <div class="point-lottery__header">
+        <div>
+          <p class="point-lottery__eyebrow">Points Lottery</p>
+          <h2 class="point-lottery__title">积分抽奖</h2>
+        </div>
+        <div class="point-lottery__balance">
+          <span>我的积分</span>
+          <strong data-point-lottery-points>{{ pointLottery.points }}</strong>
+        </div>
+      </div>
+      <div class="point-lottery__status" data-point-lottery-status>
+        每次抽奖消耗 <strong data-point-lottery-cost>{{ pointLottery.cost }}</strong> 积分
+      </div>
+      <div class="point-lottery__prizes" data-point-lottery-prizes></div>
+      <div class="point-lottery__result" data-point-lottery-result hidden></div>
+      <button class="button rounded primary point-lottery__draw" type="button" data-point-lottery-draw>立即抽奖</button>
+    </section>
+  </div>
   <nav class="ui-v2-home__quick" aria-label="quick">
     <a class="ui-v2-home__card" href="{{ url('problem_main') }}">
       <span class="ui-v2-home__card-icon" aria-hidden="true">📚</span>
@@ -72,4 +95,290 @@
     </div>
   </div>
 </div>
+<style>
+  .ui-v2-home__lottery-trigger {
+    border-color: #f59e0b !important;
+    color: #92400e !important;
+    background: #fffbeb !important;
+  }
+  .point-lottery[hidden] {
+    display: none;
+  }
+  .point-lottery {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 8vh 1rem 1rem;
+  }
+  .point-lottery__shade {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, .42);
+  }
+  .point-lottery__panel {
+    position: relative;
+    width: min(38rem, 100%);
+    border: 1px solid #dbeafe;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 24px 80px rgba(15, 23, 42, .26);
+    padding: 1.4rem;
+  }
+  .point-lottery__close {
+    position: absolute;
+    top: .75rem;
+    right: .85rem;
+    border: 0;
+    background: transparent;
+    color: #64748b;
+    font-size: 1.7rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .point-lottery__header {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: flex-start;
+    margin-right: 1.8rem;
+  }
+  .point-lottery__eyebrow {
+    margin: 0 0 .25rem;
+    color: #64748b;
+    font-size: .78rem;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .point-lottery__title {
+    margin: 0;
+    color: #0f172a;
+    font-size: 1.75rem;
+    line-height: 1.2;
+  }
+  .point-lottery__balance {
+    min-width: 7.5rem;
+    border-radius: 10px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    padding: .65rem .8rem;
+    text-align: center;
+  }
+  .point-lottery__balance span {
+    display: block;
+    font-size: .78rem;
+    color: #64748b;
+  }
+  .point-lottery__balance strong {
+    display: block;
+    font-size: 1.55rem;
+  }
+  .point-lottery__status {
+    margin-top: 1rem;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: #334155;
+    padding: .75rem .85rem;
+  }
+  .point-lottery__prizes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: .75rem;
+    margin-top: 1rem;
+  }
+  .point-lottery__prize {
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #fff;
+    padding: .75rem;
+    min-height: 8.5rem;
+  }
+  .point-lottery__prize-image {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 4.4rem;
+    border-radius: 8px;
+    background: #f1f5f9;
+    overflow: hidden;
+    color: #94a3b8;
+    font-size: 1.8rem;
+    font-weight: 700;
+  }
+  .point-lottery__prize-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .point-lottery__prize-name {
+    margin-top: .55rem;
+    color: #0f172a;
+    font-weight: 700;
+  }
+  .point-lottery__prize-points {
+    margin-top: .2rem;
+    color: #64748b;
+    font-size: .86rem;
+  }
+  .point-lottery__result {
+    margin-top: 1rem;
+    border: 1px solid #bbf7d0;
+    border-radius: 10px;
+    background: #f0fdf4;
+    color: #166534;
+    padding: .8rem .9rem;
+    font-weight: 700;
+  }
+  .point-lottery__result.is-error {
+    border-color: #fecaca;
+    background: #fef2f2;
+    color: #991b1b;
+  }
+  .point-lottery__draw {
+    width: 100%;
+    margin-top: 1rem;
+  }
+  .point-lottery__draw[disabled] {
+    cursor: not-allowed;
+    opacity: .62;
+  }
+  @media (max-width: 40em) {
+    .point-lottery {
+      padding-top: 4vh;
+    }
+    .point-lottery__header {
+      display: block;
+    }
+    .point-lottery__balance {
+      margin-top: .85rem;
+      text-align: left;
+    }
+  }
+</style>
+<script>
+(function () {
+  var pointLottery = {{ pointLottery|json|safe }};
+  var modal = document.querySelector('[data-point-lottery]');
+  if (!modal) return;
+  var openButton = document.querySelector('[data-point-lottery-open]');
+  var closeButtons = modal.querySelectorAll('[data-point-lottery-close]');
+  var drawButton = modal.querySelector('[data-point-lottery-draw]');
+  var pointsNode = modal.querySelector('[data-point-lottery-points]');
+  var costNode = modal.querySelector('[data-point-lottery-cost]');
+  var statusNode = modal.querySelector('[data-point-lottery-status]');
+  var prizesNode = modal.querySelector('[data-point-lottery-prizes]');
+  var resultNode = modal.querySelector('[data-point-lottery-result]');
+  var drawUrl = {{ url('point_lottery_draw')|json|safe }};
+
+  function escapeHtml(value) {
+    return String(value || '').replace(/[&<>"']/g, function (ch) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+    });
+  }
+
+  function showResult(message, isError) {
+    resultNode.hidden = false;
+    resultNode.classList.toggle('is-error', !!isError);
+    resultNode.textContent = message;
+  }
+
+  function renderPrizes() {
+    var prizes = pointLottery.prizes || [];
+    if (!prizes.length) {
+      prizesNode.innerHTML = '<div class="point-lottery__status">暂未配置奖品。</div>';
+      return;
+    }
+    prizesNode.innerHTML = prizes.map(function (prize) {
+      var initial = escapeHtml((prize.name || '?').slice(0, 1));
+      var image = prize.image
+        ? '<img src="' + escapeHtml(prize.image) + '" alt="' + escapeHtml(prize.name) + '">'
+        : initial;
+      var points = prize.pointDelta > 0 ? '中奖加 ' + prize.pointDelta + ' 积分' : '实物或其他奖励';
+      return '<div class="point-lottery__prize">'
+        + '<div class="point-lottery__prize-image">' + image + '</div>'
+        + '<div class="point-lottery__prize-name">' + escapeHtml(prize.name) + '</div>'
+        + '<div class="point-lottery__prize-points">' + escapeHtml(points) + '</div>'
+        + '</div>';
+    }).join('');
+  }
+
+  function syncState() {
+    pointsNode.textContent = pointLottery.points || 0;
+    costNode.textContent = pointLottery.cost || 0;
+    renderPrizes();
+    if (!pointLottery.canDraw) {
+      drawButton.disabled = true;
+      statusNode.innerHTML = '请先登录后再抽奖。';
+      return;
+    }
+    if (!pointLottery.enabled) {
+      drawButton.disabled = true;
+      statusNode.innerHTML = '积分抽奖暂未开启。';
+      return;
+    }
+    if (!pointLottery.prizes || !pointLottery.prizes.length) {
+      drawButton.disabled = true;
+      statusNode.innerHTML = '奖品暂未配置。';
+      return;
+    }
+    if (Number(pointLottery.points || 0) < Number(pointLottery.cost || 0)) {
+      drawButton.disabled = true;
+      statusNode.innerHTML = '积分不足，本次抽奖需要 <strong>' + escapeHtml(pointLottery.cost || 0) + '</strong> 积分。';
+      return;
+    }
+    drawButton.disabled = false;
+    statusNode.innerHTML = '每次抽奖消耗 <strong data-point-lottery-cost>' + escapeHtml(pointLottery.cost || 0) + '</strong> 积分';
+  }
+
+  function openModal() {
+    resultNode.hidden = true;
+    modal.hidden = false;
+    syncState();
+  }
+
+  function closeModal() {
+    modal.hidden = true;
+  }
+
+  openButton && openButton.addEventListener('click', openModal);
+  closeButtons.forEach(function (button) {
+    button.addEventListener('click', closeModal);
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && !modal.hidden) closeModal();
+  });
+
+  drawButton.addEventListener('click', function () {
+    if (drawButton.disabled) return;
+    drawButton.disabled = true;
+    drawButton.textContent = '抽奖中...';
+    fetch(drawUrl, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    }).then(function (res) {
+      return res.json().then(function (data) {
+        if (!res.ok || data.error) {
+          var err = data.error || {};
+          throw new Error(err.message || '抽奖失败，请稍后再试。');
+        }
+        return data;
+      });
+    }).then(function (data) {
+      pointLottery.points = data.points;
+      pointsNode.textContent = data.points;
+      showResult('抽中了：' + data.prize.name + '。当前积分：' + data.points, false);
+    }).catch(function (err) {
+      showResult(err.message || '抽奖失败，请稍后再试。', true);
+    }).finally(function () {
+      drawButton.textContent = '立即抽奖';
+      syncState();
+    });
+  });
+
+  syncState();
+}());
+</script>
 {% endblock %}

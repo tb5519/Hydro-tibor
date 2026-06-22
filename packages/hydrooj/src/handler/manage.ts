@@ -7,6 +7,9 @@ import Schema from 'schemastery';
 import {
     CannotEditSuperAdminError, NotLaunchedByPM2Error, UserNotFoundError, ValidationError, VerifyPasswordError,
 } from '../error';
+import {
+    buildPointLotteryConfigFromForm, getPointLotteryConfig, POINT_LOTTERY_CONFIG_KEY, POINT_LOTTERY_POINTS_FIELD,
+} from '../lib/point_lottery';
 import { Logger } from '../logger';
 import { PERM, PRIV, STATUS } from '../model/builtin';
 import domain from '../model/domain';
@@ -707,6 +710,76 @@ class SystemUserManagementHandler extends SystemHandler {
     }
 }
 
+class SystemLotteryHandler extends SystemHandler {
+    async prepare() {
+        this.checkPriv(PRIV.PRIV_ALL);
+    }
+
+    @requireSudo
+    @param('q', Types.Content, true)
+    @param('saved', Types.Int, true)
+    @param('added', Types.Int, true)
+    async get(domainId: string, q = '', saved = 0, added = 0) {
+        const config = getPointLotteryConfig();
+        const target = q.trim() ? await getManageTargetUser(domainId, q) : null;
+        const targetDudoc = target ? await domain.collUser.findOne(
+            { domainId, uid: target._id },
+            { projection: { [POINT_LOTTERY_POINTS_FIELD]: 1 } },
+        ) : null;
+        const logs = await this.ctx.db.collection('lottery.draw')
+            .find({ domainId })
+            .sort({ createdAt: -1, _id: -1 })
+            .limit(20)
+            .toArray();
+        const logUids = Array.from(new Set(logs.map((log) => log.uid).filter((uid) => typeof uid === 'number')));
+        const logUdict = logUids.length ? await user.getListForRender(domainId, logUids, false) : {};
+        const logRows = logs.map((log) => ({
+            ...log,
+            udoc: logUdict[log.uid] || { _id: log.uid, uname: `${log.uid}` },
+        }));
+        this.response.template = 'manage_lottery.html';
+        this.response.body = {
+            config,
+            configKey: POINT_LOTTERY_CONFIG_KEY,
+            prizeSlots: Array.from({ length: 10 }, (_, i) => config.prizes[i] || {
+                name: '',
+                image: '',
+                probability: '',
+                pointDelta: 0,
+            }),
+            q,
+            target,
+            canAddTarget: target ? !isPasswordResetProtectedTarget(target) : false,
+            targetPoints: Math.max(0, Math.floor(+targetDudoc?.[POINT_LOTTERY_POINTS_FIELD] || 0)),
+            saved,
+            added,
+            logRows,
+        };
+    }
+
+    @requireSudo
+    async postSaveConfig() {
+        const config = buildPointLotteryConfigFromForm(this.args);
+        await system.set(POINT_LOTTERY_CONFIG_KEY, config);
+        this.response.redirect = this.url('manage_lottery', { query: { saved: 1 } });
+    }
+
+    @requireSudo
+    @param('q', Types.Content)
+    @param('points', Types.Int)
+    async postAddPoints(domainId: string, q: string, points: number) {
+        if (points <= 0) throw new ValidationError('points');
+        const target = await getManageTargetUser(domainId, q);
+        if (!target) throw new UserNotFoundError(q);
+        if (isPasswordResetProtectedTarget(target)) throw new CannotEditSuperAdminError();
+        await domain.updateUserInDomain(domainId, target._id, {
+            $inc: { [POINT_LOTTERY_POINTS_FIELD]: points },
+            $setOnInsert: { domainId, uid: target._id },
+        });
+        this.response.redirect = this.url('manage_lottery', { query: { q, added: points } });
+    }
+}
+
 class SystemUserPrivHandler extends SystemHandler {
     @requireSudo
     @param('extraIgnore', Types.NumericArray, true)
@@ -760,5 +833,7 @@ export async function apply(ctx) {
     ctx.injectUI('ControlPanel', 'manage_user_management', { before: 'manage_user_import', icon: 'user' }, PRIV.PRIV_ALL);
     ctx.Route('manage_user_import', '/manage/userimport', SystemUserImportHandler);
     ctx.Route('manage_user_priv', '/manage/userpriv', SystemUserPrivHandler);
+    ctx.Route('manage_lottery', '/manage/lottery', SystemLotteryHandler);
+    ctx.injectUI('ControlPanel', 'manage_lottery', { icon: 'gift' }, PRIV.PRIV_ALL);
     ctx.Connection('manage_check', '/manage/check-conn', SystemCheckConnHandler);
 }
