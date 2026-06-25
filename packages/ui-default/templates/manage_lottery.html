@@ -199,7 +199,7 @@
         {% for log in logRows %}
           <tr>
             <td>{{ datetimeSpan(log.createdAt, false)|safe }}</td>
-            <td>{{ user.render_inline(log.udoc) }}</td>
+            <td>{{ user.render_inline(log.udoc, true, true, false) }}</td>
             <td>{{ log.cost }}</td>
             <td>{{ log.prize.name }}</td>
             <td>{{ log.pointDelta }}</td>
