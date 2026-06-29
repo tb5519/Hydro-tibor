@@ -34,18 +34,18 @@
     --badge-flow-speed: 8.4s;
     --badge-scan-speed: 4.6s;
     --badge-scan-width: 34%;
-    --badge-sweep-size: 52%;
+    --badge-sweep-period: 2400px;
+    --badge-sweep-start: -2400px;
     animation: ranking-row-flow var(--badge-flow-speed) linear infinite;
     background:
-      linear-gradient(105deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0) 35%, rgba(255, 255, 255, .9) 47%, rgba(var(--badge-third), .28) 55%, rgba(255, 255, 255, 0) 68%, rgba(255, 255, 255, 0) 100%),
-      linear-gradient(105deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0) 35%, rgba(255, 255, 255, .9) 47%, rgba(var(--badge-third), .28) 55%, rgba(255, 255, 255, 0) 68%, rgba(255, 255, 255, 0) 100%),
+      linear-gradient(105deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0) 31%, rgba(255, 255, 255, .9) 44%, rgba(var(--badge-third), .28) 52%, rgba(255, 255, 255, 0) 66%, rgba(255, 255, 255, 0) 100%),
       radial-gradient(circle at 16% 50%, rgba(var(--badge-primary), .18) 0%, rgba(var(--badge-primary), 0) 22rem),
       linear-gradient(90deg, rgba(255, 255, 255, var(--badge-wash)) 0%, rgba(255, 255, 255, var(--badge-wash-2)) 50%, rgba(255, 255, 255, var(--badge-wash)) 100%),
       linear-gradient(120deg, rgba(var(--badge-primary), var(--badge-alpha)) 0%, rgba(var(--badge-secondary), var(--badge-alpha-2)) 30%, rgba(var(--badge-third), var(--badge-alpha-3)) 58%, rgba(var(--badge-primary), var(--badge-alpha)) 100%),
       #fff;
-    background-position: -70% 50%, 70% 50%, 0% 50%, 0 0, 0% 50%, 0 0;
-    background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, repeat;
-    background-size: var(--badge-sweep-size) 100%, var(--badge-sweep-size) 100%, 180% 100%, 100% 100%, 300% 100%, 100% 100%;
+    background-position: var(--badge-sweep-start) 50%, 0% 50%, 0 0, 0% 50%, 0 0;
+    background-repeat: repeat-x, no-repeat, no-repeat, no-repeat, repeat;
+    background-size: var(--badge-sweep-period) 100%, 180% 100%, 100% 100%, 300% 100%, 100% 100%;
     isolation: isolate;
     position: relative;
   }
@@ -451,11 +451,11 @@
 
   @keyframes ranking-row-flow {
     0% {
-      background-position: -70% 50%, 70% 50%, 0% 50%, 0 0, 0% 50%, 0 0;
+      background-position: var(--badge-sweep-start) 50%, 0% 50%, 0 0, 0% 50%, 0 0;
     }
 
     100% {
-      background-position: 70% 50%, 210% 50%, 100% 50%, 0 0, 100% 50%, 0 0;
+      background-position: 0 50%, 0% 50%, 0 0, 0% 50%, 0 0;
     }
   }
 
