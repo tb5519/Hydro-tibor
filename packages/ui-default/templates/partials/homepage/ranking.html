@@ -55,6 +55,502 @@
         transform: translateX(120%);
       }
     }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge {
+      --badge-primary: 59, 130, 246;
+      --badge-secondary: 34, 211, 238;
+      --badge-third: 168, 85, 247;
+      --badge-edge: #60a5fa;
+      --badge-edge-width: 4px;
+      --badge-alpha: .22;
+      --badge-alpha-2: .18;
+      --badge-alpha-3: .14;
+      --badge-wash: .74;
+      --badge-wash-2: .52;
+      --badge-orbit-size: 34px;
+      --badge-glow-size: 18px;
+      --badge-flow-speed: 8.4s;
+      --badge-scan-speed: 4.6s;
+      --badge-scan-width: 34%;
+      animation: homepage-ranking-row-flow var(--badge-flow-speed) linear infinite;
+      background:
+        radial-gradient(circle at 15% 50%, rgba(var(--badge-primary), .18) 0%, rgba(var(--badge-primary), 0) 20rem),
+        linear-gradient(90deg, rgba(255, 255, 255, var(--badge-wash)) 0%, rgba(255, 255, 255, var(--badge-wash-2)) 50%, rgba(255, 255, 255, var(--badge-wash)) 100%),
+        linear-gradient(120deg, rgba(var(--badge-primary), var(--badge-alpha)) 0%, rgba(var(--badge-secondary), var(--badge-alpha-2)) 30%, rgba(var(--badge-third), var(--badge-alpha-3)) 58%, rgba(var(--badge-primary), var(--badge-alpha)) 100%),
+        #fff;
+      background-size: 180% 100%, 100% 100%, 300% 100%, 100% 100%;
+      isolation: isolate;
+      position: relative;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-1 {
+      --badge-alpha: .22;
+      --badge-alpha-2: .18;
+      --badge-alpha-3: .14;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-2 {
+      --badge-primary: 99, 102, 241;
+      --badge-secondary: 168, 85, 247;
+      --badge-third: 236, 72, 153;
+      --badge-edge: #a855f7;
+      --badge-edge-width: 6px;
+      --badge-alpha: .34;
+      --badge-alpha-2: .28;
+      --badge-alpha-3: .22;
+      --badge-wash: .66;
+      --badge-wash-2: .38;
+      --badge-orbit-size: 40px;
+      --badge-glow-size: 24px;
+      --badge-flow-speed: 7.2s;
+      --badge-scan-speed: 3.9s;
+      --badge-scan-width: 42%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-3 {
+      --badge-primary: 168, 85, 247;
+      --badge-secondary: 236, 72, 153;
+      --badge-third: 251, 191, 36;
+      --badge-edge: #f59e0b;
+      --badge-edge-width: 8px;
+      --badge-alpha: .42;
+      --badge-alpha-2: .36;
+      --badge-alpha-3: .32;
+      --badge-wash: .58;
+      --badge-wash-2: .28;
+      --badge-orbit-size: 46px;
+      --badge-glow-size: 32px;
+      --badge-flow-speed: 6.3s;
+      --badge-scan-speed: 3.4s;
+      --badge-scan-width: 50%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-4 {
+      --badge-primary: 236, 72, 153;
+      --badge-secondary: 251, 191, 36;
+      --badge-third: 34, 197, 94;
+      --badge-edge: #ec4899;
+      --badge-edge-width: 9px;
+      --badge-alpha: .5;
+      --badge-alpha-2: .42;
+      --badge-alpha-3: .36;
+      --badge-wash: .5;
+      --badge-wash-2: .22;
+      --badge-orbit-size: 52px;
+      --badge-glow-size: 40px;
+      --badge-flow-speed: 5.6s;
+      --badge-scan-speed: 3s;
+      --badge-scan-width: 58%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-5 {
+      --badge-primary: 245, 158, 11;
+      --badge-secondary: 34, 197, 94;
+      --badge-third: 6, 182, 212;
+      --badge-edge: #facc15;
+      --badge-edge-width: 10px;
+      --badge-alpha: .56;
+      --badge-alpha-2: .48;
+      --badge-alpha-3: .42;
+      --badge-wash: .44;
+      --badge-wash-2: .18;
+      --badge-orbit-size: 58px;
+      --badge-glow-size: 48px;
+      --badge-flow-speed: 5s;
+      --badge-scan-speed: 2.7s;
+      --badge-scan-width: 66%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-6 {
+      --badge-primary: 34, 197, 94;
+      --badge-secondary: 6, 182, 212;
+      --badge-third: 99, 102, 241;
+      --badge-edge: #22c55e;
+      --badge-edge-width: 11px;
+      --badge-alpha: .62;
+      --badge-alpha-2: .54;
+      --badge-alpha-3: .46;
+      --badge-wash: .38;
+      --badge-wash-2: .14;
+      --badge-orbit-size: 64px;
+      --badge-glow-size: 56px;
+      --badge-flow-speed: 4.5s;
+      --badge-scan-speed: 2.35s;
+      --badge-scan-width: 74%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-7 {
+      --badge-primary: 6, 182, 212;
+      --badge-secondary: 99, 102, 241;
+      --badge-third: 236, 72, 153;
+      --badge-edge: #06b6d4;
+      --badge-edge-width: 12px;
+      --badge-alpha: .68;
+      --badge-alpha-2: .6;
+      --badge-alpha-3: .52;
+      --badge-wash: .32;
+      --badge-wash-2: .1;
+      --badge-orbit-size: 70px;
+      --badge-glow-size: 64px;
+      --badge-flow-speed: 4s;
+      --badge-scan-speed: 2.1s;
+      --badge-scan-width: 82%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-8 {
+      --badge-primary: 251, 191, 36;
+      --badge-secondary: 236, 72, 153;
+      --badge-third: 99, 102, 241;
+      --badge-edge: #fde047;
+      --badge-edge-width: 13px;
+      --badge-alpha: .76;
+      --badge-alpha-2: .68;
+      --badge-alpha-3: .58;
+      --badge-wash: .26;
+      --badge-wash-2: .08;
+      --badge-orbit-size: 78px;
+      --badge-glow-size: 74px;
+      --badge-flow-speed: 3.5s;
+      --badge-scan-speed: 1.85s;
+      --badge-scan-width: 92%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-9 {
+      --badge-primary: 244, 63, 94;
+      --badge-secondary: 250, 204, 21;
+      --badge-third: 34, 211, 238;
+      --badge-edge: #fb7185;
+      --badge-edge-width: 14px;
+      --badge-alpha: .8;
+      --badge-alpha-2: .72;
+      --badge-alpha-3: .62;
+      --badge-wash: .22;
+      --badge-wash-2: .06;
+      --badge-orbit-size: 86px;
+      --badge-glow-size: 84px;
+      --badge-flow-speed: 3.2s;
+      --badge-scan-speed: 1.7s;
+      --badge-scan-width: 100%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-10 {
+      --badge-primary: 14, 165, 233;
+      --badge-secondary: 250, 204, 21;
+      --badge-third: 244, 63, 94;
+      --badge-edge: #38bdf8;
+      --badge-edge-width: 15px;
+      --badge-alpha: .84;
+      --badge-alpha-2: .76;
+      --badge-alpha-3: .66;
+      --badge-wash: .18;
+      --badge-wash-2: .05;
+      --badge-orbit-size: 94px;
+      --badge-glow-size: 94px;
+      --badge-flow-speed: 2.95s;
+      --badge-scan-speed: 1.55s;
+      --badge-scan-width: 108%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-11 {
+      --badge-primary: 217, 70, 239;
+      --badge-secondary: 59, 130, 246;
+      --badge-third: 250, 204, 21;
+      --badge-edge: #d946ef;
+      --badge-edge-width: 16px;
+      --badge-alpha: .88;
+      --badge-alpha-2: .8;
+      --badge-alpha-3: .7;
+      --badge-wash: .15;
+      --badge-wash-2: .04;
+      --badge-orbit-size: 102px;
+      --badge-glow-size: 104px;
+      --badge-flow-speed: 2.75s;
+      --badge-scan-speed: 1.42s;
+      --badge-scan-width: 116%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-12 {
+      --badge-primary: 250, 204, 21;
+      --badge-secondary: 244, 63, 94;
+      --badge-third: 34, 211, 238;
+      --badge-edge: #fef08a;
+      --badge-edge-width: 18px;
+      --badge-alpha: .92;
+      --badge-alpha-2: .84;
+      --badge-alpha-3: .74;
+      --badge-wash: .12;
+      --badge-wash-2: .03;
+      --badge-orbit-size: 112px;
+      --badge-glow-size: 116px;
+      --badge-flow-speed: 2.5s;
+      --badge-scan-speed: 1.28s;
+      --badge-scan-width: 126%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-13 {
+      --badge-primary: 244, 63, 94;
+      --badge-secondary: 34, 211, 238;
+      --badge-third: 250, 204, 21;
+      --badge-edge: #fb7185;
+      --badge-edge-width: 19px;
+      --badge-alpha: .94;
+      --badge-alpha-2: .86;
+      --badge-alpha-3: .78;
+      --badge-wash: .1;
+      --badge-wash-2: .025;
+      --badge-orbit-size: 120px;
+      --badge-glow-size: 128px;
+      --badge-flow-speed: 2.35s;
+      --badge-scan-speed: 1.18s;
+      --badge-scan-width: 134%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-14 {
+      --badge-primary: 34, 211, 238;
+      --badge-secondary: 217, 70, 239;
+      --badge-third: 250, 204, 21;
+      --badge-edge: #22d3ee;
+      --badge-edge-width: 20px;
+      --badge-alpha: .95;
+      --badge-alpha-2: .87;
+      --badge-alpha-3: .79;
+      --badge-wash: .09;
+      --badge-wash-2: .024;
+      --badge-orbit-size: 128px;
+      --badge-glow-size: 138px;
+      --badge-flow-speed: 2.2s;
+      --badge-scan-speed: 1.08s;
+      --badge-scan-width: 142%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-15 {
+      --badge-primary: 250, 204, 21;
+      --badge-secondary: 59, 130, 246;
+      --badge-third: 244, 63, 94;
+      --badge-edge: #fde047;
+      --badge-edge-width: 21px;
+      --badge-alpha: .96;
+      --badge-alpha-2: .88;
+      --badge-alpha-3: .8;
+      --badge-wash: .08;
+      --badge-wash-2: .022;
+      --badge-orbit-size: 136px;
+      --badge-glow-size: 148px;
+      --badge-flow-speed: 2.05s;
+      --badge-scan-speed: .98s;
+      --badge-scan-width: 150%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-16 {
+      --badge-primary: 217, 70, 239;
+      --badge-secondary: 250, 204, 21;
+      --badge-third: 34, 211, 238;
+      --badge-edge: #e879f9;
+      --badge-edge-width: 22px;
+      --badge-alpha: .97;
+      --badge-alpha-2: .89;
+      --badge-alpha-3: .81;
+      --badge-wash: .07;
+      --badge-wash-2: .02;
+      --badge-orbit-size: 144px;
+      --badge-glow-size: 158px;
+      --badge-flow-speed: 1.92s;
+      --badge-scan-speed: .9s;
+      --badge-scan-width: 158%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-17 {
+      --badge-primary: 14, 165, 233;
+      --badge-secondary: 244, 63, 94;
+      --badge-third: 250, 204, 21;
+      --badge-edge: #7dd3fc;
+      --badge-edge-width: 23px;
+      --badge-alpha: .98;
+      --badge-alpha-2: .9;
+      --badge-alpha-3: .82;
+      --badge-wash: .06;
+      --badge-wash-2: .018;
+      --badge-orbit-size: 152px;
+      --badge-glow-size: 168px;
+      --badge-flow-speed: 1.8s;
+      --badge-scan-speed: .84s;
+      --badge-scan-width: 166%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-18 {
+      --badge-primary: 244, 63, 94;
+      --badge-secondary: 250, 204, 21;
+      --badge-third: 217, 70, 239;
+      --badge-edge: #fda4af;
+      --badge-edge-width: 24px;
+      --badge-alpha: .985;
+      --badge-alpha-2: .91;
+      --badge-alpha-3: .83;
+      --badge-wash: .05;
+      --badge-wash-2: .016;
+      --badge-orbit-size: 160px;
+      --badge-glow-size: 178px;
+      --badge-flow-speed: 1.68s;
+      --badge-scan-speed: .78s;
+      --badge-scan-width: 174%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-19 {
+      --badge-primary: 250, 204, 21;
+      --badge-secondary: 34, 211, 238;
+      --badge-third: 244, 63, 94;
+      --badge-edge: #fef3c7;
+      --badge-edge-width: 25px;
+      --badge-alpha: .99;
+      --badge-alpha-2: .92;
+      --badge-alpha-3: .84;
+      --badge-wash: .04;
+      --badge-wash-2: .014;
+      --badge-orbit-size: 168px;
+      --badge-glow-size: 188px;
+      --badge-flow-speed: 1.55s;
+      --badge-scan-speed: .74s;
+      --badge-scan-width: 182%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-20 {
+      --badge-primary: 255, 255, 255;
+      --badge-secondary: 250, 204, 21;
+      --badge-third: 34, 211, 238;
+      --badge-edge: #ffffff;
+      --badge-edge-width: 26px;
+      --badge-alpha: .995;
+      --badge-alpha-2: .94;
+      --badge-alpha-3: .88;
+      --badge-wash: .03;
+      --badge-wash-2: .01;
+      --badge-orbit-size: 176px;
+      --badge-glow-size: 196px;
+      --badge-flow-speed: 1.4s;
+      --badge-scan-speed: .7s;
+      --badge-scan-width: 190%;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge:nth-child(2n) {
+      animation-delay: -2.2s;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge:nth-child(3n) {
+      animation-delay: -4.1s;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge td {
+      background: transparent !important;
+      border-bottom-color: rgba(147, 197, 253, .4);
+      border-top-color: rgba(255, 255, 255, .42);
+      position: relative;
+      z-index: 1;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge td:first-child {
+      box-shadow: inset var(--badge-edge-width) 0 0 var(--badge-edge);
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge td.col--user {
+      overflow: hidden;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge td.col--user::before {
+      animation: homepage-ranking-row-orbit 3.6s ease-in-out infinite;
+      border: 1px solid rgba(255, 255, 255, .62);
+      border-radius: 999px;
+      box-shadow: 0 0 var(--badge-glow-size) rgba(var(--badge-primary), .5), inset 0 0 18px rgba(255, 255, 255, .3);
+      content: '';
+      height: var(--badge-orbit-size);
+      left: 14px;
+      pointer-events: none;
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: var(--badge-orbit-size);
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge td.col--user::after {
+      animation: homepage-ranking-row-comet var(--badge-scan-speed) ease-in-out infinite;
+      background: linear-gradient(105deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, .88) 38%, rgba(var(--badge-third), .28) 52%, rgba(255, 255, 255, 0) 76%);
+      content: '';
+      inset: 0 auto 0 -46%;
+      pointer-events: none;
+      position: absolute;
+      width: var(--badge-scan-width);
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge .homepage-ranking-user {
+      position: relative;
+      z-index: 1;
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge .user-profile-name {
+      color: #0f172a;
+      font-weight: 800;
+      text-shadow: 0 1px 0 rgba(255, 255, 255, .74);
+    }
+
+    .homepage-ranking-table tbody tr.ranking-row--badge-4 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-5 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-6 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-7 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-8 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-9 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-10 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-11 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-12 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-13 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-14 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-15 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-16 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-17 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-18 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-19 .user-profile-name,
+    .homepage-ranking-table tbody tr.ranking-row--badge-20 .user-profile-name {
+      text-shadow: 0 1px 0 rgba(255, 255, 255, .82), 0 0 12px rgba(var(--badge-third), .44);
+    }
+
+    @keyframes homepage-ranking-row-flow {
+      0% {
+        background-position: 0% 50%, 0 0, 0% 50%, 0 0;
+      }
+
+      100% {
+        background-position: 100% 50%, 0 0, 100% 50%, 0 0;
+      }
+    }
+
+    @keyframes homepage-ranking-row-comet {
+      0%, 44% {
+        transform: translateX(0);
+      }
+
+      72%, 100% {
+        transform: translateX(440%);
+      }
+    }
+
+    @keyframes homepage-ranking-row-orbit {
+      0%, 100% {
+        opacity: .42;
+        transform: translateY(-50%) scale(.86);
+      }
+
+      50% {
+        opacity: .95;
+        transform: translateY(-50%) scale(1.12);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .homepage-ranking-table tbody tr.ranking-row--badge,
+      .homepage-ranking-table tbody tr.ranking-row--badge td.col--user::before,
+      .homepage-ranking-table tbody tr.ranking-row--badge td.col--user::after,
+      .homepage-ranking-user__badge:not(.user-profile-badge--more)::after {
+        animation: none;
+      }
+    }
   </style>
   <div class="section">
     <div class="section__header">
@@ -62,7 +558,7 @@
     </div>
     <div class="section__body no-padding">
       <div>
-        <table class="data-table">
+        <table class="data-table homepage-ranking-table">
           <colgroup>
             <col class="col--rank">
             <col class="col--user">
@@ -80,7 +576,10 @@
           <tbody>
             {%- for uid in payload -%}
               {% set udoc = udict[uid] %}
-              <tr>
+              {% set rowOwnedBadges = udoc.ownedBadges|default([]) %}
+              {% set rowBadgeCount = rowOwnedBadges|length or (1 if udoc.badge else 0) %}
+              {% set rowBadgeLevel = 20 if rowBadgeCount > 20 else rowBadgeCount %}
+              <tr{% if rowBadgeCount %} class="ranking-row--badge ranking-row--badge-{{ rowBadgeLevel }}"{% endif %}>
                 <td class="col--rank">{{ loop.index }}</td>
                 <td class="col--user">
                   <span class="homepage-ranking-user">

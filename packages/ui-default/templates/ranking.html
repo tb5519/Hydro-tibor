@@ -18,27 +18,399 @@
     padding-bottom: 8px;
   }
 
-  .ranking-table tbody tr.ranking-row--badge td {
-    animation: ranking-row-aurora 6s ease-in-out infinite;
+  .ranking-table tbody tr.ranking-row--badge {
+    --badge-primary: 59, 130, 246;
+    --badge-secondary: 34, 211, 238;
+    --badge-third: 168, 85, 247;
+    --badge-edge: #60a5fa;
+    --badge-edge-width: 4px;
+    --badge-alpha: .22;
+    --badge-alpha-2: .18;
+    --badge-alpha-3: .14;
+    --badge-wash: .74;
+    --badge-wash-2: .52;
+    --badge-orbit-size: 38px;
+    --badge-glow-size: 18px;
+    --badge-flow-speed: 8.4s;
+    --badge-scan-speed: 4.6s;
+    --badge-scan-width: 34%;
+    animation: ranking-row-flow var(--badge-flow-speed) linear infinite;
     background:
-      linear-gradient(90deg, rgba(255, 255, 255, .64), rgba(255, 255, 255, .28)),
-      linear-gradient(120deg, rgba(96, 165, 250, .26), rgba(168, 85, 247, .24), rgba(236, 72, 153, .18), rgba(34, 197, 94, .18), rgba(251, 191, 36, .22)) !important;
-    background-size: 100% 100%, 260% 100%;
-    border-bottom-color: rgba(147, 197, 253, .38);
-    border-top-color: rgba(244, 114, 182, .24);
+      radial-gradient(circle at 16% 50%, rgba(var(--badge-primary), .18) 0%, rgba(var(--badge-primary), 0) 22rem),
+      linear-gradient(90deg, rgba(255, 255, 255, var(--badge-wash)) 0%, rgba(255, 255, 255, var(--badge-wash-2)) 50%, rgba(255, 255, 255, var(--badge-wash)) 100%),
+      linear-gradient(120deg, rgba(var(--badge-primary), var(--badge-alpha)) 0%, rgba(var(--badge-secondary), var(--badge-alpha-2)) 30%, rgba(var(--badge-third), var(--badge-alpha-3)) 58%, rgba(var(--badge-primary), var(--badge-alpha)) 100%),
+      #fff;
+    background-size: 180% 100%, 100% 100%, 300% 100%, 100% 100%;
+    isolation: isolate;
     position: relative;
   }
 
-  .ranking-table tbody tr.ranking-row--badge:nth-child(2n) td {
-    animation-delay: -1.7s;
+  .ranking-table tbody tr.ranking-row--badge-1 {
+    --badge-alpha: .22;
+    --badge-alpha-2: .18;
+    --badge-alpha-3: .14;
   }
 
-  .ranking-table tbody tr.ranking-row--badge:nth-child(3n) td {
-    animation-delay: -3.1s;
+  .ranking-table tbody tr.ranking-row--badge-2 {
+    --badge-primary: 99, 102, 241;
+    --badge-secondary: 168, 85, 247;
+    --badge-third: 236, 72, 153;
+    --badge-edge: #a855f7;
+    --badge-edge-width: 6px;
+    --badge-alpha: .34;
+    --badge-alpha-2: .28;
+    --badge-alpha-3: .22;
+    --badge-wash: .66;
+    --badge-wash-2: .38;
+    --badge-orbit-size: 44px;
+    --badge-glow-size: 24px;
+    --badge-flow-speed: 7.2s;
+    --badge-scan-speed: 3.9s;
+    --badge-scan-width: 42%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-3 {
+    --badge-primary: 168, 85, 247;
+    --badge-secondary: 236, 72, 153;
+    --badge-third: 251, 191, 36;
+    --badge-edge: #f59e0b;
+    --badge-edge-width: 8px;
+    --badge-alpha: .42;
+    --badge-alpha-2: .36;
+    --badge-alpha-3: .32;
+    --badge-wash: .58;
+    --badge-wash-2: .28;
+    --badge-orbit-size: 50px;
+    --badge-glow-size: 32px;
+    --badge-flow-speed: 6.3s;
+    --badge-scan-speed: 3.4s;
+    --badge-scan-width: 50%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-4 {
+    --badge-primary: 236, 72, 153;
+    --badge-secondary: 251, 191, 36;
+    --badge-third: 34, 197, 94;
+    --badge-edge: #ec4899;
+    --badge-edge-width: 9px;
+    --badge-alpha: .5;
+    --badge-alpha-2: .42;
+    --badge-alpha-3: .36;
+    --badge-wash: .5;
+    --badge-wash-2: .22;
+    --badge-orbit-size: 56px;
+    --badge-glow-size: 40px;
+    --badge-flow-speed: 5.6s;
+    --badge-scan-speed: 3s;
+    --badge-scan-width: 58%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-5 {
+    --badge-primary: 245, 158, 11;
+    --badge-secondary: 34, 197, 94;
+    --badge-third: 6, 182, 212;
+    --badge-edge: #facc15;
+    --badge-edge-width: 10px;
+    --badge-alpha: .56;
+    --badge-alpha-2: .48;
+    --badge-alpha-3: .42;
+    --badge-wash: .44;
+    --badge-wash-2: .18;
+    --badge-orbit-size: 62px;
+    --badge-glow-size: 48px;
+    --badge-flow-speed: 5s;
+    --badge-scan-speed: 2.7s;
+    --badge-scan-width: 66%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-6 {
+    --badge-primary: 34, 197, 94;
+    --badge-secondary: 6, 182, 212;
+    --badge-third: 99, 102, 241;
+    --badge-edge: #22c55e;
+    --badge-edge-width: 11px;
+    --badge-alpha: .62;
+    --badge-alpha-2: .54;
+    --badge-alpha-3: .46;
+    --badge-wash: .38;
+    --badge-wash-2: .14;
+    --badge-orbit-size: 68px;
+    --badge-glow-size: 56px;
+    --badge-flow-speed: 4.5s;
+    --badge-scan-speed: 2.35s;
+    --badge-scan-width: 74%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-7 {
+    --badge-primary: 6, 182, 212;
+    --badge-secondary: 99, 102, 241;
+    --badge-third: 236, 72, 153;
+    --badge-edge: #06b6d4;
+    --badge-edge-width: 12px;
+    --badge-alpha: .68;
+    --badge-alpha-2: .6;
+    --badge-alpha-3: .52;
+    --badge-wash: .32;
+    --badge-wash-2: .1;
+    --badge-orbit-size: 74px;
+    --badge-glow-size: 64px;
+    --badge-flow-speed: 4s;
+    --badge-scan-speed: 2.1s;
+    --badge-scan-width: 82%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-8 {
+    --badge-primary: 251, 191, 36;
+    --badge-secondary: 236, 72, 153;
+    --badge-third: 99, 102, 241;
+    --badge-edge: #fde047;
+    --badge-edge-width: 13px;
+    --badge-alpha: .76;
+    --badge-alpha-2: .68;
+    --badge-alpha-3: .58;
+    --badge-wash: .26;
+    --badge-wash-2: .08;
+    --badge-orbit-size: 82px;
+    --badge-glow-size: 74px;
+    --badge-flow-speed: 3.5s;
+    --badge-scan-speed: 1.85s;
+    --badge-scan-width: 92%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-9 {
+    --badge-primary: 244, 63, 94;
+    --badge-secondary: 250, 204, 21;
+    --badge-third: 34, 211, 238;
+    --badge-edge: #fb7185;
+    --badge-edge-width: 14px;
+    --badge-alpha: .8;
+    --badge-alpha-2: .72;
+    --badge-alpha-3: .62;
+    --badge-wash: .22;
+    --badge-wash-2: .06;
+    --badge-orbit-size: 90px;
+    --badge-glow-size: 84px;
+    --badge-flow-speed: 3.2s;
+    --badge-scan-speed: 1.7s;
+    --badge-scan-width: 100%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-10 {
+    --badge-primary: 14, 165, 233;
+    --badge-secondary: 250, 204, 21;
+    --badge-third: 244, 63, 94;
+    --badge-edge: #38bdf8;
+    --badge-edge-width: 15px;
+    --badge-alpha: .84;
+    --badge-alpha-2: .76;
+    --badge-alpha-3: .66;
+    --badge-wash: .18;
+    --badge-wash-2: .05;
+    --badge-orbit-size: 98px;
+    --badge-glow-size: 94px;
+    --badge-flow-speed: 2.95s;
+    --badge-scan-speed: 1.55s;
+    --badge-scan-width: 108%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-11 {
+    --badge-primary: 217, 70, 239;
+    --badge-secondary: 59, 130, 246;
+    --badge-third: 250, 204, 21;
+    --badge-edge: #d946ef;
+    --badge-edge-width: 16px;
+    --badge-alpha: .88;
+    --badge-alpha-2: .8;
+    --badge-alpha-3: .7;
+    --badge-wash: .15;
+    --badge-wash-2: .04;
+    --badge-orbit-size: 106px;
+    --badge-glow-size: 104px;
+    --badge-flow-speed: 2.75s;
+    --badge-scan-speed: 1.42s;
+    --badge-scan-width: 116%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-12 {
+    --badge-primary: 250, 204, 21;
+    --badge-secondary: 244, 63, 94;
+    --badge-third: 34, 211, 238;
+    --badge-edge: #fef08a;
+    --badge-edge-width: 18px;
+    --badge-alpha: .92;
+    --badge-alpha-2: .84;
+    --badge-alpha-3: .74;
+    --badge-wash: .12;
+    --badge-wash-2: .03;
+    --badge-orbit-size: 116px;
+    --badge-glow-size: 116px;
+    --badge-flow-speed: 2.5s;
+    --badge-scan-speed: 1.28s;
+    --badge-scan-width: 126%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-13 {
+    --badge-primary: 244, 63, 94;
+    --badge-secondary: 34, 211, 238;
+    --badge-third: 250, 204, 21;
+    --badge-edge: #fb7185;
+    --badge-edge-width: 19px;
+    --badge-alpha: .94;
+    --badge-alpha-2: .86;
+    --badge-alpha-3: .78;
+    --badge-wash: .1;
+    --badge-wash-2: .025;
+    --badge-orbit-size: 124px;
+    --badge-glow-size: 128px;
+    --badge-flow-speed: 2.35s;
+    --badge-scan-speed: 1.18s;
+    --badge-scan-width: 134%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-14 {
+    --badge-primary: 34, 211, 238;
+    --badge-secondary: 217, 70, 239;
+    --badge-third: 250, 204, 21;
+    --badge-edge: #22d3ee;
+    --badge-edge-width: 20px;
+    --badge-alpha: .95;
+    --badge-alpha-2: .87;
+    --badge-alpha-3: .79;
+    --badge-wash: .09;
+    --badge-wash-2: .024;
+    --badge-orbit-size: 132px;
+    --badge-glow-size: 138px;
+    --badge-flow-speed: 2.2s;
+    --badge-scan-speed: 1.08s;
+    --badge-scan-width: 142%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-15 {
+    --badge-primary: 250, 204, 21;
+    --badge-secondary: 59, 130, 246;
+    --badge-third: 244, 63, 94;
+    --badge-edge: #fde047;
+    --badge-edge-width: 21px;
+    --badge-alpha: .96;
+    --badge-alpha-2: .88;
+    --badge-alpha-3: .8;
+    --badge-wash: .08;
+    --badge-wash-2: .022;
+    --badge-orbit-size: 140px;
+    --badge-glow-size: 148px;
+    --badge-flow-speed: 2.05s;
+    --badge-scan-speed: .98s;
+    --badge-scan-width: 150%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-16 {
+    --badge-primary: 217, 70, 239;
+    --badge-secondary: 250, 204, 21;
+    --badge-third: 34, 211, 238;
+    --badge-edge: #e879f9;
+    --badge-edge-width: 22px;
+    --badge-alpha: .97;
+    --badge-alpha-2: .89;
+    --badge-alpha-3: .81;
+    --badge-wash: .07;
+    --badge-wash-2: .02;
+    --badge-orbit-size: 148px;
+    --badge-glow-size: 158px;
+    --badge-flow-speed: 1.92s;
+    --badge-scan-speed: .9s;
+    --badge-scan-width: 158%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-17 {
+    --badge-primary: 14, 165, 233;
+    --badge-secondary: 244, 63, 94;
+    --badge-third: 250, 204, 21;
+    --badge-edge: #7dd3fc;
+    --badge-edge-width: 23px;
+    --badge-alpha: .98;
+    --badge-alpha-2: .9;
+    --badge-alpha-3: .82;
+    --badge-wash: .06;
+    --badge-wash-2: .018;
+    --badge-orbit-size: 156px;
+    --badge-glow-size: 168px;
+    --badge-flow-speed: 1.8s;
+    --badge-scan-speed: .84s;
+    --badge-scan-width: 166%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-18 {
+    --badge-primary: 244, 63, 94;
+    --badge-secondary: 250, 204, 21;
+    --badge-third: 217, 70, 239;
+    --badge-edge: #fda4af;
+    --badge-edge-width: 24px;
+    --badge-alpha: .985;
+    --badge-alpha-2: .91;
+    --badge-alpha-3: .83;
+    --badge-wash: .05;
+    --badge-wash-2: .016;
+    --badge-orbit-size: 164px;
+    --badge-glow-size: 178px;
+    --badge-flow-speed: 1.68s;
+    --badge-scan-speed: .78s;
+    --badge-scan-width: 174%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-19 {
+    --badge-primary: 250, 204, 21;
+    --badge-secondary: 34, 211, 238;
+    --badge-third: 244, 63, 94;
+    --badge-edge: #fef3c7;
+    --badge-edge-width: 25px;
+    --badge-alpha: .99;
+    --badge-alpha-2: .92;
+    --badge-alpha-3: .84;
+    --badge-wash: .04;
+    --badge-wash-2: .014;
+    --badge-orbit-size: 172px;
+    --badge-glow-size: 188px;
+    --badge-flow-speed: 1.55s;
+    --badge-scan-speed: .74s;
+    --badge-scan-width: 182%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge-20 {
+    --badge-primary: 255, 255, 255;
+    --badge-secondary: 250, 204, 21;
+    --badge-third: 34, 211, 238;
+    --badge-edge: #ffffff;
+    --badge-edge-width: 26px;
+    --badge-alpha: .995;
+    --badge-alpha-2: .94;
+    --badge-alpha-3: .88;
+    --badge-wash: .03;
+    --badge-wash-2: .01;
+    --badge-orbit-size: 180px;
+    --badge-glow-size: 196px;
+    --badge-flow-speed: 1.4s;
+    --badge-scan-speed: .7s;
+    --badge-scan-width: 190%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge:nth-child(2n) {
+    animation-delay: -2.2s;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge:nth-child(3n) {
+    animation-delay: -4.1s;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge td {
+    background: transparent !important;
+    border-bottom-color: rgba(147, 197, 253, .4);
+    border-top-color: rgba(255, 255, 255, .42);
+    position: relative;
+    z-index: 1;
   }
 
   .ranking-table tbody tr.ranking-row--badge td:first-child {
-    box-shadow: inset 5px 0 0 rgba(251, 191, 36, .95);
+    box-shadow: inset var(--badge-edge-width) 0 0 var(--badge-edge);
   }
 
   .ranking-table tbody tr.ranking-row--badge td.col--user {
@@ -46,27 +418,28 @@
   }
 
   .ranking-table tbody tr.ranking-row--badge td.col--user::before {
-    animation: ranking-row-pulse 2.8s ease-in-out infinite;
-    background: radial-gradient(circle, rgba(255, 255, 255, .88) 0%, rgba(96, 165, 250, .42) 38%, rgba(96, 165, 250, 0) 72%);
+    animation: ranking-row-orbit 3.6s ease-in-out infinite;
+    border: 1px solid rgba(255, 255, 255, .62);
     border-radius: 999px;
+    box-shadow: 0 0 var(--badge-glow-size) rgba(var(--badge-primary), .5), inset 0 0 18px rgba(255, 255, 255, .3);
     content: '';
-    height: 52px;
-    left: 18px;
+    height: var(--badge-orbit-size);
+    left: 17px;
     pointer-events: none;
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
-    width: 52px;
+    width: var(--badge-orbit-size);
   }
 
   .ranking-table tbody tr.ranking-row--badge td.col--user::after {
-    animation: ranking-row-scan 3.4s ease-in-out infinite;
-    background: linear-gradient(105deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, .62) 45%, rgba(255, 255, 255, 0) 72%);
+    animation: ranking-row-comet var(--badge-scan-speed) ease-in-out infinite;
+    background: linear-gradient(105deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, .88) 38%, rgba(var(--badge-third), .28) 52%, rgba(255, 255, 255, 0) 76%);
     content: '';
-    inset: 0 auto 0 -42%;
+    inset: 0 auto 0 -46%;
     pointer-events: none;
     position: absolute;
-    width: 34%;
+    width: var(--badge-scan-width);
   }
 
   .ranking-table tbody tr.ranking-row--badge .ranking-user {
@@ -77,43 +450,57 @@
   .ranking-table tbody tr.ranking-row--badge .ranking-user__name {
     color: #0f172a;
     font-weight: 800;
-    text-shadow: 0 1px 0 rgba(255, 255, 255, .72);
+    text-shadow: 0 1px 0 rgba(255, 255, 255, .74);
   }
 
-  .ranking-table tbody tr.ranking-row--badge:hover td {
-    background:
-      linear-gradient(90deg, rgba(255, 255, 255, .72), rgba(255, 255, 255, .34)),
-      linear-gradient(120deg, rgba(59, 130, 246, .32), rgba(168, 85, 247, .3), rgba(236, 72, 153, .24), rgba(34, 197, 94, .22), rgba(251, 191, 36, .28)) !important;
+  .ranking-table tbody tr.ranking-row--badge-4 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-5 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-6 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-7 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-8 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-9 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-10 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-11 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-12 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-13 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-14 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-15 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-16 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-17 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-18 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-19 .ranking-user__name,
+  .ranking-table tbody tr.ranking-row--badge-20 .ranking-user__name {
+    text-shadow: 0 1px 0 rgba(255, 255, 255, .82), 0 0 12px rgba(var(--badge-third), .44);
   }
 
-  @keyframes ranking-row-aurora {
-    0%, 100% {
-      background-position: 0 0, 0% 50%;
+  @keyframes ranking-row-flow {
+    0% {
+      background-position: 0% 50%, 0 0, 0% 50%, 0 0;
     }
 
-    50% {
-      background-position: 0 0, 100% 50%;
+    100% {
+      background-position: 100% 50%, 0 0, 100% 50%, 0 0;
     }
   }
 
-  @keyframes ranking-row-scan {
-    0%, 46% {
+  @keyframes ranking-row-comet {
+    0%, 44% {
       transform: translateX(0);
     }
 
     72%, 100% {
-      transform: translateX(430%);
+      transform: translateX(440%);
     }
   }
 
-  @keyframes ranking-row-pulse {
+  @keyframes ranking-row-orbit {
     0%, 100% {
-      opacity: .34;
+      opacity: .42;
       transform: translateY(-50%) scale(.86);
     }
 
     50% {
-      opacity: .72;
+      opacity: .95;
       transform: translateY(-50%) scale(1.12);
     }
   }
@@ -203,6 +590,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .ranking-table tbody tr.ranking-row--badge,
     .ranking-table tbody tr.ranking-row--badge td,
     .ranking-table tbody tr.ranking-row--badge td.col--user::before,
     .ranking-table tbody tr.ranking-row--badge td.col--user::after,
@@ -352,8 +740,9 @@
             <tbody>
               {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
               {% set currentOwnedBadges = handler.user.ownedBadges|default([]) %}
-              {% set currentHasBadges = handler.user.badge or currentOwnedBadges|length %}
-              <tr{% if currentHasBadges %} class="ranking-row--badge"{% endif %}>
+              {% set currentBadgeCount = currentOwnedBadges|length or (1 if handler.user.badge else 0) %}
+              {% set currentBadgeLevel = 20 if currentBadgeCount > 20 else currentBadgeCount %}
+              <tr{% if currentBadgeCount %} class="ranking-row--badge ranking-row--badge-{{ currentBadgeLevel }}"{% endif %}>
                 <td class="col--rank">{{ handler.user.rank|default('-') }}</td>
                 <td class="col--user">{{ user.render_ranking(handler.user) }}</td>
                 <td class="col--rp">{{ handler.user.rp|default(0)|round(0) }}</td>
@@ -370,8 +759,9 @@
               {% endif %}
               {%- for udoc in udocs -%}
               {% set rowOwnedBadges = udoc.ownedBadges|default([]) %}
-              {% set rowHasBadges = udoc.badge or rowOwnedBadges|length %}
-              <tr{% if rowHasBadges %} class="ranking-row--badge"{% endif %}>
+              {% set rowBadgeCount = rowOwnedBadges|length or (1 if udoc.badge else 0) %}
+              {% set rowBadgeLevel = 20 if rowBadgeCount > 20 else rowBadgeCount %}
+              <tr{% if rowBadgeCount %} class="ranking-row--badge ranking-row--badge-{{ rowBadgeLevel }}"{% endif %}>
                 <td class="col--rank">{{ (page - 1) * model.system.get('pagination.ranking') + loop.index }}</td>
                 <td class="col--user">{{ user.render_ranking(udoc) }}</td>
                 <td class="col--rp">{{ udoc.rp|default(0)|round(0) }}</td>
