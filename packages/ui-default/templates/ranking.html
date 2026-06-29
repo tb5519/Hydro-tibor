@@ -18,6 +18,106 @@
     padding-bottom: 8px;
   }
 
+  .ranking-table tbody tr.ranking-row--badge td {
+    animation: ranking-row-aurora 6s ease-in-out infinite;
+    background:
+      linear-gradient(90deg, rgba(255, 255, 255, .64), rgba(255, 255, 255, .28)),
+      linear-gradient(120deg, rgba(96, 165, 250, .26), rgba(168, 85, 247, .24), rgba(236, 72, 153, .18), rgba(34, 197, 94, .18), rgba(251, 191, 36, .22)) !important;
+    background-size: 100% 100%, 260% 100%;
+    border-bottom-color: rgba(147, 197, 253, .38);
+    border-top-color: rgba(244, 114, 182, .24);
+    position: relative;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge:nth-child(2n) td {
+    animation-delay: -1.7s;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge:nth-child(3n) td {
+    animation-delay: -3.1s;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge td:first-child {
+    box-shadow: inset 5px 0 0 rgba(251, 191, 36, .95);
+  }
+
+  .ranking-table tbody tr.ranking-row--badge td.col--user {
+    overflow: hidden;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge td.col--user::before {
+    animation: ranking-row-pulse 2.8s ease-in-out infinite;
+    background: radial-gradient(circle, rgba(255, 255, 255, .88) 0%, rgba(96, 165, 250, .42) 38%, rgba(96, 165, 250, 0) 72%);
+    border-radius: 999px;
+    content: '';
+    height: 52px;
+    left: 18px;
+    pointer-events: none;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 52px;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge td.col--user::after {
+    animation: ranking-row-scan 3.4s ease-in-out infinite;
+    background: linear-gradient(105deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, .62) 45%, rgba(255, 255, 255, 0) 72%);
+    content: '';
+    inset: 0 auto 0 -42%;
+    pointer-events: none;
+    position: absolute;
+    width: 34%;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge .ranking-user {
+    position: relative;
+    z-index: 1;
+  }
+
+  .ranking-table tbody tr.ranking-row--badge .ranking-user__name {
+    color: #0f172a;
+    font-weight: 800;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, .72);
+  }
+
+  .ranking-table tbody tr.ranking-row--badge:hover td {
+    background:
+      linear-gradient(90deg, rgba(255, 255, 255, .72), rgba(255, 255, 255, .34)),
+      linear-gradient(120deg, rgba(59, 130, 246, .32), rgba(168, 85, 247, .3), rgba(236, 72, 153, .24), rgba(34, 197, 94, .22), rgba(251, 191, 36, .28)) !important;
+  }
+
+  @keyframes ranking-row-aurora {
+    0%, 100% {
+      background-position: 0 0, 0% 50%;
+    }
+
+    50% {
+      background-position: 0 0, 100% 50%;
+    }
+  }
+
+  @keyframes ranking-row-scan {
+    0%, 46% {
+      transform: translateX(0);
+    }
+
+    72%, 100% {
+      transform: translateX(430%);
+    }
+  }
+
+  @keyframes ranking-row-pulse {
+    0%, 100% {
+      opacity: .34;
+      transform: translateY(-50%) scale(.86);
+    }
+
+    50% {
+      opacity: .72;
+      transform: translateY(-50%) scale(1.12);
+    }
+  }
+
   .ranking-user {
     min-width: 450px;
   }
@@ -100,6 +200,15 @@
   .ranking-user__badge.user-profile-badge--more {
     background: #eef4fb;
     color: #476176;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ranking-table tbody tr.ranking-row--badge td,
+    .ranking-table tbody tr.ranking-row--badge td.col--user::before,
+    .ranking-table tbody tr.ranking-row--badge td.col--user::after,
+    .ranking-user__badge:not(.user-profile-badge--more)::after {
+      animation: none;
+    }
   }
 
   @media screen and (max-width: 767px) {
@@ -242,7 +351,9 @@
             </thead>
             <tbody>
               {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
-              <tr>
+              {% set currentOwnedBadges = handler.user.ownedBadges|default([]) %}
+              {% set currentHasBadges = handler.user.badge or currentOwnedBadges|length %}
+              <tr{% if currentHasBadges %} class="ranking-row--badge"{% endif %}>
                 <td class="col--rank">{{ handler.user.rank|default('-') }}</td>
                 <td class="col--user">{{ user.render_ranking(handler.user) }}</td>
                 <td class="col--rp">{{ handler.user.rp|default(0)|round(0) }}</td>
@@ -258,7 +369,9 @@
               </tr>
               {% endif %}
               {%- for udoc in udocs -%}
-              <tr>
+              {% set rowOwnedBadges = udoc.ownedBadges|default([]) %}
+              {% set rowHasBadges = udoc.badge or rowOwnedBadges|length %}
+              <tr{% if rowHasBadges %} class="ranking-row--badge"{% endif %}>
                 <td class="col--rank">{{ (page - 1) * model.system.get('pagination.ranking') + loop.index }}</td>
                 <td class="col--user">{{ user.render_ranking(udoc) }}</td>
                 <td class="col--rp">{{ udoc.rp|default(0)|round(0) }}</td>
