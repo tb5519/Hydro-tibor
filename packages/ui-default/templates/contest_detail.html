@@ -7,19 +7,21 @@
 {{ set(UiContext, 'tsdoc', tsdoc) }}
 <div class="row">
   <div class="medium-9 columns">
-    <div class="section">
-      <div class="section__header" style="align: center">
-        <h1 class="section__title">{{ tdoc.title }}</h1>
-      </div>
+    <div class="section contest-detail-hero contest-type--{{ tdoc.rule }}">
       <div class="section__body">
-        <span class="problem__tag-item">{{ _(model.contest.statusText(tdoc, tsdoc)) }}</span>
-        <span class="problem__tag-item icon icon-award">{{ _(model.contest.RULES[tdoc.rule].TEXT) }}</span>
-        <span class="problem__tag-item">{{ _('Start at') }}: {{ contest.render_time(tsdoc.startAt or tdoc.beginAt) }}</span>
-        <span class="problem__tag-item icon icon-schedule">{{ contest.render_duration(tdoc) }} {{ _('hour(s)') }}</span>
-        <span class="problem__tag-item">{{ _('Host') }}: {{ user.render_inline(udict[tdoc.owner], badge=false) }}</span>
-        <span class="problem__tag-item icon icon-user--multiple">{{ tdoc['attend']|default(0) }}</span>
+        <div class="contest-detail-hero__eyebrow">
+          <span>{{ _(model.contest.statusText(tdoc, tsdoc)) }}</span>
+          <span>{{ _(model.contest.RULES[tdoc.rule].TEXT) }}</span>
+        </div>
+        <h1 class="contest-detail-hero__title">{{ tdoc.title }}</h1>
+        <div class="contest-detail-hero__meta">
+          <span><span class="icon icon-calendar"></span>{{ _('Start at') }}: {{ contest.render_time(tsdoc.startAt or tdoc.beginAt) }}</span>
+          <span><span class="icon icon-schedule"></span>{{ contest.render_duration(tdoc) }} {{ _('hour(s)') }}</span>
+          <span><span class="icon icon-user--multiple"></span>{{ tdoc['attend']|default(0) }}</span>
+          <span>{{ _('Host') }}: {{ user.render_inline(udict[tdoc.owner], badge=false) }}</span>
+        </div>
         {% if tsdoc.attend %}
-          <span class="problem__tag-item icon icon-check">{{ _('Attended') }}</span>
+          <div class="contest-detail-hero__attended"><span class="icon icon-check"></span>{{ _('Attended') }}</div>
         {% endif %}
       </div>
     </div>

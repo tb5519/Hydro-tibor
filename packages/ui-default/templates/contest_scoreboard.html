@@ -6,8 +6,8 @@
 
 {% block content %}
 <div class="row"><div class="medium-12 columns scoreboard--{{ tdoc.rule }}">
-  <div class="section visible">
-    <div class="section__header">
+  <div class="section visible contest-scoreboard-card">
+    <div class="section__header contest-scoreboard-toolbar">
       {%- for ext in ['HTML', 'CSV', 'Ghost'] -%}
         <a class="button" target="_blank" href="{{ url(type + '_scoreboard_view', tid=tdoc.docId, view=ext.toLowerCase()) }}">
           <span class="icon icon-download"></span> {{ _('Export as {0}').format(ext) }}

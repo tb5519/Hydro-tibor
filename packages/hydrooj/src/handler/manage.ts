@@ -764,12 +764,12 @@ class SystemLotteryHandler extends SystemHandler {
         this.response.body = {
             config,
             configKey: POINT_LOTTERY_CONFIG_KEY,
-            prizeSlots: Array.from({ length: 10 }, (_, i) => config.prizes[i] || {
+            prizeSlots: (config.prizes.length ? config.prizes : [{
                 name: '',
                 image: '',
                 probability: '',
                 pointDelta: 0,
-            }),
+            }]),
             q,
             target,
             canAddTarget: target ? !isPasswordResetProtectedTarget(target) : false,

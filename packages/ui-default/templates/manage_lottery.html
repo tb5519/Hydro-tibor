@@ -39,10 +39,24 @@
     padding: .85rem;
     background: #fff;
   }
+  .lottery-admin__prize.is-template {
+    display: none;
+  }
   .lottery-admin__prize-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
     margin-bottom: .7rem;
     color: #0f172a;
     font-weight: 700;
+  }
+  .lottery-admin__remove {
+    border: 0;
+    background: transparent;
+    color: #ef4444;
+    cursor: pointer;
+    font-size: .86rem;
   }
   .lottery-admin__actions,
   .lottery-admin__search {
@@ -94,9 +108,14 @@
       <div class="lottery-admin__note">
         {{ _('概率按权重计算。例如两个奖品概率分别填 1 和 3，则第二个奖品约为第一个的 3 倍。奖品图片填写可访问的图片 URL。') }}
       </div>
-      {% for prize in prizeSlots %}
-        <div class="lottery-admin__prize">
-          <div class="lottery-admin__prize-title">{{ _('奖品') }} {{ loop.index }}</div>
+      <input type="hidden" name="prizeCount" value="{{ prizeSlots.length }}" data-lottery-prize-count>
+      <div class="lottery-admin__prizes" data-lottery-prizes>
+        {% for prize in prizeSlots %}
+        <div class="lottery-admin__prize" data-lottery-prize>
+          <div class="lottery-admin__prize-title">
+            <span data-lottery-prize-title>{{ _('奖品') }} {{ loop.index }}</span>
+            <button class="lottery-admin__remove" type="button" data-lottery-remove>{{ _('删除') }}</button>
+          </div>
           <div class="lottery-admin__grid">
             <label>
               <div>{{ _('奖品名称') }}</div>
@@ -116,9 +135,35 @@
             </label>
           </div>
         </div>
-      {% endfor %}
+        {% endfor %}
+      </div>
+      <div class="lottery-admin__prize is-template" data-lottery-template>
+        <div class="lottery-admin__prize-title">
+          <span data-lottery-prize-title>{{ _('奖品') }}</span>
+          <button class="lottery-admin__remove" type="button" data-lottery-remove>{{ _('删除') }}</button>
+        </div>
+        <div class="lottery-admin__grid">
+          <label>
+            <div>{{ _('奖品名称') }}</div>
+            <input class="textbox" data-field="Name" autocomplete="off">
+          </label>
+          <label>
+            <div>{{ _('奖品图片 URL') }}</div>
+            <input class="textbox" data-field="Image" autocomplete="off">
+          </label>
+          <label>
+            <div>{{ _('奖品概率权重') }}</div>
+            <input class="textbox" type="number" min="0" step="0.01" data-field="Probability">
+          </label>
+          <label>
+            <div>{{ _('中奖额外加积分') }}</div>
+            <input class="textbox" type="number" min="0" step="1" data-field="PointDelta" value="0">
+          </label>
+        </div>
+      </div>
       <div class="lottery-admin__actions">
         <button class="rounded primary button" type="submit">{{ _('保存抽奖配置') }}</button>
+        <button class="rounded button" type="button" data-lottery-add>{{ _('添加奖品') }}</button>
         <span class="lottery-admin__note">{{ _('此配置保存后首页立即按新规则抽奖。') }}</span>
       </div>
     </form>
@@ -127,12 +172,15 @@
 
 <div class="section">
   <div class="section__header">
-    <h1 class="section__title">{{ _('学员抽奖积分') }}</h1>
+    <h1 class="section__title">{{ _('学员积分管理') }}</h1>
   </div>
   <div class="section__body lottery-admin">
     {% if added %}
       <div class="lottery-admin__success">{{ _('已给学员增加积分。') }}</div>
     {% endif %}
+    <div class="lottery-admin__note">
+      {{ _('搜索学员后可以直接给该学员增加抽奖积分，不需要学员输入密码。') }}
+    </div>
     <form method="get" action="{{ url('manage_lottery') }}" class="lottery-admin__search">
       <label>
         <div>{{ _('按 UID 或用户名查找学员') }}</div>
@@ -214,4 +262,59 @@
     </table>
   </div>
 </div>
+<script>
+(function () {
+  var list = document.querySelector('[data-lottery-prizes]');
+  var template = document.querySelector('[data-lottery-template]');
+  var addButton = document.querySelector('[data-lottery-add]');
+  var countInput = document.querySelector('[data-lottery-prize-count]');
+  if (!list || !template || !addButton || !countInput) return;
+
+  function rows() {
+    return Array.prototype.slice.call(list.querySelectorAll('[data-lottery-prize]'));
+  }
+
+  function reindex() {
+    var items = rows();
+    items.forEach(function (row, index) {
+      var title = row.querySelector('[data-lottery-prize-title]');
+      if (title) title.textContent = '{{ _("奖品") }} ' + (index + 1);
+      Array.prototype.slice.call(row.querySelectorAll('input[data-field], input[name]')).forEach(function (input) {
+        var field = input.getAttribute('data-field') || (input.name.match(/^prize\d+(.+)$/) || [])[1];
+        if (!field) return;
+        input.setAttribute('data-field', field);
+        input.name = 'prize' + index + field;
+      });
+    });
+    countInput.value = items.length;
+  }
+
+  function bind(row) {
+    var button = row.querySelector('[data-lottery-remove]');
+    if (!button) return;
+    button.addEventListener('click', function () {
+      row.parentNode.removeChild(row);
+      if (!rows().length) addRow();
+      reindex();
+    });
+  }
+
+  function addRow() {
+    var row = template.cloneNode(true);
+    row.classList.remove('is-template');
+    row.removeAttribute('data-lottery-template');
+    row.setAttribute('data-lottery-prize', '');
+    Array.prototype.slice.call(row.querySelectorAll('input')).forEach(function (input) {
+      if (input.getAttribute('data-field') !== 'PointDelta') input.value = '';
+    });
+    list.appendChild(row);
+    bind(row);
+    reindex();
+  }
+
+  rows().forEach(bind);
+  addButton.addEventListener('click', addRow);
+  reindex();
+}());
+</script>
 {% endblock %}

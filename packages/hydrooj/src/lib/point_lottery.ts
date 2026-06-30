@@ -48,7 +48,16 @@ export function getPointLotteryConfig() {
 
 export function buildPointLotteryConfigFromForm(args: any): PointLotteryConfig {
     const prizes: PointLotteryPrize[] = [];
-    for (let i = 0; i < 10; i++) {
+    const indexedKeys = Object.keys(args)
+        .map((key) => /^prize(\d+)Name$/.exec(key)?.[1])
+        .filter((index): index is string => index !== undefined)
+        .map((index) => +index);
+    const count = Math.max(
+        Math.floor(toNumber(args.prizeCount, 0)),
+        indexedKeys.length ? Math.max(...indexedKeys) + 1 : 0,
+        10,
+    );
+    for (let i = 0; i < count; i++) {
         prizes.push({
             name: args[`prize${i}Name`],
             image: args[`prize${i}Image`],
