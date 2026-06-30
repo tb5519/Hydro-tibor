@@ -1,6 +1,6 @@
 {% extends "layout/basic.html" %}
 {% import "components/contest.html" as contest with context %}
-{% macro render_important_contest(view, title, tdoc, itemTsdoc) %}
+{% macro render_important_contest(view, title, tdoc) %}
 <div class="section immersive--content section--contest {{ view }}">
   <div class="media">
     <div class="media__body middle">
@@ -16,7 +16,7 @@
           </li>
           <li>
             <span class="icon icon-calendar"></span>
-            {{ _('Start at') }}: {{ contest.render_time(itemTsdoc.startAt or tdoc.beginAt) }}
+            {{ _('Start at') }}: {{ contest.render_time(tsdoc.startAt or tdoc.beginAt) }}
           </li>
           <li>
             <span class="icon icon-schedule--fill"></span>
@@ -33,7 +33,7 @@
       <div class="section__body">
         <a href="{{ url('contest_detail', tid=tdoc.docId) }}" class="detail-button">{{ _('View Details') }}</a>
         <div class="typo text-center">
-          {% if itemTsdoc.attend %}
+          {% if tsdict[tdoc.docId].attend %}
             <p><span class="icon icon-check"></span> {{ _('Attended') }}</p>
           {% else %}
             <p><span class="icon icon-schedule"></span> {{ _('Not Attended') }}</p>
@@ -45,229 +45,13 @@
 </div>
 {% endmacro %}
 {% block content %}
-<style>
-.contest-main-upgrade .section--contest {
-  border: 1px solid #dfe6ef;
-  border-left: 4px solid #2f7cf6;
-  border-radius: 8px;
-  overflow: hidden;
-  color: #1f2937;
-  background: #fff;
-  box-shadow: 0 6px 18px rgba(31, 45, 61, .06);
-}
-.contest-main-upgrade .section--contest.ready {
-  border-left-color: #8aa4c8;
-}
-.contest-main-upgrade .section--contest.live {
-  border-left-color: #2f7cf6;
-}
-.contest-main-upgrade .section--contest .media {
-  display: flex;
-  align-items: stretch;
-  gap: 0;
-}
-.contest-main-upgrade .section--contest .section__body {
-  padding: 22px 24px;
-}
-.contest-main-upgrade .section--contest h1 {
-  margin: 10px 0 16px;
-  color: #111827;
-  font-size: 24px;
-  line-height: 1.32;
-  font-weight: 600;
-}
-.contest-main-upgrade .section--contest .status_title {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  margin: 0;
-  padding: 4px 10px;
-  border-radius: 999px;
-  color: #2f6fe4;
-  background: #edf4ff;
-  font-size: 13px;
-  font-weight: 600;
-}
-.contest-main-upgrade .section--contest .info {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  margin: 0;
-  color: #63728a;
-}
-.contest-main-upgrade .section--contest .info li {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.contest-main-upgrade .section--contest .info .icon {
-  color: #2f6fe4;
-}
-.contest-main-upgrade .section--contest .media__right {
-  width: 190px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-left: 1px solid #edf1f5;
-  background: #fbfdff;
-}
-.contest-main-upgrade .section--contest .detail-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 128px;
-  min-height: 36px;
-  padding: 0 18px;
-  border-radius: 6px;
-  color: #fff;
-  background: #2f6fe4;
-  font-weight: 600;
-}
-.contest-main-upgrade .section--contest .typo {
-  margin-top: 10px;
-  color: #63728a;
-}
-.contest-main-upgrade .section__header {
-  gap: 16px;
-  align-items: center;
-}
-.contest-main-upgrade .section__tools form {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: flex-end;
-}
-.contest-main-upgrade .section__tools .textbox,
-.contest-main-upgrade .section__tools .select,
-.contest-main-upgrade .section__tools .button {
-  height: 38px;
-  border-radius: 6px;
-}
-.contest-main-upgrade .contest__list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.contest-main-upgrade .contest__item {
-  margin: 0;
-  padding: 0;
-  border-left: 0;
-  border-top: 1px solid #e5eaf1;
-  background: #fff;
-  transition: background .16s ease;
-}
-.contest-main-upgrade .contest__item:first-child {
-  border-top: 0;
-}
-.contest-main-upgrade .contest__item:hover {
-  background: #f8fbff;
-}
-.contest-main-upgrade .contest__item > .media {
-  display: grid;
-  grid-template-columns: 74px minmax(0, 1fr);
-  gap: 16px;
-  align-items: center;
-  padding: 15px 20px;
-}
-.contest-main-upgrade .contest__date {
-  width: 62px;
-  min-height: 62px;
-  border-radius: 8px;
-  background: #f8fafc;
-  box-shadow: inset 0 0 0 1px #e2e8f0;
-}
-.contest-main-upgrade .contest__item-topline {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 10px;
-}
-.contest-main-upgrade .contest__title {
-  margin: 0;
-  font-size: 20px;
-  line-height: 1.35;
-  font-weight: 600;
-}
-.contest-main-upgrade .contest__title a {
-  color: #0f172a;
-}
-.contest-main-upgrade .contest__status-pill {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  color: #1e3a8a;
-  background: #dbeafe;
-  font-size: 13px;
-  font-weight: 700;
-}
-.contest-main-upgrade .contest__item.live .contest__status-pill {
-  color: #065f46;
-  background: #d1fae5;
-}
-.contest-main-upgrade .contest__item.ready .contest__status-pill {
-  color: #854d0e;
-  background: #fef3c7;
-}
-.contest-main-upgrade .contest__item.done .contest__status-pill {
-  color: #475569;
-  background: #e2e8f0;
-}
-.contest-main-upgrade .contest__item .supplementary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  margin: 0 0 12px;
-  color: #64748b;
-}
-.contest-main-upgrade .contest__item-footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  color: #475569;
-}
-.contest-main-upgrade .contest__enter-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 32px;
-  padding: 0 12px;
-  border-radius: 6px;
-  color: #fff;
-  background: #2f6fe4;
-  font-weight: 600;
-}
-@media (max-width: 720px) {
-  .contest-main-upgrade .section--contest .media {
-    display: block;
-  }
-  .contest-main-upgrade .section--contest .media__right {
-    width: auto;
-  }
-  .contest-main-upgrade .contest__item > .media {
-    grid-template-columns: 1fr;
-  }
-  .contest-main-upgrade .contest__item-topline {
-    display: block;
-  }
-  .contest-main-upgrade .contest__status-pill {
-    margin-top: 8px;
-  }
-}
-</style>
-<div class="row contest-main-upgrade">
+<div class="row">
   <div class="medium-9 columns">
   {%- for tdoc in tdocs -%}
-    {% set itemTsdoc = tsdict[tdoc.docId] %}
-    {% if model.contest.isOngoing(tdoc, itemTsdoc) %}
-      {{ render_important_contest('live', 'Live...', tdoc, itemTsdoc) }}
+    {% if model.contest.isOngoing(tdoc, tsdoc) %}
+      {{ render_important_contest('live', 'Live...', tdoc) }}
     {% elif model.contest.isUpcoming(tdoc) %}
-      {{ render_important_contest('ready', 'Ready (☆▽☆)', tdoc, itemTsdoc) }}
+      {{ render_important_contest('ready', 'Ready (☆▽☆)', tdoc) }}
     {% endif %}
   {%- endfor -%}
     <div class="section">
@@ -305,9 +89,7 @@
       {% else %}
         <ol class="section__list contest__list">
         {%- for tdoc in tdocs -%}
-          {% set itemTsdoc = tsdict[tdoc.docId] %}
-          {% set contestStatusClass = 'live' if model.contest.isOngoing(tdoc, itemTsdoc) else ('ready' if model.contest.isUpcoming(tdoc) else ('done' if model.contest.isDone(tdoc) else 'idle')) %}
-          <li class="section__list__item contest__item contest-type--{{ tdoc['rule'] }} {{ contestStatusClass }}">
+          <li class="section__list__item contest__item contest-type--{{ tdoc['rule'] }}">
             <div class="media">
               <div class="media__left medium">
                 <div class="contest__date numbox">
@@ -316,10 +98,7 @@
                 </div>
               </div>
               <div class="media__body medium">
-                <div class="contest__item-topline">
-                  <h1 class="contest__title"><a href="{{ url('contest_detail', tid=tdoc.docId) }}" data-emoji-enabled>{{ tdoc.title }}</a></h1>
-                  <span class="contest__status-pill">{{ _(model.contest.statusText(tdoc, itemTsdoc)) }}</span>
-                </div>
+                <h1 class="contest__title"><a href="{{ url('contest_detail', tid=tdoc.docId) }}" data-emoji-enabled>{{ tdoc.title }}</a></h1>
                 <ul class="supplementary list">
                   <li>
                     <a href="?rule={{ tdoc['rule'] }}" class="contest-type-tag"><span class="icon icon-award"></span>{{ _(model.contest.RULES[tdoc.rule].TEXT) }}</a>
@@ -333,16 +112,12 @@
                   <li>
                     <span class="icon icon-user--multiple"></span> {{ tdoc['attend']|default(0) }}
                   </li>
-                {% if itemTsdoc.attend %}
+                {% if tsdict[tdoc.docId].attend %}
                   <li class="contest__info-attended">
                     <span class="icon icon-check"></span> {{ _('Attended') }}
                   </li>
                 {% endif %}
                 </ul>
-                <div class="contest__item-footer">
-                  <span>{{ _('End at') }}: {{ contest.render_time(itemTsdoc.endAt or tdoc.endAt) }}</span>
-                  <a class="contest__enter-link" href="{{ url('contest_detail', tid=tdoc.docId) }}">{{ _('View Details') }}</a>
-                </div>
               </div>
             </div>
           </li>

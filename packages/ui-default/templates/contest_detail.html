@@ -5,121 +5,21 @@
 {% block content %}
 {{ set(UiContext, 'tdoc', tdoc) }}
 {{ set(UiContext, 'tsdoc', tsdoc) }}
-<style>
-.contest-detail-upgrade .contest-detail-hero {
-  margin-bottom: 22px;
-  border: 1px solid #dfe6ef;
-  border-left: 4px solid #2f7cf6;
-  border-radius: 8px;
-  overflow: hidden;
-  color: #1f2937;
-  background: #fff;
-  box-shadow: 0 6px 18px rgba(31, 45, 61, .06);
-}
-.contest-detail-upgrade .contest-detail-hero .section__body {
-  padding: 24px;
-}
-.contest-detail-upgrade .contest-detail-hero__eyebrow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-.contest-detail-upgrade .contest-detail-hero__eyebrow span {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  color: #2f6fe4;
-  background: #edf4ff;
-  font-size: 13px;
-  font-weight: 600;
-}
-.contest-detail-upgrade .contest-detail-hero__title {
-  margin: 0 0 16px;
-  color: #111827;
-  font-size: 26px;
-  line-height: 1.32;
-  font-weight: 600;
-}
-.contest-detail-upgrade .contest-detail-hero__meta {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-.contest-detail-upgrade .contest-detail-hero__meta > span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 40px;
-  padding: 8px 12px;
-  border: 1px solid #edf1f5;
-  border-radius: 6px;
-  color: #63728a;
-  background: #fbfdff;
-  white-space: normal;
-}
-.contest-detail-upgrade .contest-detail-hero__meta .icon {
-  color: #2f6fe4;
-}
-.contest-detail-upgrade .contest-detail-hero__attended {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 14px;
-  min-height: 32px;
-  padding: 5px 10px;
-  border-radius: 999px;
-  color: #064e3b;
-  background: #d1fae5;
-  font-weight: 600;
-}
-.contest-detail-upgrade .section:not(.contest-detail-hero) {
-  border-radius: 8px;
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 6px 18px rgba(31, 45, 61, .04);
-}
-.contest-detail-upgrade .richmedia {
-  font-size: 15px;
-  line-height: 1.75;
-}
-.contest-detail-upgrade blockquote.warn {
-  border-left: 4px solid #ef4444;
-  border-radius: 6px;
-  background: #fff8f6;
-}
-.contest-detail-upgrade blockquote.note {
-  border-left: 4px solid #2563eb;
-  border-radius: 6px;
-  background: #eff6ff;
-}
-@media (max-width: 720px) {
-  .contest-detail-upgrade .contest-detail-hero__title {
-    font-size: 22px;
-  }
-  .contest-detail-upgrade .contest-detail-hero__meta {
-    grid-template-columns: 1fr;
-  }
-}
-</style>
-<div class="row contest-detail-upgrade">
+<div class="row">
   <div class="medium-9 columns">
-    <div class="section contest-detail-hero contest-type--{{ tdoc.rule }}">
+    <div class="section">
+      <div class="section__header" style="align: center">
+        <h1 class="section__title">{{ tdoc.title }}</h1>
+      </div>
       <div class="section__body">
-        <div class="contest-detail-hero__eyebrow">
-          <span>{{ _(model.contest.statusText(tdoc, tsdoc)) }}</span>
-          <span>{{ _(model.contest.RULES[tdoc.rule].TEXT) }}</span>
-        </div>
-        <h1 class="contest-detail-hero__title">{{ tdoc.title }}</h1>
-        <div class="contest-detail-hero__meta">
-          <span><span class="icon icon-calendar"></span>{{ _('Start at') }}: {{ contest.render_time(tsdoc.startAt or tdoc.beginAt) }}</span>
-          <span><span class="icon icon-schedule"></span>{{ contest.render_duration(tdoc) }} {{ _('hour(s)') }}</span>
-          <span><span class="icon icon-user--multiple"></span>{{ tdoc['attend']|default(0) }}</span>
-          <span>{{ _('Host') }}: {{ user.render_inline(udict[tdoc.owner], badge=false) }}</span>
-        </div>
+        <span class="problem__tag-item">{{ _(model.contest.statusText(tdoc, tsdoc)) }}</span>
+        <span class="problem__tag-item icon icon-award">{{ _(model.contest.RULES[tdoc.rule].TEXT) }}</span>
+        <span class="problem__tag-item">{{ _('Start at') }}: {{ contest.render_time(tsdoc.startAt or tdoc.beginAt) }}</span>
+        <span class="problem__tag-item icon icon-schedule">{{ contest.render_duration(tdoc) }} {{ _('hour(s)') }}</span>
+        <span class="problem__tag-item">{{ _('Host') }}: {{ user.render_inline(udict[tdoc.owner], badge=false) }}</span>
+        <span class="problem__tag-item icon icon-user--multiple">{{ tdoc['attend']|default(0) }}</span>
         {% if tsdoc.attend %}
-          <div class="contest-detail-hero__attended"><span class="icon icon-check"></span>{{ _('Attended') }}</div>
+          <span class="problem__tag-item icon icon-check">{{ _('Attended') }}</span>
         {% endif %}
       </div>
     </div>

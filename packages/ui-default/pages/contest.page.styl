@@ -1,190 +1,102 @@
-.page--contest_main
-  .contest__list
-    margin: 0
-    padding: 0
-    list-style: none
+$highlight-button-color = #F6DF45
 
+.page--contest_main
   .contest__title
-    font-size: rem(20px)
-    line-height: 1.35
-    margin: 0
-    font-weight: 600
+    font-size: rem($font-size-title)
+    line-height: 1.2em
+    margin-bottom: rem(10px)
 
   .contest__date
+    margin-right: rem(10px)
     white-space: nowrap
-    width: rem(62px)
-    min-height: rem(62px)
-    border-radius: rem(8px)
-    background: #f8fafc
-    box-shadow: inset 0 0 0 1px #e2e8f0
+    width: rem(60px)
 
   .contest__info-attended
     color: $success-color
 
   .contest__item
-    margin: 0
-    padding: 0
-    border-left: 0
-    border-top: 1px solid #e5eaf1
-    background: #fff
-    transition: background .16s ease
-
-    &:hover
-      background: #f8fbff
-
-    &:first-child
-      border-top: 0
-
-    > .media
-      display: grid
-      grid-template-columns: rem(74px) minmax(0, 1fr)
-      gap: rem(16px)
-      align-items: center
-      padding: rem(15px 20px)
-
-  .contest__item-topline
-    display: flex
-    align-items: flex-start
-    justify-content: space-between
-    gap: rem(12px)
-    margin-bottom: rem(10px)
-
-  .contest__status-pill
-    flex: 0 0 auto
-    border-radius: rem(999px)
-    padding: rem(3px 10px)
-    background: #dbeafe
-    color: #1e3a8a
-    font-size: rem($font-size-small)
-    font-weight: 600
-
-  .contest__item.live .contest__status-pill
-    color: #065f46
-    background: #d1fae5
-
-  .contest__item.ready .contest__status-pill
-    color: #854d0e
-    background: #fef3c7
-
-  .contest__item.done .contest__status-pill
-    color: #475569
-    background: #e2e8f0
-
-  .contest__item-footer
-    display: flex
-    align-items: center
-    justify-content: space-between
-    gap: rem(12px)
-    margin-top: rem(11px)
-    color: #64748b
-    font-size: rem($font-size-small)
-
-  .contest__enter-link
-    flex: 0 0 auto
-    border-radius: rem(6px)
-    padding: rem(6px 12px)
-    background: #2f6fe4
-    color: #fff
-    font-weight: 600
-
-    &:hover
-      color: #fff
-      text-decoration: none
-      background: #1d5ed8
-
-  .section--contest
-    border: 1px solid #dfe6ef
-    border-left: rem(4px) solid #2f7cf6
-    border-radius: rem(8px)
-    overflow: hidden
-    color: #1f2937
-    background: #fff
-    box-shadow: 0 rem(6px) rem(18px) rgba(#1f2d3d, .06)
-
-    &.ready
-      border-left-color: #8aa4c8
+    border-left: rem(5px) solid transparent
+    padding-left: rem(5px)
 
     &.live
-      border-left-color: #2f7cf6
+      border-left: rem(5px) solid #E98696
 
-    .media
-      display: flex
-      align-items: stretch
-      gap: 0
+    &.ready
+      border-left: rem(5px) solid #469DCF
 
-    .section__body
-      padding: rem(22px 24px)
+  .section--contest
+    &.live
+      background: #E98696
+      background-image: -webkit-radial-gradient(left top, ellipse farthest-corner, #E98696 0%, #E96B6B 100%)
+
+    &.ready
+      background: #469DCF
+      background-image: -webkit-radial-gradient(left top, ellipse farthest-corner, #8ACDE6 0%, #469DCF 100%)
 
     .status_title
-      display: inline-flex
-      align-items: center
-      min-height: rem(28px)
-      margin: 0
-      padding: rem(4px 10px)
-      border-radius: rem(999px)
-      color: #2f6fe4
-      background: #edf4ff
-      font-size: rem($font-size-small)
-      font-weight: 600
+      display: inline-block
+      font-size: rem($font-size-secondary)
+      color: #FFF
+      background: rgba(#000, 0.3)
+      padding: rem(7px 10px)
+      border-radius: rem(2px)
 
     h1
-      margin: rem(10px 0 16px)
-      color: #111827
-      line-height: 1.32
-      font-size: rem(24px)
-      font-weight: 600
+      line-height: 1.2
+      font-size: rem(25px)
+      margin: rem(20px 0)
 
     .info
-      display: flex
-      flex-wrap: wrap
-      gap: rem(8px 16px)
-      margin: 0
-      color: #63728a
+      color: #FFF
       font-size: rem($font-size-secondary)
 
       .icon
-        color: #2f6fe4
+        color: #FFEB81
         font-size: rem($font-size-icon)
 
       li
-        display: inline-flex
-        align-items: center
-        gap: rem(6px)
+        display: inline-block
+        margin-right: rem(10px)
 
     .attandance
       margin-top: rem(15px)
       font-size: rem($font-size-secondary)
       opacity: 0.8
 
-    .media__right
-      width: rem(190px)
-      display: flex
-      align-items: center
-      justify-content: center
-      border-left: 1px solid #edf1f5
-      background: #fbfdff
-
     .detail-button
       cursor: pointer
-      display: inline-flex
-      align-items: center
-      justify-content: center
-      min-width: rem(128px)
-      min-height: rem(36px)
-      padding: rem(0 18px)
-      border-radius: rem(6px)
-      background: #2f6fe4
-      color: #fff
-      font-weight: 600
+      display: block
+      text-align: center
+      background: $highlight-button-color
+      color: darken($highlight-button-color, 70%)
+      line-height: rem(40px)
+      border-radius: rem(20px)
+      width: rem(150px)
+      position: relative
+      overflow: hidden
+      transition: box-shadow .4s, background-color .4s
+      transition-timing-function: ease-out-cubic
+
+      &:after
+        position: absolute
+        background: #fff
+        content: ""
+        height: rem(100px)
+        left: rem(-70px)
+        top: rem(-25px)
+        width: rem(50px)
+        opacity: 0.2
+        transform: rotate(35deg)
+        transition: left 0.6s ease-out-cubic
+        z-index: 1
 
       &:hover
         text-decoration: none
-        color: #fff
-        background: #1d5ed8
+        box-shadow: 0 2px 20px rgba($highlight-button-color, 0.8)
+        background: lighten($highlight-button-color, 20%)
 
-    .typo
-      margin-top: rem(10px)
-      color: #63728a
+        &:after
+          left: 150%
 
     +mobile()
       .media, .media_body, .media__right
@@ -196,80 +108,6 @@
 
       .detail-button
         width: auto
-
-  +mobile()
-    .contest__item-topline,
-    .contest__item-footer
-      display: block
-
-    .contest__status-pill,
-    .contest__enter-link
-      display: inline-block
-      margin-top: rem(8px)
-
-.page--contest_detail
-  .contest-detail-hero
-    overflow: hidden
-    border: 1px solid #dfe6ef
-    border-left: rem(4px) solid #2f7cf6
-    border-radius: rem(8px)
-    background: #fff
-    box-shadow: 0 rem(6px) rem(18px) rgba(#1f2d3d, .06)
-
-    .section__body
-      position: relative
-      padding: rem(24px)
-
-  .contest-detail-hero__eyebrow
-    display: flex
-    flex-wrap: wrap
-    gap: rem(8px)
-    margin-bottom: rem(12px)
-
-    span
-      border-radius: rem(999px)
-      padding: rem(4px 10px)
-      background: #edf4ff
-      color: #2f6fe4
-      font-size: rem($font-size-small)
-      font-weight: 600
-
-  .contest-detail-hero__title
-    margin: 0 0 rem(16px)
-    color: #111827
-    font-size: rem(26px)
-    line-height: 1.32
-    font-weight: 600
-
-  .contest-detail-hero__meta
-    display: grid
-    grid-template-columns: repeat(2, minmax(0, 1fr))
-    gap: rem(10px)
-
-    > span
-      display: flex
-      align-items: center
-      gap: rem(6px)
-      min-height: rem(40px)
-      border: 1px solid #edf1f5
-      border-radius: rem(6px)
-      padding: rem(8px 12px)
-      background: #fbfdff
-      color: #63728a
-
-    .icon
-      color: #2f6fe4
-
-  .contest-detail-hero__attended
-    display: inline-flex
-    align-items: center
-    gap: rem(6px)
-    margin-top: rem(14px)
-    border-radius: rem(999px)
-    padding: rem(5px 10px)
-    background: #dcfce7
-    color: #166534
-    font-weight: 600
 
 .page--contest_problemlist
   .col--status, .col--correction
@@ -326,31 +164,6 @@
     .row
       max-width: 100vw !important;
 
-  .contest-scoreboard-card
-    overflow: visible
-    border-radius: rem(14px)
-
-  .contest-scoreboard-toolbar
-    position: relative
-    z-index: 3
-    align-items: center
-    gap: rem(8px)
-    flex-wrap: wrap
-
-  .scoreboard-table-wrap
-    position: relative
-    overflow-x: auto
-    padding-top: rem(8px)
-
-  .scoreboard-table
-    table-layout: auto
-
-    thead th
-      background: #f8fafc
-
-    tbody tr:first-child td
-      border-top: rem(8px) solid #fff
-
   .data-table td
     line-height: 1.5
 
@@ -388,17 +201,6 @@
 
   .star-highlight
   	background: lighten($primary-color, 90%)
-
-  .contest-timer
-    left: auto
-    right: rem(16px)
-    top: rem(56px)
-    pointer-events: none
-    border-radius: rem(999px)
-    padding: rem(4px 9px)
-    background: rgba(#0f172a, .78)
-    color: #fff
-    box-shadow: 0 rem(8px) rem(22px) rgba(#0f172a, .18)
 
 .page--contest_user
   .col--uid
