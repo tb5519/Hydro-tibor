@@ -1,51 +1,50 @@
-$highlight-button-color = #F6DF45
-
 .page--contest_main
   .contest__list
-    display: grid
-    gap: rem(14px)
+    margin: 0
+    padding: 0
+    list-style: none
 
   .contest__title
-    font-size: rem($font-size-title)
-    line-height: 1.2em
+    font-size: rem(20px)
+    line-height: 1.35
     margin: 0
+    font-weight: 600
 
   .contest__date
-    margin-right: rem(10px)
     white-space: nowrap
-    width: rem(60px)
-    border-radius: rem(12px)
+    width: rem(62px)
+    min-height: rem(62px)
+    border-radius: rem(8px)
     background: #f8fafc
-    box-shadow: inset 0 0 0 1px #e5edf7
+    box-shadow: inset 0 0 0 1px #e2e8f0
 
   .contest__info-attended
     color: $success-color
 
   .contest__item
-    border: 1px solid #e5edf7
-    border-left: rem(5px) solid transparent
-    border-radius: rem(14px)
-    padding: rem(14px 16px 14px 11px)
-    background: linear-gradient(135deg, #fff 0%, #f8fbff 100%)
-    box-shadow: 0 rem(10px) rem(26px) rgba(#0f172a, .06)
-    transition: transform .18s ease, box-shadow .18s ease
+    margin: 0
+    padding: 0
+    border-left: 0
+    border-top: 1px solid #e5eaf1
+    background: #fff
+    transition: background .16s ease
 
     &:hover
-      transform: translateY(rem(-2px))
-      box-shadow: 0 rem(16px) rem(34px) rgba(#0f172a, .1)
-    
-    &.live
-      border-left: rem(5px) solid #E98696
+      background: #f8fbff
 
-    &.ready
-      border-left: rem(5px) solid #469DCF
+    &:first-child
+      border-top: 0
 
-    &.done
-      border-left: rem(5px) solid #22c55e
+    > .media
+      display: grid
+      grid-template-columns: rem(74px) minmax(0, 1fr)
+      gap: rem(16px)
+      align-items: center
+      padding: rem(15px 20px)
 
   .contest__item-topline
     display: flex
-    align-items: center
+    align-items: flex-start
     justify-content: space-between
     gap: rem(12px)
     margin-bottom: rem(10px)
@@ -53,11 +52,23 @@ $highlight-button-color = #F6DF45
   .contest__status-pill
     flex: 0 0 auto
     border-radius: rem(999px)
-    padding: rem(4px 10px)
-    background: #eef2ff
-    color: #3730a3
+    padding: rem(3px 10px)
+    background: #dbeafe
+    color: #1e3a8a
     font-size: rem($font-size-small)
-    font-weight: 700
+    font-weight: 600
+
+  .contest__item.live .contest__status-pill
+    color: #065f46
+    background: #d1fae5
+
+  .contest__item.ready .contest__status-pill
+    color: #854d0e
+    background: #fef3c7
+
+  .contest__item.done .contest__status-pill
+    color: #475569
+    background: #e2e8f0
 
   .contest__item-footer
     display: flex
@@ -70,90 +81,110 @@ $highlight-button-color = #F6DF45
 
   .contest__enter-link
     flex: 0 0 auto
-    border-radius: rem(999px)
-    padding: rem(5px 12px)
-    background: #2563eb
+    border-radius: rem(6px)
+    padding: rem(6px 12px)
+    background: #2f6fe4
     color: #fff
-    font-weight: 700
+    font-weight: 600
 
     &:hover
       color: #fff
       text-decoration: none
-      background: #1d4ed8
+      background: #1d5ed8
 
   .section--contest
-    &.live
-      background: #E98696
-      background-image: -webkit-radial-gradient(left top, ellipse farthest-corner, #E98696 0%, #E96B6B 100%)
+    border: 1px solid #dfe6ef
+    border-left: rem(4px) solid #2f7cf6
+    border-radius: rem(8px)
+    overflow: hidden
+    color: #1f2937
+    background: #fff
+    box-shadow: 0 rem(6px) rem(18px) rgba(#1f2d3d, .06)
 
     &.ready
-      background: #469DCF
-      background-image: -webkit-radial-gradient(left top, ellipse farthest-corner, #8ACDE6 0%, #469DCF 100%)
+      border-left-color: #8aa4c8
+
+    &.live
+      border-left-color: #2f7cf6
+
+    .media
+      display: flex
+      align-items: stretch
+      gap: 0
+
+    .section__body
+      padding: rem(22px 24px)
 
     .status_title
-      display: inline-block
-      font-size: rem($font-size-secondary)
-      color: #FFF
-      background: rgba(#000, 0.3)
-      padding: rem(7px 10px)
-      border-radius: rem(2px)
+      display: inline-flex
+      align-items: center
+      min-height: rem(28px)
+      margin: 0
+      padding: rem(4px 10px)
+      border-radius: rem(999px)
+      color: #2f6fe4
+      background: #edf4ff
+      font-size: rem($font-size-small)
+      font-weight: 600
 
     h1
-      line-height: 1.2
-      font-size: rem(25px)
-      margin: rem(20px 0)
+      margin: rem(10px 0 16px)
+      color: #111827
+      line-height: 1.32
+      font-size: rem(24px)
+      font-weight: 600
 
     .info
-      color: #FFF
+      display: flex
+      flex-wrap: wrap
+      gap: rem(8px 16px)
+      margin: 0
+      color: #63728a
       font-size: rem($font-size-secondary)
 
       .icon
-        color: #FFEB81
+        color: #2f6fe4
         font-size: rem($font-size-icon)
 
       li
-        display: inline-block
-        margin-right: rem(10px)
+        display: inline-flex
+        align-items: center
+        gap: rem(6px)
 
     .attandance
       margin-top: rem(15px)
       font-size: rem($font-size-secondary)
       opacity: 0.8
 
+    .media__right
+      width: rem(190px)
+      display: flex
+      align-items: center
+      justify-content: center
+      border-left: 1px solid #edf1f5
+      background: #fbfdff
+
     .detail-button
       cursor: pointer
-      display: block
-      text-align: center
-      background: $highlight-button-color
-      color: darken($highlight-button-color, 70%)
-      line-height: rem(40px)
-      border-radius: rem(20px)
-      width: rem(150px)
-      position: relative
-      overflow: hidden
-      transition: box-shadow .4s, background-color .4s
-      transition-timing-function: ease-out-cubic
-
-      &:after
-        position: absolute
-        background: #fff
-        content: ""
-        height: rem(100px)
-        left: rem(-70px)
-        top: rem(-25px)
-        width: rem(50px)
-        opacity: 0.2
-        transform: rotate(35deg)
-        transition: left 0.6s ease-out-cubic
-        z-index: 1
+      display: inline-flex
+      align-items: center
+      justify-content: center
+      min-width: rem(128px)
+      min-height: rem(36px)
+      padding: rem(0 18px)
+      border-radius: rem(6px)
+      background: #2f6fe4
+      color: #fff
+      font-weight: 600
 
       &:hover
         text-decoration: none
-        box-shadow: 0 2px 20px rgba($highlight-button-color, 0.8)
-        background: lighten($highlight-button-color, 20%)
+        color: #fff
+        background: #1d5ed8
 
-        &:after
-          left: 150%
+    .typo
+      margin-top: rem(10px)
+      color: #63728a
 
     +mobile()
       .media, .media_body, .media__right
@@ -179,14 +210,15 @@ $highlight-button-color = #F6DF45
 .page--contest_detail
   .contest-detail-hero
     overflow: hidden
-    border: 1px solid #dbe7f3
-    border-radius: rem(18px)
-    background: radial-gradient(circle at 86% 24%, rgba(#60a5fa, .18), transparent 32%), linear-gradient(135deg, #ffffff 0%, #f3f8ff 100%)
-    box-shadow: 0 rem(14px) rem(36px) rgba(#0f172a, .08)
+    border: 1px solid #dfe6ef
+    border-left: rem(4px) solid #2f7cf6
+    border-radius: rem(8px)
+    background: #fff
+    box-shadow: 0 rem(6px) rem(18px) rgba(#1f2d3d, .06)
 
     .section__body
       position: relative
-      padding: rem(28px)
+      padding: rem(24px)
 
   .contest-detail-hero__eyebrow
     display: flex
@@ -197,44 +229,47 @@ $highlight-button-color = #F6DF45
     span
       border-radius: rem(999px)
       padding: rem(4px 10px)
-      background: #e0ecff
-      color: #1d4ed8
+      background: #edf4ff
+      color: #2f6fe4
       font-size: rem($font-size-small)
-      font-weight: 800
+      font-weight: 600
 
   .contest-detail-hero__title
-    margin: 0 0 rem(18px)
-    color: #0f172a
-    font-size: rem(30px)
-    line-height: 1.2
+    margin: 0 0 rem(16px)
+    color: #111827
+    font-size: rem(26px)
+    line-height: 1.32
+    font-weight: 600
 
   .contest-detail-hero__meta
-    display: flex
-    flex-wrap: wrap
-    gap: rem(9px)
+    display: grid
+    grid-template-columns: repeat(2, minmax(0, 1fr))
+    gap: rem(10px)
 
     > span
-      border: 1px solid #dbe7f3
-      border-radius: rem(12px)
-      padding: rem(7px 10px)
-      background: rgba(#fff, .78)
-      color: #475569
-      font-size: rem($font-size-small)
+      display: flex
+      align-items: center
+      gap: rem(6px)
+      min-height: rem(40px)
+      border: 1px solid #edf1f5
+      border-radius: rem(6px)
+      padding: rem(8px 12px)
+      background: #fbfdff
+      color: #63728a
 
     .icon
-      margin-right: rem(5px)
-      color: #2563eb
+      color: #2f6fe4
 
   .contest-detail-hero__attended
     display: inline-flex
     align-items: center
     gap: rem(6px)
-    margin-top: rem(16px)
+    margin-top: rem(14px)
     border-radius: rem(999px)
-    padding: rem(7px 12px)
+    padding: rem(5px 10px)
     background: #dcfce7
     color: #166534
-    font-weight: 800
+    font-weight: 600
 
 .page--contest_problemlist
   .col--status, .col--correction
