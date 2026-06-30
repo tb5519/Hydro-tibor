@@ -97,6 +97,7 @@ class SystemDashboardHandler extends SystemHandler {
 
 const RANKING_MODES = ['single', 'all'];
 const TRAINING_DASHBOARD_SORTS = ['newAc30', 'submit30', 'acRate30', 'lastActive'];
+const TRAINING_DASHBOARD_DOMAIN_IDS = ['system', 'C0001'];
 
 type TrainingRangeStats = {
     submit: number;
@@ -178,20 +179,38 @@ function buildTrainingChart(dailyData: any[]) {
     };
 }
 
+async function getTrainingDashboardDomainIds(currentDomainId: string) {
+    const preferredDomainIds = Array.from(new Set([currentDomainId, ...TRAINING_DASHBOARD_DOMAIN_IDS].filter(Boolean)));
+    const preferredLowerIds = preferredDomainIds.map((id) => id.toLowerCase());
+    const existingDomains = await domain.getMulti({
+        $or: [
+            { _id: { $in: preferredDomainIds } },
+            { lower: { $in: preferredLowerIds } },
+        ],
+    }).project({ _id: 1 }).toArray();
+    const existingDomainIds = new Map(existingDomains.map((ddoc) => [ddoc._id.toLowerCase(), ddoc._id]));
+    const domainIds = preferredDomainIds
+        .map((id) => existingDomainIds.get(id.toLowerCase()))
+        .filter((id): id is string => !!id);
+    return domainIds.length ? domainIds : [currentDomainId];
+}
+
 class SystemTrainingDashboardHandler extends SystemHandler {
     @param('q', Types.Content, true)
     @param('sort', Types.Range(TRAINING_DASHBOARD_SORTS), true)
     async get(domainId: string, q = '', sort = 'newAc30') {
+        const dashboardDomainIds = await getTrainingDashboardDomainIds(domainId);
+        const dashboardDomainLabel = dashboardDomainIds.join('、');
         const timeZone = this.user.timeZone || system.get('timeZone') || 'Asia/Shanghai';
         const now = moment().tz(timeZone);
         const start7 = now.clone().subtract(6, 'days').startOf('day');
         const start30 = now.clone().subtract(29, 'days').startOf('day');
         const days = Array.from({ length: 30 }, (_, i) => start30.clone().add(i, 'days').format('YYYY-MM-DD'));
 
-        const joined = await domain.getMultiUserInDomain(domainId, { uid: { $gt: 1 }, join: true })
+        const joined = await domain.collUser.find({ domainId: { $in: dashboardDomainIds }, uid: { $gt: 1 }, join: true })
             .project({ uid: 1 })
             .toArray();
-        const uids = joined.map((i) => i.uid);
+        const uids = Array.from(new Set(joined.map((i) => i.uid))).sort((a, b) => a - b);
         const emptyDaily = Object.fromEntries(days.map((date) => [date, {
             date,
             submitCount: 0,
@@ -205,6 +224,8 @@ class SystemTrainingDashboardHandler extends SystemHandler {
             this.response.body = {
                 q,
                 sort,
+                dashboardDomainIds,
+                dashboardDomainLabel,
                 overview: {
                     totalStudents: 0,
                     active7: 0,
@@ -225,7 +246,7 @@ class SystemTrainingDashboardHandler extends SystemHandler {
         }
 
         const baseMatch = {
-            domainId,
+            domainId: { $in: dashboardDomainIds },
             uid: { $in: uids },
             pid: { $gt: 0 },
             contest: { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] },
@@ -318,7 +339,7 @@ class SystemTrainingDashboardHandler extends SystemHandler {
                 { $match: acMatch },
                 {
                     $group: {
-                        _id: { uid: '$uid', pid: '$pid' },
+                        _id: { uid: '$uid', domainId: '$domainId', pid: '$pid' },
                         firstRecordId: { $min: '$_id' },
                     },
                 },
@@ -404,6 +425,8 @@ class SystemTrainingDashboardHandler extends SystemHandler {
         this.response.body = {
             q,
             sort,
+            dashboardDomainIds,
+            dashboardDomainLabel,
             overview: {
                 totalStudents: uids.length,
                 active7: Object.keys(range7).length,

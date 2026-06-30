@@ -357,7 +357,7 @@
   </div>
 
   <div class="training-dashboard-note">
-    {{ _('新增 AC 题数按学员首次 AC 题目统计，重复 AC 不重复计入。') }}
+    {{ _('当前汇总域') }}：{{ dashboardDomainLabel }}。{{ _('新增 AC 题数按学员在各域首次 AC 题目统计，重复 AC 不重复计入。') }}
   </div>
 
   <section class="training-dashboard-card">
@@ -491,7 +491,7 @@
       <div class="training-dashboard-toolbar">
         <div>
           <h2 class="training-dashboard-card__title">{{ _('学员明细表') }}</h2>
-          <div class="training-dashboard-card__subtitle">{{ _('每页显示 10 名当前域已加入学员') }}</div>
+          <div class="training-dashboard-card__subtitle">{{ _('每页显示 10 名已加入学员') }} · {{ _('汇总域') }}：{{ dashboardDomainLabel }}</div>
         </div>
         <form method="get" class="training-dashboard-filters">
           <input name="q" class="training-dashboard-input" value="{{ q }}" placeholder="{{ _('搜索用户名') }}">
