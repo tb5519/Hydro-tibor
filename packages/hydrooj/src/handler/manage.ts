@@ -745,9 +745,15 @@ class SystemHomePosterHandler extends SystemHandler {
     @param('saved', Types.Int, true)
     @param('cleared', Types.Int, true)
     async get(domainId: string, saved = 0, cleared = 0) {
+        const config = getHomePosterConfig();
+        if (config.storagePath) {
+            config.image = this.url('home_poster_image', {
+                query: { v: config.updatedAt || '' },
+            });
+        }
         this.response.template = 'manage_home_poster.html';
         this.response.body = {
-            config: getHomePosterConfig(),
+            config,
             configKey: HOME_POSTER_CONFIG_KEY,
             saved,
             cleared,
@@ -772,10 +778,11 @@ class SystemHomePosterHandler extends SystemHandler {
         if (oldConfig.storagePath && oldConfig.storagePath !== storagePath) {
             storage.del([oldConfig.storagePath], this.user._id).catch((e) => logger.error(e));
         }
+        const updatedAt = new Date().toISOString();
         await system.set(HOME_POSTER_CONFIG_KEY, {
-            image: this.url('fs_download', { uid: this.user._id, filename, query: { v: Date.now() } }),
+            image: this.url('home_poster_image', { query: { v: updatedAt } }),
             storagePath,
-            updatedAt: new Date().toISOString(),
+            updatedAt,
         });
         this.response.redirect = this.url('manage_home_poster', { query: { saved: 1 } });
     }

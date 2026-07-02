@@ -235,12 +235,18 @@ export class HomeHandler extends Handler {
                 { projection: { [POINT_LOTTERY_POINTS_FIELD]: 1 } },
             )
             : null;
+        const homePoster = getHomePosterConfig();
+        if (homePoster.storagePath) {
+            homePoster.image = this.url('home_poster_image', {
+                query: { v: homePoster.updatedAt || '' },
+            });
+        }
         this.response.template = 'main.html';
         this.response.body = {
             contents,
             udict,
             domain: this.domain,
-            homePoster: getHomePosterConfig(),
+            homePoster,
             pointLottery: {
                 enabled: pointLotteryConfig.enabled,
                 cost: pointLotteryConfig.cost,
@@ -249,6 +255,17 @@ export class HomeHandler extends Handler {
                 prizes: pointLotteryConfig.prizes.map(publicPointLotteryPrize),
             },
         };
+    }
+}
+
+class HomePosterImageHandler extends Handler {
+    noCheckPermView = true;
+
+    async get() {
+        const config = getHomePosterConfig();
+        if (!config.storagePath) throw new NotFoundError('home-poster');
+        this.response.redirect = await storage.signDownloadLink(config.storagePath, undefined, false, 'user');
+        this.response.addHeader('Cache-Control', 'public, max-age=604800, immutable');
     }
 }
 
@@ -739,6 +756,7 @@ class HomeMessagesHandler extends Handler {
 export const inject = { geoip: { required: false }, oauth: {} };
 export function apply(ctx: Context) {
     ctx.Route('homepage', '/', HomeHandler);
+    ctx.Route('home_poster_image', '/home/poster', HomePosterImageHandler);
     ctx.Route('point_lottery_draw', '/lottery/draw', PointLotteryDrawHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_security', '/home/security', HomeSecurityHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('user_changemail_with_code', '/home/changeMail/:code', UserChangemailWithCodeHandler, PRIV.PRIV_USER_PROFILE);
