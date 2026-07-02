@@ -1,0 +1,107 @@
+{% extends "manage_base.html" %}
+{% block manage_content %}
+<style>
+  .home-poster-admin {
+    display: grid;
+    gap: 1rem;
+  }
+  .home-poster-admin__note {
+    color: #64748b;
+    line-height: 1.6;
+  }
+  .home-poster-admin__success {
+    border: 1px solid #bbf7d0;
+    border-radius: 8px;
+    background: #f0fdf4;
+    color: #166534;
+    padding: .7rem .85rem;
+  }
+  .home-poster-admin__preview {
+    border: 1px solid #dbe4ef;
+    border-radius: 10px;
+    background: #f8fafc;
+    overflow: hidden;
+  }
+  .home-poster-admin__preview img {
+    display: block;
+    width: 100%;
+    max-height: 20rem;
+    object-fit: cover;
+  }
+  .home-poster-admin__empty {
+    border: 1px dashed #cbd5e1;
+    border-radius: 10px;
+    background: #f8fafc;
+    color: #64748b;
+    padding: 2rem;
+    text-align: center;
+  }
+  .home-poster-admin__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .65rem;
+    align-items: center;
+  }
+  .home-poster-admin__file {
+    max-width: 28rem;
+  }
+  @media (max-width: 40em) {
+    .home-poster-admin__actions,
+    .home-poster-admin__actions .button,
+    .home-poster-admin__file {
+      display: block;
+      width: 100%;
+    }
+    .home-poster-admin__actions .button {
+      margin-top: .6rem;
+    }
+  }
+</style>
+
+<div class="section">
+  <div class="section__header">
+    <h1 class="section__title">{{ _('首页海报') }}</h1>
+  </div>
+  <div class="section__body home-poster-admin">
+    {% if saved %}
+      <div class="home-poster-admin__success">{{ _('首页海报已保存。') }}</div>
+    {% endif %}
+    {% if cleared %}
+      <div class="home-poster-admin__success">{{ _('首页海报已清除，首页将恢复默认样式。') }}</div>
+    {% endif %}
+    <div class="home-poster-admin__note">
+      {{ _('上传后，海报会显示在首页顶部训练区域，作为背景层放在标题、说明和按钮下方。没有海报时首页保持当前默认界面。') }}
+      <br>
+      {{ _('建议比例：') }}<strong>{{ recommendedRatio }}</strong>，
+      {{ _('推荐尺寸：') }}<strong>{{ recommendedSize }}</strong>{{ _(' 或同等比例图片。主体内容建议放在画面中间偏右，左侧留给首页文字。') }}
+    </div>
+
+    {% if config.image %}
+      <div class="home-poster-admin__preview">
+        <img src="{{ config.image }}" alt="{{ _('当前首页海报') }}">
+      </div>
+    {% else %}
+      <div class="home-poster-admin__empty">{{ _('当前未设置海报。') }}</div>
+    {% endif %}
+
+    <form method="post" enctype="multipart/form-data" class="home-poster-admin">
+      <input type="hidden" name="operation" value="upload">
+      <label>
+        <div>{{ _('上传海报图片') }}</div>
+        <input class="textbox home-poster-admin__file" type="file" name="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required>
+      </label>
+      <div class="home-poster-admin__actions">
+        <button class="rounded primary button" type="submit">{{ _('保存首页海报') }}</button>
+        <span class="home-poster-admin__note">{{ _('支持 JPG、PNG、WEBP，单张最大 8MB。') }}</span>
+      </div>
+    </form>
+
+    {% if config.image %}
+      <form method="post">
+        <input type="hidden" name="operation" value="clear">
+        <button class="rounded button" type="submit">{{ _('清除海报并恢复默认') }}</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

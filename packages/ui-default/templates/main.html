@@ -5,7 +5,11 @@
 {% import "components/user.html" as user with context %}
 {% block content %}
 <div class="ui-v2-home">
-  <header class="ui-v2-home__hero">
+  <header class="ui-v2-home__hero{% if homePoster.image %} ui-v2-home__hero--poster{% endif %}">
+    {% if homePoster.image %}
+      <img class="ui-v2-home__hero-poster" src="{{ homePoster.image }}" alt="" aria-hidden="true">
+      <span class="ui-v2-home__hero-poster-mask" aria-hidden="true"></span>
+    {% endif %}
     <div class="ui-v2-home__hero-inner">
       <div class="ui-v2-home__hero-text">
         <p class="ui-v2-home__eyebrow">Training</p>
@@ -109,6 +113,32 @@
   </div>
 </div>
 <style>
+  .ui-v2-home__hero {
+    position: relative;
+    overflow: hidden;
+  }
+  .ui-v2-home__hero-poster {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .ui-v2-home__hero-poster-mask {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background: linear-gradient(90deg, rgba(255, 255, 255, .94) 0%, rgba(255, 255, 255, .86) 40%, rgba(255, 255, 255, .34) 100%);
+  }
+  .ui-v2-home__hero-inner {
+    position: relative;
+    z-index: 1;
+  }
+  .ui-v2-home__hero--poster .ui-v2-home__hero-visual {
+    opacity: 0;
+    pointer-events: none;
+  }
   .ui-v2-home__lottery-trigger {
     border: 0 !important;
     color: #7c2d12 !important;

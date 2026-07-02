@@ -1,4 +1,5 @@
 import { exec } from 'child_process';
+import path from 'path';
 import { inspect } from 'util';
 import * as yaml from 'js-yaml';
 import moment from 'moment-timezone';
@@ -7,6 +8,7 @@ import Schema from 'schemastery';
 import {
     CannotEditSuperAdminError, NotLaunchedByPM2Error, UserNotFoundError, ValidationError, VerifyPasswordError,
 } from '../error';
+import { getHomePosterConfig, HOME_POSTER_CONFIG_KEY } from '../lib/home_poster';
 import {
     buildPointLotteryConfigFromForm, getPointLotteryConfig, POINT_LOTTERY_CONFIG_KEY, POINT_LOTTERY_POINTS_FIELD,
 } from '../lib/point_lottery';
@@ -15,6 +17,7 @@ import { PERM, PRIV, STATUS } from '../model/builtin';
 import domain from '../model/domain';
 import record from '../model/record';
 import * as setting from '../model/setting';
+import storage from '../model/storage';
 import system from '../model/system';
 import token from '../model/token';
 import user, { User as HydroUser } from '../model/user';
@@ -733,6 +736,61 @@ class SystemUserManagementHandler extends SystemHandler {
     }
 }
 
+class SystemHomePosterHandler extends SystemHandler {
+    async prepare() {
+        this.checkPriv(PRIV.PRIV_ALL);
+    }
+
+    @requireSudo
+    @param('saved', Types.Int, true)
+    @param('cleared', Types.Int, true)
+    async get(domainId: string, saved = 0, cleared = 0) {
+        this.response.template = 'manage_home_poster.html';
+        this.response.body = {
+            config: getHomePosterConfig(),
+            configKey: HOME_POSTER_CONFIG_KEY,
+            saved,
+            cleared,
+            recommendedRatio: '18:5',
+            recommendedSize: '2160 x 600',
+        };
+    }
+
+    @requireSudo
+    async postUpload() {
+        const file = this.request.files?.file;
+        if (!file) throw new ValidationError('poster');
+        if (file.size > 8 * 1024 * 1024) throw new ValidationError('poster');
+
+        const ext = path.extname(file.originalFilename || '').toLowerCase();
+        if (!['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) throw new ValidationError('poster');
+
+        const oldConfig = getHomePosterConfig();
+        const filename = `home-poster-${Date.now()}${ext}`;
+        const storagePath = `user/${this.user._id}/${filename}`;
+        await storage.put(storagePath, file.filepath, this.user._id);
+        if (oldConfig.storagePath && oldConfig.storagePath !== storagePath) {
+            storage.del([oldConfig.storagePath], this.user._id).catch((e) => logger.error(e));
+        }
+        await system.set(HOME_POSTER_CONFIG_KEY, {
+            image: this.url('fs_download', { uid: this.user._id, filename, query: { v: Date.now() } }),
+            storagePath,
+            updatedAt: new Date().toISOString(),
+        });
+        this.response.redirect = this.url('manage_home_poster', { query: { saved: 1 } });
+    }
+
+    @requireSudo
+    async postClear() {
+        const oldConfig = getHomePosterConfig();
+        if (oldConfig.storagePath) {
+            storage.del([oldConfig.storagePath], this.user._id).catch((e) => logger.error(e));
+        }
+        await system.set(HOME_POSTER_CONFIG_KEY, { image: '' });
+        this.response.redirect = this.url('manage_home_poster', { query: { cleared: 1 } });
+    }
+}
+
 class SystemLotteryHandler extends SystemHandler {
     async prepare() {
         this.checkPriv(PRIV.PRIV_ALL);
@@ -856,6 +914,8 @@ export async function apply(ctx) {
     ctx.injectUI('ControlPanel', 'manage_user_management', { before: 'manage_user_import', icon: 'user' }, PRIV.PRIV_ALL);
     ctx.Route('manage_user_import', '/manage/userimport', SystemUserImportHandler);
     ctx.Route('manage_user_priv', '/manage/userpriv', SystemUserPrivHandler);
+    ctx.Route('manage_home_poster', '/manage/home-poster', SystemHomePosterHandler);
+    ctx.injectUI('ControlPanel', 'manage_home_poster', { before: 'manage_lottery', icon: 'image' }, PRIV.PRIV_ALL);
     ctx.Route('manage_lottery', '/manage/lottery', SystemLotteryHandler);
     ctx.injectUI('ControlPanel', 'manage_lottery', { icon: 'gift' }, PRIV.PRIV_ALL);
     ctx.Connection('manage_check', '/manage/check-conn', SystemCheckConnHandler);

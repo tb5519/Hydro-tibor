@@ -14,6 +14,7 @@ import {
 import { DomainDoc, Setting } from '../interface';
 import avatar, { validate } from '../lib/avatar';
 import * as mail from '../lib/mail';
+import { getHomePosterConfig } from '../lib/home_poster';
 import {
     getPointLotteryConfig, pickPointLotteryPrize, POINT_LOTTERY_POINTS_FIELD, publicPointLotteryPrize,
 } from '../lib/point_lottery';
@@ -239,6 +240,7 @@ export class HomeHandler extends Handler {
             contents,
             udict,
             domain: this.domain,
+            homePoster: getHomePosterConfig(),
             pointLottery: {
                 enabled: pointLotteryConfig.enabled,
                 cost: pointLotteryConfig.cost,
