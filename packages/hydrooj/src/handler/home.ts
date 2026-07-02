@@ -3,6 +3,7 @@ import { generateRegistrationOptions, verifyRegistrationResponse } from '@simple
 import { isoBase64URL, isoUint8Array } from '@simplewebauthn/server/helpers';
 import yaml from 'js-yaml';
 import { pick } from 'lodash';
+import { lookup } from 'mime-types';
 import { Binary, ObjectId } from 'mongodb';
 import { UAParser } from 'ua-parser-js';
 import { Context } from '../context';
@@ -264,7 +265,10 @@ class HomePosterImageHandler extends Handler {
     async get() {
         const config = getHomePosterConfig();
         if (!config.storagePath) throw new NotFoundError('home-poster');
-        this.response.redirect = await storage.signDownloadLink(config.storagePath, undefined, false, 'user');
+        const meta = await storage.getMeta(config.storagePath);
+        if (!meta) throw new NotFoundError('home-poster');
+        this.response.body = await storage.get(config.storagePath);
+        this.response.type = meta['Content-Type'] || lookup(config.storagePath) || 'application/octet-stream';
         this.response.addHeader('Cache-Control', 'public, max-age=604800, immutable');
     }
 }
