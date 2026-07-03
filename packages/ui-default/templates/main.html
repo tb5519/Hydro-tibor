@@ -68,7 +68,15 @@
             <div class="point-lottery__preview-name" data-point-lottery-preview-name>选择奖品查看图片</div>
           </div>
           <div class="point-lottery__wins" data-point-lottery-wins></div>
-          <div class="point-lottery__result" data-point-lottery-result hidden></div>
+        </div>
+      </div>
+      <div class="point-lottery__result" data-point-lottery-result hidden>
+        <div class="point-lottery__result-card">
+          <button class="point-lottery__result-close" type="button" data-point-lottery-result-close aria-label="关闭结果">×</button>
+          <p class="point-lottery__result-eyebrow" data-point-lottery-result-eyebrow>中奖结果</p>
+          <div class="point-lottery__result-image" data-point-lottery-result-image></div>
+          <strong class="point-lottery__result-title" data-point-lottery-result-title></strong>
+          <p class="point-lottery__result-points" data-point-lottery-result-points></p>
         </div>
       </div>
     </section>
@@ -515,17 +523,122 @@
     font-size: .8rem;
   }
   .point-lottery__result {
-    border: 1px solid #bbf7d0;
-    border-radius: 10px;
-    background: #f0fdf4;
-    color: #166534;
-    padding: .8rem .9rem;
-    font-weight: 700;
+    position: absolute;
+    inset: 0;
+    z-index: 8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.4rem;
+    background: rgba(15, 23, 42, .28);
+    backdrop-filter: blur(6px);
+  }
+  .point-lottery__result[hidden] {
+    display: none;
+  }
+  .point-lottery__result-card {
+    position: relative;
+    width: min(23rem, 100%);
+    border: 1px solid rgba(219, 234, 254, .92);
+    border-radius: 18px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    box-shadow: 0 24px 70px rgba(15, 23, 42, .22);
+    padding: 1.15rem;
+    text-align: center;
+  }
+  .point-lottery__result-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(135deg, rgba(37, 99, 235, .1), rgba(251, 146, 60, .12));
+    pointer-events: none;
+  }
+  .point-lottery__result-close {
+    position: absolute;
+    right: .7rem;
+    top: .55rem;
+    z-index: 1;
+    border: 0;
+    background: transparent;
+    color: #64748b;
+    cursor: pointer;
+    font-size: 1.45rem;
+    line-height: 1;
+  }
+  .point-lottery__result-eyebrow {
+    position: relative;
+    margin: 0 1.6rem .75rem;
+    color: #64748b;
+    font-size: .75rem;
+    font-weight: 800;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .point-lottery__result-image {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 16 / 10;
+    border: 1px solid #dbeafe;
+    border-radius: 14px;
+    background:
+      radial-gradient(circle at 50% 0%, rgba(250, 204, 21, .24), transparent 42%),
+      #f8fafc;
+    color: #94a3b8;
+    overflow: hidden;
+  }
+  .point-lottery__result-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: #fff;
+  }
+  .point-lottery__result-placeholder {
+    display: grid;
+    place-items: center;
+    width: 5.5rem;
+    height: 5.5rem;
+    border-radius: 24px;
+    background: #eef2ff;
+    color: #64748b;
+    font-size: 1.8rem;
+    font-weight: 900;
+  }
+  .point-lottery__result-title {
+    position: relative;
+    display: block;
+    margin-top: .85rem;
+    color: #0f172a;
+    font-size: 1.25rem;
+    line-height: 1.25;
+  }
+  .point-lottery__result-points {
+    position: relative;
+    margin: .35rem 0 0;
+    color: #2563eb;
+    font-size: .9rem;
+    font-weight: 800;
   }
   .point-lottery__result.is-error {
+    background: rgba(127, 29, 29, .22);
+  }
+  .point-lottery__result.is-error .point-lottery__result-card {
     border-color: #fecaca;
-    background: #fef2f2;
+  }
+  .point-lottery__result.is-error .point-lottery__result-image {
+    border-color: #fecaca;
+    background: #fff7f7;
+    color: #dc2626;
+  }
+  .point-lottery__result.is-error .point-lottery__result-title {
     color: #991b1b;
+  }
+  .point-lottery__wheel-wrap.is-preparing .point-lottery__hub {
+    box-shadow:
+      0 14px 34px rgba(220, 38, 38, .32),
+      0 0 0 12px rgba(251, 146, 60, .16);
   }
   .point-lottery__wheel-wrap.is-spinning .point-lottery__hub {
     box-shadow:
@@ -617,12 +730,21 @@
   var previewMetaNode = modal.querySelector('[data-point-lottery-preview-meta]');
   var winsNode = modal.querySelector('[data-point-lottery-wins]');
   var resultNode = modal.querySelector('[data-point-lottery-result]');
+  var resultCloseButton = modal.querySelector('[data-point-lottery-result-close]');
+  var resultEyebrowNode = modal.querySelector('[data-point-lottery-result-eyebrow]');
+  var resultImageNode = modal.querySelector('[data-point-lottery-result-image]');
+  var resultTitleNode = modal.querySelector('[data-point-lottery-result-title]');
+  var resultPointsNode = modal.querySelector('[data-point-lottery-result-points]');
   var drawUrl = {{ url('point_lottery_draw')|json|safe }};
   var currentPointerDeg = 0;
   var selectedPrizeIndex = 0;
   var previewAutoplayIndex = 0;
   var previewAutoplayTimer = null;
   var previewManuallyLocked = false;
+  var pointerWarmupFrame = null;
+  var pointerWarmupStart = 0;
+  var pointerWarmupBaseDeg = 0;
+  var audioContext = null;
   var wheelColors = [
     '#bfdbfe', '#fde68a', '#fecaca', '#bbf7d0', '#ddd6fe',
     '#fed7aa', '#bae6fd', '#fbcfe8', '#ccfbf1', '#e9d5ff',
@@ -634,10 +756,74 @@
     });
   }
 
-  function showResult(message, isError) {
+  function hideResult() {
+    resultNode.hidden = true;
+  }
+
+  function resultImageHtml(prize, fallbackText) {
+    if (prize && prize.image) {
+      return '<img src="' + escapeHtml(prize.image) + '" alt="' + escapeHtml(prize.name || fallbackText) + '">';
+    }
+    return '<span class="point-lottery__result-placeholder">' + escapeHtml(fallbackText || '奖') + '</span>';
+  }
+
+  function prepareLotteryAudio() {
+    try {
+      var Context = window.AudioContext || window.webkitAudioContext;
+      if (!Context) return null;
+      if (!audioContext) audioContext = new Context();
+      if (audioContext.state === 'suspended') audioContext.resume();
+      return audioContext;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function playLotterySound(success) {
+    var context = prepareLotteryAudio();
+    if (!context) return;
+    try {
+      var now = context.currentTime;
+      var gain = context.createGain();
+      gain.connect(context.destination);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(success ? 0.16 : 0.09, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + (success ? 0.72 : 0.36));
+      var notes = success ? [523.25, 659.25, 783.99, 1046.5] : [392, 329.63];
+      notes.forEach(function (frequency, index) {
+        var osc = context.createOscillator();
+        var start = now + index * (success ? 0.1 : 0.12);
+        osc.type = success ? 'triangle' : 'sine';
+        osc.frequency.setValueAtTime(frequency, start);
+        osc.connect(gain);
+        osc.start(start);
+        osc.stop(start + (success ? 0.22 : 0.18));
+      });
+    } catch (e) {
+      // Audio is decorative; ignore browser or permission failures.
+    }
+  }
+
+  function showPrizeResult(prize, points) {
+    var visibleWin = isVisibleWinPrize(prize);
+    var name = String((prize && prize.name) || (visibleWin ? '中奖' : '未中奖')).trim();
     resultNode.hidden = false;
-    resultNode.classList.toggle('is-error', !!isError);
-    resultNode.textContent = message;
+    resultNode.classList.remove('is-error');
+    resultEyebrowNode.textContent = visibleWin ? '恭喜获得' : '本次结果';
+    resultImageNode.innerHTML = resultImageHtml(prize, visibleWin ? '奖' : '未');
+    resultTitleNode.textContent = name;
+    resultPointsNode.textContent = '当前积分：' + points;
+    playLotterySound(visibleWin);
+  }
+
+  function showErrorResult(message) {
+    resultNode.hidden = false;
+    resultNode.classList.add('is-error');
+    resultEyebrowNode.textContent = '抽奖失败';
+    resultImageNode.innerHTML = '<span class="point-lottery__result-placeholder">!</span>';
+    resultTitleNode.textContent = message;
+    resultPointsNode.textContent = '';
+    playLotterySound(false);
   }
 
   function shortText(value, limit) {
@@ -878,7 +1064,31 @@
     return 0;
   }
 
+  function startPointerWarmup() {
+    stopPointerWarmup();
+    wheelWrapNode.classList.add('is-preparing');
+    pointerWarmupStart = performance.now();
+    pointerWarmupBaseDeg = currentPointerDeg;
+    pointerNode.style.transition = 'none';
+    var tick = function (now) {
+      var elapsed = Math.max(now - pointerWarmupStart, 0);
+      currentPointerDeg = pointerWarmupBaseDeg + elapsed * 0.28;
+      pointerNode.style.transform = 'rotate(' + currentPointerDeg + 'deg)';
+      pointerWarmupFrame = requestAnimationFrame(tick);
+    };
+    pointerWarmupFrame = requestAnimationFrame(tick);
+  }
+
+  function stopPointerWarmup() {
+    if (pointerWarmupFrame !== null) {
+      cancelAnimationFrame(pointerWarmupFrame);
+      pointerWarmupFrame = null;
+    }
+    wheelWrapNode.classList.remove('is-preparing');
+  }
+
   function spinToPrize(prize, prizeIndex) {
+    stopPointerWarmup();
     var prizes = pointLottery.prizes || [];
     var index = Number.isInteger(prizeIndex) && prizeIndex >= 0 && prizeIndex < prizes.length
       ? prizeIndex
@@ -900,6 +1110,9 @@
     var finalDeg = currentPointerDeg + 360 * 8 + delta;
     currentPointerDeg = finalDeg;
     wheelWrapNode.classList.add('is-spinning');
+    pointerNode.style.transition = 'none';
+    pointerNode.style.transform = 'rotate(' + (finalDeg - 360 * 8 - delta) + 'deg)';
+    pointerNode.offsetHeight;
     pointerNode.style.transition = 'transform 5.4s cubic-bezier(.09,.74,.13,1)';
     pointerNode.style.transform = 'rotate(' + finalDeg + 'deg)';
     return new Promise(function (resolve) {
@@ -946,7 +1159,7 @@
   }
 
   function openModal() {
-    resultNode.hidden = true;
+    hideResult();
     modal.hidden = false;
     previewManuallyLocked = false;
     syncState();
@@ -955,6 +1168,8 @@
 
   function closeModal() {
     stopPreviewAutoplay();
+    stopPointerWarmup();
+    hideResult();
     modal.hidden = true;
   }
 
@@ -972,15 +1187,21 @@
     if (!button || !winsNode.contains(button)) return;
     renderWonPrizePreview(Number(button.getAttribute('data-point-lottery-win-index')));
   });
+  resultCloseButton.addEventListener('click', hideResult);
+  resultNode.addEventListener('click', function (ev) {
+    if (ev.target === resultNode) hideResult();
+  });
   document.addEventListener('keydown', function (ev) {
     if (ev.key === 'Escape' && !modal.hidden) closeModal();
   });
 
   drawButton.addEventListener('click', function () {
     if (drawButton.disabled) return;
-    resultNode.hidden = true;
+    hideResult();
+    prepareLotteryAudio();
     drawButton.disabled = true;
     drawButton.textContent = '转';
+    startPointerWarmup();
     fetch(drawUrl, {
       method: 'POST',
       credentials: 'same-origin',
@@ -1010,11 +1231,14 @@
           pointLottery.recentWins = [winPrize].concat(pointLottery.recentWins || []).filter(isVisibleWinPrize).slice(0, 6);
         }
         renderWins();
-        showResult('我的奖品：' + data.prize.name + '。当前积分：' + data.points, false);
+        showPrizeResult(data.prize, data.points);
       });
     }).catch(function (err) {
-      showResult(err.message || '抽奖失败，请稍后再试。', true);
+      stopPointerWarmup();
+      wheelWrapNode.classList.remove('is-spinning');
+      showErrorResult(err.message || '抽奖失败，请稍后再试。');
     }).finally(function () {
+      stopPointerWarmup();
       drawButton.textContent = '抽';
       syncState();
     });
