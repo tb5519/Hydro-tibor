@@ -296,6 +296,7 @@ class PointLotteryDrawHandler extends Handler {
         if (!config.enabled) return fail('积分抽奖未开启。');
         const prize = pickPointLotteryPrize(config);
         if (!prize) return fail('抽奖奖品未配置。');
+        const prizeIndex = config.prizes.indexOf(prize);
 
         const query: any = { domainId, uid: this.user._id };
         if (config.cost > 0) query[POINT_LOTTERY_POINTS_FIELD] = { $gte: config.cost };
@@ -328,6 +329,7 @@ class PointLotteryDrawHandler extends Handler {
         this.response.body = {
             ok: true,
             prize: publicPointLotteryPrize(prize),
+            prizeIndex,
             cost: config.cost,
             points,
         };
