@@ -236,6 +236,13 @@ export class HomeHandler extends Handler {
                 { projection: { [POINT_LOTTERY_POINTS_FIELD]: 1 } },
             )
             : null;
+        const pointLotteryWins = this.user.hasPriv(PRIV.PRIV_USER_PROFILE)
+            ? await this.ctx.db.collection('lottery.draw')
+                .find({ domainId, uid: this.user._id })
+                .sort({ createdAt: -1, _id: -1 })
+                .limit(6)
+                .toArray()
+            : [];
         const homePoster = getHomePosterConfig();
         if (homePoster.storagePath) {
             homePoster.image = this.url('home_poster_image', {
@@ -254,6 +261,12 @@ export class HomeHandler extends Handler {
                 points: Math.max(0, Math.floor(+pointLotteryUser?.[POINT_LOTTERY_POINTS_FIELD] || 0)),
                 canDraw: this.user.hasPriv(PRIV.PRIV_USER_PROFILE),
                 prizes: pointLotteryConfig.prizes.map(publicPointLotteryPrize),
+                recentWins: pointLotteryWins.map((log: any) => ({
+                    name: `${log.prize?.name || ''}`,
+                    image: `${log.prize?.image || ''}`,
+                    pointDelta: Math.max(0, Math.floor(+log.prize?.pointDelta || +log.pointDelta || 0)),
+                    createdAt: log.createdAt,
+                })).filter((prize) => prize.name),
             },
         };
     }
