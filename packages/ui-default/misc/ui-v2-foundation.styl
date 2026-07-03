@@ -157,6 +157,12 @@ html.page--homepage
   width: 100%
   height: 100%
   object-fit: fill
+  opacity: 0
+  visibility: hidden
+
+.page--homepage .ui-v2-home__hero--poster-ready .ui-v2-home__hero-poster
+  opacity: 1
+  visibility: visible
 
 .page--homepage .ui-v2-home__hero-inner
   position: relative
@@ -209,7 +215,7 @@ html.page--homepage
   +below(rupture.desktop-cutoff)
     min-height: rem(180px)
 
-.page--homepage .ui-v2-home__hero--poster .ui-v2-home__hero-visual
+.page--homepage .ui-v2-home__hero--poster-ready .ui-v2-home__hero-visual
   opacity: 0
   pointer-events: none
 

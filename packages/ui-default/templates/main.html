@@ -127,12 +127,18 @@
     width: 100%;
     height: 100%;
     object-fit: fill;
+    opacity: 0;
+    visibility: hidden;
+  }
+  .ui-v2-home__hero--poster-ready .ui-v2-home__hero-poster {
+    opacity: 1;
+    visibility: visible;
   }
   .ui-v2-home__hero-inner {
     position: relative;
     z-index: 1;
   }
-  .ui-v2-home__hero--poster .ui-v2-home__hero-visual {
+  .ui-v2-home__hero--poster-ready .ui-v2-home__hero-visual {
     opacity: 0;
     pointer-events: none;
   }
@@ -445,6 +451,30 @@
   }
 </style>
 <script>
+(function () {
+  var hero = document.querySelector('.ui-v2-home__hero--poster');
+  if (!hero) return;
+  var poster = hero.querySelector('.ui-v2-home__hero-poster');
+  if (!poster) return;
+  var done = false;
+  function reveal() {
+    if (done) return;
+    done = true;
+    hero.classList.add('ui-v2-home__hero--poster-ready');
+  }
+  function revealAfterDecode() {
+    if (poster.decode) poster.decode().then(reveal).catch(reveal);
+    else reveal();
+  }
+  if (poster.complete && poster.naturalWidth) revealAfterDecode();
+  else {
+    poster.addEventListener('load', revealAfterDecode, { once: true });
+    poster.addEventListener('error', function () {
+      hero.classList.remove('ui-v2-home__hero--poster');
+    }, { once: true });
+  }
+})();
+
 (function () {
   var pointLottery = {{ pointLottery|json|safe }};
   var modal = document.querySelector('[data-point-lottery]');
