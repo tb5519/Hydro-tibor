@@ -115,6 +115,9 @@
   .ui-v2-home__hero {
     position: relative;
     overflow: hidden;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
   }
   .ui-v2-home__hero--poster {
     aspect-ratio: 18 / 5;
@@ -125,10 +128,12 @@
     inset: 0;
     z-index: 0;
     width: 100%;
+    max-width: 100%;
     height: 100%;
     object-fit: fill;
     opacity: 0;
     visibility: hidden;
+    display: block;
   }
   .ui-v2-home__hero--poster-ready .ui-v2-home__hero-poster {
     opacity: 1;
@@ -425,6 +430,17 @@
       0 0 0 12px rgba(251, 146, 60, .18);
   }
   @media (max-width: 40em) {
+    .ui-v2-home {
+      max-width: 100%;
+      overflow-x: hidden;
+    }
+    .ui-v2-home__hero--poster {
+      aspect-ratio: auto;
+      min-height: 260px;
+    }
+    .ui-v2-home__hero--poster-ready .ui-v2-home__hero-visual {
+      display: none;
+    }
     .point-lottery {
       padding-top: 4vh;
     }
