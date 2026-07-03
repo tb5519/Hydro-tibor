@@ -28,6 +28,8 @@ import { Time } from '../utils';
 import { JudgeResultCallbackContext } from './judge';
 
 const logger = new Logger('manage');
+const LOTTERY_PRIZE_IMAGE_LIMIT = 4 * 1024 * 1024;
+const LOTTERY_PRIZE_IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp'];
 
 function set(key: string, value: any) {
     if (setting.SYSTEM_SETTINGS_BY_KEY[key]) {
@@ -52,6 +54,35 @@ function set(key: string, value: any) {
         return value;
     }
     return undefined;
+}
+
+function getRequestFile(files: any, key: string) {
+    const file = files?.[key];
+    if (Array.isArray(file)) return file[0];
+    return file;
+}
+
+async function applyLotteryPrizeImageUploads(handler: Handler, args: any) {
+    const files = handler.request.files || {};
+    const indexedKeys = Object.keys({ ...args, ...files })
+        .map((key) => /^prize(\d+)(?:Name|ImageFile)$/.exec(key)?.[1])
+        .filter((index): index is string => index !== undefined)
+        .map((index) => +index);
+    const count = Math.max(
+        Math.floor(+args.prizeCount || 0),
+        indexedKeys.length ? Math.max(...indexedKeys) + 1 : 0,
+    );
+    const version = Date.now();
+    for (let i = 0; i < count; i++) {
+        const file = getRequestFile(files, `prize${i}ImageFile`);
+        if (!file || !file.size) continue;
+        if (file.size > LOTTERY_PRIZE_IMAGE_LIMIT) throw new ValidationError(`prize${i}ImageFile`);
+        const ext = path.extname(file.originalFilename || '').toLowerCase();
+        if (!LOTTERY_PRIZE_IMAGE_EXTS.includes(ext)) throw new ValidationError(`prize${i}ImageFile`);
+        const filename = `lottery-prize-${version}-${i}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+        await storage.put(`system/point-lottery/${filename}`, file.filepath, handler.user._id);
+        args[`prize${i}Image`] = handler.url('point_lottery_prize_image', { filename, query: { v: version } });
+    }
 }
 
 class SystemHandler extends Handler {
@@ -847,7 +878,9 @@ class SystemLotteryHandler extends SystemHandler {
 
     @requireSudo
     async postSaveConfig() {
-        const config = buildPointLotteryConfigFromForm(this.args);
+        const args = { ...this.args };
+        await applyLotteryPrizeImageUploads(this, args);
+        const config = buildPointLotteryConfigFromForm(args);
         await system.set(POINT_LOTTERY_CONFIG_KEY, config);
         this.response.redirect = this.url('manage_lottery', { query: { saved: 1 } });
     }

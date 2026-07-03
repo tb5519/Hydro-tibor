@@ -273,6 +273,20 @@ class HomePosterImageHandler extends Handler {
     }
 }
 
+class PointLotteryPrizeImageHandler extends Handler {
+    noCheckPermView = true;
+
+    @param('filename', Types.Filename)
+    async get({ }, filename: string) {
+        const target = `system/point-lottery/${filename}`;
+        const meta = await storage.getMeta(target);
+        if (!meta) throw new NotFoundError(filename);
+        this.response.body = await storage.get(target);
+        this.response.type = meta['Content-Type'] || lookup(target) || 'application/octet-stream';
+        this.response.addHeader('Cache-Control', 'public, max-age=604800, immutable');
+    }
+}
+
 class PointLotteryDrawHandler extends Handler {
     async post({ domainId }) {
         const fail = (message: string) => {
@@ -761,6 +775,7 @@ export const inject = { geoip: { required: false }, oauth: {} };
 export function apply(ctx: Context) {
     ctx.Route('homepage', '/', HomeHandler);
     ctx.Route('home_poster_image', '/home/poster', HomePosterImageHandler);
+    ctx.Route('point_lottery_prize_image', '/lottery/prize/:filename', PointLotteryPrizeImageHandler);
     ctx.Route('point_lottery_draw', '/lottery/draw', PointLotteryDrawHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_security', '/home/security', HomeSecurityHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('user_changemail_with_code', '/home/changeMail/:code', UserChangemailWithCodeHandler, PRIV.PRIV_USER_PROFILE);

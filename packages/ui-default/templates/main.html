@@ -284,7 +284,7 @@
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 6.4rem;
+    width: 6.8rem;
     color: #0f172a;
     font-size: .86rem;
     font-weight: 800;
@@ -293,6 +293,17 @@
     text-shadow: 0 1px 0 rgba(255, 255, 255, .75);
     transform-origin: center;
     word-break: keep-all;
+  }
+  .point-lottery__wheel-image {
+    display: block;
+    width: 2.9rem;
+    height: 2.9rem;
+    margin: 0 auto .28rem;
+    border: 3px solid rgba(255, 255, 255, .78);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, .72);
+    box-shadow: 0 8px 18px rgba(15, 23, 42, .16);
+    object-fit: cover;
   }
   .point-lottery__wheel-label small {
     display: block;
@@ -363,7 +374,7 @@
   }
   .point-lottery__prize {
     display: grid;
-    grid-template-columns: 2.25rem 1fr auto;
+    grid-template-columns: 2.25rem 2.45rem 1fr auto;
     gap: .65rem;
     align-items: center;
     border: 1px solid #e5e7eb;
@@ -382,6 +393,14 @@
     color: #0f172a;
     font-size: .9rem;
     font-weight: 700;
+  }
+  .point-lottery__prize-image {
+    width: 2.45rem;
+    height: 2.45rem;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    background: #f8fafc;
+    object-fit: cover;
   }
   .point-lottery__prize-name {
     color: #0f172a;
@@ -458,8 +477,13 @@
       width: min(18rem, 100%);
     }
     .point-lottery__wheel-label {
-      width: 5.1rem;
+      width: 5.35rem;
       font-size: .76rem;
+    }
+    .point-lottery__wheel-image {
+      width: 2.35rem;
+      height: 2.35rem;
+      border-radius: 10px;
     }
     .point-lottery__wheel-label small {
       font-size: .62rem;
@@ -571,9 +595,10 @@
     wheelLabelsNode.innerHTML = prizeSegments.map(function (segment) {
       var prize = segment.prize;
       var angle = segment.center;
-      var distance = prizes.length > 8 ? 7.75 : 8.35;
+      var distance = prizes.length > 8 ? 7.5 : 8.1;
       var transform = 'translate(-50%, -50%) rotate(' + angle + 'deg) translateY(-' + distance + 'rem) rotate(' + (-angle) + 'deg)';
       return '<div class="point-lottery__wheel-label" style="transform: ' + transform + ';">'
+        + (prize.image ? '<img class="point-lottery__wheel-image" src="' + escapeHtml(prize.image) + '" alt="">' : '')
         + '<div>' + escapeHtml(shortText(prize.name, 7)) + '</div>'
         + '<small>' + escapeHtml(prizeText(prize)) + '</small>'
         + '</div>';
@@ -591,6 +616,7 @@
       var color = wheelColors[index % wheelColors.length];
       return '<div class="point-lottery__prize">'
         + '<div class="point-lottery__prize-index" style="--prize-color:' + color + '">' + (index + 1) + '</div>'
+        + (prize.image ? '<img class="point-lottery__prize-image" src="' + escapeHtml(prize.image) + '" alt="">' : '<div class="point-lottery__prize-image" aria-hidden="true"></div>')
         + '<div><div class="point-lottery__prize-name">' + escapeHtml(prize.name) + '</div>'
         + '<div class="point-lottery__prize-points">' + escapeHtml(prizeText(prize)) + '</div></div>'
         + '<div class="point-lottery__prize-prob">' + escapeHtml(prize.probability) + '</div>'
@@ -615,14 +641,24 @@
     var prizes = pointLottery.prizes || [];
     var index = findPrizeIndex(prize);
     var segments = getPrizeSegments(prizes);
-    var targetDeg = segments[index] ? segments[index].center : 0;
+    var segment = segments[index];
+    var targetDeg = 0;
+    if (segment) {
+      var span = Math.max(segment.end - segment.start, 1);
+      var padding = span > 12 ? Math.min(span * 0.12, 10) : 0;
+      var innerStart = segment.start + padding;
+      var innerEnd = segment.end - padding;
+      targetDeg = innerEnd > innerStart
+        ? innerStart + Math.random() * (innerEnd - innerStart)
+        : segment.center;
+    }
     var currentMod = ((currentPointerDeg % 360) + 360) % 360;
     var delta = targetDeg - currentMod;
     if (delta < 0) delta += 360;
-    var finalDeg = currentPointerDeg + 360 * 5 + delta;
+    var finalDeg = currentPointerDeg + 360 * 8 + delta;
     currentPointerDeg = finalDeg;
     wheelWrapNode.classList.add('is-spinning');
-    pointerNode.style.transition = 'transform 3.2s cubic-bezier(.12,.78,.16,1)';
+    pointerNode.style.transition = 'transform 5.4s cubic-bezier(.09,.74,.13,1)';
     pointerNode.style.transform = 'rotate(' + finalDeg + 'deg)';
     return new Promise(function (resolve) {
       var done = false;

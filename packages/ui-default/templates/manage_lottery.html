@@ -58,6 +58,50 @@
     cursor: pointer;
     font-size: .86rem;
   }
+  .lottery-admin__upload {
+    display: flex;
+    align-items: center;
+    gap: .65rem;
+    min-height: 3.1rem;
+  }
+  .lottery-admin__upload-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 6.6rem;
+    height: 2.6rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: #fff;
+    color: #334155;
+    cursor: pointer;
+    font-size: .9rem;
+    line-height: 1;
+  }
+  .lottery-admin__upload-button:hover {
+    border-color: #2563eb;
+    color: #2563eb;
+  }
+  .lottery-admin__upload input[type="file"] {
+    display: none;
+  }
+  .lottery-admin__preview {
+    width: 2.8rem;
+    height: 2.8rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc center / cover no-repeat;
+    color: #94a3b8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    font-size: .75rem;
+    flex: 0 0 auto;
+  }
+  .lottery-admin__preview.has-image {
+    color: transparent;
+  }
   .lottery-admin__actions,
   .lottery-admin__search {
     display: flex;
@@ -95,7 +139,7 @@
     {% if saved %}
       <div class="lottery-admin__success">{{ _('抽奖配置已保存。') }}</div>
     {% endif %}
-    <form method="post" class="lottery-admin">
+    <form method="post" enctype="multipart/form-data" class="lottery-admin">
       <input type="hidden" name="operation" value="save_config">
       <label>
         <input type="checkbox" name="enabled"{% if config.enabled %} checked{% endif %}>
@@ -106,7 +150,7 @@
         <input class="textbox" type="number" min="0" step="1" name="cost" value="{{ config.cost }}" required>
       </label>
       <div class="lottery-admin__note">
-        {{ _('概率按权重计算。例如两个奖品概率分别填 1 和 3，则第二个奖品约为第一个的 3 倍。奖品图片填写可访问的图片 URL。') }}
+        {{ _('概率按权重计算。例如两个奖品概率分别填 1 和 3，则第二个奖品约为第一个的 3 倍。奖品图片上传后会显示在转盘对应区域。') }}
       </div>
       <input type="hidden" name="prizeCount" value="{{ prizeSlots.length }}" data-lottery-prize-count>
       <div class="lottery-admin__prizes" data-lottery-prizes>
@@ -122,8 +166,15 @@
               <input class="textbox" name="prize{{ loop.index0 }}Name" value="{{ prize.name }}" autocomplete="off">
             </label>
             <label>
-              <div>{{ _('奖品图片 URL') }}</div>
-              <input class="textbox" name="prize{{ loop.index0 }}Image" value="{{ prize.image }}" autocomplete="off">
+              <div>{{ _('奖品图片') }}</div>
+              <div class="lottery-admin__upload">
+                <input type="hidden" name="prize{{ loop.index0 }}Image" value="{{ prize.image }}" data-lottery-image-value>
+                <label class="lottery-admin__upload-button">
+                  {{ _('上传图片') }}
+                  <input type="file" name="prize{{ loop.index0 }}ImageFile" accept="image/png,image/jpeg,image/webp" data-lottery-image-file>
+                </label>
+                <span class="lottery-admin__preview{% if prize.image %} has-image{% endif %}" data-lottery-image-preview{% if prize.image %} style="background-image: url('{{ prize.image }}')"{% endif %}>{{ _('无图') }}</span>
+              </div>
             </label>
             <label>
               <div>{{ _('奖品概率权重') }}</div>
@@ -148,8 +199,15 @@
             <input class="textbox" data-field="Name" autocomplete="off">
           </label>
           <label>
-            <div>{{ _('奖品图片 URL') }}</div>
-            <input class="textbox" data-field="Image" autocomplete="off">
+            <div>{{ _('奖品图片') }}</div>
+            <div class="lottery-admin__upload">
+              <input type="hidden" data-field="Image" data-lottery-image-value>
+              <label class="lottery-admin__upload-button">
+                {{ _('上传图片') }}
+                <input type="file" data-field="ImageFile" accept="image/png,image/jpeg,image/webp" data-lottery-image-file>
+              </label>
+              <span class="lottery-admin__preview" data-lottery-image-preview>{{ _('无图') }}</span>
+            </div>
           </label>
           <label>
             <div>{{ _('奖品概率权重') }}</div>
@@ -291,12 +349,23 @@
 
   function bind(row) {
     var button = row.querySelector('[data-lottery-remove]');
-    if (!button) return;
-    button.addEventListener('click', function () {
-      row.parentNode.removeChild(row);
-      if (!rows().length) addRow();
-      reindex();
-    });
+    if (button) {
+      button.addEventListener('click', function () {
+        row.parentNode.removeChild(row);
+        if (!rows().length) addRow();
+        reindex();
+      });
+    }
+    var fileInput = row.querySelector('[data-lottery-image-file]');
+    var preview = row.querySelector('[data-lottery-image-preview]');
+    if (fileInput && preview) {
+      fileInput.addEventListener('change', function () {
+        var file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        preview.style.backgroundImage = 'url("' + URL.createObjectURL(file) + '")';
+        preview.classList.add('has-image');
+      });
+    }
   }
 
   function addRow() {
@@ -306,6 +375,10 @@
     row.setAttribute('data-lottery-prize', '');
     Array.prototype.slice.call(row.querySelectorAll('input')).forEach(function (input) {
       if (input.getAttribute('data-field') !== 'PointDelta') input.value = '';
+    });
+    Array.prototype.slice.call(row.querySelectorAll('[data-lottery-image-preview]')).forEach(function (preview) {
+      preview.style.backgroundImage = '';
+      preview.classList.remove('has-image');
     });
     list.appendChild(row);
     bind(row);
