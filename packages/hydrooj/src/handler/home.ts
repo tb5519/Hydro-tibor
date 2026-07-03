@@ -74,6 +74,11 @@ async function attachOwnedBadges(ctx: Context, udocs: any[]) {
     }
 }
 
+function isVisiblePointLotteryWin(prize: any) {
+    const name = `${prize?.name || ''}`.trim();
+    return !!name && !['未中奖', '谢谢参与', '再接再厉', '空奖'].includes(name);
+}
+
 export class HomeHandler extends Handler {
     uids = new Set<number>();
     rankingRows = new Map<number, SharedRankingRow>();
@@ -240,7 +245,7 @@ export class HomeHandler extends Handler {
             ? await this.ctx.db.collection('lottery.draw')
                 .find({ domainId, uid: this.user._id })
                 .sort({ createdAt: -1, _id: -1 })
-                .limit(6)
+                .limit(24)
                 .toArray()
             : [];
         const homePoster = getHomePosterConfig();
@@ -266,7 +271,7 @@ export class HomeHandler extends Handler {
                     image: `${log.prize?.image || ''}`,
                     pointDelta: Math.max(0, Math.floor(+log.prize?.pointDelta || +log.pointDelta || 0)),
                     createdAt: log.createdAt,
-                })).filter((prize) => prize.name),
+                })).filter(isVisiblePointLotteryWin).slice(0, 6),
             },
         };
     }

@@ -68,11 +68,6 @@
             <div class="point-lottery__preview-name" data-point-lottery-preview-name>选择奖品查看图片</div>
           </div>
           <div class="point-lottery__wins" data-point-lottery-wins></div>
-          <div class="point-lottery__prize-title">
-            <span>奖品清单</span>
-            <small>稀有奖品在上方</small>
-          </div>
-          <div class="point-lottery__prizes" data-point-lottery-prizes></div>
           <div class="point-lottery__result" data-point-lottery-result hidden></div>
         </div>
       </div>
@@ -279,6 +274,7 @@
       0 18px 42px rgba(30, 64, 175, .18),
       inset 0 0 0 1px rgba(148, 163, 184, .34),
       inset 0 0 0 10px rgba(255, 255, 255, .38);
+    cursor: pointer;
     overflow: hidden;
   }
   .point-lottery__wheel-canvas {
@@ -301,6 +297,7 @@
     position: absolute;
     inset: 0;
     z-index: 1;
+    pointer-events: none;
   }
   .point-lottery__wheel-label {
     position: absolute;
@@ -335,6 +332,7 @@
     position: absolute;
     inset: 0;
     z-index: 3;
+    pointer-events: none;
     transform: rotate(0deg);
     transform-origin: center;
   }
@@ -459,8 +457,7 @@
     background: rgba(255, 255, 255, .8);
     padding: .65rem;
   }
-  .point-lottery__wins-title,
-  .point-lottery__prize-title {
+  .point-lottery__wins-title {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
@@ -468,8 +465,7 @@
     font-size: .9rem;
     font-weight: 800;
   }
-  .point-lottery__wins-title small,
-  .point-lottery__prize-title small {
+  .point-lottery__wins-title small {
     color: #94a3b8;
     font-size: .72rem;
     font-weight: 700;
@@ -517,60 +513,6 @@
   .point-lottery__wins-empty {
     color: #94a3b8;
     font-size: .8rem;
-  }
-  .point-lottery__prize-title {
-    padding: 0 .1rem;
-  }
-  .point-lottery__prizes {
-    display: grid;
-    gap: .45rem;
-    max-height: 8.7rem;
-    overflow: auto;
-    padding-right: .15rem;
-  }
-  .point-lottery__prize {
-    display: grid;
-    grid-template-columns: 2.25rem 1fr auto;
-    gap: .6rem;
-    align-items: center;
-    width: 100%;
-    border: 1px solid #e5e7eb;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, .82);
-    padding: .62rem .7rem;
-    color: inherit;
-    cursor: pointer;
-    text-align: left;
-  }
-  .point-lottery__prize:hover,
-  .point-lottery__prize.is-active {
-    border-color: #93c5fd;
-    background: #eff6ff;
-  }
-  .point-lottery__prize-index {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 2.25rem;
-    height: 2.25rem;
-    border-radius: 8px;
-    background: var(--prize-color, #dbeafe);
-    color: #0f172a;
-    font-size: .9rem;
-    font-weight: 700;
-  }
-  .point-lottery__prize-name {
-    color: #0f172a;
-    font-size: .95rem;
-    font-weight: 700;
-  }
-  .point-lottery__prize-prob {
-    border-radius: 999px;
-    background: #f8fafc;
-    color: #64748b;
-    font-size: .76rem;
-    font-weight: 800;
-    padding: .18rem .5rem;
   }
   .point-lottery__result {
     border: 1px solid #bbf7d0;
@@ -665,7 +607,6 @@
   var pointsNode = modal.querySelector('[data-point-lottery-points]');
   var costNode = modal.querySelector('[data-point-lottery-cost]');
   var statusNode = modal.querySelector('[data-point-lottery-status]');
-  var prizesNode = modal.querySelector('[data-point-lottery-prizes]');
   var wheelWrapNode = modal.querySelector('.point-lottery__wheel-wrap');
   var wheelNode = modal.querySelector('[data-point-lottery-wheel]');
   var wheelCanvasNode = modal.querySelector('[data-point-lottery-canvas]');
@@ -679,6 +620,9 @@
   var drawUrl = {{ url('point_lottery_draw')|json|safe }};
   var currentPointerDeg = 0;
   var selectedPrizeIndex = 0;
+  var previewAutoplayIndex = 0;
+  var previewAutoplayTimer = null;
+  var previewManuallyLocked = false;
   var wheelColors = [
     '#bfdbfe', '#fde68a', '#fecaca', '#bbf7d0', '#ddd6fe',
     '#fed7aa', '#bae6fd', '#fbcfe8', '#ccfbf1', '#e9d5ff',
@@ -711,13 +655,9 @@
     return '概率 ' + value + '%';
   }
 
-  function sortedPrizeRows(prizes) {
-    return prizes.map(function (prize, index) {
-      return { prize: prize, index: index };
-    }).sort(function (a, b) {
-      return Math.max(Number(a.prize.probability || 0), 0) - Math.max(Number(b.prize.probability || 0), 0)
-        || a.index - b.index;
-    });
+  function isVisibleWinPrize(prize) {
+    var name = String((prize && prize.name) || '').trim();
+    return !!name && ['未中奖', '谢谢参与', '再接再厉', '空奖'].indexOf(name) === -1;
   }
 
   function getPrizeSegments(prizes) {
@@ -812,36 +752,66 @@
         + '<span class="point-lottery__wheel-label-text">'
         + escapeHtml(shortText(prize.name, 7))
         + '</span>'
-        + '</div>';
+      + '</div>';
     }).join('');
+  }
+
+  function stopPreviewAutoplay() {
+    if (!previewAutoplayTimer) return;
+    clearInterval(previewAutoplayTimer);
+    previewAutoplayTimer = null;
+  }
+
+  function startPreviewAutoplay() {
+    stopPreviewAutoplay();
+    var prizes = pointLottery.prizes || [];
+    if (!prizes.length || previewManuallyLocked) return;
+    renderPrizePreview(previewAutoplayIndex % prizes.length, { autoplay: true });
+    previewAutoplayTimer = setInterval(function () {
+      if (previewManuallyLocked || modal.hidden) {
+        stopPreviewAutoplay();
+        return;
+      }
+      previewAutoplayIndex = (previewAutoplayIndex + 1) % prizes.length;
+      renderPrizePreview(previewAutoplayIndex, { autoplay: true });
+    }, 2400);
+  }
+
+  function getPrizeIndexFromWheelAngle(angle) {
+    var segments = getPrizeSegments(pointLottery.prizes || []);
+    for (var i = 0; i < segments.length; i++) {
+      var segment = segments[i];
+      if (angle >= segment.start && angle < segment.end) return segment.index;
+    }
+    return segments.length ? segments[segments.length - 1].index : null;
+  }
+
+  function getPrizeIndexFromWheelPoint(ev) {
+    var rect = wheelNode.getBoundingClientRect();
+    var x = ev.clientX - rect.left - rect.width / 2;
+    var y = ev.clientY - rect.top - rect.height / 2;
+    var radius = Math.min(rect.width, rect.height) / 2;
+    if (Math.sqrt(x * x + y * y) > radius) return null;
+    var angle = (Math.atan2(y, x) * 180 / Math.PI + 90 + 360) % 360;
+    return getPrizeIndexFromWheelAngle(angle);
   }
 
   function renderPrizes() {
     var prizes = pointLottery.prizes || [];
     renderWheel(prizes);
     if (!prizes.length) {
-      prizesNode.innerHTML = '<div class="point-lottery__status">暂未配置奖品。</div>';
       previewImageNode.innerHTML = '<span>暂无奖品图片</span>';
       previewNameNode.textContent = '暂未配置奖品';
+      previewMetaNode.textContent = '概率';
+      stopPreviewAutoplay();
       return;
     }
     if (selectedPrizeIndex < 0 || selectedPrizeIndex >= prizes.length) selectedPrizeIndex = 0;
-    var rows = sortedPrizeRows(prizes);
-    prizesNode.innerHTML = rows.map(function (row, displayIndex) {
-      var prize = row.prize;
-      var index = row.index;
-      var color = wheelColors[index % wheelColors.length];
-      var activeClass = index === selectedPrizeIndex ? ' is-active' : '';
-      return '<button class="point-lottery__prize' + activeClass + '" type="button" data-point-lottery-prize-index="' + index + '">'
-        + '<div class="point-lottery__prize-index" style="--prize-color:' + color + '">' + (displayIndex + 1) + '</div>'
-        + '<div class="point-lottery__prize-name">' + escapeHtml(prize.name) + '</div>'
-        + '<span class="point-lottery__prize-prob">' + escapeHtml(prizeProbabilityText(prize, prizes)) + '</span>'
-        + '</button>';
-    }).join('');
-    renderPrizePreview(selectedPrizeIndex);
+    if (!previewManuallyLocked) renderPrizePreview(previewAutoplayIndex % prizes.length, { autoplay: true });
   }
 
-  function renderPrizePreview(index) {
+  function renderPrizePreview(index, options) {
+    options = options || {};
     var prizes = pointLottery.prizes || [];
     var prize = prizes[index];
     if (!prize) {
@@ -849,19 +819,22 @@
       previewNameNode.textContent = '暂未配置奖品';
       return;
     }
+    if (!options.autoplay) {
+      previewManuallyLocked = true;
+      stopPreviewAutoplay();
+    }
     selectedPrizeIndex = index;
+    previewAutoplayIndex = index;
     previewImageNode.innerHTML = prize.image
       ? '<img src="' + escapeHtml(prize.image) + '" alt="' + escapeHtml(prize.name) + '">'
       : '<span>暂无奖品图片</span>';
     previewNameNode.textContent = prize.name;
     previewMetaNode.textContent = prizeProbabilityText(prize, prizes);
-    prizesNode.querySelectorAll('[data-point-lottery-prize-index]').forEach(function (button) {
-      button.classList.toggle('is-active', Number(button.getAttribute('data-point-lottery-prize-index')) === index);
-    });
   }
 
   function renderWins() {
-    var wins = pointLottery.recentWins || [];
+    var wins = (pointLottery.recentWins || []).filter(isVisibleWinPrize);
+    pointLottery.recentWins = wins;
     if (!wins.length) {
       winsNode.innerHTML = '<div class="point-lottery__wins-title"><span>我的奖品</span><small>最近中奖</small></div>'
         + '<div class="point-lottery__wins-empty">还没有中奖记录。</div>';
@@ -888,9 +861,8 @@
       : '<span>暂无奖品图片</span>';
     previewNameNode.textContent = prize.name;
     previewMetaNode.textContent = '曾经中过';
-    prizesNode.querySelectorAll('[data-point-lottery-prize-index]').forEach(function (button) {
-      button.classList.remove('is-active');
-    });
+    previewManuallyLocked = true;
+    stopPreviewAutoplay();
   }
 
   function findPrizeIndex(target) {
@@ -915,7 +887,12 @@
     var segment = segments[index];
     var targetDeg = 0;
     if (segment) {
-      targetDeg = segment.center;
+      var span = Math.max(segment.end - segment.start, 1);
+      var padding = Math.min(10, span * 0.18);
+      var available = Math.max(span - padding * 2, 0);
+      targetDeg = available
+        ? segment.start + padding + Math.random() * available
+        : segment.center;
     }
     var currentMod = ((currentPointerDeg % 360) + 360) % 360;
     var delta = targetDeg - currentMod;
@@ -971,10 +948,13 @@
   function openModal() {
     resultNode.hidden = true;
     modal.hidden = false;
+    previewManuallyLocked = false;
     syncState();
+    startPreviewAutoplay();
   }
 
   function closeModal() {
+    stopPreviewAutoplay();
     modal.hidden = true;
   }
 
@@ -982,10 +962,10 @@
   closeButtons.forEach(function (button) {
     button.addEventListener('click', closeModal);
   });
-  prizesNode.addEventListener('click', function (ev) {
-    var button = ev.target.closest('[data-point-lottery-prize-index]');
-    if (!button || !prizesNode.contains(button)) return;
-    renderPrizePreview(Number(button.getAttribute('data-point-lottery-prize-index')));
+  wheelNode.addEventListener('click', function (ev) {
+    var index = getPrizeIndexFromWheelPoint(ev);
+    if (index === null) return;
+    renderPrizePreview(index);
   });
   winsNode.addEventListener('click', function (ev) {
     var button = ev.target.closest('[data-point-lottery-win-index]');
@@ -1021,11 +1001,14 @@
         pointsNode.textContent = data.points;
         var index = Number.isInteger(data.prizeIndex) ? data.prizeIndex : findPrizeIndex(data.prize);
         renderPrizePreview(index);
-        pointLottery.recentWins = [{
+        var winPrize = {
           name: data.prize.name,
           image: data.prize.image,
           pointDelta: data.prize.pointDelta,
-        }].concat(pointLottery.recentWins || []).slice(0, 6);
+        };
+        if (isVisibleWinPrize(winPrize)) {
+          pointLottery.recentWins = [winPrize].concat(pointLottery.recentWins || []).filter(isVisibleWinPrize).slice(0, 6);
+        }
         renderWins();
         showResult('我的奖品：' + data.prize.name + '。当前积分：' + data.points, false);
       });
