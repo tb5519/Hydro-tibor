@@ -1,6 +1,9 @@
 {% extends "layout/basic.html" %}
 {% block content %}
-{{ set(UiContext, 'pdoc', pdoc) }}
+{{ set(UiContext, {
+  pdoc: pdoc,
+  codeLang: codeLang or handler.user.codeLang
+}) }}
 <div class="row">
   <div class="medium-9 columns">
     <div class="section">
@@ -14,7 +17,7 @@
                 label:'Code language',
                 options:langRange,
                 name:'lang',
-                value:handler.user.codeLang
+                value:codeLang or handler.user.codeLang
               }) }}
           </div>
           <div class="row nojs--hide" id="codelang-selector"></div>

@@ -26,6 +26,7 @@ for (const country of countries) {
 }
 const timezones = [...tzs].sort().map((tz) => [tz, tz]) as [string, string][];
 const langRange: Dictionary<string> = {};
+const domainCodeLangRange: Dictionary<string> = {};
 
 export const FLAG_HIDDEN = 1;
 export const FLAG_DISABLED = 2;
@@ -246,6 +247,13 @@ const ServerLangSettingNode = {
     range: {},
 };
 
+function updateCodeLangRanges(range: Dictionary<string>) {
+    LangSettingNode.range = range;
+    ServerLangSettingNode.range = range;
+    for (const key in domainCodeLangRange) delete domainCodeLangRange[key];
+    Object.assign(domainCodeLangRange, { '': 'Use user preference' }, range);
+}
+
 PreferenceSetting(
     Setting('setting_display', 'viewLang', null, langRange, 'UI Language'),
     Setting('setting_display', 'timeZone', 'Asia/Shanghai', timezones, 'Timezone'),
@@ -278,6 +286,8 @@ DomainSetting(
     Setting('setting_domain', 'share', '', 'text', 'Share problem with domain (* for any)'),
     Setting('setting_domain', 'bulletin', '', 'markdown', 'Bulletin'),
     Setting('setting_domain', 'langs', '', 'text', 'Allowed langs', null),
+    Setting('setting_domain', 'defaultCodeLang', '', domainCodeLangRange, 'Default code language',
+        'Initial editor language in this domain. It only applies when the language is allowed by the current problem and contest.'),
     Setting('setting_storage', 'host', '', 'text', 'Custom host', null, FLAG_HIDDEN | FLAG_DISABLED),
 );
 
@@ -393,18 +403,16 @@ export async function apply(ctx: Context) {
     }
     try {
         Object.assign(langs, parseLang(system.get('hydrooj.langs')));
-        const range = {};
+        const range: Dictionary<string> = {};
         for (const key in langs) range[key] = langs[key].display;
-        LangSettingNode.range = range;
-        ServerLangSettingNode.range = range;
+        updateCodeLangRanges(range);
     } catch (e) { /* Ignore */ }
     ctx.on('system/setting', (args) => {
         if (!args.hydrooj?.langs) return;
         Object.assign(langs, parseLang(args.hydrooj.langs));
-        const range = {};
+        const range: Dictionary<string> = {};
         for (const key in langs) range[key] = langs[key].display;
-        LangSettingNode.range = range;
-        ServerLangSettingNode.range = range;
+        updateCodeLangRanges(range);
     });
     ctx.emit('system/setting-loaded');
 }

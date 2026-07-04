@@ -59,6 +59,17 @@ function buildQuery(udoc: User) {
     return q;
 }
 
+function getDomainDefaultCodeLang(ddoc?: DomainDoc | null) {
+    const lang = String(ddoc?.defaultCodeLang || '').trim();
+    return lang && setting.langs[lang] && !setting.langs[lang].disabled ? lang : '';
+}
+
+function pickPreferredCodeLang(langs: string[], udoc: User, ddoc?: DomainDoc | null) {
+    const domainCodeLang = getDomainDefaultCodeLang(ddoc);
+    const preferred = [domainCodeLang, udoc.codeLang, 'py.py3', 'cc.cc14', 'cc.cc17', 'cc.cc20', 'cc.cc11', 'cc'];
+    return preferred.find((lang) => lang && langs.includes(lang)) || langs[0] || domainCodeLang || udoc.codeLang || 'py.py3';
+}
+
 const defaultSearch = async (domainId: string, q: string, options?: ProblemSearchOptions) => {
     const escaped = escapeRegExp(q.toLowerCase());
     const projection: (keyof ProblemDoc)[] = ['domainId', 'docId', 'pid'];
@@ -345,12 +356,12 @@ export class OnlineIdeHandler extends Handler {
 
     pickCodeLang(pdoc: ProblemDoc, ddoc: DomainDoc | null) {
         const langs = this.getAllowedLangs(pdoc, ddoc);
-        const preferred = [this.user.codeLang, 'py.py3', 'cc.cc14', 'cc.cc17', 'cc.cc20', 'cc.cc11', 'cc'];
-        return preferred.find((lang) => lang && langs.includes(lang)) || langs[0] || this.user.codeLang || 'py.py3';
+        return pickPreferredCodeLang(langs, this.user, ddoc);
     }
 
     async findHostPdoc(domainId: string, problemQuery: Filter<ProblemDoc>) {
         const ddoc = await domain.get(domainId);
+        const preferredCodeLang = getDomainDefaultCodeLang(ddoc) || this.user.codeLang;
         const pdocs = await problem.getMulti(domainId, problemQuery, ['docId'])
             .sort({ sort: 1, docId: 1 }).limit(200).toArray();
         const isRunnable = (pdoc: ProblemDoc | null) => !!(pdoc
@@ -366,7 +377,7 @@ export class OnlineIdeHandler extends Handler {
             if (!isRunnable(fullPdoc)) continue;
             const langs = this.getAllowedLangs(fullPdoc, ddoc);
             if (!langs.length) continue;
-            const currentScore = langs.includes(this.user.codeLang) ? 4
+            const currentScore = langs.includes(preferredCodeLang) ? 4
                 : langs.includes('py.py3') ? 3
                     : !fullPdoc.config?.langs?.length ? 2 : 1;
             if (currentScore > score) {
@@ -478,6 +489,9 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
         ]);
         const isProgrammingProblem = !!this.pdoc.config && typeof this.pdoc.config === 'object'
             && !['objective', 'submit_answer'].includes(this.pdoc.config.type);
+        const codeLang = this.pdoc.config && typeof this.pdoc.config === 'object'
+            ? pickPreferredCodeLang(this.pdoc.config.langs || [], this.user, this.domain)
+            : this.user.codeLang;
         const canUseMistake = !tid && isProgrammingProblem && this.user.hasPerm(PERM.PERM_SUBMIT_PROBLEM);
         const mistakeDoc = canUseMistake
             ? await mistake.get(domainId, this.user._id, this.pdoc.docId)
@@ -534,6 +548,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             mistakeDoc,
             isMistakeSupported: isProgrammingProblem,
             canUseMistake,
+            codeLang,
             firstFormalStatus,
             hasWrongFormalRecord,
             showMistakePrompt,
@@ -671,6 +686,7 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
             ? Object.fromEntries(this.pdoc.config.langs.map((i) => [i, setting.langs[i]?.display || i]))
             : setting.SETTINGS_BY_KEY.codeLang.range;
         this.response.body.langRange = langRange;
+        this.response.body.codeLang = pickPreferredCodeLang(Object.keys(langRange || {}), this.user, this.domain);
         this.response.body.page_name = this.tdoc
             ? this.tdoc.rule === 'homework'
                 ? 'homework_detail_problem_submit'

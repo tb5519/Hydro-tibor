@@ -4,7 +4,7 @@
 {{ set(UiContext, {
   problemId: pdoc.pid|default(pdoc.docId),
   problemNumId: pdoc.docId,
-  codeLang: handler.user.codeLang,
+  codeLang: codeLang or handler.user.codeLang,
   codeTemplate: handler.user.codeTemplate,
   pdoc: pdoc,
   isMistakeSupported: isMistakeSupported,

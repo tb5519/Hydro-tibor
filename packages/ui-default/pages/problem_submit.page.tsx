@@ -13,7 +13,7 @@ const page = new NamedPage(['problem_submit', 'contest_detail_problem_submit', '
   }
   const availableLangs = getAvailableLangs(config.langs);
   const mainLangs = {};
-  const preferences = [UserContext.codeLang || ''];
+  const preferences = [UiContext.codeLang || UserContext.codeLang || ''];
   for (const key in availableLangs) {
     if (config.langs && !config.langs.filter((i) => i === key || i.startsWith(`${key}.`)).length) continue;
     if (window.LANGS[key].pretest === preferences[0]) preferences.push(key);
