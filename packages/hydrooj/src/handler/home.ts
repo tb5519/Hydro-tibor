@@ -331,6 +331,13 @@ class PointLotteryDrawHandler extends Handler {
         const prize = pickPointLotteryPrize({ ...config, prizes: availablePrizes });
         if (!prize) return fail(availablePrizes.length ? '抽奖奖品未配置。' : '可抽奖品已全部抽完。');
         const prizeIndex = config.prizes.indexOf(prize);
+        const existingDudoc = await domain.collUser.findOne(
+            { domainId, uid: this.user._id },
+            { projection: { [POINT_LOTTERY_POINTS_FIELD]: 1, [POINT_LOTTERY_TOTAL_POINTS_FIELD]: 1 } },
+        );
+        const initialTotalPoints = existingDudoc && existingDudoc[POINT_LOTTERY_TOTAL_POINTS_FIELD] === undefined
+            ? Math.max(0, Math.floor(+existingDudoc[POINT_LOTTERY_POINTS_FIELD] || 0))
+            : null;
 
         const query: any = { domainId, uid: this.user._id };
         if (config.cost > 0) query[POINT_LOTTERY_POINTS_FIELD] = { $gte: config.cost };
@@ -338,10 +345,11 @@ class PointLotteryDrawHandler extends Handler {
         const update: any = {
             $inc: {
                 [POINT_LOTTERY_POINTS_FIELD]: pointDelta,
-                [POINT_LOTTERY_TOTAL_POINTS_FIELD]: prize.pointDelta,
             },
             $setOnInsert: { domainId, uid: this.user._id },
         };
+        if (initialTotalPoints === null) update.$inc[POINT_LOTTERY_TOTAL_POINTS_FIELD] = prize.pointDelta;
+        else update.$set = { [POINT_LOTTERY_TOTAL_POINTS_FIELD]: initialTotalPoints + prize.pointDelta };
         const result = await domain.collUser.findOneAndUpdate(
             query,
             update,

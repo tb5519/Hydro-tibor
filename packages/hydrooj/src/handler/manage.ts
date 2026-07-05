@@ -951,12 +951,21 @@ class SystemLotteryHandler extends SystemHandler {
         const target = await getManageTargetUser(domainId, q);
         if (!target) throw new UserNotFoundError(q);
         if (isPasswordResetProtectedTarget(target)) throw new CannotEditSuperAdminError();
-        await domain.updateUserInDomain(domainId, target._id, {
-            $inc: {
-                [POINT_LOTTERY_POINTS_FIELD]: points,
-                [POINT_LOTTERY_TOTAL_POINTS_FIELD]: points,
-            },
+        const dudoc = await domain.collUser.findOne(
+            { domainId, uid: target._id },
+            { projection: { [POINT_LOTTERY_POINTS_FIELD]: 1, [POINT_LOTTERY_TOTAL_POINTS_FIELD]: 1 } },
+        );
+        const initialTotalPoints = dudoc && dudoc[POINT_LOTTERY_TOTAL_POINTS_FIELD] === undefined
+            ? Math.max(0, Math.floor(+dudoc[POINT_LOTTERY_POINTS_FIELD] || 0))
+            : null;
+        const update: any = {
+            $inc: { [POINT_LOTTERY_POINTS_FIELD]: points },
             $setOnInsert: { domainId, uid: target._id },
+        };
+        if (initialTotalPoints === null) update.$inc[POINT_LOTTERY_TOTAL_POINTS_FIELD] = points;
+        else update.$set = { [POINT_LOTTERY_TOTAL_POINTS_FIELD]: initialTotalPoints + points };
+        await domain.updateUserInDomain(domainId, target._id, {
+            ...update,
         });
         this.response.redirect = this.url('manage_lottery', { query: { q, added: points } });
     }
