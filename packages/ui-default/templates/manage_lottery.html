@@ -108,6 +108,29 @@
     gap: .6rem;
     align-items: flex-end;
   }
+  .lottery-admin__inline-check {
+    display: flex;
+    align-items: center;
+    gap: .45rem;
+    min-height: 2.6rem;
+  }
+  .lottery-admin__compact-form {
+    display: flex;
+    align-items: center;
+    gap: .45rem;
+    flex-wrap: wrap;
+  }
+  .lottery-admin__compact-form .textbox,
+  .lottery-admin__compact-form select {
+    width: 8rem;
+  }
+  .lottery-admin__rank-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    flex-wrap: wrap;
+  }
   .lottery-admin__search .textbox {
     min-width: 22rem;
   }
@@ -139,6 +162,9 @@
     {% if saved %}
       <div class="lottery-admin__success">{{ _('抽奖配置已保存。') }}</div>
     {% endif %}
+    {% if deleted %}
+      <div class="lottery-admin__success">{{ _('抽奖记录已删除，学员端将不再显示。') }}</div>
+    {% endif %}
     <form method="post" enctype="multipart/form-data" class="lottery-admin">
       <input type="hidden" name="operation" value="save_config">
       <label>
@@ -150,7 +176,7 @@
         <input class="textbox" type="number" min="0" step="1" name="cost" value="{{ config.cost }}" required>
       </label>
       <div class="lottery-admin__note">
-        {{ _('概率按权重计算。例如两个奖品概率分别填 1 和 3，则第二个奖品约为第一个的 3 倍。奖品图片上传后会显示在转盘对应区域。') }}
+        {{ _('概率按权重计算。例如两个奖品概率分别填 1 和 3，则第二个奖品约为第一个的 3 倍。奖品图片上传后会显示在学员端奖品预览区域。') }}
       </div>
       <input type="hidden" name="prizeCount" value="{{ prizeSlots.length }}" data-lottery-prize-count>
       <div class="lottery-admin__prizes" data-lottery-prizes>
@@ -183,6 +209,13 @@
             <label>
               <div>{{ _('中奖额外加积分') }}</div>
               <input class="textbox" type="number" min="0" step="1" name="prize{{ loop.index0 }}PointDelta" value="{{ prize.pointDelta }}">
+            </label>
+            <label>
+              <div>{{ _('抽中后是否还能抽中') }}</div>
+              <span class="lottery-admin__inline-check">
+                <input type="checkbox" name="prize{{ loop.index0 }}Repeatable" value="true"{% if prize.repeatable !== false %} checked{% endif %}>
+                {{ _('可以重复抽中') }}
+              </span>
             </label>
           </div>
         </div>
@@ -217,6 +250,13 @@
             <div>{{ _('中奖额外加积分') }}</div>
             <input class="textbox" type="number" min="0" step="1" data-field="PointDelta" value="0">
           </label>
+          <label>
+            <div>{{ _('抽中后是否还能抽中') }}</div>
+            <span class="lottery-admin__inline-check">
+              <input type="checkbox" data-field="Repeatable" value="true" checked data-default-checked="true">
+              {{ _('可以重复抽中') }}
+            </span>
+          </label>
         </div>
       </div>
       <div class="lottery-admin__actions">
@@ -236,8 +276,11 @@
     {% if added %}
       <div class="lottery-admin__success">{{ _('已给学员增加积分。') }}</div>
     {% endif %}
+    {% if adjusted %}
+      <div class="lottery-admin__success">{{ _('已扣减学员积分。') }}</div>
+    {% endif %}
     <div class="lottery-admin__note">
-      {{ _('搜索学员后可以直接给该学员增加抽奖积分，不需要学员输入密码。') }}
+      {{ _('搜索学员后可以直接调整抽奖积分，不需要学员输入密码。加积分会同时增加当前积分和累计积分；扣积分可以选择扣当前或累计。') }}
     </div>
     <form method="get" action="{{ url('manage_lottery') }}" class="lottery-admin__search">
       <label>
@@ -258,6 +301,7 @@
             <th>{{ _('UID') }}</th>
             <th>{{ _('Username') }}</th>
             <th>{{ _('当前抽奖积分') }}</th>
+            <th>{{ _('累计抽奖积分') }}</th>
             <th>{{ _('操作') }}</th>
           </tr>
         </thead>
@@ -266,22 +310,75 @@
             <td>{{ target._id }}</td>
             <td>{{ user.render_inline(target) }}</td>
             <td>{{ targetPoints }}</td>
+            <td>{{ targetTotalPoints }}</td>
             <td>
               {% if canAddTarget %}
-                <form method="post" class="lottery-admin__actions">
+                <form method="post" class="lottery-admin__compact-form">
                   <input type="hidden" name="operation" value="add_points">
                   <input type="hidden" name="q" value="{{ q }}">
                   <input class="textbox" type="number" min="1" step="1" name="points" placeholder="{{ _('增加积分') }}" required>
                   <button class="rounded primary button" type="submit">{{ _('加积分') }}</button>
                 </form>
+                <form method="post" class="lottery-admin__compact-form">
+                  <input type="hidden" name="operation" value="deduct_points">
+                  <input type="hidden" name="q" value="{{ q }}">
+                  <input class="textbox" type="number" min="1" step="1" name="points" placeholder="{{ _('扣减积分') }}" required>
+                  <select class="select" name="scope">
+                    <option value="current">{{ _('扣当前积分') }}</option>
+                    <option value="total">{{ _('扣累计积分') }}</option>
+                  </select>
+                  <button class="rounded button" type="submit">{{ _('扣积分') }}</button>
+                </form>
               {% else %}
-                <span class="lottery-admin__warning">{{ _('系统账号或超级管理员账号不能在这里加积分。') }}</span>
+                <span class="lottery-admin__warning">{{ _('系统账号或超级管理员账号不能在这里调整积分。') }}</span>
               {% endif %}
             </td>
           </tr>
         </tbody>
       </table>
     {% endif %}
+  </div>
+</div>
+
+<div class="section">
+  <div class="section__header lottery-admin__rank-header">
+    <h1 class="section__title">{{ _('积分排行榜') }}</h1>
+    <form method="get" action="{{ url('manage_lottery') }}" class="lottery-admin__compact-form">
+      {% if q %}
+        <input type="hidden" name="q" value="{{ q }}">
+      {% endif %}
+      <select class="select" name="rankBy">
+        <option value="total"{% if rankBy == 'total' %} selected{% endif %}>{{ _('按累计积分') }}</option>
+        <option value="current"{% if rankBy == 'current' %} selected{% endif %}>{{ _('按当前积分') }}</option>
+      </select>
+      <button class="rounded button" type="submit">{{ _('切换') }}</button>
+    </form>
+  </div>
+  <div class="section__body">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>{{ _('排名') }}</th>
+          <th>{{ _('学员') }}</th>
+          <th>{{ _('累计积分') }}</th>
+          <th>{{ _('当前积分') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in pointRankRows %}
+          <tr>
+            <td>{{ row.rank }}</td>
+            <td>{{ user.render_inline(row.udoc, true, true, false) }}</td>
+            <td>{{ row.totalPoints }}</td>
+            <td>{{ row.currentPoints }}</td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="4">{{ _('暂无积分数据。') }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 </div>
 
@@ -299,6 +396,7 @@
           <th>{{ _('奖品') }}</th>
           <th>{{ _('中奖加积分') }}</th>
           <th>{{ _('抽奖后积分') }}</th>
+          <th>{{ _('操作') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -310,10 +408,17 @@
             <td>{{ log.prize.name }}</td>
             <td>{{ log.pointDelta }}</td>
             <td>{{ log.points }}</td>
+            <td>
+              <form method="post">
+                <input type="hidden" name="operation" value="delete_draw">
+                <input type="hidden" name="drawId" value="{{ log.drawId }}">
+                <button class="rounded button" type="submit">{{ _('删除') }}</button>
+              </form>
+            </td>
           </tr>
         {% else %}
           <tr>
-            <td colspan="6">{{ _('暂无抽奖记录。') }}</td>
+            <td colspan="7">{{ _('暂无抽奖记录。') }}</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -374,7 +479,12 @@
     row.removeAttribute('data-lottery-template');
     row.setAttribute('data-lottery-prize', '');
     Array.prototype.slice.call(row.querySelectorAll('input')).forEach(function (input) {
-      if (input.getAttribute('data-field') !== 'PointDelta') input.value = '';
+      if (input.type === 'checkbox') {
+        input.value = 'true';
+        input.checked = input.getAttribute('data-default-checked') === 'true';
+      } else if (input.getAttribute('data-field') !== 'PointDelta') {
+        input.value = '';
+      }
     });
     Array.prototype.slice.call(row.querySelectorAll('[data-lottery-image-preview]')).forEach(function (preview) {
       preview.style.backgroundImage = '';

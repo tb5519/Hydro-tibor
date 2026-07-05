@@ -17,7 +17,8 @@ import avatar, { validate } from '../lib/avatar';
 import * as mail from '../lib/mail';
 import { getHomePosterConfig } from '../lib/home_poster';
 import {
-    getPointLotteryConfig, pickPointLotteryPrize, POINT_LOTTERY_POINTS_FIELD, publicPointLotteryPrize,
+    getPointLotteryConfig, pickPointLotteryPrize, POINT_LOTTERY_POINTS_FIELD,
+    POINT_LOTTERY_TOTAL_POINTS_FIELD, pointLotteryPrizeKey, publicPointLotteryPrize,
 } from '../lib/point_lottery';
 import { getSharedRankingSnapshot, SharedRankingRow } from '../lib/shared_ranking';
 import { verifyTFA } from '../lib/verifyTFA';
@@ -243,7 +244,7 @@ export class HomeHandler extends Handler {
             : null;
         const pointLotteryWins = this.user.hasPriv(PRIV.PRIV_USER_PROFILE)
             ? await this.ctx.db.collection('lottery.draw')
-                .find({ domainId, uid: this.user._id })
+                .find({ domainId, uid: this.user._id, deleted: { $ne: true } })
                 .sort({ createdAt: -1, _id: -1 })
                 .limit(24)
                 .toArray()
@@ -312,15 +313,33 @@ class PointLotteryDrawHandler extends Handler {
         };
         const config = getPointLotteryConfig();
         if (!config.enabled) return fail('积分抽奖未开启。');
-        const prize = pickPointLotteryPrize(config);
-        if (!prize) return fail('抽奖奖品未配置。');
+        const nonRepeatablePrizes = config.prizes.filter((prize) => !prize.repeatable);
+        let availablePrizes = config.prizes;
+        if (nonRepeatablePrizes.length) {
+            const nonRepeatableKeys = new Set(nonRepeatablePrizes.map(pointLotteryPrizeKey));
+            const wonLogs = await this.ctx.db.collection('lottery.draw').find({
+                domainId,
+                uid: this.user._id,
+                deleted: { $ne: true },
+                'prize.name': { $in: nonRepeatablePrizes.map((prize) => prize.name) },
+            }).project({ prize: 1 }).toArray();
+            const wonKeys = new Set(wonLogs
+                .map((log: any) => log.prize && pointLotteryPrizeKey(log.prize))
+                .filter((key) => key && nonRepeatableKeys.has(key)));
+            availablePrizes = config.prizes.filter((prize) => prize.repeatable || !wonKeys.has(pointLotteryPrizeKey(prize)));
+        }
+        const prize = pickPointLotteryPrize({ ...config, prizes: availablePrizes });
+        if (!prize) return fail(availablePrizes.length ? '抽奖奖品未配置。' : '可抽奖品已全部抽完。');
         const prizeIndex = config.prizes.indexOf(prize);
 
         const query: any = { domainId, uid: this.user._id };
         if (config.cost > 0) query[POINT_LOTTERY_POINTS_FIELD] = { $gte: config.cost };
         const pointDelta = prize.pointDelta - config.cost;
         const update: any = {
-            $inc: { [POINT_LOTTERY_POINTS_FIELD]: pointDelta },
+            $inc: {
+                [POINT_LOTTERY_POINTS_FIELD]: pointDelta,
+                [POINT_LOTTERY_TOTAL_POINTS_FIELD]: prize.pointDelta,
+            },
             $setOnInsert: { domainId, uid: this.user._id },
         };
         const result = await domain.collUser.findOneAndUpdate(
@@ -335,6 +354,7 @@ class PointLotteryDrawHandler extends Handler {
         const dudoc = result.value;
         if (!dudoc) return fail('积分不足，无法抽奖。');
         const points = Math.max(0, Math.floor(+dudoc[POINT_LOTTERY_POINTS_FIELD] || 0));
+        const totalPoints = Math.max(0, Math.floor(+dudoc[POINT_LOTTERY_TOTAL_POINTS_FIELD] || 0));
         await this.ctx.db.collection('lottery.draw').insertOne({
             domainId,
             uid: this.user._id,
@@ -342,6 +362,7 @@ class PointLotteryDrawHandler extends Handler {
             prize: publicPointLotteryPrize(prize),
             pointDelta: prize.pointDelta,
             points,
+            totalPoints,
             createdAt: new Date(),
         });
         this.response.body = {

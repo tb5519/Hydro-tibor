@@ -4,13 +4,15 @@ import { inspect } from 'util';
 import * as yaml from 'js-yaml';
 import moment from 'moment-timezone';
 import { omit } from 'lodash';
+import { ObjectId } from 'mongodb';
 import Schema from 'schemastery';
 import {
     CannotEditSuperAdminError, NotLaunchedByPM2Error, UserNotFoundError, ValidationError, VerifyPasswordError,
 } from '../error';
 import { getHomePosterConfig, HOME_POSTER_CONFIG_KEY } from '../lib/home_poster';
 import {
-    buildPointLotteryConfigFromForm, getPointLotteryConfig, POINT_LOTTERY_CONFIG_KEY, POINT_LOTTERY_POINTS_FIELD,
+    buildPointLotteryConfigFromForm, getPointLotteryConfig, POINT_LOTTERY_CONFIG_KEY,
+    POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
 } from '../lib/point_lottery';
 import { Logger } from '../logger';
 import { PERM, PRIV, STATUS } from '../model/builtin';
@@ -30,6 +32,8 @@ import { JudgeResultCallbackContext } from './judge';
 const logger = new Logger('manage');
 const LOTTERY_PRIZE_IMAGE_LIMIT = 4 * 1024 * 1024;
 const LOTTERY_PRIZE_IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp'];
+type LotteryPointRankType = 'total' | 'current';
+const LOTTERY_POINT_RANK_TYPES: LotteryPointRankType[] = ['total', 'current'];
 
 function set(key: string, value: any) {
     if (setting.SYSTEM_SETTINGS_BY_KEY[key]) {
@@ -836,17 +840,62 @@ class SystemLotteryHandler extends SystemHandler {
 
     @requireSudo
     @param('q', Types.Content, true)
+    @param('rankBy', Types.Range(LOTTERY_POINT_RANK_TYPES), true)
     @param('saved', Types.Int, true)
     @param('added', Types.Int, true)
-    async get(domainId: string, q = '', saved = 0, added = 0) {
+    @param('adjusted', Types.Int, true)
+    @param('deleted', Types.Int, true)
+    async get(
+        domainId: string, q = '', rankBy: typeof LOTTERY_POINT_RANK_TYPES[number] = 'total',
+        saved = 0, added = 0, adjusted = 0, deleted = 0,
+    ) {
         const config = getPointLotteryConfig();
         const target = q.trim() ? await getManageTargetUser(domainId, q) : null;
         const targetDudoc = target ? await domain.collUser.findOne(
             { domainId, uid: target._id },
-            { projection: { [POINT_LOTTERY_POINTS_FIELD]: 1 } },
+            { projection: { [POINT_LOTTERY_POINTS_FIELD]: 1, [POINT_LOTTERY_TOTAL_POINTS_FIELD]: 1 } },
         ) : null;
+        const pointRankField = rankBy === 'current' ? '$currentPoints' : '$totalPoints';
+        const pointRankDocs = await domain.collUser.aggregate([
+            {
+                $match: {
+                    domainId,
+                    uid: { $gt: 1 },
+                    $or: [
+                        { [POINT_LOTTERY_POINTS_FIELD]: { $gt: 0 } },
+                        { [POINT_LOTTERY_TOTAL_POINTS_FIELD]: { $gt: 0 } },
+                    ],
+                },
+            },
+            {
+                $project: {
+                    uid: 1,
+                    currentPoints: { $ifNull: [`$${POINT_LOTTERY_POINTS_FIELD}`, 0] },
+                    totalPoints: {
+                        $ifNull: [
+                            `$${POINT_LOTTERY_TOTAL_POINTS_FIELD}`,
+                            { $ifNull: [`$${POINT_LOTTERY_POINTS_FIELD}`, 0] },
+                        ],
+                    },
+                },
+            },
+            { $addFields: { rankPoints: pointRankField } },
+            { $match: { rankPoints: { $gt: 0 } } },
+            { $sort: { rankPoints: -1, uid: 1 } },
+            { $limit: 30 },
+        ]).toArray();
+        const pointRankUids = pointRankDocs.map((row: any) => row.uid);
+        const pointRankUdict = pointRankUids.length ? await user.getListForRender(domainId, pointRankUids, false) : {};
+        const pointRankRows = pointRankDocs.map((row: any, index: number) => ({
+            rank: index + 1,
+            uid: row.uid,
+            udoc: pointRankUdict[row.uid] || { _id: row.uid, uname: `${row.uid}` },
+            currentPoints: Math.max(0, Math.floor(+row.currentPoints || 0)),
+            totalPoints: Math.max(0, Math.floor(+row.totalPoints || 0)),
+            rankPoints: Math.max(0, Math.floor(+row.rankPoints || 0)),
+        }));
         const logs = await this.ctx.db.collection('lottery.draw')
-            .find({ domainId })
+            .find({ domainId, deleted: { $ne: true } })
             .sort({ createdAt: -1, _id: -1 })
             .limit(20)
             .toArray();
@@ -854,6 +903,7 @@ class SystemLotteryHandler extends SystemHandler {
         const logUdict = logUids.length ? await user.getListForRender(domainId, logUids, false) : {};
         const logRows = logs.map((log) => ({
             ...log,
+            drawId: log._id?.toHexString?.() || `${log._id}`,
             udoc: logUdict[log.uid] || { _id: log.uid, uname: `${log.uid}` },
         }));
         this.response.template = 'manage_lottery.html';
@@ -865,14 +915,22 @@ class SystemLotteryHandler extends SystemHandler {
                 image: '',
                 probability: '',
                 pointDelta: 0,
+                repeatable: true,
             }]),
             q,
+            rankBy,
             target,
             canAddTarget: target ? !isPasswordResetProtectedTarget(target) : false,
             targetPoints: Math.max(0, Math.floor(+targetDudoc?.[POINT_LOTTERY_POINTS_FIELD] || 0)),
+            targetTotalPoints: Math.max(0, Math.floor(+(
+                targetDudoc?.[POINT_LOTTERY_TOTAL_POINTS_FIELD] ?? targetDudoc?.[POINT_LOTTERY_POINTS_FIELD]
+            ) || 0)),
             saved,
             added,
+            adjusted,
+            deleted,
             logRows,
+            pointRankRows,
         };
     }
 
@@ -894,10 +952,43 @@ class SystemLotteryHandler extends SystemHandler {
         if (!target) throw new UserNotFoundError(q);
         if (isPasswordResetProtectedTarget(target)) throw new CannotEditSuperAdminError();
         await domain.updateUserInDomain(domainId, target._id, {
-            $inc: { [POINT_LOTTERY_POINTS_FIELD]: points },
+            $inc: {
+                [POINT_LOTTERY_POINTS_FIELD]: points,
+                [POINT_LOTTERY_TOTAL_POINTS_FIELD]: points,
+            },
             $setOnInsert: { domainId, uid: target._id },
         });
         this.response.redirect = this.url('manage_lottery', { query: { q, added: points } });
+    }
+
+    @requireSudo
+    @param('q', Types.Content)
+    @param('points', Types.Int)
+    @param('scope', Types.Range(['current', 'total']))
+    async postDeductPoints(domainId: string, q: string, points: number, scope: 'current' | 'total') {
+        if (points <= 0) throw new ValidationError('points');
+        const target = await getManageTargetUser(domainId, q);
+        if (!target) throw new UserNotFoundError(q);
+        if (isPasswordResetProtectedTarget(target)) throw new CannotEditSuperAdminError();
+        const field = scope === 'current' ? POINT_LOTTERY_POINTS_FIELD : POINT_LOTTERY_TOTAL_POINTS_FIELD;
+        const dudoc = await domain.collUser.findOne({ domainId, uid: target._id });
+        const fallback = scope === 'total' ? dudoc?.[POINT_LOTTERY_POINTS_FIELD] : 0;
+        const current = Math.max(0, Math.floor(+(dudoc?.[field] ?? fallback) || 0));
+        await domain.updateUserInDomain(domainId, target._id, {
+            $set: { [field]: Math.max(0, current - points) },
+            $setOnInsert: { domainId, uid: target._id },
+        });
+        this.response.redirect = this.url('manage_lottery', { query: { q, adjusted: points } });
+    }
+
+    @requireSudo
+    @param('drawId', Types.ObjectId)
+    async postDeleteDraw(domainId: string, drawId: ObjectId) {
+        await this.ctx.db.collection('lottery.draw').updateOne(
+            { _id: drawId, domainId },
+            { $set: { deleted: true, deletedAt: new Date(), deletedBy: this.user._id } },
+        );
+        this.response.redirect = this.url('manage_lottery', { query: { deleted: 1 } });
     }
 }
 

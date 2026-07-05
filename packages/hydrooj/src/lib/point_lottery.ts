@@ -2,12 +2,14 @@ import system from '../model/system';
 
 export const POINT_LOTTERY_CONFIG_KEY = 'pointLottery.config';
 export const POINT_LOTTERY_POINTS_FIELD = 'lotteryPoints';
+export const POINT_LOTTERY_TOTAL_POINTS_FIELD = 'lotteryTotalPoints';
 
 export interface PointLotteryPrize {
     name: string;
     image: string;
     probability: number;
     pointDelta: number;
+    repeatable: boolean;
 }
 
 export interface PointLotteryConfig {
@@ -38,6 +40,7 @@ export function normalizePointLotteryConfig(raw: any): PointLotteryConfig {
             image: `${prize?.image || ''}`.trim(),
             probability: Math.max(0, toNumber(prize?.probability, 0)),
             pointDelta: Math.max(0, Math.floor(toNumber(prize?.pointDelta, 0))),
+            repeatable: prize?.repeatable !== false && prize?.repeatable !== 'false' && prize?.repeatable !== '0',
         })).filter((prize) => prize.name && prize.probability > 0),
     };
 }
@@ -63,6 +66,9 @@ export function buildPointLotteryConfigFromForm(args: any): PointLotteryConfig {
             image: args[`prize${i}Image`],
             probability: toNumber(args[`prize${i}Probability`], 0),
             pointDelta: toNumber(args[`prize${i}PointDelta`], 0),
+            repeatable: args[`prize${i}Repeatable`] === 'on'
+                || args[`prize${i}Repeatable`] === 'true'
+                || args[`prize${i}Repeatable`] === '1',
         });
     }
     return normalizePointLotteryConfig({
@@ -90,4 +96,8 @@ export function publicPointLotteryPrize(prize: PointLotteryPrize) {
         probability: prize.probability,
         pointDelta: prize.pointDelta,
     };
+}
+
+export function pointLotteryPrizeKey(prize: Pick<PointLotteryPrize, 'name' | 'image'>) {
+    return `${prize.name}\n${prize.image || ''}`;
 }
