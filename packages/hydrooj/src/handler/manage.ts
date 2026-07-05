@@ -845,9 +845,10 @@ class SystemLotteryHandler extends SystemHandler {
     @param('added', Types.Int, true)
     @param('adjusted', Types.Int, true)
     @param('deleted', Types.Int, true)
+    @param('cleared', Types.Int, true)
     async get(
         domainId: string, q = '', rankBy: typeof LOTTERY_POINT_RANK_TYPES[number] = 'total',
-        saved = 0, added = 0, adjusted = 0, deleted = 0,
+        saved = 0, added = 0, adjusted = 0, deleted = 0, cleared = 0,
     ) {
         const config = getPointLotteryConfig();
         const target = q.trim() ? await getManageTargetUser(domainId, q) : null;
@@ -929,6 +930,7 @@ class SystemLotteryHandler extends SystemHandler {
             added,
             adjusted,
             deleted,
+            cleared,
             logRows,
             pointRankRows,
         };
@@ -998,6 +1000,15 @@ class SystemLotteryHandler extends SystemHandler {
             { $set: { deleted: true, deletedAt: new Date(), deletedBy: this.user._id } },
         );
         this.response.redirect = this.url('manage_lottery', { query: { deleted: 1 } });
+    }
+
+    @requireSudo
+    async postClearDraws(domainId: string) {
+        await this.ctx.db.collection('lottery.draw').updateMany(
+            { domainId, deleted: { $ne: true } },
+            { $set: { deleted: true, deletedAt: new Date(), deletedBy: this.user._id, deletedReason: 'clear_all' } },
+        );
+        this.response.redirect = this.url('manage_lottery', { query: { cleared: 1 } });
     }
 }
 

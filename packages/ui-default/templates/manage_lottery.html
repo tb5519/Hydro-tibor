@@ -165,6 +165,9 @@
     {% if deleted %}
       <div class="lottery-admin__success">{{ _('抽奖记录已删除，学员端将不再显示。') }}</div>
     {% endif %}
+    {% if cleared %}
+      <div class="lottery-admin__success">{{ _('抽奖记录已清空，学员端将不再显示。') }}</div>
+    {% endif %}
     <form method="post" enctype="multipart/form-data" class="lottery-admin">
       <input type="hidden" name="operation" value="save_config">
       <label>
@@ -383,8 +386,12 @@
 </div>
 
 <div class="section">
-  <div class="section__header">
+  <div class="section__header lottery-admin__rank-header">
     <h1 class="section__title">{{ _('最近抽奖记录') }}</h1>
+    <form method="post" onsubmit='return confirm({{ _("确定清空当前域的所有抽奖记录吗？清空后学员端也看不到这些记录。")|json|safe }});'>
+      <input type="hidden" name="operation" value="clear_draws">
+      <button class="rounded button" type="submit">{{ _('一键清空抽奖记录') }}</button>
+    </form>
   </div>
   <div class="section__body">
     <table class="data-table">
