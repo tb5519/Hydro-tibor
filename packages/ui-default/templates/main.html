@@ -62,7 +62,6 @@
           <div class="point-lottery__preview">
             <div class="point-lottery__preview-head">
               <span>奖品预览</span>
-              <strong data-point-lottery-preview-meta>概率</strong>
             </div>
             <div class="point-lottery__preview-image" data-point-lottery-preview-image></div>
             <div class="point-lottery__preview-name" data-point-lottery-preview-name>选择奖品查看图片</div>
@@ -428,12 +427,6 @@
     font-size: .78rem;
     font-weight: 800;
   }
-  .point-lottery__preview-head strong {
-    border-radius: 999px;
-    background: #fff7ed;
-    color: #c2410c;
-    padding: .18rem .5rem;
-  }
   .point-lottery__preview-image {
     display: flex;
     align-items: center;
@@ -727,7 +720,6 @@
   var pointerNode = modal.querySelector('[data-point-lottery-pointer]');
   var previewImageNode = modal.querySelector('[data-point-lottery-preview-image]');
   var previewNameNode = modal.querySelector('[data-point-lottery-preview-name]');
-  var previewMetaNode = modal.querySelector('[data-point-lottery-preview-meta]');
   var winsNode = modal.querySelector('[data-point-lottery-wins]');
   var resultNode = modal.querySelector('[data-point-lottery-result]');
   var resultCloseButton = modal.querySelector('[data-point-lottery-result-close]');
@@ -829,16 +821,6 @@
   function shortText(value, limit) {
     var text = String(value || '');
     return text.length > limit ? text.slice(0, limit - 1) + '…' : text;
-  }
-
-  function prizeProbabilityText(prize, prizes) {
-    var total = prizes.reduce(function (sum, item) {
-      return sum + Math.max(Number(item.probability || 0), 0);
-    }, 0);
-    if (!total) return '概率 0%';
-    var percent = Math.max(Number(prize.probability || 0), 0) / total * 100;
-    var value = percent >= 10 ? Math.round(percent) : Math.round(percent * 10) / 10;
-    return '概率 ' + value + '%';
   }
 
   function isVisibleWinPrize(prize) {
@@ -988,7 +970,6 @@
     if (!prizes.length) {
       previewImageNode.innerHTML = '<span>暂无奖品图片</span>';
       previewNameNode.textContent = '暂未配置奖品';
-      previewMetaNode.textContent = '概率';
       stopPreviewAutoplay();
       return;
     }
@@ -1015,7 +996,6 @@
       ? '<img src="' + escapeHtml(prize.image) + '" alt="' + escapeHtml(prize.name) + '">'
       : '<span>暂无奖品图片</span>';
     previewNameNode.textContent = prize.name;
-    previewMetaNode.textContent = prizeProbabilityText(prize, prizes);
   }
 
   function renderWins() {
@@ -1046,7 +1026,6 @@
       ? '<img src="' + escapeHtml(prize.image) + '" alt="' + escapeHtml(prize.name) + '">'
       : '<span>暂无奖品图片</span>';
     previewNameNode.textContent = prize.name;
-    previewMetaNode.textContent = '曾经中过';
     previewManuallyLocked = true;
     stopPreviewAutoplay();
   }
