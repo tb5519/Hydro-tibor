@@ -1004,10 +1004,7 @@ class SystemLotteryHandler extends SystemHandler {
 
     @requireSudo
     async postClearDraws(domainId: string) {
-        await this.ctx.db.collection('lottery.draw').updateMany(
-            { domainId, deleted: { $ne: true } },
-            { $set: { deleted: true, deletedAt: new Date(), deletedBy: this.user._id, deletedReason: 'clear_all' } },
-        );
+        await this.ctx.db.collection('lottery.draw').deleteMany({ domainId });
         this.response.redirect = this.url('manage_lottery', { query: { cleared: 1 } });
     }
 }
