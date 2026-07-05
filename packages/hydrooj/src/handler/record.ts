@@ -34,6 +34,33 @@ function canViewAllPretestRecords(udoc: { hasPriv(priv: number): boolean, hasPer
         || udoc.hasPerm(PERM.PERM_READ_RECORD_CODE);
 }
 
+function formalRecordFilter(includePretest: boolean, canViewAllPretest: boolean, uid: number) {
+    if (includePretest && canViewAllPretest) {
+        return { contest: { $ne: record.RECORD_GENERATE } } as Filter<RecordDoc>;
+    }
+    if (includePretest) {
+        return {
+            $or: [
+                { contest: { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] } },
+                { contest: record.RECORD_PRETEST, uid },
+            ],
+        } as Filter<RecordDoc>;
+    }
+    return { contest: { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] } } as Filter<RecordDoc>;
+}
+
+function recordListFilter(tid: ObjectId, includePretest: boolean, canViewAllPretest: boolean, uid: number) {
+    if (!tid) return formalRecordFilter(includePretest, canViewAllPretest, uid);
+    if (includePretest && !canViewAllPretest) {
+        return {
+            $or: [{ contest: tid }, { contest: record.RECORD_PRETEST, uid }],
+        } as Filter<RecordDoc>;
+    }
+    return includePretest
+        ? { contest: { $in: [tid, record.RECORD_PRETEST] } } as Filter<RecordDoc>
+        : { contest: tid } as Filter<RecordDoc>;
+}
+
 export class RecordListHandler extends ContestDetailBaseHandler {
     @param('page', Types.PositiveInt, true)
     @param('pid', Types.ProblemId, true)
@@ -58,11 +85,7 @@ export class RecordListHandler extends ContestDetailBaseHandler {
         const canViewAllPretest = canViewAllPretestRecords(this.user);
         const hasExplicitPretestFilter = Object.prototype.hasOwnProperty.call(this.request.query, 'includePretest');
         if (!hasExplicitPretestFilter && canViewAllPretest) includePretest = true;
-        const q: Filter<RecordDoc> = includePretest && !canViewAllPretest
-            ? { $or: [{ contest: tid || null }, { contest: record.RECORD_PRETEST, uid: this.user._id }] } as Filter<RecordDoc>
-            : includePretest
-                ? { contest: { $in: [tid || null, record.RECORD_PRETEST] } } as Filter<RecordDoc>
-                : { contest: tid };
+        const q: Filter<RecordDoc> = recordListFilter(tid, includePretest, canViewAllPretest, this.user._id);
         if (full) uidOrName = this.user._id.toString();
         if (uidOrName) {
             const udoc = await user.getById(domainId, +uidOrName)
@@ -103,16 +126,25 @@ export class RecordListHandler extends ContestDetailBaseHandler {
             this.checkPerm(PERM.PERM_VIEW_CONTEST_HIDDEN_SCOREBOARD);
             this.checkPerm(PERM.PERM_VIEW_HOMEWORK_HIDDEN_SCOREBOARD);
             delete q.contest;
+            delete q.$or;
         }
         if (allDomain) {
             this.checkPriv(PRIV.PRIV_MANAGE_ALL_DOMAIN);
             delete q.contest;
+            delete q.$or;
             q._id = { $gt: Time.getObjectID(new Date(Date.now() - 10 * Time.week)) };
         }
         if ((all || allDomain) && !canViewAllPretest) {
             if (includePretest) {
-                q.$or = [{ contest: { $ne: record.RECORD_PRETEST } }, { contest: record.RECORD_PRETEST, uid: this.user._id }];
-            } else q.contest = { $ne: record.RECORD_PRETEST } as any;
+                q.$or = [
+                    { contest: { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] } },
+                    { contest: record.RECORD_PRETEST, uid: this.user._id },
+                ];
+            } else q.contest = { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] } as any;
+        } else if (all || allDomain) {
+            q.contest = includePretest
+                ? { $ne: record.RECORD_GENERATE } as any
+                : { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] } as any;
         }
         appendHiddenSuperAdminFilter(q, await getHiddenSuperAdminUids(this.user));
         let cursor = record.getMulti(allDomain ? '' : domainId, q).sort('_id', -1);
@@ -365,7 +397,7 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
     async message(msg: { rids: string[] }) {
         if (!(msg.rids instanceof Array)) return;
         const rids = msg.rids.map((id) => new ObjectId(id));
-        const rdocs = await record.getMulti(this.args.domainId, { _id: { $in: rids } })
+        const rdocs = await record.getMulti(this.allDomain ? '' : this.args.domainId, { _id: { $in: rids } })
             .project<RecordDoc>(buildProjection(record.PROJECTION_LIST)).toArray();
         for (const rdoc of rdocs) this.onRecordChange(rdoc);
     }
@@ -373,19 +405,21 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
     @subscribe('record/change')
     async onRecordChange(rdoc: RecordDoc) {
         if (this.hiddenSuperAdminUids.includes(rdoc.uid)) return;
+        const isPretestRecord = rdoc.contest?.toHexString() === record.RECORD_PRETEST.toHexString();
+        const isGeneratedRecord = rdoc.contest?.toHexString() === record.RECORD_GENERATE.toHexString();
+        if (!this.pretest && typeof rdoc.input === 'string') return;
+        if (!this.pretest && isGeneratedRecord) return;
+        if (!this.pretest && isPretestRecord && !this.includePretest) return;
+        if (!this.pretest && isPretestRecord && rdoc.uid !== this.user._id && !canViewAllPretestRecords(this.user)) return;
         if (!this.allDomain) {
-            const isPretestRecord = rdoc.contest?.toHexString() === record.RECORD_PRETEST.toHexString();
             if (rdoc.domainId !== this.args.domainId) return;
-            if (!this.pretest && typeof rdoc.input === 'string') return;
-            if (!this.pretest && isPretestRecord && !this.includePretest) return;
-            if (!this.pretest && isPretestRecord && rdoc.uid !== this.user._id && !canViewAllPretestRecords(this.user)) return;
             if (this.includePretest && this.tid && isPretestRecord && this.tdoc?.pids?.length && !this.tdoc.pids.includes(rdoc.pid)) return;
-            if (!this.all) {
-                if (!rdoc.contest && this.tid) return;
+            if (!this.all && this.tid) {
+                if (!rdoc.contest) return;
                 const allowedContests = [this.tid];
                 if (this.includePretest || this.pretest) allowedContests.push(record.RECORD_PRETEST.toHexString());
                 if (rdoc.contest && !allowedContests.includes(rdoc.contest.toString())) return;
-                if (this.tid && !isPretestRecord) {
+                if (!isPretestRecord) {
                     if (rdoc.uid !== this.user._id && !contest.canShowRecord.call(this, this.tdoc, true)) return;
                     if (rdoc.uid === this.user._id && !contest.canShowSelfRecord.call(this, this.tdoc, true)) return;
                 }
