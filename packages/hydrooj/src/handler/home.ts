@@ -131,7 +131,9 @@ export class HomeHandler extends Handler {
                     ],
                 },
         };
-        const tdocs = await contest.getMulti(domainId, q).sort({ endAt: -1, beginAt: -1, _id: -1 })
+        const tdocs = await contest.getMulti(domainId, q).sort({
+            pinned: -1, endAt: -1, beginAt: -1, _id: -1,
+        })
             .limit(limit).toArray();
         const tsdict = await contest.getListStatus(
             domainId, this.user._id, tdocs.map((tdoc) => tdoc.docId),

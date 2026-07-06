@@ -262,6 +262,7 @@ export interface Tdoc extends Document {
     rule: string;
     pids: number[];
     rated?: boolean;
+    pinned?: boolean;
     _code?: string;
     assign?: string[];
     files?: FileInfo[];

@@ -142,6 +142,16 @@
           }) }}
           <div class="row">
             {{ form.form_checkbox({
+              columns:4,
+              label:'置顶比赛',
+              name:'pinned',
+              placeholder:_('在首页和比赛列表优先显示'),
+              value:tdoc.pinned|default(false),
+              row:false
+            }) }}
+          </div>
+          <div class="row">
+            {{ form.form_checkbox({
               columns:2,
               label:'Rated',
               name:'rated',

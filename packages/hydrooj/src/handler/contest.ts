@@ -59,7 +59,9 @@ export class ContestListHandler extends Handler {
             ...q ? { title: { $regex } } : {},
         };
         await this.ctx.parallel('contest/list', filter, this);
-        const cursor = contest.getMulti(domainId, filter).sort({ endAt: -1, beginAt: -1, _id: -1 });
+        const cursor = contest.getMulti(domainId, filter).sort({
+            pinned: -1, endAt: -1, beginAt: -1, _id: -1,
+        });
         let qs = rule ? `rule=${rule}` : '';
         if (group) qs += qs ? `&group=${group}` : `group=${group}`;
         if (q) qs += `${qs ? '&' : ''}q=${encodeURIComponent(q)}`;
@@ -407,6 +409,7 @@ export class ContestEditHandler extends Handler {
     @param('rule', Types.String)
     @param('pids', Types.Content)
     @param('rated', Types.Boolean)
+    @param('pinned', Types.Boolean)
     @param('code', Types.String, true)
     @param('autoHide', Types.Boolean)
     @param('assign', Types.CommaSeperatedArray, true)
@@ -420,7 +423,7 @@ export class ContestEditHandler extends Handler {
     async postUpdate(
         domainId: string, tid: ObjectId, beginAtDate: string, beginAtTime: string, duration: number,
         title: string, content: string, rule: string, _pids: string, rated = false,
-        _code = '', autoHide = false, assign: string[] = [], lock: number = null,
+        pinned = false, _code = '', autoHide = false, assign: string[] = [], lock: number = null,
         contestDuration: number = null, maintainer: number[] = [], allowViewCode = false, allowPrint = false,
         keepScoreboardHidden = false, langs: string[] = [],
     ) {
@@ -437,7 +440,7 @@ export class ContestEditHandler extends Handler {
         await problem.getList(domainId, pids, this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN) || this.user._id, true);
         if (tid) {
             await contest.edit(domainId, tid, {
-                title, content, rule, beginAt, endAt, pids, rated, duration: contestDuration,
+                title, content, rule, beginAt, endAt, pids, rated, pinned, duration: contestDuration,
             });
             if (this.tdoc.beginAt !== beginAt || this.tdoc.endAt !== endAt
                 || diffArray(this.tdoc.pids, pids) || this.tdoc.rule !== rule
@@ -445,7 +448,9 @@ export class ContestEditHandler extends Handler {
                 await contest.recalcStatus(domainId, this.tdoc.docId);
             }
         } else {
-            tid = await contest.add(domainId, title, content, this.user._id, rule, beginAt, endAt, pids, rated, { duration: contestDuration });
+            tid = await contest.add(domainId, title, content, this.user._id, rule, beginAt, endAt, pids, rated, {
+                pinned, duration: contestDuration,
+            });
         }
         const task = {
             type: 'schedule', subType: 'contest', domainId, tid,
