@@ -120,6 +120,11 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   let sawCurrentWrongFormalRecord = false;
   const watchedFormalSubmitRids = new Set<string>();
 
+  if (new URL(window.location.href).searchParams.get('reset_code') !== '1') {
+    delete (window as any).__HYDRO_RESET_SCRATCHPAD_CODE__;
+    delete (window as any).__HYDRO_RESET_SCRATCHPAD_KEY__;
+  }
+
   function getScratchpadCacheKey() {
     let cacheKey = `${UserContext._id}/${UiContext.pdoc.domainId}/${UiContext.pdoc.docId}`;
     if (UiContext.tdoc?._id) cacheKey += `@${UiContext.tdoc._id}`;
@@ -130,7 +135,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     const url = new URL(window.location.href);
     if (url.searchParams.get('reset_code') !== '1') return;
     (window as any).__HYDRO_RESET_SCRATCHPAD_CODE__ = true;
-    localStorage.removeItem(getScratchpadCacheKey());
+    (window as any).__HYDRO_RESET_SCRATCHPAD_KEY__ = getScratchpadCacheKey();
     url.searchParams.delete('reset_code');
     url.searchParams.delete('scratchpad');
     window.history.replaceState(window.history.state, '', url.toString());
