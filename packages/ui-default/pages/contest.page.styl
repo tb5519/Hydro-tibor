@@ -17,12 +17,33 @@ $highlight-button-color = #F6DF45
   .contest__item
     border-left: rem(5px) solid transparent
     padding-left: rem(5px)
+    transition: background-color .2s ease, box-shadow .2s ease
 
     &.live
       border-left: rem(5px) solid #E98696
 
     &.ready
       border-left: rem(5px) solid #469DCF
+
+    &.contest__item--pinned
+      position: relative
+      border-left-color: #F2B544
+      background: linear-gradient(90deg, rgba(#FFF7DE, 0.98) 0%, rgba(#EEF6FF, 0.95) 62%, rgba(#FFFFFF, 0.98) 100%)
+      box-shadow: inset 0 0 0 1px rgba(#F2B544, 0.24), 0 rem(4px) rem(16px) rgba(#2E6BFF, 0.08)
+
+      &:before
+        content: ""
+        position: absolute
+        left: 0
+        right: 0
+        top: 0
+        height: rem(2px)
+        background: linear-gradient(90deg, #F2B544, #62B6FF, #FFFFFF)
+        opacity: 0.85
+
+      .contest__date
+        background: rgba(#FFFFFF, 0.72)
+        border-radius: rem(8px)
 
   .section--contest
     &.live
