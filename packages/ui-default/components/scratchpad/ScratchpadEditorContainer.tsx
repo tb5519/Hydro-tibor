@@ -13,28 +13,8 @@ interface ScratchpadOptions {
   commandDone?: () => void;
 }
 
-function shouldResetScratchpadModel() {
-  let cacheKey = `${UserContext._id}/${UiContext.pdoc.domainId}/${UiContext.pdoc.docId}`;
-  if (UiContext.tdoc?._id) cacheKey += `@${UiContext.tdoc._id}`;
-  return Boolean(
-    (window as any).__HYDRO_RESET_SCRATCHPAD_CODE__
-    && (window as any).__HYDRO_RESET_SCRATCHPAD_KEY__ === cacheKey,
-  )
-    || new URLSearchParams(window.location.search).get('reset_code') === '1';
-}
-
 function getModelUri(monacoInstance: any, language?: string) {
   return monacoInstance.Uri.parse(`hydro:${UiContext.pdoc.pid || UiContext.pdoc.docId}.${language}`);
-}
-
-function createScratchpadModel(monacoInstance: any, language: string | undefined, value: string) {
-  const uri = getModelUri(monacoInstance, language);
-  const existingModel = monacoInstance.editor.getModel(uri);
-  if (shouldResetScratchpadModel()) {
-    existingModel?.dispose();
-    return monacoInstance.editor.createModel(value, language, uri);
-  }
-  return existingModel || monacoInstance.editor.createModel(value, language, uri);
 }
 
 export default connect((state: any) => ({
@@ -66,7 +46,8 @@ export default connect((state: any) => ({
     const value = this.props.value || '';
     const { language } = this.props;
     const { monaco, registerAction, customOptions } = await load([language]);
-    this.model = createScratchpadModel(monaco, language, value);
+    const uri = getModelUri(monaco, language);
+    this.model = monaco.editor.getModel(uri) || monaco.editor.createModel(value, language, uri);
     if (this.containerElement) {
       const config: monaco.editor.IStandaloneEditorConstructionOptions = {
         theme: 'vs-light',
@@ -119,7 +100,7 @@ export default connect((state: any) => ({
     if (model && editor && prevProps.language !== language) {
       const val = model.getValue(LF, false);
       model.dispose();
-      this.model = createScratchpadModel(monaco, language, val);
+      this.model = monaco.editor.createModel(val, language, getModelUri(monaco, language));
       editor.setModel(this.model);
     }
     if (editor && this.props.settings) {

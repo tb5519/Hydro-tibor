@@ -246,7 +246,7 @@
                     <td>{{ datetimeSpan(mdoc.updatedAt)|safe }}</td>
                     <td class="text-right">
                       <div class="mistake-action">
-                        <a class="button mistake-action__button mistake-action__button--practice" href="{{ url('problem_detail', pid=pdoc.pid|default(pdoc.docId)) }}?scratchpad=1&reset_code=1">
+                        <a class="button mistake-action__button mistake-action__button--practice" href="{{ url('problem_detail', pid=pdoc.pid|default(pdoc.docId)) }}?scratchpad=1">
                           <span class="icon icon-refresh"></span>
                           <span>重新练习</span>
                         </a>
