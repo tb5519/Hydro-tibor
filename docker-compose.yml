@@ -30,7 +30,7 @@ services:
       NODE_ENV: development
       DEFAULT_STORE_PATH: /data/file/hydro
       HYDRO_MONGODB_URL: ${HYDRO_MONGODB_URL:-mongodb://mongo:27017/hydro}
-      HYDRO_ADDONS_JSON: ${HYDRO_ADDONS_JSON}
+      HYDRO_ADDONS_JSON: ${HYDRO_ADDONS_JSON:-["@hydrooj/ui-default","/workspace/addons/badge-for-hydrooj"]}
       HYDRO_MONGO_HOST: mongo
       HYDRO_FILE_STORAGE: /data/file
       YARN_ENABLE_INLINE_BUILDS: ${YARN_ENABLE_INLINE_BUILDS:-1}

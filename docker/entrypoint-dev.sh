@@ -39,7 +39,10 @@ const url = process.env.HYDRO_MONGODB_URL || 'mongodb://mongo:27017/hydro';
 fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ url }));
 let addons = process.env.HYDRO_ADDONS_JSON;
 if (!addons || !String(addons).trim()) {
-    addons = JSON.stringify(['@hydrooj/ui-default']);
+    const defaults = ['@hydrooj/ui-default'];
+    const badgeAddon = '/workspace/addons/badge-for-hydrooj';
+    if (fs.existsSync(badgeAddon)) defaults.push(badgeAddon);
+    addons = JSON.stringify(defaults);
 } else {
     try {
         JSON.parse(addons);
