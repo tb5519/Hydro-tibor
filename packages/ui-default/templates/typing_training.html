@@ -1,0 +1,770 @@
+{% set page_name = "typing_training" %}
+{% extends "layout/basic.html" %}
+{% block content %}
+<style>
+  .typing-page {
+    --typing-blue: #2f6df6;
+    --typing-blue-soft: #eaf2ff;
+    --typing-text: #0f172a;
+    --typing-muted: #64748b;
+    --typing-line: #dbe5f2;
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 28px 24px 56px;
+  }
+
+  .typing-hero {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 20px;
+    padding: 24px 28px;
+    border: 1px solid var(--typing-line);
+    border-radius: 8px;
+    background: linear-gradient(135deg, #ffffff 0%, #eef6ff 100%);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, .08);
+  }
+
+  .typing-hero__eyebrow {
+    margin: 0 0 8px;
+    color: #6b7c95;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+  }
+
+  .typing-hero__title {
+    margin: 0;
+    color: var(--typing-text);
+    font-size: 36px;
+    line-height: 1.2;
+    letter-spacing: 0;
+  }
+
+  .typing-hero__meta {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 12px;
+    min-width: 360px;
+  }
+
+  .typing-stat {
+    min-width: 110px;
+    padding: 12px 16px;
+    border: 1px solid #dbeafe;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, .78);
+    text-align: center;
+  }
+
+  .typing-stat span {
+    display: block;
+    color: var(--typing-muted);
+    font-size: 13px;
+  }
+
+  .typing-stat strong {
+    display: block;
+    color: #1d4ed8;
+    font-size: 28px;
+    line-height: 1.1;
+  }
+
+  .typing-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 360px;
+    gap: 20px;
+    align-items: stretch;
+  }
+
+  .typing-card {
+    border: 1px solid var(--typing-line);
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 14px 30px rgba(15, 23, 42, .08);
+    overflow: hidden;
+  }
+
+  .typing-game__toolbar {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 12px;
+    align-items: center;
+    padding: 16px 18px;
+    border-bottom: 1px solid #edf2f7;
+    background: #fbfdff;
+  }
+
+  .typing-input {
+    width: 100%;
+    min-width: 0;
+    height: 46px;
+    padding: 0 16px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    color: var(--typing-text);
+    font-size: 20px;
+    font-weight: 700;
+    outline: none;
+  }
+
+  .typing-input:focus {
+    border-color: #60a5fa;
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, .12);
+  }
+
+  .typing-input.is-wrong {
+    border-color: #fb7185;
+    box-shadow: 0 0 0 4px rgba(251, 113, 133, .14);
+  }
+
+  .typing-button {
+    height: 46px;
+    padding: 0 20px;
+    border: 1px solid #2563eb;
+    border-radius: 8px;
+    background: #2563eb;
+    color: #fff;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .typing-button.secondary {
+    border-color: #dbe5f2;
+    background: #fff;
+    color: #334155;
+  }
+
+  .typing-button:disabled {
+    border-color: #cbd5e1;
+    background: #e2e8f0;
+    color: #94a3b8;
+    cursor: default;
+  }
+
+  .typing-stage {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 210px;
+    gap: 18px;
+    padding: 18px;
+  }
+
+  .typing-stage__scene {
+    position: relative;
+    height: 470px;
+    border: 1px solid #dbeafe;
+    border-radius: 8px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, .86), rgba(255, 255, 255, .24)),
+      repeating-linear-gradient(0deg, rgba(59, 130, 246, .08) 0, rgba(59, 130, 246, .08) 1px, transparent 1px, transparent 46px),
+      linear-gradient(135deg, #f7fbff, #e6f2ff);
+    overflow: hidden;
+  }
+
+  .typing-stage__scene::before {
+    content: "";
+    position: absolute;
+    inset: 18px;
+    border: 1px dashed rgba(96, 165, 250, .38);
+    border-radius: 8px;
+    pointer-events: none;
+  }
+
+  .typing-step {
+    position: absolute;
+    left: calc(5% + var(--step) * 8%);
+    bottom: calc(34px + var(--step) * 48px);
+    width: 185px;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(37, 99, 235, .28);
+    border-radius: 8px;
+    background: linear-gradient(180deg, #ffffff, #eef6ff);
+    color: #0f172a;
+    font-size: 18px;
+    font-weight: 800;
+    box-shadow: 0 10px 22px rgba(37, 99, 235, .12);
+  }
+
+  .typing-step.is-target {
+    border-color: rgba(37, 99, 235, .62);
+    background: linear-gradient(180deg, #dbeafe, #ffffff);
+  }
+
+  .typing-step.is-target::after {
+    content: "";
+    position: absolute;
+    left: 18px;
+    right: 18px;
+    bottom: -6px;
+    height: 6px;
+    border-radius: 999px;
+    background: #2563eb;
+  }
+
+  .typing-stage-record {
+    position: absolute;
+    left: calc(5% + var(--step) * 8% + 142px + var(--lane) * 10px);
+    bottom: calc(34px + var(--step) * 48px + 56px + var(--lane) * 9px);
+    z-index: 5;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 126px;
+    padding: 4px 7px 4px 5px;
+    border: 1px solid rgba(37, 99, 235, .24);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .9);
+    box-shadow: 0 8px 18px rgba(15, 23, 42, .12);
+    pointer-events: none;
+  }
+
+  .typing-stage-record__person {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: linear-gradient(180deg, #60a5fa, #2563eb);
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, .12);
+  }
+
+  .typing-stage-record__name {
+    min-width: 0;
+    overflow: hidden;
+    color: #0f172a;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.15;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .typing-runner {
+    position: absolute;
+    left: 6%;
+    bottom: 96px;
+    width: 48px;
+    height: 60px;
+    transform-origin: center bottom;
+    transition: transform .22s ease;
+    z-index: 3;
+  }
+
+  .typing-runner::before {
+    content: "";
+    position: absolute;
+    left: 14px;
+    top: 0;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #2563eb;
+    box-shadow: 0 0 0 6px rgba(37, 99, 235, .16);
+  }
+
+  .typing-runner::after {
+    content: "";
+    position: absolute;
+    left: 10px;
+    top: 25px;
+    width: 28px;
+    height: 28px;
+    border-radius: 12px 12px 10px 10px;
+    background: linear-gradient(180deg, #60a5fa, #2563eb);
+  }
+
+  .typing-runner.is-jumping {
+    transform: translate(118px, -52px) scale(1.04);
+  }
+
+  .typing-stage__panel {
+    display: grid;
+    gap: 12px;
+    align-content: start;
+  }
+
+  .typing-metric {
+    padding: 14px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+  }
+
+  .typing-metric span {
+    display: block;
+    color: var(--typing-muted);
+    font-size: 13px;
+  }
+
+  .typing-metric strong {
+    display: block;
+    color: var(--typing-text);
+    font-size: 28px;
+    line-height: 1.2;
+  }
+
+  .typing-leaderboard {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+  }
+
+  .typing-leaderboard__head {
+    padding: 18px;
+    border-bottom: 1px solid #edf2f7;
+  }
+
+  .typing-leaderboard__head h2 {
+    margin: 0;
+    color: var(--typing-text);
+    font-size: 22px;
+  }
+
+  .typing-leaderboard__list {
+    display: grid;
+    gap: 10px;
+    padding: 16px;
+  }
+
+  .typing-rank-item {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) 58px;
+    gap: 10px;
+    align-items: center;
+    padding: 10px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #fbfdff;
+  }
+
+  .typing-rank-item__rank {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    background: #eaf2ff;
+    color: #1d4ed8;
+    font-weight: 800;
+  }
+
+  .typing-rank-item__name {
+    color: var(--typing-text);
+    font-weight: 800;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .typing-rank-item__track {
+    position: relative;
+    height: 24px;
+    margin-top: 5px;
+    border-radius: 999px;
+    background: #e2e8f0;
+    overflow: hidden;
+  }
+
+  .typing-rank-item__fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #bfdbfe, #60a5fa);
+  }
+
+  .typing-rank-item__runner {
+    position: absolute;
+    top: 2px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #2563eb;
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, .16);
+    transform: translateX(-50%);
+  }
+
+  .typing-rank-item__score {
+    color: #0f172a;
+    font-size: 20px;
+    font-weight: 800;
+    text-align: right;
+  }
+
+  .typing-empty {
+    padding: 28px 18px;
+    color: var(--typing-muted);
+    text-align: center;
+  }
+
+  @media (max-width: 1100px) {
+    .typing-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .typing-hero {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .typing-hero__meta {
+      justify-content: flex-start;
+      min-width: 0;
+      width: 100%;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .typing-page {
+      padding: 16px 10px 36px;
+    }
+
+    .typing-hero__title {
+      font-size: 28px;
+    }
+
+    .typing-game__toolbar,
+    .typing-stage {
+      grid-template-columns: 1fr;
+    }
+
+    .typing-stage__scene {
+      height: 390px;
+    }
+
+    .typing-step {
+      left: calc(3% + var(--step) * 6%);
+      bottom: calc(28px + var(--step) * 39px);
+      width: 150px;
+      font-size: 16px;
+    }
+
+    .typing-stage-record {
+      left: calc(3% + var(--step) * 6% + 116px + var(--lane) * 8px);
+      bottom: calc(28px + var(--step) * 39px + 52px + var(--lane) * 8px);
+      max-width: 104px;
+    }
+  }
+</style>
+
+<div class="typing-page" data-typing-game>
+  <section class="typing-hero">
+    <div>
+      <p class="typing-hero__eyebrow">Typing Training</p>
+      <h1 class="typing-hero__title">打字训练</h1>
+    </div>
+    <div class="typing-hero__meta">
+      <div class="typing-stat">
+        <span>倒计时</span>
+        <strong data-typing-timer>3:00</strong>
+      </div>
+      <div class="typing-stat">
+        <span>当前分数</span>
+        <strong data-typing-score>0</strong>
+      </div>
+      <div class="typing-stat">
+        <span>最高纪录</span>
+        <strong data-typing-best>{{ bestRecord.score|default(0) }}</strong>
+      </div>
+    </div>
+  </section>
+
+  <div class="typing-grid">
+    <section class="typing-card typing-game">
+      <div class="typing-game__toolbar">
+        <input class="typing-input" data-typing-input type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="输入当前单词" disabled>
+        <button class="typing-button" data-typing-start type="button">开始</button>
+        <button class="typing-button secondary" data-typing-reset type="button">重置</button>
+      </div>
+      <div class="typing-stage">
+        <div class="typing-stage__scene" data-typing-stage>
+          <div class="typing-runner" data-typing-runner aria-hidden="true"></div>
+        </div>
+        <div class="typing-stage__panel">
+          <div class="typing-metric">
+            <span>正确率</span>
+            <strong data-typing-accuracy>100%</strong>
+          </div>
+          <div class="typing-metric">
+            <span>完成单词</span>
+            <strong data-typing-words>0</strong>
+          </div>
+          <div class="typing-metric">
+            <span>每分钟</span>
+            <strong data-typing-wpm>0</strong>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="typing-card typing-leaderboard">
+      <div class="typing-leaderboard__head">
+        <h2>最高纪录</h2>
+      </div>
+      <div class="typing-leaderboard__list" data-typing-leaderboard></div>
+    </aside>
+  </div>
+</div>
+
+<script id="typing-leaderboard-data" type="application/json">{{ leaderboard|json|safe }}</script>
+<script id="typing-best-data" type="application/json">{{ bestRecord|json|safe }}</script>
+<script>
+(function () {
+  var root = document.querySelector('[data-typing-game]');
+  if (!root) return;
+
+  var words = [
+    'array', 'function', 'return', 'const', 'class', 'object', 'string', 'number',
+    'boolean', 'promise', 'async', 'await', 'import', 'export', 'module', 'loop',
+    'index', 'length', 'push', 'filter', 'map', 'reduce', 'sort', 'stack',
+    'queue', 'tree', 'graph', 'binary', 'search', 'debug', 'compile', 'syntax',
+    'variable', 'parameter', 'callback', 'event', 'state', 'render', 'cache',
+    'token', 'branch', 'commit', 'merge', 'socket', 'request', 'response',
+    'server', 'client', 'database', 'query', 'router', 'template', 'memory',
+    'pointer', 'integer', 'float', 'method', 'package', 'runtime', 'process'
+  ];
+  var gameSeconds = 180;
+  var typingUrl = {{ url('typing_training')|json|safe }};
+  var stageNode = root.querySelector('[data-typing-stage]');
+  var runnerNode = root.querySelector('[data-typing-runner]');
+  var inputNode = root.querySelector('[data-typing-input]');
+  var startButton = root.querySelector('[data-typing-start]');
+  var resetButton = root.querySelector('[data-typing-reset]');
+  var timerNode = root.querySelector('[data-typing-timer]');
+  var scoreNode = root.querySelector('[data-typing-score]');
+  var bestNode = root.querySelector('[data-typing-best]');
+  var accuracyNode = root.querySelector('[data-typing-accuracy]');
+  var wordsNode = root.querySelector('[data-typing-words]');
+  var wpmNode = root.querySelector('[data-typing-wpm]');
+  var leaderboardNode = root.querySelector('[data-typing-leaderboard]');
+  var leaderboard = JSON.parse(document.getElementById('typing-leaderboard-data').textContent || '[]');
+  var bestRecord = JSON.parse(document.getElementById('typing-best-data').textContent || '{}') || {};
+  var queue = [];
+  var active = false;
+  var score = 0;
+  var attempts = 0;
+  var correct = 0;
+  var secondsLeft = gameSeconds;
+  var timer = null;
+
+  function nextWord() {
+    return words[Math.floor(Math.random() * words.length)];
+  }
+
+  function fillQueue() {
+    queue = [];
+    for (var i = 0; i < 8; i++) queue.push(nextWord());
+  }
+
+  function formatTime(value) {
+    var minutes = Math.floor(value / 60);
+    var seconds = value % 60;
+    return minutes + ':' + String(seconds).padStart(2, '0');
+  }
+
+  function getAccuracy() {
+    return attempts ? Math.round((correct / attempts) * 100) : 100;
+  }
+
+  function getWpm() {
+    var elapsed = Math.max(1, gameSeconds - secondsLeft);
+    return Math.round(correct / (elapsed / 60));
+  }
+
+  function renderSteps() {
+    stageNode.querySelectorAll('.typing-step').forEach(function (node) {
+      node.remove();
+    });
+    queue.forEach(function (word, index) {
+      var step = document.createElement('div');
+      step.className = 'typing-step' + (index === 0 ? ' is-target' : '');
+      step.style.setProperty('--step', index);
+      step.textContent = word;
+      stageNode.appendChild(step);
+    });
+  }
+
+  function renderStats() {
+    timerNode.textContent = formatTime(secondsLeft);
+    scoreNode.textContent = score;
+    bestNode.textContent = Math.max(bestRecord.score || 0, score);
+    accuracyNode.textContent = getAccuracy() + '%';
+    wordsNode.textContent = correct;
+    wpmNode.textContent = getWpm();
+  }
+
+  function renderLeaderboard() {
+    var maxScore = leaderboard.reduce(function (max, item) {
+      return Math.max(max, item.score || 0);
+    }, 1);
+    leaderboardNode.innerHTML = '';
+    if (!leaderboard.length) {
+      var empty = document.createElement('div');
+      empty.className = 'typing-empty';
+      empty.textContent = '暂无纪录';
+      leaderboardNode.appendChild(empty);
+      renderStageRecords(maxScore);
+      return;
+    }
+    leaderboard.forEach(function (item, index) {
+      var percent = Math.max(8, Math.min(100, Math.round(((item.score || 0) / maxScore) * 100)));
+      var row = document.createElement('div');
+      row.className = 'typing-rank-item';
+      row.innerHTML = [
+        '<div class="typing-rank-item__rank"></div>',
+        '<div>',
+          '<div class="typing-rank-item__name"></div>',
+          '<div class="typing-rank-item__track">',
+            '<div class="typing-rank-item__fill"></div>',
+            '<span class="typing-rank-item__runner"></span>',
+          '</div>',
+        '</div>',
+        '<div class="typing-rank-item__score"></div>'
+      ].join('');
+      row.querySelector('.typing-rank-item__rank').textContent = item.rank || index + 1;
+      row.querySelector('.typing-rank-item__name').textContent = item.uname || ('UID ' + item.uid);
+      row.querySelector('.typing-rank-item__fill').style.width = percent + '%';
+      row.querySelector('.typing-rank-item__runner').style.left = percent + '%';
+      row.querySelector('.typing-rank-item__score').textContent = item.score || 0;
+      leaderboardNode.appendChild(row);
+    });
+    renderStageRecords(maxScore);
+  }
+
+  function renderStageRecords(maxScore) {
+    stageNode.querySelectorAll('.typing-stage-record').forEach(function (node) {
+      node.remove();
+    });
+    leaderboard.slice(0, 8).forEach(function (item, index) {
+      var scoreValue = item.score || 0;
+      if (!scoreValue) return;
+      var stepIndex = Math.max(0, Math.min(7, Math.round((scoreValue / maxScore) * 7)));
+      var marker = document.createElement('div');
+      marker.className = 'typing-stage-record';
+      marker.style.setProperty('--step', stepIndex);
+      marker.style.setProperty('--lane', index % 3);
+      marker.title = (item.uname || ('UID ' + item.uid)) + '：' + scoreValue;
+      marker.innerHTML = '<span class="typing-stage-record__person"></span><span class="typing-stage-record__name"></span>';
+      marker.querySelector('.typing-stage-record__name').textContent = item.uname || ('UID ' + item.uid);
+      stageNode.appendChild(marker);
+    });
+  }
+
+  function submitScore() {
+    if (!score) return Promise.resolve();
+    var body = new URLSearchParams();
+    body.set('score', String(score));
+    body.set('accuracy', String(getAccuracy()));
+    body.set('words', String(correct));
+    body.set('wpm', String(getWpm()));
+    return fetch(typingUrl, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: body.toString()
+    }).then(function (res) {
+      return res.json();
+    }).then(function (data) {
+      if (!data || !data.ok) return;
+      leaderboard = data.leaderboard || leaderboard;
+      bestRecord = data.bestRecord || bestRecord;
+      renderLeaderboard();
+      renderStats();
+    }).catch(function () {});
+  }
+
+  function endGame() {
+    if (!active) return;
+    active = false;
+    inputNode.disabled = true;
+    startButton.disabled = false;
+    startButton.textContent = '再来一次';
+    if (timer) window.clearInterval(timer);
+    timer = null;
+    submitScore();
+  }
+
+  function startGame() {
+    active = true;
+    startButton.disabled = true;
+    inputNode.disabled = false;
+    inputNode.value = '';
+    inputNode.focus();
+    timer = window.setInterval(function () {
+      secondsLeft -= 1;
+      renderStats();
+      if (secondsLeft <= 0) endGame();
+    }, 1000);
+  }
+
+  function resetGame() {
+    active = false;
+    if (timer) window.clearInterval(timer);
+    timer = null;
+    score = 0;
+    attempts = 0;
+    correct = 0;
+    secondsLeft = gameSeconds;
+    inputNode.value = '';
+    inputNode.disabled = true;
+    inputNode.classList.remove('is-wrong');
+    startButton.disabled = false;
+    startButton.textContent = '开始';
+    fillQueue();
+    renderSteps();
+    renderStats();
+  }
+
+  function correctWord() {
+    correct += 1;
+    score += 1;
+    queue.shift();
+    queue.push(nextWord());
+    runnerNode.classList.add('is-jumping');
+    window.setTimeout(function () {
+      runnerNode.classList.remove('is-jumping');
+      renderSteps();
+    }, 230);
+    inputNode.value = '';
+    renderStats();
+  }
+
+  function wrongWord() {
+    inputNode.classList.add('is-wrong');
+    window.setTimeout(function () {
+      inputNode.classList.remove('is-wrong');
+    }, 180);
+    inputNode.select();
+    renderStats();
+  }
+
+  inputNode.addEventListener('keydown', function (ev) {
+    if (!active) return;
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    ev.preventDefault();
+    var value = inputNode.value.trim().toLowerCase();
+    if (!value) return;
+    attempts += 1;
+    if (value === queue[0]) correctWord();
+    else wrongWord();
+  });
+
+  startButton.addEventListener('click', function () {
+    if (!active) startGame();
+  });
+  resetButton.addEventListener('click', resetGame);
+
+  fillQueue();
+  renderSteps();
+  renderStats();
+  renderLeaderboard();
+}());
+</script>
+{% endblock %}
