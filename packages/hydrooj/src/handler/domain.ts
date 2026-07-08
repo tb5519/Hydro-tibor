@@ -146,89 +146,6 @@ class DomainRankHandler extends Handler {
     }
 }
 
-function normalizeTypingScore(value: number, max = 10000) {
-    const normalized = Math.floor(Number(value) || 0);
-    if (normalized < 0) return 0;
-    return Math.min(normalized, max);
-}
-
-async function getTypingLeaderboard(ctx: Context, domainId: string, limit = 10) {
-    const records = await ctx.db.collection('typing.training')
-        .find({ domainId })
-        .sort({ score: -1, accuracy: -1, updatedAt: 1 })
-        .limit(limit)
-        .toArray();
-    const udict = await user.getList(domainId, records.map((record: any) => record.uid));
-    return records.map((record: any, index: number) => ({
-        uid: record.uid,
-        uname: udict[record.uid]?.uname || record.uname || `UID ${record.uid}`,
-        score: record.score || 0,
-        accuracy: record.accuracy || 0,
-        words: record.words || 0,
-        wpm: record.wpm || 0,
-        rank: index + 1,
-        updatedAt: record.updatedAt,
-    }));
-}
-
-class TypingTrainingHandler extends Handler {
-    async get() {
-        const domainId = this.domain._id;
-        const [leaderboard, bestRecord] = await Promise.all([
-            getTypingLeaderboard(this.ctx, domainId),
-            this.ctx.db.collection('typing.training').findOne({ domainId, uid: this.user._id }),
-        ]);
-        this.response.template = 'typing_training.html';
-        this.response.body = { leaderboard, bestRecord: bestRecord || {} };
-    }
-
-    @post('score', Types.Int)
-    @post('accuracy', Types.Int, true)
-    @post('words', Types.Int, true)
-    @post('wpm', Types.Int, true)
-    async post(_domainId: string, score: number, accuracy = 0, words = 0, wpm = 0) {
-        const domainId = this.domain._id;
-        const normalizedScore = normalizeTypingScore(score);
-        const normalizedAccuracy = normalizeTypingScore(accuracy, 100);
-        const normalizedWords = normalizeTypingScore(words);
-        const normalizedWpm = normalizeTypingScore(wpm, 1000);
-        if (!normalizedScore) throw new ValidationError('score');
-        const collection = this.ctx.db.collection('typing.training');
-        const current = await collection.findOne({ domainId, uid: this.user._id });
-        const shouldUpdate = !current
-            || normalizedScore > (current.score || 0)
-            || (normalizedScore === (current.score || 0) && normalizedAccuracy > (current.accuracy || 0));
-        if (shouldUpdate) {
-            await collection.updateOne(
-                { domainId, uid: this.user._id },
-                {
-                    $set: {
-                        domainId,
-                        uid: this.user._id,
-                        uname: this.user.uname,
-                        score: normalizedScore,
-                        accuracy: normalizedAccuracy,
-                        words: normalizedWords,
-                        wpm: normalizedWpm,
-                        updatedAt: new Date(),
-                    },
-                },
-                { upsert: true },
-            );
-        }
-        const [leaderboard, bestRecord] = await Promise.all([
-            getTypingLeaderboard(this.ctx, domainId),
-            collection.findOne({ domainId, uid: this.user._id }),
-        ]);
-        this.response.body = {
-            ok: true,
-            updated: shouldUpdate,
-            leaderboard,
-            bestRecord: bestRecord || {},
-        };
-    }
-}
-
 class ManageHandler extends Handler {
     async prepare({ domainId }) {
         this.checkPerm(PERM.PERM_EDIT_DOMAIN);
@@ -670,7 +587,6 @@ declare module '@hydrooj/framework' {
 
 export async function apply(ctx: Context) {
     ctx.Route('ranking', '/ranking', DomainRankHandler, PERM.PERM_VIEW_RANKING);
-    ctx.Route('typing_training', '/typing', TypingTrainingHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('domain_dashboard', '/domain/dashboard', DomainDashboardHandler);
     ctx.Route('domain_edit', '/domain/edit', DomainEditHandler);
     ctx.Route('domain_user', '/domain/user', DomainUserHandler);

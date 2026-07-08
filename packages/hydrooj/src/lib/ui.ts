@@ -58,7 +58,6 @@ inject('Nav', 'record_main', {
 }, (handler) => (handler.user.hasPriv(PRIV.PRIV_USER_PROFILE)
     ? true : handler.user.hasPerm(PERM.PERM_VIEW_RECORD)));
 inject('Nav', 'ranking', { prefix: 'ranking' }, PERM.PERM_VIEW_RANKING);
-inject('Nav', 'typing_training', { prefix: 'typing', before: 'domain_dashboard' }, PRIV.PRIV_USER_PROFILE);
 inject('Nav', 'domain_dashboard', { prefix: 'domain' }, PERM.PERM_EDIT_DOMAIN);
 inject('Nav', 'manage_dashboard', { prefix: 'manage' }, PRIV.PRIV_EDIT_SYSTEM);
 inject('ProblemAdd', 'problem_create', { icon: 'add', text: 'Create Problem' });

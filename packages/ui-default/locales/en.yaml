@@ -47,7 +47,6 @@ problem.import.limit_and_hint: '## Limits'
 problem.import.output_format: '## Output Format'
 problem.import.problem_description: '## Description'
 ranking: Ranking
-typing_training: Typing
 record_detail: Record Detail
 record_main: Record
 rpDetailText_contest: Contest
