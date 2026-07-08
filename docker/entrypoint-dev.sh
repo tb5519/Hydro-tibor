@@ -144,7 +144,23 @@ const hash = crypto.createHash('sha256');
 const includePaths = [
   'package.json',
   'yarn.lock',
-  'packages/ui-default',
+  'packages/ui-default/package.json',
+  'packages/ui-default/api.ts',
+  'packages/ui-default/entry.js',
+  'packages/ui-default/hydro.ts',
+  'packages/ui-default/lazyload.ts',
+  'packages/ui-default/polyfill.ts',
+  'packages/ui-default/sentry.ts',
+  'packages/ui-default/service-worker.ts',
+  'packages/ui-default/__core-js.js',
+  'packages/ui-default/build',
+  'packages/ui-default/common',
+  'packages/ui-default/components',
+  'packages/ui-default/constant',
+  'packages/ui-default/misc',
+  'packages/ui-default/static',
+  'packages/ui-default/theme',
+  'packages/ui-default/utils',
 ];
 const ignoredDirs = new Set(['node_modules', 'public', '.cache', 'coverage']);
 
@@ -193,8 +209,13 @@ if [ -f "${UI_PUBLIC_DIR}/default.theme.js" ] && grep -q "module.hot.data" "${UI
     NEED_UI_PRODUCTION_BUILD="1"
 fi
 if [ "$CURRENT_UI_BUILD_META" != "$PREV_UI_BUILD_META" ]; then
-    echo "Detected UI source change, running production UI build."
-    NEED_UI_PRODUCTION_BUILD="1"
+    if [ "${HYDRO_REBUILD_UI_ON_SOURCE_CHANGE:-0}" = "1" ]; then
+        echo "Detected UI core asset source change, running production UI build."
+        NEED_UI_PRODUCTION_BUILD="1"
+    else
+        echo "Detected UI core asset source change, skipping automatic production UI build."
+        echo "Set HYDRO_REBUILD_UI_ON_SOURCE_CHANGE=1 to rebuild UI production assets explicitly."
+    fi
 fi
 
 if [ "$NEED_UI_PRODUCTION_BUILD" = "1" ]; then
@@ -204,6 +225,8 @@ if [ "$NEED_UI_PRODUCTION_BUILD" = "1" ]; then
     printf '%s' "$CURRENT_UI_BUILD_META" > "$UI_BUILD_META_FILE"
 else
     echo "UI production assets and source meta unchanged, skipping build:ui:production."
+    mkdir -p "$UI_PUBLIC_DIR"
+    printf '%s' "$CURRENT_UI_BUILD_META" > "$UI_BUILD_META_FILE"
 fi
 
 if [ "${HYDRO_SET_SERVER_HOST:-1}" = "1" ]; then

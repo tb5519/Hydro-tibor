@@ -311,13 +311,36 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
       .promise();
   }
 
+  let scratchpadModulesPromise = null;
+
+  function loadScratchpadModules() {
+    scratchpadModulesPromise ||= Promise.all([
+      import('../components/socket'),
+      import('../components/scratchpad'),
+      import('../components/scratchpad/reducers'),
+    ]).then(([socketModule, scratchpadModule, reducerModule]) => ({
+      WebSocket: socketModule.default,
+      ScratchpadApp: scratchpadModule.default,
+      ScratchpadReducer: reducerModule.default,
+    })).catch((err) => {
+      scratchpadModulesPromise = null;
+      throw err;
+    });
+    return scratchpadModulesPromise;
+  }
+
+  function preloadScratchpadModules() {
+    if (reactLoaded) return;
+    loadScratchpadModules().catch((err) => {
+      console.error('Failed to preload scratchpad:', err);
+    });
+  }
+
   async function loadReact() {
     if (reactLoaded) return;
     $('.loader-container').show();
 
-    const { default: WebSocket } = await import('../components/socket');
-    const { default: ScratchpadApp } = await import('../components/scratchpad');
-    const { default: ScratchpadReducer } = await import('../components/scratchpad/reducers');
+    const { WebSocket, ScratchpadApp, ScratchpadReducer } = await loadScratchpadModules();
     const { Provider, store } = await loadReactRedux(ScratchpadReducer);
 
     // @ts-ignore
@@ -351,12 +374,27 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   async function enterScratchpadMode() {
     if (progress) return;
     progress = true;
-    await extender.extend();
-    await loadReact();
-    renderReact();
-    setTimeout(updateMistakePromptPosition, 0);
-    await scratchpadFadeIn();
-    progress = false;
+    try {
+      await loadReact();
+      await extender.extend();
+      renderReact();
+      setTimeout(updateMistakePromptPosition, 0);
+      await scratchpadFadeIn();
+    } catch (err) {
+      console.error('Failed to open scratchpad:', err);
+      Notification.error('在线编辑器加载失败，请刷新页面后重试。');
+      if (extender.isExtended) {
+        try {
+          await extender.collapse();
+        } catch (collapseErr) {
+          console.error('Failed to restore problem page:', collapseErr);
+        }
+      }
+      $('.loader-container').hide();
+      $('#scratchpad').css({ opacity: 0 });
+    } finally {
+      progress = false;
+    }
   }
 
   async function leaveScratchpadMode() {
@@ -547,6 +585,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     enterScratchpadMode();
     ev.preventDefault();
   });
+  $(document).on('mouseenter focus touchstart', '[name="problem-sidebar__open-scratchpad"]', preloadScratchpadModules);
   $(document).on('click', '[name="problem-sidebar__quit-scratchpad"]', (ev) => {
     leaveScratchpadMode();
     ev.preventDefault();
