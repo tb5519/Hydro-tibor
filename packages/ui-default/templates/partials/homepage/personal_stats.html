@@ -1,0 +1,246 @@
+{% set stats = payload %}
+{% set udoc = udict[stats.uid] %}
+{% if stats and udoc %}
+<div class="section side nojs--hide homepage-personal">
+  <div class="section__header">
+    <h1 class="section__title">我的成长</h1>
+  </div>
+  <div class="section__body homepage-personal__body">
+    <div class="homepage-personal__identity">
+      <img class="homepage-personal__avatar" src="{{ avatarUrl(udoc.avatar|default('')) }}" alt="" loading="lazy" width="42" height="42">
+      <div class="homepage-personal__name-wrap">
+        <div class="homepage-personal__name">{{ user.render_inline(udoc, avatar=false, badge=false) }}</div>
+        <div class="homepage-personal__rank">
+          {% if stats.rank %}
+            排名 No. {{ stats.rank }}
+          {% else %}
+            暂无排名
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="homepage-personal__badges">
+      <div class="homepage-personal__label">我的荣誉徽章</div>
+      <div class="homepage-personal__badge-list">
+        {{ user.render_custom_badges(udoc, 6, 'homepage-personal__badge') }}
+        {% if not udoc.ownedBadges and not udoc.badge %}
+          <span class="homepage-personal__empty">暂无荣誉徽章</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="homepage-personal__stats">
+      <div class="homepage-personal__stat">
+        <span>我的 RP</span>
+        <strong>{{ stats.rp|default(0) }}</strong>
+      </div>
+      <div class="homepage-personal__stat">
+        <span>当前排名</span>
+        <strong>{% if stats.rank %}{{ stats.rank }}{% else %}-{% endif %}</strong>
+      </div>
+      <div class="homepage-personal__stat">
+        <span>7 天新增 AC</span>
+        <strong>{{ stats.newAc7|default(0) }}</strong>
+      </div>
+      <div class="homepage-personal__stat">
+        <span>30 天新增 AC</span>
+        <strong>{{ stats.newAc30|default(0) }}</strong>
+      </div>
+    </div>
+
+    <div class="homepage-personal__mistakes">
+      <div class="homepage-personal__mistake-head">
+        <span>我的错题集</span>
+        <a href="{{ url('problem_mistake') }}">全部</a>
+      </div>
+      {% if stats.mistakes and stats.mistakes.length %}
+        <div class="homepage-personal__mistake-list">
+          {% for item in stats.mistakes %}
+            <div class="homepage-personal__mistake">
+              <div class="homepage-personal__mistake-main">
+                <div class="homepage-personal__mistake-title">
+                  {{ problem.render_problem_title(item.pdoc, show_tags=false, show_invisible_flag=false) }}
+                </div>
+                <div class="homepage-personal__mistake-time">{{ datetimeSpan(item.mdoc.updatedAt)|safe }}</div>
+              </div>
+              <a class="homepage-personal__mistake-action" href="{{ url('problem_detail', pid=item.pdoc.pid|default(item.pdoc.docId)) }}?scratchpad=1">重练</a>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="homepage-personal__empty-block">暂无待复盘错题</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<style>
+  .homepage-personal .section__body {
+    padding: 1rem 1.1rem 1.15rem;
+  }
+  .homepage-personal__identity {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+  }
+  .homepage-personal__avatar {
+    flex: 0 0 auto;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: #e5edf5;
+    box-shadow: 0 0 0 1px #dbe6f3;
+  }
+  .homepage-personal__name-wrap {
+    min-width: 0;
+  }
+  .homepage-personal__name {
+    color: #0f172a;
+    font-size: .95rem;
+    font-weight: 700;
+    line-height: 1.35;
+  }
+  .homepage-personal__name .user-profile-name {
+    color: inherit;
+  }
+  .homepage-personal__rank {
+    margin-top: .15rem;
+    color: #64748b;
+    font-size: .78rem;
+  }
+  .homepage-personal__badges {
+    margin-top: .9rem;
+    padding: .8rem;
+    border: 1px solid #dbe6f3;
+    border-radius: 8px;
+    background: #f8fbff;
+  }
+  .homepage-personal__label {
+    margin-bottom: .45rem;
+    color: #64748b;
+    font-size: .78rem;
+    font-weight: 700;
+  }
+  .homepage-personal__badge-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem;
+    min-height: 24px;
+  }
+  .homepage-personal__badge {
+    margin: 0 !important;
+  }
+  .homepage-personal__empty {
+    color: #94a3b8;
+    font-size: .82rem;
+  }
+  .homepage-personal__stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .6rem;
+    margin-top: .8rem;
+  }
+  .homepage-personal__stat {
+    min-width: 0;
+    padding: .7rem .75rem;
+    border: 1px solid #dbe6f3;
+    border-radius: 8px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  }
+  .homepage-personal__stat span {
+    display: block;
+    margin-bottom: .2rem;
+    color: #64748b;
+    font-size: .74rem;
+    white-space: nowrap;
+  }
+  .homepage-personal__stat strong {
+    display: block;
+    color: #0f172a;
+    font-size: 1.25rem;
+    line-height: 1.15;
+  }
+  .homepage-personal__mistakes {
+    margin-top: .9rem;
+    padding-top: .85rem;
+    border-top: 1px solid #e2e8f0;
+  }
+  .homepage-personal__mistake-head {
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+    gap: .75rem;
+    margin-bottom: .55rem;
+    color: #0f172a;
+    font-size: .86rem;
+    font-weight: 800;
+  }
+  .homepage-personal__mistake-head a {
+    color: #2563eb;
+    flex: 0 0 auto;
+    font-size: .76rem;
+    font-weight: 700;
+  }
+  .homepage-personal__mistake-list {
+    display: grid;
+    gap: .5rem;
+  }
+  .homepage-personal__mistake {
+    align-items: center;
+    display: flex;
+    gap: .6rem;
+    min-width: 0;
+    padding: .55rem .6rem;
+    border: 1px solid #dbe6f3;
+    border-radius: 8px;
+    background: #fff;
+  }
+  .homepage-personal__mistake-main {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .homepage-personal__mistake-title {
+    color: #334155;
+    font-size: .84rem;
+    font-weight: 700;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .homepage-personal__mistake-title a {
+    color: inherit;
+  }
+  .homepage-personal__mistake-time {
+    margin-top: .15rem;
+    color: #94a3b8;
+    font-size: .72rem;
+  }
+  .homepage-personal__mistake-action {
+    flex: 0 0 auto;
+    padding: .25rem .5rem;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #2563eb;
+    font-size: .74rem;
+    font-weight: 800;
+    line-height: 1;
+  }
+  .homepage-personal__empty-block {
+    padding: .7rem .75rem;
+    border: 1px dashed #cbd5e1;
+    border-radius: 8px;
+    color: #94a3b8;
+    font-size: .82rem;
+    text-align: center;
+  }
+  @media screen and (max-width: 700px) {
+    .homepage-personal__stats {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+</style>
+{% endif %}

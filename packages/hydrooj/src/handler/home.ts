@@ -2,6 +2,7 @@ import path from 'path';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { isoBase64URL, isoUint8Array } from '@simplewebauthn/server/helpers';
 import yaml from 'js-yaml';
+import moment from 'moment-timezone';
 import { pick } from 'lodash';
 import { lookup } from 'mime-types';
 import { Binary, ObjectId } from 'mongodb';
@@ -23,12 +24,14 @@ import {
 import { getSharedRankingSnapshot, SharedRankingRow } from '../lib/shared_ranking';
 import { verifyTFA } from '../lib/verifyTFA';
 import BlackListModel from '../model/blacklist';
-import { PERM, PRIV } from '../model/builtin';
+import { PERM, PRIV, STATUS } from '../model/builtin';
 import * as contest from '../model/contest';
 import * as discussion from '../model/discussion';
 import domain from '../model/domain';
 import message from '../model/message';
+import * as mistake from '../model/mistake';
 import ProblemModel from '../model/problem';
+import record from '../model/record';
 import * as setting from '../model/setting';
 import storage from '../model/storage';
 import system from '../model/system';
@@ -38,7 +41,7 @@ import user from '../model/user';
 import {
     Handler, param, query, requireSudo, Types,
 } from '../service/server';
-import { camelCase, md5 } from '../utils';
+import { camelCase, md5, Time } from '../utils';
 
 function normalizeBadgeColor(color: string, fallback: string) {
     const value = `${color || fallback}`;
@@ -201,6 +204,96 @@ export class HomeHandler extends Handler {
         return discussion.getNodes(domainId);
     }
 
+    async getPersonalMistakes(domainId: string, limit = 5) {
+        if (!this.user.hasPriv(PRIV.PRIV_USER_PROFILE) || !this.user.hasPerm(PERM.PERM_VIEW_PROBLEM) || this.user._id <= 1) return [];
+        const mdocs = await mistake.getMulti(domainId, {
+            uid: this.user._id,
+            status: 'review',
+        }).sort({ updatedAt: -1, _id: -1 }).limit(limit).toArray();
+        if (!mdocs.length) return [];
+        const pdict = await ProblemModel.getList(
+            domainId,
+            mdocs.map((mdoc) => mdoc.pid),
+            this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN) || this.user._id,
+            false,
+            ProblemModel.PROJECTION_LIST,
+            true,
+        );
+        return mdocs.map((mdoc) => ({ mdoc, pdoc: pdict[mdoc.pid] })).filter((item) => item.pdoc);
+    }
+
+    async getPersonalStats(domainId: string) {
+        if (!this.user.hasPriv(PRIV.PRIV_USER_PROFILE) || this.user._id <= 1) return null;
+        const uid = this.user._id;
+        this.collectUser([uid]);
+
+        const timeZone = this.user.timeZone || system.get('timeZone') || 'Asia/Shanghai';
+        const now = moment().tz(timeZone);
+        const start7 = now.clone().subtract(6, 'days').startOf('day');
+        const start30 = now.clone().subtract(29, 'days').startOf('day');
+
+        let rankingRow = this.rankingRows.get(uid);
+        if (!rankingRow && system.get('ranking.mode') === 'all') {
+            rankingRow = (await getSharedRankingSnapshot()).find((row) => row.uid === uid);
+        }
+
+        const [
+            domainRankingDoc,
+            firstAcceptedRows,
+            mistakes,
+        ] = await Promise.all([
+            rankingRow ? null : domain.collUser.findOne(
+                { domainId, uid },
+                { projection: { rp: 1, nAccept: 1, nSubmit: 1, level: 1, rpInfo: 1 } },
+            ),
+            record.coll.aggregate([
+                {
+                    $match: {
+                        uid,
+                        pid: { $gt: 0 },
+                        status: STATUS.STATUS_ACCEPTED,
+                        contest: { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] },
+                    },
+                },
+                {
+                    $group: {
+                        _id: { domainId: '$domainId', pid: '$pid' },
+                        firstRecordId: { $min: '$_id' },
+                    },
+                },
+                { $match: { firstRecordId: { $gte: Time.getObjectID(start30.toDate()) } } },
+            ]).toArray(),
+            this.getPersonalMistakes(domainId),
+        ]);
+
+        let rank: number | null = rankingRow?.rank || null;
+        if (!rankingRow && domainRankingDoc?.rp) {
+            const strongerCount = await domain.collUser.countDocuments({
+                domainId,
+                uid: { $gt: 1 },
+                rp: { $gt: domainRankingDoc.rp },
+            });
+            rank = strongerCount + 1;
+        }
+
+        let newAc7 = 0;
+        let newAc30 = 0;
+        for (const row of firstAcceptedRows as any[]) {
+            const acceptedAt = row.firstRecordId.getTimestamp();
+            if (acceptedAt >= start30.toDate()) newAc30++;
+            if (acceptedAt >= start7.toDate()) newAc7++;
+        }
+
+        return {
+            uid,
+            rp: rankingRow ? rankingRow.totalRp : Math.round((+domainRankingDoc?.rp || 0) * 100) / 100,
+            rank,
+            newAc7,
+            newAc30,
+            mistakes,
+        };
+    }
+
     async get({ domainId }) {
         const homepageConfig = this.ctx.setting.get('hydrooj.homepage');
         const info = yaml.load(homepageConfig) as any;
@@ -208,6 +301,15 @@ export class HomeHandler extends Handler {
             'recent_problems', 'discussion_nodes', 'suggestion', 'discussion', 'hitokoto',
         ]);
         const contents = [];
+        let personalStatsInserted = false;
+        let personalStatsLoaded = false;
+        let personalStats: any = null;
+        const loadPersonalStats = async () => {
+            if (personalStatsLoaded) return personalStats;
+            personalStatsLoaded = true;
+            personalStats = await this.getPersonalStats(domainId);
+            return personalStats;
+        };
         for (const column of info) {
             const tasks = [];
             for (const name in column) {
@@ -224,11 +326,23 @@ export class HomeHandler extends Handler {
             }
             // eslint-disable-next-line no-await-in-loop
             const sections = await Promise.all(tasks);
+            if (!personalStatsInserted && (+column.width || 0) < 7) {
+                // eslint-disable-next-line no-await-in-loop
+                const stats = await loadPersonalStats();
+                if (stats) {
+                    sections.push(['personal_stats', stats]);
+                    personalStatsInserted = true;
+                }
+            }
             if (!sections.length) continue;
             contents.push({
                 width: column.width,
                 sections,
             });
+        }
+        if (!personalStatsInserted) {
+            const stats = await loadPersonalStats();
+            if (stats) contents.push({ width: 3, sections: [['personal_stats', stats]] });
         }
         if (contents.length) {
             const totalWidth = contents.reduce((sum, column) => sum + (+column.width || 0), 0);
