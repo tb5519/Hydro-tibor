@@ -2,24 +2,142 @@
 {% import "components/contest.html" as contest with context %}
 {% import "components/record.html" as record with context %}
 {% import "components/problem.html" as problem with context %}
+{% import "components/user.html" as user with context %}
 {% block content %}
 {{ set(UiContext, 'tdoc', tdoc) }}
 {{ set(UiContext, 'tsdoc', tsdoc) }}
 <style>
-.contest-detail-hero__header {
-  align-items: flex-start;
+.contest-detail-v2 {
+  --contest-blue: #2f6df6;
+  --contest-blue-deep: #1858dc;
+  --contest-border: #dce5f0;
+  --contest-muted: #6b7788;
+  --contest-text: #111827;
+}
+
+.contest-detail-v2 .section {
+  border: 1px solid rgba(218, 226, 237, .92);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(30, 55, 90, .08);
+  overflow: hidden;
+}
+
+.contest-detail-hero {
+  background:
+    radial-gradient(circle at 83% 28%, rgba(47, 109, 246, .12), rgba(47, 109, 246, 0) 32%),
+    linear-gradient(135deg, #fff 0%, #fff 56%, #f2f7ff 100%);
+}
+
+.contest-detail-hero__body {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) 210px;
+  padding: 32px 36px 34px;
+}
+
+.contest-detail-hero__title {
+  color: var(--contest-text);
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.25;
+  margin: 0 0 12px;
+}
+
+.contest-detail-hero__desc {
+  color: var(--contest-muted);
+  font-size: 16px;
+  margin: 0 0 24px;
+}
+
+.contest-detail-pills {
   display: flex;
-  gap: 16px;
-  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 28px;
 }
 
-.contest-detail-hero__header .section__title {
-  margin-right: 0;
+.contest-detail-pill {
+  align-items: center;
+  background: #eef3f9;
+  border-radius: 7px;
+  color: #334155;
+  display: inline-flex;
+  font-size: 15px;
+  font-weight: 600;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 14px;
 }
 
-.contest-detail-hero__actions {
-  flex: 0 0 auto;
-  padding-top: 2px;
+.contest-detail-pill--live {
+  background: #dcfce7;
+  color: #16803b;
+}
+
+.contest-detail-pill--attended {
+  background: #eaf2ff;
+  color: var(--contest-blue);
+}
+
+.contest-detail-meta-grid {
+  border: 1px solid var(--contest-border);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  max-width: 760px;
+  overflow: hidden;
+}
+
+.contest-detail-meta {
+  align-items: center;
+  border-right: 1px solid var(--contest-border);
+  display: flex;
+  gap: 12px;
+  min-height: 76px;
+  padding: 13px 18px;
+}
+
+.contest-detail-meta:last-child {
+  border-right: 0;
+}
+
+.contest-detail-meta__icon {
+  color: #4b5563;
+  font-size: 22px;
+  width: 24px;
+}
+
+.contest-detail-meta__label {
+  color: #7b8797;
+  font-size: 13px;
+  margin-bottom: 3px;
+}
+
+.contest-detail-meta__value {
+  color: var(--contest-text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.contest-detail-hero__art {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  justify-content: flex-end;
+}
+
+.contest-detail-trophy {
+  align-items: center;
+  background: radial-gradient(circle at 48% 28%, #dce9ff, #9dbcff 58%, #6b93f7);
+  border-radius: 50%;
+  box-shadow: 0 20px 36px rgba(47, 109, 246, .24);
+  color: #fff;
+  display: flex;
+  font-size: 58px;
+  height: 138px;
+  justify-content: center;
+  width: 138px;
 }
 
 .contest-detail-hero__actions form {
@@ -28,28 +146,28 @@
 
 .contest-detail-start {
   align-items: center;
-  background: #2f6df6;
-  border: 1px solid #2f6df6;
+  background: var(--contest-blue);
+  border: 1px solid var(--contest-blue);
   border-radius: 8px;
-  box-shadow: 0 8px 18px rgba(47, 109, 246, .18);
+  box-shadow: 0 12px 22px rgba(47, 109, 246, .24);
   color: #fff !important;
   cursor: pointer;
   display: inline-flex;
-  font-size: 15px;
-  font-weight: 600;
-  gap: 7px;
+  font-size: 17px;
+  font-weight: 700;
+  gap: 9px;
   justify-content: center;
   line-height: 1;
-  min-height: 42px;
-  min-width: 124px;
-  padding: 0 20px;
+  min-height: 58px;
+  min-width: 166px;
+  padding: 0 24px;
   text-decoration: none !important;
   white-space: nowrap;
 }
 
 .contest-detail-start:hover {
-  background: #255dda;
-  border-color: #255dda;
+  background: var(--contest-blue-deep);
+  border-color: var(--contest-blue-deep);
   color: #fff !important;
 }
 
@@ -61,13 +179,187 @@
   cursor: not-allowed;
 }
 
-@media screen and (max-width: 640px) {
-  .contest-detail-hero__header {
-    display: block;
+.contest-detail-content-card .section__body {
+  color: #2f3a4a;
+  font-size: 16px;
+  min-height: 142px;
+  padding: 30px 34px;
+}
+
+.contest-detail-alert {
+  align-items: center;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(180, 83, 9, .08);
+  color: #6b3b08;
+  display: flex;
+  gap: 22px;
+  margin-top: 24px;
+  min-height: 112px;
+  padding: 24px 30px;
+}
+
+.contest-detail-alert__icon {
+  color: #f59e0b;
+  font-size: 42px;
+}
+
+.contest-detail-alert__title {
+  color: #9a3412;
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.contest-detail-alert__text {
+  color: #6b7280;
+  font-size: 15px;
+}
+
+.contest-detail-v2 .medium-3 > .section.side {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.contest-detail-v2 .contest-detail-side-card {
+  background: #fff;
+  border: 1px solid rgba(218, 226, 237, .92);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(30, 55, 90, .08);
+  margin-bottom: 24px;
+  padding: 22px 26px;
+}
+
+.contest-detail-v2 .contest-detail-side-title {
+  border-bottom: 1px solid var(--contest-border);
+  color: var(--contest-text);
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+}
+
+.contest-detail-v2 .contest-detail-side-card .menu {
+  margin: 0;
+}
+
+.contest-detail-v2 .contest-detail-side-card .menu__item {
+  border: 0;
+}
+
+.contest-detail-v2 .contest-detail-side-card .menu__link {
+  border-radius: 7px;
+  color: #4b5563;
+  display: block;
+  font-size: 15px;
+  min-height: 42px;
+  padding: 10px 24px 10px 4px;
+  position: relative;
+}
+
+.contest-detail-v2 .contest-detail-side-card .menu__link .icon {
+  margin-right: 10px;
+}
+
+.contest-detail-v2 .contest-detail-side-card .menu__link:after {
+  color: #6b7280;
+  content: "›";
+  font-size: 24px;
+  line-height: 1;
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.contest-detail-v2 .contest-detail-side-card .menu__link:hover {
+  background: #f7faff;
+  color: var(--contest-blue);
+}
+
+.contest-detail-v2 .contest-detail-side-card form .menu__link {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  width: 100%;
+}
+
+.contest-detail-v2 .contest-detail-side-card .menu__seperator {
+  display: none;
+}
+
+.contest-detail-v2 .contest-detail-info-card .section__body {
+  padding: 0;
+}
+
+.contest-detail-v2 .contest-detail-info-card dl {
+  margin: 0;
+}
+
+.contest-detail-v2 .contest-detail-info-card dt,
+.contest-detail-v2 .contest-detail-info-card dd {
+  border: 0;
+  font-size: 15px;
+  padding: 7px 0;
+}
+
+.contest-detail-v2 .contest-detail-info-card dt {
+  color: #7b8797;
+}
+
+.contest-detail-v2 .contest-detail-info-card dd {
+  color: var(--contest-text);
+  font-weight: 600;
+}
+
+@media screen and (max-width: 900px) {
+  .contest-detail-hero__body {
+    grid-template-columns: 1fr;
   }
 
-  .contest-detail-hero__actions {
-    padding-top: 12px;
+  .contest-detail-hero__art {
+    align-items: flex-start;
+  }
+
+  .contest-detail-meta-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .contest-detail-meta:nth-child(2) {
+    border-right: 0;
+  }
+
+  .contest-detail-meta:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--contest-border);
+  }
+}
+
+@media screen and (max-width: 640px) {
+  .contest-detail-hero__body {
+    padding: 24px 20px;
+  }
+
+  .contest-detail-hero__title {
+    font-size: 25px;
+  }
+
+  .contest-detail-meta-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .contest-detail-meta,
+  .contest-detail-meta:nth-child(2) {
+    border-bottom: 1px solid var(--contest-border);
+    border-right: 0;
+  }
+
+  .contest-detail-meta:last-child {
+    border-bottom: 0;
   }
 
   .contest-detail-start {
@@ -75,58 +367,87 @@
   }
 }
 </style>
-<div class="row">
+<div class="row contest-detail-v2">
   <div class="medium-9 columns">
-    <div class="section">
-      <div class="section__header contest-detail-hero__header">
-        <h1 class="section__title">{{ tdoc.title }}</h1>
-        <div class="contest-detail-hero__actions">
-        {% if model.contest.isNotStarted(tdoc) %}
-          <span class="contest-detail-start contest-detail-start--disabled">{{ _('Not Started') }}</span>
-        {% elif tsdoc.attend or model.contest.isDone(tdoc) %}
-          <a class="contest-detail-start" href="{{ url('contest_problemlist', tid=tdoc.docId) }}">
-            <span class="icon icon-send"></span> {{ _('开始比赛') }}
-          </a>
-        {% elif handler.user.hasPerm(perm.PERM_ATTEND_CONTEST) and handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
-          <form action="{{ url('contest_detail', tid=tdoc.docId) }}" method="POST">
-            <input type="hidden" name="operation" value="attend">
-            <button class="contest-detail-start" {% if tdoc._code %}data-contest-code{% endif %} type="submit">
+    <div class="section contest-detail-hero">
+      <div class="contest-detail-hero__body">
+        <div>
+          <h1 class="contest-detail-hero__title">{{ tdoc.title }}</h1>
+          <p class="contest-detail-hero__desc">本场比赛仅分配给指定学员，个人作答时长不限，可在开放时间内完成。</p>
+          <div class="contest-detail-pills">
+            <span class="contest-detail-pill contest-detail-pill--live">{{ _(model.contest.statusText(tdoc, tsdoc)) }}</span>
+            <span class="contest-detail-pill"><span class="icon icon-award"></span>{{ _(model.contest.RULES[tdoc.rule].TEXT) }}</span>
+            {% if tsdoc.attend %}
+              <span class="contest-detail-pill contest-detail-pill--attended"><span class="icon icon-check"></span>{{ _('Attended') }}</span>
+            {% endif %}
+          </div>
+          <div class="contest-detail-meta-grid">
+            <div class="contest-detail-meta">
+              <span class="contest-detail-meta__icon icon icon-schedule"></span>
+              <div>
+                <div class="contest-detail-meta__label">{{ _('Start at') }}</div>
+                <div class="contest-detail-meta__value">{{ contest.render_time(tsdoc.startAt or tdoc.beginAt) }}</div>
+              </div>
+            </div>
+            <div class="contest-detail-meta">
+              <span class="contest-detail-meta__icon icon icon-schedule"></span>
+              <div>
+                <div class="contest-detail-meta__label">{{ _('Duration') }}</div>
+                <div class="contest-detail-meta__value">{{ contest.render_duration(tdoc) }} {{ _('hour(s)') }}</div>
+              </div>
+            </div>
+            <div class="contest-detail-meta">
+              <span class="contest-detail-meta__icon icon icon-user"></span>
+              <div>
+                <div class="contest-detail-meta__label">{{ _('Host') }}</div>
+                <div class="contest-detail-meta__value">{{ user.render_inline(udict[tdoc.owner], badge=false) }}</div>
+              </div>
+            </div>
+            <div class="contest-detail-meta">
+              <span class="contest-detail-meta__icon icon icon-user--multiple"></span>
+              <div>
+                <div class="contest-detail-meta__label">{{ _('Partic.') }}</div>
+                <div class="contest-detail-meta__value">{{ tdoc['attend']|default(0) }} 人</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="contest-detail-hero__art">
+          <div class="contest-detail-trophy">
+            <span class="icon icon-award"></span>
+          </div>
+          <div class="contest-detail-hero__actions">
+          {% if model.contest.isNotStarted(tdoc) %}
+            <span class="contest-detail-start contest-detail-start--disabled">{{ _('Not Started') }}</span>
+          {% elif tsdoc.attend or model.contest.isDone(tdoc) %}
+            <a class="contest-detail-start" href="{{ url('contest_problemlist', tid=tdoc.docId) }}">
               <span class="icon icon-send"></span> {{ _('开始比赛') }}
-            </button>
-          </form>
-        {% elif not handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
-          <a class="contest-detail-start" href="javascript:showSignInDialog();">
-            <span class="icon icon-send"></span> {{ _('开始比赛') }}
-          </a>
-        {% elif not handler.user._dudoc.join %}
-          <a class="contest-detail-start" href="/domain/join?target={{ tdoc.domainId }}">
-            <span class="icon icon-send"></span> {{ _('开始比赛') }}
-          </a>
-        {% else %}
-          <span class="contest-detail-start contest-detail-start--disabled">{{ _('No Permission to Attend Contest') }}</span>
-        {% endif %}
+            </a>
+          {% elif handler.user.hasPerm(perm.PERM_ATTEND_CONTEST) and handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
+            <form action="{{ url('contest_detail', tid=tdoc.docId) }}" method="POST">
+              <input type="hidden" name="operation" value="attend">
+              <button class="contest-detail-start" {% if tdoc._code %}data-contest-code{% endif %} type="submit">
+                <span class="icon icon-send"></span> {{ _('开始比赛') }}
+              </button>
+            </form>
+          {% elif not handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
+            <a class="contest-detail-start" href="javascript:showSignInDialog();">
+              <span class="icon icon-send"></span> {{ _('开始比赛') }}
+            </a>
+          {% elif not handler.user._dudoc.join %}
+            <a class="contest-detail-start" href="/domain/join?target={{ tdoc.domainId }}">
+              <span class="icon icon-send"></span> {{ _('开始比赛') }}
+            </a>
+          {% else %}
+            <span class="contest-detail-start contest-detail-start--disabled">{{ _('No Permission to Attend Contest') }}</span>
+          {% endif %}
+          </div>
         </div>
       </div>
-      <div class="section__body">
-        <span class="problem__tag-item">{{ _(model.contest.statusText(tdoc, tsdoc)) }}</span>
-        <span class="problem__tag-item icon icon-award">{{ _(model.contest.RULES[tdoc.rule].TEXT) }}</span>
-        <span class="problem__tag-item">{{ _('Start at') }}: {{ contest.render_time(tsdoc.startAt or tdoc.beginAt) }}</span>
-        <span class="problem__tag-item icon icon-schedule">{{ contest.render_duration(tdoc) }} {{ _('hour(s)') }}</span>
-        <span class="problem__tag-item">{{ _('Host') }}: {{ user.render_inline(udict[tdoc.owner], badge=false) }}</span>
-        <span class="problem__tag-item icon icon-user--multiple">{{ tdoc['attend']|default(0) }}</span>
-        {% if tsdoc.attend %}
-          <span class="problem__tag-item icon icon-check">{{ _('Attended') }}</span>
-        {% endif %}
-      </div>
     </div>
-    <div class="section">
+    <div class="section contest-detail-content-card">
       <div class="section__body typo richmedia">
         {{ tdoc['content']|markdown|safe }}
-      {% if model.contest.isOngoing(tdoc, tsdoc) %}
-        <blockquote class="warn">
-          <p>{{ _('We will check code similarity after this contest.') }}</p>
-        </blockquote>
-      {% endif %}
       {% if tdoc.duration %}
         <blockquote class="note">
           <p>{{ _('The contest is a flexible time contest. You need to complete the contest within a specified time after you attended.') }}</p>
@@ -134,6 +455,15 @@
       {% endif %}
       </div>
     </div>
+    {% if model.contest.isOngoing(tdoc, tsdoc) %}
+      <div class="contest-detail-alert">
+        <div class="contest-detail-alert__icon icon icon-help"></div>
+        <div>
+          <div class="contest-detail-alert__title">诚信提醒</div>
+          <div class="contest-detail-alert__text">{{ _('We will check code similarity after this contest.') }}</div>
+        </div>
+      </div>
+    {% endif %}
     {% if files.length %}
       <div class="section">
         <div class="section__header">

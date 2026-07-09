@@ -15,6 +15,10 @@
     </div>
   </a>
 {% endif %}
+{% if page_name == 'contest_detail' %}
+  <div class="contest-detail-side-card contest-detail-nav-card">
+    <div class="contest-detail-side-title">功能导航</div>
+{% endif %}
   <div>
     <ol class="menu">
     {% if page_name == 'discussion_node' or page_name == 'discussion_detail' %}
@@ -129,6 +133,11 @@
       <li class="menu__seperator"></li>
     </ol>
   </div>
+{% if page_name == 'contest_detail' %}
+  </div>
+  <div class="contest-detail-side-card contest-detail-info-card">
+    <div class="contest-detail-side-title"><span class="icon icon-help"></span> 比赛信息</div>
+{% endif %}
   <div class="section__body typo">
     <dl class="large horizontal">
       <dt>{{ _('Status') }}</dt>
@@ -147,4 +156,7 @@
       <dt>{{ _('Partic.') }}</dt><dd>{{ tdoc['attend']|default(0) }}</dd>
     </dl>
   </div>
+{% if page_name == 'contest_detail' %}
+  </div>
+{% endif %}
 </div>
