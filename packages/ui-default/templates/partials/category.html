@@ -1,9 +1,18 @@
-<ul class="group-list" data-widget-cf-container>
+{% set _auto_categories = problemCategoriesAuto|default(false) %}
+{% if problemCategories is defined %}
+  {% set _categories = problemCategories %}
+{% else %}
   {% set _categories = handler.ctx.setting.get('problem.categories')|parseYaml %}
+{% endif %}
+<ul class="group-list" {{ '' if _auto_categories else 'data-widget-cf-container' }}>
   {%- for category, sub_categories in _categories -%}
     <li class="group-list__item">
       <h2 class="section__title">
-        <a href="{{ url('problem_main', query={q:'category:'+category}) }}">{{ category }}</a>
+        {% if _auto_categories %}
+          <span>{{ category }}</span>
+        {% else %}
+          <a href="{{ url('problem_main', query={q:'category:'+category}) }}">{{ category }}</a>
+        {% endif %}
       </h2>
       {% if sub_categories | length > 0 %}
         <ol class="chip-list">
@@ -13,6 +22,8 @@
             </li>
           {%- endfor -%}
         </ol>
+      {% elif _auto_categories %}
+        <div class="typo supplementary">{{ _('No tags') }}</div>
       {% endif %}
     </li>
   {%- endfor -%}

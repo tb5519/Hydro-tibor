@@ -70,6 +70,62 @@ function pickPreferredCodeLang(langs: string[], udoc: User, ddoc?: DomainDoc | n
     return preferred.find((lang) => lang && langs.includes(lang)) || langs[0] || domainCodeLang || udoc.codeLang || 'py.py3';
 }
 
+type ProblemCategoryEntry = [string, string[]];
+
+const AUTO_CATEGORY_GROUPS = [
+    { name: '语言', keywords: ['python', 'c++', 'cpp', 'c语言', 'java', 'javascript', 'js', 'go', 'rust', 'php'] },
+    { name: '入门基础', keywords: ['入门', '基础', '输出', '输入', '变量', '顺序', '模拟'] },
+    { name: '语法结构', keywords: ['选择', '判断', '分支', '循环', '数组', '字符串', '函数'] },
+    {
+        name: '算法与数据结构',
+        keywords: [
+            '排序', '查找', '搜索', '递归', '回溯', '贪心', '动态规划', 'dp', 'bfs', 'dfs',
+            '图论', '最短路', '树', '并查集', '二分', '前缀和', '差分', '栈', '队列', '双指针',
+        ],
+    },
+    { name: '数学逻辑', keywords: ['数学', '数论', '组合', '概率', '高精度', '枚举', '取余', '取整', '日期'] },
+    { name: '竞赛考级', keywords: ['gesp', 'csp', 'noip', '蓝桥', '真题', '模拟赛', '信息素养', '竞赛'] },
+];
+
+function normalizeProblemTag(tag: unknown) {
+    return String(tag || '').trim();
+}
+
+function inferProblemTagGroup(tag: string) {
+    const structured = tag.split(/[/>＞:：|]/).map((i) => i.trim()).filter((i) => i);
+    if (structured.length > 1 && structured[0].length <= 12) return structured[0];
+    const lowered = tag.toLowerCase();
+    for (const group of AUTO_CATEGORY_GROUPS) {
+        if (group.keywords.some((keyword) => lowered.includes(keyword.toLowerCase()) || tag.includes(keyword))) return group.name;
+    }
+    return '其他标签';
+}
+
+async function buildAutoProblemCategories(domainId: string, udoc: User): Promise<ProblemCategoryEntry[]> {
+    const tagCounts = new Map<string, number>();
+    await problem.getMulti(domainId, buildQuery(udoc), ['tag']).forEach((pdoc) => {
+        for (const rawTag of pdoc.tag || []) {
+            const tag = normalizeProblemTag(rawTag);
+            if (!tag) continue;
+            tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+        }
+    });
+    const grouped = new Map<string, [string, number][]>();
+    for (const entry of tagCounts.entries()) {
+        const group = inferProblemTagGroup(entry[0]);
+        grouped.set(group, [...(grouped.get(group) || []), entry]);
+    }
+    const groupOrder = new Map(AUTO_CATEGORY_GROUPS.map((group, index) => [group.name, index]));
+    groupOrder.set('其他标签', AUTO_CATEGORY_GROUPS.length);
+    return [...grouped.entries()]
+        .sort(([a], [b]) => (groupOrder.get(a) ?? 999) - (groupOrder.get(b) ?? 999) || a.localeCompare(b))
+        .map(([group, tags]) => [
+            group,
+            tags.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 24).map(([tag]) => tag),
+        ] as ProblemCategoryEntry)
+        .filter(([, tags]) => tags.length);
+}
+
 const defaultSearch = async (domainId: string, q: string, options?: ProblemSearchOptions) => {
     const escaped = escapeRegExp(q.toLowerCase());
     const projection: (keyof ProblemDoc)[] = ['domainId', 'docId', 'pid'];
@@ -187,6 +243,7 @@ export class ProblemMainHandler extends Handler {
                 pdocs.map((i) => i.docId),
             ));
         }
+        const problemCategories = pjax ? [] : await buildAutoProblemCategories(domainId, this.user);
         if (pjax) {
             this.response.body = {
                 title: this.renderTitle(this.translate('problem_main')),
@@ -208,6 +265,8 @@ export class ProblemMainHandler extends Handler {
                 psdict,
                 qs: q,
                 sort: sortStrategy,
+                problemCategories,
+                problemCategoriesAuto: true,
             };
         }
     }

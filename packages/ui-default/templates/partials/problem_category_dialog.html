@@ -1,4 +1,9 @@
-{% set _categories = handler.ctx.setting.get('problem.categories')|parseYaml %}
+{% set _auto_categories = problemCategoriesAuto|default(false) %}
+{% if problemCategories is defined %}
+  {% set _categories = problemCategories %}
+{% else %}
+  {% set _categories = handler.ctx.setting.get('problem.categories')|parseYaml %}
+{% endif %}
 <div class="dialog--category-filter" style="display:none;">
   <div>
     <div class="category-filter__header">      
@@ -14,10 +19,12 @@
         <div class="subcategory__selected">
           <h2>{{ _('Selected categories') }}: </h2>
           <div class="list flex-row flex-wrap">
+            {% if not _auto_categories %}
             <div class="chip-list__item search-tag__item hide selected" data-selection="category:{{ category }}">
               {{ category }}
               <span class="icon icon-close"></span>            
-            </div>            
+            </div>
+            {% endif %}
             {%- for sub_category in sub_categories -%}
             <div class="chip-list__item search-tag__item hide selected" data-selection="category:{{ sub_category }}">
               {{ sub_category }}
@@ -30,7 +37,9 @@
         <div class="subcategory__all">
           <h2>{{ category }}: </h2>
           <div class="list flex-row flex-wrap">
-            <div class="chip-list__item search-tag__item" data-selection="category:{{ category }}">{{ category }}</div>          
+            {% if not _auto_categories %}
+            <div class="chip-list__item search-tag__item" data-selection="category:{{ category }}">{{ category }}</div>
+            {% endif %}
             {%- for sub_category in sub_categories -%}
             <div class="chip-list__item search-tag__item" data-selection="category:{{ sub_category }}">{{ sub_category }}</div>
             {%- endfor -%}
