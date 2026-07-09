@@ -43,7 +43,7 @@ export function getProblemRpDifficulty(pdoc: { difficulty?: number, nSubmit?: nu
 export const RpTypes: Record<string, RpDef> = {
     problem: {
         async run(domainIds, udict, report) {
-            const problems = await problem.getMulti('', { domainId: { $in: domainIds }, nAccept: { $gt: 0 }, hidden: false }).toArray();
+            const problems = await problem.getMulti('', { domainId: { $in: domainIds }, nAccept: { $gt: 0 } }).toArray();
             if (problems.length) await report({ message: `Found ${problems.length} problems in ${domainIds[0]}` });
             const solved = Counter();
             for (const pdoc of problems) {
