@@ -24,40 +24,44 @@
 
 .contest-detail-hero {
   background:
-    radial-gradient(circle at 83% 28%, rgba(47, 109, 246, .12), rgba(47, 109, 246, 0) 32%),
-    linear-gradient(135deg, #fff 0%, #fff 56%, #f2f7ff 100%);
+    radial-gradient(circle at 84% 30%, rgba(72, 125, 255, .14), rgba(72, 125, 255, 0) 31%),
+    linear-gradient(135deg, #fff 0%, #fff 58%, #f5f9ff 100%);
 }
 
 .contest-detail-hero__body {
   align-items: center;
   display: grid;
-  gap: 22px;
-  grid-template-columns: minmax(0, 1fr) 178px;
-  padding: 26px 30px 28px;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) 196px;
+  min-height: 292px;
+  padding: 24px 28px;
 }
 
 .contest-detail-hero__title {
   color: var(--contest-text);
-  font-size: 28px;
+  font-size: 23px;
   font-weight: 700;
-  line-height: 1.34;
-  margin: 0 0 10px;
-  max-width: 760px;
+  line-height: 1.28;
+  margin: 0 0 8px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .contest-detail-hero__desc {
   color: var(--contest-muted);
-  font-size: 16px;
-  line-height: 1.65;
-  margin: 0 0 18px;
-  max-width: 780px;
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 0 0 16px;
+  max-width: 720px;
 }
 
 .contest-detail-pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: 10px;
+  margin-bottom: 18px;
 }
 
 .contest-detail-pill {
@@ -66,11 +70,11 @@
   border-radius: 7px;
   color: #334155;
   display: inline-flex;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
-  gap: 7px;
-  min-height: 38px;
-  padding: 0 14px;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 13px;
 }
 
 .contest-detail-pill--live {
@@ -87,8 +91,8 @@
   border: 1px solid var(--contest-border);
   border-radius: 8px;
   display: grid;
-  grid-template-columns: 1.15fr .82fr 1.08fr .74fr;
-  max-width: 820px;
+  grid-template-columns: 1.12fr .86fr 1.08fr .78fr;
+  max-width: 680px;
   overflow: hidden;
 }
 
@@ -96,9 +100,9 @@
   align-items: center;
   border-right: 1px solid var(--contest-border);
   display: flex;
-  gap: 12px;
-  min-height: 64px;
-  padding: 10px 14px;
+  gap: 10px;
+  min-height: 56px;
+  padding: 9px 12px;
 }
 
 .contest-detail-meta:last-child {
@@ -107,20 +111,20 @@
 
 .contest-detail-meta__icon {
   color: #4b5563;
-  flex: 0 0 22px;
-  font-size: 21px;
-  width: 22px;
+  flex: 0 0 20px;
+  font-size: 19px;
+  width: 20px;
 }
 
 .contest-detail-meta__label {
   color: #7b8797;
-  font-size: 13px;
-  margin-bottom: 2px;
+  font-size: 12px;
+  margin-bottom: 1px;
 }
 
 .contest-detail-meta__value {
   color: var(--contest-text);
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -136,21 +140,100 @@
   align-items: center;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  justify-content: flex-end;
+  gap: 14px;
+  justify-content: center;
 }
 
 .contest-detail-trophy {
   align-items: center;
-  background: radial-gradient(circle at 48% 28%, #dce9ff, #9dbcff 58%, #6b93f7);
-  border-radius: 50%;
-  box-shadow: 0 20px 36px rgba(47, 109, 246, .24);
-  color: #fff;
+  background: linear-gradient(180deg, rgba(234, 242, 255, .86), rgba(215, 228, 255, .64));
+  border: 1px solid rgba(184, 206, 250, .72);
+  border-radius: 26px;
+  box-shadow: 0 18px 34px rgba(47, 109, 246, .13);
   display: flex;
-  font-size: 46px;
   height: 112px;
   justify-content: center;
-  width: 112px;
+  overflow: hidden;
+  position: relative;
+  width: 132px;
+}
+
+.contest-detail-trophy:before,
+.contest-detail-trophy:after {
+  content: "";
+  position: absolute;
+}
+
+.contest-detail-trophy:before {
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, .82), rgba(255, 255, 255, 0) 18%),
+    linear-gradient(180deg, #8eb4ff 0%, #4d82f4 100%);
+  border-radius: 18px 18px 24px 24px;
+  box-shadow:
+    0 16px 24px rgba(47, 109, 246, .23),
+    inset 0 1px 0 rgba(255, 255, 255, .5);
+  height: 68px;
+  left: 42px;
+  top: 22px;
+  width: 48px;
+}
+
+.contest-detail-trophy:after {
+  background: linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .72));
+  border-radius: 999px 999px 12px 12px;
+  bottom: 16px;
+  box-shadow: 0 8px 18px rgba(47, 109, 246, .18);
+  height: 12px;
+  left: 37px;
+  width: 58px;
+}
+
+.contest-detail-trophy__handle {
+  border: 8px solid rgba(120, 160, 245, .65);
+  border-left-color: transparent;
+  border-radius: 50%;
+  height: 30px;
+  position: absolute;
+  top: 34px;
+  width: 30px;
+}
+
+.contest-detail-trophy__handle--left {
+  left: 27px;
+  transform: rotate(180deg);
+}
+
+.contest-detail-trophy__handle--right {
+  right: 27px;
+}
+
+.contest-detail-trophy__star {
+  color: rgba(255, 255, 255, .94);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  position: relative;
+  text-shadow: 0 1px 6px rgba(35, 83, 190, .35);
+  z-index: 1;
+}
+
+.contest-detail-trophy__spark {
+  background: #8db2ff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px rgba(141, 178, 255, .12);
+  height: 4px;
+  position: absolute;
+  width: 4px;
+}
+
+.contest-detail-trophy__spark--one {
+  right: 28px;
+  top: 20px;
+}
+
+.contest-detail-trophy__spark--two {
+  left: 30px;
+  top: 30px;
 }
 
 .contest-detail-hero__actions form {
@@ -166,14 +249,14 @@
   color: #fff !important;
   cursor: pointer;
   display: inline-flex;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
-  gap: 9px;
+  gap: 8px;
   justify-content: center;
   line-height: 1;
-  min-height: 50px;
-  min-width: 150px;
-  padding: 0 24px;
+  min-height: 44px;
+  min-width: 136px;
+  padding: 0 22px;
   text-decoration: none !important;
   white-space: nowrap;
 }
@@ -335,6 +418,10 @@
     grid-template-columns: 1fr;
   }
 
+  .contest-detail-hero__title {
+    white-space: normal;
+  }
+
   .contest-detail-hero__art {
     align-items: flex-start;
   }
@@ -358,7 +445,7 @@
   }
 
   .contest-detail-hero__title {
-    font-size: 25px;
+    font-size: 22px;
   }
 
   .contest-detail-meta-grid {
@@ -442,8 +529,12 @@
           </div>
         </div>
         <div class="contest-detail-hero__art">
-          <div class="contest-detail-trophy">
-            <span class="icon icon-award"></span>
+          <div class="contest-detail-trophy" aria-hidden="true">
+            <span class="contest-detail-trophy__handle contest-detail-trophy__handle--left"></span>
+            <span class="contest-detail-trophy__handle contest-detail-trophy__handle--right"></span>
+            <span class="contest-detail-trophy__spark contest-detail-trophy__spark--one"></span>
+            <span class="contest-detail-trophy__spark contest-detail-trophy__spark--two"></span>
+            <span class="contest-detail-trophy__star">&#9733;</span>
           </div>
           <div class="contest-detail-hero__actions">
           {% if model.contest.isNotStarted(tdoc) %}
