@@ -49,7 +49,6 @@ inject('Nav', 'problem_mistake', { prefix: 'problem_mistake', before: 'training_
 inject('Nav', 'training_main', { prefix: 'training' }, PERM.PERM_VIEW_TRAINING);
 inject('Nav', 'contest_main', { prefix: 'contest' }, PERM.PERM_VIEW_CONTEST);
 inject('Nav', 'homework_main', { prefix: 'homework' }, PERM.PERM_VIEW_HOMEWORK);
-inject('Nav', 'discussion_main', { prefix: 'discussion' }, PERM.PERM_VIEW_DISCUSSION);
 inject('Nav', 'record_main', {
     prefix: 'record',
     query: (handler) => (handler.user.hasPriv(PRIV.PRIV_USER_PROFILE)
