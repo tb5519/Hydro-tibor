@@ -16,15 +16,15 @@ const SPECIAL_BADGES = {
     strongest: {
         title: '最强王者',
         short: '🏆最强王者',
-        backgroundColor: 'FFD400',
-        fontColor: '111827',
+        backgroundColor: 'FFD700',
+        fontColor: '000000',
         content: '每周日 22:00 自动分配给排行榜第一名同学。',
     },
     shadow: {
         title: '暗影骑士',
         short: '♞ 暗影骑士',
-        backgroundColor: '111827',
-        fontColor: 'FACC15',
+        backgroundColor: '111111',
+        fontColor: 'FFD700',
         content: '每周日 22:00 自动分配给最近一周 AC 数最多的同学。',
     },
 };
