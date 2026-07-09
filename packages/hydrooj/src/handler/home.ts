@@ -204,11 +204,14 @@ export class HomeHandler extends Handler {
     async get({ domainId }) {
         const homepageConfig = this.ctx.setting.get('hydrooj.homepage');
         const info = yaml.load(homepageConfig) as any;
+        const hiddenHomepageSections = new Set([
+            'recent_problems', 'discussion_nodes', 'suggestion', 'discussion', 'hitokoto',
+        ]);
         const contents = [];
         for (const column of info) {
             const tasks = [];
             for (const name in column) {
-                if (name === 'width') continue;
+                if (name === 'width' || hiddenHomepageSections.has(name)) continue;
                 const func = `get${camelCase(name).replace(/^[a-z]/, (i) => i.toUpperCase())}`;
                 if (!this[func]) tasks.push([name, column[name]]);
                 else {
@@ -219,11 +222,29 @@ export class HomeHandler extends Handler {
                     );
                 }
             }
+            // eslint-disable-next-line no-await-in-loop
+            const sections = await Promise.all(tasks);
+            if (!sections.length) continue;
             contents.push({
                 width: column.width,
-                // eslint-disable-next-line no-await-in-loop
-                sections: await Promise.all(tasks),
+                sections,
             });
+        }
+        if (contents.length) {
+            const totalWidth = contents.reduce((sum, column) => sum + (+column.width || 0), 0);
+            if (totalWidth && totalWidth !== 12) {
+                let assignedWidth = 0;
+                for (let i = 0; i < contents.length; i++) {
+                    const width = i === contents.length - 1
+                        ? 12 - assignedWidth
+                        : Math.max(1, Math.min(
+                            12,
+                            Math.round((+contents[i].width || 0) * 12 / totalWidth),
+                        ));
+                    contents[i].width = width;
+                    assignedWidth += width;
+                }
+            }
         }
         const udict = await user.getList(domainId, Array.from(this.uids));
         for (const [uid, row] of this.rankingRows) {
