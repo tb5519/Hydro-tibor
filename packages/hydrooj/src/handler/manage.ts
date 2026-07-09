@@ -248,7 +248,14 @@ class SystemTrainingDashboardHandler extends SystemHandler {
         const joined = await domain.collUser.find({ domainId: { $in: dashboardDomainIds }, uid: { $gt: 1 }, join: true })
             .project({ uid: 1 })
             .toArray();
-        const uids = Array.from(new Set(joined.map((i) => i.uid))).sort((a, b) => a - b);
+        const rawUids = Array.from(new Set(joined.map((i) => i.uid))).sort((a, b) => a - b);
+        const userPrivDocs = rawUids.length
+            ? await user.getMulti({ _id: { $in: rawUids } }, ['_id', 'priv']).toArray()
+            : [];
+        const studentUidSet = new Set(userPrivDocs
+            .filter((udoc) => (udoc.priv & PRIV.PRIV_USER_PROFILE) && !(udoc.priv & PRIV.PRIV_EDIT_SYSTEM))
+            .map((udoc) => udoc._id));
+        const uids = rawUids.filter((uid) => studentUidSet.has(uid));
         const emptyDaily = Object.fromEntries(days.map((date) => [date, {
             date,
             submitCount: 0,

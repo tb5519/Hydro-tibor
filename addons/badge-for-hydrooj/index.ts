@@ -1,10 +1,144 @@
-import { Context, Handler, NotFoundError, param, PRIV, Types } from 'hydrooj';
+import moment from 'moment-timezone';
+import { ObjectId } from 'mongodb';
+import { Context, Handler, NotFoundError, param, PRIV, STATUS, Types } from 'hydrooj';
+import { getSharedRankingSnapshot } from 'hydrooj/src/lib/shared_ranking';
+import RecordModel from 'hydrooj/src/model/record';
+import { Time } from 'hydrooj/src/utils';
 import { Badge } from './model';
 
 const UserBadgeModel = global.Hydro.model.userBadge;
 const BadgeModel = global.Hydro.model.badge;
 
 const user = global.Hydro.model.user;
+const SPECIAL_BADGE_TASK = 'badge.autoAssignSpecial';
+const SPECIAL_BADGE_TIMEZONE = 'Asia/Shanghai';
+const SPECIAL_BADGES = {
+    strongest: {
+        title: '最强王者',
+        short: '🏆最强王者',
+        backgroundColor: 'FFD400',
+        fontColor: '111827',
+        content: '每周日 22:00 自动分配给排行榜第一名同学。',
+    },
+    shadow: {
+        title: '暗影骑士',
+        short: '♞ 暗影骑士',
+        backgroundColor: '111827',
+        fontColor: 'FACC15',
+        content: '每周日 22:00 自动分配给最近一周 AC 数最多的同学。',
+    },
+};
+
+function nextSunday22() {
+    const now = moment().tz(SPECIAL_BADGE_TIMEZONE);
+    const next = now.clone().day(7).hour(22).minute(0).second(0).millisecond(0);
+    if (next.isSameOrBefore(now)) next.add(7, 'days');
+    return next.toDate();
+}
+
+function isStudentPriv(priv = 0) {
+    return !!(priv & PRIV.PRIV_USER_PROFILE) && !(priv & PRIV.PRIV_EDIT_SYSTEM);
+}
+
+async function getStudentUidSet(ctx: Context, uids: number[]) {
+    if (!uids.length) return new Set<number>();
+    const udocs = await ctx.db.collection('user').find({ _id: { $in: uids } })
+        .project({ _id: 1, priv: 1 })
+        .toArray();
+    return new Set(udocs.filter((udoc) => isStudentPriv(udoc.priv)).map((udoc) => udoc._id));
+}
+
+async function ensureSpecialBadge(ctx: Context, config: typeof SPECIAL_BADGES.strongest) {
+    const current = await ctx.db.collection('badge').findOne({ title: config.title });
+    if (current) {
+        await ctx.db.collection('badge').updateOne({ _id: current._id }, {
+            $set: {
+                short: config.short,
+                backgroundColor: config.backgroundColor,
+                fontColor: config.fontColor,
+                content: config.content,
+            },
+        });
+        return current._id;
+    }
+    const max = await ctx.db.collection('badge').find().sort({ _id: -1 }).limit(1).next();
+    const badgeId = (max?._id || 0) + 1;
+    await ctx.db.collection('badge').insertOne({
+        _id: badgeId,
+        short: config.short,
+        title: config.title,
+        backgroundColor: config.backgroundColor,
+        fontColor: config.fontColor,
+        content: config.content,
+        users: [],
+        createAt: new Date(),
+    });
+    return badgeId;
+}
+
+async function replaceBadgeOwners(ctx: Context, badgeId: number, owners: number[]) {
+    await ctx.db.collection('badge').updateOne({ _id: badgeId }, { $set: { users: owners } });
+    await ctx.db.collection('userBadge').deleteMany({ badgeId, owner: { $nin: owners } });
+    await ctx.db.collection('user').updateMany(
+        { badgeId, _id: { $nin: owners } },
+        { $unset: { badgeId: '', badge: '' } },
+    );
+    for (const uid of owners) {
+        const exists = await ctx.db.collection('userBadge').findOne({ owner: uid, badgeId });
+        if (!exists) await ctx.db.collection('userBadge').insertOne({ owner: uid, badgeId, getAt: new Date() });
+        await UserBadgeModel.userBadgeSel(ctx, uid, badgeId);
+    }
+    ctx.broadcast('user/delcache', true);
+}
+
+async function getStrongestUid(ctx: Context) {
+    const rows = await getSharedRankingSnapshot();
+    const candidateUids = rows.map((row) => row.uid);
+    const studentUidSet = await getStudentUidSet(ctx, candidateUids);
+    return rows.find((row) => studentUidSet.has(row.uid))?.uid || null;
+}
+
+async function getWeeklyAcChampionUid(ctx: Context) {
+    const since = moment().tz(SPECIAL_BADGE_TIMEZONE).subtract(7, 'days').toDate();
+    const rows = await RecordModel.coll.aggregate([
+        {
+            $match: {
+                _id: { $gte: Time.getObjectID(since) },
+                uid: { $gt: 1 },
+                pid: { $gt: 0 },
+                status: STATUS.STATUS_ACCEPTED,
+                contest: { $nin: [RecordModel.RECORD_PRETEST, RecordModel.RECORD_GENERATE] },
+            },
+        },
+        {
+            $group: {
+                _id: '$uid',
+                ac: { $sum: 1 },
+                lastRecordId: { $max: '$_id' },
+            },
+        },
+        { $sort: { ac: -1, lastRecordId: -1, _id: 1 } },
+        { $limit: 50 },
+    ]).toArray();
+    const candidateUids = rows.map((row) => row._id);
+    const studentUidSet = await getStudentUidSet(ctx, candidateUids);
+    return rows.find((row) => studentUidSet.has(row._id))?._id || null;
+}
+
+async function assignSpecialBadges(ctx: Context) {
+    const [strongestBadgeId, shadowBadgeId] = await Promise.all([
+        ensureSpecialBadge(ctx, SPECIAL_BADGES.strongest),
+        ensureSpecialBadge(ctx, SPECIAL_BADGES.shadow),
+    ]);
+    const [strongestUid, shadowUid] = await Promise.all([
+        getStrongestUid(ctx),
+        getWeeklyAcChampionUid(ctx),
+    ]);
+    await Promise.all([
+        replaceBadgeOwners(ctx, strongestBadgeId, strongestUid ? [strongestUid] : []),
+        replaceBadgeOwners(ctx, shadowBadgeId, shadowUid ? [shadowUid] : []),
+    ]);
+}
 
 class UserBadgeManageHandler extends Handler {
 
@@ -113,6 +247,22 @@ class BadgeDetailHandler extends Handler {
 
 
 export async function apply(ctx: Context) {
+    await ctx.inject(['worker'], (c) => {
+        c.worker.addHandler(SPECIAL_BADGE_TASK, async () => assignSpecialBadges(ctx));
+    });
+    if (!process.env.NODE_APP_INSTANCE || process.env.NODE_APP_INSTANCE === '0') {
+        const exists = await ctx.db.collection('schedule').countDocuments({ type: 'schedule', subType: SPECIAL_BADGE_TASK });
+        if (!exists) {
+            await ctx.db.collection('schedule').insertOne({
+                _id: new ObjectId(),
+                type: 'schedule',
+                subType: SPECIAL_BADGE_TASK,
+                executeAfter: nextSunday22(),
+                interval: [1, 'week'],
+            });
+        }
+    }
+
     ctx.Route('badge_manage', '/manage/badge', BadgeManageHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
     ctx.Route('badge_add', '/badge/add', BadgeAddHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
     ctx.Route('badge_edit', '/badge/:id/edit', BadgeEditHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
