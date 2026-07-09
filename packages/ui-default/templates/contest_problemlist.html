@@ -7,180 +7,56 @@
 {{ set(UiContext, 'tsdoc', tsdoc) }}
 {% set hasCorrection = correction and Object.keys(correction).length %}
 <style>
-.page--contest_problemlist .contest-problems-card {
-  overflow: hidden;
-  border: 1px solid #dbe6f3;
-  border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 12px 28px rgba(31, 45, 61, .06);
-}
-.page--contest_problemlist .contest-problems-card .section__header {
-  padding: 22px 24px 16px;
-  border-bottom: 1px solid #e8eef6;
-}
-.page--contest_problemlist .contest-problems-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-}
-.page--contest_problemlist .contest-problems-title {
-  margin: 0;
-  color: #0f172a;
-  font-weight: 700;
-}
-.page--contest_problemlist .contest-problems-subtitle {
-  margin-top: 7px;
-  color: #64748b;
-  font-size: 14px;
-  line-height: 1.5;
-}
 .page--contest_problemlist .contest-problems-count {
-  flex: none;
-  padding: 7px 13px;
+  display: inline-flex;
+  margin-left: 10px;
+  padding: 3px 10px;
   border-radius: 999px;
   background: #eef5ff;
   color: #2f6df6;
-  font-size: 14px;
-  font-weight: 700;
-}
-.page--contest_problemlist .contest-problems-table-wrap {
-  overflow-x: auto;
-}
-.page--contest_problemlist .contest-problems-table {
-  min-width: 760px;
-  table-layout: fixed;
-}
-.page--contest_problemlist .contest-problems-table thead th {
-  padding: 13px 16px;
-  border-top: 0;
-  border-bottom: 1px solid #e6edf5;
-  background: #f8fbff;
-  color: #64748b;
   font-size: 13px;
   font-weight: 700;
-}
-.page--contest_problemlist .contest-problems-table tbody tr {
-  background: #fff;
-  transition: background .16s ease, box-shadow .16s ease;
-}
-.page--contest_problemlist .contest-problems-table tbody tr:nth-child(even) {
-  background: #fbfdff;
-}
-.page--contest_problemlist .contest-problems-table tbody tr:hover {
-  background: #f3f7ff;
-}
-.page--contest_problemlist .contest-problems-table td {
-  padding: 15px 16px;
-  border-top: 1px solid #edf2f7;
+  line-height: 1.35;
   vertical-align: middle;
-  line-height: 1.45;
-}
-.page--contest_problemlist .contest-problems-table .col--problem {
-  border-left: 1px solid #e6edf5;
-}
-.page--contest_problemlist .contest-problems-table .col--status {
-  color: #334155;
-  font-weight: 650;
-}
-.page--contest_problemlist .contest-problems-table .col--submit-at {
-  color: #64748b;
-  font-size: 13px;
-}
-.page--contest_problemlist .contest-problems-table .col--score {
-  color: #0f172a;
-  font-weight: 700;
-}
-.page--contest_problemlist .contest-problem-cell {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-}
-.page--contest_problemlist .contest-problem-main {
-  min-width: 0;
-}
-.page--contest_problemlist .contest-problem-title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  color: #1f2937;
-  font-weight: 700;
-}
-.page--contest_problemlist .contest-problem-title a {
-  color: #1f2937;
-  text-decoration: none;
-}
-.page--contest_problemlist .contest-problem-title a:hover {
-  color: #2f6df6;
-}
-.page--contest_problemlist .contest-problem-limits {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 7px;
 }
 .page--contest_problemlist .contest-problem-limit {
-  display: inline-flex;
-  align-items: center;
-  margin: 0 !important;
-  padding: 4px 8px !important;
+  font-size: .75rem;
+  margin: 0;
+  padding: 0 5px !important;
   border: 1px solid #dce7f3;
   border-radius: 999px;
   background: #eef4fb;
   color: #526174;
-  font-size: 12px;
-  line-height: 1.2;
 }
-.page--contest_problemlist .contest-problem-submit {
+.page--contest_problemlist .contest-problem-submit-link {
   display: inline-flex;
-  flex: none;
+  float: right;
   align-items: center;
-  gap: 5px;
-  padding: 7px 13px;
+  gap: 4px;
+  padding: 2px 10px;
   border-radius: 999px;
   background: #eaf2ff;
   color: #2f6df6 !important;
-  font-weight: 700;
+  font-weight: 650;
   text-decoration: none !important;
   transition: background .16s ease, color .16s ease;
 }
-.page--contest_problemlist .contest-problem-submit:hover {
+.page--contest_problemlist .contest-problem-submit-link:hover {
   background: #2f6df6;
   color: #fff !important;
 }
-.page--contest_problemlist .contest-problem-submit .icon {
+.page--contest_problemlist .contest-problem-submit-link .icon {
   color: inherit;
-}
-@media screen and (max-width: 768px) {
-  .page--contest_problemlist .contest-problems-card .section__header {
-    padding: 18px 18px 14px;
-  }
-  .page--contest_problemlist .contest-problems-header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-  .page--contest_problemlist .contest-problem-cell {
-    align-items: flex-start;
-    flex-direction: column;
-  }
 }
 </style>
 <div class="row" data-sticky-parent>
   <div class="medium-9 columns">
-    <div class="section contest-problems-card">
+    <div class="section">
       <div class="section__header">
-        <div class="contest-problems-header">
-          <div>
-            <h1 class="section__title contest-problems-title">{{ _('Problems') }}</h1>
-            <div class="contest-problems-subtitle">按顺序完成比赛题目，右侧可直接进入递交。</div>
-          </div>
-          <div class="contest-problems-count">{{ tdoc.pids.length }} 题</div>
-        </div>
+        <h1 class="section__title">{{ _('Problems') }} <span class="contest-problems-count">{{ tdoc.pids.length }} 题</span></h1>
       </div>
-      <div class="section__body no-padding contest-problems-table-wrap">
-        <table class="data-table contest-problems-table">
+      <div class="section__body no-padding">
+        <table class="data-table">
           <colgroup>
           {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
             <col class="col--status">
@@ -240,22 +116,14 @@
               <td class="col--score">{{ tdoc.score[pid]|default(100) }}</td>
             {% endif %}
               <td class="col--problem col--problem-name">
-                <div class="contest-problem-cell">
-                  <div class="contest-problem-main">
-                    <div class="contest-problem-title">
-                      {{ problem.render_problem_title(pdict[pid], tdoc, alphabetic=true) }}
-                    </div>
-                    {% if pdict[pid].config.type != 'objective' and pdict[pid].config.type != 'submit_answer' %}
-                      <div class="contest-problem-limits">
-                        <span class="contest-problem-limit icon icon-stopwatch">{{ pdict[pid].config.timeMax if pdict[pid].config.timeMax == pdict[pid].config.timeMin else pdict[pid].config.timeMin+'~'+pdict[pid].config.timeMax }}ms</span>
-                        <span class="contest-problem-limit icon icon-comparison">{{ pdict[pid].config.memoryMax if pdict[pid].config.memoryMax == pdict[pid].config.memoryMin else pdict[pid].config.memoryMin+'~'+pdict[pid].config.memoryMax }}MiB</span>
-                      </div>
-                    {% endif %}
-                  </div>
-                  {% if pdict[pid].config.type != 'objective' %}
-                    <a href="{{ url('problem_submit', pid=pid, query={tid:tdoc.docId}) }}" target="_blank" class="contest-problem-submit"><span class="icon icon-send"></span>{{ _('Submit') }}</a>
-                  {% endif %}
-                </div>
+                {{ problem.render_problem_title(pdict[pid], tdoc, alphabetic=true) }}
+                {% if pdict[pid].config.type != 'objective' and pdict[pid].config.type != 'submit_answer' %}
+                  <span class="problem__tag-item contest-problem-limit icon icon-stopwatch">{{ pdict[pid].config.timeMax if pdict[pid].config.timeMax == pdict[pid].config.timeMin else pdict[pid].config.timeMin+'~'+pdict[pid].config.timeMax }}ms</span>
+                  <span class="problem__tag-item contest-problem-limit icon icon-comparison">{{ pdict[pid].config.memoryMax if pdict[pid].config.memoryMax == pdict[pid].config.memoryMin else pdict[pid].config.memoryMin+'~'+pdict[pid].config.memoryMax }}MiB</span>
+                {% endif %}
+                {% if pdict[pid].config.type != 'objective' %}
+                  <a href="{{ url('problem_submit', pid=pid, query={tid:tdoc.docId}) }}" target="_blank" class="typo-a contest-problem-submit-link"><span class="icon icon-send">{{ _('Submit') }}</span></a>
+                {% endif %}
               </td>
             </tr>
           {%- endfor -%}
