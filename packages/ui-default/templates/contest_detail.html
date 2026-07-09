@@ -5,11 +5,107 @@
 {% block content %}
 {{ set(UiContext, 'tdoc', tdoc) }}
 {{ set(UiContext, 'tsdoc', tsdoc) }}
+<style>
+.contest-detail-hero__header {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.contest-detail-hero__header .section__title {
+  margin-right: 0;
+}
+
+.contest-detail-hero__actions {
+  flex: 0 0 auto;
+  padding-top: 2px;
+}
+
+.contest-detail-hero__actions form {
+  margin: 0;
+}
+
+.contest-detail-start {
+  align-items: center;
+  background: #2f6df6;
+  border: 1px solid #2f6df6;
+  border-radius: 8px;
+  box-shadow: 0 8px 18px rgba(47, 109, 246, .18);
+  color: #fff !important;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 15px;
+  font-weight: 600;
+  gap: 7px;
+  justify-content: center;
+  line-height: 1;
+  min-height: 42px;
+  min-width: 124px;
+  padding: 0 20px;
+  text-decoration: none !important;
+  white-space: nowrap;
+}
+
+.contest-detail-start:hover {
+  background: #255dda;
+  border-color: #255dda;
+  color: #fff !important;
+}
+
+.contest-detail-start--disabled {
+  background: #eef2f7;
+  border-color: #d9e2ec;
+  box-shadow: none;
+  color: #718096 !important;
+  cursor: not-allowed;
+}
+
+@media screen and (max-width: 640px) {
+  .contest-detail-hero__header {
+    display: block;
+  }
+
+  .contest-detail-hero__actions {
+    padding-top: 12px;
+  }
+
+  .contest-detail-start {
+    width: 100%;
+  }
+}
+</style>
 <div class="row">
   <div class="medium-9 columns">
     <div class="section">
-      <div class="section__header" style="align: center">
+      <div class="section__header contest-detail-hero__header">
         <h1 class="section__title">{{ tdoc.title }}</h1>
+        <div class="contest-detail-hero__actions">
+        {% if model.contest.isNotStarted(tdoc) %}
+          <span class="contest-detail-start contest-detail-start--disabled">{{ _('Not Started') }}</span>
+        {% elif tsdoc.attend or model.contest.isDone(tdoc) %}
+          <a class="contest-detail-start" href="{{ url('contest_problemlist', tid=tdoc.docId) }}">
+            <span class="icon icon-send"></span> {{ _('开始比赛') }}
+          </a>
+        {% elif handler.user.hasPerm(perm.PERM_ATTEND_CONTEST) and handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
+          <form action="{{ url('contest_detail', tid=tdoc.docId) }}" method="POST">
+            <input type="hidden" name="operation" value="attend">
+            <button class="contest-detail-start" {% if tdoc._code %}data-contest-code{% endif %} type="submit">
+              <span class="icon icon-send"></span> {{ _('开始比赛') }}
+            </button>
+          </form>
+        {% elif not handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
+          <a class="contest-detail-start" href="javascript:showSignInDialog();">
+            <span class="icon icon-send"></span> {{ _('开始比赛') }}
+          </a>
+        {% elif not handler.user._dudoc.join %}
+          <a class="contest-detail-start" href="/domain/join?target={{ tdoc.domainId }}">
+            <span class="icon icon-send"></span> {{ _('开始比赛') }}
+          </a>
+        {% else %}
+          <span class="contest-detail-start contest-detail-start--disabled">{{ _('No Permission to Attend Contest') }}</span>
+        {% endif %}
+        </div>
       </div>
       <div class="section__body">
         <span class="problem__tag-item">{{ _(model.contest.statusText(tdoc, tsdoc)) }}</span>
