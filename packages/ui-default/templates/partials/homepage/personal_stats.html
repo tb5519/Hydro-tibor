@@ -124,13 +124,49 @@
     font-weight: 700;
   }
   .homepage-personal__badge-list {
+    align-items: center;
     display: flex;
     flex-wrap: wrap;
-    gap: .4rem;
+    gap: 4px;
     min-height: 24px;
+    min-width: 0;
+    overflow: hidden;
   }
   .homepage-personal__badge {
+    border-radius: 999px;
+    font-size: 11px;
+    line-height: 1.65;
     margin: 0 !important;
+    max-width: 104px;
+    overflow: hidden;
+    padding: 0 7px;
+    position: relative;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .homepage-personal__badge:not(.user-profile-badge--more) {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, .42), 0 0 12px rgba(59, 130, 246, .22);
+    isolation: isolate;
+  }
+  .homepage-personal__badge:not(.user-profile-badge--more)::after {
+    animation: homepage-personal-badge-shine 3.2s ease-in-out infinite;
+    background: linear-gradient(115deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0) 38%, rgba(255, 255, 255, .72) 50%, rgba(255, 255, 255, 0) 62%, rgba(255, 255, 255, 0) 100%);
+    border-radius: inherit;
+    content: '';
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+    transform: translateX(-120%);
+    z-index: 1;
+  }
+  @keyframes homepage-personal-badge-shine {
+    0%, 42% {
+      transform: translateX(-120%);
+    }
+
+    62%, 100% {
+      transform: translateX(120%);
+    }
   }
   .homepage-personal__empty {
     color: #94a3b8;
@@ -240,6 +276,11 @@
   @media screen and (max-width: 700px) {
     .homepage-personal__stats {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .homepage-personal__badge:not(.user-profile-badge--more)::after {
+      animation: none;
     }
   }
 </style>

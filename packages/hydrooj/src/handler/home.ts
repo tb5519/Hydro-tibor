@@ -286,7 +286,7 @@ export class HomeHandler extends Handler {
 
         return {
             uid,
-            rp: rankingRow ? rankingRow.totalRp : Math.round((+domainRankingDoc?.rp || 0) * 100) / 100,
+            rp: Math.floor(rankingRow ? rankingRow.totalRp : (+domainRankingDoc?.rp || 0)),
             rank,
             newAc7,
             newAc30,
