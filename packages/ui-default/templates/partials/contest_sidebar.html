@@ -1,6 +1,6 @@
 {% import "components/user.html" as user with context %}
 {% import "components/contest.html" as contest with context %}
-<div class="section side">
+<div class="section side{% if page_name == 'contest_problemlist' %} contest-list-sidebar{% endif %}">
 {% if page_name != 'contest_detail' %}
   <a class="contest-sidebar__bg" href="{{ url('contest_detail', tid=tdoc.docId) }}">
     <div class="section__body">
@@ -115,6 +115,7 @@
     <div class="contest-detail-side-title"><span class="icon icon-help"></span> 比赛信息</div>
 {% endif %}
   <div class="section__body typo">
+    {% if page_name == 'contest_problemlist' %}<div class="contest-list-info-title">比赛信息</div>{% endif %}
     <dl class="large horizontal">
       <dt>{{ _('Status') }}</dt>
       <dd>

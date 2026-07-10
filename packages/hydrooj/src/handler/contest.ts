@@ -30,6 +30,38 @@ import {
     Handler, param, post, Type, Types,
 } from '../service/server';
 
+function normalizeContestBadgeColor(color: string, fallback: string) {
+    const value = `${color || fallback}`;
+    return value.startsWith('#') ? value : `#${value}`;
+}
+
+async function attachContestOwnedBadges(ctx: Context, udict: Record<number, any>) {
+    const udocs = Object.values(udict).filter(Boolean);
+    const uids = Array.from(new Set(udocs.map((udoc) => udoc._id).filter((uid) => typeof uid === 'number')));
+    for (const udoc of udocs) udoc.ownedBadges = [];
+    if (!uids.length) return;
+    const userBadges = await (ctx.db as any).collection('userBadge').find({ owner: { $in: uids } }).sort({ badgeId: 1 }).toArray();
+    const badgeIds = Array.from(new Set(userBadges.map((doc: any) => doc.badgeId).filter((badgeId) => typeof badgeId === 'number')));
+    if (!badgeIds.length) return;
+    const badges = await (ctx.db as any).collection('badge').find({ _id: { $in: badgeIds } }).toArray();
+    const badgeMap = new Map(badges.map((badge: any) => [badge._id, badge]));
+    const ownedBadges: Record<number, any[]> = {};
+    for (const doc of userBadges as any[]) {
+        const badge = badgeMap.get(doc.badgeId) as any;
+        if (!badge) continue;
+        ownedBadges[doc.owner] ||= [];
+        ownedBadges[doc.owner].push({
+            id: badge._id,
+            displayName: badge.short || `${badge._id}`,
+            backgroundColor: normalizeContestBadgeColor(badge.backgroundColor, 'e5edf5'),
+            fontColor: normalizeContestBadgeColor(badge.fontColor, '1f2937'),
+            tooltip: badge.title || badge.short || `${badge._id}`,
+            href: `/badge/${badge._id}`,
+        });
+    }
+    for (const udoc of udocs) udoc.ownedBadges = ownedBadges[udoc._id] || [];
+}
+
 export class ContestListHandler extends Handler {
     @param('rule', Types.Range(contest.RULES), true)
     @param('group', Types.Name, true)
@@ -135,11 +167,6 @@ export class ContestDetailBaseHandler extends Handler {
                 name: 'contest_print',
                 args: { tid, prefix: 'contest_print' },
                 checker: () => this.tdoc.allowPrint && (this.tsdoc?.attend || this.user.own(this.tdoc) || this.user.hasPerm(PERM.PERM_EDIT_CONTEST)),
-            },
-            {
-                name: 'contest_scoreboard',
-                args: { tid, prefix: 'contest_scoreboard' },
-                checker: () => contest.canShowScoreboard.call(this, this.tdoc, true),
             },
             {
                 name: 'problem_detail',
@@ -296,13 +323,36 @@ export class ContestProblemListHandler extends ContestDetailBaseHandler {
     async get(domainId: string, tid: ObjectId) {
         if (contest.isNotStarted(this.tdoc)) throw new ContestNotLiveError(domainId, tid);
         if (!this.tsdoc?.attend && !contest.isDone(this.tdoc)) throw new ContestNotAttendedError(domainId, tid);
-        const [pdict, udict, tcdocs] = await Promise.all([
+        const [pdict, udict] = await Promise.all([
             problem.getList(domainId, this.tdoc.pids, true, true, problem.PROJECTION_CONTEST_LIST),
             user.getList(domainId, [this.tdoc.owner, this.user._id]),
-            contest.getMultiClarification(domainId, tid, this.user._id),
         ]);
+        const canShowEmbeddedScoreboard = this.user.hasPerm(PERM.PERM_VIEW_CONTEST_SCOREBOARD)
+            && contest.canShowScoreboard.call(this, this.tdoc, true);
+        let contestScoreboardRows = [];
+        let contestScoreboardUdict = {};
+        let contestScoreboardPdict = {};
+        if (canShowEmbeddedScoreboard) {
+            const config: ScoreboardConfig = {
+                isExport: false,
+                showDisplayName: this.user.hasPerm(PERM.PERM_VIEW_USER_PRIVATE_INFO),
+            };
+            if (this.tdoc.lockAt && !this.tdoc.unlocked) config.lockAt = this.tdoc.lockAt;
+            [, contestScoreboardRows, contestScoreboardUdict, contestScoreboardPdict] = await contest.getScoreboard.call(
+                this, domainId, tid, config,
+            );
+            await attachContestOwnedBadges(this.ctx, contestScoreboardUdict);
+        }
         this.response.body = {
-            pdict, psdict: {}, udict, rdict: {}, tdoc: this.tdoc, tcdocs,
+            pdict,
+            psdict: {},
+            udict,
+            rdict: {},
+            tdoc: this.tdoc,
+            canShowEmbeddedScoreboard,
+            contestScoreboardRows,
+            contestScoreboardUdict,
+            contestScoreboardPdict,
         };
         this.response.template = 'contest_problemlist.html';
         this.response.body.showScore = Object.values(this.tdoc.score || {}).some((i) => i && i !== 100);

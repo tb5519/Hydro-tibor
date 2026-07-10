@@ -7,12 +7,24 @@
 {{ set(UiContext, 'tdoc', tdoc) }}
 {{ set(UiContext, 'tsdoc', tsdoc) }}
 <style>
+.page--contest_detail #nprogress {
+  display: none !important;
+}
+.page--contest_detail .main {
+  padding-top: 30px;
+  padding-bottom: 48px;
+}
 .contest-detail-v2 {
   --contest-blue: #2f6df6;
   --contest-blue-deep: #1858dc;
   --contest-border: #dce5f0;
   --contest-muted: #6b7788;
   --contest-text: #111827;
+  box-sizing: border-box;
+  width: calc(100% - 40px);
+  max-width: 1240px;
+  margin-right: auto;
+  margin-left: auto;
 }
 
 .contest-detail-v2 .section {
@@ -414,6 +426,15 @@
 }
 
 @media screen and (max-width: 900px) {
+  .contest-detail-v2 {
+    width: calc(100% - 24px);
+  }
+
+  .contest-detail-v2 > .medium-9,
+  .contest-detail-v2 > .medium-3 {
+    width: 100%;
+  }
+
   .contest-detail-hero__body {
     grid-template-columns: 1fr;
   }
@@ -440,6 +461,15 @@
 }
 
 @media screen and (max-width: 640px) {
+  .page--contest_detail .main {
+    padding-top: 12px;
+    padding-bottom: 28px;
+  }
+
+  .contest-detail-v2 {
+    width: calc(100% - 16px);
+  }
+
   .contest-detail-hero__body {
     padding: 24px 20px;
   }

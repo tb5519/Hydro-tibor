@@ -1,4 +1,6 @@
 {% import "components/user.html" as user with context %}
+{% set scoreboardUserDict = embeddedScoreboardUdict|default(udict) %}
+{% set scoreboardProblemDict = embeddedScoreboardPdict|default(pdict) %}
 {% macro renderRecord(cell, canView) %}
   {% if canView %}<a href="{{ url('record_detail', rid=cell.raw) }}">{% endif %}
   {%- set _color = utils.status.getScoreColor(cell.score|default(cell.value)) -%}
@@ -19,7 +21,7 @@
     </div>
   {% endif %}
   <div class="section__body no-padding overflow-hidden-horizontal">
-    <table class="data-table">
+    <table class="data-table{% if embeddedScoreboard %} contest-embedded-scoreboard__table{% endif %}">
       <colgroup>
       {%- for column in rows[0] -%}
         <col class="col--{{ column.type }}">
@@ -30,8 +32,8 @@
         {%- for column in rows[0] -%}
           <th class="col--{{ column.type }}">
           {%- if column.type == 'problem' and column.raw -%}
-            <a href="{{ url('problem_detail', pid=column.raw, query={tid:tdoc.docId}) }}" data-tooltip="{{ pdict[column.raw].title }}">
-              {{ column.value }}<br />{{ pdict[column.raw].nAccept|default(0) }}/{{ pdict[column.raw].nSubmit|default(0) }}
+            <a href="{{ url('problem_detail', pid=column.raw, query={tid:tdoc.docId}) }}" data-tooltip="{{ scoreboardProblemDict[column.raw].title }}">
+              {{ column.value }}<br />{{ scoreboardProblemDict[column.raw].nAccept|default(0) }}/{{ scoreboardProblemDict[column.raw].nSubmit|default(0) }}
             </a>
           {%- else -%}
             {{ column.value|string|nl2br|safe }}
@@ -43,18 +45,35 @@
       <tbody>
       {%- set canViewAll = handler.user.own(tdoc) or model.contest.canShowRecord.call(handler, tdoc) -%}
       {%- for row in rows -%}{%- if loop.index0 > 0 -%}
-        <tr>
+        {%- set scoreboardRowUdoc = scoreboardUserDict[row[1].raw] -%}
+        {%- set scoreboardRowBadges = scoreboardRowUdoc.ownedBadges|default([]) -%}
+        {%- set scoreboardRowBadgeCount = scoreboardRowBadges|length or (1 if scoreboardRowUdoc.badge else 0) -%}
+        {%- set scoreboardRowBadgeLevel = 20 if scoreboardRowBadgeCount > 20 else scoreboardRowBadgeCount -%}
+        <tr{% if embeddedScoreboard and scoreboardRowBadgeCount %} class="contest-scoreboard-row--badge" style="--contest-badge-alpha:{{ 10 + scoreboardRowBadgeLevel * 2 }}%;--contest-badge-edge-width:{{ 3 + scoreboardRowBadgeLevel / 2 }}px;--contest-badge-speed:{{ 5.5 - scoreboardRowBadgeLevel / 8 }}s"{% endif %}>
           {%- for column in row -%}
             <td class="col--{{ rows[0][loop.index0]['type'] }}"{% if column.style %} style="{{ column.style }}"{% endif %}>
             {%- if column.type == 'rank' -%}
               <span class="{{ 'rank--unrank' if column.value == '0' else 'rank--normal' }}">{{ '*' if column.value == '0' else column.value|string|nl2br|safe }}</span>
             {%- elif column.type == 'user' -%}
               {%- set canView = canViewAll or handler.user._id == column.raw -%}
+              {%- if not embeddedScoreboard -%}
               <button class="star user--{{ column.raw }}" data-uid="{{ column.raw }}">
                 <span class="starred--hide"><span class="icon icon-star--outline" data-tooltip="{{ _('Star') }}"></span></span>
                 <span class="starred--show"><span class="icon icon-star" data-tooltip="{{ _('Unstar') }}"></span></span>
               </button>
-              {{ user.render_inline(udict[column.raw], badge=false) }}
+              {{ user.render_inline(scoreboardUserDict[column.raw], badge=false) }}
+              {%- else -%}
+              <div class="ranking-user contest-ranking-user">
+                <div class="ranking-user__main">
+                  {{ user.render_inline(scoreboardUserDict[column.raw], avatar=true, badge=false) }}
+                  {%- if scoreboardUserDict[column.raw].level -%}
+                    {%- set scoreboardUserLevel = scoreboardUserDict[column.raw].level -%}
+                    <a class="user-profile-badge v-center badge--lv{{ scoreboardUserLevel }}" href="{{ url('user_detail', uid=column.raw) }}" data-tooltip="{{ _('LV '+ scoreboardUserLevel) }}: Top {{ model.builtin.LEVELS[scoreboardUserLevel]|default('N/A') }}%">{{ _('LV '+ scoreboardUserLevel) }}</a>
+                  {%- endif -%}
+                  {{ user.render_custom_badges(scoreboardUserDict[column.raw], 4, 'ranking-user__badge') }}
+                </div>
+              </div>
+              {%- endif -%}
             {%- elif column.type == 'record' and column.raw -%}
               {{ renderRecord(column, canView) }}
             {%- elif column.type == 'records' -%}

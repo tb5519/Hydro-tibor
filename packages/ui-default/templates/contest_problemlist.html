@@ -1,262 +1,802 @@
 {% extends "layout/basic.html" %}
 {% import "components/contest.html" as contest with context %}
-{% import "components/record.html" as record with context %}
 {% import "components/problem.html" as problem with context %}
+{% import "components/user.html" as user with context %}
 {% block content %}
 {{ set(UiContext, 'tdoc', tdoc) }}
 {{ set(UiContext, 'tsdoc', tsdoc) }}
 {% set hasCorrection = correction and Object.keys(correction).length %}
 <style>
+.page--contest_problemlist {
+  --contest-bg: #f3f6fb;
+  --contest-surface: #fff;
+  --contest-surface-soft: #f8faff;
+  --contest-border: #dfe7f2;
+  --contest-text: #182235;
+  --contest-muted: #68778f;
+  --contest-blue: #2f6df6;
+  --contest-blue-soft: #edf4ff;
+}
+.page--contest_problemlist #nprogress {
+  display: none !important;
+}
+.page--contest_problemlist .main {
+  padding-top: 34px;
+  padding-bottom: 52px;
+  background: var(--contest-bg);
+}
+.page--contest_problemlist .contest-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 20px;
+  width: calc(100% - 40px);
+  max-width: 1240px;
+  margin: 0 auto;
+}
+.page--contest_problemlist .contest-workspace__main,
+.page--contest_problemlist .contest-workspace__aside {
+  min-width: 0;
+}
+.page--contest_problemlist .contest-panel,
+.page--contest_problemlist .contest-list-sidebar,
+.page--contest_problemlist .contest-materials {
+  overflow: hidden;
+  border: 1px solid var(--contest-border);
+  border-radius: 12px;
+  background: var(--contest-surface);
+  box-shadow: 0 10px 28px rgba(35, 56, 88, .07);
+}
+.page--contest_problemlist .contest-panel {
+  margin-bottom: 18px;
+}
+.page--contest_problemlist .contest-panel__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 70px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--contest-border);
+}
+.page--contest_problemlist .contest-panel__icon {
+  display: inline-flex;
+  flex: 0 0 34px;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--contest-blue-soft);
+  color: var(--contest-blue);
+  font-size: 18px;
+}
+.page--contest_problemlist .contest-panel__title {
+  margin: 0;
+  color: var(--contest-text);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.3;
+}
 .page--contest_problemlist .contest-problems-count {
   display: inline-flex;
-  margin-left: 10px;
-  padding: 3px 10px;
+  align-items: center;
+  margin-left: 2px;
+  padding: 4px 11px;
   border-radius: 999px;
-  background: #eef5ff;
-  color: #2f6df6;
+  background: var(--contest-blue-soft);
+  color: var(--contest-blue);
   font-size: 13px;
   font-weight: 700;
-  line-height: 1.35;
-  vertical-align: middle;
+}
+.page--contest_problemlist .contest-problem-list {
+  width: 100%;
+}
+.page--contest_problemlist .contest-problem-list__header,
+.page--contest_problemlist .contest-problem-list__row {
+  display: grid;
+  grid-template-columns: 155px minmax(220px, 1fr) 82px 210px 92px;
+  align-items: center;
+  column-gap: 14px;
+}
+.page--contest_problemlist .contest-problem-list__header {
+  min-height: 50px;
+  padding: 0 22px;
+  color: var(--contest-muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+.page--contest_problemlist .contest-problem-list__row {
+  position: relative;
+  min-height: 68px;
+  padding: 0 22px;
+  border-top: 1px solid var(--contest-border);
+  color: var(--contest-text);
+  transition: background-color .16s ease;
+}
+.page--contest_problemlist .contest-problem-list__row:nth-child(odd) {
+  background: #fbfcff;
+}
+.page--contest_problemlist .contest-problem-list__row:hover {
+  background: #f5f8ff;
+}
+.page--contest_problemlist .contest-problem-list__row.pass {
+  background: linear-gradient(90deg, rgba(235, 250, 241, .92) 0, rgba(255, 255, 255, .98) 28%);
+}
+.page--contest_problemlist .contest-problem-list__row.pass:before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: #35b967;
+}
+.page--contest_problemlist .contest-problem-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #344258;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none !important;
+}
+.page--contest_problemlist .contest-problem-status .record-status--icon {
+  flex: none;
+}
+.page--contest_problemlist .contest-problem-status--empty:before {
+  content: "";
+  flex: 0 0 17px;
+  width: 17px;
+  height: 17px;
+  border: 1.5px dashed #91a0b5;
+  border-radius: 50%;
+}
+.page--contest_problemlist .contest-problem-correction {
+  margin-top: 3px;
+  color: var(--contest-muted);
+  font-size: 11px;
+}
+.page--contest_problemlist .contest-problem-title {
+  min-width: 0;
+  font-weight: 650;
+}
+.page--contest_problemlist .contest-problem-title a {
+  display: block;
+  overflow: hidden;
+  color: var(--contest-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.page--contest_problemlist .contest-problem-title a:hover {
+  color: var(--contest-blue);
+}
+.page--contest_problemlist .contest-problem-score {
+  text-align: center;
+  font-weight: 650;
+}
+.page--contest_problemlist .contest-problem-limits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
 }
 .page--contest_problemlist .contest-problem-limit {
-  font-size: .75rem;
-  margin: 0;
-  padding: 0 5px !important;
-  border: 1px solid #dce7f3;
-  border-radius: 999px;
-  background: #eef4fb;
+  display: inline-flex;
+  align-items: center;
+  margin: 0 !important;
+  padding: 5px 9px !important;
+  border: 1px solid #d9e4f1;
+  border-radius: 8px;
+  background: #f5f8fc;
   color: #526174;
+  font-size: 12px;
+  line-height: 1.2;
+}
+.page--contest_problemlist .contest-problem-limit:before {
+  margin-right: 4px;
+}
+.page--contest_problemlist .contest-problem-limit--plain {
+  color: var(--contest-muted);
+}
+.page--contest_problemlist .contest-problem-action {
+  text-align: right;
 }
 .page--contest_problemlist .contest-problem-submit-link {
+  box-sizing: border-box;
   display: inline-flex;
-  float: right;
   align-items: center;
-  gap: 4px;
-  padding: 2px 10px;
-  border-radius: 999px;
-  background: #eaf2ff;
-  color: #2f6df6 !important;
-  font-weight: 650;
+  justify-content: center;
+  gap: 5px;
+  min-width: 76px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #d7e4fa;
+  border-radius: 8px;
+  background: #f5f8ff;
+  color: var(--contest-blue) !important;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
   text-decoration: none !important;
-  transition: background .16s ease, color .16s ease;
+  transition: border-color .16s ease, background .16s ease, color .16s ease;
 }
 .page--contest_problemlist .contest-problem-submit-link:hover {
-  background: #2f6df6;
+  border-color: var(--contest-blue);
+  background: var(--contest-blue);
   color: #fff !important;
 }
 .page--contest_problemlist .contest-problem-submit-link .icon {
   color: inherit;
 }
+.page--contest_problemlist .contest-record-table-wrap {
+  overflow-x: auto;
+}
+.page--contest_problemlist .contest-record-table {
+  min-width: 690px;
+  table-layout: auto;
+}
+.page--contest_problemlist .contest-record-table thead {
+  background: #fbfcff;
+}
+.page--contest_problemlist .contest-record-table th,
+.page--contest_problemlist .contest-record-table td {
+  border-color: var(--contest-border);
+}
+.page--contest_problemlist .contest-record-table th {
+  height: 48px;
+  padding-top: 0;
+  padding-bottom: 0;
+  color: var(--contest-muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+.page--contest_problemlist .contest-record-table td {
+  height: 58px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.page--contest_problemlist .contest-record-table tbody tr:has(.col--status.pass) {
+  background: linear-gradient(90deg, rgba(235, 250, 241, .9), #fff 34%);
+}
+.page--contest_problemlist .contest-empty {
+  display: flex;
+  min-height: 148px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  color: #8a98ad;
+  text-align: center;
+}
+.page--contest_problemlist .contest-empty .icon {
+  color: #cad8f2;
+  font-size: 46px;
+}
+.page--contest_problemlist .contest-scoreboard-card .contest-panel__header {
+  justify-content: flex-start;
+}
+.page--contest_problemlist .contest-scoreboard-note {
+  margin-left: auto;
+  color: var(--contest-muted);
+  font-size: 12px;
+}
+.page--contest_problemlist .contest-scoreboard-wrap {
+  overflow-x: auto;
+}
+.page--contest_problemlist .contest-scoreboard-wrap .section__table-header {
+  position: static !important;
+  top: auto !important;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table {
+  width: 100%;
+  min-width: 680px;
+  table-layout: auto;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table thead {
+  background: #f8faff;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table th,
+.page--contest_problemlist .contest-embedded-scoreboard__table td {
+  height: 52px;
+  padding: 8px 12px;
+  border-color: var(--contest-border);
+  font-size: 13px;
+  vertical-align: middle;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table th {
+  color: var(--contest-muted);
+  font-weight: 650;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table .col--rank {
+  width: 56px;
+  text-align: center;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table .col--user {
+  min-width: 250px;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table .col--problem,
+.page--contest_problemlist .contest-embedded-scoreboard__table .col--record,
+.page--contest_problemlist .contest-embedded-scoreboard__table .col--records,
+.page--contest_problemlist .contest-embedded-scoreboard__table .col--time,
+.page--contest_problemlist .contest-embedded-scoreboard__table .col--solved,
+.page--contest_problemlist .contest-embedded-scoreboard__table .col--total_score {
+  min-width: 72px;
+  text-align: center;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user,
+.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__main {
+  min-width: 0;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__avatar {
+  flex: 0 0 auto;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__name {
+  display: inline-block;
+  max-width: 110px;
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__short-badges,
+.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__custom-badges {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__badge {
+  position: relative;
+  max-width: 104px;
+  overflow: hidden;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.65;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__badge:not(.user-profile-badge--more) {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .45), 0 0 12px rgba(59, 130, 246, .22);
+  isolation: isolate;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__badge:not(.user-profile-badge--more):after {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: linear-gradient(115deg, transparent 0%, transparent 38%, rgba(255, 255, 255, .75) 50%, transparent 62%, transparent 100%);
+  content: "";
+  pointer-events: none;
+  animation: contest-scoreboard-badge-shine 3.2s ease-in-out infinite;
+  transform: translateX(-120%);
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table tbody tr.contest-scoreboard-row--badge {
+  position: relative;
+  isolation: isolate;
+  background:
+    linear-gradient(105deg, transparent 0%, transparent 35%, rgba(255, 255, 255, .92) 47%, rgba(168, 85, 247, .22) 52%, transparent 65%, transparent 100%) -1800px 0 / 1800px 100% repeat-x,
+    linear-gradient(112deg, rgba(59, 130, 246, var(--contest-badge-alpha)), rgba(34, 211, 238, var(--contest-badge-alpha)) 44%, rgba(168, 85, 247, var(--contest-badge-alpha)) 100%),
+    #fff;
+  animation: contest-scoreboard-row-shine var(--contest-badge-speed) linear infinite;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table tbody tr.contest-scoreboard-row--badge td {
+  position: relative;
+  z-index: 1;
+  background: transparent !important;
+}
+.page--contest_problemlist .contest-embedded-scoreboard__table tbody tr.contest-scoreboard-row--badge td:first-child {
+  box-shadow: inset var(--contest-badge-edge-width) 0 0 #60a5fa;
+}
+.page--contest_problemlist .contest-scoreboard-empty {
+  min-height: 130px;
+}
+@keyframes contest-scoreboard-row-shine {
+  from { background-position: -1800px 0, 0 0, 0 0; }
+  to { background-position: 0 0, 0 0, 0 0; }
+}
+@keyframes contest-scoreboard-badge-shine {
+  0%, 42% { transform: translateX(-120%); }
+  62%, 100% { transform: translateX(120%); }
+}
+.page--contest_problemlist .contest-materials {
+  margin-bottom: 18px;
+}
+.page--contest_problemlist .contest-list-sidebar {
+  margin: 0;
+  font-size: 13px;
+}
+.page--contest_problemlist .contest-list-sidebar .contest-sidebar__bg {
+  position: relative;
+  min-height: 180px;
+  overflow: hidden;
+  padding: 0;
+  background: linear-gradient(135deg, #3569f4 0%, #2957e8 58%, #5f87f7 100%);
+}
+.page--contest_problemlist .contest-list-sidebar .contest-sidebar__bg:before,
+.page--contest_problemlist .contest-list-sidebar .contest-sidebar__bg:after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+.page--contest_problemlist .contest-list-sidebar .contest-sidebar__bg:before {
+  right: -55px;
+  bottom: -78px;
+  width: 250px;
+  height: 185px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .18);
+  transform: rotate(-18deg);
+}
+.page--contest_problemlist .contest-list-sidebar .contest-sidebar__bg:after {
+  content: "★";
+  right: 26px;
+  top: 42px;
+  color: #ffe169;
+  font-size: 86px;
+  line-height: 1;
+  text-shadow: 0 9px 16px rgba(88, 72, 0, .24);
+  transform: rotate(13deg);
+}
+.page--contest_problemlist .contest-list-sidebar .contest-sidebar__bg .section__body {
+  position: relative;
+  z-index: 1;
+  padding: 26px 118px 24px 22px;
+}
+.page--contest_problemlist .contest-list-sidebar .contest-sidebar__bg h1 {
+  margin: 0;
+  color: #fff;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.45;
+  text-shadow: none;
+}
+.page--contest_problemlist .contest-list-sidebar .contest-sidebar__status {
+  margin-top: 22px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 650;
+}
+.page--contest_problemlist .contest-list-sidebar .menu {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 16px 13px;
+  border-bottom: 1px solid var(--contest-border);
+}
+.page--contest_problemlist .contest-list-sidebar .menu__item {
+  min-width: 0;
+  border: 1px solid var(--contest-border);
+  border-radius: 9px;
+  background: #fff;
+}
+.page--contest_problemlist .contest-list-sidebar .menu__item:hover {
+  border-color: #bfd0ed;
+  background: #f8faff;
+}
+.page--contest_problemlist .contest-list-sidebar .menu__item form {
+  width: 100%;
+  height: 100%;
+}
+.page--contest_problemlist .contest-list-sidebar .menu__link {
+  display: flex;
+  width: 100%;
+  min-height: 72px;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px 3px;
+  color: #2f3949;
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
+}
+.page--contest_problemlist .contest-list-sidebar .menu__link:hover {
+  color: var(--contest-blue);
+  text-decoration: none;
+}
+.page--contest_problemlist .contest-list-sidebar .menu__link .icon {
+  margin: 0;
+  color: #303a4b;
+  font-size: 22px;
+}
+.page--contest_problemlist .contest-list-sidebar .menu__seperator {
+  display: none;
+}
+.page--contest_problemlist .contest-list-sidebar > .section__body {
+  margin: 18px 14px 16px;
+  padding: 18px;
+  border: 1px solid var(--contest-border);
+  border-radius: 10px;
+}
+.page--contest_problemlist .contest-list-info-title {
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--contest-border);
+  color: var(--contest-text);
+  font-size: 16px;
+  font-weight: 700;
+}
+.page--contest_problemlist .contest-list-sidebar dl.horizontal dt {
+  color: var(--contest-muted);
+}
+.page--contest_problemlist .contest-list-sidebar dl.horizontal dd {
+  color: var(--contest-text);
+}
+.page--contest_problemlist .contest-timer {
+  left: 18px;
+  top: 74px;
+  z-index: 90;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--contest-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 4px 14px rgba(35, 56, 88, .08);
+  color: #334155;
+  font-size: 13px;
+  line-height: 1;
+}
+@media screen and (max-width: 1240px) {
+  .page--contest_problemlist .contest-workspace {
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 18px;
+  }
+  .page--contest_problemlist .contest-problem-list__header,
+  .page--contest_problemlist .contest-problem-list__row {
+    grid-template-columns: 140px minmax(180px, 1fr) 70px 180px 82px;
+    column-gap: 10px;
+  }
+  .page--contest_problemlist .contest-list-sidebar .menu {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media screen and (max-width: 960px) {
+  .page--contest_problemlist .contest-workspace {
+    grid-template-columns: 1fr;
+  }
+  .page--contest_problemlist .contest-list-sidebar .menu {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+@media screen and (max-width: 720px) {
+  .page--contest_problemlist .main {
+    padding: 12px 0 28px;
+  }
+  .page--contest_problemlist .contest-workspace {
+    width: calc(100% - 20px);
+    gap: 12px;
+  }
+  .page--contest_problemlist .contest-workspace__aside {
+    display: block;
+  }
+  .page--contest_problemlist .contest-panel,
+  .page--contest_problemlist .contest-list-sidebar,
+  .page--contest_problemlist .contest-materials {
+    margin-left: 0;
+    margin-right: 0;
+    border-radius: 10px;
+    box-shadow: 0 5px 18px rgba(35, 56, 88, .06);
+  }
+  .page--contest_problemlist .contest-panel__header {
+    min-height: 62px;
+    padding: 0 16px;
+  }
+  .page--contest_problemlist .contest-panel__title {
+    font-size: 19px;
+  }
+  .page--contest_problemlist .contest-problem-list__header {
+    display: none;
+  }
+  .page--contest_problemlist .contest-problem-list__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px 14px;
+    min-height: 0;
+    padding: 16px;
+  }
+  .page--contest_problemlist .contest-problem-status-cell {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .page--contest_problemlist .contest-problem-title {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .page--contest_problemlist .contest-problem-score {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .page--contest_problemlist .contest-problem-score:after {
+    content: "分";
+  }
+  .page--contest_problemlist .contest-problem-limits {
+    grid-column: 1;
+    grid-row: 3;
+  }
+  .page--contest_problemlist .contest-problem-action {
+    grid-column: 2;
+    grid-row: 3;
+  }
+  .page--contest_problemlist .contest-list-sidebar {
+    margin-bottom: 12px;
+  }
+  .page--contest_problemlist .contest-list-sidebar .menu {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .page--contest_problemlist .contest-timer {
+    display: none !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .page--contest_problemlist .contest-embedded-scoreboard__table tbody tr.contest-scoreboard-row--badge,
+  .page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__badge:not(.user-profile-badge--more):after {
+    animation: none;
+  }
+}
 </style>
-<div class="row" data-sticky-parent>
-  <div class="medium-9 columns">
-    <div class="section">
-      <div class="section__header">
-        <h1 class="section__title">{{ _('Problems') }} <span class="contest-problems-count">{{ tdoc.pids.length }} 题</span></h1>
-      </div>
-      <div class="section__body no-padding">
-        <table class="data-table">
-          <colgroup>
-          {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
-            <col class="col--status">
-            <col class="col--submit-at">
-          {% endif %}
-          {% if showScore %}
-            <col class="col--score">
-          {% endif %}
-            <col class="col--problem">
-          </colgroup>
-          <thead>
-            <tr>
-            {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
-              <th class="col--status record-status--border">{{ _('Status') }}</th>
-              {% if hasCorrection %}
-                <th class="col--correction">{{ _('Correction') }}</th>
-              {% else %}
-                <th class="col--submit-at">{{ _('Last Submit At') }}</th>
-              {% endif %}
-            {% endif %}
+<div class="contest-workspace">
+  <main class="contest-workspace__main">
+    <section class="section contest-panel contest-problems-card">
+      <header class="contest-panel__header">
+        <span class="contest-panel__icon icon icon-file"></span>
+        <h1 class="contest-panel__title">{{ _('Problems') }}</h1>
+        <span class="contest-problems-count">{{ tdoc.pids.length }} 题</span>
+      </header>
+      <div class="contest-problem-list" role="table" aria-label="{{ _('Problems') }}">
+        <div class="contest-problem-list__header" role="row">
+          <div role="columnheader">{{ _('Status') }}</div>
+          <div role="columnheader">{{ _('Problem') }}</div>
+          <div role="columnheader">{{ _('Score') }}</div>
+          <div role="columnheader">限制</div>
+          <div role="columnheader">操作</div>
+        </div>
+        {% for pid in tdoc.pids %}
+          {% set currentRdoc = none %}
+          {% set currentStatusClass = '' %}
+          {% set displayScore = 0 %}
+          {% if psdict[pid] and psdict[pid].rid %}
+            {% set currentRdoc = rdict[psdict[pid].rid] %}
+            {% set currentStatusClass = model.builtin.STATUS_CODES[currentRdoc.status] %}
             {% if showScore %}
-              <th class="col--score">{{ _('Score') }}</th>
+              {% set displayScore = (tdoc.score[pid]|default(100)) * (psdict[pid].score|default(0)) / 100 %}
+            {% else %}
+              {% set displayScore = psdict[pid].penaltyScore|default(psdict[pid].score) %}
             {% endif %}
-              <th class="col--problem">{{ _('Problem') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-          {%- for pid in tdoc.pids -%}
-            <tr class="contest-problem-row{% if psdict[pid] and psdict[pid].rid %} is-submitted{% else %} is-unsubmitted{% endif %}">
-            {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
-              {% if psdict[pid] and psdict[pid].rid %}
-                {% set rdoc = rdict[psdict[pid].rid] %}
+          {% endif %}
+          <div class="contest-problem-list__row {{ currentStatusClass }}{% if currentRdoc %} is-submitted{% else %} is-unsubmitted{% endif %}" role="row">
+            <div class="contest-problem-status-cell" role="cell">
+              {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) and currentRdoc %}
                 {% if model.contest.canShowSelfRecord.call(handler, tdoc) %}
-                  {% set displayScore = ((tdoc.score[pid]|default(100)) * (psdict[pid].score|default(0)) / 100) if showScore else (psdict[pid].penaltyScore|default(psdict[pid].score)) %}
-                  {{ record.render_status_td(rdoc, displayScore=displayScore) }}
+                  <a class="contest-problem-status record-status--text {{ currentStatusClass }}" href="{{ url('record_detail', rid=currentRdoc._id) }}">
+                    <span class="icon record-status--icon {{ currentStatusClass }}"></span>
+                    <span>{{ displayScore }} {{ model.builtin.STATUS_TEXTS[currentRdoc.status] }}</span>
+                  </a>
                 {% else %}
-                  <td class="col--status record-status--border"><a href="{{ url('record_detail', rid=rdoc._id) }}">{{ _('Submitted') }}</a></td>
+                  <a class="contest-problem-status" href="{{ url('record_detail', rid=currentRdoc._id) }}">
+                    <span class="icon icon-check"></span>
+                    <span>{{ _('Submitted') }}</span>
+                  </a>
                 {% endif %}
-                {% if not hasCorrection %}
-                  <td class="col--submit-at">{{ datetimeSpan(rdoc._id)|safe }}</td>
+                {% if hasCorrection and correction[pid] %}
+                  {% set correctionRdoc = rdict[correction[pid].rid] %}
+                  <div class="contest-problem-correction">{{ _('Correction') }}：{{ model.builtin.STATUS_TEXTS[correctionRdoc.status] }}</div>
                 {% endif %}
               {% else %}
-                <td class="col--status record-status--border">{{ _('No Submissions') }}</td>
-                {% if not hasCorrection %}
-                  <td class="col--submit-at">-</td>
-                {% endif %}
+                <span class="contest-problem-status contest-problem-status--empty">{{ _('No Submissions') }}</span>
               {% endif %}
-              {% if hasCorrection %}
-                {% if correction[pid] %}
-                  {{ record.render_status_td(rdict[correction[pid].rid], class="col--correction") }}
-                {% else %}
-                  <td class="col--correction">-</td>
-                {% endif %}
+            </div>
+            <div class="contest-problem-title" role="cell">
+              {{ problem.render_problem_title(pdict[pid], tdoc, alphabetic=true) }}
+            </div>
+            <div class="contest-problem-score" role="cell">{{ tdoc.score[pid]|default(100) }}</div>
+            <div class="contest-problem-limits" role="cell">
+              {% if pdict[pid].config.type != 'objective' and pdict[pid].config.type != 'submit_answer' %}
+                <span class="contest-problem-limit icon icon-stopwatch">{{ pdict[pid].config.timeMax if pdict[pid].config.timeMax == pdict[pid].config.timeMin else pdict[pid].config.timeMin+'~'+pdict[pid].config.timeMax }}ms</span>
+                <span class="contest-problem-limit icon icon-comparison">{{ pdict[pid].config.memoryMax if pdict[pid].config.memoryMax == pdict[pid].config.memoryMin else pdict[pid].config.memoryMin+'~'+pdict[pid].config.memoryMax }}MiB</span>
+              {% else %}
+                <span class="contest-problem-limit contest-problem-limit--plain">客观题</span>
               {% endif %}
-            {% endif %}
-            {% if showScore %}
-              <td class="col--score">{{ tdoc.score[pid]|default(100) }}</td>
-            {% endif %}
-              <td class="col--problem col--problem-name">
-                {{ problem.render_problem_title(pdict[pid], tdoc, alphabetic=true) }}
-                {% if pdict[pid].config.type != 'objective' and pdict[pid].config.type != 'submit_answer' %}
-                  <span class="problem__tag-item contest-problem-limit icon icon-stopwatch">{{ pdict[pid].config.timeMax if pdict[pid].config.timeMax == pdict[pid].config.timeMin else pdict[pid].config.timeMin+'~'+pdict[pid].config.timeMax }}ms</span>
-                  <span class="problem__tag-item contest-problem-limit icon icon-comparison">{{ pdict[pid].config.memoryMax if pdict[pid].config.memoryMax == pdict[pid].config.memoryMin else pdict[pid].config.memoryMin+'~'+pdict[pid].config.memoryMax }}MiB</span>
-                {% endif %}
-                {% if pdict[pid].config.type != 'objective' %}
-                  <a href="{{ url('problem_submit', pid=pid, query={tid:tdoc.docId}) }}" target="_blank" class="typo-a contest-problem-submit-link"><span class="icon icon-send">{{ _('Submit') }}</span></a>
-                {% endif %}
-              </td>
-            </tr>
-          {%- endfor -%}
-          </tbody>
-        </table>
-      </div>
-    </div>
-    <div class="section">
-      <div class="section__header">
-        <h1 class="section__title">{{ _('Submissions') }}</h1>
-      </div>
-      <div class="section__body no-padding">
-      {% if not canViewRecord %}
-        {{ nothing.render('According to the contest rules, you cannot view your submission details at current.', compact=true) }}
-      {% elif not rdocs.length %}
-        {{ nothing.render('Oh, there is no submission!', compact=true) }}
-      {% else %}
-        <table class="data-table record_main__table">
-          <colgroup>
-            <col class="col--status">
-            <col class="col--problem">
-            <col class="col--submit-by">
-            <col class="col--time">
-            <col class="col--memory">
-            <col class="col--lang">
-            <col class="col--submit-at">
-          </colgroup>
-          <thead>
-            <tr>
-              <th class="col--status record-status--border">{{ _('Status') }}</th>
-              <th class="col--problem">{{ _('Problem') }}</th>
-              <th class="col--submit-by">{{ _('Submit By') }}</th>
-              <th class="col--time">{{ _('Time') }}</th>
-              <th class="col--memory">{{ _('Memory') }}</th>
-              <th class="col--lang">{{ _('Language') }}</th>
-              <th class="col--submit-at">{{ _('Submit At') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-          {%- for rdoc in rdocs -%}
-            {% set udoc = udict[rdoc['uid']] %}
-            {% set pdoc = pdict[rdoc['pid']] %}
-            {% include 'record_main_tr.html' %}
-          {%- endfor -%}
-          </tbody>
-        </table>
-      {% endif %}
-      </div>
-    </div>
-    <div class="section section--clarifications">
-      <div class="section__header">
-        <h1 class="section__title">{{ _('Contest Clarifications') }}</h1>
-      </div>
-      <div class="section__body">
-      {% if not tcdocs.length %}
-        {{ nothing.render('Oh, there is no clarification!', compact=true) }}
-      {% else %}
-      <ul class="dczcomments__list">
-        {% for doc in tcdocs %}
-        <li class="dczcomments__item">
-          <div class="media">
-            <div class="media__body top">
-              <div class="clearfix">
-                <div class="supplementary dczcomments__supplementary">
-                  {{_('Subject') }}: {{ contest.render_clarification_subject(tdoc,pdict,doc.subject) }} | {% if doc.owner == 0 %}<b>{{ _('Jury') }}</b>{% else %}{{ user.render_inline(udict[doc.owner], badge=false) }}{% endif %} @ {{ datetimeSpan(doc._id)|safe }}
-                </div>
-              </div>
-              <div class="typo richmedia" data-emoji-enabled>
-                {{ doc['content']|markdown|safe }}
-              </div>
+            </div>
+            <div class="contest-problem-action" role="cell">
+              {% if pdict[pid].config.type == 'objective' %}
+                <a href="{{ url('problem_detail', pid=pid, query={tid:tdoc.docId}) }}" class="contest-problem-submit-link"><span class="icon icon-edit"></span>在线答题</a>
+              {% else %}
+                <a href="{{ url('problem_detail', pid=pid, query={tid:tdoc.docId, scratchpad:'1'}) }}" class="contest-problem-submit-link"><span class="icon icon-edit"></span>在线答题</a>
+              {% endif %}
             </div>
           </div>
-          <ul class="dczcomments__replies">
-          {%- for rdoc in doc['reply'] -%}
-            <li class="dczcomments__reply">
-              <div class="media">
-                <div class="media__left top">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</div>
-                <div class="media__body top">
-                  <div class="clearfix">
-                    <div class="supplementary dczcomments__supplementary">
-                      <b>{{ _('Jury') }}</b> @ {{ datetimeSpan(rdoc['_id'])|safe }}
-                    </div>
-                  </div>
-                  <div class="typo richmedia" data-emoji-enabled>
-                    {{ rdoc['content']|markdown|safe }}
-                  </div>
-                </div>
-              </div>
-            </li>
-          {%- endfor -%}
-          </ul>
-        </li>
         {% endfor %}
-      </ul>
+      </div>
+    </section>
+
+    <section class="section contest-panel contest-records-card">
+      <header class="contest-panel__header">
+        <span class="contest-panel__icon icon icon-send"></span>
+        <h1 class="contest-panel__title">{{ _('Submissions') }}</h1>
+      </header>
+      {% if not canViewRecord %}
+        <div class="contest-empty">
+          <span class="icon icon-flag"></span>
+          <span>{{ _('According to the contest rules, you cannot view your submission details at current.') }}</span>
+        </div>
+      {% elif not rdocs.length %}
+        <div class="contest-empty">
+          <span class="icon icon-send"></span>
+          <span>{{ _('Oh, there is no submission!') }}</span>
+        </div>
+      {% else %}
+        <div class="contest-record-table-wrap">
+          <table class="data-table record_main__table contest-record-table">
+            <colgroup>
+              <col class="col--status">
+              <col class="col--problem">
+              <col class="col--submit-by">
+              <col class="col--time">
+              <col class="col--memory">
+              <col class="col--lang">
+              <col class="col--submit-at">
+            </colgroup>
+            <thead>
+              <tr>
+                <th class="col--status record-status--border">{{ _('Status') }}</th>
+                <th class="col--problem">{{ _('Problem') }}</th>
+                <th class="col--submit-by">{{ _('Submit By') }}</th>
+                <th class="col--time">{{ _('Time') }}</th>
+                <th class="col--memory">{{ _('Memory') }}</th>
+                <th class="col--lang">{{ _('Language') }}</th>
+                <th class="col--submit-at">{{ _('Submit At') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+            {% for rdoc in rdocs %}
+              {% set udoc = udict[rdoc['uid']] %}
+              {% set pdoc = pdict[rdoc['pid']] %}
+              {% include 'record_main_tr.html' %}
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
       {% endif %}
-      </div>
-      {% if tsdoc.attend %}
-      <div class="section__header">
-        <h1 class="section__title">{{ _('Send Clarification Request') }}</h1>
-      </div>
-      <div class="section__body typo">
-        <form method="post">
-          <input type="hidden" name="operation" value="clarification">
-          <div class="row">
-            <div class="medium-12 columns form__item">
-              <label>
-                {{ _('Subject') }}
-                <select name="subject" class="select">
-                  <option value="0">{{ _('General Issue') }}</option>
-                  <option value="-1">{{ _('Technical Issue') }}</option>
-                  {% for pid in tdoc.pids %}
-                  <option value="{{ pid }}">{{ utils.getAlphabeticId(loop.index0) }}. {{ pdict[pid].title }}</option>
-                  {% endfor %}
-                </select>
-              </label>
-            </div>
-            <div class="medium-12 columns form__item">
-              <label>
-                {{ _('Content') }}
-                <textarea name="content" class="textbox" data-markdown required></textarea>
-              </label>
-            </div>
-          </div>
-          <button type="submit" class="rounded primary button">{{ _('Submit') }}</button>
-      </div>
+    </section>
+
+    <section class="section contest-panel contest-scoreboard-card">
+      <header class="contest-panel__header">
+        <span class="contest-panel__icon icon icon-statistics"></span>
+        <h1 class="contest-panel__title">比赛成绩表</h1>
+        {% if canShowEmbeddedScoreboard and contestScoreboardRows.length > 1 %}
+          <span class="contest-scoreboard-note">{{ contestScoreboardRows.length - 1 }} 名参赛者</span>
+        {% endif %}
+      </header>
+      {% if canShowEmbeddedScoreboard and contestScoreboardRows.length > 1 %}
+        <div class="contest-scoreboard-wrap">
+          {% set rows = contestScoreboardRows %}
+          {% set embeddedScoreboard = true %}
+          {% set embeddedScoreboardUdict = contestScoreboardUdict %}
+          {% set embeddedScoreboardPdict = contestScoreboardPdict %}
+          {% include "partials/scoreboard.html" %}
+        </div>
+      {% else %}
+        <div class="contest-empty contest-scoreboard-empty">
+          <span class="icon icon-statistics"></span>
+          <span>{% if canShowEmbeddedScoreboard %}暂无参赛成绩{% else %}比赛成绩暂未公开{% endif %}</span>
+        </div>
       {% endif %}
-    </div>
-  </div>
-  <div class="medium-3 columns" data-sticky="large">
+    </section>
+  </main>
+
+  <aside class="contest-workspace__aside">
     {% if tdoc.privateFiles.length %}
-    <div class="section side">
+    <section class="section side contest-materials">
       <div class="section__header">
-        <h1 class="section__title">{{_('Materials')}}</h1>
+        <h1 class="section__title">{{ _('Materials') }}</h1>
       </div>
       <ol>
         {% for file in tdoc.privateFiles %}
@@ -265,10 +805,10 @@
         </li>
         {% endfor %}
       </ol>
-    </div>
+    </section>
     {% endif %}
     {% set owner_udoc = udict[tdoc.owner] %}
     {% include "partials/contest_sidebar.html" %}
-  </div>
+  </aside>
 </div>
 {% endblock %}
