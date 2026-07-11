@@ -2,16 +2,82 @@
   <style>
     .homepage-ranking-user {
       align-items: center;
-      display: inline-flex;
-      gap: 4px;
-      max-width: 100%;
+      display: flex;
+      gap: 6px;
       min-width: 0;
+      white-space: nowrap;
+      width: 100%;
+    }
+
+    .homepage-ranking-table {
+      table-layout: fixed;
+      width: 100%;
+    }
+
+    .homepage-ranking-table .col--rank {
+      width: 64px;
+    }
+
+    .homepage-ranking-table .col--user {
+      min-width: 0;
+      width: 60%;
+    }
+
+    .homepage-ranking-table .col--rp {
+      width: 84px;
+    }
+
+    .homepage-ranking-table th.col--rp,
+    .homepage-ranking-table td.col--rp {
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .homepage-ranking-table td.col--user {
+      overflow: hidden;
+    }
+
+    .homepage-ranking-table .col--bio {
+      display: table-cell;
+      min-width: 0;
+    }
+
+    .homepage-ranking-table td.col--bio {
+      color: #64748b;
+      overflow: hidden;
+      padding-left: 18px;
+      text-align: left;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 767px) {
+      .homepage-ranking-table .col--user {
+        width: auto;
+      }
+
+      .homepage-ranking-table .col--bio {
+        display: none;
+      }
+    }
+
+    .homepage-ranking-user > .user-profile-link {
+      flex: 0 1 auto;
+      flex-wrap: nowrap;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .homepage-ranking-user .user-profile-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
       white-space: nowrap;
     }
 
     .homepage-ranking-user__badges {
       align-items: center;
       display: inline-flex;
+      flex: 0 1 auto;
       gap: 4px;
       min-width: 0;
       overflow: hidden;

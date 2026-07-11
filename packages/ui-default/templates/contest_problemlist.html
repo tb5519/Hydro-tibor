@@ -108,6 +108,16 @@
   font-size: 13px;
   font-weight: 650;
 }
+.page--contest_problemlist .contest-problem-list__header > :nth-child(3),
+.page--contest_problemlist .contest-problem-score {
+  justify-self: center;
+  text-align: center;
+}
+.page--contest_problemlist .contest-problem-list__header > :nth-child(5),
+.page--contest_problemlist .contest-problem-action {
+  justify-self: end;
+  text-align: right;
+}
 .page--contest_problemlist .contest-problem-list__row {
   position: relative;
   min-height: 68px;
@@ -174,7 +184,6 @@
   color: var(--contest-blue);
 }
 .page--contest_problemlist .contest-problem-score {
-  text-align: center;
   font-weight: 650;
 }
 .page--contest_problemlist .contest-problem-limits {
@@ -199,9 +208,6 @@
 }
 .page--contest_problemlist .contest-problem-limit--plain {
   color: var(--contest-muted);
-}
-.page--contest_problemlist .contest-problem-action {
-  text-align: right;
 }
 .page--contest_problemlist .contest-problem-submit-link {
   box-sizing: border-box;
