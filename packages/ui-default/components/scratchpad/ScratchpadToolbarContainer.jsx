@@ -17,6 +17,7 @@ const mapStateToProps = (state) => ({
   isRunning: state.pretest.isRunning,
   pretestWaitSec: state.ui.pretestWaitSec,
   submitWaitSec: state.ui.submitWaitSec,
+  formalSubmitCount: state.ui.formalSubmitRids.length,
   editorLang: state.editor.lang,
   editorCode: state.editor.code,
   pretestInput: state.pretest.input,
@@ -92,7 +93,13 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
     if (this.props.recordsVisible) this.props.loadSubmissions();
   }
 
-  componentDidUpdate() {
+  componentDidUpdate(prevProps) {
+    if (this.props.recordsVisible && (
+      !prevProps.recordsVisible
+      || this.props.formalSubmitCount > prevProps.formalSubmitCount
+    )) {
+      this.props.loadSubmissions();
+    }
     if (this.props.pretestWaitSec > 0 || this.props.submitWaitSec > 0) {
       setTimeout(() => this.props.tick(), 1000);
     }

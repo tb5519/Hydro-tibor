@@ -80,6 +80,10 @@ export default function reducer(state = {
       return (action.type === 'SCRATCHPAD_POST_SUBMIT_FULFILLED' && UiContext.canViewRecord)
         ? {
           ...state,
+          pretest: {
+            ...state.pretest,
+            visible: false,
+          },
           records: {
             ...state.records,
             visible: true,
