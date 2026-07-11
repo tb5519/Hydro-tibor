@@ -289,7 +289,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
           <div className="contest-submit-result__header">
             <div>
               <div className="contest-submit-result__eyebrow">比赛评测完成</div>
-              <div className="contest-submit-result__title">{accepted ? '本题 AC，继续加油！' : '本题已评测，继续尝试！'}</div>
+              <div className="contest-submit-result__title">{accepted ? '本题 AC，继续加油！' : '本题已评测，可尝试修改代码继续评测直至AC'}</div>
             </div>
             <div className={`contest-submit-result__status${accepted ? ' is-accepted' : ''}`}>
               {getContestStatusText(status)}
