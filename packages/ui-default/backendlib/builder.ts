@@ -17,6 +17,7 @@ declare module 'hydrooj' {
   }
   interface UiContextBase {
     constantVersion?: string;
+    staticVersion?: string;
   }
 }
 
@@ -24,6 +25,16 @@ const vfs: Record<string, string> = {};
 const hashes: Record<string, string> = {};
 const logger = new Logger('ui');
 const tmp = tmpdir();
+
+function getStaticVersion() {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(resolve(__dirname, '../public/manifest.json'), 'utf8')) as Record<string, string>;
+    const asset = manifest[`hydro-${global.Hydro.version['ui-default']}.js`];
+    return asset?.split('?')[1];
+  } catch {
+    return undefined;
+  }
+}
 
 const federationPlugin: esbuild.Plugin = {
   name: 'federation',
@@ -143,6 +154,9 @@ export async function buildUI() {
     ${pages.join('\n')}
   };`);
   UiContextBase.constantVersion = hashes['entry.js'];
+  // The core UI bundle is built separately from dynamic addon resources.
+  // Read its content hash so browsers cannot keep an older core bundle alive.
+  UiContextBase.staticVersion = getStaticVersion();
   for (const key in vfs) {
     if (newFiles.includes(key)) continue;
     delete vfs[key];

@@ -21,7 +21,7 @@ import system from '../model/system';
 import TaskModel from '../model/task';
 import user from '../model/user';
 import {
-    ConnectionHandler, param, subscribe, Types,
+    ConnectionHandler, Handler, param, subscribe, Types,
 } from '../service/server';
 import { buildProjection, Time } from '../utils';
 import { ContestDetailBaseHandler } from './contest';
@@ -591,9 +591,38 @@ export class ContestSubmitFeedbackConnectionHandler extends ConnectionHandler {
     }
 }
 
+/**
+ * Returns the outcome of one of the current user's contest submissions.
+ * This deliberately omits source code, testcase details, and other users' data
+ * so it can be polled by the scratchpad even when contest record pages are hidden.
+ */
+export class ContestSubmitFeedbackHandler extends Handler {
+    @param('rid', Types.ObjectId)
+    async get(domainId: string, rid: ObjectId) {
+        const rdoc = await record.get(domainId, rid);
+        if (!rdoc || rdoc.uid !== this.user._id || !rdoc.contest
+            || [record.RECORD_GENERATE, record.RECORD_PRETEST].some((i) => i.equals(rdoc.contest))) {
+            throw new RecordNotFoundError(domainId, rid);
+        }
+        if (!(await contest.get(domainId, rdoc.contest))) throw new RecordNotFoundError(domainId, rid);
+
+        this.response.body = {
+            rdoc: {
+                _id: rdoc._id.toString(),
+                memory: rdoc.memory,
+                pid: rdoc.pid,
+                score: rdoc.score,
+                status: rdoc.status,
+                time: rdoc.time,
+            },
+        };
+    }
+}
+
 export async function apply(ctx) {
     ctx.Route('record_main', '/record', RecordListHandler);
     ctx.Route('record_detail', '/record/:rid', RecordDetailHandler);
+    ctx.Route('contest_submit_feedback', '/contest-submit-feedback', ContestSubmitFeedbackHandler);
     ctx.Connection('record_conn', '/record-conn', RecordMainConnectionHandler);
     ctx.Connection('record_detail_conn', '/record-detail-conn', RecordDetailConnectionHandler);
     ctx.Connection('contest_submit_feedback_conn', '/contest-submit-feedback-conn', ContestSubmitFeedbackConnectionHandler);

@@ -77,7 +77,7 @@ export default function reducer(state = {
     case 'SCRATCHPAD_POST_PRETEST_FULFILLED':
     case 'SCRATCHPAD_POST_SUBMIT_FULFILLED': {
       const isContestSubmit = action.type === 'SCRATCHPAD_POST_SUBMIT_FULFILLED'
-        && UiContext.tdoc?.rule !== 'homework';
+        && UiContext.isContestProblem === true;
       Notification.success(isContestSubmit ? '已提交，正在评测…' : i18n('Submitted.'));
       const isFormalSubmit = action.type === 'SCRATCHPAD_POST_SUBMIT_FULFILLED';
       return isFormalSubmit

@@ -126,7 +126,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   } as Record<string, any>;
 
   function isContestSubmitFeedbackEnabled() {
-    return !!UiContext.tdoc && UiContext.tdoc.rule !== 'homework';
+    return UiContext.isContestProblem === true;
   }
 
   function isFinalRecordStatus(status: number) {
@@ -378,6 +378,11 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     return `record-detail-conn?${query.toString()}`;
   }
 
+  function getContestSubmitFeedbackUrl(recordId: string) {
+    if (!UiContext.contestSubmitFeedbackUrl) return '';
+    return UiContext.contestSubmitFeedbackUrl.replace('{rid}', encodeURIComponent(recordId));
+  }
+
   function receiveFormalSubmitRecord(store, rdoc: any) {
     store.dispatch({
       type: 'SCRATCHPAD_RECORDS_PUSH',
@@ -389,7 +394,8 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
 
   function pollFormalSubmitRecord(store, rid) {
     const recordId = getRecordId({ _id: rid });
-    if (!recordId || !UiContext.getSubmissionsUrl || pollingFormalSubmitRids.has(recordId)) return;
+    const feedbackUrl = getContestSubmitFeedbackUrl(recordId);
+    if (!recordId || (!feedbackUrl && !UiContext.getSubmissionsUrl) || pollingFormalSubmitRids.has(recordId)) return;
     pollingFormalSubmitRids.add(recordId);
 
     let attempts = 0;
@@ -401,8 +407,10 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
 
       attempts++;
       try {
-        const result = await request.get(UiContext.getSubmissionsUrl);
-        const rdoc = result?.rdocs?.find((item) => getRecordId(item) === recordId);
+        const result = await request.get(feedbackUrl || UiContext.getSubmissionsUrl);
+        const rdoc = feedbackUrl
+          ? result?.rdoc
+          : result?.rdocs?.find((item) => getRecordId(item) === recordId);
         if (rdoc) {
           receiveFormalSubmitRecord(store, rdoc);
           if (isFinalRecordStatus(+rdoc.status)) {
@@ -428,11 +436,18 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     const recordId = getRecordId({ _id: rid });
     if (!recordId || watchedFormalSubmitRids.has(recordId)) return;
     watchedFormalSubmitRids.add(recordId);
-    if (UiContext.canViewRecord) pollFormalSubmitRecord(store, rid);
+    // Poll the sanitized endpoint as a fallback for hidden contest records.
+    // WebSocket delivery remains the fast path, but a result prompt must not depend on it.
+    pollFormalSubmitRecord(store, rid);
 
     const sock = new WebSocket(UiContext.ws_prefix + getRecordDetailConnUrl(recordId));
     sock.onmessage = (message, data) => {
-      const msg = JSON.parse(data || message.data);
+      let msg;
+      try {
+        msg = JSON.parse(data || message.data);
+      } catch {
+        return;
+      }
       const rdoc = msg.rdoc;
       if (!rdoc) return;
       receiveFormalSubmitRecord(store, rdoc);
