@@ -1,9 +1,9 @@
-import { NORMAL_STATUS, STATUS } from '@hydrooj/common';
+import { NORMAL_STATUS, STATUS, STATUS_TEXTS } from '@hydrooj/common';
 import $ from 'jquery';
 import yaml from 'js-yaml';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { confirm } from 'vj/components/dialog';
+import { confirm, InfoDialog } from 'vj/components/dialog';
 import Notification from 'vj/components/notification';
 import { downloadProblemSet } from 'vj/components/zipDownloader';
 import { NamedPage } from 'vj/misc/Page';
@@ -119,6 +119,77 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   let hasWrongFormalRecord = !!UiContext.hasWrongFormalRecord;
   let sawCurrentWrongFormalRecord = false;
   const watchedFormalSubmitRids = new Set<string>();
+  const pollingFormalSubmitRids = new Set<string>();
+  const reportedFormalSubmitRids = new Set<string>();
+  const contestProgressDetails = {
+    ...(UiContext.tsdoc?.detail || {}),
+  } as Record<string, any>;
+
+  function isContestSubmitFeedbackEnabled() {
+    return !!UiContext.tdoc && UiContext.tdoc.rule !== 'homework';
+  }
+
+  function isFinalRecordStatus(status: number) {
+    return normalStatuses.has(status as STATUS) || status === STATUS.STATUS_CANCELED;
+  }
+
+  function formatContestScore(value: number) {
+    const rounded = Math.round((Number(value) || 0) * 100) / 100;
+    return Number.isInteger(rounded) ? `${rounded}` : rounded.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+  }
+
+  function getContestProblemScore(pid: number) {
+    const score = Number(UiContext.tdoc?.score?.[pid] ?? 100);
+    return Number.isFinite(score) ? score : 100;
+  }
+
+  function getContestRecordScore(rdoc: any) {
+    const score = Number(rdoc?.score);
+    return Number.isFinite(score) ? Math.max(0, score) : 0;
+  }
+
+  function getContestStatusText(status: number) {
+    if (status === STATUS.STATUS_ACCEPTED) return 'AC';
+    return STATUS_TEXTS[status] || '评测完成';
+  }
+
+  function updateContestProgress(rdoc: any) {
+    const pid = Number(rdoc?.pid);
+    if (!Number.isFinite(pid) || !UiContext.tdoc?.pids?.some((item) => Number(item) === pid)) return;
+
+    const key = `${pid}`;
+    const previous = contestProgressDetails[key];
+    const rule = UiContext.tdoc.rule;
+    if (rule === 'oi') {
+      if (!previous || getContestRecordScore(rdoc) >= getContestRecordScore(previous)) contestProgressDetails[key] = rdoc;
+      return;
+    }
+    if (rule === 'acm') {
+      if (!previous || previous.status !== STATUS.STATUS_ACCEPTED) contestProgressDetails[key] = rdoc;
+      return;
+    }
+    if (!previous || getContestRecordScore(rdoc) >= getContestRecordScore(previous)) {
+      contestProgressDetails[key] = rdoc;
+    }
+  }
+
+  function getContestProgressSummary() {
+    const pids = UiContext.tdoc?.pids || [];
+    let totalScore = 0;
+    let acceptedCount = 0;
+    for (const rawPid of pids) {
+      const pid = Number(rawPid);
+      const detail = contestProgressDetails[pid];
+      if (!detail) continue;
+      totalScore += getContestProblemScore(pid) * getContestRecordScore(detail) / 100;
+      if (+detail.status === STATUS.STATUS_ACCEPTED) acceptedCount++;
+    }
+    return {
+      totalScore,
+      acceptedCount,
+      remainingCount: Math.max(0, pids.length - acceptedCount),
+    };
+  }
 
   function updateMistakePromptPosition() {
     const prompt = document.querySelector<HTMLElement>('.problem-mistake-float');
@@ -195,6 +266,54 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
       .some((rid) => getRecordId({ _id: rid }) === recordId);
   }
 
+  function showContestSubmitResult(store, rdoc: any) {
+    if (!isContestSubmitFeedbackEnabled() || !isCurrentFormalSubmitRecord(store, rdoc)) return;
+    const recordId = getRecordId(rdoc);
+    const status = +rdoc.status;
+    if (!recordId || !isFinalRecordStatus(status) || reportedFormalSubmitRids.has(recordId)) return;
+    reportedFormalSubmitRids.add(recordId);
+
+    updateContestProgress(rdoc);
+    const pid = Number(rdoc.pid);
+    const maxScore = getContestProblemScore(pid);
+    const problemScore = maxScore * getContestRecordScore(rdoc) / 100;
+    const { totalScore, acceptedCount, remainingCount } = getContestProgressSummary();
+    const accepted = status === STATUS.STATUS_ACCEPTED;
+    const isAcm = UiContext.tdoc?.rule === 'acm';
+
+    new InfoDialog({
+      classes: 'dialog--contest-submit-result',
+      width: '32rem',
+      $body: tpl(
+        <div className="contest-submit-result">
+          <div className="contest-submit-result__header">
+            <div>
+              <div className="contest-submit-result__eyebrow">比赛评测完成</div>
+              <div className="contest-submit-result__title">{accepted ? '本题 AC，继续加油！' : '本题已评测，继续尝试！'}</div>
+            </div>
+            <div className={`contest-submit-result__status${accepted ? ' is-accepted' : ''}`}>
+              {getContestStatusText(status)}
+            </div>
+          </div>
+          <div className="contest-submit-result__score-grid">
+            <div className="contest-submit-result__score-card">
+              <span>本题得分</span>
+              <strong>{formatContestScore(problemScore)}<small> / {formatContestScore(maxScore)}</small></strong>
+            </div>
+            <div className="contest-submit-result__score-card">
+              <span>{isAcm ? '已完成题目' : '比赛累计得分'}</span>
+              <strong>{isAcm ? `${acceptedCount} 题` : formatContestScore(totalScore)}</strong>
+            </div>
+          </div>
+          <div className="contest-submit-result__summary">
+            <span><b>{acceptedCount}</b> 题已 AC</span>
+            <span><b>{remainingCount}</b> 题待完成</span>
+          </div>
+        </div>,
+      ),
+    }).open();
+  }
+
   function getKnownFormalRecords(store) {
     return (Object.values(store.getState()?.records?.items || {}) as any[])
       .filter((rdoc) => {
@@ -248,6 +367,9 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   }
 
   function getRecordDetailConnUrl(recordId: string) {
+    if (UiContext.contestSubmitFeedbackConnUrl) {
+      return UiContext.contestSubmitFeedbackConnUrl.replace('{rid}', encodeURIComponent(recordId));
+    }
     const query = new URLSearchParams({
       domainId: UiContext.pdoc.domainId,
       rid: recordId,
@@ -256,24 +378,67 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     return `record-detail-conn?${query.toString()}`;
   }
 
+  function receiveFormalSubmitRecord(store, rdoc: any) {
+    store.dispatch({
+      type: 'SCRATCHPAD_RECORDS_PUSH',
+      payload: { rdoc },
+    });
+    maybeRevealMistakePrompt(store, rdoc);
+    showContestSubmitResult(store, rdoc);
+  }
+
+  function pollFormalSubmitRecord(store, rid) {
+    const recordId = getRecordId({ _id: rid });
+    if (!recordId || !UiContext.getSubmissionsUrl || pollingFormalSubmitRids.has(recordId)) return;
+    pollingFormalSubmitRids.add(recordId);
+
+    let attempts = 0;
+    const poll = async () => {
+      if (reportedFormalSubmitRids.has(recordId)) {
+        pollingFormalSubmitRids.delete(recordId);
+        return;
+      }
+
+      attempts++;
+      try {
+        const result = await request.get(UiContext.getSubmissionsUrl);
+        const rdoc = result?.rdocs?.find((item) => getRecordId(item) === recordId);
+        if (rdoc) {
+          receiveFormalSubmitRecord(store, rdoc);
+          if (isFinalRecordStatus(+rdoc.status)) {
+            pollingFormalSubmitRids.delete(recordId);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load contest submission result:', err);
+      }
+
+      if (attempts >= 45) {
+        pollingFormalSubmitRids.delete(recordId);
+        return;
+      }
+      window.setTimeout(poll, 1200);
+    };
+
+    window.setTimeout(poll, 500);
+  }
+
   function watchFormalSubmitRecord(store, WebSocket, rid) {
     const recordId = getRecordId({ _id: rid });
     if (!recordId || watchedFormalSubmitRids.has(recordId)) return;
     watchedFormalSubmitRids.add(recordId);
+    if (UiContext.canViewRecord) pollFormalSubmitRecord(store, rid);
 
     const sock = new WebSocket(UiContext.ws_prefix + getRecordDetailConnUrl(recordId));
     sock.onmessage = (message, data) => {
       const msg = JSON.parse(data || message.data);
       const rdoc = msg.rdoc;
       if (!rdoc) return;
-      store.dispatch({
-        type: 'SCRATCHPAD_RECORDS_PUSH',
-        payload: { rdoc },
-      });
-      maybeRevealMistakePrompt(store, rdoc);
+      receiveFormalSubmitRecord(store, rdoc);
 
       const status = +rdoc.status;
-      if (normalStatuses.has(status as STATUS) || status === STATUS.STATUS_CANCELED) {
+      if (isFinalRecordStatus(status)) {
         setTimeout(() => sock.close(), 1000);
       }
     };

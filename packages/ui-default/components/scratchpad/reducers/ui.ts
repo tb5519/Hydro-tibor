@@ -76,8 +76,11 @@ export default function reducer(state = {
     }
     case 'SCRATCHPAD_POST_PRETEST_FULFILLED':
     case 'SCRATCHPAD_POST_SUBMIT_FULFILLED': {
-      Notification.success(i18n('Submitted.'));
-      return (action.type === 'SCRATCHPAD_POST_SUBMIT_FULFILLED' && UiContext.canViewRecord)
+      const isContestSubmit = action.type === 'SCRATCHPAD_POST_SUBMIT_FULFILLED'
+        && UiContext.tdoc?.rule !== 'homework';
+      Notification.success(isContestSubmit ? '已提交，正在评测…' : i18n('Submitted.'));
+      const isFormalSubmit = action.type === 'SCRATCHPAD_POST_SUBMIT_FULFILLED';
+      return isFormalSubmit
         ? {
           ...state,
           pretest: {
@@ -86,7 +89,7 @@ export default function reducer(state = {
           },
           records: {
             ...state.records,
-            visible: true,
+            visible: UiContext.canViewRecord ? true : state.records.visible,
           },
           formalSubmitRids: action.payload?.rid
             ? [...state.formalSubmitRids, action.payload.rid]

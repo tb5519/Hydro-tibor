@@ -549,9 +549,52 @@ export class RecordDetailConnectionHandler extends ConnectionHandler {
     }
 }
 
+/**
+ * Exposes the outcome of a user's own current contest submission without
+ * exposing source code, testcase details, or the regular hidden record view.
+ */
+export class ContestSubmitFeedbackConnectionHandler extends ConnectionHandler {
+    rid = '';
+    disconnectTimeout?: NodeJS.Timeout;
+
+    @param('rid', Types.ObjectId)
+    async prepare(domainId: string, rid: ObjectId) {
+        const rdoc = await record.get(domainId, rid);
+        if (!rdoc || rdoc.uid !== this.user._id || !rdoc.contest
+            || [record.RECORD_GENERATE, record.RECORD_PRETEST].some((i) => i.equals(rdoc.contest))) {
+            throw new RecordNotFoundError(domainId, rid);
+        }
+        const tdoc = await contest.get(domainId, rdoc.contest);
+        if (!tdoc) throw new RecordNotFoundError(domainId, rid);
+        this.rid = rid.toString();
+        await this.onRecordChange(rdoc);
+    }
+
+    @subscribe('record/change')
+    async onRecordChange(rdoc: RecordDoc) {
+        if (rdoc._id.toString() !== this.rid) return;
+        if (this.disconnectTimeout) clearTimeout(this.disconnectTimeout);
+        this.disconnectTimeout = undefined;
+        this.send({
+            rdoc: {
+                _id: rdoc._id.toString(),
+                memory: rdoc.memory,
+                pid: rdoc.pid,
+                score: rdoc.score,
+                status: rdoc.status,
+                time: rdoc.time,
+            },
+        });
+        if (![STATUS.STATUS_WAITING, STATUS.STATUS_JUDGING, STATUS.STATUS_COMPILING, STATUS.STATUS_FETCHED].includes(rdoc.status)) {
+            this.disconnectTimeout = setTimeout(() => this.close(4001, 'Ended'), 30000);
+        }
+    }
+}
+
 export async function apply(ctx) {
     ctx.Route('record_main', '/record', RecordListHandler);
     ctx.Route('record_detail', '/record/:rid', RecordDetailHandler);
     ctx.Connection('record_conn', '/record-conn', RecordMainConnectionHandler);
     ctx.Connection('record_detail_conn', '/record-detail-conn', RecordDetailConnectionHandler);
+    ctx.Connection('contest_submit_feedback_conn', '/contest-submit-feedback-conn', ContestSubmitFeedbackConnectionHandler);
 }

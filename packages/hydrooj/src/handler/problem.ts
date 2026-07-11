@@ -810,7 +810,9 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
             ]);
         }
         if (tid && !pretest && !contest.canShowSelfRecord.call(this, this.tdoc)) {
-            this.response.body = { tid };
+            // The regular record page remains hidden for contests that do not expose
+            // submissions, but the editor still needs this id for its own result prompt.
+            this.response.body = { rid, tid };
             this.response.redirect = this.url(this.tdoc.rule === 'homework' ? 'homework_detail' : 'contest_problemlist', { tid });
         } else {
             this.response.body = { rid };
