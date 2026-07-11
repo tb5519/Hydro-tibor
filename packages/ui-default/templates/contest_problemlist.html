@@ -17,11 +17,15 @@
   --contest-blue: #2f6df6;
   --contest-blue-soft: #edf4ff;
 }
-.page--contest_problemlist #nprogress {
+.page--contest_problemlist #nprogress,
+.page--contest_problemlist #nprogress .bar,
+.page--contest_problemlist #nprogress .peg,
+.page--contest_problemlist #nprogress .spinner,
+.page--contest_problemlist .contest-timer {
   display: none !important;
 }
 .page--contest_problemlist .main {
-  padding-top: 34px;
+  padding-top: 72px !important;
   padding-bottom: 52px;
   background: var(--contest-bg);
 }
@@ -30,7 +34,7 @@
   grid-template-columns: minmax(0, 1fr) 300px;
   gap: 20px;
   width: calc(100% - 40px);
-  max-width: 1240px;
+  max-width: 1180px;
   margin: 0 auto;
 }
 .page--contest_problemlist .contest-workspace__main,
@@ -531,20 +535,6 @@
 .page--contest_problemlist .contest-list-sidebar dl.horizontal dd {
   color: var(--contest-text);
 }
-.page--contest_problemlist .contest-timer {
-  left: 18px;
-  top: 74px;
-  z-index: 90;
-  margin: 0;
-  padding: 8px 12px;
-  border: 1px solid var(--contest-border);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, .96);
-  box-shadow: 0 4px 14px rgba(35, 56, 88, .08);
-  color: #334155;
-  font-size: 13px;
-  line-height: 1;
-}
 @media screen and (max-width: 1240px) {
   .page--contest_problemlist .contest-workspace {
     grid-template-columns: minmax(0, 1fr) 280px;
@@ -569,7 +559,7 @@
 }
 @media screen and (max-width: 720px) {
   .page--contest_problemlist .main {
-    padding: 12px 0 28px;
+    padding: 76px 0 28px !important;
   }
   .page--contest_problemlist .contest-workspace {
     width: calc(100% - 20px);
@@ -644,6 +634,7 @@
 </style>
 <div class="contest-workspace">
   <main class="contest-workspace__main">
+    {% if not showScoreboardView %}
     <section class="section contest-panel contest-problems-card">
       <header class="contest-panel__header">
         <span class="contest-panel__icon icon icon-file"></span>
@@ -766,7 +757,7 @@
         </div>
       {% endif %}
     </section>
-
+    {% else %}
     <section class="section contest-panel contest-scoreboard-card">
       <header class="contest-panel__header">
         <span class="contest-panel__icon icon icon-statistics"></span>
@@ -790,6 +781,7 @@
         </div>
       {% endif %}
     </section>
+    {% endif %}
   </main>
 
   <aside class="contest-workspace__aside">

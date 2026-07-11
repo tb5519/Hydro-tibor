@@ -1,7 +1,15 @@
 {%- macro nav_item(item) -%}
 <li class="nav__list-item">
+  {% set navQuery = item.args.query(handler) if typeof(item.args.query) == 'function' else item.args.query or {} %}
   {% set navActive = page_name.startsWith(item.args.prefix) and not (item.args.excludePrefix and page_name.startsWith(item.args.excludePrefix)) %}
-  <a href="{{ url(item.name, item.args, query=item.args.query(handler) if typeof(item.args.query) == 'function' else item.args.query or {}) }}" class="nav__item{% if navActive %} nav--active{% endif %}">
+  {% if item.name == 'contest_problemlist' %}
+    {% if navQuery.view == 'scoreboard' and handler.request.query.view != 'scoreboard' %}
+      {% set navActive = false %}
+    {% elif not navQuery.view and handler.request.query.view == 'scoreboard' %}
+      {% set navActive = false %}
+    {% endif %}
+  {% endif %}
+  <a href="{{ url(item.name, item.args, query=navQuery) }}" class="nav__item{% if navActive %} nav--active{% endif %}">
     {{ _(item.displayName or item.name) }}
   </a>
 </li>

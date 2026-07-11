@@ -65,11 +65,11 @@
       {% endif %}
     {% endif %}{# not attend and not done #}
     {% if model.contest.canShowScoreboard.call(handler, tdoc, False) %}
-      <li class="menu__item"><a class="menu__link" href="{{ url('contest_scoreboard', tid=tdoc.docId) }}">
+      <li class="menu__item"><a class="menu__link" href="{{ url('contest_problemlist', tid=tdoc.docId, query={view:'scoreboard'}) }}">
         <span class="icon icon-statistics"></span> {{ _('Scoreboard') }}
       </a></li>
     {% elif model.contest.canViewHiddenScoreboard.call(handler, tdoc) %}
-      <li class="menu__item"><a class="menu__link" href="{{ url('contest_scoreboard', tid=tdoc.docId) }}">
+      <li class="menu__item"><a class="menu__link" href="{{ url('contest_problemlist', tid=tdoc.docId, query={view:'scoreboard'}) }}">
         <span class="icon icon-statistics"></span> {{ _('Scoreboard (Hidden)') }}
       </a></li>
     {% endif %}

@@ -164,6 +164,13 @@ export class ContestDetailBaseHandler extends Handler {
                 checker: () => this.tsdoc?.attend || contest.isDone(this.tdoc),
             },
             {
+                name: 'contest_problemlist',
+                displayName: 'Scoreboard',
+                args: { tid, prefix: 'contest_problemlist', query: { view: 'scoreboard' } },
+                checker: () => this.user.hasPerm(PERM.PERM_VIEW_CONTEST_SCOREBOARD)
+                    && contest.canShowScoreboard.call(this, this.tdoc, true),
+            },
+            {
                 name: 'contest_print',
                 args: { tid, prefix: 'contest_print' },
                 checker: () => this.tdoc.allowPrint && (this.tsdoc?.attend || this.user.own(this.tdoc) || this.user.hasPerm(PERM.PERM_EDIT_CONTEST)),
@@ -208,7 +215,7 @@ export class ContestDetailHandler extends ContestDetailBaseHandler {
         if (contest.isDone(this.tdoc)) throw new ContestNotLiveError(domainId, tid);
         if (this.tdoc._code && code !== this.tdoc._code) throw new InvalidTokenError('Contest Invitation', code);
         await contest.attend(domainId, tid, this.user._id, { subscribe: 1 });
-        this.back();
+        this.response.redirect = this.url('contest_problemlist', { tid });
     }
 
     @param('tid', Types.ObjectId)
@@ -321,14 +328,19 @@ export class ContestProblemListHandler extends ContestDetailBaseHandler {
 
     @param('tid', Types.ObjectId)
     async get(domainId: string, tid: ObjectId) {
+        const showScoreboardView = this.request.query.view === 'scoreboard';
+        const canShowEmbeddedScoreboard = showScoreboardView
+            && this.user.hasPerm(PERM.PERM_VIEW_CONTEST_SCOREBOARD)
+            && contest.canShowScoreboard.call(this, this.tdoc, true);
         if (contest.isNotStarted(this.tdoc)) throw new ContestNotLiveError(domainId, tid);
-        if (!this.tsdoc?.attend && !contest.isDone(this.tdoc)) throw new ContestNotAttendedError(domainId, tid);
+        if (showScoreboardView && !canShowEmbeddedScoreboard) throw new ContestScoreboardHiddenError(tid);
+        if (!showScoreboardView && !this.tsdoc?.attend && !contest.isDone(this.tdoc)) {
+            throw new ContestNotAttendedError(domainId, tid);
+        }
         const [pdict, udict] = await Promise.all([
             problem.getList(domainId, this.tdoc.pids, true, true, problem.PROJECTION_CONTEST_LIST),
             user.getList(domainId, [this.tdoc.owner, this.user._id]),
         ]);
-        const canShowEmbeddedScoreboard = this.user.hasPerm(PERM.PERM_VIEW_CONTEST_SCOREBOARD)
-            && contest.canShowScoreboard.call(this, this.tdoc, true);
         let contestScoreboardRows = [];
         let contestScoreboardUdict = {};
         let contestScoreboardPdict = {};
@@ -349,6 +361,7 @@ export class ContestProblemListHandler extends ContestDetailBaseHandler {
             udict,
             rdict: {},
             tdoc: this.tdoc,
+            showScoreboardView,
             canShowEmbeddedScoreboard,
             contestScoreboardRows,
             contestScoreboardUdict,

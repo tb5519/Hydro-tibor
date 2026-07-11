@@ -7,11 +7,15 @@
 {{ set(UiContext, 'tdoc', tdoc) }}
 {{ set(UiContext, 'tsdoc', tsdoc) }}
 <style>
-.page--contest_detail #nprogress {
+.page--contest_detail #nprogress,
+.page--contest_detail #nprogress .bar,
+.page--contest_detail #nprogress .peg,
+.page--contest_detail #nprogress .spinner,
+.page--contest_detail .contest-timer {
   display: none !important;
 }
 .page--contest_detail .main {
-  padding-top: 30px;
+  padding-top: 72px !important;
   padding-bottom: 48px;
 }
 .contest-detail-v2 {
@@ -22,7 +26,7 @@
   --contest-text: #111827;
   box-sizing: border-box;
   width: calc(100% - 40px);
-  max-width: 1240px;
+  max-width: 1180px;
   margin-right: auto;
   margin-left: auto;
 }
@@ -462,7 +466,7 @@
 
 @media screen and (max-width: 640px) {
   .page--contest_detail .main {
-    padding-top: 12px;
+    padding-top: 76px !important;
     padding-bottom: 28px;
   }
 
