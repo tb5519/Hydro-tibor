@@ -1,10 +1,42 @@
 {% extends "layout/basic.html" %}
 {% block content %}
+<style>
+  .badge-profile-background-upload {
+    margin: 18px 0;
+    padding: 16px;
+    border: 1px solid #dce6f5;
+    border-radius: 8px;
+    background: #f8fbff;
+  }
+  .badge-profile-background-upload__title {
+    margin: 0 0 5px;
+    color: #1f2a44;
+    font-weight: 700;
+  }
+  .badge-profile-background-upload__hint {
+    margin: 0 0 12px;
+    color: #6b7b93;
+    font-size: 13px;
+  }
+  .badge-profile-background-upload__preview {
+    display: block;
+    width: min(100%, 520px);
+    aspect-ratio: 16 / 5;
+    margin: 0 0 12px;
+    border: 1px solid #d9e3f1;
+    border-radius: 6px;
+    object-fit: cover;
+  }
+  .badge-profile-background-upload__clear {
+    display: block;
+    margin-top: 10px;
+  }
+</style>
 <div class="row">
   <div class="medium-9 columns">
     <div class="section">
       <div class="section__body">
-        <form method="post">
+        <form method="post" enctype="multipart/form-data">
           {{ form.form_text({
             columns:12,
             label:('{0} ({1})').format(_('badge title'), _('Also used as badge hover text')),
@@ -56,6 +88,21 @@
             value:badge.content|default(''),
             markdown:true
           }) }}
+          <div class="badge-profile-background-upload">
+            <p class="badge-profile-background-upload__title">{{ _('Badge profile background') }}</p>
+            <p class="badge-profile-background-upload__hint">{{ _('Upload a wide image to display behind the holder\'s profile information.') }}</p>
+            <p class="badge-profile-background-upload__hint">{{ _('Recommended size: 1600 x 500 (16:5), JPG, PNG, WebP or GIF, up to 8 MB.') }}</p>
+            {% if badge.backgroundImage %}
+              <img class="badge-profile-background-upload__preview" src="{{ badge.backgroundImage }}" alt="{{ _('Current profile background') }}">
+            {% endif %}
+            <input type="file" name="backgroundImage" accept="image/jpeg,image/png,image/webp,image/gif">
+            {% if badge.backgroundImage %}
+              <label class="checkbox badge-profile-background-upload__clear">
+                <input type="checkbox" name="removeBackground" value="true">
+                {{ _('Remove current profile background') }}
+              </label>
+            {% endif %}
+          </div>
           <button name="operation" value="update" type="submit" class="rounded primary button">
             {{ _('Update') }}
           </button>

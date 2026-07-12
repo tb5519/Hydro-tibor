@@ -15,6 +15,8 @@ export interface Badge {
     title: string;
     backgroundColor: string;
     fontColor: string;
+    backgroundImagePath?: string;
+    backgroundImageUpdatedAt?: string;
     content: string;
     users: [number];
     createAt: Date;

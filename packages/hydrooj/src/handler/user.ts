@@ -58,11 +58,37 @@ async function attachOwnedBadges(ctx: Context, udocs: any[]) {
             fontColor: normalizeBadgeColor(badge.fontColor, '1f2937'),
             tooltip: badge.title || badge.short || `${badge._id}`,
             href: `/badge/${badge._id}`,
+            backgroundImage: badge.backgroundImagePath
+                ? `/badge/${badge._id}/background?v=${encodeURIComponent(badge.backgroundImageUpdatedAt || '')}`
+                : '',
         });
     }
     for (const udoc of udocs) {
         if (udoc) udoc.ownedBadges = ownedBadges[udoc._id] || [];
     }
+}
+
+function getBadgeProfileBackground(udoc: any) {
+    const backgrounds = (udoc?.ownedBadges || [])
+        .filter((badge: any) => badge.backgroundImage)
+        .map((badge: any) => ({
+            id: badge.id,
+            name: badge.displayName,
+            image: badge.backgroundImage,
+        }));
+    const preferredIds = [
+        Number(udoc?.badgeProfileBackgroundBadgeId),
+        Number(udoc?.badgeId),
+    ].filter((id) => Number.isSafeInteger(id) && id > 0);
+    const selected = preferredIds
+        .map((id) => backgrounds.find((badge: any) => badge.id === id))
+        .find(Boolean) || backgrounds[0] || null;
+    return {
+        mode: udoc?.badgeProfileBackgroundMode === 'rotate' && backgrounds.length > 1 ? 'rotate' : 'selected',
+        selectedId: selected?.id || 0,
+        image: selected?.image || '',
+        backgrounds,
+    };
 }
 
 async function successfulAuth(this: Handler, udoc: User) {
@@ -431,6 +457,7 @@ class UserDetailHandler extends Handler {
         ]);
         if (!udoc) throw new UserNotFoundError(uid);
         await attachOwnedBadges(this.ctx, [udoc]);
+        const badgeProfileBackground = getBadgeProfileBackground(udoc);
         const pdocs: ProblemDoc[] = [];
         const acInfo: Record<string, number> = {};
         const canViewHidden = this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN) || this.user._id;
@@ -455,7 +482,7 @@ class UserDetailHandler extends Handler {
             .project({ docId: 1, title: 1, rule: 1 }).sort({ _id: -1 }).toArray();
         this.response.template = 'user_detail.html';
         this.response.body = {
-            isSelfProfile, udoc, sdoc, pdocs, tags, tdocs,
+            isSelfProfile, udoc, sdoc, pdocs, tags, tdocs, badgeProfileBackground,
         };
         if (this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_SOLUTION)) {
             const psdocs = await SolutionModel.getByUser(domainId, uid).limit(10).toArray();
@@ -468,6 +495,28 @@ class UserDetailHandler extends Handler {
             }
         }
         this.UiContext.extraTitleContent = udoc.uname;
+    }
+}
+
+class UserBadgeBackgroundHandler extends Handler {
+    @param('uid', Types.Int)
+    @param('mode', Types.Range(['selected', 'rotate']))
+    @param('badgeId', Types.PositiveInt, true)
+    async post(domainId: string, uid: number, mode: 'selected' | 'rotate', badgeId = 0) {
+        if (this.user._id !== uid) throw new ForbiddenError();
+        const udoc = await user.getById(domainId, uid);
+        if (!udoc) throw new UserNotFoundError(uid);
+        await attachOwnedBadges(this.ctx, [udoc]);
+        const badgeProfileBackground = getBadgeProfileBackground(udoc);
+        if (!badgeProfileBackground.backgrounds.length) throw new ValidationError('badgeId');
+        const selected = badgeProfileBackground.backgrounds.find((badge) => badge.id === badgeId)
+            || badgeProfileBackground.backgrounds.find((badge) => badge.id === badgeProfileBackground.selectedId);
+        if (mode === 'selected' && !selected) throw new ValidationError('badgeId');
+        await user.setById(uid, {
+            badgeProfileBackgroundMode: mode,
+            badgeProfileBackgroundBadgeId: selected?.id || badgeProfileBackground.selectedId,
+        } as any);
+        this.response.redirect = this.url('user_detail', { uid });
     }
 }
 
@@ -659,6 +708,7 @@ export async function apply(ctx: Context) {
     ctx.Route('user_lostpass', '/lostpass', UserLostPassHandler);
     ctx.Route('user_lostpass_with_code', '/lostpass/:code', UserLostPassWithCodeHandler);
     ctx.Route('user_delete', '/user/delete', UserDeleteHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('user_badge_background', '/user/:uid/badge-background', UserBadgeBackgroundHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('user_detail', '/user/:uid', UserDetailHandler);
     if (system.get('server.contestmode')) {
         ctx.Route('contest_mode', '/contestmode', ContestModeHandler, PRIV.PRIV_EDIT_SYSTEM);

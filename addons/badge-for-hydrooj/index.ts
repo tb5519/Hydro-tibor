@@ -1,8 +1,11 @@
+import path from 'path';
+import { lookup } from 'mime-types';
 import moment from 'moment-timezone';
 import { ObjectId } from 'mongodb';
-import { Context, Handler, NotFoundError, param, PRIV, STATUS, Types } from 'hydrooj';
+import { Context, Handler, NotFoundError, param, PRIV, STATUS, Types, ValidationError } from 'hydrooj';
 import { getSharedRankingSnapshot } from 'hydrooj/src/lib/shared_ranking';
 import RecordModel from 'hydrooj/src/model/record';
+import storage from 'hydrooj/src/model/storage';
 import { Time } from 'hydrooj/src/utils';
 import { Badge } from './model';
 
@@ -12,6 +15,8 @@ const BadgeModel = global.Hydro.model.badge;
 const user = global.Hydro.model.user;
 const SPECIAL_BADGE_TASK = 'badge.autoAssignSpecial';
 const SPECIAL_BADGE_TIMEZONE = 'Asia/Shanghai';
+const BADGE_BACKGROUND_IMAGE_LIMIT = 8 * 1024 * 1024;
+const BADGE_BACKGROUND_IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
 const SPECIAL_BADGES = {
     strongest: {
         title: '最强王者',
@@ -28,6 +33,19 @@ const SPECIAL_BADGES = {
         content: '每周日 22:00 自动分配给最近一周 AC 数最多的同学。',
     },
 };
+
+function getRequestFile(files: any, key: string) {
+    const file = files?.[key];
+    return Array.isArray(file) ? file[0] : file;
+}
+
+function getBadgeBackgroundImageUrl(handler: Handler, badge: Badge) {
+    if (!badge?.backgroundImagePath) return '';
+    return handler.url('badge_background_image', {
+        id: badge._id,
+        query: { v: badge.backgroundImageUpdatedAt || '' },
+    });
+}
 
 function nextSunday22() {
     const now = moment().tz(SPECIAL_BADGE_TIMEZONE);
@@ -210,7 +228,12 @@ class BadgeEditHandler extends Handler {
         const badge = await BadgeModel.badgeGet(this.ctx, id);
         if (!badge) throw new NotFoundError(`Badge ${id} is not exist!`);
         this.response.template = 'badge_edit.html';
-        this.response.body = { badge };
+        this.response.body = {
+            badge: {
+                ...badge,
+                backgroundImage: getBadgeBackgroundImageUrl(this, badge),
+            },
+        };
     }
 
     @param('id', Types.PositiveInt, true)
@@ -220,16 +243,69 @@ class BadgeEditHandler extends Handler {
     @param('fontColor', Types.String)
     @param('content', Types.Content)
     @param('users', Types.NumericArray, true)
-    async postUpdate(_: string, id: number, short: string, title: string, backgroundColor: string, fontColor: string, content: string, users: [number]) {
-        const users_old = (await BadgeModel.badgeGet(this.ctx, id)).users;
+    @param('removeBackground', Types.Boolean, true)
+    async postUpdate(
+        _: string,
+        id: number,
+        short: string,
+        title: string,
+        backgroundColor: string,
+        fontColor: string,
+        content: string,
+        users: [number],
+        removeBackground = false,
+    ) {
+        const badge = await BadgeModel.badgeGet(this.ctx, id);
+        if (!badge) throw new NotFoundError(`Badge ${id} is not exist!`);
+        const file = getRequestFile(this.request.files, 'backgroundImage');
+        if (file?.size > BADGE_BACKGROUND_IMAGE_LIMIT) throw new ValidationError('backgroundImage');
+        const ext = file?.size ? path.extname(file.originalFilename || '').toLowerCase() : '';
+        if (file?.size && !BADGE_BACKGROUND_IMAGE_EXTS.includes(ext)) throw new ValidationError('backgroundImage');
+
+        const users_old = badge.users;
         await BadgeModel.badgeEdit(this.ctx, id, short, title, backgroundColor, fontColor, content, users, users_old);
+        if (file?.size) {
+            const storagePath = `badge/${id}/profile-background-${Date.now()}${ext}`;
+            await storage.put(storagePath, file.filepath, this.user._id);
+            const updatedAt = new Date().toISOString();
+            await this.ctx.db.collection('badge').updateOne({ _id: id }, {
+                $set: { backgroundImagePath: storagePath, backgroundImageUpdatedAt: updatedAt },
+            });
+            if (badge.backgroundImagePath && badge.backgroundImagePath !== storagePath) {
+                storage.del([badge.backgroundImagePath], this.user._id).catch(() => {});
+            }
+        } else if (removeBackground && badge.backgroundImagePath) {
+            await this.ctx.db.collection('badge').updateOne({ _id: id }, {
+                $unset: { backgroundImagePath: '', backgroundImageUpdatedAt: '' },
+            });
+            storage.del([badge.backgroundImagePath], this.user._id).catch(() => {});
+        }
         this.response.redirect = this.url('badge_detail', { id });
     }
 
     @param('id', Types.PositiveInt, true)
-    async postDelete(_:string, id: number) {
+    async postDelete(_: string, id: number) {
+        const badge = await BadgeModel.badgeGet(this.ctx, id);
         await BadgeModel.badgeDel(this.ctx, id);
+        if (badge?.backgroundImagePath) {
+            storage.del([badge.backgroundImagePath], this.user._id).catch(() => {});
+        }
         this.response.redirect = this.url('badge_manage');
+    }
+}
+
+class BadgeBackgroundImageHandler extends Handler {
+    noCheckPermView = true;
+
+    @param('id', Types.PositiveInt, true)
+    async get(_: string, id: number) {
+        const badge = await BadgeModel.badgeGet(this.ctx, id);
+        if (!badge?.backgroundImagePath) throw new NotFoundError(`Badge background ${id} is not exist!`);
+        const meta = await storage.getMeta(badge.backgroundImagePath);
+        if (!meta) throw new NotFoundError(`Badge background ${id} is not exist!`);
+        this.response.body = await storage.get(badge.backgroundImagePath);
+        this.response.type = meta['Content-Type'] || lookup(badge.backgroundImagePath) || 'application/octet-stream';
+        this.response.addHeader('Cache-Control', 'public, max-age=604800, immutable');
     }
 }
 
@@ -266,6 +342,7 @@ export async function apply(ctx: Context) {
     ctx.Route('badge_manage', '/manage/badge', BadgeManageHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
     ctx.Route('badge_add', '/badge/add', BadgeAddHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
     ctx.Route('badge_edit', '/badge/:id/edit', BadgeEditHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
+    ctx.Route('badge_background_image', '/badge/:id/background', BadgeBackgroundImageHandler);
     ctx.Route('badge_detail', '/badge/:id', BadgeDetailHandler);
     ctx.Route('user_badge_manage', '/mybadge', UserBadgeManageHandler, PRIV.PRIV_USER_PROFILE);
     ctx.injectUI('ControlPanel', 'badge_manage');
@@ -285,6 +362,13 @@ export async function apply(ctx: Context) {
         'Enable': '启用',
         'badge background color': '徽章背景色',
         'badge font color': '徽章字体色',
+        'Badge profile background': '徽章个人主页背景图',
+        'Upload a wide image to display behind the holder\'s profile information.':
+            '上传横向图片，作为获得者个人主页顶部的背景。',
+        'Recommended size: 1600 x 500 (16:5), JPG, PNG, WebP or GIF, up to 8 MB.':
+            '建议尺寸：1600 x 500（16:5），支持 JPG、PNG、WebP、GIF，最大 8 MB。GIF 将在个人主页背景中自动播放。',
+        'Current profile background': '当前个人主页背景图',
+        'Remove current profile background': '移除当前个人主页背景图',
         'hex color code': '十六进制颜色代码',
         'badge preview': '徽章预览',
         'badge assignment': '徽章分配',
@@ -315,6 +399,14 @@ export async function apply(ctx: Context) {
         'enable': 'Enable',
         'badge background color': 'Badge Background Color',
         'badge font color': 'Badge Font Color',
+        'Badge profile background': 'Badge Profile Background',
+        'Upload a wide image to display behind the holder\'s profile information.':
+            'Upload a wide image to display behind the holder\'s profile information.',
+        'Recommended size: 1600 x 500 (16:5), JPG, PNG, WebP or GIF, up to 8 MB.':
+            'Recommended size: 1600 x 500 (16:5), JPG, PNG, WebP or GIF, up to 8 MB. '
+            + 'GIFs play automatically on the profile background.',
+        'Current profile background': 'Current Profile Background',
+        'Remove current profile background': 'Remove current profile background',
         'hex color code': 'Hex Color Code',
         'badge preview': 'Badge Preview',
         'badge assignment': 'Badge Assignment',
