@@ -42,8 +42,12 @@
           <h2 class="point-lottery__title">积分抽奖</h2>
         </div>
         <div class="point-lottery__balance">
-          <span>我的积分</span>
-          <strong data-point-lottery-points>{{ pointLottery.points }}</strong>
+          <span>当前积分 / 累计积分</span>
+          <strong>
+            <b data-point-lottery-points>{{ pointLottery.points }}</b>
+            <i>/</i>
+            <b data-point-lottery-total-points>{{ pointLottery.totalPoints }}</b>
+          </strong>
         </div>
       </div>
       <div class="point-lottery__status" data-point-lottery-status>
@@ -203,7 +207,7 @@
     line-height: 1.2;
   }
   .point-lottery__balance {
-    min-width: 7.5rem;
+    min-width: 10.5rem;
     border-radius: 10px;
     background: #fff7ed;
     color: #1d4ed8;
@@ -217,8 +221,20 @@
     color: #64748b;
   }
   .point-lottery__balance strong {
-    display: block;
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: .35rem;
     font-size: 1.55rem;
+  }
+  .point-lottery__balance strong b {
+    font-weight: 700;
+  }
+  .point-lottery__balance strong i {
+    color: #94a3b8;
+    font-size: 1rem;
+    font-style: normal;
+    font-weight: 400;
   }
   .point-lottery__status {
     margin-top: 1rem;
@@ -691,6 +707,7 @@
   var closeButtons = modal.querySelectorAll('[data-point-lottery-close]');
   var drawButton = modal.querySelector('[data-point-lottery-draw]');
   var pointsNode = modal.querySelector('[data-point-lottery-points]');
+  var totalPointsNode = modal.querySelector('[data-point-lottery-total-points]');
   var costNode = modal.querySelector('[data-point-lottery-cost]');
   var statusNode = modal.querySelector('[data-point-lottery-status]');
   var wheelWrapNode = modal.querySelector('.point-lottery__wheel-wrap');
@@ -1090,6 +1107,7 @@
 
   function syncState() {
     pointsNode.textContent = pointLottery.points || 0;
+    totalPointsNode.textContent = pointLottery.totalPoints || 0;
     costNode.textContent = pointLottery.cost || 0;
     renderPrizes();
     renderWins();
@@ -1178,7 +1196,9 @@
       drawButton.textContent = '转';
       return spinToPrize(data.prize, data.prizeIndex).then(function () {
         pointLottery.points = data.points;
+        pointLottery.totalPoints = data.totalPoints === undefined ? data.points : data.totalPoints;
         pointsNode.textContent = data.points;
+        totalPointsNode.textContent = pointLottery.totalPoints;
         var index = Number.isInteger(data.prizeIndex) ? data.prizeIndex : findPrizeIndex(data.prize);
         renderPrizePreview(index);
         var winPrize = {

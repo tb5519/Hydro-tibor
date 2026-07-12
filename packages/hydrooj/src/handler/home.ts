@@ -378,9 +378,13 @@ export class HomeHandler extends Handler {
         const pointLotteryUser = this.user.hasPriv(PRIV.PRIV_USER_PROFILE)
             ? await domain.collUser.findOne(
                 { domainId, uid: this.user._id },
-                { projection: { [POINT_LOTTERY_POINTS_FIELD]: 1 } },
+                { projection: { [POINT_LOTTERY_POINTS_FIELD]: 1, [POINT_LOTTERY_TOTAL_POINTS_FIELD]: 1 } },
             )
             : null;
+        const pointLotteryPoints = Math.max(0, Math.floor(+pointLotteryUser?.[POINT_LOTTERY_POINTS_FIELD] || 0));
+        const pointLotteryTotalPoints = pointLotteryUser?.[POINT_LOTTERY_TOTAL_POINTS_FIELD] === undefined
+            ? pointLotteryPoints
+            : Math.max(0, Math.floor(+pointLotteryUser?.[POINT_LOTTERY_TOTAL_POINTS_FIELD] || 0));
         const pointLotteryWins = this.user.hasPriv(PRIV.PRIV_USER_PROFILE)
             ? await this.ctx.db.collection('lottery.draw')
                 .find({ domainId, uid: this.user._id, deleted: { $ne: true } })
@@ -404,7 +408,8 @@ export class HomeHandler extends Handler {
             pointLottery: {
                 enabled: pointLotteryConfig.enabled,
                 cost: pointLotteryConfig.cost,
-                points: Math.max(0, Math.floor(+pointLotteryUser?.[POINT_LOTTERY_POINTS_FIELD] || 0)),
+                points: pointLotteryPoints,
+                totalPoints: pointLotteryTotalPoints,
                 canDraw: this.user.hasPriv(PRIV.PRIV_USER_PROFILE),
                 prizes: pointLotteryConfig.prizes.map(publicPointLotteryPrize),
                 recentWins: pointLotteryWins.map((log: any) => ({
@@ -519,6 +524,7 @@ class PointLotteryDrawHandler extends Handler {
             prizeIndex,
             cost: config.cost,
             points,
+            totalPoints,
         };
     }
 }
