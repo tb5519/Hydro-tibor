@@ -133,8 +133,14 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     return normalStatuses.has(status as STATUS) || status === STATUS.STATUS_CANCELED;
   }
 
+  function normalizeContestScore(value: number) {
+    const score = Number(value);
+    if (!Number.isFinite(score)) return 0;
+    return Math.round((score + Number.EPSILON) * 100) / 100;
+  }
+
   function formatContestScore(value: number) {
-    const rounded = Math.round((Number(value) || 0) * 100) / 100;
+    const rounded = normalizeContestScore(value);
     return Number.isInteger(rounded) ? `${rounded}` : rounded.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
   }
 
@@ -180,10 +186,10 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     let acceptedCount = 0;
     for (const rawPid of pids) {
       const pid = Number(rawPid);
-      maxTotalScore += getContestProblemScore(pid);
+      maxTotalScore = normalizeContestScore(maxTotalScore + getContestProblemScore(pid));
       const detail = contestProgressDetails[pid];
       if (!detail) continue;
-      totalScore += getContestProblemScore(pid) * getContestRecordScore(detail) / 100;
+      totalScore = normalizeContestScore(totalScore + getContestProblemScore(pid) * getContestRecordScore(detail) / 100);
       if (+detail.status === STATUS.STATUS_ACCEPTED) acceptedCount++;
     }
     return {
@@ -279,7 +285,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     updateContestProgress(rdoc);
     const pid = Number(rdoc.pid);
     const maxScore = getContestProblemScore(pid);
-    const problemScore = maxScore * getContestRecordScore(rdoc) / 100;
+    const problemScore = normalizeContestScore(maxScore * getContestRecordScore(rdoc) / 100);
     const {
       totalScore, maxTotalScore, acceptedCount, remainingCount,
     } = getContestProgressSummary();
@@ -314,7 +320,11 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
             </div>
             <div className="contest-submit-result__score-card">
               <span>{isAcm ? '已完成题目' : '比赛累计得分'}</span>
-              <strong>{isAcm ? `${acceptedCount} 题` : <>{formatContestScore(totalScore)}<small> / {formatContestScore(maxTotalScore)}</small></>}</strong>
+              <strong>
+                {isAcm ? `${acceptedCount} 题` : (
+                  <>{formatContestScore(totalScore)}<small> / {formatContestScore(maxTotalScore)}</small></>
+                )}
+              </strong>
             </div>
           </div>
           <div className="contest-submit-result__summary">

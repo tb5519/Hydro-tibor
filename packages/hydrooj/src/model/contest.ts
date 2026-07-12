@@ -79,6 +79,17 @@ export function isLocked(tdoc: Tdoc, time = new Date()) {
     return tdoc.lockAt < time && !tdoc.unlocked;
 }
 
+// Contest scoring can include percentage weights, so do not expose IEEE-754 tails to users.
+export function normalizeContestScore(value: number) {
+    const score = Number(value);
+    if (!Number.isFinite(score)) return 0;
+    return Math.round((score + Number.EPSILON) * 100) / 100;
+}
+
+export function formatContestScore(value: number) {
+    return `${normalizeContestScore(value)}`;
+}
+
 export function isExtended(tdoc: Tdoc) {
     const now = Date.now();
     return tdoc.penaltySince.getTime() <= now && now < tdoc.endAt.getTime();
@@ -312,7 +323,7 @@ const oi = buildContestRule({
         for (const i in display) {
             score += ((tdoc.score?.[i] || 100) * (display[i].score || 0)) / 100;
         }
-        return { score, detail, display };
+        return { score: normalizeContestScore(score), detail, display };
     },
     showScoreboard: (tdoc, now) => now > tdoc.endAt && !tdoc.keepScoreboardHidden,
     showSelfRecord: (tdoc, now) => now > tdoc.endAt && !tdoc.keepScoreboardHidden,
@@ -354,7 +365,7 @@ const oi = buildContestRule({
         ];
         const displayScore = (pid: number, score?: number) => {
             if (typeof score !== 'number') return '-';
-            return score * ((tdoc.score?.[pid] || 100) / 100);
+            return formatContestScore(score * ((tdoc.score?.[pid] || 100) / 100));
         };
         if (config.isExport && config.showDisplayName) {
             row.push({ type: 'email', value: udoc.mail });
@@ -362,7 +373,7 @@ const oi = buildContestRule({
             row.push({ type: 'string', value: udoc.displayName || '' });
             row.push({ type: 'string', value: udoc.studentId || '' });
         }
-        row.push({ type: 'total_score', value: tsdoc.score || 0 });
+        row.push({ type: 'total_score', value: formatContestScore(tsdoc.score || 0) });
         const accepted = {};
         for (const s of tsdoc.journal || []) {
             if (!pdict[s.pid]) continue;
@@ -412,7 +423,10 @@ const oi = buildContestRule({
         return row;
     },
     async scoreboard(config, _, tdoc, pdict, cursor) {
-        const rankedTsdocs = await db.ranked(cursor, (a, b) => (a.score || 0) === (b.score || 0));
+        const rankedTsdocs = await db.ranked(
+            cursor,
+            (a, b) => normalizeContestScore(a.score || 0) === normalizeContestScore(b.score || 0),
+        );
         const uids = rankedTsdocs.map(([, tsdoc]) => tsdoc.uid);
         const udict = await UserModel.getListForRender(tdoc.domainId, uids, config.showDisplayName ? ['displayName'] : []);
         const psdict = {};
@@ -448,7 +462,7 @@ const oi = buildContestRule({
         return [rows, udict];
     },
     async ranked(tdoc, cursor) {
-        return await db.ranked(cursor, (a, b) => a.score === b.score);
+        return await db.ranked(cursor, (a, b) => normalizeContestScore(a.score) === normalizeContestScore(b.score));
     },
     applyProjection(tdoc, rdoc) {
         if (isDone(tdoc)) return rdoc;
@@ -496,7 +510,7 @@ const strictioi = buildContestRule({
             if (!detail[j.pid] || detail[j.pid].score < j.score) detail[j.pid] = { ...j, subtasks: subtasks[j.pid] };
         }
         for (const i in detail) score += ((tdoc.score?.[i] || 100) * (detail[i].score || 0)) / 100;
-        return { score, detail };
+        return { score: normalizeContestScore(score), detail };
     },
     async scoreboardRow(config, _, tdoc, pdict, udoc, rank, tsdoc, meta) {
         const tsddict = tsdoc.detail || {};
@@ -530,17 +544,17 @@ const strictioi = buildContestRule({
                     type: 'records',
                     value: '',
                     raw: [{
-                        value: ((tsddict[pid]?.score || 0) * ((tdoc.score?.[pid] || 100) / 100)).toString() || '',
+                        value: formatContestScore((tsddict[pid]?.score || 0) * ((tdoc.score?.[pid] || 100) / 100)),
                         raw: tsddict[pid]?.rid || null,
                         score: tsddict[pid]?.score,
                     }, {
-                        value: ((meta?.psdict?.[index]?.score || 0) * ((tdoc.score?.[pid] || 100) / 100)).toString() || '',
+                        value: formatContestScore((meta?.psdict?.[index]?.score || 0) * ((tdoc.score?.[pid] || 100) / 100)),
                         raw: meta?.psdict?.[index]?.rid ?? null,
                         score: meta?.psdict?.[index]?.score,
                     }],
                 } : {
                     type: 'record',
-                    value: ((tsddict[pid]?.score || 0) * ((tdoc.score?.[pid] || 100) / 100)).toString() || '',
+                    value: formatContestScore((tsddict[pid]?.score || 0) * ((tdoc.score?.[pid] || 100) / 100)),
                     raw: tsddict[pid]?.rid,
                     score: tsddict[pid]?.score,
                 };
@@ -586,7 +600,7 @@ const ledo = buildContestRule({
             originalScore += detail[pid].score * rate;
         }
         return {
-            score, originalScore, detail,
+            score: normalizeContestScore(score), originalScore: normalizeContestScore(originalScore), detail,
         };
     },
     async scoreboardRow(config, _, tdoc, pdict, udoc, rank, tsdoc, meta) {
@@ -603,8 +617,9 @@ const ledo = buildContestRule({
         }
         row.push({
             type: 'total_score',
-            value: tsdoc.score || 0,
-            hover: tsdoc.score !== tsdoc.originalScore ? _('Original score: {0}').format(tsdoc.originalScore) : '',
+            value: formatContestScore(tsdoc.score || 0),
+            hover: normalizeContestScore(tsdoc.score) !== normalizeContestScore(tsdoc.originalScore)
+                ? _('Original score: {0}').format(formatContestScore(tsdoc.originalScore)) : '',
         });
         const accepted = {};
         for (const s of tsdoc.journal || []) {
@@ -618,7 +633,7 @@ const ledo = buildContestRule({
         for (const pid of tdoc.pids) {
             row.push({
                 type: 'record',
-                value: ((tsddict[pid]?.penaltyScore || 0) * ((tdoc.score?.[pid] || 100) / 100)).toString(),
+                value: formatContestScore((tsddict[pid]?.penaltyScore || 0) * ((tdoc.score?.[pid] || 100) / 100)),
                 hover: tsddict[pid]?.ntry ? `-${tsddict[pid].ntry} (${Math.round(Math.max(0.7, 0.95 ** tsddict[pid].ntry) * 100)}%)` : '',
                 raw: tsddict[pid]?.rid,
                 score: tsddict[pid]?.score,
@@ -673,8 +688,8 @@ const homework = buildContestRule({
             detail.push(effective[j]);
         }
         return {
-            score: sumBy(detail, 'score'),
-            penaltyScore: sumBy(detail, 'penaltyScore'),
+            score: normalizeContestScore(sumBy(detail, 'score')),
+            penaltyScore: normalizeContestScore(sumBy(detail, 'penaltyScore')),
             time: Math.sum(detail.map((d) => d.time)),
             detail: effective,
         };
@@ -742,9 +757,9 @@ const homework = buildContestRule({
             row.push({ type: 'string', value: udoc.displayName || '' });
             row.push({ type: 'string', value: udoc.studentId || '' });
         }
-        row.push({ type: 'string', value: tsdoc.penaltyScore || 0 });
+        row.push({ type: 'string', value: formatContestScore(tsdoc.penaltyScore || 0) });
         if (config.isExport) {
-            row.push({ type: 'string', value: tsdoc.score || 0 });
+            row.push({ type: 'string', value: formatContestScore(tsdoc.score || 0) });
         }
         row.push({ type: 'time', value: formatSeconds(tsdoc.time || 0, false), raw: tsdoc.time });
         const accepted = {};
@@ -758,8 +773,12 @@ const homework = buildContestRule({
         }
         for (const pid of tdoc.pids) {
             const rid = tsddict[pid]?.rid;
-            const colScore = tsddict[pid]?.penaltyScore ?? '';
-            const colOriginalScore = tsddict[pid]?.score ?? '';
+            const colScore = typeof tsddict[pid]?.penaltyScore === 'number'
+                ? formatContestScore(tsddict[pid].penaltyScore)
+                : '';
+            const colOriginalScore = typeof tsddict[pid]?.score === 'number'
+                ? formatContestScore(tsddict[pid].score)
+                : '';
             const colTime = tsddict[pid]?.time || '';
             const colTimeStr = colTime ? formatSeconds(colTime, false) : '';
             if (config.isExport) {
@@ -782,7 +801,10 @@ const homework = buildContestRule({
         return row;
     },
     async scoreboard(config, _, tdoc, pdict, cursor) {
-        const rankedTsdocs = await db.ranked(cursor, (a, b) => a.score === b.score);
+        const rankedTsdocs = await db.ranked(
+            cursor,
+            (a, b) => normalizeContestScore(a.score) === normalizeContestScore(b.score),
+        );
         const uids = rankedTsdocs.map(([, tsdoc]) => tsdoc.uid);
         const udict = await UserModel.getListForRender(tdoc.domainId, uids, config.showDisplayName ? ['displayName'] : []);
         const columns = await this.scoreboardHeader(config, _, tdoc, pdict);
@@ -795,7 +817,7 @@ const homework = buildContestRule({
         return [rows, udict];
     },
     async ranked(tdoc, cursor) {
-        return await db.ranked(cursor, (a, b) => a.score === b.score);
+        return await db.ranked(cursor, (a, b) => normalizeContestScore(a.score) === normalizeContestScore(b.score));
     },
 });
 
