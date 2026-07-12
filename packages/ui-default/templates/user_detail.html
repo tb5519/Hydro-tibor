@@ -152,6 +152,18 @@
     white-space: nowrap;
   }
 
+  .ui-v2-badge-background-modal__preview-ac {
+    position: absolute;
+    z-index: 1;
+    right: 12px;
+    bottom: 10px;
+    max-width: 42%;
+    max-height: 82%;
+    object-fit: contain;
+    filter: drop-shadow(0 10px 18px rgba(15, 23, 42, .28));
+    pointer-events: none;
+  }
+
   .ui-v2-badge-background-modal__actions {
     display: flex;
     flex-wrap: wrap;
@@ -168,6 +180,14 @@
     color: #718096;
     font-size: 13px;
     line-height: 1.6;
+  }
+
+  .ui-v2-badge-background-modal__media-hint {
+    margin: 10px 0 0;
+    color: #4f6688;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.5;
   }
 
   @media (max-width: 480px) {
@@ -204,7 +224,7 @@
                 <div class="ui-v2-user-detail-badge-row">
                   {% if udoc.ownedBadges and udoc.ownedBadges.length %}
                     {% for badge in udoc.ownedBadges %}
-                      {% if isSelfProfile and badge.backgroundImage %}
+                      {% if isSelfProfile and badge.isTheme %}
                         <button
                           type="button"
                           class="user-profile-badge v-center user-profile-badge--custom ui-v2-user-detail-badge-row__selector"
@@ -213,6 +233,8 @@
                           data-badge-background-id="{{ badge.id }}"
                           data-badge-background-name="{{ badge.displayName }}"
                           data-badge-background-image="{{ badge.backgroundImage }}"
+                          data-badge-theme-ac-image="{{ badge.acImage }}"
+                          data-badge-theme-sound="{{ badge.themeSound }}"
                           title="{{ badge.tooltip }}"
                           data-tooltip="{{ badge.tooltip }}"
                         >{{ badge.displayName }}</button>
@@ -382,24 +404,25 @@
     {% endif %}
   </div>
 </div>
-{% if isSelfProfile and badgeProfileBackground.backgrounds.length %}
+{% if isSelfProfile and badgeProfileBackground.themes.length %}
   <div class="ui-v2-badge-background-modal" data-badge-background-modal hidden>
     <div class="ui-v2-badge-background-modal__shade" data-badge-background-close></div>
     <section class="ui-v2-badge-background-modal__panel" role="dialog" aria-modal="true" aria-labelledby="badge-background-modal-title">
       <button class="ui-v2-badge-background-modal__close" type="button" data-badge-background-close aria-label="关闭">×</button>
       <div class="ui-v2-badge-background-modal__header">
-        <p class="ui-v2-badge-background-modal__eyebrow">Badge Background</p>
-        <h2 class="ui-v2-badge-background-modal__title" id="badge-background-modal-title">个人主页背景</h2>
+        <p class="ui-v2-badge-background-modal__eyebrow">Badge Theme</p>
+        <h2 class="ui-v2-badge-background-modal__title" id="badge-background-modal-title">我的徽章主题</h2>
       </div>
       <div class="ui-v2-badge-background-modal__body">
         <div class="ui-v2-badge-background-modal__preview" data-badge-background-preview>
+          <img class="ui-v2-badge-background-modal__preview-ac" data-badge-theme-preview-ac alt="" hidden>
           <span class="ui-v2-badge-background-modal__preview-name" data-badge-background-preview-name></span>
         </div>
         <div class="ui-v2-badge-background-modal__actions">
           <form method="post" action="{{ url('user_badge_background', uid=udoc._id) }}">
             <input type="hidden" name="mode" value="selected">
             <input type="hidden" name="badgeId" value="{{ badgeProfileBackground.selectedId }}" data-badge-background-selected-id>
-            <button type="submit" class="rounded primary button">展示此徽章背景</button>
+            <button type="submit" class="rounded primary button">使用此徽章主题</button>
           </form>
           {% if badgeProfileBackground.backgrounds.length > 1 %}
             <form method="post" action="{{ url('user_badge_background', uid=udoc._id) }}">
@@ -409,7 +432,8 @@
             </form>
           {% endif %}
         </div>
-        <p class="ui-v2-badge-background-modal__hint">PNG 会静态显示，GIF 会在个人主页背景中自动播放。</p>
+        <p class="ui-v2-badge-background-modal__media-hint" data-badge-theme-preview-media></p>
+        <p class="ui-v2-badge-background-modal__hint">主题包含个人主页背景、满分 AC 动画图和专属音效；未配置的内容会自动跳过。PNG 会静态显示，GIF 会在个人主页背景中自动播放。</p>
       </div>
     </section>
   </div>
@@ -421,6 +445,8 @@
       var header = document.querySelector('.user-profile-bg--badge');
       var preview = modal.querySelector('[data-badge-background-preview]');
       var previewName = modal.querySelector('[data-badge-background-preview-name]');
+      var previewAc = modal.querySelector('[data-badge-theme-preview-ac]');
+      var previewMedia = modal.querySelector('[data-badge-theme-preview-media]');
       var selectedInput = modal.querySelector('[data-badge-background-selected-id]');
       var rotateInput = modal.querySelector('[data-badge-background-rotate-id]');
       var backgrounds = [
@@ -434,8 +460,18 @@
         var id = button.getAttribute('data-badge-background-id');
         var image = button.getAttribute('data-badge-background-image');
         var name = button.getAttribute('data-badge-background-name');
-        preview.style.setProperty('--badge-preview-background', 'url("' + image.replace(/"/g, '\\"') + '")');
+        var acImage = button.getAttribute('data-badge-theme-ac-image');
+        var themeSound = button.getAttribute('data-badge-theme-sound');
+        preview.style.setProperty('--badge-preview-background', image
+          ? 'url("' + image.replace(/"/g, '\\"') + '")'
+          : 'none');
         previewName.textContent = name;
+        previewAc.hidden = !acImage;
+        previewAc.src = acImage || '';
+        var media = [];
+        if (acImage) media.push('已配置满分 AC 动画图');
+        if (themeSound) media.push('已配置专属音效');
+        previewMedia.textContent = media.join(' · ') || '此主题仅使用个人主页背景或默认展示效果。';
         selectedInput.value = id;
         if (rotateInput) rotateInput.value = id;
       }

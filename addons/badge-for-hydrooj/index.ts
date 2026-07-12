@@ -17,6 +17,10 @@ const SPECIAL_BADGE_TASK = 'badge.autoAssignSpecial';
 const SPECIAL_BADGE_TIMEZONE = 'Asia/Shanghai';
 const BADGE_BACKGROUND_IMAGE_LIMIT = 8 * 1024 * 1024;
 const BADGE_BACKGROUND_IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+const BADGE_AC_IMAGE_LIMIT = 8 * 1024 * 1024;
+const BADGE_AC_IMAGE_EXTS = ['.png'];
+const BADGE_THEME_SOUND_LIMIT = 10 * 1024 * 1024;
+const BADGE_THEME_SOUND_EXTS = ['.mp3', '.wav', '.ogg', '.m4a'];
 const SPECIAL_BADGES = {
     strongest: {
         title: '最强王者',
@@ -44,6 +48,22 @@ function getBadgeBackgroundImageUrl(handler: Handler, badge: Badge) {
     return handler.url('badge_background_image', {
         id: badge._id,
         query: { v: badge.backgroundImageUpdatedAt || '' },
+    });
+}
+
+function getBadgeAcImageUrl(handler: Handler, badge: Badge) {
+    if (!badge?.acImagePath) return '';
+    return handler.url('badge_ac_image', {
+        id: badge._id,
+        query: { v: badge.acImageUpdatedAt || '' },
+    });
+}
+
+function getBadgeThemeSoundUrl(handler: Handler, badge: Badge) {
+    if (!badge?.themeSoundPath) return '';
+    return handler.url('badge_theme_sound', {
+        id: badge._id,
+        query: { v: badge.themeSoundUpdatedAt || '' },
     });
 }
 
@@ -232,6 +252,8 @@ class BadgeEditHandler extends Handler {
             badge: {
                 ...badge,
                 backgroundImage: getBadgeBackgroundImageUrl(this, badge),
+                acImage: getBadgeAcImageUrl(this, badge),
+                themeSound: getBadgeThemeSoundUrl(this, badge),
             },
         };
     }
@@ -244,6 +266,8 @@ class BadgeEditHandler extends Handler {
     @param('content', Types.Content)
     @param('users', Types.NumericArray, true)
     @param('removeBackground', Types.Boolean, true)
+    @param('removeAcImage', Types.Boolean, true)
+    @param('removeThemeSound', Types.Boolean, true)
     async postUpdate(
         _: string,
         id: number,
@@ -254,32 +278,76 @@ class BadgeEditHandler extends Handler {
         content: string,
         users: [number],
         removeBackground = false,
+        removeAcImage = false,
+        removeThemeSound = false,
     ) {
         const badge = await BadgeModel.badgeGet(this.ctx, id);
         if (!badge) throw new NotFoundError(`Badge ${id} is not exist!`);
-        const file = getRequestFile(this.request.files, 'backgroundImage');
-        if (file?.size > BADGE_BACKGROUND_IMAGE_LIMIT) throw new ValidationError('backgroundImage');
-        const ext = file?.size ? path.extname(file.originalFilename || '').toLowerCase() : '';
-        if (file?.size && !BADGE_BACKGROUND_IMAGE_EXTS.includes(ext)) throw new ValidationError('backgroundImage');
+        const backgroundFile = getRequestFile(this.request.files, 'backgroundImage');
+        const acImageFile = getRequestFile(this.request.files, 'acImage');
+        const themeSoundFile = getRequestFile(this.request.files, 'themeSound');
+        const fileSpecs = [
+            {
+                file: backgroundFile,
+                input: 'backgroundImage',
+                limit: BADGE_BACKGROUND_IMAGE_LIMIT,
+                extensions: BADGE_BACKGROUND_IMAGE_EXTS,
+            },
+            {
+                file: acImageFile,
+                input: 'acImage',
+                limit: BADGE_AC_IMAGE_LIMIT,
+                extensions: BADGE_AC_IMAGE_EXTS,
+            },
+            {
+                file: themeSoundFile,
+                input: 'themeSound',
+                limit: BADGE_THEME_SOUND_LIMIT,
+                extensions: BADGE_THEME_SOUND_EXTS,
+            },
+        ];
+        for (const spec of fileSpecs) {
+            if (spec.file?.size > spec.limit) throw new ValidationError(spec.input);
+            const ext = spec.file?.size ? path.extname(spec.file.originalFilename || '').toLowerCase() : '';
+            if (spec.file?.size && !spec.extensions.includes(ext)) throw new ValidationError(spec.input);
+        }
 
         const users_old = badge.users;
         await BadgeModel.badgeEdit(this.ctx, id, short, title, backgroundColor, fontColor, content, users, users_old);
-        if (file?.size) {
-            const storagePath = `badge/${id}/profile-background-${Date.now()}${ext}`;
-            await storage.put(storagePath, file.filepath, this.user._id);
-            const updatedAt = new Date().toISOString();
-            await this.ctx.db.collection('badge').updateOne({ _id: id }, {
-                $set: { backgroundImagePath: storagePath, backgroundImageUpdatedAt: updatedAt },
-            });
-            if (badge.backgroundImagePath && badge.backgroundImagePath !== storagePath) {
-                storage.del([badge.backgroundImagePath], this.user._id).catch(() => {});
+        const setFields: Record<string, string> = {};
+        const unsetFields: Record<string, string> = {};
+        const obsoletePaths: string[] = [];
+        const uploadAsset = async (
+            file: any,
+            filename: string,
+            pathField: keyof Badge,
+            updatedAtField: keyof Badge,
+            remove: boolean,
+        ) => {
+            const oldPath = badge[pathField] as string | undefined;
+            if (file?.size) {
+                const ext = path.extname(file.originalFilename || '').toLowerCase();
+                const storagePath = `badge/${id}/${filename}-${Date.now()}${ext}`;
+                await storage.put(storagePath, file.filepath, this.user._id);
+                setFields[pathField] = storagePath;
+                setFields[updatedAtField] = new Date().toISOString();
+                if (oldPath && oldPath !== storagePath) obsoletePaths.push(oldPath);
+            } else if (remove && oldPath) {
+                unsetFields[pathField] = '';
+                unsetFields[updatedAtField] = '';
+                obsoletePaths.push(oldPath);
             }
-        } else if (removeBackground && badge.backgroundImagePath) {
-            await this.ctx.db.collection('badge').updateOne({ _id: id }, {
-                $unset: { backgroundImagePath: '', backgroundImageUpdatedAt: '' },
-            });
-            storage.del([badge.backgroundImagePath], this.user._id).catch(() => {});
+        };
+        await uploadAsset(backgroundFile, 'profile-background', 'backgroundImagePath', 'backgroundImageUpdatedAt', removeBackground);
+        await uploadAsset(acImageFile, 'ac-effect', 'acImagePath', 'acImageUpdatedAt', removeAcImage);
+        await uploadAsset(themeSoundFile, 'theme-sound', 'themeSoundPath', 'themeSoundUpdatedAt', removeThemeSound);
+        if (Object.keys(setFields).length || Object.keys(unsetFields).length) {
+            const update: any = {};
+            if (Object.keys(setFields).length) update.$set = setFields;
+            if (Object.keys(unsetFields).length) update.$unset = unsetFields;
+            await this.ctx.db.collection('badge').updateOne({ _id: id }, update);
         }
+        if (obsoletePaths.length) storage.del(obsoletePaths, this.user._id).catch(() => {});
         this.response.redirect = this.url('badge_detail', { id });
     }
 
@@ -287,26 +355,43 @@ class BadgeEditHandler extends Handler {
     async postDelete(_: string, id: number) {
         const badge = await BadgeModel.badgeGet(this.ctx, id);
         await BadgeModel.badgeDel(this.ctx, id);
-        if (badge?.backgroundImagePath) {
-            storage.del([badge.backgroundImagePath], this.user._id).catch(() => {});
-        }
+        const assetPaths = [badge?.backgroundImagePath, badge?.acImagePath, badge?.themeSoundPath].filter(Boolean) as string[];
+        if (assetPaths.length) storage.del(assetPaths, this.user._id).catch(() => {});
         this.response.redirect = this.url('badge_manage');
     }
 }
 
-class BadgeBackgroundImageHandler extends Handler {
+abstract class BadgeAssetHandler extends Handler {
     noCheckPermView = true;
+    protected abstract readonly assetField: keyof Badge;
+    protected abstract readonly assetName: string;
 
     @param('id', Types.PositiveInt, true)
     async get(_: string, id: number) {
         const badge = await BadgeModel.badgeGet(this.ctx, id);
-        if (!badge?.backgroundImagePath) throw new NotFoundError(`Badge background ${id} is not exist!`);
-        const meta = await storage.getMeta(badge.backgroundImagePath);
-        if (!meta) throw new NotFoundError(`Badge background ${id} is not exist!`);
-        this.response.body = await storage.get(badge.backgroundImagePath);
-        this.response.type = meta['Content-Type'] || lookup(badge.backgroundImagePath) || 'application/octet-stream';
+        const assetPath = badge?.[this.assetField] as string | undefined;
+        if (!assetPath) throw new NotFoundError(`Badge ${this.assetName} ${id} is not exist!`);
+        const meta = await storage.getMeta(assetPath);
+        if (!meta) throw new NotFoundError(`Badge ${this.assetName} ${id} is not exist!`);
+        this.response.body = await storage.get(assetPath);
+        this.response.type = meta['Content-Type'] || lookup(assetPath) || 'application/octet-stream';
         this.response.addHeader('Cache-Control', 'public, max-age=604800, immutable');
     }
+}
+
+class BadgeBackgroundImageHandler extends BadgeAssetHandler {
+    protected readonly assetField = 'backgroundImagePath' as const;
+    protected readonly assetName = 'background';
+}
+
+class BadgeAcImageHandler extends BadgeAssetHandler {
+    protected readonly assetField = 'acImagePath' as const;
+    protected readonly assetName = 'AC effect';
+}
+
+class BadgeThemeSoundHandler extends BadgeAssetHandler {
+    protected readonly assetField = 'themeSoundPath' as const;
+    protected readonly assetName = 'theme sound';
 }
 
 class BadgeDetailHandler extends Handler {
@@ -343,6 +428,8 @@ export async function apply(ctx: Context) {
     ctx.Route('badge_add', '/badge/add', BadgeAddHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
     ctx.Route('badge_edit', '/badge/:id/edit', BadgeEditHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
     ctx.Route('badge_background_image', '/badge/:id/background', BadgeBackgroundImageHandler);
+    ctx.Route('badge_ac_image', '/badge/:id/ac-image', BadgeAcImageHandler);
+    ctx.Route('badge_theme_sound', '/badge/:id/theme-sound', BadgeThemeSoundHandler);
     ctx.Route('badge_detail', '/badge/:id', BadgeDetailHandler);
     ctx.Route('user_badge_manage', '/mybadge', UserBadgeManageHandler, PRIV.PRIV_USER_PROFILE);
     ctx.injectUI('ControlPanel', 'badge_manage');
@@ -369,6 +456,19 @@ export async function apply(ctx: Context) {
             '建议尺寸：1600 x 500（16:5），支持 JPG、PNG、WebP、GIF，最大 8 MB。GIF 将在个人主页背景中自动播放。',
         'Current profile background': '当前个人主页背景图',
         'Remove current profile background': '移除当前个人主页背景图',
+        'Badge AC effect': '徽章满分 AC 动画图',
+        'Upload a transparent PNG displayed after a holder earns a full-score AC.':
+            '上传透明 PNG，获得者满分 AC 后会播放该动画图。',
+        'Recommended size: 1200 x 800, transparent PNG, up to 8 MB.':
+            '建议尺寸：1200 x 800，透明 PNG，最大 8 MB。',
+        'Current AC effect image': '当前满分 AC 动画图',
+        'Remove current AC effect image': '移除当前满分 AC 动画图',
+        'Badge theme sound': '徽章主题音效',
+        'Upload an MP3, WAV, OGG or M4A sound played with the full-score AC effect.':
+            '上传 MP3、WAV、OGG 或 M4A 音效，满分 AC 动画播放时同步播放。',
+        'Recommended length: 2-10 seconds, up to 10 MB.':
+            '建议时长：2-10 秒，最大 10 MB。',
+        'Remove current badge theme sound': '移除当前徽章主题音效',
         'hex color code': '十六进制颜色代码',
         'badge preview': '徽章预览',
         'badge assignment': '徽章分配',
@@ -407,6 +507,19 @@ export async function apply(ctx: Context) {
             + 'GIFs play automatically on the profile background.',
         'Current profile background': 'Current Profile Background',
         'Remove current profile background': 'Remove current profile background',
+        'Badge AC effect': 'Badge Full-score AC Effect',
+        'Upload a transparent PNG displayed after a holder earns a full-score AC.':
+            'Upload a transparent PNG displayed after a holder earns a full-score AC.',
+        'Recommended size: 1200 x 800, transparent PNG, up to 8 MB.':
+            'Recommended size: 1200 x 800, transparent PNG, up to 8 MB.',
+        'Current AC effect image': 'Current Full-score AC Effect Image',
+        'Remove current AC effect image': 'Remove Current Full-score AC Effect Image',
+        'Badge theme sound': 'Badge Theme Sound',
+        'Upload an MP3, WAV, OGG or M4A sound played with the full-score AC effect.':
+            'Upload an MP3, WAV, OGG or M4A sound played with the full-score AC effect.',
+        'Recommended length: 2-10 seconds, up to 10 MB.':
+            'Recommended length: 2-10 seconds, up to 10 MB.',
+        'Remove current badge theme sound': 'Remove Current Badge Theme Sound',
         'hex color code': 'Hex Color Code',
         'badge preview': 'Badge Preview',
         'badge assignment': 'Badge Assignment',

@@ -27,6 +27,20 @@
     border-radius: 6px;
     object-fit: cover;
   }
+  .badge-profile-background-upload__preview--contain {
+    background:
+      linear-gradient(45deg, #edf3fb 25%, transparent 25%) 0 0 / 16px 16px,
+      linear-gradient(-45deg, #edf3fb 25%, transparent 25%) 0 8px / 16px 16px,
+      linear-gradient(45deg, transparent 75%, #edf3fb 75%) 8px -8px / 16px 16px,
+      linear-gradient(-45deg, transparent 75%, #edf3fb 75%) -8px 0 / 16px 16px,
+      #fff;
+    object-fit: contain;
+  }
+  .badge-profile-background-upload__audio {
+    display: block;
+    width: min(100%, 520px);
+    margin: 0 0 12px;
+  }
   .badge-profile-background-upload__clear {
     display: block;
     margin-top: 10px;
@@ -100,6 +114,36 @@
               <label class="checkbox badge-profile-background-upload__clear">
                 <input type="checkbox" name="removeBackground" value="true">
                 {{ _('Remove current profile background') }}
+              </label>
+            {% endif %}
+          </div>
+          <div class="badge-profile-background-upload">
+            <p class="badge-profile-background-upload__title">{{ _('Badge AC effect') }}</p>
+            <p class="badge-profile-background-upload__hint">{{ _('Upload a transparent PNG displayed after a holder earns a full-score AC.') }}</p>
+            <p class="badge-profile-background-upload__hint">{{ _('Recommended size: 1200 x 800, transparent PNG, up to 8 MB.') }}</p>
+            {% if badge.acImage %}
+              <img class="badge-profile-background-upload__preview badge-profile-background-upload__preview--contain" src="{{ badge.acImage }}" alt="{{ _('Current AC effect image') }}">
+            {% endif %}
+            <input type="file" name="acImage" accept="image/png">
+            {% if badge.acImage %}
+              <label class="checkbox badge-profile-background-upload__clear">
+                <input type="checkbox" name="removeAcImage" value="true">
+                {{ _('Remove current AC effect image') }}
+              </label>
+            {% endif %}
+          </div>
+          <div class="badge-profile-background-upload">
+            <p class="badge-profile-background-upload__title">{{ _('Badge theme sound') }}</p>
+            <p class="badge-profile-background-upload__hint">{{ _('Upload an MP3, WAV, OGG or M4A sound played with the full-score AC effect.') }}</p>
+            <p class="badge-profile-background-upload__hint">{{ _('Recommended length: 2-10 seconds, up to 10 MB.') }}</p>
+            {% if badge.themeSound %}
+              <audio class="badge-profile-background-upload__audio" controls preload="metadata" src="{{ badge.themeSound }}"></audio>
+            {% endif %}
+            <input type="file" name="themeSound" accept="audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/x-m4a">
+            {% if badge.themeSound %}
+              <label class="checkbox badge-profile-background-upload__clear">
+                <input type="checkbox" name="removeThemeSound" value="true">
+                {{ _('Remove current badge theme sound') }}
               </label>
             {% endif %}
           </div>

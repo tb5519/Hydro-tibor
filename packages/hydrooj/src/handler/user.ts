@@ -61,6 +61,13 @@ async function attachOwnedBadges(ctx: Context, udocs: any[]) {
             backgroundImage: badge.backgroundImagePath
                 ? `/badge/${badge._id}/background?v=${encodeURIComponent(badge.backgroundImageUpdatedAt || '')}`
                 : '',
+            acImage: badge.acImagePath
+                ? `/badge/${badge._id}/ac-image?v=${encodeURIComponent(badge.acImageUpdatedAt || '')}`
+                : '',
+            themeSound: badge.themeSoundPath
+                ? `/badge/${badge._id}/theme-sound?v=${encodeURIComponent(badge.themeSoundUpdatedAt || '')}`
+                : '',
+            isTheme: !!(badge.backgroundImagePath || badge.acImagePath || badge.themeSoundPath),
         });
     }
     for (const udoc of udocs) {
@@ -69,24 +76,31 @@ async function attachOwnedBadges(ctx: Context, udocs: any[]) {
 }
 
 function getBadgeProfileBackground(udoc: any) {
-    const backgrounds = (udoc?.ownedBadges || [])
-        .filter((badge: any) => badge.backgroundImage)
+    const themes = (udoc?.ownedBadges || [])
+        .filter((badge: any) => badge.isTheme)
         .map((badge: any) => ({
             id: badge.id,
             name: badge.displayName,
             image: badge.backgroundImage,
+            acImage: badge.acImage,
+            themeSound: badge.themeSound,
         }));
+    const backgrounds = themes.filter((theme: any) => theme.image);
     const preferredIds = [
         Number(udoc?.badgeProfileBackgroundBadgeId),
         Number(udoc?.badgeId),
     ].filter((id) => Number.isSafeInteger(id) && id > 0);
-    const selected = preferredIds
-        .map((id) => backgrounds.find((badge: any) => badge.id === id))
-        .find(Boolean) || backgrounds[0] || null;
+    const selectedTheme = preferredIds
+        .map((id) => themes.find((theme: any) => theme.id === id))
+        .find(Boolean) || themes[0] || null;
+    const selectedBackground = selectedTheme?.image
+        ? selectedTheme
+        : backgrounds[0] || null;
     return {
         mode: udoc?.badgeProfileBackgroundMode === 'rotate' && backgrounds.length > 1 ? 'rotate' : 'selected',
-        selectedId: selected?.id || 0,
-        image: selected?.image || '',
+        selectedId: selectedTheme?.id || 0,
+        image: selectedBackground?.image || '',
+        themes,
         backgrounds,
     };
 }
@@ -508,12 +522,14 @@ class UserBadgeBackgroundHandler extends Handler {
         if (!udoc) throw new UserNotFoundError(uid);
         await attachOwnedBadges(this.ctx, [udoc]);
         const badgeProfileBackground = getBadgeProfileBackground(udoc);
-        if (!badgeProfileBackground.backgrounds.length) throw new ValidationError('badgeId');
-        const selected = badgeProfileBackground.backgrounds.find((badge) => badge.id === badgeId)
-            || badgeProfileBackground.backgrounds.find((badge) => badge.id === badgeProfileBackground.selectedId);
+        if (!badgeProfileBackground.themes.length) throw new ValidationError('badgeId');
+        const selected = badgeProfileBackground.themes.find((badge) => badge.id === badgeId)
+            || badgeProfileBackground.themes.find((badge) => badge.id === badgeProfileBackground.selectedId);
         if (mode === 'selected' && !selected) throw new ValidationError('badgeId');
         await user.setById(uid, {
-            badgeProfileBackgroundMode: mode,
+            badgeProfileBackgroundMode: mode === 'rotate' && badgeProfileBackground.backgrounds.length > 1
+                ? 'rotate'
+                : 'selected',
             badgeProfileBackgroundBadgeId: selected?.id || badgeProfileBackground.selectedId,
         } as any);
         this.response.redirect = this.url('user_detail', { uid });

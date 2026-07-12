@@ -121,6 +121,10 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   const watchedFormalSubmitRids = new Set<string>();
   const pollingFormalSubmitRids = new Set<string>();
   const reportedFormalSubmitRids = new Set<string>();
+  const formalSubmitEffectPromises = new Map<string, Promise<void>>();
+  let activeBadgeThemeEffect: Promise<void> | null = null;
+  let badgeThemeAudio: HTMLAudioElement | null = null;
+  let badgeThemeAudioSource = '';
   const contestProgressDetails = {
     ...(UiContext.tsdoc?.detail || {}),
   } as Record<string, any>;
@@ -152,6 +156,111 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   function getContestRecordScore(rdoc: any) {
     const score = Number(rdoc?.score);
     return Number.isFinite(score) ? Math.max(0, score) : 0;
+  }
+
+  function isFullScoreAccepted(rdoc: any) {
+    return +rdoc?.status === STATUS.STATUS_ACCEPTED && getContestRecordScore(rdoc) >= 100;
+  }
+
+  function getBadgeThemeAudio() {
+    const source = String(UiContext.badgeAcTheme?.themeSound || '');
+    if (!source) return null;
+    if (!badgeThemeAudio || badgeThemeAudioSource !== source) {
+      badgeThemeAudio?.pause();
+      badgeThemeAudio = new Audio(source);
+      badgeThemeAudio.preload = 'auto';
+      badgeThemeAudioSource = source;
+    }
+    return badgeThemeAudio;
+  }
+
+  function primeBadgeThemeAudio() {
+    const audio = getBadgeThemeAudio();
+    if (!audio) return;
+    audio.muted = true;
+    const result = audio.play();
+    result?.then(() => {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+    }).catch(() => {
+      audio.muted = false;
+    });
+  }
+
+  document.addEventListener('pointerdown', primeBadgeThemeAudio, { capture: true, once: true });
+  document.addEventListener('keydown', primeBadgeThemeAudio, { capture: true, once: true });
+
+  function playBadgeThemeAcEffect() {
+    const theme = UiContext.badgeAcTheme;
+    const acImage = String(theme?.acImage || '');
+    const themeSound = String(theme?.themeSound || '');
+    if ((!acImage && !themeSound) || activeBadgeThemeEffect) return activeBadgeThemeEffect || Promise.resolve();
+
+    const effect = document.createElement('div');
+    effect.className = 'badge-ac-theme-effect';
+    effect.setAttribute('aria-hidden', 'true');
+    const frame = document.createElement('div');
+    frame.className = 'badge-ac-theme-effect__frame';
+    const burst = document.createElement('div');
+    burst.className = 'badge-ac-theme-effect__burst';
+    frame.appendChild(burst);
+
+    if (acImage) {
+      const image = new Image();
+      image.className = 'badge-ac-theme-effect__image';
+      image.src = acImage;
+      image.alt = '';
+      frame.appendChild(image);
+    } else {
+      const label = document.createElement('div');
+      label.className = 'badge-ac-theme-effect__label';
+      label.textContent = `${theme?.name || '徽章主题'} · 满分 AC`;
+      frame.appendChild(label);
+    }
+
+    effect.appendChild(frame);
+    document.body.appendChild(effect);
+    window.requestAnimationFrame(() => effect.classList.add('is-visible'));
+
+    const effectPromise = new Promise<void>((resolve) => {
+      let finished = false;
+      let timeout = 0;
+      const audio = themeSound ? getBadgeThemeAudio() : null;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        window.clearTimeout(timeout);
+        if (audio) {
+          audio.onended = null;
+          audio.onerror = null;
+        }
+        effect.classList.remove('is-visible');
+        effect.classList.add('is-leaving');
+        window.setTimeout(() => {
+          effect.remove();
+          resolve();
+        }, 340);
+      };
+
+      if (audio) {
+        audio.pause();
+        audio.currentTime = 0;
+        audio.onended = finish;
+        audio.onerror = finish;
+        timeout = window.setTimeout(finish, 12000);
+        audio.play().catch(() => {
+          window.clearTimeout(timeout);
+          timeout = window.setTimeout(finish, 2200);
+        });
+      } else {
+        timeout = window.setTimeout(finish, 2200);
+      }
+    });
+    activeBadgeThemeEffect = effectPromise.finally(() => {
+      activeBadgeThemeEffect = null;
+    });
+    return activeBadgeThemeEffect;
   }
 
   function getContestStatusText(status: number) {
@@ -405,12 +514,22 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     return UiContext.contestSubmitFeedbackUrl.replace('{rid}', encodeURIComponent(recordId));
   }
 
-  function receiveFormalSubmitRecord(store, rdoc: any) {
+  async function receiveFormalSubmitRecord(store, rdoc: any) {
     store.dispatch({
       type: 'SCRATCHPAD_RECORDS_PUSH',
       payload: { rdoc },
     });
     maybeRevealMistakePrompt(store, rdoc);
+
+    const recordId = getRecordId(rdoc);
+    if (recordId && isCurrentFormalSubmitRecord(store, rdoc) && isFinalRecordStatus(+rdoc.status)) {
+      let effectPromise = formalSubmitEffectPromises.get(recordId);
+      if (!effectPromise) {
+        effectPromise = isFullScoreAccepted(rdoc) ? playBadgeThemeAcEffect() : Promise.resolve();
+        formalSubmitEffectPromises.set(recordId, effectPromise);
+      }
+      await effectPromise;
+    }
     showContestSubmitResult(store, rdoc);
   }
 
@@ -434,7 +553,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
           ? result?.rdoc
           : result?.rdocs?.find((item) => getRecordId(item) === recordId);
         if (rdoc) {
-          receiveFormalSubmitRecord(store, rdoc);
+          void receiveFormalSubmitRecord(store, rdoc);
           if (isFinalRecordStatus(+rdoc.status)) {
             pollingFormalSubmitRids.delete(recordId);
             return;
@@ -472,7 +591,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
       }
       const rdoc = msg.rdoc;
       if (!rdoc) return;
-      receiveFormalSubmitRecord(store, rdoc);
+      void receiveFormalSubmitRecord(store, rdoc);
 
       const status = +rdoc.status;
       if (isFinalRecordStatus(status)) {
