@@ -392,6 +392,42 @@ export class HomeHandler extends Handler {
                 .limit(24)
                 .toArray()
             : [];
+        const noBroadcastPointLotteryPrizeKeys = new Set(pointLotteryConfig.prizes
+            .filter((prize) => !prize.broadcast)
+            .map(pointLotteryPrizeKey));
+        const pointLotteryAnnouncementLogs = pointLotteryConfig.enabled
+            ? await this.ctx.db.collection('lottery.draw')
+                .find({
+                    domainId,
+                    deleted: { $ne: true },
+                    'prize.broadcast': { $ne: false },
+                })
+                .sort({ createdAt: -1, _id: -1 })
+                .limit(100)
+                .toArray()
+            : [];
+        const pointLotteryAnnouncementUids = Array.from(new Set(pointLotteryAnnouncementLogs
+            .map((log: any) => log.uid)
+            .filter((uid) => typeof uid === 'number')));
+        const pointLotteryAnnouncementUdict = pointLotteryAnnouncementUids.length
+            ? await user.getListForRender(domainId, pointLotteryAnnouncementUids, false)
+            : {};
+        const pointLotteryAnnouncements = pointLotteryAnnouncementLogs
+            .filter((log: any) => log.prize?.broadcast !== false
+                && log.prize?.broadcast !== 'false'
+                && log.prize?.broadcast !== '0'
+                && !noBroadcastPointLotteryPrizeKeys.has(pointLotteryPrizeKey({
+                    name: `${log.prize?.name || ''}`,
+                    image: `${log.prize?.image || ''}`,
+                }))
+                && isVisiblePointLotteryWin(log.prize))
+            .slice(0, 10)
+            .map((log: any) => ({
+                winner: pointLotteryAnnouncementUdict[log.uid]?.displayName
+                    || pointLotteryAnnouncementUdict[log.uid]?.uname
+                    || '一位同学',
+                prize: `${log.prize?.name || ''}`,
+            }));
         const homePoster = getHomePosterConfig();
         if (homePoster.storagePath) {
             homePoster.image = this.url('home_poster_image', {
@@ -412,6 +448,7 @@ export class HomeHandler extends Handler {
                 totalPoints: pointLotteryTotalPoints,
                 canDraw: this.user.hasPriv(PRIV.PRIV_USER_PROFILE),
                 prizes: pointLotteryConfig.prizes.map(publicPointLotteryPrize),
+                announcements: pointLotteryAnnouncements,
                 recentWins: pointLotteryWins.map((log: any) => ({
                     name: `${log.prize?.name || ''}`,
                     image: `${log.prize?.image || ''}`,

@@ -220,6 +220,13 @@
                 {{ _('可以重复抽中') }}
               </span>
             </label>
+            <label>
+              <div>{{ _('中奖信息') }}</div>
+              <span class="lottery-admin__inline-check">
+                <input type="checkbox" name="prize{{ loop.index0 }}NoBroadcast" value="true"{% if prize.broadcast === false %} checked{% endif %}>
+                {{ _('不播报中奖信息') }}
+              </span>
+            </label>
           </div>
         </div>
         {% endfor %}
@@ -258,6 +265,13 @@
             <span class="lottery-admin__inline-check">
               <input type="checkbox" data-field="Repeatable" value="true" checked data-default-checked="true">
               {{ _('可以重复抽中') }}
+            </span>
+          </label>
+          <label>
+            <div>{{ _('中奖信息') }}</div>
+            <span class="lottery-admin__inline-check">
+              <input type="checkbox" data-field="NoBroadcast" value="true">
+              {{ _('不播报中奖信息') }}
             </span>
           </label>
         </div>

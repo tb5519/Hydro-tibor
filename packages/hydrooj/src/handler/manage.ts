@@ -924,6 +924,7 @@ class SystemLotteryHandler extends SystemHandler {
                 probability: '',
                 pointDelta: 0,
                 repeatable: true,
+                broadcast: true,
             }]),
             q,
             rankBy,

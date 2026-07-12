@@ -10,6 +10,7 @@ export interface PointLotteryPrize {
     probability: number;
     pointDelta: number;
     repeatable: boolean;
+    broadcast: boolean;
 }
 
 export interface PointLotteryConfig {
@@ -41,6 +42,8 @@ export function normalizePointLotteryConfig(raw: any): PointLotteryConfig {
             probability: Math.max(0, toNumber(prize?.probability, 0)),
             pointDelta: Math.max(0, Math.floor(toNumber(prize?.pointDelta, 0))),
             repeatable: prize?.repeatable !== false && prize?.repeatable !== 'false' && prize?.repeatable !== '0',
+            // Older configurations predate this option and should keep broadcasting by default.
+            broadcast: prize?.broadcast !== false && prize?.broadcast !== 'false' && prize?.broadcast !== '0',
         })).filter((prize) => prize.name && prize.probability > 0),
     };
 }
@@ -61,6 +64,7 @@ export function buildPointLotteryConfigFromForm(args: any): PointLotteryConfig {
         10,
     );
     for (let i = 0; i < count; i++) {
+        const noBroadcast = args[`prize${i}NoBroadcast`];
         prizes.push({
             name: args[`prize${i}Name`],
             image: args[`prize${i}Image`],
@@ -69,6 +73,7 @@ export function buildPointLotteryConfigFromForm(args: any): PointLotteryConfig {
             repeatable: args[`prize${i}Repeatable`] === 'on'
                 || args[`prize${i}Repeatable`] === 'true'
                 || args[`prize${i}Repeatable`] === '1',
+            broadcast: noBroadcast !== 'on' && noBroadcast !== 'true' && noBroadcast !== '1',
         });
     }
     return normalizePointLotteryConfig({
@@ -95,6 +100,7 @@ export function publicPointLotteryPrize(prize: PointLotteryPrize) {
         image: prize.image,
         probability: prize.probability,
         pointDelta: prize.pointDelta,
+        broadcast: prize.broadcast,
     };
 }
 
