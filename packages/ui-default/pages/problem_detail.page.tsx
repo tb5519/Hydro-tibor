@@ -176,9 +176,11 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   function getContestProgressSummary() {
     const pids = UiContext.tdoc?.pids || [];
     let totalScore = 0;
+    let maxTotalScore = 0;
     let acceptedCount = 0;
     for (const rawPid of pids) {
       const pid = Number(rawPid);
+      maxTotalScore += getContestProblemScore(pid);
       const detail = contestProgressDetails[pid];
       if (!detail) continue;
       totalScore += getContestProblemScore(pid) * getContestRecordScore(detail) / 100;
@@ -186,6 +188,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     }
     return {
       totalScore,
+      maxTotalScore,
       acceptedCount,
       remainingCount: Math.max(0, pids.length - acceptedCount),
     };
@@ -277,7 +280,9 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     const pid = Number(rdoc.pid);
     const maxScore = getContestProblemScore(pid);
     const problemScore = maxScore * getContestRecordScore(rdoc) / 100;
-    const { totalScore, acceptedCount, remainingCount } = getContestProgressSummary();
+    const {
+      totalScore, maxTotalScore, acceptedCount, remainingCount,
+    } = getContestProgressSummary();
     const accepted = status === STATUS.STATUS_ACCEPTED;
     const isAcm = UiContext.tdoc?.rule === 'acm';
 
@@ -289,7 +294,15 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
           <div className="contest-submit-result__header">
             <div>
               <div className="contest-submit-result__eyebrow">比赛评测完成</div>
-              <div className="contest-submit-result__title">{accepted ? '本题 AC，继续加油！' : '本题已评测，可尝试修改代码继续评测直至AC'}</div>
+              <div className="contest-submit-result__title">
+                {accepted ? '本题 AC，继续加油！' : (
+                  <>
+                    <span>本题已评测</span>
+                    <br />
+                    <span>可尝试修改代码继续评测直至AC</span>
+                  </>
+                )}
+              </div>
             </div>
             <div className={`contest-submit-result__status${accepted ? ' is-accepted' : ''}`}>
               {getContestStatusText(status)}
@@ -302,7 +315,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
             </div>
             <div className="contest-submit-result__score-card">
               <span>{isAcm ? '已完成题目' : '比赛累计得分'}</span>
-              <strong>{isAcm ? `${acceptedCount} 题` : formatContestScore(totalScore)}</strong>
+              <strong>{isAcm ? `${acceptedCount} 题` : <>{formatContestScore(totalScore)}<small> / {formatContestScore(maxTotalScore)}</small></>}</strong>
             </div>
           </div>
           <div className="contest-submit-result__summary">
