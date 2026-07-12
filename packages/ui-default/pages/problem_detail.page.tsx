@@ -288,7 +288,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
 
     new InfoDialog({
       classes: 'dialog--contest-submit-result',
-      width: '32rem',
+      width: '36rem',
       $body: tpl(
         <div className="contest-submit-result">
           <div className="contest-submit-result__header">
@@ -297,9 +297,8 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
               <div className="contest-submit-result__title">
                 {accepted ? '本题 AC，继续加油！' : (
                   <>
-                    <span>本题已评测</span>
-                    <br />
-                    <span>可尝试修改代码继续评测直至AC</span>
+                    <span className="contest-submit-result__title-line">本题已评测</span>
+                    <span className="contest-submit-result__title-line contest-submit-result__title-line--hint">可尝试修改代码继续评测直至AC</span>
                   </>
                 )}
               </div>
