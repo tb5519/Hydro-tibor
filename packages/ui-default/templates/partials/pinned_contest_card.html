@@ -1,0 +1,134 @@
+{% import "components/contest.html" as contest with context %}
+{% if pinnedContest %}
+  {% set pinnedTdoc = pinnedContest.tdoc %}
+  {% set pinnedTsdoc = pinnedContest.tsdoc %}
+  {% set pinnedOngoing = model.contest.isOngoing(pinnedTdoc, pinnedTsdoc) %}
+  {% set pinnedUpcoming = model.contest.isUpcoming(pinnedTdoc) %}
+  <section class="ui-pinned-contest" aria-label="置顶比赛">
+    <div class="ui-pinned-contest__main">
+      <div class="ui-pinned-contest__kicker">
+        <span class="icon icon-award" aria-hidden="true"></span>
+        <span>置顶比赛</span>
+        <span class="ui-pinned-contest__state{% if pinnedOngoing %} is-live{% elif pinnedUpcoming %} is-upcoming{% endif %}">
+          {% if pinnedOngoing %}正在进行{% elif pinnedUpcoming %}即将开始{% else %}开放中{% endif %}
+        </span>
+      </div>
+      <h2 class="ui-pinned-contest__title">{{ pinnedTdoc.title }}</h2>
+      <div class="ui-pinned-contest__meta">
+        <span><i class="icon icon-calendar" aria-hidden="true"></i>{{ contest.render_time(pinnedTdoc.beginAt) }}</span>
+        <span><i class="icon icon-schedule--fill" aria-hidden="true"></i>{{ contest.render_duration(pinnedTdoc) }} {{ _('hour(s)') }}</span>
+        <span><i class="icon icon-list" aria-hidden="true"></i>{{ pinnedTdoc.pids.length }} 题</span>
+      </div>
+    </div>
+    <a class="button primary ui-pinned-contest__action" href="{{ url('contest_detail', tid=pinnedTdoc.docId) }}">
+      {{ '进入比赛' if pinnedOngoing else '查看比赛' }}
+    </a>
+  </section>
+  <style>
+    .ui-pinned-contest {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin: 0 0 1rem;
+      padding: 1rem 1.15rem 1rem 1.35rem;
+      overflow: hidden;
+      border: 1px solid #d9e5f4;
+      border-radius: 8px;
+      background: #ffffff;
+      box-shadow: 0 7px 18px rgba(29, 78, 216, 0.06);
+    }
+    .ui-pinned-contest::before {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: 4px;
+      content: '';
+      background: #2f6fed;
+    }
+    .ui-pinned-contest__main {
+      min-width: 0;
+    }
+    .ui-pinned-contest__kicker,
+    .ui-pinned-contest__meta,
+    .ui-pinned-contest__meta span {
+      display: flex;
+      align-items: center;
+    }
+    .ui-pinned-contest__kicker {
+      gap: 0.42rem;
+      color: #4f6b95;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+    .ui-pinned-contest__kicker > .icon {
+      color: #2f6fed;
+      font-size: 0.95rem;
+    }
+    .ui-pinned-contest__state {
+      margin-left: 0.15rem;
+      padding: 0.14rem 0.46rem;
+      border-radius: 999px;
+      background: #eef3fb;
+      color: #587197;
+      font-size: 0.72rem;
+      line-height: 1.25;
+    }
+    .ui-pinned-contest__state.is-live {
+      background: #e7f8ec;
+      color: #22884a;
+    }
+    .ui-pinned-contest__state.is-upcoming {
+      background: #fff4dc;
+      color: #aa6f00;
+    }
+    .ui-pinned-contest__title {
+      margin: 0.3rem 0 0.5rem;
+      overflow: hidden;
+      color: #17233a;
+      font-size: 1.08rem;
+      font-weight: 700;
+      line-height: 1.3;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ui-pinned-contest__meta {
+      flex-wrap: wrap;
+      gap: 0.3rem 1rem;
+      color: #71809a;
+      font-size: 0.8rem;
+    }
+    .ui-pinned-contest__meta span {
+      gap: 0.28rem;
+      white-space: nowrap;
+    }
+    .ui-pinned-contest__meta .icon {
+      color: #7891b6;
+    }
+    .ui-pinned-contest__action {
+      flex: 0 0 auto;
+      margin: 0;
+      padding: 0.58rem 0.9rem;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    @media (max-width: 40em) {
+      .ui-pinned-contest {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 0.8rem;
+      }
+      .ui-pinned-contest__title {
+        white-space: normal;
+      }
+      .ui-pinned-contest__action {
+        width: 100%;
+        text-align: center;
+      }
+    }
+  </style>
+{% endif %}

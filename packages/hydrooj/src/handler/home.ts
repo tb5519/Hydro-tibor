@@ -2,9 +2,9 @@ import path from 'path';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { isoBase64URL, isoUint8Array } from '@simplewebauthn/server/helpers';
 import yaml from 'js-yaml';
-import moment from 'moment-timezone';
 import { pick } from 'lodash';
 import { lookup } from 'mime-types';
+import moment from 'moment-timezone';
 import { Binary, ObjectId } from 'mongodb';
 import { UAParser } from 'ua-parser-js';
 import { Context } from '../context';
@@ -15,8 +15,9 @@ import {
 } from '../error';
 import { DomainDoc, Setting } from '../interface';
 import avatar, { validate } from '../lib/avatar';
-import * as mail from '../lib/mail';
 import { getHomePosterConfig } from '../lib/home_poster';
+import * as mail from '../lib/mail';
+import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
 import {
     getPointLotteryConfig, pickPointLotteryPrize, POINT_LOTTERY_POINTS_FIELD,
     POINT_LOTTERY_TOTAL_POINTS_FIELD, pointLotteryPrizeKey, publicPointLotteryPrize,
@@ -300,6 +301,7 @@ export class HomeHandler extends Handler {
         const hiddenHomepageSections = new Set([
             'recent_problems', 'discussion_nodes', 'suggestion', 'discussion', 'hitokoto',
         ]);
+        const pinnedContestPromise = getLatestVisiblePinnedContest(domainId, this.user);
         const contents = [];
         let personalStatsInserted = false;
         let personalStatsLoaded = false;
@@ -398,6 +400,7 @@ export class HomeHandler extends Handler {
             udict,
             domain: this.domain,
             homePoster,
+            pinnedContest: await pinnedContestPromise,
             pointLottery: {
                 enabled: pointLotteryConfig.enabled,
                 cost: pointLotteryConfig.cost,

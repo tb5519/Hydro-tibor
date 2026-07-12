@@ -24,6 +24,7 @@ import {
 import {
     DomainDoc, ProblemDoc, ProblemSearchOptions, ProblemStatusDoc, RecordDoc, User,
 } from '../interface';
+import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
 import {
     appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
 } from '../lib/record_visibility';
@@ -243,7 +244,14 @@ export class ProblemMainHandler extends Handler {
                 pdocs.map((i) => i.docId),
             ));
         }
-        const problemCategories = pjax ? [] : await buildAutoProblemCategories(domainId, this.user);
+        let problemCategories: ProblemCategoryEntry[] = [];
+        let pinnedContest: Awaited<ReturnType<typeof getLatestVisiblePinnedContest>> = null;
+        if (!pjax) {
+            [problemCategories, pinnedContest] = await Promise.all([
+                buildAutoProblemCategories(domainId, this.user),
+                getLatestVisiblePinnedContest(domainId, this.user),
+            ]);
+        }
         if (pjax) {
             this.response.body = {
                 title: this.renderTitle(this.translate('problem_main')),
@@ -267,6 +275,7 @@ export class ProblemMainHandler extends Handler {
                 sort: sortStrategy,
                 problemCategories,
                 problemCategoriesAuto: true,
+                pinnedContest,
             };
         }
     }
