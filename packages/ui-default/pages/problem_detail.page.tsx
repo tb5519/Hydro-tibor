@@ -159,7 +159,9 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   }
 
   function isFullScoreAccepted(rdoc: any) {
-    return +rdoc?.status === STATUS.STATUS_ACCEPTED && getContestRecordScore(rdoc) >= 100;
+    // Hydro only marks a submission as Accepted after it earns the problem's
+    // full score. The raw record score is not always normalized to 100.
+    return +rdoc?.status === STATUS.STATUS_ACCEPTED;
   }
 
   function getBadgeThemeAudio() {

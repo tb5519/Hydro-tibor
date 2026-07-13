@@ -26,13 +26,19 @@ const cache = new LRUCache<string, User>({ max: 10000, ttl: 300 * 1000 });
 
 export function deleteUserCache(udoc: { _id: number, uname: string, mail: string } | string | true | undefined | null, receiver = false) {
     if (!udoc) return false;
+    // `true` means every cached user should be invalidated. Handle it before
+    // serializing the broadcast payload so other workers receive `true`, not {}.
+    if (udoc === true) {
+        if (!receiver) bus.broadcast('user/delcache', true);
+        cache.clear();
+        return true;
+    }
     if (!receiver) {
         bus.broadcast(
             'user/delcache',
             JSON.stringify(typeof udoc === 'string' ? udoc : pick(udoc, ['uname', 'mail', '_id'])),
         );
     }
-    if (udoc === true) return cache.clear();
     if (typeof udoc === 'string') {
         // is domainId
         for (const key of [...cache.keys()].filter((i) => i.endsWith(`/${udoc}`))) cache.delete(key);
