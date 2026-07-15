@@ -436,13 +436,22 @@ export class ProblemModel {
         domainId: string, pid: number, uid: number,
         rid: ObjectId, status: number, score: number,
     ) {
-        const condition = status === STATUS.STATUS_ACCEPTED ? {}
-            : { $or: [{ status: { $ne: STATUS.STATUS_ACCEPTED } }, { rid }] };
+        if (status === STATUS.STATUS_ACCEPTED) {
+            // Keep the latest accepted record, but return the status before this
+            // atomic update so callers can tell whether this is the user's first AC.
+            const previous = await document.setStatusIfCondition(
+                domainId, document.TYPE_PROBLEM, pid, uid,
+                {}, { rid, status, score }, 'before',
+            ) as ProblemStatusDoc | null | false;
+            if (previous === false) return { updated: false, firstAccepted: false };
+            return { updated: true, firstAccepted: previous?.status !== STATUS.STATUS_ACCEPTED };
+        }
+
         const res = await document.setStatusIfCondition(
             domainId, document.TYPE_PROBLEM, pid, uid,
-            condition, { rid, status, score },
+            { $or: [{ status: { $ne: STATUS.STATUS_ACCEPTED } }, { rid }] }, { rid, status, score },
         );
-        return !!res;
+        return { updated: !!res, firstAccepted: false };
     }
 
     static async incStatus(

@@ -7,7 +7,7 @@ import { tpl, withTransitionCallback } from 'vj/utils';
 import { createBadgeAcThemePlayer } from '../components/badge_ac_effect';
 
 export default new NamedPage('record_detail', async () => {
-  const badgeThemeEffect = UiContext.badgeAcEffect
+  const badgeThemeEffect = UiContext.badgeAcEffect && UiContext.badgeAcFirstEligible !== false
     ? createBadgeAcThemePlayer(UiContext.badgeAcTheme)
     : null;
   let badgeEffectPlayed = false;

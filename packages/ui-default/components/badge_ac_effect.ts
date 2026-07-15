@@ -4,6 +4,8 @@ export interface BadgeAcTheme {
   themeSound?: string;
 }
 
+const CELEBRATION_VOLUME = 0.25;
+
 /**
  * Display a badge's full-score celebration. The sound is primed on the first
  * user gesture so Chrome can play it when an asynchronous judge result arrives.
@@ -28,6 +30,7 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
       audio = new Audio(themeSound);
       audioSource = themeSound;
       audio.preload = 'auto';
+      audio.volume = CELEBRATION_VOLUME;
       audio.load();
     }
     return audio;
@@ -38,9 +41,8 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
     if (!player || audioPrimed || audioPriming) return;
     const generation = ++audioGeneration;
     audioPriming = true;
-    const previousVolume = player.volume;
     const restoreAudio = () => {
-      player.volume = previousVolume > 0 ? previousVolume : 1;
+      player.volume = CELEBRATION_VOLUME;
       player.muted = false;
     };
     player.muted = false;
@@ -119,7 +121,7 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
         player.pause();
         player.currentTime = 0;
         player.muted = false;
-        player.volume = 1;
+        player.volume = CELEBRATION_VOLUME;
         audioPrimed = true;
         player.onended = finish;
         player.onerror = finish;

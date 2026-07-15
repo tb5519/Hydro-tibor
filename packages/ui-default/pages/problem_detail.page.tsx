@@ -127,6 +127,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   const reportedFormalSubmitRids = new Set<string>();
   const formalSubmitEffectPromises = new Map<string, Promise<void>>();
   let formalSubmitEventListenerBound = false;
+  let badgeAcFirstEligible = UiContext.badgeAcFirstEligible !== false;
   const badgeThemeEffect = createBadgeAcThemePlayer(UiContext.badgeAcTheme);
   const contestProgressDetails = {
     ...(UiContext.tsdoc?.detail || {}),
@@ -465,7 +466,10 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     if (recordId && isCurrentFormalSubmitRecord(store, rdoc) && isFinalRecordStatus(+rdoc.status)) {
       let effectPromise = formalSubmitEffectPromises.get(recordId);
       if (!effectPromise) {
-        effectPromise = isFullScoreAccepted(rdoc) ? playBadgeThemeAcEffect() : Promise.resolve();
+        const isAccepted = isFullScoreAccepted(rdoc);
+        const shouldPlayBadgeEffect = isAccepted && badgeAcFirstEligible;
+        if (isAccepted) badgeAcFirstEligible = false;
+        effectPromise = shouldPlayBadgeEffect ? playBadgeThemeAcEffect() : Promise.resolve();
         formalSubmitEffectPromises.set(recordId, effectPromise);
       }
       await effectPromise;

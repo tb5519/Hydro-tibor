@@ -615,6 +615,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             udoc: this.udoc,
             psdoc: tid ? null : this.psdoc,
             badgeAcTheme: await getActiveBadgeAcTheme(this.ctx, this.user, this.url.bind(this)),
+            badgeAcFirstEligible: this.psdoc?.status !== STATUS.STATUS_ACCEPTED,
             mistakeDoc,
             isMistakeSupported: isProgrammingProblem,
             canUseMistake,
@@ -829,7 +830,9 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
             this.response.body = { rid };
             this.response.redirect = this.url('record_detail', {
                 rid,
-                query: { badgeAcEffect: '1' },
+                query: {
+                    badgeAcEffect: this.psdoc?.status === STATUS.STATUS_ACCEPTED ? '0' : '1',
+                },
             });
         }
     }

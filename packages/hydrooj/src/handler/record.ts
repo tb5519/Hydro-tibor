@@ -62,6 +62,17 @@ function recordListFilter(tid: ObjectId, includePretest: boolean, canViewAllPret
         : { contest: tid } as Filter<RecordDoc>;
 }
 
+async function hasAcceptedFormalRecordBefore(rdoc: RecordDoc) {
+    return await record.getMulti(rdoc.domainId, {
+        uid: rdoc.uid,
+        pid: rdoc.pid,
+        status: STATUS.STATUS_ACCEPTED,
+        input: { $exists: false },
+        contest: { $ne: record.RECORD_GENERATE },
+        _id: { $ne: rdoc._id },
+    }).limit(1).hasNext();
+}
+
 export class RecordListHandler extends ContestDetailBaseHandler {
     @param('page', Types.PositiveInt, true)
     @param('pid', Types.ProblemId, true)
@@ -273,6 +284,9 @@ export class RecordDetailHandler extends ContestDetailBaseHandler {
             rdoc.input = [];
         } else if (download) return await this.download();
         if (isPretestRecord && typeof rdoc.input === 'string') rdoc.input = [rdoc.input];
+        const badgeAcFirstEligible = rdoc.uid === this.user._id
+            ? !(await hasAcceptedFormalRecordBefore(rdoc))
+            : false;
         this.response.template = 'record_detail.html';
         this.response.body = {
             udoc,
@@ -285,6 +299,7 @@ export class RecordDetailHandler extends ContestDetailBaseHandler {
             badgeAcTheme: rdoc.uid === this.user._id
                 ? await getActiveBadgeAcTheme(this.ctx, this.user, this.url.bind(this))
                 : null,
+            badgeAcFirstEligible,
         };
     }
 
