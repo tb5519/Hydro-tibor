@@ -265,6 +265,8 @@ export interface Tdoc extends Document {
     pinned?: boolean;
     /** Published in every domain but stored once in its source domain. */
     allDomains?: boolean;
+    /** Add each participant's final contest score to their lottery points. */
+    scoreToPoints?: boolean;
     _code?: string;
     assign?: string[];
     files?: FileInfo[];

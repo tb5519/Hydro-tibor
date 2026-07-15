@@ -558,8 +558,9 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
         ]);
         const isProgrammingProblem = !!this.pdoc.config && typeof this.pdoc.config === 'object'
             && !['objective', 'submit_answer'].includes(this.pdoc.config.type);
+        const preferredCodeDomain = this.tdoc?.allDomains && this.entryDomain ? this.entryDomain : this.domain;
         const codeLang = this.pdoc.config && typeof this.pdoc.config === 'object'
-            ? pickPreferredCodeLang(this.pdoc.config.langs || [], this.user, this.domain)
+            ? pickPreferredCodeLang(this.pdoc.config.langs || [], this.user, preferredCodeDomain)
             : this.user.codeLang;
         const canUseMistake = !tid && isProgrammingProblem && this.user.hasPerm(PERM.PERM_SUBMIT_PROBLEM);
         const mistakeDoc = canUseMistake
@@ -759,7 +760,8 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
             ? Object.fromEntries(this.pdoc.config.langs.map((i) => [i, setting.langs[i]?.display || i]))
             : setting.SETTINGS_BY_KEY.codeLang.range;
         this.response.body.langRange = langRange;
-        this.response.body.codeLang = pickPreferredCodeLang(Object.keys(langRange || {}), this.user, this.domain);
+        const preferredCodeDomain = this.tdoc?.allDomains && this.entryDomain ? this.entryDomain : this.domain;
+        this.response.body.codeLang = pickPreferredCodeLang(Object.keys(langRange || {}), this.user, preferredCodeDomain);
         this.response.body.page_name = this.tdoc
             ? this.tdoc.rule === 'homework'
                 ? 'homework_detail_problem_submit'
@@ -827,7 +829,10 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
             // The regular record page remains hidden for contests that do not expose
             // submissions, but the editor still needs this id for its own result prompt.
             this.response.body = { rid, tid };
-            this.response.redirect = this.url(this.tdoc.rule === 'homework' ? 'homework_detail' : 'contest_problemlist', { tid });
+            this.response.redirect = this.url(this.tdoc.rule === 'homework' ? 'homework_detail' : 'contest_problemlist', {
+                tid,
+                query: this.contestEntryQuery,
+            });
         } else {
             this.response.body = { rid };
             this.response.redirect = this.url('record_detail', {

@@ -16,11 +16,11 @@
         <span class="icon icon-enlarge"></span> {{ _('Quit Scratchpad') }} (Alt+Q)
       </a></li>
     {% else %}
-      <li class="menu__item"><a class="menu__link" href="{{ url('problem_detail', pid=pdoc.pid|default(pdoc.docId), query={tid:tdoc.docId}) }}">
+      <li class="menu__item"><a class="menu__link" href="{{ url('problem_detail', pid=pdoc.pid|default(pdoc.docId), query={tid:tdoc.docId, entryDomainId:handler.entryDomainId} if handler.entryDomainId else {tid:tdoc.docId}) }}">
         <span class="icon icon-flag"></span> {{ _('View Problem') }}
       </a></li>
     {% endif %}
-      <li class="menu__item scratchpad--hide ui-v2-sidebar-submit"><a class="menu__link{% if page_name == 'contest_detail_problem_submit' %} active{% endif %}" href="{{ url('problem_submit', pid=pdoc.pid|default(pdoc.docId), query={tid:tdoc.docId} if mode=='contest' else {}) }}">
+      <li class="menu__item scratchpad--hide ui-v2-sidebar-submit"><a class="menu__link{% if page_name == 'contest_detail_problem_submit' %} active{% endif %}" href="{{ url('problem_submit', pid=pdoc.pid|default(pdoc.docId), query={tid:tdoc.docId, entryDomainId:handler.entryDomainId} if mode=='contest' and handler.entryDomainId else ({tid:tdoc.docId} if mode=='contest' else {}) }}">
         <span class="icon icon-send"></span> {{ _('Submit') }}
       </a></li>
     {% endif %}

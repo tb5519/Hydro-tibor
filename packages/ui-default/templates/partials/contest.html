@@ -1,3 +1,3 @@
-<a class="discussion-node-tag media-link" href="{{ url('contest_detail', domainId=tdoc.domainId, tid=tdoc.docId) }}">
+<a class="discussion-node-tag media-link" href="{{ url('contest_detail', domainId=tdoc.domainId, tid=tdoc.docId, query={entryDomainId:handler.args.domainId} if tdoc.allDomains else {}) }}">
   <span class="v-center icon icon-award"></span>{{ tdoc.title }}
 </a>

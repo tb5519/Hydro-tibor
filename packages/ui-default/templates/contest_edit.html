@@ -149,9 +149,17 @@
               value:tdoc.pinned|default(false),
               row:false
             }) }}
-            {% if handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM) %}
             {{ form.form_checkbox({
               columns:5,
+              label:'比赛得分增加积分',
+              name:'scoreToPoints',
+              placeholder:_('比赛结束后，按最终得分的整数部分增加抽奖积分；赛后提交不计入'),
+              value:tdoc.scoreToPoints|default(false),
+              row:false
+            }) }}
+            {% if handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM) %}
+            {{ form.form_checkbox({
+              columns:3,
               label:'发布到所有域',
               name:'allDomains',
               placeholder:_('所有域用户参加同一场比赛，并使用同一份成绩排名'),

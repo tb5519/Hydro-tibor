@@ -2,7 +2,7 @@
 {% import "components/contest.html" as contest with context %}
 <div class="section side{% if page_name == 'contest_problemlist' %} contest-list-sidebar{% endif %}">
 {% if page_name != 'contest_detail' %}
-  <a class="contest-sidebar__bg" href="{{ url('contest_detail', tid=tdoc.docId) }}">
+  <a class="contest-sidebar__bg" href="{{ url('contest_detail', tid=tdoc.docId, query={entryDomainId:handler.entryDomainId} if handler.entryDomainId else {}) }}">
     <div class="section__body">
       <h1>{{ tdoc.title }}</h1>
       <div class="contest-sidebar__status">
@@ -22,14 +22,14 @@
   <div>
     <ol class="menu">
     {% if page_name != 'contest_detail' %}
-      <li class="menu__item"><a class="menu__link" href="{{ url('contest_detail', tid=tdoc.docId) }}">
+      <li class="menu__item"><a class="menu__link" href="{{ url('contest_detail', tid=tdoc.docId, query={entryDomainId:handler.entryDomainId} if handler.entryDomainId else {}) }}">
         <span class="icon icon-award"></span> {{ _('View Contest') }}
       </a></li>
     {% endif %}
     {% if not (tsdoc.attend) and not model.contest.isDone(tdoc) %}
       <li class="menu__item">
     {% if (tdoc.allDomains or handler.user.hasPerm(perm.PERM_ATTEND_CONTEST)) and handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
-      <form action="{{ url('contest_detail', tid=tdoc.docId) }}" method="POST">
+      <form action="{{ url('contest_detail', tid=tdoc.docId, query={entryDomainId:handler.entryDomainId} if handler.entryDomainId else {}) }}" method="POST">
         <input type="hidden" name="operation" value="attend">
         <button class="menu__link" {% if tdoc._code %}data-contest-code{% endif %} type="submit">
           <span class="icon icon-add"></span> {{ _('Attend Contest') }}
@@ -50,12 +50,12 @@
     {% endif %}
       </li>
     {% else %}
-      <li class="menu__item"><a class="menu__link" href="{{ url('contest_problemlist', tid=tdoc.docId) }}">
+      <li class="menu__item"><a class="menu__link" href="{{ url('contest_problemlist', tid=tdoc.docId, query={entryDomainId:handler.entryDomainId} if handler.entryDomainId else {}) }}">
         <span class="icon icon-unordered_list"></span> {{ _('Problem List') }}
       </a></li>
       {% if page_name == 'contest_detail' and tsdoc.attend and model.contest.isOngoing(tdoc, tsdoc) and tdoc.rule !== 'homework' %}
       <li class="menu__item">
-        <form action="{{ url('contest_detail', tid=tdoc.docId) }}" method="POST" onsubmit='return confirm({{ _("Confirm end contest early? You will not be able to submit after this.")|json|safe }});'>
+        <form action="{{ url('contest_detail', tid=tdoc.docId, query={entryDomainId:handler.entryDomainId} if handler.entryDomainId else {}) }}" method="POST" onsubmit='return confirm({{ _("Confirm end contest early? You will not be able to submit after this.")|json|safe }});'>
           <input type="hidden" name="operation" value="early_end">
           <button class="menu__link" type="submit">
             <span class="icon icon-delete"></span> {{ _('End Contest Early') }}
@@ -65,11 +65,11 @@
       {% endif %}
     {% endif %}{# not attend and not done #}
     {% if model.contest.canShowScoreboard.call(handler, tdoc, False) %}
-      <li class="menu__item"><a class="menu__link" href="{{ url('contest_problemlist', tid=tdoc.docId, query={view:'scoreboard'}) }}">
+      <li class="menu__item"><a class="menu__link" href="{{ url('contest_problemlist', tid=tdoc.docId, query={entryDomainId:handler.entryDomainId, view:'scoreboard'} if handler.entryDomainId else {view:'scoreboard'}) }}">
         <span class="icon icon-statistics"></span> {{ _('Scoreboard') }}
       </a></li>
     {% elif model.contest.canViewHiddenScoreboard.call(handler, tdoc) %}
-      <li class="menu__item"><a class="menu__link" href="{{ url('contest_problemlist', tid=tdoc.docId, query={view:'scoreboard'}) }}">
+      <li class="menu__item"><a class="menu__link" href="{{ url('contest_problemlist', tid=tdoc.docId, query={entryDomainId:handler.entryDomainId, view:'scoreboard'} if handler.entryDomainId else {view:'scoreboard'}) }}">
         <span class="icon icon-statistics"></span> {{ _('Scoreboard (Hidden)') }}
       </a></li>
     {% endif %}

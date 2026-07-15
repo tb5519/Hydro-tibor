@@ -704,9 +704,9 @@
             </div>
             <div class="contest-problem-action" role="cell">
               {% if pdict[pid].config.type == 'objective' %}
-                <a href="{{ url('problem_detail', pid=pid, query={tid:tdoc.docId}) }}" class="contest-problem-submit-link"><span class="icon icon-edit"></span>在线答题</a>
+                <a href="{{ url('problem_detail', pid=pid, query={tid:tdoc.docId, entryDomainId:handler.entryDomainId} if handler.entryDomainId else {tid:tdoc.docId}) }}" class="contest-problem-submit-link"><span class="icon icon-edit"></span>在线答题</a>
               {% else %}
-                <a href="{{ url('problem_detail', pid=pid, query={tid:tdoc.docId, scratchpad:'1'}) }}" class="contest-problem-submit-link"><span class="icon icon-edit"></span>在线答题</a>
+                <a href="{{ url('problem_detail', pid=pid, query={tid:tdoc.docId, scratchpad:'1', entryDomainId:handler.entryDomainId} if handler.entryDomainId else {tid:tdoc.docId, scratchpad:'1'}) }}" class="contest-problem-submit-link"><span class="icon icon-edit"></span>在线答题</a>
               {% endif %}
             </div>
           </div>
