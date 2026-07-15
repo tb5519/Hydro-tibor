@@ -16,7 +16,7 @@
               </div>
             </div>
             <div class="media__body medium">
-              <h1 class="contest__title"><a href="{{ url('contest_detail', tid=tdoc.docId) }}" data-emoji-enabled>{{ tdoc.title }}</a></h1>
+              <h1 class="contest__title"><a href="{{ url('contest_detail', domainId=tdoc.domainId, tid=tdoc.docId) }}" data-emoji-enabled>{{ tdoc.title }}</a></h1>
               <ul class="supplementary list">
                 <li>
                   <a href="{{ url('contest_main', query={rule:tdoc.rule}) }}" class="contest-type-tag"><span class="icon icon-award"></span>{{ _(model.contest.RULES[tdoc.rule].TEXT) }}</a>
@@ -26,6 +26,9 @@
                 {% endif %}
                 {% if tdoc.pinned %}
                   <li class="contest-tag-pinned"><span class="icon icon-star"></span>置顶</li>
+                {% endif %}
+                {% if tdoc.allDomains %}
+                  <li><span class="icon icon-global"></span>全域比赛</li>
                 {% endif %}
                 <li>
                   <span class="icon icon-schedule--fill text-blue"></span> {{ contest.render_duration(tdoc) }} {{ _('hour(s)') }}

@@ -263,6 +263,8 @@ export interface Tdoc extends Document {
     pids: number[];
     rated?: boolean;
     pinned?: boolean;
+    /** Published in every domain but stored once in its source domain. */
+    allDomains?: boolean;
     _code?: string;
     assign?: string[];
     files?: FileInfo[];

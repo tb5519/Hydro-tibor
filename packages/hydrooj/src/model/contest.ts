@@ -982,6 +982,32 @@ export function getMulti(
     return document.getMulti(domainId, document.TYPE_CONTEST, query).sort({ beginAt: -1 });
 }
 
+/**
+ * Returns contests owned by the current domain plus contests explicitly shared
+ * by their owners with every domain. The contest itself and its status rows
+ * remain in the source domain, so all participants use the same scoreboard.
+ */
+export function getMultiVisibleInDomain(
+    domainId: string, query: Filter<document.DocType['30']> = {},
+) {
+    return document.coll.find({
+        docType: document.TYPE_CONTEST,
+        $and: [
+            { $or: [{ domainId }, { allDomains: true }] },
+            query,
+        ],
+    }).sort({ beginAt: -1 });
+}
+
+export async function getListStatusAcrossDomains(uid: number, tids: ObjectId[]) {
+    if (!tids.length) return {};
+    const tsdocs = await document.getMultiStatusWithoutDomain(document.TYPE_CONTEST, {
+        uid,
+        docId: { $in: tids },
+    }).toArray();
+    return Object.fromEntries(tsdocs.map((tsdoc) => [tsdoc.docId.toHexString(), tsdoc]));
+}
+
 export async function getAndListStatus(domainId: string, tid: ObjectId): Promise<[Tdoc, any[]]> {
     // TODO(iceboy): projection, pagination.
     const tdoc = await get(domainId, tid);
@@ -1178,6 +1204,8 @@ global.Hydro.model.contest = {
     count,
     countStatus,
     getMulti,
+    getMultiVisibleInDomain,
+    getListStatusAcrossDomains,
     setStatus,
     getAndListStatus,
     recalcStatus,

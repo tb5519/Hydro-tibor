@@ -28,7 +28,7 @@
     {% endif %}
     {% if not (tsdoc.attend) and not model.contest.isDone(tdoc) %}
       <li class="menu__item">
-    {% if handler.user.hasPerm(perm.PERM_ATTEND_CONTEST) and handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
+    {% if (tdoc.allDomains or handler.user.hasPerm(perm.PERM_ATTEND_CONTEST)) and handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
       <form action="{{ url('contest_detail', tid=tdoc.docId) }}" method="POST">
         <input type="hidden" name="operation" value="attend">
         <button class="menu__link" {% if tdoc._code %}data-contest-code{% endif %} type="submit">
@@ -39,7 +39,7 @@
         <a class="menu__link" href="javascript:showSignInDialog()">
           <span class="icon icon-add"></span> {{ _('Login to Attend Contest') }}
         </a>
-    {% elif not handler.user._dudoc.join %}
+    {% elif not tdoc.allDomains and not handler.user._dudoc.join %}
         <a class="menu__link" href="/domain/join?target={{ tdoc.domainId }}">
           <span class="icon icon-add"></span> {{ _('Join Domain to Attend Contest') }}
         </a>

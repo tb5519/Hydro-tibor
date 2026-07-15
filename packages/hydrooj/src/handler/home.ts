@@ -128,6 +128,7 @@ export class HomeHandler extends Handler {
                 ? {}
                 : {
                     $or: [
+                        { allDomains: true },
                         { maintainer: this.user._id },
                         { owner: this.user._id },
                         { assign: { $in: groups } },
@@ -135,13 +136,11 @@ export class HomeHandler extends Handler {
                     ],
                 },
         };
-        const tdocs = await contest.getMulti(domainId, q).sort({
+        const tdocs = await contest.getMultiVisibleInDomain(domainId, q).sort({
             pinned: -1, endAt: -1, beginAt: -1, _id: -1,
         })
             .limit(limit).toArray();
-        const tsdict = await contest.getListStatus(
-            domainId, this.user._id, tdocs.map((tdoc) => tdoc.docId),
-        );
+        const tsdict = await contest.getListStatusAcrossDomains(this.user._id, tdocs.map((tdoc) => tdoc.docId));
         return [tdocs, tsdict];
     }
 
@@ -490,8 +489,9 @@ class PointLotteryPrizeImageHandler extends Handler {
 
 class PointLotteryDrawHandler extends Handler {
     async post({ domainId }) {
-        const fail = (message: string) => {
-            this.response.body = { ok: false, error: { message } };
+        const fail = (errorMessage: string) => {
+            this.response.body = { ok: false, error: { message: errorMessage } };
+            return this.response.body;
         };
         const config = getPointLotteryConfig();
         if (!config.enabled) return fail('积分抽奖未开启。');
@@ -521,8 +521,8 @@ class PointLotteryDrawHandler extends Handler {
             ? Math.max(0, Math.floor(+existingDudoc[POINT_LOTTERY_POINTS_FIELD] || 0))
             : null;
 
-        const query: any = { domainId, uid: this.user._id };
-        if (config.cost > 0) query[POINT_LOTTERY_POINTS_FIELD] = { $gte: config.cost };
+        const userQuery: any = { domainId, uid: this.user._id };
+        if (config.cost > 0) userQuery[POINT_LOTTERY_POINTS_FIELD] = { $gte: config.cost };
         const pointDelta = prize.pointDelta - config.cost;
         const update: any = {
             $inc: {
@@ -533,7 +533,7 @@ class PointLotteryDrawHandler extends Handler {
         if (initialTotalPoints === null) update.$inc[POINT_LOTTERY_TOTAL_POINTS_FIELD] = prize.pointDelta;
         else update.$set = { [POINT_LOTTERY_TOTAL_POINTS_FIELD]: initialTotalPoints + prize.pointDelta };
         const result = await domain.collUser.findOneAndUpdate(
-            query,
+            userQuery,
             update,
             {
                 upsert: config.cost === 0,
@@ -563,6 +563,7 @@ class PointLotteryDrawHandler extends Handler {
             points,
             totalPoints,
         };
+        return this.response.body;
     }
 }
 

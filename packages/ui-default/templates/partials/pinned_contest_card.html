@@ -20,7 +20,7 @@
         <span><i class="icon icon-list" aria-hidden="true"></i>{{ pinnedTdoc.pids.length }} 题</span>
       </div>
     </div>
-    <a class="button primary ui-pinned-contest__action" href="{{ url('contest_detail', tid=pinnedTdoc.docId) }}">
+    <a class="button primary ui-pinned-contest__action" href="{{ url('contest_detail', domainId=pinnedTdoc.domainId, tid=pinnedTdoc.docId) }}">
       {{ '进入比赛' if pinnedOngoing else '查看比赛' }}
     </a>
   </section>

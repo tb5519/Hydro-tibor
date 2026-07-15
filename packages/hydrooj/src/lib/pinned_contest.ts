@@ -31,6 +31,7 @@ export async function getLatestVisiblePinnedContest(
             ? {}
             : {
                 $or: [
+                    { allDomains: true },
                     { maintainer: currentUser._id },
                     { owner: currentUser._id },
                     { assign: { $in: groups } },
@@ -38,12 +39,12 @@ export async function getLatestVisiblePinnedContest(
                 ],
             }),
     };
-    const [tdoc] = await contest.getMulti(domainId, query)
+    const [tdoc] = await contest.getMultiVisibleInDomain(domainId, query)
         .sort({ beginAt: -1, _id: -1 })
         .limit(1)
         .toArray();
     if (!tdoc) return null;
 
-    const tsdict = await contest.getListStatus(domainId, currentUser._id, [tdoc.docId]);
+    const tsdict = await contest.getListStatusAcrossDomains(currentUser._id, [tdoc.docId]);
     return { tdoc, tsdoc: tsdict[tdoc.docId.toHexString()] };
 }

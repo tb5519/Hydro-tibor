@@ -75,23 +75,25 @@ export class ContestListHandler extends Handler {
         const rules = Object.keys(contest.RULES).filter((i) => !contest.RULES[i].hidden);
         const escaped = escapeRegExp(q.toLowerCase());
         const $regex = new RegExp(q.length >= 2 ? escaped : `\\A${escaped}`, 'gim');
+        const visibilityFilter = (this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_CONTEST) && !group)
+            ? {}
+            : {
+                $or: [
+                    { allDomains: true },
+                    { maintainer: this.user._id },
+                    { owner: this.user._id },
+                    { assign: { $in: groups } },
+                    { assign: { $size: 0 } },
+                ],
+            };
         const filter = {
-            ...(this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_CONTEST) && !group)
-                ? {}
-                : {
-                    $or: [
-                        { maintainer: this.user._id },
-                        { owner: this.user._id },
-                        { assign: { $in: groups } },
-                        { assign: { $size: 0 } },
-                    ],
-                },
+            ...visibilityFilter,
             ...rule ? { rule } : { rule: { $in: rules } },
             ...group ? { assign: { $in: [group] } } : {},
             ...q ? { title: { $regex } } : {},
         };
         await this.ctx.parallel('contest/list', filter, this);
-        const cursor = contest.getMulti(domainId, filter).sort({
+        const cursor = contest.getMultiVisibleInDomain(domainId, filter).sort({
             pinned: -1, endAt: -1, beginAt: -1, _id: -1,
         });
         let qs = rule ? `rule=${rule}` : '';
@@ -100,7 +102,7 @@ export class ContestListHandler extends Handler {
         const [tdocs, tpcount] = await this.paginate(cursor, page, 'contest');
         const tids = [];
         for (const tdoc of tdocs) tids.push(tdoc.docId);
-        const tsdict = await contest.getListStatus(domainId, this.user._id, tids);
+        const tsdict = await contest.getListStatusAcrossDomains(this.user._id, tids);
         const groupsFilter = groups.filter((i) => !Number.isSafeInteger(+i));
         this.response.template = 'contest_main.html';
         this.response.body = {
@@ -211,7 +213,8 @@ export class ContestDetailHandler extends ContestDetailBaseHandler {
     @param('tid', Types.ObjectId)
     @param('code', Types.String, true)
     async postAttend(domainId: string, tid: ObjectId, code = '') {
-        this.checkPerm(PERM.PERM_ATTEND_CONTEST);
+        if (this.tdoc.allDomains) this.checkPriv(PRIV.PRIV_USER_PROFILE);
+        else this.checkPerm(PERM.PERM_ATTEND_CONTEST);
         if (contest.isDone(this.tdoc)) throw new ContestNotLiveError(domainId, tid);
         if (this.tdoc._code && code !== this.tdoc._code) throw new InvalidTokenError('Contest Invitation', code);
         await contest.attend(domainId, tid, this.user._id, { subscribe: 1 });
@@ -473,6 +476,7 @@ export class ContestEditHandler extends Handler {
     @param('pids', Types.Content)
     @param('rated', Types.Boolean)
     @param('pinned', Types.Boolean)
+    @param('allDomains', Types.Boolean)
     @param('code', Types.String, true)
     @param('autoHide', Types.Boolean)
     @param('assign', Types.CommaSeperatedArray, true)
@@ -486,11 +490,18 @@ export class ContestEditHandler extends Handler {
     async postUpdate(
         domainId: string, tid: ObjectId, beginAtDate: string, beginAtTime: string, duration: number,
         title: string, content: string, rule: string, _pids: string, rated = false,
-        pinned = false, _code = '', autoHide = false, assign: string[] = [], lock: number = null,
+        pinned = false, allDomains = false, _code = '', autoHide = false, assign: string[] = [], lock: number = null,
         contestDuration: number = null, maintainer: number[] = [], allowViewCode = false, allowPrint = false,
         keepScoreboardHidden = false, langs: string[] = [],
     ) {
         if (!Object.keys(contest.RULES).includes(rule) || contest.RULES[rule].hidden) throw new ValidationError('rule');
+        if (allDomains) {
+            this.checkPriv(PRIV.PRIV_EDIT_SYSTEM);
+            if (rule === 'homework') throw new ValidationError('allDomains');
+            // A contest shared by every domain must not be restricted to one of them.
+            assign = [];
+            _code = '';
+        }
         if (autoHide) this.checkPerm(PERM.PERM_EDIT_PROBLEM);
         const pids = _pids.replace(/，/g, ',').split(',').map((i) => +i).filter((i) => i);
         const beginAtMoment = moment.tz(`${beginAtDate} ${beginAtTime}`, this.user.timeZone);
@@ -532,7 +543,7 @@ export class ContestEditHandler extends Handler {
             });
         }
         await contest.edit(domainId, tid, {
-            assign, _code, autoHide, lockAt, maintainer, allowViewCode, allowPrint, keepScoreboardHidden, langs,
+            assign, _code, autoHide, lockAt, maintainer, allowViewCode, allowPrint, keepScoreboardHidden, langs, allDomains,
         });
         this.response.body = { tid };
         this.response.redirect = this.url('contest_detail', { tid });

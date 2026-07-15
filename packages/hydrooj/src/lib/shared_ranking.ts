@@ -1,9 +1,7 @@
-import { Dictionary } from 'lodash';
-import domain from '../model/domain';
 import { LEVELS } from '../model/builtin';
-import { RpTypes } from '../script/rating';
+import domain from '../model/domain';
 
-export type SharedRankingRow = {
+export interface SharedRankingRow {
     uid: number;
     totalRp: number;
     totalAccept: number;
@@ -11,24 +9,19 @@ export type SharedRankingRow = {
     level: number;
     rpInfo: Record<string, number>;
     rank?: number;
-};
+}
 
-type SharedRankingCache = {
+interface SharedRankingCache {
     key: string;
     expiresAt: number;
     rows: SharedRankingRow[];
-};
+}
 
 const SHARED_RANKING_CACHE_TTL = 5 * 60 * 1000;
 let sharedRankingCache: SharedRankingCache | null = null;
 
-function createRpDict(base: number) {
-    return new Proxy({} as Dictionary<number>, {
-        get(self, key) {
-            if (typeof key !== 'string') return self[key as any];
-            return self[key] ?? base;
-        },
-    });
+export function invalidateSharedRankingSnapshot() {
+    sharedRankingCache = null;
 }
 
 function getLevelByRank(rank: number, count: number) {
@@ -57,12 +50,15 @@ export async function getSharedRankingSnapshot() {
     if (sharedRankingCache?.key === cacheKey && sharedRankingCache.expiresAt > Date.now()) return sharedRankingCache.rows;
 
     const dudocs = await domain.collUser.find({
+        domainId: { $in: domainIds },
         uid: { $gt: 1 },
         join: true,
     }).project({
         uid: 1,
         nAccept: 1,
         nSubmit: 1,
+        rp: 1,
+        rpInfo: 1,
     }).toArray();
     const merged = new Map<number, SharedRankingRow>();
     for (const dudoc of dudocs) {
@@ -79,19 +75,12 @@ export async function getSharedRankingSnapshot() {
         const row = merged.get(dudoc.uid)!;
         row.totalAccept += dudoc.nAccept || 0;
         row.totalSubmit += dudoc.nSubmit || 0;
-    }
-
-    for (const type in RpTypes) {
-        if (type !== 'problem') continue;
-        const result = createRpDict(RpTypes[type].base);
-        await RpTypes[type].run(domainIds, result, async () => {});
-        for (const uidText in result) {
-            const uid = +uidText;
-            const row = merged.get(uid);
-            if (!row) continue;
-            const value = result[uidText] || 0;
-            row.rpInfo[type] = value;
-            row.totalRp += value;
+        const rp = Math.max(0, +dudoc.rp || 0);
+        // Shared RP is written identically to every domain membership. Select it
+        // once instead of summing the same score for each domain.
+        if (rp > row.totalRp) {
+            row.totalRp = rp;
+            row.rpInfo = { ...(dudoc.rpInfo || {}) };
         }
     }
 

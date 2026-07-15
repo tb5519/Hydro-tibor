@@ -577,7 +577,7 @@
             <a class="contest-detail-start" href="{{ url('contest_problemlist', tid=tdoc.docId) }}">
               <span class="icon icon-send"></span> {{ _('开始比赛') }}
             </a>
-          {% elif handler.user.hasPerm(perm.PERM_ATTEND_CONTEST) and handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
+          {% elif (tdoc.allDomains or handler.user.hasPerm(perm.PERM_ATTEND_CONTEST)) and handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
             <form action="{{ url('contest_detail', tid=tdoc.docId) }}" method="POST">
               <input type="hidden" name="operation" value="attend">
               <button class="contest-detail-start" {% if tdoc._code %}data-contest-code{% endif %} type="submit">
@@ -588,7 +588,7 @@
             <a class="contest-detail-start" href="javascript:showSignInDialog();">
               <span class="icon icon-send"></span> {{ _('开始比赛') }}
             </a>
-          {% elif not handler.user._dudoc.join %}
+          {% elif not tdoc.allDomains and not handler.user._dudoc.join %}
             <a class="contest-detail-start" href="/domain/join?target={{ tdoc.domainId }}">
               <span class="icon icon-send"></span> {{ _('开始比赛') }}
             </a>

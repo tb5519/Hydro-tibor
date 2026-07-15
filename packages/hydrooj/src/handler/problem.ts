@@ -746,6 +746,8 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
 export class ProblemSubmitHandler extends ProblemDetailHandler {
     @param('tid', Types.ObjectId, true)
     async prepare(domainId: string, tid?: ObjectId) {
+        if (!this.tdoc?.allDomains) this.checkPerm(PERM.PERM_SUBMIT_PROBLEM);
+        else this.checkPriv(PRIV.PRIV_USER_PROFILE);
         if (tid && !contest.isOngoing(this.tdoc, this.tsdoc)) throw new ContestNotLiveError(this.tdoc.docId);
         if (typeof this.pdoc.config === 'string') throw new ProblemConfigError();
         if (this.pdoc.config.langs && !this.pdoc.config.langs.length) throw new ProblemConfigError();
@@ -1361,7 +1363,7 @@ export async function apply(ctx: Context) {
     ctx.Route('problem_random', '/problem/random', ProblemRandomHandler, PERM.PERM_VIEW_PROBLEM);
     ctx.Route('online_ide', '/ide', OnlineIdeHandler, PERM.PERM_SUBMIT_PROBLEM);
     ctx.Route('problem_detail', '/p/:pid', ProblemDetailHandler);
-    ctx.Route('problem_submit', '/p/:pid/submit', ProblemSubmitHandler, PERM.PERM_SUBMIT_PROBLEM);
+    ctx.Route('problem_submit', '/p/:pid/submit', ProblemSubmitHandler);
     ctx.Route('problem_hack', '/p/:pid/hack/:rid', ProblemHackHandler, PERM.PERM_SUBMIT_PROBLEM);
     ctx.Route('problem_edit', '/p/:pid/edit', ProblemEditHandler);
     ctx.Route('problem_config', '/p/:pid/config', ProblemConfigHandler);
