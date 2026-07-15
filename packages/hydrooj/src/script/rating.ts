@@ -4,12 +4,10 @@ import { NumericDictionary } from 'lodash';
 import { Filter, ObjectId } from 'mongodb';
 import Schema from 'schemastery';
 import { Counter } from '@hydrooj/utils';
-import { Tdoc, Udoc } from '../interface';
+import { Udoc } from '../interface';
 import difficultyAlgorithm from '../lib/difficulty';
-import rating from '../lib/rating';
 import { invalidateSharedRankingSnapshot } from '../lib/shared_ranking';
 import { PRIV, STATUS } from '../model/builtin';
-import * as contest from '../model/contest';
 import domain from '../model/domain';
 import problem from '../model/problem';
 import system from '../model/system';
@@ -71,38 +69,6 @@ export const RpTypes: Record<string, RpDef> = {
         },
         hidden: false,
         base: 0,
-    },
-    contest: {
-        async run(domainIds, udict, report) {
-            const contests: Tdoc[] = await contest.getMulti('', { domainId: { $in: domainIds }, rated: true })
-                .limit(10).toArray() as any;
-            if (contests.length) await report({ message: `Found ${contests.length} contests in ${domainIds[0]}` });
-            for (const tdoc of contests.reverse()) {
-                const start = Date.now();
-                const query = {
-                    docId: tdoc.docId,
-                    journal: { $ne: null },
-                };
-                if (!await contest.countStatus(tdoc.domainId, query)) continue;
-                const cursor = contest.getMultiStatus(tdoc.domainId, query).sort(contest.RULES[tdoc.rule].statusSort);
-                const rankedTsdocs = await contest.RULES[tdoc.rule].ranked(tdoc, cursor);
-                const users = rankedTsdocs.map((i) => ({ uid: i[1].uid, rank: i[0], old: udict[i[1].uid] }));
-                // FIXME sum(rating.new) always less than sum(rating.old)
-                for (const udoc of rating(users)) udict[udoc.uid] = udoc.new;
-                await report({
-                    case: {
-                        status: STATUS.STATUS_ACCEPTED,
-                        message: `Contest ${tdoc.title} finished`,
-                        time: Date.now() - start,
-                        memory: 0,
-                        score: 0,
-                    },
-                });
-            }
-            for (const key in udict) udict[key] = max(1, udict[key] / 4 - 375);
-        },
-        hidden: false,
-        base: 1500,
     },
     delta: {
         async run(domainIds, udict) {
