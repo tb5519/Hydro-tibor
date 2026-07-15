@@ -13,12 +13,16 @@ import {
     ScoreboardConfig, ScoreboardNode, ScoreboardRow, SubtaskResult, Tdoc,
 } from '../interface';
 import avatar from '../lib/avatar';
+import {
+    POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
+} from '../lib/point_lottery';
 import bus from '../service/bus';
 import db from '../service/db';
 import type { Handler } from '../service/server';
 import { Optional } from '../typeutils';
 import { PERM, STATUS, STATUS_SHORT_TEXTS } from './builtin';
 import * as document from './document';
+import domain from './domain';
 import MessageModel from './message';
 import problem, { ProblemModel } from './problem';
 import RecordModel from './record';
@@ -825,6 +829,58 @@ export const RULES: ContestRules = {
     acm, oi, homework, ioi, ledo, strictioi,
 };
 
+function getScorePointEndAt(tdoc: Tdoc, tsdoc: any) {
+    const ends = [tdoc.endAt];
+    if (tsdoc?.endAt) ends.push(tsdoc.endAt);
+    if (tdoc.duration && tsdoc?.startAt) {
+        ends.push(new Date(tsdoc.startAt.getTime() + tdoc.duration * Time.hour));
+    }
+    return new Date(Math.min(...ends.map((time) => time.getTime())));
+}
+
+function getScorePoints(tdoc: Tdoc, tsdoc: any) {
+    const endAt = getScorePointEndAt(tdoc, tsdoc);
+    const journal = (tsdoc.journal || [])
+        .filter((entry) => entry.rid?.getTimestamp?.() <= endAt)
+        .sort((a, b) => a.rid.getTimestamp().getTime() - b.rid.getTimestamp().getTime());
+    // Score-to-points always follows the real score, rather than a frozen
+    // scoreboard. Entries made after the participant's deadline are excluded.
+    const stats = RULES[tdoc.rule].stat({ ...tdoc, unlocked: true }, journal);
+    const score = Number.isFinite(+stats.score) ? +stats.score : (+stats.accept || 0);
+    return Math.max(0, Math.floor(normalizeContestScore(score)));
+}
+
+async function awardScorePoints(tdoc: Tdoc, tsdoc: any) {
+    if (!tdoc.scoreToPoints) return;
+    const points = getScorePoints(tdoc, tsdoc);
+    if (!points) return;
+    const pointDomainId = tdoc.allDomains ? tsdoc.entryDomainId : tdoc.domainId;
+    if (!pointDomainId) return;
+
+    // Store this contest's high-water score inside the recipient's domain-user
+    // document. The update is atomic, so retries and repeated submissions only
+    // credit the difference between the new high score and the prior high score.
+    const awardField = `contestScorePointAwards.${tdoc.docId.toHexString()}`;
+    const previous = { $ifNull: [`$${awardField}`, 0] };
+    const delta = { $subtract: [points, previous] };
+    const currentPoints = { $ifNull: [`$${POINT_LOTTERY_POINTS_FIELD}`, 0] };
+    const totalPoints = { $ifNull: [`$${POINT_LOTTERY_TOTAL_POINTS_FIELD}`, currentPoints] };
+    await (domain.collUser as any).findOneAndUpdate({
+        domainId: pointDomainId,
+        uid: tsdoc.uid,
+        join: true,
+        $expr: { $lt: [previous, points] },
+    }, [
+        {
+            $set: {
+                [POINT_LOTTERY_POINTS_FIELD]: { $add: [currentPoints, delta] },
+                [POINT_LOTTERY_TOTAL_POINTS_FIELD]: { $add: [totalPoints, delta] },
+                [awardField]: points,
+            },
+        },
+    ]);
+}
+
 const collBalloon = db.collection('contest.balloon');
 
 function _getStatusJournal(tsdoc) {
@@ -940,7 +996,9 @@ export async function updateStatus(
     }, 'rid');
     const journal = _getStatusJournal(tsdoc);
     const stats = RULES[tdoc.rule].stat(tdoc, journal);
-    return await document.revSetStatus(tdoc.domainId, document.TYPE_CONTEST, tdoc.docId, uid, tsdoc.rev, { journal, ...stats });
+    const result = await document.revSetStatus(tdoc.domainId, document.TYPE_CONTEST, tdoc.docId, uid, tsdoc.rev, { journal, ...stats });
+    if (result) await awardScorePoints(tdoc, result);
+    return result;
 }
 
 export async function getListStatus(domainId: string, uid: number, tids: ObjectId[]) {

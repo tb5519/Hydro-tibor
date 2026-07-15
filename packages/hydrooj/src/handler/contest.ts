@@ -17,9 +17,6 @@ import {
 import {
     DomainDoc, FileInfo, ScoreboardConfig, Tdoc,
 } from '../interface';
-import {
-    POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
-} from '../lib/point_lottery';
 import { PERM, PRIV, STATUS } from '../model/builtin';
 import * as contest from '../model/contest';
 import * as discussion from '../model/discussion';
@@ -39,89 +36,6 @@ import {
 function normalizeContestBadgeColor(color: string, fallback: string) {
     const value = `${color || fallback}`;
     return value.startsWith('#') ? value : `#${value}`;
-}
-
-function getContestScorePointEndAt(tdoc: Tdoc, tsdoc: any) {
-    const ends = [tdoc.endAt];
-    if (tsdoc?.endAt) ends.push(tsdoc.endAt);
-    if (tdoc.duration && tsdoc?.startAt) {
-        ends.push(new Date(tsdoc.startAt.getTime() + tdoc.duration * Time.hour));
-    }
-    return new Date(Math.min(...ends.map((time) => time.getTime())));
-}
-
-function getContestScorePoints(tdoc: Tdoc, tsdoc: any) {
-    const endAt = getContestScorePointEndAt(tdoc, tsdoc);
-    const journal = (tsdoc.journal || [])
-        .filter((entry) => entry.rid?.getTimestamp?.() <= endAt)
-        .sort((a, b) => a.rid.getTimestamp().getTime() - b.rid.getTimestamp().getTime());
-    // Award the final, unlocked score. Submissions made after the participant's
-    // contest deadline have already been excluded from the journal above.
-    const stats = contest.RULES[tdoc.rule].stat({ ...tdoc, unlocked: true }, journal);
-    const score = Number.isFinite(+stats.score) ? +stats.score : (+stats.accept || 0);
-    return Math.max(0, Math.floor(contest.normalizeContestScore(score)));
-}
-
-async function awardContestScorePoints(tdoc: Tdoc) {
-    if (!tdoc.scoreToPoints) return true;
-    const pending = await record.count(tdoc.domainId, {
-        contest: tdoc.docId,
-        _id: { $lte: Time.getObjectID(tdoc.endAt) },
-        status: {
-            $in: [
-                STATUS.STATUS_WAITING,
-                STATUS.STATUS_FETCHED,
-                STATUS.STATUS_COMPILING,
-                STATUS.STATUS_JUDGING,
-            ],
-        },
-    });
-    // Let all submissions made before the contest deadline receive a final judge
-    // result before the score is converted into points.
-    if (pending) return false;
-
-    const cursor = contest.getMultiStatus(tdoc.domainId, {
-        docId: tdoc.docId,
-        attend: { $gt: 0 },
-    });
-    for await (const tsdoc of cursor) {
-        const pointDomainId = tdoc.allDomains ? tsdoc.entryDomainId : tdoc.domainId;
-        if (!pointDomainId) continue;
-        const points = getContestScorePoints(tdoc, tsdoc);
-        const dudoc = await domain.collUser.findOne({
-            domainId: pointDomainId,
-            uid: tsdoc.uid,
-            join: true,
-            contestScorePointAwards: { $ne: tdoc.docId },
-        }, {
-            projection: {
-                [POINT_LOTTERY_POINTS_FIELD]: 1,
-                [POINT_LOTTERY_TOTAL_POINTS_FIELD]: 1,
-            },
-        });
-        if (!dudoc) continue;
-
-        const currentPoints = Math.max(0, Math.floor(+dudoc[POINT_LOTTERY_POINTS_FIELD] || 0));
-        const totalPoints = dudoc[POINT_LOTTERY_TOTAL_POINTS_FIELD];
-        const update: any = {
-            $addToSet: { contestScorePointAwards: tdoc.docId },
-        };
-        if (points) {
-            update.$inc = { [POINT_LOTTERY_POINTS_FIELD]: points };
-            if (totalPoints === undefined) {
-                update.$set = { [POINT_LOTTERY_TOTAL_POINTS_FIELD]: currentPoints + points };
-            } else {
-                update.$inc[POINT_LOTTERY_TOTAL_POINTS_FIELD] = points;
-            }
-        }
-        await domain.collUser.updateOne({
-            domainId: pointDomainId,
-            uid: tsdoc.uid,
-            join: true,
-            contestScorePointAwards: { $ne: tdoc.docId },
-        }, update);
-    }
-    return true;
 }
 
 async function attachContestOwnedBadges(ctx: Context, udict: Record<number, any>) {
@@ -648,12 +562,9 @@ export class ContestEditHandler extends Handler {
         };
         await ScheduleModel.deleteMany(task);
         const operation = [];
-        if (Date.now() <= endAt.getTime()) {
-            if (autoHide) {
-                await Promise.all(pids.map((pid) => problem.edit(domainId, pid, { hidden: true })));
-                operation.push('unhide');
-            }
-            if (scoreToPoints) operation.push('awardScorePoints');
+        if (Date.now() <= endAt.getTime() && autoHide) {
+            await Promise.all(pids.map((pid) => problem.edit(domainId, pid, { hidden: true })));
+            operation.push('unhide');
         }
         if (operation.length) {
             await ScheduleModel.add({
@@ -1135,24 +1046,12 @@ export async function apply(ctx: Context) {
         const tdoc = await contest.get(doc.domainId, doc.tid);
         if (!tdoc) return;
         const tasks = [];
-        let shouldAwardScorePoints = false;
         for (const op of doc.operation) {
             if (op === 'unhide') {
                 for (const pid of tdoc.pids) {
                     tasks.push(problem.edit(doc.domainId, pid, { hidden: false }));
                 }
             }
-            if (op === 'awardScorePoints') shouldAwardScorePoints = true;
-        }
-        if (shouldAwardScorePoints && !await awardContestScorePoints(tdoc)) {
-            await ScheduleModel.add({
-                type: 'schedule',
-                subType: 'contest',
-                domainId: doc.domainId,
-                tid: doc.tid,
-                operation: ['awardScorePoints'],
-                executeAfter: new Date(Date.now() + Time.minute),
-            });
         }
         await Promise.all(tasks);
     });
