@@ -7,7 +7,7 @@ services:
     privileged: true
     depends_on:
       hydro:
-        condition: service_started
+        condition: service_healthy
       mongo:
         condition: service_healthy
     environment:

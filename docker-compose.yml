@@ -42,6 +42,14 @@ services:
     ports:
       - "${HYDRO_HTTP_PORT:-8888}:8888"
     command: ["corepack", "yarn", "debug"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'node -e "fetch(\"http://localhost:8888/login\").then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"'
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
 volumes:
   hydro_dev_mongo_data:

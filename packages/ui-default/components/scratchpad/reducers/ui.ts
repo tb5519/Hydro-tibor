@@ -1,6 +1,42 @@
 import Notification from 'vj/components/notification';
 import { i18n } from 'vj/utils';
 
+function normalizeRecordId(value: any) {
+  if (value === undefined || value === null || value === '') return '';
+  if (typeof value === 'string' || typeof value === 'number') return `${value}`;
+  if (value.$oid) return `${value.$oid}`;
+  if (value.oid) return `${value.oid}`;
+  if (typeof value.toHexString === 'function') return value.toHexString();
+  return '';
+}
+
+function getFormalSubmitRecordId(payload: any) {
+  const values = [
+    payload,
+    payload?.data,
+    payload?.data?.data,
+    payload?.body,
+    payload?.body?.data,
+    payload?.response,
+    payload?.response?.data,
+  ];
+  for (const value of values) {
+    if (typeof value === 'string' || typeof value === 'number') {
+      const directRecordId = normalizeRecordId(value);
+      if (directRecordId) return directRecordId;
+    }
+    const recordId = normalizeRecordId(value?.rid || value?.recordId || value?._id);
+    if (recordId) return recordId;
+  }
+  return '';
+}
+
+function appendFormalSubmitRid(rids: string[], payload: any) {
+  const recordId = getFormalSubmitRecordId(payload);
+  if (!recordId || rids.includes(recordId)) return rids;
+  return [...rids, recordId];
+}
+
 export default function reducer(state = {
   pretest: {
     visible: UiContext.ideMode ? true : UiContext.pdoc.config?.type === 'default'
@@ -74,6 +110,14 @@ export default function reducer(state = {
         isPosting: true,
       };
     }
+    case 'SCRATCHPAD_FORMAL_SUBMIT_REGISTER': {
+      const formalSubmitRids = appendFormalSubmitRid(state.formalSubmitRids, action.payload);
+      if (formalSubmitRids === state.formalSubmitRids) return state;
+      return {
+        ...state,
+        formalSubmitRids,
+      };
+    }
     case 'SCRATCHPAD_POST_PRETEST_FULFILLED':
     case 'SCRATCHPAD_POST_SUBMIT_FULFILLED': {
       const isContestSubmit = action.type === 'SCRATCHPAD_POST_SUBMIT_FULFILLED'
@@ -91,9 +135,7 @@ export default function reducer(state = {
             ...state.records,
             visible: UiContext.canViewRecord ? true : state.records.visible,
           },
-          formalSubmitRids: action.payload?.rid
-            ? [...state.formalSubmitRids, action.payload.rid]
-            : state.formalSubmitRids,
+          formalSubmitRids: appendFormalSubmitRid(state.formalSubmitRids, action.payload),
           isPosting: false,
           submitWaitSec: 8,
         } : {

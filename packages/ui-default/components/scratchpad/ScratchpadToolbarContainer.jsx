@@ -10,6 +10,36 @@ import Toolbar, {
   ToolbarSplitComponent as ToolbarSplit,
 } from './ToolbarComponent';
 
+function normalizeRecordId(value) {
+  if (value === undefined || value === null || value === '') return '';
+  if (typeof value === 'string' || typeof value === 'number') return `${value}`;
+  if (value.$oid) return `${value.$oid}`;
+  if (value.oid) return `${value.oid}`;
+  if (typeof value.toHexString === 'function') return value.toHexString();
+  return '';
+}
+
+function getSubmitRecordId(payload) {
+  const values = [
+    payload,
+    payload?.data,
+    payload?.data?.data,
+    payload?.body,
+    payload?.body?.data,
+    payload?.response,
+    payload?.response?.data,
+  ];
+  for (const value of values) {
+    if (typeof value === 'string' || typeof value === 'number') {
+      const directRecordId = normalizeRecordId(value);
+      if (directRecordId) return directRecordId;
+    }
+    const recordId = normalizeRecordId(value?.rid || value?.recordId || value?._id);
+    if (recordId) return recordId;
+  }
+  return '';
+}
+
 const mapStateToProps = (state) => ({
   pretestVisible: state.ui.pretest.visible,
   recordsVisible: state.ui.records.visible,
@@ -52,6 +82,23 @@ const mapDispatchToProps = (dispatch) => ({
     const req = request.post(UiContext.postSubmitUrl, {
       lang: props.editorLang,
       code: props.editorCode,
+    }).then((payload) => {
+      // Register the record as soon as the submit endpoint returns. The
+      // WebSocket result may arrive before the promise middleware updates
+      // Redux, especially for fast full-score submissions.
+      const recordId = getSubmitRecordId(payload);
+      if (recordId) {
+        dispatch({
+          type: 'SCRATCHPAD_FORMAL_SUBMIT_REGISTER',
+          payload: { rid: recordId },
+        });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('hydro:formal-submit', {
+            detail: { rid: recordId },
+          }));
+        }
+      }
+      return payload;
     });
     dispatch({
       type: 'SCRATCHPAD_POST_SUBMIT',

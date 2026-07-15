@@ -1,10 +1,21 @@
+import { STATUS } from '@hydrooj/common';
 import $ from 'jquery';
 import React from 'react';
 import { InfoDialog } from 'vj/components/dialog';
 import { NamedPage } from 'vj/misc/Page';
 import { tpl, withTransitionCallback } from 'vj/utils';
+import { createBadgeAcThemePlayer } from '../components/badge_ac_effect';
 
 export default new NamedPage('record_detail', async () => {
+  const badgeThemeEffect = UiContext.badgeAcEffect
+    ? createBadgeAcThemePlayer(UiContext.badgeAcTheme)
+    : null;
+  let badgeEffectPlayed = false;
+  const maybePlayBadgeEffect = (status: unknown) => {
+    if (badgeEffectPlayed || Number(status) !== STATUS.STATUS_ACCEPTED) return;
+    badgeEffectPlayed = true;
+    void badgeThemeEffect?.play();
+  };
   $(document).on('click', '.compiler-text', () => {
     withTransitionCallback(() => {
       $('.collapsed').removeClass('collapsed');
@@ -19,7 +30,10 @@ export default new NamedPage('record_detail', async () => {
     }).open();
   });
 
-  if (!UiContext.socketUrl) return;
+  if (!UiContext.socketUrl) {
+    maybePlayBadgeEffect(UiContext.recordStatus);
+    return;
+  }
   const [{ default: WebSocket }, { DiffDOM }] = await Promise.all([
     import('../components/socket'),
     import('diff-dom'),
@@ -29,6 +43,7 @@ export default new NamedPage('record_detail', async () => {
   const dd = new DiffDOM();
   sock.onmessage = (_, data) => {
     const msg = JSON.parse(data);
+    maybePlayBadgeEffect(msg.status);
     if (typeof msg.status === 'number' && window.parent) window.parent.postMessage({ status: msg.status });
     withTransitionCallback(() => {
       const newStatus = $(msg.status_html);

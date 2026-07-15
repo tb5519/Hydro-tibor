@@ -8,6 +8,7 @@ import {
     ProblemNotFoundError, RecordNotFoundError, UserNotFoundError,
 } from '../error';
 import { RecordDoc, Tdoc } from '../interface';
+import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
 import {
     appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
 } from '../lib/record_visibility';
@@ -83,7 +84,7 @@ export class RecordListHandler extends ContestDetailBaseHandler {
         let invalid = false;
         this.response.template = 'record_main.html';
         const canViewAllPretest = canViewAllPretestRecords(this.user);
-        const hasExplicitPretestFilter = Object.prototype.hasOwnProperty.call(this.request.query, 'includePretest');
+        const hasExplicitPretestFilter = Object.hasOwn(this.request.query, 'includePretest');
         if (!hasExplicitPretestFilter && canViewAllPretest) includePretest = true;
         const q: Filter<RecordDoc> = recordListFilter(tid, includePretest, canViewAllPretest, this.user._id);
         if (full) uidOrName = this.user._id.toString();
@@ -274,7 +275,16 @@ export class RecordDetailHandler extends ContestDetailBaseHandler {
         if (isPretestRecord && typeof rdoc.input === 'string') rdoc.input = [rdoc.input];
         this.response.template = 'record_detail.html';
         this.response.body = {
-            udoc, rdoc: canViewDetail ? rdoc : pick(rdoc, ['_id', 'lang', 'code']), pdoc, tdoc: this.tdoc, rev, allRevs, isPretestRecord,
+            udoc,
+            rdoc: canViewDetail ? rdoc : pick(rdoc, ['_id', 'lang', 'code']),
+            pdoc,
+            tdoc: this.tdoc,
+            rev,
+            allRevs,
+            isPretestRecord,
+            badgeAcTheme: rdoc.uid === this.user._id
+                ? await getActiveBadgeAcTheme(this.ctx, this.user, this.url.bind(this))
+                : null,
         };
     }
 

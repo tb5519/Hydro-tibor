@@ -24,6 +24,7 @@ import {
 import {
     DomainDoc, ProblemDoc, ProblemSearchOptions, ProblemStatusDoc, RecordDoc, User,
 } from '../interface';
+import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
 import {
     appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
@@ -69,63 +70,6 @@ function pickPreferredCodeLang(langs: string[], udoc: User, ddoc?: DomainDoc | n
     const domainCodeLang = getDomainDefaultCodeLang(ddoc);
     const preferred = [domainCodeLang, udoc.codeLang, 'py.py3', 'cc.cc14', 'cc.cc17', 'cc.cc20', 'cc.cc11', 'cc'];
     return preferred.find((lang) => lang && langs.includes(lang)) || langs[0] || domainCodeLang || udoc.codeLang || 'py.py3';
-}
-
-async function getActiveBadgeAcTheme(
-    ctx: Context,
-    currentUser: User,
-    routeUrl: (routeName: string, args?: any) => string,
-) {
-    const db = ctx.db as any;
-    const selectedBadgeId = Number((currentUser as any).badgeProfileBackgroundBadgeId)
-        || Number((currentUser as any).badgeId);
-    const userBadges = await db.collection('userBadge')
-        .find({ owner: currentUser._id })
-        .project({ badgeId: 1 })
-        .toArray();
-    const badgeIds = Array.from(new Set(userBadges
-        .map((badge: any) => Number(badge.badgeId))
-        .filter((badgeId) => Number.isSafeInteger(badgeId) && badgeId > 0)));
-    if (!badgeIds.length) return null;
-
-    const badges = await db.collection('badge')
-        .find({ _id: { $in: badgeIds } })
-        .project({
-            _id: 1,
-            short: 1,
-            title: 1,
-            backgroundImagePath: 1,
-            acImagePath: 1,
-            acImageUpdatedAt: 1,
-            themeSoundPath: 1,
-            themeSoundUpdatedAt: 1,
-        })
-        .toArray();
-    const themedBadges = badges.filter((badge: any) => (
-        badge.backgroundImagePath || badge.acImagePath || badge.themeSoundPath
-    ));
-    const activeBadge = themedBadges.find((badge: any) => Number(badge._id) === selectedBadgeId)
-        || themedBadges[0];
-    // A user's chosen theme controls every part of the badge experience.
-    // Do not borrow the AC effect from a different badge when this theme has none.
-    if (!activeBadge || (!activeBadge.acImagePath && !activeBadge.themeSoundPath)) return null;
-
-    return {
-        id: activeBadge._id,
-        name: activeBadge.short || activeBadge.title || '徽章主题',
-        acImage: activeBadge.acImagePath
-            ? routeUrl('badge_ac_image', {
-                id: activeBadge._id,
-                query: { v: activeBadge.acImageUpdatedAt || '' },
-            })
-            : '',
-        themeSound: activeBadge.themeSoundPath
-            ? routeUrl('badge_theme_sound', {
-                id: activeBadge._id,
-                query: { v: activeBadge.themeSoundUpdatedAt || '' },
-            })
-            : '',
-    };
 }
 
 type ProblemCategoryEntry = [string, string[]];
@@ -883,7 +827,10 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
             this.response.redirect = this.url(this.tdoc.rule === 'homework' ? 'homework_detail' : 'contest_problemlist', { tid });
         } else {
             this.response.body = { rid };
-            this.response.redirect = this.url('record_detail', { rid });
+            this.response.redirect = this.url('record_detail', {
+                rid,
+                query: { badgeAcEffect: '1' },
+            });
         }
     }
 }

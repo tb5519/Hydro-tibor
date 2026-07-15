@@ -11,6 +11,7 @@ import {
   delay, i18n, loadReactRedux, pjax, request, tpl,
 } from 'vj/utils';
 import { openDB } from 'vj/utils/db';
+import { createBadgeAcThemePlayer } from '../components/badge_ac_effect';
 
 class ProblemPageExtender {
   isExtended = false;
@@ -118,13 +119,15 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     : null;
   let hasWrongFormalRecord = !!UiContext.hasWrongFormalRecord;
   let sawCurrentWrongFormalRecord = false;
+  // Keep the current page's formal submissions separately from Redux. Record
+  // updates can arrive before the reducer state is observed by the socket.
+  const currentFormalSubmitRids = new Set<string>();
   const watchedFormalSubmitRids = new Set<string>();
   const pollingFormalSubmitRids = new Set<string>();
   const reportedFormalSubmitRids = new Set<string>();
   const formalSubmitEffectPromises = new Map<string, Promise<void>>();
-  let activeBadgeThemeEffect: Promise<void> | null = null;
-  let badgeThemeAudio: HTMLAudioElement | null = null;
-  let badgeThemeAudioSource = '';
+  let formalSubmitEventListenerBound = false;
+  const badgeThemeEffect = createBadgeAcThemePlayer(UiContext.badgeAcTheme);
   const contestProgressDetails = {
     ...(UiContext.tsdoc?.detail || {}),
   } as Record<string, any>;
@@ -164,105 +167,8 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     return +rdoc?.status === STATUS.STATUS_ACCEPTED;
   }
 
-  function getBadgeThemeAudio() {
-    const source = String(UiContext.badgeAcTheme?.themeSound || '');
-    if (!source) return null;
-    if (!badgeThemeAudio || badgeThemeAudioSource !== source) {
-      badgeThemeAudio?.pause();
-      badgeThemeAudio = new Audio(source);
-      badgeThemeAudio.preload = 'auto';
-      badgeThemeAudioSource = source;
-    }
-    return badgeThemeAudio;
-  }
-
-  function primeBadgeThemeAudio() {
-    const audio = getBadgeThemeAudio();
-    if (!audio) return;
-    audio.muted = true;
-    const result = audio.play();
-    result?.then(() => {
-      audio.pause();
-      audio.currentTime = 0;
-      audio.muted = false;
-    }).catch(() => {
-      audio.muted = false;
-    });
-  }
-
-  document.addEventListener('pointerdown', primeBadgeThemeAudio, { capture: true, once: true });
-  document.addEventListener('keydown', primeBadgeThemeAudio, { capture: true, once: true });
-
   function playBadgeThemeAcEffect() {
-    const theme = UiContext.badgeAcTheme;
-    const acImage = String(theme?.acImage || '');
-    const themeSound = String(theme?.themeSound || '');
-    if ((!acImage && !themeSound) || activeBadgeThemeEffect) return activeBadgeThemeEffect || Promise.resolve();
-
-    const effect = document.createElement('div');
-    effect.className = 'badge-ac-theme-effect';
-    effect.setAttribute('aria-hidden', 'true');
-    const frame = document.createElement('div');
-    frame.className = 'badge-ac-theme-effect__frame';
-    const burst = document.createElement('div');
-    burst.className = 'badge-ac-theme-effect__burst';
-    frame.appendChild(burst);
-
-    if (acImage) {
-      const image = new Image();
-      image.className = 'badge-ac-theme-effect__image';
-      image.src = acImage;
-      image.alt = '';
-      frame.appendChild(image);
-    } else {
-      const label = document.createElement('div');
-      label.className = 'badge-ac-theme-effect__label';
-      label.textContent = `${theme?.name || '徽章主题'} · 满分 AC`;
-      frame.appendChild(label);
-    }
-
-    effect.appendChild(frame);
-    document.body.appendChild(effect);
-    window.requestAnimationFrame(() => effect.classList.add('is-visible'));
-
-    const effectPromise = new Promise<void>((resolve) => {
-      let finished = false;
-      let timeout = 0;
-      const audio = themeSound ? getBadgeThemeAudio() : null;
-      const finish = () => {
-        if (finished) return;
-        finished = true;
-        window.clearTimeout(timeout);
-        if (audio) {
-          audio.onended = null;
-          audio.onerror = null;
-        }
-        effect.classList.remove('is-visible');
-        effect.classList.add('is-leaving');
-        window.setTimeout(() => {
-          effect.remove();
-          resolve();
-        }, 340);
-      };
-
-      if (audio) {
-        audio.pause();
-        audio.currentTime = 0;
-        audio.onended = finish;
-        audio.onerror = finish;
-        timeout = window.setTimeout(finish, 12000);
-        audio.play().catch(() => {
-          window.clearTimeout(timeout);
-          timeout = window.setTimeout(finish, 2200);
-        });
-      } else {
-        timeout = window.setTimeout(finish, 2200);
-      }
-    });
-    activeBadgeThemeEffect = effectPromise.finally(() => {
-      activeBadgeThemeEffect = null;
-    });
-    return activeBadgeThemeEffect;
+    return badgeThemeEffect.play();
   }
 
   function getContestStatusText(status: number) {
@@ -348,12 +254,39 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   }
 
   function getRecordId(rdoc) {
-    const id = rdoc?._id;
-    if (!id) return '';
-    if (typeof id === 'string') return id;
-    if (id.$oid) return id.$oid;
-    if (id.toHexString) return id.toHexString();
+    const id = rdoc?._id ?? rdoc?.rid ?? rdoc?.recordId ?? rdoc?.id;
+    if (id === undefined || id === null || id === '') return '';
+    if (typeof id === 'string' || typeof id === 'number') return `${id}`;
+    if (id.$oid) return `${id.$oid}`;
+    if (id.oid) return `${id.oid}`;
+    if (typeof id.toHexString === 'function') return id.toHexString();
     return `${id}`;
+  }
+
+  function getResponsePayloads(result: any) {
+    return [
+      result,
+      result?.data,
+      result?.data?.data,
+      result?.body,
+      result?.body?.data,
+      result?.response,
+      result?.response?.data,
+    ].filter(Boolean);
+  }
+
+  function findFormalSubmitRecord(result: any, recordId: string) {
+    for (const payload of getResponsePayloads(result)) {
+      for (const rdoc of [payload?.rdoc, payload?.record]) {
+        if (rdoc && getRecordId(rdoc) === recordId) return rdoc;
+      }
+      for (const records of [payload?.rdocs, payload?.records, payload?.docs, payload?.data]) {
+        if (!Array.isArray(records)) continue;
+        const rdoc = records.find((item: any) => getRecordId(item) === recordId);
+        if (rdoc) return rdoc;
+      }
+    }
+    return null;
   }
 
   function getRecordContestId(rdoc) {
@@ -382,6 +315,11 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   function isCurrentFormalSubmitRecord(store, rdoc) {
     const recordId = getRecordId(rdoc);
     if (!recordId) return false;
+    if (
+      currentFormalSubmitRids.has(recordId)
+      || watchedFormalSubmitRids.has(recordId)
+      || pollingFormalSubmitRids.has(recordId)
+    ) return true;
     return (store.getState()?.ui?.formalSubmitRids || [])
       .some((rid) => getRecordId({ _id: rid }) === recordId);
   }
@@ -551,9 +489,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
       attempts++;
       try {
         const result = await request.get(feedbackUrl || UiContext.getSubmissionsUrl);
-        const rdoc = feedbackUrl
-          ? result?.rdoc
-          : result?.rdocs?.find((item) => getRecordId(item) === recordId);
+        const rdoc = findFormalSubmitRecord(result, recordId);
         if (rdoc) {
           void receiveFormalSubmitRecord(store, rdoc);
           if (isFinalRecordStatus(+rdoc.status)) {
@@ -577,7 +513,9 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
 
   function watchFormalSubmitRecord(store, WebSocket, rid) {
     const recordId = getRecordId({ _id: rid });
-    if (!recordId || watchedFormalSubmitRids.has(recordId)) return;
+    if (!recordId) return;
+    currentFormalSubmitRids.add(recordId);
+    if (watchedFormalSubmitRids.has(recordId)) return;
     watchedFormalSubmitRids.add(recordId);
     // Poll the sanitized endpoint as a fallback for hidden contest records.
     // WebSocket delivery remains the fast path, but a result prompt must not depend on it.
@@ -591,7 +529,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
       } catch {
         return;
       }
-      const rdoc = msg.rdoc;
+      const rdoc = findFormalSubmitRecord(msg, recordId);
       if (!rdoc) return;
       void receiveFormalSubmitRecord(store, rdoc);
 
@@ -603,11 +541,27 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   }
 
   function watchFormalSubmitRecords(store, WebSocket) {
-    store.subscribe(() => {
+    if (!formalSubmitEventListenerBound && typeof window !== 'undefined') {
+      formalSubmitEventListenerBound = true;
+      window.addEventListener('hydro:formal-submit', (event: Event) => {
+        const detail = (event as CustomEvent<{ rid?: unknown }>).detail;
+        const recordId = getRecordId({ _id: detail?.rid });
+        if (!recordId) return;
+        currentFormalSubmitRids.add(recordId);
+        watchFormalSubmitRecord(store, WebSocket, recordId);
+      });
+    }
+    const syncFormalSubmitRecords = () => {
       const rids = store.getState()?.ui?.formalSubmitRids || [];
-      rids.forEach((rid) => watchFormalSubmitRecord(store, WebSocket, rid));
+      rids.forEach((rid) => {
+        const recordId = getRecordId({ _id: rid });
+        if (recordId) currentFormalSubmitRids.add(recordId);
+        watchFormalSubmitRecord(store, WebSocket, rid);
+      });
       maybeRevealMistakePrompt(store);
-    });
+    };
+    syncFormalSubmitRecords();
+    store.subscribe(syncFormalSubmitRecords);
   }
 
   async function handleClickDownloadProblem() {
