@@ -1,15 +1,4 @@
 {% extends "layout/basic.html" %}
-{% block ogp_site %}
-  {{ super() }}
-  {% if badgeAcFirstEligible and badgeAcTheme %}
-    {% if badgeAcTheme.acImage %}
-      <link rel="preload" href="{{ badgeAcTheme.acImage }}" as="image" fetchpriority="low">
-    {% endif %}
-    {% if badgeAcTheme.themeSound %}
-      <link rel="preload" href="{{ badgeAcTheme.themeSound }}" as="audio">
-    {% endif %}
-  {% endif %}
-{% endblock %}
 {% block content %}
 <script>
 {{ set(UiContext, {
@@ -49,34 +38,35 @@
 </script>
 {% if badgeAcFirstEligible and badgeAcTheme and (badgeAcTheme.acImage or badgeAcTheme.themeSound) %}
 <script>
-  // Fetch and decode the holder's AC theme before they submit. This runs when
-  // the problem page is idle, so the first full-score AC does not have to wait
-  // for a large image or audio file to arrive.
+  // Prefetch the holder's AC theme only after the page has loaded and the
+  // browser is idle. This keeps the problem page and editor ahead of an
+  // optional celebration image or audio file in the network queue.
   (function () {
     var connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
     if (connection && connection.saveData) return;
 
     var preload = function () {
       var theme = JSON.parse('{{ badgeAcTheme|json|jsesc|safe }}');
-      var cache = window.__hydroBadgeAcPreload || (window.__hydroBadgeAcPreload = {});
-      if (theme.acImage && !cache.acImage) {
-        var image = new Image();
-        image.decoding = 'async';
-        image.src = theme.acImage;
-        cache.acImage = image;
-        if (image.decode) image.decode().catch(function () {});
-      }
-      if (theme.themeSound && !cache.themeSound) {
-        var audio = new Audio();
-        audio.preload = 'auto';
-        audio.src = theme.themeSound;
-        audio.load();
-        cache.themeSound = audio;
-      }
+      var cache = window.__hydroBadgeAcPrefetch || (window.__hydroBadgeAcPrefetch = {});
+      var prefetch = function (url, type) {
+        if (!url || cache[url]) return;
+        var link = document.createElement('link');
+        link.rel = 'prefetch';
+        link.as = type;
+        link.href = url;
+        cache[url] = true;
+        document.head.appendChild(link);
+      };
+      prefetch(theme.acImage, 'image');
+      prefetch(theme.themeSound, 'audio');
     };
 
-    if (window.requestIdleCallback) window.requestIdleCallback(preload, { timeout: 2500 });
-    else window.setTimeout(preload, 500);
+    var schedule = function () {
+      if (window.requestIdleCallback) window.requestIdleCallback(preload, { timeout: 8000 });
+      else window.setTimeout(preload, 2000);
+    };
+    if (document.readyState === 'complete') schedule();
+    else window.addEventListener('load', schedule, { once: true });
   }());
 </script>
 {% endif %}
