@@ -489,10 +489,12 @@ class PointLotteryDrawHandler extends Handler {
     async post({ domainId }) {
         const fail = (errorMessage: string) => {
             this.response.body = { ok: false, error: { message: errorMessage } };
-            return this.response.body;
         };
         const config = getPointLotteryConfig();
-        if (!config.enabled) return fail('积分抽奖未开启。');
+        if (!config.enabled) {
+            fail('积分抽奖未开启。');
+            return;
+        }
         const nonRepeatablePrizes = config.prizes.filter((prize) => !prize.repeatable);
         let availablePrizes = config.prizes;
         if (nonRepeatablePrizes.length) {
@@ -509,7 +511,10 @@ class PointLotteryDrawHandler extends Handler {
             availablePrizes = config.prizes.filter((prize) => prize.repeatable || !wonKeys.has(pointLotteryPrizeKey(prize)));
         }
         const prize = pickPointLotteryPrize({ ...config, prizes: availablePrizes });
-        if (!prize) return fail(availablePrizes.length ? '抽奖奖品未配置。' : '可抽奖品已全部抽完。');
+        if (!prize) {
+            fail(availablePrizes.length ? '抽奖奖品未配置。' : '可抽奖品已全部抽完。');
+            return;
+        }
         const prizeIndex = config.prizes.indexOf(prize);
         const existingPointState = await ensureGlobalPointLotteryState(this.user._id);
         const initialTotalPoints = existingPointState && existingPointState[POINT_LOTTERY_TOTAL_POINTS_FIELD] === undefined
@@ -536,7 +541,10 @@ class PointLotteryDrawHandler extends Handler {
             },
         );
         const dudoc = result.value;
-        if (!dudoc) return fail('积分不足，无法抽奖。');
+        if (!dudoc) {
+            fail('积分不足，无法抽奖。');
+            return;
+        }
         const points = Math.max(0, Math.floor(+dudoc[POINT_LOTTERY_POINTS_FIELD] || 0));
         const totalPoints = Math.max(0, Math.floor(+dudoc[POINT_LOTTERY_TOTAL_POINTS_FIELD] || 0));
         await this.ctx.db.collection('lottery.draw').insertOne({
@@ -557,7 +565,6 @@ class PointLotteryDrawHandler extends Handler {
             points,
             totalPoints,
         };
-        return this.response.body;
     }
 }
 
