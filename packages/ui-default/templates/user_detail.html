@@ -140,7 +140,9 @@
                   {% endif %}
                 </div>
               {% endif %}
-              {% if badgeProfileBackground.currentTheme %}
+              {# Theme controls and its selected-state hint are private to the
+                 profile owner; visitors only see the public badge list. #}
+              {% if isSelfProfile and badgeProfileBackground.currentTheme %}
                 <p class="ui-v2-current-badge-theme">当前主题：{{ badgeProfileBackground.currentTheme.name }}</p>
               {% endif %}
               <p>
