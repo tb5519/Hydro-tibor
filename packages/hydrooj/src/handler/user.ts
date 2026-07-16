@@ -41,7 +41,8 @@ async function attachOwnedBadges(ctx: Context, udocs: any[]) {
         if (udoc) udoc.ownedBadges = [];
     }
     if (!uids.length) return;
-    const userBadges = await ctx.db.collection('userBadge').find({ owner: { $in: uids } }).sort({ badgeId: 1 }).toArray();
+    const userBadges = await ctx.db.collection('userBadge').find({ owner: { $in: uids } })
+        .sort({ getAt: -1, badgeId: -1 }).toArray();
     const badgeIds = Array.from(new Set(userBadges.map((doc: any) => doc.badgeId).filter((badgeId) => typeof badgeId === 'number')));
     if (!badgeIds.length) return;
     const badges = await ctx.db.collection('badge').find({ _id: { $in: badgeIds } }).toArray();
@@ -58,6 +59,7 @@ async function attachOwnedBadges(ctx: Context, udocs: any[]) {
             fontColor: normalizeBadgeColor(badge.fontColor, '1f2937'),
             tooltip: badge.title || badge.short || `${badge._id}`,
             href: `/badge/${badge._id}`,
+            getAt: doc.getAt,
             backgroundImage: badge.backgroundImagePath
                 ? `/badge/${badge._id}/background?v=${encodeURIComponent(badge.backgroundImageUpdatedAt || '')}`
                 : '',
@@ -82,26 +84,25 @@ function getBadgeProfileBackground(udoc: any) {
             id: badge.id,
             name: badge.displayName,
             image: badge.backgroundImage,
+            backgroundColor: badge.backgroundColor,
             acImage: badge.acImage,
             themeSound: badge.themeSound,
-        }));
-    const backgrounds = themes.filter((theme: any) => theme.image);
-    const preferredIds = [
-        Number(udoc?.badgeProfileBackgroundBadgeId),
-        Number(udoc?.badgeId),
-    ].filter((id) => Number.isSafeInteger(id) && id > 0);
-    const selectedTheme = preferredIds
-        .map((id) => themes.find((theme: any) => theme.id === id))
-        .find(Boolean) || themes[0] || null;
-    const selectedBackground = selectedTheme?.image
-        ? selectedTheme
-        : backgrounds[0] || null;
+            getAt: badge.getAt,
+        }))
+        .sort((a: any, b: any) => {
+            const getTime = (badge: any) => new Date(badge.getAt || 0).getTime() || 0;
+            return getTime(b) - getTime(a) || b.id - a.id;
+        });
+    const selectedId = Number(udoc?.badgeProfileBackgroundBadgeId);
+    // A member's newest themed badge is the default. Once they choose a
+    // theme, the profile-specific selection takes precedence permanently.
+    const selectedTheme = themes.find((theme: any) => theme.id === selectedId) || themes[0] || null;
     return {
-        mode: udoc?.badgeProfileBackgroundMode === 'rotate' && backgrounds.length > 1 ? 'rotate' : 'selected',
         selectedId: selectedTheme?.id || 0,
-        image: selectedBackground?.image || '',
+        image: selectedTheme?.image || '',
+        placeholderColor: selectedTheme?.backgroundColor || '#17233a',
+        currentTheme: selectedTheme,
         themes,
-        backgrounds,
     };
 }
 
@@ -465,13 +466,24 @@ class UserDetailHandler extends Handler {
     async get(domainId: string, uid: number) {
         if (uid === 0) throw new UserNotFoundError(0);
         const isSelfProfile = this.user._id === uid;
-        const [udoc, sdoc] = await Promise.all([
+        const [udoc, sdoc, themePreference] = await Promise.all([
             user.getById(domainId, uid),
             token.getMostRecentSessionByUid(uid, ['createAt', 'updateAt']),
+            // Theme preference is a badge extension field, not a standard
+            // User setting. User#getById intentionally exposes a curated
+            // user object, so read this small preference projection directly
+            // to avoid falling back to the newest badge after every click.
+            user.coll.findOne(
+                { _id: uid },
+                { projection: { badgeProfileBackgroundBadgeId: 1 } },
+            ),
         ]);
         if (!udoc) throw new UserNotFoundError(uid);
         await attachOwnedBadges(this.ctx, [udoc]);
-        const badgeProfileBackground = getBadgeProfileBackground(udoc);
+        const badgeProfileBackground = getBadgeProfileBackground({
+            ownedBadges: udoc.ownedBadges,
+            badgeProfileBackgroundBadgeId: themePreference?.badgeProfileBackgroundBadgeId,
+        });
         const pdocs: ProblemDoc[] = [];
         const acInfo: Record<string, number> = {};
         const canViewHidden = this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN) || this.user._id;
@@ -514,24 +526,32 @@ class UserDetailHandler extends Handler {
 
 class UserBadgeBackgroundHandler extends Handler {
     @param('uid', Types.Int)
-    @param('mode', Types.Range(['selected', 'rotate']))
     @param('badgeId', Types.PositiveInt, true)
-    async post(domainId: string, uid: number, mode: 'selected' | 'rotate', badgeId = 0) {
+    async post(domainId: string, uid: number, badgeId = 0) {
         if (this.user._id !== uid) throw new ForbiddenError();
         const udoc = await user.getById(domainId, uid);
         if (!udoc) throw new UserNotFoundError(uid);
         await attachOwnedBadges(this.ctx, [udoc]);
-        const badgeProfileBackground = getBadgeProfileBackground(udoc);
+        const themePreference = await user.coll.findOne(
+            { _id: uid },
+            { projection: { badgeProfileBackgroundBadgeId: 1 } },
+        );
+        const badgeProfileBackground = getBadgeProfileBackground({
+            ownedBadges: udoc.ownedBadges,
+            badgeProfileBackgroundBadgeId: themePreference?.badgeProfileBackgroundBadgeId,
+        });
         if (!badgeProfileBackground.themes.length) throw new ValidationError('badgeId');
         const selected = badgeProfileBackground.themes.find((badge) => badge.id === badgeId)
             || badgeProfileBackground.themes.find((badge) => badge.id === badgeProfileBackground.selectedId);
-        if (mode === 'selected' && !selected) throw new ValidationError('badgeId');
+        if (!selected) throw new ValidationError('badgeId');
         await user.setById(uid, {
-            badgeProfileBackgroundMode: mode === 'rotate' && badgeProfileBackground.backgrounds.length > 1
-                ? 'rotate'
-                : 'selected',
+            badgeProfileBackgroundMode: 'selected',
             badgeProfileBackgroundBadgeId: selected?.id || badgeProfileBackground.selectedId,
         } as any);
+        // Theme selection is displayed immediately after the redirect. Clear
+        // the cached public user as well so the profile cannot render the
+        // previous theme while MongoDB already holds the new selection.
+        deleteUserCache({ _id: uid, uname: udoc.uname, mail: udoc.mail });
         this.response.redirect = this.url('user_detail', { uid });
     }
 }

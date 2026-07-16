@@ -11,11 +11,42 @@
   }
 
   .user-profile-bg--badge {
+    isolation: isolate;
+    background-color: var(--badge-profile-placeholder, #17233a);
+    background-image:
+      radial-gradient(circle at 80% 16%, rgba(255, 255, 255, .16), transparent 38%),
+      linear-gradient(110deg, rgba(4, 12, 27, .9) 0%, rgba(9, 22, 55, .68) 58%, rgba(9, 22, 55, .48) 100%);
+    background-position: center;
+    background-size: cover;
+  }
+
+  .user-profile-bg--badge::before {
+    content: '';
+    position: absolute;
+    z-index: 0;
+    inset: 0;
+    opacity: 0;
     background-image:
       linear-gradient(90deg, rgba(9, 22, 55, .34) 0%, rgba(9, 22, 55, .16) 48%, rgba(9, 22, 55, .06) 100%),
       var(--badge-profile-background);
     background-position: center;
     background-size: cover;
+    pointer-events: none;
+    transition: opacity .18s ease-out;
+  }
+
+  .user-profile-bg--badge.is-badge-profile-background-ready::before {
+    opacity: 1;
+  }
+
+  .user-profile-bg--badge .profile-header__content {
+    z-index: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .user-profile-bg--badge::before {
+      transition: none;
+    }
   }
 
   .ui-v2-user-detail-badge-row {
@@ -32,184 +63,47 @@
     padding: 0 8px;
   }
 
+  .ui-v2-user-detail-badge-row__theme-form {
+    margin: 0;
+  }
+
   .ui-v2-user-detail-badge-row__selector {
+    position: relative;
     border: 0;
     cursor: pointer;
     font-family: inherit;
     appearance: none;
+    overflow: visible;
   }
 
-  .ui-v2-user-detail-badge-row__selector::after {
-    content: "\25BE";
-    margin-left: 5px;
-    font-size: 10px;
-    opacity: .72;
+  .ui-v2-user-detail-badge-row__selector.is-current {
+    box-shadow: 0 2px 6px rgba(9, 22, 55, .2);
   }
 
-  .ui-v2-badge-background-modal[hidden] {
-    display: none;
-  }
-
-  .ui-v2-badge-background-modal {
-    position: fixed;
-    inset: 0;
-    z-index: 1600;
-    display: grid;
-    place-items: center;
-    padding: 20px;
-  }
-
-  .ui-v2-badge-background-modal__shade {
-    position: absolute;
-    inset: 0;
-    background: rgba(15, 23, 42, .48);
-  }
-
-  .ui-v2-badge-background-modal__panel {
-    position: relative;
-    width: min(560px, 100%);
-    border: 1px solid #dbe6f6;
-    border-radius: 12px;
-    background: #fff;
-    box-shadow: 0 28px 70px rgba(15, 23, 42, .26);
-    overflow: hidden;
-  }
-
-  .ui-v2-badge-background-modal__header {
-    padding: 22px 24px 14px;
-  }
-
-  .ui-v2-badge-background-modal__eyebrow {
-    margin: 0 0 5px;
-    color: #6982a3;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: .08em;
-    text-transform: uppercase;
-  }
-
-  .ui-v2-badge-background-modal__title {
-    margin: 0;
-    color: #17233a;
-    font-size: 22px;
-    line-height: 1.25;
-  }
-
-  .ui-v2-badge-background-modal__close {
-    position: absolute;
-    top: 13px;
-    right: 15px;
-    width: 34px;
-    height: 34px;
-    border: 0;
-    border-radius: 50%;
-    background: #f1f5fb;
-    color: #52627a;
-    cursor: pointer;
-    font-size: 25px;
-    line-height: 1;
-  }
-
-  .ui-v2-badge-background-modal__body {
-    padding: 0 24px 24px;
-  }
-
-  .ui-v2-badge-background-modal__preview {
-    position: relative;
-    min-height: 154px;
-    border: 1px solid #d9e5f5;
-    border-radius: 9px;
-    background-color: #edf4ff;
-    background-image: var(--badge-preview-background);
-    background-position: center;
-    background-size: cover;
-    overflow: hidden;
-  }
-
-  .ui-v2-badge-background-modal__preview::after {
+  .ui-v2-user-detail-badge-row__selector.is-current::after {
     content: '';
     position: absolute;
-    inset: 0;
-    background: linear-gradient(90deg, rgba(15, 23, 42, .42), rgba(15, 23, 42, .04));
-    pointer-events: none;
+    left: 50%;
+    bottom: -7px;
+    width: 0;
+    height: 0;
+    border: 4px solid transparent;
+    border-bottom-color: rgba(255, 255, 255, .94);
+    filter: drop-shadow(0 1px 1px rgba(9, 22, 55, .34));
+    transform: translateX(-50%);
   }
 
-  .ui-v2-badge-background-modal__preview-name {
-    position: absolute;
-    z-index: 1;
-    right: 14px;
-    bottom: 12px;
-    max-width: calc(100% - 28px);
-    overflow: hidden;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, .92);
-    color: #1f2d46;
-    font-size: 13px;
-    font-weight: 700;
+  .ui-v2-current-badge-theme {
+    margin: -4px 0 12px;
+    color: rgba(255, 255, 255, .86);
+    font-size: 12px;
     line-height: 1.4;
-    padding: 5px 10px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .ui-v2-badge-background-modal__preview-ac {
-    position: absolute;
-    z-index: 1;
-    right: 12px;
-    bottom: 10px;
-    max-width: 42%;
-    max-height: 82%;
-    object-fit: contain;
-    filter: drop-shadow(0 10px 18px rgba(15, 23, 42, .28));
-    pointer-events: none;
-  }
-
-  .ui-v2-badge-background-modal__actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 16px;
-  }
-
-  .ui-v2-badge-background-modal__actions form {
-    margin: 0;
-  }
-
-  .ui-v2-badge-background-modal__hint {
-    margin: 12px 0 0;
-    color: #718096;
-    font-size: 13px;
-    line-height: 1.6;
-  }
-
-  .ui-v2-badge-background-modal__media-hint {
-    margin: 10px 0 0;
-    color: #4f6688;
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 1.5;
-  }
-
-  @media (max-width: 480px) {
-    .ui-v2-badge-background-modal {
-      padding: 12px;
-    }
-
-    .ui-v2-badge-background-modal__header,
-    .ui-v2-badge-background-modal__body {
-      padding-left: 16px;
-      padding-right: 16px;
-    }
-
-    .ui-v2-badge-background-modal__preview {
-      min-height: 124px;
-    }
   }
 </style>
 <div class="row">
   <div class="medium-9 columns">
     <div class="section">
-      <div class="profile-header user-profile-bg{% if badgeProfileBackground.image %} user-profile-bg--badge{% endif %}"{% if badgeProfileBackground.image %} style="--badge-profile-background: url('{{ badgeProfileBackground.image }}')"{% endif %}>
+      <div class="profile-header user-profile-bg{% if badgeProfileBackground.image %} user-profile-bg--badge{% endif %}"{% if badgeProfileBackground.image %} data-badge-profile-background-src="{{ badgeProfileBackground.image }}" style="--badge-profile-placeholder: {{ badgeProfileBackground.placeholderColor }}"{% endif %}>
         <div class="profile-header__content">
           <div class="media">
             <div class="media__left">
@@ -225,19 +119,18 @@
                   {% if udoc.ownedBadges and udoc.ownedBadges.length %}
                     {% for badge in udoc.ownedBadges %}
                       {% if isSelfProfile and badge.isTheme %}
-                        <button
-                          type="button"
-                          class="user-profile-badge v-center user-profile-badge--custom ui-v2-user-detail-badge-row__selector"
-                          style="background-color:{{ badge.backgroundColor }}{% if badge.fontColor %};color:{{ badge.fontColor }}{% endif %}"
-                          data-badge-background-select
-                          data-badge-background-id="{{ badge.id }}"
-                          data-badge-background-name="{{ badge.displayName }}"
-                          data-badge-background-image="{{ badge.backgroundImage }}"
-                          data-badge-theme-ac-image="{{ badge.acImage }}"
-                          data-badge-theme-sound="{{ badge.themeSound }}"
-                          title="{{ badge.tooltip }}"
-                          data-tooltip="{{ badge.tooltip }}"
-                        >{{ badge.displayName }}</button>
+                        <form class="ui-v2-user-detail-badge-row__theme-form" method="post" action="{{ url('user_badge_background', uid=udoc._id) }}">
+                          <input type="hidden" name="mode" value="selected">
+                          <input type="hidden" name="badgeId" value="{{ badge.id }}">
+                          <button
+                            type="submit"
+                            class="user-profile-badge v-center user-profile-badge--custom ui-v2-user-detail-badge-row__selector{% if badge.id == badgeProfileBackground.selectedId %} is-current{% endif %}"
+                            style="background-color:{{ badge.backgroundColor }}{% if badge.fontColor %};color:{{ badge.fontColor }}{% endif %}"
+                            title="{{ '当前主题：' + badge.displayName if badge.id == badgeProfileBackground.selectedId else '点击切换为 ' + badge.displayName + ' 主题' }}"
+                            data-tooltip="{{ '当前主题：' + badge.displayName if badge.id == badgeProfileBackground.selectedId else '点击切换为 ' + badge.displayName + ' 主题' }}"
+                            {% if badge.id == badgeProfileBackground.selectedId %}aria-current="true"{% endif %}
+                          >{{ badge.displayName }}</button>
+                        </form>
                       {% else %}
                         {{ user.render_custom_badge_item(badge) }}
                       {% endif %}
@@ -246,6 +139,9 @@
                     {{ user.render_custom_badges(udoc) }}
                   {% endif %}
                 </div>
+              {% endif %}
+              {% if badgeProfileBackground.currentTheme %}
+                <p class="ui-v2-current-badge-theme">当前主题：{{ badgeProfileBackground.currentTheme.name }}</p>
               {% endif %}
               <p>
                 {{ _('UID') }}: {{ udoc['_id'] }},
@@ -315,6 +211,33 @@
           </div>
         </div>
       </div>
+      {% if badgeProfileBackground.image %}
+        <script>
+          (function () {
+            var header = document.querySelector('[data-badge-profile-background-src]');
+            if (!header) return;
+            var source = header.getAttribute('data-badge-profile-background-src');
+            if (!source) return;
+
+            var revealed = false;
+            var reveal = function () {
+              if (revealed) return;
+              revealed = true;
+              header.style.setProperty('--badge-profile-background', 'url("' + source.replace(/"/g, '\\"') + '")');
+              header.classList.add('is-badge-profile-background-ready');
+            };
+            var image = new Image();
+            image.decoding = 'async';
+            image.fetchPriority = 'low';
+            image.onload = function () {
+              if (image.decode) image.decode().then(reveal).catch(reveal);
+              else reveal();
+            };
+            image.src = source;
+            if (image.complete && image.naturalWidth) image.onload();
+          }());
+        </script>
+      {% endif %}
       <div class="profile-content">
         <div class="section__tab-container immersive memo">
           <ul class="section__tabs">
@@ -404,114 +327,4 @@
     {% endif %}
   </div>
 </div>
-{% if isSelfProfile and badgeProfileBackground.themes.length %}
-  <div class="ui-v2-badge-background-modal" data-badge-background-modal hidden>
-    <div class="ui-v2-badge-background-modal__shade" data-badge-background-close></div>
-    <section class="ui-v2-badge-background-modal__panel" role="dialog" aria-modal="true" aria-labelledby="badge-background-modal-title">
-      <button class="ui-v2-badge-background-modal__close" type="button" data-badge-background-close aria-label="关闭">×</button>
-      <div class="ui-v2-badge-background-modal__header">
-        <p class="ui-v2-badge-background-modal__eyebrow">Badge Theme</p>
-        <h2 class="ui-v2-badge-background-modal__title" id="badge-background-modal-title">我的徽章主题</h2>
-      </div>
-      <div class="ui-v2-badge-background-modal__body">
-        <div class="ui-v2-badge-background-modal__preview" data-badge-background-preview>
-          <img class="ui-v2-badge-background-modal__preview-ac" data-badge-theme-preview-ac alt="" hidden>
-          <span class="ui-v2-badge-background-modal__preview-name" data-badge-background-preview-name></span>
-        </div>
-        <div class="ui-v2-badge-background-modal__actions">
-          <form method="post" action="{{ url('user_badge_background', uid=udoc._id) }}">
-            <input type="hidden" name="mode" value="selected">
-            <input type="hidden" name="badgeId" value="{{ badgeProfileBackground.selectedId }}" data-badge-background-selected-id>
-            <button type="submit" class="rounded primary button">使用此徽章主题</button>
-          </form>
-          {% if badgeProfileBackground.backgrounds.length > 1 %}
-            <form method="post" action="{{ url('user_badge_background', uid=udoc._id) }}">
-              <input type="hidden" name="mode" value="rotate">
-              <input type="hidden" name="badgeId" value="{{ badgeProfileBackground.selectedId }}" data-badge-background-rotate-id>
-              <button type="submit" class="rounded button">轮流展示所有徽章背景</button>
-            </form>
-          {% endif %}
-        </div>
-        <p class="ui-v2-badge-background-modal__media-hint" data-badge-theme-preview-media></p>
-        <p class="ui-v2-badge-background-modal__hint">主题包含个人主页背景、满分 AC 动画图和专属音效；未配置的内容会自动跳过。PNG 会静态显示，GIF 会在个人主页背景中自动播放。</p>
-      </div>
-    </section>
-  </div>
-  <script>
-    (function () {
-      var modal = document.querySelector('[data-badge-background-modal]');
-      if (!modal) return;
-
-      var header = document.querySelector('.user-profile-bg--badge');
-      var preview = modal.querySelector('[data-badge-background-preview]');
-      var previewName = modal.querySelector('[data-badge-background-preview-name]');
-      var previewAc = modal.querySelector('[data-badge-theme-preview-ac]');
-      var previewMedia = modal.querySelector('[data-badge-theme-preview-media]');
-      var selectedInput = modal.querySelector('[data-badge-background-selected-id]');
-      var rotateInput = modal.querySelector('[data-badge-background-rotate-id]');
-      var backgrounds = [
-        {% for badge in badgeProfileBackground.backgrounds %}
-          { id: {{ badge.id|json|safe }}, image: {{ badge.image|json|safe }} }{% if not loop.last %},{% endif %}
-        {% endfor %}
-      ];
-
-      function setPreview(button) {
-        if (!button) return;
-        var id = button.getAttribute('data-badge-background-id');
-        var image = button.getAttribute('data-badge-background-image');
-        var name = button.getAttribute('data-badge-background-name');
-        var acImage = button.getAttribute('data-badge-theme-ac-image');
-        var themeSound = button.getAttribute('data-badge-theme-sound');
-        preview.style.setProperty('--badge-preview-background', image
-          ? 'url("' + image.replace(/"/g, '\\"') + '")'
-          : 'none');
-        previewName.textContent = name;
-        previewAc.hidden = !acImage;
-        previewAc.src = acImage || '';
-        var media = [];
-        if (acImage) media.push('已配置满分 AC 动画图');
-        if (themeSound) media.push('已配置专属音效');
-        previewMedia.textContent = media.join(' · ') || '此主题仅使用个人主页背景或默认展示效果。';
-        selectedInput.value = id;
-        if (rotateInput) rotateInput.value = id;
-      }
-
-      function openModal(button) {
-        setPreview(button);
-        modal.hidden = false;
-      }
-
-      function closeModal() {
-        modal.hidden = true;
-      }
-
-      var badgeButtons = document.querySelectorAll('[data-badge-background-select]');
-      badgeButtons.forEach(function (button) {
-        button.addEventListener('click', function () {
-          openModal(button);
-        });
-      });
-      modal.querySelectorAll('[data-badge-background-close]').forEach(function (button) {
-        button.addEventListener('click', closeModal);
-      });
-      document.addEventListener('keydown', function (event) {
-        if (event.key === 'Escape' && !modal.hidden) closeModal();
-      });
-
-      if (header && {{ (badgeProfileBackground.mode == 'rotate')|json|safe }} && backgrounds.length > 1) {
-        var selectedId = {{ badgeProfileBackground.selectedId|json|safe }};
-        var index = backgrounds.findIndex(function (badge) { return badge.id === selectedId; });
-        if (index < 0) index = 0;
-        backgrounds.forEach(function (badge) {
-          var image = new Image();
-          image.src = badge.image;
-        });
-        window.setInterval(function () {
-          index = (index + 1) % backgrounds.length;
-          header.style.setProperty('--badge-profile-background', 'url("' + backgrounds[index].image.replace(/"/g, '\\"') + '")');
-        }, 10000);
-      }
-    })();
-  </script>
-{% endif %}
 {% endblock %}
