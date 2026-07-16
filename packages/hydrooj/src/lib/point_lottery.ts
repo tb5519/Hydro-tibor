@@ -1,8 +1,75 @@
 import system from '../model/system';
+import db from '../service/db';
 
 export const POINT_LOTTERY_CONFIG_KEY = 'pointLottery.config';
 export const POINT_LOTTERY_POINTS_FIELD = 'lotteryPoints';
 export const POINT_LOTTERY_TOTAL_POINTS_FIELD = 'lotteryTotalPoints';
+
+export const pointLotteryUserColl = db.collection('user');
+
+function normalizePoints(value: any) {
+    const points = Math.floor(+value || 0);
+    return Math.max(0, Number.isFinite(points) ? points : 0);
+}
+
+/**
+ * Lottery points are account-wide. Older installations stored them in each
+ * domain membership; migrate those legacy balances once, on first access.
+ */
+export async function ensureGlobalPointLotteryState(uid: number) {
+    const projection = {
+        [POINT_LOTTERY_POINTS_FIELD]: 1,
+        [POINT_LOTTERY_TOTAL_POINTS_FIELD]: 1,
+        contestScorePointAwards: 1,
+    };
+    const current = await pointLotteryUserColl.findOne({ _id: uid }, { projection });
+    if (current && (
+        current[POINT_LOTTERY_POINTS_FIELD] !== undefined
+        || current[POINT_LOTTERY_TOTAL_POINTS_FIELD] !== undefined
+        || current.contestScorePointAwards !== undefined
+    )) return current;
+
+    const legacy = await db.collection('domain.user').find(
+        { uid, join: true },
+        { projection },
+    ).toArray();
+    let points = 0;
+    let totalPoints = 0;
+    const contestScorePointAwards: Record<string, number> = {};
+    for (const dudoc of legacy) {
+        const currentPoints = normalizePoints(dudoc[POINT_LOTTERY_POINTS_FIELD]);
+        points += currentPoints;
+        totalPoints += normalizePoints(dudoc[POINT_LOTTERY_TOTAL_POINTS_FIELD] ?? currentPoints);
+        for (const [tid, score] of Object.entries(dudoc.contestScorePointAwards || {})) {
+            contestScorePointAwards[tid] = Math.max(contestScorePointAwards[tid] || 0, normalizePoints(score));
+        }
+    }
+    await pointLotteryUserColl.updateOne({
+        _id: uid,
+        [POINT_LOTTERY_POINTS_FIELD]: { $exists: false },
+        [POINT_LOTTERY_TOTAL_POINTS_FIELD]: { $exists: false },
+    }, {
+        $set: {
+            [POINT_LOTTERY_POINTS_FIELD]: points,
+            [POINT_LOTTERY_TOTAL_POINTS_FIELD]: totalPoints,
+            contestScorePointAwards,
+        },
+    });
+    return await pointLotteryUserColl.findOne({ _id: uid }, { projection });
+}
+
+export async function migrateGlobalPointLotteryStates() {
+    const uids = await db.collection('domain.user').distinct('uid', {
+        uid: { $gt: 1 },
+        $or: [
+            { [POINT_LOTTERY_POINTS_FIELD]: { $exists: true } },
+            { [POINT_LOTTERY_TOTAL_POINTS_FIELD]: { $exists: true } },
+            { contestScorePointAwards: { $exists: true } },
+        ],
+    });
+    for (const uid of uids) await ensureGlobalPointLotteryState(uid); // eslint-disable-line no-await-in-loop
+    return uids.length;
+}
 
 export interface PointLotteryPrize {
     name: string;

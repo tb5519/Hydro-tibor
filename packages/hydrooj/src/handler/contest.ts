@@ -245,7 +245,7 @@ export class ContestDetailHandler extends ContestDetailBaseHandler {
         if (this.tdoc._code && code !== this.tdoc._code) throw new InvalidTokenError('Contest Invitation', code);
         await contest.attend(domainId, tid, this.user._id, {
             subscribe: 1,
-            ...(this.entryDomainId ? { entryDomainId: this.entryDomainId } : {}),
+            ...(this.tdoc.allDomains ? { entryDomainId: this.entryDomainId || domainId } : {}),
         });
         this.response.redirect = this.url('contest_problemlist', { tid, query: this.contestEntryQuery });
     }

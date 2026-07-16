@@ -11,8 +11,9 @@ import {
 } from '../error';
 import { getHomePosterConfig, HOME_POSTER_CONFIG_KEY } from '../lib/home_poster';
 import {
-    buildPointLotteryConfigFromForm, getPointLotteryConfig, POINT_LOTTERY_CONFIG_KEY,
-    POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
+    buildPointLotteryConfigFromForm, ensureGlobalPointLotteryState, getPointLotteryConfig,
+    POINT_LOTTERY_CONFIG_KEY, POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
+    pointLotteryUserColl,
 } from '../lib/point_lottery';
 import { Logger } from '../logger';
 import { PERM, PRIV, STATUS } from '../model/builtin';
@@ -859,16 +860,12 @@ class SystemLotteryHandler extends SystemHandler {
     ) {
         const config = getPointLotteryConfig();
         const target = q.trim() ? await getManageTargetUser(domainId, q) : null;
-        const targetDudoc = target ? await domain.collUser.findOne(
-            { domainId, uid: target._id },
-            { projection: { [POINT_LOTTERY_POINTS_FIELD]: 1, [POINT_LOTTERY_TOTAL_POINTS_FIELD]: 1 } },
-        ) : null;
+        const targetPointState = target ? await ensureGlobalPointLotteryState(target._id) : null;
         const pointRankField = rankBy === 'current' ? '$currentPoints' : '$totalPoints';
-        const pointRankDocs = await domain.collUser.aggregate([
+        const pointRankDocs = await pointLotteryUserColl.aggregate([
             {
                 $match: {
-                    domainId,
-                    uid: { $gt: 1 },
+                    _id: { $gt: 1 },
                     $or: [
                         { [POINT_LOTTERY_POINTS_FIELD]: { $gt: 0 } },
                         { [POINT_LOTTERY_TOTAL_POINTS_FIELD]: { $gt: 0 } },
@@ -877,7 +874,7 @@ class SystemLotteryHandler extends SystemHandler {
             },
             {
                 $project: {
-                    uid: 1,
+                    uid: '$_id',
                     currentPoints: { $ifNull: [`$${POINT_LOTTERY_POINTS_FIELD}`, 0] },
                     totalPoints: {
                         $ifNull: [
@@ -930,9 +927,9 @@ class SystemLotteryHandler extends SystemHandler {
             rankBy,
             target,
             canAddTarget: target ? !isPasswordResetProtectedTarget(target) : false,
-            targetPoints: Math.max(0, Math.floor(+targetDudoc?.[POINT_LOTTERY_POINTS_FIELD] || 0)),
+            targetPoints: Math.max(0, Math.floor(+targetPointState?.[POINT_LOTTERY_POINTS_FIELD] || 0)),
             targetTotalPoints: Math.max(0, Math.floor(+(
-                targetDudoc?.[POINT_LOTTERY_TOTAL_POINTS_FIELD] ?? targetDudoc?.[POINT_LOTTERY_POINTS_FIELD]
+                targetPointState?.[POINT_LOTTERY_TOTAL_POINTS_FIELD] ?? targetPointState?.[POINT_LOTTERY_POINTS_FIELD]
             ) || 0)),
             saved,
             added,
@@ -961,22 +958,16 @@ class SystemLotteryHandler extends SystemHandler {
         const target = await getManageTargetUser(domainId, q);
         if (!target) throw new UserNotFoundError(q);
         if (isPasswordResetProtectedTarget(target)) throw new CannotEditSuperAdminError();
-        const dudoc = await domain.collUser.findOne(
-            { domainId, uid: target._id },
-            { projection: { [POINT_LOTTERY_POINTS_FIELD]: 1, [POINT_LOTTERY_TOTAL_POINTS_FIELD]: 1 } },
-        );
-        const initialTotalPoints = dudoc && dudoc[POINT_LOTTERY_TOTAL_POINTS_FIELD] === undefined
-            ? Math.max(0, Math.floor(+dudoc[POINT_LOTTERY_POINTS_FIELD] || 0))
+        const pointState = await ensureGlobalPointLotteryState(target._id);
+        const initialTotalPoints = pointState && pointState[POINT_LOTTERY_TOTAL_POINTS_FIELD] === undefined
+            ? Math.max(0, Math.floor(+pointState[POINT_LOTTERY_POINTS_FIELD] || 0))
             : null;
         const update: any = {
             $inc: { [POINT_LOTTERY_POINTS_FIELD]: points },
-            $setOnInsert: { domainId, uid: target._id },
         };
         if (initialTotalPoints === null) update.$inc[POINT_LOTTERY_TOTAL_POINTS_FIELD] = points;
         else update.$set = { [POINT_LOTTERY_TOTAL_POINTS_FIELD]: initialTotalPoints + points };
-        await domain.updateUserInDomain(domainId, target._id, {
-            ...update,
-        });
+        await pointLotteryUserColl.updateOne({ _id: target._id }, update);
         this.response.redirect = this.url('manage_lottery', { query: { q, added: points } });
     }
 
@@ -990,12 +981,11 @@ class SystemLotteryHandler extends SystemHandler {
         if (!target) throw new UserNotFoundError(q);
         if (isPasswordResetProtectedTarget(target)) throw new CannotEditSuperAdminError();
         const field = scope === 'current' ? POINT_LOTTERY_POINTS_FIELD : POINT_LOTTERY_TOTAL_POINTS_FIELD;
-        const dudoc = await domain.collUser.findOne({ domainId, uid: target._id });
-        const fallback = scope === 'total' ? dudoc?.[POINT_LOTTERY_POINTS_FIELD] : 0;
-        const current = Math.max(0, Math.floor(+(dudoc?.[field] ?? fallback) || 0));
-        await domain.updateUserInDomain(domainId, target._id, {
+        const pointState = await ensureGlobalPointLotteryState(target._id);
+        const fallback = scope === 'total' ? pointState?.[POINT_LOTTERY_POINTS_FIELD] : 0;
+        const current = Math.max(0, Math.floor(+(pointState?.[field] ?? fallback) || 0));
+        await pointLotteryUserColl.updateOne({ _id: target._id }, {
             $set: { [field]: Math.max(0, current - points) },
-            $setOnInsert: { domainId, uid: target._id },
         });
         this.response.redirect = this.url('manage_lottery', { query: { q, adjusted: points } });
     }

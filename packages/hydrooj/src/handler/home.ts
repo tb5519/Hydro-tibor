@@ -19,8 +19,9 @@ import { getHomePosterConfig } from '../lib/home_poster';
 import * as mail from '../lib/mail';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
 import {
-    getPointLotteryConfig, pickPointLotteryPrize, POINT_LOTTERY_POINTS_FIELD,
-    POINT_LOTTERY_TOTAL_POINTS_FIELD, pointLotteryPrizeKey, publicPointLotteryPrize,
+    ensureGlobalPointLotteryState, getPointLotteryConfig, pickPointLotteryPrize,
+    POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD, pointLotteryPrizeKey,
+    pointLotteryUserColl, publicPointLotteryPrize,
 } from '../lib/point_lottery';
 import { getSharedRankingSnapshot, SharedRankingRow } from '../lib/shared_ranking';
 import { verifyTFA } from '../lib/verifyTFA';
@@ -375,10 +376,7 @@ export class HomeHandler extends Handler {
         await attachOwnedBadges(this.ctx, Object.values(udict));
         const pointLotteryConfig = getPointLotteryConfig();
         const pointLotteryUser = this.user.hasPriv(PRIV.PRIV_USER_PROFILE)
-            ? await domain.collUser.findOne(
-                { domainId, uid: this.user._id },
-                { projection: { [POINT_LOTTERY_POINTS_FIELD]: 1, [POINT_LOTTERY_TOTAL_POINTS_FIELD]: 1 } },
-            )
+            ? await ensureGlobalPointLotteryState(this.user._id)
             : null;
         const pointLotteryPoints = Math.max(0, Math.floor(+pointLotteryUser?.[POINT_LOTTERY_POINTS_FIELD] || 0));
         const pointLotteryTotalPoints = pointLotteryUser?.[POINT_LOTTERY_TOTAL_POINTS_FIELD] === undefined
@@ -513,26 +511,22 @@ class PointLotteryDrawHandler extends Handler {
         const prize = pickPointLotteryPrize({ ...config, prizes: availablePrizes });
         if (!prize) return fail(availablePrizes.length ? '抽奖奖品未配置。' : '可抽奖品已全部抽完。');
         const prizeIndex = config.prizes.indexOf(prize);
-        const existingDudoc = await domain.collUser.findOne(
-            { domainId, uid: this.user._id },
-            { projection: { [POINT_LOTTERY_POINTS_FIELD]: 1, [POINT_LOTTERY_TOTAL_POINTS_FIELD]: 1 } },
-        );
-        const initialTotalPoints = existingDudoc && existingDudoc[POINT_LOTTERY_TOTAL_POINTS_FIELD] === undefined
-            ? Math.max(0, Math.floor(+existingDudoc[POINT_LOTTERY_POINTS_FIELD] || 0))
+        const existingPointState = await ensureGlobalPointLotteryState(this.user._id);
+        const initialTotalPoints = existingPointState && existingPointState[POINT_LOTTERY_TOTAL_POINTS_FIELD] === undefined
+            ? Math.max(0, Math.floor(+existingPointState[POINT_LOTTERY_POINTS_FIELD] || 0))
             : null;
 
-        const userQuery: any = { domainId, uid: this.user._id };
+        const userQuery: any = { _id: this.user._id };
         if (config.cost > 0) userQuery[POINT_LOTTERY_POINTS_FIELD] = { $gte: config.cost };
         const pointDelta = prize.pointDelta - config.cost;
         const update: any = {
             $inc: {
                 [POINT_LOTTERY_POINTS_FIELD]: pointDelta,
             },
-            $setOnInsert: { domainId, uid: this.user._id },
         };
         if (initialTotalPoints === null) update.$inc[POINT_LOTTERY_TOTAL_POINTS_FIELD] = prize.pointDelta;
         else update.$set = { [POINT_LOTTERY_TOTAL_POINTS_FIELD]: initialTotalPoints + prize.pointDelta };
-        const result = await domain.collUser.findOneAndUpdate(
+        const result = await pointLotteryUserColl.findOneAndUpdate(
             userQuery,
             update,
             {

@@ -14,7 +14,8 @@ import {
 } from '../interface';
 import avatar from '../lib/avatar';
 import {
-    POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
+    ensureGlobalPointLotteryState, POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
+    pointLotteryUserColl,
 } from '../lib/point_lottery';
 import bus from '../service/bus';
 import db from '../service/db';
@@ -22,7 +23,6 @@ import type { Handler } from '../service/server';
 import { Optional } from '../typeutils';
 import { PERM, STATUS, STATUS_SHORT_TEXTS } from './builtin';
 import * as document from './document';
-import domain from './domain';
 import MessageModel from './message';
 import problem, { ProblemModel } from './problem';
 import RecordModel from './record';
@@ -854,21 +854,18 @@ async function awardScorePoints(tdoc: Tdoc, tsdoc: any) {
     if (!tdoc.scoreToPoints) return;
     const points = getScorePoints(tdoc, tsdoc);
     if (!points) return;
-    const pointDomainId = tdoc.allDomains ? tsdoc.entryDomainId : tdoc.domainId;
-    if (!pointDomainId) return;
 
-    // Store this contest's high-water score inside the recipient's domain-user
-    // document. The update is atomic, so retries and repeated submissions only
+    // Store both the shared balance and this contest's high-water score on the
+    // account. The update is atomic, so retries and repeated submissions only
     // credit the difference between the new high score and the prior high score.
+    await ensureGlobalPointLotteryState(tsdoc.uid);
     const awardField = `contestScorePointAwards.${tdoc.docId.toHexString()}`;
     const previous = { $ifNull: [`$${awardField}`, 0] };
     const delta = { $subtract: [points, previous] };
     const currentPoints = { $ifNull: [`$${POINT_LOTTERY_POINTS_FIELD}`, 0] };
     const totalPoints = { $ifNull: [`$${POINT_LOTTERY_TOTAL_POINTS_FIELD}`, currentPoints] };
-    await (domain.collUser as any).findOneAndUpdate({
-        domainId: pointDomainId,
-        uid: tsdoc.uid,
-        join: true,
+    await (pointLotteryUserColl as any).findOneAndUpdate({
+        _id: tsdoc.uid,
         $expr: { $lt: [previous, points] },
     }, [
         {
@@ -879,6 +876,25 @@ async function awardScorePoints(tdoc: Tdoc, tsdoc: any) {
             },
         },
     ]);
+}
+
+export async function reconcileScorePoints() {
+    let contests = 0;
+    let participants = 0;
+    for await (const tdoc of document.coll.find({
+        docType: document.TYPE_CONTEST,
+        scoreToPoints: true,
+    })) {
+        contests++;
+        const cursor = document.getMultiStatus(
+            tdoc.domainId, document.TYPE_CONTEST, { docId: tdoc.docId, attend: { $gt: 0 } },
+        );
+        for await (const tsdoc of cursor) {
+            await awardScorePoints(tdoc, tsdoc);
+            participants++;
+        }
+    }
+    return { contests, participants };
 }
 
 const collBalloon = db.collection('contest.balloon');
