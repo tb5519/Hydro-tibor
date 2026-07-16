@@ -324,7 +324,6 @@
       inset 0 0 0 10px rgba(255, 255, 255, .38);
     cursor: pointer;
     overflow: hidden;
-    will-change: transform;
   }
   .point-lottery__wheel-canvas {
     position: absolute;
@@ -685,8 +684,8 @@
       0 14px 34px rgba(220, 38, 38, .3),
       0 0 0 12px rgba(251, 146, 60, .18);
   }
-  .point-lottery__wheel-wrap.is-spinning .point-lottery__wheel {
-    filter: drop-shadow(0 10px 18px rgba(30, 64, 175, .22));
+  .point-lottery__wheel-wrap.is-spinning .point-lottery__pointer {
+    filter: drop-shadow(0 10px 18px rgba(220, 38, 38, .22));
   }
   @media (max-width: 40em) {
     .ui-v2-home {
@@ -771,6 +770,7 @@
   var wheelNode = modal.querySelector('[data-point-lottery-wheel]');
   var wheelCanvasNode = modal.querySelector('[data-point-lottery-canvas]');
   var wheelLabelsNode = modal.querySelector('[data-point-lottery-wheel-labels]');
+  var pointerNode = modal.querySelector('[data-point-lottery-pointer]');
   var previewImageNode = modal.querySelector('[data-point-lottery-preview-image]');
   var previewNameNode = modal.querySelector('[data-point-lottery-preview-name]');
   var winsNode = modal.querySelector('[data-point-lottery-wins]');
@@ -781,16 +781,16 @@
   var resultTitleNode = modal.querySelector('[data-point-lottery-result-title]');
   var resultPointsNode = modal.querySelector('[data-point-lottery-result-points]');
   var drawUrl = {{ url('point_lottery_draw')|json|safe }};
-  var currentWheelDeg = 0;
+  var currentPointerDeg = 0;
   var selectedPrizeIndex = 0;
   var previewAutoplayIndex = 0;
   var previewAutoplayTimer = null;
   var announcementTimer = null;
   var announcementIndex = 0;
   var previewManuallyLocked = false;
-  var wheelWarmupFrame = null;
-  var wheelWarmupStart = 0;
-  var wheelWarmupBaseDeg = 0;
+  var pointerWarmupFrame = null;
+  var pointerWarmupStart = 0;
+  var pointerWarmupBaseDeg = 0;
   var audioContext = null;
   var wheelColors = [
     '#bfdbfe', '#fde68a', '#fecaca', '#bbf7d0', '#ddd6fe',
@@ -1050,7 +1050,6 @@
     var radius = Math.min(rect.width, rect.height) / 2;
     if (Math.sqrt(x * x + y * y) > radius) return null;
     var angle = (Math.atan2(y, x) * 180 / Math.PI + 90 + 360) % 360;
-    angle = ((angle - currentWheelDeg) % 360 + 360) % 360;
     return getPrizeIndexFromWheelAngle(angle);
   }
 
@@ -1133,70 +1132,67 @@
     return 0;
   }
 
-  function startWheelWarmup() {
-    stopWheelWarmup();
+  function startPointerWarmup() {
+    stopPointerWarmup();
     wheelWrapNode.classList.add('is-preparing');
-    wheelWarmupStart = performance.now();
-    wheelWarmupBaseDeg = currentWheelDeg;
-    wheelNode.style.transition = 'none';
+    pointerWarmupStart = performance.now();
+    pointerWarmupBaseDeg = currentPointerDeg;
+    pointerNode.style.transition = 'none';
     var tick = function (now) {
-      var elapsed = Math.max(now - wheelWarmupStart, 0);
-      currentWheelDeg = wheelWarmupBaseDeg + elapsed * 0.28;
-      wheelNode.style.transform = 'rotate(' + currentWheelDeg + 'deg)';
-      wheelWarmupFrame = requestAnimationFrame(tick);
+      var elapsed = Math.max(now - pointerWarmupStart, 0);
+      currentPointerDeg = pointerWarmupBaseDeg + elapsed * 0.28;
+      pointerNode.style.transform = 'rotate(' + currentPointerDeg + 'deg)';
+      pointerWarmupFrame = requestAnimationFrame(tick);
     };
-    wheelWarmupFrame = requestAnimationFrame(tick);
+    pointerWarmupFrame = requestAnimationFrame(tick);
   }
 
-  function stopWheelWarmup() {
-    if (wheelWarmupFrame !== null) {
-      cancelAnimationFrame(wheelWarmupFrame);
-      wheelWarmupFrame = null;
+  function stopPointerWarmup() {
+    if (pointerWarmupFrame !== null) {
+      cancelAnimationFrame(pointerWarmupFrame);
+      pointerWarmupFrame = null;
     }
     wheelWrapNode.classList.remove('is-preparing');
   }
 
   function spinToPrize(prize, prizeIndex) {
-    stopWheelWarmup();
+    stopPointerWarmup();
     var prizes = pointLottery.prizes || [];
     var index = Number.isInteger(prizeIndex) && prizeIndex >= 0 && prizeIndex < prizes.length
       ? prizeIndex
       : findPrizeIndex(prize);
     var segments = getPrizeSegments(prizes);
     var segment = segments[index];
-    var targetAngle = 0;
+    var targetDeg = 0;
     if (segment) {
       var span = Math.max(segment.end - segment.start, 1);
       var padding = Math.min(10, span * 0.18);
       var available = Math.max(span - padding * 2, 0);
-      targetAngle = available
+      targetDeg = available
         ? segment.start + padding + Math.random() * available
         : segment.center;
     }
-    // The pointer stays fixed at the top. Rotate the real wheel so the chosen
-    // segment lands below it, rather than rotating an overlay pointer.
-    var targetDeg = ((-targetAngle % 360) + 360) % 360;
-    var currentMod = ((currentWheelDeg % 360) + 360) % 360;
+    var currentMod = ((currentPointerDeg % 360) + 360) % 360;
     var delta = targetDeg - currentMod;
     if (delta < 0) delta += 360;
-    var finalDeg = currentWheelDeg + 360 * 8 + delta;
-    currentWheelDeg = finalDeg;
+    var finalDeg = currentPointerDeg + 360 * 8 + delta;
+    currentPointerDeg = finalDeg;
     wheelWrapNode.classList.add('is-spinning');
-    wheelNode.style.transition = 'none';
-    wheelNode.style.transform = 'rotate(' + (finalDeg - 360 * 8 - delta) + 'deg)';
-    wheelNode.offsetHeight;
-    wheelNode.style.transition = 'transform 5.4s cubic-bezier(.09,.74,.13,1)';
-    wheelNode.style.transform = 'rotate(' + finalDeg + 'deg)';
+    pointerNode.style.transition = 'none';
+    pointerNode.style.transform = 'rotate(' + (finalDeg - 360 * 8 - delta) + 'deg)';
+    pointerNode.offsetHeight;
+    pointerNode.style.transition = 'transform 5.4s cubic-bezier(.09,.74,.13,1)';
+    pointerNode.style.transform = 'rotate(' + finalDeg + 'deg)';
     return new Promise(function (resolve) {
       var done = false;
       var finish = function () {
         if (done) return;
         done = true;
         wheelWrapNode.classList.remove('is-spinning');
-        wheelNode.removeEventListener('transitionend', finish);
+        pointerNode.removeEventListener('transitionend', finish);
         resolve();
       };
-      wheelNode.addEventListener('transitionend', finish);
+      pointerNode.addEventListener('transitionend', finish);
       setTimeout(finish, 6100);
     });
   }
@@ -1243,7 +1239,7 @@
   function closeModal() {
     stopAnnouncements();
     stopPreviewAutoplay();
-    stopWheelWarmup();
+    stopPointerWarmup();
     hideResult();
     modal.hidden = true;
   }
@@ -1276,7 +1272,7 @@
     prepareLotteryAudio();
     drawButton.disabled = true;
     drawButton.textContent = '转';
-    startWheelWarmup();
+    startPointerWarmup();
     fetch(drawUrl, {
       method: 'POST',
       credentials: 'same-origin',
@@ -1318,11 +1314,11 @@
         showPrizeResult(data.prize, data.points);
       });
     }).catch(function (err) {
-      stopWheelWarmup();
+      stopPointerWarmup();
       wheelWrapNode.classList.remove('is-spinning');
       showErrorResult(err.message || '抽奖失败，请稍后再试。');
     }).finally(function () {
-      stopWheelWarmup();
+      stopPointerWarmup();
       drawButton.textContent = '抽';
       syncState();
     });
