@@ -155,6 +155,77 @@ export class HomeHandler extends Handler {
         return [tdocs, tsdict];
     }
 
+    async getEnrolledTrainingProgress(domainId: string, limit = 4) {
+        if (!this.user.hasPriv(PRIV.PRIV_USER_PROFILE) || !this.user.hasPerm(PERM.PERM_VIEW_TRAINING)) {
+            return { items: [], total: 0 };
+        }
+        const statusDocs = await training.getMultiStatus(domainId, {
+            uid: this.user._id,
+            // Training enrollment is persisted as 1 by training.enroll().
+            enroll: 1,
+        }).toArray();
+        if (!statusDocs.length) return { items: [], total: 0 };
+
+        const tdict = await training.getList(
+            domainId,
+            statusDocs.map((status: any) => status.docId),
+        );
+        const plans = statusDocs.map((status: any) => {
+            const tdoc = tdict[status.docId];
+            if (!tdoc) return null;
+            const dag = tdoc.dag || [];
+            const totalProblems = training.getPids(dag).length;
+            const donePids = new Set(status.donePids || []);
+            const doneNids = new Set<number>();
+            const chapters = dag.map((chapter, index) => {
+                const unlocked = new Set(doneNids).isSupersetOf(new Set(chapter.requireNids));
+                const doneChapter = training.isDone(chapter, doneNids, donePids);
+                if (doneChapter) doneNids.add(chapter._id);
+                const chapterPids = Array.from(new Set(chapter.pids || []));
+                const acceptedProblems = chapterPids.filter((pid) => donePids.has(pid)).length;
+                // A later chapter stays locked until every prerequisite chapter
+                // is complete. Its earlier AC records become visible only then.
+                const doneChapterProblems = unlocked ? acceptedProblems : 0;
+                return {
+                    index: index + 1,
+                    title: chapter.title,
+                    done: doneChapter,
+                    doneProblems: doneChapterProblems,
+                    totalProblems: chapterPids.length,
+                    percent: chapterPids.length ? Math.round(100 * doneChapterProblems / chapterPids.length) : 0,
+                    progress: unlocked && !doneChapter && doneChapterProblems > 0,
+                };
+            });
+            // Keep the overall plan progress consistent with the locked chapter
+            // segments: accepted problems in a locked later chapter do not count yet.
+            const doneProblems = chapters.reduce((sum, chapter) => sum + chapter.doneProblems, 0);
+            const doneChapters = chapters.filter((chapter) => chapter.done).length;
+            const done = !!status.done || (totalProblems > 0 && doneProblems >= totalProblems);
+            const percent = totalProblems
+                ? Math.max(0, Math.min(100, Math.round(100 * doneProblems / totalProblems)))
+                : done ? 100 : 0;
+            return {
+                id: tdoc.docId,
+                title: tdoc.title,
+                pin: +tdoc.pin || 0,
+                totalProblems,
+                doneProblems,
+                totalChapters: chapters.length,
+                doneChapters,
+                visibleChapters: chapters.slice(0, 6),
+                hiddenChapterCount: Math.max(0, chapters.length - 6),
+                chapterNodeCount: Math.min(chapters.length, 6) + (chapters.length > 6 ? 1 : 0),
+                done,
+                percent,
+            };
+        }).filter(Boolean) as any[];
+
+        plans.sort((a, b) => Number(a.done) - Number(b.done)
+            || b.pin - a.pin
+            || `${b.id}`.localeCompare(`${a.id}`));
+        return { items: plans.slice(0, limit), total: plans.length };
+    }
+
     async getDiscussion(domainId: string, limit = 20) {
         if (!this.user.hasPerm(PERM.PERM_VIEW_DISCUSSION)) return [[], {}];
         const ddocs = await discussion.getMulti(domainId).limit(limit).toArray();
@@ -302,6 +373,7 @@ export class HomeHandler extends Handler {
             'recent_problems', 'discussion_nodes', 'suggestion', 'discussion', 'hitokoto',
         ]);
         const pinnedContestPromise = getLatestVisiblePinnedContest(domainId, this.user);
+        const enrolledTrainingProgressPromise = this.getEnrolledTrainingProgress(domainId);
         const contents = [];
         let personalStatsInserted = false;
         let personalStatsLoaded = false;
@@ -438,6 +510,7 @@ export class HomeHandler extends Handler {
             domain: this.domain,
             homePoster,
             pinnedContest: await pinnedContestPromise,
+            enrolledTrainingProgress: await enrolledTrainingProgressPromise,
             pointLottery: {
                 enabled: pointLotteryConfig.enabled,
                 cost: pointLotteryConfig.cost,
