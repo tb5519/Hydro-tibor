@@ -27,12 +27,9 @@
                       {% for chapter in plan.visibleChapters %}
                         <span class="ui-v2-home-training-plan__chapter{% if chapter.done %} is-done{% elif chapter.progress %} is-progress{% endif %}" title="第 {{ chapter.index }} 章：{{ chapter.title }}，已完成 {{ chapter.doneProblems }} / {{ chapter.totalProblems }} 题">
                           <span class="ui-v2-home-training-plan__chapter-fill" style="width: {{ chapter.percent }}%;"></span>
-                          <span class="ui-v2-home-training-plan__chapter-label">{{ chapter.title }}</span>
+                          <span class="ui-v2-home-training-plan__chapter-label"><span class="ui-v2-home-training-plan__chapter-label-text">{{ chapter.title }}</span></span>
                         </span>
                       {% endfor %}
-                      {% if plan.hiddenChapterCount %}
-                        <span class="ui-v2-home-training-plan__chapter ui-v2-home-training-plan__chapter--more">+{{ plan.hiddenChapterCount }} 章</span>
-                      {% endif %}
                     </span>
                   {% endif %}
                 </span>
@@ -198,7 +195,7 @@
       padding: 0;
       color: #7a90ae;
       background: rgba(255, 255, 255, .42);
-      font-size: .68rem;
+      font-size: .64rem;
       font-weight: 650;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -214,33 +211,27 @@
       overflow: hidden;
       background: linear-gradient(90deg, #5b9fed, #7bcaff);
     }
-    .ui-v2-home-training-plan__chapter-fill::after {
-      position: absolute;
-      top: 50%;
-      left: -15%;
-      width: .42rem;
-      height: .42rem;
-      content: '';
-      opacity: 0;
-      border-top: 2px solid rgba(255, 255, 255, .9);
-      border-right: 2px solid rgba(255, 255, 255, .9);
-      transform: translateY(-50%) rotate(45deg);
-      animation: ui-v2-home-training-progress-arrow 2.8s linear infinite;
-    }
-    @keyframes ui-v2-home-training-progress-arrow {
-      0% { left: -15%; opacity: 0; }
-      16%, 82% { opacity: .88; }
-      100% { left: 105%; opacity: 0; }
-    }
     .ui-v2-home-training-plan__chapter-label {
       position: relative;
       z-index: 1;
-      display: block;
+      display: flex;
+      height: 100%;
+      align-items: center;
+      justify-content: center;
+      padding: .2rem .22rem;
+      box-sizing: border-box;
+    }
+    .ui-v2-home-training-plan__chapter-label-text {
+      display: -webkit-box;
+      min-width: 0;
+      max-width: 100%;
       overflow: hidden;
-      padding: .68rem .3rem 0;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      line-height: 1.15;
       text-align: center;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      white-space: normal;
+      overflow-wrap: anywhere;
     }
     .ui-v2-home-training-plan__chapter.is-done {
       color: #127a51;
@@ -251,7 +242,6 @@
       color: #2876ca;
       background: rgba(244, 250, 255, .55);
     }
-    .ui-v2-home-training-plan__chapter--more { color: #5d7da3; background: rgba(255, 255, 255, .58); }
     .ui-v2-home-training-plan__percent {
       flex: 0 0 auto;
       color: #347ecb;
@@ -295,10 +285,7 @@
       .ui-v2-home-training-overview__header,
       .ui-v2-home-training-overview__body,
       .ui-v2-home-training-overview__welcome { padding-left: 1rem; padding-right: 1rem; }
-      .ui-v2-home-training-plan__chapter { font-size: .67rem; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .ui-v2-home-training-plan__chapter-fill::after { animation: none; }
+      .ui-v2-home-training-plan__chapter { font-size: .61rem; }
     }
   </style>
 {% endif %}

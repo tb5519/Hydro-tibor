@@ -212,9 +212,8 @@ export class HomeHandler extends Handler {
                 doneProblems,
                 totalChapters: chapters.length,
                 doneChapters,
-                visibleChapters: chapters.slice(0, 6),
-                hiddenChapterCount: Math.max(0, chapters.length - 6),
-                chapterNodeCount: Math.min(chapters.length, 6) + (chapters.length > 6 ? 1 : 0),
+                visibleChapters: chapters,
+                chapterNodeCount: chapters.length,
                 done,
                 percent,
             };
