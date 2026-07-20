@@ -4,76 +4,86 @@
 {% block content %}
 {{ set(UiContext, 'tdoc', tdoc) }}
 {{ set(UiContext, 'tsdoc', tsdoc) }}
+<style>
+  .homework-detail-hero { overflow: hidden; border: 1px solid #dce8f8; border-radius: 17px; background: linear-gradient(135deg, #fff 0%, #f4faff 100%); box-shadow: 0 10px 28px rgba(41, 91, 164, .08); }
+  .homework-detail-hero__body { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1.2rem; padding: 1.35rem 1.45rem; }
+  .homework-detail-hero__eyebrow { margin: 0 0 .25rem; color: #4f8ee7; font-size: .74rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+  .homework-detail-hero h1 { margin: 0; color: #15294b; }
+  .homework-detail-hero__tag { display: inline-flex; align-items: center; gap: .32rem; margin-top: .58rem; padding: .25rem .55rem; border-radius: 999px; color: #21754f; background: #e8f8ef; font-size: .76rem; font-weight: 700; }
+  .homework-detail-hero__progress { min-width: 11rem; align-self: center; }
+  .homework-detail-hero__progress-top { display: flex; align-items: baseline; justify-content: space-between; gap: .7rem; color: #7188a6; font-size: .8rem; }
+  .homework-detail-hero__progress-top strong { color: #347ecb; font-size: 1.12rem; }
+  .homework-detail-hero__meter { display: block; height: .55rem; margin-top: .48rem; overflow: hidden; border-radius: 999px; background: #dfeaf7; }
+  .homework-detail-hero__meter > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #5b9fed, #79c7fb); }
+  .homework-detail-hero.is-done .homework-detail-hero__progress-top strong { color: #209c6a; }
+  .homework-detail-hero.is-done .homework-detail-hero__meter > span { background: linear-gradient(90deg, #43bf89, #72dbb0); }
+  .homework-detail-section { overflow: hidden; border: 1px solid #e1ebf7; border-radius: 15px; background: #fff; }
+  .homework-detail-section + .homework-detail-section { margin-top: 1rem; }
+  .homework-detail-section__head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .95rem 1.15rem; border-bottom: 1px solid #e7eef7; background: #fbfdff; }
+  .homework-detail-section__head h2 { margin: 0; color: #24476f; font-size: 1rem; }
+  .homework-detail-section__head span { color: #7890ae; font-size: .78rem; }
+  .homework-detail-section__content { padding: 1.1rem 1.15rem; }
+  .homework-problem-list { display: grid; gap: .55rem; margin: 0; padding: 0; list-style: none; }
+  a.homework-problem-list__item, a.homework-problem-list__item:visited, a.homework-problem-list__item:hover, a.homework-problem-list__item:focus { color: inherit; text-decoration: none; }
+  .homework-problem-list__item { display: flex; align-items: center; gap: .75rem; min-width: 0; padding: .78rem .85rem; border: 1px solid #e3edf8; border-radius: 11px; background: #fff; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+  .homework-problem-list__item:hover, .homework-problem-list__item:focus { border-color: #9fc8f6; box-shadow: 0 5px 13px rgba(52, 126, 203, .11); transform: translateY(-1px); }
+  .homework-problem-list__state { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 1.7rem; height: 1.7rem; border-radius: 50%; color: #7d96b5; background: #edf3fb; }
+  .homework-problem-list__state.is-accepted { color: #fff; background: #38b77d; }
+  .homework-problem-list__title { min-width: 0; flex: 1 1 auto; }
+  .homework-problem-list__done-label { flex: 0 0 auto; padding: .18rem .42rem; border-radius: 999px; color: #24794f; background: #e5f8ee; font-size: .7rem; font-weight: 800; }
+  .homework-problem-list__record { flex: 0 0 auto; color: #8297b3; font-size: .76rem; }
+  .homework-detail-empty { padding: 2.1rem 1rem; color: #7890ae; text-align: center; }
+  @media (max-width: 639px) { .homework-detail-hero__body { grid-template-columns: 1fr; padding: 1.1rem; } .homework-detail-hero__progress { min-width: 0; } }
+</style>
 <div class="row">
   <div class="medium-9 columns">
-    <div class="section">
-      <div class="section__header">
-        <h1 class="section__title">{{ _('Homework Introduction') }}</h1>
+    <section class="homework-detail-hero{% if homeworkProgress.done %} is-done{% endif %}">
+      <div class="homework-detail-hero__body">
+        <div>
+          <p class="homework-detail-hero__eyebrow">My Homework</p>
+          <h1 data-emoji-enabled>{{ tdoc.title }}</h1>
+          <span class="homework-detail-hero__tag"><span class="icon icon-check"></span> 长期作业 · 无截止时间</span>
+        </div>
+        <div class="homework-detail-hero__progress">
+          <div class="homework-detail-hero__progress-top"><span>完成进度 {{ homeworkProgress.acceptedProblems }} / {{ homeworkProgress.totalProblems }} 题</span><strong>{{ homeworkProgress.percent }}%</strong></div>
+          <span class="homework-detail-hero__meter" role="progressbar" aria-label="作业完成进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ homeworkProgress.percent }}"><span style="width: {{ homeworkProgress.percent }}%;"></span></span>
+        </div>
       </div>
-      <div class="section__body typo richmedia">
-        {{ tdoc['content']|markdown|safe }}
-      </div>
-    </div>
-    <div class="section">
-      <div class="section__header">
-        <h1 class="section__title">{{ _('Problem') }}</h1>
-      </div>
-    {% if pdict %}
-      <div class="section__body no-padding">
-        <table class="data-table">
-          <colgroup>
-          {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
-            <col class="col--status">
-            <col class="col--submit-at">
-          {% endif %}
-            <col class="col--problem">
-          </colgroup>
-          <thead>
-            <tr>
-            {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
-              <th class="col--status record-status--border">{{ _('Status') }}</th>
-              <th class="col--submit-at">{{ _('Last Submit At') }}</th>
-            {% endif %}
-              <th class="col--problem">{{ _('Problem') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-          {% set isAdmin = handler.user.own(tdoc) or handler.user.hasPerm(perm.PERM_VIEW_HOMEWORK_HIDDEN_SCOREBOARD) %}
-          {% set ntdoc = model.contest.isDone(tdoc) or (tsdoc.attend and not model.contest.isNotStarted(tdoc)) %}
-          {%- for pid in tdoc.pids -%}
-            <tr>
-              {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
-                {% if psdict[pid] and psdict[pid].rid %}
-                  {% set rdoc = rdict[psdict[pid].rid] %}
-                  {% if model.contest.canShowSelfRecord.call(handler, tdoc) %}
-                    {{ record.render_status_td(rdoc) }}
-                  {% else %}
-                    <td class="col--status record-status--border"><a href="{{ url('record_detail', rid=rdoc._id) }}">{{ _('Submitted') }}</a></td>
-                  {% endif %}
-                  <td class="col--submit-at">{{ datetimeSpan(rdoc._id)|safe }}</td>
-                {% else %}
-                  <td class="col--status record-status--border">{{ _('No Submissions') }}</td>
-                  <td class="col--submit-at">-</td>
-                {% endif %}
-              {% endif %}
-              <td class="col--problem col--problem-name">
-                {% if isAdmin and not ntdoc %}
-                  {{ problem.render_problem_title(pdict[pid], show_invisible_flag=false, show_tags=false) }}
-                {% else %}
-                  {{ problem.render_problem_title(pdict[pid], tdoc=tdoc, show_invisible_flag=false, show_tags=false) }}
-                {% endif %}
-              </td>
-            </tr>
-          {%- endfor -%}
-          </tbody>
-        </table>
-      </div>
-    {% elif tsdoc.attend %}
-      {{ nothing.render('This homework is not open and you cannot view problems.') }}
-    {% else %}
-      {{ nothing.render('Please claim the assignment to see the problems.') }}
+    </section>
+
+    {% if tdoc.content %}
+      <section class="homework-detail-section">
+        <div class="homework-detail-section__head"><h2>作业说明</h2></div>
+        <div class="homework-detail-section__content typo richmedia">{{ tdoc.content|markdown|safe }}</div>
+      </section>
     {% endif %}
-    </div>
+
+    <section class="homework-detail-section">
+      <div class="homework-detail-section__head"><h2>作业题目</h2><span>{{ tdoc.pids|length }} 道题</span></div>
+      {% if pdict %}
+        <div class="homework-detail-section__content">
+          <ol class="homework-problem-list">
+            {% for pid in tdoc.pids %}
+              {% set detail = psdict[pid] %}
+              <li>
+                <a class="homework-problem-list__item" href="{{ url('problem_detail', pid=pdict[pid].pid|default(pdict[pid].docId), query={tid:tdoc.docId}) }}" data-no-instant data-emoji-enabled>
+                  <span class="homework-problem-list__state{% if detail and detail.status == STATUS.STATUS_ACCEPTED %} is-accepted{% endif %}"><span class="icon {% if detail and detail.status == STATUS.STATUS_ACCEPTED %}icon-check{% else %}icon-circle{% endif %}"></span></span>
+                  <span class="homework-problem-list__title"><b>{{ pdict[pid].pid|default(pdict[pid].docId) }}</b>&nbsp;&nbsp;{{ pdict[pid].title }}</span>
+                  {% if detail and detail.status == STATUS.STATUS_ACCEPTED %}<span class="homework-problem-list__done-label">已完成</span>{% endif %}
+                  {% if detail and detail.rid %}
+                    <span class="homework-problem-list__record">{{ datetimeSpan(detail.rid)|safe }}</span>
+                  {% endif %}
+                </a>
+              </li>
+            {% endfor %}
+          </ol>
+        </div>
+      {% elif tsdoc.attend %}
+        <div class="homework-detail-empty">作业暂未开放，请稍后再试。</div>
+      {% else %}
+        <div class="homework-detail-empty">请先认领这份历史作业后查看题目。</div>
+      {% endif %}
+    </section>
   </div>
   <div class="medium-3 columns">
     {% include "partials/homework_sidebar.html" %}

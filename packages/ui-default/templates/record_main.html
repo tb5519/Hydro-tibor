@@ -11,6 +11,21 @@
   + ("&allDomain=1" if allDomain else "")
 ) }}
 {{ set(UiContext, 'rids', rdocs.map(eval("rdoc=>rdoc._id.toString()"))) }}
+<style>
+  .record-main__homework-tag {
+    display: inline-block;
+    margin-left: .42rem;
+    padding: .12rem .35rem;
+    border-radius: 3px;
+    color: #21754f;
+    background: #e4f7ec;
+    font-size: .68rem;
+    font-weight: 750;
+    line-height: 1.2;
+    vertical-align: middle;
+  }
+  .record-main__homework-tag:hover { color: #145d3b; background: #d7f1e2; text-decoration: none; }
+</style>
 <div class="row">
   <div class="medium-12 columns">
     <form method="get">

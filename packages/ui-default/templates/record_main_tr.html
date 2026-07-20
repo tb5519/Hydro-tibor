@@ -3,6 +3,8 @@
 {% import "components/problem.html" as problem with context %}
 <tr data-rid="{{ rdoc['_id'] }}">
   {% set _isPretest = rdoc.contest and rdoc.contest.toString() == '000000000000000000000000' %}
+  {% set homeworkTdoc = (homeworkTdocs[rdoc.domainId + '/' + rdoc.contest.toHexString()] if not tdoc and rdoc.contest and not _isPretest else none) %}
+  {% set recordTdoc = tdoc or homeworkTdoc %}
   {{ record.render_status_td(rdoc, allDomain = allDomain) }}
   <td class="col--problem col--problem-name">
   {% if handler.user.hasPerm(perm.PERM_REJUDGE) and not rdoc.files.hack and not _isPretest %}
@@ -18,11 +20,14 @@
     </form>
   {% endif %}
   {% if pdoc and rdoc.contest and not _isPretest %}
-    {{ problem.render_problem_title(pdoc, tdoc=tdoc, show_tags=false, show_invisible_flag=false) }}
+    {{ problem.render_problem_title(pdoc, tdoc=recordTdoc, show_tags=false, show_invisible_flag=false) }}
   {% elif pdoc and (not pdoc.hidden or handler.user.hasPerm(perm.PERM_VIEW_PROBLEM_HIDDEN) or handler.user.own(pdoc)) %}
     {{ problem.render_problem_title(pdoc, show_tags=false) }}
   {% else %}
     *
+  {% endif %}
+  {% if homeworkTdoc %}
+    <a class="record-main__homework-tag" href="{{ url('homework_detail', tid=homeworkTdoc.docId) }}" title="{{ homeworkTdoc.title }}">作业</a>
   {% endif %}
   {% if rdoc.files.hack %}<span class="text-orange">({{ _('Hack') }})</span>{% endif %}
   {% if _isPretest %}<span class="text-orange">({{ _('Pretest') }})</span>{% endif %}

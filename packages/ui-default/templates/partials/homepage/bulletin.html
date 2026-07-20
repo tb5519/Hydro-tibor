@@ -1,14 +1,50 @@
-{% if enrolledTrainingProgress.items.length or domain.bulletin %}
+{% if assignedHomeworkProgress.items.length or assignedHomeworkProgress.completedItems.length or enrolledTrainingProgress.items.length or domain.bulletin %}
   <div class="section ui-v2-home-panel ui-v2-home-panel--bulletin ui-v2-home-training-overview">
-    {% if enrolledTrainingProgress.items.length %}
+    {% if assignedHomeworkProgress.items.length or assignedHomeworkProgress.completedItems.length or enrolledTrainingProgress.items.length %}
       <div class="section__header ui-v2-home-training-overview__header">
         <div>
-          <p class="ui-v2-home-training-overview__eyebrow">My Training</p>
-          <h1 class="section__title">我参加的训练计划</h1>
+          <p class="ui-v2-home-training-overview__eyebrow">My Learning</p>
+          <h1 class="section__title">我的作业与训练计划</h1>
         </div>
-        <span class="ui-v2-home-training-overview__count">已参加 {{ enrolledTrainingProgress.total }} 个</span>
+        <span class="ui-v2-home-training-overview__count">{% if assignedHomeworkProgress.total %}作业 {{ assignedHomeworkProgress.total }}{% endif %}{% if assignedHomeworkProgress.total and enrolledTrainingProgress.total %} · {% endif %}{% if enrolledTrainingProgress.total %}训练 {{ enrolledTrainingProgress.total }}{% endif %}</span>
       </div>
       <div class="section__body ui-v2-home-training-overview__body">
+        {% if assignedHomeworkProgress.items.length or assignedHomeworkProgress.completedItems.length %}
+          <section class="ui-v2-home-learning-group ui-v2-home-learning-group--homework">
+            <div class="ui-v2-home-learning-group__head">
+              <h2><span class="icon icon-homework" aria-hidden="true"></span> 我的作业</h2>
+              <a href="{{ url('homework_main') }}">查看全部 <span aria-hidden="true">→</span></a>
+            </div>
+            <div class="ui-v2-home-homework-grid">
+              {% for homework in assignedHomeworkProgress.items %}
+                <a class="ui-v2-home-homework{% if homework.done %} is-done{% endif %}" href="{{ url('homework_detail', tid=homework.id) }}" data-emoji-enabled>
+                  <span class="ui-v2-home-homework__icon icon {% if homework.done %}icon-check{% else %}icon-homework{% endif %}" aria-hidden="true"></span>
+                  <span class="ui-v2-home-homework__body">
+                    <span class="ui-v2-home-homework__topline"><span class="ui-v2-home-homework__title">{{ homework.title }}</span><span class="ui-v2-home-homework__percent">{{ homework.percent }}%</span></span>
+                    <span class="ui-v2-home-homework__meta">已完成 {{ homework.doneProblems }} / {{ homework.totalProblems }} 题 · 无截止时间</span>
+                    <span class="ui-v2-home-homework__meter" role="progressbar" aria-label="{{ homework.title }} 完成进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ homework.percent }}"><span style="width: {{ homework.percent }}%;"></span></span>
+                  </span>
+                </a>
+              {% endfor %}
+            </div>
+            {% if assignedHomeworkProgress.completedItems.length %}
+              <div class="ui-v2-home-homework-completed" aria-label="已完成作业">
+                <span class="ui-v2-home-homework-completed__label"><span class="icon icon-check" aria-hidden="true"></span> 已完成</span>
+                <span class="ui-v2-home-homework-completed__items">
+                  {% for homework in assignedHomeworkProgress.completedItems %}
+                    <a class="ui-v2-home-homework-completed__item" href="{{ url('homework_detail', tid=homework.id) }}" title="{{ homework.title }} · 已完成" data-emoji-enabled><span>{{ homework.title }}</span><em>已完成</em></a>
+                  {% endfor %}
+                </span>
+              </div>
+            {% endif %}
+          </section>
+        {% endif %}
+
+        {% if enrolledTrainingProgress.items.length %}
+          <section class="ui-v2-home-learning-group">
+            <div class="ui-v2-home-learning-group__head">
+              <h2><span class="icon icon-flag" aria-hidden="true"></span> 我的训练计划</h2>
+            </div>
         <div class="ui-v2-home-training-overview__grid">
           {% for plan in enrolledTrainingProgress.items %}
             <a class="ui-v2-home-training-plan{% if plan.done %} is-done{% endif %}" href="{{ url('training_detail', tid=plan.id) }}" data-emoji-enabled>
@@ -40,14 +76,16 @@
         {% if enrolledTrainingProgress.total > enrolledTrainingProgress.items.length %}
           <a class="ui-v2-home-training-overview__more" href="{{ url('training_main') }}">查看全部 {{ enrolledTrainingProgress.total }} 个训练计划 <span aria-hidden="true">→</span></a>
         {% endif %}
+          </section>
+        {% endif %}
       </div>
     {% endif %}
 
     {% if domain.bulletin %}
-      <div class="ui-v2-home-training-overview__welcome{% if enrolledTrainingProgress.items.length %} has-progress{% endif %}">
+      <div class="ui-v2-home-training-overview__welcome{% if assignedHomeworkProgress.items.length or assignedHomeworkProgress.completedItems.length or enrolledTrainingProgress.items.length %} has-progress{% endif %}">
         <div class="ui-v2-home-training-overview__welcome-head">
           <span class="icon icon-comment" aria-hidden="true"></span>
-          <h2>{% if enrolledTrainingProgress.items.length %}训练中心欢迎语{% else %}欢迎来到训练中心{% endif %}</h2>
+          <h2>{% if assignedHomeworkProgress.items.length or assignedHomeworkProgress.completedItems.length or enrolledTrainingProgress.items.length %}训练中心欢迎语{% else %}欢迎来到训练中心{% endif %}</h2>
         </div>
         <div class="typo richmedia ui-v2-home-bulletin-source">
           {{ domain.bulletin|markdown|safe }}
@@ -96,6 +134,86 @@
     .ui-v2-home-training-overview__body {
       padding: .25rem 1.35rem 1.2rem;
     }
+    .ui-v2-home-learning-group + .ui-v2-home-learning-group {
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid #e4edf8;
+    }
+    .ui-v2-home-learning-group__head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .8rem;
+      padding: .5rem .25rem .3rem;
+    }
+    .ui-v2-home-learning-group__head h2 {
+      display: flex;
+      align-items: center;
+      gap: .4rem;
+      margin: 0;
+      color: #315276;
+      font-size: .9rem;
+    }
+    .ui-v2-home-learning-group__head h2 .icon { color: #438ce0; }
+    .ui-v2-home-learning-group__head a { color: #4b89cc; font-size: .78rem; font-weight: 700; }
+    .ui-v2-home-homework-grid { display: grid; }
+    a.ui-v2-home-homework,
+    a.ui-v2-home-homework:visited,
+    a.ui-v2-home-homework:hover,
+    a.ui-v2-home-homework:active,
+    a.ui-v2-home-homework:focus { color: #1d3557; text-decoration: none; }
+    .ui-v2-home-homework {
+      display: flex;
+      align-items: flex-start;
+      gap: .78rem;
+      min-width: 0;
+      padding: .85rem .25rem;
+      border-bottom: 1px solid #e5eef9;
+      transition: color .16s ease, background-color .16s ease;
+    }
+    .ui-v2-home-homework:last-child { border-bottom: 0; }
+    .ui-v2-home-homework:hover { color: #155eaa; background: linear-gradient(90deg, rgba(235, 246, 255, .8), rgba(255, 255, 255, 0)); }
+    .ui-v2-home-homework__icon {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: center;
+      width: 1.85rem;
+      height: 1.85rem;
+      border-radius: 9px;
+      color: #fff;
+      background: linear-gradient(135deg, #5a9dea, #2f78cf);
+      box-shadow: 0 4px 11px rgba(47, 120, 207, .2);
+    }
+    .ui-v2-home-homework.is-done .ui-v2-home-homework__icon { background: linear-gradient(135deg, #41bd87, #209b6a); }
+    .ui-v2-home-homework__body { display: grid; flex: 1 1 auto; min-width: 0; gap: .35rem; }
+    .ui-v2-home-homework__topline { display: flex; justify-content: space-between; gap: .8rem; min-width: 0; }
+    .ui-v2-home-homework__title { overflow: hidden; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+    .ui-v2-home-homework__percent { flex: 0 0 auto; color: #347ecb; font-size: .84rem; font-weight: 800; }
+    .ui-v2-home-homework.is-done .ui-v2-home-homework__percent { color: #209c6a; }
+    .ui-v2-home-homework__meta { color: #7c90ad; font-size: .76rem; }
+    .ui-v2-home-homework__meter { display: block; width: 100%; height: .42rem; overflow: hidden; border-radius: 999px; background: #e5eef9; }
+    .ui-v2-home-homework__meter > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #5b9fed, #7bcaff); }
+    .ui-v2-home-homework.is-done .ui-v2-home-homework__meter > span { background: linear-gradient(90deg, #45c28b, #72dcb1); }
+    .ui-v2-home-homework-completed {
+      display: flex;
+      align-items: center;
+      gap: .55rem;
+      min-width: 0;
+      margin: .7rem 0 .1rem;
+      padding: .7rem 0 .05rem;
+      border-top: 1px dashed #dce9e1;
+      color: #5b728f;
+      font-size: .74rem;
+    }
+    .ui-v2-home-homework-completed__label { display: inline-flex; flex: 0 0 auto; align-items: center; gap: .25rem; padding: .28rem .45rem; border: 1px solid #d6eddf; border-radius: 999px; color: #317757; background: #f3fbf6; font-weight: 750; white-space: nowrap; }
+    .ui-v2-home-homework-completed__label .icon { color: #37ad77; }
+    .ui-v2-home-homework-completed__items { display: flex; align-items: center; gap: .4rem; min-width: 0; overflow: hidden; }
+    a.ui-v2-home-homework-completed__item, a.ui-v2-home-homework-completed__item:visited, a.ui-v2-home-homework-completed__item:hover, a.ui-v2-home-homework-completed__item:focus { color: #45617d; text-decoration: none; }
+    .ui-v2-home-homework-completed__item { display: inline-flex; flex: 0 1 auto; align-items: center; gap: .32rem; min-width: 0; max-width: 12rem; padding: .25rem .32rem .25rem .48rem; border: 1px solid #e2ede6; border-radius: 6px; background: #fff; box-shadow: 0 2px 5px rgba(34, 86, 58, .04); vertical-align: middle; }
+    .ui-v2-home-homework-completed__item:hover { border-color: #b8dfc8; background: #f8fdf9; }
+    .ui-v2-home-homework-completed__item > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ui-v2-home-homework-completed__item em { flex: 0 0 auto; padding: .14rem .3rem; border: 1px solid #bfe5cd; border-radius: 3px; color: #20754e; background: #eefaf2; font-size: .64rem; font-style: normal; font-weight: 800; line-height: 1.15; }
     .ui-v2-home-training-overview__grid {
       display: grid;
     }

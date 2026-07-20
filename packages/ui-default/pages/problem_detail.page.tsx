@@ -333,13 +333,20 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     reportedFormalSubmitRids.add(recordId);
 
     updateContestProgress(rdoc);
+    // A homework is intentionally submitted just like a normal problem. It
+    // still belongs to the homework for progress and record filtering, but it
+    // must not show a contest-like score/result dialog.
+    if (UiContext.tdoc?.rule === 'homework') return;
+
+    const accepted = status === STATUS.STATUS_ACCEPTED;
+    const {
+      acceptedCount, remainingCount,
+    } = getContestProgressSummary();
+
     const pid = Number(rdoc.pid);
     const maxScore = getContestProblemScore(pid);
     const problemScore = normalizeContestScore(maxScore * getContestRecordScore(rdoc) / 100);
-    const {
-      totalScore, maxTotalScore, acceptedCount, remainingCount,
-    } = getContestProgressSummary();
-    const accepted = status === STATUS.STATUS_ACCEPTED;
+    const { totalScore, maxTotalScore } = getContestProgressSummary();
     const isAcm = UiContext.tdoc?.rule === 'acm';
 
     new InfoDialog({

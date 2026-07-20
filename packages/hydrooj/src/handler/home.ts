@@ -45,6 +45,23 @@ import {
 } from '../service/server';
 import { camelCase, md5, Time } from '../utils';
 
+function homeworkVisibilityQuery(uid: number, groups: string[]) {
+    return {
+        $or: [
+            { maintainer: uid },
+            { owner: uid },
+            { assignedUsers: uid },
+            { assign: { $in: groups } },
+            {
+                $and: [
+                    { $or: [{ assign: { $exists: false } }, { assign: { $size: 0 } }] },
+                    { $or: [{ assignedUsers: { $exists: false } }, { assignedUsers: { $size: 0 } }] },
+                ],
+            },
+        ],
+    };
+}
+
 function normalizeBadgeColor(color: string, fallback: string) {
     const value = `${color || fallback}`;
     return value.startsWith('#') ? value : `#${value}`;
@@ -101,14 +118,7 @@ export class HomeHandler extends Handler {
             rule: 'homework',
             ...this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_HOMEWORK)
                 ? {}
-                : {
-                    $or: [
-                        { maintainer: this.user._id },
-                        { owner: this.user._id },
-                        { assign: { $in: groups } },
-                        { assign: { $size: 0 } },
-                    ],
-                },
+                : homeworkVisibilityQuery(this.user._id, groups),
         }).sort({
             penaltySince: -1, endAt: -1, beginAt: -1, _id: -1,
         }).limit(limit).toArray();
@@ -116,6 +126,44 @@ export class HomeHandler extends Handler {
             domainId, this.user._id, tdocs.map((tdoc) => tdoc.docId),
         );
         return [tdocs, tsdict];
+    }
+
+    async getAssignedHomeworkProgress(domainId: string, limit = 4) {
+        if (!this.user.hasPriv(PRIV.PRIV_USER_PROFILE) || !this.user.hasPerm(PERM.PERM_VIEW_HOMEWORK)) {
+            return { items: [], completedItems: [], total: 0 };
+        }
+        const homeworkQuery = {
+            rule: 'homework',
+            homeworkNoDeadline: true,
+            assignedUsers: this.user._id,
+        };
+        // Keep a compact summary of completed homework on the homepage while
+        // reserving the full progress cards for work that still needs attention.
+        // A bounded lookback avoids turning the homepage into an unbounded
+        // per-user status query for long-running classes.
+        const fetchLimit = Math.max(limit, 100);
+        const [tdocs, total] = await Promise.all([
+            contest.getMulti(domainId, homeworkQuery).sort({ beginAt: -1, _id: -1 }).limit(fetchLimit).toArray(),
+            contest.count(domainId, homeworkQuery),
+        ]);
+        const tsdict = await contest.getListStatus(domainId, this.user._id, tdocs.map((tdoc) => tdoc.docId));
+        const items = tdocs.map((tdoc) => {
+            const tsdoc = tsdict[tdoc.docId.toHexString()];
+            const totalProblems = tdoc.pids.length;
+            const doneProblems = tdoc.pids.filter((pid) => tsdoc?.detail?.[pid]?.status === STATUS.STATUS_ACCEPTED).length;
+            const percent = totalProblems ? Math.round(100 * doneProblems / totalProblems) : 0;
+            return {
+                id: tdoc.docId,
+                title: tdoc.title,
+                doneProblems,
+                totalProblems,
+                percent,
+                done: totalProblems > 0 && doneProblems === totalProblems,
+            };
+        });
+        const activeItems = items.filter((item) => !item.done).slice(0, limit);
+        const completedItems = items.filter((item) => item.done);
+        return { items: activeItems, completedItems, total };
     }
 
     async getContest(domainId: string, limit = 10) {
@@ -369,9 +417,10 @@ export class HomeHandler extends Handler {
         const homepageConfig = this.ctx.setting.get('hydrooj.homepage');
         const info = yaml.load(homepageConfig) as any;
         const hiddenHomepageSections = new Set([
-            'recent_problems', 'discussion_nodes', 'suggestion', 'discussion', 'hitokoto',
+            'recent_problems', 'discussion_nodes', 'suggestion', 'discussion', 'hitokoto', 'homework',
         ]);
         const pinnedContestPromise = getLatestVisiblePinnedContest(domainId, this.user);
+        const assignedHomeworkProgressPromise = this.getAssignedHomeworkProgress(domainId);
         const enrolledTrainingProgressPromise = this.getEnrolledTrainingProgress(domainId);
         const contents = [];
         let personalStatsInserted = false;
@@ -509,6 +558,7 @@ export class HomeHandler extends Handler {
             domain: this.domain,
             homePoster,
             pinnedContest: await pinnedContestPromise,
+            assignedHomeworkProgress: await assignedHomeworkProgressPromise,
             enrolledTrainingProgress: await enrolledTrainingProgressPromise,
             pointLottery: {
                 enabled: pointLotteryConfig.enabled,

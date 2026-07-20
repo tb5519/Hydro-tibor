@@ -1,50 +1,30 @@
 import $ from 'jquery';
 import { NamedPage } from 'vj/misc/Page';
-import { i18n, mongoId } from 'vj/utils';
 
-const page = new NamedPage('homework_main', async () => {
+const page = new NamedPage('homework_main', () => {
   $('[name="filter-form"] select').on('change', () => {
     $('[name="filter-form"]').trigger('submit');
   });
-  // Homework Calendar
-  const { default: Calendar } = await import('vj/components/calendar');
-  if (UiContext.docs) {
-    const events = UiContext.docs.map((doc) => ({
-      beginAt: doc.beginAt,
-      endAt: doc.endAt,
-      title: doc.title,
-      maskFrom: doc.penaltySince ? doc.penaltySince : null,
-      maskTitle: i18n('Time Extension'),
-      colorIndex: mongoId(doc._id).timestamp % 12,
-      link: doc.url,
-    }));
-    const calendar = new Calendar(events);
-    calendar.getDom().appendTo('[name="calendar_entry"]');
-    const preference = localStorage.getItem('homework-view') || 'list';
-    if (preference === 'calendar') {
-      $('.homework__list').hide();
-      $('[name="homework_display"]').val('calendar');
-    } else {
-      $('[name="calendar_entry"]').hide();
-      $('[name="homework_display"]').val('list');
-    }
-    $('[name="homework_display"]').change((ev) => {
-      switch (ev.currentTarget.value) {
-        case 'calendar':
-          $('.homework__list').hide();
-          $('[name="calendar_entry"]').show();
-          localStorage.setItem('homework-view', 'calendar');
-          break;
-        case 'list':
-          $('.homework__list').show();
-          $('[name="calendar_entry"]').hide();
-          localStorage.setItem('homework-view', 'list');
-          break;
-        default:
-          throw new Error('Unexpected display parameter');
-      }
+
+  const refreshCompletedOverflow = () => {
+    $('[data-homework-completed-line]').each((_, line) => {
+      const pills = $(line).find('[data-homework-completed-pills]')[0];
+      if (!pills) return;
+      $(line).toggleClass('is-overflowing', pills.scrollWidth > pills.clientWidth + 1);
     });
-  }
+  };
+
+  $('[data-homework-student-toggle], [data-homework-assignment-toggle]').on('click', function onToggle() {
+    const $trigger = $(this);
+    const expanded = $trigger.attr('aria-expanded') === 'true';
+    const id = $trigger.attr('aria-controls');
+    $trigger.attr('aria-expanded', String(!expanded));
+    $(`#${id}`).prop('hidden', expanded);
+    if (!expanded) requestAnimationFrame(refreshCompletedOverflow);
+  });
+
+  refreshCompletedOverflow();
+  $(window).on('resize.homework-main', refreshCompletedOverflow);
 });
 
 export default page;

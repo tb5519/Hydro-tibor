@@ -62,6 +62,28 @@ function recordListFilter(tid: ObjectId, includePretest: boolean, canViewAllPret
         : { contest: tid } as Filter<RecordDoc>;
 }
 
+function homeworkRecordKey(domainId: string, tid: ObjectId) {
+    return `${domainId}/${tid.toHexString()}`;
+}
+
+async function getHomeworkTdocsForRecords(rdocs: RecordDoc[]): Promise<Record<string, Tdoc>> {
+    const tidsByDomain = new Map<string, ObjectId[]>();
+    for (const rdoc of rdocs) {
+        if (!rdoc.contest || [record.RECORD_PRETEST, record.RECORD_GENERATE]
+            .some((reservedId) => reservedId.equals(rdoc.contest))) continue;
+        const tids = tidsByDomain.get(rdoc.domainId) || [];
+        tids.push(rdoc.contest);
+        tidsByDomain.set(rdoc.domainId, tids);
+    }
+    const results = await Promise.all([...tidsByDomain.entries()].map(async ([domainId, tids]) => (
+        await contest.getMulti(domainId, {
+            docId: { $in: tids },
+            rule: 'homework',
+        }).toArray()
+    )));
+    return Object.fromEntries(results.flat().map((tdoc) => [homeworkRecordKey(tdoc.domainId, tdoc.docId), tdoc]));
+}
+
 async function hasAcceptedFormalRecordBefore(rdoc: RecordDoc) {
     return await record.getMulti(rdoc.domainId, {
         uid: rdoc.uid,
@@ -166,7 +188,7 @@ export class RecordListHandler extends ContestDetailBaseHandler {
             ? [] as RecordDoc[]
             : await cursor.skip((page - 1) * limit).limit(limit).toArray();
         const canViewHiddenProblem = this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN) || this.user._id;
-        const [udict, pdict] = full ? [{}, {}]
+        const [udict, pdict, homeworkTdocs] = full ? [{}, {}, {}]
             : await Promise.all([
                 user.getList(domainId, rdocs.map((rdoc) => rdoc.uid)),
                 tid
@@ -174,6 +196,7 @@ export class RecordListHandler extends ContestDetailBaseHandler {
                     : this.user.hasPerm(PERM.PERM_VIEW_PROBLEM)
                         ? problem.getList(domainId, rdocs.map((rdoc) => rdoc.pid), canViewHiddenProblem, false, problem.PROJECTION_LIST)
                         : Object.fromEntries(uniqBy(rdocs, 'pid').map((rdoc) => [rdoc.pid, { ...problem.default, pid: rdoc.pid }])),
+                tid ? {} : getHomeworkTdocsForRecords(rdocs),
             ]);
         if (this.tdoc && !this.user.own(this.tdoc) && !this.user.hasPerm(PERM.PERM_EDIT_CONTEST)) {
             rdocs = rdocs.map((i) => contest.applyProjection(tdoc, i, this.user));
@@ -182,6 +205,7 @@ export class RecordListHandler extends ContestDetailBaseHandler {
             page,
             rdocs,
             tdoc,
+            homeworkTdocs,
             pdict,
             udict,
             all,
@@ -458,6 +482,7 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
             problem.get(rdoc.domainId, rdoc.pid),
         ]);
         const tdoc = this.tid ? this.tdoc : null;
+        const homeworkTdocs = tdoc ? {} : await getHomeworkTdocsForRecords([rdoc]);
         if (pdoc && !rdoc.contest) {
             if (!problem.canViewBy(pdoc, this.user)) pdoc = null;
             if (!this.user.hasPerm(PERM.PERM_VIEW_PROBLEM)) pdoc = null;
@@ -470,7 +495,7 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
         } else {
             this.queueSend(rdoc._id.toHexString(), async () => ({
                 html: await this.renderHTML('record_main_tr.html', {
-                    rdoc, udoc, pdoc, tdoc, allDomain: this.allDomain,
+                    rdoc, udoc, pdoc, tdoc, homeworkTdocs, allDomain: this.allDomain,
                 }),
             }));
         }

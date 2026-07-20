@@ -1,138 +1,182 @@
 {% extends "layout/basic.html" %}
 {% block content %}
-<div class="row">
-  <div class="medium-9 columns">
-    <div class="section">
-      <div class="section__body">
-        <form method="post">
+<style>
+  .homework-compose {
+    overflow: hidden;
+    border: 1px solid #dce8f8;
+    border-radius: 18px;
+    background: linear-gradient(135deg, #ffffff, #f6faff);
+    box-shadow: 0 12px 34px rgba(41, 91, 164, .08);
+  }
+  .homework-compose__hero {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.45rem 1.6rem 1.2rem;
+    border-bottom: 1px solid #e2edf9;
+  }
+  .homework-compose__eyebrow {
+    margin: 0 0 .25rem;
+    color: #4f8ee7;
+    font-size: .75rem;
+    font-weight: 800;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .homework-compose__hero h1 { margin: 0; color: #15294b; }
+  .homework-compose__hero p:not(.homework-compose__eyebrow) { margin: .45rem 0 0; color: #6f86a5; }
+  .homework-compose__timeless {
+    flex: 0 0 auto;
+    padding: .45rem .72rem;
+    border-radius: 999px;
+    color: #187751;
+    background: #e7f8ef;
+    font-size: .82rem;
+    font-weight: 700;
+  }
+  .homework-compose__body { padding: 1.4rem 1.6rem 1.55rem; }
+  .homework-compose__block + .homework-compose__block {
+    margin-top: 1.35rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid #e5eef9;
+  }
+  .homework-compose__block-head { margin-bottom: .85rem; }
+  .homework-compose__block-head h2 { margin: 0; color: #24476f; font-size: 1.02rem; }
+  .homework-compose__block-head p { margin: .25rem 0 0; color: #7b90ad; font-size: .82rem; }
+  .homework-compose__grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
+  .homework-compose label { color: #486786; font-weight: 700; }
+  .homework-compose input.textbox,
+  .homework-compose textarea.textbox { margin-top: .4rem; border-color: #cdddf0; border-radius: 9px; box-shadow: none; }
+  .homework-compose__tips {
+    display: flex;
+    gap: .45rem;
+    margin: .85rem 0 0;
+    color: #5681b2;
+    font-size: .8rem;
+  }
+  .homework-compose__tips .icon { color: #3986dc; }
+  .homework-compose__actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1.45rem; }
+  .homework-compose__actions .button { margin: 0; border-radius: 9px; }
+  @media (max-width: 639px) {
+    .homework-compose__hero, .homework-compose__body { padding-right: 1rem; padding-left: 1rem; }
+    .homework-compose__hero { flex-direction: column; }
+    .homework-compose__grid { grid-template-columns: 1fr; gap: 0; }
+  }
+</style>
+<div class="row"><div class="medium-10 medium-centered columns">
+  <form method="post" class="homework-compose">
+    <div class="homework-compose__hero">
+      <div>
+        <p class="homework-compose__eyebrow">Homework Studio</p>
+        <h1>{% if page_name == 'homework_edit' %}编辑作业{% else %}布置新作业{% endif %}</h1>
+        <p>从题库选择题目，指定学生后立即布置；学生完成进度会自动更新。</p>
+      </div>
+      <span class="homework-compose__timeless"><span class="icon icon-infinite" aria-hidden="true"></span> 无截止时间</span>
+    </div>
+    <div class="homework-compose__body">
+      <div class="homework-compose__block">
+        <div class="homework-compose__block-head">
+          <h2>作业内容</h2>
+          <p>题目支持按题号或标题搜索，可一次选择多道题。</p>
+        </div>
+        {{ form.form_text({
+            columns:null,
+            label:'作业名称',
+            name:'title',
+            placeholder:'例如：循环结构巩固练习',
+            value:tdoc['title']|default(''),
+            autofocus:true
+        }) }}
+        {{ form.form_text({
+            columns:null,
+            label:'选择题库题目',
+            name:'pids',
+            placeholder:'输入题号或题目名称搜索并选择',
+            value:pids
+        }) }}
+      </div>
+
+      <div class="homework-compose__block">
+        <div class="homework-compose__block-head">
+          <h2>布置给学生</h2>
+          <p>可选择一位或多位学生；保存后他们无需认领即可看到并完成作业。</p>
+        </div>
+        <label>学生
+          <input class="textbox" type="text" name="assignedUsers" list="homework-student-options" value="{{ assignedUsers }}" placeholder="输入学员姓名或 UID，可用逗号选择多位">
+        </label>
+        <datalist id="homework-student-options">
+          {% for student in homeworkStudentOptions %}
+            <option value="{{ student.displayName }}" label="@{{ student.uname }} · UID {{ student.uid }}"></option>
+            <option value="{{ student.uid }}" label="{{ student.displayName }} · {{ student.uname }}"></option>
+          {% endfor %}
+        </datalist>
+        <p class="homework-compose__tips"><span class="icon icon-info"></span> 可直接选择姓名或输入 UID；多个学员用逗号隔开。长期作业没有截止时间，修改题目后进度会自动重新计算。</p>
+      </div>
+
+      <div class="homework-compose__block">
+        <div class="homework-compose__block-head">
+          <h2>作业分类 <small>（可选）</small></h2>
+          <p>例如“循环练习”“暑期巩固”。留空的作业会归入“未分类”。</p>
+        </div>
+        {{ form.form_text({
+            columns:null,
+            label:'分类名称',
+            name:'homeworkCategory',
+            value:homeworkCategory,
+            placeholder:'输入一个便于管理的分类名称'
+        }) }}
+      </div>
+
+      <div class="homework-compose__block">
+        <div class="homework-compose__block-head">
+          <h2>作业说明 <small>（可选）</small></h2>
+        </div>
+        {{ form.form_textarea({
+            columns:null,
+            label:'给学生的话',
+            name:'content',
+            value:tdoc['content']|default(''),
+            markdown:true
+        }) }}
+      </div>
+
+      <div class="homework-compose__block">
+        <div class="homework-compose__block-head">
+          <h2>教师设置 <small>（可选）</small></h2>
+        </div>
+        <div class="homework-compose__grid">
           {{ form.form_text({
-              columns:12,
-              label:'Title',
-              name:'title',
-              placeholder:_('title'),
-              value:tdoc['title']|default(''),
-              autofocus:true
-          }) }}
-          <div class="row">
-            {{ form.form_text({
-                columns:3,
-                label:'Begin Date',
-                name:'beginAtDate',
-                placeholder:'YYYY-mm-dd',
-                value:dateBeginText,
-                date:true,
-                row:false
-            }) }}
-            {{ form.form_text({
-                columns:2,
-                label:'Begin Time',
-                name:'beginAtTime',
-                placeholder:'HH:MM',
-                value:timeBeginText,
-                time:true,
-                row:false
-            }) }}
-            {{ form.form_text({
-                columns:3,
-                label:'End Date',
-                name:'penaltySinceDate',
-                placeholder:'YYYY-mm-dd',
-                value:datePenaltyText,
-                date:true,
-                row:false
-            }) }}
-            {{ form.form_text({
-                columns:2,
-                label:'End Time',
-                name:'penaltySinceTime',
-                placeholder:'HH:MM',
-                value:timePenaltyText,
-                time:true,
-                row:false
-            }) }}
-            {{ form.form_text({
-                row:false,
-                last_column:true,
-                columns:2,
-                label:'Extension (days)',
-                name:'extensionDays',
-                value:extensionDays
-            }) }}
-          </div>
-          <div class="row">
-            {{ form.form_text({
-                row:false,
-                columns:6,
-                label:'Assign',
-                name:'assign',
-                placeholder:_('Group / UID'),
-                value:tdoc.assign|default('')
-            }) }}
-            {{ form.form_text({
-                row:false,
-                last_column:true,
-                columns:6,
-                label:'Homework Maintainer',
-                name:'maintainer',
-                help_text:_('Allow to maintain this {0}').format(_('homework')),
-                value:tdoc.maintainer|default('')
-            }) }}
-          </div>
-          <div class="row"><div class="columns">
-            <label>
-              {{ _('Extension Score Penalty') }}
-              <textarea name="penaltyRules" class="monospace textbox" data-yaml>{% if tdoc %}{{ penaltyRules }}{% else %}{% include 'partials/homework_default_penalty_rules.yaml' %}{% endif %}</textarea>
-            </label>
-          </div></div>
-          {{ form.form_text({
+              row:false,
               columns:null,
-              label:'Problems',
-              name:'pids',
-              value:pids
-          }) }}
-          {{ form.form_textarea({
-              columns:null,
-              label:'Content',
-              name:'content',
-              value:tdoc['content']|default(''),
-              markdown:true
+              label:'作业协管教师',
+              name:'maintainer',
+              value:tdoc.maintainer|default(''),
+              placeholder:'搜索教师账号'
           }) }}
           {{ form.form_text({
-              columns:12,
-              label:'Submission language limit',
+              row:false,
+              columns:null,
+              label:'允许提交的语言',
               name:'langs',
               value:tdoc.langs|default(''),
-              placeholder:_("Seperated with ','"),
-              row:true
+              placeholder:_('Seperated with ","')
           }) }}
-          <div class="row"><div class="columns">
-          {% if page_name == 'homework_edit' %}
-            <button name="operation" value="update" type="submit" class="rounded primary button">
-              {{ _('Update') }}
-            </button>
-            <button name="operation" value="update" type="submit" formaction="{{ url('homework_create') }}" class="rounded button">
-              {{ _('Clone') }}
-            </button>
-            {% if handler.user.own(tdoc) or handler.user.hasPerm(perm.PERM_EDIT_HOMEWORK) %}
-              <button name="operation" value="delete" type="submit" class="rounded button">
-                {{ _('Delete') }}
-              </button>
-            {% endif %}
-          {% else %}
-            <button name="operation" value="update" type="submit" class="rounded primary button">
-              {{ _('Create') }}
-            </button>
-          {% endif %}
-            <button type="button" class="rounded button" onclick="window.history.go(-1)">
-              {{ _('Cancel') }}
-            </button>
-          </div></div>
-        </form>
+        </div>
+      </div>
+
+      <div class="homework-compose__actions">
+      {% if page_name == 'homework_edit' %}
+        <button name="operation" value="update" type="submit" class="primary button">保存作业</button>
+        {% if handler.user.own(tdoc) or handler.user.hasPerm(perm.PERM_EDIT_HOMEWORK) %}
+          <button name="operation" value="delete" type="submit" class="button">删除作业</button>
+        {% endif %}
+      {% else %}
+        <button name="operation" value="update" type="submit" class="primary button">立即布置作业</button>
+      {% endif %}
+        <button type="button" class="button" onclick="window.history.go(-1)">取消</button>
       </div>
     </div>
-  </div>
-  <div class="medium-3 columns">
-    {% include 'components/md_hint.html' %}
-  </div>
-</div>
+  </form>
+</div></div>
 {% endblock %}

@@ -269,6 +269,12 @@ export interface Tdoc extends Document {
     scoreToPoints?: boolean;
     _code?: string;
     assign?: string[];
+    /** Individual recipients of a homework. Kept separate from legacy group assignment. */
+    assignedUsers?: number[];
+    /** A long-running homework with no student-facing deadline. */
+    homeworkNoDeadline?: boolean;
+    /** Optional teacher-defined folder/category for organising homework. */
+    homeworkCategory?: string;
     files?: FileInfo[];
     privateFiles?: FileInfo[];
     allowViewCode?: boolean;
