@@ -61,22 +61,6 @@ function getHomeworkProgress(tdoc: Tdoc, tsdoc: any) {
     };
 }
 
-function getHomeworkProblemProgress(tdoc: Tdoc, tsdoc: any, pdict: any) {
-    return tdoc.pids.map((pid) => {
-        const detail = tsdoc?.detail?.[pid];
-        const accepted = detail?.status === STATUS.STATUS_ACCEPTED;
-        const score = Number(detail?.score) || (accepted ? 100 : 0);
-        return {
-            pid,
-            title: pdict[pid]?.title || `P${pid}`,
-            accepted,
-            partial: !accepted && score > 0,
-            score,
-            attempted: !!detail,
-        };
-    });
-}
-
 async function resolveHomeworkRecipients(domainId: string, input: string | number[] = '') {
     const tokens = (Array.isArray(input) ? input.map(String) : input.split(/[，,;；\n]+/))
         .map((item) => item.trim())
@@ -148,16 +132,12 @@ class HomeworkMainHandler extends Handler {
             .filter((tdoc) => (tdoc.assignedUsers || []).length);
         const tids = tdocs.map((tdoc) => tdoc.docId);
         const uids = Array.from(new Set(tdocs.flatMap((tdoc) => tdoc.assignedUsers || [])));
-        const pids = Array.from(new Set(tdocs.flatMap((tdoc) => tdoc.pids)));
-        const [statusDocs, udict, pdict] = await Promise.all([
+        const [statusDocs, udict] = await Promise.all([
             tids.length && uids.length
                 ? contest.getMultiStatus(domainId, { docId: { $in: tids }, uid: { $in: uids } }).toArray()
                 : [],
             uids.length
                 ? user.getListForRender(domainId, uids, this.user.hasPerm(PERM.PERM_VIEW_USER_PRIVATE_INFO))
-                : {},
-            pids.length
-                ? problem.getList(domainId, pids, true, true, problem.PROJECTION_CONTEST_LIST)
                 : {},
         ]);
         const statusByStudentAndHomework = new Map(statusDocs.map((status) => [
@@ -177,7 +157,6 @@ class HomeworkMainHandler extends Handler {
                         id: tdoc.docId,
                         title: tdoc.title,
                         category: normalizeHomeworkCategory(tdoc.homeworkCategory),
-                        problems: getHomeworkProblemProgress(tdoc, status, pdict),
                         ...progress,
                     };
                 });
@@ -394,8 +373,21 @@ class HomeworkDetailHandler extends Handler {
     @param('tid', Types.ObjectId)
     @param('page', Types.PositiveInt, true)
     async get(domainId: string, tid: ObjectId, page = 1) {
-        const tsdoc = await contest.getStatus(domainId, tid, this.user._id);
         if (this.tdoc.rule !== 'homework') throw new ContestNotFoundError(domainId, tid);
+        const canViewAssignedProgress = this.user.own(this.tdoc)
+            || this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_HOMEWORK);
+        const requestedUid = Number(this.request.query.uid);
+        const targetUid = Number.isSafeInteger(requestedUid) && requestedUid > 1 && requestedUid !== this.user._id
+            ? requestedUid
+            : this.user._id;
+        if (targetUid !== this.user._id
+            && (!canViewAssignedProgress || !(this.tdoc.assignedUsers || []).includes(targetUid))) {
+            throw new NotAssignedError('homework', this.tdoc.docId);
+        }
+        const [tsdoc, progressUser] = await Promise.all([
+            contest.getStatus(domainId, tid, targetUid),
+            targetUid === this.user._id ? null : user.getById(domainId, targetUid),
+        ]);
         // discussion
         const [ddocs, dpcount, dcount] = await this.paginate(
             discussion.getMulti(domainId, { parentType: this.tdoc.docType, parentId: this.tdoc.docId }),
@@ -410,6 +402,7 @@ class HomeworkDetailHandler extends Handler {
             tdoc: this.tdoc,
             tsdoc,
             homeworkProgress: getHomeworkProgress(this.tdoc, tsdoc),
+            homeworkProgressUserName: progressUser?.displayName || progressUser?.uname || '',
             udict,
             ddocs,
             page,
@@ -425,16 +418,18 @@ class HomeworkDetailHandler extends Handler {
             && !this.user.hasPerm(PERM.PERM_VIEW_HOMEWORK_HIDDEN_SCOREBOARD)
         ) return;
         const pdict = await problem.getList(domainId, this.tdoc.pids, true, true, problem.PROJECTION_CONTEST_LIST);
-        const psdict = {};
+        // `detail` stores each problem's current best result. The journal is
+        // only the submission history, so using it here could show an older,
+        // lower score after a student improves their solution.
+        const psdict = { ...(tsdoc?.detail || {}) };
         let rdict = {};
         if (tsdoc) {
-            if (tsdoc.attend && !tsdoc.startAt && contest.isOngoing(this.tdoc)) {
-                await contest.setStatus(domainId, tid, this.user._id, { startAt: new Date() });
+            if (targetUid === this.user._id && tsdoc.attend && !tsdoc.startAt && contest.isOngoing(this.tdoc)) {
+                await contest.setStatus(domainId, tid, targetUid, { startAt: new Date() });
                 tsdoc.startAt = new Date();
             }
             const valid = (tsdoc.journal || []).filter((p) => this.tdoc.pids.includes(p.pid));
             for (const pdetail of valid) {
-                psdict[pdetail.pid] = pdetail;
                 rdict[pdetail.rid] = { _id: pdetail.rid };
             }
             if (contest.canShowSelfRecord.call(this, this.tdoc) && valid.length) {

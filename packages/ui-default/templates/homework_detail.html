@@ -29,8 +29,10 @@
   .homework-problem-list__item:hover, .homework-problem-list__item:focus { border-color: #9fc8f6; box-shadow: 0 5px 13px rgba(52, 126, 203, .11); transform: translateY(-1px); }
   .homework-problem-list__state { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 1.7rem; height: 1.7rem; border-radius: 50%; color: #7d96b5; background: #edf3fb; }
   .homework-problem-list__state.is-accepted { color: #fff; background: #38b77d; }
+  .homework-problem-list__state.is-partial { color: #2d77be; background: #e9f3ff; }
   .homework-problem-list__title { min-width: 0; flex: 1 1 auto; }
   .homework-problem-list__done-label { flex: 0 0 auto; padding: .18rem .42rem; border-radius: 999px; color: #24794f; background: #e5f8ee; font-size: .7rem; font-weight: 800; }
+  .homework-problem-list__done-label.is-partial { color: #286fae; background: #eaf4ff; }
   .homework-problem-list__record { flex: 0 0 auto; color: #8297b3; font-size: .76rem; }
   .homework-detail-empty { padding: 2.1rem 1rem; color: #7890ae; text-align: center; }
   @media (max-width: 639px) { .homework-detail-hero__body { grid-template-columns: 1fr; padding: 1.1rem; } .homework-detail-hero__progress { min-width: 0; } }
@@ -40,7 +42,7 @@
     <section class="homework-detail-hero{% if homeworkProgress.done %} is-done{% endif %}">
       <div class="homework-detail-hero__body">
         <div>
-          <p class="homework-detail-hero__eyebrow">My Homework</p>
+          <p class="homework-detail-hero__eyebrow">{% if homeworkProgressUserName %}{{ homeworkProgressUserName }} 的作业进度{% else %}My Homework{% endif %}</p>
           <h1 data-emoji-enabled>{{ tdoc.title }}</h1>
           <span class="homework-detail-hero__tag"><span class="icon icon-check"></span> 长期作业 · 无截止时间</span>
         </div>
@@ -67,9 +69,9 @@
               {% set detail = psdict[pid] %}
               <li>
                 <a class="homework-problem-list__item" href="{{ url('problem_detail', pid=pdict[pid].pid|default(pdict[pid].docId), query={tid:tdoc.docId}) }}" data-no-instant data-emoji-enabled>
-                  <span class="homework-problem-list__state{% if detail and detail.status == STATUS.STATUS_ACCEPTED %} is-accepted{% endif %}"><span class="icon {% if detail and detail.status == STATUS.STATUS_ACCEPTED %}icon-check{% else %}icon-circle{% endif %}"></span></span>
+                  <span class="homework-problem-list__state{% if detail and detail.status == STATUS.STATUS_ACCEPTED %} is-accepted{% elif detail and detail.score > 0 %} is-partial{% endif %}"><span class="icon {% if detail and detail.status == STATUS.STATUS_ACCEPTED %}icon-check{% elif detail and detail.score > 0 %}icon-star{% else %}icon-circle{% endif %}"></span></span>
                   <span class="homework-problem-list__title"><b>{{ pdict[pid].pid|default(pdict[pid].docId) }}</b>&nbsp;&nbsp;{{ pdict[pid].title }}</span>
-                  {% if detail and detail.status == STATUS.STATUS_ACCEPTED %}<span class="homework-problem-list__done-label">已完成</span>{% endif %}
+                  {% if detail and detail.status == STATUS.STATUS_ACCEPTED %}<span class="homework-problem-list__done-label">AC</span>{% elif detail and detail.score > 0 %}<span class="homework-problem-list__done-label is-partial">{{ detail.score }} 分</span>{% endif %}
                   {% if detail and detail.rid %}
                     <span class="homework-problem-list__record">{{ datetimeSpan(detail.rid)|safe }}</span>
                   {% endif %}
