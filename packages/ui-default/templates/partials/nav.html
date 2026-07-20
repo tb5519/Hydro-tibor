@@ -117,7 +117,7 @@
   <div class="row"><div class="columns clearfix">
     <ol class="nav__list nav__list--main clearfix">
       <li class="nav__list-item">
-        <a href="/" class="nav__logo nav__logo--text">{{ model.system.get('server.name') or 'Hydro' }}</a>
+        <a href="{{ url('homepage', domainId=UiContext.domain._id) }}" class="nav__logo nav__logo--text">{{ model.system.get('server.name') or 'Hydro' }}</a>
       </li>
       {%- for item in overrideNav|default(ui.getNodes('Nav')) -%}{% if item.checker(handler) %}
         {{ nav_item(item) }}
