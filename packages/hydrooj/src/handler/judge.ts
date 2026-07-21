@@ -125,7 +125,10 @@ export class JudgeResultCallbackContext {
             rdoc.domainId, rdoc.pid, rdoc.uid, rdoc._id, rdoc.status, rdoc.score,
         );
         if (rdoc.contest) await contest.updateStatus(rdoc.domainId, rdoc.contest, rdoc.uid, rdoc._id, rdoc.pid, rdoc);
-        else if (accept && firstAccepted) await domain.incUserInDomain(rdoc.domainId, rdoc.uid, 'nAccept', 1);
+        else if (accept) {
+            await contest.syncAcceptedProblemToAssignedHomework(rdoc.domainId, rdoc.uid, rdoc.pid, rdoc);
+            if (firstAccepted) await domain.incUserInDomain(rdoc.domainId, rdoc.uid, 'nAccept', 1);
+        }
         const isNormalSubmission = ![
             STATUS.STATUS_ETC, STATUS.STATUS_HACK_SUCCESSFUL, STATUS.STATUS_HACK_UNSUCCESSFUL,
             STATUS.STATUS_FORMAT_ERROR, STATUS.STATUS_SYSTEM_ERROR, STATUS.STATUS_CANCELED,

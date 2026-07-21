@@ -1017,6 +1017,33 @@ export async function updateStatus(
     return result;
 }
 
+// A normal problem submission has no contest id, so it would otherwise never
+// reach the per-homework status document. Mirror an accepted normal submission
+// into each active homework that was explicitly assigned to this student and
+// contains the problem. `updateStatus` de-duplicates by record id, so retries
+// and repeated judge callbacks cannot inflate the homework progress.
+export async function syncAcceptedProblemToAssignedHomework(
+    domainId: string, uid: number, pid: number, rdoc: Pick<RecordDoc, '_id' | 'score' | 'subtasks' | 'lang'>,
+) {
+    const now = new Date();
+    const tdocs = await document.getMulti(domainId, document.TYPE_CONTEST, {
+        rule: 'homework',
+        assignedUsers: uid,
+        pids: pid,
+        beginAt: { $lte: now },
+        endAt: { $gt: now },
+    }).toArray();
+    await Promise.all(tdocs.map((tdoc) => updateStatus(
+        domainId, tdoc.docId, uid, rdoc._id, pid, {
+            status: STATUS.STATUS_ACCEPTED,
+            score: rdoc.score,
+            subtasks: rdoc.subtasks,
+            lang: rdoc.lang,
+        },
+    )));
+    return tdocs.length;
+}
+
 export async function getListStatus(domainId: string, uid: number, tids: ObjectId[]) {
     const r = {};
     // eslint-disable-next-line no-await-in-loop
@@ -1274,6 +1301,7 @@ global.Hydro.model.contest = {
     get,
     getRelated,
     updateStatus,
+    syncAcceptedProblemToAssignedHomework,
     getStatus,
     count,
     countStatus,
