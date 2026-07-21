@@ -121,7 +121,7 @@
                     <td class="col--name col--problem-name"{% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %} data-star-action="{{ url('problem_detail', pid=pdoc.docId) }}" data-star="{{ psdoc.star }}"{% endif %}>
                       {{ problem.render_problem_title(
                         pdoc,
-                        invalid=not tsdoc['enroll'] or nsdict[node['_id']]['isInvalid'],
+                        invalid=not trainingDirectProblemLinks and (not tsdoc['enroll'] or nsdict[node['_id']]['isInvalid']),
                         show_tags=false
                       ) }}
                     </td>

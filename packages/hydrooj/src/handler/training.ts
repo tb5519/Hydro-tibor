@@ -156,8 +156,11 @@ class TrainingDetailHandler extends Handler {
         });
         const groups = this.user.hasPerm(PERM.PERM_EDIT_DOMAIN)
             ? await user.listGroup(domainId) : [];
+        const trainingDirectProblemLinks = this.user.own(tdoc)
+            || this.user.hasPerm(PERM.PERM_EDIT_TRAINING);
         this.response.body = {
             tdoc, tsdoc, pids, pdict, psdict, ndict, nsdict, udoc, udict, selfPsdict, groups, missing,
+            trainingDirectProblemLinks,
         };
         this.response.body.tdoc.description = this.response.body.tdoc.description
             .replace(/\(file:\/\//g, `(./${tdoc.docId}/file/`)

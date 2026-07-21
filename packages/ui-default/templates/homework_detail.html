@@ -67,8 +67,10 @@
           <ol class="homework-problem-list">
             {% for pid in tdoc.pids %}
               {% set detail = psdict[pid] %}
+              {% set problemUrl = url('problem_detail', pid=pdict[pid].pid|default(pdict[pid].docId), query={tid:tdoc.docId}) %}
+              {% if homeworkDirectProblemLinks %}{% set problemUrl = url('problem_detail', pid=pdict[pid].pid|default(pdict[pid].docId)) %}{% endif %}
               <li>
-                <a class="homework-problem-list__item" href="{{ url('problem_detail', pid=pdict[pid].pid|default(pdict[pid].docId), query={tid:tdoc.docId}) }}" data-no-instant data-emoji-enabled>
+                <a class="homework-problem-list__item" href="{{ problemUrl }}" data-no-instant data-emoji-enabled>
                   <span class="homework-problem-list__state{% if detail and detail.status == STATUS.STATUS_ACCEPTED %} is-accepted{% elif detail and detail.score > 0 %} is-partial{% endif %}"><span class="icon {% if detail and detail.status == STATUS.STATUS_ACCEPTED %}icon-check{% elif detail and detail.score > 0 %}icon-star{% else %}icon-circle{% endif %}"></span></span>
                   <span class="homework-problem-list__title"><b>{{ pdict[pid].pid|default(pdict[pid].docId) }}</b>&nbsp;&nbsp;{{ pdict[pid].title }}</span>
                   {% if detail and detail.status == STATUS.STATUS_ACCEPTED %}<span class="homework-problem-list__done-label">AC</span>{% elif detail and detail.score > 0 %}<span class="homework-problem-list__done-label is-partial">{{ detail.score }} 分</span>{% endif %}

@@ -376,6 +376,9 @@ class HomeworkDetailHandler extends Handler {
         if (this.tdoc.rule !== 'homework') throw new ContestNotFoundError(domainId, tid);
         const canViewAssignedProgress = this.user.own(this.tdoc)
             || this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_HOMEWORK);
+        const homeworkDirectProblemLinks = this.user.own(this.tdoc)
+            || this.user.hasPerm(PERM.PERM_EDIT_HOMEWORK)
+            || this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_HOMEWORK);
         const requestedUid = Number(this.request.query.uid);
         const targetUid = Number.isSafeInteger(requestedUid) && requestedUid > 1 && requestedUid !== this.user._id
             ? requestedUid
@@ -403,6 +406,7 @@ class HomeworkDetailHandler extends Handler {
             tsdoc,
             homeworkProgress: getHomeworkProgress(this.tdoc, tsdoc),
             homeworkProgressUserName: progressUser?.displayName || progressUser?.uname || '',
+            homeworkDirectProblemLinks,
             udict,
             ddocs,
             page,
