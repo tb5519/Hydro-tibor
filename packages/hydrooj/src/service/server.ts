@@ -27,6 +27,22 @@ const ignoredLimit = `,${argv.options.ignoredLimit},`;
 
 const logger = new Logger('server');
 
+// Domains are private learning spaces. Keep only the routes required to sign
+// in or recover an account available to guests; every other domain route is
+// redirected to its own login page by the common error handler below.
+const GUEST_AUTH_PATHS = [
+    /^\/login$/,
+    /^\/register(?:\/[^/]+)?$/,
+    /^\/lostpass(?:\/[^/]+)?$/,
+    /^\/oauth\/[^/]+\/(?:login|callback)$/,
+    /^\/user\/(?:tfa|webauthn)$/,
+    /^\/language\/[^/]+$/,
+];
+
+function isGuestAuthPath(path: string) {
+    return GUEST_AUTH_PATHS.some((pattern) => pattern.test(path));
+}
+
 declare module '@hydrooj/framework' {
     export interface HandlerCommon {
         domain: DomainDoc;
@@ -277,6 +293,9 @@ export async function apply(ctx: Context) {
                     text: v.text,
                     name: v.name,
                 }));
+            if (!h.user.hasPriv(PRIV.PRIV_USER_PROFILE) && !isGuestAuthPath(h.request.path)) {
+                h.checkPriv(PRIV.PRIV_USER_PROFILE);
+            }
             if ((!('noCheckPermView' in h) || !h.noCheckPermView) && !h.user.hasPriv(PRIV.PRIV_VIEW_ALL_DOMAIN)) h.checkPerm(PERM.PERM_VIEW);
             if (h.context.pendingError) throw h.context.pendingError;
         });
