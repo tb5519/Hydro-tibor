@@ -105,11 +105,28 @@ export class ContestListHandler extends Handler {
         const [tdocs, tpcount] = await this.paginate(cursor, page, 'contest');
         const tids = [];
         for (const tdoc of tdocs) tids.push(tdoc.docId);
-        const tsdict = await contest.getListStatusAcrossDomains(this.user._id, tids);
+        const canCreateContest = this.user.hasPerm(PERM.PERM_CREATE_CONTEST);
+        const [tsdict, attendedStatusDocs] = await Promise.all([
+            contest.getListStatusAcrossDomains(this.user._id, tids),
+            canCreateContest
+                ? Promise.resolve([])
+                : document.getMultiStatusWithoutDomain(document.TYPE_CONTEST, {
+                    uid: this.user._id,
+                    attend: { $gt: 0 },
+                }).project({ docId: 1 }).toArray(),
+        ]);
+        const attendedTids = attendedStatusDocs.map((status) => status.docId);
+        const attendedTdocs = attendedTids.length
+            ? await contest.getMultiVisibleInDomain(domainId, {
+                ...visibilityFilter,
+                rule: { $in: rules },
+                docId: { $in: attendedTids },
+            }).sort({ endAt: -1, beginAt: -1, _id: -1 }).limit(5).toArray()
+            : [];
         const groupsFilter = groups.filter((i) => !Number.isSafeInteger(+i));
         this.response.template = 'contest_main.html';
         this.response.body = {
-            page, tpcount, qs, rule, tdocs, tsdict, groups: groupsFilter, group, q,
+            page, tpcount, qs, rule, tdocs, tsdict, attendedTdocs, groups: groupsFilter, group, q,
         };
     }
 }

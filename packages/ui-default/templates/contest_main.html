@@ -45,6 +45,15 @@
 </div>
 {% endmacro %}
 {% block content %}
+<style>
+  .contest-attended__list { margin: 0; padding: 0; list-style: none; }
+  .contest-attended__item + .contest-attended__item { border-top: 1px solid #edf2f7; }
+  .contest-attended__link { display: block; padding: .7rem 0; color: #334155; text-decoration: none; }
+  .contest-attended__link:hover { color: #2563eb; text-decoration: none; }
+  .contest-attended__title { display: block; overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+  .contest-attended__meta { display: block; margin-top: .24rem; color: #94a3b8; font-size: .78rem; }
+  .contest-attended__empty { margin: 0; color: #94a3b8; font-size: .86rem; }
+</style>
 <div class="row">
   <div class="medium-9 columns">
   {%- for tdoc in tdocs -%}
@@ -144,6 +153,28 @@
       </div>
       <div class="section__body">
         <p><a href="{{ url('contest_create') }}" class="expanded primary button">{{ _('Create a contest') }}</a></p>
+      </div>
+    </div>
+  {% else %}
+    <div class="section side">
+      <div class="section__header">
+        <h1 class="section__title">{{ _('我参加过的比赛') }}</h1>
+      </div>
+      <div class="section__body">
+      {% if attendedTdocs.length %}
+        <ol class="contest-attended__list">
+        {% for tdoc in attendedTdocs %}
+          <li class="contest-attended__item">
+            <a class="contest-attended__link" href="{{ url('contest_detail', domainId=tdoc.domainId, tid=tdoc.docId, query={entryDomainId:handler.args.domainId} if tdoc.allDomains else {}) }}" data-emoji-enabled>
+              <span class="contest-attended__title">{{ tdoc.title }}</span>
+              <span class="contest-attended__meta"><span class="icon icon-calendar"></span> {{ datetimeSpan(tdoc['beginAt'], false, 'YYYY-MM-DD')|safe }}</span>
+            </a>
+          </li>
+        {% endfor %}
+        </ol>
+      {% else %}
+        <p class="contest-attended__empty">{{ _('还没有参加过比赛。') }}</p>
+      {% endif %}
       </div>
     </div>
   {% endif %}

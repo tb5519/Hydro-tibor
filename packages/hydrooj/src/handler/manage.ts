@@ -2,12 +2,13 @@ import { exec } from 'child_process';
 import path from 'path';
 import { inspect } from 'util';
 import * as yaml from 'js-yaml';
-import moment from 'moment-timezone';
 import { omit } from 'lodash';
+import moment from 'moment-timezone';
 import { ObjectId } from 'mongodb';
 import Schema from 'schemastery';
 import {
-    CannotEditSuperAdminError, NotLaunchedByPM2Error, UserNotFoundError, ValidationError, VerifyPasswordError,
+    CannotEditSuperAdminError, NotLaunchedByPM2Error, UserAlreadyExistError, UserNotFoundError, ValidationError,
+    VerifyPasswordError,
 } from '../error';
 import { getHomePosterConfig, HOME_POSTER_CONFIG_KEY } from '../lib/home_poster';
 import {
@@ -23,7 +24,7 @@ import * as setting from '../model/setting';
 import storage from '../model/storage';
 import system from '../model/system';
 import token from '../model/token';
-import user, { User as HydroUser } from '../model/user';
+import user, { handleMailLower, User as HydroUser } from '../model/user';
 import {
     ConnectionHandler, Handler, param, requireSudo, Types,
 } from '../service/server';
@@ -728,6 +729,10 @@ class SystemUserImportHandler extends SystemHandler {
 
 const Priv = omit(PRIV, ['PRIV_DEFAULT', 'PRIV_NEVER', 'PRIV_NONE', 'PRIV_ALL']);
 const allPriv = Math.sum(Object.values(Priv));
+const MANAGED_STUDENT_SORTS = ['submit', 'login', 'practice'];
+const MANAGED_STUDENT_SORT_DIRECTIONS = ['desc', 'asc'];
+type ManagedStudentSort = 'submit' | 'login' | 'practice';
+type ManagedStudentSortDirection = 'desc' | 'asc';
 
 async function getManageTargetUser(domainId: string, query: string) {
     const q = query.trim();
@@ -737,12 +742,102 @@ async function getManageTargetUser(domainId: string, query: string) {
     return user.getByUname(domainId, q);
 }
 
+function isPasswordResetProtectedTarget(udoc: HydroUser) {
+    return udoc._id <= 1 || udoc.priv === -1 || udoc.priv === allPriv;
+}
+
 function checkPasswordResetTarget(udoc: HydroUser) {
     if (isPasswordResetProtectedTarget(udoc)) throw new CannotEditSuperAdminError();
 }
 
-function isPasswordResetProtectedTarget(udoc: HydroUser) {
-    return udoc._id <= 1 || udoc.priv === -1 || udoc.priv === allPriv;
+function isManagedStudent(udoc: Pick<HydroUser, '_id' | 'priv'>) {
+    return udoc._id > 1
+        && !!(udoc.priv & PRIV.PRIV_USER_PROFILE)
+        && !(udoc.priv & PRIV.PRIV_EDIT_SYSTEM)
+        && !(udoc.priv & PRIV.PRIV_JUDGE);
+}
+
+function normalizeManagedStudentText(value: string, key: string) {
+    const result = value.trim();
+    if (result.length > 255) throw new ValidationError(key);
+    return result;
+}
+
+async function getManagedStudents(
+    domainId: string, sort: ManagedStudentSort, direction: ManagedStudentSortDirection,
+) {
+    const joined = await domain.getMultiUserInDomain(domainId, { uid: { $gt: 1 }, join: true })
+        .project<{ uid: number, displayName?: string, nSubmit?: number, nAccept?: number }>({
+            uid: 1, displayName: 1, nSubmit: 1, nAccept: 1,
+        })
+        .toArray();
+    const candidateUids = Array.from(new Set(joined.map((row) => row.uid)));
+    if (!candidateUids.length) return [];
+    const userPrivDocs = await user.getMulti({ _id: { $in: candidateUids } }, ['_id', 'priv']).toArray();
+    const studentUidSet = new Set(userPrivDocs.filter(isManagedStudent).map((udoc) => udoc._id));
+    const studentUids = candidateUids.filter((uid) => studentUidSet.has(uid));
+    if (!studentUids.length) return [];
+    const membershipByUid = new Map(joined.map((row) => [row.uid, row]));
+    const [udict, recentActivity] = await Promise.all([
+        user.getListForRender(domainId, studentUids, true),
+        record.coll.aggregate<{ _id: number, lastRecordId: ObjectId }>([
+            {
+                $match: {
+                    domainId,
+                    uid: { $in: studentUids },
+                    pid: { $gt: 0 },
+                    contest: { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] },
+                },
+            },
+            { $group: { _id: '$uid', lastRecordId: { $max: '$_id' } } },
+        ]).toArray(),
+    ]);
+    const lastSubmitAtByUid = new Map(recentActivity.map((row) => [row._id, row.lastRecordId.getTimestamp()]));
+    const students = studentUids.map((uid) => {
+        const udoc = udict[uid];
+        const membership = membershipByUid.get(uid);
+        const displayName = membership?.displayName || udoc.displayName || udoc.uname;
+        const loginAt = (udoc as unknown as Pick<HydroUser, 'loginat'>).loginat;
+        return {
+            ...udoc,
+            uid,
+            displayName,
+            submitCount: membership?.nSubmit || 0,
+            acceptedCount: membership?.nAccept || 0,
+            loginAt,
+            lastSubmitAt: lastSubmitAtByUid.get(uid) || null,
+            searchText: [uid, displayName, udoc.uname, udoc.mail, udoc.school, udoc.studentId]
+                .filter(Boolean)
+                .join(' ')
+                .toLocaleLowerCase(),
+        };
+    });
+    const getTime = (value: Date | null | undefined) => value?.getTime() || 0;
+    return students.sort((a, b) => {
+        let comparison = 0;
+        if (sort === 'login') {
+            comparison = getTime(b.loginAt) - getTime(a.loginAt)
+                || b.submitCount - a.submitCount
+                || a.uid - b.uid;
+        } else if (sort === 'practice') {
+            comparison = getTime(b.lastSubmitAt) - getTime(a.lastSubmitAt)
+                || b.submitCount - a.submitCount
+                || a.uid - b.uid;
+        } else {
+            comparison = b.submitCount - a.submitCount
+                || getTime(b.lastSubmitAt) - getTime(a.lastSubmitAt)
+                || a.uid - b.uid;
+        }
+        return direction === 'asc' ? -comparison : comparison;
+    });
+}
+
+async function getManagedStudent(domainId: string, uid: number) {
+    const [membership, target] = await Promise.all([
+        domain.collUser.findOne({ domainId, uid, join: true }),
+        user.getById(domainId, uid),
+    ]);
+    return membership && target && isManagedStudent(target) ? target : null;
 }
 
 class SystemUserManagementHandler extends SystemHandler {
@@ -751,16 +846,24 @@ class SystemUserManagementHandler extends SystemHandler {
     }
 
     @requireSudo
-    @param('q', Types.Content, true)
-    @param('reset', Types.Int, true)
-    async get(domainId: string, q = '', reset = 0) {
-        const target = q.trim() ? await getManageTargetUser(domainId, q) : null;
+    @param('uid', Types.Int, true)
+    @param('saved', Types.Int, true)
+    @param('sort', Types.Range(MANAGED_STUDENT_SORTS), true)
+    @param('order', Types.Range(MANAGED_STUDENT_SORT_DIRECTIONS), true)
+    async get(
+        domainId: string, uid = 0, saved = 0, sort: ManagedStudentSort = 'submit',
+        order: ManagedStudentSortDirection = 'desc',
+    ) {
+        const students = await getManagedStudents(domainId, sort, order);
+        const selectedStudent = uid ? students.find((student) => student.uid === uid) : null;
+        if (uid && !selectedStudent) throw new UserNotFoundError(uid);
         this.response.template = 'manage_user_management.html';
         this.response.body = {
-            q,
-            target,
-            canResetTarget: target ? !isPasswordResetProtectedTarget(target) : false,
-            reset,
+            students,
+            selectedStudent,
+            saved,
+            sort,
+            order,
         };
     }
 
@@ -768,14 +871,56 @@ class SystemUserManagementHandler extends SystemHandler {
     @param('uid', Types.Int)
     @param('password', Types.Password)
     @param('verifyPassword', Types.Password)
-    async postResetPassword(domainId: string, uid: number, password: string, verifyPassword: string) {
+    @param('sort', Types.Range(MANAGED_STUDENT_SORTS), true)
+    @param('order', Types.Range(MANAGED_STUDENT_SORT_DIRECTIONS), true)
+    async postResetPassword(
+        domainId: string, uid: number, password: string, verifyPassword: string, sort: ManagedStudentSort = 'submit',
+        order: ManagedStudentSortDirection = 'desc',
+    ) {
         if (password !== verifyPassword) throw new VerifyPasswordError();
-        const target = await user.getById(domainId, uid);
+        const target = await getManagedStudent(domainId, uid);
         if (!target) throw new UserNotFoundError(uid);
         checkPasswordResetTarget(target);
         await user.setPassword(uid, password);
         await token.delByUid(uid);
-        this.response.redirect = this.url('manage_user_management', { query: { q: uid, reset: uid } });
+        this.response.redirect = this.url('manage_user_management', { query: { uid, saved: 1, sort, order } });
+    }
+
+    @requireSudo
+    @param('uid', Types.Int)
+    @param('uname', Types.Username)
+    @param('mail', Types.Email)
+    @param('displayName', Types.String)
+    @param('school', Types.String)
+    @param('studentId', Types.String)
+    @param('sort', Types.Range(MANAGED_STUDENT_SORTS), true)
+    @param('order', Types.Range(MANAGED_STUDENT_SORT_DIRECTIONS), true)
+    async postEditStudent(
+        domainId: string, uid: number, uname: string, mail: string,
+        displayName: string, school: string, studentId: string, sort: ManagedStudentSort = 'submit',
+        order: ManagedStudentSortDirection = 'desc',
+    ) {
+        const target = await getManagedStudent(domainId, uid);
+        if (!target) throw new UserNotFoundError(uid);
+        const normalizedDisplayName = normalizeManagedStudentText(displayName, 'displayName');
+        const normalizedSchool = normalizeManagedStudentText(school, 'school');
+        const normalizedStudentId = normalizeManagedStudentText(studentId, 'studentId');
+        const [sameNameUser, sameMailUser] = await Promise.all([
+            uname === target.uname ? null : user.getByUname(domainId, uname),
+            mail === target.mail ? null : user.getByEmail(domainId, mail),
+        ]);
+        if (sameNameUser && sameNameUser._id !== uid) throw new UserAlreadyExistError(uname);
+        if (sameMailUser && sameMailUser._id !== uid) throw new UserAlreadyExistError(mail);
+        await user.setById(uid, {
+            uname,
+            unameLower: uname.toLowerCase(),
+            mail,
+            mailLower: handleMailLower(mail),
+            school: normalizedSchool,
+            studentId: normalizedStudentId,
+        });
+        await domain.setUserInDomain(domainId, uid, { displayName: normalizedDisplayName });
+        this.response.redirect = this.url('manage_user_management', { query: { uid, saved: 1, sort, order } });
     }
 }
 

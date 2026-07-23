@@ -1,142 +1,593 @@
-{% import "components/user.html" as user %}
 {% extends "manage_base.html" %}
 {% block manage_content %}
 <style>
-  .manage-user-tools {
+  .student-management {
     display: grid;
     gap: 1rem;
   }
-  .manage-user-tools__search {
+  .student-management__hero,
+  .student-management__editor,
+  .student-management__roster {
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, .06);
+  }
+  .student-management__hero {
     display: flex;
-    gap: .6rem;
-    align-items: flex-end;
-    max-width: 40rem;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.2rem 1.3rem;
+    background: linear-gradient(135deg, #eff6ff 0%, #fff 55%, #fdf4ff 100%);
   }
-  .manage-user-tools__search .textbox {
-    flex: 1 1 auto;
+  .student-management__hero h1,
+  .student-management__editor h2,
+  .student-management__roster h2 {
+    margin: 0;
+    color: #0f172a;
   }
-  .manage-user-tools__note {
+  .student-management__hero h1 { font-size: 1.45rem; }
+  .student-management__hero p {
+    margin: .45rem 0 0;
     color: #64748b;
-    font-size: .86rem;
-    line-height: 1.5;
+    font-size: .9rem;
+    line-height: 1.55;
   }
-  .manage-user-tools__success {
+  .student-management__count {
+    flex: 0 0 auto;
+    border-radius: 999px;
+    padding: .38rem .7rem;
+    background: #dbeafe;
+    color: #1d4ed8;
+    font-size: .82rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .student-management__success {
     border: 1px solid #bbf7d0;
-    border-radius: 8px;
+    border-radius: 10px;
+    padding: .7rem .85rem;
     background: #f0fdf4;
     color: #166534;
-    padding: .7rem .85rem;
   }
-  .manage-user-tools__warning {
-    border: 1px solid #fde68a;
-    border-radius: 8px;
-    background: #fffbeb;
-    color: #92400e;
-    padding: .7rem .85rem;
-  }
-  .manage-user-tools__form {
-    max-width: 32rem;
-  }
-  .manage-user-tools__form .textbox {
-    width: 100%;
-  }
-  .manage-user-tools__actions {
+  .student-management__editor { padding: 1.15rem 1.25rem; }
+  .student-management__editor--inline { animation: student-management-editor-expand .2s ease-out; }
+  .student-management__editor-heading,
+  .student-management__roster-heading {
     display: flex;
-    gap: .6rem;
     align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    margin-bottom: 1rem;
   }
-  @media (max-width: 40em) {
-    .manage-user-tools__search {
-      display: block;
+  .student-management__editor-heading p,
+  .student-management__roster-heading p {
+    margin: .3rem 0 0;
+    color: #64748b;
+    font-size: .83rem;
+  }
+  .student-management__editor-avatar {
+    width: 3.15rem;
+    height: 3.15rem;
+    border: 3px solid #e0ecff;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+  .student-management__form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .85rem 1rem;
+  }
+  .student-management__form label { min-width: 0; }
+  .student-management__form label > span {
+    display: block;
+    margin-bottom: .35rem;
+    color: #475569;
+    font-size: .84rem;
+    font-weight: 700;
+  }
+  .student-management__form .textbox { width: 100%; }
+  .student-management__form .student-management__wide { grid-column: 1 / -1; }
+  .student-management__form-actions {
+    display: flex;
+    align-items: center;
+    gap: .65rem;
+    flex-wrap: wrap;
+    margin-top: .25rem;
+  }
+  .student-management__hint {
+    color: #64748b;
+    font-size: .8rem;
+    line-height: 1.5;
+  }
+  .student-management__password {
+    margin-top: 1rem;
+    border-top: 1px solid #edf2f7;
+    padding-top: .85rem;
+  }
+  .student-management__password summary {
+    color: #475569;
+    cursor: pointer;
+    font-size: .86rem;
+    font-weight: 700;
+  }
+  .student-management__password-form {
+    display: flex;
+    align-items: flex-end;
+    gap: .7rem;
+    flex-wrap: wrap;
+    margin-top: .85rem;
+  }
+  .student-management__password-form label { flex: 1 1 12rem; }
+  .student-management__password-form label > span {
+    display: block;
+    margin-bottom: .35rem;
+    color: #64748b;
+    font-size: .8rem;
+  }
+  .student-management__password-form .textbox { width: 100%; }
+  .student-management__roster { padding: 1.15rem 1.25rem 1.3rem; }
+  .student-management__roster-heading { align-items: flex-start; }
+  .student-management__sort {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    flex: 0 0 auto;
+  }
+  .student-management__sort-direction {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    min-height: 2.25rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 0;
+    background: #fff;
+    color: #2563eb;
+    cursor: pointer;
+    font-size: 1.05rem;
+    font-weight: 800;
+  }
+  .student-management__sort-direction:hover,
+  .student-management__sort-direction:focus-visible {
+    border-color: #60a5fa;
+    background: #eff6ff;
+    outline: none;
+  }
+  .student-management__sort label {
+    display: flex;
+    align-items: center;
+    gap: .45rem;
+    color: #475569;
+    font-size: .83rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .student-management__sort select {
+    min-height: 2.25rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: .32rem .45rem;
+    background: #fff;
+    color: #334155;
+  }
+  .student-management__search {
+    width: min(21rem, 100%);
+    margin-bottom: 1rem;
+  }
+  .student-management__search .textbox { width: 100%; }
+  .student-management__list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: .65rem;
+  }
+  .student-note-row {
+    display: grid;
+    gap: .65rem;
+  }
+  .student-note {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(11.5rem, 1.1fr) minmax(9rem, .75fr) minmax(17rem, 1.3fr) auto;
+    align-items: center;
+    gap: 1rem;
+    min-height: 5.7rem;
+    overflow: hidden;
+    border: 1px solid rgba(148, 163, 184, .35);
+    border-radius: 10px;
+    padding: .85rem 1rem;
+    background: linear-gradient(90deg, #fff 0%, #f8fbff 100%);
+    color: #334155;
+    text-decoration: none;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, .08);
+    transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+  }
+  a.student-note,
+  a.student-note:visited,
+  a.student-note:hover,
+  a.student-note:focus,
+  a.student-note:focus-visible,
+  a.student-note:active {
+    text-decoration: none;
+  }
+  .student-note::before {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 4px;
+    background: #60a5fa;
+    content: '';
+  }
+  .student-note:hover,
+  .student-note:focus-visible {
+    z-index: 1;
+    border-color: #60a5fa;
+    box-shadow: 0 12px 24px rgba(37, 99, 235, .17);
+    color: #0f172a;
+    outline: none;
+    transform: translateY(-2px);
+  }
+  .student-note.is-selected {
+    border: 2px solid #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, .14), 0 12px 24px rgba(37, 99, 235, .18);
+  }
+  .student-note__head {
+    display: flex;
+    align-items: center;
+    gap: .65rem;
+    min-width: 0;
+  }
+  .student-note__avatar {
+    width: 2.65rem;
+    height: 2.65rem;
+    flex: 0 0 auto;
+    border: 2px solid #e0ecff;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+  .student-note__name {
+    overflow: hidden;
+    color: #0f172a;
+    font-size: 1rem;
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .student-note__uname {
+    overflow: hidden;
+    margin-top: .1rem;
+    color: #64748b;
+    font-size: .78rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .student-note__profile {
+    display: grid;
+    gap: .24rem;
+    min-width: 0;
+    color: #64748b;
+    font-size: .78rem;
+    line-height: 1.35;
+  }
+  .student-note__profile span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .student-note__activity {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .55rem;
+    min-width: 0;
+  }
+  .student-note__metric {
+    display: grid;
+    gap: .12rem;
+    min-width: 0;
+  }
+  .student-note__metric-label {
+    color: #64748b;
+    font-size: .72rem;
+  }
+  .student-note__metric-value {
+    overflow: hidden;
+    color: #1e293b;
+    font-size: .8rem;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .student-note__metric-value strong {
+    color: #2563eb;
+    font-size: 1rem;
+  }
+  .student-note__metric-value small {
+    color: #64748b;
+    font-size: .71rem;
+    font-weight: 400;
+  }
+  .student-note__edit {
+    color: #2563eb;
+    font-size: .77rem;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+  .student-management__empty {
+    border: 1px dashed #cbd5e1;
+    border-radius: 12px;
+    padding: 2rem 1rem;
+    color: #64748b;
+    text-align: center;
+  }
+  @keyframes student-management-editor-expand {
+    from { opacity: 0; transform: translateY(-.35rem); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @media (max-width: 70em) {
+    .student-note {
+      grid-template-columns: minmax(11.5rem, 1fr) minmax(9rem, 1fr) auto;
     }
-    .manage-user-tools__search .button {
-      margin-top: .6rem;
-      width: 100%;
+    .student-note__activity {
+      grid-column: 1 / -2;
+      border-top: 1px solid #e2e8f0;
+      padding-top: .65rem;
+    }
+  }
+  @media (max-width: 42em) {
+    .student-management__hero { display: block; }
+    .student-management__count { display: inline-block; margin-top: .75rem; }
+    .student-management__form { grid-template-columns: 1fr; }
+    .student-management__roster-heading { display: block; }
+    .student-management__sort { width: 100%; margin-top: .8rem; }
+    .student-management__sort label { flex: 1; }
+    .student-management__sort select { flex: 1; min-width: 0; }
+    .student-note {
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: .7rem;
+    }
+    .student-note__profile { grid-column: 2 / 3; }
+    .student-note__activity {
+      grid-column: 1 / -1;
+      border-top: 1px solid #e2e8f0;
+      padding-top: .65rem;
     }
   }
 </style>
-<div class="section">
-  <div class="section__header">
-    <h1 class="section__title">{{ _('用户管理') }}</h1>
-  </div>
-  <div class="section__body manage-user-tools">
-    {% if reset %}
-      <div class="manage-user-tools__success">{{ _('密码已重置。') }}</div>
-    {% endif %}
-    <form method="get" action="{{ url('manage_user_management') }}" class="manage-user-tools__search">
-      <label>
-        <div>{{ _('按 UID 或用户名查找学员') }}</div>
-        <input class="textbox" name="q" value="{{ q }}" placeholder="{{ _('例如：26 或 李白') }}" autocomplete="off">
-      </label>
-      <button class="rounded primary button" type="submit">
-        <span class="icon icon-search"></span>{{ _('查找') }}
-      </button>
-    </form>
-    <div class="manage-user-tools__note">
-      {{ _('此页面需要 sudo 验证。只能重置普通学员账号密码，不能重置 UID 1 或超级管理员账号。') }}
+
+<div class="student-management">
+  <section class="student-management__hero">
+    <div>
+      <h1>{{ _('学员管理') }}</h1>
+      <p>{{ _('当前课程内的普通学员会直接显示在下方。默认按刷题量排序，可按近期活动调整。') }}</p>
     </div>
-  </div>
-</div>
+    <span class="student-management__count">{{ students.length }} {{ _('位学员') }}</span>
+  </section>
 
-{% if q and not target %}
-<div class="section">
-  <div class="section__body">
-    <div class="manage-user-tools__warning">{{ _('未找到用户。') }}</div>
-  </div>
-</div>
-{% endif %}
+  {% if saved %}
+    <div class="student-management__success">{{ _('学员操作已完成。') }}</div>
+  {% endif %}
 
-{% if target %}
-<div class="section">
-  <div class="section__header">
-    <h1 class="section__title">{{ _('重置学员密码') }}</h1>
-  </div>
-  <div class="section__body manage-user-tools">
-    <table class="data-table">
-      <colgroup>
-        <col class="col--uid">
-        <col class="col--user">
-        <col>
-        <col>
-      </colgroup>
-      <thead>
-        <tr>
-          <th>{{ _('UID') }}</th>
-          <th>{{ _('Username') }}</th>
-          <th>{{ _('Email') }}</th>
-          <th>{{ _('Privilege') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>{{ target._id }}</td>
-          <td>{{ user.render_inline(target) }}</td>
-          <td>{{ target.mail }}</td>
-          <td>{{ target.priv }}</td>
-        </tr>
-      </tbody>
-    </table>
-    {% if not canResetTarget %}
-      <div class="manage-user-tools__warning">{{ _('该账号是系统账号或超级管理员，不能在这里重置密码。') }}</div>
-    {% else %}
-      <form method="post" class="manage-user-tools__form">
-        <input type="hidden" name="operation" value="reset_password">
-        <input type="hidden" name="uid" value="{{ target._id }}">
+  <section class="student-management__roster">
+    <div class="student-management__roster-heading">
+      <div>
+        <h2>{{ _('学员列表') }}</h2>
+        <p>{{ _('输入姓名、用户名、UID、邮箱、学校或学号即可筛选。') }}</p>
+      </div>
+      <form method="get" class="student-management__sort" data-student-sort-form>
+        {% if selectedStudent %}<input type="hidden" name="uid" value="{{ selectedStudent.uid }}">{% endif %}
+        <input type="hidden" name="order" value="{{ order }}" data-student-sort-order>
+        <button class="student-management__sort-direction" type="button" data-student-sort-direction aria-label="{{ _('切换排序方向') }}" title="{{ _('切换排序方向') }}">
+          <span data-student-sort-arrow aria-hidden="true">{% if order == 'asc' %}↑{% else %}↓{% endif %}</span>
+        </button>
         <label>
-          <div>{{ _('新密码') }}</div>
-          <input class="textbox" type="password" name="password" autocomplete="new-password" required>
+          <span>{{ _('排序') }}</span>
+          <select name="sort" data-student-sort-select>
+            <option value="submit"{% if sort == 'submit' %} selected{% endif %}>{{ _('刷题量') }}</option>
+            <option value="login"{% if sort == 'login' %} selected{% endif %}>{{ _('最近登录') }}</option>
+            <option value="practice"{% if sort == 'practice' %} selected{% endif %}>{{ _('最近刷题') }}</option>
+          </select>
         </label>
-        <label>
-          <div>{{ _('确认新密码') }}</div>
-          <input class="textbox" type="password" name="verifyPassword" autocomplete="new-password" required>
-        </label>
-        <div class="manage-user-tools__actions">
-          <button class="rounded primary button" type="submit">{{ _('重置密码') }}</button>
-          <span class="manage-user-tools__note">{{ _('提交后该学员需要使用新密码登录。') }}</span>
-        </div>
       </form>
+    </div>
+    {% if students.length %}
+      <div class="student-management__search">
+        <input class="textbox" type="search" data-student-search placeholder="{{ _('筛选学员') }}" autocomplete="off">
+      </div>
+      <div class="student-management__list" data-student-notes>
+        {% for student in students %}
+          <div class="student-note-row" data-student-note-row>
+            <a class="student-note{% if selectedStudent and selectedStudent.uid == student.uid %} is-selected{% endif %}" href="{{ url('manage_user_management', query={uid: student.uid, sort: sort, order: order}) }}#student-editor" data-student-note data-student-search-text="{{ student.searchText }}" aria-expanded="{% if selectedStudent and selectedStudent.uid == student.uid %}true{% else %}false{% endif %}">
+              <div class="student-note__head">
+                <img class="student-note__avatar" loading="lazy" src="{{ avatarUrl(student.avatar|default('')) }}" alt="">
+                <div>
+                  <div class="student-note__name">{{ student.displayName }}</div>
+                  <div class="student-note__uname">@{{ student.uname }}</div>
+                </div>
+              </div>
+              <div class="student-note__profile">
+                <span>UID {{ student.uid }}</span>
+                {% if student.studentId %}<span>{{ _('学号') }}：{{ student.studentId }}</span>{% endif %}
+                {% if student.school %}<span>{{ student.school }}</span>{% endif %}
+                {% if not student.studentId and not student.school %}<span>{{ student.mail }}</span>{% endif %}
+              </div>
+              <div class="student-note__activity">
+                <span class="student-note__metric">
+                  <span class="student-note__metric-label">{{ _('刷题量') }}</span>
+                  <span class="student-note__metric-value"><strong>{{ student.submitCount }}</strong> <small>{{ _('次提交') }} · AC {{ student.acceptedCount }}</small></span>
+                </span>
+                <span class="student-note__metric">
+                  <span class="student-note__metric-label">{{ _('最近登录') }}</span>
+                  <span class="student-note__metric-value">{% if student.loginAt %}{{ datetimeSpan(student.loginAt, false)|safe }}{% else %}-{% endif %}</span>
+                </span>
+                <span class="student-note__metric">
+                  <span class="student-note__metric-label">{{ _('最近刷题') }}</span>
+                  <span class="student-note__metric-value">{% if student.lastSubmitAt %}{{ datetimeSpan(student.lastSubmitAt, false)|safe }}{% else %}-{% endif %}</span>
+                </span>
+              </div>
+              <span class="student-note__edit"><span class="icon icon-edit"></span> {{ _('编辑') }}</span>
+            </a>
+            {% if selectedStudent and selectedStudent.uid == student.uid %}
+              <section class="student-management__editor student-management__editor--inline" id="student-editor" data-student-editor>
+                <div class="student-management__editor-heading">
+                  <div>
+                    <h2>{{ _('编辑学员信息') }}</h2>
+                    <p>UID {{ selectedStudent.uid }} · @{{ selectedStudent.uname }}</p>
+                  </div>
+                  <img class="student-management__editor-avatar" src="{{ avatarUrl(selectedStudent.avatar|default('')) }}" alt="{{ selectedStudent.displayName }}">
+                </div>
+                <form method="post" class="student-management__form">
+                  <input type="hidden" name="operation" value="edit_student">
+                  <input type="hidden" name="uid" value="{{ selectedStudent.uid }}">
+                  <input type="hidden" name="sort" value="{{ sort }}">
+                  <input type="hidden" name="order" value="{{ order }}">
+                  <label>
+                    <span>{{ _('用户名') }}</span>
+                    <input class="textbox" name="uname" value="{{ selectedStudent.uname }}" autocomplete="username" required>
+                  </label>
+                  <label>
+                    <span>{{ _('显示姓名') }}</span>
+                    <input class="textbox" name="displayName" value="{{ selectedStudent.displayName }}" autocomplete="name">
+                  </label>
+                  <label>
+                    <span>{{ _('邮箱') }}</span>
+                    <input class="textbox" type="email" name="mail" value="{{ selectedStudent.mail }}" autocomplete="email" required>
+                  </label>
+                  <label>
+                    <span>{{ _('学号') }}</span>
+                    <input class="textbox" name="studentId" value="{{ selectedStudent.studentId|default('') }}" autocomplete="off">
+                  </label>
+                  <label class="student-management__wide">
+                    <span>{{ _('学校') }}</span>
+                    <input class="textbox" name="school" value="{{ selectedStudent.school|default('') }}" autocomplete="organization">
+                  </label>
+                  <div class="student-management__wide student-management__form-actions">
+                    <button class="rounded primary button" type="submit"><span class="icon icon-save"></span>{{ _('保存学员信息') }}</button>
+                    <a class="rounded button" href="{{ url('manage_user_management', query={sort: sort, order: order}) }}">{{ _('取消') }}</a>
+                    <span class="student-management__hint">{{ _('用户名和邮箱必须保持唯一。显示姓名只在当前课程中使用。') }}</span>
+                  </div>
+                </form>
+                <details class="student-management__password">
+                  <summary>{{ _('需要重置登录密码？') }}</summary>
+                  <form method="post" class="student-management__password-form">
+                    <input type="hidden" name="operation" value="reset_password">
+                    <input type="hidden" name="uid" value="{{ selectedStudent.uid }}">
+                    <input type="hidden" name="sort" value="{{ sort }}">
+                    <input type="hidden" name="order" value="{{ order }}">
+                    <label>
+                      <span>{{ _('新密码') }}</span>
+                      <input class="textbox" type="password" name="password" autocomplete="new-password" required>
+                    </label>
+                    <label>
+                      <span>{{ _('确认新密码') }}</span>
+                      <input class="textbox" type="password" name="verifyPassword" autocomplete="new-password" required>
+                    </label>
+                    <button class="rounded button" type="submit">{{ _('重置密码') }}</button>
+                  </form>
+                </details>
+              </section>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+      <div class="student-management__empty" data-student-empty hidden>{{ _('没有匹配的学员。') }}</div>
+    {% else %}
+      <div class="student-management__empty">{{ _('当前课程还没有已加入的普通学员。') }}</div>
     {% endif %}
-  </div>
+  </section>
 </div>
-{% endif %}
+
+<script>
+  (() => {
+    const sortForm = document.querySelector('[data-student-sort-form]');
+    const sortSelect = document.querySelector('[data-student-sort-select]');
+    const sortOrder = document.querySelector('[data-student-sort-order]');
+    const sortDirection = document.querySelector('[data-student-sort-direction]');
+    const sortArrow = document.querySelector('[data-student-sort-arrow]');
+    const syncSortDirection = () => {
+      if (!sortOrder || !sortDirection || !sortArrow) return;
+      const ascending = sortOrder.value === 'asc';
+      sortArrow.textContent = ascending ? '↑' : '↓';
+      const label = ascending ? '切换为从高到低排序' : '切换为从低到高排序';
+      sortDirection.setAttribute('aria-label', label);
+      sortDirection.setAttribute('title', label);
+    };
+    if (sortForm && sortSelect && sortOrder && sortDirection) {
+      syncSortDirection();
+      sortSelect.addEventListener('change', () => sortForm.requestSubmit());
+      sortDirection.addEventListener('click', () => {
+        sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc';
+        syncSortDirection();
+        sortForm.requestSubmit();
+      });
+    }
+
+    const input = document.querySelector('[data-student-search]');
+    const cards = Array.from(document.querySelectorAll('[data-student-note]'));
+    const empty = document.querySelector('[data-student-empty]');
+    const filter = () => {
+      if (!input || !empty) return;
+      const query = input.value.trim().toLocaleLowerCase();
+      let visible = 0;
+      cards.forEach((card) => {
+        const matched = !query || card.dataset.studentSearchText.includes(query);
+        const row = card.closest('[data-student-note-row]');
+        if (row) row.hidden = !matched;
+        if (matched) visible += 1;
+      });
+      empty.hidden = visible !== 0;
+    };
+    if (input && cards.length && empty) input.addEventListener('input', filter);
+
+    let editorLoading = false;
+    cards.forEach((card) => {
+      card.addEventListener('click', async (event) => {
+        if (editorLoading || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        const row = card.closest('[data-student-note-row]');
+        if (!row) return;
+        const openEditor = document.querySelector('[data-student-editor]');
+        if (card.classList.contains('is-selected') && openEditor && openEditor.parentElement === row) {
+          openEditor.remove();
+          card.classList.remove('is-selected');
+          card.setAttribute('aria-expanded', 'false');
+          const url = new URL(window.location.href);
+          url.searchParams.delete('uid');
+          url.searchParams.delete('saved');
+          url.hash = '';
+          window.history.pushState({}, '', url);
+          return;
+        }
+        const href = card.href;
+        editorLoading = true;
+        card.dataset.studentLoading = 'true';
+        card.setAttribute('aria-busy', 'true');
+        try {
+          const response = await fetch(href, { credentials: 'same-origin' });
+          if (!response.ok) throw new Error('Unable to load student editor');
+          const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+          const editor = page.querySelector('[data-student-editor]');
+          if (!editor) throw new Error('Student editor is unavailable');
+          document.querySelector('[data-student-editor]')?.remove();
+          cards.forEach((item) => {
+            item.classList.remove('is-selected');
+            item.setAttribute('aria-expanded', 'false');
+          });
+          row.append(editor);
+          card.classList.add('is-selected');
+          card.setAttribute('aria-expanded', 'true');
+          window.history.pushState({}, '', href);
+        } catch {
+          window.location.assign(href);
+        } finally {
+          editorLoading = false;
+          delete card.dataset.studentLoading;
+          card.removeAttribute('aria-busy');
+        }
+      });
+    });
+  })();
+</script>
 {% endblock %}

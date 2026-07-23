@@ -234,8 +234,7 @@ class HomeworkMainHandler extends Handler {
         const canViewAllHomework = this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_HOMEWORK);
         const canManageHomework = canViewAllHomework
             || this.user.hasPerm(PERM.PERM_CREATE_HOMEWORK)
-            || this.user.hasPerm(PERM.PERM_EDIT_HOMEWORK)
-            || this.user.hasPerm(PERM.PERM_EDIT_HOMEWORK_SELF);
+            || this.user.hasPerm(PERM.PERM_EDIT_HOMEWORK);
         const canCreateHomework = this.user.hasPerm(PERM.PERM_CREATE_HOMEWORK);
         const view = canManageHomework && requestedView !== 'assignments' ? 'students' : 'assignments';
         const groups = canViewAllHomework
