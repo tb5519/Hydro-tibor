@@ -5,12 +5,15 @@ import selectUser from 'vj/components/selectUser';
 import { AutoloadPage } from 'vj/misc/Page';
 import { i18n, request, tpl } from 'vj/utils';
 
-function handleNavLogoutClick(ev) {
+async function handleNavLogoutClick(ev) {
   const $logoutLink = $(ev.currentTarget);
-  request
-    .post($logoutLink.attr('href'))
-    .then(() => window.location.reload());
   ev.preventDefault();
+  try {
+    const res = await request.post($logoutLink.attr('href'));
+    window.location.href = res.url || window.location.href;
+  } catch (error) {
+    Notification.error(error.message);
+  }
 }
 
 async function handlerSwitchAccount(ev) {

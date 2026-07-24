@@ -791,6 +791,9 @@
                           </label>
                         {% endfor %}
                       </div>
+                      {% if not selectedStudentDefaultDomain %}
+                        <span class="student-management__hint">{{ _('尚未设置默认域，请选择一个域后保存。') }}</span>
+                      {% endif %}
                     {% else %}
                       <input type="hidden" name="defaultDomain" value="">
                       <span class="student-management__hint">{{ _('暂无可选择的域') }}</span>

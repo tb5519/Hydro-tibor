@@ -890,10 +890,10 @@ async function getManagedStudentDomains(domainId: string, uid: number) {
     const storedDefaultDomain = typeof userDoc?.defaultDomain === 'string'
         ? userDoc.defaultDomain.toLowerCase()
         : '';
-    const selectedDefaultDomain = domains.find((item) => item.id.toLowerCase() === storedDefaultDomain)?.id
-        || domains.find((item) => item.isCurrent)?.id
-        || domains[0]?.id
-        || '';
+    // Do not infer a default from the management page's current domain. An
+    // inferred checked radio looked saved in the UI, while login correctly had
+    // no persisted preference to follow.
+    const selectedDefaultDomain = domains.find((item) => item.id.toLowerCase() === storedDefaultDomain)?.id || '';
     return { domains, selectedDefaultDomain };
 }
 

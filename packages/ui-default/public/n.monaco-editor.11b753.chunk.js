@@ -1,4 +1,4 @@
-!function(){try{var e="undefined"!=typeof window?window:"undefined"!=typeof global?global:"undefined"!=typeof globalThis?globalThis:"undefined"!=typeof self?self:{};e.SENTRY_RELEASE={id:"409ed04a578bdc8c2235e125a14bee71470a0e98"};var n=(new e.Error).stack;n&&(e._sentryDebugIds=e._sentryDebugIds||{},e._sentryDebugIds[n]="6c3060f3-cf3d-4ef1-95d5-bd99f6474897",e._sentryDebugIdIdentifier="sentry-dbid-6c3060f3-cf3d-4ef1-95d5-bd99f6474897");}catch(e){}}();
+!function(){try{var e="undefined"!=typeof window?window:"undefined"!=typeof global?global:"undefined"!=typeof globalThis?globalThis:"undefined"!=typeof self?self:{};e.SENTRY_RELEASE={id:"a7577f5f4b6a7d0195d70c49da931a72ff902622"};var n=(new e.Error).stack;n&&(e._sentryDebugIds=e._sentryDebugIds||{},e._sentryDebugIds[n]="6c3060f3-cf3d-4ef1-95d5-bd99f6474897",e._sentryDebugIdIdentifier="sentry-dbid-6c3060f3-cf3d-4ef1-95d5-bd99f6474897");}catch(e){}}();
 "use strict";
 (self["webpackChunk_hydrooj_ui_default"] = self["webpackChunk_hydrooj_ui_default"] || []).push([["n.monaco-editor"],{
 

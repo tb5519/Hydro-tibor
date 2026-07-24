@@ -121,12 +121,12 @@ async function successfulAuth(this: Handler, udoc: User) {
 
 async function getDefaultDomainLoginRedirect(handler: Handler, udoc: User) {
     const defaultDomain = typeof udoc._udoc.defaultDomain === 'string' ? udoc._udoc.defaultDomain.trim() : '';
-    if (!defaultDomain) return handler.url('homepage');
+    if (!defaultDomain) return '';
     const ddoc = await domain.get(defaultDomain);
     const membership = ddoc
         ? await domain.collUser.findOne({ domainId: ddoc._id, uid: udoc._id, join: true })
         : null;
-    return ddoc && membership ? handler.url('homepage', { domainId: ddoc._id }) : handler.url('homepage');
+    return ddoc && membership ? handler.url('homepage', { domainId: ddoc._id }) : '';
 }
 
 class UserLoginHandler extends Handler {
@@ -177,11 +177,11 @@ class UserLoginHandler extends Handler {
         if (!udoc.hasPriv(PRIV.PRIV_USER_PROFILE)) throw new BlacklistedError(uname, udoc.banReason);
         await successfulAuth.call(this, udoc);
         this.session.save = rememberme;
-        // An explicit target (for example, a protected page the user was trying
-        // to visit) still takes priority. Otherwise, always enter the
-        // student's selected default domain instead of returning to whichever
-        // domain happened to host the login form.
-        this.response.redirect = redirect || await getDefaultDomainLoginRedirect(this, udoc);
+        // A saved student preference must win over the automatic login-guard
+        // redirect. Otherwise a student who logs in from /d/system/login is
+        // always sent back to system instead of their selected default domain.
+        const defaultRedirect = await getDefaultDomainLoginRedirect(this, udoc);
+        this.response.redirect = defaultRedirect || redirect || this.url('homepage');
     }
 }
 
@@ -294,7 +294,8 @@ class UserWebauthnHandler extends Handler {
             const authenticatedUser = await user.getById(domainId, udoc._id);
             await successfulAuth.call(this, authenticatedUser);
             await token.del(challenge, token.TYPE_WEBAUTHN);
-            this.response.redirect = redirect || await getDefaultDomainLoginRedirect(this, authenticatedUser);
+            const defaultRedirect = await getDefaultDomainLoginRedirect(this, authenticatedUser);
+            this.response.redirect = defaultRedirect || redirect || this.url('homepage');
         } else {
             await token.update(challenge, token.TYPE_WEBAUTHN, 60, { verified: true });
             this.back();
@@ -312,7 +313,7 @@ class UserLogoutHandler extends Handler {
     async post({ domainId }) {
         const redirect = await getDefaultDomainLoginRedirect(this, this.user);
         await successfulAuth.call(this, await user.getById(domainId, 0));
-        this.response.redirect = redirect;
+        this.response.redirect = redirect || this.url('homepage');
     }
 }
 
