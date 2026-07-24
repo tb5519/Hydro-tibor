@@ -90,7 +90,7 @@ export interface Udoc extends Record<string, any> {
     loginat: Date;
     ip: string[];
     loginip: string;
-    /** Domain entered after a regular account/password login when no explicit redirect is requested. */
+    /** Domain entered after a login when no explicit redirect is requested. */
     defaultDomain?: string;
 }
 

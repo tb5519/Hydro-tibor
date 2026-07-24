@@ -1,4 +1,4 @@
-!function(){try{var e="undefined"!=typeof window?window:"undefined"!=typeof global?global:"undefined"!=typeof globalThis?globalThis:"undefined"!=typeof self?self:{};e.SENTRY_RELEASE={id:"d20716eb55585a31549f949f536d330bb1d762d6"};var n=(new e.Error).stack;n&&(e._sentryDebugIds=e._sentryDebugIds||{},e._sentryDebugIds[n]="53c9788c-ff48-4ce9-bbf6-b9913fff473b",e._sentryDebugIdIdentifier="sentry-dbid-53c9788c-ff48-4ce9-bbf6-b9913fff473b");}catch(e){}}();
+!function(){try{var e="undefined"!=typeof window?window:"undefined"!=typeof global?global:"undefined"!=typeof globalThis?globalThis:"undefined"!=typeof self?self:{};e.SENTRY_RELEASE={id:"970d75aa8607cff89eb0648ee23d6fafc2d8eca2"};var n=(new e.Error).stack;n&&(e._sentryDebugIds=e._sentryDebugIds||{},e._sentryDebugIds[n]="53c9788c-ff48-4ce9-bbf6-b9913fff473b",e._sentryDebugIdIdentifier="sentry-dbid-53c9788c-ff48-4ce9-bbf6-b9913fff473b");}catch(e){}}();
 (self["webpackChunk_hydrooj_ui_default"] = self["webpackChunk_hydrooj_ui_default"] || []).push([["n.prismjs"],{
 
 /***/ "../../node_modules/prismjs/components.js"

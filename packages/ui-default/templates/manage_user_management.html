@@ -333,8 +333,8 @@
   }
   .student-management__domain-info strong { font-size: .76rem; }
   .student-management__domain-info small { margin-left: .2rem; color: #64748b; font-size: .67rem; font-weight: 400; }
-  .student-management__domain-current {
-    display: inline-flex !important;
+  .student-management__domain-default {
+    display: none !important;
     flex: 0 0 auto;
     align-items: center;
     margin: 0 0 0 auto !important;
@@ -347,6 +347,7 @@
     font-weight: 800;
     white-space: nowrap;
   }
+  .student-management__domain-choice > input:checked ~ .student-management__domain-default { display: inline-flex !important; }
   .student-management__sort {
     display: flex;
     align-items: center;
@@ -786,7 +787,7 @@
                             <input type="radio" name="defaultDomain" value="{{ joinedDomain.id }}"{% if selectedStudentDefaultDomain == joinedDomain.id %} checked{% endif %} required>
                             <span class="student-management__domain-check"><span class="icon icon-check" aria-hidden="true"></span></span>
                             <span class="student-management__domain-info"><strong>{{ joinedDomain.name }}</strong><small>{{ joinedDomain.id }}</small></span>
-                            {% if joinedDomain.isCurrent %}<span class="student-management__domain-current">{{ _('当前课程') }}</span>{% endif %}
+                            <span class="student-management__domain-default">{{ _('默认') }}</span>
                           </label>
                         {% endfor %}
                       </div>

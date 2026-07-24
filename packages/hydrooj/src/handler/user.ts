@@ -177,8 +177,11 @@ class UserLoginHandler extends Handler {
         if (!udoc.hasPriv(PRIV.PRIV_USER_PROFILE)) throw new BlacklistedError(uname, udoc.banReason);
         await successfulAuth.call(this, udoc);
         this.session.save = rememberme;
-        this.response.redirect = redirect || ((this.request.referer || '/login').endsWith('/login')
-            ? await getDefaultDomainLoginRedirect(this, udoc) : this.request.referer);
+        // An explicit target (for example, a protected page the user was trying
+        // to visit) still takes priority. Otherwise, always enter the
+        // student's selected default domain instead of returning to whichever
+        // domain happened to host the login form.
+        this.response.redirect = redirect || await getDefaultDomainLoginRedirect(this, udoc);
     }
 }
 
@@ -288,10 +291,10 @@ class UserWebauthnHandler extends Handler {
         authenticator.counter = verification.authenticationInfo.newCounter;
         await user.setById(udoc._id, { authenticators: udoc._authenticators });
         if (tdoc.uid === 'login') {
-            await successfulAuth.call(this, await user.getById(domainId, udoc._id));
+            const authenticatedUser = await user.getById(domainId, udoc._id);
+            await successfulAuth.call(this, authenticatedUser);
             await token.del(challenge, token.TYPE_WEBAUTHN);
-            this.response.redirect = redirect || ((this.request.referer || '/login').endsWith('/login')
-                ? this.url('homepage') : this.request.referer);
+            this.response.redirect = redirect || await getDefaultDomainLoginRedirect(this, authenticatedUser);
         } else {
             await token.update(challenge, token.TYPE_WEBAUTHN, 60, { verified: true });
             this.back();
