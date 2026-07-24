@@ -1,3 +1,223 @@
-(()=>{(function(){try{var i=typeof window<"u"?window:typeof global<"u"?global:typeof globalThis<"u"?globalThis:typeof self<"u"?self:{};i.SENTRY_RELEASE={id:"709c947e6fe386902dec0a2792985f66761aaaa2"};var u=new i.Error().stack;u&&(i._sentryDebugIds=i._sentryDebugIds||{},i._sentryDebugIds[u]="1cdf6f66-2bfd-4b31-aeb2-dbd5cafa8c8e",i._sentryDebugIdIdentifier="sentry-dbid-1cdf6f66-2bfd-4b31-aeb2-dbd5cafa8c8e")}catch{}})();(()=>{"use strict";const i=new Map;function u(e){return new ReadableStream({start(s){e.onmessage=({data:n})=>n==="end"?s.close():n==="abort"?s.error("Aborted the download"):s.enqueue(n)},cancel(s){console.log("user aborted",s),e.postMessage({abort:!0})}})}self.onmessage=e=>{if(e.data==="ping")return;const s=e.data,n=s.url||`${self.registration.scope+Math.random()}/${typeof s=="string"?s:s.filename}`,t=e.ports[0],r=Array.from({length:3});r[1]=s,r[2]=t,e.data.readableStream?r[0]=e.data.readableStream:e.data.transferringReadable?t.onmessage=l=>{t.onmessage=null,r[0]=l.data.readableStream}:r[0]=u(t),i.set(n,r),t.postMessage({download:n})};function m(e){const s=i.get(e.request.url),[n,t,r]=s;i.delete(e.request.url);const l=new Headers({"Content-Type":"application/octet-stream; charset=utf-8","Content-Security-Policy":"default-src 'none'","X-Content-Security-Policy":"default-src 'none'","X-WebKit-CSP":"default-src 'none'","X-XSS-Protection":"1; mode=block"}),a=new Headers(t.headers||{});a.has("Content-Length")&&l.set("Content-Length",a.get("Content-Length")),a.has("Content-Disposition")&&l.set("Content-Disposition",a.get("Content-Disposition")),t.size&&(console.warn("Depricated"),l.set("Content-Length",t.size));let d=typeof t=="string"?t:t.filename;d&&(console.warn("Depricated"),d=encodeURIComponent(d).replace(/['()]/g,escape).replace(/\*/g,"%2A"),l.set("Content-Disposition",`attachment; filename*=UTF-8''${d}`)),e.respondWith(new Response(n,{headers:l})),r.postMessage({debug:"Download started"})}self.addEventListener("notificationclick",e=>{console.log("On notification click: ",e.notification.tag),e.notification.close(),e.notification.tag.startsWith("message-")&&e.waitUntil(self.clients.matchAll({type:"window"}).then(s=>{for(const n of s)if(n.url==="/home/messages"&&"focus"in n)return n.focus();return self.clients.openWindow&&self.clients.openWindow("/home/messages"),null}))});const h="ui-resources-cache",C=[".worker.js","fonts"];function p(e){return!(!e.split("?")[0].split("/").pop()||!e.split("?")[0].split("/").pop().includes(".")||e.includes("?v="))}function w(e){return!p(e.url)||e.headers.get("Pragma")==="no-cache"?!1:["get","head","options"].includes(e.method.toLowerCase())}function L(e){return!(!p(e)||C.filter(s=>e.includes(s)).length)}let o=null;function S(e){o=e,o.hosts||(o.hosts=[]),o.domains=Array.from(new Set([location.host,...o.domains||[]])),console.log("Config:",o)}self.addEventListener("install",e=>e.waitUntil((async()=>{if(o!=null&&o.preload){const[s,n]=await Promise.all([caches.open(h),fetch("/manifest.json").then(r=>r.json())]),t=Object.values(n).filter(L).map(r=>new URL(r,o.preload).toString());await s.addAll(t)}self.skipWaiting()})())),self.addEventListener("activate",e=>{e.waitUntil(self.clients.claim());const s=[h];caches.keys().then(n=>n.filter(t=>t.startsWith("precache-")).filter(t=>!s.includes(t)).map(t=>caches.delete(t)))});async function R(e){const s=w(e);for(const n of o.domains||[]){const t=new URL(e.url);t.host=n;try{console.log("From ",t.toString());const r=await fetch(t,{method:e.method,credentials:s?"same-origin":"include",headers:e.headers,redirect:e.redirect,keepalive:e.keepalive,referrer:e.referrer,referrerPolicy:e.referrerPolicy,signal:e.signal,...e.method.toLowerCase()==="get"?{}:{body:e.body}});if(r.ok)return console.log("Load success from ",t.toString()),r}catch(r){console.warn(t.toString()," Load fail ",r)}}return null}function b(e){const s=new URL(e),n=s.pathname;return(n.startsWith("/fs/")||n.toLowerCase().includes("x-amz"))&&(s.search=""),s.toString()}async function k(e,s,n){const t=b(e.url),r=new URL(t),a=!o.assets.some(f=>e.url.startsWith(f))&&o.domains.length>1&&o.domains.includes(r.hostname)&&r.origin===location.origin;let d=[t];if(a&&(d=o.domains.map(f=>{const y=new URL(e.url);return y.host=f,b(y.toString())})),!w(e))return a?n():fetch(e);const g=(await Promise.all(d.map(f=>caches.match(f)))).find(f=>f);if(g)return console.debug("Serve from cache %s <- %s",e.url,g.url),g;const[P,c]=await Promise.all([caches.open(s),n().catch(()=>null)]);return(c==null?void 0:c.status)===206?c:c!=null&&c.ok?(console.log(`Cached ${t}`),P.put(t,c.clone()),c):(console.log(`Failed to cache ${t}`,c),fetch(e))}self.addEventListener("fetch",e=>{var s,n;if(e.request.url.endsWith("/ping")){e.respondWith(new Response("pong"));return}if(e.request.url.endsWith("/service-worker-config")){e.request.json().then(a=>S(a)),e.respondWith(new Response("ok"));return}if(i.get(e.request.url)){m(e);return}if(!["get","post","head"].includes(e.request.method.toLowerCase())||!o)return;const t=new URL(e.request.url),r=o.assets.some(a=>e.request.url.startsWith(a)),l=!r&&o.domains.length>1&&o.domains.includes(t.hostname)&&t.origin===location.origin;!r&&!o.hosts.some(a=>e.request.url.startsWith(a))||(n=(s=e.request.headers.get("range"))==null?void 0:s.trim())!=null&&n.length||e.respondWith((async()=>k(e.request,r?"assets":h,()=>l?R(e.request):fetch(t,{method:e.request.method,headers:e.request.headers,redirect:e.request.redirect,keepalive:e.request.keepalive,referrer:e.request.referrer,referrerPolicy:e.request.referrerPolicy,signal:e.request.signal})))())})})();})();
+!function(){try{var e="undefined"!=typeof window?window:"undefined"!=typeof global?global:"undefined"!=typeof globalThis?globalThis:"undefined"!=typeof self?self:{};e.SENTRY_RELEASE={id:"d20716eb55585a31549f949f536d330bb1d762d6"};var n=(new e.Error).stack;n&&(e._sentryDebugIds=e._sentryDebugIds||{},e._sentryDebugIds[n]="6c1249f8-e7cf-4744-bc89-b777be561ae4",e._sentryDebugIdIdentifier="sentry-dbid-6c1249f8-e7cf-4744-bc89-b777be561ae4");}catch(e){}}();
+/******/ (() => { // webpackBootstrap
+/******/ 	"use strict";
+/*!***************************!*\
+  !*** ./service-worker.ts ***!
+  \***************************/
 
-//# sourceMappingURL=service-worker.js.map?e79b00
+const map = /* @__PURE__ */ new Map();
+function createStream(port) {
+  return new ReadableStream({
+    start(controller) {
+      port.onmessage = ({ data }) => {
+        if (data === "end") return controller.close();
+        if (data === "abort") return controller.error("Aborted the download");
+        return controller.enqueue(data);
+      };
+    },
+    cancel(reason) {
+      console.log("user aborted", reason);
+      port.postMessage({ abort: true });
+    }
+  });
+}
+self.onmessage = (event) => {
+  if (event.data === "ping") return;
+  const data = event.data;
+  const downloadUrl = data.url || `${self.registration.scope + Math.random()}/${typeof data === "string" ? data : data.filename}`;
+  const port = event.ports[0];
+  const metadata = Array.from({ length: 3 });
+  metadata[1] = data;
+  metadata[2] = port;
+  if (event.data.readableStream) {
+    metadata[0] = event.data.readableStream;
+  } else if (event.data.transferringReadable) {
+    port.onmessage = (evt) => {
+      port.onmessage = null;
+      metadata[0] = evt.data.readableStream;
+    };
+  } else metadata[0] = createStream(port);
+  map.set(downloadUrl, metadata);
+  port.postMessage({ download: downloadUrl });
+};
+function streamsaver(event) {
+  const hijacke = map.get(event.request.url);
+  const [stream, data, port] = hijacke;
+  map.delete(event.request.url);
+  const responseHeaders = new Headers({
+    "Content-Type": "application/octet-stream; charset=utf-8",
+    "Content-Security-Policy": "default-src 'none'",
+    "X-Content-Security-Policy": "default-src 'none'",
+    "X-WebKit-CSP": "default-src 'none'",
+    "X-XSS-Protection": "1; mode=block"
+  });
+  const headers = new Headers(data.headers || {});
+  if (headers.has("Content-Length")) {
+    responseHeaders.set("Content-Length", headers.get("Content-Length"));
+  }
+  if (headers.has("Content-Disposition")) {
+    responseHeaders.set("Content-Disposition", headers.get("Content-Disposition"));
+  }
+  if (data.size) {
+    console.warn("Depricated");
+    responseHeaders.set("Content-Length", data.size);
+  }
+  let fileName = typeof data === "string" ? data : data.filename;
+  if (fileName) {
+    console.warn("Depricated");
+    fileName = encodeURIComponent(fileName).replace(/['()]/g, escape).replace(/\*/g, "%2A");
+    responseHeaders.set("Content-Disposition", `attachment; filename*=UTF-8''${fileName}`);
+  }
+  event.respondWith(new Response(stream, { headers: responseHeaders }));
+  port.postMessage({ debug: "Download started" });
+}
+self.addEventListener("notificationclick", (event) => {
+  console.log("On notification click: ", event.notification.tag);
+  event.notification.close();
+  if (!event.notification.tag.startsWith("message-")) return;
+  event.waitUntil(self.clients.matchAll({ type: "window" }).then((clientList) => {
+    for (const client of clientList) {
+      if (client.url === "/home/messages" && "focus" in client) return client.focus();
+    }
+    if (self.clients.openWindow) self.clients.openWindow("/home/messages");
+    return null;
+  }));
+});
+const PRECACHE = "ui-resources-cache";
+const DO_NOT_PRECACHE = [".worker.js", "fonts"];
+function shouldCachePath(path) {
+  if (!path.split("?")[0].split("/").pop()) return false;
+  if (!path.split("?")[0].split("/").pop().includes(".")) return false;
+  if ( true && (path.includes(".hot-update.") || path.includes("?version="))) return false;
+  if (path.includes("?v=")) return false;
+  return true;
+}
+function shouldCache(request) {
+  if (!shouldCachePath(request.url)) return false;
+  if (request.headers.get("Pragma") === "no-cache") return false;
+  return ["get", "head", "options"].includes(request.method.toLowerCase());
+}
+function shouldPreCache(name) {
+  if (!shouldCachePath(name)) return false;
+  if (DO_NOT_PRECACHE.filter((i) => name.includes(i)).length) return false;
+  return true;
+}
+let config = null;
+function initConfig(cfg) {
+  config = cfg;
+  config.hosts || (config.hosts = []);
+  config.domains = Array.from(/* @__PURE__ */ new Set([location.host, ...config.domains || []]));
+  console.log("Config:", config);
+}
+self.addEventListener("install", (event) => event.waitUntil((async () => {
+  if (false) // removed by dead control flow
+{}
+  self.skipWaiting();
+})()));
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
+  const valid = [PRECACHE];
+  caches.keys().then((names) => names.filter((name) => name.startsWith("precache-")).filter((name) => !valid.includes(name)).map((p) => caches.delete(p)));
+});
+async function get(request) {
+  const isResource = shouldCache(request);
+  for (const target of config.domains || []) {
+    const source = new URL(request.url);
+    source.host = target;
+    try {
+      console.log("From ", source.toString());
+      const r = await fetch(source, {
+        method: request.method,
+        credentials: isResource ? "same-origin" : "include",
+        headers: request.headers,
+        redirect: request.redirect,
+        keepalive: request.keepalive,
+        referrer: request.referrer,
+        referrerPolicy: request.referrerPolicy,
+        signal: request.signal,
+        ...request.method.toLowerCase() === "get" ? {} : { body: request.body }
+      });
+      if (r.ok) {
+        console.log("Load success from ", source.toString());
+        return r;
+      }
+    } catch (error) {
+      console.warn(source.toString(), " Load fail ", error);
+    }
+  }
+  return null;
+}
+function transformUrl(url) {
+  const urlObject = new URL(url);
+  const path = urlObject.pathname;
+  if (path.startsWith("/fs/") || path.toLowerCase().includes("x-amz")) urlObject.search = "";
+  return urlObject.toString();
+}
+async function cached(request, cacheKey, fetchFunc) {
+  const url = transformUrl(request.url);
+  const urlObject = new URL(url);
+  const isAsset = config.assets.some((i) => request.url.startsWith(i));
+  const rewritable = !isAsset && config.domains.length > 1 && config.domains.includes(urlObject.hostname) && urlObject.origin === location.origin;
+  let targets = [url];
+  if (rewritable) {
+    targets = config.domains.map((i) => {
+      const t = new URL(request.url);
+      t.host = i;
+      return transformUrl(t.toString());
+    });
+  }
+  if (!shouldCache(request)) return rewritable ? fetchFunc() : fetch(request);
+  const results = await Promise.all(targets.map((i) => caches.match(i)));
+  const found = results.find((i) => i);
+  if (found) {
+    console.debug("Serve from cache %s <- %s", request.url, found.url);
+    return found;
+  }
+  const [cache, response] = await Promise.all([
+    caches.open(cacheKey),
+    fetchFunc().catch(() => null)
+  ]);
+  if ((response == null ? void 0 : response.status) === 206) return response;
+  if (response == null ? void 0 : response.ok) {
+    console.log(`Cached ${url}`);
+    cache.put(url, response.clone());
+    return response;
+  }
+  console.log(`Failed to cache ${url}`, response);
+  return fetch(request);
+}
+self.addEventListener("fetch", (event) => {
+  var _a, _b;
+  if (event.request.url.endsWith("/ping")) {
+    event.respondWith(new Response("pong"));
+    return;
+  }
+  if (event.request.url.endsWith("/service-worker-config")) {
+    event.request.json().then((cfg) => initConfig(cfg));
+    event.respondWith(new Response("ok"));
+    return;
+  }
+  if (map.get(event.request.url)) {
+    streamsaver(event);
+    return;
+  }
+  if (!["get", "post", "head"].includes(event.request.method.toLowerCase())) return;
+  if (!config) return;
+  const url = new URL(event.request.url);
+  const isAsset = config.assets.some((i) => event.request.url.startsWith(i));
+  const rewritable = !isAsset && config.domains.length > 1 && config.domains.includes(url.hostname) && url.origin === location.origin;
+  if (!isAsset && !config.hosts.some((i) => event.request.url.startsWith(i))) return;
+  if ((_b = (_a = event.request.headers.get("range")) == null ? void 0 : _a.trim()) == null ? void 0 : _b.length) return;
+  event.respondWith((async () => cached(event.request, isAsset ? "assets" : PRECACHE, () => rewritable ? get(event.request) : fetch(url, {
+    method: event.request.method,
+    headers: event.request.headers,
+    redirect: event.request.redirect,
+    keepalive: event.request.keepalive,
+    referrer: event.request.referrer,
+    referrerPolicy: event.request.referrerPolicy,
+    signal: event.request.signal
+  })))());
+});
+
+/******/ })()
+;

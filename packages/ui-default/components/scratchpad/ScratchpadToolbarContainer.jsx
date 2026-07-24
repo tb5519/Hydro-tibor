@@ -72,6 +72,7 @@ const mapDispatchToProps = (dispatch) => ({
       code: props.editorCode,
       input: [props.pretestInput],
       pretest: true,
+      source: 'scratchpad',
     });
     dispatch({
       type: 'SCRATCHPAD_POST_PRETEST',
@@ -82,6 +83,7 @@ const mapDispatchToProps = (dispatch) => ({
     const req = request.post(UiContext.postSubmitUrl, {
       lang: props.editorLang,
       code: props.editorCode,
+      source: 'scratchpad',
     }).then((payload) => {
       // Register the record as soon as the submit endpoint returns. The
       // WebSocket result may arrive before the promise middleware updates

@@ -90,6 +90,8 @@ export interface Udoc extends Record<string, any> {
     loginat: Date;
     ip: string[];
     loginip: string;
+    /** Domain entered after a regular account/password login when no explicit redirect is requested. */
+    defaultDomain?: string;
 }
 
 export interface VUdoc {
@@ -135,8 +137,12 @@ export interface BaseUser {
     school?: string;
     displayName?: string;
     studentId?: string;
+    cppEditorMode?: CppEditorMode;
+    cppStarterTemplate?: boolean;
 }
 export type BaseUserDict = Record<number, BaseUser>;
+
+export type CppEditorMode = 'beginner' | 'preset' | 'proficient';
 
 export interface ProblemConfig {
     redirect?: [string, string];

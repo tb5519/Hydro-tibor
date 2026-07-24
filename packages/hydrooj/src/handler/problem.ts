@@ -47,6 +47,55 @@ import {
 } from '../service/server';
 import { ContestDetailBaseHandler } from './contest';
 
+const CPP_STARTER_TEMPLATE = `#include<bits/stdc++.h>
+using namespace std;
+int main(){
+    // ------在以下区域写代码------
+
+    // --------------------------
+    return 0;
+}
+`;
+
+const CPP_BEGINNER_TEMPLATE_PREFIX = `#include<bits/stdc++.h>
+using namespace std;
+int main(){
+`;
+
+const CPP_BEGINNER_TEMPLATE_SUFFIX = `
+    return 0;
+}
+`;
+
+type CppEditorMode = 'beginner' | 'preset' | 'proficient';
+
+function getCppEditorMode(udoc: User): CppEditorMode {
+    const settings = udoc as unknown as { cppEditorMode?: unknown, cppStarterTemplate?: unknown };
+    if (settings.cppEditorMode === 'beginner' || settings.cppEditorMode === 'preset' || settings.cppEditorMode === 'proficient') {
+        return settings.cppEditorMode;
+    }
+    // Keep the previously released one-off template option working for any
+    // existing student settings while the three-mode setting rolls out.
+    return settings.cppStarterTemplate === true ? 'preset' : 'proficient';
+}
+
+function isCppLanguage(lang: string) {
+    const language = setting.langs[lang];
+    return language?.monaco === 'cpp'
+        || language?.highlight?.split(/\s+/).includes('cpp')
+        || lang === 'cc'
+        || lang.startsWith('cc.');
+}
+
+function isCompleteCppTranslationUnit(code: string) {
+    return /\b(?:int|signed|auto)\s+main\s*\(/.test(code);
+}
+
+function wrapBeginnerCppCode(code: string) {
+    const body = code ? (code.endsWith('\n') ? code : `${code}\n`) : '';
+    return `${CPP_BEGINNER_TEMPLATE_PREFIX}${body}${CPP_BEGINNER_TEMPLATE_SUFFIX}`;
+}
+
 export const parseCategory = (value: string) => value.replace(/，/g, ',').split(',').map((e) => e.trim());
 
 function buildQuery(udoc: User) {
@@ -494,6 +543,8 @@ export class OnlineIdeHandler extends Handler {
         this.response.body.hostPdoc = hostPdoc;
         this.response.body.ideAllowedLangs = ideAllowedLangs;
         this.response.body.ideCodeLang = this.pickCodeLang(pdoc, ddoc);
+        this.response.body.cppEditorMode = getCppEditorMode(this.user);
+        this.response.body.cppStarterTemplate = getCppEditorMode(this.user) === 'preset' ? CPP_STARTER_TEMPLATE : '';
     }
 }
 
@@ -621,6 +672,8 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             isMistakeSupported: isProgrammingProblem,
             canUseMistake,
             codeLang,
+            cppEditorMode: getCppEditorMode(this.user),
+            cppStarterTemplate: getCppEditorMode(this.user) === 'preset' ? CPP_STARTER_TEMPLATE : '',
             firstFormalStatus,
             hasWrongFormalRecord,
             showMistakePrompt,
@@ -773,9 +826,13 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
     @param('code', Types.String, true)
     @param('pretest', Types.Boolean)
     @param('input', Types.ArrayOf(Types.String, true), true)
+    @param('source', Types.String, true)
     @param('tid', Types.ObjectId, true)
-    async post(domainId: string, lang: string, code: string, pretest = false, input: string[] = [], tid?: ObjectId) {
+    async post(
+        domainId: string, lang: string, code: string, pretest = false, input: string[] = [], source = '', tid?: ObjectId,
+    ) {
         const config = this.pdoc.config;
+        const submittedLang = lang;
         if (typeof config === 'string' || config === null) throw new ProblemConfigError();
         if (['submit_answer', 'objective'].includes(config.type)) {
             lang = '_';
@@ -794,7 +851,17 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
         await this.limitRate('add_record', 60, pretest ? system.get('limit.pretest') : system.get('limit.submission'));
         const files: Record<string, string> = {};
         const lengthLimit = system.get('limit.codelength') || 128 * 1024;
-        if (!code) {
+        // Beginner mode deliberately keeps Scratchpad free of C++ boilerplate.
+        // The source marker leaves the conventional submit page and file uploads
+        // untouched, while still allowing an empty beginner editor to run.
+        const isBeginnerScratchpadCpp = source === 'scratchpad'
+            && getCppEditorMode(this.user) === 'beginner'
+            && (isCppLanguage(submittedLang) || isCppLanguage(lang));
+        if (isBeginnerScratchpadCpp) {
+            code = (code || '').replace(/\r\n/g, '\n');
+            if (!isCompleteCppTranslationUnit(code)) code = wrapBeginnerCppCode(code);
+            if (code.length > lengthLimit) throw new ValidationError('code');
+        } else if (!code) {
             const file = this.request.files?.file;
             if (!file || file.size === 0) throw new ValidationError('code');
             const sizeLimit = config.type === 'submit_answer' ? 128 * 1024 * 1024 : lengthLimit;

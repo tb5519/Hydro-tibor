@@ -14,10 +14,11 @@
   .homework-hub .pager { margin: 1rem 0 0; }
 
   .homework-admin { display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 1rem; align-items: start; }
-  .homework-admin__sidebar { position: sticky; top: 1rem; overflow: hidden; border: 1px solid #dbe8f7; border-radius: 13px; background: #fbfdff; box-shadow: 0 5px 15px rgba(45, 103, 173, .04); }
+  .homework-admin__sidebar { position: sticky; top: 1rem; overflow: hidden; border: 1px solid #dbe8f7; border-radius: 13px; background: #fbfdff; box-shadow: 0 5px 15px rgba(45, 103, 173, .04); transition: opacity .16s ease, transform .16s ease; }
   .homework-admin__nav { display: grid; gap: .2rem; padding: .45rem; border-bottom: 1px solid #e4edf8; }
   a.homework-admin__nav-link, a.homework-admin__nav-link:visited { display: flex; align-items: center; gap: .5rem; padding: .58rem .65rem; border-radius: 8px; color: #587696; font-size: .82rem; font-weight: 750; text-decoration: none; }
   a.homework-admin__nav-link:hover { color: #2876c6; background: #edf6ff; }
+  a.homework-admin__nav-link.is-loading { cursor: progress; opacity: .72; }
   a.homework-admin__nav-link.is-active { color: #216bc0; background: #e5f1ff; box-shadow: inset 3px 0 #4b99ed; }
   .homework-admin__section { padding: .8rem .9rem; }
   .homework-admin__section + .homework-admin__section { border-top: 1px solid #e6eef8; }
@@ -29,7 +30,10 @@
   .homework-admin__search { display: grid; gap: .45rem; margin: 0; }
   .homework-admin__search .textbox, .homework-admin__search .button { height: 2.25rem; margin: 0; border-radius: 8px; }
   .homework-admin__create { width: 100%; margin: .45rem 0 0; border-radius: 8px; text-align: center; }
-  .homework-admin__content { min-width: 0; }
+  .homework-admin__content { min-width: 0; transition: opacity .16s ease, transform .16s ease; }
+  .homework-admin__sidebar.is-homework-view-leaving, .homework-admin__content.is-homework-view-leaving { opacity: 0; pointer-events: none; transform: translateY(.4rem); }
+  .homework-admin__sidebar.is-homework-view-entering, .homework-admin__content.is-homework-view-entering { animation: homework-admin-view-enter .28s cubic-bezier(.22, 1, .36, 1) both; }
+  @keyframes homework-admin-view-enter { from { opacity: 0; transform: translateY(.55rem); } to { opacity: 1; transform: translateY(0); } }
 
   .homework-roster__summary { display: flex; align-items: center; justify-content: space-between; gap: .8rem; margin: 0 0 .8rem; padding: .78rem .9rem; border: 1px solid #dce9f7; border-radius: 11px; color: #5b7799; background: linear-gradient(90deg, #f9fcff, #f2f8ff); font-size: .82rem; }
   .homework-roster__summary strong { display: block; margin-bottom: .12rem; color: #244e7d; font-size: .9rem; }
@@ -127,6 +131,7 @@
   .homework-hub__completed-card::before { content: '✓'; display: inline-flex; align-items: center; justify-content: center; width: 1.15rem; height: 1.15rem; border-radius: 50%; color: #fff; background: #42b97f; font-size: .67rem; font-weight: 800; }
   .homework-hub__completed-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .homework-hub__completed-tag { padding: .15rem .35rem; border: 1px solid #bae5cb; border-radius: 3px; color: #19724b; background: #eefaf2; font-size: .67rem; font-weight: 800; line-height: 1.2; }
+  @media (prefers-reduced-motion: reduce) { .homework-admin__sidebar, .homework-admin__content { transition: none; } .homework-admin__sidebar.is-homework-view-entering, .homework-admin__content.is-homework-view-entering { animation: none; } }
   @media (max-width: 900px) { .homework-admin { grid-template-columns: 1fr; } .homework-admin__sidebar { position: static; } .homework-admin__nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } .homework-admin__section--categories { display: none; } .homework-admin__search { grid-template-columns: minmax(0, 1fr) auto; } .homework-admin__create { grid-column: 1 / -1; } }
   @media (max-width: 639px) { .homework-hub__hero, .homework-hub__body { padding-right: 1rem; padding-left: 1rem; } .homework-hub__hero { flex-direction: column; } .homework-roster__student, .homework-assignment__trigger { grid-template-columns: auto minmax(0, 1fr) auto; } .homework-roster__percent, .homework-assignment__completion { grid-column: 2; text-align: left; } .homework-roster__chevron, .homework-assignment__chevron { grid-column: 3; grid-row: 1; } .homework-roster__unfinished { grid-template-columns: 1fr; } .homework-assignment__details { grid-template-columns: 1fr; } .homework-assignment__quick-add { justify-content: stretch; } .homework-assignment__quick-add .textbox { flex: 1 1 auto; width: 0; } .homework-assignment__edit { grid-column: 1; text-align: left; } .homework-hub__card { grid-template-columns: auto minmax(0, 1fr); } .homework-hub__percent { grid-column: 2; } }
 </style>
@@ -144,11 +149,11 @@
     {% endif %}
     <div class="homework-hub__body">
       {% if canManageHomework %}
-        <div class="homework-admin">
-          <aside class="homework-admin__sidebar" aria-label="作业管理操作栏">
+        <div class="homework-admin" data-homework-admin data-homework-view="{{ view }}" aria-busy="false">
+          <aside class="homework-admin__sidebar" data-homework-admin-sidebar aria-label="作业管理操作栏">
             <nav class="homework-admin__nav" aria-label="作业管理视图">
-              <a class="homework-admin__nav-link{% if view == 'students' %} is-active{% endif %}" href="{{ url('homework_main') }}"><span class="icon icon-user"></span> 学员完成情况</a>
-              <a class="homework-admin__nav-link{% if view == 'assignments' %} is-active{% endif %}" href="{{ url('homework_main', query={view:'assignments'}) }}"><span class="icon icon-homework"></span> 作业与布置</a>
+              <a class="homework-admin__nav-link{% if view == 'students' %} is-active{% endif %}" data-homework-admin-view-link href="{{ url('homework_main') }}"{% if view == 'students' %} aria-current="page"{% endif %}><span class="icon icon-user"></span> 学员完成情况</a>
+              <a class="homework-admin__nav-link{% if view == 'assignments' %} is-active{% endif %}" data-homework-admin-view-link href="{{ url('homework_main', query={view:'assignments'}) }}"{% if view == 'assignments' %} aria-current="page"{% endif %}><span class="icon icon-homework"></span> 作业与布置</a>
             </nav>
             {% if view == 'assignments' %}
               <div class="homework-admin__section homework-admin__section--categories">
@@ -173,7 +178,7 @@
             {% endif %}
           </aside>
 
-          <div class="homework-admin__content">
+          <div class="homework-admin__content" data-homework-admin-panel aria-live="polite">
             {% if view == 'students' %}
               <div class="homework-roster__summary">
                 <div><strong>学员作业完成情况</strong><span>未完成作业的学员优先显示；点击学员可展开查看全部作业。</span></div>

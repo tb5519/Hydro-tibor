@@ -119,6 +119,16 @@ async function successfulAuth(this: Handler, udoc: User) {
     if (udoc._id !== 0) await oplog.log(this, 'user.loginSuccess', { uid: udoc._id });
 }
 
+async function getDefaultDomainLoginRedirect(handler: Handler, udoc: User) {
+    const defaultDomain = typeof udoc._udoc.defaultDomain === 'string' ? udoc._udoc.defaultDomain.trim() : '';
+    if (!defaultDomain) return handler.url('homepage');
+    const ddoc = await domain.get(defaultDomain);
+    const membership = ddoc
+        ? await domain.collUser.findOne({ domainId: ddoc._id, uid: udoc._id, join: true })
+        : null;
+    return ddoc && membership ? handler.url('homepage', { domainId: ddoc._id }) : handler.url('homepage');
+}
+
 class UserLoginHandler extends Handler {
     noCheckPermView = true;
 
@@ -168,7 +178,7 @@ class UserLoginHandler extends Handler {
         await successfulAuth.call(this, udoc);
         this.session.save = rememberme;
         this.response.redirect = redirect || ((this.request.referer || '/login').endsWith('/login')
-            ? this.url('homepage') : this.request.referer);
+            ? await getDefaultDomainLoginRedirect(this, udoc) : this.request.referer);
     }
 }
 

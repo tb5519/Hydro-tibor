@@ -89,6 +89,100 @@
   }
   .student-management__form .textbox { width: 100%; }
   .student-management__form .student-management__wide { grid-column: 1 / -1; }
+  .student-management__cpp-mode {
+    grid-column: 1 / -1;
+    min-width: 0;
+    margin-top: .1rem;
+  }
+  .student-management__cpp-mode-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: .75rem;
+    flex-wrap: wrap;
+  }
+  .student-management__cpp-mode-title {
+    color: #475569;
+    font-size: .84rem;
+    font-weight: 700;
+  }
+  .student-management__cpp-mode-hint {
+    color: #64748b;
+    font-size: .76rem;
+    line-height: 1.45;
+  }
+  .student-management__cpp-mode-options {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .55rem;
+    margin-top: .45rem;
+  }
+  .student-management__cpp-mode-choice {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: .45rem;
+    min-width: 0;
+    min-height: 4.85rem;
+    border: 1px solid #d8e6fa;
+    border-radius: 9px;
+    padding: .55rem .6rem;
+    background: linear-gradient(135deg, #f8fbff, #fdfefe);
+    cursor: pointer;
+    transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
+  }
+  .student-management__cpp-mode-choice:hover {
+    border-color: #93c5fd;
+    background: #f4f9ff;
+    box-shadow: 0 5px 13px rgba(37, 99, 235, .08);
+  }
+  .student-management__cpp-mode-choice > input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .student-management__cpp-mode-indicator {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 1.05rem;
+    height: 1.05rem;
+    flex: 0 0 auto;
+    margin: .08rem 0 0 !important;
+    border: 1px solid #b8cbe3;
+    border-radius: 4px;
+    color: transparent;
+    background: #fff;
+    font-size: .62rem;
+    transition: color .16s ease, border-color .16s ease, background .16s ease;
+  }
+  .student-management__cpp-mode-choice > input:checked + .student-management__cpp-mode-indicator {
+    border-color: #2563eb;
+    color: #fff;
+    background: #2563eb;
+  }
+  .student-management__cpp-mode-choice > input:focus-visible + .student-management__cpp-mode-indicator {
+    outline: 3px solid rgba(37, 99, 235, .24);
+    outline-offset: 2px;
+  }
+  .student-management__cpp-mode-choice > input:checked ~ .student-management__cpp-mode-copy strong { color: #1d4ed8; }
+  .student-management__cpp-mode-copy {
+    display: grid !important;
+    gap: .12rem;
+    min-width: 0;
+    margin: 0 !important;
+  }
+  .student-management__cpp-mode-copy strong {
+    color: #334155;
+    font-size: .84rem;
+  }
+  .student-management__cpp-mode-copy small {
+    color: #64748b;
+    font-size: .72rem;
+    font-weight: 400;
+    line-height: 1.4;
+  }
   .student-management__form-actions {
     display: flex;
     align-items: center;
@@ -129,6 +223,130 @@
   .student-management__password-form .textbox { width: 100%; }
   .student-management__roster { padding: 1.15rem 1.25rem 1.3rem; }
   .student-management__roster-heading { align-items: flex-start; }
+  .student-management__roster-title {
+    display: flex;
+    align-items: center;
+    gap: .7rem;
+    flex-wrap: wrap;
+  }
+  .student-management__add-student {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: .25rem;
+    min-height: 1.72rem;
+    border: 1px solid #2563eb;
+    border-radius: 999px;
+    padding: .27rem .55rem;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    box-shadow: 0 5px 12px rgba(37, 99, 235, .18);
+    color: #fff;
+    cursor: pointer;
+    font-size: .74rem;
+    font-weight: 800;
+    line-height: 1;
+    transition: box-shadow .16s ease, transform .16s ease;
+  }
+  .student-management__add-student:hover,
+  .student-management__add-student:focus-visible {
+    box-shadow: 0 8px 17px rgba(37, 99, 235, .27);
+    outline: none;
+    transform: translateY(-1px);
+  }
+  .student-management__domains-field {
+    grid-column: 1 / -1;
+    min-width: 0;
+    margin: 0;
+    border: 0;
+    padding: 0;
+  }
+  .student-management__domains-row {
+    display: flex;
+    align-items: center;
+    gap: .55rem;
+    min-height: 2rem;
+    flex-wrap: wrap;
+  }
+  .student-management__domains-label {
+    flex: 0 0 auto;
+    color: #475569;
+    font-size: .84rem;
+    font-weight: 700;
+  }
+  .student-management__domains {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: .35rem;
+  }
+  .student-management__domain-choice {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: .35rem;
+    min-width: 0;
+    min-height: 1.9rem;
+    border: 1px solid #d9e5f4;
+    border-radius: 7px;
+    padding: .24rem .42rem;
+    background: #fbfdff;
+    cursor: pointer;
+    transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
+  }
+  .student-management__domain-choice:hover { border-color: #93c5fd; background: #f4f9ff; }
+  .student-management__domain-choice > input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .student-management__domain-check {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: .95rem;
+    height: .95rem;
+    flex: 0 0 auto;
+    margin: 0 !important;
+    border: 1px solid #b9cce3;
+    border-radius: 4px;
+    color: transparent;
+    background: #fff;
+    font-size: .59rem;
+    transition: background .16s ease, border-color .16s ease, color .16s ease;
+  }
+  .student-management__domain-choice > input:checked + .student-management__domain-check {
+    border-color: #2563eb;
+    color: #fff;
+    background: #2563eb;
+  }
+  .student-management__domain-choice > input:focus-visible + .student-management__domain-check { outline: 3px solid rgba(37, 99, 235, .24); outline-offset: 2px; }
+  .student-management__domain-choice > input:checked ~ .student-management__domain-info { color: #1e40af; }
+  .student-management__domain-info {
+    display: inline !important;
+    min-width: 0;
+    margin: 0 !important;
+    color: #475569;
+  }
+  .student-management__domain-info strong,
+  .student-management__domain-info small {
+    white-space: nowrap;
+  }
+  .student-management__domain-info strong { font-size: .76rem; }
+  .student-management__domain-info small { margin-left: .2rem; color: #64748b; font-size: .67rem; font-weight: 400; }
+  .student-management__domain-current {
+    display: inline-flex !important;
+    flex: 0 0 auto;
+    align-items: center;
+    margin: 0 0 0 auto !important;
+    border-radius: 999px;
+    margin-left: .05rem !important;
+    padding: .1rem .24rem;
+    color: #2563eb;
+    background: #dbeafe;
+    font-size: .58rem;
+    font-weight: 800;
+    white-space: nowrap;
+  }
   .student-management__sort {
     display: flex;
     align-items: center;
@@ -322,6 +540,111 @@
     color: #64748b;
     text-align: center;
   }
+  .student-create-dialog[hidden] { display: none; }
+  .student-create-dialog {
+    position: fixed;
+    z-index: 1000;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 1.2rem;
+  }
+  .student-create-dialog__backdrop {
+    position: absolute;
+    inset: 0;
+    border: 0;
+    background: rgba(15, 23, 42, .48);
+    cursor: default;
+  }
+  .student-create-dialog__panel {
+    position: relative;
+    width: min(42rem, 100%);
+    max-height: min(44rem, calc(100vh - 2.4rem));
+    overflow: auto;
+    border: 1px solid rgba(191, 219, 254, .9);
+    border-radius: 18px;
+    background: linear-gradient(145deg, #fff 0%, #f8fbff 100%);
+    box-shadow: 0 28px 70px rgba(15, 23, 42, .28);
+    animation: student-create-dialog-enter .22s cubic-bezier(.22, 1, .36, 1);
+  }
+  .student-create-dialog__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.2rem 1.25rem 1rem;
+    border-bottom: 1px solid #e3edf9;
+    background: linear-gradient(135deg, #eaf4ff, #fff 67%, #f9f1ff);
+  }
+  .student-create-dialog__eyebrow {
+    margin: 0 0 .2rem;
+    color: #2563eb;
+    font-size: .7rem;
+    font-weight: 850;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .student-create-dialog__header h2 { margin: 0; color: #0f172a; font-size: 1.28rem; }
+  .student-create-dialog__header p:not(.student-create-dialog__eyebrow) { margin: .3rem 0 0; color: #64748b; font-size: .82rem; line-height: 1.45; }
+  .student-create-dialog__close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    flex: 0 0 auto;
+    border: 1px solid #d7e2f0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, .8);
+    color: #64748b;
+    cursor: pointer;
+    transition: color .16s ease, background .16s ease;
+  }
+  .student-create-dialog__close:hover,
+  .student-create-dialog__close:focus-visible { color: #1d4ed8; background: #eff6ff; outline: none; }
+  .student-create-dialog__form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .85rem 1rem;
+    padding: 1.1rem 1.25rem 1.25rem;
+  }
+  .student-create-dialog__field { min-width: 0; }
+  .student-create-dialog__field > span {
+    display: block;
+    margin-bottom: .35rem;
+    color: #475569;
+    font-size: .82rem;
+    font-weight: 750;
+  }
+  .student-create-dialog__required { color: #dc2626; }
+  .student-create-dialog__field .textbox { width: 100%; }
+  .student-create-dialog__wide { grid-column: 1 / -1; }
+  .student-create-dialog__tip {
+    display: flex;
+    align-items: flex-start;
+    gap: .45rem;
+    border: 1px solid #dbeafe;
+    border-radius: 10px;
+    padding: .65rem .72rem;
+    color: #466684;
+    background: #f4f9ff;
+    font-size: .78rem;
+    line-height: 1.45;
+  }
+  .student-create-dialog__tip .icon { flex: 0 0 auto; color: #3b82f6; }
+  .student-create-dialog__actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: .6rem;
+    flex-wrap: wrap;
+    margin-top: .1rem;
+  }
+  body.student-create-dialog-open { overflow: hidden; }
+  @keyframes student-create-dialog-enter {
+    from { opacity: 0; transform: translateY(.7rem) scale(.985); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
   @keyframes student-management-editor-expand {
     from { opacity: 0; transform: translateY(-.35rem); }
     to { opacity: 1; transform: translateY(0); }
@@ -344,6 +667,11 @@
     .student-management__sort { width: 100%; margin-top: .8rem; }
     .student-management__sort label { flex: 1; }
     .student-management__sort select { flex: 1; min-width: 0; }
+    .student-management__domains-row { align-items: flex-start; }
+    .student-management__cpp-mode-options { grid-template-columns: 1fr; }
+    .student-create-dialog { padding: .65rem; }
+    .student-create-dialog__form { grid-template-columns: 1fr; }
+    .student-create-dialog__wide { grid-column: auto; }
     .student-note {
       grid-template-columns: auto minmax(0, 1fr) auto;
       gap: .7rem;
@@ -373,7 +701,12 @@
   <section class="student-management__roster">
     <div class="student-management__roster-heading">
       <div>
-        <h2>{{ _('学员列表') }}</h2>
+        <div class="student-management__roster-title">
+          <h2>{{ _('学员列表') }}</h2>
+          <button class="student-management__add-student" type="button" data-student-add-open>
+            <span class="icon icon-add" aria-hidden="true"></span>{{ _('增加学员') }}
+          </button>
+        </div>
         <p>{{ _('输入姓名、用户名、UID、邮箱、学校或学号即可筛选。') }}</p>
       </div>
       <form method="get" class="student-management__sort" data-student-sort-form>
@@ -443,17 +776,37 @@
                   <input type="hidden" name="uid" value="{{ selectedStudent.uid }}">
                   <input type="hidden" name="sort" value="{{ sort }}">
                   <input type="hidden" name="order" value="{{ order }}">
+                  <div class="student-management__domains-field" role="radiogroup" aria-labelledby="student-default-domain-label">
+                    <div class="student-management__domains-row">
+                      <span class="student-management__domains-label" id="student-default-domain-label">{{ _('已加入的域') }}</span>
+                    {% if selectedStudentDomains.length %}
+                      <div class="student-management__domains">
+                        {% for joinedDomain in selectedStudentDomains %}
+                          <label class="student-management__domain-choice" title="{{ _('设为默认登录域') }}">
+                            <input type="radio" name="defaultDomain" value="{{ joinedDomain.id }}"{% if selectedStudentDefaultDomain == joinedDomain.id %} checked{% endif %} required>
+                            <span class="student-management__domain-check"><span class="icon icon-check" aria-hidden="true"></span></span>
+                            <span class="student-management__domain-info"><strong>{{ joinedDomain.name }}</strong><small>{{ joinedDomain.id }}</small></span>
+                            {% if joinedDomain.isCurrent %}<span class="student-management__domain-current">{{ _('当前课程') }}</span>{% endif %}
+                          </label>
+                        {% endfor %}
+                      </div>
+                    {% else %}
+                      <input type="hidden" name="defaultDomain" value="">
+                      <span class="student-management__hint">{{ _('暂无可选择的域') }}</span>
+                    {% endif %}
+                    </div>
+                  </div>
                   <label>
                     <span>{{ _('用户名') }}</span>
                     <input class="textbox" name="uname" value="{{ selectedStudent.uname }}" autocomplete="username" required>
                   </label>
                   <label>
                     <span>{{ _('显示姓名') }}</span>
-                    <input class="textbox" name="displayName" value="{{ selectedStudent.displayName }}" autocomplete="name">
+                    <input class="textbox" name="displayName" value="{{ selectedStudent.displayName }}" autocomplete="name" required>
                   </label>
                   <label>
                     <span>{{ _('邮箱') }}</span>
-                    <input class="textbox" type="email" name="mail" value="{{ selectedStudent.mail }}" autocomplete="email" required>
+                    <input class="textbox" type="email" name="mail" value="{{ selectedStudent.mail }}" autocomplete="email" placeholder="{{ _('选填') }}">
                   </label>
                   <label>
                     <span>{{ _('学号') }}</span>
@@ -463,10 +816,42 @@
                     <span>{{ _('学校') }}</span>
                     <input class="textbox" name="school" value="{{ selectedStudent.school|default('') }}" autocomplete="organization">
                   </label>
+                  <div class="student-management__cpp-mode" role="radiogroup" aria-labelledby="student-cpp-mode-label">
+                    <div class="student-management__cpp-mode-heading">
+                      <span class="student-management__cpp-mode-title" id="student-cpp-mode-label">{{ _('C++ 在线编写代码模式') }}</span>
+                      <span class="student-management__cpp-mode-hint">{{ _('只影响当前课程内的该学员，三种模式只能选择一项。') }}</span>
+                    </div>
+                    <div class="student-management__cpp-mode-options">
+                      <label class="student-management__cpp-mode-choice">
+                        <input type="radio" name="cppEditorMode" value="beginner"{% if selectedStudent.cppEditorMode == 'beginner' %} checked{% endif %} required>
+                        <span class="student-management__cpp-mode-indicator"><span class="icon icon-check" aria-hidden="true"></span></span>
+                        <span class="student-management__cpp-mode-copy">
+                          <strong>{{ _('新手模式') }}</strong>
+                          <small>{{ _('自动补全基础程序，直接写 cout 等语句即可。') }}</small>
+                        </span>
+                      </label>
+                      <label class="student-management__cpp-mode-choice">
+                        <input type="radio" name="cppEditorMode" value="preset"{% if selectedStudent.cppEditorMode == 'preset' %} checked{% endif %} required>
+                        <span class="student-management__cpp-mode-indicator"><span class="icon icon-check" aria-hidden="true"></span></span>
+                        <span class="student-management__cpp-mode-copy">
+                          <strong>{{ _('预制模式') }}</strong>
+                          <small>{{ _('显示带提示的基础程序，在指定区域编写代码。') }}</small>
+                        </span>
+                      </label>
+                      <label class="student-management__cpp-mode-choice">
+                        <input type="radio" name="cppEditorMode" value="proficient"{% if selectedStudent.cppEditorMode == 'proficient' %} checked{% endif %} required>
+                        <span class="student-management__cpp-mode-indicator"><span class="icon icon-check" aria-hidden="true"></span></span>
+                        <span class="student-management__cpp-mode-copy">
+                          <strong>{{ _('熟练模式') }}</strong>
+                          <small>{{ _('不自动补全、不预制，完全由学员自行编写。') }}</small>
+                        </span>
+                      </label>
+                    </div>
+                  </div>
                   <div class="student-management__wide student-management__form-actions">
                     <button class="rounded primary button" type="submit"><span class="icon icon-save"></span>{{ _('保存学员信息') }}</button>
                     <a class="rounded button" href="{{ url('manage_user_management', query={sort: sort, order: order}) }}">{{ _('取消') }}</a>
-                    <span class="student-management__hint">{{ _('用户名和邮箱必须保持唯一。显示姓名只在当前课程中使用。') }}</span>
+                    <span class="student-management__hint">{{ _('用户名必须保持唯一；邮箱如填写也必须唯一。显示姓名只在当前课程中使用。') }}</span>
                   </div>
                 </form>
                 <details class="student-management__password">
@@ -497,6 +882,61 @@
       <div class="student-management__empty">{{ _('当前课程还没有已加入的普通学员。') }}</div>
     {% endif %}
   </section>
+
+  <div class="student-create-dialog" data-student-add-dialog role="dialog" aria-modal="true" aria-labelledby="student-create-title" hidden>
+    <button class="student-create-dialog__backdrop" type="button" data-student-add-close aria-label="{{ _('关闭增加学员窗口') }}"></button>
+    <section class="student-create-dialog__panel">
+      <header class="student-create-dialog__header">
+        <div>
+          <p class="student-create-dialog__eyebrow">NEW STUDENT</p>
+          <h2 id="student-create-title">{{ _('增加学员') }}</h2>
+          <p>{{ _('创建账号、补充基础资料，并加入当前课程。') }}</p>
+        </div>
+        <button class="student-create-dialog__close" type="button" data-student-add-close aria-label="{{ _('关闭') }}"><span class="icon icon-close" aria-hidden="true"></span></button>
+      </header>
+      <form method="post" class="student-create-dialog__form" data-student-add-form>
+        <input type="hidden" name="operation" value="add_student">
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <input type="hidden" name="order" value="{{ order }}">
+        <label class="student-create-dialog__field">
+          <span>{{ _('用户名') }} <em class="student-create-dialog__required" aria-hidden="true">*</em></span>
+          <input class="textbox" name="uname" autocomplete="username" required data-student-add-first-field>
+        </label>
+        <label class="student-create-dialog__field">
+          <span>{{ _('显示姓名') }} <em class="student-create-dialog__required" aria-hidden="true">*</em></span>
+          <input class="textbox" name="displayName" autocomplete="name" placeholder="{{ _('例如：张三') }}" required>
+        </label>
+        <label class="student-create-dialog__field">
+          <span>{{ _('邮箱') }}</span>
+          <input class="textbox" type="email" name="mail" autocomplete="email" placeholder="{{ _('选填，例如：student@example.com') }}">
+        </label>
+        <label class="student-create-dialog__field">
+          <span>{{ _('学号') }}</span>
+          <input class="textbox" name="studentId" autocomplete="off">
+        </label>
+        <label class="student-create-dialog__field student-create-dialog__wide">
+          <span>{{ _('学校') }}</span>
+          <input class="textbox" name="school" autocomplete="organization">
+        </label>
+        <label class="student-create-dialog__field">
+          <span>{{ _('登录密码') }} <em class="student-create-dialog__required" aria-hidden="true">*</em></span>
+          <input class="textbox" type="password" name="password" autocomplete="new-password" required minlength="6" data-student-add-password>
+        </label>
+        <label class="student-create-dialog__field">
+          <span>{{ _('确认密码') }} <em class="student-create-dialog__required" aria-hidden="true">*</em></span>
+          <input class="textbox" type="password" name="verifyPassword" autocomplete="new-password" required minlength="6" data-student-add-verify-password>
+        </label>
+        <div class="student-create-dialog__tip student-create-dialog__wide">
+          <span class="icon icon-info" aria-hidden="true"></span>
+          <span>{{ _('创建后，学员会自动加入当前课程，并将当前课程设为其默认登录域。') }}</span>
+        </div>
+        <div class="student-create-dialog__actions student-create-dialog__wide">
+          <button class="rounded button" type="button" data-student-add-close>{{ _('取消') }}</button>
+          <button class="rounded primary button" type="submit"><span class="icon icon-add"></span>{{ _('创建学员') }}</button>
+        </div>
+      </form>
+    </section>
+  </div>
 </div>
 
 <script>
@@ -523,6 +963,47 @@
         sortForm.requestSubmit();
       });
     }
+
+    const addDialog = document.querySelector('[data-student-add-dialog]');
+    const addOpen = document.querySelector('[data-student-add-open]');
+    const addClose = Array.from(document.querySelectorAll('[data-student-add-close]'));
+    const addForm = document.querySelector('[data-student-add-form]');
+    const addFirstField = document.querySelector('[data-student-add-first-field]');
+    const addPassword = document.querySelector('[data-student-add-password]');
+    const addVerifyPassword = document.querySelector('[data-student-add-verify-password]');
+    let addDialogPreviousFocus = null;
+    const syncAddPassword = () => {
+      if (!addPassword || !addVerifyPassword) return;
+      addVerifyPassword.setCustomValidity(
+        addPassword.value === addVerifyPassword.value ? '' : '两次输入的密码不一致。',
+      );
+    };
+    const closeAddDialog = () => {
+      if (!addDialog || addDialog.hidden) return;
+      addDialog.hidden = true;
+      document.body.classList.remove('student-create-dialog-open');
+      addDialogPreviousFocus?.focus({ preventScroll: true });
+    };
+    const openAddDialog = () => {
+      if (!addDialog) return;
+      addDialogPreviousFocus = document.activeElement;
+      addDialog.hidden = false;
+      document.body.classList.add('student-create-dialog-open');
+      window.requestAnimationFrame(() => addFirstField?.focus());
+    };
+    if (addOpen) addOpen.addEventListener('click', openAddDialog);
+    addClose.forEach((button) => button.addEventListener('click', closeAddDialog));
+    if (addPassword && addVerifyPassword) {
+      addPassword.addEventListener('input', syncAddPassword);
+      addVerifyPassword.addEventListener('input', syncAddPassword);
+    }
+    if (addForm) addForm.addEventListener('submit', (event) => {
+      syncAddPassword();
+      if (!addForm.reportValidity()) event.preventDefault();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeAddDialog();
+    });
 
     const input = document.querySelector('[data-student-search]');
     const cards = Array.from(document.querySelectorAll('[data-student-note]'));

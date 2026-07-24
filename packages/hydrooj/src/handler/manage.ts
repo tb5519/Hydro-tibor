@@ -6,10 +6,12 @@ import { omit } from 'lodash';
 import moment from 'moment-timezone';
 import { ObjectId } from 'mongodb';
 import Schema from 'schemastery';
+import { randomstring } from '@hydrooj/utils';
 import {
     CannotEditSuperAdminError, NotLaunchedByPM2Error, UserAlreadyExistError, UserNotFoundError, ValidationError,
     VerifyPasswordError,
 } from '../error';
+import type { CppEditorMode } from '../interface';
 import { getHomePosterConfig, HOME_POSTER_CONFIG_KEY } from '../lib/home_poster';
 import {
     buildPointLotteryConfigFromForm, ensureGlobalPointLotteryState, getPointLotteryConfig,
@@ -731,6 +733,7 @@ const Priv = omit(PRIV, ['PRIV_DEFAULT', 'PRIV_NEVER', 'PRIV_NONE', 'PRIV_ALL'])
 const allPriv = Math.sum(Object.values(Priv));
 const MANAGED_STUDENT_SORTS = ['submit', 'login', 'practice'];
 const MANAGED_STUDENT_SORT_DIRECTIONS = ['desc', 'asc'];
+const CPP_EDITOR_MODES: CppEditorMode[] = ['beginner', 'preset', 'proficient'];
 type ManagedStudentSort = 'submit' | 'login' | 'practice';
 type ManagedStudentSortDirection = 'desc' | 'asc';
 
@@ -761,6 +764,13 @@ function normalizeManagedStudentText(value: string, key: string) {
     const result = value.trim();
     if (result.length > 255) throw new ValidationError(key);
     return result;
+}
+
+function resolveManagedStudentCppEditorMode(value: unknown, legacyCppStarterTemplate?: boolean): CppEditorMode {
+    if (typeof value === 'string' && CPP_EDITOR_MODES.includes(value as CppEditorMode)) {
+        return value as CppEditorMode;
+    }
+    return legacyCppStarterTemplate ? 'preset' : 'proficient';
 }
 
 async function getManagedStudents(
@@ -802,6 +812,7 @@ async function getManagedStudents(
             ...udoc,
             uid,
             displayName,
+            cppEditorMode: resolveManagedStudentCppEditorMode(udoc.cppEditorMode, udoc.cppStarterTemplate),
             submitCount: membership?.nSubmit || 0,
             acceptedCount: membership?.nAccept || 0,
             loginAt,
@@ -840,6 +851,37 @@ async function getManagedStudent(domainId: string, uid: number) {
     return membership && target && isManagedStudent(target) ? target : null;
 }
 
+interface ManagedStudentDomain {
+    id: string;
+    name: string;
+    isCurrent: boolean;
+}
+
+async function getManagedStudentDomains(domainId: string, uid: number) {
+    const [memberships, userDoc] = await Promise.all([
+        domain.collUser.find({ uid, join: true }).project<{ domainId: string }>({ domainId: 1 }).toArray(),
+        user.coll.findOne({ _id: uid }, { projection: { defaultDomain: 1 } }),
+    ]);
+    const joinedDomainIds = Array.from(new Set(memberships.map((membership) => membership.domainId)));
+    const ddocs = joinedDomainIds.length
+        ? await domain.getMulti({ _id: { $in: joinedDomainIds } }).project({ _id: 1, name: 1 }).toArray()
+        : [];
+    const currentDomainId = domainId.toLowerCase();
+    const domains: ManagedStudentDomain[] = ddocs.map((ddoc) => ({
+        id: ddoc._id,
+        name: ddoc.name || ddoc._id,
+        isCurrent: ddoc._id.toLowerCase() === currentDomainId,
+    })).sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent) || a.name.localeCompare(b.name, 'zh-CN'));
+    const storedDefaultDomain = typeof userDoc?.defaultDomain === 'string'
+        ? userDoc.defaultDomain.toLowerCase()
+        : '';
+    const selectedDefaultDomain = domains.find((item) => item.id.toLowerCase() === storedDefaultDomain)?.id
+        || domains.find((item) => item.isCurrent)?.id
+        || domains[0]?.id
+        || '';
+    return { domains, selectedDefaultDomain };
+}
+
 class SystemUserManagementHandler extends SystemHandler {
     async prepare() {
         this.checkPriv(PRIV.PRIV_ALL);
@@ -857,14 +899,57 @@ class SystemUserManagementHandler extends SystemHandler {
         const students = await getManagedStudents(domainId, sort, order);
         const selectedStudent = uid ? students.find((student) => student.uid === uid) : null;
         if (uid && !selectedStudent) throw new UserNotFoundError(uid);
+        const selectedStudentDomainState = selectedStudent
+            ? await getManagedStudentDomains(domainId, selectedStudent.uid)
+            : { domains: [], selectedDefaultDomain: '' };
         this.response.template = 'manage_user_management.html';
         this.response.body = {
             students,
             selectedStudent,
+            selectedStudentDomains: selectedStudentDomainState.domains,
+            selectedStudentDefaultDomain: selectedStudentDomainState.selectedDefaultDomain,
             saved,
             sort,
             order,
         };
+    }
+
+    @requireSudo
+    @param('uname', Types.Username)
+    @param('mail', Types.Email, true)
+    @param('password', Types.Password)
+    @param('verifyPassword', Types.Password)
+    @param('displayName', Types.String)
+    @param('school', Types.String, true)
+    @param('studentId', Types.String, true)
+    @param('sort', Types.Range(MANAGED_STUDENT_SORTS), true)
+    @param('order', Types.Range(MANAGED_STUDENT_SORT_DIRECTIONS), true)
+    async postAddStudent(
+        domainId: string, uname: string, mail: string | undefined, password: string, verifyPassword: string,
+        displayName: string, school = '', studentId = '', sort: ManagedStudentSort = 'submit',
+        order: ManagedStudentSortDirection = 'desc',
+    ) {
+        if (password !== verifyPassword) throw new VerifyPasswordError();
+        const normalizedDisplayName = normalizeManagedStudentText(displayName, 'displayName');
+        if (!normalizedDisplayName) throw new ValidationError('displayName');
+        const normalizedSchool = normalizeManagedStudentText(school, 'school');
+        const normalizedStudentId = normalizeManagedStudentText(studentId, 'studentId');
+        const accountMail = mail?.trim() || `${randomstring(12)}@invalid.local`;
+        const uid = await user.create(accountMail, uname, password);
+        await Promise.all([
+            domain.setUserInDomain(domainId, uid, {
+                join: true,
+                role: 'default',
+                displayName: normalizedDisplayName,
+                cppEditorMode: 'proficient',
+            }),
+            user.setById(uid, {
+                school: normalizedSchool,
+                studentId: normalizedStudentId,
+                defaultDomain: domainId,
+            }),
+        ]);
+        this.response.redirect = this.url('manage_user_management', { query: { uid, saved: 1, sort, order } });
     }
 
     @requireSudo
@@ -889,37 +974,51 @@ class SystemUserManagementHandler extends SystemHandler {
     @requireSudo
     @param('uid', Types.Int)
     @param('uname', Types.Username)
-    @param('mail', Types.Email)
+    @param('mail', Types.Email, true)
     @param('displayName', Types.String)
-    @param('school', Types.String)
-    @param('studentId', Types.String)
+    @param('school', Types.String, true)
+    @param('studentId', Types.String, true)
+    @param('defaultDomain', Types.String, true)
+    @param('cppEditorMode', Types.Range(CPP_EDITOR_MODES))
     @param('sort', Types.Range(MANAGED_STUDENT_SORTS), true)
     @param('order', Types.Range(MANAGED_STUDENT_SORT_DIRECTIONS), true)
     async postEditStudent(
-        domainId: string, uid: number, uname: string, mail: string,
-        displayName: string, school: string, studentId: string, sort: ManagedStudentSort = 'submit',
-        order: ManagedStudentSortDirection = 'desc',
+        domainId: string, uid: number, uname: string, mail: string | undefined,
+        displayName: string, school = '', studentId = '', defaultDomain = '', cppEditorMode: CppEditorMode = 'proficient',
+        sort: ManagedStudentSort = 'submit', order: ManagedStudentSortDirection = 'desc',
     ) {
         const target = await getManagedStudent(domainId, uid);
         if (!target) throw new UserNotFoundError(uid);
         const normalizedDisplayName = normalizeManagedStudentText(displayName, 'displayName');
+        if (!normalizedDisplayName) throw new ValidationError('displayName');
         const normalizedSchool = normalizeManagedStudentText(school, 'school');
         const normalizedStudentId = normalizeManagedStudentText(studentId, 'studentId');
+        const effectiveMail = mail?.trim() || target.mail;
+        const domainState = await getManagedStudentDomains(domainId, uid);
+        const requestedDefaultDomain = normalizeManagedStudentText(defaultDomain, 'defaultDomain');
+        const selectedDefaultDomain = domainState.domains.find(
+            (item) => item.id.toLowerCase() === (requestedDefaultDomain || domainState.selectedDefaultDomain).toLowerCase(),
+        )?.id;
+        if (!selectedDefaultDomain) throw new ValidationError('defaultDomain');
         const [sameNameUser, sameMailUser] = await Promise.all([
             uname === target.uname ? null : user.getByUname(domainId, uname),
-            mail === target.mail ? null : user.getByEmail(domainId, mail),
+            effectiveMail === target.mail ? null : user.getByEmail(domainId, effectiveMail),
         ]);
         if (sameNameUser && sameNameUser._id !== uid) throw new UserAlreadyExistError(uname);
-        if (sameMailUser && sameMailUser._id !== uid) throw new UserAlreadyExistError(mail);
+        if (sameMailUser && sameMailUser._id !== uid) throw new UserAlreadyExistError(effectiveMail);
         await user.setById(uid, {
             uname,
             unameLower: uname.toLowerCase(),
-            mail,
-            mailLower: handleMailLower(mail),
+            mail: effectiveMail,
+            mailLower: handleMailLower(effectiveMail),
             school: normalizedSchool,
             studentId: normalizedStudentId,
+            defaultDomain: selectedDefaultDomain,
         });
-        await domain.setUserInDomain(domainId, uid, { displayName: normalizedDisplayName });
+        await domain.updateUserInDomain(domainId, uid, {
+            $set: { displayName: normalizedDisplayName, cppEditorMode },
+            $unset: { cppStarterTemplate: '' },
+        });
         this.response.redirect = this.url('manage_user_management', { query: { uid, saved: 1, sort, order } });
     }
 }
@@ -1202,7 +1301,7 @@ export async function apply(ctx) {
     ctx.Route('manage_setting', '/manage/setting', SystemSettingHandler);
     ctx.Route('manage_config', '/manage/config', SystemConfigHandler);
     ctx.Route('manage_user_management', '/manage/users', SystemUserManagementHandler);
-    ctx.injectUI('ControlPanel', 'manage_user_management', { before: 'manage_user_import', icon: 'user' }, PRIV.PRIV_ALL);
+    ctx.injectUI('ControlPanel', 'manage_user_management', { before: 'manage_user_priv', icon: 'user' }, PRIV.PRIV_ALL);
     ctx.Route('manage_user_import', '/manage/userimport', SystemUserImportHandler);
     ctx.Route('manage_user_priv', '/manage/userpriv', SystemUserPrivHandler);
     ctx.Route('manage_home_poster', '/manage/home-poster', SystemHomePosterHandler);

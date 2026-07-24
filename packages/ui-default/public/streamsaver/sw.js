@@ -1,3 +1,129 @@
-(()=>{self.addEventListener("install",()=>{self.skipWaiting()});self.addEventListener("activate",e=>{e.waitUntil(self.clients.claim())});const d=new Map;self.onmessage=e=>{if(e.data==="ping")return;const t=e.data,a=t.url||self.registration.scope+Math.random()+"/"+(typeof t=="string"?t:t.filename),s=e.ports[0],n=new Array(3);n[1]=t,n[2]=s,e.data.readableStream?n[0]=e.data.readableStream:e.data.transferringReadable?s.onmessage=l=>{s.onmessage=null,n[0]=l.data.readableStream}:n[0]=c(s),d.set(a,n),s.postMessage({download:a})};function c(e){return new ReadableStream({start(t){e.onmessage=({data:a})=>{if(a==="end")return t.close();if(a==="abort"){t.error("Aborted the download");return}t.enqueue(a)}},cancel(t){console.log("user aborted",t),e.postMessage({abort:!0})}})}self.onfetch=e=>{const t=e.request.url;if(t.endsWith("/ping"))return e.respondWith(new Response("pong"));const a=d.get(t);if(!a)return null;const[s,n,l]=a;d.delete(t);const o=new Headers({"Content-Type":"application/octet-stream; charset=utf-8","Content-Security-Policy":"default-src 'none'","X-Content-Security-Policy":"default-src 'none'","X-WebKit-CSP":"default-src 'none'","X-XSS-Protection":"1; mode=block"});let r=new Headers(n.headers||{});r.has("Content-Length")&&o.set("Content-Length",r.get("Content-Length")),r.has("Content-Disposition")&&o.set("Content-Disposition",r.get("Content-Disposition")),n.size&&(console.warn("Depricated"),o.set("Content-Length",n.size));let i=typeof n=="string"?n:n.filename;i&&(console.warn("Depricated"),i=encodeURIComponent(i).replace(/['()]/g,escape).replace(/\*/g,"%2A"),o.set("Content-Disposition","attachment; filename*=UTF-8''"+i)),e.respondWith(new Response(s,{headers:o})),l.postMessage({debug:"Download started"})};})();
+/* global self ReadableStream Response */
 
-//# sourceMappingURL=sw.js.map
+self.addEventListener('install', () => {
+  self.skipWaiting()
+})
+
+self.addEventListener('activate', event => {
+  event.waitUntil(self.clients.claim())
+})
+
+const map = new Map()
+
+// This should be called once per download
+// Each event has a dataChannel that the data will be piped through
+self.onmessage = event => {
+  // We send a heartbeat every x second to keep the
+  // service worker alive if a transferable stream is not sent
+  if (event.data === 'ping') {
+    return
+  }
+
+  const data = event.data
+  const downloadUrl = data.url || self.registration.scope + Math.random() + '/' + (typeof data === 'string' ? data : data.filename)
+  const port = event.ports[0]
+  const metadata = new Array(3) // [stream, data, port]
+
+  metadata[1] = data
+  metadata[2] = port
+
+  // Note to self:
+  // old streamsaver v1.2.0 might still use `readableStream`...
+  // but v2.0.0 will always transfer the stream through MessageChannel #94
+  if (event.data.readableStream) {
+    metadata[0] = event.data.readableStream
+  } else if (event.data.transferringReadable) {
+    port.onmessage = evt => {
+      port.onmessage = null
+      metadata[0] = evt.data.readableStream
+    }
+  } else {
+    metadata[0] = createStream(port)
+  }
+
+  map.set(downloadUrl, metadata)
+  port.postMessage({ download: downloadUrl })
+}
+
+function createStream (port) {
+  // ReadableStream is only supported by chrome 52
+  return new ReadableStream({
+    start (controller) {
+      // When we receive data on the messageChannel, we write
+      port.onmessage = ({ data }) => {
+        if (data === 'end') {
+          return controller.close()
+        }
+
+        if (data === 'abort') {
+          controller.error('Aborted the download')
+          return
+        }
+
+        controller.enqueue(data)
+      }
+    },
+    cancel (reason) {
+      console.log('user aborted', reason)
+      port.postMessage({ abort: true })
+    }
+  })
+}
+
+self.onfetch = event => {
+  const url = event.request.url
+
+  // this only works for Firefox
+  if (url.endsWith('/ping')) {
+    return event.respondWith(new Response('pong'))
+  }
+
+  const hijacke = map.get(url)
+
+  if (!hijacke) return null
+
+  const [ stream, data, port ] = hijacke
+
+  map.delete(url)
+
+  // Not comfortable letting any user control all headers
+  // so we only copy over the length & disposition
+  const responseHeaders = new Headers({
+    'Content-Type': 'application/octet-stream; charset=utf-8',
+
+    // To be on the safe side, The link can be opened in a iframe.
+    // but octet-stream should stop it.
+    'Content-Security-Policy': "default-src 'none'",
+    'X-Content-Security-Policy': "default-src 'none'",
+    'X-WebKit-CSP': "default-src 'none'",
+    'X-XSS-Protection': '1; mode=block'
+  })
+
+  let headers = new Headers(data.headers || {})
+
+  if (headers.has('Content-Length')) {
+    responseHeaders.set('Content-Length', headers.get('Content-Length'))
+  }
+
+  if (headers.has('Content-Disposition')) {
+    responseHeaders.set('Content-Disposition', headers.get('Content-Disposition'))
+  }
+
+  // data, data.filename and size should not be used anymore
+  if (data.size) {
+    console.warn('Depricated')
+    responseHeaders.set('Content-Length', data.size)
+  }
+
+  let fileName = typeof data === 'string' ? data : data.filename
+  if (fileName) {
+    console.warn('Depricated')
+    // Make filename RFC5987 compatible
+    fileName = encodeURIComponent(fileName).replace(/['()]/g, escape).replace(/\*/g, '%2A')
+    responseHeaders.set('Content-Disposition', "attachment; filename*=UTF-8''" + fileName)
+  }
+
+  event.respondWith(new Response(stream, { headers: responseHeaders }))
+
+  port.postMessage({ debug: 'Download started' })
+}

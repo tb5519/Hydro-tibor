@@ -7,6 +7,8 @@
   problemNumId: hostPdoc.docId,
   codeLang: ideCodeLang,
   codeTemplate: handler.user.codeTemplate,
+  cppEditorMode: cppEditorMode,
+  cppStarterTemplate: cppStarterTemplate,
   ideMode: true,
   canViewRecord: false,
   pdoc: {
@@ -68,8 +70,13 @@ body.online-ide-mode .scratchpad-container [class*="splitViewView"]:has(.scratch
   left: 0 !important;
   width: 100% !important;
 }
-body.online-ide-mode .scratchpad-container [class*="sash-container"] {
+/* The outer navigation panes are hidden in IDE mode, but the editor's
+ * horizontal sash must stay available so the self-test panel can be resized. */
+body.online-ide-mode .scratchpad-container [class*="sash-module_vertical"] {
   display: none !important;
+}
+body.online-ide-mode .scratchpad-container [class*="sash-module_horizontal"] {
+  z-index: 36;
 }
 </style>
 <div class="online-ide-seed">
@@ -118,9 +125,6 @@ body.online-ide-mode .scratchpad-container [class*="sash-container"] {
       editorPane.style.width = '100%';
       editorPane.style.right = '0px';
     }
-    document.querySelectorAll('.scratchpad-container [class*="sash-container"]').forEach(function (el) {
-      el.style.display = 'none';
-    });
     window.dispatchEvent(new Event('resize'));
   }
   function openScratchpad() {

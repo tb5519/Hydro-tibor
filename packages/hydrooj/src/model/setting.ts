@@ -295,6 +295,16 @@ DomainUserSetting(Schema.object({
     displayName: Schema.transform(String, (input) => saslPrep(input)).default('').description('Display Name')
         .extra('family', 'setting_info').extra('flag', FLAG_PRIVATE),
 
+    // Keep this unset for legacy memberships so callers can resolve the former
+    // cppStarterTemplate flag before falling back to proficient mode.
+    cppEditorMode: Schema.union(['beginner', 'preset', 'proficient']).description('C++ online editor mode')
+        .extra('family', 'setting_storage').extra('flag', FLAG_PRIVATE).hidden(),
+
+    // Legacy field kept only to resolve existing student settings. New saves
+    // write cppEditorMode and remove this field.
+    cppStarterTemplate: Schema.boolean().default(false).description('Use C++ starter template in online IDE')
+        .extra('family', 'setting_storage').extra('flag', FLAG_PRIVATE).hidden(),
+
     rpInfo: Schema.any().extra('family', 'setting_storage').disabled().hidden(),
 
     ...Object.fromEntries(['nAccept', 'nSubmit', 'nLiked', 'rp', 'rpdelta', 'rank', 'level', 'join'].map((i) => ([
