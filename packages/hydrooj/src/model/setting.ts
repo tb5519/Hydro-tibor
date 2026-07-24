@@ -280,6 +280,13 @@ AccountSetting(
     Setting('setting_storage', 'pinnedDomains', [], 'json', 'pinned domains', null, FLAG_DISABLED | FLAG_HIDDEN),
 );
 
+// This intentionally has no default. An absent global value lets callers
+// retain a legacy per-domain setting until the student is saved again.
+AccountSetting(Schema.object({
+    cppEditorMode: Schema.union(['beginner', 'preset', 'proficient']).description('C++ online editor mode')
+        .extra('family', 'setting_storage').extra('flag', FLAG_PRIVATE).hidden(),
+}));
+
 DomainSetting(
     Setting('setting_domain', 'name', 'New domain', 'text', 'name'),
     Setting('setting_domain', 'avatar', '', 'text', 'avatar', 'Will be used as the domain icon.'),
@@ -294,16 +301,6 @@ DomainSetting(
 DomainUserSetting(Schema.object({
     displayName: Schema.transform(String, (input) => saslPrep(input)).default('').description('Display Name')
         .extra('family', 'setting_info').extra('flag', FLAG_PRIVATE),
-
-    // Keep this unset for legacy memberships so callers can resolve the former
-    // cppStarterTemplate flag before falling back to proficient mode.
-    cppEditorMode: Schema.union(['beginner', 'preset', 'proficient']).description('C++ online editor mode')
-        .extra('family', 'setting_storage').extra('flag', FLAG_PRIVATE).hidden(),
-
-    // Legacy field kept only to resolve existing student settings. New saves
-    // write cppEditorMode and remove this field.
-    cppStarterTemplate: Schema.boolean().default(false).description('Use C++ starter template in online IDE')
-        .extra('family', 'setting_storage').extra('flag', FLAG_PRIVATE).hidden(),
 
     rpInfo: Schema.any().extra('family', 'setting_storage').disabled().hidden(),
 

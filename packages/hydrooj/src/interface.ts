@@ -92,6 +92,8 @@ export interface Udoc extends Record<string, any> {
     loginip: string;
     /** Domain entered after a login when no explicit redirect is requested. */
     defaultDomain?: string;
+    /** Global C++ online editor mode, shared by every domain the user joins. */
+    cppEditorMode?: CppEditorMode;
 }
 
 export interface VUdoc {
@@ -137,7 +139,9 @@ export interface BaseUser {
     school?: string;
     displayName?: string;
     studentId?: string;
+    /** Global C++ online editor mode, shared by every domain the user joins. */
     cppEditorMode?: CppEditorMode;
+    /** @deprecated Legacy per-domain starter-template flag. */
     cppStarterTemplate?: boolean;
 }
 export type BaseUserDict = Record<number, BaseUser>;

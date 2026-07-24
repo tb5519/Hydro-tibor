@@ -70,13 +70,22 @@ const CPP_BEGINNER_TEMPLATE_SUFFIX = `
 type CppEditorMode = 'beginner' | 'preset' | 'proficient';
 
 function getCppEditorMode(udoc: User): CppEditorMode {
-    const settings = udoc as unknown as { cppEditorMode?: unknown, cppStarterTemplate?: unknown };
-    if (settings.cppEditorMode === 'beginner' || settings.cppEditorMode === 'preset' || settings.cppEditorMode === 'proficient') {
-        return settings.cppEditorMode;
+    const globalSettings = udoc as unknown as { cppEditorMode?: unknown };
+    if (globalSettings.cppEditorMode === 'beginner'
+        || globalSettings.cppEditorMode === 'preset'
+        || globalSettings.cppEditorMode === 'proficient') {
+        return globalSettings.cppEditorMode;
     }
-    // Keep the previously released one-off template option working for any
-    // existing student settings while the three-mode setting rolls out.
-    return settings.cppStarterTemplate === true ? 'preset' : 'proficient';
+    // A previous release stored this on each membership. Continue honoring a
+    // legacy value in the current domain until an administrator saves the new
+    // account-wide preference.
+    const legacySettings = udoc._dudoc as { cppEditorMode?: unknown, cppStarterTemplate?: unknown };
+    if (legacySettings.cppEditorMode === 'beginner'
+        || legacySettings.cppEditorMode === 'preset'
+        || legacySettings.cppEditorMode === 'proficient') {
+        return legacySettings.cppEditorMode;
+    }
+    return legacySettings.cppStarterTemplate === true ? 'preset' : 'proficient';
 }
 
 function isCppLanguage(lang: string) {

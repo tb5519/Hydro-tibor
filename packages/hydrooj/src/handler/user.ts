@@ -310,8 +310,9 @@ class UserLogoutHandler extends Handler {
     }
 
     async post({ domainId }) {
+        const redirect = await getDefaultDomainLoginRedirect(this, this.user);
         await successfulAuth.call(this, await user.getById(domainId, 0));
-        this.response.redirect = '/';
+        this.response.redirect = redirect;
     }
 }
 

@@ -766,9 +766,14 @@ function normalizeManagedStudentText(value: string, key: string) {
     return result;
 }
 
-function resolveManagedStudentCppEditorMode(value: unknown, legacyCppStarterTemplate?: boolean): CppEditorMode {
-    if (typeof value === 'string' && CPP_EDITOR_MODES.includes(value as CppEditorMode)) {
-        return value as CppEditorMode;
+function resolveManagedStudentCppEditorMode(
+    globalValue: unknown, legacyValue?: unknown, legacyCppStarterTemplate?: boolean,
+): CppEditorMode {
+    if (typeof globalValue === 'string' && CPP_EDITOR_MODES.includes(globalValue as CppEditorMode)) {
+        return globalValue as CppEditorMode;
+    }
+    if (typeof legacyValue === 'string' && CPP_EDITOR_MODES.includes(legacyValue as CppEditorMode)) {
+        return legacyValue as CppEditorMode;
     }
     return legacyCppStarterTemplate ? 'preset' : 'proficient';
 }
@@ -777,8 +782,11 @@ async function getManagedStudents(
     domainId: string, sort: ManagedStudentSort, direction: ManagedStudentSortDirection,
 ) {
     const joined = await domain.getMultiUserInDomain(domainId, { uid: { $gt: 1 }, join: true })
-        .project<{ uid: number, displayName?: string, nSubmit?: number, nAccept?: number }>({
-            uid: 1, displayName: 1, nSubmit: 1, nAccept: 1,
+        .project<{
+            uid: number; displayName?: string; nSubmit?: number; nAccept?: number;
+            cppEditorMode?: unknown; cppStarterTemplate?: boolean;
+        }>({
+            uid: 1, displayName: 1, nSubmit: 1, nAccept: 1, cppEditorMode: 1, cppStarterTemplate: 1,
         })
         .toArray();
     const candidateUids = Array.from(new Set(joined.map((row) => row.uid)));
@@ -788,7 +796,7 @@ async function getManagedStudents(
     const studentUids = candidateUids.filter((uid) => studentUidSet.has(uid));
     if (!studentUids.length) return [];
     const membershipByUid = new Map(joined.map((row) => [row.uid, row]));
-    const [udict, recentActivity] = await Promise.all([
+    const [udict, recentActivity, globalModeDocs] = await Promise.all([
         user.getListForRender(domainId, studentUids, true),
         record.coll.aggregate<{ _id: number, lastRecordId: ObjectId }>([
             {
@@ -801,7 +809,12 @@ async function getManagedStudents(
             },
             { $group: { _id: '$uid', lastRecordId: { $max: '$_id' } } },
         ]).toArray(),
+        // getListForRender overlays membership fields over user fields. Read
+        // this account-wide preference directly so legacy membership data can
+        // never shadow it in the student management editor.
+        user.getMulti({ _id: { $in: studentUids } }, ['_id', 'cppEditorMode']).toArray(),
     ]);
+    const globalModeByUid = new Map(globalModeDocs.map((udoc) => [udoc._id, udoc.cppEditorMode]));
     const lastSubmitAtByUid = new Map(recentActivity.map((row) => [row._id, row.lastRecordId.getTimestamp()]));
     const students = studentUids.map((uid) => {
         const udoc = udict[uid];
@@ -812,7 +825,9 @@ async function getManagedStudents(
             ...udoc,
             uid,
             displayName,
-            cppEditorMode: resolveManagedStudentCppEditorMode(udoc.cppEditorMode, udoc.cppStarterTemplate),
+            cppEditorMode: resolveManagedStudentCppEditorMode(
+                globalModeByUid.get(uid), membership?.cppEditorMode, membership?.cppStarterTemplate,
+            ),
             submitCount: membership?.nSubmit || 0,
             acceptedCount: membership?.nAccept || 0,
             loginAt,
@@ -941,12 +956,12 @@ class SystemUserManagementHandler extends SystemHandler {
                 join: true,
                 role: 'default',
                 displayName: normalizedDisplayName,
-                cppEditorMode: 'proficient',
             }),
             user.setById(uid, {
                 school: normalizedSchool,
                 studentId: normalizedStudentId,
                 defaultDomain: domainId,
+                cppEditorMode: 'proficient',
             }),
         ]);
         this.response.redirect = this.url('manage_user_management', { query: { uid, saved: 1, sort, order } });
@@ -1014,10 +1029,10 @@ class SystemUserManagementHandler extends SystemHandler {
             school: normalizedSchool,
             studentId: normalizedStudentId,
             defaultDomain: selectedDefaultDomain,
+            cppEditorMode,
         });
         await domain.updateUserInDomain(domainId, uid, {
-            $set: { displayName: normalizedDisplayName, cppEditorMode },
-            $unset: { cppStarterTemplate: '' },
+            $set: { displayName: normalizedDisplayName },
         });
         this.response.redirect = this.url('manage_user_management', { query: { uid, saved: 1, sort, order } });
     }
