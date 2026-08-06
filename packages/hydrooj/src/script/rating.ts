@@ -10,11 +10,10 @@ import { invalidateSharedRankingSnapshot } from '../lib/shared_ranking';
 import { PRIV, STATUS } from '../model/builtin';
 import domain from '../model/domain';
 import problem from '../model/problem';
-import system from '../model/system';
 import UserModel from '../model/user';
 import db from '../service/db';
 
-export const description = 'Calculate RP for a domain, or a shared ranking across all domains';
+export const description = 'Calculate RP for a domain';
 
 type ND = NumericDictionary<number>;
 type Report = (data: any) => void;
@@ -142,45 +141,10 @@ async function runInDomain(domainId: string, report: Report) {
     await calcLevel(domainId, report);
 }
 
-async function calcSharedLevel(domainIds: string[], report: Report) {
-    const coll = db.collection('domain.user');
-    await coll.updateMany({ domainId: { $in: domainIds } }, { $set: { level: 0, rank: null } });
-    const users = await coll.aggregate<{ _id: number, rp: number }>([
-        {
-            $match: {
-                domainId: { $in: domainIds },
-                join: true,
-                rp: { $gt: 0 },
-                uid: { $nin: [0, 1], $gt: -1000 },
-            },
-        },
-        { $group: { _id: '$uid', rp: { $max: '$rp' } } },
-        { $sort: { rp: -1, _id: 1 } },
-    ]).toArray();
-    if (!users.length) return;
-
-    let lastRp: number | null = null;
-    let rank = 0;
-    let bulk = coll.initializeUnorderedBulkOp();
-    for (let index = 0; index < users.length; index++) {
-        const entry = users[index];
-        if (entry.rp !== lastRp) rank = index + 1;
-        bulk.find({ domainId: { $in: domainIds }, uid: entry._id, join: true }).update({ $set: { rank } });
-        lastRp = entry.rp;
-        if ((index + 1) % 100 === 0) report({ message: `#${index + 1}: Shared rank ${rank}` });
-    }
-    if (bulk.batches.length) await bulk.execute();
-
-    const levels = global.Hydro.model.builtin.LEVELS;
-    bulk = coll.initializeUnorderedBulkOp();
-    for (let i = 0; i < levels.length; i++) {
-        const range: any = { rank: { $lte: (levels[i] * users.length) / 100 } };
-        if (i < levels.length - 1) range.rank.$gt = (levels[i + 1] * users.length) / 100;
-        bulk.find({ domainId: { $in: domainIds }, join: true, ...range }).update({ $set: { level: i } });
-    }
-    if (bulk.batches.length) await bulk.execute();
-}
-
+// A global result is kept separately from the regular per-domain RP fields so
+// one domain can show a shared board without changing another domain's local
+// board. The formula is the original all-domain RP formula, not a sum of each
+// domain's displayed RP.
 async function runAcrossDomains(domainIds: string[], report: Report) {
     const membershipDocs = await domain.collUser.find({
         domainId: { $in: domainIds },
@@ -196,7 +160,7 @@ async function runAcrossDomains(domainIds: string[], report: Report) {
 
     const coll = db.collection('domain.user');
     await coll.updateMany({ domainId: { $in: domainIds } }, {
-        $set: { rpInfo: {}, rp: 0, level: 0, rank: null },
+        $set: { sharedRpInfo: {}, sharedRp: 0 },
     });
     const total = Counter();
     for (const type in RpTypes) {
@@ -210,7 +174,7 @@ async function runAcrossDomains(domainIds: string[], report: Report) {
             const value = result[uidText];
             total[uid] += value;
             bulk.find({ domainId: { $in: domains }, uid, join: true })
-                .update({ $set: { [`rpInfo.${type}`]: value } });
+                .update({ $set: { [`sharedRpInfo.${type}`]: value } });
         }
         if (bulk.batches.length) await bulk.execute();
     }
@@ -221,32 +185,12 @@ async function runAcrossDomains(domainIds: string[], report: Report) {
         const domains = membership.get(uid);
         if (!domains?.length) continue;
         bulk.find({ domainId: { $in: domains }, uid, join: true })
-            .update({ $set: { rp: Math.max(0, total[uid]) } });
+            .update({ $set: { sharedRp: Math.max(0, total[uid]) } });
     }
     if (bulk.batches.length) await bulk.execute();
-    await calcSharedLevel(domainIds, report);
 }
 
 export async function run({ domainId }, report: Report) {
-    if (system.get('ranking.mode') === 'all') {
-        const domains = await domain.getMulti().project<{ _id: string }>({ _id: 1 }).toArray();
-        const domainIds = domains.map((ddoc) => ddoc._id);
-        const start = Date.now();
-        await report({ message: `Calculating shared RP across ${domainIds.length} domains` });
-        await runAcrossDomains(domainIds, report);
-        await report({
-            case: {
-                status: STATUS.STATUS_ACCEPTED,
-                message: 'Shared ranking finished',
-                time: Date.now() - start,
-                memory: 0,
-                score: 0,
-            },
-            progress: 100,
-        });
-        invalidateSharedRankingSnapshot();
-        return true;
-    }
     if (!domainId) {
         const domains = await domain.getMulti().toArray();
         await report({ message: `Found ${domains.length} domains` });
@@ -265,11 +209,29 @@ export async function run({ domainId }, report: Report) {
             });
         }
     } else await runInDomain(domainId, report);
+
+    const allDomains = await domain.getMulti().project<{ _id: string, rankingMode?: string }>({ _id: 1, rankingMode: 1 }).toArray();
+    if (allDomains.some((ddoc) => ddoc.rankingMode === 'all')) {
+        const start = Date.now();
+        const domainIds = allDomains.map((ddoc) => ddoc._id);
+        await report({ message: `Calculating shared RP across ${domainIds.length} domains` });
+        await runAcrossDomains(domainIds, report);
+        await report({
+            case: {
+                status: STATUS.STATUS_ACCEPTED,
+                message: 'Shared ranking finished',
+                time: Date.now() - start,
+                memory: 0,
+                score: 0,
+            },
+            progress: 100,
+        });
+    }
     invalidateSharedRankingSnapshot();
     return true;
 }
 
 export const apply = (ctx) => ctx.addScript(
-    'rp', 'Calculate RP for a domain, or the shared ranking across all domains.',
+    'rp', 'Calculate RP for a domain and refresh shared rankings when enabled.',
     Schema.object({ domainId: Schema.string() }), run,
 );

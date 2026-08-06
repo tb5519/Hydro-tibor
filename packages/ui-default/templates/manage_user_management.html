@@ -690,7 +690,7 @@
   <section class="student-management__hero">
     <div>
       <h1>{{ _('学员管理') }}</h1>
-      <p>{{ _('当前课程内的普通学员会直接显示在下方。默认按刷题量排序，可按近期活动调整。') }}</p>
+      <p>{{ _('所有域内的普通学员会直接显示在下方。默认按全域刷题量排序，可按近期活动调整。') }}</p>
     </div>
     <span class="student-management__count">{{ students.length }} {{ _('位学员') }}</span>
   </section>
@@ -746,6 +746,7 @@
                 {% if student.studentId %}<span>{{ _('学号') }}：{{ student.studentId }}</span>{% endif %}
                 {% if student.school %}<span>{{ student.school }}</span>{% endif %}
                 {% if not student.studentId and not student.school %}<span>{{ student.mail }}</span>{% endif %}
+                {% if student.domainNames.length %}<span>{{ _('所在域') }}：{{ student.domainNames|join('、') }}</span>{% endif %}
               </div>
               <div class="student-note__activity">
                 <span class="student-note__metric">
@@ -855,7 +856,7 @@
                   <div class="student-management__wide student-management__form-actions">
                     <button class="rounded primary button" type="submit"><span class="icon icon-save"></span>{{ _('保存学员信息') }}</button>
                     <a class="rounded button" href="{{ url('manage_user_management', query={sort: sort, order: order}) }}">{{ _('取消') }}</a>
-                    <span class="student-management__hint">{{ _('用户名必须保持唯一；邮箱如填写也必须唯一。显示姓名只在当前课程中使用。') }}</span>
+                    <span class="student-management__hint">{{ _('用户名必须保持唯一；邮箱如填写也必须唯一。显示姓名保存在选定的默认域中。') }}</span>
                   </div>
                 </form>
                 <details class="student-management__password">
@@ -883,7 +884,7 @@
       </div>
       <div class="student-management__empty" data-student-empty hidden>{{ _('没有匹配的学员。') }}</div>
     {% else %}
-      <div class="student-management__empty">{{ _('当前课程还没有已加入的普通学员。') }}</div>
+      <div class="student-management__empty">{{ _('所有域中还没有已加入的普通学员。') }}</div>
     {% endif %}
   </section>
 
@@ -894,7 +895,7 @@
         <div>
           <p class="student-create-dialog__eyebrow">NEW STUDENT</p>
           <h2 id="student-create-title">{{ _('增加学员') }}</h2>
-          <p>{{ _('创建账号、补充基础资料，并加入当前课程。') }}</p>
+          <p>{{ _('创建账号、补充基础资料，并加入指定的域。') }}</p>
         </div>
         <button class="student-create-dialog__close" type="button" data-student-add-close aria-label="{{ _('关闭') }}"><span class="icon icon-close" aria-hidden="true"></span></button>
       </header>
@@ -922,6 +923,12 @@
           <span>{{ _('学校') }}</span>
           <input class="textbox" name="school" autocomplete="organization">
         </label>
+        <label class="student-create-dialog__field student-create-dialog__wide">
+          <span>{{ _('初始加入域') }} <em class="student-create-dialog__required" aria-hidden="true">*</em></span>
+          <select class="textbox" name="joinDomain" required>
+            {% for item in allDomains %}<option value="{{ item.id }}">{{ item.name }} · {{ item.id }}</option>{% endfor %}
+          </select>
+        </label>
         <label class="student-create-dialog__field">
           <span>{{ _('登录密码') }} <em class="student-create-dialog__required" aria-hidden="true">*</em></span>
           <input class="textbox" type="password" name="password" autocomplete="new-password" required minlength="6" data-student-add-password>
@@ -932,7 +939,7 @@
         </label>
         <div class="student-create-dialog__tip student-create-dialog__wide">
           <span class="icon icon-info" aria-hidden="true"></span>
-          <span>{{ _('创建后，学员会自动加入当前课程，并将当前课程设为其默认登录域。') }}</span>
+          <span>{{ _('创建后，学员会自动加入所选域，并将其设为默认登录域。') }}</span>
         </div>
         <div class="student-create-dialog__actions student-create-dialog__wide">
           <button class="rounded button" type="button" data-student-add-close>{{ _('取消') }}</button>
@@ -1005,6 +1012,7 @@
       syncAddPassword();
       if (!addForm.reportValidity()) event.preventDefault();
     });
+
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') closeAddDialog();
     });

@@ -331,6 +331,19 @@ export interface DomainDoc extends Record<string, any> {
     defaultCodeLang?: string;
     _join?: any;
     host?: string[];
+    /** Controls the ranking presentation for this domain only. */
+    rankingMode?: 'single' | 'all';
+    /** Optional banner displayed on this domain's home page. */
+    homePoster?: {
+        image: string;
+        storagePath?: string;
+        updatedAt?: string;
+    };
+    /** Controls which optional learning entries appear in this domain's top navigation. */
+    navVisibility?: Partial<Record<
+        'problem_mistake' | 'training_main' | 'contest_main' | 'homework_main' | 'record_main' | 'ranking',
+        boolean
+    >>;
 }
 
 // Message

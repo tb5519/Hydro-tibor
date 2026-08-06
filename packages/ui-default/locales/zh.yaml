@@ -87,6 +87,13 @@ Add prefix/suffix: 添加前缀/后缀
 Add suffix: 添加后缀
 Add testcase: 添加测试点
 Add User: 添加用户
+Manually Add Student: 手动添加学员
+Add an existing student account to this domain directly. The student will receive the normal member role.: 将已有学员账号直接加入此域，加入后为普通成员。
+Student has been added to this domain.: 学员已加入当前域。
+Student UID or username: 学员 UID 或用户名
+'For example: 1024 or zhangsan': 例如：1024 或 zhangsan
+Add to this domain: 加入此域
+Only existing normal student accounts can be added. This action does not change the student's default login domain.: 仅可添加已有的普通学员账号；此操作不会改变学员的默认登录域。
 Add: 添加
 Additional Files: 附加文件
 additional_file: 附加文件
@@ -328,12 +335,16 @@ Domain ID cannot be changed once the domain is created.: 在创建后不能更�
 Domain ID: 域 ID
 Domain Settings: 域设置
 domain_dashboard: 管理域
+domain_add_student: 手动添加学员
 domain_discussion: 讨论节点
 domain_edit: 编辑域资料
+domain_home_poster: 首页海报
 domain_join: 加入域
 domain_main: 首页
 domain_permission: 管理权限
+domain_navigation_setting: 导航显示
 domain_role: 管理角色
+domain_ranking_setting: 排行榜设置
 domain_user: 管理用户
 domain: 域
 Domain: 域

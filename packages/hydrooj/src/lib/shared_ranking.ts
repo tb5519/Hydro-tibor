@@ -59,7 +59,13 @@ export async function getSharedRankingSnapshot() {
         nSubmit: 1,
         rp: 1,
         rpInfo: 1,
+        sharedRp: 1,
+        sharedRpInfo: 1,
     }).toArray();
+    // `sharedRp` is calculated separately from a domain's own RP. Old
+    // installations have no such field until the next RP task, so retain a
+    // read-only local-RP fallback during the migration.
+    const hasSharedRp = dudocs.some((dudoc) => typeof dudoc.sharedRp === 'number');
     const merged = new Map<number, SharedRankingRow>();
     for (const dudoc of dudocs) {
         if (!merged.has(dudoc.uid)) {
@@ -75,12 +81,12 @@ export async function getSharedRankingSnapshot() {
         const row = merged.get(dudoc.uid)!;
         row.totalAccept += dudoc.nAccept || 0;
         row.totalSubmit += dudoc.nSubmit || 0;
-        const rp = Math.max(0, +dudoc.rp || 0);
-        // Shared RP is written identically to every domain membership. Select it
-        // once instead of summing the same score for each domain.
+        const rp = Math.max(0, +(hasSharedRp ? dudoc.sharedRp : dudoc.rp) || 0);
+        // The shared calculation is written identically to every membership;
+        // select it once instead of adding the same score multiple times.
         if (rp > row.totalRp) {
             row.totalRp = rp;
-            row.rpInfo = { ...(dudoc.rpInfo || {}) };
+            row.rpInfo = { ...((hasSharedRp ? dudoc.sharedRpInfo : dudoc.rpInfo) || {}) };
         }
     }
 

@@ -7,6 +7,10 @@ Handled Requests: Req
 Hint::icon::difficulty: The difficulty of the problems in Hydro will be calculated by algorithm, depending on current submission, sometimes the difficulty may not so exact.
 Hint::icon::switch_account: As a superadmin, you can switch to anyone's account.
 manage: System Manage
+domain_home_poster: Home Poster
+domain_add_student: Manually Add Student
+domain_navigation_setting: Navigation Display
+domain_ranking_setting: Ranking Settings
 manage_lottery: Points Lottery
 manage_shared_ranking: Ranking Settings
 manage_user_management: Student Management

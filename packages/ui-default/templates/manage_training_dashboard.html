@@ -42,6 +42,33 @@
   font-weight: 700;
 }
 
+.training-dashboard-scope {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.training-dashboard-scope label {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.training-dashboard-scope select {
+  height: 34px;
+  max-width: 220px;
+  border: 1px solid #cfe0f5;
+  border-radius: 10px;
+  padding: 0 30px 0 11px;
+  color: #1e3a5f;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .training-dashboard-note {
   margin: 0 0 18px;
   border: 1px solid #dbeafe;
@@ -335,14 +362,17 @@
   }
 
   .training-dashboard-pill,
-  .training-dashboard-filters {
+  .training-dashboard-filters,
+  .training-dashboard-scope {
     margin-top: 12px;
   }
 
   .training-dashboard-input,
   .training-dashboard-select,
-  .training-dashboard-button {
+  .training-dashboard-button,
+  .training-dashboard-scope select {
     width: 100%;
+    max-width: none;
   }
 }
 </style>
@@ -353,11 +383,19 @@
       <h1 data-heading>{{ _('学员训练数据看板') }}</h1>
       <p>{{ _('查看学员提交、AC、活跃和进步趋势。') }}</p>
     </div>
-    <div class="training-dashboard-pill">{{ _('只读统计') }}</div>
+    <form method="get" class="training-dashboard-scope">
+      <label for="training-dashboard-domain">{{ _('查看范围') }}</label>
+      <select id="training-dashboard-domain" name="domain" onchange="this.form.submit()">
+        <option value="all"{% if selectedDashboardDomain == 'all' %} selected{% endif %}>{{ _('所有域') }}</option>
+        {% for item in dashboardDomains %}
+          <option value="{{ item.id }}"{% if selectedDashboardDomain == item.id %} selected{% endif %}>{{ item.name }} · {{ item.id }}</option>
+        {% endfor %}
+      </select>
+    </form>
   </div>
 
   <div class="training-dashboard-note">
-    {{ _('当前汇总域') }}：{{ dashboardDomainLabel }}。{{ _('新增 AC 题数按学员在各域首次 AC 题目统计，重复 AC 不重复计入。') }}
+    {{ _('当前查看范围') }}：{{ dashboardDomainLabel }}。{{ _('新增 AC 题数按学员在所选范围内首次 AC 题目统计，重复 AC 不重复计入。') }}
   </div>
 
   <section class="training-dashboard-card">
@@ -491,9 +529,10 @@
       <div class="training-dashboard-toolbar">
         <div>
           <h2 class="training-dashboard-card__title">{{ _('学员明细表') }}</h2>
-          <div class="training-dashboard-card__subtitle">{{ _('每页显示 10 名已加入学员') }} · {{ _('汇总域') }}：{{ dashboardDomainLabel }}</div>
+          <div class="training-dashboard-card__subtitle">{{ _('每页显示 10 名已加入学员') }} · {{ _('当前查看范围') }}：{{ dashboardDomainLabel }}</div>
         </div>
         <form method="get" class="training-dashboard-filters">
+          <input type="hidden" name="domain" value="{{ selectedDashboardDomain }}">
           <input name="q" class="training-dashboard-input" value="{{ q }}" placeholder="{{ _('搜索用户名') }}">
           <select name="sort" class="training-dashboard-select">
             <option value="newAc30"{% if sort == 'newAc30' %} selected{% endif %}>{{ _('新增 AC') }}</option>

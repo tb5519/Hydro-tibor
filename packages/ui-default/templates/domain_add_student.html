@@ -1,0 +1,109 @@
+{% extends "domain_base.html" %}
+{% block domain_content %}
+<style>
+  .domain-add-student__hero {
+    display: flex;
+    align-items: flex-start;
+    gap: .9rem;
+    padding: 1.15rem 1.2rem 1.05rem;
+    border: 1px solid #dbeafe;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #f8fbff 0%, #eef5ff 100%);
+  }
+  .domain-add-student__icon {
+    display: grid;
+    flex: 0 0 auto;
+    width: 2.5rem;
+    height: 2.5rem;
+    place-items: center;
+    border-radius: 9px;
+    color: #fff;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    box-shadow: 0 6px 14px rgba(37, 99, 235, .2);
+    font-size: 1.05rem;
+  }
+  .domain-add-student__hero h1 { margin: 0; }
+  .domain-add-student__hero p {
+    margin: .32rem 0 0;
+    color: #64748b;
+    font-size: .94rem;
+    line-height: 1.65;
+  }
+  .domain-add-student__form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: .75rem;
+    align-items: end;
+    max-width: 42rem;
+    margin-top: 1rem;
+    padding: 1rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #fff;
+  }
+  .domain-add-student__field { min-width: 0; }
+  .domain-add-student__field > span {
+    display: block;
+    margin-bottom: .42rem;
+    color: #334155;
+    font-size: .85rem;
+    font-weight: 700;
+  }
+  .domain-add-student__submit {
+    min-height: 2.4rem;
+    padding-right: .95rem;
+    padding-left: .95rem;
+    white-space: nowrap;
+  }
+  .domain-add-student__hint {
+    max-width: 42rem;
+    margin: .8rem 0 0;
+    color: #64748b;
+    font-size: .84rem;
+    line-height: 1.65;
+  }
+  .domain-add-student__feedback {
+    display: flex;
+    align-items: center;
+    gap: .45rem;
+    margin-bottom: 1rem;
+    padding: .7rem .85rem;
+    border: 1px solid #bbf7d0;
+    border-radius: 8px;
+    color: #166534;
+    background: #f0fdf4;
+    font-size: .9rem;
+    font-weight: 600;
+  }
+  @media (max-width: 34em) {
+    .domain-add-student__form { grid-template-columns: 1fr; }
+    .domain-add-student__submit { width: 100%; }
+  }
+</style>
+
+<div class="section">
+  <div class="section__body">
+    <div class="domain-add-student__hero">
+      <span class="domain-add-student__icon"><span class="icon icon-add" aria-hidden="true"></span></span>
+      <div>
+        <h1>{{ _('Manually Add Student') }}</h1>
+        <p>{{ _('Add an existing student account to this domain directly. The student will receive the normal member role.') }}</p>
+      </div>
+    </div>
+
+    {% if added %}
+      <div class="domain-add-student__feedback"><span class="icon icon-check"></span>{{ _('Student has been added to this domain.') }}</div>
+    {% endif %}
+
+    <form method="post" class="domain-add-student__form">
+      <input type="hidden" name="operation" value="add_student">
+      <label class="domain-add-student__field">
+        <span>{{ _('Student UID or username') }}</span>
+        <input class="textbox" name="uidOrName" autocomplete="off" placeholder="{{ _('For example: 1024 or zhangsan') }}" required autofocus>
+      </label>
+      <button class="rounded primary button domain-add-student__submit" type="submit"><span class="icon icon-add"></span>{{ _('Add to this domain') }}</button>
+    </form>
+    <p class="domain-add-student__hint">{{ _('Only existing normal student accounts can be added. This action does not change the student\'s default login domain.') }}</p>
+  </div>
+</div>
+{% endblock %}

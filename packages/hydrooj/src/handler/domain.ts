@@ -1,13 +1,17 @@
+import path from 'path';
 import { load } from 'js-yaml';
 import moment from 'moment-timezone';
 import Schema from 'schemastery';
 import type { Context } from '../context';
 import {
     CannotDeleteSystemDomainError, DomainJoinAlreadyMemberError, DomainJoinForbiddenError, ForbiddenError,
-    InvalidJoinInvitationCodeError, NotFoundError, OnlyOwnerCanDeleteDomainError, PermissionError, RoleAlreadyExistError, ValidationError,
+    InvalidJoinInvitationCodeError, NotFoundError, OnlyOwnerCanDeleteDomainError, PermissionError,
+    RoleAlreadyExistError, UserNotFoundError, ValidationError,
 } from '../error';
 import type { DomainDoc } from '../interface';
 import avatar from '../lib/avatar';
+import { getDomainRankingMode } from '../lib/domain_ranking';
+import { getHomePosterConfig } from '../lib/home_poster';
 import { getSharedRankingSnapshot, SharedRankingRow } from '../lib/shared_ranking';
 import { PERM, PERMS_BY_FAMILY, PRIV } from '../model/builtin';
 import * as discussion from '../model/discussion';
@@ -15,6 +19,7 @@ import domain from '../model/domain';
 import MessageModel from '../model/message';
 import * as oplog from '../model/oplog';
 import { DOMAIN_SETTINGS, DOMAIN_SETTINGS_BY_KEY } from '../model/setting';
+import storage from '../model/storage';
 import system from '../model/system';
 import user from '../model/user';
 import {
@@ -110,7 +115,7 @@ async function getSharedRankingRows(ctx: Context, currentUser: any, currentDomai
 class DomainRankHandler extends Handler {
     @query('page', Types.PositiveInt, true)
     async get(domainId: string, page = 1) {
-        if (system.get('ranking.mode') === 'all') {
+        if (getDomainRankingMode(this.domain) === 'all') {
             const pageSize = system.get('pagination.ranking') || 100;
             const {
                 udocs, upcount, ucount, currentUser,
@@ -150,6 +155,111 @@ class ManageHandler extends Handler {
     async prepare({ domainId }) {
         this.checkPerm(PERM.PERM_EDIT_DOMAIN);
         this.domain = await domain.get(domainId);
+    }
+}
+
+const DOMAIN_RANKING_MODES = ['single', 'all'];
+const DOMAIN_POSTER_MAX_SIZE = 8 * 1024 * 1024;
+const DOMAIN_POSTER_EXTS = ['.jpg', '.jpeg', '.png', '.webp'];
+const DOMAIN_NAVIGATION_ITEMS = [
+    'problem_mistake', 'training_main', 'contest_main', 'homework_main', 'record_main', 'ranking',
+] as const;
+type DomainNavigationItem = typeof DOMAIN_NAVIGATION_ITEMS[number];
+
+class DomainRankingSettingHandler extends ManageHandler {
+    async get() {
+        this.response.template = 'domain_ranking_setting.html';
+        this.response.body = {
+            domain: this.domain,
+            mode: getDomainRankingMode(this.domain),
+        };
+    }
+
+    @param('mode', Types.Range(DOMAIN_RANKING_MODES))
+    async post(domainId: string, mode: 'single' | 'all') {
+        await domain.edit(domainId, { rankingMode: mode });
+        this.response.redirect = this.url('domain_ranking_setting', { query: { saved: 1 } });
+    }
+}
+
+class DomainHomePosterHandler extends ManageHandler {
+    @param('saved', Types.Int, true)
+    @param('cleared', Types.Int, true)
+    async get(domainId: string, saved = 0, cleared = 0) {
+        const config = getHomePosterConfig(this.domain);
+        if (config.storagePath) {
+            config.image = this.url('home_poster_image', {
+                query: { v: config.updatedAt || '' },
+            });
+        }
+        this.response.template = 'domain_home_poster.html';
+        this.response.body = {
+            domain: this.domain,
+            config,
+            saved,
+            cleared,
+            recommendedRatio: '18:5',
+            recommendedSize: '2160 x 600',
+        };
+    }
+
+    @requireSudo
+    @param('operation', Types.String)
+    async postUpload(domainId: string) {
+        const file = this.request.files?.file;
+        if (!file || file.size > DOMAIN_POSTER_MAX_SIZE) throw new ValidationError('poster');
+        const ext = path.extname(file.originalFilename || '').toLowerCase();
+        if (!DOMAIN_POSTER_EXTS.includes(ext)) throw new ValidationError('poster');
+
+        const oldConfig = getHomePosterConfig(this.domain);
+        const filename = `home-poster-${Date.now()}${ext}`;
+        const storagePath = `domain/${domainId}/${filename}`;
+        await storage.put(storagePath, file.filepath, this.user._id);
+        if (oldConfig.storagePath && oldConfig.storagePath !== storagePath) {
+            storage.del([oldConfig.storagePath], this.user._id).catch(() => undefined);
+        }
+        const updatedAt = new Date().toISOString();
+        await domain.edit(domainId, {
+            homePoster: {
+                image: this.url('home_poster_image', { query: { v: updatedAt } }),
+                storagePath,
+                updatedAt,
+            },
+        });
+        this.response.redirect = this.url('domain_home_poster', { query: { saved: 1 } });
+    }
+
+    @requireSudo
+    @param('operation', Types.String)
+    async postClear(domainId: string) {
+        const oldConfig = getHomePosterConfig(this.domain);
+        if (oldConfig.storagePath) storage.del([oldConfig.storagePath], this.user._id).catch(() => undefined);
+        await domain.edit(domainId, { homePoster: { image: '' } });
+        this.response.redirect = this.url('domain_home_poster', { query: { cleared: 1 } });
+    }
+}
+
+class DomainNavigationSettingHandler extends ManageHandler {
+    @param('saved', Types.Int, true)
+    async get(domainId: string, saved = 0) {
+        this.response.template = 'domain_navigation_setting.html';
+        this.response.body = {
+            domain: this.domain,
+            saved,
+            items: DOMAIN_NAVIGATION_ITEMS.map((id) => ({
+                id,
+                visible: this.domain.navVisibility?.[id] !== false,
+            })),
+        };
+    }
+
+    async post(args) {
+        const navVisibility = Object.fromEntries(DOMAIN_NAVIGATION_ITEMS.map((id) => [
+            id,
+            args[`show_${id}`] === 'on',
+        ])) as Record<DomainNavigationItem, boolean>;
+        await domain.edit(args.domainId, { navVisibility });
+        this.response.redirect = this.url('domain_navigation_setting', { query: { saved: 1 } });
     }
 }
 
@@ -421,6 +531,41 @@ class DomainJoinApplicationsHandler extends ManageHandler {
     }
 }
 
+class DomainAddStudentHandler extends ManageHandler {
+    @param('added', Types.Int, true)
+    async get(domainId: string, added = 0) {
+        this.response.template = 'domain_add_student.html';
+        this.response.body = { domain: this.domain, added };
+    }
+
+    @requireSudo
+    @param('uidOrName', Types.UidOrName)
+    async postAddStudent(domainId: string, uidOrName: string) {
+        const targetKey = uidOrName.trim();
+        const target = /^\d+$/.test(targetKey)
+            ? await user.getById(domainId, +targetKey)
+            : await user.getByUname(domainId, targetKey);
+        const isStudent = target && target._id > 1
+            && target.hasPriv(PRIV.PRIV_USER_PROFILE)
+            && !target.hasPriv(PRIV.PRIV_EDIT_SYSTEM)
+            && !target.hasPriv(PRIV.PRIV_JUDGE);
+        if (!isStudent) throw new UserNotFoundError(uidOrName);
+
+        const existing = await domain.collUser.findOne({ domainId, uid: target._id, join: true });
+        if (existing) throw new DomainJoinAlreadyMemberError();
+
+        await Promise.all([
+            domain.setUserInDomain(domainId, target._id, {
+                join: true,
+                role: 'default',
+                displayName: target.uname,
+            }),
+            oplog.log(this, 'domain.addStudent', { uid: target._id }),
+        ]);
+        this.response.redirect = this.url('domain_add_student', { query: { added: target._id } });
+    }
+}
+
 class DomainUserGroupHandler extends ManageHandler {
     async get({ domainId }) {
         this.response.template = 'domain_group.html';
@@ -589,11 +734,19 @@ export async function apply(ctx: Context) {
     ctx.Route('ranking', '/ranking', DomainRankHandler, PERM.PERM_VIEW_RANKING);
     ctx.Route('domain_dashboard', '/domain/dashboard', DomainDashboardHandler);
     ctx.Route('domain_edit', '/domain/edit', DomainEditHandler);
+    ctx.Route('domain_ranking_setting', '/domain/ranking-setting', DomainRankingSettingHandler);
+    ctx.Route('domain_home_poster', '/domain/home-poster', DomainHomePosterHandler);
+    ctx.Route('domain_navigation_setting', '/domain/navigation', DomainNavigationSettingHandler);
+    ctx.injectUI('DomainManage', 'domain_ranking_setting', { family: 'Properties', icon: 'info', before: 'domain_edit' });
+    ctx.injectUI('DomainManage', 'domain_home_poster', { family: 'Properties', icon: 'image', before: 'domain_edit' });
+    ctx.injectUI('DomainManage', 'domain_navigation_setting', { family: 'Properties', icon: 'menu', before: 'domain_edit' });
     ctx.Route('domain_user', '/domain/user', DomainUserHandler);
     ctx.Route('domain_permission', '/domain/permission', DomainPermissionHandler);
     ctx.Route('domain_role', '/domain/role', DomainRoleHandler);
     ctx.Route('domain_group', '/domain/group', DomainUserGroupHandler);
     ctx.Route('domain_join_applications', '/domain/join_applications', DomainJoinApplicationsHandler);
+    ctx.Route('domain_add_student', '/domain/add-student', DomainAddStudentHandler);
+    ctx.injectUI('DomainManage', 'domain_add_student', { family: 'Properties', icon: 'add', before: 'domain_role' });
     ctx.Route('domain_join', '/domain/join', DomainJoinHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('domain_search', '/domain/search', DomainSearchHandler, PRIV.PRIV_USER_PROFILE);
     await ctx.inject(['api'], ({ api }) => {

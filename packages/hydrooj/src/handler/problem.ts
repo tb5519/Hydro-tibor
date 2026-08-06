@@ -50,9 +50,7 @@ import { ContestDetailBaseHandler } from './contest';
 const CPP_STARTER_TEMPLATE = `#include<bits/stdc++.h>
 using namespace std;
 int main(){
-    // ------在以下区域写代码------
 
-    // --------------------------
     return 0;
 }
 `;

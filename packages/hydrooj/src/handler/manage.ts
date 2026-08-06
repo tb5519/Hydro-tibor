@@ -12,7 +12,6 @@ import {
     VerifyPasswordError,
 } from '../error';
 import type { CppEditorMode } from '../interface';
-import { getHomePosterConfig, HOME_POSTER_CONFIG_KEY } from '../lib/home_poster';
 import {
     buildPointLotteryConfigFromForm, ensureGlobalPointLotteryState, getPointLotteryConfig,
     POINT_LOTTERY_CONFIG_KEY, POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
@@ -137,16 +136,14 @@ class SystemDashboardHandler extends SystemHandler {
     }
 }
 
-const RANKING_MODES = ['single', 'all'];
 const TRAINING_DASHBOARD_SORTS = ['newAc30', 'submit30', 'acRate30', 'lastActive'];
-const TRAINING_DASHBOARD_DOMAIN_IDS = ['system', 'C0001'];
 
-type TrainingRangeStats = {
+interface TrainingRangeStats {
     submit: number;
     ac: number;
     activeDays: number;
     lastRecordId: any;
-};
+}
 
 function roundChartNumber(value: number) {
     return Math.round(value * 10) / 10;
@@ -221,28 +218,29 @@ function buildTrainingChart(dailyData: any[]) {
     };
 }
 
-async function getTrainingDashboardDomainIds(currentDomainId: string) {
-    const preferredDomainIds = Array.from(new Set([currentDomainId, ...TRAINING_DASHBOARD_DOMAIN_IDS].filter(Boolean)));
-    const preferredLowerIds = preferredDomainIds.map((id) => id.toLowerCase());
-    const existingDomains = await domain.getMulti({
-        $or: [
-            { _id: { $in: preferredDomainIds } },
-            { lower: { $in: preferredLowerIds } },
-        ],
-    }).project({ _id: 1 }).toArray();
-    const existingDomainIds = new Map(existingDomains.map((ddoc) => [ddoc._id.toLowerCase(), ddoc._id]));
-    const domainIds = preferredDomainIds
-        .map((id) => existingDomainIds.get(id.toLowerCase()))
-        .filter((id): id is string => !!id);
-    return domainIds.length ? domainIds : [currentDomainId];
+interface TrainingDashboardDomain {
+    id: string;
+    name: string;
+}
+
+async function getTrainingDashboardDomains(): Promise<TrainingDashboardDomain[]> {
+    const ddocs = await domain.getMulti().project<{ _id: string, name?: string }>({ _id: 1, name: 1 }).toArray();
+    return ddocs.map((ddoc) => ({ id: ddoc._id, name: ddoc.name || ddoc._id }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
 }
 
 class SystemTrainingDashboardHandler extends SystemHandler {
     @param('q', Types.Content, true)
     @param('sort', Types.Range(TRAINING_DASHBOARD_SORTS), true)
-    async get(domainId: string, q = '', sort = 'newAc30') {
-        const dashboardDomainIds = await getTrainingDashboardDomainIds(domainId);
-        const dashboardDomainLabel = dashboardDomainIds.join('、');
+    @param('domain', Types.String, true)
+    async get(domainId: string, q = '', sort = 'newAc30', selectedDashboardDomain = 'all') {
+        const dashboardDomains = await getTrainingDashboardDomains();
+        const selectedDomain = selectedDashboardDomain === 'all'
+            ? null
+            : dashboardDomains.find((item) => item.id.toLowerCase() === selectedDashboardDomain.toLowerCase());
+        if (selectedDashboardDomain !== 'all' && !selectedDomain) throw new ValidationError('domain');
+        const dashboardDomainIds = selectedDomain ? [selectedDomain.id] : dashboardDomains.map((item) => item.id);
+        const dashboardDomainLabel = selectedDomain ? selectedDomain.name : '所有域';
         const timeZone = this.user.timeZone || system.get('timeZone') || 'Asia/Shanghai';
         const now = moment().tz(timeZone);
         const start7 = now.clone().subtract(6, 'days').startOf('day');
@@ -273,6 +271,8 @@ class SystemTrainingDashboardHandler extends SystemHandler {
             this.response.body = {
                 q,
                 sort,
+                dashboardDomains,
+                selectedDashboardDomain: selectedDomain?.id || 'all',
                 dashboardDomainIds,
                 dashboardDomainLabel,
                 overview: {
@@ -393,7 +393,7 @@ class SystemTrainingDashboardHandler extends SystemHandler {
                     },
                 },
             ]).toArray(),
-            user.getListForRender(domainId, uids, this.user.hasPerm(PERM.PERM_VIEW_USER_PRIVATE_INFO)),
+            user.getListForRender('system', uids, this.user.hasPerm(PERM.PERM_VIEW_USER_PRIVATE_INFO)),
         ]);
 
         const totalMap: Record<number, any> = {};
@@ -474,6 +474,8 @@ class SystemTrainingDashboardHandler extends SystemHandler {
         this.response.body = {
             q,
             sort,
+            dashboardDomains,
+            selectedDashboardDomain: selectedDomain?.id || 'all',
             dashboardDomainIds,
             dashboardDomainLabel,
             overview: {
@@ -492,21 +494,6 @@ class SystemTrainingDashboardHandler extends SystemHandler {
             rows: filteredRows.sort(detailCompare[sort]).slice(0, 500),
             udict,
         };
-    }
-}
-
-class SystemSharedRankingHandler extends SystemHandler {
-    async get() {
-        this.response.template = 'manage_shared_ranking.html';
-        this.response.body = {
-            mode: system.get('ranking.mode') === 'all' ? 'all' : 'single',
-        };
-    }
-
-    @param('mode', Types.Range(RANKING_MODES))
-    async post(domainId: string, mode: string) {
-        await system.set('ranking.mode', mode);
-        this.back();
     }
 }
 
@@ -779,14 +766,13 @@ function resolveManagedStudentCppEditorMode(
 }
 
 async function getManagedStudents(
-    domainId: string, sort: ManagedStudentSort, direction: ManagedStudentSortDirection,
+    allDomains: ManagedStudentDomain[], sort: ManagedStudentSort, direction: ManagedStudentSortDirection,
 ) {
-    const joined = await domain.getMultiUserInDomain(domainId, { uid: { $gt: 1 }, join: true })
+    const joined = await domain.collUser.find({ uid: { $gt: 1 }, join: true })
         .project<{
-            uid: number; displayName?: string; nSubmit?: number; nAccept?: number;
-            cppEditorMode?: unknown; cppStarterTemplate?: boolean;
+            uid: number; domainId: string; displayName?: string; nSubmit?: number; nAccept?: number;
         }>({
-            uid: 1, displayName: 1, nSubmit: 1, nAccept: 1, cppEditorMode: 1, cppStarterTemplate: 1,
+            uid: 1, domainId: 1, displayName: 1, nSubmit: 1, nAccept: 1,
         })
         .toArray();
     const candidateUids = Array.from(new Set(joined.map((row) => row.uid)));
@@ -795,13 +781,18 @@ async function getManagedStudents(
     const studentUidSet = new Set(userPrivDocs.filter(isManagedStudent).map((udoc) => udoc._id));
     const studentUids = candidateUids.filter((uid) => studentUidSet.has(uid));
     if (!studentUids.length) return [];
-    const membershipByUid = new Map(joined.map((row) => [row.uid, row]));
+    const membershipsByUid = new Map<number, typeof joined>();
+    for (const membership of joined) {
+        membershipsByUid.set(membership.uid, [...(membershipsByUid.get(membership.uid) || []), membership]);
+    }
+    const domainNameById = new Map(allDomains.map((item) => [item.id.toLowerCase(), item.name]));
+    const domainIds = allDomains.map((item) => item.id);
     const [udict, recentActivity, globalModeDocs] = await Promise.all([
-        user.getListForRender(domainId, studentUids, true),
+        user.getListForRender('system', studentUids, true),
         record.coll.aggregate<{ _id: number, lastRecordId: ObjectId }>([
             {
                 $match: {
-                    domainId,
+                    domainId: { $in: domainIds },
                     uid: { $in: studentUids },
                     pid: { $gt: 0 },
                     contest: { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] },
@@ -818,21 +809,28 @@ async function getManagedStudents(
     const lastSubmitAtByUid = new Map(recentActivity.map((row) => [row._id, row.lastRecordId.getTimestamp()]));
     const students = studentUids.map((uid) => {
         const udoc = udict[uid];
-        const membership = membershipByUid.get(uid);
-        const displayName = membership?.displayName || udoc.displayName || udoc.uname;
+        const memberships = membershipsByUid.get(uid) || [];
+        const defaultMembership = memberships.find(
+            (membership) => membership.domainId.toLowerCase() === `${(udoc as any).defaultDomain || ''}`.toLowerCase(),
+        );
+        const displayName = defaultMembership?.displayName || memberships[0]?.displayName || udoc.displayName || udoc.uname;
         const loginAt = (udoc as unknown as Pick<HydroUser, 'loginat'>).loginat;
         return {
             ...udoc,
             uid,
             displayName,
             cppEditorMode: resolveManagedStudentCppEditorMode(
-                globalModeByUid.get(uid), membership?.cppEditorMode, membership?.cppStarterTemplate,
+                globalModeByUid.get(uid), undefined, false,
             ),
-            submitCount: membership?.nSubmit || 0,
-            acceptedCount: membership?.nAccept || 0,
+            submitCount: memberships.reduce((sum, membership) => sum + (membership.nSubmit || 0), 0),
+            acceptedCount: memberships.reduce((sum, membership) => sum + (membership.nAccept || 0), 0),
             loginAt,
             lastSubmitAt: lastSubmitAtByUid.get(uid) || null,
-            searchText: [uid, displayName, udoc.uname, udoc.mail, udoc.school, udoc.studentId]
+            domainNames: memberships.map((membership) => domainNameById.get(membership.domainId.toLowerCase()) || membership.domainId),
+            searchText: [
+                uid, displayName, udoc.uname, udoc.mail, udoc.school, udoc.studentId,
+                ...memberships.map((membership) => domainNameById.get(membership.domainId.toLowerCase()) || membership.domainId),
+            ]
                 .filter(Boolean)
                 .join(' ')
                 .toLocaleLowerCase(),
@@ -860,8 +858,8 @@ async function getManagedStudents(
 
 async function getManagedStudent(domainId: string, uid: number) {
     const [membership, target] = await Promise.all([
-        domain.collUser.findOne({ domainId, uid, join: true }),
-        user.getById(domainId, uid),
+        domain.collUser.findOne({ uid, join: true }),
+        user.getById('system', uid),
     ]);
     return membership && target && isManagedStudent(target) ? target : null;
 }
@@ -869,24 +867,21 @@ async function getManagedStudent(domainId: string, uid: number) {
 interface ManagedStudentDomain {
     id: string;
     name: string;
-    isCurrent: boolean;
 }
 
-async function getManagedStudentDomains(domainId: string, uid: number) {
+async function getManagedDomains(): Promise<ManagedStudentDomain[]> {
+    const ddocs = await domain.getMulti().project({ _id: 1, name: 1 }).toArray();
+    return ddocs.map((ddoc) => ({ id: ddoc._id, name: ddoc.name || ddoc._id }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+}
+
+async function getManagedStudentDomains(uid: number, allDomains: ManagedStudentDomain[]) {
     const [memberships, userDoc] = await Promise.all([
         domain.collUser.find({ uid, join: true }).project<{ domainId: string }>({ domainId: 1 }).toArray(),
         user.coll.findOne({ _id: uid }, { projection: { defaultDomain: 1 } }),
     ]);
-    const joinedDomainIds = Array.from(new Set(memberships.map((membership) => membership.domainId)));
-    const ddocs = joinedDomainIds.length
-        ? await domain.getMulti({ _id: { $in: joinedDomainIds } }).project({ _id: 1, name: 1 }).toArray()
-        : [];
-    const currentDomainId = domainId.toLowerCase();
-    const domains: ManagedStudentDomain[] = ddocs.map((ddoc) => ({
-        id: ddoc._id,
-        name: ddoc.name || ddoc._id,
-        isCurrent: ddoc._id.toLowerCase() === currentDomainId,
-    })).sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent) || a.name.localeCompare(b.name, 'zh-CN'));
+    const joinedDomainIds = new Set(memberships.map((membership) => membership.domainId.toLowerCase()));
+    const domains = allDomains.filter((item) => joinedDomainIds.has(item.id.toLowerCase()));
     const storedDefaultDomain = typeof userDoc?.defaultDomain === 'string'
         ? userDoc.defaultDomain.toLowerCase()
         : '';
@@ -894,7 +889,10 @@ async function getManagedStudentDomains(domainId: string, uid: number) {
     // inferred checked radio looked saved in the UI, while login correctly had
     // no persisted preference to follow.
     const selectedDefaultDomain = domains.find((item) => item.id.toLowerCase() === storedDefaultDomain)?.id || '';
-    return { domains, selectedDefaultDomain };
+    return {
+        domains,
+        selectedDefaultDomain,
+    };
 }
 
 class SystemUserManagementHandler extends SystemHandler {
@@ -911,11 +909,12 @@ class SystemUserManagementHandler extends SystemHandler {
         domainId: string, uid = 0, saved = 0, sort: ManagedStudentSort = 'submit',
         order: ManagedStudentSortDirection = 'desc',
     ) {
-        const students = await getManagedStudents(domainId, sort, order);
+        const allDomains = await getManagedDomains();
+        const students = await getManagedStudents(allDomains, sort, order);
         const selectedStudent = uid ? students.find((student) => student.uid === uid) : null;
         if (uid && !selectedStudent) throw new UserNotFoundError(uid);
         const selectedStudentDomainState = selectedStudent
-            ? await getManagedStudentDomains(domainId, selectedStudent.uid)
+            ? await getManagedStudentDomains(selectedStudent.uid, allDomains)
             : { domains: [], selectedDefaultDomain: '' };
         this.response.template = 'manage_user_management.html';
         this.response.body = {
@@ -923,6 +922,7 @@ class SystemUserManagementHandler extends SystemHandler {
             selectedStudent,
             selectedStudentDomains: selectedStudentDomainState.domains,
             selectedStudentDefaultDomain: selectedStudentDomainState.selectedDefaultDomain,
+            allDomains,
             saved,
             sort,
             order,
@@ -935,13 +935,14 @@ class SystemUserManagementHandler extends SystemHandler {
     @param('password', Types.Password)
     @param('verifyPassword', Types.Password)
     @param('displayName', Types.String)
+    @param('joinDomain', Types.DomainId)
     @param('school', Types.String, true)
     @param('studentId', Types.String, true)
     @param('sort', Types.Range(MANAGED_STUDENT_SORTS), true)
     @param('order', Types.Range(MANAGED_STUDENT_SORT_DIRECTIONS), true)
     async postAddStudent(
         domainId: string, uname: string, mail: string | undefined, password: string, verifyPassword: string,
-        displayName: string, school = '', studentId = '', sort: ManagedStudentSort = 'submit',
+        displayName: string, joinDomain: string, school = '', studentId = '', sort: ManagedStudentSort = 'submit',
         order: ManagedStudentSortDirection = 'desc',
     ) {
         if (password !== verifyPassword) throw new VerifyPasswordError();
@@ -949,10 +950,12 @@ class SystemUserManagementHandler extends SystemHandler {
         if (!normalizedDisplayName) throw new ValidationError('displayName');
         const normalizedSchool = normalizeManagedStudentText(school, 'school');
         const normalizedStudentId = normalizeManagedStudentText(studentId, 'studentId');
+        const joinTarget = await domain.get(joinDomain);
+        if (!joinTarget) throw new ValidationError('joinDomain');
         const accountMail = mail?.trim() || `${randomstring(12)}@invalid.local`;
         const uid = await user.create(accountMail, uname, password);
         await Promise.all([
-            domain.setUserInDomain(domainId, uid, {
+            domain.setUserInDomain(joinTarget._id, uid, {
                 join: true,
                 role: 'default',
                 displayName: normalizedDisplayName,
@@ -960,7 +963,7 @@ class SystemUserManagementHandler extends SystemHandler {
             user.setById(uid, {
                 school: normalizedSchool,
                 studentId: normalizedStudentId,
-                defaultDomain: domainId,
+                defaultDomain: joinTarget._id,
                 cppEditorMode: 'proficient',
             }),
         ]);
@@ -1009,7 +1012,7 @@ class SystemUserManagementHandler extends SystemHandler {
         const normalizedSchool = normalizeManagedStudentText(school, 'school');
         const normalizedStudentId = normalizeManagedStudentText(studentId, 'studentId');
         const effectiveMail = mail?.trim() || target.mail;
-        const domainState = await getManagedStudentDomains(domainId, uid);
+        const domainState = await getManagedStudentDomains(uid, await getManagedDomains());
         const requestedDefaultDomain = normalizeManagedStudentText(defaultDomain, 'defaultDomain');
         const selectedDefaultDomain = domainState.domains.find(
             (item) => item.id.toLowerCase() === (requestedDefaultDomain || domainState.selectedDefaultDomain).toLowerCase(),
@@ -1031,72 +1034,10 @@ class SystemUserManagementHandler extends SystemHandler {
             defaultDomain: selectedDefaultDomain,
             cppEditorMode,
         });
-        await domain.updateUserInDomain(domainId, uid, {
+        await domain.updateUserInDomain(selectedDefaultDomain, uid, {
             $set: { displayName: normalizedDisplayName },
         });
         this.response.redirect = this.url('manage_user_management', { query: { uid, saved: 1, sort, order } });
-    }
-}
-
-class SystemHomePosterHandler extends SystemHandler {
-    async prepare() {
-        this.checkPriv(PRIV.PRIV_ALL);
-    }
-
-    @requireSudo
-    @param('saved', Types.Int, true)
-    @param('cleared', Types.Int, true)
-    async get(domainId: string, saved = 0, cleared = 0) {
-        const config = getHomePosterConfig();
-        if (config.storagePath) {
-            config.image = this.url('home_poster_image', {
-                query: { v: config.updatedAt || '' },
-            });
-        }
-        this.response.template = 'manage_home_poster.html';
-        this.response.body = {
-            config,
-            configKey: HOME_POSTER_CONFIG_KEY,
-            saved,
-            cleared,
-            recommendedRatio: '18:5',
-            recommendedSize: '2160 x 600',
-        };
-    }
-
-    @requireSudo
-    async postUpload() {
-        const file = this.request.files?.file;
-        if (!file) throw new ValidationError('poster');
-        if (file.size > 8 * 1024 * 1024) throw new ValidationError('poster');
-
-        const ext = path.extname(file.originalFilename || '').toLowerCase();
-        if (!['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) throw new ValidationError('poster');
-
-        const oldConfig = getHomePosterConfig();
-        const filename = `home-poster-${Date.now()}${ext}`;
-        const storagePath = `user/${this.user._id}/${filename}`;
-        await storage.put(storagePath, file.filepath, this.user._id);
-        if (oldConfig.storagePath && oldConfig.storagePath !== storagePath) {
-            storage.del([oldConfig.storagePath], this.user._id).catch((e) => logger.error(e));
-        }
-        const updatedAt = new Date().toISOString();
-        await system.set(HOME_POSTER_CONFIG_KEY, {
-            image: this.url('home_poster_image', { query: { v: updatedAt } }),
-            storagePath,
-            updatedAt,
-        });
-        this.response.redirect = this.url('manage_home_poster', { query: { saved: 1 } });
-    }
-
-    @requireSudo
-    async postClear() {
-        const oldConfig = getHomePosterConfig();
-        if (oldConfig.storagePath) {
-            storage.del([oldConfig.storagePath], this.user._id).catch((e) => logger.error(e));
-        }
-        await system.set(HOME_POSTER_CONFIG_KEY, { image: '' });
-        this.response.redirect = this.url('manage_home_poster', { query: { cleared: 1 } });
     }
 }
 
@@ -1308,9 +1249,7 @@ export const inject = ['setting', 'check'];
 export async function apply(ctx) {
     ctx.Route('manage', '/manage', SystemMainHandler);
     ctx.Route('manage_dashboard', '/manage/dashboard', SystemDashboardHandler);
-    ctx.Route('manage_shared_ranking', '/manage/shared-ranking', SystemSharedRankingHandler);
     ctx.Route('manage_training_dashboard', '/manage/training-dashboard', SystemTrainingDashboardHandler);
-    ctx.injectUI('ControlPanel', 'manage_shared_ranking', { before: 'manage_training_dashboard' });
     ctx.injectUI('ControlPanel', 'manage_training_dashboard', { before: 'manage_script' });
     ctx.Route('manage_script', '/manage/script', SystemScriptHandler);
     ctx.Route('manage_setting', '/manage/setting', SystemSettingHandler);
@@ -1319,8 +1258,6 @@ export async function apply(ctx) {
     ctx.injectUI('ControlPanel', 'manage_user_management', { before: 'manage_user_priv', icon: 'user' }, PRIV.PRIV_ALL);
     ctx.Route('manage_user_import', '/manage/userimport', SystemUserImportHandler);
     ctx.Route('manage_user_priv', '/manage/userpriv', SystemUserPrivHandler);
-    ctx.Route('manage_home_poster', '/manage/home-poster', SystemHomePosterHandler);
-    ctx.injectUI('ControlPanel', 'manage_home_poster', { before: 'manage_lottery', icon: 'image' }, PRIV.PRIV_ALL);
     ctx.Route('manage_lottery', '/manage/lottery', SystemLotteryHandler);
     ctx.injectUI('ControlPanel', 'manage_lottery', { icon: 'gift' }, PRIV.PRIV_ALL);
     ctx.Connection('manage_check', '/manage/check-conn', SystemCheckConnHandler);

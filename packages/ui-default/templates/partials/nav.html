@@ -119,7 +119,9 @@
       <li class="nav__list-item">
         <a href="{{ url('homepage', domainId=UiContext.domain._id) }}" class="nav__logo nav__logo--text">{{ model.system.get('server.name') or 'Hydro' }}</a>
       </li>
-      {%- for item in overrideNav|default(ui.getNodes('Nav')) -%}{% if item.checker(handler) %}
+      {% set domainNavVisibility = UiContext.domain.navVisibility or {} %}
+      {% set configurableDomainNavItems = ['problem_mistake', 'training_main', 'contest_main', 'homework_main', 'record_main', 'ranking'] %}
+      {%- for item in overrideNav|default(ui.getNodes('Nav')) -%}{% if item.checker(handler) and (item.name not in configurableDomainNavItems or domainNavVisibility[item.name] != false) %}
         {{ nav_item(item) }}
       {% endif %}{%- endfor -%}
     </ol>

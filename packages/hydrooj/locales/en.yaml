@@ -22,13 +22,17 @@ discussion_node: Discussion
 display_name: Display Name
 domain_create: Create Domain
 domain_dashboard: Dashboard
+domain_add_student: Manually Add Student
 domain_discussion: Discussion Nodes
 domain_edit: Edit Info
+domain_home_poster: Home Poster
 domain_group: Manage Groups
 domain_join_applications: Join Applications
 domain_main: Main
 domain_permission: System Permission
+domain_navigation_setting: Navigation Display
 domain_role: System Role
+domain_ranking_setting: Ranking Settings
 domain_user: System User
 fs_upload: File Upload
 home_account: Account Settings

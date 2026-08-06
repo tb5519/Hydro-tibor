@@ -27,20 +27,22 @@ const ignoredLimit = `,${argv.options.ignoredLimit},`;
 
 const logger = new Logger('server');
 
-// Domains are private learning spaces. Keep only the routes required to sign
-// in or recover an account available to guests; every other domain route is
+// Domains are private learning spaces. Keep sign-in flows and the tiny public
+// UI bootstrap surface available to guests; every other domain route is
 // redirected to its own login page by the common error handler below.
-const GUEST_AUTH_PATHS = [
+const GUEST_ACCESSIBLE_PATHS = [
     /^\/login$/,
     /^\/register(?:\/[^/]+)?$/,
     /^\/lostpass(?:\/[^/]+)?$/,
     /^\/oauth\/[^/]+\/(?:login|callback)$/,
     /^\/user\/(?:tfa|webauthn)$/,
     /^\/language\/[^/]+$/,
+    /^\/(?:lazy|resource)\/[^/]+\/[^/]+$/,
+    /^\/service-worker-config$/,
 ];
 
-function isGuestAuthPath(path: string) {
-    return GUEST_AUTH_PATHS.some((pattern) => pattern.test(path));
+function isGuestAccessiblePath(path: string) {
+    return GUEST_ACCESSIBLE_PATHS.some((pattern) => pattern.test(path));
 }
 
 declare module '@hydrooj/framework' {
@@ -293,7 +295,7 @@ export async function apply(ctx: Context) {
                     text: v.text,
                     name: v.name,
                 }));
-            if (!h.user.hasPriv(PRIV.PRIV_USER_PROFILE) && !isGuestAuthPath(h.request.path)) {
+            if (!h.user.hasPriv(PRIV.PRIV_USER_PROFILE) && !isGuestAccessiblePath(h.request.path)) {
                 h.checkPriv(PRIV.PRIV_USER_PROFILE);
             }
             if ((!('noCheckPermView' in h) || !h.noCheckPermView) && !h.user.hasPriv(PRIV.PRIV_VIEW_ALL_DOMAIN)) h.checkPerm(PERM.PERM_VIEW);

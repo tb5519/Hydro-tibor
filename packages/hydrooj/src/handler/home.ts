@@ -15,6 +15,7 @@ import {
 } from '../error';
 import { DomainDoc, Setting } from '../interface';
 import avatar, { validate } from '../lib/avatar';
+import { getDomainRankingMode } from '../lib/domain_ranking';
 import { getHomePosterConfig } from '../lib/home_poster';
 import * as mail from '../lib/mail';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
@@ -283,7 +284,7 @@ export class HomeHandler extends Handler {
 
     async getRanking(domainId: string, limit = 50) {
         if (!this.user.hasPerm(PERM.PERM_VIEW_RANKING)) return [];
-        if (system.get('ranking.mode') === 'all') {
+        if (getDomainRankingMode(this.domain) === 'all') {
             const rows = (await getSharedRankingSnapshot()).slice(0, limit);
             const uids = rows.map((row) => row.uid);
             this.rankingRows = new Map(rows.map((row) => [row.uid, row]));
@@ -352,7 +353,7 @@ export class HomeHandler extends Handler {
         const start30 = now.clone().subtract(29, 'days').startOf('day');
 
         let rankingRow = this.rankingRows.get(uid);
-        if (!rankingRow && system.get('ranking.mode') === 'all') {
+        if (!rankingRow && getDomainRankingMode(this.domain) === 'all') {
             rankingRow = (await getSharedRankingSnapshot()).find((row) => row.uid === uid);
         }
 
@@ -545,7 +546,7 @@ export class HomeHandler extends Handler {
                     || '一位同学',
                 prize: `${log.prize?.name || ''}`,
             }));
-        const homePoster = getHomePosterConfig();
+        const homePoster = getHomePosterConfig(this.domain);
         if (homePoster.storagePath) {
             homePoster.image = this.url('home_poster_image', {
                 query: { v: homePoster.updatedAt || '' },
@@ -583,13 +584,24 @@ class HomePosterImageHandler extends Handler {
     noCheckPermView = true;
 
     async get() {
-        const config = getHomePosterConfig();
+        const config = getHomePosterConfig(this.domain);
         if (!config.storagePath) throw new NotFoundError('home-poster');
         const meta = await storage.getMeta(config.storagePath);
         if (!meta) throw new NotFoundError('home-poster');
         this.response.body = await storage.get(config.storagePath);
         this.response.type = meta['Content-Type'] || lookup(config.storagePath) || 'application/octet-stream';
         this.response.addHeader('Cache-Control', 'public, max-age=604800, immutable');
+    }
+}
+
+class ServiceWorkerConfigHandler extends Handler {
+    noCheckPermView = true;
+
+    async post() {
+        // The service worker keeps this configuration in the browser. Before
+        // it takes control of a newly opened guest page, the initial request
+        // reaches Hydro directly and must still succeed without a login.
+        this.response.status = 204;
     }
 }
 
@@ -1131,6 +1143,7 @@ export const inject = { geoip: { required: false }, oauth: {} };
 export function apply(ctx: Context) {
     ctx.Route('homepage', '/', HomeHandler);
     ctx.Route('home_poster_image', '/home/poster', HomePosterImageHandler);
+    ctx.Route('service_worker_config', '/service-worker-config', ServiceWorkerConfigHandler);
     ctx.Route('point_lottery_prize_image', '/lottery/prize/:filename', PointLotteryPrizeImageHandler);
     ctx.Route('point_lottery_draw', '/lottery/draw', PointLotteryDrawHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_security', '/home/security', HomeSecurityHandler, PRIV.PRIV_USER_PROFILE);
