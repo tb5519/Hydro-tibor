@@ -103,7 +103,13 @@
       </label>
       <button class="rounded primary button domain-add-student__submit" type="submit"><span class="icon icon-add"></span>{{ _('Add to this domain') }}</button>
     </form>
-    <p class="domain-add-student__hint">{{ _('Only existing normal student accounts can be added. This action does not change the student\'s default login domain.') }}</p>
+    <p class="domain-add-student__hint">
+      {% if domain.workspaceId %}
+        {{ _('The student will join this teacher workspace, and this domain becomes the default destination after login.') }}
+      {% else %}
+        {{ _('Only existing normal student accounts can be added. This action does not change the student\'s default login domain.') }}
+      {% endif %}
+    </p>
   </div>
 </div>
 {% endblock %}

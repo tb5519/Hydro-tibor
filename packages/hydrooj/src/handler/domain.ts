@@ -1,5 +1,6 @@
 import path from 'path';
 import { load } from 'js-yaml';
+import type { Dictionary } from 'lodash';
 import moment from 'moment-timezone';
 import Schema from 'schemastery';
 import type { Context } from '../context';
@@ -22,6 +23,7 @@ import { DOMAIN_SETTINGS, DOMAIN_SETTINGS_BY_KEY } from '../model/setting';
 import storage from '../model/storage';
 import system from '../model/system';
 import user from '../model/user';
+import workspace from '../model/workspace';
 import {
     Handler, Mutation, param, post, Query, query, requireSudo, Types,
 } from '../service/server';
@@ -287,7 +289,14 @@ class DomainDashboardHandler extends ManageHandler {
     async get() {
         const owner = await user.getById(this.domain._id, this.domain.owner);
         this.response.template = 'domain_dashboard.html';
-        this.response.body = { domain: this.domain, owner };
+        const workspaceDomains = this.domain.workspaceId
+            ? await workspace.getDomains(this.domain.workspaceId)
+            : [];
+        this.response.body = {
+            domain: this.domain,
+            owner,
+            canDeleteDomain: !this.domain.workspaceId || workspaceDomains.length > 1,
+        };
     }
 
     async postInitDiscussionNode({ domainId }) {
@@ -308,11 +317,36 @@ class DomainDashboardHandler extends ManageHandler {
     async postDelete({ domainId }) {
         if (domainId === 'system') throw new CannotDeleteSystemDomainError();
         if (this.domain.owner !== this.user._id) throw new OnlyOwnerCanDeleteDomainError();
+        const workspaceId = this.domain.workspaceId;
+        const workspaceDomains = workspaceId ? await workspace.getDomains(workspaceId) : [];
+        if (workspaceId && workspaceDomains.length <= 1) throw new ForbiddenError();
+        const replacementDomain = workspaceDomains.find((item) => item._id !== domainId);
+        const affectedUsers = replacementDomain
+            ? await domain.collUser.find({ domainId, join: true, uid: { $gt: 1 } })
+                .project<{ uid: number }>({ uid: 1 }).toArray()
+            : [];
         await Promise.all([
             domain.del(domainId),
             oplog.log(this, 'domain.delete', {}),
         ]);
-        this.response.redirect = this.url('home_domain', { domainId: 'system' });
+        if (workspaceId && replacementDomain) {
+            const members = await workspace.getMembers(workspaceId);
+            const memberRoles = new Map(members.map((item) => [item.uid, item.role]));
+            await Promise.all(affectedUsers.map(async ({ uid }) => {
+                const role = memberRoles.get(uid);
+                await domain.setUserRole(
+                    replacementDomain._id,
+                    uid,
+                    role === 'assistant' || !role ? 'default' : 'root',
+                    true,
+                );
+                const account = await user.coll.findOne({ _id: uid }, { projection: { defaultDomain: 1 } });
+                if (account?.defaultDomain === domainId) {
+                    await user.setById(uid, { defaultDomain: replacementDomain._id });
+                }
+            }));
+            this.response.redirect = this.url('workspace_dashboard', { workspaceCode: workspaceId });
+        } else this.response.redirect = this.url('home_domain', { domainId: 'system' });
     }
 }
 
@@ -554,12 +588,23 @@ class DomainAddStudentHandler extends ManageHandler {
         const existing = await domain.collUser.findOne({ domainId, uid: target._id, join: true });
         if (existing) throw new DomainJoinAlreadyMemberError();
 
+        if (this.domain.workspaceId) {
+            if (await workspace.getMember(this.domain.workspaceId, target._id)
+                || await workspace.isAssignedToOtherWorkspace(target._id, this.domain.workspaceId)) {
+                throw new ValidationError('uidOrName');
+            }
+        }
+
         await Promise.all([
             domain.setUserInDomain(domainId, target._id, {
                 join: true,
                 role: 'default',
                 displayName: target.uname,
             }),
+            ...(this.domain.workspaceId ? [
+                workspace.addStudent(this.domain.workspaceId, target._id, this.user._id),
+                user.setById(target._id, { defaultDomain: domainId }),
+            ] : []),
             oplog.log(this, 'domain.addStudent', { uid: target._id }),
         ]);
         this.response.redirect = this.url('domain_add_student', { query: { added: target._id } });
@@ -595,11 +640,19 @@ class DomainJoinHandler extends Handler {
 
     @param('target', Types.DomainId, true)
     async prepare({ domainId }, target: string = domainId) {
-        const [ddoc, dudoc] = await Promise.all([
+        const [ddoc, dudoc, assignedWorkspaceIds] = await Promise.all([
             domain.get(target),
             domain.collUser.findOne({ domainId: target, uid: this.user._id }),
+            workspace.getAssignedWorkspaceIds(this.user._id),
         ]);
         if (!ddoc) throw new NotFoundError(target);
+        if (!workspace.isPlatformAdmin(this.user._id)) {
+            const targetWorkspaceId = workspace.resolveDomainWorkspaceId(ddoc);
+            const allowed = assignedWorkspaceIds.length
+                ? assignedWorkspaceIds.includes(targetWorkspaceId)
+                : targetWorkspaceId === workspace.LEGACY_WORKSPACE_ID;
+            if (!allowed) throw new NotFoundError(target);
+        }
         const assignedRole = this.user.hasPriv(PRIV.PRIV_MANAGE_ALL_DOMAIN)
             ? 'root'
             : dudoc?.role || 'default';
@@ -663,11 +716,25 @@ class DomainSearchHandler extends Handler {
     @param('q', Types.Content, true)
     async get(domainId: string, q: string = '') {
         let ddocs: DomainDoc[] = [];
+        const accessibleQuery = workspace.isPlatformAdmin(this.user._id)
+            ? {}
+            : await workspace.getAssignedWorkspaceIds(this.user._id).then((workspaceIds) => (
+                workspaceIds.length
+                    ? { workspaceId: { $in: workspaceIds } }
+                    : workspace.getDomainQuery(workspace.LEGACY_WORKSPACE_ID)
+            ));
         if (!q) {
             const dudict = await domain.getDictUserByDomainId(this.user._id);
             const dids = Object.keys(dudict);
-            ddocs = await domain.getMulti({ _id: { $in: dids } }).toArray();
-        } else ddocs = await domain.getPrefixSearch(q, 20);
+            ddocs = await domain.getMulti({ $and: [{ _id: { $in: dids } }, accessibleQuery] }).toArray();
+        } else {
+            const prefixMatches = await domain.getPrefixSearch(q, 20);
+            const accessibleIds = await domain.getMulti({
+                $and: [{ _id: { $in: prefixMatches.map((item) => item._id) } }, accessibleQuery],
+            }).project<{ _id: string }>({ _id: 1 }).toArray();
+            const allowedIds = new Set(accessibleIds.map((item) => item._id));
+            ddocs = prefixMatches.filter((item) => allowedIds.has(item._id));
+        }
         for (let i = 0; i < ddocs.length; i++) {
             ddocs[i].avatarUrl = ddocs[i].avatar ? avatar(ddocs[i].avatar, 64) : '/img/team_avatar.png';
         }

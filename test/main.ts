@@ -29,15 +29,19 @@ describe('App', () => {
         console.log('Application inited in %d ms', Date.now() - init);
     }, { timeout: 30000 });
 
-    const routes = ['/', '/p', '/contest', '/homework', '/user/1', '/training'];
-    for (const route of routes) {
+    const protectedRoutes = ['/', '/p', '/contest', '/homework', '/user/1', '/training'];
+    for (const route of protectedRoutes) {
         // eslint-disable-next-line ts/no-loop-func
-        it(`GET ${route}`, () => agent.get(route).expect(200));
+        it(`Guest GET ${route} redirects to login`, () => agent.get(route)
+            .expect(302)
+            .expect('Location', `/login?redirect=${encodeURIComponent(route)}`));
     }
 
-    it('API user', async () => {
-        await agent.get('/api/user?args={"id":1}&projection=uname').expect({ uname: 'Hydro' });
-        await agent.get('/api/user?args={"id":2}&projection=uname').expect(null);
+    it('Guest API redirects to login', async () => {
+        const route = '/api/user?args={"id":1}&projection=uname';
+        await agent.get(route)
+            .expect(302)
+            .expect('Location', /^\/login\?redirect=/);
     });
 
     it('Create User', async () => {
@@ -66,7 +70,7 @@ describe('App', () => {
 
     const results: Record<string, autocannon.Result> = {};
     if (process.env.BENCHMARK) {
-        for (const route of routes) {
+        for (const route of protectedRoutes) {
             it(`Performance test ${route}`, { timeout: 60000 }, async () => {
                 const result = await autocannon({ url: `http://localhost:8888${route}` });
                 assert(result.errors === 0, `test ${route} returns errors`);
@@ -84,6 +88,6 @@ describe('App', () => {
             }));
             writeFileSync('./benchmark.json', JSON.stringify(metrics, null, 2));
         }
-        setTimeout(() => process.exit(0), 1000);
+        setTimeout(() => process.exit(process.exitCode || 0), 1000);
     });
 });

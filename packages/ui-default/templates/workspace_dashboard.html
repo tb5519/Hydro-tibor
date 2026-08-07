@@ -1,0 +1,202 @@
+{% extends "layout/basic.html" %}
+{% block content %}
+<style>
+  .teacher-workspace { padding-bottom: 2rem; }
+  .teacher-workspace__hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding: 1.55rem 1.7rem;
+    border: 1px solid #dbeafe;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #f8fbff, #eff6ff 65%, #f5f3ff);
+    box-shadow: 0 14px 35px rgba(30, 64, 175, .08);
+  }
+  .teacher-workspace__eyebrow {
+    margin: 0 0 .38rem;
+    color: #2563eb;
+    font-size: .73rem;
+    font-weight: 850;
+    letter-spacing: .14em;
+  }
+  .teacher-workspace__hero h1 { margin: 0; color: #172033; }
+  .teacher-workspace__hero p:last-child { margin: .45rem 0 0; color: #64748b; }
+  .teacher-workspace__tools { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .8rem; }
+  .teacher-workspace__tool {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    padding: .42rem .7rem;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    color: #1d4ed8;
+    background: rgba(255, 255, 255, .82);
+    font-size: .78rem;
+    font-weight: 800;
+  }
+  .teacher-workspace__tool:hover { border-color: #60a5fa; background: #fff; }
+  .teacher-workspace__stats { display: flex; gap: .6rem; }
+  .teacher-workspace__stat {
+    min-width: 5.2rem;
+    padding: .7rem .8rem;
+    border: 1px solid rgba(147, 197, 253, .55);
+    border-radius: 11px;
+    text-align: center;
+    background: rgba(255, 255, 255, .8);
+  }
+  .teacher-workspace__stat strong { display: block; color: #1d4ed8; font-size: 1.25rem; }
+  .teacher-workspace__stat span { color: #64748b; font-size: .72rem; }
+  .teacher-workspace__notice {
+    margin-bottom: 1rem;
+    padding: .7rem .85rem;
+    border: 1px solid #bbf7d0;
+    border-radius: 10px;
+    color: #166534;
+    background: #f0fdf4;
+    font-weight: 650;
+  }
+  .teacher-workspace__layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 20rem;
+    gap: 1rem;
+    align-items: start;
+  }
+  .teacher-workspace__panel {
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, .06);
+  }
+  .teacher-workspace__header {
+    padding: 1rem 1.1rem;
+    border-bottom: 1px solid #e8eef6;
+  }
+  .teacher-workspace__header h2 { margin: 0; font-size: 1.05rem; }
+  .teacher-workspace__domains { display: grid; gap: .7rem; padding: 1rem; }
+  .teacher-workspace__domain {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .8rem;
+    padding: .9rem 1rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 11px;
+    color: inherit;
+    background: #fbfdff;
+    transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+  }
+  .teacher-workspace__domain:hover {
+    border-color: #93c5fd;
+    box-shadow: 0 9px 22px rgba(37, 99, 235, .1);
+    transform: translateY(-1px);
+  }
+  .teacher-workspace__domain h3 { margin: 0; color: #172033; font-size: .98rem; }
+  .teacher-workspace__domain p { margin: .2rem 0 0; color: #64748b; font-size: .78rem; }
+  .teacher-workspace__enter { color: #2563eb; font-size: .82rem; font-weight: 800; white-space: nowrap; }
+  .teacher-workspace__empty { padding: 2rem 1rem; text-align: center; color: #64748b; }
+  .teacher-workspace__form { display: grid; gap: .85rem; padding: 1rem; }
+  .teacher-workspace__field span {
+    display: block;
+    margin-bottom: .35rem;
+    color: #334155;
+    font-size: .8rem;
+    font-weight: 750;
+  }
+  .teacher-workspace__form button { width: 100%; }
+  .teacher-workspace__tip {
+    margin: 0;
+    padding: .8rem 1rem 1rem;
+    color: #64748b;
+    font-size: .78rem;
+    line-height: 1.6;
+  }
+  .teacher-workspace__locked {
+    margin: 1rem;
+    padding: .85rem;
+    border: 1px solid #dbe5f2;
+    border-radius: 10px;
+    color: #64748b;
+    background: #f8fafc;
+    font-size: .82rem;
+    line-height: 1.6;
+  }
+  @media (max-width: 62em) {
+    .teacher-workspace__hero { grid-template-columns: 1fr; }
+    .teacher-workspace__layout { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 38em) {
+    .teacher-workspace__hero { padding: 1.2rem; }
+    .teacher-workspace__stats { display: grid; grid-template-columns: repeat(3, 1fr); }
+    .teacher-workspace__stat { min-width: 0; }
+  }
+</style>
+
+<div class="row teacher-workspace">
+  <div class="columns">
+    <section class="teacher-workspace__hero">
+      <div>
+        <p class="teacher-workspace__eyebrow">TEACHER WORKSPACE · {{ workspace.code|upper }}</p>
+        <h1>{{ workspace.name }}</h1>
+        <p>{{ _('Manage the domains and teaching resources that belong only to this workspace.') }}</p>
+        {% if showWorkspaceTools %}
+          <nav class="teacher-workspace__tools" aria-label="{{ _('Workspace tools') }}">
+            {% if canReturnPlatform %}<a class="teacher-workspace__tool" href="{{ url('platform_workspace') }}">← {{ _('Back to platform') }}</a>{% endif %}
+            <a class="teacher-workspace__tool" href="{{ url('workspace_students', { workspaceCode: workspace.code }) }}"><span class="icon icon-user"></span>{{ _('Student Management') }}</a>
+            {% if canManageMembers %}<a class="teacher-workspace__tool" href="{{ url('workspace_members', { workspaceCode: workspace.code }) }}"><span class="icon icon-user"></span>{{ _('Teacher and Role Management') }}</a>{% endif %}
+          </nav>
+        {% endif %}
+      </div>
+      <div class="teacher-workspace__stats">
+        <div class="teacher-workspace__stat"><strong>{{ stats.domainCount }}</strong><span>{{ _('domains') }}</span></div>
+        <div class="teacher-workspace__stat"><strong>{{ stats.studentCount }}</strong><span>{{ _('students') }}</span></div>
+        <div class="teacher-workspace__stat"><strong>{{ stats.teacherCount }}</strong><span>{{ _('teachers') }}</span></div>
+      </div>
+    </section>
+
+    {% if createdDomain %}
+      <div class="teacher-workspace__notice"><span class="icon icon-check"></span>{{ _('Domain created successfully') }}：{{ createdDomain }}</div>
+    {% endif %}
+
+    <div class="teacher-workspace__layout">
+      <section class="teacher-workspace__panel">
+        <header class="teacher-workspace__header"><h2>{{ _('Workspace Domains') }}</h2></header>
+        {% if domains.length %}
+          <div class="teacher-workspace__domains">
+            {% for item in domains %}
+              <a class="teacher-workspace__domain" href="{% if canCreateDomain %}{{ url('domain_dashboard', { domainId: item._id }) }}{% else %}{{ url('homepage', { domainId: item._id }) }}{% endif %}">
+                <div><h3>{{ item.name|default(item._id) }}</h3><p>{{ item._id }}</p></div>
+                <span class="teacher-workspace__enter">{% if canCreateDomain %}{{ _('Manage domain') }}{% else %}{{ _('Enter domain') }}{% endif %} →</span>
+              </a>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="teacher-workspace__empty">{{ _('No domains have been created in this workspace yet.') }}</div>
+        {% endif %}
+      </section>
+
+      <aside class="teacher-workspace__panel">
+        <header class="teacher-workspace__header"><h2>{{ _('Create Domain') }}</h2></header>
+        {% if canCreateDomain %}
+          <form method="post" class="teacher-workspace__form">
+            <input type="hidden" name="operation" value="create_domain">
+            <label class="teacher-workspace__field">
+              <span>{{ _('Domain ID') }}</span>
+              <input class="textbox" name="domainCode" placeholder="Z0001" required>
+            </label>
+            <label class="teacher-workspace__field">
+              <span>{{ _('Domain name') }}</span>
+              <input class="textbox" name="name" placeholder="{{ _('For example: Programming Basics') }}" maxlength="64" required>
+            </label>
+            <button class="rounded primary button" type="submit"><span class="icon icon-add"></span>{{ _('Create Domain') }}</button>
+          </form>
+          <p class="teacher-workspace__tip">{{ _('Domain IDs are globally unique. After creation, the workspace owner becomes the domain owner automatically.') }}</p>
+        {% else %}
+          <div class="teacher-workspace__locked">{{ _('Only workspace owners, administrators, and teachers can create domains.') }}</div>
+        {% endif %}
+      </aside>
+    </div>
+  </div>
+</div>
+{% endblock %}

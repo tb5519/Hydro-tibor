@@ -43,6 +43,12 @@ export interface SystemKeys {
     'session.saved_expire_seconds': number;
     'session.unsaved_expire_seconds': number;
     'user.quota': number;
+    /** Master switch for the dormant multi-teacher workspace foundation. */
+    'workspace.enabled': boolean;
+    /** Allows platform administrators to create new teacher workspaces. */
+    'workspace.newTeacherEnabled': boolean;
+    /** UIDs allowed to enter the platform layer above teacher workspaces. */
+    'workspace.platformAdminUids': number[];
 }
 
 export interface Setting {
@@ -275,6 +281,8 @@ export interface Tdoc extends Document {
     pinned?: boolean;
     /** Published in every domain but stored once in its source domain. */
     allDomains?: boolean;
+    /** Limits an all-domain contest to domains in the same teacher workspace. */
+    workspaceId?: string;
     /** Add each participant's final contest score to their lottery points. */
     scoreToPoints?: boolean;
     _code?: string;
@@ -327,6 +335,8 @@ export interface DomainDoc extends Record<string, any> {
     roles: Dictionary<string>;
     avatar: string;
     bulletin: string;
+    /** Owning teacher workspace. Missing means the legacy Tang workspace. */
+    workspaceId?: string;
     langs?: string;
     defaultCodeLang?: string;
     _join?: any;
@@ -344,6 +354,38 @@ export interface DomainDoc extends Record<string, any> {
         'problem_mistake' | 'training_main' | 'contest_main' | 'homework_main' | 'record_main' | 'ranking',
         boolean
     >>;
+}
+
+export type WorkspaceRole = 'owner' | 'admin' | 'teacher' | 'assistant';
+export type WorkspaceStatus = 'active' | 'suspended' | 'archived';
+
+export interface WorkspaceDoc {
+    _id: string;
+    code: string;
+    name: string;
+    ownerUid: number;
+    status: WorkspaceStatus;
+    legacy?: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+}
+
+export interface WorkspaceMemberDoc {
+    _id?: ObjectId;
+    workspaceId: string;
+    uid: number;
+    role: WorkspaceRole;
+    status: 'active' | 'disabled';
+    createdAt: Date;
+}
+
+export interface WorkspaceStudentDoc {
+    _id?: ObjectId;
+    workspaceId: string;
+    uid: number;
+    status: 'active' | 'disabled' | 'graduated';
+    createdBy: number;
+    joinedAt: Date;
 }
 
 // Message
@@ -613,6 +655,15 @@ declare module './service/db' {
         schedule: Schedule;
         'contest.balloon': ContestBalloonDoc;
         lock: LockDoc;
+        workspace: WorkspaceDoc;
+        'workspace.member': WorkspaceMemberDoc;
+        'workspace.student': WorkspaceStudentDoc;
+        /** Collections supplied by the bundled badge extension. */
+        badge: any;
+        userBadge: any;
+        /** OneByOne feature collections whose concrete shapes are owned by their feature modules. */
+        'lottery.draw': any;
+        mistake: any;
     }
 }
 
@@ -623,6 +674,7 @@ export interface Model {
     discussion: typeof import('./model/discussion');
     document: Omit<typeof import('./model/document'), 'apply'>;
     domain: typeof import('./model/domain').default;
+    workspace: typeof import('./model/workspace').default;
     message: typeof import('./model/message').default;
     opcount: typeof import('./model/opcount');
     problem: typeof import('./model/problem').default;

@@ -186,7 +186,7 @@ export class HomeHandler extends Handler {
                     ],
                 },
         };
-        const tdocs = await contest.getMultiVisibleInDomain(domainId, q).sort({
+        const tdocs = await (await contest.getMultiVisibleInDomain(domainId, q)).sort({
             pinned: -1, endAt: -1, beginAt: -1, _id: -1,
         })
             .limit(limit).toArray();
@@ -224,13 +224,13 @@ export class HomeHandler extends Handler {
             if (!tdoc) return null;
             const dag = tdoc.dag || [];
             const totalProblems = training.getPids(dag).length;
-            const donePids = new Set(status.donePids || []);
+            const donePids = new Set<number>((status.donePids || []) as number[]);
             const doneNids = new Set<number>();
             const chapters = dag.map((chapter, index) => {
                 const unlocked = new Set(doneNids).isSupersetOf(new Set(chapter.requireNids));
                 const doneChapter = training.isDone(chapter, doneNids, donePids);
                 if (doneChapter) doneNids.add(chapter._id);
-                const chapterPids = Array.from(new Set(chapter.pids || []));
+                const chapterPids = Array.from(new Set<number>((chapter.pids || []) as number[]));
                 const acceptedProblems = chapterPids.filter((pid) => donePids.has(pid)).length;
                 // A later chapter stays locked until every prerequisite chapter
                 // is complete. Its earlier AC records become visible only then.

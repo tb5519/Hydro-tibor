@@ -26,6 +26,7 @@ import SolutionModel from '../model/solution';
 import system from '../model/system';
 import token from '../model/token';
 import user, { deleteUserCache } from '../model/user';
+import workspace from '../model/workspace';
 import {
     Handler, param, post, Query, Types,
 } from '../service/server';
@@ -120,13 +121,34 @@ async function successfulAuth(this: Handler, udoc: User) {
 }
 
 async function getDefaultDomainLoginRedirect(handler: Handler, udoc: User) {
+    if (workspace.isPlatformAdmin(udoc._id)) return handler.url('platform_workspace');
     const defaultDomain = typeof udoc._udoc.defaultDomain === 'string' ? udoc._udoc.defaultDomain.trim() : '';
-    if (!defaultDomain) return '';
-    const ddoc = await domain.get(defaultDomain);
-    const membership = ddoc
-        ? await domain.collUser.findOne({ domainId: ddoc._id, uid: udoc._id, join: true })
-        : null;
-    return ddoc && membership ? handler.url('homepage', { domainId: ddoc._id }) : '';
+    if (defaultDomain) {
+        const ddoc = await domain.get(defaultDomain);
+        const membership = ddoc
+            ? await domain.collUser.findOne({ domainId: ddoc._id, uid: udoc._id, join: true })
+            : null;
+        if (ddoc && membership) return handler.url('homepage', { domainId: ddoc._id });
+    }
+    if (workspace.isEnabled()) {
+        const assignedWorkspace = await workspace.getPrimaryForUser(udoc._id);
+        if (assignedWorkspace) {
+            return handler.url('workspace_dashboard', { workspaceCode: assignedWorkspace.code });
+        }
+        const studentWorkspace = await workspace.getPrimaryForStudent(udoc._id);
+        if (studentWorkspace) {
+            const domains = await workspace.getDomains(studentWorkspace._id);
+            const joined = domains.length
+                ? await domain.collUser.findOne({
+                    domainId: { $in: domains.map((item) => item._id) },
+                    uid: udoc._id,
+                    join: true,
+                })
+                : null;
+            if (joined) return handler.url('homepage', { domainId: joined.domainId });
+        }
+    }
+    return '';
 }
 
 class UserLoginHandler extends Handler {
@@ -211,7 +233,10 @@ class UserSudoHandler extends Handler {
         this.session.sudo = Date.now();
         if (this.session.sudoArgs.method.toLowerCase() !== 'get') {
             this.response.template = 'user_sudo_redirect.html';
-            this.response.body = this.session.sudoArgs;
+            this.response.body = {
+                ...this.session.sudoArgs,
+                args: { ...this.session.sudoArgs.args },
+            };
         } else this.response.redirect = this.session.sudoArgs.redirect;
         this.session.sudoArgs.method = null;
     }

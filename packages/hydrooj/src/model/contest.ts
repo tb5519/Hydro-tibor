@@ -23,6 +23,7 @@ import type { Handler } from '../service/server';
 import { Optional } from '../typeutils';
 import { PERM, STATUS, STATUS_SHORT_TEXTS } from './builtin';
 import * as document from './document';
+import DomainModel from './domain';
 import MessageModel from './message';
 import problem, { ProblemModel } from './problem';
 import RecordModel from './record';
@@ -1088,13 +1089,27 @@ export function getMulti(
  * by their owners with every domain. The contest itself and its status rows
  * remain in the source domain, so all participants use the same scoreboard.
  */
-export function getMultiVisibleInDomain(
+export async function getMultiVisibleInDomain(
     domainId: string, query: Filter<document.DocType['30']> = {},
 ) {
+    const currentDomain = await DomainModel.get(domainId);
+    const sharedScope = currentDomain?.workspaceId
+        ? { workspaceId: currentDomain.workspaceId }
+        : {
+            $or: [
+                { workspaceId: { $exists: false } },
+                { workspaceId: 'tang' },
+            ],
+        };
     return document.coll.find({
         docType: document.TYPE_CONTEST,
         $and: [
-            { $or: [{ domainId }, { allDomains: true }] },
+            {
+                $or: [
+                    { domainId },
+                    { $and: [{ allDomains: true }, sharedScope] },
+                ],
+            },
             query,
         ],
     }).sort({ beginAt: -1 });
@@ -1338,4 +1353,7 @@ global.Hydro.model.contest = {
     updatePrintTask,
     allocatePrintTask,
     getMultiPrintTask,
+    normalizeContestScore,
+    formatContestScore,
+    reconcileScorePoints,
 };

@@ -21,6 +21,7 @@ import db from './db';
 import baseLayer from './layers/base';
 import domainLayer from './layers/domain';
 import userLayer from './layers/user';
+import { resolveWorkspaceAccess } from './layers/workspace';
 
 const argv = cac().parse();
 const ignoredLimit = `,${argv.options.ignoredLimit},`;
@@ -286,6 +287,11 @@ export async function apply(ctx: Context) {
             h.ctx = h.ctx.extend({ domain: h.domain });
         });
         on('handler/create/http', async (h) => {
+            const workspaceAccess = await resolveWorkspaceAccess(h.context);
+            if (!workspaceAccess.allowed) {
+                if (workspaceAccess.redirect) h.response.redirect = workspaceAccess.redirect;
+                throw new NotFoundError(h.args.domainId);
+            }
             if (!argv.options.benchmark && !h.notUsage) await h.limitRate('global', 5, 100);
             h.loginMethods = Object.entries(oauth.providers)
                 .filter(([_, v]) => !v.hidden)
@@ -302,6 +308,8 @@ export async function apply(ctx: Context) {
             if (h.context.pendingError) throw h.context.pendingError;
         });
         on('handler/create/ws', async (h) => {
+            const workspaceAccess = await resolveWorkspaceAccess(h.context);
+            if (!workspaceAccess.allowed) throw new NotFoundError(h.args.domainId);
             if (h.context.pendingError) throw h.context.pendingError;
         });
     });

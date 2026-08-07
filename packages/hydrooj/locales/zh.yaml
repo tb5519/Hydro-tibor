@@ -65,6 +65,80 @@ Add module: 添加模块
 Add new data: 添加新数据
 Add User: 添加用户
 Manually Add Student: 手动添加学员
+Teacher Workspace Management: 教师工作区管理
+Create isolated teaching spaces for different teachers. Existing Tang teacher domains continue to run through the transparent legacy workspace.: 为不同老师创建彼此隔离的教学空间，唐老师现有域继续通过透明兼容工作区运行。
+Workspace created successfully: 工作区创建成功
+Workspace List: 工作区列表
+workspaces: 个工作区
+domains: 个域
+students: 位学员
+teachers: 位教师
+Legacy compatible: 旧系统兼容
+Open workspace: 进入工作区
+Create Teacher Workspace: 创建教师工作区
+Workspace code: 工作区代码
+Workspace name: 工作区名称
+'For example: Teacher Zhang Workspace': 例如：张老师工作区
+Owner UID or username: 负责人 UID 或用户名
+Create workspace: 创建工作区
+Initial domain ID: 初始域 ID
+Initial domain name: 初始域名称
+Create workspace and initial domain: 创建工作区与初始域
+The initial domain becomes the teacher default after login, keeping its problem bank and ranking separate from existing teachers.: 初始域会成为老师登录后的默认域，使题库和排行榜与其他老师完全分开。
+Safe pilot mode: 安全试运行模式
+The workspace foundation is loaded, but creating new teacher workspaces remains disabled until data isolation checks pass.: 工作区基础能力已经加载，但在数据隔离检查通过前，创建新教师工作区仍保持关闭。
+Manage the domains and teaching resources that belong only to this workspace.: 管理仅属于当前工作区的域和教学资源。
+Domain created successfully: 域创建成功
+Workspace Domains: 工作区下的域
+Manage domain: 管理域
+Enter domain: 进入域
+No domains have been created in this workspace yet.: 当前工作区还没有创建域。
+Domain name: 域名称
+'For example: Programming Basics': 例如：编程基础
+Domain IDs are globally unique. After creation, the workspace owner becomes the domain owner automatically.: 域 ID 在全平台保持唯一；创建后，工作区负责人会自动成为域所有者。
+Only workspace owners, administrators, and teachers can create domains.: 只有工作区负责人、管理员和老师可以创建域。
+Workspace tools: 工作区工具
+Student Management: 学员管理
+Teacher and Role Management: 教师与角色管理
+Add teachers to this workspace and assign only the permissions they need.: 将老师加入当前工作区，并只分配其所需权限。
+Back to workspace: 返回工作区
+Teacher added to workspace: 老师已加入工作区
+Teacher role updated: 教师角色已更新
+Teacher removed from workspace: 教师已移出工作区
+Save role: 保存角色
+Remove teacher: 移除教师
+Remove this teacher from the workspace?: 确定将这位教师移出工作区吗？
+Workspace Teachers: 工作区教师
+Workspace owner: 工作区负责人
+Workspace administrator: 工作区管理员
+Teacher: 老师
+Teaching assistant: 助教
+Add Teacher: 添加老师
+Use an existing OneByOne account.: 使用已有的 OneByOne 账号。
+UID or username: UID 或用户名
+Workspace role: 工作区角色
+Administrators can manage teachers and students. Teachers can manage students and domains. Teaching assistants have read-only workspace access.: 管理员可以管理教师和学员；老师可以管理学员和域；助教仅可查看工作区。
+Only students who joined domains in this workspace are shown here.: 此处只显示已加入当前工作区域的学员。
+Existing student added: 已有学员已加入
+Student account created: 学员账号已创建
+Student removed from workspace: 学员已移出工作区
+Remove from workspace: 移出工作区
+Remove this student from all domains in the workspace?: 确定将这位学员移出工作区内的所有域吗？
+Search students: 搜索学员
+submissions: 次提交
+No students found in this workspace.: 当前工作区没有符合条件的学员。
+Add Existing Student: 添加已有学员
+Join domain: 加入域
+Add to workspace: 加入工作区
+Create Student Account: 创建学员账号
+optional: 可选
+Confirm Password: 确认密码
+Create and add student: 创建并加入学员
+The new account is bound only to the selected domain and uses that domain as its default login destination.: 新账号只会加入所选域，并将该域设为默认登录目标。
+Create a domain in this workspace before adding students.: 请先在当前工作区创建域，再添加学员。
+You have read-only access to workspace students.: 你当前只有查看工作区学员的权限。
+A teacher workspace must keep at least one domain.: 教师工作区必须至少保留一个域。
+The student will join this teacher workspace, and this domain becomes the default destination after login.: 学员会同时加入当前教师工作区，并在登录后默认进入此域。
 Add an existing student account to this domain directly. The student will receive the normal member role.: 将已有学员账号直接加入此域，加入后为普通成员。
 Student has been added to this domain.: 学员已加入当前域。
 Student UID or username: 学员 UID 或用户名
@@ -286,6 +360,12 @@ Domain ID: 域 ID
 domain_create: 创建域
 domain_dashboard: 管理域
 domain_add_student: 手动添加学员
+platform_workspace: 教师工作区管理
+Back to platform: 返回平台管理
+workspace_dashboard: 工作区概览
+workspace_members: 教师与角色管理
+workspace_students: 学员管理
+domain_workspace: 教师工作区
 domain_discussion: 讨论节点
 domain_edit: 编辑域资料
 domain_home_poster: 首页海报

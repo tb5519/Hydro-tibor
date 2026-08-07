@@ -23,6 +23,14 @@ display_name: Display Name
 domain_create: Create Domain
 domain_dashboard: Dashboard
 domain_add_student: Manually Add Student
+platform_workspace: Teacher Workspace Management
+Back to platform: Back to platform
+workspace_dashboard: Workspace Dashboard
+workspace_members: Teacher and Role Management
+workspace_students: Student Management
+domain_workspace: Teacher Workspace
+A teacher workspace must keep at least one domain.: A teacher workspace must keep at least one domain.
+The student will join this teacher workspace, and this domain becomes the default destination after login.: The student will join this teacher workspace, and this domain becomes the default destination after login.
 domain_discussion: Discussion Nodes
 domain_edit: Edit Info
 domain_home_poster: Home Poster

@@ -370,6 +370,15 @@ SystemSetting(
     Setting('setting_basic', 'discussion.nodes', builtin.DEFAULT_NODES, 'yaml', 'discussion.nodes', 'Discussion Nodes'),
     Setting('setting_basic', 'problem.categories', builtin.CATEGORIES, 'yaml', 'problem.categories', 'Problem Categories'),
     Setting('setting_basic', 'training.enrolled-users', true, 'boolean', 'training.enrolled-users', 'Show enrolled users for training'),
+    Setting('setting_storage', 'workspace.enabled', false, 'boolean', 'workspace.enabled', 'Enable teacher workspaces', FLAG_HIDDEN),
+    Setting(
+        'setting_storage', 'workspace.newTeacherEnabled', false, 'boolean',
+        'workspace.newTeacherEnabled', 'Allow creating teacher workspaces', FLAG_HIDDEN,
+    ),
+    Setting(
+        'setting_storage', 'workspace.platformAdminUids', [], 'yaml',
+        'workspace.platformAdminUids', 'Teacher workspace platform administrator UIDs', FLAG_HIDDEN,
+    ),
     Setting('setting_basic', 'record.statMode', 'unique', 'text', 'record.statMode', 'Record stat mode'),
     Setting('setting_basic', 'pagination.problem', 100, 'number', 'pagination.problem', 'Problems per page'),
     Setting('setting_basic', 'pagination.contest', 20, 'number', 'pagination.contest', 'Contests per page'),

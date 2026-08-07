@@ -161,13 +161,13 @@ function inferProblemTagGroup(tag: string) {
 
 async function buildAutoProblemCategories(domainId: string, udoc: User): Promise<ProblemCategoryEntry[]> {
     const tagCounts = new Map<string, number>();
-    await problem.getMulti(domainId, buildQuery(udoc), ['tag']).forEach((pdoc) => {
+    for await (const pdoc of problem.getMulti(domainId, buildQuery(udoc), ['tag'])) {
         for (const rawTag of pdoc.tag || []) {
             const tag = normalizeProblemTag(rawTag);
             if (!tag) continue;
             tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
         }
-    });
+    }
     const grouped = new Map<string, [string, number][]>();
     for (const entry of tagCounts.entries()) {
         const group = inferProblemTagGroup(entry[0]);
@@ -503,7 +503,7 @@ export class OnlineIdeHandler extends Handler {
             if (!langs.length) continue;
             const currentScore = langs.includes(preferredCodeLang) ? 4
                 : langs.includes('py.py3') ? 3
-                    : !fullPdoc.config?.langs?.length ? 2 : 1;
+                    : typeof fullPdoc.config !== 'string' && !fullPdoc.config?.langs?.length ? 2 : 1;
             if (currentScore > score) {
                 pdoc = fullPdoc;
                 score = currentScore;

@@ -47,7 +47,7 @@ class DomainModel {
     };
 
     @ArgMethod
-    static async add(domainId: string, owner: number, name: string, bulletin: string) {
+    static async add(domainId: string, owner: number, name: string, bulletin: string, workspaceId?: string) {
         const ddoc: DomainDoc = {
             _id: domainId,
             lower: domainId.toLowerCase(),
@@ -56,6 +56,7 @@ class DomainModel {
             bulletin,
             roles: {},
             avatar: '',
+            ...(workspaceId ? { workspaceId } : {}),
         };
         await bus.parallel('domain/create', ddoc);
         await coll.insertOne(ddoc);

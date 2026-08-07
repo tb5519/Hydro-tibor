@@ -1,0 +1,147 @@
+{% extends "layout/basic.html" %}
+{% block content %}
+<style>
+  .workspace-students { padding-bottom: 2rem; color: #172033; }
+  .workspace-students__hero {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    margin-bottom: 1rem; padding: 1.45rem 1.6rem; border: 1px solid #dbeafe; border-radius: 16px;
+    background: linear-gradient(135deg, #f8fbff, #eff6ff 65%, #f5f3ff); box-shadow: 0 14px 35px rgba(30,64,175,.08);
+  }
+  .workspace-students__eyebrow { margin: 0 0 .35rem; color: #2563eb; font-size: .73rem; font-weight: 850; letter-spacing: .13em; }
+  .workspace-students__hero h1 { margin: 0; color: #172033; }
+  .workspace-students__hero p:last-child { margin: .42rem 0 0; color: #64748b; }
+  .workspace-students__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .45rem; }
+  .workspace-students__link { padding: .46rem .7rem; border: 1px solid #bfdbfe; border-radius: 999px; color: #1d4ed8; background: rgba(255,255,255,.85); font-size: .78rem; font-weight: 800; white-space: nowrap; }
+  .workspace-students__notice { margin-bottom: 1rem; padding: .72rem .85rem; border: 1px solid #bbf7d0; border-radius: 10px; color: #166534; background: #f0fdf4; font-weight: 700; }
+  .workspace-students__layout { display: grid; grid-template-columns: minmax(0, 1fr) 21rem; gap: 1rem; align-items: start; }
+  .workspace-students__panel { overflow: hidden; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; box-shadow: 0 12px 28px rgba(15,23,42,.06); }
+  .workspace-students__header { display: flex; align-items: center; justify-content: space-between; gap: .7rem; padding: 1rem 1.1rem; border-bottom: 1px solid #e8eef6; }
+  .workspace-students__header h2 { margin: 0; font-size: 1.05rem; }
+  .workspace-students__filter { display: flex; gap: .4rem; }
+  .workspace-students__filter input { width: 13rem; min-width: 0; }
+  .workspace-students__filter button { flex: 0 0 auto; white-space: nowrap; }
+  .workspace-students__list { display: grid; gap: .68rem; padding: 1rem; }
+  .workspace-students__item { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: .8rem; align-items: center; padding: .9rem 1rem; border: 1px solid #e2e8f0; border-radius: 11px; background: #fbfdff; }
+  .workspace-students__name { margin: 0; font-size: .96rem; font-weight: 800; }
+  .workspace-students__meta { margin: .2rem 0 0; color: #64748b; font-size: .77rem; }
+  .workspace-students__domains { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .48rem; }
+  .workspace-students__domain { padding: .18rem .43rem; border: 1px solid #dbe5f2; border-radius: 999px; color: #475569; background: #fff; font-size: .69rem; }
+  .workspace-students__metrics { display: flex; gap: .45rem; }
+  .workspace-students__item-actions { display: grid; justify-items: end; gap: .5rem; }
+  .workspace-students__remove { margin: 0; }
+  .workspace-students__remove button { border-color: #fecaca; color: #b91c1c; background: #fff7f7; font-size: .72rem; white-space: nowrap; }
+  .workspace-students__metric { min-width: 3.8rem; padding: .48rem .55rem; border-radius: 9px; text-align: center; background: #eff6ff; }
+  .workspace-students__metric strong { display: block; color: #1d4ed8; font-size: 1rem; }
+  .workspace-students__metric span { color: #64748b; font-size: .68rem; }
+  .workspace-students__empty { padding: 2.1rem 1rem; text-align: center; color: #64748b; }
+  .workspace-students__aside { display: grid; gap: 1rem; }
+  .workspace-students__form { display: grid; gap: .78rem; padding: 1rem; }
+  .workspace-students__field span { display: block; margin-bottom: .32rem; color: #334155; font-size: .78rem; font-weight: 750; }
+  .workspace-students__form button { width: 100%; }
+  .workspace-students__hint { margin: 0; padding: .9rem 1rem; color: #64748b; background: #f8fafc; font-size: .77rem; line-height: 1.6; }
+  .workspace-students__locked { margin: 1rem; padding: .85rem; border: 1px solid #fde68a; border-radius: 10px; color: #92400e; background: #fffbeb; font-size: .8rem; line-height: 1.6; }
+  @media (max-width: 64em) { .workspace-students__layout { grid-template-columns: 1fr; } }
+  @media (max-width: 42em) {
+    .workspace-students__hero, .workspace-students__header { display: block; padding: 1.15rem; }
+    .workspace-students__actions { justify-content: flex-start; margin-top: .85rem; }
+    .workspace-students__filter { margin-top: .75rem; }
+    .workspace-students__filter input { flex: 1 1 auto; width: auto; }
+    .workspace-students__item { grid-template-columns: 1fr; }
+    .workspace-students__metrics { justify-content: flex-start; }
+    .workspace-students__item-actions { justify-items: start; }
+  }
+</style>
+
+<div class="row workspace-students">
+  <div class="columns">
+    <section class="workspace-students__hero">
+      <div>
+        <p class="workspace-students__eyebrow">{{ workspace.name }} · {{ workspace.code|upper }}</p>
+        <h1>{{ _('Student Management') }}</h1>
+        <p>{{ _('Only students who joined domains in this workspace are shown here.') }}</p>
+      </div>
+      <nav class="workspace-students__actions" aria-label="{{ _('Workspace tools') }}">
+        <a class="workspace-students__link" href="{{ url('workspace_dashboard', { workspaceCode: workspace.code }) }}">← {{ _('Back to workspace') }}</a>
+        {% if canManageMembers %}<a class="workspace-students__link" href="{{ url('workspace_members', { workspaceCode: workspace.code }) }}">{{ _('Teacher and Role Management') }}</a>{% endif %}
+      </nav>
+    </section>
+
+    {% if added %}<div class="workspace-students__notice"><span class="icon icon-check"></span>{{ _('Existing student added') }} · UID {{ added }}</div>{% endif %}
+    {% if created %}<div class="workspace-students__notice"><span class="icon icon-check"></span>{{ _('Student account created') }} · UID {{ created }}</div>{% endif %}
+    {% if removed %}<div class="workspace-students__notice"><span class="icon icon-check"></span>{{ _('Student removed from workspace') }} · UID {{ removed }}</div>{% endif %}
+
+    <div class="workspace-students__layout">
+      <section class="workspace-students__panel">
+        <header class="workspace-students__header">
+          <h2>{{ students.length }} {{ _('students') }}</h2>
+          <form method="get" class="workspace-students__filter">
+            <input class="textbox" name="q" value="{{ q }}" placeholder="{{ _('Search students') }}">
+            <button class="rounded button" type="submit">{{ _('Search') }}</button>
+          </form>
+        </header>
+        {% if students.length %}
+          <div class="workspace-students__list">
+            {% for item in students %}
+              <article class="workspace-students__item">
+                <div>
+                  <p class="workspace-students__name">{{ item.displayName|default(item.account.uname)|default('UID ' + item.uid) }}</p>
+                  <p class="workspace-students__meta">@{{ item.account.uname|default(item.uid) }} · UID {{ item.uid }}{% if item.account.mail %} · {{ item.account.mail }}{% endif %}</p>
+                  <div class="workspace-students__domains">{% for name in item.domainNames %}<span class="workspace-students__domain">{{ name }}</span>{% endfor %}</div>
+                </div>
+                <div class="workspace-students__item-actions">
+                  <div class="workspace-students__metrics">
+                    <div class="workspace-students__metric"><strong>{{ item.submitCount }}</strong><span>{{ _('submissions') }}</span></div>
+                    <div class="workspace-students__metric"><strong>{{ item.acceptedCount }}</strong><span>AC</span></div>
+                  </div>
+                  {% if canManageStudents %}
+                    <form method="post" class="workspace-students__remove" onsubmit="return confirm('{{ _('Remove this student from all domains in the workspace?') }}')">
+                      <input type="hidden" name="operation" value="remove_student">
+                      <input type="hidden" name="uid" value="{{ item.uid }}">
+                      <button class="rounded button" type="submit">{{ _('Remove from workspace') }}</button>
+                    </form>
+                  {% endif %}
+                </div>
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="workspace-students__empty">{{ _('No students found in this workspace.') }}</div>
+        {% endif %}
+      </section>
+
+      <aside class="workspace-students__aside">
+        {% if canManageStudents and domains.length %}
+          <section class="workspace-students__panel">
+            <header class="workspace-students__header"><h2>{{ _('Add Existing Student') }}</h2></header>
+            <form method="post" class="workspace-students__form">
+              <input type="hidden" name="operation" value="add_existing">
+              <label class="workspace-students__field"><span>{{ _('UID or username') }}</span><input class="textbox" name="account" autocomplete="off" required></label>
+              <label class="workspace-students__field"><span>{{ _('Join domain') }}</span><select class="select" name="domainCode" required>{% for item in domains %}<option value="{{ item._id }}">{{ item.name|default(item._id) }} · {{ item._id }}</option>{% endfor %}</select></label>
+              <button class="rounded primary button" type="submit"><span class="icon icon-add"></span>{{ _('Add to workspace') }}</button>
+            </form>
+          </section>
+
+          <section class="workspace-students__panel">
+            <header class="workspace-students__header"><h2>{{ _('Create Student Account') }}</h2></header>
+            <form method="post" class="workspace-students__form">
+              <input type="hidden" name="operation" value="create_student">
+              <label class="workspace-students__field"><span>{{ _('Username') }}</span><input class="textbox" name="uname" autocomplete="off" required></label>
+              <label class="workspace-students__field"><span>{{ _('Display Name') }}</span><input class="textbox" name="displayName" maxlength="64" required></label>
+              <label class="workspace-students__field"><span>{{ _('Email') }} <small>({{ _('optional') }})</small></span><input class="textbox" type="email" name="mail"></label>
+              <label class="workspace-students__field"><span>{{ _('Password') }}</span><input class="textbox" type="password" name="password" autocomplete="new-password" required></label>
+              <label class="workspace-students__field"><span>{{ _('Confirm Password') }}</span><input class="textbox" type="password" name="verifyPassword" autocomplete="new-password" required></label>
+              <label class="workspace-students__field"><span>{{ _('Join domain') }}</span><select class="select" name="domainCode" required>{% for item in domains %}<option value="{{ item._id }}">{{ item.name|default(item._id) }} · {{ item._id }}</option>{% endfor %}</select></label>
+              <button class="rounded primary button" type="submit"><span class="icon icon-add"></span>{{ _('Create and add student') }}</button>
+            </form>
+            <p class="workspace-students__hint">{{ _('The new account is bound only to the selected domain and uses that domain as its default login destination.') }}</p>
+          </section>
+        {% elif not domains.length %}
+          <div class="workspace-students__locked">{{ _('Create a domain in this workspace before adding students.') }}</div>
+        {% else %}
+          <div class="workspace-students__locked">{{ _('You have read-only access to workspace students.') }}</div>
+        {% endif %}
+      </aside>
+    </div>
+  </div>
+</div>
+{% endblock %}

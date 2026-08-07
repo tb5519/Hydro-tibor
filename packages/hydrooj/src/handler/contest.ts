@@ -96,7 +96,7 @@ export class ContestListHandler extends Handler {
             ...q ? { title: { $regex } } : {},
         };
         await this.ctx.parallel('contest/list', filter, this);
-        const cursor = contest.getMultiVisibleInDomain(domainId, filter).sort({
+        const cursor = (await contest.getMultiVisibleInDomain(domainId, filter)).sort({
             pinned: -1, endAt: -1, beginAt: -1, _id: -1,
         });
         let qs = rule ? `rule=${rule}` : '';
@@ -117,11 +117,11 @@ export class ContestListHandler extends Handler {
         ]);
         const attendedTids = attendedStatusDocs.map((status) => status.docId);
         const attendedTdocs = attendedTids.length
-            ? await contest.getMultiVisibleInDomain(domainId, {
+            ? await (await contest.getMultiVisibleInDomain(domainId, {
                 ...visibilityFilter,
                 rule: { $in: rules },
                 docId: { $in: attendedTids },
-            }).sort({ endAt: -1, beginAt: -1, _id: -1 }).limit(5).toArray()
+            })).sort({ endAt: -1, beginAt: -1, _id: -1 }).limit(5).toArray()
             : [];
         const groupsFilter = groups.filter((i) => !Number.isSafeInteger(+i));
         this.response.template = 'contest_main.html';
@@ -543,7 +543,7 @@ export class ContestEditHandler extends Handler {
     ) {
         if (!Object.keys(contest.RULES).includes(rule) || contest.RULES[rule].hidden) throw new ValidationError('rule');
         if (allDomains) {
-            this.checkPriv(PRIV.PRIV_EDIT_SYSTEM);
+            if (!this.domain.workspaceId) this.checkPriv(PRIV.PRIV_EDIT_SYSTEM);
             if (rule === 'homework') throw new ValidationError('allDomains');
             // A contest shared by every domain must not be restricted to one of them.
             assign = [];
@@ -593,6 +593,7 @@ export class ContestEditHandler extends Handler {
         await contest.edit(domainId, tid, {
             assign, _code, autoHide, lockAt, maintainer, allowViewCode, allowPrint, keepScoreboardHidden, langs,
             allDomains, scoreToPoints,
+            ...(this.domain.workspaceId ? { workspaceId: this.domain.workspaceId } : {}),
         });
         this.response.body = { tid };
         this.response.redirect = this.url('contest_detail', { tid });

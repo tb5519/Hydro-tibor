@@ -1,0 +1,140 @@
+{% extends "layout/basic.html" %}
+{% block content %}
+<style>
+  .workspace-members { padding-bottom: 2rem; color: #172033; }
+  .workspace-members__hero {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    padding: 1.45rem 1.6rem;
+    border: 1px solid #dbeafe;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #f8fbff, #eff6ff 65%, #f5f3ff);
+    box-shadow: 0 14px 35px rgba(30, 64, 175, .08);
+  }
+  .workspace-members__eyebrow { margin: 0 0 .35rem; color: #2563eb; font-size: .73rem; font-weight: 850; letter-spacing: .13em; }
+  .workspace-members__hero h1 { margin: 0; color: #172033; }
+  .workspace-members__hero p:last-child { margin: .42rem 0 0; color: #64748b; }
+  .workspace-members__back {
+    flex: 0 0 auto;
+    padding: .48rem .72rem;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    color: #1d4ed8;
+    background: rgba(255,255,255,.82);
+    font-size: .8rem;
+    font-weight: 800;
+  }
+  .workspace-members__notice { margin-bottom: 1rem; padding: .72rem .85rem; border: 1px solid #bbf7d0; border-radius: 10px; color: #166534; background: #f0fdf4; font-weight: 700; }
+  .workspace-members__layout { display: grid; grid-template-columns: minmax(0, 1fr) 20rem; gap: 1rem; align-items: start; }
+  .workspace-members__panel { overflow: hidden; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; box-shadow: 0 12px 28px rgba(15,23,42,.06); }
+  .workspace-members__header { padding: 1rem 1.1rem; border-bottom: 1px solid #e8eef6; }
+  .workspace-members__header h2 { margin: 0; font-size: 1.05rem; }
+  .workspace-members__header p { margin: .28rem 0 0; color: #64748b; font-size: .8rem; }
+  .workspace-members__list { display: grid; gap: .7rem; padding: 1rem; }
+  .workspace-members__item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .8rem; align-items: center; padding: .9rem 1rem; border: 1px solid #e2e8f0; border-radius: 11px; background: #fbfdff; }
+  .workspace-members__name { margin: 0; font-size: .96rem; font-weight: 800; }
+  .workspace-members__meta { margin: .2rem 0 0; color: #64748b; font-size: .78rem; }
+  .workspace-members__role { border: 1px solid #bfdbfe; border-radius: 999px; padding: .28rem .58rem; color: #1d4ed8; background: #eff6ff; font-size: .74rem; font-weight: 800; }
+  .workspace-members__controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .4rem; }
+  .workspace-members__controls form { display: flex; gap: .35rem; margin: 0; }
+  .workspace-members__controls select { min-width: 7.5rem; }
+  .workspace-members__controls button { white-space: nowrap; }
+  .workspace-members__remove { border-color: #fecaca !important; color: #b91c1c !important; background: #fff7f7 !important; }
+  .workspace-members__form { display: grid; gap: .85rem; padding: 1rem; }
+  .workspace-members__field span { display: block; margin-bottom: .35rem; color: #334155; font-size: .8rem; font-weight: 750; }
+  .workspace-members__form button { width: 100%; }
+  .workspace-members__tip { margin: 0; padding: 0 1rem 1rem; color: #64748b; font-size: .77rem; line-height: 1.65; }
+  @media (max-width: 58em) { .workspace-members__layout { grid-template-columns: 1fr; } }
+  @media (max-width: 38em) {
+    .workspace-members__hero { display: block; padding: 1.2rem; }
+    .workspace-members__back { display: inline-flex; margin-top: .9rem; }
+    .workspace-members__item { grid-template-columns: 1fr; }
+    .workspace-members__controls { justify-content: flex-start; }
+  }
+</style>
+
+<div class="row workspace-members">
+  <div class="columns">
+    <section class="workspace-members__hero">
+      <div>
+        <p class="workspace-members__eyebrow">{{ workspace.name }} · {{ workspace.code|upper }}</p>
+        <h1>{{ _('Teacher and Role Management') }}</h1>
+        <p>{{ _('Add teachers to this workspace and assign only the permissions they need.') }}</p>
+      </div>
+      <a class="workspace-members__back" href="{{ url('workspace_dashboard', { workspaceCode: workspace.code }) }}">← {{ _('Back to workspace') }}</a>
+    </section>
+
+    {% if added %}<div class="workspace-members__notice"><span class="icon icon-check"></span>{{ _('Teacher added to workspace') }} · UID {{ added }}</div>{% endif %}
+    {% if updated %}<div class="workspace-members__notice"><span class="icon icon-check"></span>{{ _('Teacher role updated') }} · UID {{ updated }}</div>{% endif %}
+    {% if removed %}<div class="workspace-members__notice"><span class="icon icon-check"></span>{{ _('Teacher removed from workspace') }} · UID {{ removed }}</div>{% endif %}
+
+    <div class="workspace-members__layout">
+      <section class="workspace-members__panel">
+        <header class="workspace-members__header">
+          <h2>{{ _('Workspace Teachers') }}</h2>
+          <p>{{ members.length }} {{ _('teachers') }}</p>
+        </header>
+        <div class="workspace-members__list">
+          {% for item in members %}
+            {% set account = udict[item.uid] %}
+            <article class="workspace-members__item">
+              <div>
+                <p class="workspace-members__name">{{ account.displayName|default(account.uname)|default('UID ' + item.uid) }}</p>
+                <p class="workspace-members__meta">@{{ account.uname|default(item.uid) }} · UID {{ item.uid }}{% if account.mail %} · {{ account.mail }}{% endif %}</p>
+              </div>
+              {% if item.role == 'owner' %}
+                <span class="workspace-members__role">{{ _('Workspace owner') }}</span>
+              {% else %}
+                <div class="workspace-members__controls">
+                  <form method="post">
+                    <input type="hidden" name="operation" value="update_member">
+                    <input type="hidden" name="uid" value="{{ item.uid }}">
+                    <select class="select" name="role" aria-label="{{ _('Workspace role') }}">
+                      <option value="teacher"{% if item.role == 'teacher' %} selected{% endif %}>{{ _('Teacher') }}</option>
+                      <option value="assistant"{% if item.role == 'assistant' %} selected{% endif %}>{{ _('Teaching assistant') }}</option>
+                      <option value="admin"{% if item.role == 'admin' %} selected{% endif %}>{{ _('Workspace administrator') }}</option>
+                    </select>
+                    <button class="rounded button" type="submit">{{ _('Save role') }}</button>
+                  </form>
+                  <form method="post" onsubmit="return confirm('{{ _('Remove this teacher from the workspace?') }}')">
+                    <input type="hidden" name="operation" value="remove_member">
+                    <input type="hidden" name="uid" value="{{ item.uid }}">
+                    <button class="rounded button workspace-members__remove" type="submit">{{ _('Remove teacher') }}</button>
+                  </form>
+                </div>
+              {% endif %}
+            </article>
+          {% endfor %}
+        </div>
+      </section>
+
+      <aside class="workspace-members__panel">
+        <header class="workspace-members__header">
+          <h2>{{ _('Add Teacher') }}</h2>
+          <p>{{ _('Use an existing OneByOne account.') }}</p>
+        </header>
+        <form method="post" class="workspace-members__form">
+          <input type="hidden" name="operation" value="add_member">
+          <label class="workspace-members__field">
+            <span>{{ _('UID or username') }}</span>
+            <input class="textbox" name="account" autocomplete="off" required>
+          </label>
+          <label class="workspace-members__field">
+            <span>{{ _('Workspace role') }}</span>
+            <select class="select" name="role" required>
+              <option value="teacher">{{ _('Teacher') }}</option>
+              <option value="assistant">{{ _('Teaching assistant') }}</option>
+              <option value="admin">{{ _('Workspace administrator') }}</option>
+            </select>
+          </label>
+          <button class="rounded primary button" type="submit"><span class="icon icon-add"></span>{{ _('Add Teacher') }}</button>
+        </form>
+        <p class="workspace-members__tip">{{ _('Administrators can manage teachers and students. Teachers can manage students and domains. Teaching assistants have read-only workspace access.') }}</p>
+      </aside>
+    </div>
+  </div>
+</div>
+{% endblock %}
