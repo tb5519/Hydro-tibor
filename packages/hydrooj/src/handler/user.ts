@@ -133,7 +133,7 @@ async function successfulAuth(this: Handler, udoc: User) {
 }
 
 async function getDefaultDomainLoginRedirect(handler: Handler, udoc: User) {
-    if (workspace.isPlatformAdmin(udoc._id)) return handler.url('platform_workspace');
+    if (workspace.isPlatformAdmin(udoc._id)) return handler.url('platform_dashboard');
     const defaultDomain = typeof udoc._udoc.defaultDomain === 'string' ? udoc._udoc.defaultDomain.trim() : '';
     if (defaultDomain) {
         const ddoc = await domain.get(defaultDomain);

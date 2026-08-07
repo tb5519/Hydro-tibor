@@ -1,5 +1,6 @@
-{% extends "layout/basic.html" %}
-{% block content %}
+{% set page_name = "platform_workspace" %}
+{% extends "layout/platform.html" %}
+{% block platform_content %}
 <style>
   .workspace-platform { padding-bottom: 2rem; }
   .workspace-platform__hero {
@@ -79,6 +80,13 @@
     font-size: .75rem;
     font-weight: 800;
   }
+  .workspace-platform__search {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: .55rem;
+    padding: .85rem 1rem 0;
+  }
+  .workspace-platform__search button { min-width: 5.6rem; }
   .workspace-platform__cards { display: grid; gap: .75rem; padding: 1rem; }
   .workspace-platform__card {
     display: grid;
@@ -109,6 +117,11 @@
     font-size: .72rem;
   }
   .workspace-platform__open { color: #2563eb; font-size: .83rem; font-weight: 800; white-space: nowrap; }
+  .workspace-platform__card-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .35rem; }
+  .workspace-platform__card-action { padding: .34rem .52rem; border: 1px solid #dbe5f2; border-radius: .55rem; color: #52637a; background: #fff; font-size: .7rem; font-weight: 750; white-space: nowrap; }
+  .workspace-platform__card-action:hover { border-color: #93c5fd; color: #1d4ed8; background: #eff6ff; }
+  .workspace-platform__card-action--primary { border-color: #bfdbfe; color: #1d4ed8; background: #eff6ff; }
+  .workspace-platform__empty { margin: 0; padding: 1rem; color: #64748b; }
   .workspace-platform__form { display: grid; gap: .85rem; padding: 1rem; }
   .workspace-platform__field span {
     display: block;
@@ -135,6 +148,8 @@
   @media (max-width: 36em) {
     .workspace-platform__hero { padding: 1.25rem; }
     .workspace-platform__card { grid-template-columns: 1fr; }
+    .workspace-platform__card-actions { justify-content: flex-start; }
+    .workspace-platform__search { grid-template-columns: 1fr; }
   }
 </style>
 
@@ -154,11 +169,16 @@
       <section class="workspace-platform__panel">
         <header class="workspace-platform__panel-header">
           <h2>{{ _('Workspace List') }}</h2>
-          <span class="workspace-platform__count">{{ workspaces.length }} {{ _('workspaces') }}</span>
+          <span class="workspace-platform__count">{{ workspaces.length }} / {{ workspaceCount }} {{ _('workspaces') }}</span>
         </header>
-        <div class="workspace-platform__cards">
-          {% for item in workspaces %}
-            <a class="workspace-platform__card" href="{{ url('workspace_dashboard', { workspaceCode: item.code }) }}">
+        <form class="workspace-platform__search" method="get">
+          <input class="textbox" name="q" value="{{ q }}" placeholder="{{ _('Search by workspace, code or owner') }}">
+          <button class="rounded button" type="submit">{{ _('Search') }}</button>
+        </form>
+        {% if workspaces.length %}
+          <div class="workspace-platform__cards">
+            {% for item in workspaces %}
+            <article class="workspace-platform__card">
               <div>
                 <h3>{{ item.name }}{% if item.legacy %} <span class="workspace-platform__metric">{{ _('Legacy compatible') }}</span>{% endif %}</h3>
                 <p class="workspace-platform__meta">{{ item.code }} · {{ _('Owner') }}：{{ item.ownerLabel }}</p>
@@ -168,10 +188,19 @@
                   <span class="workspace-platform__metric">{{ item.stats.teacherCount }} {{ _('teachers') }}</span>
                 </div>
               </div>
-              <span class="workspace-platform__open">{{ _('Open workspace') }} →</span>
-            </a>
-          {% endfor %}
-        </div>
+              <div class="workspace-platform__card-actions">
+                <a class="workspace-platform__card-action workspace-platform__card-action--primary" href="{{ url('workspace_dashboard', { workspaceCode: item.code }) }}">{{ _('Overview') }}</a>
+                {% if not item.legacy %}
+                  <a class="workspace-platform__card-action" href="{{ url('workspace_students', { workspaceCode: item.code }) }}">{{ _('Students') }}</a>
+                  <a class="workspace-platform__card-action" href="{{ url('workspace_members', { workspaceCode: item.code }) }}">{{ _('Teachers') }}</a>
+                {% endif %}
+              </div>
+            </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="workspace-platform__empty">{{ _('No workspace matches this search.') }}</p>
+        {% endif %}
       </section>
 
       <aside class="workspace-platform__panel">

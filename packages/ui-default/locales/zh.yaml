@@ -90,6 +90,59 @@ Add User: 添加用户
 Manually Add Student: 手动添加学员
 Teacher Workspace Management: 教师工作区管理
 Create isolated teaching spaces for different teachers. Existing Tang teacher domains continue to run through the transparent legacy workspace.: 为不同老师创建彼此隔离的教学空间，唐老师现有域继续通过透明兼容工作区运行。
+platform_dashboard: 平台总览
+platform_account_lookup: 账号定位
+Platform Overview: 平台总览
+Account Lookup: 账号定位
+View teachers, workspaces, domains and students from one place. Existing teaching pages remain unchanged.: 集中查看老师、工作区、域和学员，现有教学页面保持不变。
+Platform Statistics: 平台统计
+Workspaces: 工作区
+Domains: 域
+Teachers: 老师
+Students: 学员
+Independent teaching spaces: 独立教学空间
+Problem banks and classes: 题库与班级
+Workspace teaching members: 工作区教学成员
+Deduplicated by workspace: 按工作区去重统计
+Recently Created Workspaces: 最近创建的工作区
+View all: 查看全部
+No independent teacher workspace has been created yet.: 暂未创建独立教师工作区。
+Quick Actions: 快捷操作
+Create or manage workspaces: 创建或管理工作区
+Onboard teachers and enter their management pages: 开通老师并进入对应管理页面
+Locate an account: 定位账号归属
+Find which workspace and domains an account belongs to: 查询账号所属工作区与加入的域
+Tang teacher workspace: 唐老师工作区
+Enter the transparent legacy compatibility workspace: 进入无感兼容的原有工作区
+Isolation protection is active: 数据隔离保护已启用
+Teacher workspaces are separated while Tang teacher and current students keep their original experience.: 各老师工作区彼此隔离，同时唐老师和现有学员保持原有使用体验。
+Search by workspace, code or owner: 按工作区名称、代码或负责人搜索
+Overview: 概览
+No workspace matches this search.: 没有符合当前搜索条件的工作区。
+Quickly locate a teacher or student and see their workspace, joined domains and default domain without changing any data.: 快速定位老师或学员，查看其工作区、已加入域和默认域，全程不修改数据。
+Enter an exact username or UID: 输入准确的用户名或 UID
+Search Account: 查询账号
+This is a read-only troubleshooting tool. It will not change account ownership or permissions.: 这是只读排查工具，不会修改账号归属或权限。
+Account not found: 未找到账号
+Check the username or UID and try again.: 请检查用户名或 UID 后重试。
+Default domain: 默认域
+Not set: 未设置
+System manager: 系统管理员
+Standard account: 普通账号
+Assigned Workspaces: 所属工作区
+Teaching role: 教学角色
+Student membership: 学员身份
+This account is not assigned to a workspace.: 此账号尚未归属任何工作区。
+Joined Domains: 已加入的域
+Unassigned workspace: 未归属工作区
+Domain role: 域内角色
+This account has not joined any domain.: 此账号尚未加入任何域。
+owner: 负责人
+admin: 管理员
+teacher: 老师
+assistant: 助教
+root: 管理员
+default: 普通成员
 Workspace created successfully: 工作区创建成功
 Workspace List: 工作区列表
 workspaces: 个工作区
@@ -411,6 +464,14 @@ Domain Settings: 域设置
 domain_dashboard: 管理域
 domain_add_student: 手动添加学员
 platform_workspace: 教师工作区管理
+Platform Management Center: 平台管理中心
+Teacher Workspace Console: 教师工作台
+Management navigation: 管理导航
+Workspace Overview: 工作区概览
+Platform administrator: 平台管理员
+Workspace teacher: 工作区教师
+Return to teaching platform: 返回教学平台
+Independent workspace administration: 独立工作区管理
 Back to platform: 返回平台管理
 workspace_dashboard: 工作区概览
 workspace_members: 教师与角色管理

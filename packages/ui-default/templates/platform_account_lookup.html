@@ -1,0 +1,103 @@
+{% set page_name = "platform_account_lookup" %}
+{% extends "layout/platform.html" %}
+{% block platform_content %}
+<style>
+  .account-lookup { padding-bottom: 2rem; }
+  .account-lookup__hero { padding: 1.55rem 1.7rem; border: 1px solid #dbeafe; border-radius: 16px; background: linear-gradient(135deg, #f8fbff, #eef5ff 62%, #f8f5ff); box-shadow: 0 14px 32px rgba(30, 64, 175, .07); }
+  .account-lookup__eyebrow { margin: 0 0 .38rem; color: #2563eb; font-size: .72rem; font-weight: 850; letter-spacing: .14em; }
+  .account-lookup__hero h1 { margin: 0; color: #172033; }
+  .account-lookup__hero p:last-child { max-width: 43rem; margin: .52rem 0 0; color: #64748b; line-height: 1.6; }
+  .account-lookup__search { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .65rem; margin: 1rem 0; padding: 1rem; border: 1px solid #e2e8f0; border-radius: 13px; background: #fff; box-shadow: 0 10px 24px rgba(15, 23, 42, .05); }
+  .account-lookup__search input { min-width: 0; }
+  .account-lookup__search button { min-width: 7rem; }
+  .account-lookup__hint { grid-column: 1 / -1; margin: -.1rem 0 0; color: #8492a5; font-size: .72rem; }
+  .account-lookup__profile { display: grid; grid-template-columns: 3.5rem minmax(0, 1fr) auto; gap: .85rem; align-items: center; padding: 1rem 1.1rem; border: 1px solid #dbeafe; border-radius: 14px; background: #fff; box-shadow: 0 12px 28px rgba(15, 23, 42, .055); }
+  .account-lookup__avatar { display: grid; width: 3.5rem; height: 3.5rem; border-radius: 1rem; color: #1d4ed8; background: linear-gradient(145deg, #dbeafe, #eef2ff); place-items: center; font-size: 1.1rem; font-weight: 900; }
+  .account-lookup__profile h2 { margin: 0; color: #1e293b; font-size: 1.1rem; }
+  .account-lookup__profile p { margin: .25rem 0 0; color: #64748b; font-size: .76rem; }
+  .account-lookup__badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .35rem; }
+  .account-lookup__badge { padding: .27rem .5rem; border-radius: 999px; color: #1d4ed8; background: #eff6ff; font-size: .68rem; font-weight: 800; }
+  .account-lookup__grid { display: grid; grid-template-columns: .85fr 1.15fr; gap: 1rem; margin-top: 1rem; align-items: start; }
+  .account-lookup__panel { border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; box-shadow: 0 12px 28px rgba(15, 23, 42, .05); }
+  .account-lookup__panel h2 { margin: 0; padding: 1rem 1.05rem; border-bottom: 1px solid #edf1f6; font-size: .95rem; }
+  .account-lookup__list { display: grid; gap: .6rem; padding: .85rem; }
+  .account-lookup__item { display: block; padding: .8rem .85rem; border: 1px solid #e7edf5; border-radius: 10px; color: inherit; background: #fbfdff; }
+  a.account-lookup__item:hover { border-color: #93c5fd; background: #f8fbff; }
+  .account-lookup__item-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+  .account-lookup__item strong { color: #263348; font-size: .82rem; }
+  .account-lookup__item span { color: #2563eb; font-size: .69rem; font-weight: 800; }
+  .account-lookup__item p { margin: .25rem 0 0; color: #7b8a9d; font-size: .7rem; line-height: 1.45; }
+  .account-lookup__empty { margin: 0; padding: 1rem; color: #7b8a9d; font-size: .78rem; }
+  .account-lookup__not-found { padding: 1.1rem; border: 1px solid #fed7aa; border-radius: 12px; color: #9a3412; background: #fff7ed; }
+  @media (max-width: 56em) { .account-lookup__grid { grid-template-columns: 1fr; } }
+  @media (max-width: 36em) {
+    .account-lookup__search { grid-template-columns: 1fr; }
+    .account-lookup__profile { grid-template-columns: 3.5rem 1fr; }
+    .account-lookup__badges { grid-column: 1 / -1; justify-content: flex-start; }
+  }
+</style>
+
+<div class="row account-lookup">
+  <div class="columns">
+    <section class="account-lookup__hero">
+      <p class="account-lookup__eyebrow">ACCOUNT LOCATOR</p>
+      <h1>{{ _('Account Lookup') }}</h1>
+      <p>{{ _('Quickly locate a teacher or student and see their workspace, joined domains and default domain without changing any data.') }}</p>
+    </section>
+
+    <form class="account-lookup__search" method="get">
+      <input class="textbox" name="q" value="{{ q }}" placeholder="{{ _('Enter an exact username or UID') }}" autocomplete="off" required>
+      <button class="rounded primary button" type="submit">{{ _('Search Account') }}</button>
+      <p class="account-lookup__hint">{{ _('This is a read-only troubleshooting tool. It will not change account ownership or permissions.') }}</p>
+    </form>
+
+    {% if searched and not result %}
+      <div class="account-lookup__not-found"><strong>{{ _('Account not found') }}</strong><br>{{ _('Check the username or UID and try again.') }}</div>
+    {% elif result %}
+      <section class="account-lookup__profile">
+        <div class="account-lookup__avatar">{{ result.account.uname|first|upper }}</div>
+        <div>
+          <h2>{{ result.account.displayName|default(result.account.uname) }}</h2>
+          <p>@{{ result.account.uname }} · UID {{ result.account.uid }}{% if result.account.mail %} · {{ result.account.mail }}{% endif %}</p>
+          <p>{{ _('Default domain') }}：{{ result.account.defaultDomain|default(_('Not set')) }}</p>
+        </div>
+        <div class="account-lookup__badges">
+          {% if result.account.isPlatformAdmin %}<span class="account-lookup__badge">{{ _('Platform administrator') }}</span>{% endif %}
+          {% if result.account.isSystemManager %}<span class="account-lookup__badge">{{ _('System manager') }}</span>{% endif %}
+          {% if not result.account.isPlatformAdmin and not result.account.isSystemManager %}<span class="account-lookup__badge">{{ _('Standard account') }}</span>{% endif %}
+        </div>
+      </section>
+
+      <div class="account-lookup__grid">
+        <section class="account-lookup__panel">
+          <h2>{{ _('Assigned Workspaces') }}</h2>
+          {% if result.workspaces.length %}
+            <div class="account-lookup__list">
+              {% for item in result.workspaces %}
+                <a class="account-lookup__item" href="{{ url('workspace_dashboard', { workspaceCode: item.code }) }}">
+                  <div class="account-lookup__item-head"><strong>{{ item.name }}</strong><span>{{ _('Manage') }} →</span></div>
+                  <p>{{ item.code }}{% if item.member %} · {{ _('Teaching role') }}：{{ _(item.member.role) }}{% else %} · {{ _('Student membership') }}{% endif %}</p>
+                </a>
+              {% endfor %}
+            </div>
+          {% else %}<p class="account-lookup__empty">{{ _('This account is not assigned to a workspace.') }}</p>{% endif %}
+        </section>
+
+        <section class="account-lookup__panel">
+          <h2>{{ _('Joined Domains') }}</h2>
+          {% if result.domains.length %}
+            <div class="account-lookup__list">
+              {% for item in result.domains %}
+                <div class="account-lookup__item">
+                  <div class="account-lookup__item-head"><strong>{{ item.name }}</strong><span>{{ item.domainId }}</span></div>
+                  <p>{% if item.workspace %}{{ item.workspace.name }}{% else %}{{ _('Unassigned workspace') }}{% endif %}{% if item.role %} · {{ _('Domain role') }}：{{ _(item.role) }}{% endif %}</p>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}<p class="account-lookup__empty">{{ _('This account has not joined any domain.') }}</p>{% endif %}
+        </section>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

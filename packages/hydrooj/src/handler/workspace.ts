@@ -50,28 +50,61 @@ class WorkspaceFeatureHandler extends Handler {
     }
 }
 
-class PlatformWorkspaceHandler extends WorkspaceFeatureHandler {
+async function getWorkspaceCards() {
+    const workspaces = await workspace.list();
+    return Promise.all(workspaces.map(async (item) => {
+        const owner = await user.getById('system', item.ownerUid);
+        return {
+            ...item,
+            stats: await workspace.getStats(item._id),
+            ownerLabel: owner?.uname || `UID ${item.ownerUid}`,
+        };
+    }));
+}
+
+class PlatformAdminHandler extends WorkspaceFeatureHandler {
     async prepare() {
         this.ensureFeatureEnabled();
         if (!workspace.isPlatformAdmin(this.user._id)) throw new NotFoundError('Workspace');
     }
+}
 
+class PlatformDashboardHandler extends PlatformAdminHandler {
+    async get() {
+        const workspaces = await getWorkspaceCards();
+        const totals = workspaces.reduce((result, item) => ({
+            domainCount: result.domainCount + item.stats.domainCount,
+            studentCount: result.studentCount + item.stats.studentCount,
+            teacherCount: result.teacherCount + item.stats.teacherCount,
+        }), { domainCount: 0, studentCount: 0, teacherCount: 0 });
+        this.response.template = 'platform_dashboard.html';
+        this.response.body = {
+            workspaces,
+            totals,
+            recentWorkspaces: workspaces.filter((item) => !item.legacy).slice(-4).reverse(),
+            canCreate: workspace.canCreateTeacherWorkspace(),
+            platformAdminMode: true,
+        };
+    }
+}
+
+class PlatformWorkspaceHandler extends PlatformAdminHandler {
     @param('created', Types.String, true)
-    async get(domainId: string, created = '') {
-        const workspaces = await workspace.list();
-        const cards = await Promise.all(workspaces.map(async (item) => {
-            const owner = await user.getById('system', item.ownerUid);
-            return {
-                ...item,
-                stats: await workspace.getStats(item._id),
-                ownerLabel: owner?.uname || `UID ${item.ownerUid}`,
-            };
-        }));
+    @param('q', Types.Content, true)
+    async get(domainId: string, created = '', q = '') {
+        const cards = await getWorkspaceCards();
+        const query = q.trim().toLocaleLowerCase();
+        const filteredCards = cards.filter((item) => !query || [
+            item.name, item.code, item.ownerLabel,
+        ].some((value) => `${value || ''}`.toLocaleLowerCase().includes(query)));
         this.response.template = 'platform_workspace.html';
         this.response.body = {
-            workspaces: cards,
+            workspaces: filteredCards,
+            workspaceCount: cards.length,
+            q,
             created,
             canCreate: workspace.canCreateTeacherWorkspace(),
+            platformAdminMode: true,
         };
     }
 
@@ -121,6 +154,86 @@ class PlatformWorkspaceHandler extends WorkspaceFeatureHandler {
             domainId: initialDomainId,
         });
         this.response.redirect = this.url('platform_workspace', { query: { created: created._id } });
+    }
+}
+
+class PlatformAccountLookupHandler extends PlatformAdminHandler {
+    @param('q', Types.String, true)
+    async get(domainId: string, q = '') {
+        const query = q.trim();
+        const account = query
+            ? (/^\d+$/.test(query)
+                ? await user.getById('system', +query)
+                : await user.getByUname('system', query))
+            : null;
+        let result = null;
+        if (account && account._id > 0) {
+            const [allWorkspaces, joinedDomains, modernMemberships, modernStudents, rawAccount] = await Promise.all([
+                workspace.list(),
+                domain.collUser.find({ uid: account._id, domainId: { $ne: 'system' }, join: true })
+                    .project<{ domainId: string, role?: string, displayName?: string }>({
+                        domainId: 1, role: 1, displayName: 1,
+                    }).toArray(),
+                workspace.collMember.find({ uid: account._id, status: 'active' }).toArray(),
+                workspace.collStudent.find({ uid: account._id, status: 'active' }).toArray(),
+                user.coll.findOne({ _id: account._id }, { projection: { defaultDomain: 1 } }),
+            ]);
+            const domainIds = joinedDomains.map((item) => item.domainId);
+            const domains = domainIds.length
+                ? await domain.coll.find({ _id: { $in: domainIds } })
+                    .project({ _id: 1, name: 1, workspaceId: 1 }).toArray()
+                : [];
+            const workspaceById = new Map(allWorkspaces.map((item) => [item._id, item]));
+            const membershipByWorkspace = new Map<string, { role: WorkspaceRole }>(
+                modernMemberships.map((item) => [item.workspaceId, { role: item.role }]),
+            );
+            const legacyWorkspace = workspaceById.get(workspace.LEGACY_WORKSPACE_ID);
+            if (legacyWorkspace?.ownerUid === account._id) {
+                membershipByWorkspace.set(legacyWorkspace._id, {
+                    role: 'owner',
+                });
+            }
+            const domainById = new Map(domains.map((item) => [item._id, item]));
+            const domainRows = joinedDomains.map((membership) => {
+                const domainDoc = domainById.get(membership.domainId);
+                const workspaceId = workspace.resolveDomainWorkspaceId(domainDoc);
+                return {
+                    ...membership,
+                    name: domainDoc?.name || membership.domainId,
+                    workspace: workspaceById.get(workspaceId),
+                };
+            }).sort((a, b) => a.domainId.localeCompare(b.domainId));
+            const workspaceIds = new Set([
+                ...membershipByWorkspace.keys(),
+                ...modernStudents.map((item) => item.workspaceId),
+                ...domainRows.map((item) => item.workspace?._id).filter(Boolean),
+            ]);
+            result = {
+                account: {
+                    uid: account._id,
+                    uname: account.uname,
+                    displayName: account.displayName,
+                    mail: account.mail,
+                    defaultDomain: rawAccount?.defaultDomain || account.defaultDomain,
+                    isPlatformAdmin: workspace.isPlatformAdmin(account._id),
+                    isSystemManager: account.hasPriv(PRIV.PRIV_EDIT_SYSTEM),
+                },
+                workspaces: Array.from(workspaceIds)
+                    .map((workspaceId) => {
+                        const item = workspaceById.get(workspaceId);
+                        return item && { ...item, member: membershipByWorkspace.get(workspaceId) };
+                    })
+                    .filter(Boolean),
+                domains: domainRows,
+            };
+        }
+        this.response.template = 'platform_account_lookup.html';
+        this.response.body = {
+            q,
+            searched: !!query,
+            result,
+            platformAdminMode: true,
+        };
     }
 }
 
@@ -176,6 +289,7 @@ class WorkspaceDashboardHandler extends WorkspaceScopedHandler {
             showWorkspaceTools: !this.workspaceDoc.legacy,
             canManageMembers: this.canManageMembers(),
             canReturnPlatform: workspace.isPlatformAdmin(this.user._id),
+            platformAdminMode: workspace.isPlatformAdmin(this.user._id),
             createdDomain,
         };
     }
@@ -221,6 +335,8 @@ class WorkspaceMembersHandler extends WorkspaceScopedHandler {
             added,
             updated,
             removed,
+            canManageMembers: true,
+            platformAdminMode: workspace.isPlatformAdmin(this.user._id),
         };
     }
 
@@ -360,6 +476,7 @@ class WorkspaceStudentsHandler extends WorkspaceScopedHandler {
             students,
             canManageStudents: this.canManageStudents(),
             canManageMembers: this.canManageMembers(),
+            platformAdminMode: workspace.isPlatformAdmin(this.user._id),
             q,
             added,
             created,
@@ -473,14 +590,16 @@ class DomainWorkspaceEntryHandler extends WorkspaceFeatureHandler {
 }
 
 export async function apply(ctx: Context) {
+    ctx.Route('platform_dashboard', '/platform', PlatformDashboardHandler);
     ctx.Route('platform_workspace', '/platform/workspaces', PlatformWorkspaceHandler);
+    ctx.Route('platform_account_lookup', '/platform/accounts', PlatformAccountLookupHandler);
     ctx.Route('workspace_dashboard', '/workspace/:workspaceCode', WorkspaceDashboardHandler);
     ctx.Route('workspace_members', '/workspace/:workspaceCode/members', WorkspaceMembersHandler);
     ctx.Route('workspace_students', '/workspace/:workspaceCode/students', WorkspaceStudentsHandler);
     ctx.Route('domain_workspace', '/domain/workspace', DomainWorkspaceEntryHandler, PERM.PERM_EDIT_DOMAIN);
     ctx.injectUI(
-        'Nav', 'platform_workspace',
-        { prefix: 'platform_workspace', before: 'manage_dashboard' },
+        'Nav', 'platform_dashboard',
+        { prefix: 'platform_dashboard', before: 'manage_dashboard' },
         (handler) => workspace.isPlatformAdmin(handler.user._id),
     );
     ctx.injectUI(

@@ -1,0 +1,138 @@
+{% set layout_name = "platform" %}
+{% extends "layout/html5.html" %}
+{% block body %}
+<style>
+  :root {
+    --platform-ink: #172033;
+    --platform-muted: #64748b;
+    --platform-line: #dfe7f2;
+    --platform-blue: #2563eb;
+    --platform-blue-dark: #1d4ed8;
+    --platform-bg: #f3f6fb;
+  }
+  body { min-width: 0; color: var(--platform-ink); background: var(--platform-bg); }
+  .platform-shell { min-height: 100vh; }
+  .platform-shell__topbar {
+    position: sticky;
+    z-index: 30;
+    top: 0;
+    border-bottom: 1px solid rgba(203, 213, 225, .82);
+    background: rgba(255, 255, 255, .94);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, .05);
+    backdrop-filter: blur(16px);
+  }
+  .platform-shell__topbar-inner {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 1.6rem;
+    width: min(100% - 2rem, 94rem);
+    min-height: 4.4rem;
+    margin: 0 auto;
+  }
+  .platform-shell__brand { display: flex; align-items: center; gap: .72rem; color: inherit; }
+  .platform-shell__brand-mark {
+    display: grid;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: .72rem;
+    color: #fff;
+    background: linear-gradient(145deg, #2563eb, #4f46e5);
+    box-shadow: 0 8px 18px rgba(37, 99, 235, .24);
+    place-items: center;
+    font-size: .76rem;
+    font-weight: 900;
+    letter-spacing: -.05em;
+  }
+  .platform-shell__brand-copy strong { display: block; color: #111827; font-size: 1rem; line-height: 1.15; }
+  .platform-shell__brand-copy span { display: block; margin-top: .14rem; color: #8190a5; font-size: .66rem; letter-spacing: .08em; }
+  .platform-shell__nav { display: flex; align-items: center; gap: .35rem; min-width: 0; }
+  .platform-shell__nav a {
+    padding: .52rem .7rem;
+    border-radius: .65rem;
+    color: #52637a;
+    font-size: .8rem;
+    font-weight: 750;
+    white-space: nowrap;
+  }
+  .platform-shell__nav a:hover { color: var(--platform-blue-dark); background: #eff6ff; }
+  .platform-shell__nav a.is-active { color: var(--platform-blue-dark); background: #eaf2ff; }
+  .platform-shell__account { display: flex; align-items: center; justify-content: flex-end; gap: .45rem; }
+  .platform-shell__identity { margin-right: .2rem; text-align: right; }
+  .platform-shell__identity strong { display: block; max-width: 11rem; overflow: hidden; color: #263348; font-size: .77rem; text-overflow: ellipsis; white-space: nowrap; }
+  .platform-shell__identity span { display: block; margin-top: .08rem; color: #8b98aa; font-size: .64rem; }
+  .platform-shell__account-link {
+    padding: .43rem .62rem;
+    border: 1px solid var(--platform-line);
+    border-radius: .62rem;
+    color: #52637a;
+    background: #fff;
+    font-size: .72rem;
+    font-weight: 750;
+    white-space: nowrap;
+  }
+  .platform-shell__account-link:hover { border-color: #bfdbfe; color: var(--platform-blue-dark); background: #f8fbff; }
+  .platform-shell__main { width: min(100% - 2rem, 94rem); margin: 0 auto; padding: 1.5rem 0 2.5rem; }
+  .platform-shell__footer {
+    padding: 0 1rem 1.5rem;
+    color: #94a3b8;
+    text-align: center;
+    font-size: .68rem;
+  }
+  @media (max-width: 72em) {
+    .platform-shell__topbar-inner { grid-template-columns: auto 1fr; gap: .8rem 1rem; padding: .7rem 0; }
+    .platform-shell__nav { grid-column: 1 / -1; grid-row: 2; overflow-x: auto; padding-bottom: .05rem; }
+    .platform-shell__account { grid-column: 2; grid-row: 1; }
+  }
+  @media (max-width: 42em) {
+    .platform-shell__topbar-inner, .platform-shell__main { width: min(100% - 1rem, 94rem); }
+    .platform-shell__identity, .platform-shell__account-link--return { display: none; }
+    .platform-shell__brand-copy span { display: none; }
+    .platform-shell__nav a { padding: .46rem .58rem; font-size: .75rem; }
+  }
+</style>
+
+<div class="platform-shell">
+  <header class="platform-shell__topbar">
+    <div class="platform-shell__topbar-inner">
+      <a class="platform-shell__brand" href="{% if platformAdminMode %}{{ url('platform_dashboard') }}{% elif workspace %}{{ url('workspace_dashboard', { workspaceCode: workspace.code }) }}{% else %}{{ url('homepage') }}{% endif %}">
+        <span class="platform-shell__brand-mark">1×1</span>
+        <span class="platform-shell__brand-copy">
+          <strong>{{ _('Platform Management Center') if platformAdminMode else _('Teacher Workspace Console') }}</strong>
+          <span>ONEBYONE ADMINISTRATION</span>
+        </span>
+      </a>
+
+      <nav class="platform-shell__nav" aria-label="{{ _('Management navigation') }}">
+        {% if platformAdminMode %}
+          <a class="{% if page_name == 'platform_dashboard' %}is-active{% endif %}" href="{{ url('platform_dashboard') }}">{{ _('Platform Overview') }}</a>
+          <a class="{% if page_name == 'platform_workspace' %}is-active{% endif %}" href="{{ url('platform_workspace') }}">{{ _('Workspace List') }}</a>
+          <a class="{% if page_name == 'platform_account_lookup' %}is-active{% endif %}" href="{{ url('platform_account_lookup') }}">{{ _('Account Lookup') }}</a>
+        {% endif %}
+        {% if workspace %}
+          <a class="{% if page_name == 'workspace_dashboard' %}is-active{% endif %}" href="{{ url('workspace_dashboard', { workspaceCode: workspace.code }) }}">{{ _('Workspace Overview') }}</a>
+          {% if not workspace.legacy %}
+            <a class="{% if page_name == 'workspace_students' %}is-active{% endif %}" href="{{ url('workspace_students', { workspaceCode: workspace.code }) }}">{{ _('Student Management') }}</a>
+            {% if canManageMembers %}<a class="{% if page_name == 'workspace_members' %}is-active{% endif %}" href="{{ url('workspace_members', { workspaceCode: workspace.code }) }}">{{ _('Teacher and Role Management') }}</a>{% endif %}
+          {% endif %}
+        {% endif %}
+      </nav>
+
+      <div class="platform-shell__account">
+        <div class="platform-shell__identity">
+          <strong>{{ handler.user.displayName|default(handler.user.uname) }}</strong>
+          <span>{{ _('Platform administrator') if platformAdminMode else _('Workspace teacher') }}</span>
+        </div>
+        <a class="platform-shell__account-link platform-shell__account-link--return" href="{{ url('homepage') }}">{{ _('Return to teaching platform') }}</a>
+        <a class="platform-shell__account-link" href="{{ url('user_logout') }}">{{ _('Logout') }}</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="platform-shell__main">
+    {% block platform_content %}{% endblock %}
+  </main>
+  <footer class="platform-shell__footer">OneByOne · {{ _('Independent workspace administration') }}</footer>
+</div>
+{% endblock %}
+{% block ogp %}{% endblock %}

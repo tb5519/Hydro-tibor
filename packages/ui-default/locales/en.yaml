@@ -10,7 +10,23 @@ manage: System Manage
 domain_home_poster: Home Poster
 domain_add_student: Manually Add Student
 platform_workspace: Teacher Workspace Management
+platform_dashboard: Platform Overview
+platform_account_lookup: Account Lookup
+Platform Management Center: Platform Management Center
+Teacher Workspace Console: Teacher Workspace Console
+Management navigation: Management navigation
+Workspace Overview: Workspace Overview
+Platform administrator: Platform administrator
+Workspace teacher: Workspace teacher
+Return to teaching platform: Return to teaching platform
+Independent workspace administration: Independent workspace administration
 Back to platform: Back to platform
+owner: Owner
+admin: Administrator
+teacher: Teacher
+assistant: Teaching assistant
+root: Domain administrator
+default: Standard member
 workspace_dashboard: Workspace Dashboard
 workspace_members: Teacher and Role Management
 workspace_students: Student Management

@@ -1,0 +1,149 @@
+{% set page_name = "platform_dashboard" %}
+{% extends "layout/platform.html" %}
+{% block platform_content %}
+<style>
+  .platform-overview { padding-bottom: 2rem; }
+  .platform-overview__hero {
+    position: relative;
+    overflow: hidden;
+    padding: 1.75rem 1.9rem;
+    border: 1px solid #dbeafe;
+    border-radius: 17px;
+    color: #fff;
+    background: linear-gradient(125deg, #1d4ed8 0%, #2563eb 55%, #4f46e5 100%);
+    box-shadow: 0 18px 38px rgba(37, 99, 235, .2);
+  }
+  .platform-overview__hero::before,
+  .platform-overview__hero::after {
+    position: absolute;
+    border: 1px solid rgba(255, 255, 255, .15);
+    border-radius: 50%;
+    content: '';
+  }
+  .platform-overview__hero::before { right: -4rem; top: -7rem; width: 18rem; height: 18rem; }
+  .platform-overview__hero::after { right: 8rem; bottom: -8rem; width: 14rem; height: 14rem; }
+  .platform-overview__eyebrow { position: relative; z-index: 1; margin: 0 0 .42rem; color: #bfdbfe; font-size: .72rem; font-weight: 850; letter-spacing: .15em; }
+  .platform-overview__hero h1 { position: relative; z-index: 1; margin: 0; color: #fff; font-size: 1.8rem; }
+  .platform-overview__hero p:last-child { position: relative; z-index: 1; max-width: 42rem; margin: .6rem 0 0; color: #dbeafe; line-height: 1.65; }
+  .platform-overview__metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .85rem; margin: 1rem 0; }
+  .platform-overview__metric {
+    padding: 1rem 1.05rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 13px;
+    background: #fff;
+    box-shadow: 0 10px 25px rgba(15, 23, 42, .055);
+  }
+  .platform-overview__metric span { display: block; color: #64748b; font-size: .76rem; font-weight: 750; }
+  .platform-overview__metric strong { display: block; margin-top: .32rem; color: #172033; font-size: 1.65rem; line-height: 1; }
+  .platform-overview__metric small { display: block; margin-top: .38rem; color: #94a3b8; font-size: .68rem; }
+  .platform-overview__grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(17rem, .65fr); gap: 1rem; align-items: start; }
+  .platform-overview__panel { border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; box-shadow: 0 12px 28px rgba(15, 23, 42, .055); }
+  .platform-overview__panel-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.1rem; border-bottom: 1px solid #edf1f6; }
+  .platform-overview__panel-header h2 { margin: 0; font-size: 1rem; }
+  .platform-overview__panel-header a { color: #2563eb; font-size: .76rem; font-weight: 800; }
+  .platform-overview__workspace-list { display: grid; gap: .65rem; padding: .9rem; }
+  .platform-overview__workspace {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: .85rem .9rem;
+    border: 1px solid #e8edf4;
+    border-radius: 10px;
+    color: inherit;
+    background: #fbfdff;
+  }
+  .platform-overview__workspace:hover { border-color: #93c5fd; background: #f8fbff; }
+  .platform-overview__workspace h3 { margin: 0; color: #1e293b; font-size: .9rem; }
+  .platform-overview__workspace p { margin: .23rem 0 0; color: #7b8a9d; font-size: .72rem; }
+  .platform-overview__workspace span { color: #2563eb; font-size: .74rem; font-weight: 800; white-space: nowrap; }
+  .platform-overview__empty { margin: 0; padding: 1.25rem; color: #64748b; }
+  .platform-overview__actions { display: grid; gap: .65rem; padding: .9rem; }
+  .platform-overview__action {
+    display: grid;
+    grid-template-columns: 2.1rem 1fr auto;
+    gap: .7rem;
+    align-items: center;
+    padding: .78rem;
+    border: 1px solid #e7edf5;
+    border-radius: 10px;
+    color: inherit;
+  }
+  .platform-overview__action:hover { border-color: #bfdbfe; background: #f8fbff; }
+  .platform-overview__action-icon { display: grid; width: 2.1rem; height: 2.1rem; border-radius: .65rem; color: #2563eb; background: #eff6ff; place-items: center; font-weight: 900; }
+  .platform-overview__action strong { display: block; color: #263348; font-size: .8rem; }
+  .platform-overview__action small { display: block; margin-top: .14rem; color: #8492a5; font-size: .67rem; line-height: 1.35; }
+  .platform-overview__action-arrow { color: #94a3b8; }
+  .platform-overview__status { display: flex; align-items: flex-start; gap: .65rem; margin: 0 .9rem .9rem; padding: .8rem; border: 1px solid #bbf7d0; border-radius: 10px; color: #166534; background: #f0fdf4; font-size: .73rem; line-height: 1.5; }
+  .platform-overview__status-dot { flex: 0 0 auto; width: .55rem; height: .55rem; margin-top: .2rem; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 4px #dcfce7; }
+  @media (max-width: 60em) {
+    .platform-overview__metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .platform-overview__grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 34em) {
+    .platform-overview__hero { padding: 1.35rem; }
+    .platform-overview__metrics { grid-template-columns: 1fr 1fr; }
+    .platform-overview__metric strong { font-size: 1.35rem; }
+  }
+</style>
+
+<div class="row platform-overview">
+  <div class="columns">
+    <section class="platform-overview__hero">
+      <p class="platform-overview__eyebrow">ONEBYONE ADMINISTRATION</p>
+      <h1>{{ _('Platform Overview') }}</h1>
+      <p>{{ _('View teachers, workspaces, domains and students from one place. Existing teaching pages remain unchanged.') }}</p>
+    </section>
+
+    <section class="platform-overview__metrics" aria-label="{{ _('Platform Statistics') }}">
+      <article class="platform-overview__metric"><span>{{ _('Workspaces') }}</span><strong>{{ workspaces.length }}</strong><small>{{ _('Independent teaching spaces') }}</small></article>
+      <article class="platform-overview__metric"><span>{{ _('Domains') }}</span><strong>{{ totals.domainCount }}</strong><small>{{ _('Problem banks and classes') }}</small></article>
+      <article class="platform-overview__metric"><span>{{ _('Teachers') }}</span><strong>{{ totals.teacherCount }}</strong><small>{{ _('Workspace teaching members') }}</small></article>
+      <article class="platform-overview__metric"><span>{{ _('Students') }}</span><strong>{{ totals.studentCount }}</strong><small>{{ _('Deduplicated by workspace') }}</small></article>
+    </section>
+
+    <div class="platform-overview__grid">
+      <section class="platform-overview__panel">
+        <header class="platform-overview__panel-header">
+          <h2>{{ _('Recently Created Workspaces') }}</h2>
+          <a href="{{ url('platform_workspace') }}">{{ _('View all') }} →</a>
+        </header>
+        {% if recentWorkspaces.length %}
+          <div class="platform-overview__workspace-list">
+            {% for item in recentWorkspaces %}
+              <a class="platform-overview__workspace" href="{{ url('workspace_dashboard', { workspaceCode: item.code }) }}">
+                <div><h3>{{ item.name }}</h3><p>{{ item.code }} · {{ item.stats.domainCount }} {{ _('domains') }} · {{ item.stats.studentCount }} {{ _('students') }}</p></div>
+                <span>{{ _('Manage') }} →</span>
+              </a>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="platform-overview__empty">{{ _('No independent teacher workspace has been created yet.') }}</p>
+        {% endif %}
+      </section>
+
+      <aside class="platform-overview__panel">
+        <header class="platform-overview__panel-header"><h2>{{ _('Quick Actions') }}</h2></header>
+        <div class="platform-overview__actions">
+          <a class="platform-overview__action" href="{{ url('platform_workspace') }}">
+            <span class="platform-overview__action-icon">＋</span>
+            <span><strong>{{ _('Create or manage workspaces') }}</strong><small>{{ _('Onboard teachers and enter their management pages') }}</small></span>
+            <span class="platform-overview__action-arrow">›</span>
+          </a>
+          <a class="platform-overview__action" href="{{ url('platform_account_lookup') }}">
+            <span class="platform-overview__action-icon">⌕</span>
+            <span><strong>{{ _('Locate an account') }}</strong><small>{{ _('Find which workspace and domains an account belongs to') }}</small></span>
+            <span class="platform-overview__action-arrow">›</span>
+          </a>
+          <a class="platform-overview__action" href="{{ url('workspace_dashboard', { workspaceCode: 'tang' }) }}">
+            <span class="platform-overview__action-icon">唐</span>
+            <span><strong>{{ _('Tang teacher workspace') }}</strong><small>{{ _('Enter the transparent legacy compatibility workspace') }}</small></span>
+            <span class="platform-overview__action-arrow">›</span>
+          </a>
+        </div>
+        <div class="platform-overview__status"><span class="platform-overview__status-dot"></span><span><strong>{{ _('Isolation protection is active') }}</strong><br>{{ _('Teacher workspaces are separated while Tang teacher and current students keep their original experience.') }}</span></div>
+      </aside>
+    </div>
+  </div>
+</div>
+{% endblock %}
