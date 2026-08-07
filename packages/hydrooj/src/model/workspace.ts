@@ -25,6 +25,7 @@ class WorkspaceModel {
     static collMember = collMember;
     static collStudent = collStudent;
     static LEGACY_WORKSPACE_ID = LEGACY_WORKSPACE_ID;
+    private static legacyOwnerUid = 0;
 
     static isEnabled() {
         return system.get('workspace.enabled') === true;
@@ -39,6 +40,11 @@ class WorkspaceModel {
         return WorkspaceModel.isEnabled()
             && Array.isArray(configured)
             && configured.some((item) => Number(item) === uid);
+    }
+
+    static isLegacyOwner(uid: number) {
+        return WorkspaceModel.isEnabled() && WorkspaceModel.legacyOwnerUid > 1
+            && uid === WorkspaceModel.legacyOwnerUid;
     }
 
     static resolveDomainWorkspaceId(ddoc?: Pick<DomainDoc, 'workspaceId'> | null) {
@@ -73,11 +79,13 @@ class WorkspaceModel {
             { $limit: 1 },
         ]).next();
         const now = new Date(0);
+        const ownerUid = legacyOwner?._id || systemDomain?.owner || 1;
+        WorkspaceModel.legacyOwnerUid = ownerUid;
         return {
             _id: LEGACY_WORKSPACE_ID,
             code: LEGACY_WORKSPACE_ID,
             name: LEGACY_WORKSPACE_NAME,
-            ownerUid: legacyOwner?._id || systemDomain?.owner || 1,
+            ownerUid,
             status: 'active',
             legacy: true,
             createdAt: now,
@@ -314,6 +322,7 @@ class WorkspaceModel {
 }
 
 export async function apply(_ctx: Context) {
+    await WorkspaceModel.getLegacyWorkspace();
     await Promise.all([
         db.ensureIndexes(
             coll,

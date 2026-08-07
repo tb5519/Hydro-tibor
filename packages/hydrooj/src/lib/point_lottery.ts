@@ -1,4 +1,6 @@
+import type { DomainDoc } from '../interface';
 import system from '../model/system';
+import workspace from '../model/workspace';
 import db from '../service/db';
 
 export const POINT_LOTTERY_CONFIG_KEY = 'pointLottery.config';
@@ -115,8 +117,17 @@ export function normalizePointLotteryConfig(raw: any): PointLotteryConfig {
     };
 }
 
-export function getPointLotteryConfig() {
+export function isDomainPointLottery(domain?: Pick<DomainDoc, 'workspaceId'> | null) {
+    return !!domain?.workspaceId && workspace.resolveDomainWorkspaceId(domain) !== workspace.LEGACY_WORKSPACE_ID;
+}
+
+export function getPointLotteryConfig(domain?: Pick<DomainDoc, 'workspaceId' | 'pointLottery'> | null) {
+    if (isDomainPointLottery(domain)) return normalizePointLotteryConfig(domain?.pointLottery);
     return normalizePointLotteryConfig(system.get(POINT_LOTTERY_CONFIG_KEY));
+}
+
+export function getPointLotteryStoragePrefix(domain?: Pick<DomainDoc, '_id' | 'workspaceId'> | null) {
+    return isDomainPointLottery(domain) ? `domain/${domain._id}/point-lottery` : 'system/point-lottery';
 }
 
 export function buildPointLotteryConfigFromForm(args: any): PointLotteryConfig {

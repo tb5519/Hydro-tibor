@@ -34,16 +34,28 @@ function normalizeBadgeColor(color: string, fallback: string) {
     return value.startsWith('#') ? value : `#${value}`;
 }
 
-async function attachOwnedBadges(ctx: Context, udocs: any[]) {
+async function attachOwnedBadges(ctx: Context, udocs: any[], currentDomainId: string, badgeDomainId?: string) {
     const uids = Array.from(new Set(udocs.filter(Boolean).map((udoc) => udoc._id).filter((uid) => typeof uid === 'number')));
     for (const udoc of udocs) {
         if (udoc) udoc.ownedBadges = [];
     }
     if (!uids.length) return;
-    const userBadges = await ctx.db.collection('userBadge').find({ owner: { $in: uids } }).sort({ badgeId: 1 }).toArray();
+    const selectedScopes = await ctx.db.collection('user').find({ _id: { $in: uids } })
+        .project({ _id: 1, badgeDomainId: 1 }).toArray();
+    const selectedScopeMap = new Map(selectedScopes.map((item: any) => [item._id, item.badgeDomainId]));
+    for (const udoc of udocs) {
+        const selectedScope = selectedScopeMap.get(udoc?._id);
+        if (udoc && (badgeDomainId ? selectedScope !== badgeDomainId : !!selectedScope)) {
+            delete udoc.badge;
+            delete udoc.badgeId;
+        }
+    }
+    const badgeScope = badgeDomainId ? { domainId: badgeDomainId } : { domainId: { $exists: false } };
+    const userBadges = await ctx.db.collection('userBadge').find({ owner: { $in: uids }, ...badgeScope })
+        .sort({ badgeId: 1 }).toArray();
     const badgeIds = Array.from(new Set(userBadges.map((doc: any) => doc.badgeId).filter((badgeId) => typeof badgeId === 'number')));
     if (!badgeIds.length) return;
-    const badges = await ctx.db.collection('badge').find({ _id: { $in: badgeIds } }).toArray();
+    const badges = await ctx.db.collection('badge').find({ _id: { $in: badgeIds }, ...badgeScope }).toArray();
     const badgeMap = new Map(badges.map((badge: any) => [badge._id, badge]));
     const ownedBadges: Record<number, any[]> = {};
     for (const doc of userBadges as any[]) {
@@ -56,7 +68,7 @@ async function attachOwnedBadges(ctx: Context, udocs: any[]) {
             backgroundColor: normalizeBadgeColor(badge.backgroundColor, 'e5edf5'),
             fontColor: normalizeBadgeColor(badge.fontColor, '1f2937'),
             tooltip: badge.title || badge.short || `${badge._id}`,
-            href: `/badge/${badge._id}`,
+            href: `/d/${encodeURIComponent(currentDomainId)}/badge/${badge._id}`,
         });
     }
     for (const udoc of udocs) {
@@ -85,7 +97,11 @@ async function getSharedRankingRows(ctx: Context, currentUser: any, currentDomai
     const udict = {};
     for (const uid in rawUdict) udict[uid] = cloneUserForDisplay(rawUdict[uid]);
     const displayCurrentUser = cloneUserForDisplay(currentUser);
-    await attachOwnedBadges(ctx, [displayCurrentUser, ...Object.values(udict)]);
+    const currentDomain = await domain.get(currentDomainId);
+    const badgeDomainId = workspace.resolveDomainWorkspaceId(currentDomain) === workspace.LEGACY_WORKSPACE_ID
+        ? undefined
+        : currentDomainId;
+    await attachOwnedBadges(ctx, [displayCurrentUser, ...Object.values(udict)], currentDomainId, badgeDomainId);
     for (const row of rows) {
         const udoc = udict[row.uid];
         if (!udoc) continue;
@@ -145,7 +161,10 @@ class DomainRankHandler extends Handler {
             udoc.rpInfo = dudoc.rpInfo || udoc.rpInfo || {};
             return udoc;
         });
-        await attachOwnedBadges(this.ctx, [this.user, ...udocs]);
+        const badgeDomainId = workspace.resolveDomainWorkspaceId(this.domain) === workspace.LEGACY_WORKSPACE_ID
+            ? undefined
+            : domainId;
+        await attachOwnedBadges(this.ctx, [this.user, ...udocs], domainId, badgeDomainId);
         this.response.template = 'ranking.html';
         this.response.body = {
             udocs, upcount, ucount, page,

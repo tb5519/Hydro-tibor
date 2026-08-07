@@ -1,12 +1,19 @@
-{% extends "manage_base.html" %}
+{% extends badgeBaseTemplate|default('manage_base.html') %}
 {% import "components/paginator.html" as paginator with context %}
-{% block manage_content %}
+{% macro render_badge_manage() %}
+<style>
+  .badge-manage__scope { margin: 0 0 16px; padding: 13px 15px; border: 1px solid #d8e6fb; border-radius: 10px; background: linear-gradient(135deg, #f7fbff, #f5f3ff); color: #536780; }
+  .badge-manage__scope strong { color: #245fd0; }
+</style>
 <div class="section">
   <div class="section__header">
     <h1 class="section__title">{{ _('badge_manage') }}</h1>
-    <a href="/badge/add" class="section__tools">
+    <a href="{{ url(addRoute) }}" class="section__tools">
       <button class="primary rounded button">{{ _('badge_add') }}</button>
     </a>
+  </div>
+  <div class="section__body">
+    <div class="badge-manage__scope"><strong>{{ badgeScopeTitle }}</strong> · {{ _('Only students in this scope can receive these badges.') }}</div>
   </div>
   <div class="section__body no-padding">
     {% if not ddocs.length %}
@@ -33,10 +40,10 @@
             <td class="col--id">{{ ddoc._id }}</td>
             <td class="col--title">{{ ddoc.title }}</td>
             <td class="col--preview">
-              <a href="/badge/{{ ddoc._id }}" class="user-profile-badge v-center" style="background-color:{{ ddoc.backgroundColor }};color:{{ ddoc.fontColor }};" data-tooltip="{{ ddoc.title }}">{{ ddoc.short }}</a>
+              <a href="{{ url('badge_detail', { id: ddoc._id }) }}" class="user-profile-badge v-center" style="background-color:{{ ddoc.backgroundColor }};color:{{ ddoc.fontColor }};" data-tooltip="{{ ddoc.title }}">{{ ddoc.short }}</a>
             </td>
             <td class="col--actions">
-              <a href="/badge/{{ ddoc._id }}/edit" class="typo-a">{{ _('Edit') }}</a>
+              <a href="{{ url(editRoute, { id: ddoc._id }) }}" class="typo-a">{{ _('Edit') }}</a>
             </td>
           </tr>
           {%- endfor -%}
@@ -46,4 +53,6 @@
     {% endif %}
   </div>
 </div>
-{% endblock %}
+{% endmacro %}
+{% block manage_content %}{{ render_badge_manage() }}{% endblock %}
+{% block domain_content %}{{ render_badge_manage() }}{% endblock %}

@@ -1,6 +1,6 @@
 {% import "components/user.html" as user %}
-{% extends "manage_base.html" %}
-{% block manage_content %}
+{% extends lotteryBaseTemplate|default('manage_base.html') %}
+{% macro render_lottery() %}
 <style>
   .lottery-admin {
     display: grid;
@@ -10,6 +10,23 @@
     color: #64748b;
     font-size: .86rem;
     line-height: 1.5;
+  }
+  .lottery-admin__scope {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+    padding: 14px 16px;
+    border: 1px solid #d8e6fb;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #f7fbff, #f2f6ff);
+    color: #5c6f8c;
+  }
+  .lottery-admin__scope strong {
+    display: block;
+    margin-bottom: 3px;
+    color: #2463d4;
   }
   .lottery-admin__success {
     border: 1px solid #bbf7d0;
@@ -159,6 +176,13 @@
     <h1 class="section__title">{{ _('积分抽奖') }}</h1>
   </div>
   <div class="section__body lottery-admin">
+    <div class="lottery-admin__scope">
+      <div>
+        <strong>{{ lotteryScopeTitle }}</strong>
+        <span>{{ lotteryScopeNote }}</span>
+      </div>
+      <span class="icon icon-lock"></span>
+    </div>
     {% if saved %}
       <div class="lottery-admin__success">{{ _('抽奖配置已保存。') }}</div>
     {% endif %}
@@ -299,7 +323,7 @@
     <div class="lottery-admin__note">
       {{ _('搜索学员后可以直接调整抽奖积分，不需要学员输入密码。加积分会同时增加当前积分和累计积分；扣积分可以选择扣当前或累计。') }}
     </div>
-    <form method="get" action="{{ url('manage_lottery') }}" class="lottery-admin__search">
+    <form method="get" action="{{ url(lotteryRoute) }}" class="lottery-admin__search">
       <label>
         <div>{{ _('按 UID 或用户名查找学员') }}</div>
         <input class="textbox" name="q" value="{{ q }}" placeholder="{{ _('例如：26 或 李白') }}" autocomplete="off">
@@ -360,7 +384,7 @@
 <div class="section">
   <div class="section__header lottery-admin__rank-header">
     <h1 class="section__title">{{ _('积分排行榜') }}</h1>
-    <form method="get" action="{{ url('manage_lottery') }}" class="lottery-admin__compact-form">
+    <form method="get" action="{{ url(lotteryRoute) }}" class="lottery-admin__compact-form">
       {% if q %}
         <input type="hidden" name="q" value="{{ q }}">
       {% endif %}
@@ -402,7 +426,7 @@
 <div class="section">
   <div class="section__header lottery-admin__rank-header">
     <h1 class="section__title">{{ _('最近抽奖记录') }}</h1>
-    <form method="post" onsubmit='return confirm({{ _("确定清空所有域的抽奖记录吗？清空后老师端和学员端都看不到这些记录。")|json|safe }});'>
+    <form method="post" onsubmit='return confirm({{ _("确定清空当前管理范围的抽奖记录吗？清空后老师端和学员端都看不到这些记录。")|json|safe }});'>
       <input type="hidden" name="operation" value="clear_draws">
       <button class="rounded button" type="submit">{{ _('一键清空抽奖记录') }}</button>
     </form>
@@ -521,4 +545,6 @@
   reindex();
 }());
 </script>
-{% endblock %}
+{% endmacro %}
+{% block manage_content %}{{ render_lottery() }}{% endblock %}
+{% block domain_content %}{{ render_lottery() }}{% endblock %}

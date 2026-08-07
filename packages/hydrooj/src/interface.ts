@@ -349,6 +349,19 @@ export interface DomainDoc extends Record<string, any> {
         storagePath?: string;
         updatedAt?: string;
     };
+    /** Point-lottery rules owned by this domain. Legacy Tang domains use the system-wide configuration. */
+    pointLottery?: {
+        enabled: boolean;
+        cost: number;
+        prizes: Array<{
+            name: string;
+            image: string;
+            probability: number;
+            pointDelta: number;
+            repeatable: boolean;
+            broadcast: boolean;
+        }>;
+    };
     /** Controls which optional learning entries appear in this domain's top navigation. */
     navVisibility?: Partial<Record<
         'problem_mistake' | 'training_main' | 'contest_main' | 'homework_main' | 'record_main' | 'ranking',

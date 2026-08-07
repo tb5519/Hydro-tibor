@@ -321,7 +321,7 @@ export class RecordDetailHandler extends ContestDetailBaseHandler {
             allRevs,
             isPretestRecord,
             badgeAcTheme: rdoc.uid === this.user._id
-                ? await getActiveBadgeAcTheme(this.ctx, this.user, this.url.bind(this))
+                ? await getActiveBadgeAcTheme(this.ctx, this.user, this.url.bind(this), this.domain)
                 : null,
             badgeAcFirstEligible,
         };

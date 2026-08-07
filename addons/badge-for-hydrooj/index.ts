@@ -2,10 +2,14 @@ import path from 'path';
 import { lookup } from 'mime-types';
 import moment from 'moment-timezone';
 import { ObjectId } from 'mongodb';
-import { Context, Handler, NotFoundError, param, PRIV, STATUS, Types, ValidationError } from 'hydrooj';
+import {
+    Context, Handler, NotFoundError, param, PERM, PermissionError, PRIV, STATUS, Types, ValidationError,
+} from 'hydrooj';
 import { getSharedRankingSnapshot } from 'hydrooj/src/lib/shared_ranking';
+import DomainModel from 'hydrooj/src/model/domain';
 import RecordModel from 'hydrooj/src/model/record';
 import storage from 'hydrooj/src/model/storage';
+import workspace from 'hydrooj/src/model/workspace';
 import { Time } from 'hydrooj/src/utils';
 import { Badge } from './model';
 
@@ -78,6 +82,70 @@ function isStudentPriv(priv = 0) {
     return !!(priv & PRIV.PRIV_USER_PROFILE) && !(priv & PRIV.PRIV_EDIT_SYSTEM);
 }
 
+function getBadgeDomainScope(handler: Handler) {
+    const workspaceId = workspace.resolveDomainWorkspaceId(handler.domain);
+    return workspaceId === workspace.LEGACY_WORKSPACE_ID ? undefined : handler.domain._id;
+}
+
+function isDomainBadgeManage(handler: Handler) {
+    return handler.request.path.startsWith('/domain/badge');
+}
+
+async function checkBadgeManageAccess(handler: Handler) {
+    if (isDomainBadgeManage(handler)) {
+        handler.checkPerm(PERM.PERM_EDIT_DOMAIN);
+        if (!handler.domain.workspaceId || getBadgeDomainScope(handler) === undefined) {
+            throw new PermissionError(PERM.PERM_EDIT_DOMAIN);
+        }
+        return;
+    }
+    const legacyWorkspace = await workspace.getLegacyWorkspace();
+    if (legacyWorkspace.ownerUid !== handler.user._id) throw new PermissionError(PERM.PERM_EDIT_DOMAIN);
+}
+
+function getBadgeManageRoutes(handler: Handler) {
+    const domainScoped = isDomainBadgeManage(handler);
+    return {
+        manageRoute: domainScoped ? 'domain_badge_manage' : 'badge_manage',
+        addRoute: domainScoped ? 'domain_badge_add' : 'badge_add',
+        editRoute: domainScoped ? 'domain_badge_edit' : 'badge_edit',
+    };
+}
+
+function getBadgeManageContext(handler: Handler) {
+    const domainScoped = getBadgeDomainScope(handler) !== undefined;
+    return {
+        ...getBadgeManageRoutes(handler),
+        badgeScopeTitle: domainScoped ? `${handler.domain.name} · 域内徽章` : '唐老师 · 全域徽章',
+        badgeBaseTemplate: domainScoped ? 'domain_base.html' : 'manage_base.html',
+    };
+}
+
+async function validateBadgeOwners(ctx: Context, handler: Handler, requested: number[] = []) {
+    const unique = Array.from(new Set((requested || []).filter((uid) => Number.isSafeInteger(uid) && uid > 1)));
+    if (!unique.length) return [];
+    let allowedUids: number[];
+    const domainId = getBadgeDomainScope(handler);
+    if (domainId) {
+        const joinedUids = await DomainModel.collUser.distinct('uid', {
+            domainId, uid: { $in: unique }, join: true,
+        });
+        const memberUids = handler.domain.workspaceId
+            ? new Set((await workspace.getMembers(handler.domain.workspaceId)).map((item) => item.uid))
+            : new Set<number>();
+        allowedUids = joinedUids.filter((uid) => !memberUids.has(uid));
+    } else {
+        const excluded = await workspace.getExcludedLegacyUids();
+        allowedUids = unique.filter((uid) => !excluded.has(uid));
+    }
+    const accounts = await ctx.db.collection('user').find({ _id: { $in: allowedUids } })
+        .project({ _id: 1, priv: 1 })
+        .toArray();
+    const result = accounts.filter((item) => isStudentPriv(item.priv)).map((item) => item._id);
+    if (result.length !== unique.length) throw new ValidationError('users');
+    return result;
+}
+
 async function getStudentUidSet(ctx: Context, uids: number[]) {
     if (!uids.length) return new Set<number>();
     const udocs = await ctx.db.collection('user').find({ _id: { $in: uids } })
@@ -87,7 +155,10 @@ async function getStudentUidSet(ctx: Context, uids: number[]) {
 }
 
 async function ensureSpecialBadge(ctx: Context, config: typeof SPECIAL_BADGES.strongest) {
-    const current = await ctx.db.collection('badge').findOne({ title: config.title });
+    const current = await ctx.db.collection('badge').findOne({
+        title: config.title,
+        domainId: { $exists: false },
+    });
     if (current) {
         await ctx.db.collection('badge').updateOne({ _id: current._id }, {
             $set: {
@@ -133,7 +204,8 @@ async function getStrongestUid(ctx: Context) {
     const rows = await getSharedRankingSnapshot();
     const candidateUids = rows.map((row) => row.uid);
     const studentUidSet = await getStudentUidSet(ctx, candidateUids);
-    return rows.find((row) => studentUidSet.has(row.uid))?.uid || null;
+    const excluded = await workspace.getExcludedLegacyUids();
+    return rows.find((row) => studentUidSet.has(row.uid) && !excluded.has(row.uid))?.uid || null;
 }
 
 async function getWeeklyAcChampionUid(ctx: Context) {
@@ -160,7 +232,8 @@ async function getWeeklyAcChampionUid(ctx: Context) {
     ]).toArray();
     const candidateUids = rows.map((row) => row._id);
     const studentUidSet = await getStudentUidSet(ctx, candidateUids);
-    return rows.find((row) => studentUidSet.has(row._id))?._id || null;
+    const excluded = await workspace.getExcludedLegacyUids();
+    return rows.find((row) => studentUidSet.has(row._id) && !excluded.has(row._id))?._id || null;
 }
 
 async function assignSpecialBadges(ctx: Context) {
@@ -179,54 +252,69 @@ async function assignSpecialBadges(ctx: Context) {
 }
 
 class UserBadgeManageHandler extends Handler {
-
     @param('page', Types.PositiveInt, true)
     async get(_: string, page = 1, userId = this.user._id) {
+        const domainId = getBadgeDomainScope(this);
         const [ddocs, dpcount] = await this.ctx.db.paginate(
-            await UserBadgeModel.userBadgeGetMulti(this.ctx, userId),
+            await UserBadgeModel.userBadgeGetMulti(this.ctx, userId, domainId),
             page,
-            10
+            10,
         );
-        const result = await (await BadgeModel.badgeGetMulti(this.ctx)).toArray();
+        const result = await (await BadgeModel.badgeGetMulti(this.ctx, domainId)).toArray();
         const bdocs = Object.fromEntries(result.reduce((acc, item) => {
             acc.set(item._id, item);
             return acc;
         }, new Map<number, Badge>()));
         this.response.template = 'user_badge_manage.html';
-        const current_badge = (await this.ctx.db.collection('user').findOne({ _id: userId })).badge;
+        const currentUser = await this.ctx.db.collection('user').findOne({ _id: userId });
+        const current_badge = domainId
+            ? (currentUser?.badgeDomainId === domainId ? currentUser.badge : '')
+            : (!currentUser?.badgeDomainId ? currentUser?.badge : '');
         this.response.body = { ddocs, bdocs, dpcount, page, current_badge };
     }
 
     @param('badgeId', Types.PositiveInt, true)
     async postEnable(_: string, badgeId: number) {
-        await UserBadgeModel.userBadgeSel(this.ctx, this.user._id, badgeId);
+        await UserBadgeModel.userBadgeSel(this.ctx, this.user._id, badgeId, getBadgeDomainScope(this));
         this.response.redirect = this.url('user_badge_manage');
     }
 
     async postReset(_: string) {
-        await UserBadgeModel.userBadgeUnset(this.ctx, this.user._id);
+        await UserBadgeModel.userBadgeUnset(this.ctx, this.user._id, getBadgeDomainScope(this));
         this.response.redirect = this.url('user_badge_manage');
     }
 }
 
 class BadgeManageHandler extends Handler {
+    async prepare() {
+        await checkBadgeManageAccess(this);
+    }
 
     @param('page', Types.PositiveInt, true)
     async get(_: string, page = 1) {
-        const[ddocs, dpcount] = await this.ctx.db.paginate(
-            await BadgeModel.badgeGetMulti(this.ctx),
+        const [ddocs, dpcount] = await this.ctx.db.paginate(
+            await BadgeModel.badgeGetMulti(this.ctx, getBadgeDomainScope(this)),
             page,
-            10
+            10,
         );
         this.response.template = 'badge_manage.html';
-        this.response.body = { ddocs, dpcount, page };
+        this.response.body = {
+            ddocs,
+            dpcount,
+            page,
+            ...getBadgeManageContext(this),
+        };
     }
 }
 
 class BadgeAddHandler extends Handler {
+    async prepare() {
+        await checkBadgeManageAccess(this);
+    }
 
     async get() {
         this.response.template = 'badge_add.html';
+        this.response.body = getBadgeManageContext(this);
     }
 
     @param('short', Types.String)
@@ -235,17 +323,23 @@ class BadgeAddHandler extends Handler {
     @param('fontColor', Types.String)
     @param('content', Types.Content)
     @param('users', Types.NumericArray, true)
-    async postAdd(_: string, short: string, title: string, backgroundColor: string, fontColor: string, content: string, users: [number]) {
-        const badgeId = await BadgeModel.badgeAdd(this.ctx, short, title, backgroundColor, fontColor, content, users);
+    async postAdd(_: string, short: string, title: string, backgroundColor: string, fontColor: string, content: string, users: number[] = []) {
+        const owners = await validateBadgeOwners(this.ctx, this, users);
+        const badgeId = await BadgeModel.badgeAdd(
+            this.ctx, short, title, backgroundColor, fontColor, content, owners, undefined, getBadgeDomainScope(this),
+        );
         this.response.redirect = this.url('badge_detail', { id: badgeId });
     }
 }
 
 class BadgeEditHandler extends Handler {
+    async prepare() {
+        await checkBadgeManageAccess(this);
+    }
 
     @param('id', Types.PositiveInt, true)
     async get(_: string, id: number) {
-        const badge = await BadgeModel.badgeGet(this.ctx, id);
+        const badge = await BadgeModel.badgeGet(this.ctx, id, getBadgeDomainScope(this));
         if (!badge) throw new NotFoundError(`Badge ${id} is not exist!`);
         this.response.template = 'badge_edit.html';
         this.response.body = {
@@ -255,6 +349,7 @@ class BadgeEditHandler extends Handler {
                 acImage: getBadgeAcImageUrl(this, badge),
                 themeSound: getBadgeThemeSoundUrl(this, badge),
             },
+            ...getBadgeManageContext(this),
         };
     }
 
@@ -276,12 +371,13 @@ class BadgeEditHandler extends Handler {
         backgroundColor: string,
         fontColor: string,
         content: string,
-        users: [number],
+        users: number[] = [],
         removeBackground = false,
         removeAcImage = false,
         removeThemeSound = false,
     ) {
-        const badge = await BadgeModel.badgeGet(this.ctx, id);
+        const domainId = getBadgeDomainScope(this);
+        const badge = await BadgeModel.badgeGet(this.ctx, id, domainId);
         if (!badge) throw new NotFoundError(`Badge ${id} is not exist!`);
         const backgroundFile = getRequestFile(this.request.files, 'backgroundImage');
         const acImageFile = getRequestFile(this.request.files, 'acImage');
@@ -312,8 +408,11 @@ class BadgeEditHandler extends Handler {
             if (spec.file?.size && !spec.extensions.includes(ext)) throw new ValidationError(spec.input);
         }
 
+        const owners = await validateBadgeOwners(this.ctx, this, users);
         const users_old = badge.users;
-        await BadgeModel.badgeEdit(this.ctx, id, short, title, backgroundColor, fontColor, content, users, users_old);
+        await BadgeModel.badgeEdit(
+            this.ctx, id, short, title, backgroundColor, fontColor, content, owners, users_old, domainId,
+        );
         const setFields: Record<string, string> = {};
         const unsetFields: Record<string, string> = {};
         const obsoletePaths: string[] = [];
@@ -327,7 +426,9 @@ class BadgeEditHandler extends Handler {
             const oldPath = badge[pathField] as string | undefined;
             if (file?.size) {
                 const ext = path.extname(file.originalFilename || '').toLowerCase();
-                const storagePath = `badge/${id}/${filename}-${Date.now()}${ext}`;
+                const storagePath = domainId
+                    ? `domain/${domainId}/badge/${id}/${filename}-${Date.now()}${ext}`
+                    : `badge/${id}/${filename}-${Date.now()}${ext}`;
                 await storage.put(storagePath, file.filepath, this.user._id);
                 setFields[pathField] = storagePath;
                 setFields[updatedAtField] = new Date().toISOString();
@@ -345,7 +446,10 @@ class BadgeEditHandler extends Handler {
             const update: any = {};
             if (Object.keys(setFields).length) update.$set = setFields;
             if (Object.keys(unsetFields).length) update.$unset = unsetFields;
-            await this.ctx.db.collection('badge').updateOne({ _id: id }, update);
+            await this.ctx.db.collection('badge').updateOne({
+                _id: id,
+                ...(domainId ? { domainId } : { domainId: { $exists: false } }),
+            }, update);
         }
         if (obsoletePaths.length) storage.del(obsoletePaths, this.user._id).catch(() => {});
         this.response.redirect = this.url('badge_detail', { id });
@@ -353,11 +457,13 @@ class BadgeEditHandler extends Handler {
 
     @param('id', Types.PositiveInt, true)
     async postDelete(_: string, id: number) {
-        const badge = await BadgeModel.badgeGet(this.ctx, id);
-        await BadgeModel.badgeDel(this.ctx, id);
+        const domainId = getBadgeDomainScope(this);
+        const badge = await BadgeModel.badgeGet(this.ctx, id, domainId);
+        if (!badge) throw new NotFoundError(`Badge ${id} is not exist!`);
+        await BadgeModel.badgeDel(this.ctx, id, domainId);
         const assetPaths = [badge?.backgroundImagePath, badge?.acImagePath, badge?.themeSoundPath].filter(Boolean) as string[];
         if (assetPaths.length) storage.del(assetPaths, this.user._id).catch(() => {});
-        this.response.redirect = this.url('badge_manage');
+        this.response.redirect = this.url(getBadgeManageRoutes(this).manageRoute);
     }
 }
 
@@ -368,7 +474,7 @@ abstract class BadgeAssetHandler extends Handler {
 
     @param('id', Types.PositiveInt, true)
     async get(_: string, id: number) {
-        const badge = await BadgeModel.badgeGet(this.ctx, id);
+        const badge = await BadgeModel.badgeGet(this.ctx, id, getBadgeDomainScope(this));
         const assetPath = badge?.[this.assetField] as string | undefined;
         if (!assetPath) throw new NotFoundError(`Badge ${this.assetName} ${id} is not exist!`);
         const meta = await storage.getMeta(assetPath);
@@ -395,17 +501,15 @@ class BadgeThemeSoundHandler extends BadgeAssetHandler {
 }
 
 class BadgeDetailHandler extends Handler {
-    
     @param('id', Types.PositiveInt, true)
     async get(domainId: string, id: number) {
-        const badge = await BadgeModel.badgeGet(this.ctx, id);
+        const badge = await BadgeModel.badgeGet(this.ctx, id, getBadgeDomainScope(this));
         if (!badge) throw new NotFoundError(`Badge ${id} is not exist!`);
         const udict = await user.getList(domainId, badge.users);
         this.response.template = 'badge_detail.html';
         this.response.body = { badge, udict };
     }
 }
-
 
 export async function apply(ctx: Context) {
     await ctx.inject(['worker'], (c) => {
@@ -424,29 +528,44 @@ export async function apply(ctx: Context) {
         }
     }
 
-    ctx.Route('badge_manage', '/manage/badge', BadgeManageHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
-    ctx.Route('badge_add', '/badge/add', BadgeAddHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
-    ctx.Route('badge_edit', '/badge/:id/edit', BadgeEditHandler, PRIV.PRIV_MANAGE_ALL_DOMAIN);
+    ctx.Route('badge_manage', '/manage/badge', BadgeManageHandler);
+    ctx.Route('badge_add', '/badge/add', BadgeAddHandler);
+    ctx.Route('badge_edit', '/badge/:id/edit', BadgeEditHandler);
+    ctx.Route('domain_badge_manage', '/domain/badge', BadgeManageHandler);
+    ctx.Route('domain_badge_add', '/domain/badge/add', BadgeAddHandler);
+    ctx.Route('domain_badge_edit', '/domain/badge/:id/edit', BadgeEditHandler);
     ctx.Route('badge_background_image', '/badge/:id/background', BadgeBackgroundImageHandler);
     ctx.Route('badge_ac_image', '/badge/:id/ac-image', BadgeAcImageHandler);
     ctx.Route('badge_theme_sound', '/badge/:id/theme-sound', BadgeThemeSoundHandler);
     ctx.Route('badge_detail', '/badge/:id', BadgeDetailHandler);
     ctx.Route('user_badge_manage', '/mybadge', UserBadgeManageHandler, PRIV.PRIV_USER_PROFILE);
-    ctx.injectUI('ControlPanel', 'badge_manage');
+    ctx.injectUI(
+        'ControlPanel', 'badge_manage', {}, PRIV.PRIV_ALL,
+        (handler) => workspace.isLegacyOwner(handler.user._id),
+    );
+    ctx.injectUI(
+        'DomainManage', 'domain_badge_manage',
+        { family: 'Properties', icon: 'crown', before: 'domain_edit' },
+        PERM.PERM_EDIT_DOMAIN,
+        (handler) => !!handler.domain?.workspaceId
+            && workspace.resolveDomainWorkspaceId(handler.domain) !== workspace.LEGACY_WORKSPACE_ID,
+    );
     ctx.injectUI('UserDropdown', 'user_badge_manage', () => ({ icon: 'crown', displayName: 'user_badge_manage' }));
     ctx.i18n.load('zh', {
-        'Badge': '徽章',
-        'badge_manage': '徽章管理',
-        'badge_add': '添加徽章',
-        'badge_edit': '编辑徽章',
-        'badge_detail': '徽章详情',
+        Badge: '徽章',
+        badge_manage: '徽章管理',
+        domain_badge_manage: '徽章管理',
+        badge_add: '添加徽章',
+        badge_edit: '编辑徽章',
+        badge_detail: '徽章详情',
         'create at': '创建于',
         'badge ID': '徽章ID',
+        'Only students in this scope can receive these badges.': '仅当前管理范围内的学员可以获得这些徽章。',
         'badge title': '徽章标题',
         'badge short': '徽章简称',
-        'user_badge_manage': '我的徽章',
+        user_badge_manage: '我的徽章',
         'get at': '获取时间',
-        'Enable': '启用',
+        Enable: '启用',
         'badge background color': '徽章背景色',
         'badge font color': '徽章字体色',
         'Badge profile background': '徽章个人主页背景图',
@@ -485,18 +604,18 @@ export async function apply(ctx: Context) {
         'Reset Badge': '重置徽章',
     });
     ctx.i18n.load('en', {
-        'Badge': 'Badge',
-        'badge_manage': 'Badge Manage',
-        'badge_add': 'Badge Add',
-        'badge_edit': 'Badge Edit',
-        'badge_detail': 'Badge Detail',
+        Badge: 'Badge',
+        badge_manage: 'Badge Manage',
+        badge_add: 'Badge Add',
+        badge_edit: 'Badge Edit',
+        badge_detail: 'Badge Detail',
         'create at': 'Create At',
         'badge id': 'Badge ID',
         'badge title': 'Badge Title',
         'badge short': 'Badge Short',
-        'user_badge_manage': 'My Badge',
+        user_badge_manage: 'My Badge',
         'get at': 'Get At',
-        'enable': 'Enable',
+        enable: 'Enable',
         'badge background color': 'Badge Background Color',
         'badge font color': 'Badge Font Color',
         'Badge profile background': 'Badge Profile Background',

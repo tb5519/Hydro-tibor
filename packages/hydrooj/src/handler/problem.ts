@@ -672,7 +672,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             pdoc: this.pdoc,
             udoc: this.udoc,
             psdoc: tid ? null : this.psdoc,
-            badgeAcTheme: await getActiveBadgeAcTheme(this.ctx, this.user, this.url.bind(this)),
+            badgeAcTheme: await getActiveBadgeAcTheme(this.ctx, this.user, this.url.bind(this), this.domain),
             badgeAcFirstEligible: this.psdoc?.status !== STATUS.STATUS_ACCEPTED,
             mistakeDoc,
             isMistakeSupported: isProgrammingProblem,

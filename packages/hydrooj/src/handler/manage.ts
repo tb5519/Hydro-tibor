@@ -8,12 +8,12 @@ import { ObjectId } from 'mongodb';
 import Schema from 'schemastery';
 import { randomstring } from '@hydrooj/utils';
 import {
-    CannotEditSuperAdminError, NotLaunchedByPM2Error, UserAlreadyExistError, UserNotFoundError, ValidationError,
+    CannotEditSuperAdminError, NotLaunchedByPM2Error, PermissionError, UserAlreadyExistError, UserNotFoundError, ValidationError,
     VerifyPasswordError,
 } from '../error';
 import type { CppEditorMode } from '../interface';
 import {
-    buildPointLotteryConfigFromForm, ensureGlobalPointLotteryState, getPointLotteryConfig,
+    buildPointLotteryConfigFromForm, ensureGlobalPointLotteryState, getPointLotteryConfig, getPointLotteryStoragePrefix,
     POINT_LOTTERY_CONFIG_KEY, POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
     pointLotteryUserColl,
 } from '../lib/point_lottery';
@@ -89,7 +89,8 @@ async function applyLotteryPrizeImageUploads(handler: Handler, args: any) {
         const ext = path.extname(file.originalFilename || '').toLowerCase();
         if (!LOTTERY_PRIZE_IMAGE_EXTS.includes(ext)) throw new ValidationError(`prize${i}ImageFile`);
         const filename = `lottery-prize-${version}-${i}-${Math.random().toString(36).slice(2, 8)}${ext}`;
-        uploads.push(storage.put(`system/point-lottery/${filename}`, file.filepath, handler.user._id).then(() => {
+        const storagePath = `${getPointLotteryStoragePrefix(handler.domain)}/${filename}`;
+        uploads.push(storage.put(storagePath, file.filepath, handler.user._id).then(() => {
             args[`prize${i}Image`] = handler.url('point_lottery_prize_image', { filename, query: { v: version } });
         }));
     }
@@ -1054,9 +1055,58 @@ class SystemUserManagementHandler extends SystemHandler {
     }
 }
 
-class SystemLotteryHandler extends SystemHandler {
+class SystemLotteryHandler extends Handler {
+    private domainScoped = false;
+
     async prepare() {
-        this.checkPriv(PRIV.PRIV_ALL);
+        this.domainScoped = this.request.path.startsWith('/domain/lottery');
+        if (this.domainScoped) {
+            this.checkPerm(PERM.PERM_EDIT_DOMAIN);
+            if (!this.domain.workspaceId || workspace.resolveDomainWorkspaceId(this.domain) === workspace.LEGACY_WORKSPACE_ID) {
+                throw new ValidationError('domainId');
+            }
+            return;
+        }
+        const legacyWorkspace = await workspace.getLegacyWorkspace();
+        if (legacyWorkspace.ownerUid !== this.user._id) throw new PermissionError(PRIV.PRIV_ALL);
+    }
+
+    private get routeName() {
+        return this.domainScoped ? 'domain_lottery' : 'manage_lottery';
+    }
+
+    private redirect(query: Record<string, any>) {
+        this.response.redirect = this.url(this.routeName, { query });
+    }
+
+    private async getScopeDomainIds() {
+        if (this.domainScoped) return [this.domain._id];
+        return (await workspace.getDomains(workspace.LEGACY_WORKSPACE_ID)).map((item) => item._id);
+    }
+
+    private async getScopeStudentUids() {
+        const domainIds = await this.getScopeDomainIds();
+        const uids = domainIds.length
+            ? await domain.collUser.distinct('uid', { domainId: { $in: domainIds }, uid: { $gt: 1 }, join: true })
+            : [];
+        const excluded = this.domainScoped ? new Set<number>() : await workspace.getExcludedLegacyUids();
+        const memberUids = this.domainScoped && this.domain.workspaceId
+            ? new Set((await workspace.getMembers(this.domain.workspaceId)).map((item) => item.uid))
+            : new Set<number>();
+        if (!uids.length) return [];
+        const accounts = await user.coll.find({ _id: { $in: uids } })
+            .project<Pick<HydroUser, '_id' | 'priv'>>({ _id: 1, priv: 1 })
+            .toArray();
+        return accounts.filter((item) => isManagedStudent(item)
+            && !excluded.has(item._id)
+            && !memberUids.has(item._id)).map((item) => item._id);
+    }
+
+    private async getScopedTarget(domainId: string, q: string) {
+        const target = await getManageTargetUser(domainId, q);
+        if (!target) return null;
+        const allowedUids = await this.getScopeStudentUids();
+        return allowedUids.includes(target._id) ? target : null;
     }
 
     @requireSudo
@@ -1071,14 +1121,15 @@ class SystemLotteryHandler extends SystemHandler {
         domainId: string, q = '', rankBy: typeof LOTTERY_POINT_RANK_TYPES[number] = 'total',
         saved = 0, added = 0, adjusted = 0, deleted = 0, cleared = 0,
     ) {
-        const config = getPointLotteryConfig();
-        const target = q.trim() ? await getManageTargetUser(domainId, q) : null;
+        const config = getPointLotteryConfig(this.domainScoped ? this.domain : null);
+        const target = q.trim() ? await this.getScopedTarget(domainId, q) : null;
         const targetPointState = target ? await ensureGlobalPointLotteryState(target._id) : null;
+        const scopeStudentUids = await this.getScopeStudentUids();
         const pointRankField = rankBy === 'current' ? '$currentPoints' : '$totalPoints';
         const pointRankDocs = await pointLotteryUserColl.aggregate([
             {
                 $match: {
-                    _id: { $gt: 1 },
+                    _id: { $in: scopeStudentUids },
                     $or: [
                         { [POINT_LOTTERY_POINTS_FIELD]: { $gt: 0 } },
                         { [POINT_LOTTERY_TOTAL_POINTS_FIELD]: { $gt: 0 } },
@@ -1112,8 +1163,9 @@ class SystemLotteryHandler extends SystemHandler {
             totalPoints: Math.max(0, Math.floor(+row.totalPoints || 0)),
             rankPoints: Math.max(0, Math.floor(+row.rankPoints || 0)),
         }));
+        const scopeDomainIds = await this.getScopeDomainIds();
         const logs = await this.ctx.db.collection('lottery.draw')
-            .find({ domainId, deleted: { $ne: true } })
+            .find({ domainId: { $in: scopeDomainIds }, deleted: { $ne: true } })
             .sort({ createdAt: -1, _id: -1 })
             .limit(20)
             .toArray();
@@ -1128,6 +1180,13 @@ class SystemLotteryHandler extends SystemHandler {
         this.response.body = {
             config,
             configKey: POINT_LOTTERY_CONFIG_KEY,
+            lotteryRoute: this.routeName,
+            domainScoped: this.domainScoped,
+            lotteryBaseTemplate: this.domainScoped ? 'domain_base.html' : 'manage_base.html',
+            lotteryScopeTitle: this.domainScoped ? `${this.domain.name} · 域内学员` : '唐老师 · 所有域学员',
+            lotteryScopeNote: this.domainScoped
+                ? '奖品、中奖记录和学员积分操作仅作用于当前域。'
+                : '这是唐老师专属的全域抽奖，可管理唐老师工作区内所有域的学员。',
             prizeSlots: (config.prizes.length ? config.prizes : [{
                 name: '',
                 image: '',
@@ -1159,8 +1218,9 @@ class SystemLotteryHandler extends SystemHandler {
         const args = { ...this.args };
         await applyLotteryPrizeImageUploads(this, args);
         const config = buildPointLotteryConfigFromForm(args);
-        await system.set(POINT_LOTTERY_CONFIG_KEY, config);
-        this.response.redirect = this.url('manage_lottery', { query: { saved: 1 } });
+        if (this.domainScoped) await domain.edit(this.domain._id, { pointLottery: config });
+        else await system.set(POINT_LOTTERY_CONFIG_KEY, config);
+        this.redirect({ saved: 1 });
     }
 
     @requireSudo
@@ -1168,7 +1228,7 @@ class SystemLotteryHandler extends SystemHandler {
     @param('points', Types.Int)
     async postAddPoints(domainId: string, q: string, points: number) {
         if (points <= 0) throw new ValidationError('points');
-        const target = await getManageTargetUser(domainId, q);
+        const target = await this.getScopedTarget(domainId, q);
         if (!target) throw new UserNotFoundError(q);
         if (isPasswordResetProtectedTarget(target)) throw new CannotEditSuperAdminError();
         const pointState = await ensureGlobalPointLotteryState(target._id);
@@ -1181,7 +1241,7 @@ class SystemLotteryHandler extends SystemHandler {
         if (initialTotalPoints === null) update.$inc[POINT_LOTTERY_TOTAL_POINTS_FIELD] = points;
         else update.$set = { [POINT_LOTTERY_TOTAL_POINTS_FIELD]: initialTotalPoints + points };
         await pointLotteryUserColl.updateOne({ _id: target._id }, update);
-        this.response.redirect = this.url('manage_lottery', { query: { q, added: points } });
+        this.redirect({ q, added: points });
     }
 
     @requireSudo
@@ -1190,7 +1250,7 @@ class SystemLotteryHandler extends SystemHandler {
     @param('scope', Types.Range(['current', 'total']))
     async postDeductPoints(domainId: string, q: string, points: number, scope: 'current' | 'total') {
         if (points <= 0) throw new ValidationError('points');
-        const target = await getManageTargetUser(domainId, q);
+        const target = await this.getScopedTarget(domainId, q);
         if (!target) throw new UserNotFoundError(q);
         if (isPasswordResetProtectedTarget(target)) throw new CannotEditSuperAdminError();
         const field = scope === 'current' ? POINT_LOTTERY_POINTS_FIELD : POINT_LOTTERY_TOTAL_POINTS_FIELD;
@@ -1200,23 +1260,25 @@ class SystemLotteryHandler extends SystemHandler {
         await pointLotteryUserColl.updateOne({ _id: target._id }, {
             $set: { [field]: Math.max(0, current - points) },
         });
-        this.response.redirect = this.url('manage_lottery', { query: { q, adjusted: points } });
+        this.redirect({ q, adjusted: points });
     }
 
     @requireSudo
     @param('drawId', Types.ObjectId)
     async postDeleteDraw(domainId: string, drawId: ObjectId) {
+        const scopeDomainIds = await this.getScopeDomainIds();
         await this.ctx.db.collection('lottery.draw').updateOne(
-            { _id: drawId, domainId },
+            { _id: drawId, domainId: { $in: scopeDomainIds } },
             { $set: { deleted: true, deletedAt: new Date(), deletedBy: this.user._id } },
         );
-        this.response.redirect = this.url('manage_lottery', { query: { deleted: 1 } });
+        this.redirect({ deleted: 1 });
     }
 
     @requireSudo
     async postClearDraws() {
-        await this.ctx.db.collection('lottery.draw').deleteMany({});
-        this.response.redirect = this.url('manage_lottery', { query: { cleared: 1 } });
+        const scopeDomainIds = await this.getScopeDomainIds();
+        await this.ctx.db.collection('lottery.draw').deleteMany({ domainId: { $in: scopeDomainIds } });
+        this.redirect({ cleared: 1 });
     }
 }
 
@@ -1272,6 +1334,17 @@ export async function apply(ctx) {
     ctx.Route('manage_user_import', '/manage/userimport', SystemUserImportHandler);
     ctx.Route('manage_user_priv', '/manage/userpriv', SystemUserPrivHandler);
     ctx.Route('manage_lottery', '/manage/lottery', SystemLotteryHandler);
-    ctx.injectUI('ControlPanel', 'manage_lottery', { icon: 'gift' }, PRIV.PRIV_ALL);
+    ctx.injectUI(
+        'ControlPanel', 'manage_lottery', { icon: 'gift' }, PRIV.PRIV_ALL,
+        (handler) => workspace.isLegacyOwner(handler.user._id),
+    );
+    ctx.Route('domain_lottery', '/domain/lottery', SystemLotteryHandler);
+    ctx.injectUI(
+        'DomainManage', 'domain_lottery',
+        { family: 'Properties', icon: 'gift', before: 'domain_edit' },
+        PERM.PERM_EDIT_DOMAIN,
+        (handler) => !!handler.domain?.workspaceId
+            && workspace.resolveDomainWorkspaceId(handler.domain) !== workspace.LEGACY_WORKSPACE_ID,
+    );
     ctx.Connection('manage_check', '/manage/check-conn', SystemCheckConnHandler);
 }

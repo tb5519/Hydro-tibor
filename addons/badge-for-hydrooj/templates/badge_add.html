@@ -1,5 +1,9 @@
-{% extends "layout/basic.html" %}
-{% block content %}
+{% extends badgeBaseTemplate|default('manage_base.html') %}
+{% macro render_badge_add() %}
+<style>
+  .badge-editor__scope { margin: 0 0 18px; padding: 12px 14px; border: 1px solid #d8e6fb; border-radius: 10px; background: linear-gradient(135deg, #f7fbff, #f5f3ff); color: #536780; }
+  .badge-editor__scope strong { color: #245fd0; }
+</style>
 <div class="row">
   <div class="medium-9 columns">
     <div class="section">
@@ -7,6 +11,7 @@
         <h1 class="section__title">{{ _('badge_add') }}</h1>
       </div>
       <div class="section__body">
+        <div class="badge-editor__scope"><strong>{{ badgeScopeTitle }}</strong> · {{ _('Only students in this scope can receive these badges.') }}</div>
         <form method="post">
           {{ form.form_text({
             columns:12,
@@ -67,4 +72,6 @@
     {% include 'components/md_hint.html' %}
   </div>
 </div>
-{% endblock %}
+{% endmacro %}
+{% block manage_content %}{{ render_badge_add() }}{% endblock %}
+{% block domain_content %}{{ render_badge_add() }}{% endblock %}

@@ -20,7 +20,7 @@ import { getHomePosterConfig } from '../lib/home_poster';
 import * as mail from '../lib/mail';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
 import {
-    ensureGlobalPointLotteryState, getPointLotteryConfig, pickPointLotteryPrize,
+    ensureGlobalPointLotteryState, getPointLotteryConfig, getPointLotteryStoragePrefix, pickPointLotteryPrize,
     POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD, pointLotteryPrizeKey,
     pointLotteryUserColl, publicPointLotteryPrize,
 } from '../lib/point_lottery';
@@ -41,6 +41,7 @@ import system from '../model/system';
 import token from '../model/token';
 import * as training from '../model/training';
 import user from '../model/user';
+import workspace from '../model/workspace';
 import {
     Handler, param, query, requireSudo, Types,
 } from '../service/server';
@@ -68,16 +69,28 @@ function normalizeBadgeColor(color: string, fallback: string) {
     return value.startsWith('#') ? value : `#${value}`;
 }
 
-async function attachOwnedBadges(ctx: Context, udocs: any[]) {
+async function attachOwnedBadges(ctx: Context, udocs: any[], currentDomainId: string, badgeDomainId?: string) {
     const uids = Array.from(new Set(udocs.filter(Boolean).map((udoc) => udoc._id).filter((uid) => typeof uid === 'number')));
     for (const udoc of udocs) {
         if (udoc) udoc.ownedBadges = [];
     }
     if (!uids.length) return;
-    const userBadges = await ctx.db.collection('userBadge').find({ owner: { $in: uids } }).sort({ badgeId: 1 }).toArray();
+    const selectedScopes = await ctx.db.collection('user').find({ _id: { $in: uids } })
+        .project({ _id: 1, badgeDomainId: 1 }).toArray();
+    const selectedScopeMap = new Map(selectedScopes.map((item: any) => [item._id, item.badgeDomainId]));
+    for (const udoc of udocs) {
+        const selectedScope = selectedScopeMap.get(udoc?._id);
+        if (udoc && (badgeDomainId ? selectedScope !== badgeDomainId : !!selectedScope)) {
+            delete udoc.badge;
+            delete udoc.badgeId;
+        }
+    }
+    const badgeScope = badgeDomainId ? { domainId: badgeDomainId } : { domainId: { $exists: false } };
+    const userBadges = await ctx.db.collection('userBadge').find({ owner: { $in: uids }, ...badgeScope })
+        .sort({ badgeId: 1 }).toArray();
     const badgeIds = Array.from(new Set(userBadges.map((doc: any) => doc.badgeId).filter((badgeId) => typeof badgeId === 'number')));
     if (!badgeIds.length) return;
-    const badges = await ctx.db.collection('badge').find({ _id: { $in: badgeIds } }).toArray();
+    const badges = await ctx.db.collection('badge').find({ _id: { $in: badgeIds }, ...badgeScope }).toArray();
     const badgeMap = new Map(badges.map((badge: any) => [badge._id, badge]));
     const ownedBadges: Record<number, any[]> = {};
     for (const doc of userBadges as any[]) {
@@ -90,7 +103,7 @@ async function attachOwnedBadges(ctx: Context, udocs: any[]) {
             backgroundColor: normalizeBadgeColor(badge.backgroundColor, 'e5edf5'),
             fontColor: normalizeBadgeColor(badge.fontColor, '1f2937'),
             tooltip: badge.title || badge.short || `${badge._id}`,
-            href: `/badge/${badge._id}`,
+            href: `/d/${encodeURIComponent(currentDomainId)}/badge/${badge._id}`,
         });
     }
     for (const udoc of udocs) {
@@ -494,8 +507,11 @@ export class HomeHandler extends Handler {
             udict[uid].level = row.level;
             udict[uid].rpInfo = row.rpInfo;
         }
-        await attachOwnedBadges(this.ctx, Object.values(udict));
-        const pointLotteryConfig = getPointLotteryConfig();
+        const badgeDomainId = workspace.resolveDomainWorkspaceId(this.domain) === workspace.LEGACY_WORKSPACE_ID
+            ? undefined
+            : domainId;
+        await attachOwnedBadges(this.ctx, Object.values(udict), domainId, badgeDomainId);
+        const pointLotteryConfig = getPointLotteryConfig(this.domain);
         const pointLotteryUser = this.user.hasPriv(PRIV.PRIV_USER_PROFILE)
             ? await ensureGlobalPointLotteryState(this.user._id)
             : null;
@@ -610,7 +626,7 @@ class PointLotteryPrizeImageHandler extends Handler {
 
     @param('filename', Types.Filename)
     async get({ }, filename: string) {
-        const target = `system/point-lottery/${filename}`;
+        const target = `${getPointLotteryStoragePrefix(this.domain)}/${filename}`;
         const meta = await storage.getMeta(target);
         if (!meta) throw new NotFoundError(filename);
         this.response.body = await storage.get(target);
@@ -624,7 +640,7 @@ class PointLotteryDrawHandler extends Handler {
         const fail = (errorMessage: string) => {
             this.response.body = { ok: false, error: { message: errorMessage } };
         };
-        const config = getPointLotteryConfig();
+        const config = getPointLotteryConfig(this.domain);
         if (!config.enabled) {
             fail('积分抽奖未开启。');
             return;

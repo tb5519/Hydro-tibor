@@ -29,6 +29,7 @@ import record from '../model/record';
 import ScheduleModel from '../model/schedule';
 import storage from '../model/storage';
 import user from '../model/user';
+import workspace from '../model/workspace';
 import {
     Handler, param, post, query, Type, Types,
 } from '../service/server';
@@ -38,15 +39,29 @@ function normalizeContestBadgeColor(color: string, fallback: string) {
     return value.startsWith('#') ? value : `#${value}`;
 }
 
-async function attachContestOwnedBadges(ctx: Context, udict: Record<number, any>) {
+async function attachContestOwnedBadges(
+    ctx: Context, udict: Record<number, any>, currentDomainId: string, badgeDomainId?: string,
+) {
     const udocs = Object.values(udict).filter(Boolean);
     const uids = Array.from(new Set(udocs.map((udoc) => udoc._id).filter((uid) => typeof uid === 'number')));
     for (const udoc of udocs) udoc.ownedBadges = [];
     if (!uids.length) return;
-    const userBadges = await (ctx.db as any).collection('userBadge').find({ owner: { $in: uids } }).sort({ badgeId: 1 }).toArray();
+    const selectedScopes = await (ctx.db as any).collection('user').find({ _id: { $in: uids } })
+        .project({ _id: 1, badgeDomainId: 1 }).toArray();
+    const selectedScopeMap = new Map(selectedScopes.map((item: any) => [item._id, item.badgeDomainId]));
+    for (const udoc of udocs) {
+        const selectedScope = selectedScopeMap.get(udoc?._id);
+        if (badgeDomainId ? selectedScope !== badgeDomainId : !!selectedScope) {
+            delete udoc.badge;
+            delete udoc.badgeId;
+        }
+    }
+    const badgeScope = badgeDomainId ? { domainId: badgeDomainId } : { domainId: { $exists: false } };
+    const userBadges = await (ctx.db as any).collection('userBadge').find({ owner: { $in: uids }, ...badgeScope })
+        .sort({ badgeId: 1 }).toArray();
     const badgeIds = Array.from(new Set(userBadges.map((doc: any) => doc.badgeId).filter((badgeId) => typeof badgeId === 'number')));
     if (!badgeIds.length) return;
-    const badges = await (ctx.db as any).collection('badge').find({ _id: { $in: badgeIds } }).toArray();
+    const badges = await (ctx.db as any).collection('badge').find({ _id: { $in: badgeIds }, ...badgeScope }).toArray();
     const badgeMap = new Map(badges.map((badge: any) => [badge._id, badge]));
     const ownedBadges: Record<number, any[]> = {};
     for (const doc of userBadges as any[]) {
@@ -59,7 +74,7 @@ async function attachContestOwnedBadges(ctx: Context, udict: Record<number, any>
             backgroundColor: normalizeContestBadgeColor(badge.backgroundColor, 'e5edf5'),
             fontColor: normalizeContestBadgeColor(badge.fontColor, '1f2937'),
             tooltip: badge.title || badge.short || `${badge._id}`,
-            href: `/badge/${badge._id}`,
+            href: `/d/${encodeURIComponent(currentDomainId)}/badge/${badge._id}`,
         });
     }
     for (const udoc of udocs) udoc.ownedBadges = ownedBadges[udoc._id] || [];
@@ -402,7 +417,10 @@ export class ContestProblemListHandler extends ContestDetailBaseHandler {
             [, contestScoreboardRows, contestScoreboardUdict, contestScoreboardPdict] = await contest.getScoreboard.call(
                 this, domainId, tid, config,
             );
-            await attachContestOwnedBadges(this.ctx, contestScoreboardUdict);
+            const badgeDomainId = workspace.resolveDomainWorkspaceId(this.domain) === workspace.LEGACY_WORKSPACE_ID
+                ? undefined
+                : domainId;
+            await attachContestOwnedBadges(this.ctx, contestScoreboardUdict, domainId, badgeDomainId);
         }
         this.response.body = {
             pdict,

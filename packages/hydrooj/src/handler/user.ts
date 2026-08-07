@@ -36,17 +36,28 @@ function normalizeBadgeColor(color: string, fallback: string) {
     return value.startsWith('#') ? value : `#${value}`;
 }
 
-async function attachOwnedBadges(ctx: Context, udocs: any[]) {
+async function attachOwnedBadges(ctx: Context, udocs: any[], currentDomainId: string, badgeDomainId?: string) {
     const uids = Array.from(new Set(udocs.filter(Boolean).map((udoc) => udoc._id).filter((uid) => typeof uid === 'number')));
     for (const udoc of udocs) {
         if (udoc) udoc.ownedBadges = [];
     }
     if (!uids.length) return;
-    const userBadges = await ctx.db.collection('userBadge').find({ owner: { $in: uids } })
+    const selectedScopes = await ctx.db.collection('user').find({ _id: { $in: uids } })
+        .project({ _id: 1, badgeDomainId: 1 }).toArray();
+    const selectedScopeMap = new Map(selectedScopes.map((item: any) => [item._id, item.badgeDomainId]));
+    for (const udoc of udocs) {
+        const selectedScope = selectedScopeMap.get(udoc?._id);
+        if (udoc && (badgeDomainId ? selectedScope !== badgeDomainId : !!selectedScope)) {
+            delete udoc.badge;
+            delete udoc.badgeId;
+        }
+    }
+    const badgeScope = badgeDomainId ? { domainId: badgeDomainId } : { domainId: { $exists: false } };
+    const userBadges = await ctx.db.collection('userBadge').find({ owner: { $in: uids }, ...badgeScope })
         .sort({ getAt: -1, badgeId: -1 }).toArray();
     const badgeIds = Array.from(new Set(userBadges.map((doc: any) => doc.badgeId).filter((badgeId) => typeof badgeId === 'number')));
     if (!badgeIds.length) return;
-    const badges = await ctx.db.collection('badge').find({ _id: { $in: badgeIds } }).toArray();
+    const badges = await ctx.db.collection('badge').find({ _id: { $in: badgeIds }, ...badgeScope }).toArray();
     const badgeMap = new Map(badges.map((badge: any) => [badge._id, badge]));
     const ownedBadges: Record<number, any[]> = {};
     for (const doc of userBadges as any[]) {
@@ -59,16 +70,17 @@ async function attachOwnedBadges(ctx: Context, udocs: any[]) {
             backgroundColor: normalizeBadgeColor(badge.backgroundColor, 'e5edf5'),
             fontColor: normalizeBadgeColor(badge.fontColor, '1f2937'),
             tooltip: badge.title || badge.short || `${badge._id}`,
-            href: `/badge/${badge._id}`,
+            href: `/d/${encodeURIComponent(currentDomainId)}/badge/${badge._id}`,
             getAt: doc.getAt,
             backgroundImage: badge.backgroundImagePath
-                ? `/badge/${badge._id}/background?v=${encodeURIComponent(badge.backgroundImageUpdatedAt || '')}`
+                ? `/d/${encodeURIComponent(currentDomainId)}/badge/${badge._id}/background`
+                + `?v=${encodeURIComponent(badge.backgroundImageUpdatedAt || '')}`
                 : '',
             acImage: badge.acImagePath
-                ? `/badge/${badge._id}/ac-image?v=${encodeURIComponent(badge.acImageUpdatedAt || '')}`
+                ? `/d/${encodeURIComponent(currentDomainId)}/badge/${badge._id}/ac-image?v=${encodeURIComponent(badge.acImageUpdatedAt || '')}`
                 : '',
             themeSound: badge.themeSoundPath
-                ? `/badge/${badge._id}/theme-sound?v=${encodeURIComponent(badge.themeSoundUpdatedAt || '')}`
+                ? `/d/${encodeURIComponent(currentDomainId)}/badge/${badge._id}/theme-sound?v=${encodeURIComponent(badge.themeSoundUpdatedAt || '')}`
                 : '',
             isTheme: !!(badge.backgroundImagePath || badge.acImagePath || badge.themeSoundPath),
         });
@@ -519,7 +531,10 @@ class UserDetailHandler extends Handler {
             ),
         ]);
         if (!udoc) throw new UserNotFoundError(uid);
-        await attachOwnedBadges(this.ctx, [udoc]);
+        const badgeDomainId = workspace.resolveDomainWorkspaceId(this.domain) === workspace.LEGACY_WORKSPACE_ID
+            ? undefined
+            : domainId;
+        await attachOwnedBadges(this.ctx, [udoc], domainId, badgeDomainId);
         const badgeProfileBackground = getBadgeProfileBackground({
             ownedBadges: udoc.ownedBadges,
             badgeProfileBackgroundBadgeId: themePreference?.badgeProfileBackgroundBadgeId,
@@ -571,7 +586,10 @@ class UserBadgeBackgroundHandler extends Handler {
         if (this.user._id !== uid) throw new ForbiddenError();
         const udoc = await user.getById(domainId, uid);
         if (!udoc) throw new UserNotFoundError(uid);
-        await attachOwnedBadges(this.ctx, [udoc]);
+        const badgeDomainId = workspace.resolveDomainWorkspaceId(this.domain) === workspace.LEGACY_WORKSPACE_ID
+            ? undefined
+            : domainId;
+        await attachOwnedBadges(this.ctx, [udoc], domainId, badgeDomainId);
         const themePreference = await user.coll.findOne(
             { _id: uid },
             { projection: { badgeProfileBackgroundBadgeId: 1 } },

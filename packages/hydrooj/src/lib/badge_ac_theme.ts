@@ -1,5 +1,6 @@
 import type { Context } from '../context';
-import type { User } from '../interface';
+import type { DomainDoc, User } from '../interface';
+import workspace from '../model/workspace';
 
 type RouteUrl = (routeName: string, args?: any) => string;
 
@@ -19,10 +20,14 @@ export async function getActiveBadgeAcTheme(
     ctx: Context,
     currentUser: User,
     routeUrl: RouteUrl,
+    currentDomain?: Pick<DomainDoc, '_id' | 'workspaceId'> | null,
 ): Promise<BadgeAcTheme | null> {
     const db = ctx.db as any;
+    const badgeScope = workspace.resolveDomainWorkspaceId(currentDomain) === workspace.LEGACY_WORKSPACE_ID
+        ? { domainId: { $exists: false } }
+        : { domainId: currentDomain._id };
     const userBadges = await db.collection('userBadge')
-        .find({ owner: currentUser._id })
+        .find({ owner: currentUser._id, ...badgeScope })
         .project({ badgeId: 1, getAt: 1 })
         .sort({ getAt: -1, badgeId: -1 })
         .toArray();
@@ -32,7 +37,7 @@ export async function getActiveBadgeAcTheme(
     if (!badgeIds.length) return null;
 
     const badges = await db.collection('badge')
-        .find({ _id: { $in: badgeIds } })
+        .find({ _id: { $in: badgeIds }, ...badgeScope })
         .project({
             _id: 1,
             short: 1,
