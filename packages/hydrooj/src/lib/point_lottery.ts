@@ -130,6 +130,17 @@ export function getPointLotteryStoragePrefix(domain?: Pick<DomainDoc, '_id' | 'w
     return isDomainPointLottery(domain) ? `domain/${domain._id}/point-lottery` : 'system/point-lottery';
 }
 
+/**
+ * Modern teacher lotteries are isolated to the current domain. Tang's legacy
+ * lottery is one shared pool, so every legacy domain reads the same draw log.
+ */
+export async function getPointLotteryScopeDomainIds(
+    domain?: Pick<DomainDoc, '_id' | 'workspaceId'> | null,
+) {
+    if (isDomainPointLottery(domain)) return [domain._id];
+    return (await workspace.getDomains(workspace.LEGACY_WORKSPACE_ID)).map((item) => item._id);
+}
+
 export function buildPointLotteryConfigFromForm(args: any): PointLotteryConfig {
     const prizes: PointLotteryPrize[] = [];
     const indexedKeys = Object.keys(args)

@@ -20,9 +20,9 @@ import { getHomePosterConfig } from '../lib/home_poster';
 import * as mail from '../lib/mail';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
 import {
-    ensureGlobalPointLotteryState, getPointLotteryConfig, getPointLotteryStoragePrefix, pickPointLotteryPrize,
-    POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD, pointLotteryPrizeKey,
-    pointLotteryUserColl, publicPointLotteryPrize,
+    ensureGlobalPointLotteryState, getPointLotteryConfig, getPointLotteryScopeDomainIds,
+    getPointLotteryStoragePrefix, pickPointLotteryPrize, POINT_LOTTERY_POINTS_FIELD,
+    POINT_LOTTERY_TOTAL_POINTS_FIELD, pointLotteryPrizeKey, pointLotteryUserColl, publicPointLotteryPrize,
 } from '../lib/point_lottery';
 import { getSharedRankingSnapshot, SharedRankingRow } from '../lib/shared_ranking';
 import { verifyTFA } from '../lib/verifyTFA';
@@ -512,6 +512,7 @@ export class HomeHandler extends Handler {
             : domainId;
         await attachOwnedBadges(this.ctx, Object.values(udict), domainId, badgeDomainId);
         const pointLotteryConfig = getPointLotteryConfig(this.domain);
+        const pointLotteryScopeDomainIds = await getPointLotteryScopeDomainIds(this.domain);
         const pointLotteryUser = this.user.hasPriv(PRIV.PRIV_USER_PROFILE)
             ? await ensureGlobalPointLotteryState(this.user._id)
             : null;
@@ -521,7 +522,11 @@ export class HomeHandler extends Handler {
             : Math.max(0, Math.floor(+pointLotteryUser?.[POINT_LOTTERY_TOTAL_POINTS_FIELD] || 0));
         const pointLotteryWins = this.user.hasPriv(PRIV.PRIV_USER_PROFILE)
             ? await this.ctx.db.collection('lottery.draw')
-                .find({ domainId, uid: this.user._id, deleted: { $ne: true } })
+                .find({
+                    domainId: { $in: pointLotteryScopeDomainIds },
+                    uid: this.user._id,
+                    deleted: { $ne: true },
+                })
                 .sort({ createdAt: -1, _id: -1 })
                 .limit(24)
                 .toArray()
@@ -532,7 +537,7 @@ export class HomeHandler extends Handler {
         const pointLotteryAnnouncementLogs = pointLotteryConfig.enabled
             ? await this.ctx.db.collection('lottery.draw')
                 .find({
-                    domainId,
+                    domainId: { $in: pointLotteryScopeDomainIds },
                     deleted: { $ne: true },
                     'prize.broadcast': { $ne: false },
                 })
@@ -648,9 +653,10 @@ class PointLotteryDrawHandler extends Handler {
         const nonRepeatablePrizes = config.prizes.filter((prize) => !prize.repeatable);
         let availablePrizes = config.prizes;
         if (nonRepeatablePrizes.length) {
+            const pointLotteryScopeDomainIds = await getPointLotteryScopeDomainIds(this.domain);
             const nonRepeatableKeys = new Set(nonRepeatablePrizes.map(pointLotteryPrizeKey));
             const wonLogs = await this.ctx.db.collection('lottery.draw').find({
-                domainId,
+                domainId: { $in: pointLotteryScopeDomainIds },
                 uid: this.user._id,
                 deleted: { $ne: true },
                 'prize.name': { $in: nonRepeatablePrizes.map((prize) => prize.name) },
