@@ -15,7 +15,7 @@ import type { CppEditorMode } from '../interface';
 import {
     buildPointLotteryConfigFromForm, ensureGlobalPointLotteryState, getPointLotteryConfig, getPointLotteryStoragePrefix,
     POINT_LOTTERY_CONFIG_KEY, POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
-    pointLotteryUserColl,
+    pointLotteryUserColl, publicPointLotteryPrize,
 } from '../lib/point_lottery';
 import { Logger } from '../logger';
 import { PERM, PRIV, STATUS } from '../model/builtin';
@@ -1115,11 +1115,12 @@ class SystemLotteryHandler extends Handler {
     @param('saved', Types.Int, true)
     @param('added', Types.Int, true)
     @param('adjusted', Types.Int, true)
+    @param('edited', Types.Int, true)
     @param('deleted', Types.Int, true)
     @param('cleared', Types.Int, true)
     async get(
         domainId: string, q = '', rankBy: typeof LOTTERY_POINT_RANK_TYPES[number] = 'total',
-        saved = 0, added = 0, adjusted = 0, deleted = 0, cleared = 0,
+        saved = 0, added = 0, adjusted = 0, edited = 0, deleted = 0, cleared = 0,
     ) {
         const config = getPointLotteryConfig(this.domainScoped ? this.domain : null);
         const target = q.trim() ? await this.getScopedTarget(domainId, q) : null;
@@ -1199,6 +1200,7 @@ class SystemLotteryHandler extends Handler {
             rankBy,
             target,
             canAddTarget: target ? !isPasswordResetProtectedTarget(target) : false,
+            canEditDrawPrize: !this.domainScoped && config.prizes.length > 0,
             targetPoints: Math.max(0, Math.floor(+targetPointState?.[POINT_LOTTERY_POINTS_FIELD] || 0)),
             targetTotalPoints: Math.max(0, Math.floor(+(
                 targetPointState?.[POINT_LOTTERY_TOTAL_POINTS_FIELD] ?? targetPointState?.[POINT_LOTTERY_POINTS_FIELD]
@@ -1206,6 +1208,7 @@ class SystemLotteryHandler extends Handler {
             saved,
             added,
             adjusted,
+            edited,
             deleted,
             cleared,
             logRows,
@@ -1261,6 +1264,94 @@ class SystemLotteryHandler extends Handler {
             $set: { [field]: Math.max(0, current - points) },
         });
         this.redirect({ q, adjusted: points });
+    }
+
+    @requireSudo
+    @param('drawId', Types.ObjectId)
+    @param('prizeIndex', Types.UnsignedInt)
+    async postEditDrawPrize(domainId: string, drawId: ObjectId, prizeIndex: number) {
+        // Historical prize correction is deliberately reserved for Tang's shared
+        // legacy workspace. Domain teachers can only manage records from their own
+        // isolated lottery and cannot rewrite Tang's cross-domain announcements.
+        if (this.domainScoped) throw new PermissionError(PRIV.PRIV_ALL);
+        const config = getPointLotteryConfig(null);
+        const prize = config.prizes[prizeIndex];
+        if (!prize) throw new ValidationError('prizeIndex');
+
+        const scopeDomainIds = await this.getScopeDomainIds();
+        const drawColl = this.ctx.db.collection<any>('lottery.draw');
+        const draw: any = await drawColl.findOne({
+            _id: drawId,
+            domainId: { $in: scopeDomainIds },
+            deleted: { $ne: true },
+        });
+        if (!draw) throw new ValidationError('drawId');
+        const scopeStudentUids = await this.getScopeStudentUids();
+        if (!scopeStudentUids.includes(draw.uid)) throw new UserNotFoundError(draw.uid);
+
+        const oldPointDelta = Math.max(0, Math.floor(+(draw.pointDelta ?? draw.prize?.pointDelta) || 0));
+        const pointDifference = prize.pointDelta - oldPointDelta;
+        const editedAt = new Date();
+
+        if (pointDifference) {
+            const pointState = await ensureGlobalPointLotteryState(draw.uid);
+            const currentPoints = Math.max(0, Math.floor(+pointState?.[POINT_LOTTERY_POINTS_FIELD] || 0));
+            const totalPoints = Math.max(0, Math.floor(+(
+                pointState?.[POINT_LOTTERY_TOTAL_POINTS_FIELD] ?? currentPoints
+            ) || 0));
+            await pointLotteryUserColl.updateOne({ _id: draw.uid }, {
+                $set: {
+                    [POINT_LOTTERY_POINTS_FIELD]: Math.max(0, currentPoints + pointDifference),
+                    [POINT_LOTTERY_TOTAL_POINTS_FIELD]: Math.max(0, totalPoints + pointDifference),
+                },
+            });
+
+            // Draw rows store the balance immediately after each draw. Keep the
+            // corrected row and every later snapshot for this student consistent.
+            const affectedDraws = await drawColl.find({
+                domainId: { $in: scopeDomainIds },
+                uid: draw.uid,
+                deleted: { $ne: true },
+                $or: [
+                    { createdAt: { $gt: draw.createdAt } },
+                    { createdAt: draw.createdAt, _id: { $gte: draw._id } },
+                ],
+            }).project({ _id: 1, points: 1, totalPoints: 1 }).toArray();
+            if (affectedDraws.length) {
+                await drawColl.bulkWrite(affectedDraws.map((item: any) => ({
+                    updateOne: {
+                        filter: { _id: item._id },
+                        update: {
+                            $set: {
+                                points: Math.max(0, Math.floor(+item.points || 0) + pointDifference),
+                                totalPoints: Math.max(0, Math.floor(+item.totalPoints || 0) + pointDifference),
+                            },
+                        },
+                    },
+                })));
+            }
+        }
+
+        await drawColl.updateOne({ _id: drawId, deleted: { $ne: true } }, {
+            $set: {
+                prize: publicPointLotteryPrize(prize),
+                pointDelta: prize.pointDelta,
+                editedAt,
+                editedBy: this.user._id,
+            },
+            $push: {
+                prizeEditHistory: {
+                    $each: [{
+                        prize: draw.prize,
+                        pointDelta: oldPointDelta,
+                        editedAt,
+                        editedBy: this.user._id,
+                    }],
+                    $slice: -20,
+                },
+            },
+        } as any);
+        this.redirect({ edited: 1 });
     }
 
     @requireSudo

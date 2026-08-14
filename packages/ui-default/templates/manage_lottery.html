@@ -151,6 +151,74 @@
   .lottery-admin__search .textbox {
     min-width: 22rem;
   }
+  .lottery-admin__prize-cell {
+    display: flex;
+    align-items: center;
+    gap: .35rem;
+    flex-wrap: wrap;
+  }
+  .lottery-admin__edit-link {
+    padding: .12rem .28rem;
+    border: 0;
+    background: transparent;
+    color: #2563eb;
+    cursor: pointer;
+    font-size: .8rem;
+    line-height: 1.35;
+  }
+  .lottery-admin__edit-link:hover {
+    color: #1d4ed8;
+    text-decoration: underline;
+  }
+  .lottery-admin__edit-row[hidden] {
+    display: none;
+  }
+  .lottery-admin__edit-row > td {
+    padding: 0 .85rem .85rem;
+    border-top: 0;
+    background: #f8fbff;
+  }
+  .lottery-admin__edit-panel {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: .85rem 1rem;
+    border: 1px solid #cfe0fb;
+    border-radius: 9px;
+    background: #fff;
+    box-shadow: 0 8px 24px rgba(37, 99, 235, .06);
+  }
+  .lottery-admin__edit-copy {
+    min-width: 12rem;
+  }
+  .lottery-admin__edit-copy strong {
+    display: block;
+    margin-bottom: .2rem;
+    color: #1e3a5f;
+  }
+  .lottery-admin__edit-form {
+    display: flex;
+    align-items: flex-end;
+    gap: .55rem;
+    flex-wrap: wrap;
+  }
+  .lottery-admin__edit-form label {
+    min-width: 15rem;
+  }
+  .lottery-admin__edit-form select {
+    width: 100%;
+  }
+  .lottery-admin__edited-badge {
+    display: inline-block;
+    margin-left: .35rem;
+    padding: .08rem .35rem;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #2563eb;
+    font-size: .72rem;
+    vertical-align: middle;
+  }
   @media (max-width: 56em) {
     .lottery-admin__grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -167,6 +235,16 @@
     .lottery-admin__actions .button {
       width: 100%;
       margin-top: .6rem;
+    }
+    .lottery-admin__edit-panel {
+      display: block;
+    }
+    .lottery-admin__edit-form {
+      margin-top: .75rem;
+    }
+    .lottery-admin__edit-form label,
+    .lottery-admin__edit-form .button {
+      width: 100%;
     }
   }
 </style>
@@ -185,6 +263,9 @@
     </div>
     {% if saved %}
       <div class="lottery-admin__success">{{ _('抽奖配置已保存。') }}</div>
+    {% endif %}
+    {% if edited %}
+      <div class="lottery-admin__success">{{ _('奖品已修改，学员记录、全域通报和积分已同步更新。') }}</div>
     {% endif %}
     {% if deleted %}
       <div class="lottery-admin__success">{{ _('抽奖记录已删除，学员端将不再显示。') }}</div>
@@ -450,7 +531,15 @@
             <td>{{ datetimeSpan(log.createdAt, false)|safe }}</td>
             <td>{{ user.render_inline(log.udoc, true, true, false) }}</td>
             <td>{{ log.cost }}</td>
-            <td>{{ log.prize.name }}</td>
+            <td>
+              <div class="lottery-admin__prize-cell">
+                <span>{{ log.prize.name }}</span>
+                {% if log.editedAt %}<span class="lottery-admin__edited-badge">{{ _('已修正') }}</span>{% endif %}
+                {% if canEditDrawPrize %}
+                  <button class="lottery-admin__edit-link" type="button" data-lottery-edit-toggle aria-expanded="false" aria-controls="lottery-edit-{{ log.drawId }}">{{ _('修改') }}</button>
+                {% endif %}
+              </div>
+            </td>
             <td>{{ log.pointDelta }}</td>
             <td>{{ log.points }}</td>
             <td>
@@ -461,6 +550,33 @@
               </form>
             </td>
           </tr>
+          {% if canEditDrawPrize %}
+            <tr class="lottery-admin__edit-row" id="lottery-edit-{{ log.drawId }}" hidden>
+              <td colspan="7">
+                <div class="lottery-admin__edit-panel">
+                  <div class="lottery-admin__edit-copy">
+                    <strong>{{ _('修改') }} {{ log.udoc.displayName|default(log.udoc.uname) }} {{ _('的奖品') }}</strong>
+                    <span class="lottery-admin__note">{{ _('当前：') }}{{ log.prize.name }}。{{ _('如新奖品包含积分奖励，系统会同步校正学员积分和后续记录。') }}</span>
+                  </div>
+                  <form method="post" class="lottery-admin__edit-form">
+                    <input type="hidden" name="operation" value="edit_draw_prize">
+                    <input type="hidden" name="drawId" value="{{ log.drawId }}">
+                    <label>
+                      <div>{{ _('选择新奖品') }}</div>
+                      <select class="select" name="prizeIndex" required>
+                        <option value="" selected disabled>{{ _('请选择奖品') }}</option>
+                        {% for prize in config.prizes %}
+                          <option value="{{ loop.index0 }}">{{ prize.name }}{% if prize.pointDelta %} · +{{ prize.pointDelta }} {{ _('积分') }}{% endif %}{% if prize.name == log.prize.name and prize.image == log.prize.image %} · {{ _('当前') }}{% endif %}</option>
+                        {% endfor %}
+                      </select>
+                    </label>
+                    <button class="rounded primary button" type="submit">{{ _('保存修改') }}</button>
+                    <button class="rounded button" type="button" data-lottery-edit-cancel>{{ _('取消') }}</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          {% endif %}
         {% else %}
           <tr>
             <td colspan="7">{{ _('暂无抽奖记录。') }}</td>
@@ -543,6 +659,39 @@
   rows().forEach(bind);
   addButton.addEventListener('click', addRow);
   reindex();
+}());
+(function () {
+  var toggles = Array.prototype.slice.call(document.querySelectorAll('[data-lottery-edit-toggle]'));
+  if (!toggles.length) return;
+
+  function closeRow(button) {
+    var row = document.getElementById(button.getAttribute('aria-controls'));
+    if (row) row.hidden = true;
+    button.setAttribute('aria-expanded', 'false');
+  }
+
+  toggles.forEach(function (button) {
+    button.addEventListener('click', function () {
+      var row = document.getElementById(button.getAttribute('aria-controls'));
+      if (!row) return;
+      var shouldOpen = row.hidden;
+      toggles.forEach(closeRow);
+      if (!shouldOpen) return;
+      row.hidden = false;
+      button.setAttribute('aria-expanded', 'true');
+      var select = row.querySelector('select');
+      if (select) select.focus();
+    });
+  });
+
+  Array.prototype.slice.call(document.querySelectorAll('[data-lottery-edit-cancel]')).forEach(function (cancel) {
+    cancel.addEventListener('click', function () {
+      var row = cancel.closest('.lottery-admin__edit-row');
+      if (!row) return;
+      var button = document.querySelector('[aria-controls="' + row.id + '"]');
+      if (button) closeRow(button);
+    });
+  });
 }());
 </script>
 {% endmacro %}
