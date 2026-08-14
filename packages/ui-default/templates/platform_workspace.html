@@ -132,6 +132,26 @@
   }
   .workspace-platform__form button { width: 100%; }
   .workspace-platform__form-tip { margin: -.15rem 0 0; color: #64748b; font-size: .75rem; line-height: 1.55; }
+  .workspace-platform__form-intro {
+    margin: 0;
+    padding: .72rem .78rem;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    color: #1e40af;
+    background: #eff6ff;
+    font-size: .78rem;
+    line-height: 1.55;
+  }
+  .workspace-platform__form-error {
+    margin: 0;
+    padding: .72rem .78rem;
+    border: 1px solid #fecaca;
+    border-radius: 10px;
+    color: #b91c1c;
+    background: #fff7f7;
+    font-size: .78rem;
+    line-height: 1.55;
+  }
   .workspace-platform__locked {
     margin: 1rem;
     padding: .85rem;
@@ -206,30 +226,31 @@
       <aside class="workspace-platform__panel">
         <header class="workspace-platform__panel-header"><h2>{{ _('Create Teacher Workspace') }}</h2></header>
         {% if canCreate %}
-          <form method="post" class="workspace-platform__form">
+          <form method="post" action="{{ url('platform_workspace') }}" class="workspace-platform__form">
             <input type="hidden" name="operation" value="create">
+            <p class="workspace-platform__form-intro"><strong>{{ _('Only two items are required') }}</strong><br>{{ _('The system automatically creates the workspace code, initial domain ID and dedicated teaching domain.') }}</p>
+            {% if createError %}
+              <p class="workspace-platform__form-error">
+                <strong>{{ _('Workspace was not created') }}</strong><br>
+                {% if createError == 'owner_required' %}{{ _('Please enter the teacher account.') }}
+                {% elif createError == 'name_required' %}{{ _('Please enter the workspace name.') }}
+                {% elif createError == 'name_too_long' %}{{ _('The workspace name must be no longer than 64 characters.') }}
+                {% elif createError == 'owner_not_found' %}{{ _('The teacher account was not found. Please check the username or UID.') }}
+                {% elif createError == 'owner_not_teacher' %}{{ _('Platform and system administrator accounts cannot be used as ordinary teacher accounts.') }}
+                {% elif createError == 'owner_assigned' %}{{ _('This account already belongs to a workspace and cannot be assigned again.') }}
+                {% else %}{{ _('Please check the information and try again.') }}{% endif %}
+              </p>
+            {% endif %}
             <label class="workspace-platform__field">
-              <span>{{ _('Workspace code') }}</span>
-              <input class="textbox" name="code" placeholder="zhang" pattern="[a-z][a-z0-9-]{2,31}" required>
+              <span>{{ _('Teacher account') }}</span>
+              <input class="textbox" name="owner" value="{{ createOwner }}" placeholder="{{ _('Enter username or UID') }}" autocomplete="off" required>
             </label>
             <label class="workspace-platform__field">
               <span>{{ _('Workspace name') }}</span>
-              <input class="textbox" name="name" placeholder="{{ _('For example: Teacher Zhang Workspace') }}" maxlength="64" required>
+              <input class="textbox" name="name" value="{{ createName }}" placeholder="{{ _('For example: Teacher Zhang Workspace') }}" maxlength="64" required>
             </label>
-            <label class="workspace-platform__field">
-              <span>{{ _('Owner UID or username') }}</span>
-              <input class="textbox" name="owner" autocomplete="off" required>
-            </label>
-            <label class="workspace-platform__field">
-              <span>{{ _('Initial domain ID') }}</span>
-              <input class="textbox" name="domainCode" placeholder="ZHANG01" required>
-            </label>
-            <label class="workspace-platform__field">
-              <span>{{ _('Initial domain name') }}</span>
-              <input class="textbox" name="domainName" placeholder="{{ _('For example: Programming Basics') }}" maxlength="64" required>
-            </label>
-            <p class="workspace-platform__form-tip">{{ _('The initial domain becomes the teacher default after login, keeping its problem bank and ranking separate from existing teachers.') }}</p>
-            <button class="rounded primary button" type="submit"><span class="icon icon-add"></span>{{ _('Create workspace and initial domain') }}</button>
+            <p class="workspace-platform__form-tip">{{ _('Use an existing ordinary teacher account. After creation, the teacher can log in with the original password and directly enter the independent workspace.') }}</p>
+            <button class="rounded primary button" type="submit"><span class="icon icon-add"></span>{{ _('Create teacher workspace') }}</button>
           </form>
         {% else %}
           <div class="workspace-platform__locked">

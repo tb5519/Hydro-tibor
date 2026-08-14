@@ -62,6 +62,49 @@ async function getWorkspaceCards() {
     }));
 }
 
+function getWorkspaceCodeBase(username: string, uid: number) {
+    const normalized = username.trim().toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    if (!/^[a-z][a-z0-9-]{2,31}$/.test(normalized) || normalized === workspace.LEGACY_WORKSPACE_ID) {
+        return `teacher-${uid}`;
+    }
+    return normalized;
+}
+
+async function getAvailableWorkspaceCode(username: string, uid: number) {
+    const base = getWorkspaceCodeBase(username, uid);
+    const candidates = Array.from({ length: 1000 }, (_, index) => {
+        const suffix = index ? `-${index + 1}` : '';
+        const prefix = base.slice(0, 32 - suffix.length).replace(/-+$/g, '');
+        return `${prefix}${suffix}`;
+    });
+    const unavailable = new Set((await workspace.coll.find({ _id: { $in: candidates } })
+        .project<{ _id: string }>({ _id: 1 }).toArray()).map((item) => item._id));
+    const candidate = candidates.find((item) => !unavailable.has(item));
+    if (candidate) return candidate;
+    throw new Error('Unable to allocate workspace code');
+}
+
+async function getAvailableDomainId(uid: number) {
+    const base = `T${uid.toString().padStart(3, '0')}`.slice(0, 28);
+    const candidates = Array.from({ length: 1000 }, (_, index) => {
+        const suffix = index ? `${index + 1}` : '';
+        return `${base.slice(0, 32 - suffix.length)}${suffix}`;
+    });
+    const unavailable = new Set((await domain.coll.find({
+        lower: { $in: candidates.map((item) => item.toLowerCase()) },
+    }).project<{ lower: string }>({ lower: 1 }).toArray()).map((item) => item.lower));
+    const candidate = candidates.find((item) => !unavailable.has(item.toLowerCase()));
+    if (candidate) return candidate;
+    throw new Error('Unable to allocate domain ID');
+}
+
+function getInitialDomainName(workspaceName: string) {
+    const teacherName = workspaceName.replace(/工作区\s*$/u, '').trim() || workspaceName;
+    return `${teacherName}编程训练`.slice(0, 64);
+}
+
 class PlatformAdminHandler extends WorkspaceFeatureHandler {
     async prepare() {
         this.ensureFeatureEnabled();
@@ -91,7 +134,12 @@ class PlatformDashboardHandler extends PlatformAdminHandler {
 class PlatformWorkspaceHandler extends PlatformAdminHandler {
     @param('created', Types.String, true)
     @param('q', Types.Content, true)
-    async get(domainId: string, created = '', q = '') {
+    @param('createError', Types.String, true)
+    @param('owner', Types.String, true)
+    @param('name', Types.String, true)
+    async get(
+        domainId: string, created = '', q = '', createError = '', createOwner = '', createName = '',
+    ) {
         const cards = await getWorkspaceCards();
         const query = q.trim().toLocaleLowerCase();
         const filteredCards = cards.filter((item) => !query || [
@@ -103,39 +151,59 @@ class PlatformWorkspaceHandler extends PlatformAdminHandler {
             workspaceCount: cards.length,
             q,
             created,
+            createError,
+            createOwner,
+            createName,
             canCreate: workspace.canCreateTeacherWorkspace(),
             platformAdminMode: true,
         };
     }
 
+    redirectCreateError(createError: string, owner: string, name: string) {
+        this.response.redirect = this.url('platform_workspace', {
+            query: { createError, owner: owner.trim(), name: name.trim() },
+        });
+    }
+
     @requireSudo
-    @post('code', Types.String)
-    @post('name', Types.String)
-    @post('owner', Types.UidOrName)
-    @post('domainCode', Types.DomainId)
-    @post('domainName', Types.String)
-    async postCreate(
-        domainId: string, code: string, name: string, owner: string,
-        initialDomainId: string, domainName: string,
-    ) {
+    @post('name', Types.String, true)
+    @post('owner', Types.String, true)
+    async postCreate(domainId: string, name = '', owner = '') {
         if (!workspace.canCreateTeacherWorkspace()) throw new ForbiddenError();
-        const normalizedCode = code.trim().toLowerCase();
         const normalizedName = name.trim();
-        const normalizedDomainName = domainName.trim();
-        if (!/^[a-z][a-z0-9-]{2,31}$/.test(normalizedCode)) throw new ValidationError('code');
-        if (!normalizedName || normalizedName.length > 64) throw new ValidationError('name');
-        if (!normalizedDomainName || normalizedDomainName.length > 64) throw new ValidationError('domainName');
-        if (await workspace.get(normalizedCode)) throw new ValidationError('code');
-        if (await domain.get(initialDomainId)) throw new DomainAlreadyExistsError(initialDomainId);
-        const ownerDoc = /^\d+$/.test(owner)
-            ? await user.getById('system', +owner)
-            : await user.getByUname('system', owner);
+        const normalizedOwner = owner.trim();
+        if (!normalizedOwner) {
+            this.redirectCreateError('owner_required', owner, name);
+            return;
+        }
+        if (!normalizedName) {
+            this.redirectCreateError('name_required', owner, name);
+            return;
+        }
+        if (normalizedName.length > 64) {
+            this.redirectCreateError('name_too_long', owner, name);
+            return;
+        }
+        const ownerDoc = /^\d+$/.test(normalizedOwner)
+            ? await user.getById('system', +normalizedOwner)
+            : await user.getByUname('system', normalizedOwner);
         if (!ownerDoc || ownerDoc._id <= 1 || !ownerDoc.hasPriv(PRIV.PRIV_USER_PROFILE)) {
-            throw new UserNotFoundError(owner);
+            this.redirectCreateError('owner_not_found', owner, name);
+            return;
+        }
+        if (ownerDoc.hasPriv(PRIV.PRIV_EDIT_SYSTEM) || workspace.isPlatformAdmin(ownerDoc._id)) {
+            this.redirectCreateError('owner_not_teacher', owner, name);
+            return;
         }
         if (await workspace.getAssignedWorkspaceIds(ownerDoc._id).then((items) => items.length > 0)) {
-            throw new ValidationError('owner');
+            this.redirectCreateError('owner_assigned', owner, name);
+            return;
         }
+        const [normalizedCode, initialDomainId] = await Promise.all([
+            getAvailableWorkspaceCode(ownerDoc.uname, ownerDoc._id),
+            getAvailableDomainId(ownerDoc._id),
+        ]);
+        const normalizedDomainName = getInitialDomainName(normalizedName);
         const created = await workspace.create(normalizedCode, normalizedName, ownerDoc._id);
         try {
             await domain.add(initialDomainId, ownerDoc._id, normalizedDomainName, '', created._id);

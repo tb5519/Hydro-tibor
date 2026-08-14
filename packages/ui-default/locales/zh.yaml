@@ -152,6 +152,20 @@ teachers: 位教师
 Legacy compatible: 旧系统兼容
 Open workspace: 进入工作区
 Create Teacher Workspace: 创建教师工作区
+Only two items are required: 只需填写两项
+The system automatically creates the workspace code, initial domain ID and dedicated teaching domain.: 系统会自动创建工作区代码、初始域 ID 和专属教学域。
+Workspace was not created: 工作区尚未创建
+Please enter the teacher account.: 请填写老师账号。
+Please enter the workspace name.: 请填写工作区名称。
+The workspace name must be no longer than 64 characters.: 工作区名称不能超过 64 个字符。
+The teacher account was not found. Please check the username or UID.: 没有找到这个老师账号，请检查用户名或 UID。
+Platform and system administrator accounts cannot be used as ordinary teacher accounts.: 平台管理员和系统管理员账号不能作为普通老师账号开通工作区。
+This account already belongs to a workspace and cannot be assigned again.: 这个账号已经属于一个工作区，不能重复分配。
+Please check the information and try again.: 请检查填写的信息后重试。
+Teacher account: 老师账号
+Enter username or UID: 输入用户名或 UID
+Use an existing ordinary teacher account. After creation, the teacher can log in with the original password and directly enter the independent workspace.: 请使用已有的普通老师账号。创建后，老师使用原密码登录即可直接进入独立工作区。
+Create teacher workspace: 一键创建老师工作区
 Workspace code: 工作区代码
 Workspace name: 工作区名称
 'For example: Teacher Zhang Workspace': 例如：张老师工作区
