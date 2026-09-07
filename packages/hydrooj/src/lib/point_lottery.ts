@@ -359,6 +359,50 @@ export function pointLotteryPrizeKey(prize: Pick<PointLotteryPrize, 'name' | 'im
     return `${prize.name}\n${prize.image || ''}`;
 }
 
+/** Use the same eligible pool for the draw and the probabilities displayed to its participant. */
+export async function getAvailablePointLotteryPrizes(
+    ctx: Context,
+    uid: number,
+    config: PointLotteryConfig,
+    domain?: Pick<DomainDoc, '_id' | 'workspaceId'> | null,
+) {
+    const nonRepeatablePrizes = config.prizes.filter((prize) => !prize.repeatable);
+    if (!nonRepeatablePrizes.length) return config.prizes;
+    const pointLotteryScopeDomainIds = await getPointLotteryScopeDomainIds(domain);
+    const nonRepeatableKeys = new Set(nonRepeatablePrizes.map(pointLotteryPrizeKey));
+    const badgeIds = nonRepeatablePrizes
+        .filter((item) => item.kind === 'badge')
+        .map((item) => item.badgeId);
+    const normalNames = nonRepeatablePrizes
+        .filter((item) => item.kind !== 'badge')
+        .map((item) => item.name);
+    const prizeQueries: any[] = [];
+    if (badgeIds.length) prizeQueries.push({ 'prize.kind': 'badge', 'prize.badgeId': { $in: badgeIds } });
+    if (normalNames.length) prizeQueries.push({ 'prize.name': { $in: normalNames } });
+    const wonLogs = await ctx.db.collection('lottery.draw').find({
+        domainId: { $in: pointLotteryScopeDomainIds },
+        uid,
+        deleted: { $ne: true },
+        $or: prizeQueries,
+    }).project({ prize: 1 }).toArray();
+    const wonKeys = new Set(wonLogs
+        .map((log: any) => log.prize && pointLotteryPrizeKey(log.prize))
+        .filter((key) => key && nonRepeatableKeys.has(key)));
+    return config.prizes.filter((prize) => prize.repeatable || !wonKeys.has(pointLotteryPrizeKey(prize)));
+}
+
+/** Keep every configured entry in order, including different durations of the same badge. */
+export function publicPointLotteryPrizes(prizes: PointLotteryPrize[], availablePrizes: PointLotteryPrize[]) {
+    const available = new Set(availablePrizes);
+    return prizes.map((prize) => ({ ...publicPointLotteryPrize(prize), available: available.has(prize) }));
+}
+
+/** Calculate the next pool without a fallible database read after an award has succeeded. */
+export function getPointLotteryPrizesAfterWin(availablePrizes: PointLotteryPrize[], awardedPrize: PointLotteryPrize) {
+    const awardedKey = pointLotteryPrizeKey(awardedPrize);
+    return availablePrizes.filter((prize) => prize.repeatable || pointLotteryPrizeKey(prize) !== awardedKey);
+}
+
 async function getPointLotteryBadge(
     ctx: Context,
     prize: PointLotteryPrize,

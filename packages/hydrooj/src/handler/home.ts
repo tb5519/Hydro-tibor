@@ -21,12 +21,12 @@ import * as mail from '../lib/mail';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
 import {
     canReceivePointLotteryBadge, ensureGlobalPointLotteryState, expireDuePointLotteryBadgeGrants, expirePointLotteryBadgeGrant,
-    getPointLotteryBadgeScopeQuery, getPointLotteryConfig, getPointLotteryScopeDomainIds, getPointLotteryStoragePrefix,
+    getAvailablePointLotteryPrizes, getPointLotteryBadgeScopeQuery, getPointLotteryConfig, getPointLotteryPrizesAfterWin,
+    getPointLotteryScopeDomainIds, getPointLotteryStoragePrefix,
     grantPointLotteryBadge, pickPointLotteryPrize, POINT_LOTTERY_BADGE_EXPIRY_SWEEP_TASK,
     POINT_LOTTERY_BADGE_EXPIRY_TASK, POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
-    pointLotteryPrizeKey, pointLotteryUserColl, publicPointLotteryPrize,
+    pointLotteryPrizeKey, pointLotteryUserColl, publicPointLotteryPrize, publicPointLotteryPrizes,
 } from '../lib/point_lottery';
-import ScheduleModel from '../model/schedule';
 import { getSharedRankingSnapshot, SharedRankingRow } from '../lib/shared_ranking';
 import { verifyTFA } from '../lib/verifyTFA';
 import BlackListModel from '../model/blacklist';
@@ -38,6 +38,7 @@ import message from '../model/message';
 import * as mistake from '../model/mistake';
 import ProblemModel from '../model/problem';
 import record from '../model/record';
+import ScheduleModel from '../model/schedule';
 import * as setting from '../model/setting';
 import storage from '../model/storage';
 import system from '../model/system';
@@ -519,6 +520,9 @@ export class HomeHandler extends Handler {
         const pointLotteryUser = this.user.hasPriv(PRIV.PRIV_USER_PROFILE)
             ? await ensureGlobalPointLotteryState(this.user._id)
             : null;
+        const availablePointLotteryPrizes = this.user.hasPriv(PRIV.PRIV_USER_PROFILE)
+            ? await getAvailablePointLotteryPrizes(this.ctx, this.user._id, pointLotteryConfig, this.domain)
+            : pointLotteryConfig.prizes;
         const pointLotteryPoints = Math.max(0, Math.floor(+pointLotteryUser?.[POINT_LOTTERY_POINTS_FIELD] || 0));
         const pointLotteryTotalPoints = pointLotteryUser?.[POINT_LOTTERY_TOTAL_POINTS_FIELD] === undefined
             ? pointLotteryPoints
@@ -591,12 +595,21 @@ export class HomeHandler extends Handler {
                 points: pointLotteryPoints,
                 totalPoints: pointLotteryTotalPoints,
                 canDraw: this.user.hasPriv(PRIV.PRIV_USER_PROFILE),
-                prizes: pointLotteryConfig.prizes.map(publicPointLotteryPrize),
+                prizes: publicPointLotteryPrizes(pointLotteryConfig.prizes, availablePointLotteryPrizes),
                 announcements: pointLotteryAnnouncements,
                 recentWins: pointLotteryWins.map((log: any) => ({
                     name: `${log.prize?.name || ''}`,
                     image: `${log.prize?.image || ''}`,
                     pointDelta: Math.max(0, Math.floor(+log.prize?.pointDelta || +log.pointDelta || 0)),
+                    ...(log.prize?.kind === 'badge' ? {
+                        kind: 'badge',
+                        ...(typeof log.prize.badgeDurationHours === 'number'
+                            && Number.isFinite(log.prize.badgeDurationHours)
+                            && log.prize.badgeDurationHours >= 0
+                            ? { badgeDurationHours: log.prize.badgeDurationHours } : {}),
+                        ...(log.prize.badgeRepeatEffect === 'duration' || log.prize.badgeRepeatEffect === 'upgrade'
+                            ? { badgeRepeatEffect: log.prize.badgeRepeatEffect } : {}),
+                    } : {}),
                     createdAt: log.createdAt,
                 })).filter(isVisiblePointLotteryWin).slice(0, 6),
             },
@@ -653,31 +666,7 @@ class PointLotteryDrawHandler extends Handler {
             fail('积分抽奖未开启。');
             return;
         }
-        const nonRepeatablePrizes = config.prizes.filter((prize) => !prize.repeatable);
-        let availablePrizes = config.prizes;
-        if (nonRepeatablePrizes.length) {
-            const pointLotteryScopeDomainIds = await getPointLotteryScopeDomainIds(this.domain);
-            const nonRepeatableKeys = new Set(nonRepeatablePrizes.map(pointLotteryPrizeKey));
-            const badgeIds = nonRepeatablePrizes
-                .filter((item) => item.kind === 'badge')
-                .map((item) => item.badgeId);
-            const normalNames = nonRepeatablePrizes
-                .filter((item) => item.kind !== 'badge')
-                .map((item) => item.name);
-            const prizeQueries: any[] = [];
-            if (badgeIds.length) prizeQueries.push({ 'prize.kind': 'badge', 'prize.badgeId': { $in: badgeIds } });
-            if (normalNames.length) prizeQueries.push({ 'prize.name': { $in: normalNames } });
-            const wonLogs = await this.ctx.db.collection('lottery.draw').find({
-                domainId: { $in: pointLotteryScopeDomainIds },
-                uid: this.user._id,
-                deleted: { $ne: true },
-                $or: prizeQueries,
-            }).project({ prize: 1 }).toArray();
-            const wonKeys = new Set(wonLogs
-                .map((log: any) => log.prize && pointLotteryPrizeKey(log.prize))
-                .filter((key) => key && nonRepeatableKeys.has(key)));
-            availablePrizes = config.prizes.filter((prize) => prize.repeatable || !wonKeys.has(pointLotteryPrizeKey(prize)));
-        }
+        const availablePrizes = await getAvailablePointLotteryPrizes(this.ctx, this.user._id, config, this.domain);
         const prize = pickPointLotteryPrize({ ...config, prizes: availablePrizes });
         if (!prize) {
             fail(availablePrizes.length ? '抽奖奖品未配置。' : '可抽奖品已全部抽完。');
@@ -788,6 +777,7 @@ class PointLotteryDrawHandler extends Handler {
             ok: true,
             prize: publicPointLotteryPrize(prize),
             prizeIndex,
+            prizes: publicPointLotteryPrizes(config.prizes, getPointLotteryPrizesAfterWin(availablePrizes, prize)),
             cost: config.cost,
             points,
             totalPoints,
