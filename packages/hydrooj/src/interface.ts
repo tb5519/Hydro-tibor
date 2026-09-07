@@ -728,6 +728,7 @@ export interface ProblemSearchResponse {
 export interface ProblemSearchOptions {
     limit?: number;
     skip?: number;
+    excludeDocIds?: number[];
 }
 
 export type ProblemSearch = (domainId: string, q: string, options?: ProblemSearchOptions) => Promise<ProblemSearchResponse>;

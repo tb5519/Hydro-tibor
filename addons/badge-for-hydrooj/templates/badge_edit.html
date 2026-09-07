@@ -47,6 +47,17 @@
     display: block;
     margin-top: 10px;
   }
+  .badge-ac-preview {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 4px 0 20px;
+  }
+  .badge-ac-preview__hint {
+    color: #6b7b93;
+    font-size: 13px;
+  }
 </style>
 <div class="row">
   <div class="medium-9 columns">
@@ -152,6 +163,19 @@
                 {{ _('Remove current badge theme sound') }}
               </label>
             {% endif %}
+          </div>
+          <div class="badge-ac-preview">
+            <button
+              type="button"
+              class="rounded primary button"
+              data-badge-ac-preview
+              data-ac-image="{{ badge.acImage|default('') }}"
+              data-empty-message="{{ _('Please upload an AC effect image or theme sound before previewing.') }}"
+              data-theme-sound="{{ badge.themeSound|default('') }}"
+            >
+              {{ _('Simulate AC') }}
+            </button>
+            <span class="badge-ac-preview__hint">{{ _('Preview the saved effect or files currently selected above. No student data will be changed.') }}</span>
           </div>
           <button name="operation" value="update" type="submit" class="rounded primary button">
             {{ _('Update') }}

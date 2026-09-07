@@ -596,6 +596,11 @@ export async function apply(ctx: Context) {
         'Recommended length: 2-10 seconds, up to 10 MB.':
             '建议时长：2-10 秒，最大 10 MB。',
         'Remove current badge theme sound': '移除当前徽章主题音效',
+        'Simulate AC': '模拟 AC',
+        'Preview the saved effect or files currently selected above. No student data will be changed.':
+            '预览已保存的效果或上方刚选择的文件，不会修改任何学员数据。',
+        'Please upload an AC effect image or theme sound before previewing.':
+            '请先上传满分 AC 动画图或主题音效，再进行模拟。',
         'hex color code': '十六进制颜色代码',
         'badge preview': '徽章预览',
         'badge assignment': '徽章分配',
@@ -647,6 +652,11 @@ export async function apply(ctx: Context) {
         'Recommended length: 2-10 seconds, up to 10 MB.':
             'Recommended length: 2-10 seconds, up to 10 MB.',
         'Remove current badge theme sound': 'Remove Current Badge Theme Sound',
+        'Simulate AC': 'Simulate AC',
+        'Preview the saved effect or files currently selected above. No student data will be changed.':
+            'Preview the saved effect or files currently selected above. No student data will be changed.',
+        'Please upload an AC effect image or theme sound before previewing.':
+            'Please upload an AC effect image or theme sound before previewing.',
         'hex color code': 'Hex Color Code',
         'badge preview': 'Badge Preview',
         'badge assignment': 'Badge Assignment',

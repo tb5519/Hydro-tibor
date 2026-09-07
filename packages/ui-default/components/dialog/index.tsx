@@ -124,6 +124,7 @@ export interface Field {
   columns?: number;
   rows?: number;
   multi?: boolean;
+  userApi?: 'users' | 'problemFilterStudents';
 }
 
 type Result<T extends string, R extends Record<T, Field>> = {
@@ -211,6 +212,7 @@ export async function prompt<T extends string, R extends Record<T, Field>>(title
                   onChange={(e) => setValues({ ...values, [name]: e.target.value })}
                 />)}
               {['userId', 'username', 'user'].includes(field.type) && <UserSelectAutoComplete
+                apiMethod={field.userApi}
                 data-autofocus={field.autofocus}
                 multi={field.multi}
                 ref={(el) => { refs.current[name] = el; }}

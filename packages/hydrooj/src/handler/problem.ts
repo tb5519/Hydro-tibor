@@ -19,11 +19,12 @@ import {
     FileLimitExceededError, FileTooLargeError, HackFailedError, NoProblemError, NotFoundError,
     PermissionError, ProblemAlreadyExistError, ProblemAlreadyUsedByContestError, ProblemConfigError,
     ProblemIsReferencedError, ProblemNotAllowCopyError, ProblemNotAllowLanguageError, ProblemNotAllowPretestError,
-    ProblemNotFoundError, RecordNotFoundError, SolutionNotFoundError, ValidationError,
+    ProblemNotFoundError, RecordNotFoundError, SolutionNotFoundError, UserNotFoundError, ValidationError,
 } from '../error';
 import {
     DomainDoc, ProblemDoc, ProblemSearchOptions, ProblemStatusDoc, RecordDoc, User,
 } from '../interface';
+import avatar from '../lib/avatar';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
 import {
@@ -42,6 +43,7 @@ import solution from '../model/solution';
 import storage from '../model/storage';
 import system from '../model/system';
 import user from '../model/user';
+import workspace from '../model/workspace';
 import {
     Handler, param, post, Query, query, route, Types,
 } from '../service/server';
@@ -187,24 +189,105 @@ async function buildAutoProblemCategories(domainId: string, udoc: User): Promise
 const defaultSearch = async (domainId: string, q: string, options?: ProblemSearchOptions) => {
     const escaped = escapeRegExp(q.toLowerCase());
     const projection: (keyof ProblemDoc)[] = ['domainId', 'docId', 'pid'];
-    const $regex = new RegExp(q.length >= 2 ? escaped : `\\A${escaped}`, 'gim');
-    const filter = { $or: [{ pid: { $regex } }, { title: { $regex } }, { tag: q }] };
-    const pdocs = await problem.getMulti(domainId, filter, projection)
-        .skip(options.skip || 0).limit(options.limit || system.get('pagination.problem')).toArray();
-    if (!options.skip) {
-        let pdoc = await problem.get(domainId, Number.isSafeInteger(+q) ? +q : q, projection);
-        if (pdoc) pdocs.unshift(pdoc);
-        else if (/^P\d+$/.test(q)) {
-            pdoc = await problem.get(domainId, +q.substring(1), projection);
-            if (pdoc) pdocs.unshift(pdoc);
-        }
+    const $regex = new RegExp(q.length >= 2 ? escaped : `^${escaped}`, 'gim');
+    const textFilter: Filter<ProblemDoc> = { $or: [{ pid: { $regex } }, { title: { $regex } }, { tag: q }] };
+    const excludedDocIds = new Set(options?.excludeDocIds || []);
+    const filter: Filter<ProblemDoc> = excludedDocIds.size
+        ? { $and: [textFilter, { docId: { $nin: [...excludedDocIds] } }] }
+        : textFilter;
+    let exactPdoc = await problem.get(domainId, Number.isSafeInteger(+q) ? +q : q, projection);
+    if (!exactPdoc && /^P\d+$/.test(q)) {
+        exactPdoc = await problem.get(domainId, +q.substring(1), projection);
     }
+    if (exactPdoc && excludedDocIds.has(exactPdoc.docId)) exactPdoc = null;
+    const normalFilter: Filter<ProblemDoc> = exactPdoc
+        ? { $and: [filter, { docId: { $ne: exactPdoc.docId } }] }
+        : filter;
+    const skip = options?.skip || 0;
+    const limit = options?.limit || system.get('pagination.problem');
+    const normalSkip = exactPdoc ? Math.max(0, skip - 1) : skip;
+    const normalLimit = exactPdoc && !skip ? Math.max(0, limit - 1) : limit;
+    const pdocs = normalLimit
+        ? await problem.getMulti(domainId, normalFilter, projection).skip(normalSkip).limit(normalLimit).toArray()
+        : [];
+    const hits = [
+        ...exactPdoc && !skip ? [`${exactPdoc.domainId}/${exactPdoc.docId}`] : [],
+        ...pdocs.map((i) => `${i.domainId}/${i.docId}`),
+    ];
     return {
-        hits: Array.from(new Set(pdocs.map((i) => `${i.domainId}/${i.docId}`))),
-        total: Math.max(pdocs.length, await problem.count(domainId, filter)),
+        hits,
+        total: (exactPdoc ? 1 : 0) + await problem.count(domainId, normalFilter),
         countRelation: 'eq',
     };
 };
+
+interface ProblemFilterScope {
+    ddoc: DomainDoc;
+    actorUid: number;
+    workspaceId: string;
+    scopeDomainIds: string[];
+    memberUids: Set<number>;
+    excludedLegacyUids: Set<number>;
+}
+
+async function prepareProblemFilterScope(ddoc: DomainDoc, actorUid: number): Promise<ProblemFilterScope> {
+    const workspaceId = workspace.resolveDomainWorkspaceId(ddoc);
+    const legacyWorkspace = workspaceId === workspace.LEGACY_WORKSPACE_ID
+        ? await workspace.getLegacyWorkspace()
+        : null;
+    const hasLegacyGlobalScope = legacyWorkspace?.ownerUid === actorUid;
+    const scopeDomains = hasLegacyGlobalScope
+        ? await workspace.getDomains(workspace.LEGACY_WORKSPACE_ID)
+        : [ddoc];
+    const [members, excludedLegacyUids] = await Promise.all([
+        workspace.getMembers(workspaceId),
+        workspaceId === workspace.LEGACY_WORKSPACE_ID
+            ? workspace.getExcludedLegacyUids()
+            : Promise.resolve(new Set<number>()),
+    ]);
+    return {
+        ddoc,
+        actorUid,
+        workspaceId,
+        scopeDomainIds: scopeDomains.map((item) => item._id),
+        memberUids: new Set(members.map((item) => item.uid)),
+        excludedLegacyUids,
+    };
+}
+
+async function resolveProblemFilterStudent(
+    ddoc: DomainDoc, actorUid: number, targetUid: number, preparedScope?: ProblemFilterScope,
+) {
+    const invalidTarget = () => new UserNotFoundError(targetUid.toString());
+    const account = await user.coll.findOne({ _id: targetUid });
+    if (!account
+        || targetUid <= 1
+        || targetUid === actorUid
+        || !(account.priv & PRIV.PRIV_USER_PROFILE)
+        || (account.priv & (PRIV.PRIV_EDIT_SYSTEM | PRIV.PRIV_MANAGE_ALL_DOMAIN | PRIV.PRIV_JUDGE))
+        || workspace.isPlatformAdmin(targetUid)) throw invalidTarget();
+
+    const scope = preparedScope || await prepareProblemFilterScope(ddoc, actorUid);
+    const memberships = await domain.collUser.find({
+        domainId: { $in: scope.scopeDomainIds },
+        uid: targetUid,
+        join: true,
+    }).project<{ domainId: string }>({ domainId: 1 }).toArray();
+    if (!memberships.length) throw invalidTarget();
+
+    const assignedToOtherWorkspace = scope.workspaceId !== workspace.LEGACY_WORKSPACE_ID
+        && await workspace.isAssignedToOtherWorkspace(targetUid, scope.workspaceId);
+    if (scope.memberUids.has(targetUid)
+        || scope.excludedLegacyUids.has(targetUid)
+        || assignedToOtherWorkspace) throw invalidTarget();
+
+    const scopedUsers = await Promise.all(memberships.map((item) => user.getById(item.domainId, targetUid)));
+    if (scopedUsers.some((item) => item?.hasPerm(PERM.PERM_EDIT_DOMAIN))) throw invalidTarget();
+
+    const target = await user.getById(ddoc._id, targetUid);
+    if (!target) throw invalidTarget();
+    return target;
+}
 
 export interface QueryContext {
     query: Filter<ProblemDoc>;
@@ -237,7 +320,12 @@ export class ProblemMainHandler extends Handler {
     @param('pjax', Types.Boolean)
     @param('quick', Types.Boolean)
     @param('sort', Types.Range(['default', 'recent']), true)
-    async get(domainId: string, page = 1, q = '', limit: number, pjax = false, quick = false, sortStrategy = 'default') {
+    @param('unacUid', Types.PositiveInt, true)
+    async get(
+        domainId: string, page = 1, q = '', limit: number, pjax = false, quick = false,
+        sortStrategy = 'default', unacUid?: number,
+    ) {
+        domainId = this.domain._id;
         this.response.template = 'problem_main.html';
         if (!limit || limit > this.ctx.setting.get('pagination.problem') || page > 1) limit = this.ctx.setting.get('pagination.problem');
         this.queryContext.query = buildQuery(this.user);
@@ -245,6 +333,17 @@ export class ProblemMainHandler extends Handler {
         // eslint-disable-next-line ts/no-shadow
         const query = this.queryContext.query;
         const psdict = {};
+        const canFilterStudentUnaccepted = this.user.hasPerm(PERM.PERM_EDIT_DOMAIN);
+        if (unacUid && !canFilterStudentUnaccepted) throw new PermissionError(PERM.PERM_EDIT_DOMAIN);
+        const filterStudent = unacUid
+            ? await resolveProblemFilterStudent(this.domain, this.user._id, unacUid)
+            : null;
+        const acceptedDocIds = filterStudent
+            ? (await problem.getMultiStatus(domainId, {
+                uid: filterStudent._id,
+                status: STATUS.STATUS_ACCEPTED,
+            }).project<Pick<ProblemStatusDoc, 'docId'>>({ _id: 0, docId: 1 }).toArray()).map((item) => item.docId)
+            : [];
         const search = Object.values(global.Hydro.module.problemSearch)[0] || defaultSearch;
         const parsed = parser.parse(q, {
             keywords: ['category', 'difficulty', 'namespace'],
@@ -268,13 +367,21 @@ export class ProblemMainHandler extends Handler {
         if (category.length) this.UiContext.extraTitleContent = category.join(',');
         let total = 0;
         if (text) {
-            const result = await search(domainId, q, { skip: (page - 1) * limit, limit });
+            const result = await search(domainId, q, {
+                skip: (page - 1) * limit,
+                limit,
+                excludeDocIds: acceptedDocIds,
+            });
             total = result.total;
             this.queryContext.pcountRelation = result.countRelation;
             if (!result.hits.length) this.queryContext.fail = true;
             query.docId = { $in: result.hits.map((t) => +t.split('/')[1]) };
             this.queryContext.hint = 'basic';
             this.queryContext.sort = result.hits;
+        }
+        if (acceptedDocIds.length) {
+            query.$and ||= [];
+            query.$and.push({ docId: { $nin: acceptedDocIds } });
         }
         const sort = this.queryContext.sort;
         await this.ctx.parallel('problem/list', query, this, sort);
@@ -297,7 +404,7 @@ export class ProblemMainHandler extends Handler {
         if (text && pcount > pdocs.length) pcount = pdocs.length;
         if (this.user.hasPriv(PRIV.PRIV_USER_PROFILE)) {
             Object.assign(psdict, await problem.getListStatus(
-                domainId, this.user._id,
+                domainId, filterStudent?._id || this.user._id,
                 pdocs.map((i) => i.docId),
             ));
         }
@@ -314,7 +421,16 @@ export class ProblemMainHandler extends Handler {
                 title: this.renderTitle(this.translate('problem_main')),
                 fragments: (await Promise.all([
                     this.renderHTML('partials/problem_list.html', {
-                        page, ppcount, pcount, pdocs, psdict, qs: q, sort: sortStrategy,
+                        page,
+                        ppcount,
+                        pcount,
+                        pdocs,
+                        psdict,
+                        qs: q,
+                        sort: sortStrategy,
+                        canFilterStudentUnaccepted,
+                        filterStudent,
+                        filterStudentUid: filterStudent?._id,
                     }),
                     this.renderHTML('partials/problem_lucky.html', { qs: q }),
                 ])).map((i) => ({ html: i })),
@@ -329,6 +445,9 @@ export class ProblemMainHandler extends Handler {
                 psdict,
                 qs: q,
                 sort: sortStrategy,
+                canFilterStudentUnaccepted,
+                filterStudent,
+                filterStudentUid: filterStudent?._id,
                 problemCategories,
                 problemCategoriesAuto: true,
                 pinnedContest,
@@ -1425,6 +1544,111 @@ export const ProblemApi = {
             const pdocs = await problem.getList(args.domainId, args.ids, ctx.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN) || ctx.user._id,
                 undefined, undefined, true);
             return args.ids.map((id) => pdocs[+id]).filter((i) => i);
+        },
+    ),
+    problemFilterStudents: Query(
+        Schema.object({
+            auto: Schema.array(Schema.string()),
+            search: Schema.string(),
+            limit: Schema.number().step(1),
+        }),
+        async (ctx, args) => {
+            ctx.checkPerm(PERM.PERM_EDIT_DOMAIN);
+            const ddoc = ctx.domain;
+            if (!ddoc) return [];
+            const limit = Math.max(1, Math.min(args.limit || 10, 10));
+            const scope = await prepareProblemFilterScope(ddoc, ctx.user._id);
+            const candidateIds: number[] = [];
+            if (args.auto?.length) {
+                candidateIds.push(...args.auto.slice(0, limit)
+                    .map((item) => +item)
+                    .filter((uid) => Number.isSafeInteger(uid) && uid > 1));
+            } else if (args.search) {
+                const joinedUids = await domain.collUser.distinct('uid', {
+                    domainId: { $in: scope.scopeDomainIds },
+                    uid: { $gt: 1 },
+                    join: true,
+                });
+                const searchableUids = joinedUids.filter((uid) => uid !== ctx.user._id
+                    && !scope.memberUids.has(uid)
+                    && !scope.excludedLegacyUids.has(uid));
+                if (searchableUids.length) {
+                    const numericUid = +args.search;
+                    const exact = (Number.isSafeInteger(numericUid)
+                        ? await user.getById(ddoc._id, numericUid)
+                        : null) || await user.getByUname(ddoc._id, args.search);
+                    const usernamePrefix = new RegExp(`^${escapeRegExp(args.search.toLowerCase())}`);
+                    const displayNamePrefix = new RegExp(`^${escapeRegExp(args.search)}`, 'i');
+                    const candidateLimit = Math.max(limit * 5, 50);
+                    let usernameOffset = 0;
+                    let displayNameOffset = 0;
+                    let usernameExhausted = false;
+                    let displayNameExhausted = false;
+                    const resolvedUids = new Set<number>();
+                    if (exact && searchableUids.includes(exact._id)) {
+                        try {
+                            await resolveProblemFilterStudent(ddoc, ctx.user._id, exact._id, scope);
+                            candidateIds.push(exact._id);
+                        } catch (error) {
+                            if (!(error instanceof UserNotFoundError)) throw error;
+                        }
+                        resolvedUids.add(exact._id);
+                    }
+                    while (candidateIds.length < limit && (!usernameExhausted || !displayNameExhausted)) {
+                        // eslint-disable-next-line no-await-in-loop
+                        const [usernameMatches, displayNameMatches] = await Promise.all([
+                            usernameExhausted
+                                ? Promise.resolve([])
+                                : user.coll.find({
+                                    _id: { $in: searchableUids },
+                                    unameLower: { $regex: usernamePrefix },
+                                }).sort({ _id: 1 }).skip(usernameOffset).limit(candidateLimit)
+                                    .project<{ _id: number }>({ _id: 1 }).toArray(),
+                            displayNameExhausted
+                                ? Promise.resolve([])
+                                : domain.collUser.find({
+                                    domainId: { $in: scope.scopeDomainIds },
+                                    uid: { $in: searchableUids },
+                                    join: true,
+                                    displayName: { $regex: displayNamePrefix },
+                                }).sort({ uid: 1 }).skip(displayNameOffset).limit(candidateLimit)
+                                    .project<{ uid: number }>({ uid: 1 }).toArray(),
+                        ]);
+                        usernameOffset += usernameMatches.length;
+                        displayNameOffset += displayNameMatches.length;
+                        usernameExhausted = usernameMatches.length < candidateLimit;
+                        displayNameExhausted = displayNameMatches.length < candidateLimit;
+                        const batchUids = Array.from(new Set([
+                            ...usernameMatches.map((item) => item._id),
+                            ...displayNameMatches.map((item) => item.uid),
+                        ])).filter((uid) => !resolvedUids.has(uid));
+                        for (const uid of batchUids) resolvedUids.add(uid);
+                        // eslint-disable-next-line no-await-in-loop
+                        const batch = await Promise.all(batchUids.map(async (uid) => {
+                            try {
+                                await resolveProblemFilterStudent(ddoc, ctx.user._id, uid, scope);
+                                return uid;
+                            } catch (error) {
+                                if (!(error instanceof UserNotFoundError)) throw error;
+                                return null;
+                            }
+                        }));
+                        candidateIds.push(...batch.filter((uid): uid is number => uid !== null));
+                    }
+                }
+            }
+            const result = await Promise.all(Array.from(new Set(candidateIds)).map(async (uid) => {
+                try {
+                    // Keep autocomplete results under the exact same scope check used by the page request.
+                    const target = await resolveProblemFilterStudent(ddoc, ctx.user._id, uid, scope);
+                    target.avatarUrl = avatar(target.avatar);
+                    return target;
+                } catch (error) {
+                    if (!(error instanceof UserNotFoundError)) throw error;
+                    return null;
+                }
+            }));
+            return result.filter((item): item is User => !!item).slice(0, limit);
         },
     ),
 } as const;

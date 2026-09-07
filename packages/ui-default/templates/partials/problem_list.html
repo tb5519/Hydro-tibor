@@ -3,10 +3,34 @@
 {% import "components/problem.html" as problem with context %}
 {% import "components/nothing.html" as nothing with context %}
 <div data-fragment-id="problem_list">
+{% if pdocs.length or canFilterStudentUnaccepted %}
+  <div class="problem-list-filter-bar{% if not pdocs.length %} problem-list-filter-bar--empty{% endif %}">
+  {% if pdocs.length %}
+    {{ paginator.render(page, ppcount, position='top', add_qs=utils.buildQueryString(q=qs, sort='' if sort == 'default' else sort, unacUid=filterStudentUid or '')) }}
+  {% endif %}
+  {% if canFilterStudentUnaccepted %}
+    <div class="problem-student-unac-controls">
+      <button
+        type="button"
+        class="problem-student-unac-button{% if filterStudentUid %} is-active{% endif %}"
+        data-student-unac-filter
+        title="{% if filterStudentUid %}当前筛选：{{ filterStudent.displayName or filterStudent.uname }}（{{ filterStudent.uname }} / UID {{ filterStudent._id }}）{% else %}选择一个学员，只显示该学员未 AC 的题目{% endif %}"
+      >
+        <span class="icon icon-filter"></span>
+        {% if filterStudentUid %}{{ filterStudent.displayName or filterStudent.uname }} 未 AC{% else %}学员未 AC{% endif %}
+      </button>
+      {% if filterStudentUid %}
+        <button type="button" class="problem-student-unac-clear" data-student-unac-clear title="清除学员筛选" aria-label="清除学员筛选">
+          <span class="icon icon-close"></span>
+        </button>
+      {% endif %}
+    </div>
+  {% endif %}
+  </div>
+{% endif %}
 {% if not pdocs.length %}
   {{ nothing.render('Sorry, there are no problems in the problem set.') }}
 {% else %}
-  {{ paginator.render(page, ppcount, position='top', add_qs=utils.buildQueryString(q=qs, sort='' if sort == 'default' else sort)) }}
   <table class="data-table">
     <colgroup>
       <col class="col--checkbox display-mode-hide">
@@ -63,6 +87,6 @@
     {%- endfor -%}
     </tbody>
   </table>
-  {{ paginator.render(page, ppcount, add_qs=utils.buildQueryString(q=qs, sort='' if sort == 'default' else sort)) }}
+  {{ paginator.render(page, ppcount, add_qs=utils.buildQueryString(q=qs, sort='' if sort == 'default' else sort, unacUid=filterStudentUid or '')) }}
 {% endif %}
 </div>

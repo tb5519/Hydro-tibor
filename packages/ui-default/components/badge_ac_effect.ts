@@ -19,9 +19,10 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
   let audioPrimed = false;
   let audioPriming = false;
   let audioGeneration = 0;
+  let disposed = false;
 
   function getAudio() {
-    if (!themeSound) return null;
+    if (!themeSound || disposed) return null;
     if (!audio || audioSource !== themeSound) {
       audio?.pause();
       audioGeneration++;
@@ -37,6 +38,7 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
   }
 
   function primeAudio() {
+    if (disposed) return;
     const player = getAudio();
     if (!player || audioPrimed || audioPriming) return;
     const generation = ++audioGeneration;
@@ -66,7 +68,7 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
   }
 
   function play() {
-    if ((!acImage && !themeSound) || activeEffect) return activeEffect || Promise.resolve();
+    if (disposed || (!acImage && !themeSound) || activeEffect) return activeEffect || Promise.resolve();
 
     const effect = document.createElement('div');
     effect.className = 'badge-ac-theme-effect';
@@ -105,6 +107,7 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
         if (player) {
           player.onended = null;
           player.onerror = null;
+          player.pause();
         }
         effect.classList.remove('is-visible');
         effect.classList.add('is-leaving');
@@ -140,5 +143,26 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
     return activeEffect;
   }
 
-  return { play };
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    if (themeSound) {
+      document.removeEventListener('pointerdown', primeAudio, { capture: true });
+      document.removeEventListener('keydown', primeAudio, { capture: true });
+    }
+    audioGeneration++;
+    audioPriming = false;
+    audioPrimed = false;
+    if (audio) {
+      audio.onended = null;
+      audio.onerror = null;
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+      audio = null;
+      audioSource = '';
+    }
+  }
+
+  return { dispose, play };
 }

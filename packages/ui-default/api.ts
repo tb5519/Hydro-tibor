@@ -1,4 +1,5 @@
 /* eslint-disable import/first */
+export { createBadgeAcThemePlayer } from './components/badge_ac_effect';
 export * from './components/dialog';
 export { default as loadMonaco } from './components/monaco/loader';
 export { default as Notification } from './components/notification';

@@ -95,6 +95,33 @@ function loadQuery() {
   pjax.request({ url: url.toString() });
 }
 
+async function selectStudentUnacceptedFilter() {
+  const result = await prompt(i18n('筛选学员未 AC 题目'), {
+    studentUid: {
+      type: 'userId',
+      label: i18n('选择学员账号'),
+      userApi: 'problemFilterStudents',
+      required: true,
+      autofocus: true,
+    },
+  }, {
+    cancelByClickingBack: true,
+    cancelByEsc: true,
+  });
+  if (!result) return;
+  const url = new URL(window.location.href);
+  url.searchParams.set('unacUid', result.studentUid.toString());
+  url.searchParams.delete('page');
+  window.location.assign(url.toString());
+}
+
+function clearStudentUnacceptedFilter() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('unacUid');
+  url.searchParams.delete('page');
+  window.location.assign(url.toString());
+}
+
 function handleTagSelected(ev) {
   if (ev.shiftKey || ev.metaKey || ev.ctrlKey) return;
   let [type, selection] = ['category', $(ev.currentTarget).text()];
@@ -447,6 +474,8 @@ const page = new NamedPage(['problem_main'], () => {
   $('#searchForm').on('submit', inputChanged);
   $('#searchForm').find('input').on('input', _.debounce(inputChanged, 500));
   $('#searchForm').find('select[name="sort"]').on('change', inputChanged);
+  $(document).on('click', '[data-student-unac-filter]', selectStudentUnacceptedFilter);
+  $(document).on('click', '[data-student-unac-clear]', clearStudentUnacceptedFilter);
   $('.dialog-button').on('click', (ev) => {
     categoryDialog.clear().open();
     ev.preventDefault();

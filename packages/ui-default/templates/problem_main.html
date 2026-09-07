@@ -82,6 +82,81 @@
       border-color: #2563eb !important;
       color: #ffffff !important;
     }
+    .problem-list-filter-bar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      min-height: 48px;
+      border-bottom: 2px solid rgba(148, 163, 184, .28);
+    }
+    .problem-list-filter-bar > .pager {
+      grid-column: 1;
+      grid-row: 1;
+      width: 100%;
+      margin-bottom: 0;
+      border-bottom: 0;
+    }
+    .problem-student-unac-controls {
+      grid-column: 2;
+      grid-row: 1;
+      justify-self: end;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-right: 12px;
+    }
+    .problem-student-unac-button,
+    .problem-student-unac-clear {
+      height: 34px;
+      margin: 0 !important;
+      border: 1px solid rgba(100, 116, 139, .35);
+      border-radius: 9px;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, .05);
+    }
+    .problem-student-unac-button {
+      max-width: 230px;
+      padding: 0 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .problem-student-unac-button:hover,
+    .problem-student-unac-button.is-active {
+      border-color: #60a5fa;
+      background: rgba(59, 130, 246, .12);
+      color: #2563eb;
+    }
+    .problem-student-unac-clear {
+      width: 34px;
+      padding: 0;
+      opacity: .75;
+    }
+    .problem-student-unac-clear:hover {
+      border-color: #fca5a5;
+      background: rgba(244, 63, 94, .1);
+      color: #dc2626;
+      opacity: 1;
+    }
+    @media (max-width: 64em) {
+      .problem-list-filter-bar {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto auto;
+      }
+      .problem-list-filter-bar > .pager {
+        grid-column: 1;
+        grid-row: 2;
+        width: 100%;
+      }
+      .problem-student-unac-controls {
+        grid-column: 1;
+        grid-row: 1;
+        margin-top: 6px;
+      }
+      .problem-list-filter-bar--empty { padding-bottom: 6px; }
+    }
     @media (max-width: 40em) {
       form#searchForm .ui-v2-problem-toolbar > .search {
         flex-wrap: wrap !important;
@@ -108,6 +183,7 @@
             <div class="ui-v2-problem-toolbar">
             <div class="search">
               <input name="q" type="text" value="{{ qs }}" placeholder="{{ _('Search') }}">
+              {% if filterStudentUid %}<input name="unacUid" type="hidden" value="{{ filterStudentUid }}">{% endif %}
               <select name="sort" class="search-sort">
                 {%- for sortType in ["default", "recent"] -%}
                   <option value="{{ sortType }}" {{ "selected" if sort == sortType else "" }}>{{ _('sort::' + sortType) }}</option>

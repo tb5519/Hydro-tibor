@@ -31,8 +31,20 @@ export default class ElasticSearchService extends Service {
     }
 
     async problemSearch(domainId: string, q: string, opts: Parameters<ProblemSearch>[2] = {}): ReturnType<ProblemSearch> {
-        const size = opts?.limit || SystemModel.get('pagination.problem');
-        const from = Math.min(this.config.indexSize - size, opts?.skip || 0);
+        const limit = opts?.limit || SystemModel.get('pagination.problem');
+        const skip = opts?.skip || 0;
+        const excludedDocIds = new Set(opts?.excludeDocIds || []);
+        let exactPdoc = await ProblemModel.get(domainId, +q || q, ProblemModel.PROJECTION_LIST);
+        if (!exactPdoc && /^P\d+$/.test(q)) {
+            exactPdoc = await ProblemModel.get(domainId, +q.substring(1), ProblemModel.PROJECTION_LIST);
+        }
+        if (exactPdoc && excludedDocIds.has(exactPdoc.docId)) exactPdoc = null;
+        const normalExcludedDocIds = new Set(excludedDocIds);
+        if (exactPdoc) normalExcludedDocIds.add(exactPdoc.docId);
+        const requestedSize = exactPdoc && !skip ? Math.max(0, limit - 1) : limit;
+        const normalSkip = exactPdoc ? Math.max(0, skip - 1) : skip;
+        const from = Math.min(normalSkip, this.config.indexSize);
+        const size = Math.min(requestedSize, Math.max(0, this.config.indexSize - from));
         const res = await this.client.search({
             index: 'problem',
             size,
@@ -47,24 +59,23 @@ export default class ElasticSearchService extends Service {
                 bool: {
                     minimum_should_match: 1,
                     should: [{ match: { domainId } }],
+                    ...normalExcludedDocIds.size
+                        ? { must_not: [{ terms: { docId: [...normalExcludedDocIds] } }] }
+                        : {},
                 },
             },
         });
-        let hits = res.hits.hits.map((i) => i._id);
-        if (!opts?.skip) {
-            let pdoc = await ProblemModel.get(domainId, +q || q, ProblemModel.PROJECTION_LIST);
-            if (pdoc) {
-                hits = hits.filter((i) => i !== `${pdoc.domainId}/${pdoc.docId}`);
-                hits.unshift(`${pdoc.domainId}/${pdoc.docId}`);
-            } else if (/^P\d+$/.test(q)) {
-                pdoc = await ProblemModel.get(domainId, +q.substring(1), ProblemModel.PROJECTION_LIST);
-                if (pdoc) hits.unshift(`${pdoc.domainId}/${pdoc.docId}`);
-            }
-        }
+        const hits = [
+            ...exactPdoc && !skip ? [`${exactPdoc.domainId}/${exactPdoc.docId}`] : [],
+            ...res.hits.hits.map((i) => i._id),
+        ];
+        const rawSearchTotal = typeof res.hits.total === 'number' ? res.hits.total : res.hits.total.value;
+        const searchTotal = Math.min(rawSearchTotal, this.config.indexSize);
+        const countRelation = typeof res.hits.total === 'number' ? 'eq' : res.hits.total.relation;
         return {
-            countRelation: typeof res.hits.total === 'number' ? 'eq' : res.hits.total.relation,
-            total: typeof res.hits.total === 'number' ? res.hits.total : res.hits.total.value,
-            hits: Array.from(new Set(hits)),
+            countRelation: countRelation === 'gte' || rawSearchTotal > this.config.indexSize ? 'gte' : 'eq',
+            total: searchTotal + (exactPdoc ? 1 : 0),
+            hits,
         };
     }
 

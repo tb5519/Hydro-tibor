@@ -82,22 +82,45 @@ export class SonicService extends Service {
         });
         yield this.ctx.provideModule('problemSearch', 'sonic', async (domainId, query, opts) => {
             const limit = opts?.limit || SystemModel.get('pagination.problem');
-            let hits = await this.query('problem', `${domainId}@title`, query, { limit });
-            if (!opts.skip) {
-                let pdoc = await ProblemModel.get(domainId, +query || query, ProblemModel.PROJECTION_LIST);
-                if (pdoc) {
-                    hits = hits.filter((i) => i !== `${pdoc.domainId}/${pdoc.docId}`);
-                    hits.unshift(`${pdoc.domainId}/${pdoc.docId}`);
-                } else if (/^P\d+$/.test(query)) {
-                    pdoc = await ProblemModel.get(domainId, +query.substring(1), ProblemModel.PROJECTION_LIST);
-                    if (pdoc) hits.unshift(`${pdoc.domainId}/${pdoc.docId}`);
+            const skip = opts?.skip || 0;
+            const excluded = new Set((opts?.excludeDocIds || []).map((docId) => `${domainId}/${docId}`));
+            const requested = skip + limit + 1;
+            const hits: string[] = [];
+            const seen = new Set<string>();
+            const append = (hit: string) => {
+                if (!seen.has(hit) && !excluded.has(hit)) {
+                    seen.add(hit);
+                    hits.push(hit);
                 }
+            };
+            const queryBucket = async (bucket: string) => {
+                const batchSize = Math.max(1, Math.min(Math.max(limit, 50), 100));
+                let offset = 0;
+                while (hits.length < requested) {
+                    // Keep each request within Sonic's configured query limit while using offsets to over-fetch.
+                    // eslint-disable-next-line no-await-in-loop
+                    const batch = await this.query('problem', bucket, query, { limit: batchSize, offset });
+                    for (const hit of batch) append(hit);
+                    offset += batch.length;
+                    if (batch.length < batchSize) return true;
+                }
+                return false;
+            };
+            let pdoc = await ProblemModel.get(domainId, +query || query, ProblemModel.PROJECTION_LIST);
+            if (pdoc) append(`${pdoc.domainId}/${pdoc.docId}`);
+            else if (/^P\d+$/.test(query)) {
+                pdoc = await ProblemModel.get(domainId, +query.substring(1), ProblemModel.PROJECTION_LIST);
+                if (pdoc) append(`${pdoc.domainId}/${pdoc.docId}`);
             }
-            if (limit - hits.length > 0) hits.push(...await this.query('problem', `${domainId}@content`, query, { limit: limit - hits.length }));
+            const titleExhausted = await queryBucket(`${domainId}@title`);
+            const contentExhausted = titleExhausted && hits.length < requested
+                ? await queryBucket(`${domainId}@content`)
+                : false;
+            const hasMore = hits.length > skip + limit || !titleExhausted || !contentExhausted;
             return {
-                countRelation: hits.length >= limit ? 'gte' : 'eq',
+                countRelation: hasMore ? 'gte' : 'eq',
                 total: hits.length,
-                hits,
+                hits: hits.slice(skip, skip + limit),
             };
         });
         yield this.ctx.addScript(
