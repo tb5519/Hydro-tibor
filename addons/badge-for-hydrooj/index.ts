@@ -503,11 +503,19 @@ class BadgeThemeSoundHandler extends BadgeAssetHandler {
 class BadgeDetailHandler extends Handler {
     @param('id', Types.PositiveInt, true)
     async get(domainId: string, id: number) {
-        const badge = await BadgeModel.badgeGet(this.ctx, id, getBadgeDomainScope(this));
+        const badgeDomainId = getBadgeDomainScope(this);
+        const badge = await BadgeModel.badgeGet(this.ctx, id, badgeDomainId);
         if (!badge) throw new NotFoundError(`Badge ${id} is not exist!`);
-        const udict = await user.getList(domainId, badge.users);
+        // Lottery-granted temporary badges deliberately do not enter
+        // badge.users (that field denotes a permanent manual assignment), but
+        // they are still active holders and should be visible on this page.
+        const holderUids = await this.ctx.db.collection('userBadge').distinct('owner', {
+            badgeId: id,
+            ...(badgeDomainId ? { domainId: badgeDomainId } : { domainId: { $exists: false } }),
+        });
+        const udict = await user.getList(domainId, holderUids);
         this.response.template = 'badge_detail.html';
-        this.response.body = { badge, udict };
+        this.response.body = { badge: { ...badge, users: holderUids }, udict };
     }
 }
 

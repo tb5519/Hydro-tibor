@@ -59,6 +59,28 @@
   .lottery-admin__prize.is-template {
     display: none;
   }
+  .lottery-admin__prize-kind-note {
+    color: #738196;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .lottery-admin__upgrade-list {
+    display: grid;
+    gap: .45rem;
+  }
+  .lottery-admin__upgrade-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: .45rem;
+  }
+  /* The row used as the clone template must never be interactive itself. */
+  .lottery-admin__upgrade-row[hidden] {
+    display: none !important;
+  }
+  .lottery-admin__upgrade-row .button {
+    white-space: nowrap;
+  }
   .lottery-admin__prize-title {
     display: flex;
     align-items: center;
@@ -154,21 +176,23 @@
   .lottery-admin__prize-cell {
     display: flex;
     align-items: center;
-    gap: .35rem;
-    flex-wrap: wrap;
   }
-  .lottery-admin__edit-link {
-    padding: .12rem .28rem;
+  .lottery-admin__prize-name {
+    padding: .1rem 0;
     border: 0;
+    border-bottom: 1px dashed transparent;
     background: transparent;
-    color: #2563eb;
+    color: inherit;
     cursor: pointer;
-    font-size: .8rem;
-    line-height: 1.35;
+    font: inherit;
+    line-height: inherit;
+    text-align: left;
   }
-  .lottery-admin__edit-link:hover {
+  .lottery-admin__prize-name:hover,
+  .lottery-admin__prize-name:focus-visible {
     color: #1d4ed8;
-    text-decoration: underline;
+    border-bottom-color: #93b4e8;
+    outline: 0;
   }
   .lottery-admin__edit-row[hidden] {
     display: none;
@@ -190,6 +214,7 @@
     box-shadow: 0 8px 24px rgba(37, 99, 235, .06);
   }
   .lottery-admin__edit-copy {
+    flex: 1 1 15rem;
     min-width: 12rem;
   }
   .lottery-admin__edit-copy strong {
@@ -198,26 +223,17 @@
     color: #1e3a5f;
   }
   .lottery-admin__edit-form {
-    display: flex;
+    display: grid;
+    flex: 1 1 28rem;
+    grid-template-columns: minmax(14rem, 1fr) auto auto;
     align-items: flex-end;
     gap: .55rem;
-    flex-wrap: wrap;
   }
   .lottery-admin__edit-form label {
-    min-width: 15rem;
+    min-width: 0;
   }
   .lottery-admin__edit-form select {
     width: 100%;
-  }
-  .lottery-admin__edited-badge {
-    display: inline-block;
-    margin-left: .35rem;
-    padding: .08rem .35rem;
-    border-radius: 999px;
-    background: #eff6ff;
-    color: #2563eb;
-    font-size: .72rem;
-    vertical-align: middle;
   }
   @media (max-width: 56em) {
     .lottery-admin__grid {
@@ -240,7 +256,11 @@
       display: block;
     }
     .lottery-admin__edit-form {
+      grid-template-columns: 1fr 1fr;
       margin-top: .75rem;
+    }
+    .lottery-admin__edit-form label {
+      grid-column: 1 / -1;
     }
     .lottery-admin__edit-form label,
     .lottery-admin__edit-form .button {
@@ -296,11 +316,71 @@
           </div>
           <div class="lottery-admin__grid">
             <label>
+              <div>{{ _('奖品类型') }}</div>
+              <select class="select" name="prize{{ loop.index0 }}Kind" data-field="Kind" data-lottery-kind>
+                <option value="normal"{% if prize.kind != 'badge' %} selected{% endif %}>{{ _('普通奖品') }}</option>
+                <option value="badge"{% if prize.kind == 'badge' %} selected{% endif %}>{{ _('勋章奖品') }}</option>
+              </select>
+            </label>
+            <label data-lottery-badge-field>
+              <div>{{ _('选择已有勋章') }}</div>
+              <select class="select" name="prize{{ loop.index0 }}BadgeId" data-field="BadgeId" data-lottery-badge-id>
+                <option value="">{{ _('请选择勋章') }}</option>
+                {% for badge in lotteryBadges %}
+                  <option value="{{ badge._id }}"{% if prize.kind == 'badge' and prize.badgeId == badge._id %} selected{% endif %}>{{ badge.short }} · {{ badge.title }}</option>
+                {% endfor %}
+              </select>
+              <div class="lottery-admin__prize-kind-note">{{ _('仅可选择当前管理范围内预先创建的勋章。') }}</div>
+            </label>
+            <label data-lottery-badge-field>
+              <div>{{ _('勋章有效时长（小时）') }}</div>
+              <input class="textbox" type="number" min="0" step="1" name="prize{{ loop.index0 }}BadgeDurationHours" data-field="BadgeDurationHours" value="{{ prize.badgeDurationHours|default(0) }}" data-lottery-badge-duration>
+              <div class="lottery-admin__prize-kind-note">{{ _('填 0 表示永久获得。时效叠加会累加剩余时间；效果升级会保留当前有效期。') }}</div>
+            </label>
+            <label data-lottery-badge-field>
+              <div>{{ _('重复抽中效果') }}</div>
+              <select class="select" name="prize{{ loop.index0 }}BadgeRepeatEffect" data-field="BadgeRepeatEffect" data-lottery-badge-repeat-effect>
+                <option value="duration"{% if prize.badgeRepeatEffect != 'upgrade' %} selected{% endif %}>{{ _('时效叠加') }}</option>
+                <option value="upgrade"{% if prize.badgeRepeatEffect == 'upgrade' %} selected{% endif %}>{{ _('效果升级') }}</option>
+              </select>
+              <div class="lottery-admin__prize-kind-note">{{ _('效果升级会在每次重复抽中时切换到下一状态勋章。') }}</div>
+            </label>
+            <div data-lottery-badge-field data-lottery-upgrade-field>
+              <div>{{ _('升级状态勋章') }}</div>
+              <div class="lottery-admin__upgrade-list" data-lottery-upgrade-list>
+                {% for upgradeBadgeId in prize.badgeUpgradeBadgeIds|default([]) %}
+                  <div class="lottery-admin__upgrade-row" data-lottery-upgrade-item>
+                    <span data-lottery-upgrade-title>{{ _('状态') }} {{ loop.index + 1 }}</span>
+                    <select class="select" data-lottery-upgrade-badge-id required>
+                      <option value="">{{ _('请选择勋章') }}</option>
+                      {% for badge in lotteryBadges %}
+                        <option value="{{ badge._id }}"{% if upgradeBadgeId == badge._id %} selected{% endif %}>{{ badge.short }} · {{ badge.title }}</option>
+                      {% endfor %}
+                    </select>
+                    <button class="rounded button" type="button" data-lottery-upgrade-remove>{{ _('删除') }}</button>
+                  </div>
+                {% endfor %}
+              </div>
+              <input type="hidden" name="prize{{ loop.index0 }}BadgeUpgradeBadgeIds" data-field="BadgeUpgradeBadgeIds" data-lottery-upgrade-values>
+              <div class="lottery-admin__upgrade-row" data-lottery-upgrade-template hidden>
+                <span data-lottery-upgrade-title>{{ _('状态') }}</span>
+                <select class="select" data-lottery-upgrade-badge-id>
+                  <option value="">{{ _('请选择勋章') }}</option>
+                  {% for badge in lotteryBadges %}
+                    <option value="{{ badge._id }}">{{ badge.short }} · {{ badge.title }}</option>
+                  {% endfor %}
+                </select>
+                <button class="rounded button" type="button" data-lottery-upgrade-remove>{{ _('删除') }}</button>
+              </div>
+              <button class="rounded button" type="button" data-lottery-upgrade-add>+ {{ _('添加升级状态') }}</button>
+              <div class="lottery-admin__prize-kind-note">{{ _('状态 2、状态 3…均为提前创建好的其他勋章。每个状态都必须选择一个勋章；未选择时不能保存。重复抽中后会自动切换为最新状态。') }}</div>
+            </div>
+            <label data-lottery-normal-field>
               <div>{{ _('奖品名称') }}</div>
               <input class="textbox" name="prize{{ loop.index0 }}Name" value="{{ prize.name }}" autocomplete="off">
             </label>
-            <label>
-              <div>{{ _('奖品图片') }}</div>
+            <label data-lottery-prize-image-field>
+              <div>{{ _('抽奖展示图片（可选）') }}</div>
               <div class="lottery-admin__upload">
                 <input type="hidden" name="prize{{ loop.index0 }}Image" value="{{ prize.image }}" data-lottery-image-value>
                 <label class="lottery-admin__upload-button">
@@ -309,6 +389,7 @@
                 </label>
                 <span class="lottery-admin__preview{% if prize.image %} has-image{% endif %}" data-lottery-image-preview{% if prize.image %} style="background-image: url('{{ prize.image }}')"{% endif %}>{{ _('无图') }}</span>
               </div>
+              <div class="lottery-admin__prize-kind-note">{{ _('勋章奖品可上传抽奖页展示图；不会修改已创建勋章的图片。') }}</div>
             </label>
             <label>
               <div>{{ _('奖品概率权重') }}</div>
@@ -343,11 +424,58 @@
         </div>
         <div class="lottery-admin__grid">
           <label>
+            <div>{{ _('奖品类型') }}</div>
+            <select class="select" data-field="Kind" data-lottery-kind>
+              <option value="normal" selected>{{ _('普通奖品') }}</option>
+              <option value="badge">{{ _('勋章奖品') }}</option>
+            </select>
+          </label>
+          <label data-lottery-badge-field>
+            <div>{{ _('选择已有勋章') }}</div>
+            <select class="select" data-field="BadgeId" data-lottery-badge-id>
+              <option value="">{{ _('请选择勋章') }}</option>
+              {% for badge in lotteryBadges %}
+                <option value="{{ badge._id }}">{{ badge.short }} · {{ badge.title }}</option>
+              {% endfor %}
+            </select>
+            <div class="lottery-admin__prize-kind-note">{{ _('仅可选择当前管理范围内预先创建的勋章。') }}</div>
+          </label>
+          <label data-lottery-badge-field>
+            <div>{{ _('勋章有效时长（小时）') }}</div>
+            <input class="textbox" type="number" min="0" step="1" data-field="BadgeDurationHours" value="0" data-lottery-badge-duration>
+            <div class="lottery-admin__prize-kind-note">{{ _('填 0 表示永久获得。时效叠加会累加剩余时间；效果升级会保留当前有效期。') }}</div>
+          </label>
+          <label data-lottery-badge-field>
+            <div>{{ _('重复抽中效果') }}</div>
+            <select class="select" data-field="BadgeRepeatEffect" data-lottery-badge-repeat-effect>
+              <option value="duration" selected>{{ _('时效叠加') }}</option>
+              <option value="upgrade">{{ _('效果升级') }}</option>
+            </select>
+            <div class="lottery-admin__prize-kind-note">{{ _('效果升级会在每次重复抽中时切换到下一状态勋章。') }}</div>
+          </label>
+          <div data-lottery-badge-field data-lottery-upgrade-field>
+            <div>{{ _('升级状态勋章') }}</div>
+            <div class="lottery-admin__upgrade-list" data-lottery-upgrade-list></div>
+            <input type="hidden" data-field="BadgeUpgradeBadgeIds" data-lottery-upgrade-values>
+            <div class="lottery-admin__upgrade-row" data-lottery-upgrade-template hidden>
+              <span data-lottery-upgrade-title>{{ _('状态') }}</span>
+              <select class="select" data-lottery-upgrade-badge-id>
+                <option value="">{{ _('请选择勋章') }}</option>
+                {% for badge in lotteryBadges %}
+                  <option value="{{ badge._id }}">{{ badge.short }} · {{ badge.title }}</option>
+                {% endfor %}
+              </select>
+              <button class="rounded button" type="button" data-lottery-upgrade-remove>{{ _('删除') }}</button>
+            </div>
+            <button class="rounded button" type="button" data-lottery-upgrade-add>+ {{ _('添加升级状态') }}</button>
+            <div class="lottery-admin__prize-kind-note">{{ _('状态 2、状态 3…均为提前创建好的其他勋章。每个状态都必须选择一个勋章；未选择时不能保存。重复抽中后会自动切换为最新状态。') }}</div>
+          </div>
+          <label data-lottery-normal-field>
             <div>{{ _('奖品名称') }}</div>
             <input class="textbox" data-field="Name" autocomplete="off">
           </label>
-          <label>
-            <div>{{ _('奖品图片') }}</div>
+          <label data-lottery-prize-image-field>
+            <div>{{ _('抽奖展示图片（可选）') }}</div>
             <div class="lottery-admin__upload">
               <input type="hidden" data-field="Image" data-lottery-image-value>
               <label class="lottery-admin__upload-button">
@@ -356,6 +484,7 @@
               </label>
               <span class="lottery-admin__preview" data-lottery-image-preview>{{ _('无图') }}</span>
             </div>
+            <div class="lottery-admin__prize-kind-note">{{ _('勋章奖品可上传抽奖页展示图；不会修改已创建勋章的图片。') }}</div>
           </label>
           <label>
             <div>{{ _('奖品概率权重') }}</div>
@@ -533,10 +662,10 @@
             <td>{{ log.cost }}</td>
             <td>
               <div class="lottery-admin__prize-cell">
-                <span>{{ log.prize.name }}</span>
-                {% if log.editedAt %}<span class="lottery-admin__edited-badge">{{ _('已修正') }}</span>{% endif %}
-                {% if canEditDrawPrize %}
-                  <button class="lottery-admin__edit-link" type="button" data-lottery-edit-toggle aria-expanded="false" aria-controls="lottery-edit-{{ log.drawId }}">{{ _('修改') }}</button>
+                {% if canEditDrawPrize and log.prize.kind != 'badge' %}
+                  <button class="lottery-admin__prize-name" type="button" data-lottery-edit-toggle aria-expanded="false" aria-controls="lottery-edit-{{ log.drawId }}" aria-label="{{ _('修改') }} {{ log.prize.name }}" title="{{ _('点击奖品名称修改') }}">{{ log.prize.name }}</button>
+                {% else %}
+                  <span>{{ log.prize.name }}</span>
                 {% endif %}
               </div>
             </td>
@@ -550,7 +679,7 @@
               </form>
             </td>
           </tr>
-          {% if canEditDrawPrize %}
+          {% if canEditDrawPrize and log.prize.kind != 'badge' %}
             <tr class="lottery-admin__edit-row" id="lottery-edit-{{ log.drawId }}" hidden>
               <td colspan="7">
                 <div class="lottery-admin__edit-panel">
@@ -566,7 +695,9 @@
                       <select class="select" name="prizeIndex" required>
                         <option value="" selected disabled>{{ _('请选择奖品') }}</option>
                         {% for prize in config.prizes %}
-                          <option value="{{ loop.index0 }}">{{ prize.name }}{% if prize.pointDelta %} · +{{ prize.pointDelta }} {{ _('积分') }}{% endif %}{% if prize.name == log.prize.name and prize.image == log.prize.image %} · {{ _('当前') }}{% endif %}</option>
+                          {% if prize.kind != 'badge' %}
+                            <option value="{{ loop.index0 }}">{{ prize.name }}{% if prize.pointDelta %} · +{{ prize.pointDelta }} {{ _('积分') }}{% endif %}{% if prize.name == log.prize.name and prize.image == log.prize.image %} · {{ _('当前') }}{% endif %}</option>
+                          {% endif %}
                         {% endfor %}
                       </select>
                     </label>
@@ -603,12 +734,23 @@
     items.forEach(function (row, index) {
       var title = row.querySelector('[data-lottery-prize-title]');
       if (title) title.textContent = '{{ _("奖品") }} ' + (index + 1);
-      Array.prototype.slice.call(row.querySelectorAll('input[data-field], input[name]')).forEach(function (input) {
+      Array.prototype.slice.call(row.querySelectorAll('input[data-field], input[name], select[data-field], select[name]')).forEach(function (input) {
         var field = input.getAttribute('data-field') || (input.name.match(/^prize\d+(.+)$/) || [])[1];
         if (!field) return;
         input.setAttribute('data-field', field);
         input.name = 'prize' + index + field;
       });
+      Array.prototype.slice.call(row.querySelectorAll('[data-lottery-upgrade-item]')).forEach(function (item, upgradeIndex) {
+        var title = item.querySelector('[data-lottery-upgrade-title]');
+        if (title) title.textContent = '{{ _("状态") }} ' + (upgradeIndex + 2);
+        var select = item.querySelector('[data-lottery-upgrade-badge-id]');
+        if (select) {
+          var field = 'BadgeUpgradeBadgeId' + upgradeIndex;
+          select.setAttribute('data-field', field);
+          select.name = 'prize' + index + field;
+        }
+      });
+      syncUpgradeStates(row);
     });
     countInput.value = items.length;
   }
@@ -632,6 +774,87 @@
         preview.classList.add('has-image');
       });
     }
+    var kind = row.querySelector('[data-lottery-kind]');
+    if (kind) kind.addEventListener('change', function () { updateKind(row); });
+    var repeatEffect = row.querySelector('[data-lottery-badge-repeat-effect]');
+    if (repeatEffect) repeatEffect.addEventListener('change', function () { updateRepeatEffect(row); });
+    var addUpgradeButton = row.querySelector('[data-lottery-upgrade-add]');
+    if (addUpgradeButton) addUpgradeButton.addEventListener('click', function () { addUpgradeState(row); });
+    Array.prototype.slice.call(row.querySelectorAll('[data-lottery-upgrade-item]')).forEach(bindUpgradeState);
+    updateKind(row);
+  }
+
+  function updateKind(row) {
+    var kind = row.querySelector('[data-lottery-kind]');
+    var isBadge = kind && kind.value === 'badge';
+    Array.prototype.slice.call(row.querySelectorAll('[data-lottery-normal-field]')).forEach(function (field) {
+      field.hidden = isBadge;
+      Array.prototype.slice.call(field.querySelectorAll('input, select')).forEach(function (input) {
+        input.disabled = isBadge;
+      });
+    });
+    Array.prototype.slice.call(row.querySelectorAll('[data-lottery-badge-field]')).forEach(function (field) {
+      field.hidden = !isBadge;
+      Array.prototype.slice.call(field.querySelectorAll('input, select')).forEach(function (input) {
+        input.disabled = !isBadge;
+        if (input.hasAttribute('data-lottery-badge-id')) input.required = !!isBadge;
+      });
+    });
+    updateRepeatEffect(row);
+  }
+
+  function updateRepeatEffect(row) {
+    var kind = row.querySelector('[data-lottery-kind]');
+    var repeatEffect = row.querySelector('[data-lottery-badge-repeat-effect]');
+    var showUpgrade = kind && kind.value === 'badge' && repeatEffect && repeatEffect.value === 'upgrade';
+    Array.prototype.slice.call(row.querySelectorAll('[data-lottery-upgrade-field]')).forEach(function (field) {
+      field.hidden = !showUpgrade;
+      Array.prototype.slice.call(field.querySelectorAll('input, select, button')).forEach(function (input) {
+        input.disabled = !showUpgrade;
+      });
+    });
+  }
+
+  function bindUpgradeState(item) {
+    var select = item.querySelector('[data-lottery-upgrade-badge-id]');
+    if (select) select.addEventListener('change', function () {
+      syncUpgradeStates(item.closest('[data-lottery-prize]'));
+    });
+    var removeButton = item.querySelector('[data-lottery-upgrade-remove]');
+    if (removeButton) {
+      removeButton.addEventListener('click', function () {
+        item.parentNode.removeChild(item);
+        reindex();
+      });
+    }
+  }
+
+  function syncUpgradeStates(row) {
+    if (!row) return;
+    var valueField = row.querySelector('[data-lottery-upgrade-values]');
+    if (!valueField) return;
+    var badgeIds = Array.prototype.slice.call(row.querySelectorAll('[data-lottery-upgrade-item] [data-lottery-upgrade-badge-id]'))
+      .map(function (select) { return select.value; })
+      .filter(function (badgeId) { return !!badgeId; });
+    valueField.value = JSON.stringify(badgeIds);
+  }
+
+  function addUpgradeState(row) {
+    var list = row.querySelector('[data-lottery-upgrade-list]');
+    var template = row.querySelector('[data-lottery-upgrade-template]');
+    if (!list || !template) return;
+    var item = template.cloneNode(true);
+    item.removeAttribute('hidden');
+    item.removeAttribute('data-lottery-upgrade-template');
+    item.setAttribute('data-lottery-upgrade-item', '');
+    var select = item.querySelector('[data-lottery-upgrade-badge-id]');
+    if (select) {
+      select.value = '';
+      select.required = true;
+    }
+    list.appendChild(item);
+    bindUpgradeState(item);
+    reindex();
   }
 
   function addRow() {
@@ -643,7 +866,7 @@
       if (input.type === 'checkbox') {
         input.value = 'true';
         input.checked = input.getAttribute('data-default-checked') === 'true';
-      } else if (input.getAttribute('data-field') !== 'PointDelta') {
+      } else if (input.getAttribute('data-field') !== 'PointDelta' && input.getAttribute('data-field') !== 'BadgeDurationHours') {
         input.value = '';
       }
     });
@@ -658,6 +881,13 @@
 
   rows().forEach(bind);
   addButton.addEventListener('click', addRow);
+  var configForm = list.closest('form');
+  if (configForm) configForm.addEventListener('submit', function () {
+    // A native select may not dispatch change until it loses focus.  Serialize
+    // immediately before posting so the last selected upgrade state is never
+    // omitted from the save request.
+    rows().forEach(syncUpgradeStates);
+  });
   reindex();
 }());
 (function () {

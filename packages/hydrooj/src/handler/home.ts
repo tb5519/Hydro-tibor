@@ -20,10 +20,13 @@ import { getHomePosterConfig } from '../lib/home_poster';
 import * as mail from '../lib/mail';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
 import {
-    ensureGlobalPointLotteryState, getPointLotteryConfig, getPointLotteryScopeDomainIds,
-    getPointLotteryStoragePrefix, pickPointLotteryPrize, POINT_LOTTERY_POINTS_FIELD,
-    POINT_LOTTERY_TOTAL_POINTS_FIELD, pointLotteryPrizeKey, pointLotteryUserColl, publicPointLotteryPrize,
+    canReceivePointLotteryBadge, ensureGlobalPointLotteryState, expireDuePointLotteryBadgeGrants, expirePointLotteryBadgeGrant,
+    getPointLotteryBadgeScopeQuery, getPointLotteryConfig, getPointLotteryScopeDomainIds, getPointLotteryStoragePrefix,
+    grantPointLotteryBadge, pickPointLotteryPrize, POINT_LOTTERY_BADGE_EXPIRY_SWEEP_TASK,
+    POINT_LOTTERY_BADGE_EXPIRY_TASK, POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
+    pointLotteryPrizeKey, pointLotteryUserColl, publicPointLotteryPrize,
 } from '../lib/point_lottery';
+import ScheduleModel from '../model/schedule';
 import { getSharedRankingSnapshot, SharedRankingRow } from '../lib/shared_ranking';
 import { verifyTFA } from '../lib/verifyTFA';
 import BlackListModel from '../model/blacklist';
@@ -655,11 +658,20 @@ class PointLotteryDrawHandler extends Handler {
         if (nonRepeatablePrizes.length) {
             const pointLotteryScopeDomainIds = await getPointLotteryScopeDomainIds(this.domain);
             const nonRepeatableKeys = new Set(nonRepeatablePrizes.map(pointLotteryPrizeKey));
+            const badgeIds = nonRepeatablePrizes
+                .filter((item) => item.kind === 'badge')
+                .map((item) => item.badgeId);
+            const normalNames = nonRepeatablePrizes
+                .filter((item) => item.kind !== 'badge')
+                .map((item) => item.name);
+            const prizeQueries: any[] = [];
+            if (badgeIds.length) prizeQueries.push({ 'prize.kind': 'badge', 'prize.badgeId': { $in: badgeIds } });
+            if (normalNames.length) prizeQueries.push({ 'prize.name': { $in: normalNames } });
             const wonLogs = await this.ctx.db.collection('lottery.draw').find({
                 domainId: { $in: pointLotteryScopeDomainIds },
                 uid: this.user._id,
                 deleted: { $ne: true },
-                'prize.name': { $in: nonRepeatablePrizes.map((prize) => prize.name) },
+                $or: prizeQueries,
             }).project({ prize: 1 }).toArray();
             const wonKeys = new Set(wonLogs
                 .map((log: any) => log.prize && pointLotteryPrizeKey(log.prize))
@@ -670,6 +682,46 @@ class PointLotteryDrawHandler extends Handler {
         if (!prize) {
             fail(availablePrizes.length ? '抽奖奖品未配置。' : '可抽奖品已全部抽完。');
             return;
+        }
+        const canReceiveLotteryBadge = prize.kind !== 'badge'
+            || await canReceivePointLotteryBadge(this.ctx, this.user._id, this.domain);
+        if (!canReceiveLotteryBadge) {
+            fail('勋章奖品仅可分配给当前管理范围内的学员。');
+            return;
+        }
+        let lotteryBadge: any = null;
+        if (prize.kind === 'badge') {
+            const usedUpgradeBadgeIds = new Set<number>();
+            const durationBadgeIds = new Set(config.prizes
+                .filter((item) => item.kind === 'badge' && item.badgeRepeatEffect !== 'upgrade')
+                .map((item) => item.badgeId!));
+            const invalidUpgradeChain = config.prizes.some((item) => {
+                if (item.kind !== 'badge' || item.badgeRepeatEffect !== 'upgrade') return false;
+                const itemBadgeIds = [item.badgeId!, ...(item.badgeUpgradeBadgeIds || [])];
+                if (!item.badgeUpgradeBadgeIds?.length
+                    || new Set(itemBadgeIds).size !== itemBadgeIds.length
+                    || itemBadgeIds.some((badgeId) => durationBadgeIds.has(badgeId))
+                    || itemBadgeIds.some((badgeId) => usedUpgradeBadgeIds.has(badgeId))) {
+                    return true;
+                }
+                for (const badgeId of itemBadgeIds) usedUpgradeBadgeIds.add(badgeId);
+                return false;
+            });
+            const badgeIds = [prize.badgeId!, ...(prize.badgeRepeatEffect === 'upgrade'
+                ? prize.badgeUpgradeBadgeIds || [] : [])];
+            if (new Set(badgeIds).size !== badgeIds.length || invalidUpgradeChain) {
+                fail('勋章升级链配置有重复，请联系老师更新抽奖配置。');
+                return;
+            }
+            const lotteryBadges = await this.ctx.db.collection('badge').find({
+                _id: { $in: badgeIds },
+                ...getPointLotteryBadgeScopeQuery(this.domain),
+            }).toArray();
+            if (lotteryBadges.length !== badgeIds.length) {
+                fail('该勋章奖品或升级状态已失效，请联系老师更新抽奖配置。');
+                return;
+            }
+            lotteryBadge = lotteryBadges.find((badge) => badge._id === prize.badgeId);
         }
         const prizeIndex = config.prizes.indexOf(prize);
         const existingPointState = await ensureGlobalPointLotteryState(this.user._id);
@@ -703,7 +755,25 @@ class PointLotteryDrawHandler extends Handler {
         }
         const points = Math.max(0, Math.floor(+dudoc[POINT_LOTTERY_POINTS_FIELD] || 0));
         const totalPoints = Math.max(0, Math.floor(+dudoc[POINT_LOTTERY_TOTAL_POINTS_FIELD] || 0));
+        const drawId = new ObjectId();
+        let badgeAward = null;
+        try {
+            badgeAward = prize.kind === 'badge'
+                ? await grantPointLotteryBadge(this.ctx, this.user._id, prize, this.domain, drawId, lotteryBadge)
+                : null;
+        } catch (error) {
+            await pointLotteryUserColl.updateOne({ _id: this.user._id }, {
+                $inc: {
+                    [POINT_LOTTERY_POINTS_FIELD]: -pointDelta,
+                    [POINT_LOTTERY_TOTAL_POINTS_FIELD]: -prize.pointDelta,
+                },
+            });
+            this.ctx.logger.warn('Unable to grant point lottery prize to uid %s: %o', this.user._id, error);
+            fail('奖品发放失败，本次积分已退回，请稍后重试。');
+            return;
+        }
         await this.ctx.db.collection('lottery.draw').insertOne({
+            _id: drawId,
             domainId,
             uid: this.user._id,
             cost: config.cost,
@@ -711,6 +781,7 @@ class PointLotteryDrawHandler extends Handler {
             pointDelta: prize.pointDelta,
             points,
             totalPoints,
+            ...(badgeAward?.expiresAt ? { badgeExpiresAt: badgeAward.expiresAt } : {}),
             createdAt: new Date(),
         });
         this.response.body = {
@@ -1162,7 +1233,7 @@ class HomeMessagesHandler extends Handler {
 }
 
 export const inject = { geoip: { required: false }, oauth: {} };
-export function apply(ctx: Context) {
+export async function apply(ctx: Context) {
     ctx.Route('homepage', '/', HomeHandler);
     ctx.Route('home_poster_image', '/home/poster', HomePosterImageHandler);
     ctx.Route('service_worker_config', '/service-worker-config', ServiceWorkerConfigHandler);
@@ -1175,6 +1246,22 @@ export function apply(ctx: Context) {
     ctx.Route('home_domain', '/home/domain', HomeDomainHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_domain_create', '/home/domain/create', HomeDomainCreateHandler, PRIV.PRIV_CREATE_DOMAIN);
     ctx.Route('home_messages', '/home/messages', HomeMessagesHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.worker.addHandler(POINT_LOTTERY_BADGE_EXPIRY_TASK, async (task) => {
+        await expirePointLotteryBadgeGrant(ctx, task);
+    });
+    ctx.worker.addHandler(POINT_LOTTERY_BADGE_EXPIRY_SWEEP_TASK, async () => {
+        await expireDuePointLotteryBadgeGrants(ctx);
+    });
+    if (!process.env.NODE_APP_INSTANCE || process.env.NODE_APP_INSTANCE === '0') {
+        const task = { type: 'schedule', subType: POINT_LOTTERY_BADGE_EXPIRY_SWEEP_TASK };
+        if (!await ScheduleModel.count(task)) {
+            await ScheduleModel.add({
+                ...task,
+                executeAfter: new Date(Date.now() + 5 * 60 * 1000),
+                interval: [5, 'minutes'],
+            });
+        }
+    }
 
     async function notifyMessage(uid: number[], mdoc: any, h) {
         const udoc = (await user.getById('system', mdoc.from))!;

@@ -13,9 +13,10 @@ import {
 } from '../error';
 import type { CppEditorMode } from '../interface';
 import {
-    buildPointLotteryConfigFromForm, ensureGlobalPointLotteryState, getPointLotteryConfig, getPointLotteryStoragePrefix,
-    POINT_LOTTERY_CONFIG_KEY, POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
-    pointLotteryUserColl, publicPointLotteryPrize,
+    bindPointLotteryBadgePrizes, buildPointLotteryConfigFromForm, ensureGlobalPointLotteryState,
+    getPointLotteryBadgeUpgradeBadgeIdsFromForm,
+    getPointLotteryBadges, getPointLotteryConfig, getPointLotteryStoragePrefix, POINT_LOTTERY_CONFIG_KEY,
+    POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD, pointLotteryUserColl, publicPointLotteryPrize,
 } from '../lib/point_lottery';
 import { Logger } from '../logger';
 import { PERM, PRIV, STATUS } from '../model/builtin';
@@ -1170,6 +1171,10 @@ class SystemLotteryHandler extends Handler {
             .sort({ createdAt: -1, _id: -1 })
             .limit(20)
             .toArray();
+        const lotteryBadges = await getPointLotteryBadges(
+            this.ctx,
+            this.domainScoped ? this.domain : null,
+        );
         const logUids = Array.from(new Set(logs.map((log) => log.uid).filter((uid) => typeof uid === 'number')));
         const logUdict = logUids.length ? await user.getListForRender(domainId, logUids, false) : {};
         const logRows = logs.map((log) => ({
@@ -1195,12 +1200,14 @@ class SystemLotteryHandler extends Handler {
                 pointDelta: 0,
                 repeatable: true,
                 broadcast: true,
+                kind: 'normal' as const,
             }]),
+            lotteryBadges,
             q,
             rankBy,
             target,
             canAddTarget: target ? !isPasswordResetProtectedTarget(target) : false,
-            canEditDrawPrize: !this.domainScoped && config.prizes.length > 0,
+            canEditDrawPrize: !this.domainScoped && config.prizes.some((prize) => prize.kind !== 'badge'),
             targetPoints: Math.max(0, Math.floor(+targetPointState?.[POINT_LOTTERY_POINTS_FIELD] || 0)),
             targetTotalPoints: Math.max(0, Math.floor(+(
                 targetPointState?.[POINT_LOTTERY_TOTAL_POINTS_FIELD] ?? targetPointState?.[POINT_LOTTERY_POINTS_FIELD]
@@ -1220,7 +1227,29 @@ class SystemLotteryHandler extends Handler {
     async postSaveConfig() {
         const args = { ...this.args };
         await applyLotteryPrizeImageUploads(this, args);
+        for (const [key, value] of Object.entries(args)) {
+            const index = /^prize(\d+)Kind$/.exec(key)?.[1];
+            if (index === undefined || value !== 'badge') continue;
+            const badgeId = Math.floor(+args[`prize${index}BadgeId`]);
+            if (!Number.isSafeInteger(badgeId) || badgeId <= 0) {
+                throw new ValidationError(`prize${index}BadgeId`);
+            }
+            if (args[`prize${index}BadgeRepeatEffect`] === 'upgrade') {
+                const upgradeBadgeIds = getPointLotteryBadgeUpgradeBadgeIdsFromForm(args, +index)
+                    .map((badgeId) => `${badgeId ?? ''}`.trim())
+                    .filter(Boolean)
+                    .map((badgeId) => Math.floor(+badgeId));
+                if (!upgradeBadgeIds.length || upgradeBadgeIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+                    throw new ValidationError(`prize${index}BadgeUpgradeBadgeId`);
+                }
+            }
+        }
         const config = buildPointLotteryConfigFromForm(args);
+        const lotteryBadges = await getPointLotteryBadges(
+            this.ctx,
+            this.domainScoped ? this.domain : null,
+        );
+        if (!bindPointLotteryBadgePrizes(config, lotteryBadges)) throw new ValidationError('prizeBadgeId');
         if (this.domainScoped) await domain.edit(this.domain._id, { pointLottery: config });
         else await system.set(POINT_LOTTERY_CONFIG_KEY, config);
         this.redirect({ saved: 1 });
@@ -1277,6 +1306,9 @@ class SystemLotteryHandler extends Handler {
         const config = getPointLotteryConfig(null);
         const prize = config.prizes[prizeIndex];
         if (!prize) throw new ValidationError('prizeIndex');
+        // Editing a historical draw cannot safely manufacture or revoke a
+        // badge entitlement, so those prizes are intentionally immutable.
+        if (prize.kind === 'badge') throw new ValidationError('prizeIndex');
 
         const scopeDomainIds = await this.getScopeDomainIds();
         const drawColl = this.ctx.db.collection<any>('lottery.draw');
@@ -1286,6 +1318,7 @@ class SystemLotteryHandler extends Handler {
             deleted: { $ne: true },
         });
         if (!draw) throw new ValidationError('drawId');
+        if (draw.prize?.kind === 'badge') throw new ValidationError('drawId');
         const scopeStudentUids = await this.getScopeStudentUids();
         if (!scopeStudentUids.includes(draw.uid)) throw new UserNotFoundError(draw.uid);
 

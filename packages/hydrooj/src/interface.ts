@@ -360,6 +360,13 @@ export interface DomainDoc extends Record<string, any> {
             pointDelta: number;
             repeatable: boolean;
             broadcast: boolean;
+            kind?: 'normal' | 'badge';
+            badgeId?: number;
+            /** 0 or omitted means the badge is granted permanently. */
+            badgeDurationHours?: number;
+            badgeRepeatEffect?: 'duration' | 'upgrade';
+            /** State-2 onward badge ids when repeat wins upgrade the effect. */
+            badgeUpgradeBadgeIds?: number[];
         }>;
     };
     /** Controls which optional learning entries appear in this domain's top navigation. */
@@ -676,6 +683,8 @@ declare module './service/db' {
         userBadge: any;
         /** OneByOne feature collections whose concrete shapes are owned by their feature modules. */
         'lottery.draw': any;
+        'lottery.badgeGrant': any;
+        'lottery.badgeGrantLock': any;
         mistake: any;
     }
 }
