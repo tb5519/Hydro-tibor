@@ -129,7 +129,7 @@
     height: 2.8rem;
     border: 1px solid #e2e8f0;
     border-radius: 8px;
-    background: #f8fafc center / cover no-repeat;
+    background: #f8fafc center / contain no-repeat;
     color: #94a3b8;
     display: flex;
     align-items: center;
@@ -304,7 +304,7 @@
         <input class="textbox" type="number" min="0" step="1" name="cost" value="{{ config.cost }}" required>
       </label>
       <div class="lottery-admin__note">
-        {{ _('概率按权重计算。例如两个奖品概率分别填 1 和 3，则第二个奖品约为第一个的 3 倍。奖品图片上传后会显示在学员端奖品预览区域。') }}
+        {{ _('概率按权重计算。例如两个奖品概率分别填 1 和 3，则第二个奖品约为第一个的 3 倍。每项奖品可独立上传展示图，学员端预览和开启宝箱后的弹窗使用同一张图片。') }}
       </div>
       <input type="hidden" name="prizeCount" value="{{ prizeSlots.length }}" data-lottery-prize-count>
       <div class="lottery-admin__prizes" data-lottery-prizes>
@@ -389,7 +389,7 @@
                 </label>
                 <span class="lottery-admin__preview{% if prize.image %} has-image{% endif %}" data-lottery-image-preview{% if prize.image %} style="background-image: url('{{ prize.image }}')"{% endif %}>{{ _('无图') }}</span>
               </div>
-              <div class="lottery-admin__prize-kind-note">{{ _('勋章奖品可上传抽奖页展示图；不会修改已创建勋章的图片。') }}</div>
+              <div class="lottery-admin__prize-kind-note">{{ _('建议上传 1:1 正方形透明 PNG，任意像素尺寸均会自动缩放（如 512×512、1000×1000）。预览与中奖弹窗同为正方形，不裁切；每项奖品需单独上传，不修改勋章本身的图片。') }}</div>
             </label>
             <label>
               <div>{{ _('奖品概率权重') }}</div>
@@ -484,7 +484,7 @@
               </label>
               <span class="lottery-admin__preview" data-lottery-image-preview>{{ _('无图') }}</span>
             </div>
-            <div class="lottery-admin__prize-kind-note">{{ _('勋章奖品可上传抽奖页展示图；不会修改已创建勋章的图片。') }}</div>
+            <div class="lottery-admin__prize-kind-note">{{ _('建议上传 1:1 正方形透明 PNG，任意像素尺寸均会自动缩放（如 512×512、1000×1000）。预览与中奖弹窗同为正方形，不裁切；每项奖品需单独上传，不修改勋章本身的图片。') }}</div>
           </label>
           <label>
             <div>{{ _('奖品概率权重') }}</div>

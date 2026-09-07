@@ -204,6 +204,49 @@ export async function getPointLotteryBadges(ctx: Context, domain?: Pick<DomainDo
         .toArray();
 }
 
+export interface PointLotteryBadgeStyle {
+    id: number;
+    displayName: string;
+    backgroundColor: string;
+    fontColor: string;
+    tooltip: string;
+}
+
+/** Match ranking badge colors without allowing arbitrary inline CSS. */
+function normalizePointLotteryBadgeColor(color: unknown, fallback: string) {
+    const value = `${color || fallback}`;
+    if (!/^#?(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i.test(value)) return `#${fallback}`;
+    return value.startsWith('#') ? value : `#${value}`;
+}
+
+/**
+ * The prize title and its uploaded artwork are independent of the actual
+ * badge pill. Read only configured badges in the lottery's existing scope;
+ * names, colors and tooltip fallbacks match ranking's owned-badge rendering.
+ */
+export async function getPointLotteryBadgeStyles(
+    ctx: Context,
+    prizes: PointLotteryPrize[],
+    domain?: Pick<DomainDoc, '_id' | 'workspaceId'> | null,
+): Promise<Record<number, PointLotteryBadgeStyle>> {
+    const badgeIds = Array.from(new Set(prizes
+        .filter((prize) => isBadgePrize(prize))
+        .map((prize) => normalizeBadgeId(prize.badgeId))
+        .filter((id): id is number => !!id)));
+    if (!badgeIds.length) return {};
+    const badges = await ctx.db.collection('badge').find({
+        _id: { $in: badgeIds },
+        ...getPointLotteryBadgeScopeQuery(domain),
+    }).project({ _id: 1, short: 1, title: 1, backgroundColor: 1, fontColor: 1 }).toArray();
+    return Object.fromEntries(badges.map((badge: any) => [badge._id, {
+        id: badge._id,
+        displayName: `${badge.short || badge._id}`,
+        backgroundColor: normalizePointLotteryBadgeColor(badge.backgroundColor, 'e5edf5'),
+        fontColor: normalizePointLotteryBadgeColor(badge.fontColor, '1f2937'),
+        tooltip: `${badge.title || badge.short || badge._id}`,
+    }]));
+}
+
 /** Match the badge module's student-only rules before a special prize is drawn. */
 export async function canReceivePointLotteryBadge(
     ctx: Context,

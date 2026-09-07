@@ -21,7 +21,8 @@ import * as mail from '../lib/mail';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
 import {
     canReceivePointLotteryBadge, ensureGlobalPointLotteryState, expireDuePointLotteryBadgeGrants, expirePointLotteryBadgeGrant,
-    getAvailablePointLotteryPrizes, getPointLotteryBadgeScopeQuery, getPointLotteryConfig, getPointLotteryPrizesAfterWin,
+    getAvailablePointLotteryPrizes, getPointLotteryBadgeScopeQuery, getPointLotteryBadgeStyles,
+    getPointLotteryConfig, getPointLotteryPrizesAfterWin,
     getPointLotteryScopeDomainIds, getPointLotteryStoragePrefix,
     grantPointLotteryBadge, pickPointLotteryPrize, POINT_LOTTERY_BADGE_EXPIRY_SWEEP_TASK,
     POINT_LOTTERY_BADGE_EXPIRY_TASK, POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
@@ -596,6 +597,7 @@ export class HomeHandler extends Handler {
                 totalPoints: pointLotteryTotalPoints,
                 canDraw: this.user.hasPriv(PRIV.PRIV_USER_PROFILE),
                 prizes: publicPointLotteryPrizes(pointLotteryConfig.prizes, availablePointLotteryPrizes),
+                badgeStyles: await getPointLotteryBadgeStyles(this.ctx, pointLotteryConfig.prizes, this.domain),
                 announcements: pointLotteryAnnouncements,
                 recentWins: pointLotteryWins.map((log: any) => ({
                     name: `${log.prize?.name || ''}`,

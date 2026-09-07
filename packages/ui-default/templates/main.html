@@ -38,8 +38,8 @@
       <button class="point-lottery__close" type="button" data-point-lottery-close aria-label="关闭">×</button>
       <div class="point-lottery__header">
         <div>
-          <p class="point-lottery__eyebrow">努力攒积分，快乐集勋章</p>
-          <h2 class="point-lottery__title">勋章抽奖</h2>
+          <p class="point-lottery__eyebrow">每一次努力，都藏着小惊喜</p>
+          <h2 class="point-lottery__title">勋章寻宝记</h2>
         </div>
         <div class="point-lottery__announcements" data-point-lottery-announcements hidden aria-live="polite">
           <span class="point-lottery__announcement-mark" aria-hidden="true">&#9733;</span>
@@ -58,18 +58,26 @@
         每次抽奖消耗 <strong data-point-lottery-cost>{{ pointLottery.cost }}</strong> 积分
       </div>
       <div class="point-lottery__stage">
-        <div class="point-lottery__egg-area">
-          <div class="point-lottery__egg-stage" data-point-lottery-egg-stage>
-            <span class="point-lottery__egg-cloud point-lottery__egg-cloud--left" aria-hidden="true"></span>
-            <span class="point-lottery__egg-cloud point-lottery__egg-cloud--right" aria-hidden="true"></span>
-            <p class="point-lottery__egg-kicker">✦ 你的勋章收藏之旅 ✦</p>
-            <h3>勋章金蛋</h3>
-            <p class="point-lottery__egg-subtitle">敲一敲，收获你的闪亮勋章！</p>
-            <div class="point-lottery__eggs" data-point-lottery-eggs role="group" aria-label="选择金蛋抽奖"></div>
-            <p class="point-lottery__egg-action" data-point-lottery-draw-label>选一颗金蛋，收获小惊喜</p>
-            <span class="point-lottery__egg-cost" data-point-lottery-draw-cost>{{ pointLottery.cost }} 积分 / 次</span>
+        <div class="point-lottery__chest-area">
+          <div class="point-lottery__chest-stage" data-point-lottery-chest-stage>
+            <svg class="point-lottery__treasure-map" viewBox="0 0 520 480" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+              <path fill="#d1efe8" d="M0 265Q75 225 95 175T195 110Q295 90 345 170T520 235V480H0Z"/>
+              <path fill="#fff1ce" stroke="#fff9e7" stroke-width="12" d="M-15 352Q50 292 145 320T298 296Q391 224 540 318V485H-15Z"/>
+              <path d="M26 410C110 460 152 348 215 389S315 444 372 363S455 294 490 344" fill="none" stroke="#dbb475" stroke-width="3" stroke-dasharray="7 9" stroke-linecap="round"/>
+              <g fill="#fff" opacity=".85"><path d="M24 108q0-12 14-12 0-22 24-18 18 0 19 18 20-3 20 12Z"/><path d="M422 161q0-9 12-9 0-19 21-16 15 0 16 15 17-2 17 10Z"/></g>
+              <g stroke="#64ac93" stroke-width="4" fill="none" stroke-linecap="round"><path d="M37 325l4-57m0 9q-26-24-31-4m31 4q18-29 32-13m-32 13q-14-35-27-21m27 21q10-42 26-33"/><path d="M479 277l-3-33m0 7q-17-21-26-9m26 9q12-24 27-15"/></g>
+              <g fill="#e8ad59"><path d="m454 376 16 16m0-16-16 16" stroke="#e8ad59" stroke-width="5" stroke-linecap="round"/><path d="m95 201 3 8 8 3-8 3-3 8-3-8-8-3 8-3Z"/></g>
+              <g transform="translate(450 74)" fill="none" stroke="#86bcb0"><circle r="24" stroke-width="1.5"/><path d="m0-18 5 13 13 5-13 5-5 13-5-13-13-5 13-5Z" fill="#f4fcf8"/><path d="M0-18 5-5 0 0Z" fill="#60a58f"/></g>
+            </svg>
+            <p class="point-lottery__chest-kicker">✧ TREASURE ISLAND · 勋章藏宝岛 ✧</p>
+            <h3>勋章宝箱</h3>
+            <p class="point-lottery__chest-subtitle">带上好奇心，用钥匙开启你的宝藏</p>
+            <div class="point-lottery__chests" data-point-lottery-chests role="group" aria-label="选择宝箱抽奖"></div>
+            <p class="point-lottery__chest-action" data-point-lottery-draw-label>选一个宝箱，发现闪亮的勋章</p>
+            <span class="point-lottery__chest-cost" data-point-lottery-draw-cost>{{ pointLottery.cost }} 积分 / 次</span>
+            <div class="point-lottery__journey" aria-hidden="true"><span>① 选择宝箱</span><i>···</i><span>② 钥匙解锁</span><i>···</i><span>③ 收藏宝藏</span></div>
           </div>
-          <p class="point-lottery__egg-disclaimer">每颗金蛋机会相同 · 勋章按公示概率随机揭晓</p>
+          <p class="point-lottery__chest-disclaimer">每个宝箱机会相同 · 勋章按公示概率随机揭晓</p>
         </div>
         <div class="point-lottery__side">
           <div class="point-lottery__preview">
@@ -77,9 +85,15 @@
               <span>勋章预览</span>
               <span class="point-lottery__preview-kind" data-point-lottery-preview-kind></span>
             </div>
-            <div class="point-lottery__preview-image" data-point-lottery-preview-image></div>
-            <div class="point-lottery__preview-name" data-point-lottery-preview-name>选择奖品查看图片</div>
-            <div class="point-lottery__preview-meta" data-point-lottery-preview-meta></div>
+            <div class="point-lottery__spotlight">
+              <div class="point-lottery__preview-image" data-point-lottery-preview-image></div>
+              <div class="point-lottery__preview-copy">
+                <span class="point-lottery__preview-caption">岛上的闪亮宝藏</span>
+                <div class="point-lottery__preview-name" data-point-lottery-preview-name>选择奖品查看图片</div>
+                <div class="point-lottery__preview-meta" data-point-lottery-preview-meta></div>
+                <span class="point-lottery__preview-hint">点击下方勋章，探索更多宝藏</span>
+              </div>
+            </div>
             <div class="point-lottery__odds-heading"><span>勋章奖池</span><small>有效期 · 当前中奖概率</small></div>
             <div class="point-lottery__prize-picker" data-point-lottery-prize-picker role="group" aria-label="选择奖品预览"></div>
           </div>
@@ -184,9 +198,9 @@
     max-height: 94vh;
     max-height: 94dvh;
     box-sizing: border-box;
-    border: 1px solid #e5e8f0;
+    border: 1px solid #d5e5db;
     border-radius: 24px;
-    background: linear-gradient(125deg, #fffcf6 0%, #f8faff 62%, #f1f5ff 100%);
+    background: radial-gradient(circle at 0 0, #e2f5ed 0, transparent 35%), linear-gradient(125deg, #fffcf3, #f4fbf7 65%, #edf8f4);
     box-shadow: 0 28px 90px rgba(15, 23, 42, .28);
     padding: 1.55rem;
     overflow-x: hidden;
@@ -224,7 +238,7 @@
   }
   .point-lottery__title {
     margin: 0;
-    color: #0f172a;
+    color: #245f50;
     font-size: 1.75rem;
     line-height: 1.2;
   }
@@ -233,7 +247,7 @@
     min-width: 10.5rem;
     border-radius: 10px;
     background: #fff7ed;
-    color: #1d4ed8;
+    color: #8b6329;
     padding: .65rem .8rem;
     text-align: center;
     box-shadow: inset 0 0 0 1px #fed7aa;
@@ -270,10 +284,10 @@
     gap: .5rem;
     min-height: 2.45rem;
     padding: .52rem .8rem;
-    border: 1px solid #dbeafe;
+    border: 1px solid #cfe6dc;
     border-radius: 999px;
-    background: rgba(239, 246, 255, .78);
-    color: #1e40af;
+    background: rgba(239, 250, 243, .85);
+    color: #458272;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, .86);
     overflow: hidden;
   }
@@ -312,285 +326,102 @@
   .point-lottery__stage {
     display: grid;
     grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
-    gap: 1.75rem;
+    gap: 1.2rem;
     align-items: start;
     margin-top: 1.2rem;
   }
-  .point-lottery__egg-area {
-    min-width: 0;
-    text-align: center;
+  .point-lottery__chest-area { min-width: 0; text-align: center; }
+  .point-lottery__chest-stage {
+    position: relative; isolation: isolate; overflow: hidden;
+    padding: 2.2rem 1rem 1.25rem; border: 1px solid #bfded3; border-radius: 22px;
+    background: linear-gradient(165deg, #effcf6, #dff3ef 60%, #fff1d1);
+    box-shadow: inset 0 0 0 5px #ffffff80, 0 12px 24px -20px #48887599;
   }
-  .point-lottery__egg-stage {
-    position: relative;
-    isolation: isolate;
-    overflow: hidden;
-    padding: 2rem 1.25rem 1.6rem;
-    border: 1px solid #f0dfab;
-    border-radius: 20px;
-    background:
-      radial-gradient(ellipse at 50% 53%, #fffef4 0, transparent 62%),
-      radial-gradient(circle at 8% 8%, #ffe4bd 0, transparent 40%),
-      linear-gradient(155deg, #fff6d9 10%, #f6f5eb 55%, #e2f2ff 100%);
-    box-shadow: inset 0 0 0 5px #ffffff55, 0 14px 30px -20px #b89859aa;
-  }
-  .point-lottery__egg-stage::before {
-    content: "";
-    position: absolute;
-    inset: 14px;
-    z-index: -1;
-    border: 1px solid #ffffffbb;
-    border-radius: 12px;
-    background:
-      radial-gradient(circle at 12% 37%, #f3ba56 0 2px, transparent 3px),
-      radial-gradient(circle at 86% 22%, #82b7e5 0 3px, transparent 4px),
-      radial-gradient(circle at 68% 9%, #eda998 0 2px, transparent 3px),
-      radial-gradient(circle at 38% 49%, #a9a1db 0 2px, transparent 3px),
-      radial-gradient(circle at 94% 65%, #8dc4b7 0 2px, transparent 3px);
-    pointer-events: none;
-  }
-  .point-lottery__egg-stage::after {
-    content: "✧";
-    position: absolute;
-    left: 7%;
-    top: 18%;
-    z-index: -1;
-    color: #e9b44f;
-    font-size: 2.1rem;
-    text-shadow: 20rem 3rem 0 #b5a7df, 16rem -2.1rem 0 #efbd64;
-    pointer-events: none;
-  }
-  .point-lottery__egg-kicker {
-    margin: 0 0 .65rem;
-    color: #ad823f;
-    font-size: .65rem;
-    letter-spacing: .12em;
-  }
-  .point-lottery__egg-cloud {
-    position: absolute;
-    z-index: -1;
-    width: 4.5rem;
-    height: 1.35rem;
-    border-radius: 999px;
-    background: #ffffffaa;
-    pointer-events: none;
-  }
-  .point-lottery__egg-cloud::before,
-  .point-lottery__egg-cloud::after {
-    content: "";
-    position: absolute;
-    bottom: .35rem;
-    border-radius: 50%;
-    background: #ffffffe0;
-  }
-  .point-lottery__egg-cloud::before { width: 2.2rem; height: 2.2rem; left: .65rem; }
-  .point-lottery__egg-cloud::after { width: 1.5rem; height: 1.5rem; right: .3rem; }
-  .point-lottery__egg-cloud--left { top: 32%; left: -1.5rem; transform: rotate(-8deg); }
-  .point-lottery__egg-cloud--right { top: 27%; right: -1rem; transform: scale(.85); }
-  .point-lottery__egg-stage h3 {
-    margin: 0;
-    color: #6b4d91;
-    font-size: 2.2rem;
-    font-weight: 700;
-    letter-spacing: .15em;
-    text-indent: .15em;
-    text-shadow: 0 2px 0 #fff;
-  }
-  .point-lottery__egg-subtitle {
-    margin: .5rem 0 0;
-    color: #8292ad;
-    font-size: .78rem;
-    letter-spacing: .12em;
-  }
-  .point-lottery__eggs {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: .6rem;
-    margin: 2.6rem 0 1.6rem;
-  }
-  .point-lottery__egg {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-width: 0;
-    border: 0;
-    background: transparent;
-    padding: 0 0 .45rem;
-    color: #9a8357;
-    cursor: pointer;
+  .point-lottery__treasure-map { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; }
+  .point-lottery__chest-kicker { margin: 0 0 .8rem; color: #528f83; font-size: .62rem; letter-spacing: .12em; }
+  .point-lottery__chest-stage h3 { margin: 0; color: #236858; font-size: 2.4rem; font-weight: 800; letter-spacing: .14em; text-indent: .14em; text-shadow: 0 3px 0 #fff; }
+  .point-lottery__chest-subtitle { margin: .6rem 0 0; color: #638b7f; font-size: .78rem; }
+  .point-lottery__chests { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8rem; margin: 3.2rem 0 1.8rem; }
+  .point-lottery__chest {
+    position: relative; display: flex; flex-direction: column; align-items: center; min-width: 0;
+    border: 0; background: transparent; padding: 0 0 .45rem; color: #7a694c; cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
-  .point-lottery__egg:focus-visible {
-    outline: 2px solid #eecb89;
-    outline-offset: 4px;
-    border-radius: 12px;
+  .point-lottery__chest:focus-visible { outline: 3px solid #44a68c; outline-offset: 4px; border-radius: 12px; }
+  .point-lottery__chest-figure { position: relative; display: block; width: 100%; max-width: 8.5rem; aspect-ratio: 1 / 1; margin-bottom: .65rem; perspective: 450px; z-index: 1; transition: transform .25s ease; }
+  .point-lottery__chest-figure::before { content: ""; position: absolute; inset: -25%; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse, #fff9c4cc, transparent 66%); opacity: .55; transition: opacity .25s; }
+  .point-lottery__chest-figure::after { content: ""; position: absolute; left: -7%; bottom: 1%; width: 114%; height: 18%; z-index: -1; border: 2px solid #fff8db; border-radius: 50%; background: #edcf94; box-shadow: 0 4px 0 #d3b78655; }
+  .point-lottery__chest-body {
+    position: absolute; inset: 48% 5% 10%; border: 3px solid #96512f; border-radius: 4px 4px 12px 12px;
+    background: linear-gradient(90deg, transparent 13%, #ffe29a 13% 23%, transparent 23% 77%, #ffe29a 77% 87%, transparent 87%),
+      repeating-linear-gradient(0deg, transparent 0 18%, #98543255 19% 21%, transparent 22% 40%), linear-gradient(180deg, #d88e4e, #ab5935);
+    box-shadow: inset 0 -5px 0 #713d2944, inset 0 3px 0 #ffbd7088, 0 8px 8px #66432922; z-index: 3;
   }
-  .point-lottery__egg-figure {
-    position: relative;
-    display: block;
-    width: 100%;
-    max-width: 7.2rem;
-    aspect-ratio: .78;
-    margin-bottom: 1.1rem;
-    z-index: 1;
-    transition: transform .25s ease;
+  .point-lottery__chest-lid {
+    position: absolute; inset: 19% 3% 46%; border: 3px solid #96512f; border-bottom: 6px solid #ffdc84; border-radius: 24px 24px 5px 5px;
+    background: linear-gradient(90deg, transparent 13%, #ffe8aa 13% 23%, transparent 23% 77%, #ffe8aa 77% 87%, transparent 87%), linear-gradient(180deg, #ffd18a, #d98945);
+    box-shadow: inset 0 3px 0 #ffeabaaa, 0 3px 0 #8e4929; transform-origin: center bottom;
+    transition: transform .7s cubic-bezier(.22, 1, .36, 1); z-index: 4;
   }
-  .point-lottery__egg-figure::before {
-    content: "";
-    position: absolute;
-    inset: -24%;
-    z-index: -1;
-    border-radius: 50%;
-    background: radial-gradient(ellipse, #ffdb8077, transparent 65%);
-    opacity: .5;
-    transition: opacity .25s;
+  .point-lottery__chest-lock {
+    position: absolute; top: 47%; left: 39%; width: 22%; height: 25%;
+    border: 2px solid #ab742e; border-radius: 5px 5px 9px 9px; background: linear-gradient(135deg, #fff0af, #edb542);
+    box-shadow: 0 2px 0 #81452666; z-index: 5; transition: opacity .25s;
   }
-  .point-lottery__egg-figure::after {
-    content: "";
-    position: absolute;
-    left: -5%;
-    bottom: -.6rem;
-    width: 110%;
-    height: .85rem;
-    z-index: -1;
-    border-radius: 50%;
-    border: 1px solid #e9c875;
-    background: linear-gradient(180deg, #fff5d7, #edcd8a);
-    box-shadow: 0 5px 0 #ddbd79, 0 10px 13px #b99a5433;
+  .point-lottery__chest-lock::after { content: ""; position: absolute; inset: 24% 33% 18%; background: #815032; clip-path: polygon(50% 0, 100% 15%, 100% 48%, 72% 61%, 88% 100%, 12% 100%, 28% 61%, 0 48%, 0 15%); }
+  .point-lottery__chest-key {
+    position: absolute; width: 49%; height: 49%; top: 29%; left: 56%; z-index: 6; color: #ffc857;
+    filter: drop-shadow(0 2px 0 #b77b34) drop-shadow(0 3px 5px #71522433);
+    transform: translate(5%, -30%) rotate(-24deg); transform-origin: 12% 74%;
+    opacity: 0; transition: opacity .2s, transform .25s; pointer-events: none;
   }
-  .point-lottery__egg-shell {
-    position: absolute;
-    inset: 0;
-    border-radius: 50% 50% 48% 48% / 65% 65% 36% 36%;
-    background:
-      radial-gradient(ellipse at 28% 22%, #fff9d6 0, #fff1b477 13%, transparent 34%),
-      radial-gradient(ellipse at 68% 80%, #a76114 0, transparent 50%),
-      linear-gradient(108deg, #bf7e28 0%, #f4c967 23%, #ffdd84 43%, #e6ac43 64%, #bb741e 86%, #f4cf72 100%);
-    box-shadow: inset 2px 1px 3px #ffedbdcc, inset -3px -4px 7px #92500d88;
-    transition: transform .55s ease, opacity .55s ease;
+  .point-lottery__chest-key svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .point-lottery__chest-beam {
+    position: absolute; inset: -34% -18% 24%; z-index: 2; opacity: 0;
+    clip-path: polygon(0 0, 100% 0, 64% 100%, 36% 100%);
+    background: linear-gradient(0deg, #fff3a8, #fff7cc99 45%, #fffce000); transform: scaleY(.1); transform-origin: bottom;
+    transition: opacity .4s, transform .65s;
   }
-  .point-lottery__egg-shell--top {
-    clip-path: polygon(0 0, 100% 0, 100% 53%, 81% 47%, 68% 58%, 50% 49%, 34% 59%, 17% 48%, 0 54%);
+  .point-lottery__chest-burst {
+    position: absolute; inset: -8% 10% 48%; display: grid; place-items: center; z-index: 5;
+    color: #ffeb91; font-size: 2.8rem; opacity: 0; transform: translateY(25px) scale(.3);
+    text-shadow: 0 0 12px #fff, 0 0 26px #ffc348; transition: opacity .4s, transform .65s;
   }
-  .point-lottery__egg-shell--bottom {
-    clip-path: polygon(0 54%, 17% 48%, 34% 59%, 50% 49%, 68% 58%, 81% 47%, 100% 53%, 100% 100%, 0 100%);
-  }
-  .point-lottery__egg-emblem {
-    position: absolute;
-    inset: 34% 27% 30%;
-    display: grid;
-    place-items: center;
-    border: 1px solid #9e661e55;
-    border-radius: 50%;
-    box-shadow: inset 0 1px 1px #fff0b6aa, 0 1px 0 #ffecb199;
-    color: #a36b24;
-    font-size: 1.5rem;
-    line-height: 1;
-    text-shadow: 0 1px 0 #ffe4a6;
-    transition: opacity .2s;
-  }
-  .point-lottery__egg-emblem::before,
-  .point-lottery__egg-emblem::after {
-    content: "";
-    position: absolute;
-    top: 83%;
-    width: 31%;
-    height: 38%;
-    border: 1px solid #ac722b;
-    background: linear-gradient(110deg, #f3cc75, #c79135);
-    clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 76%, 0 100%);
-  }
-  .point-lottery__egg-emblem::before { left: 12%; transform: rotate(18deg); }
-  .point-lottery__egg-emblem::after { right: 12%; transform: rotate(-18deg); }
-  .point-lottery__egg-number {
-    font-size: .7rem;
-    letter-spacing: .06em;
-  }
-  .point-lottery__egg-hammer {
-    position: absolute;
-    top: -1.4rem;
-    right: -1rem;
-    width: 3.5rem;
-    height: 4rem;
-    z-index: 4;
-    transform: rotate(22deg);
-    transform-origin: 80% 90%;
-    opacity: 0;
-    pointer-events: none;
-  }
-  .point-lottery__egg-hammer::before {
-    content: "";
-    position: absolute;
-    width: .6rem;
-    height: 3rem;
-    left: 1.55rem;
-    top: .7rem;
-    border: 1px solid #a6682d;
-    border-radius: 5px;
-    background: linear-gradient(90deg, #965725, #e3b57a, #aa672b);
-    transform: rotate(-25deg);
-  }
-  .point-lottery__egg-hammer::after {
-    content: "";
-    position: absolute;
-    width: 2.7rem;
-    height: 1.35rem;
-    border: 1px solid #fce4a2;
-    border-radius: 5px;
-    background: linear-gradient(180deg, #fff0bd, #d5a047 70%, #a06a27);
-    box-shadow: 0 3px 6px #0003;
-    transform: rotate(-25deg);
-  }
-  .point-lottery__egg-burst {
-    position: absolute;
-    inset: 25% -5%;
-    display: grid;
-    place-items: center;
-    color: #fff0b4;
-    font-size: 2.8rem;
-    opacity: 0;
-    transform: scale(.3);
-    text-shadow: 0 0 18px #ffcc59, 0 0 45px #ffd77a;
-    transition: opacity .35s, transform .55s;
-  }
+  .point-lottery__chest-burst::before, .point-lottery__chest-burst::after { content: "✧"; position: absolute; font-size: 1rem; color: #fff; }
+  .point-lottery__chest-burst::before { left: 0; top: 24%; }
+  .point-lottery__chest-burst::after { right: 0; top: 5%; }
+  .point-lottery__chest-number { font-size: .68rem; letter-spacing: .08em; border: 1px solid #ead7b3; border-radius: 999px; padding: .25rem .65rem; background: #fffaf0cc; }
   @media (hover: hover) {
-    .point-lottery__egg:not([disabled]):hover .point-lottery__egg-figure { transform: translateY(-7px); }
-    .point-lottery__egg:not([disabled]):hover .point-lottery__egg-figure::before { opacity: 1; }
-    .point-lottery__egg:not([disabled]):hover .point-lottery__egg-hammer { opacity: 1; }
+    .point-lottery__chest:not([disabled]):hover .point-lottery__chest-figure { transform: translateY(-6px); }
+    .point-lottery__chest:not([disabled]):hover .point-lottery__chest-figure::before { opacity: 1; }
+    .point-lottery__chest:not([disabled]):hover .point-lottery__chest-key { opacity: 1; }
   }
-  .point-lottery__egg[disabled] { cursor: not-allowed; }
-  .point-lottery__egg-stage.is-busy .point-lottery__egg:not(.is-selected) { opacity: .45; }
-  .point-lottery__egg.is-pending .point-lottery__egg-hammer {
-    opacity: 1;
-    animation: point-lottery-hammer .65s ease-in-out infinite alternate;
+  .point-lottery__chest:focus-visible .point-lottery__chest-key { opacity: 1; }
+  .point-lottery__chest[disabled] { cursor: not-allowed; }
+  .point-lottery__chest-stage.is-busy .point-lottery__chest:not(.is-selected) { opacity: .45; }
+  .point-lottery__chest.is-pending .point-lottery__chest-key { opacity: 1; animation: point-lottery-key-ready .8s ease-in-out infinite alternate; }
+  .point-lottery__chest.is-unlocking .point-lottery__chest-key { opacity: 1; animation: point-lottery-key-turn .6s ease-in-out both; }
+  .point-lottery__chest.is-revealed .point-lottery__chest-lid { transform: translateY(-16%) rotateX(-112deg); }
+  .point-lottery__chest.is-revealed .point-lottery__chest-lock, .point-lottery__chest.is-revealed .point-lottery__chest-key { opacity: 0; }
+  .point-lottery__chest.is-revealed .point-lottery__chest-beam { opacity: 1; transform: scaleY(1); }
+  .point-lottery__chest.is-revealed .point-lottery__chest-burst { opacity: 1; transform: translateY(-8px) scale(1); }
+  @keyframes point-lottery-key-ready { from { transform: translate(5%, -30%) rotate(-24deg); } to { transform: translate(-3%, -20%) rotate(-16deg); } }
+  @keyframes point-lottery-key-turn {
+    0% { transform: translate(5%, -30%) rotate(-24deg); }
+    40% { transform: translate(-20%, 0) rotate(0); }
+    75%, 100% { transform: translate(-20%, 0) rotate(90deg); }
   }
-  .point-lottery__egg.is-cracking .point-lottery__egg-hammer {
-    opacity: 1;
-    animation: point-lottery-strike .48s ease-in both;
-  }
-  .point-lottery__egg.is-revealed .point-lottery__egg-shell--top { transform: translate(-15%, -20%) rotate(-18deg); opacity: .2; }
-  .point-lottery__egg.is-revealed .point-lottery__egg-shell--bottom { transform: translate(12%, 15%) rotate(12deg); opacity: .4; }
-  .point-lottery__egg.is-revealed .point-lottery__egg-emblem { opacity: 0; }
-  .point-lottery__egg.is-revealed .point-lottery__egg-burst { opacity: 1; transform: scale(1); }
-  .point-lottery__egg.is-revealed .point-lottery__egg-hammer { opacity: 0; }
-  @keyframes point-lottery-hammer { from { transform: rotate(12deg); } to { transform: rotate(36deg); } }
-  @keyframes point-lottery-strike { 0% { transform: rotate(35deg); } 70% { transform: rotate(-32deg); } 100% { transform: rotate(-18deg); } }
-  .point-lottery__egg-action { margin: 0 0 .65rem; color: #73618e; font-size: .9rem; font-weight: 600; }
-  .point-lottery__egg-cost {
-    display: inline-block;
-    border: 1px solid #e2cf9e;
-    border-radius: 999px;
-    padding: .28rem .8rem;
-    color: #94713b;
-    font-size: .7rem;
-    background: #fffcf0;
-  }
-  .point-lottery__egg-disclaimer { margin: .8rem 0 0; color: #8490a6; font-size: .68rem; line-height: 1.6; }
-  .point-lottery__odds-heading { display: flex; justify-content: space-between; margin-top: 1rem; color: #5c6881; font-size: .72rem; }
-  .point-lottery__odds-heading small { color: #8b94a6; font-size: .67rem; }
-  .point-lottery__prize-option:focus-visible { outline: 3px solid #688af1; outline-offset: 2px; }
+  .point-lottery__chest-action { margin: 0 0 .7rem; color: #527b68; font-size: .86rem; font-weight: 600; }
+  .point-lottery__chest-cost { display: inline-block; border: 1px solid #d5b979; border-radius: 999px; padding: .32rem .85rem; color: #8b6732; font-size: .72rem; background: #fffaf0; }
+  .point-lottery__journey { display: flex; justify-content: center; gap: .55rem; margin-top: 1.7rem; color: #a88c5e; font-size: .63rem; }
+  .point-lottery__journey i { font-style: normal; color: #c5a779; }
+  .point-lottery__chest-disclaimer { margin: .75rem 0 0; color: #83978e; font-size: .68rem; line-height: 1.6; }
+  .point-lottery__odds-heading { display: flex; justify-content: space-between; margin-top: 1rem; color: #527a6d; font-size: .72rem; }
+  .point-lottery__odds-heading small { color: #8a9b94; font-size: .67rem; }
+  .point-lottery__prize-option:focus-visible { outline: 3px solid #53a58c; outline-offset: 2px; }
   @media (prefers-reduced-motion: reduce) {
-    .point-lottery__egg *, .point-lottery__egg *::before { animation: none !important; transition: none !important; }
+    .point-lottery__chest *, .point-lottery__chest *::before,
+    .point-lottery__badge::after { animation: none !important; transition: none !important; }
   }
   .point-lottery__side {
     display: grid;
@@ -598,33 +429,35 @@
     min-width: 0;
   }
   .point-lottery__preview {
-    border: 1px solid #dbe3ef;
-    border-radius: 12px;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, .98), rgba(248, 250, 252, .92)),
-      radial-gradient(circle at 12% 8%, rgba(250, 204, 21, .22), transparent 34%);
-    padding: .75rem;
-    box-shadow: 0 14px 34px rgba(15, 23, 42, .06);
+    border: 1px solid #dbe8df;
+    border-radius: 18px;
+    background: #ffffffcc;
+    padding: .9rem;
+    box-shadow: 0 14px 34px rgba(40, 90, 70, .04);
   }
   .point-lottery__preview-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-bottom: .55rem;
-    color: #64748b;
+    color: #5b8071;
     font-size: .78rem;
     font-weight: 800;
   }
+  .point-lottery__spotlight { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: center; gap: .85rem; }
+  .point-lottery__preview-copy { min-width: 0; }
+  .point-lottery__preview-caption { color: #b28c4f; font-size: .62rem; letter-spacing: .08em; }
+  .point-lottery__preview-hint { display: block; margin-top: .85rem; color: #94a79e; font-size: .63rem; line-height: 1.7; }
   .point-lottery__preview-image {
     display: flex;
     align-items: center;
     justify-content: center;
-    aspect-ratio: 16 / 9;
+    aspect-ratio: 1 / 1;
     width: 100%;
-    max-height: 9rem;
-    border: 1px dashed #cbd5e1;
-    border-radius: 10px;
-    background: #fff;
+    box-sizing: border-box;
+    border: 1px solid #e5d5ac;
+    border-radius: 16px;
+    background: radial-gradient(circle at 50% 40%, #fffdf2, #fff0cd 70%, #f1e3bf);
     color: #94a3b8;
     overflow: hidden;
   }
@@ -635,10 +468,10 @@
   }
   .point-lottery__preview-name {
     margin-top: .62rem;
-    color: #0f172a;
+    color: #345c4c;
     font-size: 1rem;
     font-weight: 800;
-    text-align: center;
+    text-align: left;
     overflow-wrap: anywhere;
   }
   .point-lottery__preview-kind {
@@ -649,7 +482,7 @@
   .point-lottery__preview-meta {
     display: flex;
     flex-wrap: wrap;
-    justify-content: center;
+    justify-content: flex-start;
     gap: .4rem;
     margin-top: .4rem;
     font-size: .73rem;
@@ -687,7 +520,7 @@
   .point-lottery__prize-picker {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: .4rem;
+    gap: .5rem;
     margin-top: .4rem;
     max-height: 12rem;
     overflow-y: auto;
@@ -704,34 +537,58 @@
     width: 100%;
     min-width: 0;
     min-height: 3.2rem;
-    border: 1px solid #e5e9f1;
-    border-radius: 9px;
+    border: 1px solid #e1e9e2;
+    border-radius: 12px;
     background: #fff;
-    padding: .45rem;
+    padding: .6rem;
     text-align: left;
     cursor: pointer;
     color: #35415d;
     transition: border-color .18s, background .18s;
   }
   .point-lottery__prize-option[aria-pressed="true"] {
-    border-color: #b1bfeb;
-    background: #f0f4ff;
-  }
-  .point-lottery__prize-option-number {
-    display: grid;
-    place-items: center;
-    flex: 0 0 1.6rem;
-    height: 1.6rem;
-    border-radius: 6px;
-    background: var(--prize-color, #eef2ff);
-    color: #59657d;
-    font-size: .68rem;
-    font-weight: 700;
+    border-color: #7eb6a1;
+    background: #eef8f1;
+    box-shadow: inset 0 0 0 1px #7eb6a122;
   }
   .point-lottery__prize-option-copy {
     min-width: 0;
+    width: 100%;
     display: grid;
-    gap: .12rem;
+    justify-items: start;
+    gap: .4rem;
+  }
+  /* Match ranking-user__badge: configured colors, round border/glow, and the same sweep. */
+  .point-lottery__badge {
+    display: inline-block;
+    border-radius: 999px;
+    font-size: .75rem;
+    font-weight: 400;
+    line-height: 1;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+    padding: .1875rem .25rem;
+    position: relative;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, .42), 0 0 12px rgba(59, 130, 246, .22);
+    isolation: isolate;
+  }
+  .point-lottery__badge::after {
+    animation: point-lottery-badge-shine 3.2s ease-in-out infinite;
+    background: linear-gradient(115deg, transparent 0, transparent 38%, rgba(255, 255, 255, .72) 50%, transparent 62%, transparent 100%);
+    border-radius: inherit;
+    content: '';
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+    transform: translateX(-120%);
+    z-index: 1;
+  }
+  @keyframes point-lottery-badge-shine {
+    0%, 42% { transform: translateX(-120%); }
+    62%, 100% { transform: translateX(120%); }
   }
   .point-lottery__prize-option-name {
     overflow: hidden;
@@ -793,14 +650,14 @@
     width: 4.25rem;
     height: 4.25rem;
     border-radius: 8px;
-    background: #fff;
+    background: radial-gradient(circle, #fffaf0, #f4e9cf);
     color: #cbd5e1;
     overflow: hidden;
   }
   .point-lottery__win-image img {
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    object-fit: contain;
   }
   .point-lottery__win-name {
     overflow: hidden;
@@ -831,9 +688,12 @@
   .point-lottery__result-card {
     position: relative;
     width: min(23rem, 100%);
-    border: 1px solid rgba(219, 234, 254, .92);
-    border-radius: 18px;
-    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    max-height: calc(100dvh - 2.8rem);
+    overflow-y: auto;
+    box-sizing: border-box;
+    border: 1px solid #e9d5a1;
+    border-radius: 24px;
+    background: linear-gradient(155deg, #fffdf4, #eff9f3);
     box-shadow: 0 24px 70px rgba(15, 23, 42, .22);
     padding: 1.15rem;
     text-align: center;
@@ -843,7 +703,7 @@
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: linear-gradient(135deg, rgba(37, 99, 235, .1), rgba(251, 146, 60, .12));
+    border: 5px solid #ffffff77;
     pointer-events: none;
   }
   .point-lottery__result-close {
@@ -872,12 +732,12 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    aspect-ratio: 16 / 10;
-    border: 1px solid #dbeafe;
-    border-radius: 14px;
-    background:
-      radial-gradient(circle at 50% 0%, rgba(250, 204, 21, .24), transparent 42%),
-      #f8fafc;
+    aspect-ratio: 1 / 1;
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid #e5d5ac;
+    border-radius: 16px;
+    background: radial-gradient(circle at 50% 40%, #fffdf2, #fff0cd 70%, #f1e3bf);
     color: #94a3b8;
     overflow: hidden;
   }
@@ -885,7 +745,7 @@
     width: 100%;
     height: 100%;
     object-fit: contain;
-    background: #fff;
+    background: transparent;
   }
   .point-lottery__result-placeholder {
     display: grid;
@@ -909,7 +769,7 @@
   .point-lottery__result-points {
     position: relative;
     margin: .35rem 0 0;
-    color: #2563eb;
+    color: #558371;
     font-size: .9rem;
     font-weight: 800;
   }
@@ -949,7 +809,7 @@
   }
   @media (max-width: 48em) {
     .point-lottery__stage { grid-template-columns: 1fr; gap: 1.2rem; }
-    .point-lottery__egg-stage { padding: 1.8rem 1.2rem; }
+    .point-lottery__chest-stage { padding: 1.8rem 1.2rem; }
     .point-lottery__header { flex-wrap: wrap; }
     .point-lottery__announcements { order: 3; flex-basis: 100%; max-width: none; }
   }
@@ -987,11 +847,17 @@
     .point-lottery__stage {
       grid-template-columns: 1fr;
     }
-    .point-lottery__egg-stage { padding: 1.4rem .85rem; }
-    .point-lottery__egg-stage h3 { font-size: 1.8rem; }
-    .point-lottery__egg-kicker { font-size: .6rem; letter-spacing: .06em; }
-    .point-lottery__egg-emblem { font-size: 1.1rem; }
-    .point-lottery__eggs { gap: .6rem; margin-top: 2rem; }
+    .point-lottery__chest-stage { padding: 1.4rem .85rem; }
+    .point-lottery__chest-stage h3 { font-size: 1.8rem; }
+    .point-lottery__chest-kicker { font-size: .6rem; letter-spacing: .06em; }
+    .point-lottery__chests { gap: .6rem; margin-top: 2.4rem; }
+    .point-lottery__chest-number { padding: .25rem .35rem; font-size: .6rem; }
+    .point-lottery__chest-subtitle { font-size: .7rem; }
+    .point-lottery__journey { gap: .35rem; font-size: .58rem; }
+    .point-lottery__spotlight { gap: .65rem; }
+    .point-lottery__preview-name { font-size: .88rem; }
+    .point-lottery__preview-hint { margin-top: .5rem; font-size: .6rem; }
+    .point-lottery__preview { padding: .7rem; }
   }
 </style>
 <script>
@@ -1020,13 +886,16 @@
 })();
 
 (function () {
-  var pointLottery = {{ pointLottery|json|safe }};
+  var pointLottery = JSON.parse('{{ pointLottery|json|jsesc|safe }}');
   var modal = document.querySelector('[data-point-lottery]');
   if (!modal) return;
+  // Escape the homepage's slideout stacking context only while the modal is open.
+  var modalAnchor = document.createComment('point-lottery-home');
+  modal.parentNode.insertBefore(modalAnchor, modal);
   var openButton = document.querySelector('[data-point-lottery-open]');
   var closeButtons = modal.querySelectorAll('[data-point-lottery-close]');
-  var eggsNode = modal.querySelector('[data-point-lottery-eggs]');
-  var eggStageNode = modal.querySelector('[data-point-lottery-egg-stage]');
+  var chestsNode = modal.querySelector('[data-point-lottery-chests]');
+  var chestStageNode = modal.querySelector('[data-point-lottery-chest-stage]');
   var drawLabelNode = modal.querySelector('[data-point-lottery-draw-label]');
   var drawCostNode = modal.querySelector('[data-point-lottery-draw-cost]');
   var pointsNode = modal.querySelector('[data-point-lottery-points]');
@@ -1049,13 +918,12 @@
   var drawUrl = {{ url('point_lottery_draw')|json|safe }};
   var selectedPrizeIndex = 0;
   var drawInProgress = false;
-  var activeEgg = null;
+  var activeChest = null;
   var announcementTimer = null;
   var announcementIndex = 0;
   var audioContext = null;
   var previousFocus = null;
   var previousBodyOverflow = '';
-  var prizeColors = ['#f4e5ba', '#dfe6fa', '#e9e1f4', '#deeee5', '#f5e1d5', '#e0eaf0'];
 
   function escapeHtml(value) {
     return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
@@ -1078,7 +946,7 @@
     return (Math.abs(days - rounded) > 0.000001 ? '约' : '') + rounded + ' 天';
   }
 
-  // The three eggs are identical entry points. Only the server chooses the prize.
+  // The three chests are identical entry points. Only the server chooses the prize.
   // Normalize weights over the same eligible pool as the draw endpoint.
   function prizeProbability(prize) {
     if (prize.available === false) return 0;
@@ -1100,9 +968,24 @@
     return !!name && ['未中奖', '谢谢参与', '再接再厉', '空奖'].indexOf(name) === -1;
   }
 
+  function prizeBadgeHtml(prize) {
+    var badge = prize && prize.kind === 'badge' && (pointLottery.badgeStyles || {})[prize.badgeId];
+    if (!badge) return '<span class="point-lottery__prize-option-name">' + escapeHtml(prize && prize.name) + '</span>';
+    var safeColor = function (value, fallback) {
+      return /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(String(value)) ? value : fallback;
+    };
+    return '<span class="user-profile-badge v-center user-profile-badge--custom point-lottery__badge" style="background-color:' + safeColor(badge.backgroundColor, '#e5edf5')
+      + ';color:' + safeColor(badge.fontColor, '#1f2937') + '" title="' + escapeHtml(badge.tooltip || badge.displayName)
+      + '">' + escapeHtml(badge.displayName) + '</span>';
+  }
+
   function prizeImageHtml(prize, result) {
     if (prize && prize.image) {
       return '<img src="' + escapeHtml(prize.image) + '" alt="' + escapeHtml(prize.name || '奖品') + '">';
+    }
+    if (prize && prize.kind === 'badge' && (pointLottery.badgeStyles || {})[prize.badgeId]) {
+      return '<span class="point-lottery__preview-placeholder">' + prizeBadgeHtml(prize)
+        + '<span>' + (result ? '宝藏勋章已点亮' : '勋章样式 · 未上传展示图') + '</span></span>';
     }
     if (result) return '<span class="point-lottery__result-placeholder">✦</span>';
     return '<span class="point-lottery__preview-placeholder"><b>' + (prize && prize.kind === 'badge' ? '✦' : '礼')
@@ -1130,9 +1013,7 @@
       var details = [durationLabel(prize), probabilityLabel(prize), prize.available === false ? '已获得' : ''].filter(Boolean).join(' · ');
       return '<button class="point-lottery__prize-option" type="button" data-point-lottery-prize-index="' + index
         + '" aria-pressed="false" title="' + escapeHtml(prize.name + ' · ' + details) + '">'
-        + '<span class="point-lottery__prize-option-number" style="--prize-color:' + prizeColors[index % prizeColors.length] + '">'
-        + String(index + 1).padStart(2, '0') + '</span><span class="point-lottery__prize-option-copy">'
-        + '<span class="point-lottery__prize-option-name">' + escapeHtml(prize.name) + '</span>'
+        + '<span class="point-lottery__prize-option-copy">' + prizeBadgeHtml(prize)
         + '<small>' + escapeHtml(details) + '</small></span></button>';
     }).join('');
     if (!prizes.length) {
@@ -1149,7 +1030,7 @@
   function renderWins() {
     var wins = (pointLottery.recentWins || []).filter(isVisibleWinPrize);
     pointLottery.recentWins = wins;
-    winsNode.innerHTML = '<div class="point-lottery__wins-title"><span>我的勋章</span><small>最近获得</small></div>'
+    winsNode.innerHTML = '<div class="point-lottery__wins-title"><span>我的宝藏收藏</span><small>最近获得</small></div>'
       + (wins.length ? '<div class="point-lottery__win-list">' + wins.map(function (prize, index) {
         return '<button class="point-lottery__win" type="button" data-point-lottery-win-index="' + index
           + '" title="' + escapeHtml(prize.name) + '"><span class="point-lottery__win-image">'
@@ -1208,23 +1089,23 @@
     } catch (e) { /* Decorative audio must never affect a draw. */ }
   }
 
-  function resetEggs() {
-    eggStageNode.classList.remove('is-busy');
-    eggsNode.querySelectorAll('button').forEach(function (egg) {
-      egg.classList.remove('is-selected', 'is-pending', 'is-cracking', 'is-revealed');
+  function resetChests() {
+    chestStageNode.classList.remove('is-busy');
+    chestsNode.querySelectorAll('button').forEach(function (chest) {
+      chest.classList.remove('is-selected', 'is-pending', 'is-unlocking', 'is-revealed');
     });
   }
 
   function hideResult() {
     resultNode.hidden = true;
-    if (!drawInProgress) resetEggs();
-    if (!modal.hidden && activeEgg && !activeEgg.disabled) activeEgg.focus({ preventScroll: true });
+    if (!drawInProgress) resetChests();
+    if (!modal.hidden && activeChest && !activeChest.disabled) activeChest.focus({ preventScroll: true });
   }
 
   function showResult(prize, points, error) {
     resultNode.classList.toggle('is-error', !!error);
     resultEyebrowNode.textContent = error ? '抽奖失败' : isVisibleWinPrize(prize)
-      ? (prize.kind === 'badge' ? '叮！新勋章来啦' : '恭喜获得') : '本次结果';
+      ? (prize.kind === 'badge' ? '宝箱开启！发现闪亮勋章' : '恭喜获得') : '本次结果';
     resultImageNode.innerHTML = error ? '<span class="point-lottery__result-placeholder">!</span>' : prizeImageHtml(prize, true);
     resultTitleNode.textContent = error || prize.name || '本次结果';
     var duration = durationLabel(prize);
@@ -1246,33 +1127,33 @@
     else if (!(pointLottery.prizes || []).length) reason = '奖品暂未配置。';
     else if (!pointLottery.prizes.some(function (prize) { return prize.available !== false && Number(prize.probability) > 0; })) reason = '可抽奖品已全部抽完。';
     else if (Number(pointLottery.points || 0) < Number(pointLottery.cost || 0)) reason = '积分不足，本次抽奖需要 ' + pointLottery.cost + ' 积分。';
-    eggsNode.querySelectorAll('button').forEach(function (button) { button.disabled = drawInProgress || !!reason; });
-    eggStageNode.setAttribute('aria-busy', String(drawInProgress));
-    drawLabelNode.textContent = drawInProgress ? '你的勋章即将揭晓…' : reason ? '金蛋等待开启' : '选一颗金蛋，收获小惊喜';
-    statusNode.textContent = drawInProgress ? '正在开启金蛋，请稍候…' : reason || '点击任意金蛋开始抽奖，每次消耗 ' + pointLottery.cost + ' 积分。';
+    chestsNode.querySelectorAll('button').forEach(function (button) { button.disabled = drawInProgress || !!reason; });
+    chestStageNode.setAttribute('aria-busy', String(drawInProgress));
+    drawLabelNode.textContent = drawInProgress ? '你的勋章即将揭晓…' : reason ? '宝箱等待开启' : '选一个宝箱，发现闪亮的勋章';
+    statusNode.textContent = drawInProgress ? '钥匙正在解锁，宝藏即将揭晓…' : reason || '点击任意宝箱开始寻宝，每次消耗 ' + pointLottery.cost + ' 积分。';
   }
 
-  function revealEgg(egg) {
-    egg.classList.remove('is-pending');
-    egg.classList.add('is-cracking');
+  function revealChest(chest) {
+    chest.classList.remove('is-pending');
+    chest.classList.add('is-unlocking');
     var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     return new Promise(function (resolve) {
       setTimeout(function () {
-        egg.classList.remove('is-cracking');
-        egg.classList.add('is-revealed');
-        setTimeout(resolve, reducedMotion ? 0 : 650);
-      }, reducedMotion ? 0 : 420);
+        chest.classList.remove('is-unlocking');
+        chest.classList.add('is-revealed');
+        setTimeout(resolve, reducedMotion ? 0 : 850);
+      }, reducedMotion ? 0 : 600);
     });
   }
 
-  function drawEgg(egg) {
-    if (drawInProgress || egg.disabled) return;
+  function drawChest(chest) {
+    if (drawInProgress || chest.disabled) return;
     hideResult();
-    resetEggs();
-    activeEgg = egg;
+    resetChests();
+    activeChest = chest;
     drawInProgress = true;
-    eggStageNode.classList.add('is-busy');
-    egg.classList.add('is-selected', 'is-pending');
+    chestStageNode.classList.add('is-busy');
+    chest.classList.add('is-selected', 'is-pending');
     syncState();
     prepareLotteryAudio();
     fetch(drawUrl, {
@@ -1300,16 +1181,16 @@
       renderPrizes();
       renderWins();
       syncState();
-      return revealEgg(egg).then(function () {
+      return revealChest(chest).then(function () {
         startAnnouncements();
         showResult(data.prize, data.points);
       });
     }).catch(function (err) {
-      resetEggs();
+      resetChests();
       showResult(null, null, err.message || '抽奖失败，请稍后再试。');
     }).finally(function () {
       drawInProgress = false;
-      eggStageNode.classList.remove('is-busy');
+      chestStageNode.classList.remove('is-busy');
       syncState();
     });
   }
@@ -1318,6 +1199,7 @@
     if (!modal.hidden) return;
     previousFocus = document.activeElement;
     previousBodyOverflow = document.body.style.overflow;
+    document.body.appendChild(modal);
     document.body.style.overflow = 'hidden';
     modal.hidden = false;
     syncState();
@@ -1329,23 +1211,25 @@
     if (modal.hidden) return;
     stopAnnouncements();
     modal.hidden = true;
+    if (modalAnchor.parentNode) modalAnchor.parentNode.insertBefore(modal, modalAnchor.nextSibling);
     document.body.style.overflow = previousBodyOverflow;
     if (!drawInProgress) hideResult();
     if (previousFocus && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
   }
 
-  eggsNode.innerHTML = [1, 2, 3].map(function (number) {
-    return '<button class="point-lottery__egg" type="button" data-point-lottery-egg="' + number
-      + '" aria-label="砸开 ' + number + ' 号金蛋"><span class="point-lottery__egg-figure" aria-hidden="true">'
-      + '<span class="point-lottery__egg-shell point-lottery__egg-shell--top"></span>'
-      + '<span class="point-lottery__egg-shell point-lottery__egg-shell--bottom"></span>'
-      + '<span class="point-lottery__egg-emblem">✦</span><span class="point-lottery__egg-burst">✦</span>'
-      + '<span class="point-lottery__egg-hammer"></span></span><span class="point-lottery__egg-number">'
-      + '0' + number + ' 号金蛋</span></button>';
+  chestsNode.innerHTML = [1, 2, 3].map(function (number) {
+    return '<button class="point-lottery__chest" type="button" data-point-lottery-chest="' + number
+      + '" aria-label="开启 ' + number + ' 号宝箱"><span class="point-lottery__chest-figure" aria-hidden="true">'
+      + '<span class="point-lottery__chest-beam"></span><span class="point-lottery__chest-body"></span>'
+      + '<span class="point-lottery__chest-lid"></span><span class="point-lottery__chest-lock"></span>'
+      + '<span class="point-lottery__chest-burst">✦</span><span class="point-lottery__chest-key">'
+      + '<svg viewBox="0 0 64 64" fill="none"><path d="M12 49 37 24m-19 19 7 7m-1-13 7 7" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>'
+      + '<circle cx="44" cy="17" r="12" stroke="currentColor" stroke-width="8"/><path d="m13 47 22-22" stroke="#fff3b6" stroke-width="2" stroke-linecap="round"/></svg>'
+      + '</span></span><span class="point-lottery__chest-number">0' + number + ' 号宝箱</span></button>';
   }).join('');
-  eggsNode.addEventListener('click', function (ev) {
-    var egg = ev.target.closest('[data-point-lottery-egg]');
-    if (egg && eggsNode.contains(egg)) drawEgg(egg);
+  chestsNode.addEventListener('click', function (ev) {
+    var chest = ev.target.closest('[data-point-lottery-chest]');
+    if (chest && chestsNode.contains(chest)) drawChest(chest);
   });
   prizePickerNode.addEventListener('click', function (ev) {
     var button = ev.target.closest('[data-point-lottery-prize-index]');
