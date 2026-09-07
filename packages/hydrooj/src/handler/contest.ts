@@ -160,11 +160,15 @@ export class ContestDetailBaseHandler extends Handler {
     @query('entryDomainId', Types.DomainId, true)
     async __prepare(domainId: string, tid: ObjectId, entryDomainId = '') {
         if (!tid) return; // ProblemDetailHandler also extends from ContestDetailBaseHandler
+        if (this.contestEntryContext) {
+            this.entryDomain = this.contestEntryContext.domain;
+            this.entryDomainId = this.entryDomain._id;
+        }
         [this.tdoc, this.tsdoc] = await Promise.all([
             contest.get(domainId, tid),
             contest.getStatus(domainId, tid, this.user._id),
         ]);
-        if (this.tdoc.allDomains && entryDomainId && entryDomainId !== domainId) {
+        if (!this.entryDomain && this.tdoc.allDomains && entryDomainId && entryDomainId !== domainId) {
             const [entryDomain, entryDudoc] = await Promise.all([
                 domain.get(entryDomainId),
                 domain.collUser.findOne({ domainId: entryDomainId, uid: this.user._id, join: true }),

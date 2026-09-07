@@ -1,5 +1,15 @@
 {% extends "layout/basic.html" %}
 {% block content %}
+{% if handler.contestEntryContext %}
+{{ set(UiContext, 'socketUrl',
+  "d/" + UiContext.domainId + "/record-conn?tid=" + filterTid
+  + (("&uidOrName=" + filterUidOrName) if filterUidOrName else "")
+  + (("&pid=" + filterPid) if filterPid else "")
+  + ("&includePretest=1" if filterIncludePretest else "")
+  + ("&all=1" if all else "")
+  + ("&allDomain=1" if allDomain else "")
+) }}
+{% else %}
 {{ set(
   UiContext, 'socketUrl',
   "record-conn?domainId=" + handler.args.domainId
@@ -10,6 +20,7 @@
   + ("&all=1" if all else "")
   + ("&allDomain=1" if allDomain else "")
 ) }}
+{% endif %}
 {{ set(UiContext, 'rids', rdocs.map(eval("rdoc=>rdoc._id.toString()"))) }}
 <style>
   .record-main__homework-tag {

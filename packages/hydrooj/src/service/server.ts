@@ -12,6 +12,7 @@ import { errorMessage, Time } from '@hydrooj/utils';
 import { Context } from '../context';
 import { PermissionError, PrivilegeError } from '../error';
 import type { DomainDoc } from '../interface';
+import type { ContestEntryContext } from '../lib/contest_entry';
 import { Logger } from '../logger';
 import { PERM, PRIV } from '../model/builtin';
 import * as opcount from '../model/opcount';
@@ -49,6 +50,7 @@ function isGuestAccessiblePath(path: string) {
 declare module '@hydrooj/framework' {
     export interface HandlerCommon {
         domain: DomainDoc;
+        contestEntryContext?: ContestEntryContext;
 
         paginate<T>(cursor: FindCursor<T>, page: number, key: string): Promise<[docs: T[], numPages: number, count: number]>;
         paginate<T>(cursor: FindCursor<T>, page: number, limit: number): Promise<[docs: T[], numPages: number, count: number]>;
@@ -161,11 +163,15 @@ export async function apply(ctx: Context) {
                         else query[key] = kwargs.query[key].toString();
                     }
                 }
+                if (this.contestEntryContext) {
+                    const { applyContestEntryUrl } = require('../lib/contest_entry');
+                    applyContestEntryUrl(this.contestEntryContext, name, args, query);
+                }
                 try {
                     const { anchor } = args;
                     let withDomainId = args.domainId || false;
-                    const domainId = this.args.domainId;
-                    const host = this.domain?.host;
+                    const domainId = this.contestEntryContext?.domain._id || this.args.domainId;
+                    const host = (this.contestEntryContext?.domain || this.domain)?.host;
                     if (domainId !== 'system' && (
                         !this.request.host
                         || (host instanceof Array
@@ -239,7 +245,7 @@ export async function apply(ctx: Context) {
                             redirect: (this.context.originalPath || this.request.path) + this.context.search,
                         },
                     });
-                } else if (!this.user._dudoc.join && error instanceof PermissionError) {
+                } else if (!this.contestEntryContext && !this.user._dudoc.join && error instanceof PermissionError) {
                     this.response.redirect = this.url('domain_join', {
                         domainId: 'system',
                         query: {
@@ -306,11 +312,15 @@ export async function apply(ctx: Context) {
             }
             if ((!('noCheckPermView' in h) || !h.noCheckPermView) && !h.user.hasPriv(PRIV.PRIV_VIEW_ALL_DOMAIN)) h.checkPerm(PERM.PERM_VIEW);
             if (h.context.pendingError) throw h.context.pendingError;
+            const { resolveContestEntry } = require('../lib/contest_entry');
+            await resolveContestEntry(h);
         });
         on('handler/create/ws', async (h) => {
             const workspaceAccess = await resolveWorkspaceAccess(h.context);
             if (!workspaceAccess.allowed) throw new NotFoundError(h.args.domainId);
             if (h.context.pendingError) throw h.context.pendingError;
+            const { resolveContestEntry } = require('../lib/contest_entry');
+            await resolveContestEntry(h);
         });
     });
 }

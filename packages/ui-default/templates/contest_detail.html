@@ -511,6 +511,8 @@
             {% set contest_scope_text = '本场比赛仅分配给指定学员' %}
           {% elif tdoc._code %}
             {% set contest_scope_text = '本场比赛需要邀请码后参加' %}
+          {% elif tdoc.allDomains and tdoc.rule != 'homework' %}
+            {% set contest_scope_text = '本场为全域比赛，可在当前域参加，所有域统一排名' %}
           {% else %}
             {% set contest_scope_text = '本场比赛面向当前训练域开放' %}
           {% endif %}

@@ -10,7 +10,7 @@
   badgeAcFirstEligible: badgeAcFirstEligible
 }) }}
 {% if typeof(rdoc['status']) === 'number' and not rev %}
-  {{ set(UiContext, 'socketUrl', "record-detail-conn?domainId=" + rdoc.domainId + "&rid=" + rdoc._id) }}
+  {{ set(UiContext, 'socketUrl', "d/" + UiContext.domainId + "/record-detail-conn?rid=" + rdoc._id + "&tid=" + handler.contestEntryContext.contest.docId if handler.contestEntryContext else "record-detail-conn?domainId=" + rdoc.domainId + "&rid=" + rdoc._id) }}
 {% endif %}
 <div class="row">
   <div class="medium-9 columns collapsed">
