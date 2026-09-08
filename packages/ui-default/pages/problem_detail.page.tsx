@@ -635,6 +635,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     watchFormalSubmitRecords(store, WebSocket);
 
     renderReact = () => {
+      store.dispatch({ type: 'SCRATCHPAD_UI_OPEN' });
       const root = createRoot($('#scratchpad').get(0));
       root.render(
         <Provider store={store}>

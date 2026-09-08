@@ -39,13 +39,12 @@ function appendFormalSubmitRid(rids: string[], payload: any) {
 
 export default function reducer(state = {
   pretest: {
-    visible: UiContext.ideMode ? true : UiContext.pdoc.config?.type === 'default'
-      ? localStorage.getItem('scratchpad/pretest') === 'true'
-      : false,
+    visible: !!UiContext.ideMode || UiContext.pdoc.config?.type === 'default',
   },
   records: {
-    visible: !UiContext.ideMode && UiContext.canViewRecord && localStorage.getItem('scratchpad/records') === 'true',
+    visible: !UiContext.ideMode && !!UiContext.canViewRecord,
     isLoading: false,
+    scrollRevision: 0,
   },
   settings: {
     visible: false,
@@ -60,6 +59,20 @@ export default function reducer(state = {
   formalSubmitRids: [],
 }, action: any = {}) {
   switch (action.type) {
+    case 'SCRATCHPAD_UI_OPEN': {
+      return {
+        ...state,
+        pretest: {
+          ...state.pretest,
+          visible: !!UiContext.ideMode || UiContext.pdoc.config?.type === 'default',
+        },
+        records: {
+          ...state.records,
+          visible: !UiContext.ideMode && !!UiContext.canViewRecord,
+        },
+        activePage: UiContext.ideMode ? '' : 'problem',
+      };
+    }
     case 'SCRATCHPAD_UI_SET_VISIBILITY': {
       const { uiElement, visibility } = action.payload;
       localStorage.setItem(`scratchpad/${uiElement}`, visibility.toString());
@@ -103,8 +116,17 @@ export default function reducer(state = {
         pendingCommand: action.payload.command,
       };
     }
-    case 'SCRATCHPAD_POST_PRETEST_PENDING':
     case 'SCRATCHPAD_POST_SUBMIT_PENDING': {
+      return {
+        ...state,
+        records: {
+          ...state.records,
+          scrollRevision: state.records.scrollRevision + 1,
+        },
+        isPosting: true,
+      };
+    }
+    case 'SCRATCHPAD_POST_PRETEST_PENDING': {
       return {
         ...state,
         isPosting: true,
@@ -127,10 +149,6 @@ export default function reducer(state = {
       return isFormalSubmit
         ? {
           ...state,
-          pretest: {
-            ...state.pretest,
-            visible: false,
-          },
           records: {
             ...state.records,
             visible: UiContext.canViewRecord ? true : state.records.visible,

@@ -4,6 +4,7 @@ import React from 'react';
 import { connect } from 'react-redux';
 import Icon from 'vj/components/react/IconComponent';
 import { getAvailableLangs, i18n, request } from 'vj/utils';
+import ScratchpadThemePicker from './ScratchpadThemePicker';
 import Toolbar, {
   ToolbarButtonComponent as ToolbarButton,
   ToolbarItemComponent as ToolbarItem,
@@ -209,6 +210,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
           )}
         </div>
         <div className="scratchpad__toolbar__views">
+          <ScratchpadThemePicker />
           {canUsePretest && (
             <ToolbarButton
               activated={this.props.pretestVisible}

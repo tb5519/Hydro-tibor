@@ -2,6 +2,7 @@ import React from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { i18n } from 'vj/utils';
 import { RootState } from './reducers';
+import ScratchpadThemePicker from './ScratchpadThemePicker';
 
 export default function ScratchpadSettings() {
   const config = useSelector((state: RootState) => state.ui.settings.config);
@@ -18,9 +19,6 @@ export default function ScratchpadSettings() {
       const val = ev?.target?.value || ev;
       dispatch({ type: 'SCRATCHPAD_SETTING_UPDATE', payload: { setting, value: numeric ? +val : val } });
     };
-  }
-  function openThemeSelect() {
-    dispatch({ type: 'SCRATCHPAD_TRIGGER_EDITOR_COMMAND', payload: { command: 'hydro.changeEditorTheme' } });
   }
   // TODO update style
   return <div>
@@ -41,8 +39,8 @@ export default function ScratchpadSettings() {
       </label>
     </div></div>
     <div className="row"><div className="columns">
-      <p>{i18n('Theme')}: </p>
-      <button className="rounded primary button" onClick={openThemeSelect}>{i18n('Open theme select')}</button>
+      <p>代码区主题</p>
+      <ScratchpadThemePicker expanded />
     </div></div>
   </div>;
 }

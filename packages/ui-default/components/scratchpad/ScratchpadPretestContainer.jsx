@@ -12,6 +12,7 @@ const AU = new AnsiUp();
 const mapStateToProps = (state) => ({
   input: state.pretest.input,
   output: state.pretest.output,
+  summary: state.pretest.summary,
   rid: state.pretest.rid,
 });
 
@@ -48,6 +49,12 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadPret
           <DataInput
             title={i18n('Output')}
             value={AU.ansi_to_html(this.props.output)}
+            metadata={this.props.summary && [
+              this.props.summary.status,
+              this.props.summary.time !== undefined && `${this.props.summary.time} ms`,
+              this.props.summary.memory !== undefined && `${this.props.summary.memory} KiB`,
+            ].filter((value) => value !== false).join(' · ')}
+            hasResult={!!this.props.summary}
             html
           />
         </Allotment>

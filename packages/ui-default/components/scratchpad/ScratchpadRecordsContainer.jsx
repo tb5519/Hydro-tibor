@@ -9,9 +9,20 @@ import ScratchpadRecordsRow from './ScratchpadRecordsRowContainer';
 const mapStateToProps = (state) => ({
   rows: state.records.rows.filter((id) => state.records.items[id]?.contest?.toString() !== '000000000000000000000000'),
   isLoading: state.ui.records.isLoading,
+  scrollRevision: state.ui.records.scrollRevision,
 });
 
 export default connect(mapStateToProps)(class ScratchpadRecordsContainer extends React.PureComponent {
+  scrollContainer = React.createRef();
+
+  componentDidUpdate(prevProps) {
+    if (this.props.scrollRevision !== prevProps.scrollRevision || this.props.rows[0] !== prevProps.rows[0]) {
+      // A new submission belongs at the top. Live judging updates to the same
+      // record should leave the student's reading position alone.
+      if (this.scrollContainer.current) this.scrollContainer.current.scrollTop = 0;
+    }
+  }
+
   render() {
     const cn = classNames('data-table is--full-row scratchpad__records__table', {
       loading: this.props.isLoading,
@@ -26,7 +37,7 @@ export default connect(mapStateToProps)(class ScratchpadRecordsContainer extends
           </span>
         )}
       >
-        <div className="scratchpad__records-scroll" aria-busy={this.props.isLoading}>
+        <div ref={this.scrollContainer} className="scratchpad__records-scroll" aria-busy={this.props.isLoading}>
           {this.props.rows.length ? (
             <table className={cn}>
               <colgroup>

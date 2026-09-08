@@ -9,7 +9,7 @@ export default function reducer(state = {
       const { rdocs } = action.payload;
       return {
         ...state,
-        rows: _.map(rdocs, '_id'),
+        rows: _.map(rdocs, '_id').sort((a, b) => `${b}`.localeCompare(`${a}`)),
         items: _.keyBy(rdocs, '_id'),
       };
     }
@@ -19,7 +19,7 @@ export default function reducer(state = {
       if (!rows.includes(rdoc._id)) {
         return {
           ...state,
-          rows: [rdoc._id, ...state.rows],
+          rows: [rdoc._id, ...state.rows].sort((a, b) => `${b}`.localeCompare(`${a}`)),
           items: {
             ...state.items,
             [rdoc._id]: rdoc,

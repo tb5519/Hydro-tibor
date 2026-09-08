@@ -48,6 +48,7 @@ async function harness(name, options = {}) {
                 postSubmitUrl: '/submit', getSubmissionsUrl: '/submissions', ...options.context },
             require(id) {
                 if (id === 'vj/components/react/IconComponent') return ({ name: icon }) => React.createElement('i', { 'data-icon': icon });
+                if (id === 'vj/components/notification') return { error() {} };
                 if (id === '@hydrooj/common') return statusModule.exports;
                 if (id === 'vj/constant/record') return execute(recordSource);
                 if (id === 'vj/utils') {

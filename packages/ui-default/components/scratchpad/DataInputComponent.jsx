@@ -5,6 +5,8 @@ export default function DataInputComponent(props) {
   const {
     html,
     title,
+    metadata,
+    hasResult,
     value,
     onChange,
     className,
@@ -12,12 +14,15 @@ export default function DataInputComponent(props) {
   } = props;
   return (
     <div {...rest} className={classNames(className, 'scratchpad__data-pane')}>
-      <div className="scratchpad__data-label">{title}</div>
+      <div className="scratchpad__data-label">
+        <span>{title}</span>
+        {metadata && <span className="scratchpad__data-metadata" role="status">（{metadata}）</span>}
+      </div>
       {html ? (
         <div className="scratchpad__data-input scratchpad__data-output" role="log" aria-label={title}>
           {value
             ? <pre dangerouslySetInnerHTML={{ __html: value }} />
-            : <span className="scratchpad__data-placeholder">运行自测后，结果会显示在这里</span>}
+            : !hasResult && <span className="scratchpad__data-placeholder">运行自测后，结果会显示在这里</span>}
         </div>
       ) : (
         <textarea
@@ -40,6 +45,8 @@ export default function DataInputComponent(props) {
 DataInputComponent.propTypes = {
   html: PropTypes.bool,
   title: PropTypes.string,
+  metadata: PropTypes.string,
+  hasResult: PropTypes.bool,
   value: PropTypes.string,
   onChange: PropTypes.func,
   className: PropTypes.string,

@@ -180,6 +180,12 @@ export function apply(ctx: Context, config: ReturnType<typeof Config>) {
       SettingModel.Setting('setting_display', 'showTimeAgo', true, 'boolean', 'Enable Time Ago'),
       SettingModel.Setting('setting_display', 'fontFamily', 'Open Sans', fontRange, 'Font Family'),
       SettingModel.Setting('setting_display', 'codeFontFamily', 'Source Code Pro', codeFontRange, 'Code Font Family'),
+      SettingModel.Setting(
+        'setting_display', 'scratchpadTheme', 'cloud',
+        { cloud: '云白', mist: '雾青', sand: '暖砂', ocean: '深海' },
+        '代码区主题', '在线编程时使用的主题，将随账号保存。', 0,
+        (value) => ['cloud', 'mist', 'sand', 'ocean'].includes(value),
+      ),
       SettingModel.Setting('setting_display', 'theme', 'light', { light: 'Light', dark: 'Dark' }, 'Theme'),
       SettingModel.Setting('setting_markdown', 'preferredEditorType', 'sv', { sv: 'Split View', monaco: 'Monaco Editor' }, 'Preferred Editor Type'),
       SettingModel.Setting('setting_highlight', 'showInvisibleChar', false, 'boolean', 'Show Invisible Characters'),
@@ -210,6 +216,7 @@ export function apply(ctx: Context, config: ReturnType<typeof Config>) {
     }
   });
   ctx.on('handler/after', async (that) => {
+    that.UiContext.scratchpadThemePreferenceUrl = that.url('home_settings', { category: 'preference' });
     that.UiContext.SWConfig = {
       preload: config.serviceWorker.preload,
       hosts: [

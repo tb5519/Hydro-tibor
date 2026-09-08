@@ -13,6 +13,7 @@ import ScratchpadPretest from './ScratchpadPretestContainer';
 import ScratchpadRecords from './ScratchpadRecordsContainer';
 import ScratchpadSettings from './ScratchpadSettings';
 import ScratchpadToolbar from './ScratchpadToolbarContainer';
+import { scratchpadThemeVariables, useScratchpadTheme } from './themes';
 
 const pages = {
   problem: {
@@ -64,6 +65,7 @@ let scratchpad: ScratchpadService;
 
 export default function ScratchpadContainer() {
   const store = useStore();
+  const theme = useScratchpadTheme();
   scratchpad ||= new ScratchpadService(store);
   const [, updateState] = React.useState<any>();
   const forceUpdate = React.useCallback(() => updateState({}), []);
@@ -73,11 +75,12 @@ export default function ScratchpadContainer() {
   const dispatch = useDispatch();
   const ui = useSelector<any, any>((state) => state.ui, _.isEqual);
 
-  const handleChangeSize = _.debounce(() => {
+  const handleChangeSize = React.useMemo(() => _.debounce(() => {
     ctx.scratchpad.editor?.layout?.();
     $('#scratchpad').trigger('vjScratchpadRelayout');
     forceUpdate();
-  }, 500);
+  }, 500), [forceUpdate]);
+  React.useEffect(() => () => handleChangeSize.cancel(), [handleChangeSize]);
   const switchToPage = (target) => {
     dispatch({
       type: 'SCRATCHPAD_SWITCH_TO_PAGE',
@@ -116,18 +119,20 @@ export default function ScratchpadContainer() {
           })}
         </div>
       </Allotment.Pane>
-      <Allotment vertical defaultSizes={[550, 250, 200]} onChange={handleChangeSize}>
-        <div key="editor" className="scratchpad__workspace flex-col splitpane-fill">
-          <ScratchpadToolbar />
-          <ScratchpadEditor />
-        </div>
-        <Allotment.Pane visible={ui.pretest.visible}>
-          <ScratchpadPretest key="pretest" />
-        </Allotment.Pane>
-        <Allotment.Pane visible={ui.records.visible}>
-          <ScratchpadRecords key="records" />
-        </Allotment.Pane>
-      </Allotment>
+      <div className="scratchpad__coding-area" data-scratchpad-theme={theme.id} style={scratchpadThemeVariables(theme) as React.CSSProperties}>
+        <Allotment vertical defaultSizes={[450, 280, 270]} onChange={handleChangeSize}>
+          <div key="editor" className="scratchpad__workspace flex-col splitpane-fill">
+            <ScratchpadToolbar />
+            <ScratchpadEditor />
+          </div>
+          <Allotment.Pane visible={ui.pretest.visible}>
+            <ScratchpadPretest key="pretest" />
+          </Allotment.Pane>
+          <Allotment.Pane visible={ui.records.visible}>
+            <ScratchpadRecords key="records" />
+          </Allotment.Pane>
+        </Allotment>
+      </div>
     </Allotment>
   );
 }
