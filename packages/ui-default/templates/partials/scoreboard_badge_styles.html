@@ -1,5 +1,15 @@
 {% include "partials/ranking_badge_effects.html" %}
 <style>
+.contest-scoreboard-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.contest-scoreboard-table thead {
+  background: #f8faff;
+}
+.theme--dark .contest-scoreboard-scroll .contest-scoreboard-table thead {
+  background: #1f2937;
+}
 /* Keep the starred/current-user marker visible on top of the badge glow. */
 .contest-scoreboard-table tbody tr.ranking-row--badge.star-highlight td {
   box-shadow: inset 0 1px 0 #93c5fd, inset 0 -1px 0 #93c5fd;

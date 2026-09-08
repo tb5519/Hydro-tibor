@@ -230,6 +230,7 @@ export type RecordDoc = {
 } & {
     _id: ObjectId;
     notify?: boolean;
+    scorePointAward?: import('./lib/contest_score_points').ContestScorePointAward;
 };
 
 export interface RecordHistoryDoc extends RecordJudgeInfo {

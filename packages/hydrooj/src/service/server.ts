@@ -137,6 +137,8 @@ export async function apply(ctx: Context) {
             if (!fs.existsSync(dir)) continue;
             server.addServerLayer(`${addon}_public`, cache(dir, {
                 maxAge: argv.options.public ? 0 : 24 * 3600 * 1000,
+                // Local rebuilds create new hashed chunks after this cache is initialized.
+                dynamic: process.env.NODE_ENV === 'development',
             }));
         }
 

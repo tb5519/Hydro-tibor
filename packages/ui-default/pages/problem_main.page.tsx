@@ -9,6 +9,7 @@ import { confirm, Dialog, prompt } from 'vj/components/dialog';
 import Dropdown from 'vj/components/dropdown/Dropdown';
 import createHint from 'vj/components/hint';
 import Notification from 'vj/components/notification';
+import selectStudentForUnacceptedFilter from 'vj/components/problem/StudentUnacceptedDialog';
 import { downloadProblemSet } from 'vj/components/zipDownloader';
 import { NamedPage } from 'vj/misc/Page';
 import {
@@ -96,21 +97,10 @@ function loadQuery() {
 }
 
 async function selectStudentUnacceptedFilter() {
-  const result = await prompt(i18n('筛选学员未 AC 题目'), {
-    studentUid: {
-      type: 'userId',
-      label: i18n('选择学员账号'),
-      userApi: 'problemFilterStudents',
-      required: true,
-      autofocus: true,
-    },
-  }, {
-    cancelByClickingBack: true,
-    cancelByEsc: true,
-  });
-  if (!result) return;
+  const student = await selectStudentForUnacceptedFilter();
+  if (!student) return;
   const url = new URL(window.location.href);
-  url.searchParams.set('unacUid', result.studentUid.toString());
+  url.searchParams.set('unacUid', student._id.toString());
   url.searchParams.delete('page');
   window.location.assign(url.toString());
 }

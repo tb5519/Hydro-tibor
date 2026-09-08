@@ -18,6 +18,10 @@
           {% endif %}
         </div>
       </div>
+      <div class="homepage-personal__points" role="status" aria-live="polite" aria-atomic="true">
+        <span>当前积分</span>
+        <strong data-point-lottery-points>{{ pointLottery.points|default(0) }}</strong>
+      </div>
     </div>
 
     <div class="homepage-personal__badges">
@@ -83,9 +87,10 @@
     padding: 1rem 1.1rem 1.15rem;
   }
   .homepage-personal__identity {
-    display: flex;
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) minmax(4.25rem, max-content);
     align-items: center;
-    gap: .75rem;
+    gap: .65rem;
   }
   .homepage-personal__avatar {
     flex: 0 0 auto;
@@ -104,6 +109,9 @@
     font-size: .95rem;
     font-weight: 700;
     line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .homepage-personal__name .user-profile-name {
     color: inherit;
@@ -112,6 +120,42 @@
     margin-top: .15rem;
     color: #64748b;
     font-size: .78rem;
+  }
+  .homepage-personal__points {
+    box-sizing: border-box;
+    max-width: 7rem;
+    padding: .4rem .65rem;
+    border: 1px solid var(--ui-v2-border, #dbe6f3);
+    border-radius: var(--ui-v2-radius-sm, 10px);
+    background: var(--ui-v2-surface-muted, #f8fbff);
+    text-align: right;
+  }
+  .homepage-personal__points span {
+    display: block;
+    color: var(--ui-v2-text-muted, #64748b);
+    font-size: .68rem;
+    line-height: 1.4;
+    white-space: nowrap;
+  }
+  .homepage-personal__points strong {
+    display: block;
+    margin-top: .12rem;
+    color: var(--ui-v2-accent, #2563eb);
+    font-size: 1.2rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+  }
+  .theme--dark .homepage-personal__points {
+    border-color: #3b4b60;
+    background: #283342;
+  }
+  .theme--dark .homepage-personal__points span {
+    color: #a4b3c5;
+  }
+  .theme--dark .homepage-personal__points strong {
+    color: #93c5fd;
   }
   .homepage-personal__badges {
     margin-top: .9rem;

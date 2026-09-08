@@ -5,6 +5,7 @@ import {
   SettingModel, SystemModel, Types, UserModel, yaml,
 } from 'hydrooj';
 import convert from 'schemastery-jsonschema';
+import * as contestTimer from './backendlib/contest-timer';
 import markdown from './backendlib/markdown';
 import { TemplateService } from './backendlib/template';
 
@@ -222,5 +223,6 @@ export function apply(ctx: Context, config: ReturnType<typeof Config>) {
     };
   });
   ctx.plugin(TemplateService);
+  ctx.plugin(contestTimer);
   ctx.plugin(require('./backendlib/builder'));
 }

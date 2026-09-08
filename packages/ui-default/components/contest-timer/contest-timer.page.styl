@@ -1,0 +1,172 @@
+.contest-clock
+  --clock-accent: #438fbc
+  position: fixed
+  z-index: 990
+  right: 24px
+  bottom: unquote('max(24px, env(safe-area-inset-bottom))')
+  width: 264px
+  max-width: calc(100vw - 24px)
+  height: fit-content
+  box-sizing: border-box
+  overflow: hidden
+  border: 1px solid rgba(68, 132, 171, .18)
+  border-radius: 16px
+  background: rgba(255, 255, 255, .97)
+  box-shadow: 0 8px 32px rgba(41, 83, 111, .13), 0 2px 6px rgba(41, 83, 111, .04)
+  color: #33485a
+  backdrop-filter: blur(12px)
+  touch-action: none
+  user-select: none
+
+  &[hidden]
+    display: none !important
+
+  &--urgent
+    --clock-accent: #d58b39
+
+  &--dragging
+    cursor: grabbing
+    box-shadow: 0 12px 40px rgba(41, 83, 111, .2)
+
+  &__top
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 8px
+    padding: 12px 12px 0 18px
+    cursor: grab
+
+  &__state
+    display: inline-flex
+    align-items: center
+    gap: 7px
+    font-size: 11px
+    line-height: 20px
+    letter-spacing: .05em
+    color: #8293a0
+
+  &__dot
+    width: 6px
+    height: 6px
+    border-radius: 50%
+    background: var(--clock-accent)
+
+  &__tools
+    display: flex
+    align-items: center
+    gap: 6px
+
+  &__switch, &__drag
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    min-width: 28px
+    height: 28px
+    margin: -4px 0
+    padding: 0 5px
+    border: 0
+    border-radius: 6px
+    background: transparent
+    color: #8d9eaa
+    font-size: 11px
+    font-variant-numeric: tabular-nums
+    cursor: pointer
+
+    &:hover
+      background: rgba(67, 143, 188, .08)
+      color: var(--clock-accent)
+
+    &[hidden]
+      display: none
+
+  &__drag
+    cursor: grab
+
+  &__link, &__link:visited
+    display: block
+    padding: 6px 18px 14px
+    color: inherit
+    text-decoration: none
+
+    &:hover
+      color: inherit
+      text-decoration: none
+
+  &__link:focus-visible, &__drag:focus-visible, &__switch:focus-visible
+    outline: 2px solid var(--clock-accent)
+    outline-offset: -3px
+
+  &__title
+    display: block
+    overflow: hidden
+    white-space: nowrap
+    text-overflow: ellipsis
+    line-height: 24px
+    font-size: 14px
+    font-weight: 600
+
+  &__bottom
+    display: flex
+    align-items: baseline
+    justify-content: space-between
+    gap: 10px
+    margin-top: 3px
+
+  &__time
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace
+    font-size: 27px
+    font-weight: 500
+    line-height: 36px
+    letter-spacing: -.04em
+    font-variant-numeric: tabular-nums
+    color: var(--clock-accent)
+
+  &__return
+    color: #8799a7
+    font-size: 11px
+    white-space: nowrap
+
+  &__link:hover &__return
+    color: var(--clock-accent)
+
+  &__track
+    height: 3px
+    background: rgba(67, 143, 188, .08)
+
+  &__progress
+    display: block
+    height: 100%
+    background: var(--clock-accent)
+    opacity: .7
+    transform-origin: left
+    transition: transform 1s linear
+
+  +mobile()
+    width: 244px
+
+    &__time
+      font-size: 25px
+
+.theme--dark .contest-clock
+  --clock-accent: #7bbce1
+  background: rgba(37, 47, 55, .97)
+  border-color: rgba(139, 186, 215, .2)
+  color: #e2ebf1
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .25)
+
+  &--urgent
+    --clock-accent: #eab46f
+
+  .contest-clock__link, .contest-clock__link:visited, .contest-clock__link:hover
+    color: #e2ebf1
+
+  .contest-clock__state, .contest-clock__return, .contest-clock__drag, .contest-clock__switch
+    color: #a3b3bf
+
+@media (prefers-reduced-motion: reduce)
+  .contest-clock__progress
+    transition: none
+
+@media print
+  .contest-clock
+    display: none !important

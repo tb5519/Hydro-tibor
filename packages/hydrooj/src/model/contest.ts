@@ -13,15 +13,12 @@ import {
     ScoreboardConfig, ScoreboardNode, ScoreboardRow, SubtaskResult, Tdoc,
 } from '../interface';
 import avatar from '../lib/avatar';
-import {
-    ensureGlobalPointLotteryState, POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
-    pointLotteryUserColl,
-} from '../lib/point_lottery';
+import { acknowledgeContestScorePoints, creditContestScorePoints, getContestPointBadges } from '../lib/contest_score_points';
 import bus from '../service/bus';
 import db from '../service/db';
 import type { Handler } from '../service/server';
 import { Optional } from '../typeutils';
-import { PERM, STATUS, STATUS_SHORT_TEXTS } from './builtin';
+import { NORMAL_STATUS, PERM, STATUS, STATUS_SHORT_TEXTS } from './builtin';
 import * as document from './document';
 import DomainModel from './domain';
 import MessageModel from './message';
@@ -851,32 +848,19 @@ function getScorePoints(tdoc: Tdoc, tsdoc: any) {
     return Math.max(0, Math.floor(normalizeContestScore(score)));
 }
 
-async function awardScorePoints(tdoc: Tdoc, tsdoc: any) {
-    if (!tdoc.scoreToPoints) return;
+async function awardScorePoints(tdoc: Tdoc, tsdoc: any, rid?: ObjectId) {
+    if (!tdoc.scoreToPoints) return undefined;
     const points = getScorePoints(tdoc, tsdoc);
-    if (!points) return;
-
-    // Store both the shared balance and this contest's high-water score on the
-    // account. The update is atomic, so retries and repeated submissions only
-    // credit the difference between the new high score and the prior high score.
-    await ensureGlobalPointLotteryState(tsdoc.uid);
-    const awardField = `contestScorePointAwards.${tdoc.docId.toHexString()}`;
-    const previous = { $ifNull: [`$${awardField}`, 0] };
-    const delta = { $subtract: [points, previous] };
-    const currentPoints = { $ifNull: [`$${POINT_LOTTERY_POINTS_FIELD}`, 0] };
-    const totalPoints = { $ifNull: [`$${POINT_LOTTERY_TOTAL_POINTS_FIELD}`, currentPoints] };
-    await (pointLotteryUserColl as any).findOneAndUpdate({
-        _id: tsdoc.uid,
-        $expr: { $lt: [previous, points] },
-    }, [
-        {
-            $set: {
-                [POINT_LOTTERY_POINTS_FIELD]: { $add: [currentPoints, delta] },
-                [POINT_LOTTERY_TOTAL_POINTS_FIELD]: { $add: [totalPoints, delta] },
-                [awardField]: points,
-            },
-        },
-    ]);
+    const badges = points ? await getContestPointBadges(tdoc.domainId, tsdoc.entryDomainId, tsdoc.uid) : [];
+    const award = await creditContestScorePoints(tsdoc.uid, tdoc.docId.toHexString(), rid?.toHexString() || '', points, badges);
+    if (!rid) return award;
+    // Preserve an earlier receipt for this submission when retrying after a
+    // later submission has already advanced the contest's high-water mark.
+    const previousRecord = await RecordModel.coll.findOne({ _id: rid }, { projection: { scorePointAward: 1 } });
+    const scorePointAward = award.points ? award : previousRecord?.scorePointAward || award;
+    await RecordModel.coll.updateOne({ _id: rid }, { $set: { scorePointAward } });
+    await acknowledgeContestScorePoints(tsdoc.uid, rid.toHexString());
+    return scorePointAward;
 }
 
 export async function reconcileScorePoints() {
@@ -1013,8 +997,13 @@ export async function updateStatus(
     }, 'rid');
     const journal = _getStatusJournal(tsdoc);
     const stats = RULES[tdoc.rule].stat(tdoc, journal);
-    const result = await document.revSetStatus(tdoc.domainId, document.TYPE_CONTEST, tdoc.docId, uid, tsdoc.rev, { journal, ...stats });
-    if (result) await awardScorePoints(tdoc, result);
+    let result = await document.revSetStatus(tdoc.domainId, document.TYPE_CONTEST, tdoc.docId, uid, tsdoc.rev, { journal, ...stats });
+    if (tdoc.scoreToPoints && (NORMAL_STATUS.includes(status) || status === STATUS.STATUS_CANCELED)) {
+        // Another submission may win the revision race. Its journal already
+        // contains this result; still settle a receipt for the current editor.
+        result ||= await getStatus(tdoc.domainId, tdoc.docId, uid);
+        result.scorePointAward = await awardScorePoints(tdoc, result, rid);
+    }
     return result;
 }
 

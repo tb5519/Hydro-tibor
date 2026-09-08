@@ -605,8 +605,13 @@
                 <span class="contest-problem-status contest-problem-status--empty">{{ _('No Submissions') }}</span>
               {% endif %}
             </div>
+            {% set answerQuery = {tid:tdoc.docId} if pdict[pid].config.type == 'objective' else {tid:tdoc.docId, scratchpad:'1'} %}
+            {% if handler.entryDomainId %}{{ set(answerQuery, 'entryDomainId', handler.entryDomainId) }}{% endif %}
+            {% set answerUrl = url('problem_detail', pid=pid, query=answerQuery) %}
             <div class="contest-problem-title" role="cell">
-              {{ problem.render_problem_title(pdict[pid], tdoc, alphabetic=true) }}
+              <a href="{{ answerUrl }}" data-no-instant><b>{{ utils.getAlphabeticId(loop.index0) }}</b>&nbsp;&nbsp;{{ pdict[pid].title }}</a>
+              {% if pdict[pid].hidden %}<span class="text-orange">({{ _('Hidden') }})</span>{% endif %}
+              {{ problem.render_problem_tags(pdict[pid]) }}
             </div>
             <div class="contest-problem-score" role="cell">{{ tdoc.score[pid]|default(100) }}</div>
             <div class="contest-problem-limits" role="cell">
@@ -618,11 +623,7 @@
               {% endif %}
             </div>
             <div class="contest-problem-action" role="cell">
-              {% if pdict[pid].config.type == 'objective' %}
-                <a href="{{ url('problem_detail', pid=pid, query={tid:tdoc.docId, entryDomainId:handler.entryDomainId} if handler.entryDomainId else {tid:tdoc.docId}) }}" class="contest-problem-submit-link"><span class="icon icon-edit"></span>在线答题</a>
-              {% else %}
-                <a href="{{ url('problem_detail', pid=pid, query={tid:tdoc.docId, scratchpad:'1', entryDomainId:handler.entryDomainId} if handler.entryDomainId else {tid:tdoc.docId, scratchpad:'1'}) }}" class="contest-problem-submit-link"><span class="icon icon-edit"></span>在线答题</a>
-              {% endif %}
+              <a href="{{ answerUrl }}" class="contest-problem-submit-link"><span class="icon icon-edit"></span>在线答题</a>
             </div>
           </div>
         {% endfor %}

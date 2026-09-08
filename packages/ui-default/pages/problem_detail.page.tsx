@@ -12,6 +12,7 @@ import {
 } from 'vj/utils';
 import { openDB } from 'vj/utils/db';
 import { createBadgeAcThemePlayer } from '../components/badge_ac_effect';
+import { ContestPoints } from '../components/contest_points';
 import { bindMistakePracticeActions } from '../components/mistake_practice';
 
 class ProblemPageExtender {
@@ -116,11 +117,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   const normalStatuses = new Set(NORMAL_STATUS);
   const recordPretestId = '000000000000000000000000';
   const recordGenerateId = '000000000000000000000001';
-  let firstFormalRecordStatus = Number.isFinite(+UiContext.firstFormalRecordStatus)
-    ? +UiContext.firstFormalRecordStatus
-    : null;
-  let hasWrongFormalRecord = !!UiContext.hasWrongFormalRecord;
-  let sawCurrentWrongFormalRecord = false;
+  const mistakePromptChecks = new Set<string>();
   // Keep the current page's formal submissions separately from Redux. Record
   // updates can arrive before the reducer state is observed by the socket.
   const currentFormalSubmitRids = new Set<string>();
@@ -141,6 +138,10 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
 
   function isFinalRecordStatus(status: number) {
     return normalStatuses.has(status as STATUS) || status === STATUS.STATUS_CANCELED;
+  }
+
+  function isContestResultReady(rdoc: any) {
+    return isFinalRecordStatus(+rdoc.status) && (!UiContext.tdoc?.scoreToPoints || !!rdoc.scorePointAward);
   }
 
   function normalizeContestScore(value: number) {
@@ -331,7 +332,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     if (!isContestSubmitFeedbackEnabled() || !isCurrentFormalSubmitRecord(store, rdoc)) return;
     const recordId = getRecordId(rdoc);
     const status = +rdoc.status;
-    if (!recordId || !isFinalRecordStatus(status) || reportedFormalSubmitRids.has(recordId)) return;
+    if (!recordId || !isContestResultReady(rdoc) || reportedFormalSubmitRids.has(recordId)) return;
     reportedFormalSubmitRids.add(recordId);
 
     updateContestProgress(rdoc);
@@ -390,6 +391,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
             <span><b>{acceptedCount}</b> 题已 AC</span>
             <span><b>{remainingCount}</b> 题待完成</span>
           </div>
+          <ContestPoints award={rdoc.scorePointAward} />
         </div>,
       ),
     }).open();
@@ -404,46 +406,34 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
       .sort((a, b) => getRecordId(a).localeCompare(getRecordId(b)));
   }
 
-  function maybeRevealMistakePrompt(store, rdoc = null) {
+  async function maybeRevealMistakePrompt(store, rdoc = null) {
     if (!UiContext.isMistakeSupported || !UiContext.canUseMistake) return;
     const $prompt = $('.problem-mistake-float');
     if (!$prompt.length || !$prompt.hasClass('problem-mistake-float--hidden')) return;
     if ($prompt.attr('data-mistake-state')) return;
 
-    if (rdoc && isFormalRecord(rdoc, store)) {
-      const pushedStatus = +rdoc.status;
-      if (normalStatuses.has(pushedStatus as STATUS)) {
-        if (pushedStatus !== STATUS.STATUS_ACCEPTED) {
-          hasWrongFormalRecord = true;
-          sawCurrentWrongFormalRecord = true;
-        }
-        if (firstFormalRecordStatus === null) firstFormalRecordStatus = pushedStatus;
-      }
+    const knownRecords = new Map(getKnownFormalRecords(store).map((item) => [getRecordId(item), item]));
+    if (rdoc && normalStatuses.has(+rdoc.status as STATUS) && isFormalRecord(rdoc, store)) {
+      knownRecords.set(getRecordId(rdoc), rdoc);
     }
-
-    const records = getKnownFormalRecords(store);
-    if (!records.length) return;
-    if (firstFormalRecordStatus === null) firstFormalRecordStatus = +records[0].status;
-
+    const records = [...knownRecords.values()].sort((a, b) => getRecordId(a).localeCompare(getRecordId(b)));
     const latestRecord = records[records.length - 1];
-    const latestStatus = +latestRecord.status;
-    if (latestStatus !== STATUS.STATUS_ACCEPTED) return;
-
-    const latestId = getRecordId(latestRecord);
-    const hasKnownWrongBeforeLatest = records.some((record) => {
-      const recordStatus = +record.status;
-      const recordId = getRecordId(record);
-      return recordStatus !== STATUS.STATUS_ACCEPTED
-        && (!latestId || !recordId || recordId.localeCompare(latestId) < 0);
-    });
-    const latestIsCurrentSubmit = isCurrentFormalSubmitRecord(store, latestRecord);
-    if (latestIsCurrentSubmit && (
-      sawCurrentWrongFormalRecord
-      || hasWrongFormalRecord
-      || hasKnownWrongBeforeLatest
-      || (firstFormalRecordStatus !== null && firstFormalRecordStatus !== STATUS.STATUS_ACCEPTED)
-    )) {
-      revealMistakePrompt();
+    if (!latestRecord || +latestRecord.status !== STATUS.STATUS_ACCEPTED
+      || !isFormalRecord(latestRecord, store) || !isCurrentFormalSubmitRecord(store, latestRecord)) return;
+    const rid = getRecordId(latestRecord);
+    // An earlier attempt may finish after this AC. Recheck when the known
+    // terminal history changes, including a late failure from that first attempt.
+    const checkKey = `${rid}/${records.map((item) => `${getRecordId(item)}:${item.status}`).join(',')}`;
+    if (!rid || mistakePromptChecks.has(checkKey)) return;
+    mistakePromptChecks.add(checkKey);
+    try {
+      // The server sees the full history, including submissions on other pages
+      // and devices. Visible table rows and test runs are not evidence of a retry.
+      const result = await request.post(UiContext.mistakePromptUrl, { operation: 'mistake_prompt', rid });
+      if (result?.showMistakePrompt === true) revealMistakePrompt();
+    } catch (error) {
+      mistakePromptChecks.delete(checkKey);
+      console.warn('Failed to check mistake prompt:', error);
     }
   }
 
@@ -505,7 +495,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
         const rdoc = findFormalSubmitRecord(result, recordId);
         if (rdoc) {
           void receiveFormalSubmitRecord(store, rdoc);
-          if (isFinalRecordStatus(+rdoc.status)) {
+          if (isContestResultReady(rdoc)) {
             pollingFormalSubmitRids.delete(recordId);
             return;
           }
@@ -546,8 +536,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
       if (!rdoc) return;
       void receiveFormalSubmitRecord(store, rdoc);
 
-      const status = +rdoc.status;
-      if (isFinalRecordStatus(status)) {
+      if (isContestResultReady(rdoc)) {
         setTimeout(() => sock.close(), 1000);
       }
     };

@@ -1,0 +1,121 @@
+.contest-points
+  margin: 0 22px 18px
+  padding: 16px
+  border: 1px solid #dbe9fa
+  border-radius: 14px
+  background: linear-gradient(135deg, #f7faff, #fff)
+  color: #475569
+  font-size: 13px
+
+.contest-points__heading
+  display: flex
+  align-items: center
+  justify-content: space-between
+  gap: 12px
+  color: #334155
+  font-weight: 600
+
+  strong
+    color: #2563eb
+    font-size: 28px
+    font-variant-numeric: tabular-nums
+
+  small
+    font-size: 12px
+    font-weight: 500
+
+.contest-points__breakdown
+  display: flex
+  flex-wrap: wrap
+  gap: 6px 18px
+  margin-top: 9px
+
+  b
+    color: #2563eb
+    margin-left: 4px
+
+.contest-points__bonus
+  margin-top: 14px
+  padding-top: 12px
+  border-top: 1px solid #e2ebf7
+
+.contest-points__bonus-title
+  display: flex
+  flex-wrap: wrap
+  justify-content: space-between
+  gap: 5px 10px
+  margin-bottom: 9px
+
+  b
+    color: #2563eb
+
+  small
+    color: #64748b
+    font-size: 11px
+
+.contest-points__badges
+  display: flex
+  flex-wrap: wrap
+  gap: 6px
+
+.contest-points__badge
+  display: inline-flex
+  align-items: center
+  gap: 6px
+  min-width: 0
+  max-width: 100%
+  padding: 5px 8px
+  border: 1px solid #e1e8f2
+  border-radius: 8px
+  background: #fff
+  line-height: 1.5
+  font-size: 12px
+
+  i
+    width: 7px
+    height: 7px
+    flex-shrink: 0
+    border-radius: 50%
+
+  span
+    overflow-wrap: anywhere
+
+  b
+    flex-shrink: 0
+    color: #2563eb
+    font-size: 11px
+
+.contest-points__more
+  margin-top: 9px
+
+  summary
+    cursor: pointer
+    color: #2563eb
+    font-size: 12px
+
+  .contest-points__badges
+    margin-top: 8px
+    max-height: 142px
+    overflow-y: auto
+    overscroll-behavior: contain
+
+.contest-points__note
+  margin: 9px 0 0
+  color: #64748b
+  font-size: 11px
+  line-height: 1.6
+
+.contest-points__total
+  margin-top: 12px
+  color: #64748b
+  text-align: right
+  font-size: 12px
+
+  b
+    color: #334155
+
+@media (max-width: 40em)
+  .contest-points
+    margin-right: 18px
+    margin-left: 18px
+    padding: 13px

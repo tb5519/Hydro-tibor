@@ -46,12 +46,8 @@
           <span class="point-lottery__announcement-text" data-point-lottery-announcement-text></span>
         </div>
         <div class="point-lottery__balance">
-          <span>当前积分 / 累计积分</span>
-          <strong>
-            <b data-point-lottery-points>{{ pointLottery.points }}</b>
-            <i>/</i>
-            <b data-point-lottery-total-points>{{ pointLottery.totalPoints }}</b>
-          </strong>
+          <span>当前积分</span>
+          <strong data-point-lottery-points>{{ pointLottery.points }}</strong>
         </div>
       </div>
       <div class="point-lottery__status" data-point-lottery-status role="status">
@@ -244,7 +240,7 @@
   }
   .point-lottery__balance {
     flex: 0 0 auto;
-    min-width: 10.5rem;
+    min-width: 7rem;
     border-radius: 10px;
     background: #fff7ed;
     color: #8b6329;
@@ -258,20 +254,13 @@
     color: #64748b;
   }
   .point-lottery__balance strong {
-    display: flex;
-    align-items: baseline;
-    justify-content: center;
-    gap: .35rem;
+    display: block;
+    margin-top: .15rem;
     font-size: 1.55rem;
-  }
-  .point-lottery__balance strong b {
     font-weight: 700;
-  }
-  .point-lottery__balance strong i {
-    color: #94a3b8;
-    font-size: 1rem;
-    font-style: normal;
-    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
   }
   .point-lottery__announcements {
     display: flex;
@@ -898,8 +887,6 @@
   var chestStageNode = modal.querySelector('[data-point-lottery-chest-stage]');
   var drawLabelNode = modal.querySelector('[data-point-lottery-draw-label]');
   var drawCostNode = modal.querySelector('[data-point-lottery-draw-cost]');
-  var pointsNode = modal.querySelector('[data-point-lottery-points]');
-  var totalPointsNode = modal.querySelector('[data-point-lottery-total-points]');
   var statusNode = modal.querySelector('[data-point-lottery-status]');
   var announcementsNode = modal.querySelector('[data-point-lottery-announcements]');
   var announcementTextNode = modal.querySelector('[data-point-lottery-announcement-text]');
@@ -1157,8 +1144,9 @@
   }
 
   function syncState() {
-    pointsNode.textContent = pointLottery.points || 0;
-    totalPointsNode.textContent = pointLottery.totalPoints || 0;
+    document.querySelectorAll('[data-point-lottery-points]').forEach(function (node) {
+      node.textContent = pointLottery.points || 0;
+    });
     drawCostNode.textContent = (pointLottery.cost || 0) + ' 积分 / 次';
     var reason = '';
     if (!pointLottery.canDraw) reason = '请先登录后再抽奖。';
@@ -1207,7 +1195,6 @@
     }).then(function (data) {
       // Keep the server's awarded item and original index, including identical badge names.
       pointLottery.points = data.points;
-      pointLottery.totalPoints = data.totalPoints === undefined ? data.points : data.totalPoints;
       if (Array.isArray(data.prizes)) pointLottery.prizes = data.prizes;
       if (data.badgeStyles) pointLottery.badgeStyles = Object.assign({}, pointLottery.badgeStyles || {}, data.badgeStyles);
       if (Number.isInteger(data.prizeIndex)) selectedPrizeIndex = data.prizeIndex;

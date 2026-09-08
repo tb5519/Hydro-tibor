@@ -146,7 +146,6 @@
                 <p class="ui-v2-current-badge-theme">当前主题：{{ badgeProfileBackground.currentTheme.name }}</p>
               {% endif %}
               <p>
-                {{ _('UID') }}: {{ udoc['_id'] }},
                 {{ _('Registered at') }} {{ datetimeSpan(udoc['regat'])|safe }}{% if canViewUserPresence %},
                 {{ _('last login at') }} {{ datetimeSpan(udoc['loginat'])|safe }},
                 {% if sdoc and sdoc.updateAt %}

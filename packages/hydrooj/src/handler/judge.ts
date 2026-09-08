@@ -124,8 +124,13 @@ export class JudgeResultCallbackContext {
         const { updated, firstAccepted } = await problem.updateStatus(
             rdoc.domainId, rdoc.pid, rdoc.uid, rdoc._id, rdoc.status, rdoc.score,
         );
-        if (rdoc.contest) await contest.updateStatus(rdoc.domainId, rdoc.contest, rdoc.uid, rdoc._id, rdoc.pid, rdoc);
-        else if (accept) {
+        if (rdoc.contest) {
+            const contestStatus = await contest.updateStatus(rdoc.domainId, rdoc.contest, rdoc.uid, rdoc._id, rdoc.pid, rdoc);
+            if (contestStatus?.scorePointAward) {
+                rdoc.scorePointAward = contestStatus.scorePointAward;
+                app.broadcast('record/change', rdoc);
+            }
+        } else if (accept) {
             await contest.syncAcceptedProblemToAssignedHomework(rdoc.domainId, rdoc.uid, rdoc.pid, rdoc);
             if (firstAccepted) await domain.incUserInDomain(rdoc.domainId, rdoc.uid, 'nAccept', 1);
         }

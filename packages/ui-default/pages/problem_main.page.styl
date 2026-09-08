@@ -232,3 +232,71 @@
   color: #000000
   cursor: pointer
   width: 120px
+
+.problem-student-picker
+  h1
+    margin-bottom: 6px
+
+  &__description
+    margin-bottom: 22px
+    font-size: 13px
+    opacity: .65
+
+  &__suggestions
+    margin: 14px 0 8px
+
+  &__heading
+    display: flex
+    justify-content: space-between
+    flex-wrap: wrap
+    gap: 4px 12px
+    margin-bottom: 9px
+    font-size: 12px
+
+  &__hint,
+  &__empty
+    opacity: .55
+
+  &__empty
+    margin: 0
+    font-size: 12px
+
+  &__chips
+    display: flex
+    flex-wrap: wrap
+    gap: 8px
+    max-height: 136px
+    padding: 2px
+    overflow-y: auto
+    overscroll-behavior: contain
+
+  &__chip
+    display: inline-flex
+    align-items: center
+    gap: 6px
+    max-width: 100%
+    min-height: 32px
+    padding: 5px 11px
+    border: 1px solid rgba(100, 116, 139, .2)
+    border-radius: 999px
+    background: rgba(100, 116, 139, .055)
+    color: inherit
+    font: inherit
+    font-size: 12px
+    cursor: pointer
+    transition: background .15s, border-color .15s, color .15s
+
+    &:hover,
+    &.is-selected
+      border-color: rgba(59, 130, 246, .4)
+      background: rgba(59, 130, 246, .1)
+      color: #2563eb
+
+    &:focus-visible
+      outline: 2px solid #60a5fa
+      outline-offset: 2px
+
+  &__chip-name
+    overflow: hidden
+    white-space: nowrap
+    text-overflow: ellipsis

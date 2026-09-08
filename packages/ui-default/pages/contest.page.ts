@@ -1,10 +1,6 @@
-import { formatSeconds } from '@hydrooj/utils/lib/common';
 import NProgress from 'nprogress';
 import { NamedPage } from 'vj/misc/Page';
-import { addSpeculationRules, tpl } from 'vj/utils';
-
-const contestTimer = $(tpl`<pre class="contest-timer" style="display:none"></pre>`);
-contestTimer.appendTo(document.body);
+import { addSpeculationRules } from 'vj/utils';
 
 export default new NamedPage(['contest_detail', 'contest_problemlist', 'contest_detail_problem', 'contest_scoreboard'], () => {
   const beginAt = new Date((UiContext.tdoc.duration && UiContext.tsdoc?.startAt) || UiContext.tdoc.beginAt).getTime();
@@ -14,9 +10,7 @@ export default new NamedPage(['contest_detail', 'contest_problemlist', 'contest_
     const now = Date.now();
     if (beginAt <= now && now <= endAt) {
       NProgress.set((now - beginAt) / (endAt - beginAt));
-      contestTimer.show();
-      contestTimer.text(formatSeconds(Math.floor((endAt - now) / 1000)));
-    } else contestTimer.hide();
+    }
   }
   NProgress.start();
   updateProgress();

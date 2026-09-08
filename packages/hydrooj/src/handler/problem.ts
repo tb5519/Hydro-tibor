@@ -26,11 +26,12 @@ import {
 } from '../interface';
 import avatar from '../lib/avatar';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
+import { getMistakePromptState } from '../lib/mistake_prompt';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
 import {
     appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
 } from '../lib/record_visibility';
-import { NORMAL_STATUS, PERM, PRIV, STATUS } from '../model/builtin';
+import { PERM, PRIV, STATUS } from '../model/builtin';
 import * as contest from '../model/contest';
 import * as discussion from '../model/discussion';
 import domain from '../model/domain';
@@ -675,6 +676,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
     pdoc: ProblemDoc;
     udoc: User;
     psdoc: ProblemStatusDoc;
+    mistakePromptState: Awaited<ReturnType<typeof getMistakePromptState>>;
 
     @route('pid', Types.ProblemId, true)
     @query('tid', Types.ObjectId, true)
@@ -740,50 +742,11 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
         const mistakeDoc = canUseMistake
             ? await mistake.get(domainId, this.user._id, this.pdoc.docId)
             : null;
-        let firstFormalStatus: STATUS | null = null;
-        let hasWrongFormalRecord = false;
         let showMistakePrompt = false;
         if (canUseMistake) {
-            const formalRecordQuery = {
-                uid: this.user._id,
-                pid: this.pdoc.docId,
-                status: { $in: NORMAL_STATUS },
-                input: { $exists: false },
-                $or: [
-                    { contest: { $exists: false } },
-                    { contest: null },
-                    { contest: { $ne: record.RECORD_GENERATE } },
-                ],
-            };
-            const wrongFormalRecordQuery = {
-                ...formalRecordQuery,
-                status: {
-                    $in: NORMAL_STATUS.filter((status) => status !== STATUS.STATUS_ACCEPTED),
-                },
-            };
-            const [firstSubmit, latestSubmit, wrongSubmit] = await Promise.all([
-                record.getMulti(domainId, formalRecordQuery)
-                    .project({ _id: 1, status: 1 })
-                    .sort({ _id: 1 })
-                    .limit(1)
-                    .next(),
-                record.getMulti(domainId, formalRecordQuery)
-                    .project({ _id: 1, status: 1 })
-                    .sort({ _id: -1 })
-                    .limit(1)
-                    .next(),
-                record.getMulti(domainId, wrongFormalRecordQuery)
-                    .project({ _id: 1 })
-                    .limit(1)
-                    .next(),
-            ]);
-            firstFormalStatus = firstSubmit?.status ?? null;
-            hasWrongFormalRecord = !!wrongSubmit;
-            const latestSubmitAt = latestSubmit?._id?.getTimestamp?.().getTime() || 0;
-            showMistakePrompt = !mistakeDoc
-                && hasWrongFormalRecord
-                && latestSubmit?.status === STATUS.STATUS_ACCEPTED
-                && Date.now() - latestSubmitAt <= 10 * Time.minute;
+            this.mistakePromptState = await getMistakePromptState(domainId, this.user._id, this.pdoc.docId);
+            showMistakePrompt = !mistakeDoc && this.mistakePromptState.eligible
+                && Date.now() - this.mistakePromptState.latestSubmitAt <= 10 * Time.minute;
         }
         this.response.body = {
             pdoc: this.pdoc,
@@ -798,8 +761,6 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             codeLang,
             cppEditorMode: getCppEditorMode(this.user),
             cppStarterTemplate: getCppEditorMode(this.user) === 'preset' ? CPP_STARTER_TEMPLATE : '',
-            firstFormalStatus,
-            hasWrongFormalRecord,
             showMistakePrompt,
             title: this.pdoc.title,
             solutionCount: scnt,
@@ -903,6 +864,16 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
     async postStar(domainId: string, star: boolean) {
         await problem.setStar(domainId, this.pdoc.docId, this.user._id, star);
         this.back({ star });
+    }
+
+    @param('rid', Types.ObjectId)
+    async postMistakePrompt(domainId: string, rid: ObjectId) {
+        this.checkPerm(PERM.PERM_SUBMIT_PROBLEM);
+        const state = this.mistakePromptState;
+        this.response.body = {
+            showMistakePrompt: !!this.response.body.canUseMistake && !this.response.body.mistakeDoc
+                && !!state?.eligible && state.latestRid === rid.toString(),
+        };
     }
 
     async postAddMistake() {
@@ -1589,7 +1560,7 @@ export const ProblemApi = {
                 candidateIds.push(...args.auto.slice(0, limit)
                     .map((item) => +item)
                     .filter((uid) => Number.isSafeInteger(uid) && uid > 1));
-            } else if (args.search) {
+            } else {
                 const joinedUids = await domain.collUser.distinct('uid', {
                     domainId: { $in: scope.scopeDomainIds },
                     uid: { $gt: 1 },
@@ -1599,12 +1570,13 @@ export const ProblemApi = {
                     && !scope.memberUids.has(uid)
                     && !scope.excludedLegacyUids.has(uid));
                 if (searchableUids.length) {
-                    const numericUid = +args.search;
-                    const exact = (Number.isSafeInteger(numericUid)
+                    const search = args.search?.trim() || '';
+                    const numericUid = +search;
+                    const exact = search ? ((Number.isSafeInteger(numericUid)
                         ? await user.getById(ddoc._id, numericUid)
-                        : null) || await user.getByUname(ddoc._id, args.search);
-                    const usernamePrefix = new RegExp(`^${escapeRegExp(args.search.toLowerCase())}`);
-                    const displayNamePrefix = new RegExp(`^${escapeRegExp(args.search)}`, 'i');
+                        : null) || await user.getByUname(ddoc._id, search)) : null;
+                    const usernamePrefix = new RegExp(`^${escapeRegExp(search.toLowerCase())}`);
+                    const displayNamePrefix = new RegExp(`^${escapeRegExp(search)}`, 'i');
                     const candidateLimit = Math.max(limit * 5, 50);
                     let usernameOffset = 0;
                     let displayNameOffset = 0;

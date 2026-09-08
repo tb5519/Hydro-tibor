@@ -13,7 +13,8 @@ export default class StyledTable extends DOMAttachedObject {
   static DOMAttachSelector = '.data-table';
 
   constructor($dom) {
-    if ($dom.closest('.section__body').length === 0) {
+    // Auto-sized tables need one shared column layout for their header and rows.
+    if ($dom.is('[data-table-native]') || $dom.closest('.section__body').length === 0) {
       super(null);
       return;
     }
