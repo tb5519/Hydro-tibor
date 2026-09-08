@@ -9,11 +9,11 @@ export default function PanelComponent(props) {
     children,
     ...rest
   } = props;
-  const cn = classNames(className, 'flex-col');
+  const cn = classNames(className, 'scratchpad__panel flex-col');
   return (
     <div {...rest} className={`${cn} splitpane-fill`}>
       <div className="scratchpad__panel-title">{title}</div>
-      <div className="flex-col flex-fill">{children}</div>
+      <div className="scratchpad__panel-body flex-col flex-fill">{children}</div>
     </div>
   );
 }

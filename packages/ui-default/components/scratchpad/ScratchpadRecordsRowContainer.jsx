@@ -15,7 +15,7 @@ const getRecordDetail = (data) => {
   if (!shouldShowDetail(data)) {
     return (
       <span className={`record-status--text ${STATUS_CODES[data.status]}`}>
-        {STATUS_TEXTS[data.status]}
+        {i18n(STATUS_TEXTS[data.status])}
       </span>
     );
   }
@@ -23,18 +23,19 @@ const getRecordDetail = (data) => {
     _.groupBy(data.testCases || [], 'status'),
     _.keys(STATUS_SCRATCHPAD_SHORT_TEXTS),
   );
-  return _.map(STATUS_SCRATCHPAD_SHORT_TEXTS, (text, status) => {
+  const details = _.map(STATUS_SCRATCHPAD_SHORT_TEXTS, (text, status) => {
     const count = (stat[status] && stat[status].length) || 0;
-    const cn = classNames('icol icol--stat', {
-      'record-status--text': count > 0,
-      [STATUS_CODES[data.status]]: count > 0,
-    });
+    if (!count) return null;
+    const cn = classNames('icol icol--stat record-status--text', STATUS_CODES[status]);
     return (
       <span key={text} className={cn}>
         {text}: {count}
       </span>
     );
-  });
+  }).filter(Boolean);
+  return details.length ? details : (
+    <span className={`record-status--text ${STATUS_CODES[data.status]}`}>{i18n(STATUS_TEXTS[data.status])}</span>
+  );
 };
 
 const mapStateToProps = (state) => ({
@@ -62,9 +63,10 @@ export default connect(mapStateToProps, null, mergeProps)(class ScratchpadRecord
     return data.contest?.toString() === '000000000000000000000000' ? null : (
       <tr onClick={(ev) => this.handleRowClick(ev, data._id)}>
         <td className={`col--detail record-status--border ${STATUS_CODES[data.status]}`}>
-          <span className={`icon record-status--icon ${STATUS_CODES[data.status]}`}></span>
-          <span className="icol icol--pretest"></span>
-          {getRecordDetail(data)}
+          <div className="scratchpad__record-result">
+            <span className={`icon record-status--icon ${STATUS_CODES[data.status]}`}></span>
+            {getRecordDetail(data)}
+          </div>
         </td>
         <td className="col--memory">
           {shouldShowDetail(data) ? `${Math.ceil(data.memory / 1000)} MB` : '-'}

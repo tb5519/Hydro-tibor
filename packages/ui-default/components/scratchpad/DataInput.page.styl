@@ -1,17 +1,62 @@
-.scratchpad__data-input
+#scratchpad .scratchpad__data-pane
+  display: flex
+  flex-direction: column
+  width: 100%
+  height: 100%
+  min-width: 0
+  min-height: 0
+  background: var(--ui-v2-surface)
+
+#scratchpad .scratchpad__data-label
+  flex: 0 0 auto
+  padding: rem(12px 16px 6px)
+  color: var(--ui-v2-text-muted)
+  font-size: rem(12px)
+  font-weight: 500
+  line-height: 1.4
+
+#scratchpad .scratchpad__data-input
+  display: block
+  box-sizing: border-box
+  flex: 1 1 0
+  min-height: 0
+  width: 100%
+  height: auto
+  margin: 0
   border: 0
-  border-left: 3px solid #E0E0E0
-  background: #F8F8F8
-  padding: rem(8px 4px)
+  background: var(--ui-v2-surface)
+  padding: rem(6px 16px 14px)
   font-family: $code-font-family
-  font-size: rem($font-size-secondary)
+  font-size: rem(13px)
+  line-height: 1.7
   outline: 0
   resize: none
-  color: #666
-  height: 100%
-  width: 100%
-  transition: background-color .2s linear, border-color .2s linear
+  color: var(--ui-v2-text)
+  overflow: auto
+  scrollbar-width: thin
+  user-select: text
 
   &:focus
-    background: #FFF
-    border-color: lighten($primary-color, 70%)
+    box-shadow: inset 0 -2px 0 var(--ui-v2-accent)
+
+  &::placeholder
+    color: var(--ui-v2-text-muted)
+    opacity: .65
+    font-family: $primary-font-family
+    font-size: rem(12px)
+
+  pre
+    margin: 0
+    padding: 0
+    border: 0
+    border-radius: 0
+    background: transparent
+    color: inherit
+    font: inherit
+    white-space: pre
+
+  .scratchpad__data-placeholder
+    color: var(--ui-v2-text-muted)
+    opacity: .65
+    font-family: $primary-font-family
+    font-size: rem(12px)

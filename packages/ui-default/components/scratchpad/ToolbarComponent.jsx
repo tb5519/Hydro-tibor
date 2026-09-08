@@ -35,7 +35,9 @@ export function ToolbarButtonComponent(props) {
   return (
     <button
       {...rest}
-      tabIndex="-1"
+      type="button"
+      disabled={disabled}
+      aria-pressed={props.activated === undefined ? undefined : activated}
       className={cn}
       onClick={() => !disabled && onClick && onClick()}
     >

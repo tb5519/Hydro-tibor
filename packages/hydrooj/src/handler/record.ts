@@ -9,6 +9,7 @@ import {
 } from '../error';
 import { RecordDoc, Tdoc } from '../interface';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
+import { buildObjectiveFeedback, parseObjectiveConfig } from '../lib/objective_feedback';
 import { canManageRecordList } from '../lib/record_list_scope';
 import {
     appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
@@ -686,10 +687,52 @@ export class ContestSubmitFeedbackHandler extends Handler {
     }
 }
 
+/** A narrow, owner-only result endpoint for the objective answer sheet. */
+export class ObjectiveSubmitFeedbackHandler extends Handler {
+    @param('rid', Types.ObjectId)
+    async get(domainId: string, rid: ObjectId) {
+        this.checkPriv(PRIV.PRIV_USER_PROFILE);
+        const rdoc = await record.get(domainId, rid);
+        if (!rdoc || rdoc.uid !== this.user._id
+            || [record.RECORD_GENERATE, record.RECORD_PRETEST].some((id) => id.equals(rdoc.contest))) {
+            throw new RecordNotFoundError(domainId, rid);
+        }
+        const pdoc = await problem.get(domainId, rdoc.pid, problem.PROJECTION_PUBLIC, true);
+        if (!pdoc) throw new ProblemNotFoundError(domainId, rdoc.pid);
+        let visibleRecord = rdoc;
+        if (rdoc.contest) {
+            const tdoc = await contest.get(domainId, rdoc.contest);
+            if (!tdoc) throw new RecordNotFoundError(domainId, rid);
+            const tsdoc = await contest.getStatus(domainId, tdoc.docId, this.user._id);
+            if (!tsdoc?.attend && !problem.canViewBy(pdoc, this.user)) throw new PermissionError(PERM.PERM_VIEW_PROBLEM_HIDDEN);
+            const canView = this.user.own(tdoc)
+                || contest.canShowRecord.call(this, tdoc)
+                || contest.canShowSelfRecord.call(this, tdoc);
+            const projected = this.user.own(tdoc) || this.user.hasPerm(PERM.PERM_EDIT_CONTEST)
+                ? rdoc : contest.applyProjection(tdoc, { ...rdoc }, this.user);
+            if (!canView || projected.score === undefined || projected.status === undefined
+                || (projected.testCases?.length || 0) !== (rdoc.testCases?.length || 0)) {
+                this.response.body = { objective: { rid: rid.toString(), state: 'hidden' } };
+                return;
+            }
+            // Keep the student's answers server-side to identify blanks, but derive
+            // every returned mark from the permitted projection, including plugin rules.
+            visibleRecord = { ...projected, code: rdoc.code };
+        } else if (!problem.canViewBy(pdoc, this.user)) throw new PermissionError(PERM.PERM_VIEW_PROBLEM_HIDDEN);
+        const source = pdoc.reference
+            ? await problem.get(pdoc.reference.domainId, pdoc.reference.pid, problem.PROJECTION_PUBLIC, true)
+            : pdoc;
+        const config = parseObjectiveConfig(source?.config);
+        if (!config) throw new ProblemConfigError();
+        this.response.body = { objective: buildObjectiveFeedback(visibleRecord, config) };
+    }
+}
+
 export async function apply(ctx) {
     ctx.Route('record_main', '/record', RecordListHandler);
     ctx.Route('record_detail', '/record/:rid', RecordDetailHandler);
     ctx.Route('contest_submit_feedback', '/contest-submit-feedback', ContestSubmitFeedbackHandler);
+    ctx.Route('objective_submit_feedback', '/objective-submit-feedback', ObjectiveSubmitFeedbackHandler);
     ctx.Connection('record_conn', '/record-conn', RecordMainConnectionHandler);
     ctx.Connection('record_detail_conn', '/record-detail-conn', RecordDetailConnectionHandler);
     ctx.Connection('contest_submit_feedback_conn', '/contest-submit-feedback-conn', ContestSubmitFeedbackConnectionHandler);

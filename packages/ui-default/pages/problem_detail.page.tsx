@@ -1,19 +1,18 @@
 import { NORMAL_STATUS, STATUS, STATUS_TEXTS } from '@hydrooj/common';
 import $ from 'jquery';
-import yaml from 'js-yaml';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { confirm, InfoDialog } from 'vj/components/dialog';
+import { InfoDialog } from 'vj/components/dialog';
 import Notification from 'vj/components/notification';
 import { downloadProblemSet } from 'vj/components/zipDownloader';
 import { NamedPage } from 'vj/misc/Page';
 import {
-  delay, i18n, loadReactRedux, pjax, request, tpl,
+  delay, loadReactRedux, pjax, request, tpl,
 } from 'vj/utils';
-import { openDB } from 'vj/utils/db';
 import { createBadgeAcThemePlayer } from '../components/badge_ac_effect';
 import { ContestPoints } from '../components/contest_points';
 import { bindMistakePracticeActions } from '../components/mistake_practice';
+import { loadObjective } from '../components/objective/objective';
 
 class ProblemPageExtender {
   isExtended = false;
@@ -684,180 +683,6 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     await extender.collapse();
     unmountReact();
     progress = false;
-  }
-
-  async function loadObjective() {
-    $('.outer-loader-container').show();
-    document.documentElement.classList.add('objective-problem-mode');
-    document.body.classList.add('objective-problem-mode');
-    const ans = {};
-    const pids = [];
-    let cnt = 0;
-    const reg = /\{\{ (input|select|multiselect|textarea)\(\d+(-\d+)?\) \}\}/g;
-    $('.problem-content .typo').children().each((i, e) => {
-      if (e.tagName === 'PRE' && !e.children[0].className.includes('#input')) return;
-      const questions = [];
-      let q;
-      while (q = reg.exec(e.textContent)) questions.push(q); // eslint-disable-line no-cond-assign
-      for (const [info, type] of questions) {
-        cnt++;
-        const id = info.replace(/\{\{ (input|select|multiselect|textarea)\((\d+(-\d+)?)\) \}\}/, '$2');
-        pids.push(id);
-        $(e).addClass('objective-question-title').attr('data-objective-id', id);
-        if (type === 'input') {
-          $(e).html($(e).html().replace(info, tpl`
-            <div class="objective_${id} objective-free-answer medium-3" id="p${id}">
-              <input type="text" name="${id}" class="textbox objective-input" placeholder="${i18n('Answer')}">
-            </div>
-          `));
-        } else if (type === 'textarea') {
-          $(e).html($(e).html().replace(info, tpl`
-            <div class="objective_${id} objective-free-answer medium-6" id="p${id}">
-              <textarea name="${id}" class="textbox objective-input" placeholder="${i18n('Answer')}"></textarea>
-            </div>
-          `));
-        } else {
-          if ($(e).next()[0]?.tagName !== 'UL') {
-            cnt--;
-            return;
-          }
-          $(e).html($(e).html().replace(info, ''));
-          $(e).next('ul').addClass(`objective-options objective-options--${type === 'select' ? 'single' : 'multi'}`);
-          $(e).next('ul').children().each((j, ele) => {
-            const letter = String.fromCharCode(65 + j);
-            $(ele).after(tpl`
-              <label class="objective_${id} radiobox objective-option" id="p${id}">
-                <input type="${type === 'select' ? 'radio' : 'checkbox'}" name="${id}" class="objective-input" value="${letter}">
-                <span class="objective-choice-body">
-                  <span class="objective-choice-letter">${letter}</span>
-                  <span class="objective-choice-text">${{ templateRaw: true, html: ele.innerHTML }}</span>
-                </span>
-              </label>
-            `);
-            $(ele).remove();
-          });
-        }
-      }
-    });
-
-    let cacheKey = `${UserContext._id}/${UiContext.pdoc.domainId}/${UiContext.pdoc.docId}`;
-    if (UiContext.tdoc?._id && UiContext.tdoc.rule !== 'homework') cacheKey += `@${UiContext.tdoc._id}`;
-
-    let setUpdate;
-    const db = await openDB;
-    async function saveAns() {
-      await db.put('solutions', {
-        id: `${cacheKey}#objective`,
-        value: JSON.stringify(ans),
-      });
-    }
-    async function clearAns() {
-      if (!(await confirm(i18n('All changes will be lost. Are you sure to clear all answers?')))) return;
-      await db.delete('solutions', `${cacheKey}#objective`);
-      window.location.reload();
-    }
-
-    function ProblemNavigation() {
-      [, setUpdate] = React.useState(0);
-      const update = React.useCallback(() => { setUpdate?.((v) => v + 1); }, []);
-      React.useEffect(() => {
-        $(document).on('click', update);
-        $(document).on('input', update);
-        return () => {
-          $(document).off('click', update);
-          $(document).off('input', update);
-        };
-      }, [update]);
-      return <>
-        <div className="objective-nav-card">
-          <div className="objective-nav-title">答题卡</div>
-          <div className="contest-problems objective-nav-grid">
-            {pids.map((i) => <a href={`#p${i}`} key={i} className={ans[i] ? 'pending objective-nav-item is-answered' : 'objective-nav-item'}>
-            <span className="id">{i}</span>
-            </a>)}
-          </div>
-          <div className="objective-nav-legend">
-            <span><i className="objective-nav-dot objective-nav-dot--answered" /> 已答</span>
-            <span><i className="objective-nav-dot" /> 未答</span>
-          </div>
-        </div>
-        <li className="menu__item">
-          <button className="menu__link" onClick={clearAns}>
-            <span className="icon icon-erase" /> {i18n('Clear answers')}
-          </button>
-        </li>
-      </>;
-    }
-
-    async function loadAns() {
-      const saved = await db.get('solutions', `${cacheKey}#objective`);
-      if (typeof saved?.value !== 'string') return;
-      const isValidOption = (v) => v.length === 1 && v.charCodeAt(0) >= 65 && v.charCodeAt(0) <= 90;
-      Object.assign(ans, JSON.parse(saved?.value || '{}'));
-      for (const [id, val] of Object.entries(ans)) {
-        if (Array.isArray(val)) {
-          for (const v of val) {
-            if (isValidOption(v)) $(`.objective_${id} input[value="${v}"]`).prop('checked', true);
-          }
-        } else if (val) {
-          $(`.objective_${id} input[type=text], .objective_${id} textarea`).val(val.toString());
-          if (isValidOption(val)) $(`.objective_${id}.radiobox [value="${val}"]`).prop('checked', true);
-        }
-      }
-      setUpdate?.((v) => v + 1);
-    }
-
-    function setAnswer(name: string, value: string | string[]) {
-      if (Array.isArray(value)) {
-        if (value.length) ans[name] = value;
-        else delete ans[name];
-      } else if (value) ans[name] = value;
-      else delete ans[name];
-      setUpdate?.((v) => v + 1);
-    }
-
-    if (cnt) {
-      await loadAns();
-      $('.problem-content .typo').append(document.getElementsByClassName('nav__item--round').length
-        ? `<input type="submit" disabled class="button rounded primary disabled" value="${i18n('Login to Submit')}" />`
-        : `<input type="submit" class="button rounded primary" value="${i18n('Submit')}" />`);
-      $('.objective-input[type!=checkbox]').on('input', (e: JQuery.TriggeredEvent<HTMLInputElement>) => {
-        setAnswer(e.target.name, e.target.value);
-        saveAns();
-      });
-      $('input.objective-input[type=checkbox]').on('input', (e: JQuery.TriggeredEvent<HTMLInputElement>) => {
-        const current = Array.isArray(ans[e.target.name]) ? ans[e.target.name] : [];
-        if (e.target.checked) {
-          setAnswer(e.target.name, [...new Set([...current, e.target.value])].sort((a: string, b: string) => a.charCodeAt(0) - b.charCodeAt(0)));
-        } else {
-          setAnswer(e.target.name, current.filter((v) => v !== e.target.value));
-        }
-        saveAns();
-      });
-      $('input[type="submit"]').on('click', (e) => {
-        e.preventDefault();
-        request
-          .post(UiContext.postSubmitUrl, {
-            lang: '_',
-            code: yaml.dump(ans),
-          })
-          .then((res) => {
-            window.location.href = res.url;
-          })
-          .catch((err) => {
-            Notification.error(err.message);
-          });
-      });
-    }
-    if (!document.getElementById('problem-navigation')) {
-      const ele = document.createElement('div');
-      ele.id = 'problem-navigation';
-      $('.section--problem-sidebar ol.menu').prepend(ele);
-      createRoot(document.getElementById('problem-navigation')).render(<ProblemNavigation />);
-    }
-    $('.non-scratchpad--hide').hide();
-    $('.scratchpad--hide').hide();
-    $('.outer-loader-container').hide();
   }
 
   $(document).on('click', '[name="problem-sidebar__open-scratchpad"]', (ev) => {

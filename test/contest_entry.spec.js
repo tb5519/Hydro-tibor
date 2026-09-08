@@ -1,7 +1,10 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const Module = require('node:module');
+const { resolve } = require('node:path');
 const { after, describe, it } = require('node:test');
 const { ObjectId } = require('mongodb');
+const nunjucks = require('nunjucks');
 
 const PERM = {
     PERM_VIEW: 1n,
@@ -205,6 +208,7 @@ describe('global contest entry resolver', () => {
         for (const handler of [
             createHandler({ path: '/p/P1000' }),
             createHandler({ path: `/record/${ids.plainRecord}` }),
+            createHandler({ path: '/objective-submit-feedback', args: { rid: ids.plainRecord } }),
             createHandler({ path: `/contest/${ids.normal}` }),
             createHandler({ path: `/contest/${ids.normal}`, domainId: 'system' }),
         ]) {
@@ -233,6 +237,7 @@ describe('global contest entry resolver', () => {
                 args: { domainId: 'OTHER', rid: ids.record },
             }],
             ['submit feedback', { path: '/contest-submit-feedback', args: { rid: ids.record } }],
+            ['objective feedback', { path: '/objective-submit-feedback', args: { rid: ids.record } }],
             ['submit feedback websocket', {
                 path: '/d/C0001/contest-submit-feedback-conn', websocket: true,
                 args: { domainId: 'OTHER', rid: ids.record },
@@ -258,6 +263,9 @@ describe('global contest entry resolver', () => {
         })), NotFoundError);
         await assert.rejects(() => resolveContestEntry(createHandler({
             path: `/record/${ids.foreignRecord}`,
+        })), NotFoundError);
+        await assert.rejects(() => resolveContestEntry(createHandler({
+            path: '/objective-submit-feedback', args: { rid: ids.record, tid: ids.modernShared },
         })), NotFoundError);
     });
 
@@ -341,6 +349,7 @@ describe('global contest URL generation', () => {
             ['record websocket', 'record_conn', {}, { rid: ids.record.toString() }, true],
             ['record detail websocket', 'record_detail_conn', {}, { rid: ids.record.toString() }, true],
             ['submit feedback', 'contest_submit_feedback', {}, { rid: ids.record.toString() }, true],
+            ['objective feedback', 'objective_submit_feedback', {}, { rid: ids.record.toString() }, true],
             ['submit feedback websocket', 'contest_submit_feedback_conn', {}, { rid: ids.record.toString() }, true],
         ];
         for (const [label, route, args, query, shouldHaveTid] of cases) {
@@ -358,6 +367,38 @@ describe('global contest URL generation', () => {
         assert.equal(args.domainId, 'system');
         assert.equal(query.tid, undefined);
         assert.equal(query.entryDomainId, undefined);
+    });
+
+    it('renders objective polling URLs with one query delimiter and a replaceable record placeholder', () => {
+        const template = fs.readFileSync(resolve(__dirname, '../packages/ui-default/templates/problem_detail.html'), 'utf8')
+            .match(/\{% if pdoc\.config\.type == 'objective' %\}([\s\S]*?)\{% endif %\}/)[1];
+        for (const scenario of [
+            { name: 'practice', tdoc: null, context: undefined, domainId: 'C0001' },
+            { name: 'local contest', tdoc: entry.contest, context: undefined, domainId: 'system' },
+            { name: 'shared contest', tdoc: entry.contest, context: entry, domainId: 'C0001' },
+        ]) {
+            const UiContext = {};
+            nunjucks.renderString(template, {
+                UiContext,
+                tdoc: scenario.tdoc,
+                set: (target, name, value) => { target[name] = value; return ''; },
+                url: (name, options) => {
+                    const args = {};
+                    const query = Object.fromEntries(Object.entries(options.query).map(([key, value]) => [key, value.toString()]));
+                    applyContestEntryUrl(scenario.context, name, args, query);
+                    const search = new URLSearchParams(query).toString();
+                    return `/d/${args.domainId || scenario.domainId}/objective-submit-feedback${search ? `?${search}` : ''}`;
+                },
+            });
+            const rendered = UiContext.objectiveSubmitFeedbackUrl;
+            assert.equal(rendered.split('?').length, 2, `${scenario.name}: one query delimiter`);
+            assert.ok(rendered.includes('{rid}'), `${scenario.name}: literal record placeholder`);
+            const pollingUrl = new URL(rendered.replace('{rid}', ids.record.toString()), 'https://example.test');
+            assert.equal(pollingUrl.pathname, `/d/${scenario.domainId}/objective-submit-feedback`);
+            assert.equal(pollingUrl.searchParams.get('rid'), ids.record.toString());
+            assert.equal(pollingUrl.searchParams.get('tid'), scenario.tdoc?.docId.toString() || null);
+            assert.equal(pollingUrl.searchParams.get('entryDomainId'), scenario.context ? 'C0001' : null);
+        }
     });
 
     it('does not rewrite links for another contest or global contest administration', () => {

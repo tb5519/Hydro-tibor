@@ -116,8 +116,8 @@ export default function ScratchpadContainer() {
           })}
         </div>
       </Allotment.Pane>
-      <Allotment vertical onChange={handleChangeSize}>
-        <div key="editor" className="flex-col splitpane-fill">
+      <Allotment vertical defaultSizes={[550, 250, 200]} onChange={handleChangeSize}>
+        <div key="editor" className="scratchpad__workspace flex-col splitpane-fill">
           <ScratchpadToolbar />
           <ScratchpadEditor />
         </div>

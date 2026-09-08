@@ -1,53 +1,142 @@
-.scratchpad__toolbar
-  background: $toolbar-bg
-  padding: rem(8px)
-  font-size: rem($font-size-small)
-  font-weight: normal
+#scratchpad .scratchpad__toolbar
+  flex: 0 0 auto
+  flex-wrap: wrap
+  gap: rem(8px 12px)
+  padding: rem(12px 14px)
+  border-bottom: 1px solid var(--ui-v2-border)
+  background: var(--ui-v2-surface)
+  color: var(--ui-v2-text)
+  font-size: rem(13px)
 
-.scratchpad__toolbar__item
-  margin-right: rem(5px)
-
-  .select
-    margin: 0
-    height: auto
-    line-height: 1
-
-.scratchpad__toolbar__button
-  padding: rem(5px)
-  font-size: rem($font-size-small)
-  font-weight: normal
-  background: none
-  border: 1px solid transparent
-  color: $toolbar-fore
-  outline: 0
-  transition: .2s linear opacity
-
-  // Hack for Firefox bug #984869
-  &>div
+  .scratchpad__toolbar__actions,
+  .scratchpad__toolbar__views
     display: flex
-    flex-direction: row
     align-items: center
+    flex-wrap: wrap
+    gap: rem(6px)
+    min-width: 0
 
-  &.enabled
-    cursor: pointer
+  .scratchpad__toolbar__views
+    margin-left: auto
 
-  .icon
-    font-size: rem($font-size-icon)
-    margin-right: 2px
+  .scratchpad__toolbar__item
+    margin: 0
+    flex: 0 0 auto
 
-  &.enabled:hover
-    color: $toolbar-fore-hover
-    background: $toolbar-bg-hover
+  .scratchpad__toolbar__language
+    flex-shrink: 1
+    min-width: rem(88px)
+    max-width: rem(172px)
+    margin-right: rem(4px)
 
-  &.activated
-    color: $toolbar-fore-selected !important
-    background: $toolbar-bg-selected !important
+    .select
+      display: block
+      box-sizing: border-box
+      width: 100%
+      height: rem(34px)
+      margin: 0
+      padding: rem(0 26px 0 10px)
+      border: 1px solid var(--ui-v2-border)
+      border-radius: rem(8px)
+      background-color: var(--ui-v2-surface-muted)
+      color: var(--ui-v2-text)
+      font-size: rem(13px)
+      line-height: normal
+      cursor: pointer
 
-  &.disabled
-    pointer-events: none
-    opacity: $toolbar-disabled-opacity
+  .scratchpad__toolbar__button
+    box-sizing: border-box
+    min-height: rem(34px)
+    padding: rem(0 10px)
+    border: 1px solid transparent
+    border-radius: rem(8px)
+    background: transparent
+    color: var(--ui-v2-text-muted)
+    font-size: rem(13px)
+    font-weight: 500
+    line-height: 1.2
+    outline: 0
+    transition: background-color .15s ease, border-color .15s ease, color .15s ease
 
-.scratchpad__toolbar__split
-  width: 1px
-  height: 1rem
-  background: #DDD
+    & > div
+      display: flex
+      align-items: center
+      justify-content: center
+      gap: rem(6px)
+      white-space: nowrap
+
+    .icon
+      font-size: rem(15px)
+      line-height: 1
+      color: inherit
+
+    &.enabled
+      cursor: pointer
+
+    &.enabled:hover
+      color: var(--ui-v2-text)
+      background: var(--ui-v2-surface-muted)
+      border-color: var(--ui-v2-border)
+
+    &.activated
+      color: var(--ui-v2-accent)
+      background: var(--ui-v2-accent-soft)
+      border-color: transparent
+
+    &.disabled
+      cursor: default
+      opacity: .45
+
+  .scratchpad__toolbar__pretest
+    border-color: var(--ui-v2-border)
+    color: var(--ui-v2-text)
+
+  .scratchpad__toolbar__submit
+    background: var(--ui-v2-accent)
+    border-color: var(--ui-v2-accent)
+    color: #fff
+    box-shadow: 0 2px 5px rgba(37, 99, 235, .12)
+
+    &.enabled:hover
+      color: #fff
+      background: var(--ui-v2-accent)
+      border-color: var(--ui-v2-accent)
+      filter: brightness(1.06)
+
+  .scratchpad__toolbar__exit
+    width: rem(32px)
+    padding: 0
+    margin-left: rem(2px)
+
+  kbd
+    padding: rem(2px 4px)
+    border: 1px solid currentColor
+    border-radius: rem(4px)
+    font: inherit
+    font-size: rem(10px)
+    opacity: .55
+
+  .scratchpad__toolbar__wait
+    font-size: rem(11px)
+    font-variant-numeric: tabular-nums
+    opacity: .8
+
+  .scratchpad__toolbar__button:focus-visible,
+  .select:focus-visible
+    outline: 2px solid var(--ui-v2-accent)
+    outline-offset: 2px
+
+@container scratchpad-editor (max-width: 740px)
+  #scratchpad .scratchpad__toolbar
+    padding: rem(10px)
+    gap: rem(8px)
+
+    kbd
+      display: none
+
+    .scratchpad__toolbar__language
+      max-width: rem(128px)
+
+@media (prefers-reduced-motion: reduce)
+  #scratchpad .scratchpad__toolbar .scratchpad__toolbar__button
+    transition: none

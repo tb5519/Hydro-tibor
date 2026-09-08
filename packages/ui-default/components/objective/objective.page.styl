@@ -1,0 +1,268 @@
+.objective-problem-mode, .dialog--objective-result
+  --objective-correct: #15803d
+  --objective-correct-soft: #f0fdf4
+  --objective-correct-border: #86cba0
+  --objective-incorrect: #c2414a
+  --objective-incorrect-soft: #fff1f2
+  --objective-incorrect-border: #e9a2a8
+
+.dialog.withBg.dialog--objective-result
+  box-sizing: border-box
+  justify-content: flex-start
+  padding: 16px
+  overflow-y: auto
+  scrollbar-width: none
+
+  &::-webkit-scrollbar
+    display: none
+
+.dialog.withBg.dialog--objective-result .dialog__content
+  box-sizing: border-box
+  flex: 0 0 auto
+  margin: auto
+  min-width: 0
+  max-width: calc(100vw - 32px) !important
+  max-height: none
+  overflow: visible
+  padding: 28px
+  border: 1px solid var(--ui-v2-border)
+  border-radius: 20px
+  background: var(--ui-v2-surface)
+  box-shadow: 0 20px 70px rgba(15, 23, 42, .16)
+
+.dialog--objective-result .dialog__body
+  // The shared dialog's percentage height creates overflow in an intrinsic-height card.
+  height: auto !important
+  margin-bottom: 22px
+
+.dialog--objective-result .dialog__action .button
+  min-width: 100px
+  border-radius: 10px
+
+.objective-result
+  color: var(--ui-v2-text)
+
+  &__heading
+    margin-bottom: 20px
+
+  &__eyebrow
+    display: block
+    margin-bottom: 6px
+    color: var(--ui-v2-text-muted)
+    font-size: 12px
+
+  h1.objective-result__title
+    margin: 0
+    color: var(--ui-v2-text)
+    font-size: 23px
+    font-weight: 600
+    line-height: 1.4
+
+  &__score-card
+    padding: 22px 16px 20px
+    border: 1px solid var(--ui-v2-border)
+    border-radius: 14px
+    background: var(--ui-v2-accent-soft)
+    text-align: center
+
+  &__score-label, &__total
+    color: var(--ui-v2-text-muted)
+    font-size: 13px
+
+  &__score
+    display: flex
+    align-items: baseline
+    justify-content: center
+    gap: 7px
+    margin: 6px 0
+    color: var(--ui-v2-accent)
+    font-variant-numeric: tabular-nums
+
+    strong
+      font-size: 56px
+      font-weight: 650
+      letter-spacing: -.04em
+      line-height: 1.2
+
+    span
+      font-size: 14px
+
+  &__total b
+    margin: 0 3px
+    color: var(--ui-v2-text)
+    font-weight: 600
+    font-variant-numeric: tabular-nums
+
+  &__counts
+    display: grid
+    grid-template-columns: repeat(3, minmax(0, 1fr))
+    margin: 20px 0 0
+    padding: 0
+
+  &__count
+    text-align: center
+
+    & + &
+      border-left: 1px solid var(--ui-v2-border)
+
+    dt
+      display: flex
+      align-items: center
+      justify-content: center
+      gap: 6px
+      color: var(--ui-v2-text-muted)
+      font-size: 12px
+      font-weight: 400
+
+    i
+      width: 6px
+      height: 6px
+      border-radius: 50%
+      background: var(--ui-v2-border-strong)
+
+    dd
+      margin: 7px 0 0
+      font-size: 23px
+      font-weight: 600
+      font-variant-numeric: tabular-nums
+
+      span
+        margin-left: 5px
+        color: var(--ui-v2-text-muted)
+        font-size: 11px
+        font-weight: 400
+
+    &--correct i
+      background: var(--objective-correct)
+
+    &--incorrect i
+      background: var(--objective-incorrect)
+
+  &__note
+    margin: 20px 0 0
+    color: var(--ui-v2-text-muted)
+    text-align: center
+    font-size: 12px
+    line-height: 1.6
+
+  .contest-points
+    margin: 20px 0 0
+
+for result in correct incorrect
+  .objective-problem-mode .objective-options label.objective-option.is-{result} .objective-choice-body,
+  .objective-problem-mode .objective-free-answer.is-{result} .textbox,
+  .objective-problem-mode .objective-nav-card .objective-nav-item.is-{result}
+    border-color: var(unquote('--objective-' + result + '-border'))
+    background: var(unquote('--objective-' + result + '-soft'))
+    color: var(unquote('--objective-' + result))
+    box-shadow: none
+
+  .objective-problem-mode .objective-options label.objective-option.is-{result} .objective-choice-body .objective-choice-letter
+    border-color: var(unquote('--objective-' + result))
+    background: var(unquote('--objective-' + result))
+    color: #fff
+
+  .objective-problem-mode .objective-nav-legend .objective-nav-dot--{result}
+    border-color: var(unquote('--objective-' + result))
+    background: var(unquote('--objective-' + result))
+
+.objective-problem-mode .objective-option input:focus-visible + .objective-choice-body,
+.objective-problem-mode .objective-free-answer .textbox:focus-visible,
+.objective-problem-mode .objective-nav-item:focus-visible,
+.objective-problem-mode .objective-submit:focus-visible,
+.dialog--objective-result button:focus-visible
+  outline: 2px solid var(--ui-v2-accent)
+  outline-offset: 3px
+
+.objective-problem-mode .objective-nav-grid
+  width: 100%
+  padding-bottom: 0
+
+.objective-problem-mode .objective-nav-card .objective-nav-item
+  box-sizing: border-box
+  width: 100%
+  min-width: 0
+
+.objective-problem-mode .objective-nav-item:after
+  display: none
+
+.objective-problem-mode .objective-nav-legend
+  flex-wrap: wrap
+  gap: 6px 12px
+
+.objective-problem-mode .objective-submit
+  min-width: 160px
+  min-height: 42px
+  margin-top: 12px
+
+.objective-problem-mode .objective-submit:disabled,
+.objective-problem-mode .objective-option:has(input:disabled)
+  cursor: wait
+
+.objective-problem-mode .objective-submit:disabled
+  opacity: .65
+
+.objective-submit-actions
+  display: flex
+  flex-wrap: wrap
+  align-items: center
+  gap: 0 12px
+
+.objective-submit-state
+  display: inline-block
+  margin: 8px 0
+  color: var(--ui-v2-text-muted)
+  font-size: 12px
+  line-height: 1.6
+
+.theme--dark.objective-problem-mode,
+.theme--dark .objective-problem-mode,
+.theme--dark .dialog--objective-result
+  --objective-correct: #75d99b
+  --objective-correct-soft: #18352a
+  --objective-correct-border: #367b54
+  --objective-incorrect: #f0a1a8
+  --objective-incorrect-soft: #3b252e
+  --objective-incorrect-border: #9b5965
+
+.theme--dark .dialog--objective-result
+  --ui-v2-surface: #202b38
+  --ui-v2-border: #3b4859
+  --ui-v2-border-strong: #64748b
+  --ui-v2-text: #e2e8f0
+  --ui-v2-text-muted: #a6b5c8
+  --ui-v2-accent: #8cb8ff
+  --ui-v2-accent-soft: #26394f
+
+  .contest-points
+    background: var(--ui-v2-accent-soft)
+    border-color: var(--ui-v2-border)
+    color: var(--ui-v2-text-muted)
+
+    strong, b, summary
+      color: var(--ui-v2-accent)
+
+  .contest-points__heading, .contest-points__total b
+    color: var(--ui-v2-text)
+
+  .contest-points__bonus, .contest-points__badge
+    border-color: var(--ui-v2-border)
+
+  .contest-points__badge
+    background: var(--ui-v2-surface)
+
+  .contest-points__bonus-title small, .contest-points__note, .contest-points__total
+    color: var(--ui-v2-text-muted)
+
+@media (max-width: 40em)
+  .dialog.withBg.dialog--objective-result .dialog__content
+    padding: 22px 20px
+    border-radius: 16px
+
+  .objective-result__score strong
+    font-size: 48px
+
+@media (prefers-reduced-motion: reduce)
+  .objective-problem-mode .objective-choice-body,
+  .objective-problem-mode .objective-nav-item
+    transition: none

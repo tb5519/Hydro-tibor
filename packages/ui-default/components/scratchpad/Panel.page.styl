@@ -1,11 +1,31 @@
-@import './var.inc.styl'
+#scratchpad .scratchpad__panel
+  background: var(--ui-v2-surface)
+  color: var(--ui-v2-text)
 
-.scratchpad__panel-title
-  background: $primary-color
-  line-height: rem($panel-header-height)
-  padding: rem(0 5px)
-  font-size: rem($font-size-small)
-  color: #FFF
+#scratchpad .scratchpad__panel-title
+  display: flex
+  align-items: center
+  justify-content: space-between
+  flex: 0 0 auto
+  min-height: rem(40px)
+  box-sizing: border-box
+  padding: rem(9px 16px)
+  border-top: 1px solid var(--ui-v2-border)
+  border-bottom: 1px solid var(--ui-v2-border)
+  background: var(--ui-v2-surface-muted)
+  color: var(--ui-v2-text)
+  font-size: rem(13px)
+  font-weight: 600
+  line-height: 1.5
+
+  .icon
+    margin-right: rem(5px)
+    color: var(--ui-v2-text-muted)
+
+#scratchpad .scratchpad__panel-body
+  position: relative
+  min-height: 0
+  overflow: hidden
 
 .splitpane-fill
   display: flex

@@ -7,7 +7,6 @@ import { getAvailableLangs, i18n, request } from 'vj/utils';
 import Toolbar, {
   ToolbarButtonComponent as ToolbarButton,
   ToolbarItemComponent as ToolbarItem,
-  ToolbarSplitComponent as ToolbarSplit,
 } from './ToolbarComponent';
 
 function normalizeRecordId(value) {
@@ -162,12 +161,13 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
       if (langInfo.validAs && !langInfo.hidden) canUsePretest = true;
     }
     if (langInfo?.pretest === false) canUsePretest = false;
-    if (UiContext.ideMode) {
-      return (
-        <Toolbar>
-          <ToolbarItem>
+    return (
+      <Toolbar role="toolbar" aria-label="代码编辑工具栏">
+        <div className="scratchpad__toolbar__actions">
+          <ToolbarItem className="scratchpad__toolbar__language">
             <select
               className="select"
+              aria-label={i18n('Language')}
               disabled={this.props.isPosting}
               value={this.props.editorLang}
               onChange={(ev) => this.props.setEditorLanguage(ev.target.value)}
@@ -183,15 +183,32 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
               className="scratchpad__toolbar__pretest"
               onClick={() => this.props.postPretest(this.props)}
               data-global-hotkey="f9"
-              data-tooltip="运行代码 (F9)"
+              data-tooltip={`${UiContext.ideMode ? '运行代码' : i18n('Pretest Your Code')} (F9)`}
             >
-              <Icon name="debug" />
-              {' '}
-              运行代码
-              {' '}
-              {this.props.pretestWaitSec ? `(${this.props.pretestWaitSec}s)` : '(F9)'}
+              <Icon name="play" />
+              <span>{UiContext.ideMode ? '运行代码' : i18n('Run Pretest')}</span>
+              {this.props.pretestWaitSec
+                ? <span className="scratchpad__toolbar__wait">{this.props.pretestWaitSec}s</span>
+                : <kbd>F9</kbd>}
             </ToolbarButton>
           )}
+          {!UiContext.ideMode && (
+            <ToolbarButton
+              disabled={this.props.isPosting || !!this.props.submitWaitSec}
+              className="scratchpad__toolbar__submit"
+              onClick={() => this.props.postSubmit(this.props)}
+              data-global-hotkey="f10"
+              data-tooltip={`${i18n('Submit Your Code')} (F10)`}
+            >
+              <Icon name="send" />
+              <span>{i18n('Submit Solution')}</span>
+              {this.props.submitWaitSec
+                ? <span className="scratchpad__toolbar__wait">{this.props.submitWaitSec}s</span>
+                : <kbd>F10</kbd>}
+            </ToolbarButton>
+          )}
+        </div>
+        <div className="scratchpad__toolbar__views">
           {canUsePretest && (
             <ToolbarButton
               activated={this.props.pretestVisible}
@@ -200,91 +217,32 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
               data-tooltip={`${i18n('Toggle Pretest Panel')} (Alt+P)`}
             >
               <Icon name="edit" />
-              {' '}
-              {i18n('Pretest')}
+              <span>{i18n('Pretest')}</span>
             </ToolbarButton>
           )}
-        </Toolbar>
-      );
-    }
-    return (
-      <Toolbar>
-        {canUsePretest && (
-          <ToolbarButton
-            disabled={this.props.isPosting || this.props.isRunning || !!this.props.pretestWaitSec}
-            className="scratchpad__toolbar__pretest"
-            onClick={() => this.props.postPretest(this.props)}
-            data-global-hotkey="f9"
-            data-tooltip={`${i18n('Pretest Your Code')} (F9)`}
-          >
-            <Icon name="debug" />
-            {' '}
-            {i18n('Run Pretest')}
-            {' '}
-            {this.props.pretestWaitSec ? `(${this.props.pretestWaitSec}s)` : '(F9)'}
-          </ToolbarButton>
-        )}
-        <ToolbarButton
-          disabled={this.props.isPosting || !!this.props.submitWaitSec}
-          className="scratchpad__toolbar__submit"
-          onClick={() => this.props.postSubmit(this.props)}
-          data-global-hotkey="f10"
-          data-tooltip={`${i18n('Submit Your Code')} (F10)`}
-        >
-          <Icon name="play" />
-          {' '}
-          {i18n('Submit Solution')}
-          {' '}
-          {this.props.submitWaitSec ? `(${this.props.submitWaitSec}s)` : '(F10)'}
-        </ToolbarButton>
-        <ToolbarButton
-          data-global-hotkey="alt+q"
-          data-tooltip={`${i18n('Quit Scratchpad')} (Alt+Q)`}
-          name="problem-sidebar__quit-scratchpad"
-        >
-          <Icon name="close" />
-          {' '}
-          {i18n('Exit')}
-          {' '}
-          (Alt+Q)
-        </ToolbarButton>
-        <ToolbarItem>
-          <select
-            className="select"
-            disabled={this.props.isPosting}
-            value={this.props.editorLang}
-            onChange={(ev) => this.props.setEditorLanguage(ev.target.value)}
-          >
-            {_.map(availableLangs, (val, key) => (
-              <option value={key} key={key}>{val.display}</option>
-            ))}
-          </select>
-        </ToolbarItem>
-        <ToolbarSplit />
-        {canUsePretest && (
-          <ToolbarButton
-            activated={this.props.pretestVisible}
-            onClick={() => this.props.togglePanel('pretest')}
-            data-global-hotkey="alt+p"
-            data-tooltip={`${i18n('Toggle Pretest Panel')} (Alt+P)`}
-          >
-            <Icon name="edit" />
-            {' '}
-            {i18n('Pretest')}
-          </ToolbarButton>
-        )}
-        {UiContext.canViewRecord && (
-          <ToolbarButton
-            activated={this.props.recordsVisible}
-            onClick={() => this.props.togglePanel('records')}
-            data-global-hotkey="alt+r"
-            data-tooltip={`${i18n('Toggle Records Panel')} (Alt+R)`}
-          >
-            <Icon name="flag" />
-            {' '}
-            {i18n('Records')}
-          </ToolbarButton>
-        )}
+          {!UiContext.ideMode && UiContext.canViewRecord && (
+            <ToolbarButton
+              activated={this.props.recordsVisible}
+              onClick={() => this.props.togglePanel('records')}
+              data-global-hotkey="alt+r"
+              data-tooltip={`${i18n('Toggle Records Panel')} (Alt+R)`}
+            >
+              <Icon name="flag" />
+              <span>{i18n('Records')}</span>
+            </ToolbarButton>
+          )}
+          {!UiContext.ideMode && (
+            <ToolbarButton
+              className="scratchpad__toolbar__exit"
+              data-global-hotkey="alt+q"
+              data-tooltip={`${i18n('Quit Scratchpad')} (Alt+Q)`}
+              aria-label={`${i18n('Quit Scratchpad')} (Alt+Q)`}
+              name="problem-sidebar__quit-scratchpad"
+            >
+              <Icon name="close" />
+            </ToolbarButton>
+          )}
+        </div>
       </Toolbar>
     );
   }

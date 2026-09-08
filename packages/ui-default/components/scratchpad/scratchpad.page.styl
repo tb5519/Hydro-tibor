@@ -1,6 +1,6 @@
 .scratchpad-container
   position: absolute
-  background: #FFF
+  background: var(--ui-v2-surface, #fff)
 
 #scratchpad
   position: absolute
@@ -8,6 +8,13 @@
   top: $nav-item-height
   width: 100%
   bottom: 0
+  --separator-border: var(--ui-v2-border)
+  --focus-border: var(--ui-v2-accent)
+
+  .scratchpad__workspace
+    container-type: inline-size
+    container-name: scratchpad-editor
+    background: var(--ui-v2-surface)
 
 .scratchpad__problem
   position: absolute
@@ -17,39 +24,120 @@
   height: 100%
   overflow: auto
 
-.scratchpad__toolbar__pretest.enabled:hover .icon
-  color: red
+#scratchpad .scratchpad__records-scroll
+  min-height: 0
+  height: 100%
+  overflow: auto
+  scrollbar-width: thin
 
-.scratchpad__toolbar__submit.enabled:hover .icon
-  color: green
+#scratchpad .scratchpad__records__table
+  width: 100%
+  margin: 0
+  border: 0
+  border-collapse: collapse
+  table-layout: fixed
+  font-size: rem(12px)
+  color: var(--ui-v2-text-muted)
 
-.scratchpad__records__table
   &.loading
-    // make a flash by setting opacity, otherwise users
-    // won't think that refreshing is completed!
-    opacity: 0.6
+    opacity: .6
+
+  th,
+  td
+    padding: rem(12px 14px)
+    border: 0
+    border-bottom: 1px solid var(--ui-v2-border)
+    text-align: left
+    vertical-align: middle
+    line-height: 1.5
+    font-variant-numeric: tabular-nums
+
+  th
+    position: sticky
+    top: 0
+    z-index: 1
+    padding-top: rem(9px)
+    padding-bottom: rem(9px)
+    background: var(--ui-v2-surface)
+    color: var(--ui-v2-text-muted)
+    font-size: rem(11px)
+    font-weight: 500
+
+  tbody tr
+    cursor: pointer
+    background: var(--ui-v2-surface)
+
+    &:hover
+      background: var(--ui-v2-accent-soft)
 
   .col--at
-    width: rem(120px)
+    width: rem(104px)
 
   .col--time,
   .col--memory
-    width: rem(70px)
+    width: rem(76px)
 
   .col--detail
-    border-right: 1px solid $table-border-color
+    color: var(--ui-v2-text)
 
-  .icol
-    display: inline-block
+  .scratchpad__record-result
+    display: flex
+    align-items: center
+    flex-wrap: wrap
+    gap: rem(6px)
 
-  .icol--pretest
-    width: rem(60px)
-
-    .flag
-      font-size: rem(12px)
-      color: #FFF
-      padding: rem(2px 3px)
+  .record-status--icon
+    margin-right: rem(3px)
 
   .icol--stat
-    color: #AAA
-    width: rem(60px)
+    display: inline-flex
+    align-items: center
+    padding: rem(2px 7px)
+    border-radius: rem(5px)
+    background: var(--ui-v2-surface-muted)
+    font-size: rem(11px)
+    white-space: nowrap
+
+    &.pass
+      background: rgba(22, 163, 74, .08)
+
+    &.fail
+      background: rgba(220, 38, 38, .06)
+
+#scratchpad .scratchpad__records-empty
+  display: flex
+  align-items: center
+  justify-content: center
+  flex-direction: column
+  gap: rem(9px)
+  min-height: rem(120px)
+  height: 100%
+  box-sizing: border-box
+  padding: rem(20px)
+  color: var(--ui-v2-text-muted)
+  font-size: rem(13px)
+  text-align: center
+
+  .icon
+    display: grid
+    place-items: center
+    width: rem(34px)
+    height: rem(34px)
+    border-radius: rem(10px)
+    background: var(--ui-v2-surface-muted)
+    color: var(--ui-v2-text-muted)
+    font-size: rem(17px)
+
+  small
+    font-size: rem(12px)
+    opacity: .75
+
+.theme--dark #scratchpad
+  --ui-v2-surface: #1f2430
+  --ui-v2-surface-muted: #252c39
+  --ui-v2-border: #343d4d
+  --ui-v2-border-strong: #475569
+  --ui-v2-text: #e5eaf3
+  --ui-v2-text-muted: #9ba9bf
+  --ui-v2-accent: #6697ff
+  --ui-v2-accent-soft: #293b59

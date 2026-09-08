@@ -24,7 +24,8 @@ export async function resolveContestEntry(handler: Handler | ConnectionHandler) 
     const path = handler.request.path.replace(/^\/d\/[^/]+\//, '/');
     const contestPath = /^\/contest\/([a-f\d]{24})(?:\/|$)/i.exec(path);
     const problemPath = /^\/p\/[^/]+(?:\/(?:submit|file(?:\/.*)?))?$/.test(path);
-    const recordPath = /^\/record(?:\/([a-f\d]{24}))?$|^\/(?:record-conn|record-detail-conn|contest-submit-feedback(?:-conn)?)$/i.exec(path);
+    const recordPath = /^\/record(?:\/([a-f\d]{24}))?$/i.exec(path)
+        || /^\/(?:record-conn|record-detail-conn|contest-submit-feedback(?:-conn)?|objective-submit-feedback)$/i.exec(path);
     if (!contestPath && !problemPath && !recordPath) return;
     if (!handler.user.hasPriv(PRIV.PRIV_USER_PROFILE)) return;
 
@@ -95,7 +96,7 @@ export function applyContestEntryUrl(
     const sameContest = (!args.tid || args.tid === tid) && (!query.tid || query.tid === tid);
     const contestRoute = name.startsWith('contest_') && !['contest_main', 'contest_create'].includes(name);
     const problemRoute = ['problem_detail', 'problem_submit', 'problem_file_download'].includes(name) && query.tid === tid;
-    const recordRoute = ['record_main', 'record_detail', 'record_conn', 'record_detail_conn'].includes(name);
+    const recordRoute = ['record_main', 'record_detail', 'record_conn', 'record_detail_conn', 'objective_submit_feedback'].includes(name);
     if ((contestRoute || problemRoute || recordRoute) && sameContest && (!args.domainId || args.domainId === sourceId)) {
         args.domainId = entryId;
         query.entryDomainId = entryId;
