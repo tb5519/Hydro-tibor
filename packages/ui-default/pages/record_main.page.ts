@@ -13,13 +13,13 @@ const page = new NamedPage('record_main', async () => {
   if ($userFilter.length) {
     UserSelectAutoComplete.getOrConstruct($userFilter, {
       clearDefaultValue: false,
-      props: { height: '35px', placeholder: '全部学员 / 输入用户名' },
+      props: { height: '42px', placeholder: '全部学员 / 用户名' },
     });
   }
   if ($problemFilter.length) {
     ProblemSelectAutoComplete.getOrConstruct($problemFilter, {
       clearDefaultValue: false,
-      props: { height: '35px', placeholder: '全部题目 / 输入题号' },
+      props: { height: '42px', placeholder: '全部题目 / 题号' },
     });
   }
   const $languageFilter = $('select[name="lang"]');

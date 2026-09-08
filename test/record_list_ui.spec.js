@@ -107,6 +107,17 @@ function render(overrides, plugin) {
     return { context, document: new JSDOM(html, { url: 'http://localhost/d/python/record' }).window.document };
 }
 
+function compileRecordStyles() {
+    const style = fs.readFileSync(path.join(root, 'packages/ui-default/pages/record_main.page.styl'), 'utf8');
+    const rem = fs.readFileSync(path.join(root, 'packages/ui-default/common/rem.inc.styl'), 'utf8');
+    return stylus.render(`$font-size = 16px\n${rem}\nmobile()\n  @media (max-width: 640px)\n    {block}\n${style}`);
+}
+
+function pixels(value, rootFontSize = 16) {
+    assert.match(value, /^[\d.]+(?:px|rem)$/, `Expected a concrete CSS size, received ${value}`);
+    return Number.parseFloat(value) * (value.endsWith('rem') ? rootFontSize : 1);
+}
+
 describe('record list presentation', () => {
     it('gives students a clean self view with no filter controls but unchanged live row structure', () => {
         const { context, document } = render({ canManageRecords: false, filterUidOrName: '7' });
@@ -252,9 +263,7 @@ describe('record list presentation', () => {
     });
 
     it('aligns rendered autocomplete fields with normal inputs and overrides component inline spacing', () => {
-        const style = fs.readFileSync(path.join(root, 'packages/ui-default/pages/record_main.page.styl'), 'utf8');
-        const rem = fs.readFileSync(path.join(root, 'packages/ui-default/common/rem.inc.styl'), 'utf8');
-        const css = postcss.parse(stylus.render(`$font-size = 16px\n${rem}\nmobile()\n  @media (max-width: 640px)\n    {block}\n${style}`));
+        const css = postcss.parse(compileRecordStyles());
         const rules = new Map();
         css.walkRules((rule) => {
             for (const selector of rule.selectors) {
@@ -271,14 +280,63 @@ describe('record list presentation', () => {
         const input = rules.get(`${prefix}.autocomplete-wrapper input`);
         const textbox = rules.get(`${prefix}.textbox`);
         assert.equal(wrapper.get('height').value, textbox.get('height').value);
+        assert.equal(pixels(wrapper.get('height').value), 42);
+        assert.equal(pixels(rules.get(`${prefix}.select`).get('height').value), 42);
         assert.equal(wrapper.get('height').important, true);
         assert.equal(wrapper.get('border-radius').value, textbox.get('border-radius').value);
         assert.equal(wrapper.get('box-sizing').value, 'border-box');
         assert.equal(wrapper.get('padding').value, '0');
         assert.equal(input.get('height').value, '100%');
         assert.equal(input.get('font-size').value, textbox.get('font-size').value);
+        assert.equal(pixels(input.get('font-size').value), 15);
         assert.equal(input.get('padding').value, textbox.get('padding').value);
         assert.ok(rules.has(`${prefix}.autocomplete-wrapper.focused`));
         assert.ok(rules.has(`${prefix}.autocomplete-wrapper:focus-within`));
+    });
+
+    it('keeps teacher and student typography readable with either 16px or 13px site root text', () => {
+        const css = compileRecordStyles();
+        const sizes = [];
+        for (const rootFontSize of [16, 13]) {
+            for (const canManageRecords of [true, false]) {
+                const original = fixture({ canManageRecords });
+                original.handler.user.hasPerm = (permission) => canManageRecords && permission === 'rejudge';
+                const { document } = render(original);
+                document.documentElement.style.fontSize = `${rootFontSize}px`;
+                document.body.classList.add('page--record_main');
+                const style = document.createElement('style');
+                style.textContent = css;
+                document.head.append(style);
+                const computedSize = (selector, property) => pixels(
+                    document.defaultView.getComputedStyle(document.querySelector(selector))[property], rootFontSize,
+                );
+                const fontSize = (selector) => computedSize(selector, 'fontSize');
+                const recordSizes = {
+                    table: fontSize('.record_main__table'),
+                    user: fontSize('.record_main__table .user-profile-name'),
+                    status: fontSize('.record_main__table .record-status--text'),
+                    problem: fontSize('.record_main__table .col--problem-name > a'),
+                    problemId: fontSize('.record_main__table .col--problem-name b'),
+                    header: fontSize('.record_main__table thead th'),
+                };
+                assert.deepEqual(recordSizes, { table: 15, user: 15, status: 15, problem: 16, problemId: 14, header: 14 });
+                sizes.push(recordSizes);
+                if (canManageRecords) {
+                    assert.equal(fontSize('.record-list__field > span'), 14);
+                    assert.equal(fontSize('.record-list__field .textbox'), 15);
+                    assert.equal(fontSize('.record-list__field .select'), 15);
+                    assert.equal(fontSize('.record_main__table .form--inline button'), 13);
+                    assert.equal(computedSize('.record-list__filter-actions .button', 'height'), 42);
+                    assert.equal(computedSize('.record-list__field .textbox', 'height'), 42);
+                    assert.equal(computedSize('.record-list__field .select', 'height'), 42);
+                } else {
+                    assert.equal(document.querySelector('.record-list__filters'), null);
+                }
+                document.defaultView.close();
+            }
+        }
+        assert.deepEqual(sizes[0], sizes[1]);
+        assert.deepEqual(sizes[0], sizes[2]);
+        assert.deepEqual(sizes[0], sizes[3]);
     });
 });
