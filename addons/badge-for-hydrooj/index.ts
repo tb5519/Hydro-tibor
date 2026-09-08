@@ -11,6 +11,7 @@ import RecordModel from 'hydrooj/src/model/record';
 import storage from 'hydrooj/src/model/storage';
 import workspace from 'hydrooj/src/model/workspace';
 import { Time } from 'hydrooj/src/utils';
+import { badgeAcImageCache } from './ac_image_cache';
 import { Badge } from './model';
 
 const UserBadgeModel = global.Hydro.model.userBadge;
@@ -490,9 +491,35 @@ class BadgeBackgroundImageHandler extends BadgeAssetHandler {
     protected readonly assetName = 'background';
 }
 
-class BadgeAcImageHandler extends BadgeAssetHandler {
+export class BadgeAcImageHandler extends BadgeAssetHandler {
     protected readonly assetField = 'acImagePath' as const;
     protected readonly assetName = 'AC effect';
+
+    @param('id', Types.PositiveInt, true)
+    @param('size', Types.PositiveInt, true)
+    async get(domainId: string, id: number, size?: number) {
+        if (size !== 384 && size !== 768) {
+            await super.get(domainId, id);
+            return;
+        }
+        const badge = await BadgeModel.badgeGet(this.ctx, id, getBadgeDomainScope(this));
+        if (!badge?.acImagePath) throw new NotFoundError(`Badge AC effect ${id} is not exist!`);
+        const meta = await storage.getMeta(badge.acImagePath);
+        if (!meta) throw new NotFoundError(`Badge AC effect ${id} is not exist!`);
+        const isPng = `${meta['Content-Type'] || ''}`.split(';')[0].trim().toLowerCase() === 'image/png';
+        const preview = isPng ? await badgeAcImageCache.get({
+            path: badge.acImagePath,
+            version: `${badge.acImageUpdatedAt || ''}:${meta.etag || ''}`,
+            size: meta.size,
+            load: () => storage.get(badge.acImagePath!),
+        }, size) : null;
+        this.response.body = preview || await storage.get(badge.acImagePath);
+        this.response.type = preview ? 'image/png' : meta['Content-Type'] || lookup(badge.acImagePath) || 'application/octet-stream';
+        const versionMatches = this.request.query.v && this.request.query.v === badge.acImageUpdatedAt;
+        this.response.addHeader('Cache-Control', preview && versionMatches
+            ? 'public, max-age=604800, immutable' : 'public, max-age=60');
+        this.response.addHeader('X-Content-Type-Options', 'nosniff');
+    }
 }
 
 class BadgeThemeSoundHandler extends BadgeAssetHandler {

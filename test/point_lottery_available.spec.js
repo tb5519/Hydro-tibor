@@ -32,7 +32,7 @@ try {
 
 const {
     getAvailablePointLotteryPrizes, getPointLotteryPrizesAfterWin,
-    pointLotteryPrizeKey, publicPointLotteryPrize, publicPointLotteryPrizes,
+    pointLotteryPrizeKey, publicPointLotteryBadgeAwardPrize, publicPointLotteryPrize, publicPointLotteryPrizes,
 } = lottery;
 const normal = (overrides = {}) => ({
     name: '盲盒', image: '/blind-box.png', probability: 20, pointDelta: 0,
@@ -123,12 +123,74 @@ describe('point lottery displayed prize availability', () => {
     it('retains separate same-badge durations and original order, weights, and fields', () => {
         const prizes = [badge(), badge({ badgeDurationHours: 72, probability: 5 }), badge({ badgeDurationHours: 0, probability: 1 })];
         const before = JSON.stringify(prizes);
-        const published = publicPointLotteryPrizes(prizes, [prizes[0], prizes[2]]);
+        const badgeStyle = {
+            id: 7,
+            displayName: '月宫使者',
+            tooltip: '月宫使者勋章',
+            backgroundColor: '#123456',
+            fontColor: '#ffffff',
+            image: '/d/system/badge/7/ac-image?size=384&v=one',
+            resultImage: '/d/system/badge/7/ac-image?size=768&v=one',
+        };
+        const published = publicPointLotteryPrizes(prizes, [prizes[0], prizes[2]], { 7: badgeStyle });
         assert.deepEqual(published.map((prize) => prize.available), [true, false, true]);
         assert.deepEqual(published.map((prize) => prize.probability), [20, 5, 1]);
         assert.deepEqual(published.map((prize) => prize.badgeDurationHours), [24, 72, 0]);
+        assert.deepEqual(published.map((prize) => prize.image), Array(3).fill(badgeStyle.image));
+        assert.deepEqual(published.map((prize) => prize.resultImage), Array(3).fill(badgeStyle.resultImage));
         assert.equal(JSON.stringify(prizes), before);
         assert.equal(Object.hasOwn(publicPointLotteryPrize(prizes[0]), 'available'), false);
+        assert.equal(publicPointLotteryPrize(prizes[0]).image, '');
+    });
+
+    it('snapshots the actual upgrade badge without changing the source prize identity', () => {
+        const source = badge({ name: '幸运女神奖品', image: '/legacy-upload.png', badgeUpgradeBadgeIds: [8, 9] });
+        const badgeStyle = {
+            id: 9,
+            displayName: '状态三',
+            tooltip: '幸运女神状态三',
+            backgroundColor: '#222222',
+            fontColor: '#eeeeee',
+            image: '/d/system/badge/9/ac-image?size=384&v=three',
+            resultImage: '/d/system/badge/9/ac-image?size=768&v=three',
+        };
+        const snapshot = publicPointLotteryBadgeAwardPrize(source, {
+            awardedBadgeId: 9,
+            badgeLevel: 3,
+            badgeStyle,
+        });
+        assert.equal(snapshot.badgeId, 7);
+        assert.equal(snapshot.sourceBadgeId, 7);
+        assert.equal(snapshot.awardedBadgeId, 9);
+        assert.equal(snapshot.badgeLevel, 3);
+        assert.equal(snapshot.name, '幸运女神状态三');
+        assert.equal(snapshot.sourcePrizeName, '幸运女神奖品');
+        assert.equal(snapshot.awardedBadgeName, '幸运女神状态三');
+        assert.equal(snapshot.image, badgeStyle.image);
+        assert.equal(snapshot.resultImage, badgeStyle.resultImage);
+        assert.deepEqual(snapshot.badgeStyle, badgeStyle);
+        assert.equal(pointLotteryPrizeKey(snapshot), 'badge:7');
+    });
+
+    it('keeps the configured prize name when the awarded state is still the base badge', () => {
+        const source = badge({ name: '十小时幸运奖' });
+        const badgeStyle = {
+            id: 7,
+            displayName: '幸运女神',
+            tooltip: '幸运女神勋章',
+            backgroundColor: '#222222',
+            fontColor: '#eeeeee',
+            image: '/d/system/badge/7/ac-image?size=384&v=base',
+            resultImage: '/d/system/badge/7/ac-image?size=768&v=base',
+        };
+        const snapshot = publicPointLotteryBadgeAwardPrize(source, {
+            awardedBadgeId: 7,
+            badgeLevel: 1,
+            badgeStyle,
+        });
+        assert.equal(snapshot.name, '十小时幸运奖');
+        assert.equal(snapshot.awardedBadgeName, '幸运女神勋章');
+        assert.equal(pointLotteryPrizeKey(snapshot), 'badge:7');
     });
 
     it('removes a newly won non-repeatable entry without mutating the configured pool', () => {

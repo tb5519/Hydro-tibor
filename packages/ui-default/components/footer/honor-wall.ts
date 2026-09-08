@@ -49,10 +49,11 @@ function studentChip(student: HonorStudent) {
   const avatarUrl = safeUrl(student.avatar);
   if (avatarUrl) {
     const img = element('img', 'honor-wall__avatar-image');
-    img.src = avatarUrl;
+    img.dataset.honorSrc = avatarUrl;
     img.alt = '';
     img.loading = 'lazy';
     img.decoding = 'async';
+    img.setAttribute('fetchpriority', 'low');
     img.addEventListener('error', () => img.remove(), { once: true });
     avatar.append(img);
   }
@@ -60,7 +61,7 @@ function studentChip(student: HonorStudent) {
   return chip;
 }
 
-function badgeCard(badge: HonorBadge, students: HonorStudent[], order: number) {
+function* badgeCard(badge: HonorBadge, students: HonorStudent[], order: number): Generator<void, HTMLElement> {
   const card = element('article', 'honor-wall__card');
   card.dataset.honorWallBadge = String(badge.id);
   card.style.setProperty('--honor-light', ['#e7c480', '#b7a8e8'][order] || '#95bafa');
@@ -78,11 +79,16 @@ function badgeCard(badge: HonorBadge, students: HonorStudent[], order: number) {
   const imageUrl = safeUrl(badge.acImage);
   if (imageUrl) {
     const img = element('img', 'honor-wall__ac-image');
-    img.src = imageUrl;
+    img.dataset.honorSrc = imageUrl;
     img.alt = `${badgeName} AC 徽章展示图`;
     img.loading = 'lazy';
     img.decoding = 'async';
-    fallback.hidden = true;
+    img.setAttribute('fetchpriority', 'low');
+    img.hidden = true;
+    img.addEventListener('load', () => {
+      img.hidden = false;
+      fallback.hidden = true;
+    }, { once: true });
     img.addEventListener('error', () => {
       img.remove();
       fallback.hidden = false;
@@ -97,7 +103,8 @@ function badgeCard(badge: HonorBadge, students: HonorStudent[], order: number) {
   // hiding students behind pagination or continually replacing focused links.
   const rows = Math.ceil(students.length / 8);
   constellation.style.setProperty('--orbit-rows', String(rows));
-  students.forEach((student, index) => {
+  for (let index = 0; index < students.length; index++) {
+    const student = students[index];
     const row = Math.floor(index * rows / students.length);
     const rowStart = Math.ceil(row * students.length / rows);
     const rowSize = Math.ceil((row + 1) * students.length / rows) - rowStart;
@@ -108,10 +115,98 @@ function badgeCard(badge: HonorBadge, students: HonorStudent[], order: number) {
     person.append(studentChip(student));
     slot.append(person);
     holders.append(slot);
-  });
+    // Yield between recipients so a large wall cannot monopolize the UI thread.
+    yield;
+  }
   constellation.append(art, holders);
   card.append(constellation);
   return card;
+}
+
+/** Only visible cards and a small lead-in buffer may start image requests. */
+function initHonorImages(viewport: HTMLElement, track: HTMLElement) {
+  let disposed = false;
+  let pageReady = document.readyState === 'complete';
+  const queue: HTMLImageElement[] = [];
+  const active = new Map<HTMLImageElement, () => void>();
+  const pump = () => {
+    if (disposed || !pageReady) return;
+    // Leave connection slots for the editor, submissions, and navigation even
+    // on HTTP/1 servers. A stalled decoration must not hold the queue forever.
+    while (active.size < 2 && queue.length) {
+      const img = queue.shift()!;
+      if (!img.isConnected) continue;
+      let timer: ReturnType<typeof setTimeout>;
+      const finish = () => {
+        if (!active.has(img)) return;
+        active.delete(img);
+        clearTimeout(timer);
+        img.removeEventListener('load', finish);
+        img.removeEventListener('error', finish);
+        pump();
+      };
+      timer = setTimeout(() => {
+        img.removeAttribute('src');
+        img.remove();
+        finish();
+      }, 10000);
+      active.set(img, finish);
+      img.addEventListener('load', finish);
+      img.addEventListener('error', finish);
+      // Visibility and concurrency are already controlled here. Native lazy
+      // loading would otherwise defer the hidden AC image behind its fallback.
+      img.loading = 'eager';
+      img.src = img.dataset.honorSrc!;
+      delete img.dataset.honorSrc;
+    }
+  };
+  // Decorations must not extend window.load or postpone legacy features that
+  // still initialize from that event. No image receives src before it fires.
+  const onPageReady = () => {
+    pageReady = true;
+    pump();
+  };
+  if (!pageReady) window.addEventListener('load', onPageReady, { once: true });
+  const reveal = (card: Element) => {
+    card.querySelectorAll<HTMLImageElement>('img[data-honor-src]').forEach((img) => {
+      if (img.dataset.honorQueued) return;
+      img.dataset.honorQueued = 'true';
+      queue.push(img);
+    });
+    queue.sort((left, right) => Number(right.classList.contains('honor-wall__ac-image'))
+      - Number(left.classList.contains('honor-wall__ac-image')));
+    pump();
+  };
+  const bounds = viewport.getBoundingClientRect();
+  const imageObserver = typeof IntersectionObserver === 'undefined' ? undefined : new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      reveal(entry.target);
+      imageObserver?.unobserve(entry.target);
+    });
+  }, { root: viewport, rootMargin: '0px 96px' });
+  for (const card of Array.from(track.children)) {
+    const rect = card.getBoundingClientRect();
+    if (!imageObserver || (rect.right > bounds.left - 96 && rect.left < bounds.right + 96)) reveal(card);
+    else imageObserver.observe(card);
+  }
+  // Keyboard users may reach an off-screen card before the observer fires.
+  const onFocus = (event: FocusEvent) => {
+    const card = (event.target as Element)?.closest('[data-honor-wall-badge]');
+    if (card) reveal(card);
+  };
+  viewport.addEventListener('focusin', onFocus);
+  return () => {
+    disposed = true;
+    window.removeEventListener('load', onPageReady);
+    queue.length = 0;
+    for (const [img, finish] of active) {
+      img.removeAttribute('src');
+      finish();
+    }
+    imageObserver?.disconnect();
+    viewport.removeEventListener('focusin', onFocus);
+  };
 }
 
 function initHonorMarquee(viewport: HTMLElement, track: HTMLElement, motionPaused: () => boolean) {
@@ -206,6 +301,7 @@ export function initHonorWall(wall: HTMLElement): () => void {
   let observer: IntersectionObserver | undefined;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let stopMarquee = () => {};
+  let stopImages = () => {};
   let paused = false;
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
   const motionPaused = () => paused || !!reducedMotion?.matches;
@@ -223,6 +319,10 @@ export function initHonorWall(wall: HTMLElement): () => void {
   motionButton?.addEventListener('click', toggleMotion);
   reducedMotion?.addEventListener?.('change', syncMotion);
   syncMotion();
+
+  // A timer starts a new task (unlike Promise.resolve), allowing input, editor
+  // initialization, and submission handlers to run between small DOM batches.
+  const yieldToPage = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
   async function load() {
     if (loading || disposed) return;
@@ -250,21 +350,40 @@ export function initHonorWall(wall: HTMLElement): () => void {
       if (!Array.isArray(data.badges)) throw new Error('Invalid honor wall data');
       const fragment = document.createDocumentFragment();
       const seenBadges = new Set<number>();
-      data.badges.forEach((badge: HonorBadge) => {
-        if (!badge || !Number.isSafeInteger(badge.id) || badge.id <= 0 || seenBadges.has(badge.id)) return;
+      let work = 0;
+      await yieldToPage();
+      for (const badge of data.badges as HonorBadge[]) {
+        if (disposed || !wall.isConnected) return;
+        if (!badge || !Number.isSafeInteger(badge.id) || badge.id <= 0 || seenBadges.has(badge.id)) continue;
         const seenStudents = new Set<number>();
-        const students = (Array.isArray(badge.students) ? badge.students : []).filter((student) => {
-          if (!student || !Number.isSafeInteger(student.uid) || student.uid <= 0 || seenStudents.has(student.uid)) return false;
+        const students: HonorStudent[] = [];
+        for (const student of Array.isArray(badge.students) ? badge.students : []) {
+          if (++work % 64 === 0) {
+            await yieldToPage();
+            if (disposed || !wall.isConnected) return;
+          }
+          if (!student || !Number.isSafeInteger(student.uid) || student.uid <= 0 || seenStudents.has(student.uid)) continue;
           seenStudents.add(student.uid);
-          return true;
-        });
-        if (!students.length) return;
+          students.push(student);
+        }
+        if (!students.length) continue;
         seenBadges.add(badge.id);
-        fragment.append(badgeCard(badge, students, seenBadges.size - 1));
-      });
+        const builder = badgeCard(badge, students, seenBadges.size - 1);
+        let next = builder.next();
+        while (!next.done) {
+          if (++work % 8 === 0) {
+            await yieldToPage();
+            if (disposed || !wall.isConnected) return;
+          }
+          next = builder.next();
+        }
+        fragment.append(next.value);
+      }
       stopMarquee();
+      stopImages();
       grid!.replaceChildren(fragment);
       const viewport = wall.querySelector<HTMLElement>('[data-honor-wall-viewport]');
+      stopImages = viewport ? initHonorImages(viewport, grid!) : () => {};
       stopMarquee = viewport ? initHonorMarquee(viewport, grid!, motionPaused) : () => {};
       count!.textContent = `${seenBadges.size} 枚荣誉已点亮`;
       count!.hidden = !seenBadges.size;
@@ -291,6 +410,7 @@ export function initHonorWall(wall: HTMLElement): () => void {
     controller?.abort();
     observer?.disconnect();
     stopMarquee();
+    stopImages();
     motionButton?.removeEventListener('click', toggleMotion);
     reducedMotion?.removeEventListener?.('change', syncMotion);
     retry.removeEventListener('click', onRetry);

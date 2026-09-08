@@ -142,7 +142,7 @@ describe('honor wall scope, public data, and ordering', () => {
         assert.deepEqual(result.badges[0].students, [{
             uid: 10, displayName: '学员 10', avatar: '/avatar/public-avatar?size=64', href: '/d/Python/user/10',
         }]);
-        assert.equal(result.badges[0].acImage, '/d/Python/badge/1/ac-image?v=2026-09-08T12%3A00%3A00Z');
+        assert.equal(result.badges[0].acImage, '/d/Python/badge/1/ac-image?size=384&v=2026-09-08T12%3A00%3A00Z');
         assert.equal(JSON.stringify(result).includes('private'), false);
         assert.equal(JSON.stringify(result).includes('秘密'), false);
         for (const query of ctx.queries.filter((item) => ['badge', 'userBadge', 'lottery.badgeGrant'].includes(item.name))) {

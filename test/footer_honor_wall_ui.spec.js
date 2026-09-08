@@ -408,6 +408,93 @@ describe('footer honor wall single-row marquee', () => {
 });
 
 describe('footer honor wall UI', () => {
+    it('does not let decoration images hold up the original page load event', async () => {
+        const ui = fixture();
+        try {
+            Object.defineProperty(ui.window.document, 'readyState', { configurable: true, value: 'loading' });
+            ui.intersect();
+            ui.finish({ badges: [badge(1)] });
+            await eventually(() => ui.grid.children.length === 1);
+            assert.equal(ui.grid.querySelectorAll('img[src]').length, 0);
+            Object.defineProperty(ui.window.document, 'readyState', { configurable: true, value: 'complete' });
+            ui.window.dispatchEvent(new ui.window.Event('load'));
+            assert.equal(ui.grid.querySelectorAll('img[src]').length, 2);
+        } finally { ui.dispose(); }
+    });
+
+    it('keeps input and buttons usable while a slow honor response is pending', () => {
+        const ui = fixture();
+        try {
+            const input = ui.window.document.createElement('textarea');
+            const submit = ui.window.document.createElement('button');
+            let submitted = '';
+            submit.addEventListener('click', () => { submitted = input.value; });
+            ui.window.document.body.prepend(input, submit);
+            ui.intersect();
+            assert.equal(ui.requests.length, 1);
+            input.value = 'print(42)';
+            submit.click();
+            assert.equal(submitted, 'print(42)');
+            assert.equal(ui.wall.getAttribute('aria-busy'), 'true');
+            assert.equal(submit.disabled, false);
+        } finally { ui.dispose(); }
+    });
+
+    it('yields to page interaction between batches of a large recipient list', async () => {
+        const ui = fixture();
+        try {
+            ui.intersect();
+            ui.finish({ badges: [badge(1, { students: Array.from({ length: 160 }, (_, i) => student(i + 1)) })] });
+            const counts = [];
+            const pulse = () => {
+                counts.push(ui.grid.querySelectorAll('[data-honor-wall-student]').length);
+                if (ui.wall.getAttribute('aria-busy') === 'true') ui.window.setTimeout(pulse, 0);
+            };
+            ui.window.setTimeout(pulse, 0);
+            await eventually(() => ui.grid.querySelectorAll('[data-honor-wall-student]').length === 160);
+            assert.ok(counts.length > 2, 'Other page tasks must get turns before decoration creation completes');
+        } finally { ui.dispose(); }
+    });
+
+    it('limits low-priority image requests and leaves off-screen card sources unset', async () => {
+        const ui = fixture();
+        try {
+            await loadBadges(ui, 12);
+            assert.equal(ui.grid.querySelectorAll('img[src]').length, 2, 'Only two requests may occupy connection slots');
+            const offscreen = ui.grid.querySelector('[data-honor-wall-badge="12"]');
+            assert.equal(offscreen.querySelectorAll('img[src]').length, 0);
+            for (const image of ui.grid.querySelectorAll('img')) {
+                assert.equal(image.decoding, 'async');
+                assert.equal(image.getAttribute('fetchpriority'), 'low');
+            }
+            const started = ui.grid.querySelector('img[src]');
+            started.dispatchEvent(new ui.window.Event('load'));
+            assert.equal(ui.grid.querySelectorAll('img[src]').length, 3, 'Completion releases exactly one slot');
+            assert.equal(offscreen.querySelectorAll('img[src]').length, 0);
+            ui.cleanup();
+            const after = ui.grid.querySelectorAll('img[src]').length;
+            started.dispatchEvent(new ui.window.Event('load'));
+            assert.equal(ui.grid.querySelectorAll('img[src]').length, after, 'Cleanup cannot start queued image requests');
+        } finally { ui.dispose(); }
+    });
+
+    it('shows an immediate placeholder while an AC image is pending and keeps controls active', async () => {
+        const ui = fixture();
+        try {
+            await loadBadges(ui, 1);
+            const image = ui.grid.querySelector('.honor-wall__ac-image');
+            const fallback = ui.grid.querySelector('.honor-wall__art-fallback');
+            assert.equal(image.hidden, true);
+            assert.equal(fallback.hidden, false);
+            assert.equal(ui.wall.getAttribute('aria-busy'), 'false', 'Image completion is not part of page readiness');
+            ui.get('[data-honor-wall-motion]').click();
+            assert.equal(ui.wall.classList.contains('is-motion-paused'), true);
+            image.dispatchEvent(new ui.window.Event('load'));
+            assert.equal(image.hidden, false);
+            assert.equal(fallback.hidden, true);
+        } finally { ui.dispose(); }
+    });
+
     it('waits until the footer approaches the viewport and does not request twice', async () => {
         const ui = fixture();
         try {

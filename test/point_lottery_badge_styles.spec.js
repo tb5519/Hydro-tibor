@@ -4,6 +4,7 @@ const { describe, it } = require('node:test');
 
 const originalLoad = Module._load;
 let getPointLotteryBadgeStyles;
+let getPointLotteryBadges;
 try {
     Module._load = function patchedLoad(request, parent, isMain) {
         if (parent?.filename?.endsWith('/packages/hydrooj/src/lib/point_lottery.ts')) {
@@ -18,14 +19,26 @@ try {
         }
         return originalLoad.call(this, request, parent, isMain);
     };
-    ({ getPointLotteryBadgeStyles } = require('../packages/hydrooj/src/lib/point_lottery'));
+    ({ getPointLotteryBadgeStyles, getPointLotteryBadges } = require('../packages/hydrooj/src/lib/point_lottery'));
 } finally {
     Module._load = originalLoad;
 }
 
 function context(badges = []) {
     const queries = [];
-    const projection = { _id: 1, short: 1, title: 1, backgroundColor: 1, fontColor: 1 };
+    const projection = {
+        _id: 1,
+        short: 1,
+        title: 1,
+        backgroundColor: 1,
+        fontColor: 1,
+        acImagePath: 1,
+        acImageUpdatedAt: 1,
+    };
+    const matches = (badge, query) => (!query._id?.$in || query._id.$in.includes(badge._id))
+        && (typeof query.domainId === 'string'
+            ? badge.domainId === query.domainId
+            : badge.domainId === undefined);
     return {
         queries,
         db: {
@@ -37,12 +50,15 @@ function context(badges = []) {
                         return {
                             project(fields) {
                                 assert.deepEqual(fields, projection);
+                                const toArray = async () => badges.filter((badge) => matches(badge, query))
+                                    .map((badge) => Object.fromEntries(Object.keys(projection)
+                                        .filter((key) => badge[key] !== undefined)
+                                        .map((key) => [key, badge[key]])));
                                 return {
-                                    async toArray() {
-                                        return badges.filter((badge) => query._id.$in.includes(badge._id)
-                                            && (typeof query.domainId === 'string'
-                                                ? badge.domainId === query.domainId
-                                                : badge.domainId === undefined));
+                                    toArray,
+                                    sort(fields) {
+                                        assert.deepEqual(fields, { _id: 1 });
+                                        return { toArray };
                                     },
                                 };
                             },
@@ -69,18 +85,27 @@ describe('point lottery ranking-style badge catalog', () => {
     it('uses live badge appearance rather than the independently named prize or image', async () => {
         const ctx = context([{
             _id: 7, short: '⭐幸运女神', title: '幸运女神称号', backgroundColor: '48348b', fontColor: '#FFFFFF',
+            acImagePath: 'badge/ac.png', acImageUpdatedAt: '2026-09-08T08:09:10.000Z',
             content: 'private implementation details', users: [42], backgroundImagePath: '/badge/private.png',
         }]);
         assert.deepEqual(await getPointLotteryBadgeStyles(ctx, [prize(7, { name: '奖励一天', image: '/prize.png' })]), {
-            7: { id: 7, displayName: '⭐幸运女神', tooltip: '幸运女神称号', backgroundColor: '#48348b', fontColor: '#FFFFFF' },
+            7: {
+                id: 7,
+                displayName: '⭐幸运女神',
+                tooltip: '幸运女神称号',
+                backgroundColor: '#48348b',
+                fontColor: '#FFFFFF',
+                image: '/d/system/badge/7/ac-image?size=384&v=2026-09-08T08%3A09%3A10.000Z',
+                resultImage: '/d/system/badge/7/ac-image?size=768&v=2026-09-08T08%3A09%3A10.000Z',
+            },
         });
     });
 
-    it('deduplicates repeated duration prizes and only loads configured base badge ids', async () => {
+    it('deduplicates repeated prizes and loads every configured upgrade state', async () => {
         const ctx = context([{ _id: 7 }, { _id: 8 }, { _id: 9 }]);
         const styles = await getPointLotteryBadgeStyles(ctx, [prize(7), prize(7), prize(8, { badgeUpgradeBadgeIds: [9] })]);
-        assert.deepEqual(Object.keys(styles), ['7', '8']);
-        assert.deepEqual(ctx.queries, [{ _id: { $in: [7, 8] }, domainId: { $exists: false } }]);
+        assert.deepEqual(Object.keys(styles), ['7', '8', '9']);
+        assert.deepEqual(ctx.queries, [{ _id: { $in: [7, 8, 9] }, domainId: { $exists: false } }]);
     });
 
     it('shares Tang legacy appearance across domains without exposing domain-owned badges', async () => {
@@ -88,6 +113,7 @@ describe('point lottery ranking-style badge catalog', () => {
         const styles = await getPointLotteryBadgeStyles(ctx, [prize(7), prize(8)], { _id: 'Scratch', workspaceId: 'tang' });
         assert.deepEqual(Object.keys(styles), ['7']);
         assert.deepEqual(ctx.queries[0].domainId, { $exists: false });
+        assert.equal(styles[7].image, '');
     });
 
     it('isolates non-Tang teachers by current domain including within one workspace', async () => {
@@ -110,6 +136,7 @@ describe('point lottery ranking-style badge catalog', () => {
         const styles = await getPointLotteryBadgeStyles(ctx, [prize(7), prize(8), prize(9)]);
         assert.deepEqual(styles[7], {
             id: 7, displayName: '7', tooltip: '7', backgroundColor: '#e5edf5', fontColor: '#1f2937',
+            image: '', resultImage: '',
         });
         assert.equal(styles[8].tooltip, '勋章八');
         assert.equal(styles[8].backgroundColor, '#abc');
@@ -125,5 +152,31 @@ describe('point lottery ranking-style badge catalog', () => {
         const styles = await getPointLotteryBadgeStyles(ctx, [prize(7)]);
         assert.equal(styles[7].backgroundColor, '#e5edf5');
         assert.equal(styles[7].fontColor, '#1f2937');
+    });
+
+    it('returns the same lazy AC image contract to the lottery editor', async () => {
+        const ctx = context([{
+            _id: 8,
+            short: '状态二',
+            title: '状态二说明',
+            domainId: 'Python',
+            acImagePath: 'badge/ac-state-2.png',
+            acImageUpdatedAt: 'v two',
+        }]);
+        assert.deepEqual(await getPointLotteryBadges(ctx, { _id: 'Python', workspaceId: 'teacher-workspace' }), [{
+            _id: 8,
+            id: 8,
+            short: '状态二',
+            title: '状态二说明',
+            acImagePath: 'badge/ac-state-2.png',
+            acImageUpdatedAt: 'v two',
+            displayName: '状态二',
+            tooltip: '状态二说明',
+            backgroundColor: '#e5edf5',
+            fontColor: '#1f2937',
+            image: '/d/Python/badge/8/ac-image?size=384&v=v%20two',
+            resultImage: '/d/Python/badge/8/ac-image?size=768&v=v%20two',
+        }]);
+        assert.deepEqual(ctx.queries, [{ domainId: 'Python' }]);
     });
 });

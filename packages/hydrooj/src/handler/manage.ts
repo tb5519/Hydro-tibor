@@ -84,6 +84,9 @@ async function applyLotteryPrizeImageUploads(handler: Handler, args: any) {
     const version = Date.now();
     const uploads: Promise<void>[] = [];
     for (let i = 0; i < count; i++) {
+        // Badge prizes always display their pre-created badge's AC artwork.
+        // Ignore new uploads but retain any legacy hidden image value/file.
+        if (args[`prize${i}Kind`] === 'badge') continue;
         const file = getRequestFile(files, `prize${i}ImageFile`);
         if (!file || !file.size) continue;
         if (file.size > LOTTERY_PRIZE_IMAGE_LIMIT) throw new ValidationError(`prize${i}ImageFile`);

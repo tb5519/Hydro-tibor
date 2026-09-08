@@ -117,7 +117,7 @@ describe('page layout cache-busting URLs', () => {
 
         it(`renders independent stylesheet and runtime content versions in ${mode}`, () => {
             const assets = pageAssets({ dev });
-            assert.equal(assets.css, `/theme-${uiVersion}.css?version=456def`);
+            assert.equal(assets.css, `/theme-${uiVersion}.css?456def`);
             assert.equal(assets.runtime, `/${runtimeKey}?version=123abc`);
             assert.equal(assets.defaultTheme, dev ? '/default.theme.js?version=789abc' : undefined);
         });
@@ -126,14 +126,14 @@ describe('page layout cache-busting URLs', () => {
             const before = pageAssets({ dev });
             const after = pageAssets({ dev, assets: manifest({ 'theme.css': '/theme.css?ffffff' }) });
             assert.notEqual(after.css, before.css);
-            assert.equal(after.css, `/theme-${uiVersion}.css?version=ffffff`);
+            assert.equal(after.css, `/theme-${uiVersion}.css?ffffff`);
             assert.equal(after.runtime, before.runtime);
             assert.equal(after.defaultTheme, before.defaultTheme);
         });
 
         it(`preserves the configured CDN prefix without coupling content versions in ${mode}`, () => {
             const assets = pageAssets({ dev, cdnPrefix: 'https://cdn.example.com/static/' });
-            assert.equal(assets.css, `${dev ? '/' : 'https://cdn.example.com/static/'}theme-${uiVersion}.css?version=456def`);
+            assert.equal(assets.css, `${dev ? '/' : 'https://cdn.example.com/static/'}theme-${uiVersion}.css?456def`);
             assert.equal(assets.runtime, `https://cdn.example.com/static/${runtimeKey}?version=123abc`);
             assert.equal(assets.defaultTheme, dev ? '/default.theme.js?version=789abc' : undefined);
         });
@@ -146,7 +146,7 @@ describe('page layout cache-busting URLs', () => {
                 // Passing null also exercises the absent-manifest path rather than
                 // activating pageAssets' default test data through undefined.
                 const result = pageAssets({ dev, assets: assets ?? null });
-                assert.equal(result.css, `/theme-${uiVersion}.css?version=${uiVersion}`);
+                assert.equal(result.css, `/theme-${uiVersion}.css?${uiVersion}`);
                 assert.equal(result.defaultTheme, dev ? `/default.theme.js?version=${uiVersion}` : undefined);
                 assert.doesNotMatch(result.html, /onerror|javascript:alert|undefined|null/);
             }

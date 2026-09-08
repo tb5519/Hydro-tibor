@@ -8,6 +8,7 @@ import system from '../model/system';
 import { deleteUserCache } from '../model/user';
 import workspace from '../model/workspace';
 import db from '../service/db';
+import { getBadgeAcDisplayUrl } from './badge_image';
 
 export const POINT_LOTTERY_CONFIG_KEY = 'pointLottery.config';
 export const POINT_LOTTERY_POINTS_FIELD = 'lotteryPoints';
@@ -197,19 +198,14 @@ export function getPointLotteryBadgeScopeQuery(domain?: Pick<DomainDoc, '_id' | 
     return domainId ? { domainId } : { domainId: { $exists: false } };
 }
 
-export async function getPointLotteryBadges(ctx: Context, domain?: Pick<DomainDoc, '_id' | 'workspaceId'> | null) {
-    return ctx.db.collection('badge').find(getPointLotteryBadgeScopeQuery(domain))
-        .project({ _id: 1, short: 1, title: 1, backgroundColor: 1, fontColor: 1 })
-        .sort({ _id: 1 })
-        .toArray();
-}
-
 export interface PointLotteryBadgeStyle {
     id: number;
     displayName: string;
     backgroundColor: string;
     fontColor: string;
     tooltip: string;
+    image: string;
+    resultImage: string;
 }
 
 /** Match ranking badge colors without allowing arbitrary inline CSS. */
@@ -219,32 +215,84 @@ function normalizePointLotteryBadgeColor(color: unknown, fallback: string) {
     return value.startsWith('#') ? value : `#${value}`;
 }
 
+export function buildPointLotteryBadgeStyle(
+    domainId: string,
+    badge: {
+        _id: number;
+        short?: string;
+        title?: string;
+        backgroundColor?: string;
+        fontColor?: string;
+        acImagePath?: string;
+        acImageUpdatedAt?: string;
+    },
+): PointLotteryBadgeStyle {
+    return {
+        id: badge._id,
+        displayName: `${badge.short || badge._id}`,
+        backgroundColor: normalizePointLotteryBadgeColor(badge.backgroundColor, 'e5edf5'),
+        fontColor: normalizePointLotteryBadgeColor(badge.fontColor, '1f2937'),
+        tooltip: `${badge.title || badge.short || badge._id}`,
+        image: getBadgeAcDisplayUrl(domainId, badge, 384),
+        resultImage: getBadgeAcDisplayUrl(domainId, badge, 768),
+    };
+}
+
+export async function getPointLotteryBadges(ctx: Context, domain?: Pick<DomainDoc, '_id' | 'workspaceId'> | null) {
+    const badges = await ctx.db.collection('badge').find(getPointLotteryBadgeScopeQuery(domain))
+        .project({
+            _id: 1,
+            short: 1,
+            title: 1,
+            backgroundColor: 1,
+            fontColor: 1,
+            acImagePath: 1,
+            acImageUpdatedAt: 1,
+        })
+        .sort({ _id: 1 })
+        .toArray();
+    const displayDomainId = domain?._id || 'system';
+    return badges.map((badge: any) => ({
+        ...badge,
+        ...buildPointLotteryBadgeStyle(displayDomainId, badge),
+        _id: badge._id,
+    }));
+}
+
 /**
- * The prize title and its uploaded artwork are independent of the actual
- * badge pill. Read only configured badges in the lottery's existing scope;
- * names, colors and tooltip fallbacks match ranking's owned-badge rendering.
+ * Read only configured badges in the lottery's existing scope. The URLs point
+ * at the shared, lazily generated AC-image variants; this function never
+ * generates or waits for image bytes itself.
  */
 export async function getPointLotteryBadgeStyles(
     ctx: Context,
     prizes: PointLotteryPrize[],
     domain?: Pick<DomainDoc, '_id' | 'workspaceId'> | null,
 ): Promise<Record<number, PointLotteryBadgeStyle>> {
-    const badgeIds = Array.from(new Set(prizes
-        .filter((prize) => isBadgePrize(prize))
-        .map((prize) => normalizeBadgeId(prize.badgeId))
-        .filter((id): id is number => !!id)));
+    const badgeIds = Array.from(new Set(prizes.flatMap((prize) => {
+        if (!isBadgePrize(prize)) return [];
+        return [prize.badgeId, ...(prize.badgeUpgradeBadgeIds || [])]
+            .map(normalizeBadgeId)
+            .filter((id): id is number => !!id);
+    })));
     if (!badgeIds.length) return {};
     const badges = await ctx.db.collection('badge').find({
         _id: { $in: badgeIds },
         ...getPointLotteryBadgeScopeQuery(domain),
-    }).project({ _id: 1, short: 1, title: 1, backgroundColor: 1, fontColor: 1 }).toArray();
-    return Object.fromEntries(badges.map((badge: any) => [badge._id, {
-        id: badge._id,
-        displayName: `${badge.short || badge._id}`,
-        backgroundColor: normalizePointLotteryBadgeColor(badge.backgroundColor, 'e5edf5'),
-        fontColor: normalizePointLotteryBadgeColor(badge.fontColor, '1f2937'),
-        tooltip: `${badge.title || badge.short || badge._id}`,
-    }]));
+    }).project({
+        _id: 1,
+        short: 1,
+        title: 1,
+        backgroundColor: 1,
+        fontColor: 1,
+        acImagePath: 1,
+        acImageUpdatedAt: 1,
+    }).toArray();
+    const displayDomainId = domain?._id || 'system';
+    return Object.fromEntries(badges.map((badge: any) => [
+        badge._id,
+        buildPointLotteryBadgeStyle(displayDomainId, badge),
+    ]));
 }
 
 /** Match the badge module's student-only rules before a special prize is drawn. */
@@ -293,8 +341,8 @@ export function bindPointLotteryBadgePrizes(config: PointLotteryConfig, badges: 
             for (const badgeId of chainBadgeIds) upgradeChainBadgeIds.add(badgeId);
         }
         prize.name = `${badge.title || badge.short || badge._id}`.trim();
-        // A lottery thumbnail is independent from the badge itself. It is
-        // only used by the draw UI and never changes the saved badge asset.
+        // Keep any legacy configured image value in storage. Badge prizes are
+        // published with the badge's current AC artwork instead.
     }
     return true;
 }
@@ -380,20 +428,56 @@ export function pickPointLotteryPrize(config: PointLotteryConfig) {
     return config.prizes[config.prizes.length - 1];
 }
 
-export function publicPointLotteryPrize(prize: PointLotteryPrize) {
+export function publicPointLotteryPrize(
+    prize: PointLotteryPrize,
+    badgeStyle?: PointLotteryBadgeStyle,
+) {
+    const badgePrize = isBadgePrize(prize);
     return {
         name: prize.name,
-        image: prize.image,
+        // Badge artwork always follows the pre-created badge. Keep the old
+        // configured value in storage for compatibility, but never publish it
+        // as the current badge prize image.
+        image: badgePrize ? badgeStyle?.image || '' : prize.image,
         probability: prize.probability,
         pointDelta: prize.pointDelta,
         broadcast: prize.broadcast,
         kind: prize.kind,
-        ...(isBadgePrize(prize) ? {
+        ...(badgePrize ? {
             badgeId: prize.badgeId,
             badgeDurationHours: prize.badgeDurationHours || 0,
             badgeRepeatEffect: prize.badgeRepeatEffect || 'duration',
             badgeUpgradeBadgeIds: prize.badgeUpgradeBadgeIds || [],
+            resultImage: badgeStyle?.resultImage || '',
+            ...(badgeStyle ? { badgeStyle } : {}),
         } : {}),
+    };
+}
+
+export interface PointLotteryBadgeAward {
+    awardedBadgeId: number;
+    badgeLevel: number;
+    badgeStyle: PointLotteryBadgeStyle;
+    expiresAt?: Date;
+}
+
+/** Freeze the exact upgraded state into the draw; badgeId remains the source identity. */
+export function publicPointLotteryBadgeAwardPrize(
+    prize: PointLotteryPrize,
+    award: PointLotteryBadgeAward,
+) {
+    const upgraded = award.awardedBadgeId !== prize.badgeId;
+    return {
+        ...publicPointLotteryPrize(prize, award.badgeStyle),
+        // Preserve the teacher's snapshotted prize title at the base state.
+        // A real state upgrade is displayed as the badge that was awarded.
+        name: upgraded ? award.badgeStyle.tooltip : prize.name,
+        sourcePrizeName: prize.name,
+        awardedBadgeName: award.badgeStyle.tooltip,
+        sourceBadgeId: prize.badgeId,
+        awardedBadgeId: award.awardedBadgeId,
+        badgeLevel: award.badgeLevel,
+        badgeStyle: award.badgeStyle,
     };
 }
 
@@ -435,9 +519,16 @@ export async function getAvailablePointLotteryPrizes(
 }
 
 /** Keep every configured entry in order, including different durations of the same badge. */
-export function publicPointLotteryPrizes(prizes: PointLotteryPrize[], availablePrizes: PointLotteryPrize[]) {
+export function publicPointLotteryPrizes(
+    prizes: PointLotteryPrize[],
+    availablePrizes: PointLotteryPrize[],
+    badgeStyles: Record<number, PointLotteryBadgeStyle> = {},
+) {
     const available = new Set(availablePrizes);
-    return prizes.map((prize) => ({ ...publicPointLotteryPrize(prize), available: available.has(prize) }));
+    return prizes.map((prize) => ({
+        ...publicPointLotteryPrize(prize, prize.badgeId ? badgeStyles[prize.badgeId] : undefined),
+        available: available.has(prize),
+    }));
 }
 
 /** Calculate the next pool without a fallible database read after an award has succeeded. */
@@ -472,7 +563,9 @@ function getBadgePayload(badge: any) {
     return `${badge._id}#${badge.short}#${badge.backgroundColor}#${badge.fontColor}#${badge.title}`;
 }
 
-export interface PointLotteryBadgeAward {
+interface GrantedPointLotteryBadge {
+    badge: any;
+    badgeLevel: number;
     expiresAt?: Date;
 }
 
@@ -763,7 +856,7 @@ async function grantDurationStackingLotteryBadge(
     domainId: string | undefined,
     drawId: ObjectId,
     now: Date,
-): Promise<PointLotteryBadgeAward> {
+): Promise<GrantedPointLotteryBadge> {
     const scope = userBadgeScopeQuery(domainId);
     await addLotteryBadgeToUser(ctx, uid, badge._id, domainId);
     await selectLotteryBadgeForUser(ctx, uid, badge, domainId);
@@ -776,7 +869,7 @@ async function grantDurationStackingLotteryBadge(
         ...(domainId ? { domainId } : { domainId: { $exists: false } }),
         users: uid,
     }, { projection: { _id: 1 } });
-    if (permanentBadge) return {};
+    if (permanentBadge) return { badge, badgeLevel: 1 };
 
     const durationHours = normalizeBadgeDurationHours(prize.badgeDurationHours);
     if (!durationHours) {
@@ -784,7 +877,7 @@ async function grantDurationStackingLotteryBadge(
             _id: badge._id,
             ...(domainId ? { domainId } : { domainId: { $exists: false } }),
         }, { $addToSet: { users: uid } });
-        return {};
+        return { badge, badgeLevel: 1 };
     }
 
     const activeGrants = await ctx.db.collection('lottery.badgeGrant').find({
@@ -812,7 +905,7 @@ async function grantDurationStackingLotteryBadge(
         expiresAt,
     });
     await schedulePointLotteryBadgeExpiry(ctx, expiresAt, grantId);
-    return { expiresAt };
+    return { badge, badgeLevel: 1, expiresAt };
 }
 
 async function grantUpgradeLotteryBadge(
@@ -823,7 +916,7 @@ async function grantUpgradeLotteryBadge(
     domainId: string | undefined,
     drawId: ObjectId,
     now: Date,
-): Promise<PointLotteryBadgeAward> {
+): Promise<GrantedPointLotteryBadge> {
     const scope = userBadgeScopeQuery(domainId);
     const upgradeBadgeIds = prize.badgeUpgradeBadgeIds || [];
     const badgeIds = [baseBadge._id, ...upgradeBadgeIds];
@@ -969,7 +1062,7 @@ async function grantUpgradeLotteryBadge(
         );
     }
     await selectLotteryBadgeForUser(ctx, uid, targetBadge, domainId);
-    return { expiresAt };
+    return { badge: targetBadge, badgeLevel: targetLevel, expiresAt };
 }
 
 /**
@@ -987,13 +1080,20 @@ export async function grantPointLotteryBadge(
     const badge = resolvedBadge || await getPointLotteryBadge(ctx, prize, domain);
     if (!badge || !prize.badgeId) throw new Error('Point lottery badge is unavailable');
     const domainId = getPointLotteryBadgeDomainId(domain);
-    return await withPointLotteryBadgeLock(ctx, uid, badge._id, domainId, async () => {
+    const granted = await withPointLotteryBadgeLock(ctx, uid, badge._id, domainId, async () => {
         const now = new Date();
         if (prize.badgeRepeatEffect === 'upgrade') {
             return await grantUpgradeLotteryBadge(ctx, uid, prize, badge, domainId, drawId, now);
         }
         return await grantDurationStackingLotteryBadge(ctx, uid, prize, badge, domainId, drawId, now);
     });
+    const badgeStyle = buildPointLotteryBadgeStyle(domain?._id || 'system', granted.badge);
+    return {
+        awardedBadgeId: granted.badge._id,
+        badgeLevel: granted.badgeLevel,
+        badgeStyle,
+        ...(granted.expiresAt ? { expiresAt: granted.expiresAt } : {}),
+    };
 }
 
 async function reconcileExpiredPointLotteryBadgeGrant(ctx: Context, grant: any, now: Date) {

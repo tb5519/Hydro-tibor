@@ -924,6 +924,9 @@
   var audioContext = null;
   var previousFocus = null;
   var previousBodyOverflow = '';
+  var previewPrize = null;
+  var resultPrize = null;
+  var resultError = '';
 
   function escapeHtml(value) {
     return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
@@ -968,8 +971,12 @@
     return !!name && ['未中奖', '谢谢参与', '再接再厉', '空奖'].indexOf(name) === -1;
   }
 
+  function prizeBadgeStyle(prize) {
+    return prize && prize.kind === 'badge' && (prize.badgeStyle || (pointLottery.badgeStyles || {})[prize.awardedBadgeId || prize.badgeId]);
+  }
+
   function prizeBadgeHtml(prize) {
-    var badge = prize && prize.kind === 'badge' && (pointLottery.badgeStyles || {})[prize.badgeId];
+    var badge = prizeBadgeStyle(prize);
     if (!badge) return '<span class="point-lottery__prize-option-name">' + escapeHtml(prize && prize.name) + '</span>';
     var safeColor = function (value, fallback) {
       return /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(String(value)) ? value : fallback;
@@ -979,24 +986,50 @@
       + '">' + escapeHtml(badge.displayName) + '</span>';
   }
 
-  function prizeImageHtml(prize, result) {
-    if (prize && prize.image) {
-      return '<img src="' + escapeHtml(prize.image) + '" alt="' + escapeHtml(prize.name || '奖品') + '">';
-    }
-    if (prize && prize.kind === 'badge' && (pointLottery.badgeStyles || {})[prize.badgeId]) {
+  function prizeImagePlaceholder(prize, result) {
+    if (prizeBadgeStyle(prize)) {
       return '<span class="point-lottery__preview-placeholder">' + prizeBadgeHtml(prize)
-        + '<span>' + (result ? '宝藏勋章已点亮' : '勋章样式 · 未上传展示图') + '</span></span>';
+        + '<span>' + (result ? '宝藏勋章已点亮' : '勋章样式') + '</span></span>';
     }
     if (result) return '<span class="point-lottery__result-placeholder">✦</span>';
     return '<span class="point-lottery__preview-placeholder"><b>' + (prize && prize.kind === 'badge' ? '✦' : '礼')
       + '</b><span>' + (prize && prize.kind === 'badge' ? '专属勋章奖励' : '惊喜好礼') + '</span></span>';
   }
 
-  function renderPrizePreview(index) {
-    var prize = (pointLottery.prizes || [])[index];
+  function renderPrizeImage(container, prize, result) {
+    var version = (container.lotteryImageVersion || 0) + 1;
+    container.lotteryImageVersion = version;
+    container.querySelectorAll('img').forEach(function (image) { image.removeAttribute('src'); });
+    container.innerHTML = prizeImagePlaceholder(prize, result);
+    if (modal.hidden || !prize) return;
+    var source = result ? prize.resultImage || prize.image : prize.image;
+    if (!source) return;
+    // Only the currently displayed image is requested. Never await image load
+    // or decoding before enabling the dialog, a chest, or showing an award.
+    var image = document.createElement('img');
+    image.alt = prize.name || '奖品';
+    image.decoding = 'async';
+    image.fetchPriority = 'low';
+    image.style.display = 'none';
+    image.addEventListener('load', function () {
+      if (container.lotteryImageVersion !== version || modal.hidden) return;
+      image.style.removeProperty('display');
+      container.replaceChildren(image);
+    }, { once: true });
+    image.addEventListener('error', function () {
+      if (container.lotteryImageVersion !== version) return;
+      image.remove();
+    }, { once: true });
+    container.appendChild(image);
+    image.src = source;
+  }
+
+  function renderPrizePreview(index, awardedPrize) {
+    var prize = awardedPrize || (pointLottery.prizes || [])[index];
     if (!prize) return;
     selectedPrizeIndex = index;
-    previewImageNode.innerHTML = prizeImageHtml(prize);
+    previewPrize = prize;
+    renderPrizeImage(previewImageNode, prize);
     previewNameNode.textContent = prize.name;
     previewKindNode.textContent = prize.kind === 'badge' ? '勋章奖励' : '普通奖品';
     var duration = durationLabel(prize);
@@ -1007,7 +1040,7 @@
     });
   }
 
-  function renderPrizes() {
+  function renderPrizes(awardedPrize) {
     var prizes = pointLottery.prizes || [];
     prizePickerNode.innerHTML = prizes.map(function (prize, index) {
       var details = [durationLabel(prize), probabilityLabel(prize), prize.available === false ? '已获得' : ''].filter(Boolean).join(' · ');
@@ -1024,7 +1057,7 @@
       return;
     }
     if (selectedPrizeIndex < 0 || selectedPrizeIndex >= prizes.length) selectedPrizeIndex = 0;
-    renderPrizePreview(selectedPrizeIndex);
+    renderPrizePreview(selectedPrizeIndex, awardedPrize);
   }
 
   function renderWins() {
@@ -1034,7 +1067,7 @@
       + (wins.length ? '<div class="point-lottery__win-list">' + wins.map(function (prize, index) {
         return '<button class="point-lottery__win" type="button" data-point-lottery-win-index="' + index
           + '" title="' + escapeHtml(prize.name) + '"><span class="point-lottery__win-image">'
-          + (prize.image ? '<img src="' + escapeHtml(prize.image) + '" alt="">' : '<span>✦</span>')
+          + '<span aria-hidden="true">✦</span>'
           + '</span><span class="point-lottery__win-name">' + escapeHtml(shortText(prize.name, 6)) + '</span></button>';
       }).join('') + '</div>' : '<div class="point-lottery__wins-empty">你的勋章收藏，从这里开始。</div>');
   }
@@ -1098,15 +1131,21 @@
 
   function hideResult() {
     resultNode.hidden = true;
+    resultImageNode.lotteryImageVersion = (resultImageNode.lotteryImageVersion || 0) + 1;
+    resultImageNode.querySelectorAll('img').forEach(function (image) { image.removeAttribute('src'); });
+    resultImageNode.innerHTML = '';
     if (!drawInProgress) resetChests();
     if (!modal.hidden && activeChest && !activeChest.disabled) activeChest.focus({ preventScroll: true });
   }
 
   function showResult(prize, points, error) {
+    resultPrize = prize;
+    resultError = error || '';
     resultNode.classList.toggle('is-error', !!error);
     resultEyebrowNode.textContent = error ? '抽奖失败' : isVisibleWinPrize(prize)
       ? (prize.kind === 'badge' ? '宝箱开启！发现闪亮勋章' : '恭喜获得') : '本次结果';
-    resultImageNode.innerHTML = error ? '<span class="point-lottery__result-placeholder">!</span>' : prizeImageHtml(prize, true);
+    if (error) resultImageNode.innerHTML = '<span class="point-lottery__result-placeholder">!</span>';
+    else renderPrizeImage(resultImageNode, prize, true);
     resultTitleNode.textContent = error || prize.name || '本次结果';
     var duration = durationLabel(prize);
     resultPointsNode.textContent = error ? '' : (duration ? '抽中奖品：' + duration + ' · ' : '') + '当前积分：' + points;
@@ -1170,6 +1209,7 @@
       pointLottery.points = data.points;
       pointLottery.totalPoints = data.totalPoints === undefined ? data.points : data.totalPoints;
       if (Array.isArray(data.prizes)) pointLottery.prizes = data.prizes;
+      if (data.badgeStyles) pointLottery.badgeStyles = Object.assign({}, pointLottery.badgeStyles || {}, data.badgeStyles);
       if (Number.isInteger(data.prizeIndex)) selectedPrizeIndex = data.prizeIndex;
       if (isVisibleWinPrize(data.prize)) {
         pointLottery.recentWins = [data.prize].concat(pointLottery.recentWins || []).slice(0, 6);
@@ -1178,7 +1218,7 @@
           announcementIndex = 0;
         }
       }
-      renderPrizes();
+      renderPrizes(data.prize);
       renderWins();
       syncState();
       return revealChest(chest).then(function () {
@@ -1202,6 +1242,8 @@
     document.body.appendChild(modal);
     document.body.style.overflow = 'hidden';
     modal.hidden = false;
+    renderPrizeImage(previewImageNode, previewPrize);
+    if (!resultNode.hidden && !resultError) renderPrizeImage(resultImageNode, resultPrize, true);
     syncState();
     startAnnouncements();
     (resultNode.hidden ? modal.querySelector('.point-lottery__close') : resultCloseButton).focus({ preventScroll: true });
@@ -1211,6 +1253,8 @@
     if (modal.hidden) return;
     stopAnnouncements();
     modal.hidden = true;
+    renderPrizeImage(previewImageNode, previewPrize);
+    if (!resultNode.hidden && !resultError) renderPrizeImage(resultImageNode, resultPrize, true);
     if (modalAnchor.parentNode) modalAnchor.parentNode.insertBefore(modal, modalAnchor.nextSibling);
     document.body.style.overflow = previousBodyOverflow;
     if (!drawInProgress) hideResult();
@@ -1239,7 +1283,8 @@
     var button = ev.target.closest('[data-point-lottery-win-index]');
     var prize = button && (pointLottery.recentWins || [])[Number(button.dataset.pointLotteryWinIndex)];
     if (!prize) return;
-    previewImageNode.innerHTML = prizeImageHtml(prize);
+    previewPrize = prize;
+    renderPrizeImage(previewImageNode, prize);
     previewNameNode.textContent = prize.name;
     previewKindNode.textContent = '已中奖品';
     var duration = durationLabel(prize);

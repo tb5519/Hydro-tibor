@@ -27,7 +27,8 @@ import {
     getPointLotteryScopeDomainIds, getPointLotteryStoragePrefix,
     grantPointLotteryBadge, pickPointLotteryPrize, POINT_LOTTERY_BADGE_EXPIRY_SWEEP_TASK,
     POINT_LOTTERY_BADGE_EXPIRY_TASK, POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
-    pointLotteryPrizeKey, pointLotteryUserColl, publicPointLotteryPrize, publicPointLotteryPrizes,
+    pointLotteryPrizeKey, pointLotteryUserColl, publicPointLotteryBadgeAwardPrize,
+    publicPointLotteryPrize, publicPointLotteryPrizes,
 } from '../lib/point_lottery';
 import { getSharedRankingSnapshot, SharedRankingRow } from '../lib/shared_ranking';
 import { verifyTFA } from '../lib/verifyTFA';
@@ -525,6 +526,15 @@ export class HomeHandler extends Handler {
             : domainId;
         await attachOwnedBadges(this.ctx, Object.values(udict), domainId, badgeDomainId);
         const pointLotteryConfig = getPointLotteryConfig(this.domain);
+        // This only loads the small configured badge catalog and produces lazy
+        // image URLs. Starting it here keeps it parallel with the existing
+        // lottery history reads and never waits for thumbnail generation.
+        const pointLotteryBadgeStylesPromise = getPointLotteryBadgeStyles(
+            this.ctx, pointLotteryConfig.prizes, this.domain,
+        ).catch((error) => {
+            this.ctx.logger.warn('Unable to load point lottery badge artwork: %o', error);
+            return {};
+        });
         const pointLotteryScopeDomainIds = await getPointLotteryScopeDomainIds(this.domain);
         const pointLotteryUser = this.user.hasPriv(PRIV.PRIV_USER_PROFILE)
             ? await ensureGlobalPointLotteryState(this.user._id)
@@ -571,9 +581,8 @@ export class HomeHandler extends Handler {
             .filter((log: any) => log.prize?.broadcast !== false
                 && log.prize?.broadcast !== 'false'
                 && log.prize?.broadcast !== '0'
-                && !noBroadcastPointLotteryPrizeKeys.has(pointLotteryPrizeKey({
-                    name: `${log.prize?.name || ''}`,
-                    image: `${log.prize?.image || ''}`,
+                && !noBroadcastPointLotteryPrizeKeys.has(pointLotteryPrizeKey(log.prize || {
+                    name: '', image: '',
                 }))
                 && isVisiblePointLotteryWin(log.prize))
             .slice(0, 10)
@@ -589,6 +598,7 @@ export class HomeHandler extends Handler {
                 query: { v: homePoster.updatedAt || '' },
             });
         }
+        const pointLotteryBadgeStyles = await pointLotteryBadgeStylesPromise;
         this.response.template = 'main.html';
         this.response.body = {
             contents,
@@ -604,8 +614,10 @@ export class HomeHandler extends Handler {
                 points: pointLotteryPoints,
                 totalPoints: pointLotteryTotalPoints,
                 canDraw: this.user.hasPriv(PRIV.PRIV_USER_PROFILE),
-                prizes: publicPointLotteryPrizes(pointLotteryConfig.prizes, availablePointLotteryPrizes),
-                badgeStyles: await getPointLotteryBadgeStyles(this.ctx, pointLotteryConfig.prizes, this.domain),
+                prizes: publicPointLotteryPrizes(
+                    pointLotteryConfig.prizes, availablePointLotteryPrizes, pointLotteryBadgeStyles,
+                ),
+                badgeStyles: pointLotteryBadgeStyles,
                 announcements: pointLotteryAnnouncements,
                 recentWins: pointLotteryWins.map((log: any) => ({
                     name: `${log.prize?.name || ''}`,
@@ -613,6 +625,16 @@ export class HomeHandler extends Handler {
                     pointDelta: Math.max(0, Math.floor(+log.prize?.pointDelta || +log.pointDelta || 0)),
                     ...(log.prize?.kind === 'badge' ? {
                         kind: 'badge',
+                        resultImage: `${log.prize?.resultImage || ''}`,
+                        ...(Number.isSafeInteger(log.prize.badgeId) ? { badgeId: log.prize.badgeId } : {}),
+                        ...(Number.isSafeInteger(log.prize.sourceBadgeId)
+                            ? { sourceBadgeId: log.prize.sourceBadgeId } : {}),
+                        ...(Number.isSafeInteger(log.prize.awardedBadgeId)
+                            ? { awardedBadgeId: log.prize.awardedBadgeId } : {}),
+                        ...(Number.isSafeInteger(log.prize.badgeLevel)
+                            ? { badgeLevel: log.prize.badgeLevel } : {}),
+                        ...(log.prize.badgeStyle && typeof log.prize.badgeStyle === 'object'
+                            ? { badgeStyle: log.prize.badgeStyle } : {}),
                         ...(typeof log.prize.badgeDurationHours === 'number'
                             && Number.isFinite(log.prize.badgeDurationHours)
                             && log.prize.badgeDurationHours >= 0
@@ -722,6 +744,12 @@ class PointLotteryDrawHandler extends Handler {
             }
             lotteryBadge = lotteryBadges.find((badge) => badge._id === prize.badgeId);
         }
+        // Resolve display metadata before charging points. This is a bounded
+        // config lookup and prevents a catalog read failure after an award.
+        const badgeStyles = await getPointLotteryBadgeStyles(this.ctx, config.prizes, this.domain).catch((error) => {
+            this.ctx.logger.warn('Unable to load point lottery badge artwork for draw: %o', error);
+            return {};
+        });
         const prizeIndex = config.prizes.indexOf(prize);
         const existingPointState = await ensureGlobalPointLotteryState(this.user._id);
         const initialTotalPoints = existingPointState && existingPointState[POINT_LOTTERY_TOTAL_POINTS_FIELD] === undefined
@@ -771,12 +799,18 @@ class PointLotteryDrawHandler extends Handler {
             fail('奖品发放失败，本次积分已退回，请稍后重试。');
             return;
         }
+        const awardedPrize = badgeAward
+            ? publicPointLotteryBadgeAwardPrize(prize, badgeAward)
+            : publicPointLotteryPrize(prize);
+        const responseBadgeStyles = badgeAward
+            ? { ...badgeStyles, [badgeAward.awardedBadgeId]: badgeAward.badgeStyle }
+            : badgeStyles;
         await this.ctx.db.collection('lottery.draw').insertOne({
             _id: drawId,
             domainId,
             uid: this.user._id,
             cost: config.cost,
-            prize: publicPointLotteryPrize(prize),
+            prize: awardedPrize,
             pointDelta: prize.pointDelta,
             points,
             totalPoints,
@@ -785,12 +819,21 @@ class PointLotteryDrawHandler extends Handler {
         });
         this.response.body = {
             ok: true,
-            prize: publicPointLotteryPrize(prize),
+            prize: awardedPrize,
             prizeIndex,
-            prizes: publicPointLotteryPrizes(config.prizes, getPointLotteryPrizesAfterWin(availablePrizes, prize)),
+            prizes: publicPointLotteryPrizes(
+                config.prizes,
+                getPointLotteryPrizesAfterWin(availablePrizes, prize),
+                responseBadgeStyles,
+            ),
+            badgeStyles: responseBadgeStyles,
             cost: config.cost,
             points,
             totalPoints,
+            ...(badgeAward ? {
+                awardedBadgeId: badgeAward.awardedBadgeId,
+                badgeLevel: badgeAward.badgeLevel,
+            } : {}),
         };
     }
 }

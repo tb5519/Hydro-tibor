@@ -130,6 +130,74 @@ describe('treasure chest lottery inline UI', () => {
         } finally { ui.dispose(); }
     });
 
+    it('does not request hidden lottery or history images and opens immediately while only the selected image loads', () => {
+        const ui = fixture({ prizes: [badge(24), badge(72, { image: '/second.png' })], recentWins: [badge(24, { image: '/history.png' })] });
+        try {
+            assert.equal(ui.window.document.querySelectorAll('[data-point-lottery] img').length, 0);
+            ui.open();
+            const image = ui.get('[data-point-lottery-preview-image] img');
+            assert.equal(image.getAttribute('src'), '/moon.png');
+            assert.equal(image.decoding, 'async');
+            assert.equal(ui.window.document.querySelectorAll('[data-point-lottery] img').length, 1);
+            assert.equal(ui.get('[data-point-lottery-wins] img'), null);
+            assert.ok(ui.chests.every((chest) => !chest.disabled));
+            assert.ok(ui.get('[data-point-lottery-preview-image] .point-lottery__badge'));
+            image.dispatchEvent(new ui.window.Event('error'));
+            assert.equal(ui.get('[data-point-lottery-preview-image] img'), null);
+            assert.ok(ui.get('[data-point-lottery-preview-image] .point-lottery__badge'));
+            assert.ok(ui.chests.every((chest) => !chest.disabled));
+        } finally { ui.dispose(); }
+    });
+
+    it('ignores late image loads after selecting another prize or closing the modal', () => {
+        const ui = fixture({ prizes: [badge(24), badge(72, { image: '/second.png' })] });
+        try {
+            ui.open();
+            const first = ui.get('[data-point-lottery-preview-image] img');
+            ui.get('[data-point-lottery-prize-index="1"]').click();
+            const second = ui.get('[data-point-lottery-preview-image] img');
+            assert.equal(first.getAttribute('src'), null);
+            first.dispatchEvent(new ui.window.Event('load'));
+            assert.equal(ui.get('[data-point-lottery-preview-image] img'), second);
+            assert.equal(second.getAttribute('src'), '/second.png');
+            second.dispatchEvent(new ui.window.Event('load'));
+            assert.equal(ui.get('[data-point-lottery-preview-image] .point-lottery__badge'), null);
+            assert.equal(second.style.display, '');
+            ui.close();
+            assert.equal(second.getAttribute('src'), null);
+            second.dispatchEvent(new ui.window.Event('load'));
+            assert.equal(ui.window.document.querySelectorAll('[data-point-lottery] img').length, 0);
+        } finally { ui.dispose(); }
+    });
+
+    it('completes upgraded awards without waiting for images and keeps actual award image and style snapshots in history', async () => {
+        const awardedStyle = { ...badgeStyles[7], id: 8, displayName: '✦ 星耀勇士', backgroundColor: '#145f74' };
+        const prize = badge(72, {
+            name: '✦ 星耀勇士', sourceBadgeId: 7, awardedBadgeId: 8, badgeLevel: 2,
+            image: '/badge/8/ac-image?size=384', resultImage: '/badge/8/ac-image?size=768', badgeStyle: awardedStyle,
+        });
+        const ui = fixture();
+        try {
+            ui.open();
+            ui.chests[0].click();
+            ui.finish({ prize, prizeIndex: 1, points: 90, totalPoints: 100, prizes: [badge(24), badge(72)] });
+            // No image load or decode completion is dispatched in this test.
+            await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
+            assert.equal(ui.get('[data-point-lottery-result-title]').textContent, prize.name);
+            assert.equal(ui.get('[data-point-lottery-result-image] img').getAttribute('src'), prize.resultImage);
+            assert.equal(ui.get('[data-point-lottery-preview-image] img').getAttribute('src'), prize.image);
+            assert.equal(ui.get('[data-point-lottery-result-image] .point-lottery__badge').textContent, awardedStyle.displayName);
+            assert.equal(ui.get('[data-point-lottery-prize-index="1"]').getAttribute('aria-pressed'), 'true');
+            ui.get('[data-point-lottery-result-image] img').dispatchEvent(new ui.window.Event('error'));
+            assert.ok(ui.get('[data-point-lottery-result-image] .point-lottery__badge'));
+            ui.get('[data-point-lottery-result-close]').click();
+            ui.get('[data-point-lottery-win-index="0"]').click();
+            assert.equal(ui.get('[data-point-lottery-preview-image] img').getAttribute('src'), prize.image);
+            assert.equal(ui.get('[data-point-lottery-preview-image] .point-lottery__badge').textContent, awardedStyle.displayName);
+            assert.equal(ui.get('[data-point-lottery-points]').textContent, '90');
+        } finally { ui.dispose(); }
+    });
+
     it('renders the configured ranking badge display name and colors from the top-level style catalog', () => {
         const ui = fixture({ prizes: [badge(24, { image: '' })] });
         try {
@@ -302,6 +370,7 @@ describe('treasure chest lottery inline UI', () => {
             ui.finish({ prize: badge(24), prizeIndex: 0, points: 90, totalPoints: 100 });
             await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
             assert.equal(ui.get('[data-point-lottery]').hidden, true);
+            assert.equal(ui.window.document.querySelectorAll('[data-point-lottery] img').length, 0);
             ui.open();
             assert.equal(ui.get('[data-point-lottery-result]').hidden, false);
             assert.equal(ui.get('[data-point-lottery-result-title]').textContent, '嫦娥奔月');

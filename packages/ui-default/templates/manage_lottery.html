@@ -141,6 +141,31 @@
   .lottery-admin__preview.has-image {
     color: transparent;
   }
+  .lottery-admin__badge-preview {
+    width: 8rem;
+    height: 8rem;
+    margin-top: .5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: transparent;
+    color: #64748b;
+    overflow: hidden;
+    font-size: .75rem;
+  }
+  .lottery-admin__badge-preview img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .lottery-admin__badge-preview .user-profile-badge {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .lottery-admin__actions,
   .lottery-admin__search {
     display: flex;
@@ -304,7 +329,7 @@
         <input class="textbox" type="number" min="0" step="1" name="cost" value="{{ config.cost }}" required>
       </label>
       <div class="lottery-admin__note">
-        {{ _('概率按权重计算。例如两个奖品概率分别填 1 和 3，则第二个奖品约为第一个的 3 倍。每项奖品可独立上传展示图，学员端预览和开启宝箱后的弹窗使用同一张图片。') }}
+        {{ _('概率按权重计算。例如两个奖品概率分别填 1 和 3，则第二个奖品约为第一个的 3 倍。勋章奖品自动使用勋章的 AC 图片，无需重复上传；普通奖品可独立上传展示图。') }}
       </div>
       <input type="hidden" name="prizeCount" value="{{ prizeSlots.length }}" data-lottery-prize-count>
       <div class="lottery-admin__prizes" data-lottery-prizes>
@@ -379,7 +404,12 @@
               <div>{{ _('奖品名称') }}</div>
               <input class="textbox" name="prize{{ loop.index0 }}Name" value="{{ prize.name }}" autocomplete="off">
             </label>
-            <label data-lottery-prize-image-field>
+            <div data-lottery-badge-field data-lottery-badge-preview-field{% if prize.kind != 'badge' %} hidden{% endif %}>
+              <div>{{ _('勋章 AC 图片（自动使用）') }}</div>
+              <div class="lottery-admin__badge-preview" data-lottery-badge-image-preview></div>
+              <div class="lottery-admin__prize-kind-note">{{ _('直接使用已选勋章的 AC 图片，无需单独上传。没有图片时显示勋章样式；重复抽中升级后显示实际获得状态的图片。') }}</div>
+            </div>
+            <label data-lottery-prize-image-field data-lottery-normal-field{% if prize.kind == 'badge' %} hidden{% endif %}>
               <div>{{ _('抽奖展示图片（可选）') }}</div>
               <div class="lottery-admin__upload">
                 <input type="hidden" name="prize{{ loop.index0 }}Image" value="{{ prize.image }}" data-lottery-image-value>
@@ -387,9 +417,9 @@
                   {{ _('上传图片') }}
                   <input type="file" name="prize{{ loop.index0 }}ImageFile" accept="image/png,image/jpeg,image/webp" data-lottery-image-file>
                 </label>
-                <span class="lottery-admin__preview{% if prize.image %} has-image{% endif %}" data-lottery-image-preview{% if prize.image %} style="background-image: url('{{ prize.image }}')"{% endif %}>{{ _('无图') }}</span>
+                <span class="lottery-admin__preview{% if prize.kind != 'badge' and prize.image %} has-image{% endif %}" data-lottery-image-preview{% if prize.kind != 'badge' and prize.image %} style="background-image: url('{{ prize.image }}')"{% endif %}>{{ _('无图') }}</span>
               </div>
-              <div class="lottery-admin__prize-kind-note">{{ _('建议上传 1:1 正方形透明 PNG，任意像素尺寸均会自动缩放（如 512×512、1000×1000）。预览与中奖弹窗同为正方形，不裁切；每项奖品需单独上传，不修改勋章本身的图片。') }}</div>
+              <div class="lottery-admin__prize-kind-note">{{ _('建议上传 1:1 正方形透明 PNG，任意像素尺寸均会自动缩放（如 512×512、1000×1000）。普通奖品的预览与中奖弹窗同为正方形，不裁切。勋章奖品自动使用已有 AC 图片。') }}</div>
             </label>
             <label>
               <div>{{ _('奖品概率权重') }}</div>
@@ -474,7 +504,12 @@
             <div>{{ _('奖品名称') }}</div>
             <input class="textbox" data-field="Name" autocomplete="off">
           </label>
-          <label data-lottery-prize-image-field>
+          <div data-lottery-badge-field data-lottery-badge-preview-field hidden>
+            <div>{{ _('勋章 AC 图片（自动使用）') }}</div>
+            <div class="lottery-admin__badge-preview" data-lottery-badge-image-preview></div>
+            <div class="lottery-admin__prize-kind-note">{{ _('直接使用已选勋章的 AC 图片，无需单独上传。没有图片时显示勋章样式；重复抽中升级后显示实际获得状态的图片。') }}</div>
+          </div>
+          <label data-lottery-prize-image-field data-lottery-normal-field>
             <div>{{ _('抽奖展示图片（可选）') }}</div>
             <div class="lottery-admin__upload">
               <input type="hidden" data-field="Image" data-lottery-image-value>
@@ -484,7 +519,7 @@
               </label>
               <span class="lottery-admin__preview" data-lottery-image-preview>{{ _('无图') }}</span>
             </div>
-            <div class="lottery-admin__prize-kind-note">{{ _('建议上传 1:1 正方形透明 PNG，任意像素尺寸均会自动缩放（如 512×512、1000×1000）。预览与中奖弹窗同为正方形，不裁切；每项奖品需单独上传，不修改勋章本身的图片。') }}</div>
+            <div class="lottery-admin__prize-kind-note">{{ _('建议上传 1:1 正方形透明 PNG，任意像素尺寸均会自动缩放（如 512×512、1000×1000）。普通奖品的预览与中奖弹窗同为正方形，不裁切。勋章奖品自动使用已有 AC 图片。') }}</div>
           </label>
           <label>
             <div>{{ _('奖品概率权重') }}</div>
@@ -724,6 +759,48 @@
   var addButton = document.querySelector('[data-lottery-add]');
   var countInput = document.querySelector('[data-lottery-prize-count]');
   if (!list || !template || !addButton || !countInput) return;
+  var lotteryBadges = JSON.parse('{{ lotteryBadges|json|jsesc|safe }}');
+
+  function updateBadgePreview(row) {
+    var preview = row.querySelector('[data-lottery-badge-image-preview]');
+    if (!preview) return;
+    var version = (preview.lotteryImageVersion || 0) + 1;
+    preview.lotteryImageVersion = version;
+    preview.querySelectorAll('img').forEach(function (image) { image.removeAttribute('src'); });
+    preview.replaceChildren();
+    if (row.querySelector('[data-lottery-kind]').value !== 'badge') return;
+    var id = row.querySelector('[data-lottery-badge-id]').value;
+    var badge = lotteryBadges.find(function (item) { return String(item._id) === id; });
+    if (!badge) { preview.textContent = '{{ _("请选择勋章") }}'; return; }
+    var pill = document.createElement('span');
+    pill.className = 'user-profile-badge v-center user-profile-badge--custom';
+    pill.textContent = badge.short || badge.displayName || badge.title || String(badge._id);
+    pill.title = badge.title || badge.tooltip || pill.textContent;
+    var color = function (value, fallback) {
+      var text = String(value || '');
+      return /^#?(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(text)
+        ? (text.charAt(0) === '#' ? text : '#' + text) : fallback;
+    };
+    pill.style.backgroundColor = color(badge.backgroundColor, '#e5edf5');
+    pill.style.color = color(badge.fontColor, '#1f2937');
+    preview.appendChild(pill);
+    if (!badge.image) return;
+    var image = document.createElement('img');
+    image.alt = pill.textContent;
+    image.decoding = 'async';
+    // This is the row's selected preview. Native lazy loading can indefinitely
+    // defer an image hidden behind its immediate badge fallback.
+    image.loading = 'eager';
+    image.style.display = 'none';
+    image.addEventListener('load', function () {
+      if (preview.lotteryImageVersion !== version) return;
+      image.style.removeProperty('display');
+      preview.replaceChildren(image);
+    }, { once: true });
+    image.addEventListener('error', function () { image.remove(); }, { once: true });
+    preview.appendChild(image);
+    image.src = badge.image;
+  }
 
   function rows() {
     return Array.prototype.slice.call(list.querySelectorAll('[data-lottery-prize]'));
@@ -776,6 +853,8 @@
     }
     var kind = row.querySelector('[data-lottery-kind]');
     if (kind) kind.addEventListener('change', function () { updateKind(row); });
+    var badgeId = row.querySelector('[data-lottery-badge-id]');
+    if (badgeId) badgeId.addEventListener('change', function () { updateBadgePreview(row); });
     var repeatEffect = row.querySelector('[data-lottery-badge-repeat-effect]');
     if (repeatEffect) repeatEffect.addEventListener('change', function () { updateRepeatEffect(row); });
     var addUpgradeButton = row.querySelector('[data-lottery-upgrade-add]');
@@ -801,6 +880,7 @@
       });
     });
     updateRepeatEffect(row);
+    updateBadgePreview(row);
   }
 
   function updateRepeatEffect(row) {

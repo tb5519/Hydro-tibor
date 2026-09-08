@@ -3,6 +3,7 @@ import type { DomainDoc } from '../interface';
 import { PRIV } from '../model/builtin';
 import workspace from '../model/workspace';
 import avatar from './avatar';
+import { getBadgeAcDisplayUrl } from './badge_image';
 
 export interface HonorWallStudent {
     uid: number;
@@ -159,8 +160,7 @@ export async function getBadgeHonorWall(
         result.push({
             id: badge._id,
             name: `${badge.short || badge.title || badge._id}`,
-            acImage: badge.acImagePath
-                ? `${domainPrefix}/badge/${badge._id}/ac-image?v=${encodeURIComponent(badge.acImageUpdatedAt || '')}` : '',
+            acImage: getBadgeAcDisplayUrl(currentDomain._id, badge),
             badgeHref: `${domainPrefix}/badge/${badge._id}`,
             backgroundColor: color(badge.backgroundColor, 'e5edf5'),
             fontColor: color(badge.fontColor, '1f2937'),
