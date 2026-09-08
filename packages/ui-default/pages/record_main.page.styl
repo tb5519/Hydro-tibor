@@ -1,25 +1,280 @@
 .page--record_main
+  .record-list
+    color: #334155
+
+  .record-list__header
+    display: flex
+    align-items: center
+    justify-content: space-between
+    flex-wrap: wrap
+    gap: rem(12px)
+    margin: rem(3px) 0 rem(20px)
+
+  .record-list__heading
+    display: flex
+    align-items: center
+    gap: rem(13px)
+
+    h1
+      margin: 0
+      color: #263e5e
+      font-size: rem(25px)
+      font-weight: 750
+      line-height: 1.3
+
+  .record-list__scope
+    color: #7790ad
+    background: #e5edf7
+    border-radius: rem(5px)
+    font-size: rem(12px)
+    line-height: 1.4
+    padding: rem(4px) rem(8px)
+
+  .record-list__context
+    max-width: 50%
+    overflow: hidden
+    text-overflow: ellipsis
+    white-space: nowrap
+    color: #6783a6
+    font-size: rem(13px)
+
+  .record-list__filters
+    display: grid
+    grid-template-columns: repeat(6, minmax(0, 1fr)) auto
+    align-items: end
+    gap: rem(12px)
+    margin: 0 0 rem(16px)
+    padding: rem(17px) rem(20px)
+    background: #fff
+    border: 1px solid #e0e7f0
+    border-radius: rem(12px)
+
+  .record-list__field
+    display: block
+    min-width: 0
+    margin: 0
+
+    > span:first-child
+      display: block
+      margin-bottom: rem(7px)
+      color: #7a8ba2
+      font-size: rem(11px)
+      line-height: 1.2
+
+    .textbox, .select
+      box-sizing: border-box
+      width: 100%
+      height: rem(35px)
+      margin: 0
+      padding: 0 rem(9px)
+      border: 1px solid #dfe6ef
+      border-radius: rem(7px)
+      background: #fff
+      color: #405572
+      box-shadow: none
+      font-size: rem(12px)
+
+    .textbox::placeholder
+      color: #a0adbd
+
+    .textbox:focus, .select:focus
+      border-color: #8db3e6
+      outline: none
+      box-shadow: 0 0 0 2px rgba(85, 140, 214, .10)
+
+    .autocomplete-container
+      display: block !important
+      margin: 0 !important
+      vertical-align: top
+
+    .autocomplete-wrapper
+      box-sizing: border-box
+      align-items: center
+      flex-wrap: nowrap
+      height: rem(35px) !important
+      min-height: 0
+      padding: 0
+      overflow: hidden
+      border: 1px solid #dfe6ef
+      border-radius: rem(7px)
+      background: #fff
+      outline: none
+      box-shadow: none
+
+      &:hover
+        border-color: #b8c9df
+
+      &.focused, &:focus-within
+        border-color: #8db3e6
+        outline: none
+        box-shadow: 0 0 0 2px rgba(85, 140, 214, .10)
+
+      input
+        box-sizing: border-box
+        width: 100%
+        min-width: 0
+        height: 100%
+        margin: 0
+        padding: 0 rem(9px)
+        border: 0
+        border-radius: rem(6px)
+        background: transparent
+        color: #405572
+        outline: none
+        box-shadow: none
+        font-family: inherit
+        font-size: rem(12px)
+
+        &::placeholder
+          color: #a0adbd
+
+  .record-list__filter-actions
+    display: flex
+    align-items: center
+    gap: rem(12px)
+    min-height: rem(35px)
+    white-space: nowrap
+
+    .button
+      display: inline-flex
+      align-items: center
+      gap: rem(5px)
+      height: rem(35px)
+      margin: 0
+      padding: 0 rem(13px)
+      border: 0
+      border-radius: rem(7px)
+      background: #3e7cce
+      box-shadow: none
+      font-size: rem(12px)
+      line-height: 1
+
+    .button:hover
+      background: #306bb7
+
+  .record-list__reset
+    color: #8797aa
+    font-size: rem(12px)
+
+  .record-list__content
+    overflow: hidden
+    border: 1px solid #e0e7f0
+    border-radius: rem(12px)
+    background: #fff
+
+  .record-list__table-wrap
+    overflow-x: auto
+
+  .record-list [hidden]
+    display: none !important
+
+  .record_main__table
+    width: 100%
+    min-width: rem(940px)
+    table-layout: fixed
+    border: 0
+    color: #51647d
+    font-size: rem(12px)
+
+    thead th
+      height: rem(43px)
+      padding: rem(10px) rem(17px)
+      border: 0
+      border-bottom: 1px solid #e8edf4
+      background: #f8fafc
+      color: #8392a6
+      font-size: rem(11px)
+      font-weight: 600
+      white-space: nowrap
+
+    tbody td
+      padding: rem(17px)
+      border: 0
+      border-bottom: 1px solid #edf1f6
+      line-height: 1.5
+      vertical-align: middle
+
+    tbody tr, tbody tr:nth-child(even)
+      background: #fff
+
+    tbody tr:hover
+      background: #f8fbff
+
+    tbody tr:last-child td
+      border-bottom: 0
+
+    .col--problem-name
+      color: #2d435f
+      overflow-wrap: anywhere
+
+      > a
+        color: inherit
+        font-size: rem(13px)
+
+      > a:hover
+        color: #3577cd
+
+      b
+        color: #8a9bb0
+        font-size: rem(11px)
+        font-weight: 500
+
+    .col--problem-name:has(.form--inline)
+      position: relative
+      padding-bottom: rem(34px)
+
+    .form--inline
+      position: absolute
+      left: rem(17px)
+      bottom: rem(9px)
+      display: flex
+      gap: rem(10px)
+      margin: 0
+      font-size: 0
+
+      button
+        color: #94a0b1 !important
+        font-size: rem(10px)
+        font-weight: 400
+
+      button:hover
+        color: #a55353 !important
+
+    .user-profile-name
+      color: #607997
+      font-size: rem(12px)
+      overflow-wrap: anywhere
+
+    .record-status--text
+      font-size: rem(12px)
+      font-weight: 500
+
+    .record-status--icon
+      font-size: rem(11px)
+
   .col--status
     width: rem(170px)
     position: relative
 
   .col--submit-at
-    width: rem(115px)
-    text-align: center
+    width: rem(125px)
+    text-align: right
 
   &.nojs .col--submit-at
     width: rem(160px)
 
   .col--submit-by
-    width: rem(140px)
+    width: rem(125px)
+    text-align: left
+
+  .col--time, .col--memory
+    width: rem(84px)
     text-align: right
+    font-variant-numeric: tabular-nums
 
-  .col--time, .col--memory, .col--lang
-    width: rem(95px)
+  .col--lang
+    width: rem(92px)
     text-align: center
-
-  .col--status, .col--submit-by, .col--lang
-    border-right: 1px solid $table-border-color
 
   .col--status__text
     position: relative
@@ -38,18 +293,115 @@
     left: 0
     top: 0
     height: 100%
-    background: #fff6d1
+    background: #fff9e6
 
-  +tablet()
-    .col--time,
-    .col--memory,
-    .col--lang
+  .record-list--self
+    .col--submit-by
       display: none
+
+    .record_main__table
+      min-width: rem(795px)
+
+  .record-main__homework-tag
+    display: inline-block
+    margin-left: rem(6px)
+    padding: rem(2px) rem(5px)
+    border-radius: rem(3px)
+    color: #528773
+    background: #eff7f2
+    font-size: rem(10px)
+    line-height: 1.2
+    vertical-align: middle
+
+    &:hover
+      color: #246b4e
+      background: #e4f1e9
+      text-decoration: none
+
+  .record-list__empty
+    padding: rem(55px) rem(20px)
+    text-align: center
+
+    > .icon
+      color: #bccce0
+      font-size: rem(28px)
+
+    h2
+      margin: rem(14px) 0 rem(8px)
+      color: #58728f
+      font-size: rem(17px)
+      font-weight: 600
+
+    p
+      margin: 0
+      color: #94a2b4
+      font-size: rem(12px)
+      line-height: 1.7
+
+    a
+      display: inline-block
+      margin-top: rem(15px)
+      color: #4a83ce
+      font-size: rem(12px)
+
+  .record-list__pagination
+    display: flex
+    align-items: center
+    justify-content: center
+    gap: rem(22px)
+    margin: rem(20px) 0
+    font-size: rem(12px)
+
+  .record-list__page-link
+    color: #597da8
+
+  .record-list__page-number
+    color: #98a7b9
+
+  .record-list__statistics
+    margin-top: rem(25px)
+    color: #8496ad
+    font-size: rem(12px)
+
+    summary
+      cursor: pointer
+
+    dl
+      display: flex
+      flex-wrap: wrap
+      gap: rem(22px)
+      margin-top: rem(15px)
+
+    dd
+      margin: rem(4px) 0 0
+      color: #527295
+
+  .record-list a:focus-visible, .record-list button:focus-visible
+    outline: 2px solid #8db3e6
+    outline-offset: 3px
+
+  @media (max-width: 1100px)
+    .record-list__filters
+      grid-template-columns: repeat(3, minmax(0, 1fr))
+
+    .record-list__filter-actions
+      grid-column: 1 / -1
+      justify-content: flex-end
 
   +mobile()
-    .col--submit-by,
-    .col--submit-at,
-    .col--time,
-    .col--memory,
-    .col--lang
-      display: none
+    .record-list__header
+      margin-bottom: rem(15px)
+
+    .record-list__heading h1
+      font-size: rem(22px)
+
+    .record-list__context
+      max-width: 100%
+
+    .record-list__filters
+      grid-template-columns: repeat(2, minmax(0, 1fr))
+      gap: rem(12px)
+      padding: rem(15px)
+
+    .record-list__empty
+      padding: rem(42px) rem(18px)

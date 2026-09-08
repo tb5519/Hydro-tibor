@@ -1,179 +1,152 @@
 {% extends "layout/basic.html" %}
 {% block content %}
+{% set recordQuery = {includePretest:'1' if filterIncludePretest else '0'} %}
+{% if filterTid %}{{ set(recordQuery, 'tid', filterTid.toString()) }}{% endif %}
+{% if filterUidOrName %}{{ set(recordQuery, 'uidOrName', filterUidOrName) }}{% endif %}
+{% if filterPid %}{{ set(recordQuery, 'pid', filterPid) }}{% endif %}
+{% if filterLang %}{{ set(recordQuery, 'lang', filterLang) }}{% endif %}
+{% if typeof(filterStatus) == 'number' %}{{ set(recordQuery, 'status', filterStatus.toString()) }}{% endif %}
+{% if all %}{{ set(recordQuery, 'all', '1') }}{% endif %}
+{% if allDomain %}{{ set(recordQuery, 'allDomain', '1') }}{% endif %}
+{% if handler.entryDomainId %}{{ set(recordQuery, 'entryDomainId', handler.entryDomainId) }}{% endif %}
 {% if handler.contestEntryContext %}
-{{ set(UiContext, 'socketUrl',
-  "d/" + UiContext.domainId + "/record-conn?tid=" + filterTid
-  + (("&uidOrName=" + filterUidOrName) if filterUidOrName else "")
-  + (("&pid=" + filterPid) if filterPid else "")
-  + ("&includePretest=1" if filterIncludePretest else "")
-  + ("&all=1" if all else "")
-  + ("&allDomain=1" if allDomain else "")
-) }}
+{{ set(UiContext, 'socketUrl', "d/" + UiContext.domainId + "/record-conn?" + utils.buildQueryString(recordQuery)) }}
 {% else %}
-{{ set(
-  UiContext, 'socketUrl',
-  "record-conn?domainId=" + handler.args.domainId
-  + (("&tid=" + filterTid) if filterTid else "")
-  + (("&uidOrName=" + filterUidOrName) if filterUidOrName else "")
-  + (("&pid=" + filterPid) if filterPid else "")
-  + ("&includePretest=1" if filterIncludePretest else "")
-  + ("&all=1" if all else "")
-  + ("&allDomain=1" if allDomain else "")
-) }}
+{{ set(UiContext, 'socketUrl', "record-conn?domainId=" + handler.args.domainId + "&" + utils.buildQueryString(recordQuery)) }}
 {% endif %}
 {{ set(UiContext, 'rids', rdocs.map(eval("rdoc=>rdoc._id.toString()"))) }}
-<style>
-  .record-main__homework-tag {
-    display: inline-block;
-    margin-left: .42rem;
-    padding: .12rem .35rem;
-    border-radius: 3px;
-    color: #21754f;
-    background: #e4f7ec;
-    font-size: .68rem;
-    font-weight: 750;
-    line-height: 1.2;
-    vertical-align: middle;
-  }
-  .record-main__homework-tag:hover { color: #145d3b; background: #d7f1e2; text-decoration: none; }
-</style>
+{{ set(UiContext, 'recordListPageSize', recordListPageSize|default(50)) }}
+{% set hasRecordFilter = filterUidOrName or filterPid or filterTid or filterLang or typeof(filterStatus) == 'number' %}
+{% set resetQuery = {} %}
+{% if filterTid and tdoc %}{{ set(resetQuery, 'tid', filterTid.toString()) }}{% endif %}
+{% if handler.entryDomainId %}{{ set(resetQuery, 'entryDomainId', handler.entryDomainId) }}{% endif %}
 <div class="row">
   <div class="medium-12 columns">
-    <form method="get">
-      <div class="section">
-        <div class="section__header">
-          <h1 class="section__title">{{ _('Filter') }}</h1>
-          <div class="section__tools">
-            <button type="submit" class="primary button"><span class="icon icon-filter"></span> {{ _('Filter') }}</button>
-            <a href="{{ url('record_main') }}" class="button">{{ _('Reset') }}</a>
-          </div>
+    <div class="record-list{% if not canManageRecords %} record-list--self{% endif %}">
+      <header class="record-list__header">
+        <div class="record-list__heading">
+          <h1>评测记录</h1>
+          <span class="record-list__scope">{{ ('当前筛选' if hasRecordFilter else '全部学员') if canManageRecords else '我的提交' }}</span>
         </div>
-        <div class="section__body">
-          <div class="row">
-            <div class="medium-2 columns">
-              <label class="filter-user">
-                {{ _('By Username / UID') }}
-                <input name="uidOrName" type="text" class="textbox" value="{{ filterUidOrName }}" autocomplete="off" data-autofocus>
-              </label>
-            </div>
-            <div class="medium-2 columns">
-              <label>
-                {{ _('By Problem') }}
-                <input name="pid" type="text" class="textbox" value="{{ filterPid }}">
-              </label>
-            </div>
-            <div class="medium-2 columns">
-              <label>
-                {{ _('By Contest') }}
-                <input name="tid" type="text" class="textbox" value="{{ filterTid }}">
-              </label>
-            </div>
-            <div class="medium-2 columns">
-              <label>
-                {{ _('By Language') }}
-              </label>
-              <select class="compact select" name="lang">
-                <option value="">{{ _('All Languages') }}</option>
-              </select>
-            </div>
-            <div class="medium-2 columns">
-              <label>
-                {{ _('By Status') }}
-              </label>
-              <select class="compact select" name="status">
-                <option value="" {% if typeof(filterStatus) != 'number' %}selected{% else %}{% endif %}>{{ _('All Submissions') }}</option>
-                {%- for k,v in utils.status.STATUS_TEXTS -%}
-                <option value="{{k}}" {% if filterStatus == k %}selected{% else %}{% endif %}>{{v}}</option>
-                {%- endfor -%}
-              </select>
-            </div>
-            <div class="medium-2 columns">
-              <label>
-                {{ _('By Type') }}
-              </label>
-              <select class="compact select" name="includePretest">
-                <option value="" {% if not filterIncludePretest %}selected{% endif %}>{{ _('Formal Submissions Only') }}</option>
-                <option value="1" {% if filterIncludePretest %}selected{% endif %}>{{ _('Include Pretests') }}</option>
-              </select>
-            </div>
+        {% if tdoc %}
+          <a class="record-list__context" href="{{ url('homework_detail' if tdoc.rule == 'homework' else 'contest_detail', tid=tdoc.docId, query=handler.contestEntryQuery) }}">{{ '作业' if tdoc.rule == 'homework' else '比赛' }} · {{ tdoc.title }}</a>
+        {% endif %}
+      </header>
+
+      {% if canManageRecords %}
+        <form class="record-list__filters" method="get" action="{{ url('record_main') }}" aria-label="筛选评测记录">
+          {% if handler.entryDomainId %}<input type="hidden" name="entryDomainId" value="{{ handler.entryDomainId }}">{% endif %}
+          {% if all %}<input type="hidden" name="all" value="1">{% endif %}
+          {% if allDomain %}<input type="hidden" name="allDomain" value="1">{% endif %}
+          <label class="record-list__field filter-user">
+            <span>学员</span>
+            <input name="uidOrName" type="text" class="textbox" value="{{ filterUidOrName }}" autocomplete="off" placeholder="用户名 / UID" aria-label="学员用户名或 UID">
+          </label>
+          <label class="record-list__field">
+            <span>题目</span>
+            <input name="pid" type="text" class="textbox" value="{{ filterPid }}" placeholder="题号或题目" aria-label="题目">
+          </label>
+          <label class="record-list__field">
+            <span>比赛 / 作业</span>
+            <input name="tid" type="text" class="textbox" value="{{ filterTid }}" placeholder="比赛或作业 ID" aria-label="比赛或作业 ID">
+          </label>
+          <label class="record-list__field">
+            <span>语言</span>
+            <select class="compact select" name="lang" aria-label="语言">
+              <option value="">{{ _('All Languages') }}</option>
+            </select>
+          </label>
+          <label class="record-list__field">
+            <span>状态</span>
+            <select class="compact select" name="status" aria-label="评测状态">
+              <option value=""{% if typeof(filterStatus) != 'number' %} selected{% endif %}>全部状态</option>
+              {% for k,v in utils.status.STATUS_TEXTS %}
+                <option value="{{ k }}"{% if filterStatus == k %} selected{% endif %}>{{ v }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="record-list__field">
+            <span>提交类型</span>
+            <select class="compact select" name="includePretest" aria-label="提交类型">
+              <option value="0"{% if not filterIncludePretest %} selected{% endif %}>仅正式提交</option>
+              <option value="1"{% if filterIncludePretest %} selected{% endif %}>包含自测</option>
+            </select>
+          </label>
+          <div class="record-list__filter-actions">
+            <button type="submit" class="primary button"><span class="icon icon-filter" aria-hidden="true"></span>筛选</button>
+            <a class="record-list__reset" href="{{ url('record_main', query=resetQuery) }}">重置</a>
           </div>
-        </div>
-      </div>
-    </form>
-    <div class="section">
-      <div class="section__body no-padding">
-      {% if not rdocs.length %}
-        {% if not filterUidOrName and not filterPid and not filterTid %}
-        {{ nothing.render('Oh, there is no task in the queue!') }}
-        {% else %}
-        {{ nothing.render('Oh, there are no tasks that match the filter!') }}
-        {% endif %}
-      {% else %}
-        <table class="data-table record_main__table">
-          <colgroup>
-            <col class="col--status">
-            <col class="col--problem">
-            <col class="col--submit-by">
-            <col class="col--time">
-            <col class="col--memory">
-            <col class="col--lang">
-            <col class="col--submit-at">
-          </colgroup>
-          <thead>
-            <tr>
-              <th class="col--status record-status--border">{{ _('Status') }}</th>
-              <th class="col--problem">{{ _('Problem') }}</th>
-              <th class="col--submit-by">{{ _('Submit By') }}</th>
-              <th class="col--time">{{ _('Time') }}</th>
-              <th class="col--memory">{{ _('Memory') }}</th>
-              <th class="col--lang">{{ _('Language') }}</th>
-              <th class="col--submit-at">{{ _('Submit At') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-          {%- for rdoc in rdocs -%}
-            {% set udoc = udict[rdoc['uid']] %}
-            {% set pdoc = pdict[rdoc['pid']] %}
-            {% include 'record_main_tr.html' %}
-          {%- endfor -%}
-          </tbody>
-        </table>
-        {% if handler.user.hasPriv(PRIV.PRIV_VIEW_JUDGE_STATISTICS) or filterTid or filterPid or filterUidOrName %}
-        <ul class="pager">
-          <li>
-            <a class="pager__item next link" href="?page={{ page + 1 }}{{
-              (('&tid=' + filterTid) if filterTid else '')
-              + (('&uidOrName=' + filterUidOrName) if filterUidOrName else '')
-              + (('&lang=' + filterLang) if filterLang else '')
-              + (('&status=' + filterStatus) if filterStatus else '')
-              + (('&pid=' + filterPid) if filterPid else '')
-              + ('&includePretest=1' if filterIncludePretest else '')
-              + ('&all=1' if all else '')
-              + ('&allDomain=1' if allDomain else '') }}">{{ _('pager_next') }}</a>
-          </li>
-        </ul>
-        {% endif %}
+        </form>
       {% endif %}
-      </div>
+
+      <section class="record-list__content" aria-label="提交记录">
+        <div class="record-list__table-wrap"{% if not rdocs.length %} hidden{% endif %}>
+          <table class="data-table record_main__table">
+            <colgroup>
+              <col class="col--status">
+              <col class="col--problem">
+              <col class="col--submit-by">
+              <col class="col--time">
+              <col class="col--memory">
+              <col class="col--lang">
+              <col class="col--submit-at">
+            </colgroup>
+            <thead>
+              <tr>
+                <th class="col--status record-status--border">状态 / 得分</th>
+                <th class="col--problem">题目</th>
+                <th class="col--submit-by">提交者</th>
+                <th class="col--time">耗时</th>
+                <th class="col--memory">内存</th>
+                <th class="col--lang">语言</th>
+                <th class="col--submit-at">提交时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for rdoc in rdocs %}
+                {% set udoc = udict[rdoc['uid']] %}
+                {% set pdoc = pdict[rdoc['pid']] %}
+                {% include 'record_main_tr.html' %}
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="record-list__empty"{% if rdocs.length %} hidden{% endif %}>
+          <span class="icon icon-code" aria-hidden="true"></span>
+          <h2>{{ '没有符合条件的记录' if hasRecordFilter and canManageRecords else '还没有提交记录' }}</h2>
+          <p>{{ '可以调整筛选条件，或稍后再来查看。' if canManageRecords else '完成题目并提交后，就能在这里查看评测结果。' }}</p>
+          {% if not canManageRecords %}<a href="{{ url('problem_main') }}">去题库练一练 <span aria-hidden="true">→</span></a>{% endif %}
+        </div>
+      </section>
+      {% if rdocs.length or page > 1 %}
+        <nav class="record-list__pagination" aria-label="评测记录分页">
+          {% if page > 1 %}
+            {{ set(recordQuery, 'page', page - 1) }}
+            <a class="record-list__page-link previous" href="{{ url('record_main', query=recordQuery) }}"><span aria-hidden="true">←</span> 上一页</a>
+          {% endif %}
+          <span class="record-list__page-number">第 {{ page }} 页</span>
+          {% if rdocs.length %}
+            {{ set(recordQuery, 'page', page + 1) }}
+            <a class="record-list__page-link next" href="{{ url('record_main', query=recordQuery) }}">下一页 <span aria-hidden="true">→</span></a>
+          {% endif %}
+        </nav>
+      {% endif %}
+
+      {% if statistics and canManageRecords %}
+        <details class="record-list__statistics">
+          <summary>{{ _('Statistics') }}</summary>
+          <dl>
+            <div><dt>{{ _('5 Min') }}</dt><dd>{{ statistics['d5min'] }}</dd></div>
+            <div><dt>{{ _('1 Hour') }}</dt><dd>{{ statistics['d1h'] }}</dd></div>
+            <div><dt>{{ _('Day') }}</dt><dd>{{ statistics['day'] }}</dd></div>
+            <div><dt>{{ _('Week') }}</dt><dd>{{ statistics['week'] }}</dd></div>
+            <div><dt>{{ _('Month') }}</dt><dd>{{ statistics['month'] }}</dd></div>
+            <div><dt>{{ _('Year') }}</dt><dd>{{ statistics['year'] }}</dd></div>
+            <div><dt>{{ _('Total') }}</dt><dd>{{ statistics['total'] }}</dd></div>
+          </dl>
+        </details>
+      {% endif %}
     </div>
-    {% if statistics %}
-    <div class="section">
-      <div class="section__header">
-        <h1 class="section__title">{{ _('Statistics') }}</h1>
-      </div>
-      <div class="section__body">
-        <dl class="large horizontal">
-          <dt>{{ _('5 Min')}}</dt><dd>{{ statistics['d5min'] }}</dd>
-          <dt>{{ _('1 Hour')}}</dt><dd>{{ statistics['d1h'] }}</dd>
-          <dt>{{ _('Day') }}</dt><dd>{{ statistics['day'] }}</dd>
-          <dt>{{ _('Week') }}</dt><dd>{{ statistics['week'] }}</dd>
-          <dt>{{ _('Month') }}</dt><dd>{{ statistics['month'] }}</dd>
-          <dt>{{ _('Year') }}</dt><dd>{{ statistics['year'] }}</dd>
-          <dt>{{ _('Total') }}</dt><dd>{{ statistics['total'] }}</dd>
-        </dl>
-      </div>
-    </div>
-    {% endif %}
   </div>
 </div>
 {% endblock %}

@@ -9,6 +9,7 @@ import {
 } from '../error';
 import { RecordDoc, Tdoc } from '../interface';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
+import { canManageRecordList } from '../lib/record_list_scope';
 import {
     appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
 } from '../lib/record_visibility';
@@ -116,12 +117,15 @@ export class RecordListHandler extends ContestDetailBaseHandler {
         let tdoc = null;
         let invalid = false;
         this.response.template = 'record_main.html';
+        const canManageRecords = canManageRecordList(this.user);
         const canViewAllPretest = canViewAllPretestRecords(this.user);
         const hasExplicitPretestFilter = Object.hasOwn(this.request.query, 'includePretest');
         if (!hasExplicitPretestFilter && canViewAllPretest) includePretest = true;
         const q: Filter<RecordDoc> = recordListFilter(tid, includePretest, canViewAllPretest, this.user._id);
-        if (full) uidOrName = this.user._id.toString();
-        if (uidOrName) {
+        if (full || !canManageRecords) {
+            uidOrName = this.user._id.toString();
+            q.uid = this.user._id;
+        } else if (uidOrName) {
             const udoc = await user.getById(domainId, +uidOrName)
                 || await user.getByUname(domainId, uidOrName)
                 || await user.getByEmail(domainId, uidOrName);
@@ -216,6 +220,9 @@ export class RecordListHandler extends ContestDetailBaseHandler {
             filterLang: lang,
             filterStatus: status,
             filterIncludePretest: includePretest,
+            canManageRecords,
+            recordListSelfOnly: !canManageRecords,
+            recordListPageSize: limit,
             notification,
         };
         if (this.user.hasPriv(PRIV.PRIV_VIEW_JUDGE_STATISTICS) && stat) {
@@ -381,6 +388,7 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
     tdoc: Tdoc;
     applyProjection = false;
     noTemplate = false;
+    recordListSelfOnly = true;
     hiddenSuperAdminUids: number[] = [];
     queue: Map<string, () => Promise<any>> = new Map();
     throttleQueueClear: () => void;
@@ -398,6 +406,7 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
         domainId: string, tid?: ObjectId, pid?: string | number, uidOrName?: string,
         status?: number, pretest = false, includePretest = false, all = false, allDomain = false, noTemplate = false,
     ) {
+        this.recordListSelfOnly = !canManageRecordList(this.user);
         if (tid) {
             this.tdoc = await contest.get(domainId, tid);
             if (!this.tdoc) throw new ContestNotFoundError(domainId, tid);
@@ -412,7 +421,9 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
             this.uid = this.user._id;
         } else {
             if (includePretest) this.includePretest = true;
-            if (uidOrName) {
+            if (this.recordListSelfOnly) {
+                this.uid = this.user._id;
+            } else if (uidOrName) {
                 let udoc = await user.getById(domainId, +uidOrName);
                 if (udoc) this.uid = udoc._id;
                 else {
@@ -446,13 +457,17 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
     async message(msg: { rids: string[] }) {
         if (!(msg.rids instanceof Array)) return;
         const rids = msg.rids.map((id) => new ObjectId(id));
-        const rdocs = await record.getMulti(this.allDomain ? '' : this.args.domainId, { _id: { $in: rids } })
+        const filter: Filter<RecordDoc> = { _id: { $in: rids } };
+        if (this.recordListSelfOnly) filter.uid = this.user._id;
+        else if (typeof this.uid === 'number') filter.uid = this.uid;
+        const rdocs = await record.getMulti(this.allDomain ? '' : this.args.domainId, filter)
             .project<RecordDoc>(buildProjection(record.PROJECTION_LIST)).toArray();
         for (const rdoc of rdocs) this.onRecordChange(rdoc);
     }
 
     @subscribe('record/change')
     async onRecordChange(rdoc: RecordDoc) {
+        if (this.recordListSelfOnly && rdoc.uid !== this.user._id) return;
         if (this.hiddenSuperAdminUids.includes(rdoc.uid)) return;
         const isPretestRecord = rdoc.contest?.toHexString() === record.RECORD_PRETEST.toHexString();
         const isGeneratedRecord = rdoc.contest?.toHexString() === record.RECORD_GENERATE.toHexString();

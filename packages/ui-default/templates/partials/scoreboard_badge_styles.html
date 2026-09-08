@@ -18,6 +18,18 @@
   gap: 6px;
   white-space: nowrap;
 }
+/* The nested avatar/name group must not use the truncated name's inline baseline. */
+.contest-scoreboard-table .contest-ranking-user .user-profile-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  vertical-align: middle;
+}
+.contest-scoreboard-table .contest-ranking-user .user-profile-avatar {
+  display: block;
+  flex: 0 0 auto;
+}
 .contest-scoreboard-table .ranking-user__avatar {
   flex: 0 0 auto;
 }

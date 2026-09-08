@@ -1,7 +1,7 @@
 {% import "components/record.html" as record with context %}
 {% import "components/user.html" as user with context %}
 {% import "components/problem.html" as problem with context %}
-<tr data-rid="{{ rdoc['_id'] }}">
+<tr data-rid="{{ rdoc['_id'] }}" data-record-status="{{ rdoc.status }}" data-record-lang="{{ rdoc.lang }}">
   {% set _isPretest = rdoc.contest and rdoc.contest.toString() == '000000000000000000000000' %}
   {% set homeworkTdoc = (homeworkTdocs[rdoc.domainId + '/' + rdoc.contest.toHexString()] if not tdoc and rdoc.contest and not _isPretest else none) %}
   {% set recordTdoc = tdoc or homeworkTdoc %}

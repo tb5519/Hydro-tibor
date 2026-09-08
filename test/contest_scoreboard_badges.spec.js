@@ -201,14 +201,44 @@ function expectedBadgeLevel(fixture) {
     return Math.min(fixture.badgeCount, 20);
 }
 
+function assertUserAlignmentContract(document, row, componentVariant, mode) {
+    const context = `${componentVariant}/${mode}`;
+    const user = row.querySelector('.contest-ranking-user');
+    const userLink = user?.querySelector('.user-profile-link');
+    const avatar = userLink?.querySelector('.user-profile-avatar');
+    const name = userLink?.querySelector('.user-profile-name');
+    assert.ok(userLink, `${context}: render_inline wrapper remains inside the scoreboard flex row`);
+    assert.ok(avatar, `${context}: user avatar remains inside the aligned wrapper`);
+    assert.ok(name, `${context}: user name remains inside the aligned wrapper`);
+
+    const userLinkStyle = document.defaultView.getComputedStyle(userLink);
+    assert.equal(userLinkStyle.display, 'inline-flex', `${context}: inline user wrapper participates in flex alignment`);
+    assert.equal(userLinkStyle.alignItems, 'center', `${context}: avatar and name share the same vertical center`);
+    assert.equal(userLinkStyle.gap, '6px', `${context}: avatar/name spacing stays explicit`);
+    assert.equal(userLinkStyle.minWidth, '0px', `${context}: long names may shrink inside the scoreboard cell`);
+    assert.equal(userLinkStyle.verticalAlign, 'middle', `${context}: wrapper aligns with adjacent level/custom badges`);
+
+    const avatarStyle = document.defaultView.getComputedStyle(avatar);
+    assert.equal(avatarStyle.display, 'block', `${context}: image baseline cannot push the avatar downward`);
+    assert.equal(avatarStyle.flex, '0 0 auto', `${context}: avatar never shrinks beside a long name`);
+
+    const nameStyle = document.defaultView.getComputedStyle(name);
+    assert.equal(nameStyle.display, 'inline-block', `${context}: name keeps a bounded ellipsis box`);
+    assert.equal(nameStyle.maxWidth, '110px', `${context}: name width remains bounded`);
+    assert.equal(nameStyle.overflow, 'hidden', `${context}: long names remain clipped`);
+    assert.equal(nameStyle.textOverflow, 'ellipsis', `${context}: clipped names retain an ellipsis`);
+    assert.equal(nameStyle.whiteSpace, 'nowrap', `${context}: names do not split onto another line`);
+}
+
 function assertRenderedContract(componentVariant, mode) {
-    const { table, rows } = inspectScoreboard(renderScoreboard(componentVariant, mode));
+    const { document, table, rows } = inspectScoreboard(renderScoreboard(componentVariant, mode));
     assert.ok(table.classList.contains('ranking-badge-effects'));
     assert.equal(table.classList.contains('contest-embedded-scoreboard__table'), mode === 'embedded');
     assert.equal(rows.length, userFixtures.length);
 
     for (const [index, fixture] of userFixtures.entries()) {
         const row = rows[index];
+        assertUserAlignmentContract(document, row, componentVariant, mode);
         const expectedLevel = expectedBadgeLevel(fixture);
         assert.equal(row.classList.contains('ranking-row--badge'), expectedLevel > 0, `uid ${fixture.uid}: badge row marker`);
         for (let level = 1; level <= 20; level++) {

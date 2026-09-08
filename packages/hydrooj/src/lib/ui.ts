@@ -1,5 +1,6 @@
 import { UIInjectableFields } from '../interface';
 import { PERM, PRIV } from '../model/builtin';
+import { canManageRecordList } from './record_list_scope';
 
 const trueChecker = () => true;
 const Checker = (perm: bigint | bigint[], priv: number | number[], checker: Function = trueChecker) => (handler) => (
@@ -51,7 +52,7 @@ inject('Nav', 'contest_main', { prefix: 'contest' }, PERM.PERM_VIEW_CONTEST);
 inject('Nav', 'homework_main', { prefix: 'homework' }, PERM.PERM_VIEW_HOMEWORK);
 inject('Nav', 'record_main', {
     prefix: 'record',
-    query: (handler) => (handler.user.hasPriv(PRIV.PRIV_USER_PROFILE)
+    query: (handler) => (handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) && !canManageRecordList(handler.user)
         ? ({ uidOrName: handler.user._id })
         : ({})),
 }, (handler) => (handler.user.hasPriv(PRIV.PRIV_USER_PROFILE)
