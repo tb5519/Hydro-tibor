@@ -15,6 +15,7 @@ import {
 } from '../error';
 import { DomainDoc, Setting } from '../interface';
 import avatar, { validate } from '../lib/avatar';
+import { getBadgeHonorWall } from '../lib/badge_honor_wall';
 import { getDomainRankingMode } from '../lib/domain_ranking';
 import { getHomePosterConfig } from '../lib/home_poster';
 import * as mail from '../lib/mail';
@@ -119,6 +120,13 @@ async function attachOwnedBadges(ctx: Context, udocs: any[], currentDomainId: st
 function isVisiblePointLotteryWin(prize: any) {
     const name = `${prize?.name || ''}`.trim();
     return !!name && !['未中奖', '谢谢参与', '再接再厉', '空奖'].includes(name);
+}
+
+export class BadgeHonorWallHandler extends Handler {
+    async get() {
+        this.response.addHeader('Cache-Control', 'private, no-store');
+        this.response.body = await getBadgeHonorWall(this.ctx, this.domain);
+    }
 }
 
 export class HomeHandler extends Handler {
@@ -1227,6 +1235,7 @@ class HomeMessagesHandler extends Handler {
 export const inject = { geoip: { required: false }, oauth: {} };
 export async function apply(ctx: Context) {
     ctx.Route('homepage', '/', HomeHandler);
+    ctx.Route('badge_honor_wall', '/badge-honor-wall', BadgeHonorWallHandler, PERM.PERM_VIEW_RANKING);
     ctx.Route('home_poster_image', '/home/poster', HomePosterImageHandler);
     ctx.Route('service_worker_config', '/service-worker-config', ServiceWorkerConfigHandler);
     ctx.Route('point_lottery_prize_image', '/lottery/prize/:filename', PointLotteryPrizeImageHandler);

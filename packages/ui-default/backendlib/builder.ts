@@ -7,6 +7,7 @@ import {
   size, SystemModel, Types, UiContextBase,
 } from 'hydrooj';
 import esbuild from 'esbuild';
+import { getStaticAssetVersions } from './static_asset_versions';
 
 declare module 'hydrooj' {
   interface UI {
@@ -18,6 +19,8 @@ declare module 'hydrooj' {
   interface UiContextBase {
     constantVersion?: string;
     staticVersion?: string;
+    themeVersion?: string;
+    defaultThemeVersion?: string;
   }
 }
 
@@ -26,13 +29,12 @@ const hashes: Record<string, string> = {};
 const logger = new Logger('ui');
 const tmp = tmpdir();
 
-function getStaticVersion() {
+function readStaticAssetVersions() {
   try {
-    const manifest = JSON.parse(fs.readFileSync(resolve(__dirname, '../public/manifest.json'), 'utf8')) as Record<string, string>;
-    const asset = manifest[`hydro-${global.Hydro.version['ui-default']}.js`];
-    return asset?.split('?')[1];
+    const manifest = JSON.parse(fs.readFileSync(resolve(__dirname, '../public/manifest.json'), 'utf8'));
+    return getStaticAssetVersions(manifest, global.Hydro.version['ui-default']);
   } catch {
-    return undefined;
+    return getStaticAssetVersions(undefined, global.Hydro.version['ui-default']);
   }
 }
 
@@ -154,9 +156,9 @@ export async function buildUI() {
     ${pages.join('\n')}
   };`);
   UiContextBase.constantVersion = hashes['entry.js'];
-  // The core UI bundle is built separately from dynamic addon resources.
-  // Read its content hash so browsers cannot keep an older core bundle alive.
-  UiContextBase.staticVersion = getStaticVersion();
+  // Prebuilt core JS, theme JS, and CSS each need their own cache key.
+  // A CSS-only update must invalidate the theme without relying on the core hash.
+  Object.assign(UiContextBase, readStaticAssetVersions());
   for (const key in vfs) {
     if (newFiles.includes(key)) continue;
     delete vfs[key];

@@ -1,94 +1,159 @@
-$footer-extra-link-gap = 20px
-
-.footer
-  background: $footer-bg-color
-  color: $text-1-color
-
-  h1
-    font-size: rem($font-size-title)
-
-    +mobile()
-      padding: rem($grid-padding)
-      cursor: pointer
-      font-size: rem($font-size-secondary)
-
-.footer__category
-  padding-top: rem(30px)
-  padding-bottom: rem(50px)
-
-  +mobile()
-    padding-top: rem($grid-padding)
-    padding-bottom: rem($grid-padding)
-    border-bottom: 1px solid darken($footer-bg-color, 5%)
-
-    &.expandable
-      padding: 0
-
-  .expand-icon
-    display: none
-
-    +mobile()
-      display: inline-block
-
-  &.expanded .expand-icon
-    transform: rotate(180deg)
-
-.footer__category__list
-  margin-top: rem(10px)
-  margin-bottom: rem(10px)
-  font-size: rem($font-size-small)
-  line-height: 2
-
-  +mobile()
-    margin-top: 0
-    padding-left: rem($grid-padding)
-    padding-right: rem($grid-padding)
-
-.footer__category__expander
-  +mobile()
-    display: none
-
-  +above(rupture.mobile-cutoff)
-    display: block !important
-
-.footer__extra-left
-  float: left
-
-.footer__extra-right
-  float: right
-
-.footer__extra-link
-  padding: rem(20px 0)
-  font-size: rem($font-size-small)
-
-.footer__extra-link-item
-  float: left
-  line-height: 2
-
-.footer__extra-left .footer__extra-link-item
-  margin-right: rem($footer-extra-link-gap)
-
-.footer__extra-right .footer__extra-link-item
-  margin-left: rem($footer-extra-link-gap)
-
-.layout--immersive
-  .footer
-    background: none
-    color: #FFF
-
-    a, a:visited, a:active
-      color: #FFF
-
-    a:hover
-      color: #FFF
-
-+mobile()
-  .footer__extra-left, .footer__extra-right
-    float: none
-    display: block
-
-    .footer__extra-link-item
-      float: none
-      display: inline-block
-      margin-left: 0
-      margin-right: $footer-extra-link-gap
+.footer--honors { background: radial-gradient(ellipse at 85% 20%, #eaf2ff, transparent 55%), #f3f6fa; color: #64748b; padding: .75rem 0 0; }
+.footer--honors .footer__extra-link { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .8rem; padding: .5rem 0; font-size: .75rem; }
+.footer--honors .footer__extra-link-item { line-height: 2; cursor: pointer; }
+.footer--honors .footer__extra-link-item > span { display: inline-flex; align-items: center; gap: .3rem; }
+.honor-wall {
+  position: relative;
+  isolation: isolate;
+  border: 0;
+  border-radius: 0;
+  padding: .5rem 2rem .25rem;
+  background: transparent;
+  box-shadow: none;
+  color: #344d6d;
+}
+.honor-wall::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; opacity: .6; pointer-events: none;
+  background: radial-gradient(circle at 5% 12%, #dec490 0 1px, transparent 2px), radial-gradient(circle at 65% 19%, #a5c0de 0 1px, transparent 2px), radial-gradient(circle at 91% 25%, #d2b98b 0 1.5px, transparent 2.5px);
+}
+.honor-wall [hidden], .honor-wall[hidden] { display: none !important; }
+.honor-wall__heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .25rem; }
+.honor-wall__title-row { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; }
+.honor-wall__eyebrow { display: flex; align-items: center; gap: .4rem; margin: 0; color: #9d8458; font-size: .55rem; letter-spacing: .18em; }
+.honor-wall__eyebrow span { font-size: .85rem; color: #c8a14f; text-shadow: 0 0 12px #e9cd9255; }
+.honor-wall__heading h2 { margin: 0; color: #2f4769; font-size: 1.35rem; font-weight: 700; line-height: 1.25; letter-spacing: .12em; }
+.honor-wall__subtitle { color: #8192aa; margin: .2rem 0 0; font-size: .72rem; line-height: 1.4; }
+.honor-wall__heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; }
+.honor-wall__count { border: 0; padding: .4rem .7rem; color: #7086a5; font-size: .7rem; background: transparent; }
+.honor-wall__motion-toggle { border: 0; background: transparent; padding: .4rem .15rem; color: #7c91ae; font-size: .68rem; cursor: pointer; }
+.honor-wall__motion-toggle:hover { color: #456ca9; }
+.honor-wall__motion-toggle:disabled { cursor: default; }
+.honor-wall__viewport { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.honor-wall__viewport::-webkit-scrollbar { display: none; }
+.honor-wall__viewport.is-looping {
+  overflow-x: hidden;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 2.25rem, #000 calc(100% - 2.25rem), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 2.25rem, #000 calc(100% - 2.25rem), transparent);
+}
+.honor-wall__viewport.is-looping:focus-within { -webkit-mask-image: none; mask-image: none; }
+.honor-wall__viewport.is-looping:hover,
+.honor-wall__viewport.is-looping:focus-within,
+.honor-wall.is-motion-paused .honor-wall__viewport { overflow-x: auto; }
+.honor-wall__grid { display: flex; flex-wrap: nowrap; width: 100%; gap: 0; align-items: stretch; }
+.honor-wall__viewport:not(.is-looping) .honor-wall__card { flex-grow: 1; }
+.honor-wall__card {
+  --honor-light: #95bafa;
+  flex: 0 0 calc(100% / 6); box-sizing: border-box; display: flex; flex-direction: column;
+  position: relative; min-width: 0; overflow: clip;
+  padding: .4rem .25rem; border: 0; border-radius: 0;
+  background: transparent; box-shadow: none;
+}
+.honor-wall__card:first-child { --honor-light: #e7c480; background: transparent; }
+.honor-wall__card:nth-child(2) { --honor-light: #b7a8e8; }
+.honor-wall__card::before { content: none; }
+.honor-wall__constellation {
+  position: relative; flex: 1 0 auto; width: 100%; max-width: 16rem; aspect-ratio: 3 / 2;
+  min-height: calc(var(--orbit-rows) * 3rem + 6rem);
+  margin: 0 auto; isolation: auto; perspective: 700px; transform-style: preserve-3d;
+}
+.honor-wall__constellation::before {
+  content: ""; position: absolute; inset: 12%; border: 0; border-radius: 50%; transform: translateZ(-60px);
+  background: radial-gradient(ellipse, #ffffffd9, #d9e8f54d 45%, transparent 72%); pointer-events: none;
+}
+.honor-wall__constellation::after { content: "✧"; position: absolute; right: 25%; top: 29%; transform: translateZ(-30px); color: var(--honor-light); font-size: 1.3rem; pointer-events: none; animation: honor-twinkle 4s ease-in-out infinite; }
+.honor-wall__art {
+  position: absolute; left: 18%; top: 50%; right: auto; bottom: auto; width: 64%; aspect-ratio: 1 / 1;
+  transform: translateY(-50%);
+  display: grid; place-items: center;
+  isolation: isolate; text-decoration: none;
+}
+.honor-wall__art::before { content: ""; position: absolute; inset: -30%; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse, var(--honor-light), transparent 68%); opacity: .2; animation: honor-glow 4s ease-in-out infinite; }
+.honor-wall__art::after { content: ""; position: absolute; left: 5%; right: 5%; bottom: -4%; height: 13%; z-index: -1; border: 0; border-radius: 50%; background: radial-gradient(ellipse, #a0c4ef40, transparent 70%); }
+.honor-wall__ac-image { width: 100%; height: 100%; object-fit: contain; background: transparent; filter: drop-shadow(0 5px 6px #5675a329); animation: honor-medal-float 5s ease-in-out infinite; }
+.honor-wall__art-fallback { display: grid; place-items: center; width: 75%; height: 75%; border: 0; border-radius: 50%; background: linear-gradient(130deg, #ffefbb, #e0b960); color: #a27a38; font-size: 2rem; box-shadow: 0 0 24px #e8bd5e26; animation: honor-medal-float 5s ease-in-out infinite; }
+.honor-wall__orbit { position: absolute; inset: 0; transform: rotateX(-16deg); transform-style: preserve-3d; pointer-events: none; }
+.honor-wall__orbit-slot {
+  position: absolute; left: 0; top: calc(50% + var(--orbit-y)); width: 100%; height: 0;
+  transform-origin: 50% 0; transform-style: preserve-3d;
+  transform: rotateY(var(--orbit-angle)) translateX(32%);
+  animation: honor-orbit 36s linear infinite;
+}
+.honor-wall__orbit-person {
+  position: absolute; left: 50%; top: 0; width: 72px; height: 50px;
+  margin-left: -36px; margin-top: -25px; transform-origin: 50% 50%;
+  transform: rotateY(calc(0deg - var(--orbit-angle))) rotateX(16deg);
+  animation: honor-orbit-upright 36s linear infinite; pointer-events: auto;
+}
+.honor-wall__orbit--single .honor-wall__orbit-slot { animation-name: honor-orbit-single; animation-duration: 20s; }
+.honor-wall__orbit--single .honor-wall__orbit-person { animation-name: honor-orbit-single-upright; animation-duration: 20s; }
+.honor-wall a.honor-wall__student, .honor-wall__student {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  min-width: 0; width: 72px; height: 50px; color: #243b59; background: transparent;
+  text-decoration: none; font-size: 11px; line-height: 1.35;
+}
+.honor-wall__student-name { display: block; flex-shrink: 0; width: max-content; max-width: 72px; padding: 2px 6px; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-radius: 6px; color: #243b59; background: #fffffff2; box-shadow: 0 2px 6px #102b4c26; font-weight: 600; text-shadow: none; }
+.honor-wall__avatar { position: relative; display: grid; place-items: center; flex: 0 0 24px; width: 24px; height: 24px; border: 0; border-radius: 50%; background: #e1ebf8; color: #6a8cb5; box-shadow: 0 4px 10px #6f8fad26; overflow: hidden; font-size: 11px; }
+.honor-wall__avatar-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.honor-wall__status { text-align: center; color: #8b9db4; padding: 1.5rem .5rem; margin: 0; font-size: .8rem; }
+.honor-wall__retry { display: block; margin: 0 auto; padding: .5rem 1rem; border: 0; border-radius: 999px; background: #eef4fc; color: #567aa8; cursor: pointer; }
+.honor-wall a:focus-visible, .honor-wall button:focus-visible { outline: 2px solid #709acb; outline-offset: 4px; }
+@keyframes honor-orbit { from { transform: rotateY(var(--orbit-angle)) translateX(32%); } to { transform: rotateY(calc(360deg + var(--orbit-angle))) translateX(32%); } }
+@keyframes honor-orbit-upright { from { transform: rotateY(calc(0deg - var(--orbit-angle))) rotateX(16deg); } to { transform: rotateY(calc(-360deg - var(--orbit-angle))) rotateX(16deg); } }
+/* A single recipient spends 18 seconds in front (the usual 10deg/s), but only
+   2 seconds behind the medal. Matched easing keeps names upright and changes
+   speed smoothly: 10deg/s at either side, accelerating across the rear. */
+@keyframes honor-orbit-single {
+  0% { transform: rotateY(var(--orbit-angle)) translateX(32%); animation-timing-function: cubic-bezier(.333333, .055556, .666667, .555556); }
+  2.5% { transform: rotateY(calc(30deg + var(--orbit-angle))) translateX(32%); animation-timing-function: cubic-bezier(.333333, .222222, .666667, .777778); }
+  7.5% { transform: rotateY(calc(150deg + var(--orbit-angle))) translateX(32%); animation-timing-function: cubic-bezier(.333333, .444444, .666667, .944444); }
+  10% { transform: rotateY(calc(180deg + var(--orbit-angle))) translateX(32%); animation-timing-function: linear; }
+  100% { transform: rotateY(calc(360deg + var(--orbit-angle))) translateX(32%); }
+}
+@keyframes honor-orbit-single-upright {
+  0% { transform: rotateY(calc(0deg - var(--orbit-angle))) rotateX(16deg); animation-timing-function: cubic-bezier(.333333, .055556, .666667, .555556); }
+  2.5% { transform: rotateY(calc(-30deg - var(--orbit-angle))) rotateX(16deg); animation-timing-function: cubic-bezier(.333333, .222222, .666667, .777778); }
+  7.5% { transform: rotateY(calc(-150deg - var(--orbit-angle))) rotateX(16deg); animation-timing-function: cubic-bezier(.333333, .444444, .666667, .944444); }
+  10% { transform: rotateY(calc(-180deg - var(--orbit-angle))) rotateX(16deg); animation-timing-function: linear; }
+  100% { transform: rotateY(calc(-360deg - var(--orbit-angle))) rotateX(16deg); }
+}
+@keyframes honor-medal-float { 0%, 100% { transform: translateY(2px); } 50% { transform: translateY(-5px); } }
+@keyframes honor-glow { 0%, 100% { opacity: .16; transform: scale(.95); } 50% { opacity: .3; transform: scale(1.05); } }
+@keyframes honor-twinkle { 0%, 100% { opacity: .3; transform: scale(.8); } 50% { opacity: .85; transform: scale(1.12); } }
+.honor-wall__card:hover *, .honor-wall__card:hover *::after, .honor-wall__card:hover *::before,
+.honor-wall__card:focus-within *, .honor-wall__card:focus-within *::after, .honor-wall__card:focus-within *::before,
+.honor-wall.is-motion-paused *, .honor-wall.is-motion-paused *::after, .honor-wall.is-motion-paused *::before { animation-play-state: paused !important; }
+@media (hover: hover) {
+  .honor-wall__card:hover { transform: none; box-shadow: none; }
+  .honor-wall a.honor-wall__student:hover { color: #3b6599; }
+  .honor-wall a.honor-wall__student:hover .honor-wall__avatar { box-shadow: 0 4px 15px #6f8fad55; }
+}
+.layout--immersive .footer--honors { background: transparent; color: #d6e2ef; }
+.theme--dark .footer--honors { background: #182334; color: #c1cede; }
+.theme--dark .honor-wall { background: transparent; }
+.theme--dark .honor-wall__heading h2 { color: #e8effb; }
+.theme--dark .honor-wall__card { background: transparent; }
+@media (max-width: 64em) {
+  .honor-wall { padding: .5rem 1.25rem .25rem; }
+}
+@media (max-width: 40em) {
+  .footer--honors { padding-top: .5rem; }
+  .honor-wall { padding: .4rem .7rem .2rem; }
+  .honor-wall__heading { flex-wrap: wrap; gap: .3rem .6rem; margin-bottom: .2rem; }
+  .honor-wall__heading h2 { font-size: 1.2rem; }
+  .honor-wall__title-row { gap: .6rem; }
+  .honor-wall__subtitle { font-size: .67rem; }
+  .honor-wall__heading-actions { margin-top: 0; gap: .4rem; }
+  .honor-wall__count { padding: .2rem 0; }
+  .honor-wall__motion-toggle { padding: .2rem .15rem; }
+  .honor-wall__card { flex-basis: 50%; }
+  .honor-wall__viewport:not(.is-looping) .honor-wall__card { flex-grow: 0; }
+  .footer--honors .footer__extra-link { align-items: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .honor-wall *, .honor-wall *::after, .honor-wall *::before { animation: none !important; transition: none !important; }
+  .honor-wall__constellation { flex: 0 0 auto; aspect-ratio: auto; min-height: 0; perspective: none; transform-style: flat; }
+  .honor-wall__art { position: relative; left: auto; top: auto; width: 64%; margin: .5rem auto; transform: none; }
+  .honor-wall__orbit { position: relative; display: flex; flex-wrap: wrap; justify-content: center; gap: .75rem .5rem; margin-bottom: 1rem; transform: none; transform-style: flat; }
+  .honor-wall__orbit-slot { position: relative; left: auto; top: auto; width: 72px; height: 50px; transform: none; transform-style: flat; }
+  .honor-wall__orbit-person { position: relative; left: auto; margin: 0; transform: none; }
+}
