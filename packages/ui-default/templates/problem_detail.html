@@ -11,6 +11,7 @@
   pdoc: pdoc,
   isMistakeSupported: isMistakeSupported,
   canUseMistake: canUseMistake,
+  mistakePractice: mistakePractice,
   showMistakePrompt: showMistakePrompt,
   firstFormalRecordStatus: firstFormalStatus,
   hasWrongFormalRecord: hasWrongFormalRecord,
@@ -896,6 +897,7 @@
     </div>
     <div class="section">
       <div class="problem-content-container"><div class="problem-content" data-marker-enabled>
+        {% include "partials/mistake_practice.html" %}
         <div class="section__header non-scratchpad--hide">
           <h1 class="section__title">{{ pdoc.title }}</h1>
         </div>

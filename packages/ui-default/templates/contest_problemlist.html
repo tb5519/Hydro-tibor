@@ -331,87 +331,8 @@
   min-width: 72px;
   text-align: center;
 }
-.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user,
-.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__main {
-  min-width: 0;
-}
-.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__main {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-}
-.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__avatar {
-  flex: 0 0 auto;
-}
-.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__name {
-  display: inline-block;
-  max-width: 110px;
-  overflow: hidden;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__short-badges,
-.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__custom-badges {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 4px;
-}
-.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__badge {
-  position: relative;
-  max-width: 104px;
-  overflow: hidden;
-  padding: 0 7px;
-  border-radius: 999px;
-  font-size: 11px;
-  line-height: 1.65;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__badge:not(.user-profile-badge--more) {
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, .45), 0 0 12px rgba(59, 130, 246, .22);
-  isolation: isolate;
-}
-.page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__badge:not(.user-profile-badge--more):after {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  border-radius: inherit;
-  background: linear-gradient(115deg, transparent 0%, transparent 38%, rgba(255, 255, 255, .75) 50%, transparent 62%, transparent 100%);
-  content: "";
-  pointer-events: none;
-  animation: contest-scoreboard-badge-shine 3.2s ease-in-out infinite;
-  transform: translateX(-120%);
-}
-.page--contest_problemlist .contest-embedded-scoreboard__table tbody tr.contest-scoreboard-row--badge {
-  position: relative;
-  isolation: isolate;
-  background:
-    linear-gradient(105deg, transparent 0%, transparent 35%, rgba(255, 255, 255, .92) 47%, rgba(168, 85, 247, .22) 52%, transparent 65%, transparent 100%) -1800px 0 / 1800px 100% repeat-x,
-    linear-gradient(112deg, rgba(59, 130, 246, var(--contest-badge-alpha)), rgba(34, 211, 238, var(--contest-badge-alpha)) 44%, rgba(168, 85, 247, var(--contest-badge-alpha)) 100%),
-    #fff;
-  animation: contest-scoreboard-row-shine var(--contest-badge-speed) linear infinite;
-}
-.page--contest_problemlist .contest-embedded-scoreboard__table tbody tr.contest-scoreboard-row--badge td {
-  position: relative;
-  z-index: 1;
-  background: transparent !important;
-}
-.page--contest_problemlist .contest-embedded-scoreboard__table tbody tr.contest-scoreboard-row--badge td:first-child {
-  box-shadow: inset var(--contest-badge-edge-width) 0 0 #60a5fa;
-}
 .page--contest_problemlist .contest-scoreboard-empty {
   min-height: 130px;
-}
-@keyframes contest-scoreboard-row-shine {
-  from { background-position: -1800px 0, 0 0, 0 0; }
-  to { background-position: 0 0, 0 0, 0 0; }
-}
-@keyframes contest-scoreboard-badge-shine {
-  0%, 42% { transform: translateX(-120%); }
-  62%, 100% { transform: translateX(120%); }
 }
 .page--contest_problemlist .contest-materials {
   margin-bottom: 18px;
@@ -629,12 +550,6 @@
   }
   .page--contest_problemlist .contest-timer {
     display: none !important;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .page--contest_problemlist .contest-embedded-scoreboard__table tbody tr.contest-scoreboard-row--badge,
-  .page--contest_problemlist .contest-embedded-scoreboard__table .ranking-user__badge:not(.user-profile-badge--more):after {
-    animation: none;
   }
 }
 </style>

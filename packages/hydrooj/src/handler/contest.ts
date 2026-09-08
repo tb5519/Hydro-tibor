@@ -80,6 +80,17 @@ async function attachContestOwnedBadges(
     for (const udoc of udocs) udoc.ownedBadges = ownedBadges[udoc._id] || [];
 }
 
+async function attachContestScoreboardOwnedBadges(
+    handler: ContestDetailBaseHandler, udict: Record<number, any>,
+) {
+    const displayDomain = handler.entryDomain || handler.domain;
+    const displayDomainId = displayDomain._id;
+    const badgeDomainId = workspace.resolveDomainWorkspaceId(displayDomain) === workspace.LEGACY_WORKSPACE_ID
+        ? undefined
+        : displayDomainId;
+    await attachContestOwnedBadges(handler.ctx, udict, displayDomainId, badgeDomainId);
+}
+
 export class ContestListHandler extends Handler {
     @param('rule', Types.Range(contest.RULES), true)
     @param('group', Types.Name, true)
@@ -421,10 +432,7 @@ export class ContestProblemListHandler extends ContestDetailBaseHandler {
             [, contestScoreboardRows, contestScoreboardUdict, contestScoreboardPdict] = await contest.getScoreboard.call(
                 this, domainId, tid, config,
             );
-            const badgeDomainId = workspace.resolveDomainWorkspaceId(this.domain) === workspace.LEGACY_WORKSPACE_ID
-                ? undefined
-                : domainId;
-            await attachContestOwnedBadges(this.ctx, contestScoreboardUdict, domainId, badgeDomainId);
+            await attachContestScoreboardOwnedBadges(this, contestScoreboardUdict);
         }
         this.response.body = {
             pdict,
@@ -1109,6 +1117,7 @@ export async function apply(ctx: Context) {
                     config.lockAt = this.tdoc.lockAt;
                 }
                 const [, rows, udict, pdict] = await contest.getScoreboard.call(this, tdoc.domainId, tdoc._id, config);
+                await attachContestScoreboardOwnedBadges(this, udict);
                 // eslint-disable-next-line ts/naming-convention
                 const page_name = tdoc.rule === 'homework'
                     ? 'homework_scoreboard'

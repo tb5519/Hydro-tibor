@@ -542,10 +542,8 @@ export class ProblemMistakeHandler extends Handler {
     async get(domainId: string, page = 1, status: 'review' | 'mastered' | 'all' = 'review') {
         const mistakeQuery: Filter<mistake.MistakeDoc> = { uid: this.user._id };
         if (status !== 'all') mistakeQuery.status = status;
-        const [mdocs, ppcount, mcount] = await this.paginate(
-            mistake.getMulti(domainId, mistakeQuery).sort({ updatedAt: -1, _id: -1 }),
-            page,
-            'problem',
+        const [mdocs, ppcount, mcount] = await mistake.getPage(
+            domainId, mistakeQuery, page, this.ctx.setting.get('pagination.problem') || 20,
         );
         const pids = mdocs.map((mdoc) => mdoc.pid);
         const [pdict, psdict] = await Promise.all([
@@ -794,6 +792,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             badgeAcTheme: await getActiveBadgeAcTheme(this.ctx, this.user, this.url.bind(this), this.domain),
             badgeAcFirstEligible: this.psdoc?.status !== STATUS.STATUS_ACCEPTED,
             mistakeDoc,
+            mistakePractice: mistake.getPracticeState(mistakeDoc, this.request.query.mistakePractice),
             isMistakeSupported: isProgrammingProblem,
             canUseMistake,
             codeLang,
@@ -913,6 +912,33 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
         }
         await mistake.add(this.args.domainId, this.user._id, this.pdoc.docId, 'manual');
         this.back();
+    }
+
+    private checkMistakePractice() {
+        this.checkPerm(PERM.PERM_SUBMIT_PROBLEM);
+        if (this.tdoc || this.args.tid) throw new ValidationError('tid');
+        if (!this.pdoc.config || typeof this.pdoc.config !== 'object' || ['objective', 'submit_answer'].includes(this.pdoc.config.type)) {
+            throw new ValidationError('type');
+        }
+    }
+
+    async postStartMistakePractice() {
+        this.checkMistakePractice();
+        const mdoc = await mistake.startPractice(this.args.domainId, this.user._id, this.pdoc.docId);
+        if (!mdoc) throw new ValidationError('mistake');
+        this.response.redirect = this.url('problem_detail', {
+            domainId: this.args.domainId,
+            pid: this.pdoc.pid || this.pdoc.docId,
+            query: { scratchpad: '1', mistakePractice: mdoc.practiceToken },
+        });
+    }
+
+    @param('practiceToken', Types.String)
+    async postDeepenMistake(domainId: string, practiceToken: string) {
+        this.checkMistakePractice();
+        const mdoc = await mistake.deepen(this.args.domainId, this.user._id, this.pdoc.docId, practiceToken);
+        if (!mdoc) throw new ValidationError('practiceToken');
+        this.back({ importance: mdoc.importance, deepened: true });
     }
 
     async postMasterMistake() {

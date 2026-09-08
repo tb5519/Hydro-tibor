@@ -35,6 +35,17 @@ function getInitialCode(lang: string) {
 
 function getInitialState() {
   const cacheKey = getCacheKey();
+  const practiceToken = UiContext.mistakePractice?.token;
+  // Only a server-validated, explicitly started mistake review may reset a
+  // draft. Remember each consumed token across tabs, so reloading this round
+  // (or going back to an earlier one) never erases newly written code.
+  if (!UiContext.tdoc && UiContext.canUseMistake && typeof practiceToken === 'string' && /^[a-f0-9]{24}$/.test(practiceToken)) {
+    const resetKey = `${cacheKey}#mistake-practice/${practiceToken}`;
+    if (localStorage.getItem(resetKey) !== '1') {
+      localStorage.setItem(cacheKey, '');
+      localStorage.setItem(resetKey, '1');
+    }
+  }
   const lang = localStorage.getItem(`${cacheKey}#lang`) || UiContext.codeLang;
   const cachedCode = localStorage.getItem(cacheKey);
   return {

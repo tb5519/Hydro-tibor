@@ -9,6 +9,7 @@
 {% endmacro %}
 
 <div data-fragment-id="scoreboard">
+  {% include "partials/scoreboard_badge_styles.html" %}
   {% if model.contest.isLocked(tdoc) %}
     <div class="section__body no-padding">
       <blockquote class="note">
@@ -21,7 +22,7 @@
     </div>
   {% endif %}
   <div class="section__body no-padding overflow-hidden-horizontal">
-    <table class="data-table{% if embeddedScoreboard %} contest-embedded-scoreboard__table{% endif %}">
+    <table class="data-table contest-scoreboard-table ranking-badge-effects{% if embeddedScoreboard %} contest-embedded-scoreboard__table{% endif %}">
       <colgroup>
       {%- for column in rows[0] -%}
         <col class="col--{{ column.type }}">
@@ -49,9 +50,9 @@
         {%- set scoreboardRowBadges = scoreboardRowUdoc.ownedBadges|default([]) -%}
         {%- set scoreboardRowBadgeCount = scoreboardRowBadges|length or (1 if scoreboardRowUdoc.badge else 0) -%}
         {%- set scoreboardRowBadgeLevel = 20 if scoreboardRowBadgeCount > 20 else scoreboardRowBadgeCount -%}
-        <tr{% if embeddedScoreboard and scoreboardRowBadgeCount %} class="contest-scoreboard-row--badge" style="--contest-badge-alpha:{{ 10 + scoreboardRowBadgeLevel * 2 }}%;--contest-badge-edge-width:{{ 3 + scoreboardRowBadgeLevel / 2 }}px;--contest-badge-speed:{{ 5.5 - scoreboardRowBadgeLevel / 8 }}s"{% endif %}>
+        <tr{% if scoreboardRowBadgeCount %} class="ranking-row--badge ranking-row--badge-{{ scoreboardRowBadgeLevel }}"{% endif %}>
           {%- for column in row -%}
-            <td class="col--{{ rows[0][loop.index0]['type'] }}"{% if column.style %} style="{{ column.style }}"{% endif %}>
+            <td class="col--{{ rows[0][loop.index0]['type'] }}"{% if column.style %} data-scoreboard-cell-style style="{{ column.style }}"{% endif %}>
             {%- if column.type == 'rank' -%}
               <span class="{{ 'rank--unrank' if column.value == '0' else 'rank--normal' }}">{{ '*' if column.value == '0' else column.value|string|nl2br|safe }}</span>
             {%- elif column.type == 'user' -%}
@@ -61,8 +62,7 @@
                 <span class="starred--hide"><span class="icon icon-star--outline" data-tooltip="{{ _('Star') }}"></span></span>
                 <span class="starred--show"><span class="icon icon-star" data-tooltip="{{ _('Unstar') }}"></span></span>
               </button>
-              {{ user.render_inline(scoreboardUserDict[column.raw], badge=false) }}
-              {%- else -%}
+              {%- endif -%}
               <div class="ranking-user contest-ranking-user">
                 <div class="ranking-user__main">
                   {{ user.render_inline(scoreboardUserDict[column.raw], avatar=true, badge=false) }}
@@ -73,7 +73,6 @@
                   {{ user.render_custom_badges(scoreboardUserDict[column.raw], 4, 'ranking-user__badge') }}
                 </div>
               </div>
-              {%- endif -%}
             {%- elif column.type == 'record' and column.raw -%}
               {{ renderRecord(column, canView) }}
             {%- elif column.type == 'records' -%}

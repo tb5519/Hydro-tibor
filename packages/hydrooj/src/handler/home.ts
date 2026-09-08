@@ -353,10 +353,10 @@ export class HomeHandler extends Handler {
 
     async getPersonalMistakes(domainId: string, limit = 5) {
         if (!this.user.hasPriv(PRIV.PRIV_USER_PROFILE) || !this.user.hasPerm(PERM.PERM_VIEW_PROBLEM) || this.user._id <= 1) return [];
-        const mdocs = await mistake.getMulti(domainId, {
+        const [mdocs] = await mistake.getPage(domainId, {
             uid: this.user._id,
             status: 'review',
-        }).sort({ updatedAt: -1, _id: -1 }).limit(limit).toArray();
+        }, 1, limit);
         if (!mdocs.length) return [];
         const pdict = await ProblemModel.getList(
             domainId,

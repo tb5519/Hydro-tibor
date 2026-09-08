@@ -1,275 +1,232 @@
 {% import "components/paginator.html" as paginator with context %}
 {% import "components/problem.html" as problem with context %}
 {% import "components/record.html" as record with context %}
-{% import "components/nothing.html" as nothing with context %}
 {% extends "layout/basic.html" %}
 
 {% block content %}
 <style>
-  .page--problem_mistake .page-loader {
-    display: none !important;
-    pointer-events: none !important;
-  }
-  .mistake-book .mistake-book__head {
-    background: #fff;
-    border: 1px solid #dbe4ef;
-    border-radius: 12px;
-    box-shadow: 0 12px 28px rgba(15, 23, 42, .06);
-    margin-bottom: 1.2rem;
-    padding: 1.4rem 1.6rem;
-  }
-  .mistake-book .mistake-book__title {
-    color: #0f172a;
-    font-size: 2rem;
-    font-weight: 800;
-    line-height: 1.2;
-    margin: 0;
-  }
-  .mistake-book .mistake-book__subtitle {
-    color: #64748b;
-    margin: .45rem 0 0;
-  }
-  .mistake-book .mistake-book__tabs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: .5rem;
-    margin: 0 0 1rem;
-  }
-  .mistake-book .mistake-book__tab {
-    background: #fff;
-    border: 1px solid #dbe4ef;
-    border-radius: 999px;
-    color: #475569;
-    display: inline-flex;
-    font-weight: 700;
-    line-height: 1;
-    padding: .6rem .9rem;
-  }
-  .mistake-book .mistake-book__tab.active {
-    background: #2563eb;
-    border-color: #2563eb;
-    color: #fff;
-  }
-  .mistake-book .mistake-status {
-    border-radius: 999px;
-    display: inline-flex;
-    font-size: .82rem;
-    font-weight: 700;
-    line-height: 1;
-    padding: .35rem .65rem;
-  }
-  .mistake-book .mistake-status--review {
-    background: #fff7ed;
-    color: #c2410c;
-  }
-  .mistake-book .mistake-status--mastered {
-    background: #ecfdf5;
-    color: #047857;
-  }
-  .mistake-book .mistake-table {
-    table-layout: fixed;
-  }
-  .mistake-book .mistake-table .col--status {
-    width: 9rem;
-  }
-  .mistake-book .mistake-table .col--problem {
-    width: 36%;
-  }
-  .mistake-book .mistake-table .col--mistake-status {
-    width: 11rem;
-  }
-  .mistake-book .mistake-table .col--date {
-    width: 12rem;
-  }
-  .mistake-book .mistake-table .col--actions {
-    width: 19rem;
-  }
-  .mistake-book .mistake-problem {
-    align-items: flex-start;
-    display: flex;
-    flex-direction: column;
-    gap: .45rem;
-  }
-  .mistake-book .mistake-problem__title {
-    color: #334155;
-    font-weight: 700;
-    line-height: 1.35;
-  }
-  .mistake-book .mistake-problem__title a {
-    color: inherit;
-  }
-  .mistake-book .mistake-problem .problem__tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: .35rem;
-    margin: 0;
-    padding: 0;
-  }
-  .mistake-book .mistake-problem .problem__tag {
-    display: inline-flex;
-    margin: 0;
-  }
-  .mistake-book .mistake-problem .problem__tag-link {
-    background: #f1f5f9;
-    border: 1px solid #e2e8f0;
-    border-radius: 999px;
-    color: #64748b;
-    font-size: .78rem;
-    line-height: 1;
-    max-width: 12rem;
-    overflow: hidden;
-    padding: .28rem .55rem;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .mistake-book .mistake-action {
-    align-items: center;
-    display: flex;
-    gap: .55rem;
-    justify-content: flex-end;
-  }
-  .mistake-book .mistake-action form {
-    margin: 0;
-  }
-  .mistake-book .mistake-action__button {
-    align-items: center;
-    border-radius: 999px;
-    display: inline-flex;
-    font-weight: 700;
-    gap: .35rem;
-    justify-content: center;
-    line-height: 1;
-    margin-bottom: 0;
-    min-height: 2.35rem;
-    min-width: 7rem;
-    padding: .65rem 1rem;
-    transition: background .15s ease, border-color .15s ease, box-shadow .15s ease, color .15s ease;
-  }
-  .mistake-book .mistake-action__button--practice {
-    background: #2563eb;
-    border-color: #2563eb;
-    box-shadow: 0 8px 18px rgba(37, 99, 235, .22);
-    color: #fff;
-  }
-  .mistake-book .mistake-action__button--practice:hover {
-    background: #1d4ed8;
-    border-color: #1d4ed8;
-    color: #fff;
-  }
-  .mistake-book .mistake-action__button--mastered {
-    background: #fff;
-    border: 1px solid #cbd5e1;
-    color: #475569;
-  }
-  .mistake-book .mistake-action__button--mastered:hover {
-    background: #f8fafc;
-    border-color: #94a3b8;
-    color: #334155;
+  .page--problem_mistake .page-loader { display: none !important; pointer-events: none !important; }
+  .mistake-book { color: #334155; }
+  .mistake-book__head { align-items: center; background: linear-gradient(115deg, #fff 15%, #edf5ff 100%); border: 1px solid #e1eaf5; border-radius: 20px; display: flex; gap: 24px; justify-content: space-between; margin-bottom: 22px; padding: 25px 30px; }
+  .mistake-book__heading { align-items: center; display: flex; gap: 16px; }
+  .mistake-book__symbol { align-items: center; background: #e5efff; border-radius: 17px; color: #3478e5; display: inline-flex; flex: 0 0 56px; font-size: 25px; height: 56px; justify-content: center; }
+  .mistake-book__title { color: #213a5c; font-size: 27px; font-weight: 800; line-height: 1.25; margin: 0; }
+  .mistake-book__subtitle { color: #71839c; font-size: 14px; line-height: 1.6; margin: 6px 0 0; }
+  .mistake-book__count { color: #71839c; flex-shrink: 0; font-size: 13px; text-align: right; }
+  .mistake-book__count strong { color: #2c66bd; font-size: 30px; font-weight: 800; margin: 0 5px; }
+  .mistake-book__toolbar { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin-bottom: 16px; }
+  .mistake-book__tabs { background: #e8eef6; border-radius: 12px; display: inline-flex; gap: 4px; padding: 4px; }
+  .mistake-book__tab { border-radius: 9px; color: #6c7d94; font-size: 14px; font-weight: 650; padding: 10px 22px; text-decoration: none !important; }
+  .mistake-book__tab:hover { color: #2563b9; }
+  .mistake-book__tab.active { background: #fff; box-shadow: 0 2px 5px rgba(40, 70, 110, .08); color: #2f6fcb; }
+  .mistake-book__sort { color: #788aa2; font-size: 13px; }
+  .mistake-book__sort .icon { color: #b88a44; margin-right: 5px; }
+  .mistake-book__list { display: grid; gap: 13px; list-style: none; margin: 0; padding: 0; }
+  .mistake-card { --importance-bg: #eef4ff; --importance-color: #3d78cb; align-items: center; background: #fff; border: 1px solid #e0e7f0; border-radius: 17px; display: grid; gap: 22px; grid-template-columns: 74px minmax(0, 1fr) auto; padding: 22px; transition: border-color .18s ease, box-shadow .18s ease; }
+  .mistake-card:hover { border-color: #c3d6ed; box-shadow: 0 5px 18px rgba(40, 70, 110, .05); }
+  .mistake-card--important { --importance-bg: #fff4df; --importance-color: #b67b27; border-left: 3px solid #f0c778; }
+  .mistake-card--priority { --importance-bg: #ffeddb; --importance-color: #bc652c; border-left-color: #eab174; }
+  .mistake-card--mastered { --importance-bg: #edf8f3; --importance-color: #32856b; border-left-color: #a4d6c5; }
+  .mistake-importance { background: var(--importance-bg); border-radius: 14px; color: var(--importance-color); padding: 12px 6px; text-align: center; }
+  .mistake-importance__label { display: block; font-size: 11px; font-weight: 650; letter-spacing: .08em; }
+  .mistake-importance__value { display: block; font-size: 30px; font-weight: 800; line-height: 1.15; margin-top: 3px; overflow-wrap: anywhere; }
+  .mistake-problem { min-width: 0; }
+  .mistake-problem__title { font-size: 17px; font-weight: 650; line-height: 1.45; margin: 0 0 9px; overflow-wrap: anywhere; }
+  .mistake-problem__title a { color: #253d5c; }
+  .mistake-problem__title a:hover { color: #2f77d8; }
+  .mistake-problem__title b { color: #7990ad; font-size: 13px; font-weight: 600; }
+  .mistake-problem .problem__tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 11px; padding: 0; }
+  .mistake-problem .problem__tag { display: inline-flex; margin: 0; max-width: 100%; }
+  .mistake-problem .problem__tag-link { background: #f3f6fa; border-radius: 5px; color: #7b8da5; font-size: 11px; line-height: 1.3; max-width: 190px; overflow: hidden; padding: 4px 7px; text-overflow: ellipsis; white-space: nowrap; }
+  .mistake-problem__meta { align-items: center; color: #91a0b3; display: flex; flex-wrap: wrap; font-size: 11px; gap: 7px 12px; line-height: 1.5; }
+  .mistake-status { align-items: center; display: inline-flex; font-size: 11px; gap: 5px; white-space: nowrap; }
+  .mistake-status::before { background: currentColor; border-radius: 50%; content: ''; height: 5px; width: 5px; }
+  .mistake-status--review { color: #b08645; }
+  .mistake-status--mastered { color: #3a9578; }
+  .mistake-record { border: 0; border-collapse: collapse; margin: 0; width: auto; }
+  .mistake-record td { background: transparent !important; border: 0 !important; font-size: 11px; height: auto; padding: 0 !important; text-align: left; }
+  .mistake-record .col--status__text { line-height: 1.5; white-space: normal; }
+  .mistake-record .record-status--icon { margin-right: 2px; }
+  .mistake-action { display: grid; gap: 9px; justify-items: end; max-width: 330px; }
+  .mistake-action__main { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+  .mistake-action form { margin: 0; }
+  .mistake-action__button { align-items: center; border: 1px solid transparent; border-radius: 10px; cursor: pointer; display: inline-flex; font-family: inherit; font-size: 13px; font-weight: 650; gap: 6px; justify-content: center; line-height: 1.2; margin: 0; min-height: 40px; padding: 10px 14px; transition: background .15s ease, border-color .15s ease; white-space: nowrap; }
+  .mistake-action__button--practice { background: #397bdf; color: #fff; }
+  .mistake-action__button--practice:hover { background: #2768c7; }
+  .mistake-action__button--deepen { background: #fff8ed; border-color: #f1dcc0; color: #a6712f; }
+  .mistake-action__button--deepen:hover { background: #ffeed5; border-color: #e5c395; }
+  .mistake-action__button:disabled { background: #f1f4f8; border-color: #e4eaf1; color: #91a0b3; cursor: default; }
+  .mistake-action__button--mastered { background: transparent; color: #7e90a7; font-size: 11px; font-weight: 500; min-height: 28px; padding: 3px 0 3px 8px; }
+  .mistake-action__button--mastered:hover { color: #288263; }
+  .mistake-action__hint { color: #99a7b8; font-size: 11px; line-height: 1.4; margin: 0; text-align: right; }
+  .mistake-action__secondary { align-items: center; display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: flex-end; }
+  .mistake-book__help { color: #8495ab; font-size: 12px; line-height: 1.7; margin: 18px 0 0; text-align: center; }
+  .mistake-book__empty { background: #fff; border: 1px dashed #d5e1ef; border-radius: 17px; padding: 55px 24px; text-align: center; }
+  .mistake-book__empty-icon { align-items: center; background: #eff5ff; border-radius: 20px; color: #74a2df; display: inline-flex; font-size: 29px; height: 68px; justify-content: center; margin-bottom: 18px; width: 68px; }
+  .mistake-book__empty h2 { color: #426084; font-size: 19px; font-weight: 700; margin: 0 0 10px; }
+  .mistake-book__empty p { color: #8294aa; font-size: 13px; line-height: 1.7; margin: 0; }
+  .mistake-book__empty a { color: #3477cf; display: inline-block; font-size: 13px; margin-top: 18px; }
+  .mistake-book .pager { background: transparent; border: 0; margin: 15px 0; }
+  .mistake-book .pager-top { margin-top: 0; }
+  .mistake-book a:focus-visible, .mistake-book button:focus-visible { outline: 3px solid #9ac0f0; outline-offset: 3px; }
+  @media (max-width: 64em) {
+    .mistake-card { gap: 16px; grid-template-columns: 68px minmax(0, 1fr); padding: 18px; }
+    .mistake-action { grid-column: 2; justify-items: start; max-width: none; }
+    .mistake-action__main, .mistake-action__secondary { justify-content: flex-start; }
+    .mistake-action__hint { text-align: left; }
   }
   @media (max-width: 40em) {
-    .mistake-book .mistake-book__head {
-      border-radius: 0;
-      margin-left: -1rem;
-      margin-right: -1rem;
-      padding: 1.1rem 1rem;
-    }
-    .mistake-book .mistake-book__title {
-      font-size: 1.55rem;
-    }
-    .mistake-book .data-table {
-      min-width: 840px;
-    }
-    .mistake-book .section__body.no-padding {
-      overflow-x: auto;
-    }
+    .mistake-book__head { border-radius: 15px; gap: 12px; padding: 19px 17px; }
+    .mistake-book__heading { gap: 11px; }
+    .mistake-book__symbol { border-radius: 12px; flex-basis: 42px; font-size: 20px; height: 42px; }
+    .mistake-book__title { font-size: 23px; }
+    .mistake-book__subtitle { font-size: 11px; }
+    .mistake-book__count { font-size: 11px; }
+    .mistake-book__count strong { display: block; font-size: 25px; margin: 2px 0; }
+    .mistake-book__tab { padding: 9px 17px; }
+    .mistake-book__sort { font-size: 11px; }
+    .mistake-card { gap: 13px; grid-template-columns: 57px minmax(0, 1fr); padding: 16px 13px; }
+    .mistake-importance { align-self: start; border-radius: 11px; padding: 10px 4px; }
+    .mistake-importance__value { font-size: 25px; }
+    .mistake-problem__title { font-size: 15px; }
+    .mistake-action { grid-column: 1 / -1; padding-top: 3px; width: 100%; }
+    .mistake-action__main { display: flex; width: 100%; }
+    .mistake-action__main form { flex: 1 1 0; }
+    .mistake-action__main .mistake-action__button { width: 100%; }
+    .mistake-action__secondary { justify-content: space-between; width: 100%; }
+    .mistake-book__empty { padding: 38px 20px; }
   }
+  @media (prefers-reduced-motion: reduce) { .mistake-card, .mistake-action__button { transition: none; } }
 </style>
 
-<div class="mistake-book">
-  <div class="row">
-    <div class="columns">
-      <header class="mistake-book__head">
-        <h1 class="mistake-book__title">{{ _('problem_mistake') }}</h1>
-        <p class="mistake-book__subtitle">记录你主动加入的编程题，方便之后复盘和巩固。</p>
-      </header>
-
-      <nav class="mistake-book__tabs">
-        <a class="mistake-book__tab{% if status == 'review' %} active{% endif %}" href="{{ url('problem_mistake') }}">待复盘</a>
-        <a class="mistake-book__tab{% if status == 'mastered' %} active{% endif %}" href="{{ url('problem_mistake', query={status:'mastered'}) }}">已掌握</a>
-        <a class="mistake-book__tab{% if status == 'all' %} active{% endif %}" href="{{ url('problem_mistake', query={status:'all'}) }}">全部</a>
-      </nav>
-
-      <div class="section">
-        <div class="section__body no-padding">
-          {% if not mdocs.length %}
-            {{ nothing.render('暂无错题。你可以在编程题详情页右侧点击“加入错题集”。') }}
-          {% else %}
-            {{ paginator.render(page, ppcount, position='top', add_qs=utils.buildQueryString(status='' if status == 'review' else status)) }}
-            <table class="data-table mistake-table">
-              <colgroup>
-                <col class="col--status">
-                <col class="col--problem">
-                <col class="col--mistake-status">
-                <col class="col--date">
-                <col class="col--actions">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>{{ _('Status') }}</th>
-                  <th>{{ _('Problem') }}</th>
-                  <th>错题状态</th>
-                  <th>更新时间</th>
-                  <th class="text-right">{{ _('Action') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for mdoc in mdocs %}
-                  {% set pdoc = pdict[mdoc.pid] %}
-                  {% set psdoc = psdict[mdoc.pid] %}
-                  <tr>
-                    {% if psdoc and psdoc.rid %}
-                      {{ record.render_status_td(psdoc, rid_key='rid') }}
-                    {% else %}
-                      <td class="col--status record-status--border"></td>
-                    {% endif %}
-                    <td class="col--name col--problem-name">
-                      <div class="mistake-problem">
-                        <div class="mistake-problem__title">{{ problem.render_problem_title(pdoc, show_tags=false) }}</div>
-                        {{ problem.render_problem_tags(pdoc) }}
-                      </div>
-                    </td>
-                    <td>
-                      <span class="mistake-status mistake-status--{{ mdoc.status }}">
-                        {{ '已掌握' if mdoc.status == 'mastered' else '待复盘' }}
-                      </span>
-                    </td>
-                    <td>{{ datetimeSpan(mdoc.updatedAt)|safe }}</td>
-                    <td class="text-right">
-                      <div class="mistake-action">
-                        <a class="button mistake-action__button mistake-action__button--practice" href="{{ url('problem_detail', pid=pdoc.pid|default(pdoc.docId)) }}?scratchpad=1">
-                          <span class="icon icon-refresh"></span>
-                          <span>重新练习</span>
-                        </a>
-                        {% if mdoc.status != 'mastered' %}
-                          <form method="post" action="{{ url('problem_detail', pid=pdoc.pid|default(pdoc.docId)) }}">
-                            <input type="hidden" name="operation" value="master_mistake">
-                            <button class="button mistake-action__button mistake-action__button--mastered" type="submit">
-                              <span class="icon icon-check"></span>
-                              <span>标记已掌握</span>
-                            </button>
-                          </form>
-                        {% endif %}
-                      </div>
-                    </td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-            {{ paginator.render(page, ppcount, add_qs=utils.buildQueryString(status='' if status == 'review' else status)) }}
-          {% endif %}
+{% set filterLabel = '待复盘' %}
+{% if status == 'mastered' %}{% set filterLabel = '已掌握' %}{% endif %}
+{% if status == 'all' %}{% set filterLabel = '全部' %}{% endif %}
+<div class="mistake-book" id="mistake-book">
+  <div class="row"><div class="columns">
+    <header class="mistake-book__head">
+      <div class="mistake-book__heading">
+        <span class="mistake-book__symbol icon icon-book" aria-hidden="true"></span>
+        <div>
+          <h1 class="mistake-book__title">{{ _('problem_mistake') }}</h1>
+          <p class="mistake-book__subtitle">把难题变成进步，重要的先练。</p>
         </div>
       </div>
+      <div class="mistake-book__count">{{ filterLabel }} <strong>{{ mcount|default(mdocs.length) }}</strong> 道</div>
+    </header>
+
+    <div class="mistake-book__toolbar">
+      <nav class="mistake-book__tabs" aria-label="错题状态筛选">
+        <a class="mistake-book__tab{% if status == 'review' %} active{% endif %}"{% if status == 'review' %} aria-current="page"{% endif %} href="{{ url('problem_mistake') }}">待复盘</a>
+        <a class="mistake-book__tab{% if status == 'mastered' %} active{% endif %}"{% if status == 'mastered' %} aria-current="page"{% endif %} href="{{ url('problem_mistake', query={status:'mastered'}) }}">已掌握</a>
+        <a class="mistake-book__tab{% if status == 'all' %} active{% endif %}"{% if status == 'all' %} aria-current="page"{% endif %} href="{{ url('problem_mistake', query={status:'all'}) }}">全部</a>
+      </nav>
+      <span class="mistake-book__sort"><span class="icon icon-flag" aria-hidden="true"></span>按重要性从高到低排列</span>
     </div>
-  </div>
+
+    {% if not mdocs.length %}
+      <div class="mistake-book__empty">
+        <span class="mistake-book__empty-icon icon {% if status == 'mastered' %}icon-check{% else %}icon-book{% endif %}" aria-hidden="true"></span>
+        <h2>{{ '掌握的每一题，都值得记录' if status == 'mastered' else '这里暂时没有需要复盘的题目' }}</h2>
+        <p>{{ '练习后，把真正理解的题目标记为“已掌握”，就能在这里看到。' if status == 'mastered' else '遇到想再练一次的题目，可以在题目页点击“加入错题集”。' }}</p>
+        <a href="{{ url('problem_main') }}">去题库练一练 <span aria-hidden="true">→</span></a>
+      </div>
+    {% else %}
+      {{ paginator.render(page, ppcount, position='top', add_qs=utils.buildQueryString(status='' if status == 'review' else status)) }}
+      <ol class="mistake-book__list" aria-label="{{ filterLabel }}题目">
+        {% for mdoc in mdocs %}
+          {% set pdoc = pdict[mdoc.pid] %}
+          {% set psdoc = psdict[mdoc.pid] %}
+          {% set importance = mdoc.importance|default(1, true)|int %}
+          {% if importance < 1 %}{% set importance = 1 %}{% endif %}
+          {% set canDeepen = mdoc.practiceToken and mdoc.practiceToken != mdoc.deepenedPracticeToken %}
+          <li class="mistake-card{% if importance > 1 %} mistake-card--important{% endif %}{% if importance > 2 %} mistake-card--priority{% endif %}{% if mdoc.status == 'mastered' %} mistake-card--mastered{% endif %}" data-mistake-pid="{{ mdoc.pid }}">
+            <div class="mistake-importance" aria-label="重要性 {{ importance }}">
+              <span class="mistake-importance__label">重要性</span>
+              <strong class="mistake-importance__value">{{ importance }}</strong>
+            </div>
+            <div class="mistake-problem">
+              <h2 class="mistake-problem__title">{{ problem.render_problem_title(pdoc, show_tags=false) }}</h2>
+              {{ problem.render_problem_tags(pdoc) }}
+              <div class="mistake-problem__meta">
+                <span class="mistake-status mistake-status--{{ 'mastered' if mdoc.status == 'mastered' else 'review' }}">{{ '已掌握' if mdoc.status == 'mastered' else '待复盘' }}</span>
+                {% if psdoc and psdoc.rid %}
+                  <table class="mistake-record" aria-label="最近评测状态"><tbody><tr>{{ record.render_status_td(psdoc, rid_key='rid') }}</tr></tbody></table>
+                {% else %}
+                  <span class="mistake-record--empty">暂无提交记录</span>
+                {% endif %}
+                <span class="mistake-problem__updated">更新于 {{ datetimeSpan(mdoc.updatedAt)|safe }}</span>
+              </div>
+            </div>
+            <div class="mistake-action">
+              <div class="mistake-action__main">
+                <form method="post" action="{{ url('problem_detail', pid=pdoc.pid|default(pdoc.docId)) }}" data-mistake-action>
+                  <input type="hidden" name="operation" value="start_mistake_practice">
+                  <button class="mistake-action__button mistake-action__button--practice" type="submit" title="从空白代码开始新一轮练习">
+                    <span class="icon icon-refresh" aria-hidden="true"></span>重新练习
+                  </button>
+                </form>
+                {% if mdoc.practiceToken %}
+                  <form method="post" action="{{ url('problem_detail', pid=pdoc.pid|default(pdoc.docId)) }}" data-mistake-action>
+                    <input type="hidden" name="operation" value="deepen_mistake">
+                    <input type="hidden" name="practiceToken" value="{{ mdoc.practiceToken }}">
+                    <button class="mistake-action__button mistake-action__button--deepen" type="submit"{% if not canDeepen %} disabled{% endif %} title="{{ '这一轮已加深，下次重新练习后可再标记' if not canDeepen else '这次还没掌握？重要性 +1，让它排到更前面' }}">
+                      <span class="icon {% if canDeepen %}icon-flag{% else %}icon-check{% endif %}" aria-hidden="true"></span>{{ '加深标记' if canDeepen else '本轮已加深' }}
+                    </button>
+                  </form>
+                {% endif %}
+              </div>
+              <div class="mistake-action__secondary">
+                {% if mdoc.practiceToken or mdoc.status != 'mastered' %}
+                  <p class="mistake-action__hint">{{ '重新练习后可加深标记' if not mdoc.practiceToken else ('下次练习后可再次加深' if not canDeepen else '还没掌握？加深一次，重要性 +1') }}</p>
+                {% else %}
+                  <p class="mistake-action__hint">已掌握，也可以再挑战一次</p>
+                {% endif %}
+                {% if mdoc.status != 'mastered' %}
+                  <form method="post" action="{{ url('problem_detail', pid=pdoc.pid|default(pdoc.docId)) }}" data-mistake-action>
+                    <input type="hidden" name="operation" value="master_mistake">
+                    <button class="mistake-action__button mistake-action__button--mastered" type="submit"><span class="icon icon-check" aria-hidden="true"></span>标记已掌握</button>
+                  </form>
+                {% endif %}
+              </div>
+            </div>
+          </li>
+        {% endfor %}
+      </ol>
+      {{ paginator.render(page, ppcount, add_qs=utils.buildQueryString(status='' if status == 'review' else status)) }}
+      <p class="mistake-book__help">重新练习会从空白代码开始；每轮练习可加深标记一次。</p>
+    {% endif %}
+  </div></div>
 </div>
+<script>
+  (function () {
+    var root = document.getElementById('mistake-book');
+    if (!root || root.dataset.actionsBound) return;
+    root.dataset.actionsBound = '1';
+    root.addEventListener('submit', function (event) {
+      var form = event.target;
+      if (!form.matches('form[data-mistake-action]')) return;
+      if (form.dataset.submitting) {
+        event.preventDefault();
+        return;
+      }
+      form.dataset.submitting = '1';
+      form.setAttribute('aria-busy', 'true');
+      form.querySelectorAll('button:not(:disabled)').forEach(function (button) {
+        button.dataset.submittingDisabled = '1';
+        button.disabled = true;
+      });
+    });
+    window.addEventListener('pageshow', function () {
+      root.querySelectorAll('form[data-mistake-action]').forEach(function (form) {
+        delete form.dataset.submitting;
+        form.removeAttribute('aria-busy');
+        form.querySelectorAll('[data-submitting-disabled]').forEach(function (button) {
+          button.disabled = false;
+          delete button.dataset.submittingDisabled;
+        });
+      });
+    });
+  }());
+</script>
 {% endblock %}

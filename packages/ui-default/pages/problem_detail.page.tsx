@@ -12,6 +12,7 @@ import {
 } from 'vj/utils';
 import { openDB } from 'vj/utils/db';
 import { createBadgeAcThemePlayer } from '../components/badge_ac_effect';
+import { bindMistakePracticeActions } from '../components/mistake_practice';
 
 class ProblemPageExtender {
   isExtended = false;
@@ -107,6 +108,7 @@ class ProblemPageExtender {
 }
 
 const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homework_detail_problem'], async () => {
+  bindMistakePracticeActions(document, (url, data) => request.post(url, data));
   let reactLoaded = false;
   let renderReact = null;
   let unmountReact = null;

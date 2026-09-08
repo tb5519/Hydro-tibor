@@ -1,0 +1,76 @@
+.mistake-practice
+  margin: 16px 20px
+  padding: 14px 16px
+  border: 1px solid #dce7fa
+  border-radius: 14px
+  background: linear-gradient(120deg, #f0f6ff, #fafcff)
+  color: #475569
+  font-size: 13px
+
+  &__heading
+    display: flex
+    align-items: center
+    justify-content: space-between
+    flex-wrap: wrap
+    gap: 8px
+
+  &__label
+    color: #2b528b
+    font-size: 15px
+    font-weight: 750
+
+  &__importance
+    padding: 3px 10px
+    border-radius: 999px
+    background: #fff1dc
+    color: #9a601b
+
+  &__hint
+    margin: 8px 0 12px
+    line-height: 1.6
+
+  &__actions
+    display: flex
+    align-items: center
+    flex-wrap: wrap
+    gap: 16px
+
+  &__form
+    margin: 0
+
+  &__deepen
+    border: 0
+    border-radius: 9px
+    padding: 9px 15px
+    background: #4779d5
+    color: #fff
+    font: inherit
+    font-weight: 700
+    cursor: pointer
+    transition: background .15s
+
+    &:hover:not(:disabled)
+      background: #3062be
+
+    &:disabled
+      background: #e2eaf6
+      color: #637997
+      cursor: default
+
+  &__back
+    color: #416da8
+    font-weight: 650
+
+  &__feedback:not(:empty)
+    display: block
+    margin-top: 10px
+    color: #8a5317
+
+  button:focus-visible, a:focus-visible
+    outline: 2px solid #4779d5
+    outline-offset: 3px
+
+@media (max-width: 640px)
+  .mistake-practice
+    margin: 12px
+    padding: 12px

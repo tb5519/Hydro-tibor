@@ -62,9 +62,12 @@
                 <div class="homepage-personal__mistake-title">
                   {{ problem.render_problem_title(item.pdoc, show_tags=false, show_invisible_flag=false) }}
                 </div>
-                <div class="homepage-personal__mistake-time">{{ datetimeSpan(item.mdoc.updatedAt)|safe }}</div>
+                <div class="homepage-personal__mistake-time">重要性 {{ item.mdoc.importance|default(1) }} · {{ datetimeSpan(item.mdoc.updatedAt)|safe }}</div>
               </div>
-              <a class="homepage-personal__mistake-action" href="{{ url('problem_detail', pid=item.pdoc.pid|default(item.pdoc.docId)) }}?scratchpad=1">重练</a>
+              <form method="post" action="{{ url('problem_detail', pid=item.pdoc.pid|default(item.pdoc.docId)) }}">
+                <input type="hidden" name="operation" value="start_mistake_practice">
+                <button class="homepage-personal__mistake-action" type="submit">重练</button>
+              </form>
             </div>
           {% endfor %}
         </div>
@@ -264,6 +267,11 @@
     font-size: .74rem;
     font-weight: 800;
     line-height: 1;
+    cursor: pointer;
+  }
+  .homepage-personal__mistake > form {
+    flex: 0 0 auto;
+    margin: 0;
   }
   .homepage-personal__empty-block {
     padding: .7rem .75rem;

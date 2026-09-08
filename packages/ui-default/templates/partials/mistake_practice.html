@@ -1,0 +1,18 @@
+{% if canUseMistake and mistakePractice %}
+<aside class="mistake-practice" aria-label="本轮错题练习">
+  <div class="mistake-practice__heading">
+    <span class="mistake-practice__label">错题再挑战</span>
+    <span class="mistake-practice__importance">重要性 <b data-mistake-importance>{{ mistakePractice.importance }}</b></span>
+  </div>
+  <p class="mistake-practice__hint" data-mistake-practice-hint>{{ '还没独立做出来？加深标记，下次优先练这题。' if mistakePractice.canDeepen else '本轮已加深标记。每一步复盘，都在帮助你掌握它。' }}</p>
+  <div class="mistake-practice__actions">
+    <form class="mistake-practice__form" method="post" action="{{ url('problem_detail', pid=pdoc.docId) }}">
+      <input type="hidden" name="operation" value="deepen_mistake">
+      <input type="hidden" name="practiceToken" value="{{ mistakePractice.token }}">
+      <button type="submit" class="mistake-practice__deepen"{% if not mistakePractice.canDeepen %} disabled{% endif %}>{{ '加深标记' if mistakePractice.canDeepen else '本轮已加深' }}</button>
+    </form>
+    <a class="mistake-practice__back" href="{{ url('problem_mistake') }}">返回错题集 <span aria-hidden="true">↗</span></a>
+  </div>
+  <span class="mistake-practice__feedback" role="status" aria-live="polite"></span>
+</aside>
+{% endif %}
