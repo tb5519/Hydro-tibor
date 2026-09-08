@@ -73,9 +73,6 @@ function* badgeCard(badge: HonorBadge, students: HonorStudent[], order: number):
     art.href = href;
     art.setAttribute('aria-label', `查看${badgeName}徽章`);
   }
-  const fallback = element('span', 'honor-wall__art-fallback', '✦');
-  fallback.setAttribute('aria-hidden', 'true');
-  art.append(fallback);
   const imageUrl = safeUrl(badge.acImage);
   if (imageUrl) {
     const img = element('img', 'honor-wall__ac-image');
@@ -84,15 +81,17 @@ function* badgeCard(badge: HonorBadge, students: HonorStudent[], order: number):
     img.loading = 'lazy';
     img.decoding = 'async';
     img.setAttribute('fetchpriority', 'low');
-    img.hidden = true;
-    img.addEventListener('load', () => {
-      img.hidden = false;
-      fallback.hidden = true;
+    img.addEventListener('load', async () => {
+      // Reveal the artwork and its orbit together, only after decoded pixels
+      // are ready. Slow or missing artwork leaves quiet space, never a dummy medal.
+      try {
+        await img.decode?.();
+      } catch {
+        return;
+      }
+      if (img.isConnected && img.hasAttribute('src')) card.classList.add('is-art-ready');
     }, { once: true });
-    img.addEventListener('error', () => {
-      img.remove();
-      fallback.hidden = false;
-    }, { once: true });
+    img.addEventListener('error', () => img.remove(), { once: true });
     art.append(img);
   }
   const constellation = element('div', 'honor-wall__constellation');
@@ -123,8 +122,8 @@ function* badgeCard(badge: HonorBadge, students: HonorStudent[], order: number):
   return card;
 }
 
-/** Only visible cards and a small lead-in buffer may start image requests. */
-function initHonorImages(viewport: HTMLElement, track: HTMLElement) {
+/** Warm all medal art in the background, with a bounded low-priority queue. */
+function initHonorImages(track: HTMLElement) {
   let disposed = false;
   let pageReady = document.readyState === 'complete';
   const queue: HTMLImageElement[] = [];
@@ -153,8 +152,8 @@ function initHonorImages(viewport: HTMLElement, track: HTMLElement) {
       active.set(img, finish);
       img.addEventListener('load', finish);
       img.addEventListener('error', finish);
-      // Visibility and concurrency are already controlled here. Native lazy
-      // loading would otherwise defer the hidden AC image behind its fallback.
+      // Concurrency is already controlled here. Native lazy loading would
+      // postpone the background prefetch until the visitor scrolls down.
       img.loading = 'eager';
       img.src = img.dataset.honorSrc!;
       delete img.dataset.honorSrc;
@@ -167,35 +166,12 @@ function initHonorImages(viewport: HTMLElement, track: HTMLElement) {
     pump();
   };
   if (!pageReady) window.addEventListener('load', onPageReady, { once: true });
-  const reveal = (card: Element) => {
-    card.querySelectorAll<HTMLImageElement>('img[data-honor-src]').forEach((img) => {
-      if (img.dataset.honorQueued) return;
-      img.dataset.honorQueued = 'true';
-      queue.push(img);
-    });
-    queue.sort((left, right) => Number(right.classList.contains('honor-wall__ac-image'))
-      - Number(left.classList.contains('honor-wall__ac-image')));
-    pump();
-  };
-  const bounds = viewport.getBoundingClientRect();
-  const imageObserver = typeof IntersectionObserver === 'undefined' ? undefined : new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (!entry.isIntersecting) return;
-      reveal(entry.target);
-      imageObserver?.unobserve(entry.target);
-    });
-  }, { root: viewport, rootMargin: '0px 96px' });
-  for (const card of Array.from(track.children)) {
-    const rect = card.getBoundingClientRect();
-    if (!imageObserver || (rect.right > bounds.left - 96 && rect.left < bounds.right + 96)) reveal(card);
-    else imageObserver.observe(card);
-  }
-  // Keyboard users may reach an off-screen card before the observer fires.
-  const onFocus = (event: FocusEvent) => {
-    const card = (event.target as Element)?.closest('[data-honor-wall-badge]');
-    if (card) reveal(card);
-  };
-  viewport.addEventListener('focusin', onFocus);
+  queue.push(...track.querySelectorAll<HTMLImageElement>('img[data-honor-src]'));
+  // Finish the medal artwork first; potentially large avatar groups must not
+  // delay medals further along the row from becoming ready before scrolling.
+  queue.sort((left, right) => Number(right.classList.contains('honor-wall__ac-image'))
+    - Number(left.classList.contains('honor-wall__ac-image')));
+  pump();
   return () => {
     disposed = true;
     window.removeEventListener('load', onPageReady);
@@ -204,8 +180,6 @@ function initHonorImages(viewport: HTMLElement, track: HTMLElement) {
       img.removeAttribute('src');
       finish();
     }
-    imageObserver?.disconnect();
-    viewport.removeEventListener('focusin', onFocus);
   };
 }
 
@@ -298,7 +272,6 @@ export function initHonorWall(wall: HTMLElement): () => void {
   let loading = false;
   let disposed = false;
   let controller: AbortController | undefined;
-  let observer: IntersectionObserver | undefined;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let stopMarquee = () => {};
   let stopImages = () => {};
@@ -383,7 +356,7 @@ export function initHonorWall(wall: HTMLElement): () => void {
       stopImages();
       grid!.replaceChildren(fragment);
       const viewport = wall.querySelector<HTMLElement>('[data-honor-wall-viewport]');
-      stopImages = viewport ? initHonorImages(viewport, grid!) : () => {};
+      stopImages = initHonorImages(grid!);
       stopMarquee = viewport ? initHonorMarquee(viewport, grid!, motionPaused) : () => {};
       count!.textContent = `${seenBadges.size} 枚荣誉已点亮`;
       count!.hidden = !seenBadges.size;
@@ -408,7 +381,6 @@ export function initHonorWall(wall: HTMLElement): () => void {
     disposed = true;
     clearTimeout(timeout);
     controller?.abort();
-    observer?.disconnect();
     stopMarquee();
     stopImages();
     motionButton?.removeEventListener('click', toggleMotion);
@@ -417,13 +389,6 @@ export function initHonorWall(wall: HTMLElement): () => void {
     initialized.delete(wall);
   };
   initialized.set(wall, dispose);
-  if ('IntersectionObserver' in window) {
-    observer = new IntersectionObserver((entries) => {
-      if (!entries.some((entry) => entry.isIntersecting)) return;
-      observer?.disconnect();
-      void load();
-    }, { rootMargin: '240px' });
-    observer.observe(wall);
-  } else void load();
+  void load();
   return dispose;
 }

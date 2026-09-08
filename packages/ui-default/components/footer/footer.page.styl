@@ -47,7 +47,9 @@
   position: relative; min-width: 0; overflow: clip;
   padding: .4rem .25rem; border: 0; border-radius: 0;
   background: transparent; box-shadow: none;
+  visibility: hidden; opacity: 0; transition: opacity .6s ease-out;
 }
+.honor-wall__card.is-art-ready { visibility: visible; opacity: 1; }
 .honor-wall__card:first-child { --honor-light: #e7c480; background: transparent; }
 .honor-wall__card:nth-child(2) { --honor-light: #b7a8e8; }
 .honor-wall__card::before { content: none; }
@@ -70,7 +72,6 @@
 .honor-wall__art::before { content: ""; position: absolute; inset: -30%; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse, var(--honor-light), transparent 68%); opacity: .2; animation: honor-glow 4s ease-in-out infinite; }
 .honor-wall__art::after { content: ""; position: absolute; left: 5%; right: 5%; bottom: -4%; height: 13%; z-index: -1; border: 0; border-radius: 50%; background: radial-gradient(ellipse, #a0c4ef40, transparent 70%); }
 .honor-wall__ac-image { width: 100%; height: 100%; object-fit: contain; background: transparent; filter: drop-shadow(0 5px 6px #5675a329); animation: honor-medal-float 5s ease-in-out infinite; }
-.honor-wall__art-fallback { display: grid; place-items: center; width: 75%; height: 75%; border: 0; border-radius: 50%; background: linear-gradient(130deg, #ffefbb, #e0b960); color: #a27a38; font-size: 2rem; box-shadow: 0 0 24px #e8bd5e26; animation: honor-medal-float 5s ease-in-out infinite; }
 .honor-wall__orbit { position: absolute; inset: 0; transform: rotateX(-16deg); transform-style: preserve-3d; pointer-events: none; }
 .honor-wall__orbit-slot {
   position: absolute; left: 0; top: calc(50% + var(--orbit-y)); width: 100%; height: 0;

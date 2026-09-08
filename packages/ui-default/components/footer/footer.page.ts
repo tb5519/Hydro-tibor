@@ -31,14 +31,9 @@ function deferHonorWall(wall: HTMLElement) {
     });
   };
   retry?.addEventListener('click', load);
-  if ('IntersectionObserver' in window) {
-    const observer = new IntersectionObserver((entries) => {
-      if (!entries.some((entry) => entry.isIntersecting)) return;
-      observer.disconnect();
-      load();
-    }, { rootMargin: '240px' });
-    observer.observe(wall);
-  } else load();
+  // Warm the wall after the original page is ready, even while it is below
+  // the fold. Scrolling should reveal finished artwork, not start its download.
+  load();
 }
 
 const footerPage = new AutoloadPage('footerPage', () => {

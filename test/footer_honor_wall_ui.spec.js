@@ -23,7 +23,7 @@ const badge = (id, overrides = {}) => ({
     backgroundColor: '#302365', fontColor: '#fff5bc', students: [student(id)], ...overrides,
 });
 
-function fixture({ observer = true, reducedMotion = false, viewportWidth = 1200 } = {}) {
+function fixture({ observer = true, reducedMotion = false, viewportWidth = 1200, imageDecode = 'auto' } = {}) {
     const dom = new JSDOM('<!doctype html><body><section data-honor-wall data-honor-wall-url="/honor-wall">'
         + '<span data-honor-wall-count></span><p data-honor-wall-status role="status">等待展示荣誉</p>'
         + '<button data-honor-wall-motion hidden>暂停动画</button>'
@@ -37,6 +37,25 @@ function fixture({ observer = true, reducedMotion = false, viewportWidth = 1200 
     const intervals = new Map();
     const frames = new Map();
     const motionListeners = new Set();
+    const decodes = [];
+    const imageTimeouts = new Map();
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    const nativeClearTimeout = window.clearTimeout.bind(window);
+    window.setTimeout = (callback, delay, ...args) => {
+        const id = nativeSetTimeout(callback, delay, ...args);
+        if (delay === 10000) imageTimeouts.set(id, callback);
+        return id;
+    };
+    window.clearTimeout = (id) => {
+        imageTimeouts.delete(id);
+        nativeClearTimeout(id);
+    };
+    if (imageDecode !== 'unsupported') {
+        window.HTMLImageElement.prototype.decode = function decode() {
+            if (imageDecode === 'auto') return Promise.resolve();
+            return new Promise((resolve, reject) => decodes.push({ image: this, resolve, reject }));
+        };
+    }
     let intervalId = 0;
     let frameId = 0;
     let frameTime = 0;
@@ -120,11 +139,17 @@ function fixture({ observer = true, reducedMotion = false, viewportWidth = 1200 
     const wall = get('[data-honor-wall]');
     const cleanup = window.HonorWall.initHonorWall(wall);
     return {
-        window, requests, observers, resizeObservers, wall, cleanup, get, intervals, motionListeners, frames,
+        window, requests, observers, resizeObservers, wall, cleanup, get, intervals, motionListeners, frames, decodes,
         viewport: get('[data-honor-wall-viewport]'),
         grid: get('[data-honor-wall-grid]'),
         intersect() {
             for (const item of observers) item.callback([{ target: wall, isIntersecting: true, intersectionRatio: 1 }], item);
+        },
+        expireImages() {
+            for (const [id, callback] of [...imageTimeouts]) {
+                nativeClearTimeout(id);
+                callback();
+            }
         },
         tickIntervals() {
             for (const interval of intervals.values()) interval.callback();
@@ -456,13 +481,16 @@ describe('footer honor wall UI', () => {
         } finally { ui.dispose(); }
     });
 
-    it('limits low-priority image requests and leaves off-screen card sources unset', async () => {
+    it('preloads every AC image before avatars, with only two low-priority requests at a time and no scrolling', async () => {
         const ui = fixture();
         try {
             await loadBadges(ui, 12);
             assert.equal(ui.grid.querySelectorAll('img[src]').length, 2, 'Only two requests may occupy connection slots');
             const offscreen = ui.grid.querySelector('[data-honor-wall-badge="12"]');
             assert.equal(offscreen.querySelectorAll('img[src]').length, 0);
+            assert.equal(ui.observers.length, 0, 'Preloading cannot depend on any footer/card IntersectionObserver');
+            assert.equal(ui.grid.querySelectorAll('.honor-wall__ac-image[src]').length, 2,
+                'Both initial slots should load medal artwork, not the first avatar');
             for (const image of ui.grid.querySelectorAll('img')) {
                 assert.equal(image.decoding, 'async');
                 assert.equal(image.getAttribute('fetchpriority'), 'low');
@@ -471,6 +499,18 @@ describe('footer honor wall UI', () => {
             started.dispatchEvent(new ui.window.Event('load'));
             assert.equal(ui.grid.querySelectorAll('img[src]').length, 3, 'Completion releases exactly one slot');
             assert.equal(offscreen.querySelectorAll('img[src]').length, 0);
+            const completed = new Set([started]);
+            while (!offscreen.querySelector('.honor-wall__ac-image[src]')) {
+                const next = [...ui.grid.querySelectorAll('.honor-wall__ac-image[src]')].find((image) => !completed.has(image));
+                assert.ok(next, 'Off-screen medal artwork must already be queued without scrolling or intersections');
+                completed.add(next);
+                next.dispatchEvent(new ui.window.Event('load'));
+                assert.ok(ui.grid.querySelectorAll('.honor-wall__ac-image[src]').length - completed.size <= 2,
+                    'Completing images must never increase parallel requests beyond two');
+            }
+            assert.equal(ui.grid.querySelectorAll('.honor-wall__avatar-image[src]').length, 0,
+                'Every medal AC image should enter the request queue ahead of avatars');
+            assert.equal(ui.viewport.scrollLeft, 0);
             ui.cleanup();
             const after = ui.grid.querySelectorAll('img[src]').length;
             started.dispatchEvent(new ui.window.Event('load'));
@@ -478,28 +518,32 @@ describe('footer honor wall UI', () => {
         } finally { ui.dispose(); }
     });
 
-    it('shows an immediate placeholder while an AC image is pending and keeps controls active', async () => {
-        const ui = fixture();
+    it('keeps the entire card hidden without a yellow placeholder until both image load and decoding complete', async () => {
+        const ui = fixture({ imageDecode: 'manual' });
         try {
             await loadBadges(ui, 1);
             const image = ui.grid.querySelector('.honor-wall__ac-image');
-            const fallback = ui.grid.querySelector('.honor-wall__art-fallback');
-            assert.equal(image.hidden, true);
-            assert.equal(fallback.hidden, false);
+            const card = ui.grid.firstElementChild;
+            assert.equal(ui.grid.querySelector('.honor-wall__art-fallback'), null);
+            assert.equal(card.classList.contains('is-art-ready'), false);
             assert.equal(ui.wall.getAttribute('aria-busy'), 'false', 'Image completion is not part of page readiness');
             ui.get('[data-honor-wall-motion]').click();
             assert.equal(ui.wall.classList.contains('is-motion-paused'), true);
             image.dispatchEvent(new ui.window.Event('load'));
-            assert.equal(image.hidden, false);
-            assert.equal(fallback.hidden, true);
+            assert.equal(ui.decodes.length, 1);
+            assert.equal(ui.decodes[0].image, image);
+            assert.equal(card.classList.contains('is-art-ready'), false, 'A load event alone must not reveal a still-decoding image');
+            ui.decodes[0].resolve();
+            await eventually(() => card.classList.contains('is-art-ready'));
+            assert.equal(ui.grid.querySelector('.honor-wall__art-fallback'), null);
         } finally { ui.dispose(); }
     });
 
-    it('waits until the footer approaches the viewport and does not request twice', async () => {
+    it('starts its background JSON request immediately without intersections and does not request twice', async () => {
         const ui = fixture();
         try {
-            assert.equal(ui.requests.length, 0);
-            assert.equal(ui.observers.length, 1);
+            assert.equal(ui.requests.length, 1);
+            assert.equal(ui.observers.length, 0);
             ui.intersect();
             ui.intersect();
             ui.window.HonorWall.initHonorWall(ui.wall);
@@ -508,7 +552,7 @@ describe('footer honor wall UI', () => {
             assert.ok(ui.get('[data-honor-wall-status]').textContent.trim());
             ui.finish({ badges: [badge(1)] });
             await eventually(() => ui.grid.children.length === 1);
-            assert.equal(ui.observers[0].disconnected, true);
+            assert.equal(ui.observers.length, 0);
         } finally { ui.dispose(); }
     });
 
@@ -659,7 +703,7 @@ describe('footer honor wall UI', () => {
         } finally { ui.dispose(); }
     });
 
-    it('shows the fallback when an AC illustration fails and keeps student labels if avatars fail', async () => {
+    it('does not reveal a yellow placeholder or an incomplete card if the AC image fails', async () => {
         const ui = fixture();
         try {
             ui.intersect();
@@ -670,9 +714,78 @@ describe('footer honor wall UI', () => {
             picture.dispatchEvent(new ui.window.Event('error'));
             avatar.dispatchEvent(new ui.window.Event('error'));
             assert.equal(ui.grid.querySelector('.honor-wall__ac-image'), null);
-            assert.equal(ui.grid.querySelector('.honor-wall__art-fallback').hidden, false);
+            assert.equal(ui.grid.querySelector('.honor-wall__art-fallback'), null);
+            assert.equal(ui.grid.firstElementChild.classList.contains('is-art-ready'), false);
             assert.equal(ui.grid.querySelector('.honor-wall__avatar-image'), null);
             assert.match(ui.grid.textContent, /学员 1/);
+        } finally { ui.dispose(); }
+    });
+
+    it('falls back to the load event in browsers without image.decode', async () => {
+        const ui = fixture({ imageDecode: 'unsupported' });
+        try {
+            await loadBadges(ui, 1);
+            const card = ui.grid.firstElementChild;
+            assert.equal(card.classList.contains('is-art-ready'), false);
+            ui.grid.querySelector('.honor-wall__ac-image').dispatchEvent(new ui.window.Event('load'));
+            await eventually(() => card.classList.contains('is-art-ready'));
+            assert.equal(ui.grid.querySelector('.honor-wall__art-fallback'), null);
+        } finally { ui.dispose(); }
+    });
+
+    it('keeps a failed decode invisible instead of showing a fallback medal', async () => {
+        const ui = fixture({ imageDecode: 'manual' });
+        try {
+            await loadBadges(ui, 1);
+            const image = ui.grid.querySelector('.honor-wall__ac-image');
+            image.dispatchEvent(new ui.window.Event('load'));
+            ui.decodes[0].reject(new Error('Unsupported image data'));
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            assert.equal(ui.grid.firstElementChild.classList.contains('is-art-ready'), false);
+            assert.equal(ui.grid.querySelector('.honor-wall__art-fallback'), null);
+            assert.equal(ui.wall.getAttribute('aria-busy'), 'false');
+        } finally { ui.dispose(); }
+    });
+
+    it('never creates a yellow fallback for a badge with no AC image', async () => {
+        const ui = fixture();
+        try {
+            ui.finish({ badges: [badge(1, { acImage: '' })] });
+            await eventually(() => ui.grid.children.length === 1);
+            assert.equal(ui.grid.querySelector('.honor-wall__ac-image, .honor-wall__art-fallback'), null);
+            assert.equal(ui.grid.firstElementChild.classList.contains('is-art-ready'), false);
+            assert.match(ui.grid.textContent, /学员 1/);
+        } finally { ui.dispose(); }
+    });
+
+    it('removes timed-out AC images without revealing a fallback and continues the background queue', async () => {
+        const ui = fixture();
+        try {
+            await loadBadges(ui, 3);
+            const first = ui.grid.children[0];
+            const second = ui.grid.children[1];
+            assert.equal(ui.grid.querySelectorAll('.honor-wall__ac-image[src]').length, 2);
+            ui.expireImages();
+            assert.equal(first.querySelector('.honor-wall__ac-image'), null);
+            assert.equal(second.querySelector('.honor-wall__ac-image'), null);
+            assert.equal(first.classList.contains('is-art-ready'), false);
+            assert.equal(second.classList.contains('is-art-ready'), false);
+            assert.ok(ui.grid.children[2].querySelector('.honor-wall__ac-image[src]'));
+            assert.equal(ui.grid.querySelector('.honor-wall__art-fallback'), null);
+        } finally { ui.dispose(); }
+    });
+
+    it('keeps names visible after the card is revealed even if a student avatar fails', async () => {
+        const ui = fixture();
+        try {
+            await loadBadges(ui, 1);
+            const card = ui.grid.firstElementChild;
+            ui.grid.querySelector('.honor-wall__ac-image').dispatchEvent(new ui.window.Event('load'));
+            await eventually(() => card.classList.contains('is-art-ready'));
+            ui.grid.querySelector('.honor-wall__avatar-image').dispatchEvent(new ui.window.Event('error'));
+            assert.equal(card.querySelector('.honor-wall__avatar-image'), null);
+            assert.equal(card.classList.contains('is-art-ready'), true);
+            assert.equal(card.querySelector('.honor-wall__student-name').textContent, '学员 1');
         } finally { ui.dispose(); }
     });
 
@@ -951,6 +1064,89 @@ describe('footer honor wall UI', () => {
     });
 });
 
+describe('footer background bootstrap', () => {
+    // Keep the real bootstrap control flow; only substitute its module loader
+    // and AutoloadPage dependency so neither can hide a page-readiness wait.
+    const filename = path.join(__dirname, '../packages/ui-default/components/footer/footer.page.ts');
+    const bootstrapText = fs.readFileSync(filename, 'utf8')
+        .replace("import { AutoloadPage } from 'vj/misc/Page';", 'const AutoloadPage = window.TestAutoloadPage;')
+        .replace("import('./honor-wall')", 'window.loadHonorModule()');
+    const bootstrapSource = esbuild.transformSync(bootstrapText, { loader: 'ts', format: 'iife', target: 'es2020' }).code;
+
+    function bootstrapFixture(readyState) {
+        const dom = new JSDOM('<!doctype html><body><textarea></textarea><button id="submit">提交</button>'
+            + '<section data-honor-wall><p data-honor-wall-status></p><button data-honor-wall-retry hidden>重试</button></section></body>',
+        { url: 'http://localhost/', runScripts: 'outside-only' });
+        const { window } = dom;
+        const modules = [];
+        const initializedWalls = [];
+        let pageCallback;
+        let observerCount = 0;
+        Object.defineProperty(window.document, 'readyState', { configurable: true, value: readyState });
+        window.TestAutoloadPage = class {
+            constructor(name, callback) { pageCallback = callback; }
+        };
+        window.IntersectionObserver = class {
+            constructor() { observerCount++; }
+            observe() {}
+        };
+        window.loadHonorModule = () => new Promise((resolve, reject) => modules.push({ resolve, reject }));
+        window.eval(bootstrapSource);
+        return {
+            window, modules, initializedWalls,
+            initialize: () => pageCallback(),
+            observers: () => observerCount,
+            complete() {
+                Object.defineProperty(window.document, 'readyState', { configurable: true, value: 'complete' });
+                window.dispatchEvent(new window.Event('load'));
+            },
+            finishModule() { modules.at(-1).resolve({ initHonorWall: (wall) => initializedWalls.push(wall) }); },
+            close: () => window.close(),
+        };
+    }
+
+    it('preloads just after window.load without scrolling and never returns a pending decoration promise to the page loader', async () => {
+        const ui = bootstrapFixture('loading');
+        try {
+            assert.equal(ui.initialize(), undefined, 'The main page loader must not await honor-wall JavaScript');
+            assert.equal(ui.modules.length, 0, 'Decoration imports must not extend the original window.load');
+            assert.equal(ui.observers(), 0, 'No viewport intersection may gate background preloading');
+            ui.complete();
+            assert.equal(ui.modules.length, 1);
+            let submitted = '';
+            const editor = ui.window.document.querySelector('textarea');
+            const submit = ui.window.document.querySelector('#submit');
+            submit.addEventListener('click', () => { submitted = editor.value; });
+            editor.value = 'print(42)';
+            submit.click();
+            assert.equal(submitted, 'print(42)', 'The user may submit while the decoration module is still pending');
+            ui.initialize();
+            ui.complete();
+            assert.equal(ui.modules.length, 1, 'Repeated page initialization/load events must not duplicate requests');
+            ui.finishModule();
+            await eventually(() => ui.initializedWalls.length === 1);
+            assert.equal(ui.observers(), 0);
+        } finally { ui.close(); }
+    });
+
+    it('starts immediately if the page is already loaded, with a retry if the optional module fails', async () => {
+        const ui = bootstrapFixture('complete');
+        try {
+            assert.equal(ui.initialize(), undefined);
+            assert.equal(ui.modules.length, 1);
+            assert.equal(ui.observers(), 0);
+            ui.modules[0].reject(new Error('Optional bundle unavailable'));
+            const retry = ui.window.document.querySelector('[data-honor-wall-retry]');
+            await eventually(() => !retry.hidden);
+            assert.match(ui.window.document.querySelector('[data-honor-wall-status]').textContent, /不影响做题/);
+            retry.click();
+            assert.equal(ui.modules.length, 2);
+            ui.finishModule();
+            await eventually(() => ui.initializedWalls.length === 1);
+        } finally { ui.close(); }
+    });
+});
+
 describe('footer honor wall template', () => {
     const template = fs.readFileSync(path.join(__dirname, '../packages/ui-default/templates/partials/footer.html'), 'utf8');
     const env = new nunjucks.Environment(null, { autoescape: true });
@@ -1010,6 +1206,22 @@ describe('compiled footer honor wall CSS', () => {
     const stylesheet = postcss.parse(stylus.render(fs.readFileSync(filename, 'utf8'), { filename }));
     const rule = (parent, selector) => parent.nodes.find((node) => node.type === 'rule' && node.selector === selector);
     const value = (node, property) => node?.nodes.find((item) => item.type === 'decl' && item.prop === property)?.value;
+
+    it('reserves quiet space while loading and fades in the complete decoded card without flattening its 3D children', () => {
+        const card = rule(stylesheet, '.honor-wall__card');
+        const ready = rule(stylesheet, '.honor-wall__card.is-art-ready');
+        assert.equal(value(card, 'visibility'), 'hidden');
+        assert.equal(value(card, 'opacity'), '0');
+        assert.notEqual(value(card, 'display'), 'none', 'Loading must preserve the wall layout without an image placeholder');
+        assert.match(value(card, 'transition'), /opacity (?:0?\.6s|600ms)/);
+        assert.equal(value(ready, 'visibility'), 'visible');
+        assert.equal(value(ready, 'opacity'), '1');
+        for (const selector of ['.honor-wall__constellation', '.honor-wall__orbit', '.honor-wall__orbit-slot']) {
+            assert.equal(value(rule(stylesheet, selector), 'opacity'), undefined,
+                'Fading an inner 3D grouping element would flatten the student orbit');
+        }
+        assert.equal(rule(stylesheet, '.honor-wall__art-fallback'), undefined, 'The yellow substitute medal must not remain in the display design');
+    });
 
     it('reduces header height with compact spacing on desktop and narrow screens', () => {
         const footer = rule(stylesheet, '.footer--honors');
