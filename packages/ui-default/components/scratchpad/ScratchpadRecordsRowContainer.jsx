@@ -61,7 +61,10 @@ export default connect(mapStateToProps, null, mergeProps)(class ScratchpadRecord
     const submitAt = mongoId(data._id).timestamp * 1000;
     // Is pretest
     return data.contest?.toString() === '000000000000000000000000' ? null : (
-      <tr onClick={(ev) => this.handleRowClick(ev, data._id)}>
+      <tr
+        className={UiContext.homeworkReview ? 'is-review' : undefined}
+        onClick={UiContext.homeworkReview ? undefined : (ev) => this.handleRowClick(ev, data._id)}
+      >
         <td className={`col--detail record-status--border ${STATUS_CODES[data.status]}`}>
           <div className="scratchpad__record-result">
             <span className={`icon record-status--icon ${STATUS_CODES[data.status]}`}></span>

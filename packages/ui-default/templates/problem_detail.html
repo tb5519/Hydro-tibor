@@ -1,5 +1,6 @@
 {% extends "layout/basic.html" %}
 {% block content %}
+{% set homeworkReview = UiContext.homeworkReview %}
 <script>
 {{ set(UiContext, {
   problemId: pdoc.pid|default(pdoc.docId),
@@ -37,8 +38,15 @@
   {{ set(UiContext, 'getRecordDetailUrl', url('record_detail', rid='{rid}')) }}
   {{ set(UiContext, 'pretestConnUrl', "record-conn?pretest=1&uidOrName=" + handler.user._id + "&pid=" + pdoc.docId + "&domainId=" + handler.args.domainId) }}
 {% endif %}
+{% if homeworkReview %}
+  {{ set(UiContext, 'canViewRecord', true) }}
+  {{ set(UiContext, 'postSubmitUrl', '') }}
+  {{ set(UiContext, 'getSubmissionsUrl', '') }}
+  {{ set(UiContext, 'pretestConnUrl', '') }}
+  {{ set(UiContext, 'getRecordDetailUrl', url('record_detail', rid='{rid}')) }}
+{% endif %}
 {% if pdoc.config.type == 'objective' %}
-  {{ set(UiContext, 'objectiveSubmitFeedbackUrl', url('objective_submit_feedback', query={tid:tdoc.docId} if tdoc else {}) + ('&rid={rid}' if tdoc else '?rid={rid}')) }}
+  {{ set(UiContext, 'objectiveSubmitFeedbackUrl', url('objective_submit_feedback', query={tid:tdoc.docId, reviewUid:homeworkReview.uid} if homeworkReview else ({tid:tdoc.docId} if tdoc else {})) + ('&rid={rid}' if tdoc else '?rid={rid}')) }}
 {% endif %}
 </script>
 {% if badgeAcFirstEligible and badgeAcTheme and (badgeAcTheme.acImage or badgeAcTheme.themeSound) %}
@@ -335,7 +343,7 @@
     <div class="section ui-v2-problem-detail-hero">
       <div class="section__header">
         <h1 class="section__title">
-          {% if rdoc %}
+          {% if rdoc and pdoc.config.type != 'objective' and not homeworkReview %}
             <a href="{{ url('record_detail', {rid:rdoc._id}) }}">
               <span class="icon record-status--icon {{ model.builtin.STATUS_CODES[rdoc['status']] }}"></span>
               <span class="record-status--text {{ model.builtin.STATUS_CODES[rdoc['status']] }}">{{ rdoc.score }}</span>
@@ -366,7 +374,7 @@
               {% set status = tsdoc.detail[pid].status %}
               {% set pass = status == STATUS.STATUS_ACCEPTED %}
               {% set fail = status and not pass %}
-              <a href="{{ url('problem_detail', pid=pid, query={tid:tdoc.docId}) }}"
+              <a href="{{ url('problem_detail', pid=pid, query={tid:tdoc.docId, reviewUid:homeworkReview.uid} if homeworkReview else {tid:tdoc.docId}) }}"
                  class="{% if pass %}pass{% elif fail %}fail{% endif %}
                         {% if pid==pdoc.docId %} active{% endif %}">
                 <span class="id">{{ utils.getAlphabeticId(loop.index0) }}</span>

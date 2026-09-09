@@ -64,7 +64,9 @@ export default connect(mapStateToProps)(class ScratchpadRecordsContainer extends
             <div className="scratchpad__records-empty" role="status">
               <Icon name="flag" />
               <span>{this.props.isLoading ? '正在加载评测记录' : '暂无评测记录'}</span>
-              {!this.props.isLoading && <small>递交代码后，在这里查看评测结果</small>}
+              {!this.props.isLoading && (
+                <small>{UiContext.homeworkReview ? '该学员尚未提交这道题' : '递交代码后，在这里查看评测结果'}</small>
+              )}
             </div>
           )}
         </div>

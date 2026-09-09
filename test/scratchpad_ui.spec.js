@@ -124,6 +124,19 @@ describe('scratchpad controls and result presentation', () => {
         } finally { await h.close(); }
     });
 
+    it('identifies the reviewed student and offers no teacher submission or self-test controls', async () => {
+        const h = await harness('ScratchpadToolbarContainer', { context: { homeworkReview: { uid: 23, name: '小明' } } });
+        try {
+            assert.match(h.document.querySelector('.scratchpad__review-label').textContent, /小明 的作答.*只读/);
+            assert.equal(h.document.querySelector('.select').disabled, true);
+            for (const hotkey of ['f9', 'f10', 'alt+p']) {
+                assert.equal(h.document.querySelector(`[data-global-hotkey="${hotkey}"]`), null);
+            }
+            assert.equal(h.posts.length, 0);
+            assert.ok(h.document.querySelector('[data-global-hotkey="alt+r"]'));
+        } finally { await h.close(); }
+    });
+
     it('shows mixed case statuses with their own colors, omits zero counts and labels record columns', async () => {
         const state = initialState();
         state.records = { rows: ['one'], items: { one: {

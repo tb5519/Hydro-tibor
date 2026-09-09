@@ -102,10 +102,12 @@ function feedbackHandler(options = {}) {
     const imports = `
         import { Handler, param, Types, PRIV, PERM, record, problem, contest,
             RecordNotFoundError, ProblemNotFoundError, PermissionError, ProblemConfigError,
-            buildObjectiveFeedback, parseObjectiveConfig } from 'dependencies';
+            buildObjectiveInitialSubmission, loadObjectiveSubmissionConfig, loadOwnObjectiveRecordSubmission,
+            authorizeHomeworkReview, isHomeworkReviewRecord } from 'dependencies';
     `;
     const document = makeRecord(options.record);
     const sourceReads = [];
+    const reviewCalls = [];
     const dependencies = {
         Handler: class {
             user = { _id: options.uid ?? 12, own: () => !!options.owner, hasPerm: () => !!options.editor };
@@ -127,7 +129,7 @@ function feedbackHandler(options = {}) {
             },
         },
         contest: {
-            get: async () => (options.deletedContest ? null : { docId: document.contest }),
+            get: async (domainId, tid) => (options.deletedContest ? null : { docId: tid }),
             getStatus: async () => ({ attend: !!options.attend }),
             canShowRecord: () => !!options.showRecords,
             canShowSelfRecord: () => options.showSelf !== false,
@@ -144,14 +146,38 @@ function feedbackHandler(options = {}) {
         ProblemNotFoundError: class ProblemNotFoundError extends Error {},
         PermissionError: class PermissionError extends Error {},
         ProblemConfigError: class ProblemConfigError extends Error {},
+        authorizeHomeworkReview: async (viewer, domain, homework, pid, uid) => {
+            reviewCalls.push({ pid, uid, tid: homework.docId.toString() });
+            if (!options.reviewAuthorized) throw new Error('Review denied');
+        },
         ...helpers,
     };
+    dependencies.isHomeworkReviewRecord = loadModule(
+        fs.readFileSync(path.join(root, 'packages/hydrooj/src/lib/homework_review.ts'), 'utf8'), {
+            '../error': dependencies,
+            '../model/builtin': dependencies,
+            '../model/domain': {},
+            '../model/record': {},
+            '../model/user': {},
+            '../model/workspace': {},
+            './record_visibility': {},
+        },
+    ).isHomeworkReviewRecord;
+    Object.assign(dependencies, loadModule(fs.readFileSync(path.join(root, 'packages/hydrooj/src/lib/objective_submission.ts'), 'utf8'), {
+        '../error': dependencies,
+        '../model/builtin': dependencies,
+        '../model/contest': dependencies.contest,
+        '../model/problem': dependencies.problem,
+        '../model/record': dependencies.record,
+        './objective_feedback': helpers,
+    }));
     const { ObjectiveSubmitFeedbackHandler } = loadModule(imports + source.slice(start, end), { dependencies });
     const handler = new ObjectiveSubmitFeedbackHandler();
     return {
         sourceReads,
-        async get(domainId = 'class-a') {
-            await handler.get(domainId, rid);
+        reviewCalls,
+        async get(domainId = 'class-a', tid, reviewUid) {
+            await handler.get(domainId, rid, tid, reviewUid);
             return plain(handler.response.body);
         },
     };
@@ -193,5 +219,25 @@ describe('objective feedback authorization', () => {
             { domainId: 'source-class', pid: 22, raw: true },
         ]);
         assert.ok(!JSON.stringify(response).includes('secret'));
+    });
+    it('requires explicit homework review authorization before polling another student’s result', async () => {
+        const tid = new ObjectId();
+        await assert.rejects(feedbackHandler({ uid: 13 }).get('class-a', tid, 12));
+        await assert.rejects(feedbackHandler({ uid: 13, reviewAuthorized: true }).get('class-a', undefined, 12));
+        const review = feedbackHandler({ uid: 13, reviewAuthorized: true });
+        const result = await review.get('class-a', tid, 12);
+        assert.equal(result.objective.score, 20);
+        assert.deepEqual(review.reviewCalls, [{ pid: 5983, uid: 12, tid: tid.toString() }]);
+        assert.ok(!JSON.stringify(result).includes('secret'));
+    });
+    it('rejects other contests, pretests, targets and domains even after review management authorization', async () => {
+        const tid = new ObjectId();
+        await Promise.all([{ contest: new ObjectId() }, { contest: new ObjectId('000000000000000000000000') },
+            { contest: new ObjectId('000000000000000000000001') }, { uid: 14 }, { input: '' }, { hackTarget: rid }].map(async (recordOverride) => {
+            await assert.rejects(feedbackHandler({ uid: 13, reviewAuthorized: true, record: recordOverride }).get('class-a', tid, 12));
+        }));
+        await assert.rejects(feedbackHandler({ uid: 13, reviewAuthorized: true }).get('other-class', tid, 12));
+        const ownHomework = feedbackHandler({ uid: 13, reviewAuthorized: true, record: { contest: tid } });
+        assert.equal((await ownHomework.get('class-a', tid, 12)).objective.state, 'complete');
     });
 });

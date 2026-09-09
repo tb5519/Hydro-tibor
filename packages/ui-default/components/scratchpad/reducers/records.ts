@@ -1,9 +1,12 @@
 import _ from 'lodash';
 
-export default function reducer(state = {
-  rows: [],
-  items: {},
-}, action: any = {}) {
+function getInitialState() {
+  const rdoc = UiContext.homeworkReview?.record;
+  return rdoc?._id ? { rows: [rdoc._id], items: { [rdoc._id]: rdoc } } : { rows: [], items: {} };
+}
+
+export default function reducer(state = getInitialState(), action: any = {}) {
+  if (UiContext.homeworkReview) return state;
   switch (action.type) {
     case 'SCRATCHPAD_RECORDS_LOAD_SUBMISSIONS_FULFILLED': {
       const { rdocs } = action.payload;

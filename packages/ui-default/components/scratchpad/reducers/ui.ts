@@ -39,7 +39,7 @@ function appendFormalSubmitRid(rids: string[], payload: any) {
 
 export default function reducer(state = {
   pretest: {
-    visible: !!UiContext.ideMode || UiContext.pdoc.config?.type === 'default',
+    visible: !UiContext.homeworkReview && (!!UiContext.ideMode || UiContext.pdoc.config?.type === 'default'),
   },
   records: {
     visible: !UiContext.ideMode && !!UiContext.canViewRecord,
@@ -64,7 +64,7 @@ export default function reducer(state = {
         ...state,
         pretest: {
           ...state.pretest,
-          visible: !!UiContext.ideMode || UiContext.pdoc.config?.type === 'default',
+          visible: !UiContext.homeworkReview && (!!UiContext.ideMode || UiContext.pdoc.config?.type === 'default'),
         },
         records: {
           ...state.records,

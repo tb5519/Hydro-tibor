@@ -34,6 +34,12 @@ function getInitialCode(lang: string) {
 }
 
 function getInitialState() {
+  if (UiContext.homeworkReview) {
+    return {
+      lang: UiContext.homeworkReview.lang || UiContext.codeLang,
+      code: typeof UiContext.homeworkReview.code === 'string' ? UiContext.homeworkReview.code : '',
+    };
+  }
   const cacheKey = getCacheKey();
   const practiceToken = UiContext.mistakePractice?.token;
   // Only a server-validated, explicitly started mistake review may reset a
@@ -59,6 +65,8 @@ function getInitialState() {
 
 // TODO switch to indexeddb
 export default function reducer(state = getInitialState(), action: any = {}) {
+  // Reviewing a submission must never read or overwrite the teacher's draft.
+  if (UiContext.homeworkReview) return state;
   const cacheKey = getCacheKey();
   if (action.type === 'SCRATCHPAD_EDITOR_UPDATE_CODE') {
     localStorage.setItem(cacheKey, action.payload);

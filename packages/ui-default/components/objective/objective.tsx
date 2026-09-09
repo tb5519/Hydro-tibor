@@ -25,6 +25,11 @@ export function hasObjectiveAnswer(value: unknown) {
     : typeof value === 'string' && value.trim().length > 0;
 }
 
+export function sameObjectiveAnswer(first: unknown, second: unknown) {
+  const normalize = (value: unknown) => (Array.isArray(value) ? [...new Set(value)].sort() : value || '');
+  return JSON.stringify(normalize(first)) === JSON.stringify(normalize(second));
+}
+
 let releasePrevious: (() => void) | undefined;
 
 export async function loadObjective() {
@@ -39,8 +44,9 @@ export async function loadObjective() {
   let pendingRid = '';
   let submittedAnswers: Answers = {};
   let feedback: ObjectiveFeedback | undefined;
-  let $submit: JQuery<HTMLInputElement>;
-  let $state: JQuery<HTMLElement>;
+  let stateMessage = '';
+  const readOnly = !!UiContext.homeworkReview;
+  const loggedOut = !UserContext._id;
   let resultDialog: InfoDialog;
   const active = () => !disposed && statement.isConnected;
   releasePrevious = () => {
@@ -52,6 +58,7 @@ export async function loadObjective() {
   $('.outer-loader-container').show();
   document.documentElement.classList.add('objective-problem-mode');
   document.body.classList.add('objective-problem-mode');
+  $statement.toggleClass('objective-readonly', readOnly);
   const ans: Answers = {};
   const pids: string[] = [];
   let cnt = 0;
@@ -107,25 +114,25 @@ export async function loadObjective() {
 
   const db = await openDB.catch(() => null);
   async function saveAns() {
+    if (readOnly) return;
     try {
       await db?.put('solutions', { id: `${cacheKey}#objective`, value: JSON.stringify(ans) });
     } catch { /* A storage failure must not prevent submitting answers. */ }
   }
   async function clearAns() {
-    if (busy || !(await confirm(i18n('All changes will be lost. Are you sure to clear all answers?')))) return;
+    if (readOnly || busy || !(await confirm(i18n('All changes will be lost. Are you sure to clear all answers?')))) return;
     Object.keys(ans).forEach((id) => { delete ans[id]; });
-    feedback = undefined;
+    if (feedback?.state !== 'complete') feedback = undefined;
     pendingRid = '';
+    stateMessage = '';
     $statement.find('.objective-input').prop('checked', false).filter('input[type=text], textarea').val('');
     await saveAns();
     decorateAnswers();
     renderNavigation();
-    $state.text('');
-    $submit.val(i18n('Submit'));
   }
 
   function questionResult(id: string) {
-    if (!hasObjectiveAnswer(ans[id]) || JSON.stringify(ans[id]) !== JSON.stringify(submittedAnswers[id])) return undefined;
+    if (feedback?.state !== 'complete' || !hasObjectiveAnswer(ans[id]) || !sameObjectiveAnswer(ans[id], submittedAnswers[id])) return undefined;
     return feedback?.questions?.find((item) => item.id === id)?.result;
   }
 
@@ -146,9 +153,14 @@ export async function loadObjective() {
   }
 
   function ProblemNavigation() {
+    const scored = feedback?.state === 'complete' && Number.isFinite(feedback.score);
+    const modified = !!feedback && pids.some((id) => !sameObjectiveAnswer(ans[id], submittedAnswers[id]));
+    const fallbackMessage = feedback?.state === 'hidden' ? '本场比赛暂不公开成绩。'
+      : feedback?.state === 'pending' ? '评测仍在进行。'
+        : feedback?.state === 'error' ? '本次评测未完成。' : readOnly && !feedback ? '该学员暂无递交记录。' : '';
     return <>
       <div className="objective-nav-card">
-        <div className="objective-nav-title">答题卡</div>
+        <div className="objective-nav-title">答题卡{readOnly && <span className="objective-review-label">只读查看</span>}</div>
         <div className="contest-problems objective-nav-grid">
           {pids.map((id) => {
             const result = questionResult(id);
@@ -167,34 +179,76 @@ export async function loadObjective() {
           </> : <span><i className="objective-nav-dot objective-nav-dot--answered" /> 已答</span>}
           <span><i className="objective-nav-dot" /> 未答</span>
         </div>
+        <div className="objective-nav-result" aria-live="polite" aria-atomic="true">
+          <span className="objective-nav-result-label">{readOnly ? '本次得分' : '最近一次得分'}</span>
+          <div className="objective-nav-result-score">
+            <strong>{scored ? feedback.score : '—'}</strong>
+            {scored && Number.isFinite(feedback.totalScore) && <span>/ {feedback.totalScore} 分</span>}
+            {!feedback && !readOnly && <span>尚未提交</span>}
+            {feedback?.state === 'hidden' && <span>暂不公开</span>}
+            {feedback?.state === 'pending' && <span>评测中</span>}
+          </div>
+          {!readOnly && scored && modified && <small className="objective-draft-note">答案已修改，重新提交后更新成绩。</small>}
+        </div>
+        <div className="objective-submit-state" role="status" aria-live="polite">{stateMessage || fallbackMessage}</div>
+        {!readOnly && <div className="objective-submit-actions">
+          <input
+            type="submit"
+            className={`button rounded primary objective-submit${busy || loggedOut ? ' disabled' : ''}`}
+            disabled={busy || loggedOut}
+            value={loggedOut ? i18n('Login to Submit') : busy ? '正在评测…' : pendingRid ? '查看成绩' : i18n('Submit')}
+            onClick={submitAnswers}
+          />
+          <button type="button" className="objective-clear" onClick={clearAns} disabled={busy}>
+            <span className="icon icon-erase" /> {i18n('Clear answers')}
+          </button>
+        </div>}
       </div>
-      <li className="menu__item">
-        <button className="menu__link" onClick={clearAns} disabled={busy}>
-          <span className="icon icon-erase" /> {i18n('Clear answers')}
-        </button>
-      </li>
     </>;
   }
 
+  function sanitizeAnswers(values: unknown): Answers {
+    const sanitized: Answers = {};
+    if (!values || typeof values !== 'object' || Array.isArray(values)) return sanitized;
+    for (const id of pids) {
+      const value = values[id];
+      if (typeof value === 'string') sanitized[id] = value;
+      else if (Array.isArray(value) && value.every((item) => typeof item === 'string')) sanitized[id] = [...new Set(value)].sort();
+    }
+    return sanitized;
+  }
+
   async function loadAns() {
-    try {
-      const saved = await db?.get('solutions', `${cacheKey}#objective`);
-      if (typeof saved?.value !== 'string') return;
-      const values = JSON.parse(saved.value);
-      for (const id of pids) {
-        const value = values?.[id];
-        if (typeof value !== 'string' && (!Array.isArray(value) || !value.every((v) => typeof v === 'string'))) continue;
-        ans[id] = value;
-        const $inputs = $statement.find(`.objective_${id} .objective-input`);
-        $inputs.filter('input[type=text], textarea').val(Array.isArray(value) ? value.join(',') : value);
-        $inputs.filter('input[type=radio], input[type=checkbox]').each((_, input: HTMLInputElement) => {
-          input.checked = Array.isArray(value) ? value.includes(input.value) : value === input.value;
-        });
-      }
-    } catch { /* Ignore unavailable or malformed local drafts. */ }
+    const initial = UiContext.objectiveInitialSubmission;
+    submittedAnswers = sanitizeAnswers(initial?.answers);
+    feedback = initial?.feedback;
+    if (feedback?.state === 'pending') pendingRid = feedback.rid;
+    let values = submittedAnswers;
+    if (!readOnly) {
+      try {
+        const saved = await db?.get('solutions', `${cacheKey}#objective`);
+        if (typeof saved?.value === 'string') {
+          const draft = JSON.parse(saved.value);
+          // An explicitly empty draft means the learner cleared their answers.
+          if (draft && typeof draft === 'object' && !Array.isArray(draft)) values = sanitizeAnswers(draft);
+        }
+      } catch { /* Fall back to the submitted answers if local storage is unavailable or malformed. */ }
+    }
+    Object.assign(ans, values);
+    for (const id of pids) {
+      const value = ans[id];
+      const $inputs = $statement.find(`.objective_${id} .objective-input`);
+      $inputs.filter('input[type=text], textarea').val(Array.isArray(value) ? value.join(',') : value || '');
+      $inputs.filter('input[type=radio], input[type=checkbox]').each((_, input: HTMLInputElement) => {
+        input.checked = Array.isArray(value) ? value.includes(input.value) : value === input.value;
+      });
+    }
+    $statement.find('.objective-input').prop('disabled', readOnly);
+    decorateAnswers();
   }
 
   function setAnswer(name: string, value: string | string[]) {
+    if (readOnly || busy) return;
     if (Array.isArray(value)) {
       if (value.length) ans[name] = value;
       else delete ans[name];
@@ -206,10 +260,8 @@ export async function loadObjective() {
 
   function setBusy(value: boolean, message = '') {
     busy = value;
-    $submit.prop('disabled', value).toggleClass('disabled', value)
-      .val(value ? '正在评测…' : pendingRid ? '查看成绩' : i18n('Submit'));
-    $statement.find('.objective-input').prop('disabled', value);
-    $state.text(message);
+    $statement.find('.objective-input').prop('disabled', readOnly || value);
+    stateMessage = message;
     renderNavigation();
   }
 
@@ -230,10 +282,10 @@ export async function loadObjective() {
       $action: tpl`<button type="button" class="primary rounded button" data-action="ok" data-autofocus>查看答题情况</button>`,
     });
     resultDialog.$dom.find('.dialog__content').attr({ role: 'dialog', 'aria-modal': 'true', 'aria-label': '客观题成绩' });
-    resultDialog.open().then(() => { if (active()) $submit.trigger('focus'); });
+    resultDialog.open().then(() => { if (active()) document.querySelector<HTMLInputElement>('#problem-navigation .objective-submit')?.focus(); });
   }
 
-  async function waitForResult(rid: string) {
+  async function waitForResult(rid: string, silent = false) {
     const url = UiContext.objectiveSubmitFeedbackUrl.replace('{rid}', encodeURIComponent(rid));
     const deadline = Date.now() + 60000;
     while (active() && pendingRid === rid && Date.now() < deadline) {
@@ -248,23 +300,23 @@ export async function loadObjective() {
       feedback = objective;
       decorateAnswers();
       if (objective.state === 'complete') {
-        setBusy(false, '评测完成，正确与错误已标记；未答题保持原色。');
-        showResult(objective);
+        setBusy(false, silent ? '' : '评测完成，答题情况已更新。');
+        if (!silent) showResult(objective);
       } else if (objective.state === 'hidden') {
         setBusy(false, '递交成功，本场比赛暂不公开成绩。');
-        Notification.info('递交成功，本场比赛暂不公开成绩。');
+        if (!silent) Notification.info('递交成功，本场比赛暂不公开成绩。');
       } else {
         setBusy(false, '本次评测未完成，请稍后重新递交。');
-        Notification.error('本次评测未完成，请稍后重新递交。');
+        if (!silent) Notification.error('本次评测未完成，请稍后重新递交。');
       }
       return;
     }
-    if (active()) setBusy(false, '评测仍在进行，可点击“查看成绩”继续查询，无需重复递交。');
+    if (active()) setBusy(false, readOnly ? '评测仍在进行，请稍后刷新页面。' : '评测仍在进行，可点击“查看成绩”继续查询。');
   }
 
-  async function submitAnswers(event: JQuery.ClickEvent) {
+  async function submitAnswers(event: { preventDefault: () => void }) {
     event.preventDefault();
-    if (busy || !active()) return;
+    if (readOnly || loggedOut || busy || !active()) return;
     if (!UiContext.objectiveSubmitFeedbackUrl) {
       Notification.error('成绩服务暂不可用，请刷新页面后重试。');
       return;
@@ -278,7 +330,7 @@ export async function loadObjective() {
         const rid = response.rid?.$oid || response.rid;
         if (typeof rid !== 'string' || !/^[a-f0-9]{24}$/i.test(rid)) throw new Error('未收到递交记录，请稍后重试。');
         pendingRid = rid;
-        feedback = undefined;
+        feedback = { rid, state: 'pending' };
         decorateAnswers();
         renderNavigation();
       }
@@ -295,26 +347,22 @@ export async function loadObjective() {
   if (cnt) {
     await loadAns();
     if (!active()) return;
-    const loggedOut = !UserContext._id;
-    $submit = $<HTMLInputElement>('<input type="submit" class="button rounded primary objective-submit" />')
-      .val(i18n(loggedOut ? 'Login to Submit' : 'Submit')).prop('disabled', loggedOut).toggleClass('disabled', loggedOut);
-    $state = $('<span class="objective-submit-state" role="status" aria-live="polite" />');
-    $statement.append($('<div class="objective-submit-actions" />').append($submit, $state));
-    $statement.find('.objective-input[type!=checkbox]').on('input.objective', (e: JQuery.TriggeredEvent<HTMLInputElement>) => {
-      setAnswer(e.target.name, e.target.value);
-      saveAns();
-    });
-    $statement.find('input.objective-input[type=checkbox]').on('input.objective', (e: JQuery.TriggeredEvent<HTMLInputElement>) => {
-      const currentValue = ans[e.target.name];
-      const current = Array.isArray(currentValue) ? currentValue : [];
-      if (e.target.checked) {
-        setAnswer(e.target.name, [...new Set([...current, e.target.value])].sort((a: string, b: string) => a.charCodeAt(0) - b.charCodeAt(0)));
-      } else {
-        setAnswer(e.target.name, current.filter((v) => v !== e.target.value));
-      }
-      saveAns();
-    });
-    $submit.on('click.objective', submitAnswers);
+    if (!readOnly) {
+      $statement.find('.objective-input[type!=checkbox]').on('input.objective', (e: JQuery.TriggeredEvent<HTMLInputElement>) => {
+        setAnswer(e.target.name, e.target.value);
+        saveAns();
+      });
+      $statement.find('input.objective-input[type=checkbox]').on('input.objective', (e: JQuery.TriggeredEvent<HTMLInputElement>) => {
+        const currentValue = ans[e.target.name];
+        const current = Array.isArray(currentValue) ? currentValue : [];
+        if (e.target.checked) {
+          setAnswer(e.target.name, [...new Set([...current, e.target.value])].sort((a: string, b: string) => a.charCodeAt(0) - b.charCodeAt(0)));
+        } else {
+          setAnswer(e.target.name, current.filter((v) => v !== e.target.value));
+        }
+        saveAns();
+      });
+    }
   }
   if (cnt) {
     $('#problem-navigation').remove();
@@ -323,6 +371,12 @@ export async function loadObjective() {
     $('.section--problem-sidebar ol.menu').prepend(ele);
     navigationRoot = createRoot(ele);
     renderNavigation();
+    if (pendingRid && UiContext.objectiveSubmitFeedbackUrl) {
+      setBusy(true, '正在恢复评测结果…');
+      waitForResult(pendingRid, true).catch(() => {
+        if (active()) setBusy(false, readOnly ? '暂未获取到成绩，请稍后刷新页面。' : '暂未获取到成绩，点击“查看成绩”重试。');
+      });
+    }
   }
   $('.non-scratchpad--hide').hide();
   $('.scratchpad--hide').hide();

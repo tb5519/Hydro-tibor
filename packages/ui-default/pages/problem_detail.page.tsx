@@ -623,16 +623,18 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
 
     // @ts-ignore
     window.store = store;
-    const sock = new WebSocket(UiContext.ws_prefix + UiContext.pretestConnUrl);
-    sock.onmessage = (message, data) => {
-      const msg = JSON.parse(data || message.data);
-      store.dispatch({
-        type: 'SCRATCHPAD_RECORDS_PUSH',
-        payload: msg,
-      });
-      maybeRevealMistakePrompt(store, msg.rdoc);
-    };
-    watchFormalSubmitRecords(store, WebSocket);
+    if (!UiContext.homeworkReview) {
+      const sock = new WebSocket(UiContext.ws_prefix + UiContext.pretestConnUrl);
+      sock.onmessage = (message, data) => {
+        const msg = JSON.parse(data || message.data);
+        store.dispatch({
+          type: 'SCRATCHPAD_RECORDS_PUSH',
+          payload: msg,
+        });
+        maybeRevealMistakePrompt(store, msg.rdoc);
+      };
+      watchFormalSubmitRecords(store, WebSocket);
+    }
 
     renderReact = () => {
       store.dispatch({ type: 'SCRATCHPAD_UI_OPEN' });
@@ -714,7 +716,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   if (UiContext.pdoc.config?.type === 'objective') {
     loadObjective();
     $(document).on('vjContentNew', loadObjective);
-  } else if (new URL(window.location.href).searchParams.get('scratchpad') === '1') {
+  } else if (UiContext.homeworkReview || new URL(window.location.href).searchParams.get('scratchpad') === '1') {
     enterScratchpadMode();
   }
 });

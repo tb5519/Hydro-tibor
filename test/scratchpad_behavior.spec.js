@@ -17,6 +17,7 @@ const compile = (entry) => esbuild.buildSync({
 const sources = {
     ui: compile('components/scratchpad/reducers/ui.ts'),
     records: compile('components/scratchpad/reducers/records.ts'),
+    editor: compile('components/scratchpad/reducers/editor.ts'),
     component: compile('components/scratchpad/ScratchpadRecordsContainer.jsx'),
     status: compile('../common/status.ts'),
     constants: compile('constant/record.js'),
@@ -28,6 +29,8 @@ function load(source, context = {}, storage = new Map()) {
         vm.runInNewContext(code, {
             module: mod, exports: mod.exports,
             UiContext: { pdoc: { config: { type: 'default' } }, canViewRecord: true, ...context },
+            UserContext: { _id: 2 },
+            window: { LANGS: {} },
             localStorage: {
                 getItem: (key) => storage.get(key) || null,
                 setItem: (key, value) => storage.set(key, value),
@@ -105,6 +108,42 @@ describe('scratchpad opening and formal submission behavior', () => {
             state = reducer(state, { type: 'SCRATCHPAD_POST_PRETEST_PENDING' });
             assert.equal(state.records.scrollRevision, 1);
         }
+    });
+});
+
+describe('homework submission review isolation', () => {
+    it('loads the reviewed student code and ignores teacher drafts and edits', () => {
+        const storage = new Map([['2/system/3@homework', 'teacher draft']]);
+        const reducer = load(sources.editor, {
+            pdoc: { domainId: 'system', docId: 3 }, tdoc: { _id: 'homework' }, codeLang: 'cpp',
+            homeworkReview: { uid: 23, code: 'print("student")', lang: 'python' },
+        }, storage);
+        const state = reducer();
+        assert.equal(state.code, 'print("student")');
+        assert.equal(state.lang, 'python');
+        assert.strictEqual(reducer(state, { type: 'SCRATCHPAD_EDITOR_UPDATE_CODE', payload: 'overwrite' }), state);
+        assert.strictEqual(reducer(state, { type: 'SCRATCHPAD_EDITOR_SET_LANG', payload: 'cpp' }), state);
+        assert.equal(storage.size, 1);
+        assert.equal(storage.get('2/system/3@homework'), 'teacher draft');
+        const empty = load(sources.editor, { homeworkReview: { uid: 24 }, codeTemplate: 'teacher template' }, storage);
+        assert.equal(empty().code, '');
+    });
+
+    it('shows only the authorized record and never opens a self-test panel', () => {
+        const reviewedRecord = record(secondId, { uid: 23, score: 75 });
+        const context = { homeworkReview: { uid: 23, record: reviewedRecord } };
+        const ui = load(sources.ui, context);
+        assert.equal(ui().pretest.visible, false);
+        assert.equal(ui().records.visible, true);
+        assert.equal(ui(ui(), { type: 'SCRATCHPAD_UI_OPEN' }).pretest.visible, false);
+        const reducer = load(sources.records, context);
+        const state = reducer();
+        assert.equal(state.rows.join(), secondId);
+        assert.equal(state.items[secondId].uid, 23);
+        assert.strictEqual(reducer(state, {
+            type: 'SCRATCHPAD_RECORDS_LOAD_SUBMISSIONS_FULFILLED', payload: { rdocs: [record(thirdId)] },
+        }), state);
+        assert.strictEqual(reducer(state, { type: 'SCRATCHPAD_RECORDS_PUSH', payload: { rdoc: record(firstId) } }), state);
     });
 });
 

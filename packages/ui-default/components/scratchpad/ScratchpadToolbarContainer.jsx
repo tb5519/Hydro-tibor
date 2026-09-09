@@ -67,6 +67,7 @@ const mapDispatchToProps = (dispatch) => ({
     });
   },
   postPretest(props) {
+    if (UiContext.homeworkReview) return;
     const req = request.post(UiContext.postSubmitUrl, {
       lang: props.editorLang,
       code: props.editorCode,
@@ -80,6 +81,7 @@ const mapDispatchToProps = (dispatch) => ({
     });
   },
   postSubmit(props) {
+    if (UiContext.homeworkReview) return;
     const req = request.post(UiContext.postSubmitUrl, {
       lang: props.editorLang,
       code: props.editorCode,
@@ -108,6 +110,7 @@ const mapDispatchToProps = (dispatch) => ({
     });
   },
   loadSubmissions() {
+    if (UiContext.homeworkReview) return;
     dispatch({
       type: 'SCRATCHPAD_RECORDS_LOAD_SUBMISSIONS',
       payload: request.get(UiContext.getSubmissionsUrl),
@@ -130,7 +133,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
 
   constructor(props) {
     super(props);
-    if (!availableLangs[this.props.editorLang]) {
+    if (!UiContext.homeworkReview && !availableLangs[this.props.editorLang]) {
       // preference not allowed
       const key = this.props.editorLang ? keys.filter((i) => availableLangs[i].pretest)
         .find((i) => availableLangs[i].pretest.split('.')[0] === this.props.editorLang.split('.')[0]) : '';
@@ -155,6 +158,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
   }
 
   render() {
+    const review = UiContext.homeworkReview;
     let canUsePretest = UiContext.pdoc.config?.type === 'default';
     const langInfo = availableLangs[this.props.editorLang];
     if (UiContext.pdoc.config?.type === 'remote_judge' && langInfo) {
@@ -162,6 +166,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
       if (langInfo.validAs && !langInfo.hidden) canUsePretest = true;
     }
     if (langInfo?.pretest === false) canUsePretest = false;
+    if (review) canUsePretest = false;
     return (
       <Toolbar role="toolbar" aria-label="代码编辑工具栏">
         <div className="scratchpad__toolbar__actions">
@@ -169,10 +174,13 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
             <select
               className="select"
               aria-label={i18n('Language')}
-              disabled={this.props.isPosting}
+              disabled={this.props.isPosting || !!review}
               value={this.props.editorLang}
               onChange={(ev) => this.props.setEditorLanguage(ev.target.value)}
             >
+              {review && !availableLangs[this.props.editorLang] && (
+                <option value={this.props.editorLang}>{window.LANGS?.[this.props.editorLang]?.display || this.props.editorLang || '暂无提交'}</option>
+              )}
               {_.map(availableLangs, (val, key) => (
                 <option value={key} key={key}>{val.display}</option>
               ))}
@@ -193,7 +201,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
                 : <kbd>F9</kbd>}
             </ToolbarButton>
           )}
-          {!UiContext.ideMode && (
+          {!UiContext.ideMode && !review && (
             <ToolbarButton
               disabled={this.props.isPosting || !!this.props.submitWaitSec}
               className="scratchpad__toolbar__submit"
@@ -208,6 +216,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
                 : <kbd>F10</kbd>}
             </ToolbarButton>
           )}
+          {review && <span className="scratchpad__review-label">{review.name} 的作答<span>只读</span></span>}
         </div>
         <div className="scratchpad__toolbar__views">
           <ScratchpadThemePicker />

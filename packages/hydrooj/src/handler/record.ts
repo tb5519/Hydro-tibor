@@ -9,7 +9,8 @@ import {
 } from '../error';
 import { RecordDoc, Tdoc } from '../interface';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
-import { buildObjectiveFeedback, parseObjectiveConfig } from '../lib/objective_feedback';
+import { authorizeHomeworkReview, isHomeworkReviewRecord } from '../lib/homework_review';
+import { buildObjectiveInitialSubmission, loadObjectiveSubmissionConfig, loadOwnObjectiveRecordSubmission } from '../lib/objective_submission';
 import { canManageRecordList } from '../lib/record_list_scope';
 import {
     appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
@@ -687,44 +688,26 @@ export class ContestSubmitFeedbackHandler extends Handler {
     }
 }
 
-/** A narrow, owner-only result endpoint for the objective answer sheet. */
+/** Own results, or an explicitly authorized homework review of one student. */
 export class ObjectiveSubmitFeedbackHandler extends Handler {
     @param('rid', Types.ObjectId)
-    async get(domainId: string, rid: ObjectId) {
+    @param('tid', Types.ObjectId, true)
+    @param('reviewUid', Types.Int, true)
+    async get(domainId: string, rid: ObjectId, tid?: ObjectId, reviewUid?: number) {
         this.checkPriv(PRIV.PRIV_USER_PROFILE);
         const rdoc = await record.get(domainId, rid);
-        if (!rdoc || rdoc.uid !== this.user._id
-            || [record.RECORD_GENERATE, record.RECORD_PRETEST].some((id) => id.equals(rdoc.contest))) {
-            throw new RecordNotFoundError(domainId, rid);
+        if (!rdoc) throw new RecordNotFoundError(domainId, rid);
+        if (reviewUid !== undefined) {
+            const homework = tid ? await contest.get(domainId, tid) : null;
+            if (!homework) throw new RecordNotFoundError(domainId, rid);
+            await authorizeHomeworkReview(this.user, this.domain, homework, rdoc.pid, reviewUid);
+            if (!isHomeworkReviewRecord(rdoc, domainId, rdoc.pid, reviewUid, tid)) throw new RecordNotFoundError(domainId, rid);
+            const { config } = await loadObjectiveSubmissionConfig(domainId, rdoc.pid);
+            this.response.body = { objective: buildObjectiveInitialSubmission(rdoc, config).feedback };
+            return;
         }
-        const pdoc = await problem.get(domainId, rdoc.pid, problem.PROJECTION_PUBLIC, true);
-        if (!pdoc) throw new ProblemNotFoundError(domainId, rdoc.pid);
-        let visibleRecord = rdoc;
-        if (rdoc.contest) {
-            const tdoc = await contest.get(domainId, rdoc.contest);
-            if (!tdoc) throw new RecordNotFoundError(domainId, rid);
-            const tsdoc = await contest.getStatus(domainId, tdoc.docId, this.user._id);
-            if (!tsdoc?.attend && !problem.canViewBy(pdoc, this.user)) throw new PermissionError(PERM.PERM_VIEW_PROBLEM_HIDDEN);
-            const canView = this.user.own(tdoc)
-                || contest.canShowRecord.call(this, tdoc)
-                || contest.canShowSelfRecord.call(this, tdoc);
-            const projected = this.user.own(tdoc) || this.user.hasPerm(PERM.PERM_EDIT_CONTEST)
-                ? rdoc : contest.applyProjection(tdoc, { ...rdoc }, this.user);
-            if (!canView || projected.score === undefined || projected.status === undefined
-                || (projected.testCases?.length || 0) !== (rdoc.testCases?.length || 0)) {
-                this.response.body = { objective: { rid: rid.toString(), state: 'hidden' } };
-                return;
-            }
-            // Keep the student's answers server-side to identify blanks, but derive
-            // every returned mark from the permitted projection, including plugin rules.
-            visibleRecord = { ...projected, code: rdoc.code };
-        } else if (!problem.canViewBy(pdoc, this.user)) throw new PermissionError(PERM.PERM_VIEW_PROBLEM_HIDDEN);
-        const source = pdoc.reference
-            ? await problem.get(pdoc.reference.domainId, pdoc.reference.pid, problem.PROJECTION_PUBLIC, true)
-            : pdoc;
-        const config = parseObjectiveConfig(source?.config);
-        if (!config) throw new ProblemConfigError();
-        this.response.body = { objective: buildObjectiveFeedback(visibleRecord, config) };
+        const submission = await loadOwnObjectiveRecordSubmission(this, domainId, rdoc);
+        this.response.body = { objective: submission.feedback };
     }
 }
 

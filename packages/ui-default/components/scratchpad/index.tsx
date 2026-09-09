@@ -120,9 +120,12 @@ export default function ScratchpadContainer() {
         </div>
       </Allotment.Pane>
       <div className="scratchpad__coding-area" data-scratchpad-theme={theme.id} style={scratchpadThemeVariables(theme) as React.CSSProperties}>
-        <Allotment vertical defaultSizes={[450, 280, 270]} onChange={handleChangeSize}>
+        <Allotment vertical defaultSizes={UiContext.homeworkReview ? [730, 0, 270] : [450, 280, 270]} onChange={handleChangeSize}>
           <div key="editor" className="scratchpad__workspace flex-col splitpane-fill">
             <ScratchpadToolbar />
+            {UiContext.homeworkReview && !UiContext.homeworkReview.rid && (
+              <p className="scratchpad__review-empty">该学员尚未提交这道题。</p>
+            )}
             <ScratchpadEditor />
           </div>
           <Allotment.Pane visible={ui.pretest.visible}>

@@ -15,7 +15,9 @@ interface ScratchpadOptions {
 }
 
 function getModelUri(monacoInstance: any, language?: string) {
-  return monacoInstance.Uri.parse(`hydro:${UiContext.pdoc.pid || UiContext.pdoc.docId}.${language}`);
+  const review = UiContext.homeworkReview;
+  const suffix = review ? `/review/${review.uid}/${review.rid || 'empty'}` : '';
+  return monacoInstance.Uri.parse(`hydro:${UiContext.pdoc.pid || UiContext.pdoc.docId}${suffix}.${language}`);
 }
 
 export default connect((state: any) => ({
@@ -58,6 +60,7 @@ export default connect((state: any) => ({
         fontFamily: UserContext.codeFontFamily,
         ...customOptions,
         theme: `hydro-scratchpad-${currentScratchpadTheme().id}`,
+        readOnly: !!UiContext.homeworkReview,
         lineNumbers: 'on',
         glyphMargin: true,
         lightbulb: { enabled: monaco.editor.ShowLightbulbIconMode.On },
@@ -70,9 +73,10 @@ export default connect((state: any) => ({
       // The shared action registration restores editor.config asynchronously.
       // Keep the coding workspace on its own theme after that completes.
       monaco.editor.setTheme(`hydro-scratchpad-${currentScratchpadTheme().id}`);
+      if (UiContext.homeworkReview) this.editor.updateOptions({ readOnly: true });
       this.disposable.push(
         this.editor.onDidChangeModelContent((event) => {
-          if (!this.__prevent_trigger_change_event) {
+          if (!UiContext.homeworkReview && !this.__prevent_trigger_change_event) {
             this.props.handleUpdateCode?.(this.editor.getValue({ lineEnding: '\n', preserveBOM: false }), event);
           }
         }),
@@ -114,9 +118,11 @@ export default connect((state: any) => ({
       editor.setModel(this.model);
     }
     if (editor && this.props.settings) {
-      editor.updateOptions({ ...this.props.settings, theme: `hydro-scratchpad-${currentScratchpadTheme().id}` });
+      editor.updateOptions({
+        ...this.props.settings, theme: `hydro-scratchpad-${currentScratchpadTheme().id}`, readOnly: !!UiContext.homeworkReview,
+      });
     }
-    if (editor && this.props.pendingCommand) {
+    if (editor && !UiContext.homeworkReview && this.props.pendingCommand) {
       editor.focus();
       editor.getAction(this.props.pendingCommand)?.run();
       this.props.commandDone();

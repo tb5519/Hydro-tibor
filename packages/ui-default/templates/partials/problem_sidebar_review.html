@@ -1,0 +1,23 @@
+{% set review = UiContext.homeworkReview %}
+<div class="section side section--problem-sidebar">
+  <div class="problem-review-heading">
+    <span class="problem-review-heading__eyebrow">作业作答</span>
+    <strong>{{ review.name }}</strong>
+    <span class="problem-review-heading__hint">{{ '已提交 · 只读查看' if review.rid else '该学员尚未提交' }}</span>
+  </div>
+  <div>
+    <ol class="menu">
+      {% if pdoc.config.type != 'objective' %}
+      <li class="menu__item scratchpad--hide nojs--hide"><a class="menu__link highlight" name="problem-sidebar__open-scratchpad" href="javascript:;" data-global-hotkey="alt+e">
+        <span class="icon icon-enlarge"></span> 查看学员代码
+      </a></li>
+      <li class="menu__item non-scratchpad--hide"><a class="menu__link" name="problem-sidebar__quit-scratchpad" href="javascript:;" data-global-hotkey="alt+q">
+        <span class="icon icon-enlarge"></span> 收起代码区
+      </a></li>
+      {% endif %}
+      <li class="menu__item"><a class="menu__link" href="{{ review.returnUrl }}">
+        <span class="icon icon-homework"></span> 返回该学员的作业
+      </a></li>
+    </ol>
+  </div>
+</div>

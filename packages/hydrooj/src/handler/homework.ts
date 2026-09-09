@@ -5,6 +5,7 @@ import {
     ContestNotFoundError, FileLimitExceededError, FileUploadError, HomeworkNotLiveError, NotAssignedError, ValidationError,
 } from '../error';
 import { Tdoc } from '../interface';
+import { canManageHomeworkReview } from '../lib/homework_review';
 import { PERM, STATUS } from '../model/builtin';
 import * as contest from '../model/contest';
 import * as discussion from '../model/discussion';
@@ -360,7 +361,8 @@ class HomeworkDetailHandler extends Handler {
     async prepare(domainId: string, tid: ObjectId) {
         this.tdoc = await contest.get(domainId, tid);
         if (this.tdoc.rule !== 'homework') throw new ContestNotFoundError(domainId, tid);
-        if (!this.user.own(this.tdoc) && !this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_HOMEWORK)) {
+        if (!this.user.own(this.tdoc) && !this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_HOMEWORK)
+            && !canManageHomeworkReview(this.user, this.tdoc)) {
             const assignedUsers = this.tdoc.assignedUsers || [];
             const directAssigned = assignedUsers.includes(this.user._id);
             if (!directAssigned) {
@@ -374,7 +376,8 @@ class HomeworkDetailHandler extends Handler {
     async get(domainId: string, tid: ObjectId, page = 1) {
         if (this.tdoc.rule !== 'homework') throw new ContestNotFoundError(domainId, tid);
         const canViewAssignedProgress = this.user.own(this.tdoc)
-            || this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_HOMEWORK);
+            || this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_HOMEWORK)
+            || canManageHomeworkReview(this.user, this.tdoc);
         const homeworkDirectProblemLinks = this.user.own(this.tdoc)
             || this.user.hasPerm(PERM.PERM_EDIT_HOMEWORK)
             || this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_HOMEWORK);
@@ -406,6 +409,7 @@ class HomeworkDetailHandler extends Handler {
             homeworkProgress: getHomeworkProgress(this.tdoc, tsdoc),
             homeworkProgressUserName: progressUser?.displayName || progressUser?.uname || '',
             homeworkDirectProblemLinks,
+            homeworkReviewUid: targetUid !== this.user._id && canManageHomeworkReview(this.user, this.tdoc) ? targetUid : null,
             udict,
             ddocs,
             page,

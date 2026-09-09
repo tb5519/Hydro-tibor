@@ -26,7 +26,12 @@ import {
 } from '../interface';
 import avatar from '../lib/avatar';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
+import {
+    authorizeHomeworkReview, loadHomeworkReviewRecord, publicHomeworkReviewRecord, rejectHomeworkReviewMutation,
+} from '../lib/homework_review';
 import { getMistakePromptState } from '../lib/mistake_prompt';
+import { parseObjectiveConfig } from '../lib/objective_feedback';
+import { buildObjectiveInitialSubmission, loadOwnObjectiveSubmission } from '../lib/objective_submission';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
 import {
     appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
@@ -680,13 +685,20 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
 
     @route('pid', Types.ProblemId, true)
     @query('tid', Types.ObjectId, true)
-    async _prepare(domainId: string, pid: number | string, tid?: ObjectId) {
+    @query('reviewUid', Types.PositiveInt, true)
+    async _prepare(domainId: string, pid: number | string, tid?: ObjectId, reviewUid?: number) {
+        if (!['GET', 'HEAD'].includes((this.request.method || 'GET').toUpperCase())) rejectHomeworkReviewMutation(this.request);
         this.pdoc = await problem.get(domainId, pid);
         if (!this.pdoc) throw new ProblemNotFoundError(domainId, pid);
+        const reviewStudent = reviewUid === undefined ? null
+            : await authorizeHomeworkReview(this.user, this.domain, this.tdoc, this.pdoc.docId, reviewUid);
+        if (reviewStudent) this.tsdoc = await contest.getStatus(domainId, tid, reviewUid);
         if (tid) {
             if (!this.tdoc?.pids?.includes(this.pdoc.docId)) throw new ContestNotFoundError(domainId, tid);
-            if (contest.isNotStarted(this.tdoc)) throw new ContestNotLiveError(tid);
-            if (!contest.isDone(this.tdoc, this.tsdoc) && (!this.tsdoc?.attend || !this.tsdoc.startAt)) throw new ContestNotAttendedError(tid);
+            if (!reviewStudent && contest.isNotStarted(this.tdoc)) throw new ContestNotLiveError(tid);
+            if (!reviewStudent && !contest.isDone(this.tdoc, this.tsdoc) && (!this.tsdoc?.attend || !this.tsdoc.startAt)) {
+                throw new ContestNotAttendedError(tid);
+            }
             // Delete problem-related info in contest mode
             this.pdoc.tag.length = 0;
             delete this.pdoc.nAccept;
@@ -725,7 +737,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
         }
         await this.ctx.parallel('problem/get', this.pdoc, this);
         [this.psdoc, this.udoc] = await Promise.all([
-            problem.getStatus(domainId, this.pdoc.docId, this.user._id),
+            problem.getStatus(domainId, this.pdoc.docId, reviewStudent?._id || this.user._id),
             user.getById(domainId, this.pdoc.owner),
         ]);
         const [scnt, dcnt] = await Promise.all([
@@ -767,11 +779,30 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             discussionCount: dcnt,
             tdoc: this.tdoc,
             owner_udoc: (tid && this.tdoc.owner !== this.pdoc.owner) ? await user.getById(domainId, this.tdoc.owner) : null,
-            mode: !tid ? 'normal'
+            mode: reviewStudent ? 'review' : !tid ? 'normal'
                 : !this.tsdoc?.attend ? 'view'
                     : !contest.isDone(this.tdoc) ? 'contest'
                         : problem.canViewBy(this.pdoc, this.user) ? 'correction' : 'none',
         };
+        if (reviewStudent) {
+            const rdoc = await loadHomeworkReviewRecord(domainId, this.pdoc.docId, reviewUid, this.tdoc, this.tsdoc);
+            this.UiContext.homeworkReview = {
+                uid: reviewUid,
+                name: reviewStudent.displayName || reviewStudent.uname,
+                rid: rdoc?._id.toString() || '',
+                code: rdoc?.code || '',
+                lang: rdoc?.lang || '',
+                record: publicHomeworkReviewRecord(rdoc),
+                returnUrl: this.url('homework_detail', { tid, query: { uid: reviewUid } }),
+            };
+            this.response.body.homeworkReview = this.UiContext.homeworkReview;
+            if (typeof this.pdoc.config === 'object' && this.pdoc.config?.type === 'objective' && rdoc) {
+                const source = this.pdoc.reference || { domainId, pid: this.pdoc.docId };
+                const rawProblem = await problem.get(source.domainId, source.pid, problem.PROJECTION_PUBLIC, true);
+                const rawConfig = parseObjectiveConfig(rawProblem?.config);
+                if (rawConfig) this.UiContext.objectiveInitialSubmission = buildObjectiveInitialSubmission(rdoc, rawConfig);
+            }
+        }
         if (this.tdoc && this.tsdoc) {
             const fields = ['attend', 'startAt'];
             if (this.tdoc.duration) fields.push('endAt');
@@ -828,6 +859,11 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
                 this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_CONTEST) || !tdoc.assign?.length
                 || new Set(tdoc.assign).intersection(new Set(this.user.group)).size,
             ));
+        }
+        if (!this.UiContext.homeworkReview && !args[2]
+            && typeof this.pdoc.config === 'object' && this.pdoc.config?.type === 'objective') {
+            const initialSubmission = await loadOwnObjectiveSubmission(this, this.args.domainId, this.pdoc, args[1]);
+            if (initialSubmission) this.UiContext.objectiveInitialSubmission = initialSubmission;
         }
     }
 
@@ -922,6 +958,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
 export class ProblemSubmitHandler extends ProblemDetailHandler {
     @param('tid', Types.ObjectId, true)
     async prepare(domainId: string, tid?: ObjectId) {
+        rejectHomeworkReviewMutation(this.request);
         if (!this.tdoc?.allDomains) this.checkPerm(PERM.PERM_SUBMIT_PROBLEM);
         else this.checkPriv(PRIV.PRIV_USER_PROFILE);
         if (tid && !contest.isOngoing(this.tdoc, this.tsdoc)) throw new ContestNotLiveError(this.tdoc.docId);
@@ -953,6 +990,7 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
     async post(
         domainId: string, lang: string, code: string, pretest = false, input: string[] = [], source = '', tid?: ObjectId,
     ) {
+        rejectHomeworkReviewMutation(this.request);
         const config = this.pdoc.config;
         const submittedLang = lang;
         if (typeof config === 'string' || config === null) throw new ProblemConfigError();

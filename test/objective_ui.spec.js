@@ -60,7 +60,7 @@ async function harness(options = {}) {
     global.document = dom.window.document;
     global.IS_REACT_ACT_ENVIRONMENT = true;
     const $ = jqueryFactory(dom.window);
-    const calls = { post: [], get: [], save: [], dialogs: [], errors: [], info: [] };
+    const calls = { post: [], get: [], load: [], save: [], dialogs: [], errors: [], info: [] };
     const roots = [];
     class InfoDialog {
         constructor(config) {
@@ -130,7 +130,7 @@ async function harness(options = {}) {
         },
         'vj/utils/db': {
             openDB: options.storageUnavailable ? Promise.reject(new Error('Storage unavailable')) : Promise.resolve({
-                get: async () => options.saved,
+                get: async (...args) => { calls.load.push(args); return options.saved; },
                 put: async (...args) => { calls.save.push(args); },
             }),
         },
@@ -193,6 +193,9 @@ describe('objective answer submission UI', { concurrency: false }, () => {
         assert.match(h.doc.querySelector('.objective-result__total').textContent, /总分 60 分/);
         assert.ok(h.doc.querySelector('[role="dialog"][aria-modal="true"][aria-label="客观题成绩"]'));
         assert.equal(h.doc.querySelector('.objective-submit').disabled, false);
+        assert.ok(h.doc.querySelector('.objective-nav-card .objective-submit'));
+        assert.equal(h.doc.querySelector('.problem-content .objective-submit'), null);
+        assert.equal(h.doc.querySelector('.objective-nav-result-score strong').textContent, '10');
     });
 
     it('locks answers while submitting and polling, preventing duplicate requests', async (t) => {
@@ -345,5 +348,113 @@ describe('objective answer submission UI', { concurrency: false }, () => {
         await h.submit();
         assert.equal(h.calls.post.length, 1);
         assert.deepEqual(yaml.load(h.calls.post[0][1].code), { 1: 'B', 4: '42', 5: 'draft', 6: ['A'] });
+    });
+
+    it('restores submitted answers, correct and wrong colors, and the sidebar score without reopening the result dialog', async (t) => {
+        const h = await harness({ context: { objectiveInitialSubmission: {
+            answers: { 1: 'A', 2: 'B', 4: '42', 6: ['C', 'A'] },
+            feedback: complete([question(1, 'correct'), question(2, 'incorrect'), question(4, 'correct'), question(6, 'correct')]).objective,
+        } } });
+        t.after(() => h.close());
+        assert.equal(h.doc.querySelector('[name="1"][value="A"]').checked, true);
+        assert.equal(h.doc.querySelector('[name="4"]').value, '42');
+        assert.equal(h.doc.querySelectorAll('[name="6"]:checked').length, 2);
+        assert.ok(h.nav(1).classList.contains('is-correct'));
+        assert.ok(h.nav(2).classList.contains('is-incorrect'));
+        assert.ok(h.nav(6).classList.contains('is-correct'));
+        assert.equal(h.doc.querySelector('.objective-nav-result-score strong').textContent, '30');
+        assert.equal(h.calls.dialogs.length, 0);
+        assert.equal(h.calls.get.length, 0);
+        assert.equal(h.calls.post.length, 0);
+    });
+
+    it('prefers a changed local draft and grades only answers still matching the submitted record', async (t) => {
+        const h = await harness({
+            saved: { value: JSON.stringify({ 1: 'B', 2: 'B', 6: ['C', 'A'] }) },
+            context: { objectiveInitialSubmission: {
+                answers: { 1: 'A', 2: 'B', 6: ['A', 'C'] },
+                feedback: complete([question(1, 'correct'), question(2, 'incorrect'), question(6, 'correct')]).objective,
+            } },
+        });
+        t.after(() => h.close());
+        assert.equal(h.doc.querySelector('[name="1"][value="B"]').checked, true);
+        assert.equal(h.nav(1).className, 'objective-nav-item is-answered');
+        assert.ok(h.nav(2).classList.contains('is-incorrect'));
+        assert.ok(h.nav(6).classList.contains('is-correct'));
+        assert.equal(h.doc.querySelector('.objective-nav-result-score strong').textContent, '20');
+        assert.match(h.doc.querySelector('.objective-draft-note').textContent, /答案已修改/);
+    });
+
+    it('keeps cleared answers empty after reloading even though the last graded submission exists', async () => {
+        const context = { objectiveInitialSubmission: { answers: { 1: 'A' }, feedback: complete().objective } };
+        const first = await harness({ context });
+        let saved;
+        try {
+            await first.event('.objective-clear');
+            saved = first.calls.save.at(-1)[1];
+            assert.deepEqual(JSON.parse(saved.value), {});
+            assert.equal(first.doc.querySelectorAll('.objective-input:checked').length, 0);
+        } finally { await first.close(); }
+        const second = await harness({ context, saved });
+        try {
+            assert.equal(second.doc.querySelectorAll('.objective-input:checked').length, 0);
+            assert.equal(second.doc.querySelectorAll('.is-correct, .is-incorrect').length, 0);
+            assert.equal(second.doc.querySelector('.objective-nav-result-score strong').textContent, '10');
+        } finally { await second.close(); }
+    });
+
+    it('silently resumes an initial pending submission and updates the sidebar when grading finishes', async (t) => {
+        const result = deferred();
+        const h = await harness({
+            get: () => result.promise,
+            context: { objectiveInitialSubmission: { answers: { 1: 'A' }, feedback: { rid, state: 'pending' } } },
+        });
+        t.after(() => h.close());
+        assert.equal(h.calls.get.length, 1);
+        assert.equal(h.doc.querySelector('.objective-submit').disabled, true);
+        await React.act(async () => { result.resolve(complete()); });
+        await h.flush();
+        assert.ok(h.nav(1).classList.contains('is-correct'));
+        assert.equal(h.doc.querySelector('.objective-nav-result-score strong').textContent, '10');
+        assert.equal(h.calls.dialogs.length, 0);
+        assert.equal(h.calls.post.length, 0);
+        assert.equal(h.calls.info.length, 0);
+    });
+
+    it('never restores private scores or colors for a hidden initial result', async (t) => {
+        const h = await harness({ context: { objectiveInitialSubmission: {
+            answers: { 1: 'A' }, feedback: { rid, state: 'hidden' },
+        } } });
+        t.after(() => h.close());
+        assert.equal(h.nav(1).className, 'objective-nav-item is-answered');
+        assert.equal(h.doc.querySelector('.objective-nav-result-score strong').textContent, '—');
+        assert.equal(h.doc.querySelectorAll('.is-correct, .is-incorrect').length, 0);
+        assert.equal(h.calls.dialogs.length, 0);
+    });
+
+    it('shows a target learner’s submitted answers read-only and ignores the administrator’s local draft', async (t) => {
+        const h = await harness({
+            saved: { value: JSON.stringify({ 1: 'B', 4: 'teacher draft' }) },
+            context: {
+                homeworkReview: { uid: 22, name: '目标学员', rid },
+                objectiveInitialSubmission: {
+                    answers: { 1: 'A', 2: 'B', 4: 'student answer' },
+                    feedback: complete([question(1, 'correct'), question(2, 'incorrect')]).objective,
+                },
+            },
+        });
+        t.after(() => h.close());
+        assert.equal(h.doc.querySelector('[name="1"][value="A"]').checked, true);
+        assert.equal(h.doc.querySelector('[name="4"]').value, 'student answer');
+        assert.ok([...h.doc.querySelectorAll('.objective-input')].every((input) => input.disabled));
+        assert.equal(h.doc.querySelector('.objective-submit'), null);
+        assert.equal(h.doc.querySelector('.objective-clear'), null);
+        assert.ok(h.nav(1).classList.contains('is-correct'));
+        assert.ok(h.nav(2).classList.contains('is-incorrect'));
+        assert.equal(h.doc.querySelector('.objective-nav-result-score strong').textContent, '10');
+        assert.equal(h.calls.load.length, 0);
+        assert.equal(h.calls.save.length, 0);
+        assert.equal(h.calls.post.length, 0);
+        assert.equal(h.calls.dialogs.length, 0);
     });
 });

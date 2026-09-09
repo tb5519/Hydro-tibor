@@ -17,6 +17,7 @@ import {
 import {
     DomainDoc, FileInfo, ScoreboardConfig, Tdoc,
 } from '../interface';
+import { canManageHomeworkReview } from '../lib/homework_review';
 import { PERM, PRIV, STATUS } from '../model/builtin';
 import * as contest from '../model/contest';
 import * as discussion from '../model/discussion';
@@ -189,7 +190,9 @@ export class ContestDetailBaseHandler extends Handler {
                 this.entryDomain = entryDomain;
             }
         }
-        if (this.tdoc.assign?.length && !this.user.own(this.tdoc) && !this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_CONTEST)) {
+        const managedHomeworkReview = this.request.query?.reviewUid !== undefined && canManageHomeworkReview(this.user, this.tdoc);
+        if (this.tdoc.assign?.length && !this.user.own(this.tdoc) && !this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_CONTEST)
+            && !managedHomeworkReview) {
             const groups = await user.listGroup(domainId, this.user._id);
             if (!new Set(this.tdoc.assign).intersection(new Set(groups.map((i) => i.name))).size) {
                 throw new NotAssignedError('contest', tid);

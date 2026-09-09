@@ -69,6 +69,7 @@
               {% set detail = psdict[pid] %}
               {% set problemUrl = url('problem_detail', pid=pdict[pid].pid|default(pdict[pid].docId), query={tid:tdoc.docId}) %}
               {% if homeworkDirectProblemLinks %}{% set problemUrl = url('problem_detail', pid=pdict[pid].pid|default(pdict[pid].docId)) %}{% endif %}
+              {% if homeworkReviewUid %}{% set problemUrl = url('problem_detail', pid=pdict[pid].pid|default(pdict[pid].docId), query={tid:tdoc.docId, reviewUid:homeworkReviewUid}) %}{% endif %}
               <li>
                 <a class="homework-problem-list__item" href="{{ problemUrl }}" data-no-instant data-emoji-enabled>
                   <span class="homework-problem-list__state{% if detail and detail.status == STATUS.STATUS_ACCEPTED %} is-accepted{% elif detail and detail.score > 0 %} is-partial{% endif %}"><span class="icon {% if detail and detail.status == STATUS.STATUS_ACCEPTED %}icon-check{% elif detail and detail.score > 0 %}icon-star{% else %}icon-circle{% endif %}"></span></span>
