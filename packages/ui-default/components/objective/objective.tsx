@@ -1,7 +1,7 @@
 /* eslint ts/no-use-before-define: ["error", { "functions": false }] */
 import $ from 'jquery';
 import yaml from 'js-yaml';
-import React from 'react';
+import React, { useLayoutEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { confirm, InfoDialog } from 'vj/components/dialog';
 import Notification from 'vj/components/notification';
@@ -197,13 +197,39 @@ export async function loadObjective() {
   }
 
   function ProblemNavigation() {
+    const cardRef = useRef<HTMLDivElement>(null);
+    useLayoutEffect(() => {
+      const card = cardRef.current;
+      let frame = 0;
+      const fitCard = () => {
+        const nav = document.querySelector('.nav');
+        const navPosition = nav && window.getComputedStyle(nav).position;
+        const navBottom = nav && (navPosition === 'fixed' || navPosition === 'sticky') ? nav.getBoundingClientRect().bottom : 0;
+        const top = Math.max(card.getBoundingClientRect().top, navBottom + 10);
+        // Account for the real card offset (including homework/review headings),
+        // rather than assuming it starts immediately below the site navigation.
+        card.style.setProperty('--objective-card-height', `${Math.max(0, window.innerHeight - top - 16)}px`);
+      };
+      const scheduleFit = () => {
+        window.cancelAnimationFrame(frame);
+        frame = window.requestAnimationFrame(fitCard);
+      };
+      fitCard();
+      window.addEventListener('resize', scheduleFit);
+      window.addEventListener('scroll', scheduleFit, { passive: true });
+      return () => {
+        window.cancelAnimationFrame(frame);
+        window.removeEventListener('resize', scheduleFit);
+        window.removeEventListener('scroll', scheduleFit);
+      };
+    }, []);
     const scored = feedback?.state === 'complete' && Number.isFinite(feedback.score);
     const modified = !!feedback && pids.some((id) => !sameObjectiveAnswer(ans[id], submittedAnswers[id]));
     const fallbackMessage = feedback?.state === 'hidden' ? '本场比赛暂不公开成绩。'
       : feedback?.state === 'pending' ? '评测仍在进行。'
         : feedback?.state === 'error' ? '本次评测未完成。' : readOnly && !feedback ? '该学员暂无递交记录。' : '';
     return <>
-      <div className="objective-nav-card">
+      <div className="objective-nav-card" ref={cardRef}>
         {replay && <div className="objective-replay-source">
           <span className="objective-replay-source__label">作答来源</span>
           <div className="objective-replay-source__record">
@@ -218,7 +244,7 @@ export async function loadObjective() {
           </div>
         </div>}
         <div className="objective-nav-title">答题卡{readOnly && <span className="objective-review-label">只读查看</span>}</div>
-        <div className="contest-problems objective-nav-grid">
+        <div className="contest-problems objective-nav-grid" role="navigation" aria-label="题号导航">
           {pids.map((id) => {
             const result = questionResult(id);
             const answered = hasObjectiveAnswer(ans[id]);
@@ -235,37 +261,39 @@ export async function loadObjective() {
             </a>;
           })}
         </div>
-        <div className="objective-nav-legend">
-          {feedback?.state === 'complete' ? <>
-            <span><i className="objective-nav-dot objective-nav-dot--correct" /> 正确</span>
-            <span><i className="objective-nav-dot objective-nav-dot--incorrect" /> 错误</span>
-          </> : <span><i className="objective-nav-dot objective-nav-dot--answered" /> 已答</span>}
-          <span><i className="objective-nav-dot" /> 未答</span>
-        </div>
-        <div className="objective-nav-result" aria-live="polite" aria-atomic="true">
-          <span className="objective-nav-result-label">{readOnly ? '本次得分' : replayResultActive ? '原记录得分' : '最近一次得分'}</span>
-          <div className="objective-nav-result-score">
-            <strong>{scored ? feedback.score : '—'}</strong>
-            {scored && Number.isFinite(feedback.totalScore) && <span>/ {feedback.totalScore} 分</span>}
-            {!feedback && !readOnly && <span>尚未提交</span>}
-            {feedback?.state === 'hidden' && <span>暂不公开</span>}
-            {feedback?.state === 'pending' && <span>评测中</span>}
+        <div className="objective-nav-footer">
+          <div className="objective-nav-legend">
+            {feedback?.state === 'complete' ? <>
+              <span><i className="objective-nav-dot objective-nav-dot--correct" /> 正确</span>
+              <span><i className="objective-nav-dot objective-nav-dot--incorrect" /> 错误</span>
+            </> : <span><i className="objective-nav-dot objective-nav-dot--answered" /> 已答</span>}
+            <span><i className="objective-nav-dot" /> 未答</span>
           </div>
-          {!readOnly && scored && modified && <small className="objective-draft-note">答案已修改，重新提交后更新成绩。</small>}
+          <div className="objective-nav-result" aria-live="polite" aria-atomic="true">
+            <span className="objective-nav-result-label">{readOnly ? '本次得分' : replayResultActive ? '原记录得分' : '最近一次得分'}</span>
+            <div className="objective-nav-result-score">
+              <strong>{scored ? feedback.score : '—'}</strong>
+              {scored && Number.isFinite(feedback.totalScore) && <span>/ {feedback.totalScore} 分</span>}
+              {!feedback && !readOnly && <span>尚未提交</span>}
+              {feedback?.state === 'hidden' && <span>暂不公开</span>}
+              {feedback?.state === 'pending' && <span>评测中</span>}
+            </div>
+            {!readOnly && scored && modified && <small className="objective-draft-note">答案已修改，重新提交后更新成绩。</small>}
+          </div>
+          <div className="objective-submit-state" role="status" aria-live="polite">{stateMessage || fallbackMessage}</div>
+          {!readOnly && <div className="objective-submit-actions">
+            <input
+              type="submit"
+              className={`button rounded primary objective-submit${busy || loggedOut ? ' disabled' : ''}`}
+              disabled={busy || loggedOut}
+              value={loggedOut ? i18n('Login to Submit') : busy ? '正在评测…' : pendingRid ? '查看成绩' : i18n('Submit')}
+              onClick={submitAnswers}
+            />
+            <button type="button" className="objective-clear" onClick={clearAns} disabled={busy}>
+              <span className="icon icon-erase" /> {i18n('Clear answers')}
+            </button>
+          </div>}
         </div>
-        <div className="objective-submit-state" role="status" aria-live="polite">{stateMessage || fallbackMessage}</div>
-        {!readOnly && <div className="objective-submit-actions">
-          <input
-            type="submit"
-            className={`button rounded primary objective-submit${busy || loggedOut ? ' disabled' : ''}`}
-            disabled={busy || loggedOut}
-            value={loggedOut ? i18n('Login to Submit') : busy ? '正在评测…' : pendingRid ? '查看成绩' : i18n('Submit')}
-            onClick={submitAnswers}
-          />
-          <button type="button" className="objective-clear" onClick={clearAns} disabled={busy}>
-            <span className="icon icon-erase" /> {i18n('Clear answers')}
-          </button>
-        </div>}
       </div>
     </>;
   }
