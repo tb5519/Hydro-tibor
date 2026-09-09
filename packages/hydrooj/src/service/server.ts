@@ -13,6 +13,7 @@ import { Context } from '../context';
 import { PermissionError, PrivilegeError } from '../error';
 import type { DomainDoc } from '../interface';
 import type { ContestEntryContext } from '../lib/contest_entry';
+import { isDomainAvatarImageRequest } from '../lib/domain_avatar_access';
 import { Logger } from '../logger';
 import { PERM, PRIV } from '../model/builtin';
 import * as opcount from '../model/opcount';
@@ -43,8 +44,8 @@ const GUEST_ACCESSIBLE_PATHS = [
     /^\/service-worker-config$/,
 ];
 
-function isGuestAccessiblePath(path: string) {
-    return GUEST_ACCESSIBLE_PATHS.some((pattern) => pattern.test(path));
+function isGuestAccessiblePath(path: string, method: string) {
+    return isDomainAvatarImageRequest(path, method) || GUEST_ACCESSIBLE_PATHS.some((pattern) => pattern.test(path));
 }
 
 declare module '@hydrooj/framework' {
@@ -309,7 +310,7 @@ export async function apply(ctx: Context) {
                     text: v.text,
                     name: v.name,
                 }));
-            if (!h.user.hasPriv(PRIV.PRIV_USER_PROFILE) && !isGuestAccessiblePath(h.request.path)) {
+            if (!h.user.hasPriv(PRIV.PRIV_USER_PROFILE) && !isGuestAccessiblePath(h.request.path, h.request.method)) {
                 h.checkPriv(PRIV.PRIV_USER_PROFILE);
             }
             if ((!('noCheckPermView' in h) || !h.noCheckPermView) && !h.user.hasPriv(PRIV.PRIV_VIEW_ALL_DOMAIN)) h.checkPerm(PERM.PERM_VIEW);

@@ -14,6 +14,8 @@ import { ContestPoints } from '../components/contest_points';
 import { copyHomeworkReviewToOwnDraft } from '../components/homework_review_copy';
 import { bindMistakePracticeActions } from '../components/mistake_practice';
 import { loadObjective } from '../components/objective/objective';
+import { bindProblemRecordPicker } from '../components/problem_record_picker';
+import { prepareRecordReplayDraft } from '../components/record_replay_import';
 
 class ProblemPageExtender {
   isExtended = false;
@@ -110,6 +112,19 @@ class ProblemPageExtender {
 
 const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homework_detail_problem'], async () => {
   bindMistakePracticeActions(document, (url, data) => request.post(url, data));
+  bindProblemRecordPicker();
+  try {
+    await prepareRecordReplayDraft();
+  } catch (error) {
+    UiContext.recordReplay = null;
+    Notification.error(`填入未完成：${error.message || '请检查浏览器是否允许保存草稿。'}`);
+  }
+  let mistakePromptDismissed = false;
+  $(document).off('click.mistakePromptClose').on('click.mistakePromptClose', '[data-mistake-prompt-close]', (event) => {
+    event.preventDefault();
+    mistakePromptDismissed = true;
+    $('.problem-mistake-float').addClass('problem-mistake-float--hidden');
+  });
   let copyingReview = false;
   $(document).off('click.homeworkReviewCopy').on('click.homeworkReviewCopy', '[data-homework-review-copy]', async (event) => {
     event.preventDefault();
@@ -269,6 +284,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   }
 
   function revealMistakePrompt() {
+    if (mistakePromptDismissed) return;
     updateMistakePromptPosition();
     $('.problem-mistake-float').removeClass('problem-mistake-float--hidden');
   }
@@ -423,6 +439,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   }
 
   async function maybeRevealMistakePrompt(store, rdoc = null) {
+    if (mistakePromptDismissed) return;
     if (!UiContext.isMistakeSupported || !UiContext.canUseMistake) return;
     const $prompt = $('.problem-mistake-float');
     if (!$prompt.length || !$prompt.hasClass('problem-mistake-float--hidden')) return;
@@ -733,7 +750,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   if (UiContext.pdoc.config?.type === 'objective') {
     loadObjective();
     $(document).on('vjContentNew', loadObjective);
-  } else if (UiContext.homeworkReview || new URL(window.location.href).searchParams.get('scratchpad') === '1') {
+  } else if (UiContext.homeworkReview || UiContext.recordReplay || new URL(window.location.href).searchParams.get('scratchpad') === '1') {
     enterScratchpadMode();
   }
 });

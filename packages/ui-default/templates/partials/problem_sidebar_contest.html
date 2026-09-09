@@ -20,7 +20,14 @@
         <span class="icon icon-flag"></span> {{ _('View Problem') }}
       </a></li>
     {% endif %}
-      <li class="menu__item scratchpad--hide ui-v2-sidebar-submit"><a class="menu__link{% if page_name == 'contest_detail_problem_submit' %} active{% endif %}" href="{{ url('problem_submit', pid=pdoc.pid|default(pdoc.docId), query={tid:tdoc.docId, entryDomainId:handler.entryDomainId} if mode=='contest' and handler.entryDomainId else ({tid:tdoc.docId} if mode=='contest' else {}) }}">
+      {% set _problemSubmitQuery = {} %}
+      {% if mode == 'contest' %}
+        {% set _problemSubmitQuery = {tid:tdoc.docId} %}
+        {% if handler.entryDomainId %}
+          {% set _problemSubmitQuery = {tid:tdoc.docId, entryDomainId:handler.entryDomainId} %}
+        {% endif %}
+      {% endif %}
+      <li class="menu__item scratchpad--hide ui-v2-sidebar-submit"><a class="menu__link{% if page_name == 'contest_detail_problem_submit' %} active{% endif %}" href="{{ url('problem_submit', pid=pdoc.pid|default(pdoc.docId), query=_problemSubmitQuery) }}">
         <span class="icon icon-send"></span> {{ _('Submit') }}
       </a></li>
     {% endif %}
@@ -34,9 +41,11 @@
       <li class="menu__item"><a class="menu__link{% if page_name == 'problem_edit' %} active{% endif %}" href="{{ url('problem_edit', pid=pdoc.pid|default(pdoc.docId)) }}">
         <span class="icon icon-edit"></span> {{ _('Edit') }}
       </a></li>
+      {% if UiContext.canManageProblemSidebar %}
       <li class="menu__item"><a class="menu__link{% if page_name == 'problem_files' %} active{% endif %}" href="{{ url('problem_files', pid=pdoc.pid|default(pdoc.docId)) }}">
         <span class="icon icon-file"></span> {{ _('Files') }}
       </a></li>
+      {% endif %}
     {% endif %}
     </ol>
   </div>

@@ -2,343 +2,195 @@
 {% extends lotteryBaseTemplate|default('manage_base.html') %}
 {% macro render_lottery() %}
 <style>
-  .lottery-admin {
-    display: grid;
-    gap: 1rem;
-  }
-  .lottery-admin__note {
-    color: #64748b;
-    font-size: .86rem;
-    line-height: 1.5;
-  }
-  .lottery-admin__scope {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 20px;
-    padding: 14px 16px;
-    border: 1px solid #d8e6fb;
-    border-radius: 10px;
-    background: linear-gradient(135deg, #f7fbff, #f2f6ff);
-    color: #5c6f8c;
-  }
-  .lottery-admin__scope strong {
-    display: block;
-    margin-bottom: 3px;
-    color: #2463d4;
-  }
-  .lottery-admin__success {
-    border: 1px solid #bbf7d0;
-    border-radius: 8px;
-    background: #f0fdf4;
-    color: #166534;
-    padding: .7rem .85rem;
-  }
-  .lottery-admin__warning {
-    border: 1px solid #fde68a;
-    border-radius: 8px;
-    background: #fffbeb;
-    color: #92400e;
-    padding: .7rem .85rem;
-  }
-  .lottery-admin__grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: .75rem;
-  }
-  .lottery-admin__grid .textbox {
-    width: 100%;
-  }
-  .lottery-admin__prize {
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    padding: .85rem;
-    background: #fff;
-  }
-  .lottery-admin__prize.is-template {
-    display: none;
-  }
-  .lottery-admin__prize-kind-note {
-    color: #738196;
-    font-size: 12px;
-    line-height: 1.5;
-  }
-  .lottery-admin__upgrade-list {
-    display: grid;
-    gap: .45rem;
-  }
-  .lottery-admin__upgrade-row {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: .45rem;
-  }
-  /* The row used as the clone template must never be interactive itself. */
-  .lottery-admin__upgrade-row[hidden] {
-    display: none !important;
-  }
-  .lottery-admin__upgrade-row .button {
-    white-space: nowrap;
-  }
-  .lottery-admin__prize-title {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: .75rem;
-    margin-bottom: .7rem;
-    color: #0f172a;
-    font-weight: 700;
-  }
-  .lottery-admin__remove {
-    border: 0;
-    background: transparent;
-    color: #ef4444;
-    cursor: pointer;
-    font-size: .86rem;
-  }
-  .lottery-admin__upload {
-    display: flex;
-    align-items: center;
-    gap: .65rem;
-    min-height: 3.1rem;
-  }
-  .lottery-admin__upload-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 6.6rem;
-    height: 2.6rem;
-    border: 1px solid #cbd5e1;
-    border-radius: 999px;
-    background: #fff;
-    color: #334155;
-    cursor: pointer;
-    font-size: .9rem;
-    line-height: 1;
-  }
-  .lottery-admin__upload-button:hover {
-    border-color: #2563eb;
-    color: #2563eb;
-  }
-  .lottery-admin__upload input[type="file"] {
-    display: none;
-  }
-  .lottery-admin__preview {
-    width: 2.8rem;
-    height: 2.8rem;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    background: #f8fafc center / contain no-repeat;
-    color: #94a3b8;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    font-size: .75rem;
-    flex: 0 0 auto;
-  }
-  .lottery-admin__preview.has-image {
-    color: transparent;
-  }
-  .lottery-admin__badge-preview {
-    width: 8rem;
-    height: 8rem;
-    margin-top: .5rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    background: transparent;
-    color: #64748b;
-    overflow: hidden;
-    font-size: .75rem;
-  }
-  .lottery-admin__badge-preview img {
-    display: block;
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-  }
-  .lottery-admin__badge-preview .user-profile-badge {
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .lottery-admin__actions,
-  .lottery-admin__search {
-    display: flex;
-    gap: .6rem;
-    align-items: flex-end;
-  }
-  .lottery-admin__inline-check {
-    display: flex;
-    align-items: center;
-    gap: .45rem;
-    min-height: 2.6rem;
-  }
-  .lottery-admin__compact-form {
-    display: flex;
-    align-items: center;
-    gap: .45rem;
-    flex-wrap: wrap;
-  }
-  .lottery-admin__compact-form .textbox,
-  .lottery-admin__compact-form select {
-    width: 8rem;
-  }
-  .lottery-admin__rank-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: .75rem;
-    flex-wrap: wrap;
-  }
-  .lottery-admin__search .textbox {
-    min-width: 22rem;
-  }
-  .lottery-admin__prize-cell {
-    display: flex;
-    align-items: center;
-  }
-  .lottery-admin__prize-name {
-    padding: .1rem 0;
-    border: 0;
-    border-bottom: 1px dashed transparent;
-    background: transparent;
-    color: inherit;
-    cursor: pointer;
-    font: inherit;
-    line-height: inherit;
-    text-align: left;
-  }
-  .lottery-admin__prize-name:hover,
-  .lottery-admin__prize-name:focus-visible {
-    color: #1d4ed8;
-    border-bottom-color: #93b4e8;
-    outline: 0;
-  }
-  .lottery-admin__edit-row[hidden] {
-    display: none;
-  }
-  .lottery-admin__edit-row > td {
-    padding: 0 .85rem .85rem;
-    border-top: 0;
-    background: #f8fbff;
-  }
-  .lottery-admin__edit-panel {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: .85rem 1rem;
-    border: 1px solid #cfe0fb;
-    border-radius: 9px;
-    background: #fff;
-    box-shadow: 0 8px 24px rgba(37, 99, 235, .06);
-  }
-  .lottery-admin__edit-copy {
-    flex: 1 1 15rem;
-    min-width: 12rem;
-  }
-  .lottery-admin__edit-copy strong {
-    display: block;
-    margin-bottom: .2rem;
-    color: #1e3a5f;
-  }
-  .lottery-admin__edit-form {
-    display: grid;
-    flex: 1 1 28rem;
-    grid-template-columns: minmax(14rem, 1fr) auto auto;
-    align-items: flex-end;
-    gap: .55rem;
-  }
-  .lottery-admin__edit-form label {
-    min-width: 0;
-  }
-  .lottery-admin__edit-form select {
-    width: 100%;
-  }
-  @media (max-width: 56em) {
-    .lottery-admin__grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-  }
+  .lottery-admin-page { color: var(--ui-v2-text); font-size: 14px; }
+  .lottery-admin-page *, .lottery-admin-page *::before, .lottery-admin-page *::after { box-sizing: border-box; }
+  .lottery-admin-page [hidden], .lottery-admin__prize.is-template { display: none !important; }
+  .lottery-admin-page .section { margin-bottom: 18px; overflow: visible; border: 1px solid var(--ui-v2-border); border-radius: 12px; background: var(--ui-v2-surface); box-shadow: none; }
+  .lottery-admin-page .section__header { padding: 18px 22px; border-bottom: 1px solid var(--ui-v2-border); }
+  .lottery-admin-page .section__title { color: var(--ui-v2-text); font-size: 16px; font-weight: 600; line-height: 1.5; }
+  .lottery-admin-page .section__body { padding: 20px 22px; }
+  .lottery-admin-page .button { min-width: 0; height: 36px; margin: 0; padding: 0 14px; border-radius: 8px; font-size: 13px; line-height: 34px; white-space: nowrap; }
+  .lottery-admin-page .button:not(.primary) { border: 1px solid var(--ui-v2-border-strong); background: var(--ui-v2-surface); color: var(--ui-v2-text); }
+  .lottery-admin-page .button.primary { border-color: var(--ui-v2-accent); background: var(--ui-v2-accent); color: #fff; }
+  .lottery-admin-page .textbox, .lottery-admin-page .select { width: 100%; min-width: 0; height: 38px; margin: 6px 0 0; padding: 8px 10px; border: 1px solid var(--ui-v2-border-strong); border-radius: 7px; background-color: var(--ui-v2-surface); color: var(--ui-v2-text); font-size: 13px; line-height: 20px; box-shadow: none; }
+  .lottery-admin-page .textbox:focus, .lottery-admin-page .select:focus { border-color: var(--ui-v2-accent); outline: 2px solid var(--ui-v2-accent-soft); }
+  .lottery-admin-page input[type=checkbox] { accent-color: var(--ui-v2-accent); }
+  .lottery-admin-page button:focus-visible, .lottery-admin-page summary:focus-visible { outline: 2px solid var(--ui-v2-accent); outline-offset: 3px; }
+  .lottery-admin-page label, .lottery-admin__grid > div > div:first-child { min-width: 0; font-size: 12px; line-height: 1.5; }
+  .lottery-admin__page-header, .lottery-admin__scope, .lottery-admin__section-heading, .lottery-admin__rank-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .lottery-admin__page-header { margin-bottom: 16px; }
+  .lottery-admin__eyebrow { display: block; margin-bottom: 5px; color: var(--ui-v2-text-muted); font-size: 11px; letter-spacing: .06em; }
+  .lottery-admin__page-header h1 { margin: 0; color: var(--ui-v2-text); font-size: 26px; font-weight: 600; line-height: 1.4; letter-spacing: -.02em; }
+  .lottery-admin__page-header p { margin: 6px 0 0; color: var(--ui-v2-text-muted); font-size: 12px; line-height: 1.6; }
+  .lottery-admin__scope { margin-bottom: 16px; padding: 12px 16px; border: 1px solid var(--ui-v2-border); border-radius: 9px; background: var(--ui-v2-surface); }
+  .lottery-admin__scope strong { display: block; margin-bottom: 2px; font-size: 12px; font-weight: 600; }
+  .lottery-admin__scope span { color: var(--ui-v2-text-muted); font-size: 11px; line-height: 1.6; }
+  .lottery-admin__status { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 6px; background: var(--ui-v2-surface-muted); color: var(--ui-v2-text-muted); font-size: 11px; white-space: nowrap; }
+  .lottery-admin__status::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+  .lottery-admin__status.is-enabled { background: #effaf4; color: #238454; }
+  .lottery-admin__tabs { display: flex; gap: 5px; width: fit-content; max-width: 100%; margin-bottom: 18px; padding: 4px; border: 1px solid var(--ui-v2-border); border-radius: 9px; background: var(--ui-v2-surface-muted); }
+  .lottery-admin__tabs button { padding: 8px 18px; border: 0; border-radius: 6px; background: transparent; color: var(--ui-v2-text-muted); font: inherit; font-size: 13px; cursor: pointer; }
+  .lottery-admin__tabs button[aria-selected=true] { background: var(--ui-v2-surface); color: var(--ui-v2-accent); box-shadow: 0 1px 4px rgba(15,23,42,.08); font-weight: 600; }
+  .lottery-admin { display: grid; gap: 16px; }
+  .lottery-admin__note, .lottery-admin__prize-kind-note { margin-top: 5px; color: var(--ui-v2-text-muted); font-size: 11px; line-height: 1.7; }
+  .lottery-admin__success, .lottery-admin__warning { margin-bottom: 14px; padding: 10px 14px; border: 1px solid #c5e6d1; border-radius: 8px; background: #f1faf5; color: #246744; font-size: 12px; line-height: 1.6; }
+  .lottery-admin__warning { border-color: #eddaa8; background: #fffbf0; color: #926623; }
+  .lottery-admin__basics { display: grid; grid-template-columns: minmax(0, 1fr) 210px; gap: 26px; align-items: center; padding-bottom: 20px; border-bottom: 1px solid var(--ui-v2-border); }
+  .lottery-admin-page label.lottery-admin__switch { position: relative; display: flex; flex-direction: row; align-items: center; gap: 11px; min-width: 0; margin: 0; cursor: pointer; }
+  .lottery-admin-page label.lottery-admin__switch > input[type=checkbox] { position: absolute; opacity: 0; flex: none; width: 1px; min-width: 1px; max-width: 1px; height: 1px; margin: 0; padding: 0; }
+  .lottery-admin-page .lottery-admin__switch > .lottery-admin__switch-track { display: block; flex: 0 0 34px; width: 34px; min-width: 34px; max-width: 34px; height: 20px; min-height: 20px; max-height: 20px; margin: 0; padding: 3px; border-radius: 99px; background: var(--ui-v2-border-strong); transition: background .15s; }
+  .lottery-admin-page .lottery-admin__switch-track::after { content: ''; display: block; width: 14px; min-width: 14px; max-width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.15); transition: transform .15s; }
+  .lottery-admin__switch input:checked + .lottery-admin__switch-track { background: var(--ui-v2-accent); }
+  .lottery-admin__switch input:checked + .lottery-admin__switch-track::after { transform: translateX(14px); }
+  .lottery-admin__switch input:focus-visible + .lottery-admin__switch-track { outline: 2px solid var(--ui-v2-accent); outline-offset: 3px; }
+  .lottery-admin__switch strong { display: block; font-size: 13px; font-weight: 600; }
+  .lottery-admin__switch small { display: block; margin-top: 3px; color: var(--ui-v2-text-muted); font-size: 11px; }
+  .lottery-admin__cost { display: flex; align-items: center; gap: 8px; }
+  .lottery-admin__cost .textbox { flex: 1; }
+  .lottery-admin__cost span { margin-top: 6px; color: var(--ui-v2-text-muted); font-size: 12px; }
+  .lottery-admin__section-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--ui-v2-text); font-size: 15px; font-weight: 600; }
+  .lottery-admin__count { padding: 2px 6px; border-radius: 5px; background: var(--ui-v2-surface-muted); color: var(--ui-v2-text-muted); font-size: 11px; font-weight: 400; }
+  .lottery-admin__toolbar { display: flex; align-items: center; gap: 8px; }
+  .lottery-admin__helper { padding: 10px 13px; border-radius: 7px; background: var(--ui-v2-surface-muted); color: var(--ui-v2-text-muted); font-size: 11px; line-height: 1.7; }
+  .lottery-admin__helper summary { width: fit-content; cursor: pointer; }
+  .lottery-admin__helper p { margin: 8px 0 0; }
+  .lottery-admin__prizes { display: grid; gap: 10px; }
+  .lottery-admin__prize { min-width: 0; border: 1px solid var(--ui-v2-border); border-radius: 9px; background: var(--ui-v2-surface); }
+  .lottery-admin__prize-title { display: flex; align-items: center; gap: 12px; padding: 13px 15px; list-style: none; cursor: pointer; }
+  .lottery-admin__prize-title::-webkit-details-marker { display: none; }
+  .lottery-admin__prize-title::after { content: ''; flex: 0 0 6px; width: 6px; height: 6px; margin-left: 2px; border-right: 1.5px solid var(--ui-v2-text-muted); border-bottom: 1.5px solid var(--ui-v2-text-muted); transform: rotate(45deg); }
+  .lottery-admin__prize[open] > .lottery-admin__prize-title::after { transform: rotate(225deg); }
+  .lottery-admin__prize-title > div { flex: 1; min-width: 0; }
+  .lottery-admin__prize-title [data-lottery-prize-title] { display: block; color: var(--ui-v2-text-muted); font-size: 10px; }
+  .lottery-admin__prize-title [data-lottery-prize-name] { display: block; margin-top: 2px; overflow: hidden; color: var(--ui-v2-text); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .lottery-admin__prize-meta { color: var(--ui-v2-text-muted); font-size: 11px; white-space: nowrap; }
+  .lottery-admin__remove { padding: 5px 7px; border: 0; border-radius: 5px; background: transparent; color: #b45b61; cursor: pointer; font-size: 11px; }
+  .lottery-admin__remove:hover { background: #fff1f2; color: #b53b47; }
+  .lottery-admin__grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 16px 14px; padding: 17px 15px; border-top: 1px solid var(--ui-v2-border); }
+  .lottery-admin__grid [data-lottery-upgrade-field] { grid-column: 1 / -1; }
+  .lottery-admin__upgrade-list { display: grid; gap: 8px; max-width: 580px; margin: 8px 0; }
+  .lottery-admin__upgrade-row { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 8px; }
+  .lottery-admin__upgrade-row .select { margin: 0; }
+  .lottery-admin__upload { display: flex; align-items: center; gap: 8px; min-height: 44px; margin-top: 6px; }
+  .lottery-admin-page label.lottery-admin__upload-button { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: auto; min-height: 34px; margin: 0; padding: 7px 10px; border: 1px solid var(--ui-v2-border-strong); border-radius: 7px; background: var(--ui-v2-surface); color: var(--ui-v2-text); cursor: pointer; white-space: nowrap; }
+  .lottery-admin-page label.lottery-admin__upload-button:hover { border-color: var(--ui-v2-accent); color: var(--ui-v2-accent); }
+  .lottery-admin__upload input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .lottery-admin__upload-button:focus-within { outline: 2px solid var(--ui-v2-accent); outline-offset: 2px; }
+  .lottery-admin__preview { display: flex; align-items: center; justify-content: center; flex: 0 0 44px; width: 44px; height: 44px; overflow: hidden; border: 1px solid var(--ui-v2-border); border-radius: 7px; background: var(--ui-v2-surface-muted) center / contain no-repeat; color: var(--ui-v2-text-muted); font-size: 10px; }
+  .lottery-admin__preview.has-image { color: transparent; }
+  .lottery-admin__badge-preview { display: flex; align-items: center; justify-content: center; width: 80px; height: 80px; max-width: 100%; margin-top: 6px; overflow: hidden; border: 1px solid var(--ui-v2-border); border-radius: 8px; background: var(--ui-v2-surface-muted); color: var(--ui-v2-text-muted); font-size: 11px; }
+  .lottery-admin__badge-preview img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .lottery-admin__badge-preview .user-profile-badge { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .lottery-admin__inline-check { display: flex; align-items: center; gap: 6px; min-height: 38px; margin-top: 6px; font-size: 12px; }
+  .lottery-admin__actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-top: 16px; border-top: 1px solid var(--ui-v2-border); }
+  .lottery-admin__actions .lottery-admin__note { margin: 0 0 0 auto; }
+  .lottery-admin__search { display: flex; align-items: flex-end; gap: 10px; max-width: 550px; }
+  .lottery-admin__search label { flex: 1; }
+  .lottery-admin__compact-form { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .lottery-admin__compact-form + .lottery-admin__compact-form { margin-top: 9px; }
+  .lottery-admin__compact-form .textbox, .lottery-admin__compact-form select { width: 130px; margin-top: 0; }
+  .lottery-admin__rank-header { flex-wrap: wrap; }
+  .lottery-admin__table-scroll { overflow-x: auto; scrollbar-width: thin; }
+  .lottery-admin-page .data-table { min-width: 480px; color: var(--ui-v2-text); font-size: 12px; }
+  .lottery-admin-page .data-table th { padding: 10px 12px; background: var(--ui-v2-surface-muted); color: var(--ui-v2-text-muted); font-size: 11px; font-weight: 500; white-space: nowrap; }
+  .lottery-admin-page .data-table td { padding: 12px; border-color: var(--ui-v2-border); font-variant-numeric: tabular-nums; vertical-align: middle; }
+  .lottery-admin-page .data-table .button { height: 31px; padding: 0 10px; font-size: 11px; line-height: 29px; }
+  .lottery-admin__prize-cell { display: flex; align-items: center; min-width: 95px; }
+  .lottery-admin__prize-name { padding: 2px 0; border: 0; border-bottom: 1px dashed var(--ui-v2-border-strong); background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: left; }
+  .lottery-admin__prize-name:hover { color: var(--ui-v2-accent); }
+  .lottery-admin__edit-row > td { padding: 0 12px 12px; border-top: 0; background: var(--ui-v2-surface-muted); }
+  .lottery-admin__edit-panel { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 14px; border: 1px solid var(--ui-v2-border); border-radius: 8px; background: var(--ui-v2-surface); }
+  .lottery-admin__edit-copy { flex: 1 1 180px; min-width: 0; }
+  .lottery-admin__edit-copy strong { display: block; margin-bottom: 4px; color: var(--ui-v2-text); font-weight: 600; }
+  .lottery-admin__edit-form { display: grid; flex: 1 1 320px; grid-template-columns: minmax(160px,1fr) auto auto; align-items: flex-end; gap: 7px; }
+  .lottery-admin__empty { padding: 28px 12px !important; color: var(--ui-v2-text-muted); text-align: center; }
+  .lottery-admin__destructive { color: #b45b61 !important; }
+  .theme--dark .lottery-admin-page { --ui-v2-surface: #202b38; --ui-v2-surface-muted: #263240; --ui-v2-border: #3b4859; --ui-v2-border-strong: #526174; --ui-v2-text: #e2e8f0; --ui-v2-text-muted: #a6b5c8; --ui-v2-accent: #8cb8ff; --ui-v2-accent-soft: #26394f; }
+  .theme--dark .lottery-admin__status.is-enabled, .theme--dark .lottery-admin__success { background: #1d392e; border-color: #39644e; color: #97d4b1; }
+  .theme--dark .lottery-admin__warning { background: #3b3322; border-color: #66563a; color: #e1c388; }
+  .theme--dark .lottery-admin__remove:hover { background: #422c35; color: #f0a1a8; }
+  @media (max-width: 72em) { .lottery-admin__grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
   @media (max-width: 40em) {
-    .lottery-admin__grid,
-    .lottery-admin__actions,
-    .lottery-admin__search {
-      display: block;
-    }
-    .lottery-admin__search .textbox,
-    .lottery-admin__search .button,
-    .lottery-admin__actions .button {
-      width: 100%;
-      margin-top: .6rem;
-    }
-    .lottery-admin__edit-panel {
-      display: block;
-    }
-    .lottery-admin__edit-form {
-      grid-template-columns: 1fr 1fr;
-      margin-top: .75rem;
-    }
-    .lottery-admin__edit-form label {
-      grid-column: 1 / -1;
-    }
-    .lottery-admin__edit-form label,
-    .lottery-admin__edit-form .button {
-      width: 100%;
-    }
+    .lottery-admin-page .section__header, .lottery-admin-page .section__body { padding: 15px; }
+    .lottery-admin__page-header { align-items: flex-start; }
+    .lottery-admin__page-header h1 { font-size: 23px; }
+    .lottery-admin__page-header p { max-width: 230px; }
+    .lottery-admin__tabs { width: 100%; }
+    .lottery-admin__tabs button { flex: 1; padding: 8px 6px; font-size: 12px; }
+    .lottery-admin__basics { grid-template-columns: 1fr; gap: 15px; }
+    .lottery-admin__cost { max-width: 220px; }
+    .lottery-admin__grid { grid-template-columns: 1fr; gap: 14px; }
+    .lottery-admin__section-heading { align-items: flex-start; flex-wrap: wrap; gap: 10px; }
+    .lottery-admin__prize-title { gap: 8px; padding: 12px; }
+    .lottery-admin__prize-meta { max-width: 80px; white-space: normal; font-size: 10px; text-align: right; }
+    .lottery-admin__actions .lottery-admin__note { flex-basis: 100%; margin: 2px 0 0; }
+    .lottery-admin__search { max-width: 100%; }
+    .lottery-admin__search label { min-width: 0; }
+    .lottery-admin__edit-panel { display: block; }
+    .lottery-admin__edit-form { grid-template-columns: 1fr 1fr; margin-top: 12px; }
+    .lottery-admin__edit-form label { grid-column: 1 / -1; }
+    .lottery-admin__rank-header { gap: 10px; }
   }
+  @media (prefers-reduced-motion: reduce) { .lottery-admin__switch-track, .lottery-admin__switch-track::after { transition: none; } }
 </style>
 
-<div class="section">
-  <div class="section__header">
-    <h1 class="section__title">{{ _('积分抽奖') }}</h1>
-  </div>
-  <div class="section__body lottery-admin">
-    <div class="lottery-admin__scope">
-      <div>
-        <strong>{{ lotteryScopeTitle }}</strong>
-        <span>{{ lotteryScopeNote }}</span>
-      </div>
-      <span class="icon icon-lock"></span>
+<div class="lottery-admin-page" data-lottery-admin data-initial-view="{{ 'records' if edited or deleted or cleared else ('points' if q or rankBy == 'current' or added or adjusted else 'settings') }}">
+  <header class="lottery-admin__page-header">
+    <div>
+      <span class="lottery-admin__eyebrow">{{ _('学员激励') }}</span>
+      <h1>{{ _('积分抽奖') }}</h1>
+      <p>{{ _('维护奖品与规则，管理学员积分和抽奖记录。') }}</p>
     </div>
-    {% if saved %}
-      <div class="lottery-admin__success">{{ _('抽奖配置已保存。') }}</div>
-    {% endif %}
-    {% if edited %}
-      <div class="lottery-admin__success">{{ _('奖品已修改，学员记录、全域通报和积分已同步更新。') }}</div>
-    {% endif %}
-    {% if deleted %}
-      <div class="lottery-admin__success">{{ _('抽奖记录已删除，学员端将不再显示。') }}</div>
-    {% endif %}
-    {% if cleared %}
-      <div class="lottery-admin__success">{{ _('抽奖记录已清空，学员端将不再显示。') }}</div>
-    {% endif %}
-    <form method="post" enctype="multipart/form-data" class="lottery-admin">
+    <button type="submit" form="lottery-config-form" class="primary rounded button" data-lottery-settings-action>{{ _('保存配置') }}</button>
+  </header>
+  <div class="lottery-admin__scope">
+    <div><strong>{{ lotteryScopeTitle }}</strong><span>{{ lotteryScopeNote }}</span></div>
+    <span class="lottery-admin__status{% if config.enabled %} is-enabled{% endif %}">{{ _('抽奖已开启') if config.enabled else _('抽奖已关闭') }}</span>
+  </div>
+  {% if saved %}<div class="lottery-admin__success" role="status">{{ _('抽奖配置已保存。') }}</div>{% endif %}
+  {% if edited %}<div class="lottery-admin__success" role="status">{{ _('奖品已修改，学员记录、全域通报和积分已同步更新。') }}</div>{% endif %}
+  {% if deleted %}<div class="lottery-admin__success" role="status">{{ _('抽奖记录已删除，学员端将不再显示。') }}</div>{% endif %}
+  {% if cleared %}<div class="lottery-admin__success" role="status">{{ _('抽奖记录已清空，学员端将不再显示。') }}</div>{% endif %}
+  <div class="lottery-admin__tabs" role="tablist" aria-label="{{ _('积分抽奖管理分区') }}" data-lottery-tabs hidden>
+    <button type="button" role="tab" id="lottery-tab-settings" aria-controls="lottery-settings" data-lottery-view="settings">{{ _('抽奖设置') }}</button>
+    <button type="button" role="tab" id="lottery-tab-points" aria-controls="lottery-points" data-lottery-view="points">{{ _('学员积分') }}</button>
+    <button type="button" role="tab" id="lottery-tab-records" aria-controls="lottery-records" data-lottery-view="records">{{ _('抽奖记录') }}</button>
+  </div>
+<section class="section" id="lottery-settings" data-lottery-panel="settings" aria-labelledby="lottery-tab-settings">
+  <div class="section__header"><h2 class="section__title">{{ _('抽奖设置') }}</h2></div>
+  <div class="section__body lottery-admin">
+    <form method="post" enctype="multipart/form-data" class="lottery-admin" id="lottery-config-form">
       <input type="hidden" name="operation" value="save_config">
-      <label>
-        <input type="checkbox" name="enabled"{% if config.enabled %} checked{% endif %}>
-        {{ _('开启首页积分抽奖') }}
-      </label>
-      <label>
-        <div>{{ _('每次抽奖消耗积分') }}</div>
-        <input class="textbox" type="number" min="0" step="1" name="cost" value="{{ config.cost }}" required>
-      </label>
-      <div class="lottery-admin__note">
-        {{ _('概率按权重计算。例如两个奖品概率分别填 1 和 3，则第二个奖品约为第一个的 3 倍。勋章奖品自动使用勋章的 AC 图片，无需重复上传；普通奖品可独立上传展示图。') }}
+      <div class="lottery-admin__basics">
+        <label class="lottery-admin__switch">
+          <input type="checkbox" name="enabled" role="switch"{% if config.enabled %} checked{% endif %}>
+          <span class="lottery-admin__switch-track" aria-hidden="true"></span>
+          <span><strong>{{ _('开启首页积分抽奖') }}</strong><small>{{ _('保存后生效，学员可在首页使用积分抽奖。') }}</small></span>
+        </label>
+        <label><div>{{ _('每次抽奖消耗积分') }}</div><div class="lottery-admin__cost">
+          <input class="textbox" type="number" min="0" step="1" name="cost" value="{{ config.cost }}" required><span>{{ _('积分 / 次') }}</span>
+        </div></label>
       </div>
+      <div class="lottery-admin__section-heading">
+        <h2>{{ _('奖品池') }} <span class="lottery-admin__count" data-lottery-prize-total>{{ prizeSlots.length }}</span></h2>
+        <div class="lottery-admin__toolbar">
+          <button class="rounded button" type="button" data-lottery-expand>{{ _('展开全部') }}</button>
+          <button class="rounded button" type="button" data-lottery-add>+ {{ _('添加奖品') }}</button>
+        </div>
+      </div>
+      <details class="lottery-admin__helper">
+        <summary>{{ _('概率权重与奖品图片说明') }}</summary>
+        <p>{{ _('概率按权重计算。例如两个奖品概率分别填 1 和 3，则第二个奖品约为第一个的 3 倍。勋章奖品自动使用勋章的 AC 图片，无需重复上传；普通奖品可独立上传展示图。') }}</p>
+      </details>
       <input type="hidden" name="prizeCount" value="{{ prizeSlots.length }}" data-lottery-prize-count>
       <div class="lottery-admin__prizes" data-lottery-prizes>
         {% for prize in prizeSlots %}
-        <div class="lottery-admin__prize" data-lottery-prize>
-          <div class="lottery-admin__prize-title">
-            <span data-lottery-prize-title>{{ _('奖品') }} {{ loop.index }}</span>
+        <details class="lottery-admin__prize" data-lottery-prize{% if loop.first %} open{% endif %}>
+          <summary class="lottery-admin__prize-title">
+            <div><span data-lottery-prize-title>{{ _('奖品') }} {{ loop.index }}</span><strong data-lottery-prize-name>{{ prize.name|default(_('待命名奖品'), true) }}</strong></div>
+            <span class="lottery-admin__prize-meta" data-lottery-prize-meta></span>
             <button class="lottery-admin__remove" type="button" data-lottery-remove>{{ _('删除') }}</button>
-          </div>
+          </summary>
           <div class="lottery-admin__grid">
             <label>
               <div>{{ _('奖品类型') }}</div>
@@ -355,12 +207,12 @@
                   <option value="{{ badge._id }}"{% if prize.kind == 'badge' and prize.badgeId == badge._id %} selected{% endif %}>{{ badge.short }} · {{ badge.title }}</option>
                 {% endfor %}
               </select>
-              <div class="lottery-admin__prize-kind-note">{{ _('仅可选择当前管理范围内预先创建的勋章。') }}</div>
+              <div class="lottery-admin__prize-kind-note">{{ _('选择当前管理范围内已创建的勋章。') }}</div>
             </label>
             <label data-lottery-badge-field>
               <div>{{ _('勋章有效时长（小时）') }}</div>
               <input class="textbox" type="number" min="0" step="1" name="prize{{ loop.index0 }}BadgeDurationHours" data-field="BadgeDurationHours" value="{{ prize.badgeDurationHours|default(0) }}" data-lottery-badge-duration>
-              <div class="lottery-admin__prize-kind-note">{{ _('填 0 表示永久获得。时效叠加会累加剩余时间；效果升级会保留当前有效期。') }}</div>
+              <div class="lottery-admin__prize-kind-note">{{ _('0 为永久。时效叠加累加剩余时间，效果升级保留有效期。') }}</div>
             </label>
             <label data-lottery-badge-field>
               <div>{{ _('重复抽中效果') }}</div>
@@ -368,7 +220,7 @@
                 <option value="duration"{% if prize.badgeRepeatEffect != 'upgrade' %} selected{% endif %}>{{ _('时效叠加') }}</option>
                 <option value="upgrade"{% if prize.badgeRepeatEffect == 'upgrade' %} selected{% endif %}>{{ _('效果升级') }}</option>
               </select>
-              <div class="lottery-admin__prize-kind-note">{{ _('效果升级会在每次重复抽中时切换到下一状态勋章。') }}</div>
+              <div class="lottery-admin__prize-kind-note">{{ _('重复抽中时，依次切换到下一状态勋章。') }}</div>
             </label>
             <div data-lottery-badge-field data-lottery-upgrade-field>
               <div>{{ _('升级状态勋章') }}</div>
@@ -398,7 +250,7 @@
                 <button class="rounded button" type="button" data-lottery-upgrade-remove>{{ _('删除') }}</button>
               </div>
               <button class="rounded button" type="button" data-lottery-upgrade-add>+ {{ _('添加升级状态') }}</button>
-              <div class="lottery-admin__prize-kind-note">{{ _('状态 2、状态 3…均为提前创建好的其他勋章。每个状态都必须选择一个勋章；未选择时不能保存。重复抽中后会自动切换为最新状态。') }}</div>
+              <div class="lottery-admin__prize-kind-note">{{ _('按顺序选择状态 2、状态 3…对应的已有勋章。每个状态均须选择后才能保存。') }}</div>
             </div>
             <label data-lottery-normal-field>
               <div>{{ _('奖品名称') }}</div>
@@ -407,7 +259,7 @@
             <div data-lottery-badge-field data-lottery-badge-preview-field{% if prize.kind != 'badge' %} hidden{% endif %}>
               <div>{{ _('勋章 AC 图片（自动使用）') }}</div>
               <div class="lottery-admin__badge-preview" data-lottery-badge-image-preview></div>
-              <div class="lottery-admin__prize-kind-note">{{ _('直接使用已选勋章的 AC 图片，无需单独上传。没有图片时显示勋章样式；重复抽中升级后显示实际获得状态的图片。') }}</div>
+              <div class="lottery-admin__prize-kind-note">{{ _('自动使用勋章 AC 图片；无图片时显示勋章样式，升级后随状态更新。') }}</div>
             </div>
             <label data-lottery-prize-image-field data-lottery-normal-field{% if prize.kind == 'badge' %} hidden{% endif %}>
               <div>{{ _('抽奖展示图片（可选）') }}</div>
@@ -419,7 +271,7 @@
                 </label>
                 <span class="lottery-admin__preview{% if prize.kind != 'badge' and prize.image %} has-image{% endif %}" data-lottery-image-preview{% if prize.kind != 'badge' and prize.image %} style="background-image: url('{{ prize.image }}')"{% endif %}>{{ _('无图') }}</span>
               </div>
-              <div class="lottery-admin__prize-kind-note">{{ _('建议上传 1:1 正方形透明 PNG，任意像素尺寸均会自动缩放（如 512×512、1000×1000）。普通奖品的预览与中奖弹窗同为正方形，不裁切。勋章奖品自动使用已有 AC 图片。') }}</div>
+              <div class="lottery-admin__prize-kind-note">{{ _('建议 1:1 透明 PNG，自动等比缩放、不裁切；也支持 JPG、WebP。') }}</div>
             </label>
             <label>
               <div>{{ _('奖品概率权重') }}</div>
@@ -444,14 +296,15 @@
               </span>
             </label>
           </div>
-        </div>
+        </details>
         {% endfor %}
       </div>
-      <div class="lottery-admin__prize is-template" data-lottery-template>
-        <div class="lottery-admin__prize-title">
-          <span data-lottery-prize-title>{{ _('奖品') }}</span>
+      <details class="lottery-admin__prize is-template" data-lottery-template open>
+        <summary class="lottery-admin__prize-title">
+          <div><span data-lottery-prize-title>{{ _('奖品') }}</span><strong data-lottery-prize-name>{{ _('待命名奖品') }}</strong></div>
+          <span class="lottery-admin__prize-meta" data-lottery-prize-meta></span>
           <button class="lottery-admin__remove" type="button" data-lottery-remove>{{ _('删除') }}</button>
-        </div>
+        </summary>
         <div class="lottery-admin__grid">
           <label>
             <div>{{ _('奖品类型') }}</div>
@@ -468,12 +321,12 @@
                 <option value="{{ badge._id }}">{{ badge.short }} · {{ badge.title }}</option>
               {% endfor %}
             </select>
-            <div class="lottery-admin__prize-kind-note">{{ _('仅可选择当前管理范围内预先创建的勋章。') }}</div>
+            <div class="lottery-admin__prize-kind-note">{{ _('选择当前管理范围内已创建的勋章。') }}</div>
           </label>
           <label data-lottery-badge-field>
             <div>{{ _('勋章有效时长（小时）') }}</div>
             <input class="textbox" type="number" min="0" step="1" data-field="BadgeDurationHours" value="0" data-lottery-badge-duration>
-            <div class="lottery-admin__prize-kind-note">{{ _('填 0 表示永久获得。时效叠加会累加剩余时间；效果升级会保留当前有效期。') }}</div>
+            <div class="lottery-admin__prize-kind-note">{{ _('0 为永久。时效叠加累加剩余时间，效果升级保留有效期。') }}</div>
           </label>
           <label data-lottery-badge-field>
             <div>{{ _('重复抽中效果') }}</div>
@@ -481,7 +334,7 @@
               <option value="duration" selected>{{ _('时效叠加') }}</option>
               <option value="upgrade">{{ _('效果升级') }}</option>
             </select>
-            <div class="lottery-admin__prize-kind-note">{{ _('效果升级会在每次重复抽中时切换到下一状态勋章。') }}</div>
+            <div class="lottery-admin__prize-kind-note">{{ _('重复抽中时，依次切换到下一状态勋章。') }}</div>
           </label>
           <div data-lottery-badge-field data-lottery-upgrade-field>
             <div>{{ _('升级状态勋章') }}</div>
@@ -498,7 +351,7 @@
               <button class="rounded button" type="button" data-lottery-upgrade-remove>{{ _('删除') }}</button>
             </div>
             <button class="rounded button" type="button" data-lottery-upgrade-add>+ {{ _('添加升级状态') }}</button>
-            <div class="lottery-admin__prize-kind-note">{{ _('状态 2、状态 3…均为提前创建好的其他勋章。每个状态都必须选择一个勋章；未选择时不能保存。重复抽中后会自动切换为最新状态。') }}</div>
+            <div class="lottery-admin__prize-kind-note">{{ _('按顺序选择状态 2、状态 3…对应的已有勋章。每个状态均须选择后才能保存。') }}</div>
           </div>
           <label data-lottery-normal-field>
             <div>{{ _('奖品名称') }}</div>
@@ -507,7 +360,7 @@
           <div data-lottery-badge-field data-lottery-badge-preview-field hidden>
             <div>{{ _('勋章 AC 图片（自动使用）') }}</div>
             <div class="lottery-admin__badge-preview" data-lottery-badge-image-preview></div>
-            <div class="lottery-admin__prize-kind-note">{{ _('直接使用已选勋章的 AC 图片，无需单独上传。没有图片时显示勋章样式；重复抽中升级后显示实际获得状态的图片。') }}</div>
+            <div class="lottery-admin__prize-kind-note">{{ _('自动使用勋章 AC 图片；无图片时显示勋章样式，升级后随状态更新。') }}</div>
           </div>
           <label data-lottery-prize-image-field data-lottery-normal-field>
             <div>{{ _('抽奖展示图片（可选）') }}</div>
@@ -519,7 +372,7 @@
               </label>
               <span class="lottery-admin__preview" data-lottery-image-preview>{{ _('无图') }}</span>
             </div>
-            <div class="lottery-admin__prize-kind-note">{{ _('建议上传 1:1 正方形透明 PNG，任意像素尺寸均会自动缩放（如 512×512、1000×1000）。普通奖品的预览与中奖弹窗同为正方形，不裁切。勋章奖品自动使用已有 AC 图片。') }}</div>
+            <div class="lottery-admin__prize-kind-note">{{ _('建议 1:1 透明 PNG，自动等比缩放、不裁切；也支持 JPG、WebP。') }}</div>
           </label>
           <label>
             <div>{{ _('奖品概率权重') }}</div>
@@ -544,7 +397,7 @@
             </span>
           </label>
         </div>
-      </div>
+      </details>
       <div class="lottery-admin__actions">
         <button class="rounded primary button" type="submit">{{ _('保存抽奖配置') }}</button>
         <button class="rounded button" type="button" data-lottery-add>{{ _('添加奖品') }}</button>
@@ -552,11 +405,12 @@
       </div>
     </form>
   </div>
-</div>
+</section>
 
+<div id="lottery-points" data-lottery-panel="points" aria-labelledby="lottery-tab-points">
 <div class="section">
   <div class="section__header">
-    <h1 class="section__title">{{ _('学员积分管理') }}</h1>
+    <h2 class="section__title">{{ _('学员积分管理') }}</h2>
   </div>
   <div class="section__body lottery-admin">
     {% if added %}
@@ -581,7 +435,7 @@
       <div class="lottery-admin__warning">{{ _('未找到用户。') }}</div>
     {% endif %}
     {% if target %}
-      <table class="data-table">
+      <div class="lottery-admin__table-scroll" role="region" aria-label="{{ _('积分与抽奖数据') }}" tabindex="0"><table class="data-table">
         <thead>
           <tr>
             <th>{{ _('UID') }}</th>
@@ -602,14 +456,14 @@
                 <form method="post" class="lottery-admin__compact-form">
                   <input type="hidden" name="operation" value="add_points">
                   <input type="hidden" name="q" value="{{ q }}">
-                  <input class="textbox" type="number" min="1" step="1" name="points" placeholder="{{ _('增加积分') }}" required>
+                  <input class="textbox" type="number" min="1" step="1" name="points" aria-label="{{ _('增加积分数量') }}" placeholder="{{ _('增加积分') }}" required>
                   <button class="rounded primary button" type="submit">{{ _('加积分') }}</button>
                 </form>
                 <form method="post" class="lottery-admin__compact-form">
                   <input type="hidden" name="operation" value="deduct_points">
                   <input type="hidden" name="q" value="{{ q }}">
-                  <input class="textbox" type="number" min="1" step="1" name="points" placeholder="{{ _('扣减积分') }}" required>
-                  <select class="select" name="scope">
+                  <input class="textbox" type="number" min="1" step="1" name="points" aria-label="{{ _('扣减积分数量') }}" placeholder="{{ _('扣减积分') }}" required>
+                  <select class="select" name="scope" aria-label="{{ _('扣减积分范围') }}">
                     <option value="current">{{ _('扣当前积分') }}</option>
                     <option value="total">{{ _('扣累计积分') }}</option>
                   </select>
@@ -621,19 +475,19 @@
             </td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
     {% endif %}
   </div>
 </div>
 
 <div class="section">
   <div class="section__header lottery-admin__rank-header">
-    <h1 class="section__title">{{ _('积分排行榜') }}</h1>
+    <h2 class="section__title">{{ _('积分排行榜') }}</h2>
     <form method="get" action="{{ url(lotteryRoute) }}" class="lottery-admin__compact-form">
       {% if q %}
         <input type="hidden" name="q" value="{{ q }}">
       {% endif %}
-      <select class="select" name="rankBy">
+      <select class="select" name="rankBy" aria-label="{{ _('排行榜排序依据') }}">
         <option value="total"{% if rankBy == 'total' %} selected{% endif %}>{{ _('按累计积分') }}</option>
         <option value="current"{% if rankBy == 'current' %} selected{% endif %}>{{ _('按当前积分') }}</option>
       </select>
@@ -641,7 +495,7 @@
     </form>
   </div>
   <div class="section__body">
-    <table class="data-table">
+    <div class="lottery-admin__table-scroll" role="region" aria-label="{{ _('积分与抽奖数据') }}" tabindex="0"><table class="data-table">
       <thead>
         <tr>
           <th>{{ _('排名') }}</th>
@@ -660,24 +514,25 @@
           </tr>
         {% else %}
           <tr>
-            <td colspan="4">{{ _('暂无积分数据。') }}</td>
+            <td colspan="4" class="lottery-admin__empty">{{ _('暂无积分数据。') }}</td>
           </tr>
         {% endfor %}
       </tbody>
-    </table>
+    </table></div>
   </div>
 </div>
 
-<div class="section">
+</div>
+<section class="section" id="lottery-records" data-lottery-panel="records" aria-labelledby="lottery-tab-records">
   <div class="section__header lottery-admin__rank-header">
-    <h1 class="section__title">{{ _('最近抽奖记录') }}</h1>
+    <h2 class="section__title">{{ _('最近抽奖记录') }}</h2>
     <form method="post" onsubmit='return confirm({{ _("确定清空当前管理范围的抽奖记录吗？清空后老师端和学员端都看不到这些记录。")|json|safe }});'>
       <input type="hidden" name="operation" value="clear_draws">
-      <button class="rounded button" type="submit">{{ _('一键清空抽奖记录') }}</button>
+      <button class="rounded button lottery-admin__destructive" type="submit">{{ _('清空记录') }}</button>
     </form>
   </div>
   <div class="section__body">
-    <table class="data-table">
+    <div class="lottery-admin__table-scroll" role="region" aria-label="{{ _('积分与抽奖数据') }}" tabindex="0"><table class="data-table">
       <thead>
         <tr>
           <th>{{ _('时间') }}</th>
@@ -745,20 +600,63 @@
           {% endif %}
         {% else %}
           <tr>
-            <td colspan="7">{{ _('暂无抽奖记录。') }}</td>
+            <td colspan="7" class="lottery-admin__empty">{{ _('暂无抽奖记录。') }}</td>
           </tr>
         {% endfor %}
       </tbody>
-    </table>
+    </table></div>
   </div>
+</section>
 </div>
 <script>
 (function () {
+  var page = document.querySelector('[data-lottery-admin]');
+  if (!page) return;
+  var tabs = Array.prototype.slice.call(page.querySelectorAll('[data-lottery-view]'));
+  var panels = Array.prototype.slice.call(page.querySelectorAll('[data-lottery-panel]'));
+  var views = tabs.map(function (tab) { return tab.getAttribute('data-lottery-view'); });
+  function show(view, updateLocation) {
+    if (views.indexOf(view) < 0) view = 'settings';
+    tabs.forEach(function (tab) {
+      var selected = tab.getAttribute('data-lottery-view') === view;
+      tab.setAttribute('aria-selected', String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+    });
+    panels.forEach(function (panel) {
+      panel.setAttribute('role', 'tabpanel');
+      panel.hidden = panel.getAttribute('data-lottery-panel') !== view;
+    });
+    page.querySelectorAll('[data-lottery-settings-action]').forEach(function (button) { button.hidden = view !== 'settings'; });
+    if (updateLocation) window.history.replaceState({}, '', window.location.pathname + window.location.search + '#lottery-' + view);
+  }
+  tabs.forEach(function (tab, index) {
+    tab.addEventListener('click', function () { show(views[index], true); });
+    tab.addEventListener('keydown', function (event) {
+      var next = event.key === 'ArrowRight' ? (index + 1) % tabs.length
+        : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length
+        : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1;
+      if (next < 0) return;
+      event.preventDefault();
+      show(views[next], true);
+      tabs[next].focus();
+    });
+  });
+  var hash = window.location.hash.replace(/^#lottery-/, '');
+  show(views.indexOf(hash) >= 0 ? hash : page.getAttribute('data-initial-view'));
+  page.querySelector('[data-lottery-tabs]').hidden = false;
+  var configForm = document.getElementById('lottery-config-form');
+  if (configForm) configForm.addEventListener('invalid', function (event) {
+    show('settings', true);
+    var prize = event.target.closest('details[data-lottery-prize]');
+    if (prize) prize.open = true;
+  }, true);
+}());
+(function () {
   var list = document.querySelector('[data-lottery-prizes]');
   var template = document.querySelector('[data-lottery-template]');
-  var addButton = document.querySelector('[data-lottery-add]');
+  var addButtons = Array.prototype.slice.call(document.querySelectorAll('[data-lottery-add]'));
   var countInput = document.querySelector('[data-lottery-prize-count]');
-  if (!list || !template || !addButton || !countInput) return;
+  if (!list || !template || !addButtons.length || !countInput) return;
   var lotteryBadges = JSON.parse('{{ lotteryBadges|json|jsesc|safe }}');
 
   function updateBadgePreview(row) {
@@ -828,14 +726,31 @@
         }
       });
       syncUpgradeStates(row);
+      updateSummary(row);
     });
     countInput.value = items.length;
+    document.querySelectorAll('[data-lottery-prize-total]').forEach(function (count) { count.textContent = items.length; });
+  }
+
+  function updateSummary(row) {
+    var kind = row.querySelector('[data-lottery-kind]');
+    var isBadge = kind && kind.value === 'badge';
+    var name = row.querySelector('[data-field="Name"], input[name$="Name"]');
+    var badgeSelect = row.querySelector('[data-lottery-badge-id]');
+    var badge = isBadge && lotteryBadges.find(function (item) { return String(item._id) === badgeSelect.value; });
+    var title = row.querySelector('[data-lottery-prize-name]');
+    if (title) title.textContent = isBadge ? (badge ? badge.short || badge.title : '{{ _("请选择勋章") }}') : (name && name.value.trim() || '{{ _("待命名奖品") }}');
+    var weight = row.querySelector('[data-field="Probability"], input[name$="Probability"]');
+    var meta = row.querySelector('[data-lottery-prize-meta]');
+    if (meta) meta.textContent = (isBadge ? '{{ _("勋章") }}' : '{{ _("普通奖品") }}') + ' · {{ _("权重") }} ' + (weight && weight.value || '0');
   }
 
   function bind(row) {
     var button = row.querySelector('[data-lottery-remove]');
     if (button) {
-      button.addEventListener('click', function () {
+      button.addEventListener('click', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
         row.parentNode.removeChild(row);
         if (!rows().length) addRow();
         reindex();
@@ -860,6 +775,8 @@
     var addUpgradeButton = row.querySelector('[data-lottery-upgrade-add]');
     if (addUpgradeButton) addUpgradeButton.addEventListener('click', function () { addUpgradeState(row); });
     Array.prototype.slice.call(row.querySelectorAll('[data-lottery-upgrade-item]')).forEach(bindUpgradeState);
+    row.addEventListener('input', function () { updateSummary(row); });
+    row.addEventListener('change', function () { updateSummary(row); });
     updateKind(row);
   }
 
@@ -942,6 +859,7 @@
     row.classList.remove('is-template');
     row.removeAttribute('data-lottery-template');
     row.setAttribute('data-lottery-prize', '');
+    row.open = true;
     Array.prototype.slice.call(row.querySelectorAll('input')).forEach(function (input) {
       if (input.type === 'checkbox') {
         input.value = 'true';
@@ -957,10 +875,18 @@
     list.appendChild(row);
     bind(row);
     reindex();
+    var firstInput = row.querySelector('[data-lottery-kind]');
+    if (firstInput) firstInput.focus();
   }
 
   rows().forEach(bind);
-  addButton.addEventListener('click', addRow);
+  addButtons.forEach(function (button) { button.addEventListener('click', addRow); });
+  var expandButton = document.querySelector('[data-lottery-expand]');
+  if (expandButton) expandButton.addEventListener('click', function () {
+    var open = rows().some(function (row) { return !row.open; });
+    rows().forEach(function (row) { row.open = open; });
+    expandButton.textContent = open ? '{{ _("收起全部") }}' : '{{ _("展开全部") }}';
+  });
   var configForm = list.closest('form');
   if (configForm) configForm.addEventListener('submit', function () {
     // A native select may not dispatch change until it loses focus.  Serialize
@@ -999,7 +925,10 @@
       var row = cancel.closest('.lottery-admin__edit-row');
       if (!row) return;
       var button = document.querySelector('[aria-controls="' + row.id + '"]');
-      if (button) closeRow(button);
+      if (button) {
+        closeRow(button);
+        button.focus();
+      }
     });
   });
 }());

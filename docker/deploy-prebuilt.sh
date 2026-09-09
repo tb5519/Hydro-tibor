@@ -73,7 +73,7 @@ git merge-base --is-ancestor HEAD "$EXPECTED_COMMIT" \
 
 dependency_changes="$(git diff --name-only HEAD "$EXPECTED_COMMIT" -- \
     ':(glob)**/package.json' yarn.lock package-lock.json pnpm-lock.yaml \
-    .yarnrc.yml .npmrc .yarn/patches | grep -v '^package\.json$' || true)"
+    .yarnrc.yml .npmrc .yarn/patches | grep -Ev '^(package\.json|packages/hydrooj/package\.json)$' || true)"
 [ -z "$dependency_changes" ] || stop "依赖元数据发生变化，不能直接重启：$dependency_changes"
 
 if ! docker exec -i "$HYDRO_CONTAINER" node - "$EXPECTED_COMMIT" <<'VERIFY_PACKAGE'
@@ -95,6 +95,41 @@ assert.deepStrictEqual(withoutTestScripts(readPackage('HEAD')), withoutTestScrip
 VERIFY_PACKAGE
 then
     stop 'package.json 除测试入口外发生变化，不能直接重启'
+fi
+
+if ! docker exec -i "$HYDRO_CONTAINER" node - "$EXPECTED_COMMIT" <<'VERIFY_HYDRO_PACKAGE'
+const assert = require('node:assert/strict');
+const childProcess = require('node:child_process');
+const { createRequire } = require('node:module');
+const { isDeepStrictEqual } = require('node:util');
+
+const expected = process.argv[2];
+const readPackage = (revision) => JSON.parse(childProcess.execFileSync(
+  'git', ['show', `${revision}:packages/hydrooj/package.json`], { cwd: '/workspace' },
+));
+const before = readPackage('HEAD');
+const after = readPackage(expected);
+if (!isDeepStrictEqual(before, after)) {
+  assert(before.dependencies && typeof before.dependencies === 'object' && !Array.isArray(before.dependencies));
+  assert(!Object.hasOwn(before.dependencies, 'pngjs'), 'Existing pngjs requirements cannot be changed');
+  assert.equal(after.dependencies?.pngjs, '^5.0.0', 'Only the existing pngjs 5 runtime may be declared');
+  const allowed = structuredClone(before);
+  allowed.dependencies.pngjs = '^5.0.0';
+  assert.deepStrictEqual(after, allowed, 'Other Hydro package metadata changes require separate deployment preparation');
+}
+if (after.dependencies?.pngjs === '^5.0.0') {
+  const appRequire = createRequire('/workspace/packages/hydrooj/package.json');
+  appRequire.resolve('pngjs');
+  const version = appRequire('pngjs/package.json').version;
+  assert(appRequire('semver').satisfies(version, '^5.0.0'), 'The running container must already provide pngjs ^5.0.0');
+  const { PNG } = appRequire('pngjs');
+  assert.equal(typeof PNG?.sync?.read, 'function', 'PNG.sync.read must already be available');
+  assert.equal(typeof PNG?.sync?.write, 'function', 'PNG.sync.write must already be available');
+  console.log(`已确认现有 pngjs ${version} 支持 PNG 同步读写，无需安装依赖。`);
+}
+VERIFY_HYDRO_PACKAGE
+then
+    stop 'Hydro 依赖变化超出允许范围，或现有 pngjs 5 运行环境不可用；未更新代码、未安装依赖'
 fi
 
 git rev-parse HEAD > .last-safe-deploy-commit

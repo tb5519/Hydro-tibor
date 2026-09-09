@@ -1,0 +1,92 @@
+html.page--domain_edit input[name=avatar]
+  display: none !important
+
+.domain-avatar-setting
+  width: 100% !important
+  max-width: 760px
+
+  .help-text
+    margin-top: 10px
+    line-height: 1.6
+
+.domain-avatar-control
+  display: grid
+  grid-template-columns: 48px auto
+  justify-content: start
+  align-items: center
+  gap: 12px
+  margin-top: 7px
+
+  &__preview
+    width: 48px
+    height: 48px
+    box-sizing: border-box
+    border: 1px solid var(--ui-v2-border)
+    border-radius: 50%
+    background: var(--ui-v2-surface-muted)
+    object-fit: cover
+
+  input[type=hidden], &__file
+    display: none
+
+  &__button
+    display: inline-flex
+    justify-content: center
+    align-items: center
+    gap: 7px
+    min-height: 40px
+    padding: 8px 14px
+    border: 1px solid var(--ui-v2-border)
+    border-radius: 10px
+    background: var(--ui-v2-accent-soft)
+    color: var(--ui-v2-accent)
+    font: inherit
+    font-size: 13px
+    font-weight: 500
+    white-space: nowrap
+    cursor: pointer
+
+    &:hover:not(:disabled)
+      border-color: var(--ui-v2-accent)
+
+    &:focus-visible
+      outline: 2px solid var(--ui-v2-accent)
+      outline-offset: 3px
+
+    &:disabled
+      opacity: .65
+      cursor: wait
+
+  &__hint, &__status
+    margin: 10px 0 0 60px
+    color: var(--ui-v2-text-muted)
+    font-size: 12px
+    line-height: 1.6
+
+  &__status
+    &:empty
+      display: none
+
+    &.is-success
+      color: #15803d
+
+    &.is-error
+      color: #c2414a
+
+  &[aria-busy=true] &__preview
+    opacity: .65
+
+@media (max-width: 520px)
+  .domain-avatar-control
+    gap: 10px
+    grid-template-columns: 40px auto
+
+    &__preview
+      width: 40px
+      height: 40px
+
+    &__button
+      justify-self: start
+
+    &__hint, &__status
+      margin-left: 50px

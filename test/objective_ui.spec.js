@@ -38,6 +38,23 @@ const question = (id, result) => ({
 const complete = (questions = [question(1, 'correct'), ...[2, 3, 4, 5, 6].map((id) => question(id, 'unanswered'))]) => ({
     objective: { rid, state: 'complete', score: questions.reduce((sum, item) => sum + item.score, 0), totalScore: 60, questions },
 });
+const sourceRid = '6aa000000000000000000002';
+const importToken = '7edb641d-58c7-4af6-a9f4-06469cb258e5';
+const importMarker = `hydro:record-import:11/system/5983/${importToken}`;
+function replayOptions(initial, active = true) {
+    const source = {
+        answers: { 1: 'A', 2: 'B' },
+        feedback: { ...complete([question(1, 'correct'), question(2, 'incorrect')]).objective, rid: sourceRid },
+    };
+    return {
+        url: `https://example.test/p/P5983?fromRecord=${sourceRid}&draftImport=${importToken}`,
+        context: {
+            recordReplay: { rid: sourceRid, uid: 22, name: '原作答学员', status: 2, recordUrl: `/record/${sourceRid}`, objective: source },
+            recordReplayResultActive: active,
+            objectiveInitialSubmission: initial || source,
+        },
+    };
+}
 const deferred = () => {
     let resolve;
     let reject;
@@ -83,7 +100,16 @@ async function harness(options = {}) {
             this.resolve?.();
         }
     }
-    const globals = { window: dom.window, document: dom.window.document, setTimeout, clearTimeout };
+    const context = {
+        pdoc: { domainId: 'system', docId: 5983 },
+        postSubmitUrl: '/p/5983/submit',
+        objectiveSubmitFeedbackUrl: '/record/{rid}/objective',
+        ...options.context,
+    };
+    const globals = {
+        window: dom.window, document: dom.window.document, setTimeout, clearTimeout,
+        URL: dom.window.URL, sessionStorage: dom.window.sessionStorage, localStorage: dom.window.localStorage,
+    };
     const execute = (code, mocks) => {
         const mod = { exports: {} };
         vm.runInNewContext(code, {
@@ -92,12 +118,7 @@ async function harness(options = {}) {
             exports: mod.exports,
             require: (id) => Object.hasOwn(mocks, id) ? mocks[id] : require(id),
             UserContext: { _id: 11 },
-            UiContext: {
-                pdoc: { domainId: 'system', docId: 5983 },
-                postSubmitUrl: '/p/5983/submit',
-                objectiveSubmitFeedbackUrl: '/record/{rid}/objective',
-                ...options.context,
-            },
+            UiContext: context,
         });
         return mod.exports;
     };
@@ -116,6 +137,10 @@ async function harness(options = {}) {
         'vj/components/notification': {
             info: (message) => calls.info.push(message),
             error: (message) => calls.errors.push(message),
+        },
+        'vj/constant/record': {
+            STATUS_CODES: { 0: 'pending', 1: 'pass', 2: 'fail' },
+            STATUS_TEXTS: { 0: 'Waiting', 1: 'Accepted', 2: 'Wrong Answer' },
         },
         'vj/utils': {
             ...utilities,
@@ -160,6 +185,7 @@ async function harness(options = {}) {
         doc: dom.window.document,
         calls,
         controller,
+        context,
         answer,
         event,
         flush,
@@ -179,6 +205,96 @@ async function harness(options = {}) {
 }
 
 describe('objective answer submission UI', { concurrency: false }, () => {
+    it('labels imported results as the original learner’s score while keeping the teacher’s changed draft editable', async (t) => {
+        const h = await harness({ ...replayOptions(), saved: { value: JSON.stringify({ 1: 'B', 2: 'B' }) } });
+        t.after(() => h.close());
+        assert.equal(h.doc.querySelector('.objective-nav-result-label').textContent, '原记录得分');
+        assert.equal(h.doc.querySelector('.objective-replay-source__name').textContent, '原作答学员');
+        assert.equal(h.doc.querySelector('.objective-replay-source__status').textContent, 'Wrong Answer');
+        assert.equal(h.doc.querySelector('.objective-replay-source a').getAttribute('href'), `/record/${sourceRid}`);
+        assert.equal(h.doc.querySelector('.objective-nav-result-score strong').textContent, '10');
+        assert.equal(h.nav(1).className, 'objective-nav-item is-answered');
+        assert.ok(h.nav(2).classList.contains('is-incorrect'));
+        assert.ok([...h.doc.querySelectorAll('.objective-input')].every((input) => !input.disabled));
+        assert.equal(h.doc.querySelector('.objective-submit').disabled, false);
+        assert.equal(h.calls.save.length, 0, 'Loading must not overwrite the teacher’s existing draft');
+        assert.equal(h.calls.post.length, 0);
+        assert.equal(h.calls.dialogs.length, 0);
+    });
+
+    it('switches to the teacher’s score on submission and remembers pending and completed results for refresh', async (t) => {
+        const result = deferred();
+        const h = await harness({ ...replayOptions(), get: () => result.promise });
+        t.after(() => h.close());
+        assert.ok(h.nav(1).classList.contains('is-correct'));
+        await h.answer(2, 'A');
+        await h.submit();
+        assert.equal(h.context.recordReplayResultActive, false);
+        assert.equal(h.doc.querySelector('.objective-nav-result-label').textContent, '最近一次得分');
+        assert.equal(h.doc.querySelector('.objective-nav-result-score strong').textContent, '—');
+        const pending = JSON.parse(h.dom.window.sessionStorage.getItem(importMarker));
+        assert.deepEqual(pending.ownSubmission.answers, { 1: 'A', 2: 'A' });
+        assert.deepEqual(pending.ownSubmission.feedback, { rid, state: 'pending' });
+        await React.act(async () => { result.resolve(complete([question(1, 'correct'), question(2, 'correct')])); });
+        await h.flush();
+        assert.equal(h.doc.querySelector('.objective-nav-result-score strong').textContent, '20');
+        assert.equal(h.doc.querySelector('.objective-nav-result-label').textContent, '最近一次得分');
+        assert.match(h.doc.querySelector('.objective-replay-source__footer').textContent, /已提交我的作答/);
+        assert.equal(h.doc.querySelector('.objective-replay-source__status').textContent, 'Wrong Answer', 'Source provenance stays attached to the original record');
+        const finished = JSON.parse(h.dom.window.sessionStorage.getItem(importMarker));
+        assert.equal(finished.rid, sourceRid);
+        assert.equal(finished.ownSubmission.feedback.rid, rid);
+        assert.equal(finished.ownSubmission.feedback.state, 'complete');
+        assert.equal(finished.ownSubmission.feedback.score, 20);
+        assert.equal(h.calls.dialogs.length, 1);
+    });
+
+    it('keeps the teacher’s latest submitted result and later draft changes when reopening an imported page', async (t) => {
+        const ownSubmission = {
+            answers: { 1: 'B', 2: 'A' },
+            feedback: complete([question(1, 'incorrect'), question(2, 'correct')]).objective,
+        };
+        const h = await harness({
+            ...replayOptions(ownSubmission, false),
+            saved: { value: JSON.stringify({ 1: 'B', 2: 'B', 4: 'teacher’s later edit' }) },
+        });
+        t.after(() => h.close());
+        assert.equal(h.doc.querySelector('.objective-nav-result-label').textContent, '最近一次得分');
+        assert.equal(h.doc.querySelector('[name="4"]').value, 'teacher’s later edit');
+        assert.ok(h.nav(1).classList.contains('is-incorrect'), 'Use the teacher’s feedback, not the original correct result');
+        assert.equal(h.nav(2).className, 'objective-nav-item is-answered', 'Changed answers do not inherit either record’s colors');
+        assert.equal(h.calls.save.length, 0);
+        assert.equal(h.calls.post.length, 0);
+        assert.equal(h.calls.dialogs.length, 0);
+    });
+
+    it('does not lock an imported pending learner record or query it as the teacher’s submission', async (t) => {
+        const h = await harness(replayOptions({ answers: { 1: 'A' }, feedback: { rid: sourceRid, state: 'pending' } }));
+        t.after(() => h.close());
+        assert.equal(h.calls.get.length, 0);
+        assert.equal(h.doc.querySelector('.objective-submit').disabled, false);
+        assert.equal(h.doc.querySelector('.objective-nav-result-label').textContent, '原记录得分');
+        await h.answer(1, 'B');
+        await h.submit();
+        assert.equal(h.calls.post.length, 1);
+        assert.equal(h.calls.get[0][0], `/record/${rid}/objective`);
+        assert.equal(h.context.recordReplayResultActive, false);
+    });
+
+    it('retains the original result and matching-answer colors when the teacher’s submission fails', async (t) => {
+        const h = await harness({ ...replayOptions(), post: async () => { throw new Error('Submission failed'); } });
+        t.after(() => h.close());
+        await h.answer(1, 'B');
+        await h.submit();
+        await h.answer(4, 'later edit');
+        assert.equal(h.doc.querySelector('.objective-nav-result-label').textContent, '原记录得分');
+        assert.equal(h.context.recordReplayResultActive, true);
+        assert.equal(h.nav(1).className, 'objective-nav-item is-answered');
+        assert.ok(h.nav(2).classList.contains('is-incorrect'));
+        assert.equal(h.dom.window.sessionStorage.getItem(importMarker), null);
+        assert.equal(h.calls.dialogs.length, 0);
+    });
+
     it('anchors the start of complete question stems, including images, code and free answers', async (t) => {
         const h = await harness({ statementHtml: `
             <h1>试卷标题</h1><p>试卷说明，不是题干。</p><h2>一、选择题</h2>

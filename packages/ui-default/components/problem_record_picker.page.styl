@@ -1,0 +1,284 @@
+.dialog.withBg.dialog--problem-record-picker
+  box-sizing: border-box
+  padding: 20px
+
+  .dialog__content
+    box-sizing: border-box
+    min-width: 0
+    max-width: calc(100vw - 40px) !important
+    max-height: calc(100vh - 40px)
+    max-height: calc(100dvh - 40px)
+    padding: 26px
+    border: 1px solid var(--ui-v2-border)
+    border-radius: 20px
+    background: var(--ui-v2-surface)
+    box-shadow: 0 24px 80px rgba(15, 23, 42, .18)
+    overflow: hidden
+
+  .dialog__body
+    height: auto !important
+    min-height: 0
+    margin: 0
+
+  .dialog__content > .row
+    display: none
+
+.problem-record-picker
+  display: flex
+  flex-direction: column
+  max-height: calc(100vh - 94px)
+  max-height: calc(100dvh - 94px)
+  color: var(--ui-v2-text)
+
+  &__header, &__toolbar, &__hint
+    flex-shrink: 0
+
+  &__header, &__toolbar, &__details, &__result
+    display: flex
+    align-items: center
+
+  &__header
+    justify-content: space-between
+    margin-bottom: 22px
+
+  &__eyebrow
+    color: var(--ui-v2-text-muted)
+    font-size: 12px
+
+  h1
+    margin: 4px 0 0
+    color: var(--ui-v2-text)
+    font-size: 23px
+    font-weight: 650
+
+  button
+    font: inherit
+    cursor: pointer
+
+  button:focus-visible
+    outline: 2px solid var(--ui-v2-accent)
+    outline-offset: 3px
+
+  &__close
+    display: grid
+    place-items: center
+    align-self: flex-start
+    width: 34px
+    height: 34px
+    padding: 0
+    border: 0
+    border-radius: 10px
+    background: transparent
+    color: var(--ui-v2-text-muted)
+    font-size: 27px !important
+    line-height: 1
+
+    &:hover
+      background: var(--ui-v2-surface-muted)
+      color: var(--ui-v2-text)
+
+  &__toolbar
+    justify-content: space-between
+    gap: 12px
+
+  &__filters
+    display: flex
+    gap: 3px
+    padding: 4px
+    border: 1px solid var(--ui-v2-border)
+    border-radius: 11px
+    background: var(--ui-v2-surface-muted)
+
+    button
+      padding: 7px 13px
+      border: 0
+      border-radius: 7px
+      background: transparent
+      color: var(--ui-v2-text-muted)
+      font-size: 13px
+
+      &[aria-pressed=true]
+        background: var(--ui-v2-surface)
+        color: var(--ui-v2-accent)
+        font-weight: 600
+        box-shadow: 0 1px 4px rgba(15, 23, 42, .06)
+
+  &__order
+    color: var(--ui-v2-text-muted)
+    font-size: 12px
+    white-space: nowrap
+
+  &__hint
+    margin: 13px 0 18px
+    color: var(--ui-v2-text-muted)
+    font-size: 13px
+    line-height: 1.6
+
+  &__scroll
+    min-height: 0
+    max-height: unquote('min(480px, calc(100vh - 260px))')
+    max-height: unquote('min(480px, calc(100dvh - 260px))')
+    overflow-y: auto
+    overscroll-behavior: contain
+    scrollbar-width: thin
+    scrollbar-color: var(--ui-v2-border-strong) transparent
+    padding: 3px
+    margin: -3px
+
+  &__list
+    display: flex
+    flex-direction: column
+    gap: 9px
+    margin: 0
+    padding: 0
+    list-style: none
+
+  &__record
+    display: grid
+    grid-template-columns: minmax(0, 1fr) auto 16px
+    align-items: center
+    gap: 18px
+    box-sizing: border-box
+    width: 100%
+    padding: 14px 16px
+    border: 1px solid var(--ui-v2-border)
+    border-radius: 12px
+    color: var(--ui-v2-text)
+    background: var(--ui-v2-surface)
+    text-align: left
+    transition: background .15s ease, border-color .15s ease
+
+    &:not(:disabled):hover
+      border-color: var(--ui-v2-accent)
+      background: var(--ui-v2-accent-soft)
+
+    &:disabled
+      cursor: not-allowed
+      background: var(--ui-v2-surface-muted)
+
+  &__student
+    min-width: 0
+
+  &__name
+    display: block
+    overflow: hidden
+    text-overflow: ellipsis
+    white-space: nowrap
+    font-size: 15px
+    font-weight: 600
+
+  &__details
+    flex-wrap: wrap
+    gap: 3px 12px
+    margin-top: 6px
+    color: var(--ui-v2-text-muted)
+    font-size: 12px
+    line-height: 1.4
+
+  &__unavailable
+    display: block
+    margin-top: 5px
+    color: var(--ui-v2-text-muted)
+    font-size: 12px
+
+  &__result
+    gap: 12px
+    flex-wrap: wrap
+    justify-content: flex-end
+    max-width: 175px
+
+  &__status
+    padding: 4px 8px
+    border-radius: 6px
+    background: var(--ui-v2-surface-muted)
+    color: var(--ui-v2-text-muted)
+    font-size: 12px
+    font-weight: 600
+
+    &.is-pass
+      background: rgba(21, 128, 61, .09)
+      color: #15803d
+
+    &.is-fail
+      background: rgba(194, 65, 74, .08)
+      color: #c2414a
+
+    &.is-pending, &.is-progress
+      background: var(--ui-v2-accent-soft)
+      color: var(--ui-v2-accent)
+
+  &__score
+    min-width: 45px
+    text-align: right
+    font-size: 15px
+    font-weight: 600
+    font-variant-numeric: tabular-nums
+
+    small
+      color: var(--ui-v2-text-muted)
+      font-size: 11px
+      font-weight: 400
+
+  &__arrow
+    color: var(--ui-v2-text-muted)
+    font-size: 17px
+
+  &__state
+    display: flex
+    flex-direction: column
+    align-items: center
+    gap: 13px
+    padding: 30px 12px
+    color: var(--ui-v2-text-muted)
+    font-size: 13px
+    text-align: center
+
+  &__empty-icon
+    color: var(--ui-v2-border-strong)
+    font-size: 28px
+
+  &__retry, &__more
+    padding: 10px 16px
+    border: 1px solid var(--ui-v2-border)
+    border-radius: 9px
+    background: var(--ui-v2-surface)
+    color: var(--ui-v2-accent)
+    font-size: 13px
+
+    &:hover
+      background: var(--ui-v2-accent-soft)
+
+  &__more
+    width: 100%
+    margin-top: 12px
+
+.theme--dark .problem-record-picker__status
+  &.is-pass
+    color: #70d699
+    background: rgba(112, 214, 153, .12)
+
+  &.is-fail
+    color: #f59a9f
+    background: rgba(245, 154, 159, .12)
+
+@media (max-width: 600px)
+  .dialog.withBg.dialog--problem-record-picker .dialog__content
+    padding: 20px
+
+  .problem-record-picker
+    &__order
+      display: none
+
+    &__record
+      gap: 10px
+      padding: 12px
+      grid-template-columns: minmax(0, 1fr) auto
+
+    &__result
+      flex-direction: column
+      align-items: flex-end
+      gap: 7px
+      max-width: 110px
+
+    &__arrow
+      display: none

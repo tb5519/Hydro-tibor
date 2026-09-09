@@ -255,6 +255,7 @@
     display: none;
   }
   .problem-mistake-float__title {
+    padding-right: 1rem;
     color: #0f172a;
     font-size: .95rem;
     font-weight: 800;
@@ -268,6 +269,23 @@
   .problem-mistake-float__form {
     margin: 0;
   }
+  .problem-mistake-float__close {
+    position: absolute;
+    top: .3rem;
+    right: .3rem;
+    display: grid;
+    place-items: center;
+    width: 1.4rem;
+    height: 1.4rem;
+    border: 0;
+    border-radius: 6px;
+    padding: 0;
+    background: transparent;
+    color: #94a3b8;
+    cursor: pointer;
+  }
+  .problem-mistake-float__close:hover { color: #475569; background: #f1f5f9; }
+  .problem-mistake-float__close:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
   .problem-mistake-float__button {
     background: #2563eb;
     border: 0;
@@ -320,6 +338,9 @@
   }
 </style>
 <div class="problem-mistake-float{{ '' if showMistakePrompt else ' problem-mistake-float--hidden' }}" data-mistake-state="{{ mistakeDoc.status if mistakeDoc else '' }}">
+  <button type="button" class="problem-mistake-float__close" data-mistake-prompt-close aria-label="关闭错题集提示" title="关闭">
+    <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+  </button>
   {% if mistakeDoc and mistakeDoc.status != 'mastered' %}
     <div class="problem-mistake-float__title">已加入错题集</div>
     <div class="problem-mistake-float__text">复盘完成后可以标记已掌握。</div>
@@ -398,8 +419,13 @@
             <span class="problem__tag-item icon icon-comparison">{{ pdoc.config.memoryMax if pdoc.config.memoryMax == pdoc.config.memoryMin else pdoc.config.memoryMin+'~'+pdoc.config.memoryMax }}MiB</span>
           {% endif %}
           {% if not tdoc %}
-            <a class="problem__tag-item interactive" href="{{ url('record_main', query={pid:pdoc.docId}) }}">{{ _('Tried') }}: {{ pdoc.nSubmit }}</a>
-            <a class="problem__tag-item interactive" href="{{ url('record_main', query={pid:pdoc.docId, status:1}) }}">{{ _('Accepted') }}: {{ pdoc.nAccept if ((not tdoc) or showAccept) else '?' }}</a>
+            {% if UiContext.problemRecordPicker %}
+            <a class="problem__tag-item interactive" href="{{ url('record_main', query={pid:pdoc.docId}) }}" data-problem-record-picker="all">{{ _('Tried') }}: {{ pdoc.nSubmit }}</a>
+            <a class="problem__tag-item interactive" href="{{ url('record_main', query={pid:pdoc.docId, status:1}) }}" data-problem-record-picker="accepted">{{ _('Accepted') }}: {{ pdoc.nAccept if ((not tdoc) or showAccept) else '?' }}</a>
+            {% else %}
+            <span class="problem__tag-item">{{ _('Tried') }}: {{ pdoc.nSubmit }}</span>
+            <span class="problem__tag-item">{{ _('Accepted') }}: {{ pdoc.nAccept if ((not tdoc) or showAccept) else '?' }}</span>
+            {% endif %}
             <span class="problem__tag-item">{{ _('Difficulty') }}: {{ pdoc['difficulty'] or lib.difficulty(pdoc.nSubmit, pdoc.nAccept) or _('(None)') }}</span>
             <span class="problem__tag-item interactive">{{ _('Uploaded By') }}: {{ user.render_inline(udoc, badge=false) }}</span>
           {% endif %}

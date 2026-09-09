@@ -5,8 +5,10 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { confirm, InfoDialog } from 'vj/components/dialog';
 import Notification from 'vj/components/notification';
+import { STATUS_CODES, STATUS_TEXTS } from 'vj/constant/record';
 import { delay, i18n, request, tpl } from 'vj/utils';
 import { openDB } from 'vj/utils/db';
+import { rememberRecordReplaySubmission } from '../record_replay_import';
 import { ObjectiveResult } from './ObjectiveResult';
 
 type Answers = Record<string, string | string[]>;
@@ -58,6 +60,8 @@ export async function loadObjective() {
   let feedback: ObjectiveFeedback | undefined;
   let stateMessage = '';
   const readOnly = !!UiContext.homeworkReview;
+  const replay = !readOnly && UiContext.recordReplay?.objective ? UiContext.recordReplay : null;
+  let replayResultActive = !!replay && UiContext.recordReplayResultActive === true;
   const loggedOut = !UserContext._id;
   let resultDialog: InfoDialog;
   const active = () => !disposed && statement.isConnected;
@@ -200,6 +204,19 @@ export async function loadObjective() {
         : feedback?.state === 'error' ? '本次评测未完成。' : readOnly && !feedback ? '该学员暂无递交记录。' : '';
     return <>
       <div className="objective-nav-card">
+        {replay && <div className="objective-replay-source">
+          <span className="objective-replay-source__label">作答来源</span>
+          <div className="objective-replay-source__record">
+            <strong className="objective-replay-source__name" title={replay.name}>{replay.name}</strong>
+            <span className={`objective-replay-source__status is-${STATUS_CODES[replay.status] || 'ignored'}`}>
+              {i18n(STATUS_TEXTS[replay.status] || 'Unknown')}
+            </span>
+          </div>
+          <div className="objective-replay-source__footer">
+            <span>{replayResultActive ? '已填入我的作答，可修改后提交' : '已提交我的作答'}</span>
+            <a href={replay.recordUrl}>原记录 <span aria-hidden="true">↗</span></a>
+          </div>
+        </div>}
         <div className="objective-nav-title">答题卡{readOnly && <span className="objective-review-label">只读查看</span>}</div>
         <div className="contest-problems objective-nav-grid">
           {pids.map((id) => {
@@ -226,7 +243,7 @@ export async function loadObjective() {
           <span><i className="objective-nav-dot" /> 未答</span>
         </div>
         <div className="objective-nav-result" aria-live="polite" aria-atomic="true">
-          <span className="objective-nav-result-label">{readOnly ? '本次得分' : '最近一次得分'}</span>
+          <span className="objective-nav-result-label">{readOnly ? '本次得分' : replayResultActive ? '原记录得分' : '最近一次得分'}</span>
           <div className="objective-nav-result-score">
             <strong>{scored ? feedback.score : '—'}</strong>
             {scored && Number.isFinite(feedback.totalScore) && <span>/ {feedback.totalScore} 分</span>}
@@ -268,7 +285,9 @@ export async function loadObjective() {
     const initial = UiContext.objectiveInitialSubmission;
     submittedAnswers = sanitizeAnswers(initial?.answers);
     feedback = initial?.feedback;
-    if (feedback?.state === 'pending') pendingRid = feedback.rid;
+    // An imported learner's pending record must not lock the teacher's draft
+    // or turn their Submit button into a request for that learner's result.
+    if (feedback?.state === 'pending' && !replayResultActive) pendingRid = feedback.rid;
     let values = submittedAnswers;
     if (!readOnly) {
       try {
@@ -344,6 +363,7 @@ export async function loadObjective() {
       }
       pendingRid = '';
       feedback = objective;
+      if (!readOnly && !replayResultActive) rememberRecordReplaySubmission(submittedAnswers, feedback);
       decorateAnswers();
       if (objective.state === 'complete') {
         setBusy(false, silent ? '' : '评测完成，答题情况已更新。');
@@ -370,13 +390,16 @@ export async function loadObjective() {
     setBusy(true, pendingRid ? '正在获取本次成绩…' : '正在递交并评测，请稍候…');
     try {
       if (!pendingRid) {
-        submittedAnswers = JSON.parse(JSON.stringify(ans));
-        const response = await request.post(UiContext.postSubmitUrl, { lang: '_', code: yaml.dump(submittedAnswers) }, { timeout: 30000 });
+        const answersToSubmit = JSON.parse(JSON.stringify(ans));
+        const response = await request.post(UiContext.postSubmitUrl, { lang: '_', code: yaml.dump(answersToSubmit) }, { timeout: 30000 });
         if (!active()) return;
         const rid = response.rid?.$oid || response.rid;
         if (typeof rid !== 'string' || !/^[a-f0-9]{24}$/i.test(rid)) throw new Error('未收到递交记录，请稍后重试。');
+        submittedAnswers = answersToSubmit;
         pendingRid = rid;
         feedback = { rid, state: 'pending' };
+        replayResultActive = false;
+        rememberRecordReplaySubmission(submittedAnswers, feedback);
         decorateAnswers();
         renderNavigation();
       }

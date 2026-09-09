@@ -227,6 +227,69 @@ for result in correct incorrect
   line-height: 1.4
   white-space: nowrap
 
+.objective-replay-source
+  margin: 0 0 14px
+  padding: 0 0 13px
+  border-bottom: 1px solid var(--ui-v2-border)
+
+  &__label
+    color: var(--ui-v2-text-muted)
+    font-size: 11px
+    line-height: 1.5
+
+  &__record
+    display: flex
+    align-items: flex-start
+    justify-content: space-between
+    gap: 8px
+    margin-top: 5px
+
+  &__name
+    min-width: 0
+    overflow-wrap: anywhere
+    color: var(--ui-v2-text)
+    font-size: 13px
+    font-weight: 600
+    line-height: 1.6
+
+  &__status
+    flex-shrink: 0
+    max-width: 55%
+    padding: 2px 6px
+    border-radius: 5px
+    background: var(--ui-v2-surface-muted)
+    color: var(--ui-v2-text-muted)
+    font-size: 10px
+    line-height: 1.6
+    overflow-wrap: anywhere
+
+    &.is-pass
+      background: var(--objective-correct-soft)
+      color: var(--objective-correct)
+
+    &.is-fail
+      background: var(--objective-incorrect-soft)
+      color: var(--objective-incorrect)
+
+  &__footer
+    display: flex
+    flex-wrap: wrap
+    align-items: baseline
+    justify-content: space-between
+    gap: 3px 8px
+    margin-top: 6px
+    color: var(--ui-v2-text-muted)
+    font-size: 10px
+    line-height: 1.6
+
+    a
+      flex-shrink: 0
+      color: var(--ui-v2-accent)
+
+      &:focus-visible
+        outline: 2px solid var(--ui-v2-accent)
+        outline-offset: 3px
+
 .objective-nav-result
   margin-top: 14px
   padding-top: 13px

@@ -11,6 +11,7 @@ import { RecordDoc, Tdoc } from '../interface';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
 import { authorizeHomeworkReview, isHomeworkReviewRecord } from '../lib/homework_review';
 import { buildObjectiveInitialSubmission, loadObjectiveSubmissionConfig, loadOwnObjectiveRecordSubmission } from '../lib/objective_submission';
+import { listProblemSubmissionRecords } from '../lib/problem_record_replay';
 import { canManageRecordList } from '../lib/record_list_scope';
 import {
     appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
@@ -25,7 +26,7 @@ import system from '../model/system';
 import TaskModel from '../model/task';
 import user from '../model/user';
 import {
-    ConnectionHandler, Handler, param, subscribe, Types,
+    ConnectionHandler, Handler, param, query, route, subscribe, Types,
 } from '../service/server';
 import { buildProjection, Time } from '../utils';
 import { ContestDetailBaseHandler } from './contest';
@@ -689,6 +690,17 @@ export class ContestSubmitFeedbackHandler extends Handler {
 }
 
 /** Own results, or an explicitly authorized homework review of one student. */
+export class ProblemSubmissionRecordsHandler extends Handler {
+    @route('pid', Types.ProblemId)
+    @query('accepted', Types.Boolean)
+    @query('cursor', Types.ObjectId, true)
+    async get(domainId: string, pid: number | string, accepted = false, cursor?: ObjectId) {
+        const pdoc = await problem.get(domainId, pid);
+        if (!pdoc) throw new ProblemNotFoundError(domainId, pid);
+        this.response.body = await listProblemSubmissionRecords(this, domainId, pdoc, accepted, cursor);
+    }
+}
+
 export class ObjectiveSubmitFeedbackHandler extends Handler {
     @param('rid', Types.ObjectId)
     @param('tid', Types.ObjectId, true)
@@ -714,6 +726,7 @@ export class ObjectiveSubmitFeedbackHandler extends Handler {
 export async function apply(ctx) {
     ctx.Route('record_main', '/record', RecordListHandler);
     ctx.Route('record_detail', '/record/:rid', RecordDetailHandler);
+    ctx.Route('problem_submission_records', '/p/:pid/submission-records', ProblemSubmissionRecordsHandler);
     ctx.Route('contest_submit_feedback', '/contest-submit-feedback', ContestSubmitFeedbackHandler);
     ctx.Route('objective_submit_feedback', '/objective-submit-feedback', ObjectiveSubmitFeedbackHandler);
     ctx.Connection('record_conn', '/record-conn', RecordMainConnectionHandler);

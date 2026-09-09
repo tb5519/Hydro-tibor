@@ -1,3 +1,4 @@
+import { readFile } from 'fs/promises';
 import path from 'path';
 import { load } from 'js-yaml';
 import type { Dictionary } from 'lodash';
@@ -11,6 +12,9 @@ import {
 } from '../error';
 import type { DomainDoc } from '../interface';
 import avatar from '../lib/avatar';
+import {
+    createDomainAvatarTarget, DOMAIN_AVATAR_MAX_SIZE, domainAvatarPath, isOwnedDomainAvatarPath, normalizeDomainAvatar,
+} from '../lib/domain_avatar';
 import { getDomainRankingMode } from '../lib/domain_ranking';
 import { getHomePosterConfig } from '../lib/home_poster';
 import { getSharedRankingSnapshot, SharedRankingRow } from '../lib/shared_ranking';
@@ -301,6 +305,44 @@ class DomainEditHandler extends ManageHandler {
         }
         await domain.edit(args.domainId, $set);
         this.response.redirect = this.url('domain_dashboard');
+    }
+}
+
+class DomainAvatarUploadHandler extends ManageHandler {
+    async prepare() {
+        this.checkPerm(PERM.PERM_EDIT_DOMAIN);
+    }
+
+    async post() {
+        const domainId = this.domain._id;
+        const file = this.request.files?.file;
+        if (!file || !file.size || file.size > DOMAIN_AVATAR_MAX_SIZE) throw new ValidationError('avatar');
+        const data = normalizeDomainAvatar(await readFile(file.filepath));
+        const { storagePath, avatarUrl } = createDomainAvatarTarget(domainId);
+        await storage.put(storagePath, data, this.user._id);
+        try {
+            await domain.edit(domainId, { avatar: `url:${avatarUrl}`, avatarStoragePath: storagePath });
+        } catch (error) {
+            await storage.del([storagePath], this.user._id).catch(() => undefined);
+            throw error;
+        }
+        const oldPath = this.domain.avatarStoragePath;
+        if (isOwnedDomainAvatarPath(domainId, oldPath)) storage.del([oldPath], this.user._id).catch(() => undefined);
+        this.response.body = { avatar: `url:${avatarUrl}`, avatarUrl };
+    }
+}
+
+class DomainAvatarImageHandler extends Handler {
+    noCheckPermView = true;
+
+    @param('filename', Types.String)
+    async get({ }, filename: string) {
+        const target = domainAvatarPath(this.domain._id, filename);
+        if (!await storage.getMeta(target)) throw new NotFoundError('avatar');
+        this.response.body = await storage.get(target);
+        this.response.type = 'image/png';
+        this.response.addHeader('Cache-Control', 'public, max-age=604800, immutable');
+        this.response.addHeader('X-Content-Type-Options', 'nosniff');
     }
 }
 
@@ -820,6 +862,8 @@ export async function apply(ctx: Context) {
     ctx.Route('ranking', '/ranking', DomainRankHandler, PERM.PERM_VIEW_RANKING);
     ctx.Route('domain_dashboard', '/domain/dashboard', DomainDashboardHandler);
     ctx.Route('domain_edit', '/domain/edit', DomainEditHandler);
+    ctx.Route('domain_avatar_upload', '/domain/avatar', DomainAvatarUploadHandler);
+    ctx.Route('domain_avatar_image', '/domain/avatar/:filename', DomainAvatarImageHandler);
     ctx.Route('domain_ranking_setting', '/domain/ranking-setting', DomainRankingSettingHandler);
     ctx.Route('domain_home_poster', '/domain/home-poster', DomainHomePosterHandler);
     ctx.Route('domain_navigation_setting', '/domain/navigation', DomainNavigationSettingHandler);

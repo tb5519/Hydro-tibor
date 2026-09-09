@@ -232,6 +232,8 @@ function problemHandler(options = {}) {
         setting: { langs: { python3: {} } },
         pickPreferredCodeLang: () => 'python3', getCppEditorMode: () => 'proficient',
         getActiveBadgeAcTheme: async () => null,
+        assertRecordReplayRequest: (fromRecord) => { assert.equal(fromRecord, undefined); },
+        canManageRecordList: (viewer) => viewer.hasPerm(PERM.PERM_EDIT_HOMEWORK),
         mistake: { getPracticeState: () => null },
         loadOwnObjectiveSubmission: async (...args) => { ownLoads.push(args); return null; },
     });

@@ -46,6 +46,7 @@
         "nodemailer": "^8.0.5",
         "notp": "^2.0.3",
         "p-queue": "^9.1.2",
+        "pngjs": "^5.0.0",
         "sanitize-filename": "^1.6.4",
         "schemastery": "^3.18.0",
         "semver": "^7.7.4",

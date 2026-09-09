@@ -1,4 +1,5 @@
 import type { KoaContext } from '@hydrooj/framework';
+import { isDomainAvatarImageRequest } from '../../lib/domain_avatar_access';
 import workspace from '../../model/workspace';
 
 const WORKSPACE_NEUTRAL_PATHS = [
@@ -14,8 +15,8 @@ const WORKSPACE_NEUTRAL_PATHS = [
     /^\/service-worker-config$/,
 ];
 
-function isWorkspaceNeutralPath(path: string) {
-    return WORKSPACE_NEUTRAL_PATHS.some((pattern) => pattern.test(path));
+function isWorkspaceNeutralPath(path: string, method: string) {
+    return isDomainAvatarImageRequest(path, method) || WORKSPACE_NEUTRAL_PATHS.some((pattern) => pattern.test(path));
 }
 
 /**
@@ -27,7 +28,7 @@ export async function resolveWorkspaceAccess(ctx: KoaContext) {
     const currentUser = ctx.HydroContext.user;
     if (!workspace.isEnabled() || !currentUser || currentUser._id <= 1
         || workspace.isPlatformAdmin(currentUser._id)
-        || isWorkspaceNeutralPath(ctx.request.path)) {
+        || isWorkspaceNeutralPath(ctx.request.path, ctx.request.method)) {
         return { allowed: true, redirect: '' };
     }
     const assignedWorkspaceIds = await workspace.getAssignedWorkspaceIds(currentUser._id);

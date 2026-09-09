@@ -3,4 +3,13 @@
 <div class="section">
   {% include "partials/setting.html" %}
 </div>
+<template id="domain-avatar-upload-template">
+  <div class="domain-avatar-control" data-upload-url="{{ url('domain_avatar_upload') }}">
+    <img class="domain-avatar-control__preview" src="{{ avatarUrl(current.avatar) if current.avatar else '/img/team_avatar.png' }}" alt="当前域头像" width="48" height="48">
+    <button type="button" class="domain-avatar-control__button"><span class="icon icon-upload" aria-hidden="true"></span>上传图片</button>
+    <input class="domain-avatar-control__file" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" aria-label="选择域头像图片" hidden>
+  </div>
+  <p class="domain-avatar-control__hint">支持 JPG、PNG、WebP，最大 8 MB。上传成功后立即生效。</p>
+  <p class="domain-avatar-control__status" role="status" aria-live="polite"></p>
+</template>
 {% endblock %}

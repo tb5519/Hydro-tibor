@@ -33,6 +33,8 @@ import { getMistakePromptState } from '../lib/mistake_prompt';
 import { parseObjectiveConfig } from '../lib/objective_feedback';
 import { buildObjectiveInitialSubmission, loadOwnObjectiveSubmission } from '../lib/objective_submission';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
+import { assertRecordReplayRequest, canUseProblemRecordPicker, loadProblemRecordReplay } from '../lib/problem_record_replay';
+import { canManageRecordList } from '../lib/record_list_scope';
 import {
     appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
 } from '../lib/record_visibility';
@@ -686,8 +688,11 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
     @route('pid', Types.ProblemId, true)
     @query('tid', Types.ObjectId, true)
     @query('reviewUid', Types.PositiveInt, true)
-    async _prepare(domainId: string, pid: number | string, tid?: ObjectId, reviewUid?: number) {
-        if (!['GET', 'HEAD'].includes((this.request.method || 'GET').toUpperCase())) rejectHomeworkReviewMutation(this.request);
+    @query('fromRecord', Types.ObjectId, true)
+    async _prepare(domainId: string, pid: number | string, tid?: ObjectId, reviewUid?: number, fromRecord?: ObjectId) {
+        const isReadRequest = ['GET', 'HEAD'].includes((this.request.method || 'GET').toUpperCase());
+        if (!isReadRequest) rejectHomeworkReviewMutation(this.request);
+        else assertRecordReplayRequest(fromRecord, tid, reviewUid);
         this.pdoc = await problem.get(domainId, pid);
         if (!this.pdoc) throw new ProblemNotFoundError(domainId, pid);
         const reviewStudent = reviewUid === undefined ? null
@@ -760,6 +765,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             showMistakePrompt = !mistakeDoc && this.mistakePromptState.eligible
                 && Date.now() - this.mistakePromptState.latestSubmitAt <= 10 * Time.minute;
         }
+        this.UiContext.canManageProblemSidebar = canManageRecordList(this.user);
         this.response.body = {
             pdoc: this.pdoc,
             udoc: this.udoc,
@@ -804,6 +810,15 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
                 const rawConfig = parseObjectiveConfig(rawProblem?.config);
                 if (rawConfig) this.UiContext.objectiveInitialSubmission = buildObjectiveInitialSubmission(rdoc, rawConfig);
             }
+        }
+        if (isReadRequest && !tid && !reviewStudent && canUseProblemRecordPicker(this.user)) {
+            this.UiContext.problemRecordPicker = {
+                url: this.url('problem_submission_records', { domainId, pid: this.pdoc.pid || this.pdoc.docId }),
+                ownUrl: this.url('problem_detail', { domainId, pid: this.pdoc.pid || this.pdoc.docId }),
+            };
+        }
+        if (isReadRequest && fromRecord) {
+            this.UiContext.recordReplay = await loadProblemRecordReplay(this, domainId, this.pdoc, fromRecord);
         }
         if (this.tdoc && this.tsdoc) {
             const fields = ['attend', 'startAt'];
@@ -862,7 +877,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
                 || new Set(tdoc.assign).intersection(new Set(this.user.group)).size,
             ));
         }
-        if (!this.UiContext.homeworkReview && !args[2]
+        if (!this.UiContext.homeworkReview && !this.UiContext.recordReplay && !args[2]
             && typeof this.pdoc.config === 'object' && this.pdoc.config?.type === 'objective') {
             const initialSubmission = await loadOwnObjectiveSubmission(this, this.args.domainId, this.pdoc, args[1]);
             if (initialSubmission) this.UiContext.objectiveInitialSubmission = initialSubmission;

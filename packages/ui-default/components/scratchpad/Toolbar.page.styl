@@ -215,3 +215,40 @@
 @media (prefers-reduced-motion: reduce)
   #scratchpad .scratchpad__toolbar .scratchpad__toolbar__button
     transition: none
+
+#scratchpad .scratchpad__record-source
+  display: flex
+  align-items: center
+  flex-wrap: wrap
+  flex: 0 0 auto
+  gap: rem(5px 10px)
+  padding: rem(8px 16px)
+  border-bottom: 1px solid var(--ui-v2-border)
+  background: var(--ui-v2-surface-muted)
+  color: var(--ui-v2-text-muted)
+  font-size: rem(12px)
+  line-height: 1.4
+
+  strong
+    overflow: hidden
+    max-width: rem(180px)
+    text-overflow: ellipsis
+    white-space: nowrap
+    color: var(--ui-v2-text)
+    font-weight: 500
+
+  .is-pass
+    color: #22a06b
+
+  .is-fail
+    color: #dc5a6c
+
+  .scratchpad__record-source-label
+    font-size: rem(11px)
+    border: 1px solid var(--ui-v2-border)
+    border-radius: rem(5px)
+    padding: rem(1px 5px)
+
+  .scratchpad__record-source-hint
+    margin-left: auto
+    font-size: rem(11px)

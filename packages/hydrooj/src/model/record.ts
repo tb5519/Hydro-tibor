@@ -326,6 +326,8 @@ export async function apply(ctx: Context) {
         db.ensureIndexes(
             RecordModel.coll,
             { key: { domainId: 1, pid: 1 }, name: 'delete' },
+            { key: { domainId: 1, pid: 1, _id: -1 }, name: 'problemAttempts' },
+            { key: { domainId: 1, pid: 1, status: 1, _id: -1 }, name: 'problemAttemptsByStatus' },
             { key: { domainId: 1, contest: 1, _id: -1 }, name: 'basic' },
             { key: { domainId: 1, contest: 1, uid: 1, _id: -1 }, name: 'withUser' },
             { key: { domainId: 1, contest: 1, pid: 1, _id: -1 }, name: 'withProblem' },

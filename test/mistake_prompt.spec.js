@@ -103,6 +103,7 @@ describe('live mistake prompt', () => {
             STATUS: { STATUS_ACCEPTED: AC },
             normalStatuses: new Set([AC, WA, 3, 4, 5, 6, CE]),
             mistakePromptChecks: new Set(),
+            mistakePromptDismissed: false,
             getKnownFormalRecords: () => records,
             getRecordId: (r) => r._id,
             isFormalRecord: (r) => r.formal,
@@ -116,6 +117,7 @@ describe('live mistake prompt', () => {
         return {
             check: (r) => context.maybeRevealMistakePrompt({}, r),
             setRecords: (items) => { records = items; },
+            dismiss: () => { context.mistakePromptDismissed = true; },
             counts: () => ({ calls, reveals }),
         };
     }
@@ -131,6 +133,12 @@ describe('live mistake prompt', () => {
         const h = harness();
         await Promise.all([{ status: WA }, { formal: false }, { current: false }].map((extra) =>
             h.check({ _id: 'a', status: AC, formal: true, current: true, ...extra })));
+        assert.deepEqual(h.counts(), { calls: 0, reveals: 0 });
+    });
+    it('keeps the prompt closed when further results arrive on the same page', async () => {
+        const h = harness();
+        h.dismiss();
+        await h.check({ _id: 'a', status: AC, formal: true, current: true });
         assert.deepEqual(h.counts(), { calls: 0, reveals: 0 });
     });
     it('rechecks the accepted retry when an earlier attempt finishes late', async () => {

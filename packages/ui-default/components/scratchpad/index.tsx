@@ -8,6 +8,7 @@ import React from 'react';
 import { useDispatch, useSelector, useStore } from 'react-redux';
 import Dom from 'vj/components/react/DomComponent';
 import { ctx, Service } from 'vj/context';
+import RecordReplaySource from './RecordReplaySource';
 import ScratchpadEditor from './ScratchpadEditorContainer';
 import ScratchpadPretest from './ScratchpadPretestContainer';
 import ScratchpadRecords from './ScratchpadRecordsContainer';
@@ -123,6 +124,7 @@ export default function ScratchpadContainer() {
         <Allotment vertical defaultSizes={UiContext.homeworkReview ? [730, 0, 270] : [450, 280, 270]} onChange={handleChangeSize}>
           <div key="editor" className="scratchpad__workspace flex-col splitpane-fill">
             <ScratchpadToolbar />
+            <RecordReplaySource />
             {UiContext.homeworkReview && !UiContext.homeworkReview.rid && (
               <p className="scratchpad__review-empty">该学员尚未提交这道题。</p>
             )}

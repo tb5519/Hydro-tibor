@@ -7,7 +7,7 @@ const jsesc = require('jsesc');
 const nunjucks = require('nunjucks');
 
 const template = fs.readFileSync(path.join(__dirname, '../packages/ui-default/templates/manage_lottery.html'), 'utf8');
-const formStart = template.indexOf('<form method="post" enctype="multipart/form-data" class="lottery-admin">');
+const formStart = template.indexOf('<form method="post" enctype="multipart/form-data"');
 const form = template.slice(formStart, template.indexOf('</form>', formStart) + '</form>'.length);
 const script = template.match(/<script>([\s\S]*?)<\/script>/)[1];
 const env = new nunjucks.Environment(null, { autoescape: true });
