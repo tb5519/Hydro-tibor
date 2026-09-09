@@ -15,7 +15,7 @@ const getRecordDetail = (data) => {
   if (!shouldShowDetail(data)) {
     return (
       <span className={`record-status--text ${STATUS_CODES[data.status]}`}>
-        {i18n(STATUS_TEXTS[data.status])}
+        {STATUS_TEXTS[data.status]}
       </span>
     );
   }
@@ -34,7 +34,7 @@ const getRecordDetail = (data) => {
     );
   }).filter(Boolean);
   return details.length ? details : (
-    <span className={`record-status--text ${STATUS_CODES[data.status]}`}>{i18n(STATUS_TEXTS[data.status])}</span>
+    <span className={`record-status--text ${STATUS_CODES[data.status]}`}>{STATUS_TEXTS[data.status]}</span>
   );
 };
 

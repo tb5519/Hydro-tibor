@@ -54,7 +54,7 @@ async function harness(name, options = {}) {
                 if (id === 'vj/utils') {
                     return {
                         getAvailableLangs: () => ({ python3: { display: 'Python 3' }, cpp: { display: 'C++' } }),
-                        i18n: (value) => value, mongoId: () => ({ timestamp: 0 }),
+                        i18n: options.i18n || ((value) => value), mongoId: () => ({ timestamp: 0 }),
                         request: {
                             post: async (...args) => { posts.push(args); return { rid: '6aa000000000000000000001' }; },
                             get: async () => ({ rdocs: [] }),
@@ -187,6 +187,26 @@ describe('scratchpad controls and result presentation', () => {
             await h.replace({ ...state });
             assert.equal(h.document.querySelector('tbody tr'), null);
             assert.match(h.document.querySelector('[role="status"]').textContent, /暂无评测记录/);
+        } finally { await h.close(); }
+    });
+
+    it('keeps judge status labels in English when the interface uses Chinese', async () => {
+        const state = initialState();
+        const statuses = [STATUS.STATUS_COMPILE_ERROR, STATUS.STATUS_ACCEPTED, STATUS.STATUS_WRONG_ANSWER];
+        const labels = ['Compile Error', 'Accepted', 'Wrong Answer'];
+        state.records.rows = statuses.map(String);
+        state.records.items = Object.fromEntries(statuses.map((status) => [status, {
+            _id: '6aa000000000000000000001', status, memory: 0, time: 0,
+            testCases: status === STATUS.STATUS_WRONG_ANSWER ? [{ status: STATUS.STATUS_OUTPUT_LIMIT_EXCEEDED }] : [],
+        }]));
+        const translations = { 'Compile Error': '编译错误', Accepted: '通过', 'Wrong Answer': '答案错误', Records: '评测记录' };
+        const h = await harness('ScratchpadRecordsContainer', { state, i18n: (value) => translations[value] || value });
+        try {
+            assert.deepEqual(Array.from(h.document.querySelectorAll('.scratchpad__record-result .record-status--text'),
+                (element) => element.textContent.trim()), labels);
+            assert.match(h.document.body.textContent, /评测记录/);
+            assert.equal(h.document.querySelectorAll('.record-status--text.fail').length, 2);
+            assert.equal(h.document.querySelectorAll('.record-status--text.pass').length, 1);
         } finally { await h.close(); }
     });
 
