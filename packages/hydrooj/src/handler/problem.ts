@@ -794,6 +794,8 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
                 lang: rdoc?.lang || '',
                 record: publicHomeworkReviewRecord(rdoc),
                 returnUrl: this.url('homework_detail', { tid, query: { uid: reviewUid } }),
+                ownAnswerUrl: problem.canViewBy(this.pdoc, this.user)
+                    ? this.url('problem_detail', { domainId, pid: this.pdoc.pid || this.pdoc.docId }) : '',
             };
             this.response.body.homeworkReview = this.UiContext.homeworkReview;
             if (typeof this.pdoc.config === 'object' && this.pdoc.config?.type === 'objective' && rdoc) {

@@ -179,6 +179,12 @@ for result in correct incorrect
   width: 100%
   padding-bottom: 0
 
+.objective-problem-mode .objective-question-anchor
+  display: block
+  height: 0
+  scroll-margin-top: rem($nav-item-height + 16)
+  pointer-events: none
+
 // A long answer sheet must keep its submit controls reachable while the
 // statement scrolls. Short sidebars retain their natural height.
 @media (min-width: 1000px)

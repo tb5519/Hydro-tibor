@@ -217,6 +217,17 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
             </ToolbarButton>
           )}
           {review && <span className="scratchpad__review-label">{review.name} 的作答<span>只读</span></span>}
+          {review?.rid && (
+            <ToolbarButton
+              className="scratchpad__toolbar__copy-review"
+              data-homework-review-copy
+              disabled={!review.ownAnswerUrl}
+              title={review.ownAnswerUrl ? '替换你的本题草稿，修改后可自行递交' : '当前账号没有这道题的独立作答权限'}
+            >
+              <Icon name="copy" />
+              <span>复制到我的作答</span>
+            </ToolbarButton>
+          )}
         </div>
         <div className="scratchpad__toolbar__views">
           <ScratchpadThemePicker />

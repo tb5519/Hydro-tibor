@@ -181,7 +181,8 @@ function problemHandler(options = {}) {
     const statusUids = [];
     class ContestNotLiveError extends Error {}
     const pdoc = {
-        domainId: 'class-a', docId: 1002, pid: 'P1002', owner: 10, title: '题目', content: '', tag: [],
+        domainId: 'class-a', docId: 1002, pid: options.pid === undefined ? 'P1002' : options.pid,
+        owner: 10, title: '题目', content: '', tag: [],
         config: { type: 'default', langs: ['python3'] }, additional_file: [],
     };
     class BaseHandler {
@@ -194,7 +195,15 @@ function problemHandler(options = {}) {
         request = { method: 'GET', query: { reviewUid: 20 }, json: false };
         response = { body: {} };
         ctx = { parallel: async () => {} };
-        url(_name, args) { return `/homework/${args.tid}?uid=${args.query.uid}`; }
+        url(name, args) {
+            if (name === 'problem_detail') {
+                assert.equal(args.query, undefined);
+                assert.equal(args.tid, undefined);
+                assert.equal(args.reviewUid, undefined);
+                return `/d/${args.domainId}/p/${args.pid}`;
+            }
+            return `/homework/${args.tid}?uid=${args.query.uid}`;
+        }
     }
     const source = fs.readFileSync(path.join(root, 'packages/hydrooj/src/handler/problem.ts'), 'utf8');
     const section = source.slice(source.indexOf('export class ProblemDetailHandler'), source.indexOf('export class ProblemSubmitHandler'));
@@ -215,7 +224,7 @@ function problemHandler(options = {}) {
             getStatus: async () => ({ detail: { 1002: { rid: bestRid } } }),
         },
         problem: {
-            get: async () => pdoc, canViewBy: () => true,
+            get: async () => pdoc, canViewBy: () => options.normalVisible !== false,
             getStatus: async (_domain, _pid, uid) => { statusUids.push(uid); return null; },
         },
         user: { getById: async () => ({ _id: 10 }) },
@@ -239,6 +248,7 @@ describe('problem page homework review integration', () => {
         assert.equal(h.handler.UiContext.homeworkReview.code, 'print("student")');
         assert.equal(h.handler.UiContext.homeworkReview.rid, bestRid.toString());
         assert.equal(h.handler.UiContext.homeworkReview.returnUrl, `/homework/${tid}?uid=20`);
+        assert.equal(h.handler.UiContext.homeworkReview.ownAnswerUrl, '/d/class-a/p/P1002');
         assert.deepEqual(h.statusUids, [20]);
         assert.equal(h.ownLoads.length, 0);
     });
@@ -250,6 +260,20 @@ describe('problem page homework review integration', () => {
         assert.equal(h.handler.UiContext.homeworkReview.code, '');
         assert.equal(h.handler.UiContext.homeworkReview.rid, '');
         assert.equal(h.handler.UiContext.homeworkReview.record, null);
+    });
+
+    it('uses the numeric problem id for the own-answer route when no public problem id exists', async () => {
+        const h = problemHandler({ pid: '' });
+        await h.handler._prepare('class-a', 1002, tid, 20);
+        assert.equal(h.handler.UiContext.homeworkReview.ownAnswerUrl, '/d/class-a/p/1002');
+    });
+
+    it('keeps hidden problems review-only when the teacher cannot access the normal problem page', async () => {
+        const h = problemHandler({ normalVisible: false, docs: [makeRecord()] });
+        await h.handler._prepare('class-a', 1002, tid, 20);
+        assert.equal(h.handler.UiContext.homeworkReview.code, 'print("student")');
+        assert.equal(h.handler.UiContext.homeworkReview.ownAnswerUrl, '');
+        await assert.rejects(h.handler._prepare('class-a', 1002), PermissionError);
     });
 
     it('does not let ordinary students bypass contest entry by adding reviewUid', async () => {

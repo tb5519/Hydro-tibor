@@ -11,6 +11,7 @@ import {
 } from 'vj/utils';
 import { createBadgeAcThemePlayer } from '../components/badge_ac_effect';
 import { ContestPoints } from '../components/contest_points';
+import { copyHomeworkReviewToOwnDraft } from '../components/homework_review_copy';
 import { bindMistakePracticeActions } from '../components/mistake_practice';
 import { loadObjective } from '../components/objective/objective';
 
@@ -109,6 +110,22 @@ class ProblemPageExtender {
 
 const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homework_detail_problem'], async () => {
   bindMistakePracticeActions(document, (url, data) => request.post(url, data));
+  let copyingReview = false;
+  $(document).off('click.homeworkReviewCopy').on('click.homeworkReviewCopy', '[data-homework-review-copy]', async (event) => {
+    event.preventDefault();
+    if (!UiContext.homeworkReview?.ownAnswerUrl || copyingReview) return;
+    copyingReview = true;
+    const $buttons = $('[data-homework-review-copy]');
+    $buttons.prop('disabled', true).attr('aria-busy', 'true');
+    try {
+      const url = await copyHomeworkReviewToOwnDraft();
+      window.location.assign(url);
+    } catch (error) {
+      Notification.error(`复制未完成：${error.message || '请检查浏览器是否允许保存草稿。'}`);
+      copyingReview = false;
+      $buttons.prop('disabled', false).removeAttr('aria-busy');
+    }
+  });
   let reactLoaded = false;
   let renderReact = null;
   let unmountReact = null;

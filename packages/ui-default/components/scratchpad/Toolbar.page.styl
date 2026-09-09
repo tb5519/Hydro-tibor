@@ -103,6 +103,16 @@
       border-color: var(--ui-v2-accent)
       filter: brightness(1.06)
 
+  .scratchpad__toolbar__copy-review
+    color: var(--ui-v2-accent)
+    background: var(--ui-v2-accent-soft)
+    border-color: var(--ui-v2-border)
+
+    &.enabled:hover
+      color: var(--ui-v2-accent)
+      background: var(--ui-v2-accent-soft)
+      border-color: var(--ui-v2-accent)
+
   .scratchpad__toolbar__exit
     width: rem(32px)
     padding: 0
@@ -167,6 +177,29 @@
   .problem-review-heading__hint
     color: var(--ui-v2-text-muted)
     font-size: rem(12px)
+
+  .problem-review-copy
+    margin: rem(8px) 0 rem(2px)
+    padding: rem(10px 12px)
+    border: 1px solid var(--ui-v2-border)
+    border-radius: rem(9px)
+    background: var(--ui-v2-accent-soft)
+    color: var(--ui-v2-accent)
+    font-size: rem(13px)
+    font-weight: 500
+    line-height: 1.4
+    cursor: pointer
+
+    &:disabled
+      opacity: .45
+      cursor: default
+
+    &:hover:not(:disabled)
+      border-color: var(--ui-v2-accent)
+
+    &:focus-visible
+      outline: 2px solid var(--ui-v2-accent)
+      outline-offset: 2px
 
 @container scratchpad-editor (max-width: 740px)
   #scratchpad .scratchpad__toolbar

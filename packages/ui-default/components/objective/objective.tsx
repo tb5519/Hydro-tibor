@@ -30,6 +30,18 @@ export function sameObjectiveAnswer(first: unknown, second: unknown) {
   return JSON.stringify(normalize(first)) === JSON.stringify(normalize(second));
 }
 
+function findQuestionStart(marker: Element, previousAnswerEnd?: Element) {
+  let start = marker;
+  const questionNumber = /^(?:第\s*[\d一二三四五六七八九十百]+\s*题|\d+[.．、)）]\s*)/;
+  while (start !== previousAnswerEnd && !questionNumber.test(start.textContent.trim())) {
+    const previous = start.previousElementSibling;
+    if (!previous || previous === previousAnswerEnd || previous.tagName === 'HR') break;
+    if (/^H[1-6]$/.test(previous.tagName) && !questionNumber.test(previous.textContent.trim())) break;
+    start = previous;
+  }
+  return start;
+}
+
 let releasePrevious: (() => void) | undefined;
 
 export async function loadObjective() {
@@ -61,6 +73,8 @@ export async function loadObjective() {
   $statement.toggleClass('objective-readonly', readOnly);
   const ans: Answers = {};
   const pids: string[] = [];
+  const questionStarts = new Map<string, Element>();
+  let previousAnswerEnd: Element;
   let cnt = 0;
   const reg = /\{\{ (input|select|multiselect|textarea)\(\d+(-\d+)?\) \}\}/g;
   $statement.children().each((i, e) => {
@@ -72,16 +86,18 @@ export async function loadObjective() {
       cnt++;
       const id = info.replace(/\{\{ (input|select|multiselect|textarea)\((\d+(-\d+)?)\) \}\}/, '$2');
       pids.push(id);
+      questionStarts.set(id, findQuestionStart(e, previousAnswerEnd));
+      previousAnswerEnd = type === 'select' || type === 'multiselect' ? e.nextElementSibling : e;
       $(e).addClass('objective-question-title').attr('data-objective-id', id);
       if (type === 'input') {
         $(e).html($(e).html().replace(info, tpl`
-          <div class="objective_${id} objective-free-answer medium-3" id="p${id}">
+          <div class="objective_${id} objective-free-answer medium-3">
             <input type="text" name="${id}" class="textbox objective-input" placeholder="${i18n('Answer')}">
           </div>
         `));
       } else if (type === 'textarea') {
         $(e).html($(e).html().replace(info, tpl`
-          <div class="objective_${id} objective-free-answer medium-6" id="p${id}">
+          <div class="objective_${id} objective-free-answer medium-6">
             <textarea name="${id}" class="textbox objective-input" placeholder="${i18n('Answer')}"></textarea>
           </div>
         `));
@@ -91,7 +107,7 @@ export async function loadObjective() {
           return;
         }
         $(e).html($(e).html().replace(info, ''));
-        $(e).next('ul').addClass(`objective-options objective-options--${type === 'select' ? 'single' : 'multi'}`).attr('id', `p${id}`);
+        $(e).next('ul').addClass(`objective-options objective-options--${type === 'select' ? 'single' : 'multi'}`);
         $(e).next('ul').children().each((j, ele) => {
           const letter = String.fromCharCode(65 + j);
           $(ele).after(tpl`
@@ -108,6 +124,12 @@ export async function loadObjective() {
       }
     }
   });
+
+  // A marker can follow several paragraphs, an image or code. Anchor the whole
+  // question, and keep existing Markdown heading ids available for other links.
+  for (const [id, start] of questionStarts) {
+    $(start).prepend(tpl`<span id="p${id}" class="objective-question-anchor" aria-hidden="true"></span>`);
+  }
 
   let cacheKey = `${UserContext._id}/${UiContext.pdoc.domainId}/${UiContext.pdoc.docId}`;
   if (UiContext.tdoc?._id && UiContext.tdoc.rule !== 'homework') cacheKey += `@${UiContext.tdoc._id}`;
@@ -152,6 +174,24 @@ export async function loadObjective() {
     navigationRoot?.render(<ProblemNavigation />);
   }
 
+  function navigateToQuestion(event: React.MouseEvent<HTMLAnchorElement>, id: string) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const anchor = document.getElementById(`p${id}`);
+    if (!anchor) return;
+    event.preventDefault();
+    // Handle clicks on the number as well as its surrounding link. The global
+    // anchor handler only recognizes direct <a> targets and drops query params.
+    event.stopPropagation();
+    const nav = document.querySelector<HTMLElement>('.nav');
+    const navPosition = nav && window.getComputedStyle(nav).position;
+    const navBottom = nav && (navPosition === 'fixed' || navPosition === 'sticky') ? Math.max(0, nav.getBoundingClientRect().bottom) : 0;
+    const top = Math.max(0, window.scrollY + anchor.getBoundingClientRect().top - navBottom - 16);
+    $('html,body').stop(true);
+    window.scrollTo({ top, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    const hash = `#p${id}`;
+    if (window.location.hash !== hash) window.history.pushState({}, '', `${window.location.pathname}${window.location.search}${hash}`);
+  }
+
   function ProblemNavigation() {
     const scored = feedback?.state === 'complete' && Number.isFinite(feedback.score);
     const modified = !!feedback && pids.some((id) => !sameObjectiveAnswer(ans[id], submittedAnswers[id]));
@@ -167,7 +207,13 @@ export async function loadObjective() {
             const answered = hasObjectiveAnswer(ans[id]);
             const outcome = result === 'correct' ? '回答正确' : result === 'incorrect' ? '回答错误' : answered ? '已答，待评测' : '未答';
             const state = result === 'correct' || result === 'incorrect' ? ` is-${result}` : answered ? ' is-answered' : '';
-            return <a href={`#p${id}`} key={id} className={`objective-nav-item${state}`} aria-label={`第 ${id} 题，${outcome}`}>
+            return <a
+              href={`#p${id}`}
+              key={id}
+              className={`objective-nav-item${state}`}
+              aria-label={`第 ${id} 题，${outcome}`}
+              onClick={(event) => navigateToQuestion(event, id)}
+            >
               <span className="id">{id}</span>
             </a>;
           })}

@@ -4,6 +4,12 @@
     <span class="problem-review-heading__eyebrow">作业作答</span>
     <strong>{{ review.name }}</strong>
     <span class="problem-review-heading__hint">{{ '已提交 · 只读查看' if review.rid else '该学员尚未提交' }}</span>
+    {% if review.rid %}
+    <button type="button" class="problem-review-copy" data-homework-review-copy{% if not review.ownAnswerUrl %} disabled title="当前账号没有这道题的独立作答权限"{% endif %}>
+      <span class="icon icon-copy"></span> 复制到我的作答
+    </button>
+    <span class="problem-review-heading__hint">替换你的本题草稿，修改后可自行递交</span>
+    {% endif %}
   </div>
   <div>
     <ol class="menu">

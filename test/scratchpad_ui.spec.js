@@ -134,6 +134,40 @@ describe('scratchpad controls and result presentation', () => {
             }
             assert.equal(h.posts.length, 0);
             assert.ok(h.document.querySelector('[data-global-hotkey="alt+r"]'));
+            assert.equal(h.document.querySelector('[data-homework-review-copy]'), null);
+        } finally { await h.close(); }
+    });
+
+    it('offers copying a reviewed submission without automatically submitting or running code', async () => {
+        const h = await harness('ScratchpadToolbarContainer', { context: {
+            homeworkReview: { uid: 23, name: '小明', rid: '6aa000000000000000000001', ownAnswerUrl: '/d/class-a/p/P1002' },
+        } });
+        try {
+            const button = h.document.querySelector('[data-homework-review-copy]');
+            assert.ok(button);
+            assert.equal(button.disabled, false);
+            assert.equal(button.type, 'button');
+            assert.match(button.textContent, /复制到我的作答/);
+            assert.match(button.title, /替换你的本题草稿/);
+            await h.click('[data-homework-review-copy]');
+            assert.equal(h.posts.length, 0);
+            assert.equal(h.actions.some((action) => action.type.startsWith('SCRATCHPAD_POST_')), false);
+            assert.equal(h.document.querySelector('[data-global-hotkey="f10"]'), null);
+            assert.equal(h.document.querySelector('[data-global-hotkey="f9"]'), null);
+        } finally { await h.close(); }
+    });
+
+    it('disables copying when the reviewed problem cannot be opened for independent work', async () => {
+        const h = await harness('ScratchpadToolbarContainer', { context: {
+            homeworkReview: { uid: 23, name: '小明', rid: '6aa000000000000000000001', ownAnswerUrl: '' },
+        } });
+        try {
+            const button = h.document.querySelector('[data-homework-review-copy]');
+            assert.ok(button);
+            assert.equal(button.disabled, true);
+            assert.match(button.title, /没有这道题的独立作答权限/);
+            await h.click('[data-homework-review-copy]');
+            assert.equal(h.posts.length, 0);
         } finally { await h.close(); }
     });
 

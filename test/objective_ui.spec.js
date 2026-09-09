@@ -52,15 +52,18 @@ async function harness(options = {}) {
     const dom = new JSDOM(`<!doctype html><html><body>
         <div class="outer-loader-container"></div>
         <button id="other-submit" type="button">其他递交</button>
-        <div class="problem-content"><div class="typo">${statementHtml}</div></div>
+        <nav class="nav" style="position: fixed"></nav>
+        <div class="problem-content"><div class="typo">${options.statementHtml || statementHtml}</div></div>
         <div class="section--problem-sidebar"><ol class="menu"></ol></div>
-        </body></html>`, { url: 'https://example.test/p/P5983', pretendToBeVisual: true });
+        </body></html>`, { url: options.url || 'https://example.test/p/P5983', pretendToBeVisual: true });
     const previous = { window: global.window, document: global.document, act: global.IS_REACT_ACT_ENVIRONMENT };
     global.window = dom.window;
     global.document = dom.window.document;
     global.IS_REACT_ACT_ENVIRONMENT = true;
     const $ = jqueryFactory(dom.window);
-    const calls = { post: [], get: [], load: [], save: [], dialogs: [], errors: [], info: [] };
+    const calls = { post: [], get: [], load: [], save: [], dialogs: [], errors: [], info: [], scroll: [] };
+    dom.window.scrollTo = (settings) => calls.scroll.push(settings);
+    dom.window.matchMedia = () => ({ matches: !!options.reducedMotion });
     const roots = [];
     class InfoDialog {
         constructor(config) {
@@ -176,6 +179,66 @@ async function harness(options = {}) {
 }
 
 describe('objective answer submission UI', { concurrency: false }, () => {
+    it('anchors the start of complete question stems, including images, code and free answers', async (t) => {
+        const h = await harness({ statementHtml: `
+            <h1>试卷标题</h1><p>试卷说明，不是题干。</p><h2>一、选择题</h2>
+            <p data-stem="1">第 1 题 多行题干<br>第二行 {{ select(1) }}</p><ul><li>甲</li><li>乙</li></ul>
+            <p data-stem="2">第 2 题 图片题干</p><p><img src="diagram.png" alt="题目插图"></p>
+            <p>{{ select(2) }}</p><ul><li>正确</li><li>错误</li></ul>
+            <h3 id="original-heading" data-stem="3">第 3 题 代码题干</h3><pre><code>print(1)</code></pre>
+            <p>根据程序选择所有正确选项。{{ multiselect(3) }}</p><ul><li>一</li><li>二</li></ul>
+            <h2>二、填空题</h2><p data-stem="4">第 4 题 填写结果</p><pre><code>1 + 1</code></pre><p>{{ input(4) }}</p>
+            <p data-stem="5">第 5 题 请说明原因</p><p>这一段也属于本题。{{ textarea(5) }}</p>
+            <p data-stem="6">没有题号的独立题干</p><p><img src="another.png" alt="另一幅图"></p>
+            <p>{{ select(6) }}</p><ul><li>一</li><li>二</li></ul>
+            <p data-stem="7">第 7 题 同段的两处填空：{{ input(7-1) }} 和 {{ input(7-2) }}</p>` });
+        t.after(() => h.close());
+        for (const id of ['1', '2', '3', '4', '5', '6', '7-1', '7-2']) {
+            const anchor = h.doc.getElementById(`p${id}`);
+            assert.ok(anchor, `Question ${id} has an anchor`);
+            assert.equal(anchor.parentElement.dataset.stem, id.split('-')[0]);
+            assert.equal(h.doc.querySelectorAll(`[id="p${id}"]`).length, 1);
+            assert.equal(anchor.closest('.objective-options, .objective-free-answer'), null);
+        }
+        assert.equal(h.doc.getElementById('original-heading').tagName, 'H3');
+        assert.equal(h.doc.querySelectorAll('.objective-input').length, 12);
+    });
+
+    it('scrolls the clicked number below the current fixed navigation and keeps homework review context', async () => {
+        for (const readOnly of [false, true]) {
+            const h = await harness({
+                context: readOnly ? { homeworkReview: { uid: 23, name: '学员' } } : {},
+                url: `https://example.test/p/P5983?tid=homework${readOnly ? '&reviewUid=23' : ''}`,
+                reducedMotion: readOnly,
+            });
+            try {
+                const nav = h.doc.querySelector('.nav');
+                nav.getBoundingClientRect = () => ({ bottom: 60 });
+                Object.defineProperty(h.dom.window, 'scrollY', { value: 200, configurable: true });
+                h.doc.getElementById('p2').getBoundingClientRect = () => ({ top: 500 });
+                let globalAnchorClicks = 0;
+                h.doc.body.addEventListener('click', () => { globalAnchorClicks++; });
+                const clickNumber = new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+                await React.act(async () => { h.nav(2).querySelector('.id').dispatchEvent(clickNumber); });
+                assert.equal(clickNumber.defaultPrevented, true);
+                assert.equal(h.calls.scroll.length, 1);
+                assert.equal(h.calls.scroll[0].top, 624);
+                assert.equal(h.calls.scroll[0].behavior, readOnly ? 'auto' : 'smooth');
+                assert.equal(h.dom.window.location.search, `?tid=homework${readOnly ? '&reviewUid=23' : ''}`);
+                assert.equal(h.dom.window.location.hash, '#p2');
+                assert.equal(globalAnchorClicks, 0, 'Do not run the global anchor animation a second time');
+                nav.getBoundingClientRect = () => ({ bottom: 80 });
+                await React.act(async () => {
+                    h.nav(2).dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+                });
+                assert.equal(h.calls.scroll[1].top, 604, 'A resized navigation gets a fresh offset');
+                assert.equal(h.dom.window.history.length, 2, 'Repeated navigation does not duplicate history');
+            } finally {
+                await h.close();
+            }
+        }
+    });
+
     it('submits only the objective button and presents student score and total without navigation', async (t) => {
         const h = await harness();
         t.after(() => h.close());
