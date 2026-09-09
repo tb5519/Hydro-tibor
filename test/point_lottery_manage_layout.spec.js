@@ -4,9 +4,13 @@ const path = require('node:path');
 const { describe, it } = require('node:test');
 const { JSDOM } = require('jsdom');
 const jsesc = require('jsesc');
+const jquery = require('jquery');
 const nunjucks = require('nunjucks');
 
 const source = fs.readFileSync(path.join(__dirname, '../packages/ui-default/templates/manage_lottery.html'), 'utf8');
+const styledTableSource = fs.readFileSync(path.join(__dirname, '../packages/ui-default/components/table/StyledTable.js'), 'utf8')
+    .replace(/^import .*;\n/gm, '')
+    .replace('export default class StyledTable', 'class StyledTable');
 class FixtureLoader extends nunjucks.Loader {
     getSource(name) {
         const templates = {
@@ -60,6 +64,18 @@ function fixture(overrides = {}, runScript = true) {
     };
 }
 
+function attachStyledTables(h) {
+    const { window } = h.dom;
+    window.$ = jquery(window);
+    window.responsiveCutoff = { mobile: 500 };
+    window.isBelow = () => true;
+    window.DOMAttachedObject = class {
+        constructor($dom) { this.$dom = $dom; }
+    };
+    window.eval(`${styledTableSource}\nwindow.StyledTable = StyledTable;`);
+    for (const table of h.doc.querySelectorAll('.data-table')) new window.StyledTable(window.$(table));
+}
+
 describe('lottery management page organization', () => {
     for (const base of ['manage_base.html', 'domain_base.html']) {
         it(`renders all operations once in ${base} with working form-associated save controls`, (t) => {
@@ -93,6 +109,33 @@ describe('lottery management page organization', () => {
         assert.equal(h.dom.window.location.hash, '#lottery-records');
         assert.deepEqual(snapshot(), before);
     });
+
+    for (const base of ['manage_base.html', 'domain_base.html']) {
+        it(`keeps record rows and their header in one scrollable table after global table initialization in ${base}`, (t) => {
+            const h = fixture({ lotteryBaseTemplate: base });
+            t.after(h.close);
+            // The global enhancer runs while the points and records panels are hidden.
+            attachStyledTables(h);
+            h.tab('records').click();
+            const records = h.doc.getElementById('lottery-records');
+            const table = records.querySelector('table');
+            assert.equal(records.querySelectorAll('table').length, 1, 'A detached sticky header can cover rows inside the panel scroll area');
+            assert.equal(h.doc.querySelectorAll('.section__table-header, .section__table-container').length, 0);
+            assert.equal(h.doc.querySelectorAll('.lottery-admin__table-scroll > table').length, 3);
+            assert.ok(table.tHead);
+            assert.equal(table.tHead.rows[0].cells.length, 7);
+            const rows = [...table.tBodies[0].rows].filter((row) => !row.hidden);
+            assert.equal(rows.length, 2);
+            assert.match(rows[0].textContent, /测试学员/);
+            assert.match(rows[0].textContent, /练习本/);
+            assert.match(rows[1].textContent, /星光勋章/);
+            assert.equal(table.closest('[hidden]'), null);
+            h.tab('points').click();
+            assert.ok(h.doc.querySelector('#lottery-points table').tHead);
+            h.tab('records').click();
+            assert.equal(table.closest('[hidden]'), null);
+        });
+    }
 
     it('starts searches and record mutations in their relevant panels and keeps success messages visible', () => {
         for (const [context, expected] of [[{ q: 'learner' }, 'points'], [{ adjusted: true }, 'points'], [{ edited: true }, 'records'], [{ deleted: true }, 'records'], [{ saved: true }, 'settings']]) {
