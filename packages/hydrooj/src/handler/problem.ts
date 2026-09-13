@@ -31,6 +31,7 @@ import {
     authorizeHomeworkReview, loadHomeworkReviewRecord, loadHomeworkReviewRecords, publicHomeworkReviewRecord, rejectHomeworkReviewMutation,
 } from '../lib/homework_review';
 import { getMistakePromptState } from '../lib/mistake_prompt';
+import { loadObjectiveCorrectAnswers } from '../lib/objective_correct_answers';
 import { buildObjectiveMergedReview } from '../lib/objective_merged_review';
 import { loadObjectiveSubmissionConfig, loadOwnObjectiveSubmission } from '../lib/objective_submission';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
@@ -831,6 +832,10 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
         }
         if (isReadRequest && mergedUid !== undefined) {
             this.UiContext.objectiveMergedReview = await loadProblemMergedReview(this, domainId, this.pdoc, mergedUid);
+        }
+        if (isReadRequest) {
+            const correctAnswers = await loadObjectiveCorrectAnswers(this.user, domainId, this.pdoc);
+            if (correctAnswers) this.UiContext.objectiveCorrectAnswers = correctAnswers;
         }
         if (this.tdoc && this.tsdoc) {
             const fields = ['attend', 'startAt'];

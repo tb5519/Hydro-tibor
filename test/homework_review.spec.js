@@ -275,6 +275,7 @@ function problemHandler(options = {}) {
         canManageRecordList: (viewer) => viewer.hasPerm(PERM.PERM_EDIT_HOMEWORK),
         mistake: { getPracticeState: () => null },
         loadOwnObjectiveSubmission: async (...args) => { ownLoads.push(args); return null; },
+        loadObjectiveCorrectAnswers: async () => undefined,
         buildObjectiveMergedReview: objectiveDependencies['./objective_merged_review'].buildObjectiveMergedReview,
         loadObjectiveSubmissionConfig: async () => ({ config: { type: 'objective', answers: { 1: ['SECRET_A', 10] } } }),
         loadProblemMergedReview: async (handler, domainId, problemDoc, uid) => {

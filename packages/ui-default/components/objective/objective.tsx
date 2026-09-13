@@ -45,6 +45,29 @@ function findQuestionStart(marker: Element, previousAnswerEnd?: Element) {
   return start;
 }
 
+function correctAnswerMarkup(id: string) {
+  const value = UiContext.objectiveCorrectAnswers?.[id];
+  const values = typeof value === 'string' ? [value] : Array.isArray(value) ? value : [];
+  if (!values.length || values.some((answer) => typeof answer !== 'string' || !answer.trim())) return '';
+  const text = [...new Set(values)].join('、');
+  return tpl`<span class="objective-correct-answer" data-objective-id="${id}" aria-label="正确答案：${text}">${text}</span>`;
+}
+
+function positionCorrectAnswer(marker: Element, id: string) {
+  const badge = marker.querySelector(`.objective-correct-answer[data-objective-id="${id}"]`);
+  if (!badge) return;
+  let target = badge.parentElement;
+  // A standalone answer marker belongs to the preceding stem paragraph/list.
+  if (target.textContent.trim() === badge.textContent.trim()) {
+    const previous = target.previousElementSibling;
+    if (previous?.matches('p, ol:not(.objective-options), ul:not(.objective-options), h1, h2, h3, h4, h5, h6')) {
+      target = previous as HTMLElement;
+      while (target.lastElementChild?.matches('li, p')) target = target.lastElementChild as HTMLElement;
+    }
+  }
+  target.appendChild(badge);
+}
+
 let releasePrevious: (() => void) | undefined;
 
 export async function loadObjective() {
@@ -93,18 +116,19 @@ export async function loadObjective() {
     for (const [info, type] of questions) {
       cnt++;
       const id = info.replace(/\{\{ (input|select|multiselect|textarea)\((\d+(-\d+)?)\) \}\}/, '$2');
+      const answerMarkup = correctAnswerMarkup(id);
       pids.push(id);
       questionStarts.set(id, findQuestionStart(e, previousAnswerEnd));
       previousAnswerEnd = type === 'select' || type === 'multiselect' ? e.nextElementSibling : e;
       $(e).addClass('objective-question-title').attr('data-objective-id', id);
       if (type === 'input') {
-        $(e).html($(e).html().replace(info, tpl`
+        $(e).html($(e).html().replace(info, () => answerMarkup + tpl`
           <div class="objective_${id} objective-free-answer medium-3">
             <input type="text" name="${id}" class="textbox objective-input" placeholder="${i18n('Answer')}">
           </div>
         `));
       } else if (type === 'textarea') {
-        $(e).html($(e).html().replace(info, tpl`
+        $(e).html($(e).html().replace(info, () => answerMarkup + tpl`
           <div class="objective_${id} objective-free-answer medium-6">
             <textarea name="${id}" class="textbox objective-input" placeholder="${i18n('Answer')}"></textarea>
           </div>
@@ -114,7 +138,7 @@ export async function loadObjective() {
           cnt--;
           return;
         }
-        $(e).html($(e).html().replace(info, ''));
+        $(e).html($(e).html().replace(info, () => answerMarkup));
         $(e).next('ul').addClass(`objective-options objective-options--${type === 'select' ? 'single' : 'multi'}`);
         $(e).next('ul').children().each((j, ele) => {
           const letter = String.fromCharCode(65 + j);
@@ -129,6 +153,7 @@ export async function loadObjective() {
           `);
           $(ele).remove();
         });
+        positionCorrectAnswer(e, id);
       }
     }
   });

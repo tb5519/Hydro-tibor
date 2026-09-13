@@ -839,6 +839,128 @@ describe('objective answer submission UI', { concurrency: false }, () => {
     });
 });
 
+describe('administrator objective correct-answer suffixes', { concurrency: false }, () => {
+    const correctAnswers = { 1: 'B', 2: 'A', 3: 'A', 4: '42', 5: '说明文本', 6: ['A', 'C'] };
+    const submitted = {
+        answers: { 1: 'A', 2: 'B', 4: 'student answer' },
+        feedback: complete([question(1, 'correct'), question(2, 'incorrect')]).objective,
+    };
+    const snapshot = (h) => ({
+        inputs: [...h.doc.querySelectorAll('.objective-input')].map((input) => ({
+            name: input.name, value: input.value, checked: input.checked, disabled: input.disabled,
+        })),
+        navigation: [...h.doc.querySelectorAll('.objective-nav-item')].map((item) => item.className),
+        answerColors: [...h.doc.querySelectorAll('.objective-option, .objective-free-answer')].map((item) => item.className),
+        submit: h.doc.querySelector('.objective-submit')?.disabled,
+        clear: !!h.doc.querySelector('.objective-clear'),
+        load: h.calls.load,
+        save: h.calls.save,
+        post: h.calls.post,
+        get: h.calls.get,
+    });
+
+    for (const [name, options] of [
+        ['ordinary administrator practice', { saved: { value: JSON.stringify({ 1: 'A', 4: 'teacher draft', 6: ['B'] }) } }],
+        ['single-record replay', { ...replayOptions(), saved: { value: JSON.stringify({ 1: 'B', 2: 'B' }) } }],
+        ['merged problem-bank review', { context: { objectiveMergedReview: mergedReviewFixture() } }],
+        ['single-record homework review', {
+            saved: { value: JSON.stringify({ 1: 'B', 4: 'teacher draft' }) },
+            context: { homeworkReview: { uid: 22, name: '目标学员', rid }, objectiveInitialSubmission: submitted },
+        }],
+        ['merged homework review', {
+            saved: { value: JSON.stringify({ 1: 'B', 4: 'teacher draft' }) },
+            context: { homeworkReview: { uid: 22, name: '目标学员', rid }, objectiveMergedReview: mergedReviewFixture() },
+        }],
+    ]) {
+        it(`shows only supplied canonical answers in ${name} without changing answers, colors, permissions or drafts`, async () => {
+            const baseline = await harness(options);
+            let expected;
+            try {
+                assert.equal(baseline.doc.querySelectorAll('.objective-correct-answer').length, 0,
+                    'A submission or its result must not produce a canonical answer without server authorization');
+                expected = snapshot(baseline);
+            } finally { await baseline.close(); }
+            const h = await harness({ ...options, context: { ...options.context, objectiveCorrectAnswers: correctAnswers } });
+            try {
+                const badges = [...h.doc.querySelectorAll('.objective-correct-answer')];
+                assert.deepEqual(badges.map((badge) => badge.textContent), ['B', 'A', 'A', '42', '说明文本', 'A、C']);
+                assert.deepEqual(badges.map((badge) => badge.dataset.objectiveId), ['1', '2', '3', '4', '5', '6']);
+                assert.ok(badges.every((badge) => badge.getAttribute('aria-label') === `正确答案：${badge.textContent}`));
+                assert.ok(badges.every((badge) => !badge.querySelector('input, textarea, button')));
+                assert.deepEqual(snapshot(h), expected, 'Displaying canonical answers cannot apply them as student selections or feedback');
+                await act(async () => { await h.controller.loadObjective(); });
+                assert.equal(h.doc.querySelectorAll('.objective-correct-answer').length, 6, 'Repeated initialization does not duplicate answers');
+                assert.deepEqual(snapshot(h), expected);
+            } finally { await h.close(); }
+        });
+    }
+
+    it('places single and multiple choice answers at the end of their actual paragraph or list-item stems, before options', async (t) => {
+        const h = await harness({
+            statementHtml: `
+                <p data-stem="1">1. 单段题干 {{ select(1) }}</p><ul><li>甲</li><li>乙</li></ul>
+                <ol start="2"><li><p data-stem="2">有序列表题干 {{ select(2) }}</p></li></ol><ul><li>真</li><li>假</li></ul>
+                <p>3. 多段题目的第一段</p><p data-stem="3">最后一段，请选择所有符合的选项。{{ multiselect(3) }}</p>
+                <ul><li>一</li><li>二</li><li>三</li></ul>
+                <p data-stem="4">4. 标记单独成段的题干</p><p>{{ select(4) }}</p><ul><li>甲</li><li>乙</li></ul>`,
+            context: { objectiveCorrectAnswers: { 1: 'A', 2: 'B', 3: ['A', 'C'], 4: 'B' } },
+        });
+        t.after(() => h.close());
+        for (const [id, expected] of Object.entries({ 1: 'A', 2: 'B', 3: 'A、C', 4: 'B' })) {
+            const stem = h.doc.querySelector(`[data-stem="${id}"]`);
+            const badge = stem.querySelector('.objective-correct-answer');
+            assert.ok(badge, `Question ${id} keeps its answer within the final question-stem paragraph`);
+            assert.equal(badge.textContent, expected);
+            assert.equal(stem.lastElementChild, badge);
+            const firstOption = h.doc.querySelector(`.objective_${id}`);
+            assert.ok(badge.compareDocumentPosition(firstOption) & h.dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+            assert.equal(badge.closest('.objective-options, .objective-free-answer'), null);
+        }
+        assert.equal(h.doc.querySelector('ol > .objective-correct-answer'), null, 'The suffix is never an invalid direct list child');
+        assert.equal(h.doc.querySelectorAll('.objective-correct-answer').length, 4);
+    });
+
+    it('keeps free-text and multiple-inline-blank canonical answers separate from editable answer controls', async (t) => {
+        const h = await harness({
+            statementHtml: `
+                <p data-stem="1">1. 输入结果 {{ input(1) }}</p>
+                <p data-stem="2">2. 解释原因 {{ textarea(2) }}</p>
+                <p data-stem="3">3. 两处填空 {{ input(3-1) }} 与 {{ input(3-2) }}</p>`,
+            saved: { value: JSON.stringify({ 1: 'my answer', 2: 'my explanation', '3-1': 'left', '3-2': 'right' }) },
+            context: { objectiveCorrectAnswers: { 1: '42', 2: '参考说明', '3-1': '10', '3-2': '20' } },
+        });
+        t.after(() => h.close());
+        assert.deepEqual([...h.doc.querySelectorAll('.objective-correct-answer')].map((badge) => badge.textContent), ['42', '参考说明', '10', '20']);
+        assert.deepEqual([...h.doc.querySelectorAll('.objective-input')].map((input) => input.value), ['my answer', 'my explanation', 'left', 'right']);
+        assert.ok([...h.doc.querySelectorAll('.objective-correct-answer')].every((badge) => !badge.closest('.objective-free-answer')));
+        for (const badge of h.doc.querySelectorAll('.objective-correct-answer')) {
+            assert.ok(badge.nextElementSibling.classList.contains('objective-free-answer'));
+            assert.equal(badge.nextElementSibling.querySelector('.objective-input').name, badge.dataset.objectiveId);
+        }
+        assert.equal(h.doc.querySelector('[data-stem="3"]').querySelectorAll('.objective-correct-answer').length, 2);
+        assert.equal(h.calls.save.length, 0);
+        assert.equal(h.calls.post.length, 0);
+    });
+
+    it('escapes canonical text and ignores answer keys that do not correspond to a rendered question', async (t) => {
+        const dangerous = '<img src=x onerror=alert(1)> & "quoted" $& $1 $$';
+        const h = await harness({
+            context: { objectiveCorrectAnswers: { 4: dangerous, 5: 'line one\nline two', 99: 'invisible answer' } },
+        });
+        t.after(() => h.close());
+        const badges = [...h.doc.querySelectorAll('.objective-correct-answer')];
+        assert.deepEqual(badges.map((badge) => badge.textContent), [dangerous, 'line one\nline two']);
+        assert.equal(badges[0].querySelector('img'), null);
+        assert.equal(badges[0].getAttribute('aria-label'), `正确答案：${dangerous}`);
+        assert.equal(h.doc.querySelector('img[src="x"], [onerror]'), null);
+        assert.doesNotMatch(h.doc.body.textContent, /invisible answer/);
+        assert.equal(h.doc.querySelector('[name="4"]').value, '');
+        assert.equal(h.doc.querySelector('[name="5"]').value, '');
+        assert.equal(h.nav(4).className, 'objective-nav-item');
+        assert.equal(h.nav(5).className, 'objective-nav-item');
+    });
+});
+
 describe('merged objective review page shell', () => {
     const env = new nunjucks.Environment(new nunjucks.FileSystemLoader(path.join(uiRoot, 'templates')), { autoescape: true });
     const merged = mergedReviewFixture();
