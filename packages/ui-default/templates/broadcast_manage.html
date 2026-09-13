@@ -1,4 +1,5 @@
 {% extends broadcastBaseTemplate %}
+{% set page_name = manageRoute %}
 {% macro broadcast_editor() %}
 <section class="broadcast-admin" data-broadcast-admin data-enabled="{{ 'true' if broadcast.enabled else 'false' }}">
   <header class="broadcast-admin__hero">

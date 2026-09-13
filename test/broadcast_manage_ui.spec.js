@@ -16,7 +16,8 @@ const code = esbuild.buildSync({
 const env = new nunjucks.Environment({
     getSource(name) {
         return { src: name === 'broadcast_manage.html' ? template : name === 'manage_base.html'
-            ? '{% block manage_content %}{% endblock %}' : '{% block domain_content %}{% endblock %}', path: name };
+            ? '<html data-page="{{ page_name }}"><body>{% block manage_content %}{% endblock %}</body></html>'
+            : '<html data-page="{{ page_name }}"><body>{% block domain_content %}{% endblock %}</body></html>', path: name };
     },
 }, { autoescape: true });
 const original = { title: '本周课程安排', content: '<p>周五一起学习算法。</p>', revision: 'v1', enabled: true, updatedAt: '2026-09-13T08:00:00Z' };
@@ -29,7 +30,7 @@ function fixture(options = {}) {
     const dom = new JSDOM(env.render('broadcast_manage.html', {
         broadcast, broadcastScope: scope, broadcastBaseTemplate: scope === 'global' ? 'manage_base.html' : 'domain_base.html',
         broadcastScopeLabel: scope === 'global' ? '所有域' : '当前教学域', manageRoute: route,
-        _: (value) => value, url: (value) => `/${value}`,
+        page_name: 'broadcast_manage', _: (value) => value, url: (value) => `/${value}`,
     }) + '<a id="leave" href="/home">返回首页</a>', { url: `https://example.test/${route}` });
     const requests = [];
     const commands = [];
@@ -53,7 +54,10 @@ function fixture(options = {}) {
         module: pageModule, exports: pageModule.exports, window: dom.window, document: dom.window.document,
         URL: dom.window.URL, require: (name) => dependencies[name] || require(name),
     });
-    pageModule.exports.bindBroadcastEditor();
+    // The production loader matches the rendered page name before invoking the callback.
+    if (pageModule.exports.default.names.includes(dom.window.document.documentElement.dataset.page)) {
+        pageModule.exports.default.callback();
+    }
     const query = (selector) => dom.window.document.querySelector(selector);
     const input = (selector, value) => {
         const element = query(selector);
@@ -76,6 +80,10 @@ describe('broadcast teacher editor', () => {
         t.after(global.close);
         t.after(domain.close);
         assert.deepEqual(Array.from(global.page.names), ['manage_broadcast', 'domain_broadcast']);
+        assert.equal(global.dom.window.document.documentElement.dataset.page, 'manage_broadcast');
+        assert.equal(domain.dom.window.document.documentElement.dataset.page, 'domain_broadcast');
+        assert.equal(global.query('[data-broadcast-admin]').dataset.bound, 'true');
+        assert.equal(domain.query('[data-broadcast-admin]').dataset.bound, 'true');
         assert.equal(global.query('form').action, 'https://example.test/manage_broadcast');
         assert.equal(domain.query('form').action, 'https://example.test/domain_broadcast');
         assert.match(global.query('.broadcast-admin__hero').textContent, /所有域/);
