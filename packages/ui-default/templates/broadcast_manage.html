@@ -1,0 +1,92 @@
+{% extends broadcastBaseTemplate %}
+{% macro broadcast_editor() %}
+<section class="broadcast-admin" data-broadcast-admin data-enabled="{{ 'true' if broadcast.enabled else 'false' }}">
+  <header class="broadcast-admin__hero">
+    <div class="broadcast-admin__hero-icon" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l10 4V5L8 9H4Z"/><path d="m7 15 1 6h3l-1-5M21 9v6"/></svg></div>
+    <div>
+      <div class="broadcast-admin__eyebrow">与同学们分享重要消息</div>
+      <h1>{{ _('manage_broadcast') if broadcastScope == 'global' else _('domain_broadcast') }}</h1>
+      <p>{% if broadcastScope == 'global' %}发布后，所有域的同学登录时都能看到这条广播。{% else %}发布后，本域的同学进入时会优先看到这条广播。{% endif %}</p>
+    </div>
+  </header>
+
+  <div class="broadcast-admin__overview">
+    <span class="broadcast-admin__status{% if broadcast.enabled %} is-live{% endif %}" data-broadcast-status>{% if broadcast.enabled %}正在展示{% elif not broadcast.revision %}尚未发布{% else %}已停止展示{% endif %}</span>
+    <span class="broadcast-admin__scope">{{ broadcastScopeLabel }}</span>
+    <span class="broadcast-admin__updated" data-broadcast-updated data-updated-at="{{ broadcast.updatedAt }}"></span>
+  </div>
+
+  <div class="broadcast-admin__message{% if saved %} is-success{% endif %}" data-broadcast-message role="status" aria-live="polite" tabindex="-1"{% if not saved %} hidden{% endif %}>{% if saved %}广播已保存。{% endif %}</div>
+  <noscript><p class="broadcast-admin__message is-error">请启用 JavaScript 后编辑和发布广播。</p></noscript>
+
+  <form class="broadcast-admin__form" data-broadcast-form method="post" action="{{ url(manageRoute) }}">
+    <input type="hidden" name="operation" value="publish">
+    <input type="hidden" name="revision" value="{{ broadcast.revision }}">
+    <div class="broadcast-admin__field">
+      <div class="broadcast-admin__label-row"><label for="broadcast-title">广播标题</label><span data-broadcast-title-count>0 / 100</span></div>
+      <input id="broadcast-title" class="broadcast-admin__title" name="title" type="text" value="{{ broadcast.title }}" maxlength="100" placeholder="例如：本周课程安排与温馨提醒" autocomplete="off" required>
+    </div>
+    <div class="broadcast-admin__field">
+      <div class="broadcast-admin__label-row"><label id="broadcast-content-label">广播正文</label><span>让重要的事，一眼看清</span></div>
+      <div class="broadcast-admin__editor-shell">
+        <div class="broadcast-admin__toolbar" role="group" aria-label="正文格式">
+          <div class="broadcast-admin__toolbar-group">
+            <button type="button" data-editor-command="formatBlock" data-editor-value="p" title="正文段落" aria-label="正文段落">正文</button>
+            <button type="button" data-editor-command="formatBlock" data-editor-value="h2" title="小标题" aria-label="小标题">H2</button>
+            <button type="button" data-editor-command="formatBlock" data-editor-value="h3" title="三级标题" aria-label="三级标题">H3</button>
+          </div>
+          <div class="broadcast-admin__toolbar-group">
+            <button type="button" data-editor-command="bold" title="加粗（Ctrl / ⌘ B）" aria-label="加粗" aria-pressed="false"><strong>B</strong></button>
+            <button type="button" data-editor-command="italic" title="斜体（Ctrl / ⌘ I）" aria-label="斜体" aria-pressed="false"><em>I</em></button>
+            <button type="button" data-editor-command="underline" title="下划线（Ctrl / ⌘ U）" aria-label="下划线" aria-pressed="false"><u>U</u></button>
+          </div>
+          <div class="broadcast-admin__toolbar-group">
+            <button type="button" data-editor-command="insertUnorderedList" title="项目列表" aria-label="项目列表">• 列表</button>
+            <button type="button" data-editor-command="insertOrderedList" title="编号列表" aria-label="编号列表">1. 列表</button>
+            <button type="button" data-editor-command="formatBlock" data-editor-value="blockquote" title="引用提示" aria-label="引用提示">“ 引用</button>
+          </div>
+          <div class="broadcast-admin__toolbar-group">
+            <button type="button" data-editor-link title="插入链接" aria-expanded="false" aria-controls="broadcast-link-panel">链接</button>
+            <button type="button" data-editor-command="removeFormat" title="清除选中文字的格式" aria-label="清除选中文字的格式">清除格式</button>
+          </div>
+        </div>
+        <div id="broadcast-link-panel" class="broadcast-admin__link-panel" hidden>
+          <label for="broadcast-link-url">链接地址</label>
+          <div><input id="broadcast-link-url" type="url" placeholder="https://example.com" autocomplete="off" aria-describedby="broadcast-link-hint"><button type="button" data-editor-link-apply>插入</button><button type="button" data-editor-link-cancel>取消</button></div>
+          <small id="broadcast-link-hint">先选中文字，再插入链接；也可以直接插入网址。</small>
+        </div>
+        <div class="broadcast-admin__editor broadcast-rich-content" data-broadcast-editor contenteditable="true" role="textbox" aria-multiline="true" aria-required="true" aria-labelledby="broadcast-content-label" aria-describedby="broadcast-editor-hint" data-placeholder="写下想告诉同学们的消息…">{{ broadcast.content|safe }}</div>
+        <div class="broadcast-admin__editor-footer"><span id="broadcast-editor-hint">粘贴文字会自动清理外部格式</span><span data-broadcast-content-count>0 字</span></div>
+      </div>
+    </div>
+
+    <div class="broadcast-admin__notice"><span class="icon icon-info" aria-hidden="true"></span><p>同学点击「知道了」后，同一版本不再弹出。<br><strong>修改并发布后，会作为新消息再次提醒同学。</strong></p></div>
+    <footer class="broadcast-admin__actions">
+      <div class="broadcast-admin__action-buttons">
+        <button class="broadcast-admin__button is-primary" type="submit" data-broadcast-publish disabled>{{ '更新并发布' if broadcast.enabled else '发布广播' }}</button>
+        <button class="broadcast-admin__button" type="button" data-broadcast-preview disabled>预览学员视角</button>
+      </div>
+      <span class="broadcast-admin__draft-state" data-broadcast-draft-state>编辑后记得发布</span>
+    </footer>
+  </form>
+
+  <div class="broadcast-admin__pause" data-broadcast-pause{% if not broadcast.enabled %} hidden{% endif %}>
+    <div><strong>暂时不需要展示？</strong><p>停止展示会保留正文和已读记录，之后可以重新发布。</p></div>
+    <button type="button" data-broadcast-disable>停止展示</button>
+    <div class="broadcast-admin__pause-confirm" data-broadcast-disable-confirm hidden>
+      <p>停止后，同学将不会再收到这条广播。{% if broadcastScope == 'global' %}此操作会影响所有域。{% endif %}</p>
+      <button class="broadcast-admin__button is-danger" type="button" data-broadcast-disable-apply>确认停止展示</button>
+      <button class="broadcast-admin__button" type="button" data-broadcast-disable-cancel>继续展示</button>
+    </div>
+  </div>
+
+  <dialog class="broadcast-preview" data-broadcast-preview-dialog aria-labelledby="broadcast-preview-title">
+    <div class="broadcast-preview__top"><span>学员视角预览</span><button type="button" data-broadcast-preview-close aria-label="关闭预览">×</button></div>
+    <div class="broadcast-preview__heading"><span class="broadcast-preview__badge">{{ '全域广播' if broadcastScope == 'global' else '域广播' }}</span><h2 id="broadcast-preview-title" data-broadcast-preview-title></h2><p>老师发来了一条新消息</p></div>
+    <div class="broadcast-preview__body broadcast-rich-content" data-broadcast-preview-content></div>
+    <footer class="broadcast-preview__footer"><small>预览不会发布广播，也不会改变已读记录</small><button class="broadcast-admin__button is-primary" type="button" data-broadcast-preview-close>知道了</button></footer>
+  </dialog>
+</section>
+{% endmacro %}
+{% block manage_content %}{{ broadcast_editor() }}{% endblock %}
+{% block domain_content %}{{ broadcast_editor() }}{% endblock %}

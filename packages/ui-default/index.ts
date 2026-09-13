@@ -4,7 +4,9 @@ import {
   ContestModel, Context, Handler, ObjectId, param, PERM, PRIV, ProblemModel, Schema,
   SettingModel, SystemModel, Types, UserModel, yaml,
 } from 'hydrooj';
+import { configureBroadcastSanitizer } from 'hydrooj/src/lib/broadcast';
 import convert from 'schemastery-jsonschema';
+import { sanitizeBroadcastHtml } from './backendlib/broadcast';
 import * as contestTimer from './backendlib/contest-timer';
 import markdown from './backendlib/markdown';
 import { TemplateService } from './backendlib/template';
@@ -173,6 +175,7 @@ export const Config = Schema.object({
 });
 
 export function apply(ctx: Context, config: ReturnType<typeof Config>) {
+  ctx.effect(() => configureBroadcastSanitizer(sanitizeBroadcastHtml));
   ctx.inject(['setting'], (c) => {
     c.setting.PreferenceSetting(
       SettingModel.Setting('setting_display', 'rounded', false, 'boolean', 'Rounded Corners'),

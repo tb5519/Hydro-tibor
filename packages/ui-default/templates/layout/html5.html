@@ -63,6 +63,7 @@
     <script type="text/javascript" src="{{ UiContext.cdn_prefix }}hydro-{{ global.Hydro.version['ui-default'] }}.js{% if UiContext.staticVersion or (process.env.DEV and UiContext.constantVersion) %}?version={{ UiContext.staticVersion|default(UiContext.constantVersion|default('dev')) }}{% endif %}"></script>
   {% endif %}
   {% block body %}{% endblock %}
+  {% include "partials/broadcast_dialog.html" %}
   {% block script %}{% endblock %}
   {% if not isIE(handler.request.headers['user-agent']) and not handler.session.legacy %}
     <script>

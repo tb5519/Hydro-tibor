@@ -39,6 +39,7 @@ async function createApp(t, nodeEnv) {
         '@hydrooj/framework/validator': {},
         '@hydrooj/utils': {},
         '../error': {},
+        '../lib/domain_avatar_access': { isDomainAvatarImageRequest: () => false },
         '../logger': { Logger: class {} },
         '../model/builtin': {},
         '../model/opcount': {},

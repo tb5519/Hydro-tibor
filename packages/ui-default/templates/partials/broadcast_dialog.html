@@ -1,0 +1,197 @@
+{% if UiContext.broadcasts and UiContext.broadcasts.length %}
+<dialog class="student-broadcast" data-student-broadcast aria-modal="true" aria-labelledby="student-broadcast-title">
+  <div class="student-broadcast__card">
+    <header class="student-broadcast__header">
+      <span class="student-broadcast__icon" aria-hidden="true">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 13-5v14L3 14zM16 9l3-2v10l-3-2M5 15l2 6h3l-2-5M21 10v4"/></svg>
+      </span>
+      <div><span class="student-broadcast__eyebrow">老师有话对你说</span><p class="student-broadcast__welcome">一条新广播，请查收</p></div>
+      <span class="student-broadcast__progress" data-broadcast-progress aria-live="polite"></span>
+    </header>
+    <main class="student-broadcast__scroll" data-broadcast-scroll tabindex="0" aria-label="广播内容">
+      <div class="student-broadcast__meta"><span data-broadcast-scope></span><time data-broadcast-time></time></div>
+      <h2 id="student-broadcast-title" tabindex="-1" data-broadcast-title></h2>
+      {% for item in UiContext.broadcasts %}
+      <article class="student-broadcast__content" data-broadcast-content="{{ loop.index0 }}" hidden>{{ item.content|safe }}</article>
+      {% endfor %}
+    </main>
+    <footer class="student-broadcast__footer">
+      <div class="student-broadcast__footer-copy"><span data-broadcast-hint>确认后，这条广播将不再提醒</span><p class="student-broadcast__error" role="alert" data-broadcast-error hidden></p></div>
+      <button type="button" class="student-broadcast__confirm" data-broadcast-ack>知道了 <span aria-hidden="true">✓</span></button>
+    </footer>
+  </div>
+</dialog>
+<style>
+  .student-broadcast { padding:0; border:0; width:680px; max-width:calc(100vw - 40px); max-height:calc(100vh - 48px); max-height:calc(100dvh - 48px); margin:auto; border-radius:24px; color:#334155; background:#fff; box-shadow:0 28px 100px rgba(15,23,42,.25); overscroll-behavior:contain; }
+  .student-broadcast:not([open]) { display:none; }
+  .student-broadcast::backdrop { background:rgba(15,23,42,.52); backdrop-filter:blur(5px); }
+  .student-broadcast__card { display:flex; flex-direction:column; max-height:calc(100vh - 48px); max-height:calc(100dvh - 48px); }
+  .student-broadcast__header { display:flex; align-items:center; gap:15px; padding:28px 32px 24px; background:linear-gradient(115deg,#ecfdf5,#f0fdfa 58%,#eff6ff); border-bottom:1px solid #dceee9; flex-shrink:0; }
+  .student-broadcast__icon { display:grid; place-items:center; width:52px; height:52px; flex-shrink:0; color:#0f766e; background:#fff; border:1px solid #cce8df; border-radius:17px; box-shadow:0 3px 8px rgba(15,118,110,.05); }
+  .student-broadcast__eyebrow { display:block; font-size:12px; color:#45746c; letter-spacing:.09em; margin-bottom:6px; }
+  .student-broadcast__welcome { margin:0; font-size:18px; font-weight:700; color:#153b38; line-height:1.4; }
+  .student-broadcast__progress { margin-left:auto; flex-shrink:0; color:#48776e; font-size:12px; font-variant-numeric:tabular-nums; }
+  .student-broadcast__scroll { overflow:auto; padding:28px 32px 32px; overscroll-behavior:contain; min-height:0; }
+  .student-broadcast__meta { display:flex; align-items:center; flex-wrap:wrap; gap:10px; font-size:12px; color:#64748b; margin-bottom:15px; }
+  .student-broadcast__meta > span { color:#0f766e; background:#effaf6; border:1px solid #dceee7; border-radius:6px; padding:4px 9px; max-width:100%; overflow-wrap:anywhere; }
+  .student-broadcast h2#student-broadcast-title { margin:0 0 22px; color:#172b43; font-size:25px; font-weight:700; line-height:1.5; overflow-wrap:anywhere; }
+  .student-broadcast h2#student-broadcast-title:focus { outline:none; }
+  .student-broadcast__content { font-size:16px; line-height:1.85; color:#475569; overflow-wrap:anywhere; }
+  .student-broadcast__content[hidden], .student-broadcast__error[hidden] { display:none; }
+  .student-broadcast__content > :first-child { margin-top:0; }
+  .student-broadcast__content > :last-child { margin-bottom:0; }
+  .student-broadcast__content p, .student-broadcast__content ul, .student-broadcast__content ol { margin:0 0 16px; }
+  .student-broadcast__content h1, .student-broadcast__content h2, .student-broadcast__content h3, .student-broadcast__content h4 { font-weight:700; line-height:1.5; color:#172b43; margin:24px 0 12px; }
+  .student-broadcast__content h1 { font-size:24px; } .student-broadcast__content h2 { font-size:22px; } .student-broadcast__content h3 { font-size:19px; }
+  .student-broadcast__content ul, .student-broadcast__content ol { padding-left:25px; } .student-broadcast__content ul { list-style:disc; } .student-broadcast__content ol { list-style:decimal; }
+  .student-broadcast__content li { margin:6px 0; }
+  .student-broadcast__content strong, .student-broadcast__content b { font-weight:700; color:#243a51; }
+  .student-broadcast__content em, .student-broadcast__content i { font-style:italic; }
+  .student-broadcast__content blockquote { margin:18px 0; padding:14px 18px; background:#f0fdfa; border-left:3px solid #5ab6a4; border-radius:0 10px 10px 0; color:#34675e; }
+  .student-broadcast__content blockquote p:last-child { margin-bottom:0; }
+  .student-broadcast__content a { color:#0f766e; text-decoration:underline; text-underline-offset:3px; }
+  .student-broadcast__content img { display:block; max-width:100%; height:auto; border-radius:12px; margin:18px auto; }
+  .student-broadcast__content pre { overflow:auto; padding:14px; border-radius:10px; background:#f1f5f9; white-space:pre-wrap; }
+  .student-broadcast__content hr { border:0; border-top:1px solid #e2e8f0; margin:22px 0; }
+  .student-broadcast__footer { display:flex; align-items:center; gap:20px; justify-content:space-between; padding:20px 32px; border-top:1px solid #edf1f5; background:#fafcfd; flex-shrink:0; }
+  .student-broadcast__footer-copy { font-size:12px; line-height:1.7; color:#64748b; }
+  .student-broadcast__error { color:#b42318; margin:5px 0 0; }
+  .student-broadcast__confirm { display:inline-flex; align-items:center; justify-content:center; gap:22px; flex-shrink:0; min-width:132px; min-height:46px; padding:12px 22px; border:0; border-radius:12px; background:#0f766e; color:#fff; font:inherit; font-size:15px; font-weight:600; cursor:pointer; transition:background .15s; }
+  .student-broadcast__confirm:hover { background:#115e59; }
+  .student-broadcast__confirm:disabled { cursor:wait; opacity:.7; }
+  .student-broadcast :focus-visible { outline:3px solid #5cbdaa; outline-offset:3px; }
+  .student-broadcast__scroll:focus-visible { outline-offset:-4px; }
+  .student-broadcast--fallback[open] { display:block; position:fixed; inset:0; z-index:2147483647; }
+  .student-broadcast-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.52); z-index:2147483646; }
+  @media (max-width:600px) {
+    .student-broadcast { max-width:calc(100vw - 24px); border-radius:20px; max-height:calc(100vh - 24px); max-height:calc(100dvh - 24px); }
+    .student-broadcast__card { max-height:calc(100vh - 24px); max-height:calc(100dvh - 24px); }
+    .student-broadcast__header { gap:12px; padding:22px 20px; }
+    .student-broadcast__icon { width:44px; height:44px; border-radius:14px; }
+    .student-broadcast__welcome { font-size:16px; }
+    .student-broadcast__scroll { padding:22px 22px 26px; }
+    .student-broadcast h2#student-broadcast-title { font-size:22px; margin-bottom:18px; }
+    .student-broadcast__content { font-size:15px; }
+    .student-broadcast__footer { padding:17px 20px; gap:12px; flex-wrap:wrap; }
+    .student-broadcast__confirm { flex-grow:1; }
+    .student-broadcast__footer-copy { flex-basis:100%; }
+  }
+  @media (prefers-reduced-motion:reduce) { .student-broadcast__confirm { transition:none; } }
+</style>
+<script>
+(function () {
+  var dialog = document.querySelector('[data-student-broadcast]');
+  if (!dialog) return;
+  var items = JSON.parse('{{ UiContext.broadcasts|json|jsesc|safe }}');
+  var ackUrl = '{{ UiContext.broadcastAckUrl|jsesc|safe }}';
+  var uid = {{ handler.user._id }};
+  var index = 0;
+  var busy = false;
+  var acknowledged = {};
+  var previousFocus = document.activeElement;
+  var originalOverflow = document.documentElement.style.overflow;
+  var backdrop;
+  var channel;
+  var button = dialog.querySelector('[data-broadcast-ack]');
+  var error = dialog.querySelector('[data-broadcast-error]');
+  var title = dialog.querySelector('[data-broadcast-title]');
+  var scroll = dialog.querySelector('[data-broadcast-scroll]');
+  var contentNodes = dialog.querySelectorAll('[data-broadcast-content]');
+  function itemKey(item) { return item.scope + ':' + item.revision; }
+  function finish() {
+    if (typeof dialog.close === 'function') dialog.close();
+    else dialog.removeAttribute('open');
+    if (backdrop) backdrop.remove();
+    document.documentElement.style.overflow = originalOverflow;
+    document.removeEventListener('focusin', containFocus);
+    if (channel) channel.close();
+    if (previousFocus && previousFocus.isConnected) previousFocus.focus();
+  }
+  function render() {
+    while (index < items.length && acknowledged[itemKey(items[index])]) index++;
+    if (index >= items.length) { finish(); return; }
+    var item = items[index];
+    title.textContent = item.title;
+    dialog.querySelector('[data-broadcast-scope]').textContent = item.scopeLabel || (item.scope === 'global' ? '全域广播' : '域广播');
+    var time = dialog.querySelector('[data-broadcast-time]');
+    var updated = new Date(item.updatedAt);
+    time.textContent = Number.isNaN(updated.getTime()) ? '' : updated.toLocaleDateString('zh-CN', { year:'numeric', month:'long', day:'numeric' });
+    if (!Number.isNaN(updated.getTime())) time.dateTime = updated.toISOString();
+    dialog.querySelector('[data-broadcast-progress]').textContent = items.length > 1 ? (index + 1) + ' / ' + items.length : '未读广播';
+    dialog.querySelector('[data-broadcast-hint]').textContent = index < items.length - 1 ? '确认后，继续查看下一条广播' : '确认后，这条广播将不再提醒';
+    for (var i = 0; i < contentNodes.length; i++) contentNodes[i].hidden = i !== index;
+    error.hidden = true;
+    error.textContent = '';
+    button.disabled = false;
+    button.innerHTML = '知道了 <span aria-hidden="true">✓</span>';
+    busy = false;
+    scroll.scrollTop = 0;
+    title.focus({ preventScroll:true });
+  }
+  function containFocus(event) {
+    if (dialog.hasAttribute('open') && !dialog.contains(event.target)) title.focus({ preventScroll:true });
+  }
+  dialog.addEventListener('cancel', function (event) { event.preventDefault(); });
+  dialog.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); }
+    if (event.key !== 'Tab') return;
+    var focusable = Array.prototype.filter.call(dialog.querySelectorAll('a[href],button:not([disabled]),[tabindex="0"]'), function (node) { return !node.closest('[hidden]'); });
+    var first = focusable[0];
+    var last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || document.activeElement === title)) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  });
+  button.addEventListener('click', async function () {
+    if (busy || index >= items.length) return;
+    busy = true;
+    button.disabled = true;
+    button.textContent = '正在确认…';
+    error.hidden = true;
+    var item = items[index];
+    var controller = new AbortController();
+    var timeout = setTimeout(function () { controller.abort(); }, 15000);
+    try {
+      var response = await fetch(ackUrl, {
+        method:'POST', credentials:'same-origin', signal:controller.signal,
+        headers:{ 'Content-Type':'application/json', 'Accept':'application/json', 'X-Requested-With':'XMLHttpRequest' },
+        body:JSON.stringify({ scope:item.scope, revision:item.revision }),
+      });
+      if (response.redirected || response.status === 401 || response.status === 403) throw new Error('登录状态已变化，请刷新页面后重试。');
+      var data = await response.json();
+      if (!response.ok || !data.acknowledged) throw new Error('确认未成功，请稍后重试。');
+      acknowledged[itemKey(item)] = true;
+      if (channel) channel.postMessage({ uid:uid, key:itemKey(item) });
+      render();
+    } catch (err) {
+      busy = false;
+      button.disabled = false;
+      button.textContent = '重试确认';
+      error.textContent = err.message === '登录状态已变化，请刷新页面后重试。' ? err.message : '网络连接暂时不稳定，请重试。确认成功后不会重复提醒。';
+      error.hidden = false;
+    } finally { clearTimeout(timeout); }
+  });
+  if (typeof BroadcastChannel === 'function') {
+    try {
+      channel = new BroadcastChannel('hydro-broadcast-read');
+      channel.onmessage = function (event) {
+        if (event.data && event.data.uid === uid && items.some(function (item) { return itemKey(item) === event.data.key; })) {
+          acknowledged[event.data.key] = true;
+          if (!busy) render();
+        }
+      };
+    } catch (err) { channel = null; }
+  }
+  document.documentElement.style.overflow = 'hidden';
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else {
+    backdrop = document.createElement('div');
+    backdrop.className = 'student-broadcast-backdrop';
+    document.body.appendChild(backdrop);
+    dialog.classList.add('student-broadcast--fallback');
+    dialog.setAttribute('open', '');
+  }
+  document.addEventListener('focusin', containFocus);
+  render();
+}());
+</script>
+{% endif %}
