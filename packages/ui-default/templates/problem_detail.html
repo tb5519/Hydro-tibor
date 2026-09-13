@@ -38,7 +38,7 @@
   {{ set(UiContext, 'getRecordDetailUrl', url('record_detail', rid='{rid}')) }}
   {{ set(UiContext, 'pretestConnUrl', "record-conn?pretest=1&uidOrName=" + handler.user._id + "&pid=" + pdoc.docId + "&domainId=" + handler.args.domainId) }}
 {% endif %}
-{% if homeworkReview %}
+{% if homeworkReview or UiContext.objectiveMergedReview %}
   {{ set(UiContext, 'canViewRecord', true) }}
   {{ set(UiContext, 'postSubmitUrl', '') }}
   {{ set(UiContext, 'getSubmissionsUrl', '') }}
@@ -46,7 +46,7 @@
   {{ set(UiContext, 'getRecordDetailUrl', url('record_detail', rid='{rid}')) }}
 {% endif %}
 {% if pdoc.config.type == 'objective' %}
-  {{ set(UiContext, 'objectiveSubmitFeedbackUrl', url('objective_submit_feedback', query={tid:tdoc.docId, reviewUid:homeworkReview.uid} if homeworkReview else ({tid:tdoc.docId} if tdoc else {})) + ('&rid={rid}' if tdoc else '?rid={rid}')) }}
+  {{ set(UiContext, 'objectiveSubmitFeedbackUrl', '' if UiContext.objectiveMergedReview else url('objective_submit_feedback', query={tid:tdoc.docId, reviewUid:homeworkReview.uid} if homeworkReview else ({tid:tdoc.docId} if tdoc else {})) + ('&rid={rid}' if tdoc else '?rid={rid}')) }}
 {% endif %}
 </script>
 {% if badgeAcFirstEligible and badgeAcTheme and (badgeAcTheme.acImage or badgeAcTheme.themeSound) %}
@@ -370,7 +370,7 @@
               <span class="record-status--text {{ model.builtin.STATUS_CODES[rdoc['status']] }}">{{ rdoc.score }}</span>
             </a>
           {% endif %}
-          {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) and not tdoc %}
+          {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) and not tdoc and not UiContext.objectiveMergedReview %}
             <form class="form--inline" action="" method="post">
               <input type="hidden" name="star" value="{{ 'true' if not psdoc.star else 'false' }}">
               <input type="hidden" name="operation" value="star">

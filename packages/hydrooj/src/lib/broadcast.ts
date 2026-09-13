@@ -40,6 +40,7 @@ export const collAcknowledgement = db.collection('broadcast.acknowledgement');
 const TITLE_LIMIT = 100;
 const CONTENT_LIMIT = 100000;
 const REVISION_PATTERN = /^[a-f0-9]{32}$/;
+const ACKNOWLEDGEMENT_PAGE_SIZE = 20;
 
 // eslint-disable-next-line unicorn/throw-new-error
 export const BroadcastConflictError = CreateError(
@@ -208,9 +209,29 @@ export async function acknowledgeBroadcast(viewer: User, ddoc: DomainDoc, scope:
     }
 }
 
+/** Only the current publication is reportable; old revisions never inflate its count. */
+export async function getBroadcastAcknowledgements(
+    scope: BroadcastScope, domainId: string, expectedRevision: string, requestedPage = 1,
+) {
+    validateExpectedRevision(expectedRevision);
+    if (!Number.isSafeInteger(requestedPage) || requestedPage < 1) throw new ValidationError('page');
+    const broadcast = await getBroadcast(scope, domainId);
+    if ((broadcast?.revision || '') !== expectedRevision) throw new BroadcastConflictError();
+    const query = { broadcastId: getBroadcastId(scope, domainId), revision: expectedRevision };
+    const total = broadcast ? await collAcknowledgement.countDocuments(query) : 0;
+    const pages = Math.max(1, Math.ceil(total / ACKNOWLEDGEMENT_PAGE_SIZE));
+    const page = Math.min(requestedPage, pages);
+    const rows = total ? await collAcknowledgement.find(query).sort({ acknowledgedAt: -1, _id: -1 })
+        .skip((page - 1) * ACKNOWLEDGEMENT_PAGE_SIZE).limit(ACKNOWLEDGEMENT_PAGE_SIZE).toArray() : [];
+    return { revision: expectedRevision, total, page, pages, rows };
+}
+
 export async function ensureBroadcastIndexes() {
     await Promise.all([
         db.ensureIndexes(coll, { key: { enabled: 1 }, name: 'enabled' }),
         db.ensureIndexes(collAcknowledgement, { key: { uid: 1, broadcastId: 1 }, name: 'user_broadcast' }),
+        db.ensureIndexes(collAcknowledgement, {
+            key: { broadcastId: 1, revision: 1, acknowledgedAt: -1, _id: -1 }, name: 'broadcast_revision_time',
+        }),
     ]);
 }

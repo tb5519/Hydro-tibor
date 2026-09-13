@@ -315,6 +315,118 @@
     p
       margin: 0 0 12px
 
+.broadcast-receipts
+  margin-top: 24px
+  padding: 24px 26px
+  border: 1px solid #e1e8ef
+  border-radius: 18px
+  background: #fff
+  &__header
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 16px
+    h2
+      margin: 0
+      color: #173343
+      font-size: 18px
+      font-weight: 650
+    p
+      margin: 8px 0 0
+      font-size: 12px
+      line-height: 1.7
+      color: #82909f
+    button
+      flex-shrink: 0
+      font-size: 12px
+  &__summary
+    display: flex
+    flex-wrap: wrap
+    align-items: baseline
+    gap: 9px
+    margin: 22px 0 18px
+    color: #668078
+    font-size: 12px
+    strong
+      color: #0f766e
+      font-size: 34px
+      font-weight: 650
+      line-height: 1.2
+  &__version
+    margin-left: auto
+    color: #8a99a6
+    font-size: 11px
+  &__table-wrap
+    overflow-x: auto
+  &__table
+    width: 100%
+    border-collapse: collapse
+    text-align: left
+    th
+      padding: 10px 12px
+      background: #f4f8f7
+      color: #6d807c
+      font-weight: 500
+      font-size: 12px
+      &:first-child
+        border-radius: 8px 0 0 8px
+      &:last-child
+        border-radius: 0 8px 8px 0
+    td
+      padding: 14px 12px
+      border-bottom: 1px solid #edf1f3
+      vertical-align: middle
+      font-size: 13px
+      line-height: 1.6
+      &:first-child
+        width: 60%
+        overflow-wrap: anywhere
+      strong
+        display: block
+        color: #344e60
+        font-weight: 500
+      small
+        display: block
+        margin-top: 3px
+        color: #8c9aa7
+        font-size: 11px
+      time
+        color: #65788a
+        white-space: nowrap
+        font-variant-numeric: tabular-nums
+  &__empty
+    padding: 23px 14px
+    margin: 0
+    border-radius: 10px
+    background: #f8fafb
+    color: #8593a2
+    text-align: center
+    font-size: 12px
+    line-height: 1.8
+  &__message
+    margin: -4px 0 14px
+    color: #61887d
+    font-size: 12px
+    line-height: 1.7
+    &.is-error
+      color: #a24d47
+  &__pagination
+    display: flex
+    justify-content: space-between
+    align-items: center
+    flex-wrap: wrap
+    gap: 12px
+    padding-top: 18px
+    color: #8795a3
+    font-size: 12px
+    > div
+      display: flex
+      gap: 8px
+    button
+      min-height: 36px
+      padding: 6px 12px
+      font-size: 12px
+
 .broadcast-rich-content
   color: #394e60
   font-size: 16px
@@ -444,6 +556,22 @@
       flex-shrink: 0
 
 @media (max-width: 640px)
+  .broadcast-receipts
+    padding: 20px 14px
+    &__header
+      gap: 10px
+      align-items: flex-start
+      button
+        min-height: 36px
+        padding: 6px 10px
+    &__table
+      th, td
+        padding-left: 8px
+        padding-right: 8px
+      td:first-child
+        width: 50%
+      time
+        font-size: 11px
   .broadcast-admin
     &__hero
       padding: 20px 18px

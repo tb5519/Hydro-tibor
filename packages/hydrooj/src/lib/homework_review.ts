@@ -51,7 +51,7 @@ export async function authorizeHomeworkReview(viewer: User, ddoc: DomainDoc, hom
 }
 
 export function rejectHomeworkReviewMutation(request: { query?: any, body?: any, method?: string }) {
-    if (request.query?.reviewUid !== undefined || request.body?.reviewUid !== undefined) {
+    if (['reviewUid', 'mergedUid'].some((field) => request.query?.[field] !== undefined || request.body?.[field] !== undefined)) {
         throw new PermissionError(PERM.PERM_SUBMIT_PROBLEM);
     }
 }
@@ -59,7 +59,24 @@ export function rejectHomeworkReviewMutation(request: { query?: any, body?: any,
 export function isHomeworkReviewRecord(rdoc: RecordDoc | null, domainId: string, pid: number, uid: number, tid: ObjectId) {
     return rdoc && rdoc.domainId === domainId && rdoc.pid === pid && rdoc.uid === uid
         && (!rdoc.contest || rdoc.contest.toString() === tid.toString())
-        && !rdoc.hackTarget && rdoc.input === undefined;
+        && rdoc.hackTarget === undefined && rdoc.input === undefined && rdoc.files?.hack === undefined;
+}
+
+/** Caller must authorizeHomeworkReview first; all ordinary practice and this homework's formal attempts are included. */
+export async function loadHomeworkReviewRecords(domainId: string, pid: number, uid: number, homework: Tdoc) {
+    if (homework.domainId !== domainId || homework.rule !== 'homework' || !homework.pids.includes(pid)) {
+        throw new PermissionError(PERM.PERM_EDIT_HOMEWORK);
+    }
+    const records: RecordDoc[] = [];
+    for await (const rdoc of record.getMulti(domainId, {
+        uid, pid,
+        contest: { $in: [null, homework.docId] },
+        hackTarget: { $exists: false }, input: { $exists: false }, 'files.hack': { $exists: false },
+    }).sort({ _id: 1 })) {
+        if (isHomeworkReviewRecord(rdoc, domainId, pid, uid, homework.docId)
+            && typeof rdoc.code === 'string' && !rdoc.files?.code) records.push(rdoc);
+    }
+    return records;
 }
 
 export async function loadHomeworkReviewRecord(domainId: string, pid: number, uid: number, homework: Tdoc, status: any) {
@@ -76,6 +93,7 @@ export async function loadHomeworkReviewRecord(domainId: string, pid: number, ui
         contest: { $in: [null, homework.docId] },
         hackTarget: { $exists: false },
         input: { $exists: false },
+        'files.hack': { $exists: false },
     }).sort({ _id: -1 }).limit(1).toArray();
     return isHomeworkReviewRecord(latest[0], domainId, pid, uid, homework.docId) ? latest[0] : null;
 }

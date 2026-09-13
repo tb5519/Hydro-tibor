@@ -219,6 +219,23 @@
       font-size: 11px
       font-weight: 400
 
+  &__merged-count
+    color: var(--ui-v2-text-muted)
+    font-size: 12px
+    text-align: right
+
+    strong
+      color: var(--ui-v2-text)
+      font-size: 19px
+      font-weight: 600
+      font-variant-numeric: tabular-nums
+
+    small
+      display: block
+      margin-top: 5px
+      color: var(--ui-v2-accent)
+      font-size: 11px
+
   &__arrow
     color: var(--ui-v2-text-muted)
     font-size: 17px
@@ -266,6 +283,14 @@
     padding: 20px
 
   .problem-record-picker
+    &__filters
+      width: 100%
+
+      button
+        flex: 1
+        padding: 7px 8px
+        white-space: nowrap
+
     &__order
       display: none
 

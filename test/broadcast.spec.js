@@ -28,7 +28,25 @@ function collection() {
         documents,
         beforeUpdate: null,
         async findOne(query) { return structuredClone([...documents.values()].find((doc) => matches(doc, query)) || null); },
-        find(query) { return { toArray: async () => structuredClone([...documents.values()].filter((doc) => matches(doc, query))) }; },
+        find(query) {
+            let rows = [...documents.values()].filter((doc) => matches(doc, query));
+            return {
+                sort(order) {
+                    rows.sort((a, b) => {
+                        for (const [key, direction] of Object.entries(order)) {
+                            if (a[key] < b[key]) return -direction;
+                            if (a[key] > b[key]) return direction;
+                        }
+                        return 0;
+                    });
+                    return this;
+                },
+                skip(n) { rows = rows.slice(n); return this; },
+                limit(n) { rows = rows.slice(0, n); return this; },
+                toArray: async () => structuredClone(rows),
+            };
+        },
+        async countDocuments(query) { return [...documents.values()].filter((doc) => matches(doc, query)).length; },
         async insertOne(doc) {
             if (documents.has(doc._id)) throw Object.assign(new Error('Duplicate key'), { code: 11000 });
             documents.set(doc._id, structuredClone(doc));
@@ -192,6 +210,68 @@ describe('broadcast publication and durable acknowledgement', () => {
             broadcast.acknowledgeBroadcast(student(24), domainA, 'global', published.revision)
         )));
         assert.equal(receipts.documents.size, 1);
+    });
+});
+
+describe('current broadcast confirmation reports', () => {
+    it('returns no confirmations before first publication and validates page numbers', async () => {
+        assert.deepEqual(await broadcast.getBroadcastAcknowledgements('global', 'A', ''), {
+            revision: '', total: 0, page: 1, pages: 1, rows: [],
+        });
+        for (const page of [0, -1, 1.5, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1]) {
+            await assert.rejects(broadcast.getBroadcastAcknowledgements('global', 'A', '', page), ValidationError);
+        }
+    });
+
+    it('counts only the current version, keeps stopped/reopened receipts, and rejects old-version requests', async () => {
+        const first = await publish();
+        await broadcast.acknowledgeBroadcast(student(24), domainA, 'global', first.revision);
+        const second = await publish('global', 'A', '新的广播', '<p>新的内容</p>', first.revision);
+        await assert.rejects(broadcast.getBroadcastAcknowledgements('global', 'A', first.revision), broadcast.BroadcastConflictError);
+        assert.equal((await broadcast.getBroadcastAcknowledgements('global', 'A', second.revision)).total, 0);
+        await broadcast.acknowledgeBroadcast(student(25), domainB, 'global', second.revision);
+        await broadcast.acknowledgeBroadcast(student(25), domainB, 'global', second.revision);
+        await broadcast.disableBroadcast('global', 'A', second.revision);
+        const stopped = await broadcast.getBroadcastAcknowledgements('global', 'A', second.revision);
+        assert.equal(stopped.total, 1);
+        assert.equal(stopped.rows[0].uid, 25);
+        assert.ok(stopped.rows[0].acknowledgedAt instanceof Date);
+        await publish('global', 'A', second.title, second.content, second.revision);
+        assert.equal((await broadcast.getBroadcastAcknowledgements('global', 'B', second.revision)).total, 1);
+    });
+
+    it('isolates global and domain confirmations even when revision values coincide', async () => {
+        const global = await publish();
+        await publish('domain', 'A');
+        await publish('domain', 'B');
+        broadcasts.documents.get('domain:A').revision = global.revision;
+        broadcasts.documents.get('domain:B').revision = global.revision;
+        await broadcast.acknowledgeBroadcast(student(24), domainA, 'domain', global.revision);
+        await broadcast.acknowledgeBroadcast(student(25), domainB, 'domain', global.revision);
+        await broadcast.acknowledgeBroadcast(student(24), domainA, 'global', global.revision);
+        assert.deepEqual((await broadcast.getBroadcastAcknowledgements('domain', 'A', global.revision)).rows.map((row) => row.uid), [24]);
+        assert.deepEqual((await broadcast.getBroadcastAcknowledgements('domain', 'B', global.revision)).rows.map((row) => row.uid), [25]);
+        assert.equal((await broadcast.getBroadcastAcknowledgements('global', 'B', global.revision)).total, 1);
+    });
+
+    it('paginates newest confirmations with deterministic ties and bounds oversized pages', async () => {
+        const item = await publish();
+        for (let i = 0; i < 45; i++) {
+            const uid = 100 + i;
+            const _id = `${uid}:global:${item.revision}`;
+            receipts.documents.set(_id, { _id, uid, broadcastId: 'global', revision: item.revision, acknowledgedAt: new Date('2026-09-14T08:00:00Z') });
+        }
+        const first = await broadcast.getBroadcastAcknowledgements('global', 'A', item.revision);
+        const second = await broadcast.getBroadcastAcknowledgements('global', 'A', item.revision, 2);
+        const last = await broadcast.getBroadcastAcknowledgements('global', 'A', item.revision, Number.MAX_SAFE_INTEGER);
+        assert.equal(first.total, 45);
+        assert.equal(first.pages, 3);
+        assert.equal(first.rows.length, 20);
+        assert.equal(second.rows.length, 20);
+        assert.equal(last.page, 3);
+        assert.equal(last.rows.length, 5);
+        assert.equal(first.rows[0].uid, 144);
+        assert.equal(new Set([...first.rows, ...second.rows, ...last.rows].map((row) => row.uid)).size, 45);
     });
 });
 

@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { describe, it } = require('node:test');
@@ -6,6 +7,7 @@ const esbuild = require('esbuild');
 const jqueryFactory = require('jquery');
 const { JSDOM } = require('jsdom');
 const yaml = require('js-yaml');
+const nunjucks = require('nunjucks');
 // The Hydro register hook defaults to production, which intentionally omits React's act helper.
 process.env.NODE_ENV = 'test';
 const React = require('react');
@@ -42,6 +44,23 @@ const complete = (questions = [question(1, 'correct'), ...[2, 3, 4, 5, 6].map((i
     objective: { rid, state: 'complete', score: questions.reduce((sum, item) => sum + item.score, 0), totalScore: 60, questions },
 });
 const sourceRid = '6aa000000000000000000002';
+function mergedReviewFixture() {
+    const attempt = (answer, result, number) => ({
+        rid: `6aa00000000000000000000${number}`, answer, result, submittedAt: `2026-09-13T0${number}:15:00.000Z`,
+    });
+    return {
+        uid: 22, name: '目标学员', submissionCount: 3,
+        summary: { firstCorrect: 1, correctAfterRetry: 3, incorrect: 1, unanswered: 1, pending: 0, error: 0 },
+        questions: [
+            { id: '1', result: 'first_correct', answer: 'A', attempts: [attempt('A', 'correct', 1), attempt('A', 'correct', 2)] },
+            { id: '2', result: 'correct_after_retry', answer: 'A', attempts: [attempt('B', 'incorrect', 1), attempt('A', 'correct', 2), attempt('B', 'incorrect', 3)] },
+            { id: '3', result: 'incorrect', answer: 'B', attempts: [attempt('B', 'incorrect', 1)] },
+            { id: '4', result: 'correct_after_retry', answer: '42', attempts: [attempt('<img src=x onerror=alert(1)>', 'incorrect', 1), attempt('42', 'correct', 2)] },
+            { id: '5', result: 'unanswered', attempts: [] },
+            { id: '6', result: 'correct_after_retry', answer: ['B', 'C'], attempts: [attempt(['A'], 'incorrect', 1), attempt(['B', 'C'], 'correct', 2), attempt(['A', 'C'], 'incorrect', 3)] },
+        ],
+    };
+}
 const importToken = '7edb641d-58c7-4af6-a9f4-06469cb258e5';
 const importMarker = `hydro:record-import:11/system/5983/${importToken}`;
 function replayOptions(initial, active = true) {
@@ -208,6 +227,97 @@ async function harness(options = {}) {
 }
 
 describe('objective answer submission UI', { concurrency: false }, () => {
+    it('keeps pending and failed first attempts neutral until a reliable aggregate result is available', async (t) => {
+        const merged = mergedReviewFixture();
+        merged.questions[0].result = 'pending';
+        merged.questions[0].attempts[0].result = 'pending';
+        merged.questions[1].result = 'error';
+        merged.questions[1].attempts[0].result = 'error';
+        merged.summary = { ...merged.summary, firstCorrect: 0, correctAfterRetry: 2, pending: 1, error: 1 };
+        const h = await harness({ context: { objectiveMergedReview: merged } });
+        t.after(() => h.close());
+        assert.equal(h.nav(1).className, 'objective-nav-item is-answered');
+        assert.equal(h.nav(2).className, 'objective-nav-item is-answered');
+        assert.match(h.nav(1).getAttribute('aria-label'), /评测中/);
+        assert.match(h.nav(2).getAttribute('aria-label'), /评测未完成/);
+        assert.match(h.doc.querySelector('.objective-submit-state').textContent, /稍后刷新/);
+        assert.deepEqual(h.calls.get, []);
+    });
+
+    it('shows first-correct green and corrected-after-retry yellow without changing incorrect or unanswered colors', async (t) => {
+        const h = await harness({ context: { objectiveMergedReview: mergedReviewFixture() } });
+        t.after(() => h.close());
+        assert.ok(h.nav(1).classList.contains('is-correct'));
+        assert.ok(!h.nav(1).classList.contains('is-retry-correct'), 'Repeated correct submissions stay first-correct');
+        assert.ok(h.nav(2).classList.contains('is-retry-correct'));
+        assert.match(h.nav(2).getAttribute('aria-label'), /重试后答对/);
+        assert.ok(h.nav(3).classList.contains('is-incorrect'));
+        assert.equal(h.nav(5).className, 'objective-nav-item');
+        assert.match(h.doc.querySelector('.objective-nav-legend').textContent, /首次答对.*重试后答对.*错误.*未答/);
+        assert.equal(h.doc.querySelector('.objective-nav-result-label').textContent, '累计答对');
+        assert.equal(h.doc.querySelector('.objective-nav-result-score strong').textContent, '4');
+        assert.match(h.doc.querySelector('.objective-nav-result-score').textContent, /4\/ 6 题/);
+        assert.equal(h.calls.dialogs.length, 0);
+    });
+
+    it('marks every previously selected single-choice option and preserves chronological attempts with their results', async (t) => {
+        const h = await harness({ context: { objectiveMergedReview: mergedReviewFixture() } });
+        t.after(() => h.close());
+        const first = h.doc.querySelector('[name="2"][value="A"]').closest('label');
+        const second = h.doc.querySelector('[name="2"][value="B"]').closest('label');
+        assert.ok(first.classList.contains('is-ever-selected'));
+        assert.ok(second.classList.contains('is-ever-selected'));
+        assert.equal(first.querySelector('.objective-choice-history').textContent, '曾选 1 次');
+        assert.equal(second.querySelector('.objective-choice-history').textContent, '曾选 2 次');
+        const history = h.doc.querySelector('[aria-label="第 2 题作答历程"]');
+        assert.deepEqual([...history.querySelectorAll('.objective-merged-history__answer')].map((element) => element.textContent), ['B', 'A', 'B']);
+        assert.deepEqual([...history.querySelectorAll('.objective-merged-history__result')].map((element) => element.textContent), ['错误', '正确', '错误']);
+        assert.equal(history.querySelector('time').dateTime, '2026-09-13T01:15:00.000Z');
+        assert.ok(h.doc.querySelector('[name="2"][value="A"]').checked, 'The last correct answer is the read-only representative');
+    });
+
+    it('retains each multi-choice combination and safely displays historical text answers', async (t) => {
+        const h = await harness({ context: { objectiveMergedReview: mergedReviewFixture() } });
+        t.after(() => h.close());
+        const history = h.doc.querySelector('[aria-label="第 6 题作答历程"]');
+        assert.deepEqual([...history.querySelectorAll('.objective-merged-history__answer')].map((element) => element.textContent), ['A', 'B + C', 'A + C']);
+        assert.equal(h.doc.querySelector('[name="6"][value="A"]').closest('label').querySelector('.objective-choice-history').textContent, '曾选 2 次');
+        const textHistory = h.doc.querySelector('[aria-label="第 4 题作答历程"]');
+        assert.match(textHistory.textContent, /<img src=x onerror=alert\(1\)>/);
+        assert.equal(textHistory.querySelector('img'), null, 'Answers render as text, never executable HTML');
+        assert.equal(h.doc.querySelector('[name="4"]').value, '42');
+        assert.match(h.doc.querySelector('[aria-label="第 5 题作答历程"]').textContent, /尚未填写/);
+    });
+
+    it('keeps merged bank and homework review read-only and never reads or writes the teacher draft or polls their submission', async (t) => {
+        for (const homework of [false, true]) {
+            const h = await harness({
+                saved: { value: '{"1":"teacher draft"}' },
+                context: {
+                    ...replayOptions().context,
+                    ...(homework ? { homeworkReview: { uid: 22, name: '目标学员', rid: '' } } : {}),
+                    objectiveMergedReview: mergedReviewFixture(),
+                    objectiveInitialSubmission: { answers: { 1: 'B' }, feedback: { rid, state: 'pending' } },
+                },
+            });
+            try {
+                assert.ok([...h.doc.querySelectorAll('.objective-input')].every((input) => input.disabled));
+                assert.equal(h.doc.querySelector('.objective-submit'), null);
+                assert.equal(h.doc.querySelector('.objective-clear'), null);
+                assert.equal(h.doc.querySelector('.objective-replay-source'), null);
+                assert.ok(h.doc.querySelector('[name="1"][value="A"]').checked);
+                await h.answer(1, 'B');
+                assert.deepEqual(h.calls.load, []);
+                assert.deepEqual(h.calls.save, []);
+                assert.deepEqual(h.calls.get, []);
+                assert.deepEqual(h.calls.post, []);
+                assert.equal(h.doc.querySelectorAll('.objective-merged-history').length, 6);
+                await act(async () => { await h.controller.loadObjective(); });
+                assert.equal(h.doc.querySelectorAll('.objective-merged-history').length, 6);
+            } finally { await h.close(); }
+        }
+    });
+
     it('labels imported results as the original learner’s score while keeping the teacher’s changed draft editable', async (t) => {
         const h = await harness({ ...replayOptions(), saved: { value: JSON.stringify({ 1: 'B', 2: 'B' }) } });
         t.after(() => h.close());
@@ -638,5 +748,56 @@ describe('objective answer submission UI', { concurrency: false }, () => {
         assert.equal(h.calls.save.length, 0);
         assert.equal(h.calls.post.length, 0);
         assert.equal(h.calls.dialogs.length, 0);
+    });
+});
+
+describe('merged objective review page shell', () => {
+    const env = new nunjucks.Environment(new nunjucks.FileSystemLoader(path.join(uiRoot, 'templates')), { autoescape: true });
+    const merged = mergedReviewFixture();
+    const pdoc = { docId: 1000, pid: 'P1000', domainId: 'class-a', config: { type: 'objective' } };
+
+    it('uses review navigation for both bank and homework merged views without any draft-copy action or duplicate student heading', () => {
+        for (const homework of [false, true]) {
+            const UiContext = {
+                objectiveMergedReview: merged,
+                ...(homework ? { homeworkReview: { uid: 22, name: '目标学员', rid: '', returnUrl: '/homework/1?uid=22' } } : {}),
+            };
+            const html = env.render('partials/problem_sidebar.html', {
+                UiContext, pdoc, url: (_route, args) => `/p/${args.pid}`,
+            });
+            const doc = new JSDOM(html).window.document;
+            const link = doc.querySelector('a');
+            assert.equal(link.getAttribute('href'), homework ? '/homework/1?uid=22' : '/p/P1000');
+            assert.equal(link.textContent.trim(), homework ? '返回该学员的作业' : '返回题目');
+            assert.equal(doc.querySelector('[data-homework-review-copy]'), null);
+            assert.equal(doc.querySelector('.problem-review-heading'), null);
+            assert.equal(doc.querySelector('[name="problem-sidebar__open-scratchpad"]'), null);
+            assert.ok(doc.querySelector('.section--problem-sidebar ol.menu'), 'The read-only answer card retains its mount target');
+        }
+    });
+
+    it('removes write and polling endpoints from merged review context', () => {
+        const source = fs.readFileSync(path.join(uiRoot, 'templates/problem_detail.html'), 'utf8');
+        const script = source.match(/<script>([\s\S]*?)<\/script>/)[1];
+        for (const homework of [false, true]) {
+            const UiContext = {
+                objectiveMergedReview: merged,
+                ...(homework ? { homeworkReview: { uid: 22 } } : {}),
+            };
+            env.renderString(script, {
+                UiContext, pdoc, homeworkReview: UiContext.homeworkReview,
+                tdoc: homework ? { docId: 'homework-id', rule: 'homework' } : null,
+                handler: { user: { _id: 10 }, args: { domainId: 'class-a' } },
+                url: (route) => `/${route}`,
+                set(target, key, value) {
+                    if (typeof key === 'string') target[key] = value;
+                    else Object.assign(target, key);
+                    return '';
+                },
+            });
+            for (const key of ['postSubmitUrl', 'getSubmissionsUrl', 'pretestConnUrl', 'objectiveSubmitFeedbackUrl']) {
+                assert.equal(UiContext[key], '', `${key} is disabled in a merged view`);
+            }
+        }
     });
 });

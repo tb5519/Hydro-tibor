@@ -7,6 +7,7 @@ const esbuild = require('esbuild');
 const jqueryFactory = require('jquery');
 const { JSDOM } = require('jsdom');
 const nunjucks = require('nunjucks');
+process.env.NODE_ENV = 'test';
 const React = require('react');
 const ReactDOM = require('react-dom/client');
 
@@ -86,7 +87,7 @@ async function harness(options = {}) {
             location: { href: dom.window.location.href, origin: dom.window.location.origin, assign: (url) => calls.navigate.push(url) },
             crypto: { randomUUID: () => 'draft-token' },
         },
-        UiContext: options.noPermission ? {} : { problemRecordPicker: { url: '/p/P1000/submissions', ownUrl: '/p/P1000' } },
+        UiContext: options.noPermission ? {} : { problemRecordPicker: { url: '/p/P1000/submissions', ownUrl: '/p/P1000', allowMerged: !!options.objective } },
     });
     mod.exports.bindProblemRecordPicker();
     const flush = () => React.act(async () => { await new Promise((resolve) => setImmediate(resolve)); });
@@ -107,6 +108,59 @@ async function harness(options = {}) {
 }
 
 describe('problem record picker', () => {
+    it('offers merged answers only when the objective problem explicitly allows them', async () => {
+        for (const objective of [false, true]) {
+            const app = await harness({ objective });
+            try {
+                await app.click('[data-problem-record-picker="all"]');
+                const labels = [...app.dom.window.document.querySelectorAll('.problem-record-picker__filters button')].map((button) => button.textContent);
+                assert.deepEqual(labels, objective ? ['全部记录', '仅已通过', '合并作答'] : ['全部记录', '仅已通过']);
+            } finally { await app.cleanup(); }
+        }
+    });
+
+    it('switches from accepted to merged students and opens their read-only view without a draft-import token', async () => {
+        const app = await harness({ objective: true, get: async (_, params) => ({
+            mode: params.mode,
+            records: [record({ lang: '_', uid: 8, submissionCount: 4, importUrl: '/p/P1000?mergedUid=8' })], nextCursor: null,
+        }) });
+        try {
+            await app.click('[data-problem-record-picker="accepted"]');
+            await app.click('.problem-record-picker__filters button:last-child');
+            assert.equal(app.calls.get[1][1].mode, 'merged');
+            assert.equal(app.calls.get[1][1].accepted, false);
+            const item = app.dom.window.document.querySelector('.problem-record-picker__record');
+            assert.match(item.textContent, /4 次提交/);
+            assert.match(item.textContent, /查看合并作答/);
+            assert.equal(item.querySelector('.problem-record-picker__status'), null);
+            assert.equal(item.querySelector('.problem-record-picker__score'), null);
+            assert.match(app.dom.window.document.querySelector('.problem-record-picker__hint').textContent, /只读查看，保留你的草稿/);
+            await app.click('.problem-record-picker__record');
+            const target = new URL(app.calls.navigate[0]);
+            assert.equal(target.searchParams.get('mergedUid'), '8');
+            assert.equal(target.searchParams.has('draftImport'), false);
+            await app.click('.problem-record-picker__filters button:first-child');
+            assert.equal(app.calls.get[2][1].mode, undefined);
+        } finally { await app.cleanup(); }
+    });
+
+    it('deduplicates merged cursor pages by learner even if their latest record changes', async () => {
+        const app = await harness({ objective: true, get: async (_, params) => {
+            if (params.mode !== 'merged') return { records: [], nextCursor: null };
+            if (!params.cursor) return { records: [record({ uid: 8, submissionCount: 2 })], nextCursor: 'merged-next' };
+            return { records: [record({ uid: 8, rid: 'newer', submissionCount: 3 }), record({ uid: 9, rid: 'student-two', name: '小周' })], nextCursor: null };
+        } });
+        try {
+            await app.click('[data-problem-record-picker="all"]');
+            await app.click('.problem-record-picker__filters button:last-child');
+            await app.click('.problem-record-picker__more');
+            assert.equal(app.calls.get[2][1].mode, 'merged');
+            assert.equal(app.calls.get[2][1].cursor, 'merged-next');
+            assert.equal(app.dom.window.document.querySelectorAll('.problem-record-picker__record').length, 2);
+            assert.match(app.dom.window.document.querySelector('.problem-record-picker__record').textContent, /3 次提交/);
+        } finally { await app.cleanup(); }
+    });
+
     it('loads all submissions with status, score, language and time without exposing student UID', async () => {
         const app = await harness();
         try {

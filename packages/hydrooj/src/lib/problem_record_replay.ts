@@ -8,6 +8,7 @@ import record from '../model/record';
 import { langs } from '../model/setting';
 import user from '../model/user';
 import type { Handler } from '../service/server';
+import { buildObjectiveMergedReview } from './objective_merged_review';
 import { buildObjectiveInitialSubmission, loadObjectiveSubmissionConfig } from './objective_submission';
 import { canManageRecordList } from './record_list_scope';
 import { appendHiddenSuperAdminFilter, getHiddenSuperAdminUids } from './record_visibility';
@@ -17,8 +18,10 @@ export function canUseProblemRecordPicker(viewer: Handler['user']) {
         && viewer.hasPerm(PERM.PERM_VIEW_RECORD) && canManageRecordList(viewer);
 }
 
-export function assertRecordReplayRequest(fromRecord?: ObjectId, tid?: ObjectId, reviewUid?: number) {
-    if (fromRecord && (tid !== undefined || reviewUid !== undefined)) throw new ValidationError('fromRecord');
+export function assertRecordReplayRequest(fromRecord?: ObjectId, tid?: ObjectId, reviewUid?: number, mergedUid?: number) {
+    if (fromRecord && (tid !== undefined || reviewUid !== undefined || mergedUid !== undefined)) throw new ValidationError('fromRecord');
+    if (mergedUid !== undefined && (tid !== undefined || reviewUid !== undefined
+        || !Number.isSafeInteger(mergedUid) || mergedUid <= 1)) throw new ValidationError('mergedUid');
 }
 
 export function isFormalProblemRecord(rdoc: RecordDoc | null, domainId: string, pid: number) {
@@ -124,6 +127,60 @@ export async function listProblemSubmissionRecords(
         });
     }
     return { records, nextCursor: null };
+}
+
+async function isObjectiveProblem(pdoc: ProblemDoc) {
+    const source = pdoc.reference ? await problem.get(pdoc.reference.domainId, pdoc.reference.pid) : pdoc;
+    return typeof source?.config === 'object' && source.config?.type === 'objective';
+}
+
+export async function listProblemMergedSubmissions(handler: Handler, domainId: string, pdoc: ProblemDoc, cursor?: ObjectId) {
+    const reader = await createRecordReader(handler, domainId, pdoc);
+    if (!(await isObjectiveProblem(pdoc))) throw new ValidationError('mode');
+    const filter = appendHiddenSuperAdminFilter(problemRecordListFilter(pdoc.docId), reader.hiddenUids);
+    const students = new Map<number, { rid: ObjectId, uid: number, submissionCount: number }>();
+    // Group before applying the cursor, otherwise an older attempt would repeat its student on the next page.
+    for await (const candidate of record.getMulti(domainId, filter, {
+        projection: { compilerTexts: 0, judgeTexts: 0, 'testCases.message': 0 },
+    }).sort({ _id: -1 })) {
+        const visible = await reader.read(candidate);
+        if (!visible?.canImport) continue;
+        const existing = students.get(candidate.uid);
+        if (existing) existing.submissionCount++;
+        else students.set(candidate.uid, { rid: candidate._id, uid: candidate.uid, submissionCount: 1 });
+    }
+    const page = [...students.values()].filter((item) => !cursor || item.rid.toString() < cursor.toString()).slice(0, 21);
+    const records = await Promise.all(page.slice(0, 20).map(async ({ rid, uid, submissionCount }) => {
+        const owner = await user.getById(domainId, uid);
+        return {
+            rid: rid.toString(),
+            uid,
+            name: owner?.displayName || owner?.uname || '已注销学员',
+            submittedAt: rid.getTimestamp().toISOString(),
+            submissionCount,
+            canImport: true,
+            importUrl: handler.url('problem_detail', { domainId, pid: pdoc.pid || pdoc.docId, query: { mergedUid: uid } }),
+        };
+    }));
+    return { mode: 'merged' as const, records, nextCursor: page.length > 20 ? records[19].rid : null };
+}
+
+export async function loadProblemMergedReview(handler: Handler, domainId: string, pdoc: ProblemDoc, uid: number) {
+    assertRecordReplayRequest(undefined, undefined, undefined, uid);
+    const reader = await createRecordReader(handler, domainId, pdoc);
+    if (!(await isObjectiveProblem(pdoc))) throw new ValidationError('mergedUid');
+    const filter = appendHiddenSuperAdminFilter({ ...problemRecordListFilter(pdoc.docId), uid }, reader.hiddenUids);
+    const records: RecordDoc[] = [];
+    for await (const candidate of record.getMulti(domainId, filter).sort({ _id: 1 })) {
+        if (candidate.uid !== uid) continue;
+        const visible = await reader.read(candidate);
+        if (visible?.canImport) records.push({ ...visible.rdoc, code: candidate.code });
+    }
+    if (!records.length) throw new RecordNotFoundError(domainId, uid.toString());
+    const [owner, { config }] = await Promise.all([
+        user.getById(domainId, uid), loadObjectiveSubmissionConfig(domainId, pdoc.docId),
+    ]);
+    return buildObjectiveMergedReview(records, config, { uid, name: owner?.displayName || owner?.uname || '已注销学员' });
 }
 
 function publicReplayRecord(rdoc: RecordDoc) {

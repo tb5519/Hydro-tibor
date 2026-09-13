@@ -92,6 +92,7 @@ function harness(options = {}) {
                             doc.domainId === domainId && doc.pid === query.pid
                             && !query.contest.$nin.some((id) => id.equals(doc.contest))
                             && doc.input === undefined && doc.hackTarget === undefined && doc.files?.hack === undefined
+                            && (query.uid === undefined || doc.uid === query.uid)
                             && (query.status === undefined || doc.status === query.status)
                             && (!query._id || doc._id.toString() < query._id.$lt.toString())
                             && !(query.$and?.[0]?.uid?.$nin || []).includes(doc.uid)
@@ -114,6 +115,7 @@ function harness(options = {}) {
         },
         '../model/user': { getById: async (_, uid) => ({ _id: uid, displayName: `学员 ${uid}`, uname: 'student' }) },
         './record_list_scope': { canManageRecordList: canManage },
+        './contest_access': { canViewContestLevel: () => true },
         './record_visibility': {
             getHiddenSuperAdminUids: async () => options.hiddenUids || [],
             appendHiddenSuperAdminFilter: (query, ids) => ({ ...query, $and: [{ uid: { $nin: ids } }] }),
@@ -121,6 +123,7 @@ function harness(options = {}) {
     };
     dependencies['./objective_feedback'] = compileLib('objective_feedback', dependencies);
     dependencies['./objective_submission'] = compileLib('objective_submission', dependencies);
+    dependencies['./objective_merged_review'] = compileLib('objective_merged_review', dependencies);
     return { ...compileLib('problem_record_replay', dependencies), handler, pdoc, reads };
 }
 
@@ -297,10 +300,121 @@ describe('problem record pagination', () => {
     });
 });
 
+describe('objective merged replay permissions and pagination', () => {
+    const objectiveRecord = (index, extra = {}) => makeRecord(index, {
+        lang: '_', code: '1: A', testCases: [{ subtaskId: 1, id: 0, status: 1, score: 5 }], ...extra,
+    });
+
+    it('does not provide merged mode for programming problems or ordinary students', async () => {
+        const programming = harness();
+        await assert.rejects(programming.listProblemMergedSubmissions(programming.handler, 'class-a', programming.pdoc), ValidationError);
+        await assert.rejects(programming.loadProblemMergedReview(programming.handler, 'class-a', programming.pdoc, 20), ValidationError);
+        const student = harness({ objective: true, manager: false });
+        await assert.rejects(student.listProblemMergedSubmissions(student.handler, 'class-a', student.pdoc), PermissionError);
+        await assert.rejects(student.loadProblemMergedReview(student.handler, 'class-a', student.pdoc, 20), PermissionError);
+    });
+
+    it('groups each learner once before pagination, counts all readable attempts and does not expose individual source', async () => {
+        const docs = Array.from({ length: 23 }, (_, index) => [
+            objectiveRecord(index + 1, { uid: 20 + index }), objectiveRecord(index + 30, { uid: 20 + index }),
+        ]).flat();
+        docs.push(objectiveRecord(99, { uid: 99 }));
+        const h = harness({ objective: true, docs, hiddenUids: [99] });
+        const first = await h.listProblemMergedSubmissions(h.handler, 'class-a', h.pdoc);
+        assert.equal(first.mode, 'merged');
+        assert.equal(first.records.length, 20);
+        assert.equal(first.records[0].uid, 42);
+        assert.equal(first.records[0].submissionCount, 2);
+        assert.match(first.records[0].importUrl, /mergedUid=42$/);
+        assert.doesNotMatch(JSON.stringify(first), /SECRET|testCases|code|fromRecord/);
+        const second = await h.listProblemMergedSubmissions(h.handler, 'class-a', h.pdoc, new ObjectId(first.nextCursor));
+        assert.deepEqual(plain(second.records.map((item) => item.uid)), [22, 21, 20]);
+        assert.equal(second.nextCursor, null);
+        assert.equal(new Set([...first.records, ...second.records].map((item) => item.uid)).size, 23);
+    });
+
+    it('excludes unimportable, hidden, cross-domain and nonformal records from both counts and answer history', async () => {
+        const docs = [objectiveRecord(1),
+            objectiveRecord(2, { contest: RECORD_PRETEST }), objectiveRecord(3, { contest: RECORD_GENERATE }),
+            objectiveRecord(4, { input: null }), objectiveRecord(5, { files: { hack: 'hack' } }),
+            objectiveRecord(6, { files: { code: 'stored-code' } }), objectiveRecord(7, { domainId: 'class-b' }),
+            objectiveRecord(8, { pid: 999 }), objectiveRecord(9, { code: undefined }),
+            objectiveRecord(10, { uid: 99 }), objectiveRecord(11, { hackTarget: null }),
+        ];
+        const h = harness({ objective: true, docs, hiddenUids: [99] });
+        const list = await h.listProblemMergedSubmissions(h.handler, 'class-a', h.pdoc);
+        assert.equal(list.records.length, 1);
+        assert.equal(list.records[0].submissionCount, 1);
+        assert.equal((await h.loadProblemMergedReview(h.handler, 'class-a', h.pdoc, 20)).submissionCount, 1);
+        await assert.rejects(h.loadProblemMergedReview(h.handler, 'class-a', h.pdoc, 99), RecordNotFoundError);
+        await assert.rejects(h.loadProblemMergedReview(h.handler, 'class-b', h.pdoc, 20), ProblemNotFoundError);
+        const forbiddenSource = harness({ objective: true, docs, permissions: [PERM.PERM_VIEW_PROBLEM, PERM.PERM_VIEW_RECORD, PERM.PERM_EDIT_HOMEWORK] });
+        assert.equal((await forbiddenSource.listProblemMergedSubmissions(forbiddenSource.handler, 'class-a', forbiddenSource.pdoc)).records.length, 0);
+        await assert.rejects(forbiddenSource.loadProblemMergedReview(forbiddenSource.handler, 'class-a', forbiddenSource.pdoc, 20), RecordNotFoundError);
+    });
+
+    it('applies contest visibility and projections before aggregating, including sealed result fields', async () => {
+        for (const options of [
+            { contestVisible: false }, { missingContest: true }, { contestDomain: 'class-b' }, { contestPids: [999] },
+            { projection: (doc) => ({ ...doc, score: undefined }) }, { projection: (doc) => ({ ...doc, testCases: [] }) },
+        ]) {
+            const h = harness({ objective: true, docs: [objectiveRecord(1, { contest: tid })], ...options });
+            assert.equal((await h.listProblemMergedSubmissions(h.handler, 'class-a', h.pdoc)).records.length, 0);
+            await assert.rejects(h.loadProblemMergedReview(h.handler, 'class-a', h.pdoc, 20), RecordNotFoundError);
+        }
+        const projectedFields = harness({ objective: true, docs: [objectiveRecord(1, { contest: tid })],
+            projection: (doc) => ({ ...doc, testCases: doc.testCases.map((item) => ({ ...item, status: undefined })) }) });
+        const review = await projectedFields.loadProblemMergedReview(projectedFields.handler, 'class-a', projectedFields.pdoc, 20);
+        assert.equal(review.questions[0].result, 'error');
+    });
+
+    it('reads the referenced grading config and restores permitted source after projection without exposing standard answers', async () => {
+        const h = harness({ objective: true, reference: true, docs: [objectiveRecord(1, { contest: tid })],
+            projection: (doc) => ({ ...doc, code: undefined }) });
+        const review = await h.loadProblemMergedReview(h.handler, 'class-a', h.pdoc, 20);
+        assert.equal(review.questions[0].result, 'first_correct');
+        assert.equal(review.questions[0].attempts[0].answer, 'A');
+        assert.doesNotMatch(JSON.stringify(review), /SECRET_KEY/);
+        assert.ok(h.reads.some((item) => item.configRead?.domainId === 'source-domain' && item.configRead.raw));
+    });
+
+    it('forbids combining merged replay with another replay, contest or homework context and rejects invalid learner IDs', () => {
+        const h = harness();
+        for (const args of [
+            [rid(1), undefined, undefined, 20], [undefined, tid, undefined, 20], [undefined, undefined, 20, 20],
+            ...[0, 1, -2, 1.5, NaN].map((uid) => [undefined, undefined, undefined, uid]),
+        ]) assert.throws(() => h.assertRecordReplayRequest(...args), ValidationError);
+        assert.doesNotThrow(() => h.assertRecordReplayRequest(undefined, undefined, undefined, 20));
+    });
+
+    it('dispatches real record-picker handler requests by mode and preserves the existing accepted-only path', async () => {
+        const h = harness({ objective: true, docs: [objectiveRecord(1), objectiveRecord(2)] });
+        const source = fs.readFileSync(path.join(root, 'packages/hydrooj/src/handler/record.ts'), 'utf8');
+        const section = source.slice(source.indexOf('export class ProblemSubmissionRecordsHandler'), source.indexOf('export class ObjectiveSubmitFeedbackHandler'));
+        const module = { exports: {} };
+        vm.runInNewContext(transformSync(section, {
+            loader: 'ts', format: 'cjs', tsconfigRaw: { compilerOptions: { experimentalDecorators: true } },
+        }).code, {
+            module, exports: module.exports, ...h,
+            Handler: class { user = h.handler.user; url = h.handler.url; response = {}; },
+            route: () => () => {}, query: () => () => {}, Types: {},
+            problem: { get: async () => h.pdoc }, ProblemNotFoundError, ValidationError,
+        });
+        const handler = new module.exports.ProblemSubmissionRecordsHandler();
+        await handler.get('class-a', 1002, false, undefined, 'merged');
+        assert.equal(handler.response.body.records.length, 1);
+        assert.equal(handler.response.body.records[0].submissionCount, 2);
+        await handler.get('class-a', 1002, true);
+        assert.equal(handler.response.body.records.length, 2);
+        await assert.rejects(handler.get('class-a', 1002, true, undefined, 'merged'), ValidationError);
+        await assert.rejects(handler.get('class-a', 1002, false, undefined, 'unknown'), ValidationError);
+    });
+});
+
 describe('record replay handler integration', () => {
     it('guards context combinations, only loads imports on reads, and keeps original feedback separate from teacher history', () => {
         const source = fs.readFileSync(path.join(root, 'packages/hydrooj/src/handler/problem.ts'), 'utf8');
-        assert.match(source, /else assertRecordReplayRequest\(fromRecord, tid, reviewUid\)/);
+        assert.match(source, /else assertRecordReplayRequest\(fromRecord, tid, reviewUid, mergedUid\)/);
         assert.match(source, /if \(isReadRequest && fromRecord\)\s*\{\s*this\.UiContext\.recordReplay = await loadProblemRecordReplay/);
         assert.match(source, /!this\.UiContext\.homeworkReview && !this\.UiContext\.recordReplay/);
         const recordSource = fs.readFileSync(path.join(root, 'packages/hydrooj/src/handler/record.ts'), 'utf8');

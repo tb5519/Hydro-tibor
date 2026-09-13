@@ -53,7 +53,10 @@ declare global {
   }
 
   let UserContext: Record<string, any>; // eslint-disable-line
-  let UiContext: Record<string, any>; // eslint-disable-line
+  let UiContext: Record<string, any> & { // eslint-disable-line
+    objectiveMergedReview?: import('./common/objective-merged-review').ObjectiveMergedReview;
+    problemRecordPicker?: { url: string, ownUrl?: string, allowMerged?: boolean };
+  };
 }
 
 // Below are old version api compat

@@ -28,13 +28,15 @@ import avatar from '../lib/avatar';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
 import { canViewContestLevel } from '../lib/contest_access';
 import {
-    authorizeHomeworkReview, loadHomeworkReviewRecord, publicHomeworkReviewRecord, rejectHomeworkReviewMutation,
+    authorizeHomeworkReview, loadHomeworkReviewRecord, loadHomeworkReviewRecords, publicHomeworkReviewRecord, rejectHomeworkReviewMutation,
 } from '../lib/homework_review';
 import { getMistakePromptState } from '../lib/mistake_prompt';
-import { parseObjectiveConfig } from '../lib/objective_feedback';
-import { buildObjectiveInitialSubmission, loadOwnObjectiveSubmission } from '../lib/objective_submission';
+import { buildObjectiveMergedReview } from '../lib/objective_merged_review';
+import { loadObjectiveSubmissionConfig, loadOwnObjectiveSubmission } from '../lib/objective_submission';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
-import { assertRecordReplayRequest, canUseProblemRecordPicker, loadProblemRecordReplay } from '../lib/problem_record_replay';
+import {
+    assertRecordReplayRequest, canUseProblemRecordPicker, loadProblemMergedReview, loadProblemRecordReplay,
+} from '../lib/problem_record_replay';
 import { canManageRecordList } from '../lib/record_list_scope';
 import {
     appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
@@ -690,10 +692,11 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
     @query('tid', Types.ObjectId, true)
     @query('reviewUid', Types.PositiveInt, true)
     @query('fromRecord', Types.ObjectId, true)
-    async _prepare(domainId: string, pid: number | string, tid?: ObjectId, reviewUid?: number, fromRecord?: ObjectId) {
+    @query('mergedUid', Types.PositiveInt, true)
+    async _prepare(domainId: string, pid: number | string, tid?: ObjectId, reviewUid?: number, fromRecord?: ObjectId, mergedUid?: number) {
         const isReadRequest = ['GET', 'HEAD'].includes((this.request.method || 'GET').toUpperCase());
         if (!isReadRequest) rejectHomeworkReviewMutation(this.request);
-        else assertRecordReplayRequest(fromRecord, tid, reviewUid);
+        else assertRecordReplayRequest(fromRecord, tid, reviewUid, mergedUid);
         this.pdoc = await problem.get(domainId, pid);
         if (!this.pdoc) throw new ProblemNotFoundError(domainId, pid);
         const reviewStudent = reviewUid === undefined ? null
@@ -786,13 +789,14 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             discussionCount: dcnt,
             tdoc: this.tdoc,
             owner_udoc: (tid && this.tdoc.owner !== this.pdoc.owner) ? await user.getById(domainId, this.tdoc.owner) : null,
-            mode: reviewStudent ? 'review' : !tid ? 'normal'
+            mode: reviewStudent || mergedUid !== undefined ? 'review' : !tid ? 'normal'
                 : !this.tsdoc?.attend ? 'view'
                     : !contest.isDone(this.tdoc) ? 'contest'
                         : problem.canViewBy(this.pdoc, this.user) ? 'correction' : 'none',
         };
         if (reviewStudent) {
-            const rdoc = await loadHomeworkReviewRecord(domainId, this.pdoc.docId, reviewUid, this.tdoc, this.tsdoc);
+            const isObjective = typeof this.pdoc.config === 'object' && this.pdoc.config?.type === 'objective';
+            const rdoc = isObjective ? null : await loadHomeworkReviewRecord(domainId, this.pdoc.docId, reviewUid, this.tdoc, this.tsdoc);
             this.UiContext.homeworkReview = {
                 uid: reviewUid,
                 name: reviewStudent.displayName || reviewStudent.uname,
@@ -805,21 +809,28 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
                     ? this.url('problem_detail', { domainId, pid: this.pdoc.pid || this.pdoc.docId }) : '',
             };
             this.response.body.homeworkReview = this.UiContext.homeworkReview;
-            if (typeof this.pdoc.config === 'object' && this.pdoc.config?.type === 'objective' && rdoc) {
-                const source = this.pdoc.reference || { domainId, pid: this.pdoc.docId };
-                const rawProblem = await problem.get(source.domainId, source.pid, problem.PROJECTION_PUBLIC, true);
-                const rawConfig = parseObjectiveConfig(rawProblem?.config);
-                if (rawConfig) this.UiContext.objectiveInitialSubmission = buildObjectiveInitialSubmission(rdoc, rawConfig);
+            if (isObjective) {
+                const [records, { config }] = await Promise.all([
+                    loadHomeworkReviewRecords(domainId, this.pdoc.docId, reviewUid, this.tdoc),
+                    loadObjectiveSubmissionConfig(domainId, this.pdoc.docId),
+                ]);
+                this.UiContext.objectiveMergedReview = buildObjectiveMergedReview(records, config, {
+                    uid: reviewUid, name: reviewStudent.displayName || reviewStudent.uname,
+                });
             }
         }
         if (isReadRequest && !tid && !reviewStudent && canUseProblemRecordPicker(this.user)) {
             this.UiContext.problemRecordPicker = {
                 url: this.url('problem_submission_records', { domainId, pid: this.pdoc.pid || this.pdoc.docId }),
                 ownUrl: this.url('problem_detail', { domainId, pid: this.pdoc.pid || this.pdoc.docId }),
+                allowMerged: typeof this.pdoc.config === 'object' && this.pdoc.config?.type === 'objective',
             };
         }
         if (isReadRequest && fromRecord) {
             this.UiContext.recordReplay = await loadProblemRecordReplay(this, domainId, this.pdoc, fromRecord);
+        }
+        if (isReadRequest && mergedUid !== undefined) {
+            this.UiContext.objectiveMergedReview = await loadProblemMergedReview(this, domainId, this.pdoc, mergedUid);
         }
         if (this.tdoc && this.tsdoc) {
             const fields = ['attend', 'startAt'];
@@ -878,7 +889,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
                     || new Set(tdoc.assign).intersection(new Set(this.user.group)).size),
             ));
         }
-        if (!this.UiContext.homeworkReview && !this.UiContext.recordReplay && !args[2]
+        if (!this.UiContext.homeworkReview && !this.UiContext.recordReplay && !this.UiContext.objectiveMergedReview && !args[2]
             && typeof this.pdoc.config === 'object' && this.pdoc.config?.type === 'objective') {
             const initialSubmission = await loadOwnObjectiveSubmission(this, this.args.domainId, this.pdoc, args[1]);
             if (initialSubmission) this.UiContext.objectiveInitialSubmission = initialSubmission;

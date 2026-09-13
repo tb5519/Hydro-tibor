@@ -1,16 +1,19 @@
-{% set review = UiContext.homeworkReview %}
+{% set review = UiContext.homeworkReview or UiContext.objectiveMergedReview %}
+{% set merged = UiContext.objectiveMergedReview %}
 <div class="section side section--problem-sidebar">
+  {% if not merged %}
   <div class="problem-review-heading">
-    <span class="problem-review-heading__eyebrow">作业作答</span>
+    <span class="problem-review-heading__eyebrow">{{ '合并作答' if merged else '作业作答' }}</span>
     <strong>{{ review.name }}</strong>
-    <span class="problem-review-heading__hint">{{ '已提交 · 只读查看' if review.rid else '该学员尚未提交' }}</span>
-    {% if review.rid %}
+    <span class="problem-review-heading__hint">{% if merged %}汇总 {{ merged.submissionCount }} 次提交 · 只读查看{% else %}{{ '已提交 · 只读查看' if review.rid else '该学员尚未提交' }}{% endif %}</span>
+    {% if review.rid and not merged %}
     <button type="button" class="problem-review-copy" data-homework-review-copy{% if not review.ownAnswerUrl %} disabled title="当前账号没有这道题的独立作答权限"{% endif %}>
       <span class="icon icon-copy"></span> 复制到我的作答
     </button>
     <span class="problem-review-heading__hint">替换你的本题草稿，修改后可自行递交</span>
     {% endif %}
   </div>
+  {% endif %}
   <div>
     <ol class="menu">
       {% if pdoc.config.type != 'objective' %}
@@ -21,8 +24,8 @@
         <span class="icon icon-enlarge"></span> 收起代码区
       </a></li>
       {% endif %}
-      <li class="menu__item"><a class="menu__link" href="{{ review.returnUrl }}">
-        <span class="icon icon-homework"></span> 返回该学员的作业
+      <li class="menu__item"><a class="menu__link" href="{{ review.returnUrl if UiContext.homeworkReview else url('problem_detail', pid=pdoc.pid|default(pdoc.docId)) }}">
+        <span class="icon icon-homework"></span> {{ '返回该学员的作业' if UiContext.homeworkReview else '返回题目' }}
       </a></li>
     </ol>
   </div>

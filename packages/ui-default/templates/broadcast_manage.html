@@ -71,6 +71,27 @@
     </footer>
   </form>
 
+  <section class="broadcast-receipts" data-broadcast-receipts data-page="{{ broadcastReceipts.page or 1 }}" data-pages="{{ broadcastReceipts.pages or 1 }}" aria-labelledby="broadcast-receipts-title">
+    <header class="broadcast-receipts__header">
+      <div><h2 id="broadcast-receipts-title">确认情况</h2><p>仅统计当前已发布版本，最新确认的同学排在前面。</p></div>
+      <button class="broadcast-admin__button" type="button" data-broadcast-receipts-refresh{% if not broadcast.revision %} disabled{% endif %}>刷新名单</button>
+    </header>
+    <div class="broadcast-receipts__summary" role="status" aria-live="polite"><strong data-broadcast-receipts-total>{{ broadcastReceipts.total or 0 }}</strong><span>位同学已点击「知道了」</span><span class="broadcast-receipts__version">当前版本</span></div>
+    <p class="broadcast-receipts__message" data-broadcast-receipts-message role="status" aria-live="polite" hidden></p>
+    <div class="broadcast-receipts__table-wrap" data-broadcast-receipts-table{% if not broadcastReceipts.total %} hidden{% endif %}>
+      <table class="broadcast-receipts__table"><thead><tr><th scope="col">学员</th><th scope="col">确认时间</th></tr></thead><tbody data-broadcast-receipts-rows>
+        {% for receipt in broadcastReceipts.rows %}
+        <tr><td><strong>{{ receipt.name }}</strong><small>{% if receipt.uname and receipt.uname != receipt.name %}{{ receipt.uname }} · {% endif %}UID {{ receipt.uid }}</small></td><td><time data-broadcast-confirmed-at datetime="{{ receipt.acknowledgedAt }}">{{ receipt.acknowledgedAt }}</time></td></tr>
+        {% endfor %}
+      </tbody></table>
+    </div>
+    <p class="broadcast-receipts__empty" data-broadcast-receipts-empty{% if broadcastReceipts.total %} hidden{% endif %}>{% if broadcast.revision %}还没有同学点击「知道了」。稍后可以刷新名单查看。{% else %}发布广播后，可在这里查看同学们的确认情况。{% endif %}</p>
+    <nav class="broadcast-receipts__pagination" data-broadcast-receipts-pagination aria-label="确认名单分页"{% if broadcastReceipts.pages <= 1 or not broadcastReceipts.pages %} hidden{% endif %}>
+      <span data-broadcast-receipts-page>第 {{ broadcastReceipts.page or 1 }} / {{ broadcastReceipts.pages or 1 }} 页</span>
+      <div><button class="broadcast-admin__button" type="button" data-broadcast-receipts-prev{% if broadcastReceipts.page <= 1 or not broadcastReceipts.page %} disabled{% endif %}>上一页</button><button class="broadcast-admin__button" type="button" data-broadcast-receipts-next{% if broadcastReceipts.page >= broadcastReceipts.pages or not broadcastReceipts.pages %} disabled{% endif %}>下一页</button></div>
+    </nav>
+  </section>
+
   <div class="broadcast-admin__pause" data-broadcast-pause{% if not broadcast.enabled %} hidden{% endif %}>
     <div><strong>暂时不需要展示？</strong><p>停止展示会保留正文和已读记录，之后可以重新发布。</p></div>
     <button type="button" data-broadcast-disable>停止展示</button>

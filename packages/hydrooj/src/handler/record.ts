@@ -5,14 +5,14 @@ import { Filter, ObjectId } from 'mongodb';
 import {
     ContestNotFoundError, HackRejudgeFailedError,
     PermissionError, PretestRejudgeFailedError, ProblemConfigError,
-    ProblemNotFoundError, RecordNotFoundError, UserNotFoundError,
+    ProblemNotFoundError, RecordNotFoundError, UserNotFoundError, ValidationError,
 } from '../error';
 import { RecordDoc, Tdoc } from '../interface';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
 import { canViewContestLevel } from '../lib/contest_access';
 import { authorizeHomeworkReview, isHomeworkReviewRecord } from '../lib/homework_review';
 import { buildObjectiveInitialSubmission, loadObjectiveSubmissionConfig, loadOwnObjectiveRecordSubmission } from '../lib/objective_submission';
-import { listProblemSubmissionRecords } from '../lib/problem_record_replay';
+import { listProblemMergedSubmissions, listProblemSubmissionRecords } from '../lib/problem_record_replay';
 import { canManageRecordList } from '../lib/record_list_scope';
 import {
     appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
@@ -701,9 +701,16 @@ export class ProblemSubmissionRecordsHandler extends Handler {
     @route('pid', Types.ProblemId)
     @query('accepted', Types.Boolean)
     @query('cursor', Types.ObjectId, true)
-    async get(domainId: string, pid: number | string, accepted = false, cursor?: ObjectId) {
+    @query('mode', Types.String, true)
+    async get(domainId: string, pid: number | string, accepted = false, cursor?: ObjectId, mode?: string) {
         const pdoc = await problem.get(domainId, pid);
         if (!pdoc) throw new ProblemNotFoundError(domainId, pid);
+        if (mode !== undefined && mode !== 'merged') throw new ValidationError('mode');
+        if (mode === 'merged') {
+            if (accepted) throw new ValidationError('accepted');
+            this.response.body = await listProblemMergedSubmissions(this, domainId, pdoc, cursor);
+            return;
+        }
         this.response.body = await listProblemSubmissionRecords(this, domainId, pdoc, accepted, cursor);
     }
 }

@@ -114,7 +114,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   bindMistakePracticeActions(document, (url, data) => request.post(url, data));
   bindProblemRecordPicker();
   try {
-    await prepareRecordReplayDraft();
+    if (!UiContext.objectiveMergedReview) await prepareRecordReplayDraft();
   } catch (error) {
     UiContext.recordReplay = null;
     Notification.error(`填入未完成：${error.message || '请检查浏览器是否允许保存草稿。'}`);
@@ -128,7 +128,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   let copyingReview = false;
   $(document).off('click.homeworkReviewCopy').on('click.homeworkReviewCopy', '[data-homework-review-copy]', async (event) => {
     event.preventDefault();
-    if (!UiContext.homeworkReview?.ownAnswerUrl || copyingReview) return;
+    if (UiContext.objectiveMergedReview || !UiContext.homeworkReview?.ownAnswerUrl || copyingReview) return;
     copyingReview = true;
     const $buttons = $('[data-homework-review-copy]');
     $buttons.prop('disabled', true).attr('aria-busy', 'true');

@@ -54,6 +54,16 @@ it('imports exact source code to teacher only, then refresh preserves edits and 
     assert.equal(h.local.getItem(`${key}#lang`), 'java');
     assert.equal(h.writes.length, 2);
 });
+it('never imports or remembers a replay while viewing merged objective answers', async (t) => {
+    const h = harness({ objective: true }); t.after(h.close);
+    h.context.objectiveMergedReview = { uid: 20, questions: [] };
+    await h.prepareRecordReplayDraft();
+    h.rememberRecordReplaySubmission({ 1: 'A' }, { state: 'complete' });
+    assert.equal(h.solutions.get(`${key}#objective`), '{"1":"old"}');
+    assert.equal(h.dom.window.sessionStorage.length, 0);
+    assert.equal(h.context.objectiveInitialSubmission, undefined);
+    assert.deepEqual(h.writes, []);
+});
 it('each explicit new selection token permits a fresh import', async (t) => {
     const h = harness(); t.after(h.close);
     await h.prepareRecordReplayDraft(); h.local.setItem(key, 'teacher edit');

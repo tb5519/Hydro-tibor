@@ -2,6 +2,7 @@ import { openDB } from 'vj/utils/db';
 
 /** Copy only the visible submission into this teacher's ordinary problem draft. */
 export async function copyHomeworkReviewToOwnDraft() {
+  if (UiContext.objectiveMergedReview) throw new Error('合并作答仅供查看，请返回题目后自行作答。');
   const review = UiContext.homeworkReview;
   const pdoc = UiContext.pdoc;
   if (!review?.rid || !UserContext._id) throw new Error('该学员暂无可复制的作答。');

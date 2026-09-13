@@ -8,6 +8,8 @@ import { i18n, request, secureRandomString } from 'vj/utils';
 
 interface ProblemRecord {
   rid: string;
+  uid?: number;
+  submissionCount?: number;
   name: string;
   status: number;
   score?: number;
@@ -26,16 +28,18 @@ interface RecordPage {
 const statusLabel = (status: number) => STATUS_SCRATCHPAD_SHORT_TEXTS[status]
   || (status === STATUS.STATUS_COMPILE_ERROR ? 'CE' : i18n(STATUS_TEXTS[status] || 'Unknown'));
 
-function importRecord(record: ProblemRecord) {
+function importRecord(record: ProblemRecord, merged = false) {
   if (!record.canImport || !record.importUrl) return;
   const url = new URL(record.importUrl, window.location.href);
   if (url.origin !== window.location.origin) return;
-  url.searchParams.set('draftImport', window.crypto.randomUUID?.() || secureRandomString());
+  if (!merged) url.searchParams.set('draftImport', window.crypto.randomUUID?.() || secureRandomString());
   window.location.assign(url.toString());
 }
 
-function ProblemRecordPicker({ url, initialAccepted }: { url: string, initialAccepted: boolean }) {
-  const [accepted, setAccepted] = useState(initialAccepted);
+function ProblemRecordPicker({ url, initialAccepted, allowMerged }: { url: string, initialAccepted: boolean, allowMerged: boolean }) {
+  const [mode, setMode] = useState<'all' | 'accepted' | 'merged'>(initialAccepted ? 'accepted' : 'all');
+  const accepted = mode === 'accepted';
+  const merged = mode === 'merged';
   const [records, setRecords] = useState<ProblemRecord[]>([]);
   const [nextCursor, setNextCursor] = useState<string>(null);
   const [loading, setLoading] = useState(true);
@@ -49,12 +53,14 @@ function ProblemRecordPicker({ url, initialAccepted }: { url: string, initialAcc
     setLoading(true);
     setError(false);
     try {
-      const response: RecordPage = await request.get(url, { accepted, ...(pageCursor ? { cursor: pageCursor } : {}) }, { timeout: 15000 });
+      const response: RecordPage = await request.get(url, {
+        accepted, ...(merged ? { mode: 'merged' } : {}), ...(pageCursor ? { cursor: pageCursor } : {}),
+      }, { timeout: 15000 });
       if (sequence.current !== current) return;
       if (!Array.isArray(response.records)) throw new Error('Invalid record list');
       setRecords((previous) => {
         const combined = pageCursor ? [...previous, ...response.records] : response.records;
-        return [...new Map(combined.map((record) => [record.rid, record])).values()];
+        return [...new Map(combined.map((record) => [merged ? record.uid ?? record.rid : record.rid, record])).values()];
       });
       setNextCursor(response.nextCursor || null);
     } catch {
@@ -69,7 +75,7 @@ function ProblemRecordPicker({ url, initialAccepted }: { url: string, initialAcc
     setNextCursor(null);
     load();
     return () => { sequence.current += 1; };
-  }, [accepted]);
+  }, [mode]);
 
   return <div className="problem-record-picker">
     <header className="problem-record-picker__header">
@@ -87,17 +93,21 @@ function ProblemRecordPicker({ url, initialAccepted }: { url: string, initialAcc
     </header>
     <div className="problem-record-picker__toolbar">
       <div className="problem-record-picker__filters" role="group" aria-label="筛选提交记录">
-        <button type="button" aria-pressed={!accepted} onClick={() => setAccepted(false)}>全部记录</button>
-        <button type="button" aria-pressed={accepted} onClick={() => setAccepted(true)}>仅已通过</button>
+        <button type="button" aria-pressed={mode === 'all'} onClick={() => setMode('all')}>全部记录</button>
+        <button type="button" aria-pressed={accepted} onClick={() => setMode('accepted')}>仅已通过</button>
+        {allowMerged && <button type="button" aria-pressed={merged} onClick={() => setMode('merged')}>合并作答</button>}
       </div>
-      <span className="problem-record-picker__order">最新提交在前</span>
+      <span className="problem-record-picker__order">{merged ? '每位学员一条' : '最新提交在前'}</span>
     </div>
-    <p className="problem-record-picker__hint" id="problem-record-picker-description">选择一条记录，填入我的作答并查看该次结果。</p>
+    <p className="problem-record-picker__hint" id="problem-record-picker-description">{merged
+      ? '汇总可查看的历次作答，查看答对过程与每次所选答案。只读查看，保留你的草稿。'
+      : '选择一条记录，填入我的作答并查看该次结果。'}</p>
     <div className="problem-record-picker__scroll" aria-busy={loading}>
       {!!records.length && <ul className="problem-record-picker__list" aria-label="本题提交记录">
         {records.map((record) => {
           const canImport = record.canImport && !!record.importUrl;
           const label = statusLabel(record.status);
+          const actionLabel = canImport ? merged ? '查看合并作答' : '填入我的作答' : '暂无作答查看权限';
           const submittedAt = new Date(record.submittedAt);
           const time = Number.isNaN(submittedAt.getTime()) ? '' : submittedAt.toLocaleString('zh-CN', { hour12: false });
           return <li key={record.rid}>
@@ -105,20 +115,22 @@ function ProblemRecordPicker({ url, initialAccepted }: { url: string, initialAcc
               type="button"
               className="problem-record-picker__record"
               disabled={!canImport}
-              onClick={() => importRecord(record)}
-              aria-label={`${record.name}，${label}，${canImport ? '填入我的作答' : '暂无作答查看权限'}`}
+              onClick={() => importRecord(record, merged)}
+              aria-label={`${record.name}，${merged ? `${record.submissionCount || 0} 次提交` : label}，${actionLabel}`}
             >
               <span className="problem-record-picker__student">
                 <span className="problem-record-picker__name">{record.name}</span>
                 <span className="problem-record-picker__details">
-                  <span>{record.lang === '_' ? '客观题' : record.langName || record.lang || '—'}</span>
+                  <span>{merged ? '最近作答' : record.lang === '_' ? '客观题' : record.langName || record.lang || '—'}</span>
                   <time dateTime={record.submittedAt}>{time}</time>
                 </span>
                 {!canImport && <span className="problem-record-picker__unavailable">暂无作答查看权限</span>}
               </span>
               <span className="problem-record-picker__result">
-                <span className={`problem-record-picker__status is-${STATUS_CODES[record.status] || 'ignored'}`}>{label}</span>
-                {typeof record.score === 'number' && <span className="problem-record-picker__score">
+                {merged ? <span className="problem-record-picker__merged-count">
+                  <strong>{record.submissionCount || 0}</strong> 次提交<small>查看合并作答</small></span>
+                  : <span className={`problem-record-picker__status is-${STATUS_CODES[record.status] || 'ignored'}`}>{label}</span>}
+                {!merged && typeof record.score === 'number' && <span className="problem-record-picker__score">
                   {record.score.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}<small> 分</small>
                 </span>}
               </span>
@@ -181,7 +193,11 @@ export function bindProblemRecordPicker() {
       activeDialog = null;
       trigger.focus();
     });
-    root.render(<ProblemRecordPicker url={config.url} initialAccepted={trigger.dataset.problemRecordPicker === 'accepted'} />);
+    root.render(<ProblemRecordPicker
+      url={config.url}
+      initialAccepted={trigger.dataset.problemRecordPicker === 'accepted'}
+      allowMerged={config.allowMerged === true}
+    />);
     dialog.open();
   });
 }

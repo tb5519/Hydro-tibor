@@ -9,6 +9,14 @@ interface Broadcast {
   updatedAt?: string;
 }
 
+interface BroadcastReceipts {
+  revision: string;
+  total: number;
+  page: number;
+  pages: number;
+  rows: { uid: number, name: string, uname: string, acknowledgedAt: string }[];
+}
+
 export function bindBroadcastEditor() {
   const root = document.querySelector<HTMLElement>('[data-broadcast-admin]');
   if (!root || root.dataset.bound) return;
@@ -27,6 +35,11 @@ export function bindBroadcastEditor() {
   let enabled = root.dataset.enabled === 'true';
   let baseline = { title: title.value, content: editor.innerHTML };
   let busy = false;
+  const receiptsRoot = find('[data-broadcast-receipts]');
+  let receiptsPage = Number(receiptsRoot.dataset.page) || 1;
+  let receiptsPages = Number(receiptsRoot.dataset.pages) || 1;
+  let receiptsBusy = false;
+  let receiptsRequest = 0;
   let selection: Range | null = null;
   let previewFocus: HTMLElement | null = null;
   const dirty = () => title.value !== baseline.title || editor.innerHTML !== baseline.content;
@@ -51,6 +64,14 @@ export function bindBroadcastEditor() {
     preview.disabled = busy;
   }
 
+  function updateReceiptButtons() {
+    const disabled = busy || receiptsBusy || !revision.value;
+    find<HTMLButtonElement>('[data-broadcast-receipts-refresh]').disabled = disabled;
+    find<HTMLButtonElement>('[data-broadcast-receipts-prev]').disabled = disabled || receiptsPage <= 1;
+    find<HTMLButtonElement>('[data-broadcast-receipts-next]').disabled = disabled || receiptsPage >= receiptsPages;
+    receiptsRoot.setAttribute('aria-busy', String(receiptsBusy));
+  }
+
   function setBusy(value: boolean) {
     busy = value;
     root.setAttribute('aria-busy', String(value));
@@ -58,6 +79,82 @@ export function bindBroadcastEditor() {
     editor.contentEditable = value ? 'false' : 'true';
     root.querySelectorAll<HTMLButtonElement>('button:not([data-broadcast-preview-close])').forEach((button) => { button.disabled = value; });
     update();
+    updateReceiptButtons();
+  }
+
+  function formatReceiptDate(time: HTMLElement) {
+    const date = new Date(time.getAttribute('datetime'));
+    time.textContent = Number.isFinite(date.getTime()) ? date.toLocaleString('zh-CN', {
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    }) : '时间暂不可用';
+  }
+
+  function renderReceipts(receipts: BroadcastReceipts) {
+    receiptsPage = receipts.page;
+    receiptsPages = receipts.pages;
+    find('[data-broadcast-receipts-total]').textContent = receipts.total.toLocaleString();
+    const rows = find('[data-broadcast-receipts-rows]');
+    rows.replaceChildren();
+    for (const receipt of receipts.rows) {
+      const row = document.createElement('tr');
+      const studentCell = document.createElement('td');
+      const name = document.createElement('strong');
+      name.textContent = receipt.name;
+      const account = document.createElement('small');
+      account.textContent = `${receipt.uname && receipt.uname !== receipt.name ? `${receipt.uname} · ` : ''}UID ${receipt.uid}`;
+      studentCell.append(name, account);
+      const dateCell = document.createElement('td');
+      const time = document.createElement('time');
+      time.setAttribute('datetime', receipt.acknowledgedAt);
+      formatReceiptDate(time);
+      dateCell.append(time);
+      row.append(studentCell, dateCell);
+      rows.append(row);
+    }
+    find('[data-broadcast-receipts-table]').hidden = !receipts.rows.length;
+    const empty = find('[data-broadcast-receipts-empty]');
+    empty.hidden = !!receipts.rows.length;
+    empty.textContent = revision.value ? '还没有同学点击「知道了」。稍后可以刷新名单查看。' : '发布广播后，可在这里查看同学们的确认情况。';
+    find('[data-broadcast-receipts-pagination]').hidden = receipts.pages <= 1;
+    find('[data-broadcast-receipts-page]').textContent = `第 ${receipts.page} / ${receipts.pages} 页`;
+    updateReceiptButtons();
+  }
+
+  async function loadReceipts(page = 1, reset = false) {
+    const currentRevision = revision.value;
+    const requestId = ++receiptsRequest;
+    const status = find('[data-broadcast-receipts-message]');
+    receiptsBusy = true;
+    if (reset) {
+      renderReceipts({ revision: currentRevision, total: 0, page: 1, pages: 1, rows: [] });
+      find('[data-broadcast-receipts-total]').textContent = '—';
+      find('[data-broadcast-receipts-empty]').textContent = '正在获取新版本的确认情况…';
+    }
+    status.textContent = '正在更新确认名单…';
+    status.hidden = false;
+    status.classList.remove('is-error');
+    updateReceiptButtons();
+    try {
+      const response = await request.post(form.action, { operation: 'receipts', revision: currentRevision, page }, { timeout: 15000 });
+      if (requestId !== receiptsRequest || currentRevision !== revision.value) return;
+      const receipts: BroadcastReceipts = response.receipts;
+      if (receipts?.revision !== currentRevision || !Array.isArray(receipts.rows)
+        || !Number.isSafeInteger(receipts.total) || receipts.total < 0
+        || !Number.isSafeInteger(receipts.page) || !Number.isSafeInteger(receipts.pages)
+        || receipts.page < 1 || receipts.page > receipts.pages) throw new Error('确认名单暂时不可用，请重试。');
+      renderReceipts(receipts);
+      status.textContent = '确认名单已更新。';
+    } catch (error) {
+      if (requestId !== receiptsRequest || currentRevision !== revision.value) return;
+      status.textContent = `${error.message || '确认名单加载失败，请重试。'} 编辑内容不会受影响。`;
+      status.classList.add('is-error');
+      if (reset) find('[data-broadcast-receipts-empty]').textContent = '点击「刷新名单」重新获取当前版本的确认情况。';
+    } finally {
+      if (requestId === receiptsRequest) {
+        receiptsBusy = false;
+        updateReceiptButtons();
+      }
+    }
   }
 
   function setUpdatedAt(value?: string) {
@@ -200,6 +297,7 @@ export function bindBroadcastEditor() {
       if (!saved || typeof saved.revision !== 'string' || typeof saved.content !== 'string' || typeof saved.title !== 'string') {
         throw new Error('暂时无法确认保存结果，请保留当前内容，刷新页面后查看。');
       }
+      const versionChanged = revision.value !== saved.revision;
       revision.value = saved.revision;
       enabled = saved.enabled;
       root.dataset.enabled = String(enabled);
@@ -221,6 +319,7 @@ export function bindBroadcastEditor() {
       setUpdatedAt(saved.updatedAt);
       showMessage(operation === 'publish' ? '广播已发布，同学下次访问时会收到提醒。'
         : hadChanges ? '广播已停止展示。你的未发布修改已保留在编辑器中。' : '广播已停止展示，正文和已读记录已保留。');
+      if (operation === 'publish') loadReceipts(1, versionChanged);
     } catch (error) {
       showMessage(`${error.message || '操作失败，请稍后重试。'} 当前编辑内容已保留。`, 'error');
     } finally {
@@ -278,6 +377,11 @@ export function bindBroadcastEditor() {
     }
   };
   window.addEventListener('beforeunload', beforeUnload);
+  find('[data-broadcast-receipts-refresh]').addEventListener('click', () => { if (!busy && !receiptsBusy) loadReceipts(1); });
+  find('[data-broadcast-receipts-prev]').addEventListener('click', () => { if (!busy && !receiptsBusy) loadReceipts(receiptsPage - 1); });
+  find('[data-broadcast-receipts-next]').addEventListener('click', () => { if (!busy && !receiptsBusy) loadReceipts(receiptsPage + 1); });
+  root.querySelectorAll<HTMLElement>('[data-broadcast-confirmed-at]').forEach(formatReceiptDate);
+  updateReceiptButtons();
   setUpdatedAt(find('[data-broadcast-updated]').dataset.updatedAt);
   update();
 }

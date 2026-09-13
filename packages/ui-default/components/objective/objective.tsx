@@ -8,7 +8,9 @@ import Notification from 'vj/components/notification';
 import { STATUS_CODES, STATUS_TEXTS } from 'vj/constant/record';
 import { delay, i18n, request, tpl } from 'vj/utils';
 import { openDB } from 'vj/utils/db';
+import { mergedResultLabel } from '../../common/objective-merged-review';
 import { rememberRecordReplaySubmission } from '../record_replay_import';
+import ObjectiveMergedHistory from './ObjectiveMergedHistory';
 import { ObjectiveResult } from './ObjectiveResult';
 
 type Answers = Record<string, string | string[]>;
@@ -54,12 +56,15 @@ export async function loadObjective() {
   statement.dataset.objectiveInitialized = 'true';
   let disposed = false;
   let navigationRoot: ReturnType<typeof createRoot>;
+  const historyRoots: ReturnType<typeof createRoot>[] = [];
   let busy = false;
   let pendingRid = '';
   let submittedAnswers: Answers = {};
   let feedback: ObjectiveFeedback | undefined;
   let stateMessage = '';
-  const readOnly = !!UiContext.homeworkReview;
+  const merged = UiContext.objectiveMergedReview;
+  const mergedQuestions = new Map((merged?.questions || []).map((question) => [question.id, question]));
+  const readOnly = !!UiContext.homeworkReview || !!merged;
   const replay = !readOnly && UiContext.recordReplay?.objective ? UiContext.recordReplay : null;
   let replayResultActive = !!replay && UiContext.recordReplayResultActive === true;
   const loggedOut = !UserContext._id;
@@ -68,6 +73,7 @@ export async function loadObjective() {
   releasePrevious = () => {
     disposed = true;
     navigationRoot?.unmount();
+    historyRoots.forEach((root) => root.unmount());
     resultDialog?.close();
     $statement.off('.objective');
   };
@@ -158,19 +164,24 @@ export async function loadObjective() {
   }
 
   function questionResult(id: string) {
+    if (merged) {
+      const result = mergedQuestions.get(id)?.result;
+      return result === 'first_correct' ? 'correct' : result === 'correct_after_retry' ? 'retry-correct'
+        : result === 'incorrect' ? 'incorrect' : undefined;
+    }
     if (feedback?.state !== 'complete' || !hasObjectiveAnswer(ans[id]) || !sameObjectiveAnswer(ans[id], submittedAnswers[id])) return undefined;
     return feedback?.questions?.find((item) => item.id === id)?.result;
   }
 
   function decorateAnswers() {
     $statement.find('.objective-option, .objective-free-answer')
-      .removeClass('is-correct is-incorrect').removeAttr('data-objective-result');
+      .removeClass('is-correct is-retry-correct is-incorrect').removeAttr('data-objective-result');
     for (const id of pids) {
       const result = questionResult(id);
-      if (result !== 'correct' && result !== 'incorrect') continue;
+      if (result !== 'correct' && result !== 'retry-correct' && result !== 'incorrect') continue;
       $statement.find(`.objective_${id}`).filter((_, el) =>
         !el.classList.contains('objective-option') || !!el.querySelector('input:checked'))
-        .addClass(`is-${result}`).attr('data-objective-result', result === 'correct' ? '回答正确' : '回答错误');
+        .addClass(`is-${result}`).attr('data-objective-result', result === 'retry-correct' ? '重试后答对' : result === 'correct' ? '回答正确' : '回答错误');
     }
   }
 
@@ -225,11 +236,17 @@ export async function loadObjective() {
     }, []);
     const scored = feedback?.state === 'complete' && Number.isFinite(feedback.score);
     const modified = !!feedback && pids.some((id) => !sameObjectiveAnswer(ans[id], submittedAnswers[id]));
-    const fallbackMessage = feedback?.state === 'hidden' ? '本场比赛暂不公开成绩。'
-      : feedback?.state === 'pending' ? '评测仍在进行。'
-        : feedback?.state === 'error' ? '本次评测未完成。' : readOnly && !feedback ? '该学员暂无递交记录。' : '';
+    const fallbackMessage = merged ? (merged.summary.pending || merged.summary.error ? '部分作答尚无评测结果，稍后刷新可查看更新。' : '')
+      : feedback?.state === 'hidden' ? '本场比赛暂不公开成绩。'
+        : feedback?.state === 'pending' ? '评测仍在进行。'
+          : feedback?.state === 'error' ? '本次评测未完成。' : readOnly && !feedback ? '该学员暂无递交记录。' : '';
     return <>
       <div className="objective-nav-card" ref={cardRef}>
+        {merged && <div className="objective-merged-source">
+          <span className="objective-replay-source__label">学员合并作答</span>
+          <strong>{merged.name}</strong>
+          <span>汇总 {merged.submissionCount} 次提交</span>
+        </div>}
         {replay && <div className="objective-replay-source">
           <span className="objective-replay-source__label">作答来源</span>
           <div className="objective-replay-source__record">
@@ -247,9 +264,11 @@ export async function loadObjective() {
         <div className="contest-problems objective-nav-grid" role="navigation" aria-label="题号导航">
           {pids.map((id) => {
             const result = questionResult(id);
-            const answered = hasObjectiveAnswer(ans[id]);
-            const outcome = result === 'correct' ? '回答正确' : result === 'incorrect' ? '回答错误' : answered ? '已答，待评测' : '未答';
-            const state = result === 'correct' || result === 'incorrect' ? ` is-${result}` : answered ? ' is-answered' : '';
+            const answered = merged ? !!mergedQuestions.get(id)?.attempts.length : hasObjectiveAnswer(ans[id]);
+            const outcome = merged ? mergedResultLabel[mergedQuestions.get(id)?.result || 'unanswered']
+              : result === 'correct' ? '回答正确' : result === 'incorrect' ? '回答错误' : answered ? '已答，待评测' : '未答';
+            const state = result === 'correct' || result === 'retry-correct' || result === 'incorrect'
+              ? ` is-${result}` : answered ? ' is-answered' : '';
             return <a
               href={`#p${id}`}
               key={id}
@@ -263,13 +282,23 @@ export async function loadObjective() {
         </div>
         <div className="objective-nav-footer">
           <div className="objective-nav-legend">
-            {feedback?.state === 'complete' ? <>
+            {merged ? <>
+              <span><i className="objective-nav-dot objective-nav-dot--correct" /> 首次答对</span>
+              <span><i className="objective-nav-dot objective-nav-dot--retry-correct" /> 重试后答对</span>
+              <span><i className="objective-nav-dot objective-nav-dot--incorrect" /> 错误</span>
+            </> : feedback?.state === 'complete' ? <>
               <span><i className="objective-nav-dot objective-nav-dot--correct" /> 正确</span>
               <span><i className="objective-nav-dot objective-nav-dot--incorrect" /> 错误</span>
             </> : <span><i className="objective-nav-dot objective-nav-dot--answered" /> 已答</span>}
             <span><i className="objective-nav-dot" /> 未答</span>
           </div>
-          <div className="objective-nav-result" aria-live="polite" aria-atomic="true">
+          {merged && <p className="objective-merged-legend-note">以可查看记录为准，首次非空作答即正确为绿色；答错后再答对为黄色。每题下方可查看历次答案。</p>}
+          {merged ? <div className="objective-nav-result objective-merged-summary">
+            <span className="objective-nav-result-label">累计答对</span>
+            <div className="objective-nav-result-score">
+              <strong>{merged.summary.firstCorrect + merged.summary.correctAfterRetry}</strong><span>/ {pids.length} 题</span>
+            </div>
+          </div> : <div className="objective-nav-result" aria-live="polite" aria-atomic="true">
             <span className="objective-nav-result-label">{readOnly ? '本次得分' : replayResultActive ? '原记录得分' : '最近一次得分'}</span>
             <div className="objective-nav-result-score">
               <strong>{scored ? feedback.score : '—'}</strong>
@@ -279,7 +308,7 @@ export async function loadObjective() {
               {feedback?.state === 'pending' && <span>评测中</span>}
             </div>
             {!readOnly && scored && modified && <small className="objective-draft-note">答案已修改，重新提交后更新成绩。</small>}
-          </div>
+          </div>}
           <div className="objective-submit-state" role="status" aria-live="polite">{stateMessage || fallbackMessage}</div>
           {!readOnly && <div className="objective-submit-actions">
             <input
@@ -310,7 +339,9 @@ export async function loadObjective() {
   }
 
   async function loadAns() {
-    const initial = UiContext.objectiveInitialSubmission;
+    const initial = merged ? {
+      answers: Object.fromEntries(merged.questions.map((question) => [question.id, question.answer])), feedback: undefined,
+    } : UiContext.objectiveInitialSubmission;
     submittedAnswers = sanitizeAnswers(initial?.answers);
     feedback = initial?.feedback;
     // An imported learner's pending record must not lock the teacher's draft
@@ -338,6 +369,34 @@ export async function loadObjective() {
     }
     $statement.find('.objective-input').prop('disabled', readOnly);
     decorateAnswers();
+  }
+
+  function renderMergedHistories() {
+    if (!merged) return;
+    for (const id of pids) {
+      const question = mergedQuestions.get(id) || { id, result: 'unanswered' as const, attempts: [] };
+      const $answers = $statement.find(`.objective_${id}`);
+      $answers.filter('.objective-option').each((_, element) => {
+        const value = element.querySelector<HTMLInputElement>('input')?.value;
+        const count = question.attempts.filter((attempt) => Array.isArray(attempt.answer)
+          ? attempt.answer.includes(value) : attempt.answer === value).length;
+        if (!count) return;
+        element.classList.add('is-ever-selected');
+        const badge = document.createElement('span');
+        badge.className = 'objective-choice-history';
+        badge.textContent = `曾选 ${count} 次`;
+        element.querySelector('.objective-choice-body')?.appendChild(badge);
+      });
+      const lastAnswer = $answers.last().get(0);
+      const after = lastAnswer?.closest('.objective-options') || lastAnswer?.closest('.objective-question-title') || lastAnswer;
+      if (!after) continue;
+      const container = document.createElement('div');
+      container.className = 'objective-merged-history-root';
+      after.after(container);
+      const root = createRoot(container);
+      historyRoots.push(root);
+      root.render(<ObjectiveMergedHistory question={question} />);
+    }
   }
 
   function setAnswer(name: string, value: string | string[]) {
@@ -444,6 +503,7 @@ export async function loadObjective() {
   if (cnt) {
     await loadAns();
     if (!active()) return;
+    renderMergedHistories();
     if (!readOnly) {
       $statement.find('.objective-input[type!=checkbox]').on('input.objective', (e: JQuery.TriggeredEvent<HTMLInputElement>) => {
         setAnswer(e.target.name, e.target.value);

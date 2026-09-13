@@ -3,7 +3,7 @@ const Module = require('node:module');
 const { beforeEach, describe, it } = require('node:test');
 
 const PRIV = { PRIV_USER_PROFILE: 1 };
-const PERM = { PERM_EDIT_DOMAIN: 1n };
+const PERM = { PERM_EDIT_DOMAIN: 1n, PERM_VIEW_USER_PRIVATE_INFO: 2n };
 class PermissionError extends Error {}
 const calls = [];
 const entries = new Map();
@@ -53,6 +53,11 @@ const service = {
         calls.push({ action: 'get', scope, domainId });
         return stored;
     },
+    async getBroadcastAcknowledgements(scope, domainId, revision, page) {
+        calls.push({ action: 'receipts', scope, domainId, revision, page });
+        return { revision, total: revision ? 1 : 0, page, pages: 1,
+            rows: revision ? [{ uid: 24, acknowledgedAt: notice.updatedAt, _id: 'private-receipt-id' }] : [] };
+    },
     presentBroadcast(value) {
         calls.push({ action: 'present', value });
         return value;
@@ -79,6 +84,10 @@ const service = {
     async ensureBroadcastIndexes() { calls.push({ action: 'indexes' }); },
 };
 const userModel = {
+    async getListForRender(domainId, uids, showPrivateInfo) {
+        calls.push({ action: 'receipt-users', domainId, uids, showPrivateInfo });
+        return { 24: { uname: 'student24', displayName: '小明', mail: 'private@example.test' } };
+    },
     async getById(domainId, uid, scope) {
         calls.push({ action: 'entry-user', domainId, uid, scope });
         return entries.get(`${domainId}:${uid}`) || null;
@@ -122,7 +131,7 @@ beforeEach(() => {
 
 describe('broadcast administration boundaries', () => {
     it('authorizes the Tang owner and domain teachers before reads, publish, disable, and preview', async () => {
-        for (const method of ['get', 'postPublish', 'postDisable', 'postPreview']) {
+        for (const method of ['get', 'postPublish', 'postDisable', 'postPreview', 'postReceipts']) {
             for (const handler of [
                 new BroadcastManageHandler({ uid: 10, canEdit: true }),
                 new DomainBroadcastManageHandler({ domain: classroom, uid: 24 }),
@@ -181,6 +190,27 @@ describe('broadcast administration boundaries', () => {
         await dispatch(editor, 'postPreview', 'foreign', ' preview ', '<script>unsafe()</script>');
         assert.deepEqual(editor.response.body, { title: 'preview', content: '<p>sanitized preview</p>' });
         assert.ok(!calls.some((call) => ['get', 'publish', 'disable', 'acknowledge'].includes(call.action)));
+    });
+
+    it('returns current-version confirmation names and times without exposing private account fields', async () => {
+        const teacher = new DomainBroadcastManageHandler({ domain: classroom, uid: 10, canEdit: true });
+        teacher.request.body = { domainId: 'foreign', scope: 'global', uid: 2 };
+        await dispatch(teacher, 'postReceipts', 'foreign', notice.revision, 2);
+        assert.deepEqual(calls.find((call) => call.action === 'receipts'), {
+            action: 'receipts', scope: 'domain', domainId: classroom._id, revision: notice.revision, page: 2,
+        });
+        assert.deepEqual(calls.find((call) => call.action === 'receipt-users'), {
+            action: 'receipt-users', domainId: classroom._id, uids: [24], showPrivateInfo: false,
+        });
+        assert.deepEqual(teacher.response.body.receipts.rows, [{
+            uid: 24, name: '小明', uname: 'student24', acknowledgedAt: notice.updatedAt,
+        }]);
+        assert.ok(!JSON.stringify(teacher.response.body).includes('private'));
+        calls.length = 0;
+        const owner = new BroadcastManageHandler({ domain: classroom });
+        await dispatch(owner, 'get', classroom._id);
+        assert.equal(calls.find((call) => call.action === 'receipt-users').domainId, 'system');
+        assert.equal(owner.response.body.broadcastReceipts.total, 1);
     });
 });
 

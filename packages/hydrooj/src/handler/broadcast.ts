@@ -1,7 +1,7 @@
 import type { Context } from '../context';
 import {
     acknowledgeBroadcast, assertCanManageBroadcast, BroadcastScope, disableBroadcast, ensureBroadcastIndexes,
-    getBroadcast, getUnreadBroadcasts, normalizeBroadcast, presentBroadcast, publishBroadcast,
+    getBroadcast, getBroadcastAcknowledgements, getUnreadBroadcasts, normalizeBroadcast, presentBroadcast, publishBroadcast,
 } from '../lib/broadcast';
 import { PERM, PRIV } from '../model/builtin';
 import user from '../model/user';
@@ -22,6 +22,23 @@ export class BroadcastManageHandler extends Handler {
         return this.broadcastScope === 'global' ? 'manage_broadcast' : 'domain_broadcast';
     }
 
+    private async getReceipts(revision: string, page = 1) {
+        const receipts = await getBroadcastAcknowledgements(this.broadcastScope, this.domain._id, revision, page);
+        const udict = receipts.rows.length ? await user.getListForRender(
+            this.broadcastScope === 'global' ? 'system' : this.domain._id,
+            receipts.rows.map((row) => row.uid), this.user.hasPerm(PERM.PERM_VIEW_USER_PRIVATE_INFO),
+        ) : {};
+        return {
+            ...receipts,
+            rows: receipts.rows.map((row) => ({
+                uid: row.uid,
+                name: udict[row.uid]?.displayName || udict[row.uid]?.uname || `学员 ${row.uid}`,
+                uname: udict[row.uid]?.uname || '',
+                acknowledgedAt: row.acknowledgedAt,
+            })),
+        };
+    }
+
     @param('saved', Types.Int, true)
     async get(domainId: string, saved = 0) {
         const broadcast = await getBroadcast(this.broadcastScope, this.domain._id);
@@ -35,7 +52,14 @@ export class BroadcastManageHandler extends Handler {
             },
             saved: !!saved,
             manageRoute: this.routeName,
+            broadcastReceipts: await this.getReceipts(broadcast?.revision || ''),
         };
+    }
+
+    @post('revision', Types.String, true)
+    @post('page', Types.Int, true)
+    async postReceipts(domainId: string, revision = '', page = 1) {
+        this.response.body = { receipts: await this.getReceipts(revision, page) };
     }
 
     @post('title', Types.String)

@@ -77,6 +77,15 @@ function harness(options = {}) {
 }
 
 describe('copying reviewed answers into the teacher’s own draft', () => {
+    it('rejects copying merged objective history before touching the teacher draft', async (t) => {
+        const h = harness({ objective: true }); t.after(h.close);
+        h.context.objectiveMergedReview = { uid: 20, questions: [] };
+        await assert.rejects(h.copy(), /合并作答仅供查看/);
+        assert.deepEqual(h.dbWrites, []);
+        assert.deepEqual(h.writes, []);
+        assert.equal(h.solutions.get(`${teacherKey}#objective`), '{"1":"old teacher answer"}');
+    });
+
     it('copies code and language only to the current teacher’s ordinary problem key', async (t) => {
         const h = harness();
         t.after(h.close);

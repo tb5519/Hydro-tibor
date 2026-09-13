@@ -27,14 +27,16 @@ function fixture(options = {}) {
     const broadcast = { ...original, ...options.broadcast };
     const scope = options.scope || 'global';
     const route = scope === 'global' ? 'manage_broadcast' : 'domain_broadcast';
+    const receipts = { revision: broadcast.revision, total: 0, page: 1, pages: 1, rows: [], ...options.receipts };
     const dom = new JSDOM(env.render('broadcast_manage.html', {
         broadcast, broadcastScope: scope, broadcastBaseTemplate: scope === 'global' ? 'manage_base.html' : 'domain_base.html',
         broadcastScopeLabel: scope === 'global' ? '所有域' : '当前教学域', manageRoute: route,
+        broadcastReceipts: receipts,
         page_name: 'broadcast_manage', _: (value) => value, url: (value) => `/${value}`,
     }) + '<a id="leave" href="/home">返回首页</a>', { url: `https://example.test/${route}` });
     const requests = [];
     const commands = [];
-    let post = (url, data) => Promise.resolve(data.operation === 'preview'
+    let post = (url, data) => Promise.resolve(data.operation === 'receipts' ? { receipts: { ...receipts, revision: data.revision } } : data.operation === 'preview'
         ? { title: data.title, content: '<p>服务器清理后的正文</p>' }
         : { broadcast: { ...broadcast, ...data, revision: 'v2', enabled: data.operation === 'publish' } });
     const pageModule = { exports: {} };
@@ -74,6 +76,88 @@ function fixture(options = {}) {
 }
 
 describe('broadcast teacher editor', () => {
+    it('renders confirmation names safely with useful empty and unpublished states', (t) => {
+        const h = fixture({ receipts: { total: 1, rows: [{ uid: 24, name: '<img src=x onerror=alert(1)>', uname: 'student24', acknowledgedAt: '2026-09-13T08:15:00Z' }] } });
+        const empty = fixture({ broadcast: { revision: '', title: '', content: '', enabled: false } });
+        t.after(h.close);
+        t.after(empty.close);
+        assert.equal(h.query('[data-broadcast-receipts-total]').textContent, '1');
+        assert.match(h.query('[data-broadcast-receipts-rows]').textContent, /<img src=x onerror=alert\(1\)>/);
+        assert.equal(h.query('[data-broadcast-receipts-rows] img'), null);
+        assert.match(h.query('[data-broadcast-confirmed-at]').textContent, /2026/);
+        assert.match(h.query('[data-broadcast-receipts-rows]').textContent, /student24 · UID 24/);
+        assert.equal(h.query('[data-broadcast-receipts-empty]').hidden, true);
+        assert.equal(empty.query('[data-broadcast-receipts-refresh]').disabled, true);
+        assert.match(empty.query('[data-broadcast-receipts-empty]').textContent, /发布广播后/);
+    });
+
+    it('paginates confirmation rows without losing teacher drafts or issuing duplicate requests', async (t) => {
+        const h = fixture({ receipts: { total: 21, page: 1, pages: 2, rows: [{ uid: 24, name: '小明', uname: 'student24', acknowledgedAt: original.updatedAt }] } });
+        t.after(h.close);
+        let resolve;
+        h.setPost(() => new Promise((done) => { resolve = done; }));
+        h.input('[name=title]', '老师正在编辑的标题');
+        h.input('[data-broadcast-editor]', '<p>需要保留的草稿</p>');
+        h.query('[data-broadcast-receipts-next]').click();
+        h.query('[data-broadcast-receipts-next]').click();
+        assert.deepEqual(h.requests.map((request) => request.data), [{ operation: 'receipts', revision: 'v1', page: 2 }]);
+        assert.equal(h.query('[data-broadcast-receipts]').getAttribute('aria-busy'), 'true');
+        resolve({ receipts: { revision: 'v1', total: 21, page: 2, pages: 2, rows: [{ uid: 25, name: '<script>alert(1)</script>', uname: 'student25', acknowledgedAt: original.updatedAt }] } });
+        await flush();
+        assert.equal(h.query('[data-broadcast-receipts-page]').textContent, '第 2 / 2 页');
+        assert.equal(h.query('[data-broadcast-receipts-next]').disabled, true);
+        assert.equal(h.query('[data-broadcast-receipts-prev]').disabled, false);
+        assert.match(h.query('[data-broadcast-receipts-rows]').textContent, /<script>alert\(1\)<\/script>/);
+        assert.equal(h.query('[data-broadcast-receipts-rows] script'), null);
+        assert.equal(h.query('[name=title]').value, '老师正在编辑的标题');
+        assert.equal(h.query('[data-broadcast-editor]').innerHTML, '<p>需要保留的草稿</p>');
+        assert.match(h.query('[data-broadcast-draft-state]').textContent, /未发布/);
+    });
+
+    it('refreshes statistics on publish and discards in-flight confirmations of the old revision', async (t) => {
+        const h = fixture({ receipts: { total: 1, rows: [{ uid: 24, name: '旧版本已确认的同学', uname: 'student24', acknowledgedAt: original.updatedAt }] } });
+        t.after(h.close);
+        let oldResolve;
+        let newResolve;
+        h.setPost((url, data) => {
+            if (data.operation === 'publish') return Promise.resolve({ broadcast: { ...original, title: data.title, revision: 'v2' } });
+            return new Promise((resolve) => {
+                if (data.revision === 'v1') oldResolve = resolve;
+                else newResolve = resolve;
+            });
+        });
+        h.query('[data-broadcast-receipts-refresh]').click();
+        h.input('[name=title]', '新版本消息');
+        h.submit();
+        await flush();
+        assert.equal(h.query('[name=revision]').value, 'v2');
+        assert.equal(h.query('[data-broadcast-receipts-total]').textContent, '—');
+        oldResolve({ receipts: { revision: 'v1', total: 99, page: 1, pages: 5, rows: [{ uid: 24, name: '过时名单', uname: '', acknowledgedAt: original.updatedAt }] } });
+        await flush();
+        assert.equal(h.query('[data-broadcast-receipts-total]').textContent, '—');
+        assert.doesNotMatch(h.query('[data-broadcast-receipts-rows]').textContent, /过时名单|旧版本/);
+        newResolve({ receipts: { revision: 'v2', total: 0, page: 1, pages: 1, rows: [] } });
+        await flush();
+        assert.equal(h.query('[data-broadcast-receipts-total]').textContent, '0');
+        assert.equal(h.query('[data-broadcast-receipts-refresh]').disabled, false);
+        assert.match(h.query('[data-broadcast-receipts-empty]').textContent, /还没有同学/);
+        assert.equal(h.query('[data-broadcast-publish]').disabled, true);
+    });
+
+    it('keeps existing statistics and drafts on refresh failure and allows retry', async (t) => {
+        const h = fixture({ receipts: { total: 3 } });
+        t.after(h.close);
+        h.input('[name=title]', '尚未发布的标题');
+        h.setPost(() => Promise.reject(new Error('广播已被其他老师更新，请刷新页面后再试。')));
+        h.query('[data-broadcast-receipts-refresh]').click();
+        await flush();
+        assert.equal(h.query('[data-broadcast-receipts-total]').textContent, '3');
+        assert.equal(h.query('[name=title]').value, '尚未发布的标题');
+        assert.match(h.query('[data-broadcast-receipts-message]').textContent, /其他老师更新.*编辑内容不会受影响/);
+        assert.equal(h.query('[data-broadcast-receipts-refresh]').disabled, false);
+        assert.equal(h.query('[data-broadcast-message]').hidden, true);
+    });
+
     it('renders the proper management base and distinguishes global and domain audiences', (t) => {
         const global = fixture();
         const domain = fixture({ scope: 'domain', broadcast: { title: '<img onerror="alert(1)" src=x>' } });

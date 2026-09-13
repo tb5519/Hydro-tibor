@@ -9,6 +9,7 @@ const { ObjectId } = require('mongodb');
 const root = path.resolve(__dirname, '..');
 const PERM = { PERM_EDIT_HOMEWORK: 1n, PERM_EDIT_HOMEWORK_SELF: 2n, PERM_EDIT_DOMAIN: 4n, PERM_SUBMIT_PROBLEM: 8n };
 const PRIV = { PRIV_USER_PROFILE: 1, PRIV_EDIT_SYSTEM: 2, PRIV_MANAGE_ALL_DOMAIN: 4, PRIV_JUDGE: 8 };
+const STATUS = { STATUS_ACCEPTED: 1, STATUS_WRONG_ANSWER: 2, STATUS_WAITING: 0, STATUS_JUDGING: 20, STATUS_COMPILING: 21, STATUS_FETCHED: 22 };
 const tid = new ObjectId('6aa000000000000000000001');
 const bestRid = new ObjectId('6aa000000000000000000011');
 const newestRid = new ObjectId('6aa000000000000000000012');
@@ -27,6 +28,19 @@ const makeRecord = (extra = {}) => ({
     testCases: [], ...extra,
 });
 const plain = (value) => JSON.parse(JSON.stringify(value));
+function compileLib(name, dependencies) {
+    const module = { exports: {} };
+    vm.runInNewContext(transformSync(fs.readFileSync(path.join(root, `packages/hydrooj/src/lib/${name}.ts`), 'utf8'), {
+        loader: 'ts', format: 'cjs',
+    }).code, { module, exports: module.exports, require: (dependency) => dependencies[dependency] || require(dependency) });
+    return module.exports;
+}
+const objectiveDependencies = {
+    '../error': {}, '../model/builtin': { STATUS }, '../model/contest': {}, '../model/problem': {}, '../model/record': {}, './contest_access': {},
+};
+for (const name of ['objective_feedback', 'objective_submission', 'objective_merged_review']) {
+    objectiveDependencies[`./${name}`] = compileLib(name, objectiveDependencies);
+}
 
 function harness(options = {}) {
     const reads = [];
@@ -41,9 +55,12 @@ function harness(options = {}) {
                 reads.push({ domainId, query });
                 const results = docs.filter((doc) => doc.domainId === domainId && doc.uid === query.uid && doc.pid === query.pid
                     && query.contest.$in.some((id) => id === null ? !doc.contest : id.equals(doc.contest))
-                    && doc.hackTarget === undefined && doc.input === undefined)
+                    && doc.hackTarget === undefined && doc.input === undefined && doc.files?.hack === undefined)
                     .sort((a, b) => b._id.toString().localeCompare(a._id.toString()));
-                return { sort: () => ({ limit: () => ({ toArray: async () => results.slice(0, 1) }) }) };
+                return { sort: () => ({
+                    limit: () => ({ toArray: async () => results.slice(0, 1) }),
+                    async *[Symbol.asyncIterator]() { yield* results; },
+                }) };
             },
         },
         '../model/user': {
@@ -120,6 +137,8 @@ describe('homework review authorization', () => {
         for (const request of [
             { query: { reviewUid: '20' } }, { body: { reviewUid: 20 } },
             { query: { reviewUid: '' } }, { body: { reviewUid: 0 } },
+            { query: { mergedUid: '20' } }, { body: { mergedUid: 20 } },
+            { query: { mergedUid: '' } }, { body: { mergedUid: 0 } },
         ]) assert.throws(() => h.rejectHomeworkReviewMutation(request), PermissionError);
         assert.doesNotThrow(() => h.rejectHomeworkReviewMutation({ query: {}, body: { code: 'print(1)' } }));
     });
@@ -145,7 +164,7 @@ describe('homework review submission selection', () => {
         assert.equal(await h.loadHomeworkReviewRecord('class-a', 1002, 20, homework, { detail: { 1002: { rid: bestRid } } }), newest);
         assert.deepEqual(plain(h.reads[0]), {
             domainId: 'class-a', query: { uid: 20, pid: 1002, contest: { $in: [null, tid.toString()] },
-                hackTarget: { $exists: false }, input: { $exists: false } },
+                hackTarget: { $exists: false }, input: { $exists: false }, 'files.hack': { $exists: false } },
         });
     });
 
@@ -155,9 +174,25 @@ describe('homework review submission selection', () => {
             makeRecord({ contest: new ObjectId('000000000000000000000000') }),
             makeRecord({ contest: new ObjectId('000000000000000000000001') }),
             makeRecord({ input: ['test'] }), makeRecord({ hackTarget: newestRid }),
+            makeRecord({ hackTarget: null }), makeRecord({ files: { hack: 'file-hack' } }),
             makeRecord({ domainId: 'class-b' }), makeRecord({ pid: 1003 }),
         ] });
         assert.equal(await h.loadHomeworkReviewRecord('class-a', 1002, 20, homework, { detail: { 1002: { rid: bestRid } } }), null);
+    });
+
+    it('loads every homework and ordinary practice answer while excluding other contests, targets and nonformal sources', async () => {
+        const own = makeRecord();
+        const practice = makeRecord({ _id: newestRid, contest: undefined });
+        const h = harness({ docs: [own, practice,
+            makeRecord({ uid: 21 }), makeRecord({ pid: 999 }), makeRecord({ domainId: 'class-b' }),
+            makeRecord({ contest: new ObjectId() }), makeRecord({ files: { code: 'stored-source' } }),
+            makeRecord({ input: null }), makeRecord({ files: { hack: 'stored-hack' } }),
+        ] });
+        const results = await h.loadHomeworkReviewRecords('class-a', 1002, 20, homework);
+        assert.deepEqual(new Set(results), new Set([own, practice]));
+        assert.equal(h.reads[0].query.contest.$in.length, 2);
+        await assert.rejects(h.loadHomeworkReviewRecords('class-b', 1002, 20, homework), PermissionError);
+        await assert.rejects(h.loadHomeworkReviewRecords('class-a', 1002, 20, { ...homework, rule: 'ioi' }), PermissionError);
     });
 
     it('returns only safe record fields without judge messages, test data, files or code', () => {
@@ -178,24 +213,26 @@ describe('homework review submission selection', () => {
 function problemHandler(options = {}) {
     const helpers = harness(options);
     const ownLoads = [];
+    const mergedLoads = [];
     const statusUids = [];
     class ContestNotLiveError extends Error {}
     const pdoc = {
         domainId: 'class-a', docId: 1002, pid: options.pid === undefined ? 'P1002' : options.pid,
         owner: 10, title: '题目', content: '', tag: [],
-        config: { type: 'default', langs: ['python3'] }, additional_file: [],
+        config: { type: options.objective ? 'objective' : 'default', langs: ['python3'] }, additional_file: [],
     };
     class BaseHandler {
         user = options.viewer || teacher;
         domain = { _id: 'class-a' };
         args = { domainId: 'class-a' };
-        tdoc = homework;
+        tdoc = options.standalone ? null : homework;
         tsdoc = {};
         UiContext = {};
         request = { method: 'GET', query: { reviewUid: 20 }, json: false };
         response = { body: {} };
         ctx = { parallel: async () => {} };
         url(name, args) {
+            if (name === 'problem_submission_records') return `/d/${args.domainId}/p/${args.pid}/submission-records`;
             if (name === 'problem_detail') {
                 assert.equal(args.query, undefined);
                 assert.equal(args.tid, undefined);
@@ -213,7 +250,7 @@ function problemHandler(options = {}) {
     const mod = { exports: {} };
     vm.runInNewContext(code, {
         module: mod, exports: mod.exports, ...require('lodash'), ...helpers,
-        PERM, PRIV, STATUS: { STATUS_ACCEPTED: 1 }, Time: { minute: 60000 },
+        PERM, PRIV, STATUS, Time: { minute: 60000 },
         route: () => () => {}, query: () => () => {}, param: () => () => {},
         Types: new Proxy({}, { get: () => () => {} }),
         ContestDetailBaseHandler: BaseHandler, ContestNotLiveError,
@@ -222,6 +259,7 @@ function problemHandler(options = {}) {
         contest: {
             isNotStarted: () => true, isDone: () => false, canShowSelfRecord: () => true,
             getStatus: async () => ({ detail: { 1002: { rid: bestRid } } }),
+            getRelated: async () => [],
         },
         problem: {
             get: async () => pdoc, canViewBy: () => options.normalVisible !== false,
@@ -233,11 +271,18 @@ function problemHandler(options = {}) {
         pickPreferredCodeLang: () => 'python3', getCppEditorMode: () => 'proficient',
         getActiveBadgeAcTheme: async () => null,
         assertRecordReplayRequest: (fromRecord) => { assert.equal(fromRecord, undefined); },
+        canUseProblemRecordPicker: () => true,
         canManageRecordList: (viewer) => viewer.hasPerm(PERM.PERM_EDIT_HOMEWORK),
         mistake: { getPracticeState: () => null },
         loadOwnObjectiveSubmission: async (...args) => { ownLoads.push(args); return null; },
+        buildObjectiveMergedReview: objectiveDependencies['./objective_merged_review'].buildObjectiveMergedReview,
+        loadObjectiveSubmissionConfig: async () => ({ config: { type: 'objective', answers: { 1: ['SECRET_A', 10] } } }),
+        loadProblemMergedReview: async (handler, domainId, problemDoc, uid) => {
+            mergedLoads.push({ domainId, pid: problemDoc.docId, uid });
+            return { uid, name: '学员', submissionCount: 0, questions: [], summary: {} };
+        },
     });
-    return { handler: new mod.exports.ProblemDetailHandler(), statusUids, ownLoads, ContestNotLiveError };
+    return { handler: new mod.exports.ProblemDetailHandler(), statusUids, ownLoads, mergedLoads, ContestNotLiveError };
 }
 
 describe('problem page homework review integration', () => {
@@ -282,5 +327,53 @@ describe('problem page homework review integration', () => {
         const h = problemHandler({ viewer: { _id: 30, own: () => false, hasPerm: () => false } });
         await assert.rejects(h.handler._prepare('class-a', 1002, tid, 20), PermissionError);
         await assert.rejects(h.handler._prepare('class-a', 1002, tid), h.ContestNotLiveError);
+    });
+
+    it('defaults objective homework review to all student attempts without importing any teacher draft or standard answer', async () => {
+        const h = problemHandler({ objective: true, docs: [
+            makeRecord({ code: '1: B', status: 2, score: 0, testCases: [{ subtaskId: 1, id: 0, status: 2, score: 0 }] }),
+            makeRecord({ _id: newestRid, contest: undefined, code: '1: A', testCases: [{ subtaskId: 1, id: 0, status: 1, score: 10 }] }),
+            makeRecord({ uid: 10, code: 'TEACHER_DRAFT' }),
+        ] });
+        await h.handler._prepare('class-a', 1002, tid, 20);
+        await h.handler.get('class-a', tid, false);
+        const merged = h.handler.UiContext.objectiveMergedReview;
+        assert.equal(merged.uid, 20);
+        assert.equal(merged.submissionCount, 2);
+        assert.equal(merged.questions[0].result, 'correct_after_retry');
+        assert.deepEqual(plain(merged.questions[0].attempts.map((attempt) => attempt.answer)), ['B', 'A']);
+        assert.equal(h.handler.response.body.mode, 'review');
+        assert.equal(h.handler.UiContext.homeworkReview.code, '');
+        assert.equal(h.handler.UiContext.objectiveInitialSubmission, undefined);
+        assert.equal(h.ownLoads.length, 0);
+        assert.doesNotMatch(JSON.stringify(h.handler.UiContext), /TEACHER_DRAFT|SECRET_A/);
+    });
+
+    it('returns an unanswered objective sheet for an assigned learner without any submissions', async () => {
+        const h = problemHandler({ objective: true });
+        await h.handler._prepare('class-a', 1002, tid, 20);
+        assert.equal(h.handler.UiContext.objectiveMergedReview.submissionCount, 0);
+        assert.equal(h.handler.UiContext.objectiveMergedReview.questions[0].result, 'unanswered');
+    });
+
+    it('opens a problem-bank merged learner review as read-only and never loads the teacher’s objective draft', async () => {
+        const h = problemHandler({ objective: true, standalone: true });
+        await h.handler._prepare('class-a', 1002, undefined, undefined, undefined, 20);
+        await h.handler.get('class-a', undefined, false);
+        assert.equal(h.handler.response.body.mode, 'review');
+        assert.equal(h.handler.UiContext.objectiveMergedReview.uid, 20);
+        assert.equal(h.handler.UiContext.problemRecordPicker.allowMerged, true);
+        assert.equal(h.handler.UiContext.recordReplay, undefined);
+        assert.equal(h.ownLoads.length, 0);
+        assert.deepEqual(h.mergedLoads, [{ domainId: 'class-a', pid: 1002, uid: 20 }]);
+    });
+
+    it('rejects a mergedUid write at the problem handler boundary before reading or changing any submission', async () => {
+        const h = problemHandler({ objective: true, standalone: true });
+        h.handler.request.method = 'POST';
+        h.handler.request.query = { mergedUid: 20 };
+        await assert.rejects(h.handler._prepare('class-a', 1002, undefined, undefined, undefined, 20), PermissionError);
+        assert.equal(h.statusUids.length, 0);
+        assert.equal(h.mergedLoads.length, 0);
     });
 });
