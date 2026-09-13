@@ -1,0 +1,201 @@
+{% set autoBadgeTimezoneLabel = '北京时间' if not autoBadgeTimezone or autoBadgeTimezone == 'Asia/Shanghai' else autoBadgeTimezone %}
+<style>
+  .auto-badges { --ab-text: var(--ui-v2-text, #182238); --ab-muted: var(--ui-v2-text-muted, #73839b); --ab-line: var(--ui-v2-border, #e1e8f2); --ab-surface: var(--ui-v2-surface, #fff); --ab-soft: #f7f9fc; --ab-blue: #2864ec; container-type: inline-size; margin-top: 24px; overflow: hidden; border: 1px solid var(--ab-line); border-radius: 16px; background: var(--ab-surface); color: var(--ab-text); scroll-margin-top: 80px; }
+  .auto-badges * { box-sizing: border-box; }
+  .auto-badges__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 26px 28px 22px; }
+  .auto-badges__eyebrow { margin: 0 0 8px; color: var(--ab-muted); font-size: 12px; letter-spacing: 1px; }
+  .auto-badges__title { margin: 0; color: var(--ab-text); font-size: 22px; font-weight: 650; line-height: 1.4; }
+  .auto-badges__description { margin: 9px 0 0; color: var(--ab-muted); font-size: 13px; line-height: 1.7; }
+  .auto-badges__count { flex: none; padding: 7px 11px; border: 1px solid var(--ab-line); border-radius: 8px; color: var(--ab-muted); font-size: 12px; white-space: nowrap; }
+  .auto-badges__filters { display: flex; align-items: end; gap: 12px; padding: 0 28px 22px; }
+  .auto-badges__filter { margin: 0; min-width: 0; }
+  .auto-badges__filter--search { flex: 1; }
+  .auto-badges__filter > span { display: block; margin-bottom: 7px; color: var(--ab-muted); font-size: 12px; }
+  .auto-badges .auto-badges__input { display: block; width: 100%; height: 40px; margin: 0; padding: 0 12px; border: 1px solid var(--ab-line); border-radius: 9px; outline: none; background: var(--ab-surface); box-shadow: none; color: var(--ab-text); font: inherit; font-size: 13px; }
+  .auto-badges .auto-badges__input:focus { border-color: #82a7ff; box-shadow: 0 0 0 3px #2864ec12; }
+  .auto-badges .auto-badges__input::placeholder { color: #96a3b6; }
+  .auto-badges select.auto-badges__input { min-width: 120px; padding-right: 28px; }
+  .auto-badges__search { height: 40px; margin: 0; padding: 0 20px; border: 0; border-radius: 9px; background: var(--ab-blue); color: #fff; font-size: 13px; cursor: pointer; }
+  .auto-badges__search:hover { background: #1d55d3; }
+  .auto-badges__row { display: grid; grid-template-columns: minmax(130px, 1.15fr) minmax(140px, 1.45fr) minmax(140px, 1.1fr) 74px 116px; align-items: center; gap: 16px; padding: 20px 28px; border-top: 1px solid var(--ab-line); }
+  .auto-badges__row--head { padding-top: 12px; padding-bottom: 12px; background: var(--ab-soft); color: var(--ab-muted); font-size: 12px; }
+  .auto-badges__cell { min-width: 0; font-size: 13px; }
+  .auto-badges__student { display: flex; align-items: center; gap: 10px; color: var(--ab-text); }
+  .auto-badges__student:hover { color: var(--ab-blue); }
+  .auto-badges__avatar { flex: none; width: 34px; height: 34px; border: 1px solid var(--ab-line); border-radius: 50%; object-fit: cover; background: var(--ab-soft); }
+  .auto-badges__name { min-width: 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .auto-badges__pill { display: inline-block; max-width: 100%; overflow: hidden; padding: 4px 10px; border: 1px solid #0000000a; border-radius: 7px; font-size: 12px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+  .auto-badges__secondary { margin-top: 6px; color: var(--ab-muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+  .auto-badges__date { font-size: 13px; font-variant-numeric: tabular-nums; }
+  .auto-badges__overlap { display: inline-block; margin-top: 6px; color: var(--ab-muted); font-size: 11px; cursor: help; }
+  .auto-badges__status { display: inline-flex; align-items: center; gap: 6px; color: #39816d; font-size: 12px; white-space: nowrap; }
+  .auto-badges__status::before { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ''; }
+  .auto-badges__status--expiring { color: #a97c35; }
+  .auto-badges__status--expired { color: var(--ab-muted); }
+  .auto-badges__actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+  .auto-badges__action { margin: 0; padding: 7px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--ab-blue); font-size: 12px; white-space: nowrap; cursor: pointer; }
+  .auto-badges__action:hover { background: #2864ec0b; }
+  .auto-badges__action--remove { color: #ad737b; }
+  .auto-badges__action--remove:hover { background: #fff2f3; color: #c54b5e; }
+  .auto-badges__action:focus-visible, .auto-badges__search:focus-visible, .auto-badges__pagination a:focus-visible { outline: 2px solid #82a7ff; outline-offset: 3px; }
+  .auto-badges__empty { padding: 44px 24px 48px; border-top: 1px solid var(--ab-line); text-align: center; }
+  .auto-badges__empty-icon { width: 44px; height: 44px; margin: 0 auto 14px; padding: 11px; border-radius: 12px; background: #f0f5ff; color: #6288cc; }
+  .auto-badges__empty strong { display: block; color: var(--ab-text); font-size: 14px; font-weight: 500; }
+  .auto-badges__empty p { margin: 8px 0 0; color: var(--ab-muted); font-size: 12px; line-height: 1.7; }
+  .auto-badges__footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 15px 28px; border-top: 1px solid var(--ab-line); color: var(--ab-muted); font-size: 11px; }
+  .auto-badges__pagination { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
+  .auto-badges__pagination a { padding: 6px 9px; border: 1px solid var(--ab-line); border-radius: 7px; color: var(--ab-text); font-size: 12px; }
+  .dialog.auto-badge-dialog .dialog__content { width: min(460px, calc(100vw - 32px)) !important; min-width: 0 !important; max-width: calc(100vw - 32px) !important; padding: 28px !important; border: 1px solid #e1e8f2; border-radius: 16px; background: var(--section-bg, #fff); box-shadow: 0 24px 80px #20365326; }
+  .auto-badge-dialog .dialog__body { height: auto !important; padding: 0 !important; overflow: visible; }
+  .auto-badge-dialog .dialog__action { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
+  .auto-badge-dialog .dialog__action .button { height: 38px; min-width: 82px; margin: 0; padding: 0 18px; border: 1px solid #e1e8f2; border-radius: 9px; background: #fff; color: #73839b; font-size: 13px; line-height: 36px; }
+  .auto-badge-dialog .dialog__action .primary { border-color: #2864ec; background: #2864ec; color: #fff; }
+  .auto-badge-dialog .dialog__action .auto-badge-dialog__remove { border-color: #c65365; background: #c65365; color: #fff; }
+  .auto-badge-dialog__header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .auto-badge-dialog__title { margin: 0; color: var(--text-1, #182238); font-size: 21px; font-weight: 600; }
+  .auto-badge-dialog__close { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: #8a98ac; font-size: 24px; line-height: 26px; cursor: pointer; }
+  .auto-badge-dialog__close:hover { background: #f3f6fa; color: #182238; }
+  .auto-badge-dialog__recipient { margin: 16px 0 22px; padding: 12px 14px; border: 1px solid #e1e8f2; border-radius: 10px; background: #f7f9fc; color: #73839b; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+  .auto-badge-dialog__recipient strong { color: #182238; font-weight: 600; }
+  .auto-badge-dialog__label { display: block; color: #43536b; font-size: 13px; }
+  .auto-badge-dialog__label input { width: 100%; height: 42px; margin: 8px 0 0; padding: 0 12px; border: 1px solid #dce5f1; border-radius: 8px; background: #fff; color: #182238; font: inherit; }
+  .auto-badge-dialog__label input:disabled { background: #f7f9fc; color: #a1adbf; }
+  .auto-badge-dialog .auto-badge-dialog__permanent { display: flex; align-items: center; gap: 8px; margin-top: 15px; color: #43536b; font-size: 13px; cursor: pointer; }
+  .auto-badge-dialog .auto-badge-dialog__permanent input[type="checkbox"] { flex: none; display: block; width: 14px; height: 14px; min-height: 0; margin: 0; accent-color: #2864ec; }
+  .auto-badge-dialog__hint { margin: 12px 0 0; color: #8492a7; font-size: 12px; line-height: 1.7; }
+  .auto-badge-dialog__warning { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: #fff8ec; color: #937545; font-size: 12px; line-height: 1.7; }
+  .auto-badge-dialog__error { margin-top: 12px; color: #c65365; font-size: 12px; line-height: 1.6; }
+  .auto-badge-dialog [hidden] { display: none !important; }
+  @media (max-width: 1000px) {
+    .auto-badges__row { grid-template-columns: minmax(110px, 1fr) minmax(125px, 1.25fr) minmax(124px, 1.1fr) 64px 102px; gap: 10px; padding-right: 20px; padding-left: 20px; }
+    .auto-badges__heading, .auto-badges__filters, .auto-badges__footer { padding-right: 20px; padding-left: 20px; }
+    .auto-badges__actions { gap: 2px; }
+  }
+  @media (max-width: 800px) {
+    .auto-badges__row--head { display: none; }
+    .auto-badges__row:not(.auto-badges__row--head) { grid-template-columns: minmax(0, 1fr) auto; gap: 12px 18px; }
+    .auto-badges__cell--badge { grid-column: 1; grid-row: 2; }
+    .auto-badges__cell--expiry { grid-column: 1; grid-row: 3; }
+    .auto-badges__cell--expiry::before { margin-right: 8px; color: var(--ab-muted); font-size: 12px; content: '到期时间'; }
+    .auto-badges__cell--status { grid-column: 2; grid-row: 1; justify-self: end; }
+    .auto-badges__actions { grid-column: 2; grid-row: 3; }
+    .auto-badges__secondary { margin-top: 4px; }
+    .auto-badges__cell--expiry .auto-badges__secondary { display: block; }
+    .auto-badges__heading { padding-top: 22px; }
+  }
+  @media (max-width: 480px) {
+    .auto-badges__heading { gap: 12px; }
+    .auto-badges__title { font-size: 19px; }
+    .auto-badges__description { font-size: 12px; }
+    .auto-badges__filters { flex-wrap: wrap; gap: 10px; }
+    .auto-badges__filter--search { flex-basis: 100%; }
+    .auto-badges__filter--status { flex: 1; }
+    .auto-badges__search { min-width: 84px; }
+    .auto-badges__footer { align-items: flex-start; flex-direction: column; gap: 10px; }
+    .auto-badges__cell--expiry::before { display: block; margin-bottom: 4px; }
+    .dialog.auto-badge-dialog .dialog__content { padding: 22px !important; }
+  }
+  @container (max-width: 680px) {
+    .auto-badges__row--head { display: none; }
+    .auto-badges__row:not(.auto-badges__row--head) { grid-template-columns: minmax(0, 1fr) auto; gap: 12px 18px; }
+    .auto-badges__cell--badge { grid-column: 1; grid-row: 2; }
+    .auto-badges__cell--expiry { grid-column: 1; grid-row: 3; }
+    .auto-badges__cell--expiry::before { margin-right: 8px; color: var(--ab-muted); font-size: 12px; content: '到期时间'; }
+    .auto-badges__cell--status { grid-column: 2; grid-row: 1; justify-self: end; }
+    .auto-badges__actions { grid-column: 2; grid-row: 3; }
+  }
+  .theme--dark .auto-badges, html[data-theme="dark"] .auto-badges { --ab-soft: #1e293b; --ab-surface: #172130; --ab-text: #e4ecf7; --ab-muted: #96a5bc; --ab-line: #304055; --ab-blue: #83aaff; }
+  .theme--dark .dialog.auto-badge-dialog .dialog__content { border-color: #304055; background: #172130; }
+  .theme--dark .auto-badge-dialog__title, .theme--dark .auto-badge-dialog__recipient strong { color: #e4ecf7; }
+  .theme--dark .auto-badge-dialog__recipient, .theme--dark .auto-badge-dialog__label input { border-color: #304055; background: #1e293b; color: #b4c3d8; }
+  .theme--dark .auto-badge-dialog__label, .theme--dark .auto-badge-dialog__permanent { color: #b4c3d8; }
+  .theme--dark .auto-badge-dialog__warning { background: #352f24; color: #d3b578; }
+</style>
+<section id="auto-badges" class="auto-badges" aria-labelledby="auto-badges-title" data-auto-badges data-timezone="{{ autoBadgeTimezone }}">
+  <header class="auto-badges__heading">
+    <div>
+      <p class="auto-badges__eyebrow">自动奖励</p>
+      <h2 id="auto-badges-title" class="auto-badges__title">自动获得的徽章</h2>
+      <p class="auto-badges__description">管理学员通过抽奖等方式获得的徽章，可调整有效期或移除。</p>
+    </div>
+    <span class="auto-badges__count">{{ autoBadgeTotal|default(0) }} 条记录</span>
+  </header>
+  <form class="auto-badges__filters" method="get" action="#auto-badges">
+    <input type="hidden" name="page" value="{{ page|default(1) }}">
+    <label class="auto-badges__filter auto-badges__filter--search">
+      <span>查找记录</span>
+      <input class="auto-badges__input" name="autoQuery" value="{{ autoBadgeQuery }}" placeholder="搜索学员或徽章名称" aria-label="搜索学员或徽章名称" maxlength="100">
+    </label>
+    <label class="auto-badges__filter auto-badges__filter--status">
+      <span>有效状态</span>
+      <select class="auto-badges__input" name="autoStatus" aria-label="有效状态">
+        <option value="active"{% if autoBadgeStatus != 'expired' and autoBadgeStatus != 'all' %} selected{% endif %}>生效中</option>
+        <option value="expired"{% if autoBadgeStatus == 'expired' %} selected{% endif %}>已到期</option>
+        <option value="all"{% if autoBadgeStatus == 'all' %} selected{% endif %}>全部记录</option>
+      </select>
+    </label>
+    <button class="auto-badges__search" type="submit">查询</button>
+  </form>
+  {% if autoBadgeRows.length %}
+  <div class="auto-badges__list" role="list" aria-label="自动徽章记录">
+    <div class="auto-badges__row auto-badges__row--head" aria-hidden="true"><span>学员</span><span>徽章与来源</span><span>到期时间</span><span>状态</span><span style="text-align: right">操作</span></div>
+    {% for row in autoBadgeRows %}
+    <article class="auto-badges__row" role="listitem" data-auto-badge-row data-key="{{ row.key }}" data-user-name="{{ row.userName }}" data-badge-name="{{ row.badgeName }}" data-expires-at="{{ row.expiresAtInput }}" data-permanent="{{ 'true' if row.permanent else 'false' }}" data-manual-overlap="{{ 'true' if row.manualOverlap else 'false' }}">
+      <div class="auto-badges__cell">
+        <a class="auto-badges__student" href="{{ row.userUrl }}" title="{{ row.userName }}"><img class="auto-badges__avatar" src="{{ row.userAvatar }}" alt="" loading="lazy"><span class="auto-badges__name">{{ row.userName }}</span></a>
+      </div>
+      <div class="auto-badges__cell auto-badges__cell--badge">
+        <span class="auto-badges__pill" style="background-color: {{ row.backgroundColor }}; color: {{ row.fontColor }}" title="{{ row.badgeName }}">{{ row.badgeShort or row.badgeName }}</span>
+        <div class="auto-badges__secondary">{{ row.sourcesText }}</div>
+        {% if row.manualOverlap %}<span class="auto-badges__overlap" title="另有永久授予，移除自动记录后仍保留徽章">另有永久授予</span>{% endif %}
+      </div>
+      <div class="auto-badges__cell auto-badges__cell--expiry">
+        <span class="auto-badges__date">{{ '永久有效' if row.permanent else row.expiresAtText }}</span>
+        <div class="auto-badges__secondary">获得于 {{ row.grantedAtText }}</div>
+      </div>
+      <div class="auto-badges__cell auto-badges__cell--status"><span class="auto-badges__status auto-badges__status--{{ row.status }}">{{ row.statusText }}</span></div>
+      <div class="auto-badges__cell auto-badges__actions">
+        <button type="button" class="auto-badges__action" data-auto-badge-edit aria-label="修改 {{ row.userName }} 的 {{ row.badgeName }} 有效期">改有效期</button>
+        <button type="button" class="auto-badges__action auto-badges__action--remove" data-auto-badge-remove aria-label="移除 {{ row.userName }} 的 {{ row.badgeName }} 自动记录">移除</button>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="auto-badges__empty">
+    <div class="auto-badges__empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m8 3-3 5 7 13 7-13-3-5H8Z" stroke-linejoin="round"/><path d="M5 8h14M8 3l4 5 4-5"/></svg></div>
+    <strong>{{ '没有找到符合条件的记录' if autoBadgeQuery else ('暂无已到期的自动徽章' if autoBadgeStatus == 'expired' else '暂无自动获得的徽章') }}</strong>
+    <p>{{ '试试其他学员、徽章名称或有效状态。' if autoBadgeQuery else '学员通过自动奖励获得徽章后，可在这里统一管理。' }}</p>
+  </div>
+  {% endif %}
+  <footer class="auto-badges__footer">
+    <span>时间以{{ autoBadgeTimezoneLabel }}为准 · 到期记录可重新设置有效期</span>
+    {% if autoBadgePageCount > 1 %}
+    <nav class="auto-badges__pagination" aria-label="自动徽章分页">
+      {% if autoBadgePage > 1 %}<a href="?page={{ page|default(1) }}&amp;autoQuery={{ autoBadgeQuery|urlencode }}&amp;autoStatus={{ autoBadgeStatus|urlencode }}&amp;autoPage={{ autoBadgePage - 1 }}#auto-badges">上一页</a>{% endif %}
+      <span>{{ autoBadgePage }} / {{ autoBadgePageCount }}</span>
+      {% if autoBadgePage < autoBadgePageCount %}<a href="?page={{ page|default(1) }}&amp;autoQuery={{ autoBadgeQuery|urlencode }}&amp;autoStatus={{ autoBadgeStatus|urlencode }}&amp;autoPage={{ autoBadgePage + 1 }}#auto-badges">下一页</a>{% endif %}
+    </nav>
+    {% endif %}
+  </footer>
+</section>
+<template id="auto-badge-edit-dialog">
+  <div>
+    <div class="auto-badge-dialog__header"><h2 class="auto-badge-dialog__title" id="auto-badge-edit-title">修改有效期</h2><button type="button" class="auto-badge-dialog__close" data-action="cancel" aria-label="关闭">×</button></div>
+    <p class="auto-badge-dialog__recipient"><strong data-dialog-student></strong><br><span data-dialog-badge></span></p>
+    <label class="auto-badge-dialog__label">到期时间<input type="datetime-local" name="expiresAt" required data-autofocus></label>
+    <label class="auto-badge-dialog__permanent"><input type="checkbox" name="permanent">设为永久有效</label>
+    <p class="auto-badge-dialog__hint">按{{ autoBadgeTimezoneLabel }}设置，保存后立即生效。</p>
+    <p class="auto-badge-dialog__warning" data-dialog-overlap hidden>另有永久授予，自动记录到期后仍保留徽章。</p>
+    <p class="auto-badge-dialog__error" role="alert" data-dialog-error hidden></p>
+  </div>
+</template>
+<template id="auto-badge-remove-dialog">
+  <div>
+    <div class="auto-badge-dialog__header"><h2 class="auto-badge-dialog__title" id="auto-badge-remove-title">移除自动徽章</h2><button type="button" class="auto-badge-dialog__close" data-action="cancel" aria-label="关闭">×</button></div>
+    <p class="auto-badge-dialog__recipient"><strong data-dialog-student></strong><br><span data-dialog-badge></span></p>
+    <p class="auto-badge-dialog__hint">移除这条自动获得的记录后，该徽章的自动有效期将一并结束。</p>
+    <p class="auto-badge-dialog__warning" data-dialog-overlap hidden>另有永久授予，移除自动记录后仍保留徽章。</p>
+    <p class="auto-badge-dialog__error" role="alert" data-dialog-error hidden></p>
+  </div>
+</template>

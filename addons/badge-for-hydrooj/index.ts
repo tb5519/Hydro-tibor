@@ -5,10 +5,15 @@ import { ObjectId } from 'mongodb';
 import {
     Context, Handler, NotFoundError, param, PERM, PermissionError, PRIV, STATUS, Types, ValidationError,
 } from 'hydrooj';
+import {
+    awardWeeklyAutomaticBadge, getAutomaticBadgeManagement, importLegacyLotteryAutomaticBadges,
+    migrateWeeklyAutomaticBadge, nextWeeklyAutomaticBadgeExpiry, updateAutomaticBadge,
+} from 'hydrooj/src/lib/automatic_badge';
 import { getSharedRankingSnapshot } from 'hydrooj/src/lib/shared_ranking';
 import DomainModel from 'hydrooj/src/model/domain';
 import RecordModel from 'hydrooj/src/model/record';
 import storage from 'hydrooj/src/model/storage';
+import system from 'hydrooj/src/model/system';
 import workspace from 'hydrooj/src/model/workspace';
 import { Time } from 'hydrooj/src/utils';
 import { badgeAcImageCache } from './ac_image_cache';
@@ -73,10 +78,7 @@ function getBadgeThemeSoundUrl(handler: Handler, badge: Badge) {
 }
 
 function nextSunday22() {
-    const now = moment().tz(SPECIAL_BADGE_TIMEZONE);
-    const next = now.clone().day(7).hour(22).minute(0).second(0).millisecond(0);
-    if (next.isSameOrBefore(now)) next.add(7, 'days');
-    return next.toDate();
+    return nextWeeklyAutomaticBadgeExpiry();
 }
 
 function isStudentPriv(priv = 0) {
@@ -167,6 +169,8 @@ async function ensureSpecialBadge(ctx: Context, config: typeof SPECIAL_BADGES.st
                 backgroundColor: config.backgroundColor,
                 fontColor: config.fontColor,
                 content: config.content,
+                automaticGrantVersion: 1,
+                automaticSource: config.title === SPECIAL_BADGES.strongest.title ? 'weekly_rp' : 'weekly_ac',
             },
         });
         return current._id;
@@ -181,24 +185,11 @@ async function ensureSpecialBadge(ctx: Context, config: typeof SPECIAL_BADGES.st
         fontColor: config.fontColor,
         content: config.content,
         users: [],
+        automaticGrantVersion: 1,
+        automaticSource: config.title === SPECIAL_BADGES.strongest.title ? 'weekly_rp' : 'weekly_ac',
         createAt: new Date(),
     });
     return badgeId;
-}
-
-async function replaceBadgeOwners(ctx: Context, badgeId: number, owners: number[]) {
-    await ctx.db.collection('badge').updateOne({ _id: badgeId }, { $set: { users: owners } });
-    await ctx.db.collection('userBadge').deleteMany({ badgeId, owner: { $nin: owners } });
-    await ctx.db.collection('user').updateMany(
-        { badgeId, _id: { $nin: owners } },
-        { $unset: { badgeId: '', badge: '' } },
-    );
-    for (const uid of owners) {
-        const exists = await ctx.db.collection('userBadge').findOne({ owner: uid, badgeId });
-        if (!exists) await ctx.db.collection('userBadge').insertOne({ owner: uid, badgeId, getAt: new Date() });
-        await UserBadgeModel.userBadgeSel(ctx, uid, badgeId);
-    }
-    ctx.broadcast('user/delcache', true);
 }
 
 async function getStrongestUid(ctx: Context) {
@@ -246,9 +237,10 @@ async function assignSpecialBadges(ctx: Context) {
         getStrongestUid(ctx),
         getWeeklyAcChampionUid(ctx),
     ]);
+    const expiresAt = nextSunday22();
     await Promise.all([
-        replaceBadgeOwners(ctx, strongestBadgeId, strongestUid ? [strongestUid] : []),
-        replaceBadgeOwners(ctx, shadowBadgeId, shadowUid ? [shadowUid] : []),
+        strongestUid ? awardWeeklyAutomaticBadge(ctx, strongestBadgeId, strongestUid, 'weekly_rp', expiresAt) : null,
+        shadowUid ? awardWeeklyAutomaticBadge(ctx, shadowBadgeId, shadowUid, 'weekly_ac', expiresAt) : null,
     ]);
 }
 
@@ -286,13 +278,16 @@ class UserBadgeManageHandler extends Handler {
     }
 }
 
-class BadgeManageHandler extends Handler {
+export class BadgeManageHandler extends Handler {
     async prepare() {
         await checkBadgeManageAccess(this);
     }
 
     @param('page', Types.PositiveInt, true)
-    async get(_: string, page = 1) {
+    @param('autoPage', Types.PositiveInt, true)
+    @param('autoQuery', Types.String, true)
+    @param('autoStatus', Types.String, true)
+    async get(_: string, page = 1, autoPage = 1, autoQuery = '', autoStatus = 'active') {
         const [ddocs, dpcount] = await this.ctx.db.paginate(
             await BadgeModel.badgeGetMulti(this.ctx, getBadgeDomainScope(this)),
             page,
@@ -304,7 +299,26 @@ class BadgeManageHandler extends Handler {
             dpcount,
             page,
             ...getBadgeManageContext(this),
+            ...await getAutomaticBadgeManagement(this.ctx, this.domain, {
+                query: autoQuery, status: autoStatus, page: autoPage, timeZone: system.get('timeZone') || 'Asia/Shanghai',
+            }),
         };
+    }
+
+    @param('key', Types.String)
+    @param('expiresAt', Types.String, true)
+    @param('permanent', Types.Boolean, true)
+    async postAutoBadgeUpdate(_: string, key: string, expiresAt = '', permanent = false) {
+        await updateAutomaticBadge(this.ctx, this.domain, {
+            key, expiresAt, permanent, operatorUid: this.user._id, timeZone: system.get('timeZone') || 'Asia/Shanghai',
+        });
+        this.response.body = { ok: true };
+    }
+
+    @param('key', Types.String)
+    async postAutoBadgeRemove(_: string, key: string) {
+        await updateAutomaticBadge(this.ctx, this.domain, { key, remove: true, operatorUid: this.user._id });
+        this.response.body = { ok: true };
     }
 }
 
@@ -547,6 +561,20 @@ class BadgeDetailHandler extends Handler {
 }
 
 export async function apply(ctx: Context) {
+    // Only the two known scheduler-owned legacy definitions are migrated.
+    for (const [kind, config] of Object.entries(SPECIAL_BADGES)) {
+        const badge = await ctx.db.collection('badge').findOne({
+            title: config.title, content: config.content, domainId: { $exists: false }, manualAssignmentVersion: { $ne: 1 },
+        });
+        if (badge) await migrateWeeklyAutomaticBadge(ctx, badge._id, kind === 'strongest' ? 'weekly_rp' : 'weekly_ac', nextSunday22());
+    }
+    const badgeDomains = await ctx.db.collection('badge').distinct('domainId', { domainId: { $exists: true } });
+    const legacyDomain = await DomainModel.get('system');
+    if (legacyDomain) await importLegacyLotteryAutomaticBadges(ctx, legacyDomain);
+    for (const domainId of badgeDomains) {
+        const domain = await DomainModel.get(domainId);
+        if (domain) await importLegacyLotteryAutomaticBadges(ctx, domain);
+    }
     await ctx.inject(['worker'], (c) => {
         c.worker.addHandler(SPECIAL_BADGE_TASK, async () => assignSpecialBadges(ctx));
     });

@@ -549,7 +549,7 @@ async function getPointLotteryBadge(
     });
 }
 
-function userBadgeScopeQuery(domainId?: string) {
+export function userBadgeScopeQuery(domainId?: string) {
     return domainId ? { domainId } : { domainId: { $exists: false } };
 }
 
@@ -569,7 +569,7 @@ interface GrantedPointLotteryBadge {
     expiresAt?: Date;
 }
 
-function activeLotteryBadgeGrantQuery(now: Date) {
+export function activeLotteryBadgeGrantQuery(now: Date) {
     return {
         expiredAt: { $exists: false },
         $or: [
@@ -579,7 +579,7 @@ function activeLotteryBadgeGrantQuery(now: Date) {
     };
 }
 
-async function addLotteryBadgeToUser(ctx: Context, uid: number, badgeId: number, domainId?: string) {
+export async function addLotteryBadgeToUser(ctx: Context, uid: number, badgeId: number, domainId?: string) {
     await ctx.db.collection('userBadge').updateOne({
         owner: uid,
         badgeId,
@@ -595,7 +595,7 @@ async function addLotteryBadgeToUser(ctx: Context, uid: number, badgeId: number,
     }, { upsert: true });
 }
 
-async function selectLotteryBadgeForUser(ctx: Context, uid: number, badge: any, domainId?: string) {
+export async function selectLotteryBadgeForUser(ctx: Context, uid: number, badge: any, domainId?: string) {
     await ctx.db.collection('user').updateOne({ _id: uid }, {
         $set: {
             badgeId: badge._id,
@@ -606,7 +606,7 @@ async function selectLotteryBadgeForUser(ctx: Context, uid: number, badge: any, 
     deleteUserCache(true);
 }
 
-async function schedulePointLotteryBadgeExpiry(ctx: Context, expiresAt: Date, grantId: ObjectId) {
+export async function schedulePointLotteryBadgeExpiry(ctx: Context, expiresAt: Date, grantId: ObjectId) {
     try {
         await ScheduleModel.add({
             type: 'schedule',
@@ -622,7 +622,7 @@ async function schedulePointLotteryBadgeExpiry(ctx: Context, expiresAt: Date, gr
     }
 }
 
-async function removeLotteryBadgeIfUnreferenced(
+export async function removeLotteryBadgeIfUnreferenced(
     ctx: Context,
     uid: number,
     badgeId: number,
@@ -746,7 +746,7 @@ async function retainCurrentLotteryUpgradeBadge(
     if (!finalized.matchedCount) throw new Error('Point lottery upgrade grant changed before finalizing');
 }
 
-async function withPointLotteryBadgeLock<T>(
+export async function withPointLotteryBadgeLock<T>(
     ctx: Context,
     uid: number,
     sourceBadgeId: number,
@@ -822,7 +822,7 @@ async function resolvePointLotteryUpgradeState(
                 ],
             },
         ],
-    }).project({ badgeId: 1, repeatEffect: 1, lotteryBadgeIds: 1 }).toArray();
+    }).project({ badgeId: 1, repeatEffect: 1, lotteryBadgeIds: 1, expiresAt: 1 }).toArray();
     const permanentBadgeIds = new Set<number>();
     const entitledBadgeIds = new Set<number>();
     for (const badge of badges) {
@@ -844,7 +844,9 @@ async function resolvePointLotteryUpgradeState(
     return {
         level,
         badgeId: level ? badgeIds[level - 1] : undefined,
-        permanent: permanentBadgeIds.size > 0 || fallbackGrants.some((grant) => !grant.expiresAt),
+        manual: permanentBadgeIds.size > 0,
+        permanent: permanentBadgeIds.size > 0
+            || [...entitlementGrants, ...fallbackGrants].some((grant) => !grant.expiresAt),
     };
 }
 
@@ -861,51 +863,44 @@ async function grantDurationStackingLotteryBadge(
     await addLotteryBadgeToUser(ctx, uid, badge._id, domainId);
     await selectLotteryBadgeForUser(ctx, uid, badge, domainId);
 
-    // Re-read permanent ownership inside the badge lock. Once this badge has
-    // been permanently granted, extra timed wins do not shorten it; infinity
-    // stacked with any duration remains infinity.
+    // Keep the lottery entitlement separate from a teacher's permanent
+    // assignment. Even a repeated win remains traceable and manageable.
     const permanentBadge = await ctx.db.collection('badge').findOne({
         _id: badge._id,
         ...(domainId ? { domainId } : { domainId: { $exists: false } }),
         users: uid,
     }, { projection: { _id: 1 } });
-    if (permanentBadge) return { badge, badgeLevel: 1 };
-
     const durationHours = normalizeBadgeDurationHours(prize.badgeDurationHours);
-    if (!durationHours) {
-        await ctx.db.collection('badge').updateOne({
-            _id: badge._id,
-            ...(domainId ? { domainId } : { domainId: { $exists: false } }),
-        }, { $addToSet: { users: uid } });
-        return { badge, badgeLevel: 1 };
-    }
-
     const activeGrants = await ctx.db.collection('lottery.badgeGrant').find({
         uid,
         badgeId: badge._id,
         ...scope,
-        expiresAt: { $gt: now },
-        expiredAt: { $exists: false },
+        ...activeLotteryBadgeGrantQuery(now),
     }).project({ expiresAt: 1 }).toArray();
+    const permanentLottery = activeGrants.some((grant) => !grant.expiresAt);
     const latestExpiry = activeGrants.reduce(
         (latest: number, grant: any) => Math.max(latest, grant.expiresAt?.getTime?.() || 0),
         now.getTime(),
     );
-    const expiresAt = new Date(latestExpiry + durationHours * 60 * 60 * 1000);
+    const expiresAt = durationHours && !permanentLottery
+        ? new Date(latestExpiry + durationHours * 60 * 60 * 1000) : undefined;
     const grantId = new ObjectId();
     await ctx.db.collection('lottery.badgeGrant').insertOne({
         _id: grantId,
         drawId,
         uid,
+        source: 'lottery',
         sourceBadgeId: prize.badgeId,
         badgeId: badge._id,
         repeatEffect: 'duration',
         ...(domainId ? { domainId } : {}),
         grantedAt: now,
-        expiresAt,
+        ...(expiresAt ? { expiresAt } : {}),
     });
-    await schedulePointLotteryBadgeExpiry(ctx, expiresAt, grantId);
-    return { badge, badgeLevel: 1, expiresAt };
+    if (expiresAt) await schedulePointLotteryBadgeExpiry(ctx, expiresAt, grantId);
+    // The award dialog describes effective ownership; a separate manual grant
+    // can make this badge permanent while the automatic entitlement is timed.
+    return { badge, badgeLevel: 1, ...(!permanentBadge && expiresAt ? { expiresAt } : {}) };
 }
 
 async function grantUpgradeLotteryBadge(
@@ -990,7 +985,7 @@ async function grantUpgradeLotteryBadge(
     }
 
     await addLotteryBadgeToUser(ctx, uid, targetBadgeId, domainId);
-    if (permanent) {
+    if (resolvedState.manual) {
         await ctx.db.collection('badge').updateOne({
             _id: targetBadgeId,
             ...(domainId ? { domainId } : { domainId: { $exists: false } }),
@@ -1019,6 +1014,7 @@ async function grantUpgradeLotteryBadge(
             _id: grantId,
             drawId,
             uid,
+            source: 'lottery',
             sourceBadgeId: baseBadge._id,
             badgeId: targetBadgeId,
             level: targetLevel,
@@ -1042,6 +1038,7 @@ async function grantUpgradeLotteryBadge(
             domainId,
             now,
             {
+                source: 'lottery',
                 badgeId: targetBadgeId,
                 level: targetLevel,
                 badgeUpgradeBadgeIds: upgradeBadgeIds,
@@ -1054,9 +1051,24 @@ async function grantUpgradeLotteryBadge(
         );
     }
 
-    // New grants also need full-chain consolidation; otherwise a manually
-    // assigned starting state would survive beside the upgraded target.
-    if (createdGrant) {
+    // A permanent normal win of this same prize used to be represented by a
+    // manual-style owner marker, which an upgrade replaced. Transfer that
+    // entitlement into the chain as well; unrelated prizes, weekly awards,
+    // and separately timed grants retain their own ownership.
+    const transferred = await ctx.db.collection('lottery.badgeGrant').updateMany({
+        uid,
+        source: 'lottery',
+        sourceBadgeId: baseBadge._id,
+        repeatEffect: 'duration',
+        badgeId: { $in: badgeIds.filter((id) => id !== targetBadgeId) },
+        ...scope,
+        expiresAt: { $exists: false },
+        expiredAt: { $exists: false },
+    }, { $set: { expiredAt: now, supersededAt: now, supersededByGrantId: currentGrant._id } });
+
+    // New grants and transferred permanent wins need full-chain cleanup;
+    // otherwise an obsolete starting state would remain beside the target.
+    if (createdGrant || transferred.modifiedCount) {
         await retainCurrentLotteryUpgradeBadge(
             ctx, currentGrant, targetBadgeId, badgeIds, domainId, now, {}, permanent,
         );
@@ -1181,7 +1193,7 @@ export async function reconcileActivePointLotteryUpgradeBadgeStates(ctx: Context
                         ...activeGrants.flatMap((item) => getLotteryOwnedUpgradeBadgeIds(item)),
                     ];
                     await addLotteryBadgeToUser(ctx, candidate.uid, targetBadgeId, domainId);
-                    if (resolvedState.permanent) {
+                    if (resolvedState.manual) {
                         await ctx.db.collection('badge').updateOne({
                             _id: targetBadgeId,
                             ...(domainId ? { domainId } : { domainId: { $exists: false } }),

@@ -53,6 +53,7 @@
     {% endif %}
   </div>
 </div>
+{% include "partials/auto_badge_manage.html" %}
 {% endmacro %}
 {% block manage_content %}{{ render_badge_manage() }}{% endblock %}
 {% block domain_content %}{{ render_badge_manage() }}{% endblock %}

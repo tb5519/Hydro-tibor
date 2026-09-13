@@ -1,5 +1,6 @@
 import { FindCursor, WithId } from 'mongodb';
 import { Context, ObjectId } from 'hydrooj';
+import { removeLotteryBadgeIfUnreferenced } from 'hydrooj/src/lib/point_lottery';
 import { deleteUserCache } from 'hydrooj/src/model/user';
 
 export interface UserBadge {
@@ -158,6 +159,7 @@ async function badgeAdd(
         fontColor,
         content,
         users,
+        manualAssignmentVersion: 1,
         ...(domainId ? { domainId } : {}),
         createAt: new Date(),
     });
@@ -185,11 +187,11 @@ async function badgeEdit(
     domainId?: string,
 ): Promise<number> {
     const result = await ctx.db.collection('badge').updateOne({ _id: badgeId, ...scopeQuery(domainId) }, {
-        $set: { short, title, backgroundColor, fontColor, content, users },
+        $set: { short, title, backgroundColor, fontColor, content, users, manualAssignmentVersion: 1 },
     });
     for (const userId of usersOld) {
         if (!users.includes(userId)) {
-            await userBadgeDel(ctx, userId, badgeId, domainId); // eslint-disable-line no-await-in-loop
+            await removeLotteryBadgeIfUnreferenced(ctx, userId, badgeId, domainId, new Date()); // eslint-disable-line no-await-in-loop
         }
     }
     for (const userId of users) {
