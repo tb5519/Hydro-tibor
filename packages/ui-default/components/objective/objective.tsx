@@ -10,7 +10,6 @@ import { delay, i18n, request, tpl } from 'vj/utils';
 import { openDB } from 'vj/utils/db';
 import { mergedResultLabel } from '../../common/objective-merged-review';
 import { rememberRecordReplaySubmission } from '../record_replay_import';
-import ObjectiveMergedHistory from './ObjectiveMergedHistory';
 import { ObjectiveResult } from './ObjectiveResult';
 
 type Answers = Record<string, string | string[]>;
@@ -56,7 +55,6 @@ export async function loadObjective() {
   statement.dataset.objectiveInitialized = 'true';
   let disposed = false;
   let navigationRoot: ReturnType<typeof createRoot>;
-  const historyRoots: ReturnType<typeof createRoot>[] = [];
   let busy = false;
   let pendingRid = '';
   let submittedAnswers: Answers = {};
@@ -64,6 +62,7 @@ export async function loadObjective() {
   let stateMessage = '';
   const merged = UiContext.objectiveMergedReview;
   const mergedQuestions = new Map((merged?.questions || []).map((question) => [question.id, question]));
+  const latestMergedAttempts = new Map((merged?.questions || []).map((question) => [question.id, question.attempts[question.attempts.length - 1]]));
   const readOnly = !!UiContext.homeworkReview || !!merged;
   const replay = !readOnly && UiContext.recordReplay?.objective ? UiContext.recordReplay : null;
   let replayResultActive = !!replay && UiContext.recordReplayResultActive === true;
@@ -73,7 +72,6 @@ export async function loadObjective() {
   releasePrevious = () => {
     disposed = true;
     navigationRoot?.unmount();
-    historyRoots.forEach((root) => root.unmount());
     resultDialog?.close();
     $statement.off('.objective');
   };
@@ -175,8 +173,35 @@ export async function loadObjective() {
 
   function decorateAnswers() {
     $statement.find('.objective-option, .objective-free-answer')
-      .removeClass('is-correct is-retry-correct is-incorrect').removeAttr('data-objective-result');
+      .removeClass('is-correct is-retry-correct is-incorrect is-ever-selected').removeAttr('data-objective-result');
     for (const id of pids) {
+      if (merged) {
+        // The answer card retains cumulative progress. Options show the last
+        // submitted answer, with earlier selections in yellow.
+        const latest = latestMergedAttempts.get(id);
+        const previous = new Set(mergedQuestions.get(id)?.attempts.slice(0, -1)
+          .flatMap((attempt) => Array.isArray(attempt.answer) ? attempt.answer : [attempt.answer]));
+        $statement.find(`.objective_${id}`).each((_, element) => {
+          const input = element.querySelector<HTMLInputElement>('input, textarea');
+          const isOption = element.classList.contains('objective-option');
+          const isLatest = !isOption || input?.checked;
+          const result = isLatest && latest ? latest.result : undefined;
+          let description = '';
+          if (result === 'correct' || result === 'incorrect') {
+            element.classList.add(`is-${result}`);
+            description = result === 'correct' ? '最后作答正确' : '最后作答错误';
+          } else if (!isLatest && previous.has(input?.value)) {
+            element.classList.add('is-ever-selected');
+            description = '此前选过';
+          } else if (result) {
+            description = result === 'pending' ? '最后作答评测中' : '最后作答评测未完成';
+          }
+          if (description) element.setAttribute('data-objective-result', description);
+          $(element).attr('title', description);
+          $(input).attr('aria-description', description);
+        });
+        continue;
+      }
       const result = questionResult(id);
       if (result !== 'correct' && result !== 'retry-correct' && result !== 'incorrect') continue;
       $statement.find(`.objective_${id}`).filter((_, el) =>
@@ -292,7 +317,7 @@ export async function loadObjective() {
             </> : <span><i className="objective-nav-dot objective-nav-dot--answered" /> 已答</span>}
             <span><i className="objective-nav-dot" /> 未答</span>
           </div>
-          {merged && <p className="objective-merged-legend-note">以可查看记录为准，首次非空作答即正确为绿色；答错后再答对为黄色。每题下方可查看历次答案。</p>}
+          {merged && <p className="objective-merged-legend-note">以可查看记录为准，首次非空作答即正确为绿色；答错后再答对为黄色。题目选项中，绿色为最后答对，红色为最后答错，黄色为此前选过。</p>}
           {merged ? <div className="objective-nav-result objective-merged-summary">
             <span className="objective-nav-result-label">累计答对</span>
             <div className="objective-nav-result-score">
@@ -340,7 +365,8 @@ export async function loadObjective() {
 
   async function loadAns() {
     const initial = merged ? {
-      answers: Object.fromEntries(merged.questions.map((question) => [question.id, question.answer])), feedback: undefined,
+      answers: Object.fromEntries(merged.questions.map((question) => [question.id, latestMergedAttempts.get(question.id)?.answer])),
+      feedback: undefined,
     } : UiContext.objectiveInitialSubmission;
     submittedAnswers = sanitizeAnswers(initial?.answers);
     feedback = initial?.feedback;
@@ -369,34 +395,6 @@ export async function loadObjective() {
     }
     $statement.find('.objective-input').prop('disabled', readOnly);
     decorateAnswers();
-  }
-
-  function renderMergedHistories() {
-    if (!merged) return;
-    for (const id of pids) {
-      const question = mergedQuestions.get(id) || { id, result: 'unanswered' as const, attempts: [] };
-      const $answers = $statement.find(`.objective_${id}`);
-      $answers.filter('.objective-option').each((_, element) => {
-        const value = element.querySelector<HTMLInputElement>('input')?.value;
-        const count = question.attempts.filter((attempt) => Array.isArray(attempt.answer)
-          ? attempt.answer.includes(value) : attempt.answer === value).length;
-        if (!count) return;
-        element.classList.add('is-ever-selected');
-        const badge = document.createElement('span');
-        badge.className = 'objective-choice-history';
-        badge.textContent = `曾选 ${count} 次`;
-        element.querySelector('.objective-choice-body')?.appendChild(badge);
-      });
-      const lastAnswer = $answers.last().get(0);
-      const after = lastAnswer?.closest('.objective-options') || lastAnswer?.closest('.objective-question-title') || lastAnswer;
-      if (!after) continue;
-      const container = document.createElement('div');
-      container.className = 'objective-merged-history-root';
-      after.after(container);
-      const root = createRoot(container);
-      historyRoots.push(root);
-      root.render(<ObjectiveMergedHistory question={question} />);
-    }
   }
 
   function setAnswer(name: string, value: string | string[]) {
@@ -503,7 +501,6 @@ export async function loadObjective() {
   if (cnt) {
     await loadAns();
     if (!active()) return;
-    renderMergedHistories();
     if (!readOnly) {
       $statement.find('.objective-input[type!=checkbox]').on('input.objective', (e: JQuery.TriggeredEvent<HTMLInputElement>) => {
         setAnswer(e.target.name, e.target.value);

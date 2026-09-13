@@ -260,33 +260,121 @@ describe('objective answer submission UI', { concurrency: false }, () => {
         assert.equal(h.calls.dialogs.length, 0);
     });
 
-    it('marks every previously selected single-choice option and preserves chronological attempts with their results', async (t) => {
+    it('shows a first-correct choice in green and leaves untouched options neutral without history or selection counts', async (t) => {
+        const h = await harness({ context: { objectiveMergedReview: mergedReviewFixture() } });
+        t.after(() => h.close());
+        const first = h.doc.querySelector('[name="1"][value="A"]').closest('label');
+        const untouched = h.doc.querySelector('[name="1"][value="B"]').closest('label');
+        assert.ok(first.classList.contains('is-correct'));
+        assert.ok(!first.classList.contains('is-ever-selected'));
+        assert.ok(!first.classList.contains('is-retry-correct'));
+        assert.ok(!first.classList.contains('is-incorrect'));
+        assert.ok(first.querySelector('input').checked);
+        for (const state of ['is-correct', 'is-incorrect', 'is-retry-correct', 'is-ever-selected']) {
+            assert.ok(!untouched.classList.contains(state), `An untouched option must not have ${state}`);
+        }
+        assert.equal(h.doc.querySelectorAll('.objective-choice-history, .objective-merged-history, .objective-merged-history-root').length, 0);
+        assert.doesNotMatch(h.doc.querySelector('.problem-content').textContent, /作答历程|曾选|第\s*\d+\s*次/);
+        assert.doesNotMatch(h.doc.querySelector('.objective-merged-legend-note').textContent, /历次答案/);
+    });
+
+    it('shows the last wrong choice in red and prior choices in yellow even after an earlier correct submission', async (t) => {
         const h = await harness({ context: { objectiveMergedReview: mergedReviewFixture() } });
         t.after(() => h.close());
         const first = h.doc.querySelector('[name="2"][value="A"]').closest('label');
         const second = h.doc.querySelector('[name="2"][value="B"]').closest('label');
         assert.ok(first.classList.contains('is-ever-selected'));
-        assert.ok(second.classList.contains('is-ever-selected'));
-        assert.equal(first.querySelector('.objective-choice-history').textContent, '曾选 1 次');
-        assert.equal(second.querySelector('.objective-choice-history').textContent, '曾选 2 次');
-        const history = h.doc.querySelector('[aria-label="第 2 题作答历程"]');
-        assert.deepEqual([...history.querySelectorAll('.objective-merged-history__answer')].map((element) => element.textContent), ['B', 'A', 'B']);
-        assert.deepEqual([...history.querySelectorAll('.objective-merged-history__result')].map((element) => element.textContent), ['错误', '正确', '错误']);
-        assert.equal(history.querySelector('time').dateTime, '2026-09-13T01:15:00.000Z');
-        assert.ok(h.doc.querySelector('[name="2"][value="A"]').checked, 'The last correct answer is the read-only representative');
+        assert.ok(!first.classList.contains('is-correct'));
+        assert.ok(!first.classList.contains('is-incorrect'));
+        assert.ok(!first.querySelector('input').checked);
+        assert.ok(second.classList.contains('is-incorrect'));
+        assert.ok(!second.classList.contains('is-ever-selected'));
+        assert.ok(!second.classList.contains('is-correct'));
+        assert.ok(second.querySelector('input').checked, 'The final submitted choice takes precedence over an earlier correct answer');
+        assert.ok(h.nav(2).classList.contains('is-retry-correct'), 'The answer card retains its cumulative result');
+        assert.equal(h.doc.querySelectorAll('.objective-choice-history, .objective-merged-history').length, 0);
     });
 
-    it('retains each multi-choice combination and safely displays historical text answers', async (t) => {
-        const h = await harness({ context: { objectiveMergedReview: mergedReviewFixture() } });
+    it('shows the last correct choice in green and a previous wrong choice in yellow after retrying', async (t) => {
+        const merged = mergedReviewFixture();
+        merged.questions[1].attempts.pop();
+        const h = await harness({ context: { objectiveMergedReview: merged } });
         t.after(() => h.close());
-        const history = h.doc.querySelector('[aria-label="第 6 题作答历程"]');
-        assert.deepEqual([...history.querySelectorAll('.objective-merged-history__answer')].map((element) => element.textContent), ['A', 'B + C', 'A + C']);
-        assert.equal(h.doc.querySelector('[name="6"][value="A"]').closest('label').querySelector('.objective-choice-history').textContent, '曾选 2 次');
-        const textHistory = h.doc.querySelector('[aria-label="第 4 题作答历程"]');
-        assert.match(textHistory.textContent, /<img src=x onerror=alert\(1\)>/);
-        assert.equal(textHistory.querySelector('img'), null, 'Answers render as text, never executable HTML');
-        assert.equal(h.doc.querySelector('[name="4"]').value, '42');
-        assert.match(h.doc.querySelector('[aria-label="第 5 题作答历程"]').textContent, /尚未填写/);
+        const final = h.doc.querySelector('[name="2"][value="A"]').closest('label');
+        const previous = h.doc.querySelector('[name="2"][value="B"]').closest('label');
+        assert.ok(final.classList.contains('is-correct'));
+        assert.ok(!final.classList.contains('is-ever-selected'));
+        assert.ok(!final.classList.contains('is-retry-correct'));
+        assert.ok(final.querySelector('input').checked);
+        assert.ok(previous.classList.contains('is-ever-selected'));
+        assert.ok(!previous.classList.contains('is-incorrect'));
+        assert.ok(!previous.querySelector('input').checked);
+        assert.ok(h.nav(2).classList.contains('is-retry-correct'));
+    });
+
+    it('colors only the latest multi-choice combination by its result and other previously chosen options yellow', async () => {
+        for (const correct of [false, true]) {
+            const merged = mergedReviewFixture();
+            if (correct) merged.questions[5].attempts.pop();
+            const h = await harness({ context: { objectiveMergedReview: merged } });
+            try {
+                const latest = correct ? ['B', 'C'] : ['A', 'C'];
+                for (const value of ['A', 'B', 'C']) {
+                    const input = h.doc.querySelector(`[name="6"][value="${value}"]`);
+                    const option = input.closest('label');
+                    assert.equal(input.checked, latest.includes(value));
+                    assert.equal(option.classList.contains('is-correct'), correct && latest.includes(value));
+                    assert.equal(option.classList.contains('is-incorrect'), !correct && latest.includes(value));
+                    assert.equal(option.classList.contains('is-ever-selected'), !latest.includes(value));
+                    assert.ok(!option.classList.contains('is-retry-correct'));
+                }
+                assert.ok(h.nav(6).classList.contains('is-retry-correct'));
+                assert.equal(h.doc.querySelectorAll('.objective-choice-history, .objective-merged-history').length, 0);
+            } finally { await h.close(); }
+        }
+    });
+
+    it('keeps a final pending or failed choice neutral while marking earlier choices yellow', async () => {
+        for (const result of ['pending', 'error']) {
+            const merged = mergedReviewFixture();
+            merged.questions[1].attempts.at(-1).result = result;
+            const h = await harness({ context: { objectiveMergedReview: merged } });
+            try {
+                const previous = h.doc.querySelector('[name="2"][value="A"]').closest('label');
+                const latest = h.doc.querySelector('[name="2"][value="B"]').closest('label');
+                assert.ok(previous.classList.contains('is-ever-selected'));
+                assert.ok(latest.querySelector('input').checked);
+                for (const state of ['is-correct', 'is-incorrect', 'is-retry-correct', 'is-ever-selected']) {
+                    assert.ok(!latest.classList.contains(state), `${result} latest choices must not have ${state}`);
+                }
+                assert.ok(h.nav(2).classList.contains('is-retry-correct'), 'The answer card retains its cumulative result');
+                assert.deepEqual(h.calls.get, []);
+            } finally { await h.close(); }
+        }
+    });
+
+    it('displays only the latest submitted text answer safely and colors it by the latest grade', async () => {
+        for (const result of ['correct', 'incorrect', 'pending', 'error']) {
+            const merged = mergedReviewFixture();
+            merged.questions[3].attempts.push({
+                rid: '6aa000000000000000000003',
+                answer: '<img src=x onerror=alert(1)>',
+                result,
+                submittedAt: '2026-09-13T03:15:00.000Z',
+            });
+            const h = await harness({ context: { objectiveMergedReview: merged } });
+            try {
+                const input = h.doc.querySelector('[name="4"]');
+                const field = input.closest('.objective-free-answer');
+                assert.equal(input.value, '<img src=x onerror=alert(1)>');
+                assert.equal(field.querySelector('img'), null, 'Submitted text is never interpreted as HTML');
+                assert.equal(field.classList.contains('is-correct'), result === 'correct');
+                assert.equal(field.classList.contains('is-incorrect'), result === 'incorrect');
+                assert.ok(!field.classList.contains('is-retry-correct'));
+                assert.equal(h.doc.querySelector('[name="5"]').value, '');
+                assert.equal(h.doc.querySelectorAll('.objective-choice-history, .objective-merged-history').length, 0);
+            } finally { await h.close(); }
+        }
     });
 
     it('keeps merged bank and homework review read-only and never reads or writes the teacher draft or polls their submission', async (t) => {
@@ -311,9 +399,9 @@ describe('objective answer submission UI', { concurrency: false }, () => {
                 assert.deepEqual(h.calls.save, []);
                 assert.deepEqual(h.calls.get, []);
                 assert.deepEqual(h.calls.post, []);
-                assert.equal(h.doc.querySelectorAll('.objective-merged-history').length, 6);
+                assert.equal(h.doc.querySelectorAll('.objective-choice-history, .objective-merged-history').length, 0);
                 await act(async () => { await h.controller.loadObjective(); });
-                assert.equal(h.doc.querySelectorAll('.objective-merged-history').length, 6);
+                assert.equal(h.doc.querySelectorAll('.objective-choice-history, .objective-merged-history').length, 0);
             } finally { await h.close(); }
         }
     });

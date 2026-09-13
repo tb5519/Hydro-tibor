@@ -416,131 +416,17 @@ for result in correct retry-correct incorrect
   font-size: 11px
   line-height: 1.7
 
-.objective-merged-history-root
-  clear: both
+.objective-problem-mode .objective-options label.objective-option.is-ever-selected
+  .objective-choice-body
+    border-color: var(--objective-retry-correct-border)
+    background: var(--objective-retry-correct-soft)
+    color: var(--objective-retry-correct)
+    box-shadow: none
 
-.objective-problem-mode .objective-merged-history
-  margin: 16px 0 32px
-  padding: 16px 18px
-  border: 1px solid var(--ui-v2-border)
-  border-radius: 12px
-  background: var(--ui-v2-surface-muted)
-  color: var(--ui-v2-text)
-  font-size: 13px
-  line-height: 1.7
-
-  &__heading
-    display: flex
-    align-items: center
-    justify-content: space-between
-    gap: 12px
-
-    strong
-      margin: 0
-      font-size: 13px
-      font-weight: 600
-
-      span
-        margin-left: 5px
-        font-size: 12px
-        font-weight: 400
-        color: var(--ui-v2-text-muted)
-
-  &__outcome
-    flex-shrink: 0
-    font-size: 12px
-    color: var(--ui-v2-text-muted)
-
-    &.is-first_correct
-      color: var(--objective-correct)
-
-    &.is-correct_after_retry
-      color: var(--objective-retry-correct)
-
-    &.is-incorrect
-      color: var(--objective-incorrect)
-
-  ol.objective-merged-history__attempts
-    display: flex
-    flex-direction: column
-    gap: 8px
-    margin: 12px 0 0
-    padding: 0
-    max-height: 260px
-    overflow-y: auto
-    overscroll-behavior: contain
-    scrollbar-width: thin
-    list-style: none
-
-  li.objective-merged-history__attempt
-    display: grid
-    grid-template-columns: 48px minmax(0, 1fr) auto
-    align-items: baseline
-    gap: 2px 12px
-    margin: 0
-    padding: 9px 12px
-    border: 1px solid var(--ui-v2-border)
-    border-radius: 8px
-    background: var(--ui-v2-surface)
-
-  &__index, &__time
-    color: var(--ui-v2-text-muted)
-    font-size: 11px
-    font-variant-numeric: tabular-nums
-
-  &__answer
-    white-space: pre-wrap
-    overflow-wrap: anywhere
-
-  &__time
-    grid-column: 2 / -1
-    font-size: 10px
-
-  &__result
-    font-size: 11px
-    white-space: nowrap
-    color: var(--ui-v2-text-muted)
-
-  .objective-merged-history__attempt.is-correct .objective-merged-history__result
-    color: var(--objective-correct)
-
-  .objective-merged-history__attempt.is-incorrect .objective-merged-history__result
-    color: var(--objective-incorrect)
-
-  &__empty
-    margin: 10px 0 0
-    color: var(--ui-v2-text-muted)
-    font-size: 12px
-
-.objective-problem-mode .objective-choice-history
-  flex-shrink: 0
-  margin-left: auto
-  padding: 2px 6px
-  border: 1px solid var(--ui-v2-border)
-  border-radius: 5px
-  color: var(--ui-v2-text-muted)
-  background: var(--ui-v2-surface)
-  font-size: 10px
-  line-height: 1.5
-  white-space: nowrap
-
-.objective-problem-mode .objective-option.is-ever-selected:not(.is-correct):not(.is-retry-correct):not(.is-incorrect) .objective-choice-body
-  border-style: dashed
-  border-color: var(--ui-v2-border-strong)
-
-@media (max-width: 600px)
-  .objective-problem-mode .objective-merged-history
-    padding: 13px
-    margin-bottom: 24px
-
-    li.objective-merged-history__attempt
-      grid-template-columns: 40px minmax(0, 1fr) auto
-      gap: 2px 7px
-      padding: 8px
-
-  .objective-problem-mode .objective-choice-history
-    font-size: 9px
-    padding: 2px 4px
+    .objective-choice-letter
+      border-color: var(--objective-retry-correct)
+      background: var(--objective-retry-correct)
+      color: #fff
 
 .objective-draft-note
   display: block
