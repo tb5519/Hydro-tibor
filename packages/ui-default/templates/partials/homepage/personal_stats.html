@@ -45,7 +45,24 @@
       </div>
       <div class="homepage-personal__stat">
         <span>7 天新增 AC</span>
-        <strong>{{ stats.newAc7|default(0) }}</strong>
+        <div class="homepage-personal__weekly-value">
+          <strong>{{ stats.newAc7|default(0) }}</strong>
+          {% if stats.weeklyAc %}
+            {% set weeklyScope = '工作区所有域' if stats.weeklyAc.scope == 'workspace' else '当前域' %}
+            {% set weeklyNote = weeklyScope + ' · 按平台时区统计近 7 个自然日正式提交首次 AC 的题目数，重复通过不重复计数，管理员不参与排名。' %}
+            {% if not stats.weeklyAc.eligible %}
+              <span class="homepage-personal__weekly-note" title="{{ weeklyNote }}">不参与排名</span>
+            {% elif not stats.weeklyAc.topCount %}
+              <span class="homepage-personal__weekly-note" title="{{ weeklyNote }}">暂无领跑</span>
+            {% elif stats.weeklyAc.isTop %}
+              <span class="homepage-personal__weekly-top" role="img" aria-label="近 7 天 AC 第 1 名" title="{{ weeklyNote }}并列第一同样获得 TOP 1。">
+                TOP 1
+              </span>
+            {% else %}
+              <span class="homepage-personal__weekly-gap" title="{{ weeklyNote }}追平第 1 名还需 {{ stats.weeklyAc.gap }} 题。"><span>距 Top 1</span><span>差 <b>{{ stats.weeklyAc.gap }}</b> 题</span></span>
+            {% endif %}
+          {% endif %}
+        </div>
       </div>
       <div class="homepage-personal__stat">
         <span>30 天新增 AC</span>
@@ -232,7 +249,7 @@
     border-radius: 8px;
     background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
   }
-  .homepage-personal__stat span {
+  .homepage-personal__stat > span {
     display: block;
     margin-bottom: .2rem;
     color: #64748b;
@@ -244,6 +261,67 @@
     color: #0f172a;
     font-size: 1.25rem;
     line-height: 1.15;
+  }
+  .homepage-personal__weekly-value {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .3rem;
+    min-width: 0;
+    min-height: 1.75rem;
+  }
+  .homepage-personal__weekly-value > strong {
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
+  }
+  .homepage-personal__weekly-top {
+    display: block;
+    flex: 0 1 auto;
+    min-width: 0;
+    padding: .2rem .32rem;
+    border: 1px solid #f0dfb6;
+    border-radius: 6px;
+    background: #fffbef;
+    color: #936514;
+    font-size: .6rem;
+    font-weight: 800;
+    letter-spacing: .015em;
+    line-height: 1.2;
+    text-align: center;
+  }
+  .homepage-personal__weekly-gap,
+  .homepage-personal__weekly-note {
+    min-width: 0;
+    color: var(--ui-v2-text-muted, #64748b);
+    font-size: .62rem;
+    line-height: 1.4;
+    text-align: right;
+  }
+  .homepage-personal__weekly-gap {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    column-gap: .22rem;
+  }
+  .homepage-personal__weekly-gap > span {
+    white-space: nowrap;
+  }
+  .homepage-personal__weekly-gap b {
+    color: var(--ui-v2-accent, #2563eb);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .theme--dark .homepage-personal__weekly-top {
+    border-color: #695530;
+    background: #392f21;
+    color: #edcc88;
+  }
+  .theme--dark .homepage-personal__weekly-gap,
+  .theme--dark .homepage-personal__weekly-note {
+    color: #a4b3c5;
+  }
+  .theme--dark .homepage-personal__weekly-gap b {
+    color: #93c5fd;
   }
   .homepage-personal__mistakes {
     margin-top: .9rem;

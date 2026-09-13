@@ -4,7 +4,6 @@ import { isoBase64URL, isoUint8Array } from '@simplewebauthn/server/helpers';
 import yaml from 'js-yaml';
 import { pick } from 'lodash';
 import { lookup } from 'mime-types';
-import moment from 'moment-timezone';
 import { Binary, ObjectId } from 'mongodb';
 import { UAParser } from 'ua-parser-js';
 import { Context } from '../context';
@@ -19,6 +18,7 @@ import { getBadgeHonorWall } from '../lib/badge_honor_wall';
 import { getDomainRankingMode } from '../lib/domain_ranking';
 import { getHomePosterConfig } from '../lib/home_poster';
 import * as mail from '../lib/mail';
+import { getPersonalAcGrowth, invalidatePersonalAcGrowth } from '../lib/personal_ac_growth';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
 import {
     canReceivePointLotteryBadge, ensureGlobalPointLotteryState, expireDuePointLotteryBadgeGrants, expirePointLotteryBadgeGrant,
@@ -40,7 +40,6 @@ import domain from '../model/domain';
 import message from '../model/message';
 import * as mistake from '../model/mistake';
 import ProblemModel from '../model/problem';
-import record from '../model/record';
 import ScheduleModel from '../model/schedule';
 import * as setting from '../model/setting';
 import storage from '../model/storage';
@@ -52,7 +51,7 @@ import workspace from '../model/workspace';
 import {
     Handler, param, query, requireSudo, Types,
 } from '../service/server';
-import { camelCase, md5, Time } from '../utils';
+import { camelCase, md5 } from '../utils';
 
 function homeworkVisibilityQuery(uid: number, groups: string[]) {
     return {
@@ -374,11 +373,6 @@ export class HomeHandler extends Handler {
         const uid = this.user._id;
         this.collectUser([uid]);
 
-        const timeZone = this.user.timeZone || system.get('timeZone') || 'Asia/Shanghai';
-        const now = moment().tz(timeZone);
-        const start7 = now.clone().subtract(6, 'days').startOf('day');
-        const start30 = now.clone().subtract(29, 'days').startOf('day');
-
         let rankingRow = this.rankingRows.get(uid);
         if (!rankingRow && getDomainRankingMode(this.domain) === 'all') {
             rankingRow = (await getSharedRankingSnapshot()).find((row) => row.uid === uid);
@@ -386,30 +380,14 @@ export class HomeHandler extends Handler {
 
         const [
             domainRankingDoc,
-            firstAcceptedRows,
+            acGrowth,
             mistakes,
         ] = await Promise.all([
             rankingRow ? null : domain.collUser.findOne(
                 { domainId, uid },
                 { projection: { rp: 1, nAccept: 1, nSubmit: 1, level: 1, rpInfo: 1 } },
             ),
-            record.coll.aggregate([
-                {
-                    $match: {
-                        uid,
-                        pid: { $gt: 0 },
-                        status: STATUS.STATUS_ACCEPTED,
-                        contest: { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] },
-                    },
-                },
-                {
-                    $group: {
-                        _id: { domainId: '$domainId', pid: '$pid' },
-                        firstRecordId: { $min: '$_id' },
-                    },
-                },
-                { $match: { firstRecordId: { $gte: Time.getObjectID(start30.toDate()) } } },
-            ]).toArray(),
+            getPersonalAcGrowth(this.ctx, this.domain, uid, system.get('timeZone') || 'Asia/Shanghai'),
             this.getPersonalMistakes(domainId),
         ]);
 
@@ -423,20 +401,11 @@ export class HomeHandler extends Handler {
             rank = strongerCount + 1;
         }
 
-        let newAc7 = 0;
-        let newAc30 = 0;
-        for (const row of firstAcceptedRows as any[]) {
-            const acceptedAt = row.firstRecordId.getTimestamp();
-            if (acceptedAt >= start30.toDate()) newAc30++;
-            if (acceptedAt >= start7.toDate()) newAc7++;
-        }
-
         return {
             uid,
             rp: Math.floor(rankingRow ? rankingRow.totalRp : (+domainRankingDoc?.rp || 0)),
             rank,
-            newAc7,
-            newAc30,
+            ...acGrowth,
             mistakes,
         };
     }
@@ -1277,6 +1246,7 @@ class HomeMessagesHandler extends Handler {
 
 export const inject = { geoip: { required: false }, oauth: {} };
 export async function apply(ctx: Context) {
+    ctx.on('record/change', invalidatePersonalAcGrowth);
     ctx.Route('homepage', '/', HomeHandler);
     ctx.Route('badge_honor_wall', '/badge-honor-wall', BadgeHonorWallHandler, PERM.PERM_VIEW_RANKING);
     ctx.Route('home_poster_image', '/home/poster', HomePosterImageHandler);
