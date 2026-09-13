@@ -18,6 +18,24 @@ const page = new NamedPage(['contest_edit', 'contest_create', 'homework_create',
   if (!pagename.startsWith('homework')) {
     AssignSelectAutoComplete.getOrConstruct($('[name="assign"]'), { multi: true });
   }
+  const $audience = $('[data-contest-audience]');
+  if ($audience.length) {
+    const $levels = $audience.find<HTMLInputElement>('[name="targetStudentLevels"]');
+    const updateLevelSummary = () => {
+      const levels = $levels.filter(':checked').toArray().map((input) => Number(input.value));
+      $audience.find('[data-contest-level-all]').attr('aria-pressed', String(!levels.length));
+      const summary = levels.length
+        ? `仅 ${levels.map((level) => (level === 9 ? 'MAX' : `${level} 级`)).join('、')} 的学员可见`
+        : '全部等级的学员均可见';
+      $audience.find('[data-contest-level-summary]').text(summary);
+    };
+    $levels.on('change', updateLevelSummary);
+    $audience.find('[data-contest-level-all]').on('click', () => {
+      $levels.prop('checked', false);
+      updateLevelSummary();
+    });
+    updateLevelSummary();
+  }
   $('[name="rule"]').on('change', () => {
     const rule = $('[name="rule"]').val();
     $('.contest-rule-settings input').attr('disabled', 'disabled');

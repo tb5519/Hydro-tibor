@@ -7,6 +7,7 @@ import * as contest from '../model/contest';
 import problem, { type ProblemDoc } from '../model/problem';
 import record from '../model/record';
 import type { Handler } from '../service/server';
+import { canViewContestLevel } from './contest_access';
 import { buildObjectiveFeedback, type ObjectiveFeedback, parseObjectiveConfig } from './objective_feedback';
 
 export interface ObjectiveInitialSubmission {
@@ -61,7 +62,7 @@ export async function loadOwnObjectiveRecordSubmission(
     let visibleRecord = rdoc;
     if (rdoc.contest) {
         const tdoc = await contest.get(domainId, rdoc.contest);
-        if (!tdoc) throw new RecordNotFoundError(domainId, rdoc._id);
+        if (!tdoc || !canViewContestLevel(handler.user, tdoc)) throw new RecordNotFoundError(domainId, rdoc._id);
         const tsdoc = await contest.getStatus(domainId, tdoc.docId, handler.user._id);
         if (!tsdoc?.attend && !problem.canViewBy(pdoc, handler.user)) throw new PermissionError(PERM.PERM_VIEW_PROBLEM_HIDDEN);
         const canView = handler.user.own(tdoc)

@@ -29,6 +29,10 @@ function loadSource(filename, imports, globals = {}) {
 const { PERM, PRIV } = loadSource('../../common/permission.ts', {});
 const { STATUS } = loadSource('../../common/status.ts', {});
 const builtin = { PERM, PRIV, STATUS };
+const contestAccess = loadSource('lib/contest_access.ts', {
+    '../model/builtin': builtin,
+    './student_level': loadSource('lib/student_level.ts', {}),
+});
 const scope = loadSource('lib/record_list_scope.ts', { '../model/builtin': builtin });
 const navigation = loadSource('lib/ui.ts', {
     '../model/builtin': builtin, './record_list_scope': scope,
@@ -132,6 +136,8 @@ const handlers = loadSource('handler/record.ts', {
         RecordNotFoundError: Error, UserNotFoundError: Error,
     },
     '../lib/badge_ac_theme': {}, '../lib/record_list_scope': scope,
+    '../lib/contest_access': contestAccess,
+    '../lib/homework_review': {}, '../lib/objective_submission': {}, '../lib/problem_record_replay': {},
     '../lib/record_visibility': {
         async getHiddenSuperAdminUids() { return hiddenUids; },
         appendHiddenSuperAdminFilter(query, uids) {
@@ -142,7 +148,10 @@ const handlers = loadSource('handler/record.ts', {
     '../model/record': recordModel, '../model/setting': {}, '../model/storage': {},
     '../model/system': { get: (key) => key === 'pagination.record' ? 20 : undefined },
     '../model/task': {}, '../model/user': userModel,
-    '../service/server': { Handler: TestHandler, ConnectionHandler: TestHandler, param: () => () => {}, subscribe: () => () => {}, Types: {} },
+    '../service/server': {
+        Handler: TestHandler, ConnectionHandler: TestHandler,
+        param: () => () => {}, query: () => () => {}, route: () => () => {}, subscribe: () => () => {}, Types: {},
+    },
     '../utils': { buildProjection: () => ({}), Time: { week: 604800000, getObjectID: () => new ObjectId('000000000000000000000002') } },
     './contest': { ContestDetailBaseHandler: TestHandler }, './judge': {},
 });

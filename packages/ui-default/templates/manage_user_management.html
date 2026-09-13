@@ -88,6 +88,9 @@
     font-weight: 700;
   }
   .student-management__form .textbox { width: 100%; }
+  .student-management__level-hint { margin: .4rem 0 0; color: #64748b; font-size: .76rem; line-height: 1.5; }
+  .student-note__level { display: inline-flex; align-items: center; margin-left: .45rem; padding: .12rem .42rem; border: 1px solid #dbeafe; border-radius: 6px; background: #eff6ff; color: #2563eb; font-size: .68rem; font-weight: 750; vertical-align: middle; white-space: nowrap; }
+  .student-note__level--max { border-color: #ddd6fe; background: #f5f3ff; color: #7c3aed; }
   .student-management__form .student-management__wide { grid-column: 1 / -1; }
   .student-management__cpp-mode {
     grid-column: 1 / -1;
@@ -737,7 +740,7 @@
               <div class="student-note__head">
                 <img class="student-note__avatar" loading="lazy" src="{{ avatarUrl(student.avatar|default('')) }}" alt="">
                 <div>
-                  <div class="student-note__name">{{ student.displayName }}</div>
+                  <div class="student-note__name">{{ student.displayName }}<span class="student-note__level{% if student.studentLevel == 9 %} student-note__level--max{% endif %}">{% if student.studentLevel == 9 %}MAX{% else %}{{ student.studentLevel }} 级{% endif %}</span></div>
                   <div class="student-note__uname">@{{ student.uname }}</div>
                 </div>
               </div>
@@ -817,9 +820,16 @@
                     <span>{{ _('学号') }}</span>
                     <input class="textbox" name="studentId" value="{{ selectedStudent.studentId|default('') }}" autocomplete="off">
                   </label>
-                  <label class="student-management__wide">
+                  <label>
                     <span>{{ _('学校') }}</span>
                     <input class="textbox" name="school" value="{{ selectedStudent.school|default('') }}" autocomplete="organization">
+                  </label>
+                  <label>
+                    <span>{{ _('学员等级') }}</span>
+                    <select class="textbox" name="studentLevel" required>
+                      {% for level in studentLevels %}<option value="{{ level.value }}"{% if selectedStudent.studentLevel == level.value %} selected{% endif %}>{{ level.label }}</option>{% endfor %}
+                    </select>
+                    <p class="student-management__level-hint">{{ _('用于匹配该学员可见的比赛，默认 1 级。') }}</p>
                   </label>
                   <div class="student-management__cpp-mode" role="radiogroup" aria-labelledby="student-cpp-mode-label">
                     <div class="student-management__cpp-mode-heading">
@@ -919,9 +929,15 @@
           <span>{{ _('学号') }}</span>
           <input class="textbox" name="studentId" autocomplete="off">
         </label>
-        <label class="student-create-dialog__field student-create-dialog__wide">
+        <label class="student-create-dialog__field">
           <span>{{ _('学校') }}</span>
           <input class="textbox" name="school" autocomplete="organization">
+        </label>
+        <label class="student-create-dialog__field">
+          <span>{{ _('学员等级') }}</span>
+          <select class="textbox" name="studentLevel" required>
+            {% for level in studentLevels %}<option value="{{ level.value }}"{% if level.value == 1 %} selected{% endif %}>{{ level.label }}</option>{% endfor %}
+          </select>
         </label>
         <label class="student-create-dialog__field student-create-dialog__wide">
           <span>{{ _('初始加入域') }} <em class="student-create-dialog__required" aria-hidden="true">*</em></span>

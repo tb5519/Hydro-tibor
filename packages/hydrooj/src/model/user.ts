@@ -8,6 +8,7 @@ import {
 } from '../interface';
 import avatar from '../lib/avatar';
 import pwhash from '../lib/hash.hydro';
+import { normalizeStudentLevel } from '../lib/student_level';
 import bus from '../service/bus';
 import db from '../service/db';
 import { Value } from '../typeutils';
@@ -75,6 +76,7 @@ export class User {
     loginat: Date;
     perm: bigint;
     role: string;
+    studentLevel: number;
     scope: bigint;
     _files: FileInfo[];
     tfa: boolean;
@@ -117,6 +119,8 @@ export class User {
         };
         load(setting.SETTINGS_BY_KEY, udoc);
         load(setting.DOMAIN_USER_SETTINGS_BY_KEY, dudoc);
+        // This is controlled by teachers, not a user-editable preference or domain RP level.
+        this.studentLevel = normalizeStudentLevel(udoc.studentLevel);
     }
 
     async init() {

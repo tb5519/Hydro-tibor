@@ -9,6 +9,7 @@ import {
 } from '../error';
 import { RecordDoc, Tdoc } from '../interface';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
+import { canViewContestLevel } from '../lib/contest_access';
 import { authorizeHomeworkReview, isHomeworkReviewRecord } from '../lib/homework_review';
 import { buildObjectiveInitialSubmission, loadObjectiveSubmissionConfig, loadOwnObjectiveRecordSubmission } from '../lib/objective_submission';
 import { listProblemSubmissionRecords } from '../lib/problem_record_replay';
@@ -140,7 +141,9 @@ export class RecordListHandler extends ContestDetailBaseHandler {
             tdoc = await contest.get(domainId, tid);
             this.tdoc = tdoc;
             if (!tdoc) throw new ContestNotFoundError(domainId, pid);
-            if (!contest.canShowScoreboard.call(this, tdoc, true)) throw new PermissionError(PERM.PERM_VIEW_CONTEST_HIDDEN_SCOREBOARD);
+            if (q.uid !== this.user._id && !contest.canShowScoreboard.call(this, tdoc, true)) {
+                throw new PermissionError(PERM.PERM_VIEW_CONTEST_HIDDEN_SCOREBOARD);
+            }
             if (!contest[q.uid === this.user._id ? 'canShowSelfRecord' : 'canShowRecord'].call(this, tdoc, true)) {
                 throw new PermissionError(PERM.PERM_VIEW_CONTEST_HIDDEN_SCOREBOARD);
             }
@@ -280,6 +283,7 @@ export class RecordDetailHandler extends ContestDetailBaseHandler {
             if (!canViewGeneratedRecord) throw new PermissionError(PERM.PERM_READ_RECORD_CODE);
         } else if (rdoc.contest) {
             this.tdoc = await contest.get(domainId, rdoc.contest);
+            if (!canViewContestLevel(this.user, this.tdoc)) throw new RecordNotFoundError(domainId, rid);
             let canView = this.user.own(this.tdoc);
             canView ||= contest.canShowRecord.call(this, this.tdoc);
             canView ||= contest.canShowSelfRecord.call(this, this.tdoc, true) && rdoc.uid === this.user._id;
@@ -412,8 +416,9 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
         this.recordListSelfOnly = !canManageRecordList(this.user);
         if (tid) {
             this.tdoc = await contest.get(domainId, tid);
-            if (!this.tdoc) throw new ContestNotFoundError(domainId, tid);
-            if (pretest || contest.canShowScoreboard.call(this, this.tdoc, true)) this.tid = tid.toHexString();
+            if (!this.tdoc || !canViewContestLevel(this.user, this.tdoc)) throw new ContestNotFoundError(domainId, tid);
+            if (pretest || (this.recordListSelfOnly && contest.canShowSelfRecord.call(this, this.tdoc, true))
+                || contest.canShowScoreboard.call(this, this.tdoc, true)) this.tid = tid.toHexString();
             else throw new PermissionError(PERM.PERM_VIEW_CONTEST_HIDDEN_SCOREBOARD);
             if (!this.user.own(this.tdoc) && !this.user.hasPerm(PERM.PERM_EDIT_CONTEST)) {
                 this.applyProjection = true;
@@ -548,6 +553,7 @@ export class RecordDetailConnectionHandler extends ConnectionHandler {
         if (!(await canViewRecordOwner(this.user, rdoc.uid))) throw new RecordNotFoundError(rid);
         if (rdoc.contest && ![record.RECORD_GENERATE, record.RECORD_PRETEST].some((i) => i.toHexString() === rdoc.contest.toHexString())) {
             this.tdoc = await contest.get(domainId, rdoc.contest);
+            if (!canViewContestLevel(this.user, this.tdoc)) throw new RecordNotFoundError(domainId, rid);
             let canView = this.user.own(this.tdoc);
             canView ||= contest.canShowRecord.call(this, this.tdoc);
             canView ||= this.user._id === rdoc.uid && contest.canShowSelfRecord.call(this, this.tdoc);
@@ -633,7 +639,7 @@ export class ContestSubmitFeedbackConnectionHandler extends ConnectionHandler {
             throw new RecordNotFoundError(domainId, rid);
         }
         const tdoc = await contest.get(domainId, rdoc.contest);
-        if (!tdoc) throw new RecordNotFoundError(domainId, rid);
+        if (!tdoc || !canViewContestLevel(this.user, tdoc)) throw new RecordNotFoundError(domainId, rid);
         this.rid = rid.toString();
         await this.onRecordChange(rdoc);
     }
@@ -673,7 +679,8 @@ export class ContestSubmitFeedbackHandler extends Handler {
             || [record.RECORD_GENERATE, record.RECORD_PRETEST].some((i) => i.equals(rdoc.contest))) {
             throw new RecordNotFoundError(domainId, rid);
         }
-        if (!(await contest.get(domainId, rdoc.contest))) throw new RecordNotFoundError(domainId, rid);
+        const tdoc = await contest.get(domainId, rdoc.contest);
+        if (!tdoc || !canViewContestLevel(this.user, tdoc)) throw new RecordNotFoundError(domainId, rid);
 
         this.response.body = {
             rdoc: {

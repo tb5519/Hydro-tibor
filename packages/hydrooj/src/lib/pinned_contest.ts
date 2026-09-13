@@ -39,7 +39,7 @@ export async function getLatestVisiblePinnedContest(
                 ],
             }),
     };
-    const [tdoc] = await (await contest.getMultiVisibleInDomain(domainId, query))
+    const [tdoc] = await (await contest.getMultiVisibleInDomain(domainId, query, currentUser))
         .sort({ beginAt: -1, _id: -1 })
         .limit(1)
         .toArray();

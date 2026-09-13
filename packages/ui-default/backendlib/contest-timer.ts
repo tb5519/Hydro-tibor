@@ -2,11 +2,13 @@ import {
   ContestModel, Context, DocumentModel, DomainModel, Handler, PERM, PRIV, UserModel,
 } from 'hydrooj';
 import type { Tdoc } from 'hydrooj/src/interface';
+import { canViewContestLevel } from 'hydrooj/src/lib/contest_access';
 import workspace from 'hydrooj/src/model/workspace';
 import { ActiveContestTimer, ContestTimerSnapshot, getContestTimerWindow } from '../common/contest-timer';
 
 type TimerContest = Pick<Tdoc,
-  'docId' | 'domainId' | 'title' | 'rule' | 'beginAt' | 'endAt' | 'duration' | 'allDomains' | 'owner' | 'assign'>;
+  'docId' | 'domainId' | 'title' | 'rule' | 'beginAt' | 'endAt' | 'duration'
+  | 'allDomains' | 'owner' | 'assign' | 'maintainer' | 'targetStudentLevels'>;
 
 export async function getActiveContestTimers(that: Handler): Promise<ContestTimerSnapshot> {
   const empty = () => ({ serverNow: Date.now(), contests: [] });
@@ -32,6 +34,7 @@ export async function getActiveContestTimers(that: Handler): Promise<ContestTime
     rule: { $ne: 'homework' }, beginAt: { $lte: new Date(now) }, endAt: { $gt: new Date(now) },
   }).project<TimerContest>({
     docId: 1, domainId: 1, title: 1, rule: 1, beginAt: 1, endAt: 1, duration: 1, allDomains: 1, owner: 1, assign: 1,
+    maintainer: 1, targetStudentLevels: 1,
   }).toArray();
   const statusMap = new Map(statuses.map((status) => [`${status.domainId}/${status.docId}`, status]));
   const users = new Map<string, ReturnType<typeof UserModel.getById>>();
@@ -44,7 +47,7 @@ export async function getActiveContestTimers(that: Handler): Promise<ContestTime
     const window = getContestTimerWindow(contest, status, now);
     if (!window || !ContestModel.RULES[contest.rule] || ContestModel.RULES[contest.rule].hidden) return null;
     const sourceUser = await getUser(contest.domainId);
-    if (!sourceUser) return null;
+    if (!sourceUser || !canViewContestLevel(sourceUser, contest)) return null;
     // Shared contests use the current accessible bank; private contests return
     // to their source bank only while the student can still view it.
     const linkDomain = contest.allDomains ? entryDomain._id : contest.domainId;

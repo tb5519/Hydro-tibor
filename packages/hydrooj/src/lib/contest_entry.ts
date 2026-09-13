@@ -8,6 +8,7 @@ import record from '../model/record';
 import user from '../model/user';
 import workspace from '../model/workspace';
 import type { ConnectionHandler, Handler } from '../service/server';
+import { canViewContestLevel } from './contest_access';
 
 export interface ContestEntryContext {
     domain: DomainDoc;
@@ -64,6 +65,7 @@ export async function resolveContestEntry(handler: Handler | ConnectionHandler) 
         user.getById(tdoc.domainId, handler.user._id, handler.session.scope),
     ]);
     if (!sourceDomain || !sourceUser) throw new NotFoundError(tid);
+    if (!canViewContestLevel(sourceUser, tdoc)) throw new NotFoundError(tid);
     if (workspace.resolveDomainWorkspaceId(sourceDomain) !== workspace.resolveDomainWorkspaceId(entryDomain)) {
         throw new NotFoundError(tid);
     }

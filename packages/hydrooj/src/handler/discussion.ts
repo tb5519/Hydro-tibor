@@ -80,12 +80,13 @@ class DiscussionMainHandler extends Handler {
         );
         const udict = await user.getList(domainId, ddocs.map((ddoc) => ddoc.owner));
         const [vndict, vnodes] = await Promise.all([
-            discussion.getListVnodes(domainId, ddocs, this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN), this.user.group),
+            discussion.getListVnodes(domainId, ddocs, this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN), this.user.group, this.user),
             discussion.getNodes(domainId),
         ]);
         this.response.template = 'discussion_main_or_node.html';
         this.response.body = {
-            ddocs, dpcount, udict, page, page_name: 'discussion_main', vndict, vnode: {}, vnodes,
+            ddocs: ddocs.filter((ddoc) => ddoc.parentType !== document.TYPE_CONTEST || vndict[ddoc.parentType]?.[ddoc.parentId.toString()]),
+            dpcount, udict, page, page_name: 'discussion_main', vndict, vnode: {}, vnodes,
         };
     }
 }

@@ -36,6 +36,7 @@ import BlackListModel from '../model/blacklist';
 import { PERM, PRIV, STATUS } from '../model/builtin';
 import * as contest from '../model/contest';
 import * as discussion from '../model/discussion';
+import * as document from '../model/document';
 import domain from '../model/domain';
 import message from '../model/message';
 import * as mistake from '../model/mistake';
@@ -212,7 +213,7 @@ export class HomeHandler extends Handler {
                     ],
                 },
         };
-        const tdocs = await (await contest.getMultiVisibleInDomain(domainId, q)).sort({
+        const tdocs = await (await contest.getMultiVisibleInDomain(domainId, q, this.user)).sort({
             pinned: -1, endAt: -1, beginAt: -1, _id: -1,
         })
             .limit(limit).toArray();
@@ -303,9 +304,9 @@ export class HomeHandler extends Handler {
     async getDiscussion(domainId: string, limit = 20) {
         if (!this.user.hasPerm(PERM.PERM_VIEW_DISCUSSION)) return [[], {}];
         const ddocs = await discussion.getMulti(domainId).limit(limit).toArray();
-        const vndict = await discussion.getListVnodes(domainId, ddocs, this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN), this.user.group);
+        const vndict = await discussion.getListVnodes(domainId, ddocs, this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN), this.user.group, this.user);
         this.collectUser(ddocs.map((ddoc) => ddoc.owner));
-        return [ddocs, vndict];
+        return [ddocs.filter((ddoc) => ddoc.parentType !== document.TYPE_CONTEST || vndict[ddoc.parentType]?.[ddoc.parentId.toString()]), vndict];
     }
 
     async getRanking(domainId: string, limit = 50) {

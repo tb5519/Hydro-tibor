@@ -26,6 +26,7 @@ import {
 } from '../interface';
 import avatar from '../lib/avatar';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
+import { canViewContestLevel } from '../lib/contest_access';
 import {
     authorizeHomeworkReview, loadHomeworkReviewRecord, publicHomeworkReviewRecord, rejectHomeworkReviewMutation,
 } from '../lib/homework_review';
@@ -873,8 +874,8 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
                 contest.getRelated(this.args.domainId, this.pdoc.docId),
                 contest.getRelated(this.args.domainId, this.pdoc.docId, 'homework'),
             ])).map((tdocs) => tdocs.filter((tdoc) =>
-                this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_CONTEST) || !tdoc.assign?.length
-                || new Set(tdoc.assign).intersection(new Set(this.user.group)).size,
+                canViewContestLevel(this.user, tdoc) && (this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_CONTEST) || !tdoc.assign?.length
+                    || new Set(tdoc.assign).intersection(new Set(this.user.group)).size),
             ));
         }
         if (!this.UiContext.homeworkReview && !this.UiContext.recordReplay && !args[2]

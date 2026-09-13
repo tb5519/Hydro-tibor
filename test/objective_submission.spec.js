@@ -1,3 +1,5 @@
+global.Hydro ||= { model: {} };
+const contestAccess = require('../packages/hydrooj/src/lib/contest_access');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -42,6 +44,7 @@ function fixture(records = [], options = {}) {
             RecordNotFoundError: class RecordNotFoundError extends Error {},
         },
         '../model/builtin': { PRIV: { PRIV_USER_PROFILE: 1 }, PERM: { PERM_EDIT_CONTEST: 1, PERM_VIEW_PROBLEM_HIDDEN: 2 } },
+        './contest_access': contestAccess,
         './objective_feedback': feedback,
         '../model/problem': {
             PROJECTION_PUBLIC: ['config', 'reference'],

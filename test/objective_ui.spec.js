@@ -6,8 +6,11 @@ const esbuild = require('esbuild');
 const jqueryFactory = require('jquery');
 const { JSDOM } = require('jsdom');
 const yaml = require('js-yaml');
+// The Hydro register hook defaults to production, which intentionally omits React's act helper.
+process.env.NODE_ENV = 'test';
 const React = require('react');
 const ReactDOM = require('react-dom/client');
+const act = React.act || require('react-dom/test-utils').act;
 
 const uiRoot = path.resolve(__dirname, '../packages/ui-default');
 const rid = '6aa000000000000000000001';
@@ -163,12 +166,12 @@ async function harness(options = {}) {
             }),
         },
     });
-    await React.act(async () => { await controller.loadObjective(); });
-    const flush = () => React.act(async () => { await new Promise((resolve) => setImmediate(resolve)); });
+    await act(async () => { await controller.loadObjective(); });
+    const flush = () => act(async () => { await new Promise((resolve) => setImmediate(resolve)); });
     async function event(selector, type = 'click') {
         const element = dom.window.document.querySelector(selector);
         assert.ok(element, `Missing element: ${selector}`);
-        await React.act(async () => { $(element).trigger(type); });
+        await act(async () => { $(element).trigger(type); });
         await flush();
     }
     async function answer(id, value, checked = true) {
@@ -192,7 +195,7 @@ async function harness(options = {}) {
         submit: () => event('.objective-submit'),
         nav: (id) => dom.window.document.querySelector(`.objective-nav-item[href="#p${id}"]`),
         async close() {
-            await React.act(async () => {
+            await act(async () => {
                 for (const root of roots) root.unmount();
                 for (const dialog of calls.dialogs) dialog.close();
             });
@@ -235,7 +238,7 @@ describe('objective answer submission UI', { concurrency: false }, () => {
         const pending = JSON.parse(h.dom.window.sessionStorage.getItem(importMarker));
         assert.deepEqual(pending.ownSubmission.answers, { 1: 'A', 2: 'A' });
         assert.deepEqual(pending.ownSubmission.feedback, { rid, state: 'pending' });
-        await React.act(async () => { result.resolve(complete([question(1, 'correct'), question(2, 'correct')])); });
+        await act(async () => { result.resolve(complete([question(1, 'correct'), question(2, 'correct')])); });
         await h.flush();
         assert.equal(h.doc.querySelector('.objective-nav-result-score strong').textContent, '20');
         assert.equal(h.doc.querySelector('.objective-nav-result-label').textContent, '最近一次得分');
@@ -335,7 +338,7 @@ describe('objective answer submission UI', { concurrency: false }, () => {
                 let globalAnchorClicks = 0;
                 h.doc.body.addEventListener('click', () => { globalAnchorClicks++; });
                 const clickNumber = new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
-                await React.act(async () => { h.nav(2).querySelector('.id').dispatchEvent(clickNumber); });
+                await act(async () => { h.nav(2).querySelector('.id').dispatchEvent(clickNumber); });
                 assert.equal(clickNumber.defaultPrevented, true);
                 assert.equal(h.calls.scroll.length, 1);
                 assert.equal(h.calls.scroll[0].top, 624);
@@ -344,7 +347,7 @@ describe('objective answer submission UI', { concurrency: false }, () => {
                 assert.equal(h.dom.window.location.hash, '#p2');
                 assert.equal(globalAnchorClicks, 0, 'Do not run the global anchor animation a second time');
                 nav.getBoundingClientRect = () => ({ bottom: 80 });
-                await React.act(async () => {
+                await act(async () => {
                     h.nav(2).dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
                 });
                 assert.equal(h.calls.scroll[1].top, 604, 'A resized navigation gets a fresh offset');
@@ -393,14 +396,14 @@ describe('objective answer submission UI', { concurrency: false }, () => {
         assert.equal(h.calls.post.length, 1);
         assert.equal(h.doc.querySelector('.objective-submit').disabled, true);
         assert.ok([...h.doc.querySelectorAll('.objective-input')].every((input) => input.disabled));
-        await React.act(async () => { post.resolve({ rid: { $oid: rid } }); });
+        await act(async () => { post.resolve({ rid: { $oid: rid } }); });
         await h.flush();
         assert.equal(h.calls.get.length, 1);
         assert.equal(h.doc.querySelector('.objective-submit').disabled, true);
         assert.equal(h.calls.dialogs.length, 0);
         await h.submit();
         assert.equal(h.calls.post.length, 1);
-        await React.act(async () => { pause.resolve(); });
+        await act(async () => { pause.resolve(); });
         await h.flush();
         assert.equal(h.calls.get.length, 2);
         assert.equal(h.calls.dialogs.length, 1);
@@ -515,7 +518,7 @@ describe('objective answer submission UI', { concurrency: false }, () => {
     it('restores a valid draft including checkbox selections without duplicating controls on repeated initialization', async (t) => {
         const h = await harness({ saved: { value: JSON.stringify({ 1: 'B', 4: '42', 5: 'draft', 6: ['A', 'C'] }) } });
         t.after(() => h.close());
-        await React.act(async () => { await h.controller.loadObjective(); });
+        await act(async () => { await h.controller.loadObjective(); });
         assert.equal(h.doc.querySelectorAll('.objective-submit').length, 1);
         assert.equal(h.doc.querySelectorAll('#problem-navigation').length, 1);
         assert.equal(h.doc.querySelectorAll('.objective-nav-item').length, 6);
@@ -591,7 +594,7 @@ describe('objective answer submission UI', { concurrency: false }, () => {
         t.after(() => h.close());
         assert.equal(h.calls.get.length, 1);
         assert.equal(h.doc.querySelector('.objective-submit').disabled, true);
-        await React.act(async () => { result.resolve(complete()); });
+        await act(async () => { result.resolve(complete()); });
         await h.flush();
         assert.ok(h.nav(1).classList.contains('is-correct'));
         assert.equal(h.doc.querySelector('.objective-nav-result-score strong').textContent, '10');

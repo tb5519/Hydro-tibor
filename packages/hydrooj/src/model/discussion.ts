@@ -5,6 +5,7 @@ import { DiscussionNodeNotFoundError, DocumentNotFoundError } from '../error';
 import {
     DiscussionHistoryDoc, DiscussionReplyDoc, DiscussionTailReplyDoc, Document,
 } from '../interface';
+import { canViewContestLevel } from '../lib/contest_access';
 import bus from '../service/bus';
 import db from '../service/db';
 import { NumberKeys } from '../typeutils';
@@ -307,11 +308,12 @@ export function getNodes(domainId: string) {
     return document.getMulti(domainId, document.TYPE_DISCUSSION_NODE).toArray();
 }
 
-export async function getListVnodes(domainId: string, ddocs: any, getHidden = false, assign: string[] = []) {
+export async function getListVnodes(domainId: string, ddocs: any, getHidden = false, assign: string[] = [], viewer?: User) {
     const res = {};
     async function task(ddoc: DiscussionDoc) {
         const vnode = await getVnode(domainId, ddoc.parentType, ddoc.parentId.toString());
         res[ddoc.parentType] ||= {};
+        if (viewer && ddoc.parentType === document.TYPE_CONTEST && !canViewContestLevel(viewer, vnode)) return;
         if (!getHidden && vnode.hidden) return;
         if (vnode.assign?.length && new Set(vnode.assign).intersection(new Set(assign)).size) return;
         res[ddoc.parentType][ddoc.parentId] = vnode;
@@ -321,6 +323,7 @@ export async function getListVnodes(domainId: string, ddocs: any, getHidden = fa
 }
 
 export function checkVNodeVisibility(type: number, vnode: any, user: User) {
+    if (type === document.TYPE_CONTEST && !canViewContestLevel(user, vnode)) return false;
     if (type === document.TYPE_PROBLEM) {
         if (vnode.hidden && !user.own(vnode) && !user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN)) return false;
     }

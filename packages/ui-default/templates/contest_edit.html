@@ -1,5 +1,33 @@
 {% extends "layout/basic.html" %}
 {% block content %}
+<style>
+  .contest-audience { --ca-text: var(--ui-v2-text, #182238); --ca-muted: var(--ui-v2-text-muted, #73839b); --ca-border: var(--ui-v2-border, #e1e8f2); --ca-surface: var(--ui-v2-surface, #fff); --ca-soft: #f7f9fc; --ca-blue: #2864ec; --ca-selected: #f0f5ff; margin-bottom: 24px; border: 1px solid var(--ca-border); border-radius: 14px; background: var(--ca-surface); color: var(--ca-text); overflow: hidden; }
+  .contest-audience *, .contest-audience *::before, .contest-audience *::after { box-sizing: border-box; }
+  .contest-audience__levels { min-width: 0; margin: 0; padding: 20px 22px; border: 0; }
+  .contest-audience__title { display: block; margin: 0; padding: 0; float: left; width: 100%; color: var(--ca-text); font-size: 14px; font-weight: 600; line-height: 1.5; }
+  .contest-audience__description { clear: both; margin: 7px 0 15px; color: var(--ca-muted); font-size: 12px; line-height: 1.7; }
+  .contest-audience__choices { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .contest-audience .contest-audience__all, .contest-audience__level span { display: inline-flex; align-items: center; justify-content: center; min-width: 52px; min-height: 36px; margin: 0; padding: 7px 13px; border: 1px solid var(--ca-border); border-radius: 8px; background: var(--ca-surface); color: var(--ca-muted); font: inherit; font-size: 12px; line-height: 20px; transition: background .15s ease, border-color .15s ease, color .15s ease; cursor: pointer; }
+  .contest-audience .contest-audience__all { min-width: 80px; }
+  .contest-audience .contest-audience__all:hover, .contest-audience__level:hover span { border-color: #adc3ed; color: var(--ca-blue); }
+  .contest-audience .contest-audience__all[aria-pressed="true"], .contest-audience__level input:checked + span { border-color: #adc6fa; background: var(--ca-selected); color: var(--ca-blue); font-weight: 600; }
+  .contest-audience__level { position: relative; margin: 0; }
+  .contest-audience .contest-audience__level input { position: absolute; width: 1px; height: 1px; margin: 0; padding: 0; border: 0; opacity: 0; }
+  .contest-audience__level input:focus-visible + span, .contest-audience__all:focus-visible { outline: 2px solid #82a7ff; outline-offset: 3px; }
+  .contest-audience__summary { margin: 12px 0 0; color: var(--ca-muted); font-size: 12px; line-height: 1.6; }
+  .contest-audience__options { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--ca-border); background: var(--ca-soft); }
+  .contest-audience .contest-audience__option { display: flex; align-items: flex-start; gap: 11px; min-width: 0; margin: 0; padding: 20px 22px; cursor: pointer; }
+  .contest-audience__option + .contest-audience__option { border-left: 1px solid var(--ca-border); }
+  .contest-audience .contest-audience__option input { flex: none; display: block; width: 16px; height: 16px; min-height: 0; margin: 3px 0 0; accent-color: var(--ca-blue); cursor: pointer; }
+  .contest-audience__option strong { display: block; color: var(--ca-text); font-size: 13px; font-weight: 600; line-height: 22px; }
+  .contest-audience__option small { display: block; margin-top: 5px; color: var(--ca-muted); font-size: 12px; line-height: 1.7; }
+  @media (max-width: 720px) {
+    .contest-audience__levels, .contest-audience .contest-audience__option { padding: 18px; }
+    .contest-audience__options { grid-template-columns: 1fr; }
+    .contest-audience__option + .contest-audience__option { border-top: 1px solid var(--ca-border); border-left: 0; }
+  }
+  .theme--dark .contest-audience, html[data-theme="dark"] .contest-audience { --ca-text: #e4ecf7; --ca-muted: #96a5bc; --ca-border: #304055; --ca-surface: #172130; --ca-soft: #1e293b; --ca-blue: #83aaff; --ca-selected: #253d5c; }
+</style>
 <div class="row">
   <div class="medium-9 columns">
     <div class="section">
@@ -132,6 +160,33 @@
           <h2 class="section__title">{{ _('Contest Settings') }}</h2>
         </div>
         <div class="section__body">
+          {% set targetStudentLevels = tdoc.targetStudentLevels|default([]) %}
+          <div class="contest-audience" data-contest-audience>
+            <fieldset class="contest-audience__levels">
+              <legend class="contest-audience__title">参赛学员等级</legend>
+              <p class="contest-audience__description">默认对所有学员可见，也可选择一个或多个等级。管理员始终可见。</p>
+              <div class="contest-audience__choices">
+                <button type="button" class="contest-audience__all" data-contest-level-all aria-pressed="{{ 'false' if targetStudentLevels.length else 'true' }}">全部等级</button>
+                {% for level in [1, 2, 3, 4, 5, 6, 7, 8, 9] %}
+                <label class="contest-audience__level">
+                  <input type="checkbox" name="targetStudentLevels" value="{{ level }}"{% if level in targetStudentLevels %} checked{% endif %}>
+                  <span>{{ 'MAX' if level == 9 else level + ' 级' }}</span>
+                </label>
+                {% endfor %}
+              </div>
+              <p class="contest-audience__summary" data-contest-level-summary aria-live="polite">{{ '仅所选等级的学员可见' if targetStudentLevels.length else '全部等级的学员均可见' }}</p>
+            </fieldset>
+            <div class="contest-audience__options">
+              <label class="contest-audience__option">
+                <input type="checkbox" name="hideScoreboard"{% if tdoc.hideScoreboard %} checked{% endif %}>
+                <span><strong>对学员隐藏排行榜</strong><small>勾选后，学员不显示排行榜，管理员仍可查看成绩与排名。</small></span>
+              </label>
+              <label class="contest-audience__option">
+                <input type="checkbox" name="lively"{% if tdoc.lively %} checked{% endif %}>
+                <span><strong>热闹</strong><small>每天 19:00–23:00 随机增加 0–2 个展示参赛人数，不影响真实报名与成绩。</small></span>
+              </label>
+            </div>
+          </div>
           {{ form.form_text({
             columns:12,
             label:'Submission language limit',

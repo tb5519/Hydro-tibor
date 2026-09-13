@@ -100,6 +100,8 @@ export interface Udoc extends Record<string, any> {
     defaultDomain?: string;
     /** Global C++ online editor mode, shared by every domain the user joins. */
     cppEditorMode?: CppEditorMode;
+    /** Teacher-managed learning level: 1–8, or 9 for MAX. Missing means level 1. */
+    studentLevel?: number;
 }
 
 export interface VUdoc {
@@ -286,6 +288,16 @@ export interface Tdoc extends Document {
     workspaceId?: string;
     /** Add each participant's final contest score to their lottery points. */
     scoreToPoints?: boolean;
+    /** Student audience; empty or absent means all levels. 9 represents MAX. */
+    targetStudentLevels?: number[];
+    /** Hide every scoreboard view from students, independently of contest rules. */
+    hideScoreboard?: boolean;
+    /** Display-only attendance activity. Never included in real participant status. */
+    lively?: boolean;
+    livelyBonus?: number;
+    livelyEnabledAt?: Date;
+    livelyDay?: string;
+    livelyScheduledAt?: Date;
     _code?: string;
     assign?: string[];
     /** Individual recipients of a homework. Kept separate from legacy group assignment. */

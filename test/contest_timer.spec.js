@@ -1,3 +1,4 @@
+global.Hydro ||= { model: {} };
 const assert = require('node:assert/strict');
 const Module = require('node:module');
 const { describe, it } = require('node:test');

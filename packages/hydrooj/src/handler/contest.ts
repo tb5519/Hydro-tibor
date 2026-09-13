@@ -17,6 +17,8 @@ import {
 import {
     DomainDoc, FileInfo, ScoreboardConfig, Tdoc,
 } from '../interface';
+import { canManageContestAudience, canViewContestLevel } from '../lib/contest_access';
+import { applyContestLively } from '../lib/contest_lively';
 import { canManageHomeworkReview } from '../lib/homework_review';
 import { PERM, PRIV, STATUS } from '../model/builtin';
 import * as contest from '../model/contest';
@@ -123,7 +125,7 @@ export class ContestListHandler extends Handler {
             ...q ? { title: { $regex } } : {},
         };
         await this.ctx.parallel('contest/list', filter, this);
-        const cursor = (await contest.getMultiVisibleInDomain(domainId, filter)).sort({
+        const cursor = (await contest.getMultiVisibleInDomain(domainId, filter, this.user)).sort({
             pinned: -1, endAt: -1, beginAt: -1, _id: -1,
         });
         let qs = rule ? `rule=${rule}` : '';
@@ -148,7 +150,7 @@ export class ContestListHandler extends Handler {
                 ...visibilityFilter,
                 rule: { $in: rules },
                 docId: { $in: attendedTids },
-            })).sort({ endAt: -1, beginAt: -1, _id: -1 }).limit(5).toArray()
+            }, this.user)).sort({ endAt: -1, beginAt: -1, _id: -1 }).limit(5).toArray()
             : [];
         const groupsFilter = groups.filter((i) => !Number.isSafeInteger(+i));
         this.response.template = 'contest_main.html';
@@ -180,6 +182,7 @@ export class ContestDetailBaseHandler extends Handler {
             contest.get(domainId, tid),
             contest.getStatus(domainId, tid, this.user._id),
         ]);
+        if (!canViewContestLevel(this.user, this.tdoc)) throw new ContestNotFoundError(domainId, tid);
         if (!this.entryDomain && this.tdoc.allDomains && entryDomainId && entryDomainId !== domainId) {
             const [entryDomain, entryDudoc] = await Promise.all([
                 domain.get(entryDomainId),
@@ -414,7 +417,8 @@ export class ContestProblemListHandler extends ContestDetailBaseHandler {
         const canShowEmbeddedScoreboard = showScoreboardView
             && this.user.hasPerm(PERM.PERM_VIEW_CONTEST_SCOREBOARD)
             && contest.canShowScoreboard.call(this, this.tdoc, true);
-        if (contest.isNotStarted(this.tdoc)) throw new ContestNotLiveError(domainId, tid);
+        const adminHiddenScoreboard = this.tdoc.hideScoreboard && canShowEmbeddedScoreboard && canManageContestAudience(this.user, this.tdoc);
+        if (contest.isNotStarted(this.tdoc) && !adminHiddenScoreboard) throw new ContestNotLiveError(domainId, tid);
         if (showScoreboardView && !canShowEmbeddedScoreboard) throw new ContestScoreboardHiddenError(tid);
         if (!showScoreboardView && !this.tsdoc?.attend && !contest.isDone(this.tdoc)) {
             throw new ContestNotAttendedError(domainId, tid);
@@ -567,13 +571,21 @@ export class ContestEditHandler extends Handler {
     @param('allowPrint', Types.Boolean)
     @param('keepScoreboardHidden', Types.Boolean)
     @param('langs', Types.CommaSeperatedArray, true)
+    @param('hideScoreboard', Types.Boolean)
+    @param('targetStudentLevels', Types.NumericArray, true)
+    @param('lively', Types.Boolean)
     async postUpdate(
         domainId: string, tid: ObjectId, beginAtDate: string, beginAtTime: string, duration: number,
         title: string, content: string, rule: string, _pids: string, rated = false,
         pinned = false, allDomains = false, scoreToPoints = false, _code = '', autoHide = false, assign: string[] = [], lock: number = null,
         contestDuration: number = null, maintainer: number[] = [], allowViewCode = false, allowPrint = false,
-        keepScoreboardHidden = false, langs: string[] = [],
+        keepScoreboardHidden = false, langs: string[] = [], hideScoreboard = false, targetStudentLevels: number[] = [], lively = false,
     ) {
+        if (targetStudentLevels.some((level) => !Number.isInteger(level) || level < 1 || level > 9)) {
+            throw new ValidationError('targetStudentLevels');
+        }
+        targetStudentLevels = [...new Set(targetStudentLevels)].sort((a, b) => a - b);
+        if (targetStudentLevels.length === 9) targetStudentLevels = [];
         if (!Object.keys(contest.RULES).includes(rule) || contest.RULES[rule].hidden) throw new ValidationError('rule');
         if (allDomains) {
             if (!this.domain.workspaceId) this.checkPriv(PRIV.PRIV_EDIT_SYSTEM);
@@ -626,6 +638,8 @@ export class ContestEditHandler extends Handler {
         await contest.edit(domainId, tid, {
             assign, _code, autoHide, lockAt, maintainer, allowViewCode, allowPrint, keepScoreboardHidden, langs,
             allDomains, scoreToPoints,
+            hideScoreboard, targetStudentLevels, lively,
+            ...(lively && !this.tdoc?.lively ? { livelyEnabledAt: new Date() } : {}),
             ...(this.domain.workspaceId ? { workspaceId: this.domain.workspaceId } : {}),
         });
         this.response.body = { tid };
@@ -997,7 +1011,9 @@ export class ContestScoreboardHandler extends ContestDetailBaseHandler {
         }
         if (!this.user.own(this.tdoc)) {
             if (!contest.canShowScoreboard.call(this, this.tdoc, true)) throw new ContestScoreboardHiddenError(tid);
-            if (contest.isNotStarted(this.tdoc)) throw new ContestNotLiveError(domainId, tid);
+            if (contest.isNotStarted(this.tdoc) && (!this.tdoc.hideScoreboard || !canManageContestAudience(this.user, this.tdoc))) {
+                throw new ContestNotLiveError(domainId, tid);
+            }
         }
         const view = this.ctx.scoreboard.getView(viewId);
         if (!view) throw new NotFoundError(`View ${viewId} not found`);
@@ -1079,6 +1095,7 @@ declare module 'cordis' {
 }
 
 export async function apply(ctx: Context) {
+    await applyContestLively(ctx);
     ctx.Route('contest_create', '/contest/create', ContestEditHandler);
     ctx.Route('contest_main', '/contest', ContestListHandler, PERM.PERM_VIEW_CONTEST);
     ctx.Route('contest_detail', '/contest/:tid', ContestDetailHandler, PERM.PERM_VIEW_CONTEST);

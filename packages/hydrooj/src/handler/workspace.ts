@@ -3,6 +3,7 @@ import {
     DomainAlreadyExistsError, ForbiddenError, NotFoundError, UserNotFoundError, ValidationError, VerifyPasswordError,
 } from '../error';
 import type { WorkspaceDoc, WorkspaceMemberDoc, WorkspaceRole } from '../interface';
+import { normalizeStudentLevel, STUDENT_LEVELS } from '../lib/student_level';
 import { PERM, PRIV } from '../model/builtin';
 import domain from '../model/domain';
 import * as oplog from '../model/oplog';
@@ -495,7 +496,8 @@ class WorkspaceStudentsHandler extends WorkspaceScopedHandler {
     @param('added', Types.Int, true)
     @param('created', Types.Int, true)
     @param('removed', Types.Int, true)
-    async get(domainId: string, q = '', added = 0, created = 0, removed = 0) {
+    @param('updated', Types.Int, true)
+    async get(domainId: string, q = '', added = 0, created = 0, removed = 0, updated = 0) {
         const domains = await workspace.getDomains(this.workspaceDoc._id);
         const domainIds = domains.map((item) => item._id);
         const memberships = domainIds.length
@@ -509,12 +511,13 @@ class WorkspaceStudentsHandler extends WorkspaceScopedHandler {
         const candidateUids = Array.from(new Set(memberships.map((item) => item.uid)))
             .filter((uid) => !memberUids.has(uid));
         const userPrivDocs = candidateUids.length
-            ? await user.getMulti({ _id: { $in: candidateUids } }, ['_id', 'priv']).toArray()
+            ? await user.getMulti({ _id: { $in: candidateUids } }, ['_id', 'priv', 'studentLevel']).toArray()
             : [];
         const studentUids = userPrivDocs
             .filter((item) => (item.priv & PRIV.PRIV_USER_PROFILE) && !(item.priv & PRIV.PRIV_EDIT_SYSTEM))
             .map((item) => item._id);
         const udict = studentUids.length ? await user.getListForRender('system', studentUids, true) : {};
+        const levelsByUid = new Map(userPrivDocs.map((item) => [item._id, normalizeStudentLevel(item.studentLevel)]));
         const domainNames = new Map(domains.map((item) => [item._id, item.name || item._id]));
         const byUid = new Map<number, typeof memberships>();
         for (const membership of memberships) {
@@ -527,6 +530,7 @@ class WorkspaceStudentsHandler extends WorkspaceScopedHandler {
             return {
                 uid,
                 account,
+                studentLevel: levelsByUid.get(uid) || 1,
                 displayName: joined.find((item) => item.displayName)?.displayName || account?.displayName || account?.uname,
                 domainNames: joined.map((item) => domainNames.get(item.domainId) || item.domainId),
                 submitCount: joined.reduce((sum, item) => sum + (item.nSubmit || 0), 0),
@@ -542,6 +546,7 @@ class WorkspaceStudentsHandler extends WorkspaceScopedHandler {
             workspace: this.workspaceDoc,
             domains,
             students,
+            studentLevels: STUDENT_LEVELS,
             canManageStudents: this.canManageStudents(),
             canManageMembers: this.canManageMembers(),
             platformAdminMode: workspace.isPlatformAdmin(this.user._id),
@@ -549,7 +554,33 @@ class WorkspaceStudentsHandler extends WorkspaceScopedHandler {
             added,
             created,
             removed,
+            updated,
         };
+    }
+
+    @requireSudo
+    @post('uid', Types.Int)
+    @post('studentLevel', Types.Range(STUDENT_LEVELS.map((level) => level.value)))
+    async postUpdateLevel(domainId: string, uid: number, studentLevel: number) {
+        if (!this.canManageStudents()) throw new ForbiddenError();
+        const target = await user.getById('system', uid);
+        if (!target || uid <= 1 || !target.hasPriv(PRIV.PRIV_USER_PROFILE)
+            || target.hasPriv(PRIV.PRIV_EDIT_SYSTEM) || target.hasPriv(PRIV.PRIV_JUDGE)
+            || await workspace.getMember(this.workspaceDoc._id, uid)
+            || await workspace.isAssignedToOtherWorkspace(uid, this.workspaceDoc._id)) throw new ValidationError('uid');
+        const domains = await workspace.getDomains(this.workspaceDoc._id);
+        const joined = await domain.collUser.countDocuments({
+            domainId: { $in: domains.map((item) => item._id) }, uid, join: true,
+        });
+        if (!joined) throw new ValidationError('uid');
+        await user.setById(uid, { studentLevel });
+        await oplog.log(this, 'workspace.updateStudentLevel', {
+            workspaceId: this.workspaceDoc._id, uid, studentLevel,
+        });
+        this.response.redirect = this.url('workspace_students', {
+            workspaceCode: this.workspaceDoc.code,
+            query: { updated: uid },
+        });
     }
 
     @requireSudo
@@ -614,9 +645,10 @@ class WorkspaceStudentsHandler extends WorkspaceScopedHandler {
     @post('verifyPassword', Types.Password)
     @post('displayName', Types.String)
     @post('domainCode', Types.DomainId)
+    @post('studentLevel', Types.Range(STUDENT_LEVELS.map((level) => level.value)), true)
     async postCreateStudent(
         domainId: string, uname: string, mail: string | undefined, password: string,
-        verifyPassword: string, displayName: string, domainCode: string,
+        verifyPassword: string, displayName: string, domainCode: string, studentLevel = 1,
     ) {
         if (!this.canManageStudents()) throw new ForbiddenError();
         if (password !== verifyPassword) throw new VerifyPasswordError();
@@ -631,7 +663,7 @@ class WorkspaceStudentsHandler extends WorkspaceScopedHandler {
                 role: 'default',
                 displayName: normalizedDisplayName,
             }),
-            user.setById(uid, { defaultDomain: targetDomain._id, cppEditorMode: 'proficient' }),
+            user.setById(uid, { defaultDomain: targetDomain._id, cppEditorMode: 'proficient', studentLevel }),
             workspace.addStudent(this.workspaceDoc._id, uid, this.user._id),
         ]);
         await oplog.log(this, 'workspace.createStudent', {

@@ -24,6 +24,10 @@ function loadModule(source, dependencies) {
 const helpers = loadModule(fs.readFileSync(path.join(root, 'packages/hydrooj/src/lib/objective_feedback.ts'), 'utf8'), {
     '../model/builtin': { STATUS },
 });
+const contestAccess = loadModule(fs.readFileSync(path.join(root, 'packages/hydrooj/src/lib/contest_access.ts'), 'utf8'), {
+    '../model/builtin': loadModule(fs.readFileSync(path.join(root, 'packages/common/permission.ts'), 'utf8'), {}),
+    './student_level': loadModule(fs.readFileSync(path.join(root, 'packages/hydrooj/src/lib/student_level.ts'), 'utf8'), {}),
+});
 const { buildObjectiveFeedback, parseObjectiveConfig } = helpers;
 const rid = new ObjectId();
 const config = {
@@ -169,6 +173,7 @@ function feedbackHandler(options = {}) {
         '../model/contest': dependencies.contest,
         '../model/problem': dependencies.problem,
         '../model/record': dependencies.record,
+        './contest_access': contestAccess,
         './objective_feedback': helpers,
     }));
     const { ObjectiveSubmitFeedbackHandler } = loadModule(imports + source.slice(start, end), { dependencies });

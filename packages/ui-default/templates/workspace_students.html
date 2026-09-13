@@ -24,6 +24,12 @@
   .workspace-students__list { display: grid; gap: .68rem; padding: 1rem; }
   .workspace-students__item { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: .8rem; align-items: center; padding: .9rem 1rem; border: 1px solid #e2e8f0; border-radius: 11px; background: #fbfdff; }
   .workspace-students__name { margin: 0; font-size: .96rem; font-weight: 800; }
+  .workspace-students__level { display: inline-flex; margin-left: .4rem; padding: .12rem .4rem; border: 1px solid #dbeafe; border-radius: 6px; color: #2563eb; background: #eff6ff; font-size: .68rem; vertical-align: middle; white-space: nowrap; }
+  .workspace-students__level--max { color: #7c3aed; background: #f5f3ff; border-color: #ddd6fe; }
+  .workspace-students__level-form { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem; margin: .55rem 0 0; }
+  .workspace-students__level-form label { color: #64748b; font-size: .73rem; }
+  .workspace-students__level-form select { min-width: 4.6rem; border: 1px solid #dbe5f2; border-radius: 7px; padding: .35rem .5rem; color: #334155; background: #fff; font-size: .76rem; }
+  .workspace-students__level-form button { margin: 0; padding: .4rem .6rem; border-color: #dbeafe; color: #2563eb; background: #eff6ff; font-size: .72rem; }
   .workspace-students__meta { margin: .2rem 0 0; color: #64748b; font-size: .77rem; }
   .workspace-students__domains { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .48rem; }
   .workspace-students__domain { padding: .18rem .43rem; border: 1px solid #dbe5f2; border-radius: 999px; color: #475569; background: #fff; font-size: .69rem; }
@@ -70,6 +76,7 @@
     {% if added %}<div class="workspace-students__notice"><span class="icon icon-check"></span>{{ _('Existing student added') }} · UID {{ added }}</div>{% endif %}
     {% if created %}<div class="workspace-students__notice"><span class="icon icon-check"></span>{{ _('Student account created') }} · UID {{ created }}</div>{% endif %}
     {% if removed %}<div class="workspace-students__notice"><span class="icon icon-check"></span>{{ _('Student removed from workspace') }} · UID {{ removed }}</div>{% endif %}
+    {% if updated %}<div class="workspace-students__notice"><span class="icon icon-check"></span>{{ _('学员等级已更新') }}</div>{% endif %}
 
     <div class="workspace-students__layout">
       <section class="workspace-students__panel">
@@ -85,9 +92,20 @@
             {% for item in students %}
               <article class="workspace-students__item">
                 <div>
-                  <p class="workspace-students__name">{{ item.displayName|default(item.account.uname)|default('UID ' + item.uid) }}</p>
+                  <p class="workspace-students__name">{{ item.displayName|default(item.account.uname)|default('UID ' + item.uid) }}<span class="workspace-students__level{% if item.studentLevel == 9 %} workspace-students__level--max{% endif %}">{% if item.studentLevel == 9 %}MAX{% else %}{{ item.studentLevel }} 级{% endif %}</span></p>
                   <p class="workspace-students__meta">@{{ item.account.uname|default(item.uid) }} · UID {{ item.uid }}{% if item.account.mail %} · {{ item.account.mail }}{% endif %}</p>
                   <div class="workspace-students__domains">{% for name in item.domainNames %}<span class="workspace-students__domain">{{ name }}</span>{% endfor %}</div>
+                  {% if canManageStudents %}
+                    <form method="post" class="workspace-students__level-form">
+                      <input type="hidden" name="operation" value="update_level">
+                      <input type="hidden" name="uid" value="{{ item.uid }}">
+                      <label for="student-level-{{ item.uid }}">{{ _('学员等级') }}</label>
+                      <select id="student-level-{{ item.uid }}" name="studentLevel" required>
+                        {% for level in studentLevels %}<option value="{{ level.value }}"{% if item.studentLevel == level.value %} selected{% endif %}>{{ level.label }}</option>{% endfor %}
+                      </select>
+                      <button class="rounded button" type="submit">{{ _('保存等级') }}</button>
+                    </form>
+                  {% endif %}
                 </div>
                 <div class="workspace-students__item-actions">
                   <div class="workspace-students__metrics">
@@ -132,6 +150,7 @@
               <label class="workspace-students__field"><span>{{ _('Password') }}</span><input class="textbox" type="password" name="password" autocomplete="new-password" required></label>
               <label class="workspace-students__field"><span>{{ _('Confirm Password') }}</span><input class="textbox" type="password" name="verifyPassword" autocomplete="new-password" required></label>
               <label class="workspace-students__field"><span>{{ _('Join domain') }}</span><select class="select" name="domainCode" required>{% for item in domains %}<option value="{{ item._id }}">{{ item.name|default(item._id) }} · {{ item._id }}</option>{% endfor %}</select></label>
+              <label class="workspace-students__field"><span>{{ _('学员等级') }}</span><select class="select" name="studentLevel" required>{% for level in studentLevels %}<option value="{{ level.value }}"{% if level.value == 1 %} selected{% endif %}>{{ level.label }}</option>{% endfor %}</select></label>
               <button class="rounded primary button" type="submit"><span class="icon icon-add"></span>{{ _('Create and add student') }}</button>
             </form>
             <p class="workspace-students__hint">{{ _('The new account is bound only to the selected domain and uses that domain as its default login destination.') }}</p>

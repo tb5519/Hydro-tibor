@@ -24,7 +24,7 @@
           </li>
           <li>
             <span class="icon icon-user--multiple"></span>
-            {{ _('Partic.') }}: {{ tdoc['attend']|default(0) }}
+            {{ _('Partic.') }}: {{ model.contest.getDisplayAttend(tdoc) }}
           </li>
         </ul>
       </div>
@@ -125,7 +125,7 @@
                     <span class="icon icon-schedule--fill text-blue"></span> {{ contest.render_duration(tdoc) }} {{ _('hour(s)') }}
                   </li>
                   <li>
-                    <span class="icon icon-user--multiple"></span> {{ tdoc['attend']|default(0) }}
+                    <span class="icon icon-user--multiple"></span> {{ model.contest.getDisplayAttend(tdoc) }}
                   </li>
                 {% if tsdict[tdoc.docId].attend %}
                   <li class="contest__info-attended">

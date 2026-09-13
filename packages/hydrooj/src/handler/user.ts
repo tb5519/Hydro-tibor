@@ -13,6 +13,7 @@ import {
 } from '../error';
 import { TokenDoc, Udoc, User } from '../interface';
 import avatar from '../lib/avatar';
+import { contestLevelQuery } from '../lib/contest_access';
 import { sendMail } from '../lib/mail';
 import { verifyTFA } from '../lib/verifyTFA';
 import BlackListModel from '../model/blacklist';
@@ -559,7 +560,7 @@ class UserDetailHandler extends Handler {
         }
         const tags = Object.entries(acInfo).sort((a, b) => b[1] - a[1]).slice(0, 20);
         const tsdocs = await ContestModel.getMultiStatus(domainId, { uid, attend: { $exists: true } }).project({ docId: 1 }).toArray();
-        const tdocs = await ContestModel.getMulti(domainId, { docId: { $in: tsdocs.map((i) => i.docId) } })
+        const tdocs = await ContestModel.getMulti(domainId, { docId: { $in: tsdocs.map((i) => i.docId) }, ...contestLevelQuery(this.user, domainId) })
             .project({ docId: 1, title: 1, rule: 1 }).sort({ _id: -1 }).toArray();
         this.response.template = 'user_detail.html';
         this.response.body = {

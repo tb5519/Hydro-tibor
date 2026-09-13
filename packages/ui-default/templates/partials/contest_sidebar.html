@@ -68,7 +68,7 @@
       <li class="menu__item"><a class="menu__link" href="{{ url('contest_problemlist', tid=tdoc.docId, query={entryDomainId:handler.entryDomainId, view:'scoreboard'} if handler.entryDomainId else {view:'scoreboard'}) }}">
         <span class="icon icon-statistics"></span> {{ _('Scoreboard') }}
       </a></li>
-    {% elif model.contest.canViewHiddenScoreboard.call(handler, tdoc) %}
+    {% elif not tdoc.hideScoreboard and model.contest.canViewHiddenScoreboard.call(handler, tdoc) %}
       <li class="menu__item"><a class="menu__link" href="{{ url('contest_problemlist', tid=tdoc.docId, query={entryDomainId:handler.entryDomainId, view:'scoreboard'} if handler.entryDomainId else {view:'scoreboard'}) }}">
         <span class="icon icon-statistics"></span> {{ _('Scoreboard (Hidden)') }}
       </a></li>
@@ -130,7 +130,7 @@
       <dt>{{ _('End at') }}</dt><dd>{{ contest.render_time(tsdoc.endAt or tdoc.endAt) }}</dd>
       <dt>{{ _('Duration') }}</dt><dd>{{ contest.render_duration(tdoc) }} {{ _('hour(s)') }}</dd>
       <dt>{{ _('Host') }}</dt><dd>{{ user.render_inline(owner_udoc, badge=false) }}</dd>
-      <dt>{{ _('Partic.') }}</dt><dd>{{ tdoc['attend']|default(0) }}</dd>
+      <dt>{{ _('Partic.') }}</dt><dd>{{ model.contest.getDisplayAttend(tdoc) }}</dd>
     </dl>
   </div>
 {% if page_name == 'contest_detail' %}

@@ -13,18 +13,21 @@ import {
     ScoreboardConfig, ScoreboardNode, ScoreboardRow, SubtaskResult, Tdoc,
 } from '../interface';
 import avatar from '../lib/avatar';
+import { canManageContestAudience, canViewContestLevel, contestLevelQuery } from '../lib/contest_access';
+import { getDisplayAttend } from '../lib/contest_lively';
 import { acknowledgeContestScorePoints, creditContestScorePoints, getContestPointBadges } from '../lib/contest_score_points';
 import bus from '../service/bus';
 import db from '../service/db';
 import type { Handler } from '../service/server';
 import { Optional } from '../typeutils';
-import { NORMAL_STATUS, PERM, STATUS, STATUS_SHORT_TEXTS } from './builtin';
+import { NORMAL_STATUS, PERM, PRIV, STATUS, STATUS_SHORT_TEXTS } from './builtin';
 import * as document from './document';
 import DomainModel from './domain';
 import MessageModel from './message';
 import problem, { ProblemModel } from './problem';
 import RecordModel from './record';
 import UserModel, { User } from './user';
+export { getDisplayAttend } from '../lib/contest_lively';
 
 export enum PrintTaskStatus {
     pending = 'pending',
@@ -1079,7 +1082,7 @@ export function getMulti(
  * remain in the source domain, so all participants use the same scoreboard.
  */
 export async function getMultiVisibleInDomain(
-    domainId: string, query: Filter<document.DocType['30']> = {},
+    domainId: string, query: Filter<document.DocType['30']> = {}, viewer?: User,
 ) {
     const currentDomain = await DomainModel.get(domainId);
     const sharedScope = currentDomain?.workspaceId
@@ -1090,6 +1093,21 @@ export async function getMultiVisibleInDomain(
                 { workspaceId: 'tang' },
             ],
         };
+    let manageableDomainIds: string[] = [];
+    if (viewer && !viewer.hasPriv(PRIV.PRIV_EDIT_SYSTEM) && canManageContestAudience(viewer)) {
+        const sharedDomainIds = await document.coll.distinct('domainId', {
+            docType: document.TYPE_CONTEST,
+            allDomains: true,
+            domainId: { $ne: domainId },
+            $and: [sharedScope, query],
+        });
+        const sourceUsers = await Promise.all(sharedDomainIds.map((sourceId) => UserModel.getById(sourceId, viewer._id, viewer.scope)));
+        // A teacher may administer several banks. Check each source account;
+        // permissions in the entry bank never grant rights in another bank.
+        manageableDomainIds = sharedDomainIds.filter((_, index) => (
+            sourceUsers[index] && canManageContestAudience(sourceUsers[index])
+        ));
+    }
     return document.coll.find({
         docType: document.TYPE_CONTEST,
         $and: [
@@ -1100,6 +1118,7 @@ export async function getMultiVisibleInDomain(
                 ],
             },
             query,
+            ...(viewer ? [contestLevelQuery(viewer, domainId, manageableDomainIds)] : []),
         ],
     }).sort({ beginAt: -1 });
 }
@@ -1156,18 +1175,22 @@ export function canViewHiddenScoreboard(this: { user: User }, tdoc: Tdoc) {
 }
 
 export function canShowRecord(this: { user: User }, tdoc: Tdoc, allowPermOverride = true) {
+    if (!canViewContestLevel(this.user, tdoc)) return false;
     if (RULES[tdoc.rule].showRecord(tdoc, new Date())) return true;
     if (allowPermOverride && canViewHiddenScoreboard.call(this, tdoc)) return true;
     return false;
 }
 
 export function canShowSelfRecord(this: { user: User }, tdoc: Tdoc, allowPermOverride = true) {
+    if (!canViewContestLevel(this.user, tdoc)) return false;
     if (RULES[tdoc.rule].showSelfRecord(tdoc, new Date())) return true;
     if (allowPermOverride && canViewHiddenScoreboard.call(this, tdoc)) return true;
     return false;
 }
 
 export function canShowScoreboard(this: { user: User }, tdoc: Tdoc, allowPermOverride = true) {
+    if (!canViewContestLevel(this.user, tdoc)) return false;
+    if (tdoc.hideScoreboard && tdoc.rule !== 'homework') return canManageContestAudience(this.user, tdoc);
     if (RULES[tdoc.rule].showScoreboard(tdoc, new Date())) return true;
     if (allowPermOverride && canViewHiddenScoreboard.call(this, tdoc)) return true;
     return false;
@@ -1311,6 +1334,7 @@ global.Hydro.model.contest = {
     countStatus,
     getMulti,
     getMultiVisibleInDomain,
+    getDisplayAttend,
     getListStatusAcrossDomains,
     setStatus,
     getAndListStatus,

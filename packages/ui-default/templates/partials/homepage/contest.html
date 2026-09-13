@@ -34,7 +34,7 @@
                   <span class="icon icon-schedule--fill text-blue"></span> {{ contest.render_duration(tdoc) }} {{ _('hour(s)') }}
                 </li>
                 <li>
-                  <span class="icon icon-user--multiple"></span> {{ tdoc['attend']|default(0) }}
+                  <span class="icon icon-user--multiple"></span> {{ model.contest.getDisplayAttend(tdoc) }}
                 </li>
                 {% if tsdict[tdoc.docId]['attend'] == 1 %}
                   <li class="contest__info-attended">

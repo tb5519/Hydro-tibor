@@ -14,10 +14,11 @@ import {
 import type { CppEditorMode } from '../interface';
 import {
     bindPointLotteryBadgePrizes, buildPointLotteryConfigFromForm, ensureGlobalPointLotteryState,
-    getPointLotteryBadgeUpgradeBadgeIdsFromForm,
-    getPointLotteryBadges, getPointLotteryConfig, getPointLotteryStoragePrefix, POINT_LOTTERY_CONFIG_KEY,
+    getPointLotteryBadges, getPointLotteryBadgeUpgradeBadgeIdsFromForm,
+    getPointLotteryConfig, getPointLotteryStoragePrefix, POINT_LOTTERY_CONFIG_KEY,
     POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD, pointLotteryUserColl, publicPointLotteryPrize,
 } from '../lib/point_lottery';
+import { normalizeStudentLevel, STUDENT_LEVELS } from '../lib/student_level';
 import { Logger } from '../logger';
 import { PERM, PRIV, STATUS } from '../model/builtin';
 import domain from '../model/domain';
@@ -818,9 +819,10 @@ async function getManagedStudents(
         // getListForRender overlays membership fields over user fields. Read
         // this account-wide preference directly so legacy membership data can
         // never shadow it in the student management editor.
-        user.getMulti({ _id: { $in: studentUids } }, ['_id', 'cppEditorMode']).toArray(),
+        user.getMulti({ _id: { $in: studentUids } }, ['_id', 'cppEditorMode', 'studentLevel']).toArray(),
     ]);
     const globalModeByUid = new Map(globalModeDocs.map((udoc) => [udoc._id, udoc.cppEditorMode]));
+    const globalLevelByUid = new Map(globalModeDocs.map((udoc) => [udoc._id, normalizeStudentLevel(udoc.studentLevel)]));
     const lastSubmitAtByUid = new Map(recentActivity.map((row) => [row._id, row.lastRecordId.getTimestamp()]));
     const students = studentUids.map((uid) => {
         const udoc = udict[uid];
@@ -834,6 +836,7 @@ async function getManagedStudents(
             ...udoc,
             uid,
             displayName,
+            studentLevel: globalLevelByUid.get(uid) || 1,
             cppEditorMode: resolveManagedStudentCppEditorMode(
                 globalModeByUid.get(uid), undefined, false,
             ),
@@ -935,6 +938,7 @@ class SystemUserManagementHandler extends SystemHandler {
         this.response.template = 'manage_user_management.html';
         this.response.body = {
             students,
+            studentLevels: STUDENT_LEVELS,
             selectedStudent,
             selectedStudentDomains: selectedStudentDomainState.domains,
             selectedStudentDefaultDomain: selectedStudentDomainState.selectedDefaultDomain,
@@ -956,10 +960,11 @@ class SystemUserManagementHandler extends SystemHandler {
     @param('studentId', Types.String, true)
     @param('sort', Types.Range(MANAGED_STUDENT_SORTS), true)
     @param('order', Types.Range(MANAGED_STUDENT_SORT_DIRECTIONS), true)
+    @param('studentLevel', Types.Range(STUDENT_LEVELS.map((level) => level.value)), true)
     async postAddStudent(
         domainId: string, uname: string, mail: string | undefined, password: string, verifyPassword: string,
         displayName: string, joinDomain: string, school = '', studentId = '', sort: ManagedStudentSort = 'submit',
-        order: ManagedStudentSortDirection = 'desc',
+        order: ManagedStudentSortDirection = 'desc', studentLevel = 1,
     ) {
         if (password !== verifyPassword) throw new VerifyPasswordError();
         const normalizedDisplayName = normalizeManagedStudentText(displayName, 'displayName');
@@ -983,6 +988,7 @@ class SystemUserManagementHandler extends SystemHandler {
                 studentId: normalizedStudentId,
                 defaultDomain: joinTarget._id,
                 cppEditorMode: 'proficient',
+                studentLevel,
             }),
         ]);
         this.response.redirect = this.url('manage_user_management', { query: { uid, saved: 1, sort, order } });
@@ -1018,10 +1024,11 @@ class SystemUserManagementHandler extends SystemHandler {
     @param('cppEditorMode', Types.Range(CPP_EDITOR_MODES))
     @param('sort', Types.Range(MANAGED_STUDENT_SORTS), true)
     @param('order', Types.Range(MANAGED_STUDENT_SORT_DIRECTIONS), true)
+    @param('studentLevel', Types.Range(STUDENT_LEVELS.map((level) => level.value)), true)
     async postEditStudent(
         domainId: string, uid: number, uname: string, mail: string | undefined,
         displayName: string, school = '', studentId = '', defaultDomain = '', cppEditorMode: CppEditorMode = 'proficient',
-        sort: ManagedStudentSort = 'submit', order: ManagedStudentSortDirection = 'desc',
+        sort: ManagedStudentSort = 'submit', order: ManagedStudentSortDirection = 'desc', studentLevel?: number,
     ) {
         const target = await getManagedStudent(uid, await getManagedDomains());
         if (!target) throw new UserNotFoundError(uid);
@@ -1051,6 +1058,7 @@ class SystemUserManagementHandler extends SystemHandler {
             studentId: normalizedStudentId,
             defaultDomain: selectedDefaultDomain,
             cppEditorMode,
+            studentLevel: studentLevel ?? target.studentLevel,
         });
         await domain.updateUserInDomain(selectedDefaultDomain, uid, {
             $set: { displayName: normalizedDisplayName },

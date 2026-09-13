@@ -559,7 +559,7 @@
               <span class="contest-detail-meta__icon icon icon-user--multiple"></span>
               <div>
                 <div class="contest-detail-meta__label">{{ _('Partic.') }}</div>
-                <div class="contest-detail-meta__value">{{ tdoc['attend']|default(0) }} 人</div>
+                <div class="contest-detail-meta__value">{{ model.contest.getDisplayAttend(tdoc) }} 人</div>
               </div>
             </div>
           </div>
