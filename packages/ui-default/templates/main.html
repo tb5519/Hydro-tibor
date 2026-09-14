@@ -812,7 +812,17 @@
     margin: .15rem 0 0;
     padding: .65rem .7rem;
   }
-  .point-lottery__preview-meta .point-lottery__validity-stats dd { font-size: .9rem; }
+  .point-lottery__preview-meta .point-lottery__validity-stats { grid-template-columns: 1fr; gap: .5rem; }
+  .point-lottery__preview-meta .point-lottery__validity-stats > div {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: .2rem .5rem;
+    padding: 0;
+    border: 0;
+  }
+  .point-lottery__preview-meta .point-lottery__validity-stats dt { white-space: nowrap; }
+  .point-lottery__preview-meta .point-lottery__validity-stats dd { margin: 0; font-size: .9rem; }
   .point-lottery__result-points {
     position: relative;
     margin: .35rem 0 0;
