@@ -27,9 +27,12 @@ const badgeStyles = {
     7: { id: 7, displayName: '☾ 月光小勇士', backgroundColor: '#48348b', fontColor: '#ffe6a3', tooltip: '坚持学习获得的嫦娥奔月勋章' },
 };
 // A real 1 x 1 RGBA PNG with transparent pixels: the UI must preserve its source.
+const fixedNow = '2026-09-14T02:00:00.000Z';
+const fiveDaysLater = '2026-09-19T02:00:00.000Z';
+
 const transparentSquarePng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=';
 
-function fixture(overrides = {}) {
+function fixture(overrides = {}, now = fixedNow) {
     const state = {
         enabled: true, canDraw: true, cost: 10, points: 100, totalPoints: 100,
         prizes: [badge(24), badge(72)], recentWins: [], announcements: [], badgeStyles, ...overrides,
@@ -47,6 +50,12 @@ function fixture(overrides = {}) {
     const dom = new JSDOM(html,
         { runScripts: 'outside-only', url: 'http://localhost/' });
     const { window } = dom;
+    const NativeDate = window.Date;
+    let clock = NativeDate.parse(now);
+    window.Date = class extends NativeDate {
+        constructor(...args) { super(...(args.length ? args : [clock])); }
+        static now() { return clock; }
+    };
     const requests = [];
     window.matchMedia = () => ({ matches: true });
     window.fetch = (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject }));
@@ -55,6 +64,7 @@ function fixture(overrides = {}) {
     return {
         window, requests, helpers: window.lotteryTest,
         get,
+        setNow: (value) => { clock = NativeDate.parse(value); },
         chests: Array.from(window.document.querySelectorAll('[data-point-lottery-chest]')),
         open: () => get('[data-point-lottery-open]').click(),
         close: () => get('.point-lottery__close').click(),
@@ -73,16 +83,281 @@ async function eventually(predicate) {
 }
 
 describe('treasure chest lottery inline UI', () => {
-    it('formats badge durations in days without mislabelling permanent or ordinary prizes', () => {
+    it('formats badge durations in readable day, hour, and minute units without mislabelling permanent prizes', () => {
         const ui = fixture();
         try {
             assert.equal(ui.helpers.durationLabel(badge(24)), '1 天');
             assert.equal(ui.helpers.durationLabel(badge(72)), '3 天');
-            assert.equal(ui.helpers.durationLabel(badge(36)), '1.5 天');
-            assert.equal(ui.helpers.durationLabel(badge(1)), '约0.04 天');
+            assert.equal(ui.helpers.durationLabel(badge(36)), '1 天 12 小时');
+            assert.equal(ui.helpers.durationLabel(badge(1)), '1 小时');
+            assert.equal(ui.helpers.durationLabel(badge(0.5)), '30 分钟');
+            assert.equal(ui.helpers.durationLabel(badge(1 / 60)), '1 分钟');
             assert.equal(ui.helpers.durationLabel(badge(0)), '永久');
             assert.equal(ui.helpers.durationLabel({ kind: 'normal' }), '');
             assert.equal(ui.helpers.durationLabel({ kind: 'badge' }), '');
+        } finally { ui.dispose(); }
+    });
+
+    it('prominently separates the awarded duration from cumulative remaining time and China expiry', async () => {
+        const prize = badge(72, { badgeValidity: { status: 'active', expiresAt: fiveDaysLater } });
+        const ui = fixture();
+        try {
+            ui.open();
+            ui.chests[0].click();
+            ui.finish({ prize, prizeIndex: 1, points: 90, totalPoints: 100 });
+            await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
+            const validity = ui.get('[data-point-lottery-result-validity]');
+            assert.equal(validity.hidden, false);
+            assert.match(validity.textContent.replace(/\s/g, ''), /本次获得3天/);
+            assert.match(validity.textContent.replace(/\s/g, ''), /当前剩余5天/);
+            assert.match(validity.textContent, /有效至\s*2026-09-19 10:00/);
+            assert.match(validity.textContent, /北京时间/);
+            assert.equal(ui.get('[data-point-lottery-result-points]').textContent, '当前积分：90');
+            assert.equal(ui.window.document.activeElement, ui.get('[data-point-lottery-result-close]'));
+        } finally { ui.dispose(); }
+    });
+
+    it('uses current permanent ownership without confusing it with a finite awarded duration', async () => {
+        const prize = badge(72, { badgeValidity: { status: 'permanent' } });
+        const ui = fixture();
+        try {
+            ui.open();
+            ui.chests[0].click();
+            ui.finish({ prize, prizeIndex: 1, points: 90, totalPoints: 100 });
+            await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
+            const validity = ui.get('[data-point-lottery-result-validity]');
+            assert.equal(validity.hidden, false);
+            assert.match(validity.textContent.replace(/\s/g, ''), /本次获得3天/);
+            assert.match(validity.textContent.replace(/\s/g, ''), /当前拥有永久有效/);
+            assert.doesNotMatch(validity.textContent, /有效至|当前剩余/);
+        } finally { ui.dispose(); }
+    });
+
+    it('uses the server clock for live remaining time when the student device clock is wrong', async () => {
+        const prize = badge(72, { badgeValidity: { status: 'active', expiresAt: fiveDaysLater } });
+        const ui = fixture({ recentWins: [prize], serverNow: fixedNow }, '2027-01-01T02:00:00.000Z');
+        try {
+            ui.open();
+            ui.get('[data-point-lottery-win-index="0"]').click();
+            assert.match(ui.get('[data-point-lottery-preview-meta]').textContent.replace(/\s/g, ''), /当前剩余5天/);
+            ui.chests[0].click();
+            ui.finish({ prize, prizeIndex: 1, points: 90, serverNow: '2026-09-15T02:00:00.000Z' });
+            await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
+            const text = ui.get('[data-point-lottery-result-validity]').textContent;
+            assert.match(text.replace(/\s/g, ''), /当前剩余4天/);
+            assert.match(text, /有效至\s*2026-09-19 10:00/);
+            assert.doesNotMatch(text, /已到期/);
+        } finally { ui.dispose(); }
+    });
+
+    it('describes an upgrade without claiming that the configured duration was added again', async () => {
+        const prize = badge(72, {
+            awardedBadgeId: 8, badgeAwardAction: 'upgraded', badgeDurationAddedHours: 0,
+            badgeValidity: { status: 'active', expiresAt: '2026-09-16T02:00:00.000Z' },
+        });
+        const ui = fixture();
+        try {
+            ui.open();
+            ui.chests[0].click();
+            ui.finish({ prize, prizeIndex: 1, points: 90 });
+            await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
+            const text = ui.get('[data-point-lottery-result-validity]').textContent.replace(/\s/g, '');
+            assert.match(text, /本次效果有效期不变/);
+            assert.match(text, /当前剩余2天/);
+            assert.doesNotMatch(text, /本次获得3天/);
+        } finally { ui.dispose(); }
+    });
+
+    it('labels a finite prize as configured duration when a permanent owner receives no extra hours', async () => {
+        const prize = badge(72, {
+            badgeAwardAction: 'extended', badgeDurationAddedHours: 0,
+            badgeValidity: { status: 'permanent' },
+        });
+        const ui = fixture();
+        try {
+            ui.open();
+            ui.chests[0].click();
+            ui.finish({ prize, prizeIndex: 1, points: 90 });
+            await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
+            const text = ui.get('[data-point-lottery-result-validity]').textContent.replace(/\s/g, '');
+            assert.match(text, /本次奖品3天/);
+            assert.match(text, /当前拥有永久有效/);
+            assert.doesNotMatch(text, /本次获得3天|当前剩余/);
+        } finally { ui.dispose(); }
+    });
+
+    it('still shows newly granted days for a first award from an upgrade prize', async () => {
+        const prize = badge(72, {
+            badgeRepeatEffect: 'upgrade', badgeAwardAction: 'granted', badgeDurationAddedHours: 72,
+            badgeValidity: { status: 'active', expiresAt: '2026-09-17T02:00:00.000Z' },
+        });
+        const ui = fixture();
+        try {
+            ui.open();
+            ui.chests[0].click();
+            ui.finish({ prize, prizeIndex: 1, points: 90 });
+            await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
+            const text = ui.get('[data-point-lottery-result-validity]').textContent.replace(/\s/g, '');
+            assert.match(text, /本次获得3天/);
+            assert.match(text, /当前剩余3天/);
+            assert.doesNotMatch(text, /有效期不变|本次奖品/);
+        } finally { ui.dispose(); }
+    });
+
+    it('shows short remaining time in hours and minutes instead of tiny fractional days', async () => {
+        for (const [expiresAt, label] of [
+            ['2026-09-14T03:00:00.000Z', '1小时'],
+            ['2026-09-14T02:30:00.000Z', '30分钟'],
+            ['2026-09-14T02:00:30.000Z', '不足1分钟'],
+        ]) {
+            const ui = fixture();
+            try {
+                ui.open();
+                ui.chests[0].click();
+                ui.finish({ prize: badge(1, { badgeValidity: { status: 'active', expiresAt } }), prizeIndex: 0, points: 90 });
+                // eslint-disable-next-line no-await-in-loop
+                await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
+                const text = ui.get('[data-point-lottery-result-validity]').textContent.replace(/\s/g, '');
+                assert.ok(text.includes(`当前剩余${label}`), text);
+                assert.doesNotMatch(text, /0\.0\d天/);
+            } finally { ui.dispose(); }
+        }
+    });
+
+    it('treats an expiry at or before the current time as expired even if the payload says active', async () => {
+        for (const expiresAt of [fixedNow, '2026-09-14T01:59:59.000Z']) {
+            const ui = fixture();
+            try {
+                ui.open();
+                ui.chests[0].click();
+                ui.finish({ prize: badge(72, { badgeValidity: { status: 'active', expiresAt } }), prizeIndex: 0, points: 90 });
+                // eslint-disable-next-line no-await-in-loop
+                await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
+                const text = ui.get('[data-point-lottery-result-validity]').textContent;
+                assert.match(text, /已到期/);
+                assert.doesNotMatch(text, /永久有效|当前剩余/);
+            } finally { ui.dispose(); }
+        }
+    });
+
+    it('never invents permanent ownership for unknown or malformed validity metadata', async () => {
+        for (const badgeValidity of [undefined, { status: 'unknown' }, { status: 'active' },
+            { status: 'active', expiresAt: 'not-a-date' }, { status: 'active', expiresAt: '' }]) {
+            const ui = fixture();
+            try {
+                ui.open();
+                ui.chests[0].click();
+                ui.finish({ prize: badge(72, { badgeValidity }), prizeIndex: 0, points: 90 });
+                // eslint-disable-next-line no-await-in-loop
+                await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
+                const text = ui.get('[data-point-lottery-result-validity]').textContent;
+                assert.match(text.replace(/\s/g, ''), /本次获得3天/);
+                assert.match(text, /暂无法确认/);
+                assert.doesNotMatch(text, /永久有效|有效至|Invalid Date|NaN/);
+            } finally { ui.dispose(); }
+        }
+    });
+
+    it('keeps the pool preview about the configured award while history shows live validity', () => {
+        const prize = badge(72, { badgeValidity: { status: 'active', expiresAt: fiveDaysLater } });
+        const ui = fixture({ prizes: [prize], recentWins: [prize] });
+        try {
+            ui.open();
+            const meta = ui.get('[data-point-lottery-preview-meta]');
+            assert.match(meta.textContent, /3 天/);
+            assert.doesNotMatch(meta.textContent, /当前剩余|有效至|5 天/);
+            ui.get('[data-point-lottery-win-index="0"]').click();
+            assert.match(meta.textContent.replace(/\s/g, ''), /本次获得3天/);
+            assert.match(meta.textContent.replace(/\s/g, ''), /当前剩余5天/);
+            assert.match(meta.textContent, /有效至\s*2026-09-19 10:00/);
+            ui.setNow('2026-09-20T02:00:00.000Z');
+            ui.get('[data-point-lottery-win-index="0"]').click();
+            assert.match(meta.textContent, /已到期/);
+            assert.doesNotMatch(meta.textContent, /当前剩余|永久有效/);
+            ui.get('[data-point-lottery-prize-index="0"]').click();
+            assert.doesNotMatch(meta.textContent, /已到期|当前剩余|有效至/);
+        } finally { ui.dispose(); }
+    });
+
+    it('replaces prior validity after repeated draws and clears it completely for ordinary rewards and failures', async () => {
+        const ui = fixture({ prizes: [badge(72), { kind: 'normal', name: '学习积分', pointDelta: 5, probability: 1 }] });
+        try {
+            ui.open();
+            const responses = [
+                { prize: badge(72, { badgeValidity: { status: 'active', expiresAt: fiveDaysLater } }), prizeIndex: 0, points: 90 },
+                { prize: badge(24, { badgeValidity: { status: 'permanent' } }), prizeIndex: 0, points: 80 },
+                { prize: { kind: 'normal', name: '学习积分', pointDelta: 5, badgeValidity: { status: 'permanent' } }, prizeIndex: 1, points: 75 },
+                { error: { message: '测试失败' } },
+            ];
+            for (const [index, response] of responses.entries()) {
+                ui.chests[0].click();
+                ui.finish(response);
+                // eslint-disable-next-line no-await-in-loop
+                await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
+                const validity = ui.get('[data-point-lottery-result-validity]');
+                if (index === 0) assert.match(validity.textContent, /2026-09-19/);
+                else if (index === 1) {
+                    assert.match(validity.textContent.replace(/\s/g, ''), /本次获得1天/);
+                    assert.match(validity.textContent, /永久有效/);
+                    assert.doesNotMatch(validity.textContent, /2026-09-19|5 天|3 天/);
+                } else {
+                    assert.equal(validity.hidden, true);
+                    assert.equal(validity.textContent, '');
+                }
+                ui.get('[data-point-lottery-result-close]').click();
+            }
+            assert.equal(ui.get('[data-point-lottery-points]').textContent, '75');
+        } finally { ui.dispose(); }
+    });
+
+    it('refreshes prior wins from the actual awarded badge validity map after another draw', async () => {
+        const original = badge(72, {
+            awardedBadgeId: 8, sourceBadgeId: 7,
+            badgeValidity: { status: 'active', expiresAt: '2026-09-16T02:00:00.000Z' },
+        });
+        const ui = fixture({ recentWins: [original] });
+        try {
+            ui.open();
+            ui.get('[data-point-lottery-win-index="0"]').click();
+            assert.match(ui.get('[data-point-lottery-preview-meta]').textContent.replace(/\s/g, ''), /当前剩余2天/);
+            ui.chests[0].click();
+            ui.finish({
+                prize: badge(24, { badgeId: 9, badgeValidity: { status: 'unknown' } }), prizeIndex: 0, points: 90,
+                badgeValidities: {
+                    7: { status: 'permanent' },
+                    8: { status: 'active', expiresAt: fiveDaysLater },
+                    9: { status: 'permanent' },
+                },
+            });
+            await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
+            assert.match(ui.get('[data-point-lottery-result-validity]').textContent, /永久有效/);
+            ui.get('[data-point-lottery-result-close]').click();
+            ui.get('[data-point-lottery-win-index="1"]').click();
+            const meta = ui.get('[data-point-lottery-preview-meta]').textContent;
+            assert.match(meta.replace(/\s/g, ''), /本次获得3天/);
+            assert.match(meta.replace(/\s/g, ''), /当前剩余5天/);
+            assert.match(meta, /有效至\s*2026-09-19 10:00/);
+            assert.doesNotMatch(meta, /永久有效|2026-09-16/);
+        } finally { ui.dispose(); }
+    });
+
+    it('does not interpret malformed expiry metadata as HTML or script content', async () => {
+        const payload = '</script><img data-validity-injected src=x onerror="window.injected=true">';
+        const ui = fixture({ recentWins: [badge(72, { badgeValidity: { status: 'active', expiresAt: payload } })] });
+        try {
+            ui.open();
+            ui.get('[data-point-lottery-win-index="0"]').click();
+            assert.equal(ui.get('[data-validity-injected]'), null);
+            assert.equal(ui.window.injected, undefined);
+            assert.match(ui.get('[data-point-lottery-preview-meta]').textContent, /暂无法确认/);
+            ui.chests[0].click();
+            ui.finish({ prize: badge(72, { badgeValidity: { status: 'active', expiresAt: payload } }), prizeIndex: 0, points: 90 });
+            await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
+            const validity = ui.get('[data-point-lottery-result-validity]');
+            assert.match(validity.textContent, /暂无法确认/);
+            assert.equal(validity.querySelector('img, script'), null);
+            assert.equal(ui.get('[data-validity-injected]'), null);
+            assert.equal(ui.window.injected, undefined);
         } finally { ui.dispose(); }
     });
 
@@ -273,7 +548,7 @@ describe('treasure chest lottery inline UI', () => {
             ui.finish({ prize, prizeIndex: 0, points: 90, totalPoints: 100 });
             await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
             assert.equal(ui.get('[data-point-lottery-result-title]').textContent, prize.name);
-            assert.match(ui.get('[data-point-lottery-result-points]').textContent, /3 天/);
+            assert.match(ui.get('[data-point-lottery-result-validity]').textContent, /本次获得\s*3 天/);
             assert.equal(ui.get('[data-point-lottery-result]').classList.contains('is-error'), false);
         } finally { ui.dispose(); }
     });
@@ -341,11 +616,11 @@ describe('treasure chest lottery inline UI', () => {
             await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
             assert.equal(ui.get('[data-point-lottery-points]').textContent, '90');
             assert.match(ui.get('[data-point-lottery-preview-meta]').textContent, /3 天/);
-            assert.match(ui.get('[data-point-lottery-result-points]').textContent, /抽中奖品：3 天/);
+            assert.match(ui.get('[data-point-lottery-result-validity]').textContent, /本次获得\s*3 天/);
             assert.equal(ui.get('[data-point-lottery-prize-index="1"]').getAttribute('aria-pressed'), 'true');
             ui.get('[data-point-lottery-result-close]').click();
             ui.get('[data-point-lottery-win-index="0"]').click();
-            assert.match(ui.get('[data-point-lottery-preview-meta]').textContent, /抽中奖品：3 天/);
+            assert.match(ui.get('[data-point-lottery-preview-meta]').textContent, /(?:本次获得|抽中奖品)[:：]?\s*3 天/);
         } finally { ui.dispose(); }
     });
 
