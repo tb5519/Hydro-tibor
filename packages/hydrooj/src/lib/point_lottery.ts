@@ -454,11 +454,123 @@ export function publicPointLotteryPrize(
     };
 }
 
+export interface PointLotteryBadgeValidity {
+    status: 'active' | 'permanent' | 'expired' | 'unknown';
+    expiresAt?: string;
+}
+
+interface PointLotteryBadgeValidityPrize {
+    kind?: string;
+    badgeId?: number;
+    sourceBadgeId?: number;
+    awardedBadgeId?: number;
+    badgeRepeatEffect?: string;
+    badgeUpgradeBadgeIds?: number[];
+}
+
+/**
+ * Resolve current ownership, never a draw log's old expiry snapshot. An
+ * authoritative grant without expiresAt is permanent; a historical draw or
+ * leftover userBadge without its entitlement is deliberately unknown.
+ */
+export async function getPointLotteryBadgeValidities(
+    ctx: Context,
+    uid: number,
+    prizes: PointLotteryBadgeValidityPrize[],
+    domain?: Pick<DomainDoc, '_id' | 'workspaceId'> | null,
+    now = new Date(),
+): Promise<Record<number, PointLotteryBadgeValidity>> {
+    const ids = new Set<number>();
+    const upgradeSources = new Map<number, Set<number>>();
+    for (const prize of prizes) {
+        if (prize?.kind !== 'badge') continue;
+        const badgeId = normalizeBadgeId(prize.awardedBadgeId || prize.badgeId);
+        if (!badgeId) continue;
+        ids.add(badgeId);
+        const sourceBadgeId = normalizeBadgeId(prize.sourceBadgeId || prize.badgeId);
+        if (prize.badgeRepeatEffect !== 'upgrade' || !sourceBadgeId) continue;
+        for (const id of [badgeId, sourceBadgeId, ...(prize.badgeUpgradeBadgeIds || [])]) {
+            if (!normalizeBadgeId(id)) continue;
+            ids.add(id);
+            if (!upgradeSources.has(id)) upgradeSources.set(id, new Set());
+            upgradeSources.get(id)!.add(sourceBadgeId);
+        }
+    }
+    if (!ids.size) return {};
+    const badgeIds = [...ids];
+    const scope = getPointLotteryBadgeScopeQuery(domain);
+    const sourceIds = [...new Set([...upgradeSources.values()].flatMap((sources) => [...sources]))];
+    const [manualBadges, grants] = await Promise.all([
+        ctx.db.collection('badge').find({ _id: { $in: badgeIds }, users: uid, ...scope })
+            .project({ _id: 1 }).toArray(),
+        ctx.db.collection('lottery.badgeGrant').find({
+            uid,
+            ...scope,
+            $or: [
+                { badgeId: { $in: badgeIds } },
+                { repeatEffect: 'upgrade', lotteryBadgeIds: { $in: badgeIds } },
+                ...(sourceIds.length ? [{ repeatEffect: 'upgrade', sourceBadgeId: { $in: sourceIds } }] : []),
+            ],
+        }).project({
+            badgeId: 1, sourceBadgeId: 1, repeatEffect: 1,
+            lotteryBadgeIds: 1, stateHistory: 1, expiresAt: 1, expiredAt: 1,
+        }).toArray(),
+    ]);
+    const permanentIds = new Set(manualBadges.map((badge) => badge._id));
+    return Object.fromEntries(badgeIds.map((badgeId) => {
+        if (permanentIds.has(badgeId)) return [badgeId, { status: 'permanent' }];
+        const matchingGrants = grants.filter((grant: any) => grant.badgeId === badgeId
+            || (grant.repeatEffect === 'upgrade' && (grant.lotteryBadgeIds?.includes(badgeId)
+                || (upgradeSources.get(badgeId)?.has(grant.sourceBadgeId)
+                    && (grant.sourceBadgeId === badgeId
+                        || grant.stateHistory?.some((state) => state.badgeId === badgeId))))));
+        const activeGrants = matchingGrants.filter((grant) => !grant.expiredAt
+            && (!Object.hasOwn(grant, 'expiresAt')
+                || (grant.expiresAt instanceof Date && grant.expiresAt > now)));
+        if (activeGrants.some((grant) => !Object.hasOwn(grant, 'expiresAt'))) {
+            return [badgeId, { status: 'permanent' }];
+        }
+        const unknownExpiry = matchingGrants.some((grant) => !grant.expiredAt
+            && Object.hasOwn(grant, 'expiresAt')
+            && (!(grant.expiresAt instanceof Date) || !Number.isFinite(grant.expiresAt.getTime())));
+        if (unknownExpiry) return [badgeId, { status: 'unknown' }];
+        const latestExpiry = (items: typeof grants) => items.reduce<number>((latest, grant) => (
+            grant.expiresAt instanceof Date ? Math.max(latest, grant.expiresAt.getTime() || 0) : latest
+        ), 0);
+        if (activeGrants.length) {
+            return [badgeId, { status: 'active', expiresAt: new Date(latestExpiry(activeGrants)).toISOString() }];
+        }
+        if (!matchingGrants.length) return [badgeId, { status: 'unknown' }];
+        const expiry = latestExpiry(matchingGrants);
+        return [badgeId, { status: 'expired', ...(expiry ? { expiresAt: new Date(expiry).toISOString() } : {}) }];
+    }));
+}
+
+/** Include removed/reconfigured prizes still visible in this student's recent wins. */
+export async function getPointLotteryRecentBadgeValidities(
+    ctx: Context,
+    uid: number,
+    prizes: PointLotteryBadgeValidityPrize[],
+    domain?: Pick<DomainDoc, '_id' | 'workspaceId'> | null,
+    now = new Date(),
+) {
+    const domainIds = await getPointLotteryScopeDomainIds(domain);
+    const recentDraws = await ctx.db.collection('lottery.draw').find({
+        uid, domainId: { $in: domainIds }, deleted: { $ne: true },
+    }).sort({ createdAt: -1, _id: -1 }).limit(24).project({ prize: 1 }).toArray();
+    return getPointLotteryBadgeValidities(ctx, uid, [
+        ...prizes, ...recentDraws.map((draw: any) => draw.prize),
+    ], domain, now);
+}
+
 export interface PointLotteryBadgeAward {
     awardedBadgeId: number;
     badgeLevel: number;
     badgeStyle: PointLotteryBadgeStyle;
     expiresAt?: Date;
+    badgeValidity: PointLotteryBadgeValidity;
+    badgeAwardAction: 'granted' | 'extended' | 'upgraded';
+    badgeDurationAddedHours: number;
 }
 
 /** Freeze the exact upgraded state into the draw; badgeId remains the source identity. */
@@ -478,6 +590,9 @@ export function publicPointLotteryBadgeAwardPrize(
         awardedBadgeId: award.awardedBadgeId,
         badgeLevel: award.badgeLevel,
         badgeStyle: award.badgeStyle,
+        badgeValidity: award.badgeValidity,
+        badgeAwardAction: award.badgeAwardAction,
+        badgeDurationAddedHours: award.badgeDurationAddedHours,
     };
 }
 
@@ -567,6 +682,8 @@ interface GrantedPointLotteryBadge {
     badge: any;
     badgeLevel: number;
     expiresAt?: Date;
+    badgeAwardAction: PointLotteryBadgeAward['badgeAwardAction'];
+    badgeDurationAddedHours: number;
 }
 
 export function activeLotteryBadgeGrantQuery(now: Date) {
@@ -900,7 +1017,13 @@ async function grantDurationStackingLotteryBadge(
     if (expiresAt) await schedulePointLotteryBadgeExpiry(ctx, expiresAt, grantId);
     // The award dialog describes effective ownership; a separate manual grant
     // can make this badge permanent while the automatic entitlement is timed.
-    return { badge, badgeLevel: 1, ...(!permanentBadge && expiresAt ? { expiresAt } : {}) };
+    return {
+        badge,
+        badgeLevel: 1,
+        ...(!permanentBadge && expiresAt ? { expiresAt } : {}),
+        badgeAwardAction: !permanentBadge && expiresAt && activeGrants.length ? 'extended' : 'granted',
+        badgeDurationAddedHours: !permanentBadge && expiresAt ? durationHours : 0,
+    };
 }
 
 async function grantUpgradeLotteryBadge(
@@ -1074,7 +1197,13 @@ async function grantUpgradeLotteryBadge(
         );
     }
     await selectLotteryBadgeForUser(ctx, uid, targetBadge, domainId);
-    return { badge: targetBadge, badgeLevel: targetLevel, expiresAt };
+    return {
+        badge: targetBadge,
+        badgeLevel: targetLevel,
+        expiresAt,
+        badgeAwardAction: hasExistingState ? 'upgraded' : 'granted',
+        badgeDurationAddedHours: !hasExistingState && expiresAt ? normalizeBadgeDurationHours(prize.badgeDurationHours) : 0,
+    };
 }
 
 /**
@@ -1104,6 +1233,11 @@ export async function grantPointLotteryBadge(
         awardedBadgeId: granted.badge._id,
         badgeLevel: granted.badgeLevel,
         badgeStyle,
+        badgeAwardAction: granted.badgeAwardAction,
+        badgeDurationAddedHours: granted.badgeDurationAddedHours,
+        badgeValidity: granted.expiresAt
+            ? { status: 'active', expiresAt: granted.expiresAt.toISOString() }
+            : { status: 'permanent' },
         ...(granted.expiresAt ? { expiresAt: granted.expiresAt } : {}),
     };
 }

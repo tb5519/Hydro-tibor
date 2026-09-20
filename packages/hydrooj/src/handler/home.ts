@@ -23,8 +23,8 @@ import { getPersonalAcGrowth, invalidatePersonalAcGrowth } from '../lib/personal
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
 import {
     canReceivePointLotteryBadge, ensureGlobalPointLotteryState, expireDuePointLotteryBadgeGrants, expirePointLotteryBadgeGrant,
-    getAvailablePointLotteryPrizes, getPointLotteryBadgeScopeQuery, getPointLotteryBadgeStyles,
-    getPointLotteryConfig, getPointLotteryPrizesAfterWin,
+    getAvailablePointLotteryPrizes, getPointLotteryBadgeScopeQuery, getPointLotteryBadgeStyles, getPointLotteryBadgeValidities,
+    getPointLotteryConfig, getPointLotteryPrizesAfterWin, getPointLotteryRecentBadgeValidities,
     getPointLotteryScopeDomainIds, getPointLotteryStoragePrefix,
     grantPointLotteryBadge, pickPointLotteryPrize, POINT_LOTTERY_BADGE_EXPIRY_SWEEP_TASK,
     POINT_LOTTERY_BADGE_EXPIRY_TASK, POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD,
@@ -532,6 +532,13 @@ export class HomeHandler extends Handler {
                 .limit(24)
                 .toArray()
             : [];
+        const pointLotteryServerNow = new Date();
+        const pointLotteryBadgeValidities = await getPointLotteryBadgeValidities(
+            this.ctx, this.user._id, pointLotteryWins.map((log: any) => log.prize), this.domain, pointLotteryServerNow,
+        ).catch((error) => {
+            this.ctx.logger.warn('Unable to load current point lottery badge validity: %o', error);
+            return {};
+        });
         const noBroadcastPointLotteryPrizeKeys = new Set(pointLotteryConfig.prizes
             .filter((prize) => !prize.broadcast)
             .map(pointLotteryPrizeKey));
@@ -585,6 +592,7 @@ export class HomeHandler extends Handler {
             enrolledTrainingProgress: await enrolledTrainingProgressPromise,
             pointLottery: {
                 enabled: pointLotteryConfig.enabled,
+                serverNow: pointLotteryServerNow.toISOString(),
                 cost: pointLotteryConfig.cost,
                 points: pointLotteryPoints,
                 totalPoints: pointLotteryTotalPoints,
@@ -600,6 +608,13 @@ export class HomeHandler extends Handler {
                     pointDelta: Math.max(0, Math.floor(+log.prize?.pointDelta || +log.pointDelta || 0)),
                     ...(log.prize?.kind === 'badge' ? {
                         kind: 'badge',
+                        ...(['granted', 'extended', 'upgraded'].includes(log.prize.badgeAwardAction)
+                            ? { badgeAwardAction: log.prize.badgeAwardAction } : {}),
+                        ...(typeof log.prize.badgeDurationAddedHours === 'number'
+                            && Number.isFinite(log.prize.badgeDurationAddedHours) && log.prize.badgeDurationAddedHours >= 0
+                            ? { badgeDurationAddedHours: log.prize.badgeDurationAddedHours } : {}),
+                        badgeValidity: pointLotteryBadgeValidities[log.prize.awardedBadgeId || log.prize.badgeId]
+                            || { status: 'unknown' },
                         resultImage: `${log.prize?.resultImage || ''}`,
                         ...(Number.isSafeInteger(log.prize.badgeId) ? { badgeId: log.prize.badgeId } : {}),
                         ...(Number.isSafeInteger(log.prize.sourceBadgeId)
@@ -792,8 +807,20 @@ class PointLotteryDrawHandler extends Handler {
             ...(badgeAward?.expiresAt ? { badgeExpiresAt: badgeAward.expiresAt } : {}),
             createdAt: new Date(),
         });
+        const serverNow = new Date();
+        // A display-only refresh must not turn an already-paid successful draw
+        // into a failure. The new award itself still has its authoritative validity.
+        const badgeValidities = badgeAward
+            ? await getPointLotteryRecentBadgeValidities(this.ctx, this.user._id, [
+                ...config.prizes, awardedPrize,
+            ], this.domain, serverNow).catch((error) => {
+                this.ctx.logger.warn('Unable to refresh current point lottery badge validity: %o', error);
+                return { [badgeAward.awardedBadgeId]: badgeAward.badgeValidity };
+            }) : {};
         this.response.body = {
             ok: true,
+            serverNow: serverNow.toISOString(),
+            badgeValidities,
             prize: awardedPrize,
             prizeIndex,
             prizes: publicPointLotteryPrizes(

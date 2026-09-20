@@ -102,6 +102,7 @@
           <p class="point-lottery__result-eyebrow" data-point-lottery-result-eyebrow>中奖结果</p>
           <div class="point-lottery__result-image" data-point-lottery-result-image></div>
           <strong class="point-lottery__result-title" data-point-lottery-result-title></strong>
+          <div class="point-lottery__validity" data-point-lottery-result-validity hidden></div>
           <p class="point-lottery__result-points" data-point-lottery-result-points></p>
         </div>
       </div>
@@ -755,6 +756,73 @@
     font-size: 1.25rem;
     line-height: 1.25;
   }
+  .point-lottery__validity {
+    position: relative;
+    width: 100%;
+    box-sizing: border-box;
+    margin: .85rem 0 .65rem;
+    padding: .85rem .9rem;
+    border: 1px solid #d5e7dc;
+    border-radius: 14px;
+    background: rgba(246, 251, 247, .92);
+    text-align: left;
+  }
+  .point-lottery__validity[hidden] { display: none; }
+  .point-lottery__validity-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .8rem;
+    margin: 0;
+  }
+  .point-lottery__validity-stats > div + div {
+    padding-left: .8rem;
+    border-left: 1px solid #dce9e0;
+  }
+  .point-lottery__validity-stats dt {
+    color: #61766b;
+    font-size: .7rem;
+    line-height: 1.5;
+    font-weight: 500;
+  }
+  .point-lottery__validity-stats dd {
+    margin: .25rem 0 0;
+    color: #276447;
+    font-size: 1.05rem;
+    font-weight: 750;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    font-variant-numeric: tabular-nums;
+  }
+  .point-lottery__validity-expiry {
+    margin: .7rem 0 0;
+    padding-top: .65rem;
+    border-top: 1px solid #dce9e0;
+    color: #61766b;
+    font-size: .7rem;
+    line-height: 1.6;
+    font-variant-numeric: tabular-nums;
+  }
+  .point-lottery__validity-expiry small {
+    margin-left: .3rem;
+    color: #708278;
+    font-size: .65rem;
+    white-space: nowrap;
+  }
+  .point-lottery__preview-meta .point-lottery__validity {
+    margin: .15rem 0 0;
+    padding: .65rem .7rem;
+  }
+  .point-lottery__preview-meta .point-lottery__validity-stats { grid-template-columns: 1fr; gap: .5rem; }
+  .point-lottery__preview-meta .point-lottery__validity-stats > div {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: .2rem .5rem;
+    padding: 0;
+    border: 0;
+  }
+  .point-lottery__preview-meta .point-lottery__validity-stats dt { white-space: nowrap; }
+  .point-lottery__preview-meta .point-lottery__validity-stats dd { margin: 0; font-size: .9rem; }
   .point-lottery__result-points {
     position: relative;
     margin: .35rem 0 0;
@@ -902,6 +970,7 @@
   var resultImageNode = modal.querySelector('[data-point-lottery-result-image]');
   var resultTitleNode = modal.querySelector('[data-point-lottery-result-title]');
   var resultPointsNode = modal.querySelector('[data-point-lottery-result-points]');
+  var resultValidityNode = modal.querySelector('[data-point-lottery-result-validity]');
   var drawUrl = {{ url('point_lottery_draw')|json|safe }};
   var selectedPrizeIndex = 0;
   var drawInProgress = false;
@@ -914,6 +983,9 @@
   var previewPrize = null;
   var resultPrize = null;
   var resultError = '';
+  var previewIsAward = false;
+  var serverClockOffset = 0;
+  syncServerClock(pointLottery.serverNow);
 
   function escapeHtml(value) {
     return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
@@ -926,14 +998,83 @@
     return chars.length > limit ? chars.slice(0, limit - 1).join('') + '…' : chars.join('');
   }
 
+  function timeLengthLabel(minutes) {
+    if (minutes < 1) return '不足 1 分钟';
+    var days = Math.floor(minutes / 1440);
+    var hours = Math.floor(minutes % 1440 / 60);
+    var rest = Math.floor(minutes % 60);
+    return [days ? days + ' 天' : '', hours ? hours + ' 小时' : '', !days && rest ? rest + ' 分钟' : ''].filter(Boolean).join(' ');
+  }
+
   function durationLabel(prize) {
     if (!prize || prize.kind !== 'badge' || prize.badgeDurationHours == null) return '';
     var hours = Number(prize.badgeDurationHours);
     if (!Number.isFinite(hours) || hours < 0) return '';
-    if (!hours) return '永久';
-    var days = hours / 24;
-    var rounded = Math.round(days * 100) / 100;
-    return (Math.abs(days - rounded) > 0.000001 ? '约' : '') + rounded + ' 天';
+    return hours ? timeLengthLabel(hours * 60) : '永久';
+  }
+
+  function syncServerClock(serverNow) {
+    var value = typeof serverNow === 'string' ? Date.parse(serverNow) : NaN;
+    if (Number.isFinite(value)) serverClockOffset = value - Date.now();
+  }
+
+  function expiryLabel(timestamp) {
+    var parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date(timestamp));
+    var values = {};
+    parts.forEach(function (part) { values[part.type] = part.value; });
+    return values.year + '-' + values.month + '-' + values.day + ' ' + values.hour + ':' + values.minute;
+  }
+
+  function badgeValidityHtml(prize) {
+    if (!prize || prize.kind !== 'badge') return '';
+    var validity = prize.badgeValidity || {};
+    var expiry = typeof validity.expiresAt === 'string' ? Date.parse(validity.expiresAt) : NaN;
+    var remaining = expiry - (Date.now() + serverClockOffset);
+    var label = '当前有效期';
+    var value = '暂无法确认';
+    var expiryText = '';
+    if (validity.status === 'permanent') {
+      label = '当前拥有';
+      value = '永久有效';
+    } else if (validity.status === 'active' && Number.isFinite(expiry) && remaining > 0) {
+      label = '当前剩余';
+      value = timeLengthLabel(remaining < 60000 ? remaining / 60000 : Math.ceil(remaining / 60000));
+      expiryText = '有效至';
+    } else if (validity.status === 'expired' || (validity.status === 'active' && remaining <= 0)) {
+      value = remaining <= 0 ? '已到期' : '已失效';
+      if (Number.isFinite(expiry) && remaining <= 0) expiryText = '到期于';
+    }
+    // Upgrade prizes retain their existing expiry on repeat wins; configured days are not newly added days.
+    var awardLabel = (prize.badgeRepeatEffect === 'upgrade' && !prize.badgeAwardAction)
+      || (prize.badgeDurationAddedHours === 0 && Number(prize.badgeDurationHours) > 0) ? '本次奖品' : '本次获得';
+    var awardValue = durationLabel(prize) || '时长未记录';
+    if (prize.badgeAwardAction === 'upgraded') { awardLabel = '本次效果'; awardValue = '有效期不变'; }
+    return '<dl class="point-lottery__validity-stats"><div><dt>' + awardLabel + '</dt><dd>' + escapeHtml(awardValue)
+      + '</dd></div><div><dt>' + label + '</dt><dd>' + escapeHtml(value) + '</dd></div></dl>'
+      + (expiryText ? '<p class="point-lottery__validity-expiry">' + expiryText + ' <time datetime="'
+        + escapeHtml(new Date(expiry).toISOString()) + '">' + escapeHtml(expiryLabel(expiry)) + '</time><small>北京时间</small></p>' : '');
+  }
+
+  function renderAwardMeta(prize) {
+    var html = badgeValidityHtml(prize);
+    previewMetaNode.innerHTML = html ? '<div class="point-lottery__validity">' + html + '</div>' : '';
+  }
+
+  function renderResultValidity() {
+    var html = resultError ? '' : badgeValidityHtml(resultPrize);
+    resultValidityNode.innerHTML = html;
+    resultValidityNode.hidden = !html;
+  }
+
+  function refreshBadgeValidities(validities) {
+    if (!validities || typeof validities !== 'object') return;
+    (pointLottery.recentWins || []).forEach(function (prize) {
+      var id = prize.awardedBadgeId || prize.badgeId;
+      if (prize.kind === 'badge' && Object.prototype.hasOwnProperty.call(validities, id)) prize.badgeValidity = validities[id];
+    });
   }
 
   // The three chests are identical entry points. Only the server chooses the prize.
@@ -1016,12 +1157,14 @@
     if (!prize) return;
     selectedPrizeIndex = index;
     previewPrize = prize;
+    previewIsAward = !!awardedPrize;
     renderPrizeImage(previewImageNode, prize);
     previewNameNode.textContent = prize.name;
     previewKindNode.textContent = prize.kind === 'badge' ? '勋章奖励' : '普通奖品';
     var duration = durationLabel(prize);
     previewMetaNode.innerHTML = (duration ? '<b>' + escapeHtml(duration) + '</b>' : '')
       + '<span>' + (prize.available === false ? '已获得 · 不可重复抽取' : '中奖概率 ' + escapeHtml(probabilityLabel(prize))) + '</span>';
+    if (awardedPrize) renderAwardMeta(prize);
     prizePickerNode.querySelectorAll('[data-point-lottery-prize-index]').forEach(function (button) {
       button.setAttribute('aria-pressed', String(Number(button.dataset.pointLotteryPrizeIndex) === index));
     });
@@ -1134,8 +1277,8 @@
     if (error) resultImageNode.innerHTML = '<span class="point-lottery__result-placeholder">!</span>';
     else renderPrizeImage(resultImageNode, prize, true);
     resultTitleNode.textContent = error || prize.name || '本次结果';
-    var duration = durationLabel(prize);
-    resultPointsNode.textContent = error ? '' : (duration ? '抽中奖品：' + duration + ' · ' : '') + '当前积分：' + points;
+    renderResultValidity();
+    resultPointsNode.textContent = error ? '' : '当前积分：' + points;
     resultNode.hidden = false;
     if (!modal.hidden) {
       resultCloseButton.focus({ preventScroll: true });
@@ -1195,6 +1338,7 @@
     }).then(function (data) {
       // Keep the server's awarded item and original index, including identical badge names.
       pointLottery.points = data.points;
+      syncServerClock(data.serverNow);
       if (Array.isArray(data.prizes)) pointLottery.prizes = data.prizes;
       if (data.badgeStyles) pointLottery.badgeStyles = Object.assign({}, pointLottery.badgeStyles || {}, data.badgeStyles);
       if (Number.isInteger(data.prizeIndex)) selectedPrizeIndex = data.prizeIndex;
@@ -1205,6 +1349,7 @@
           announcementIndex = 0;
         }
       }
+      refreshBadgeValidities(data.badgeValidities);
       renderPrizes(data.prize);
       renderWins();
       syncState();
@@ -1229,6 +1374,8 @@
     document.body.appendChild(modal);
     document.body.style.overflow = 'hidden';
     modal.hidden = false;
+    if (previewIsAward) renderAwardMeta(previewPrize);
+    if (!resultNode.hidden) renderResultValidity();
     renderPrizeImage(previewImageNode, previewPrize);
     if (!resultNode.hidden && !resultError) renderPrizeImage(resultImageNode, resultPrize, true);
     syncState();
@@ -1274,8 +1421,8 @@
     renderPrizeImage(previewImageNode, prize);
     previewNameNode.textContent = prize.name;
     previewKindNode.textContent = '已中奖品';
-    var duration = durationLabel(prize);
-    previewMetaNode.textContent = duration ? '抽中奖品：' + duration : '';
+    previewIsAward = true;
+    renderAwardMeta(prize);
     prizePickerNode.querySelectorAll('button').forEach(function (item) { item.setAttribute('aria-pressed', 'false'); });
   });
   if (openButton) openButton.addEventListener('click', openModal);
