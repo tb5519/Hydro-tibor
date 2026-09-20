@@ -46,6 +46,11 @@ packages/**/*.js
 !packages/geoip/download.js
 !examples/**
 packages/ui-default/public
+# The native Scratch editor is a prepared release artifact, built locally.
+!packages/ui-default/public/
+packages/ui-default/public/*
+!packages/ui-default/public/scratch-editor/
+!packages/ui-default/public/scratch-editor/**
 packages/ui-default/misc/.iconfont
 packages/ui-default/static/locale
 plugins/

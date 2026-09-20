@@ -344,6 +344,8 @@ export interface TrainingDoc extends Omit<Tdoc, 'docType'> {
 
 export interface DomainDoc extends Record<string, any> {
     _id: string;
+    /** Missing on legacy domains, which remain OJ domains. */
+    domainType?: 'oj' | 'scratch';
     owner: number;
     roles: Dictionary<string>;
     avatar: string;

@@ -3,6 +3,7 @@ import { LRUCache } from 'lru-cache';
 import { Filter } from 'mongodb';
 import { Context } from '../context';
 import { DomainDoc } from '../interface';
+import { DomainType, getDomainType } from '../lib/domain_type';
 import bus from '../service/bus';
 import db from '../service/db';
 import { MaybeArray, NumberKeys } from '../typeutils';
@@ -47,13 +48,14 @@ class DomainModel {
     };
 
     @ArgMethod
-    static async add(domainId: string, owner: number, name: string, bulletin: string, workspaceId?: string) {
+    static async add(domainId: string, owner: number, name: string, bulletin: string, workspaceId?: string, domainType: DomainType = 'oj') {
         const ddoc: DomainDoc = {
             _id: domainId,
             lower: domainId.toLowerCase(),
             owner,
             name,
             bulletin,
+            domainType: getDomainType({ domainType }),
             roles: {},
             avatar: '',
             ...(workspaceId ? { workspaceId } : {}),

@@ -1,0 +1,10 @@
+{% if assignments|length %}
+<ul class="sc-list">
+  {% for item in assignments %}
+  <li class="sc-list-item">
+    <div class="sc-assignment-title"><span class="sc-assignment-mark icon icon-flag" aria-hidden="true"></span><div><h3><a href="{{ url('scratch_assignment', assignmentId=item._id) }}">{{ item.title }}</a></h3><p>{% if item.deadline %}请在 {{ datetimeSpan(item.deadline)|safe }} 前完成{% else %}{{ '未设置截止时间' if isTeacher else '准备好了，就来试一试！' }}{% endif %}</p></div></div>
+    <a class="sc-button" href="{{ url('scratch_assignment', assignmentId=item._id) }}">{{ '查看进度' if isTeacher else '看看任务' }}<span class="icon icon-chevron_right" aria-hidden="true"></span></a>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}<div class="sc-empty"><strong>还没有课堂作业</strong><p>{{ '发布一份作业，引导学生完成一次创作。' if isTeacher else '老师发布的新任务会显示在这里。' }}</p></div>{% endif %}

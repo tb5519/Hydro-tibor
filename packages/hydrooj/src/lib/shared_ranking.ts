@@ -1,5 +1,6 @@
 import { LEVELS } from '../model/builtin';
 import domain from '../model/domain';
+import { getOjDomainQuery } from './domain_type';
 
 export interface SharedRankingRow {
     uid: number;
@@ -44,7 +45,7 @@ function assignRanksAndLevels(rows: SharedRankingRow[]) {
 }
 
 export async function getSharedRankingSnapshot() {
-    const domains = await domain.getMulti().project<{ _id: string }>({ _id: 1 }).toArray();
+    const domains = await domain.getMulti(getOjDomainQuery()).project<{ _id: string }>({ _id: 1 }).toArray();
     const domainIds = domains.map((ddoc) => ddoc._id).filter(Boolean).sort();
     const cacheKey = domainIds.join('\n');
     if (sharedRankingCache?.key === cacheKey && sharedRankingCache.expiresAt > Date.now()) return sharedRankingCache.rows;

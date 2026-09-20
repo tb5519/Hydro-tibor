@@ -1,0 +1,64 @@
+{% extends "scratch_base.html" %}
+{% macro material_icon(fileName) %}
+{% set name = fileName.toLowerCase() %}
+<div class="sc-material-icon" aria-hidden="true">
+  <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    {% if name.endsWith('.sb3') %}<path d="M9 18h30v21H9zM15 18v-7h7v7m5 0v-7h7v7M9 29h30"/><path d="M18 25h4m5 7h4"/>
+    {% elif name.endsWith('.mp3') or name.endsWith('.wav') or name.endsWith('.ogg') %}<path d="M20 33V13l18-4v20M20 20l18-4"/><ellipse cx="14" cy="34" rx="6" ry="5"/><ellipse cx="32" cy="30" rx="6" ry="5"/>
+    {% elif name.endsWith('.png') or name.endsWith('.jpg') or name.endsWith('.jpeg') or name.endsWith('.gif') or name.endsWith('.webp') %}<rect x="7" y="9" width="34" height="30" rx="5"/><circle cx="17" cy="19" r="4"/><path d="m9 35 11-10 7 6 7-9 7 9"/>
+    {% else %}<path d="M13 7h16l9 9v25H13zM29 7v10h9M20 25h11m-11 7h11"/>{% endif %}
+  </svg>
+</div>
+{% endmacro %}
+{% block scratch_content %}
+<div class="sc-heading">
+  <div><div class="sc-eyebrow">{{ '课堂资料' if isTeacher else '创作的小帮手' }}</div><h1>上课素材</h1><p class="sc-muted">{{ '上传课堂资料，按作业或学生分发。' if isTeacher else '看看老师准备了什么，把灵感带进作品里。' }}</p></div>
+</div>
+{% if isTeacher %}
+<section class="sc-panel">
+  <div class="sc-panel-head"><h2>上传素材</h2></div>
+  <div class="sc-panel-body"><form class="sc-form" method="post" enctype="multipart/form-data">
+    <div class="sc-form-grid"><label class="sc-field"><span>素材名称</span><input name="title" required maxlength="120" placeholder="例如：海底世界角色包"></label><label class="sc-field"><span>分类</span><input name="category" maxlength="40" value="未分类" placeholder="例如：角色素材"></label></div>
+    <label class="sc-field"><span>关联作业（可选）</span><select name="assignmentId"><option value="">通用课堂素材</option>{% for assignment in assignments %}<option value="{{ assignment._id }}">{{ assignment.title }}</option>{% endfor %}</select></label>
+    <label class="sc-field"><span>素材文件</span><input type="file" name="file" accept=".sb3,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.ogg,.pdf,.txt" required><small>Scratch 项目、图片、声音或课堂文档，单个文件最大 20MB。</small></label>
+    <fieldset class="sc-field"><legend>发送范围</legend><div class="sc-checks">{% for student in students %}<label><input type="checkbox" name="recipientIds" value="{{ student._id or student.uid }}">{{ student.displayName or student.uname }}</label>{% endfor %}</div><small>勾选指定成员；不勾选时，课堂内所有成员可见。</small></fieldset>
+    <div><button class="sc-button sc-button-primary" type="submit">上传并发送</button></div>
+  </form></div>
+</section>
+{% endif %}
+<div class="sc-heading"><h2>{{ '素材列表' if isTeacher else '老师分享的素材' }}</h2><span class="sc-badge">{{ materials|length }} 份素材</span></div>
+{% if materials|length %}
+<div{% if not isTeacher %} class="sc-grid"{% endif %}>
+  {% for item in materials %}
+  <article class="{{ 'sc-panel' if isTeacher else 'sc-card' }}">
+    {% if not isTeacher %}{{ material_icon(item.fileName) }}{% endif %}
+    <div class="{{ 'sc-panel-body' if isTeacher else 'sc-card-body' }}">
+      <div{% if isTeacher %} class="sc-list-item"{% endif %}>
+        <div><h3>{{ item.title }}</h3><span class="sc-badge">{{ item.category or '未分类' }}</span><p class="sc-card-meta sc-spaced">{{ item.fileName }} · {{ (item.size / 1024)|round(1) }} KB</p>
+          {% if isTeacher %}<p class="sc-spaced">可见范围：{% if item.recipientIds|length %}{% for uid in item.recipientIds %}{{ (udict[uid].displayName or udict[uid].uname) if udict[uid] else uid }}{% if not loop.last %}、{% endif %}{% endfor %}{% else %}课堂内所有成员{% endif %}</p>{% endif %}
+        </div>
+        <div class="sc-actions">
+          {% if item.fileName.toLowerCase().endsWith('.sb3') %}<form method="post" action="{{ url('scratch_works') }}"><input type="hidden" name="materialId" value="{{ item._id }}"><input type="hidden" name="title" value="{{ item.title }}"><button class="sc-button sc-button-primary" type="submit">用这个素材创作</button></form>{% endif %}
+          <a class="sc-button" href="{{ url('scratch_file', fileId=item.fileId) }}">下载素材</a>
+        </div>
+      </div>
+      {% if isTeacher %}
+      <details class="sc-spaced sc-version-details"><summary>编辑素材与发送范围</summary>
+        <form class="sc-form sc-spaced" method="post" enctype="multipart/form-data" action="{{ url('scratch_material', materialId=item._id) }}">
+          <div class="sc-form-grid"><label class="sc-field"><span>名称</span><input name="title" value="{{ item.title }}" maxlength="120" required></label><label class="sc-field"><span>分类</span><input name="category" value="{{ item.category }}" maxlength="40" required></label></div>
+          <fieldset class="sc-field"><legend>发送范围</legend><div class="sc-checks">{% for student in students %}<label><input type="checkbox" name="recipientIds" value="{{ student._id or student.uid }}"{% if (student._id or student.uid) in item.recipientIds %} checked{% endif %}>{{ student.displayName or student.uname }}</label>{% endfor %}</div><small>不勾选时，课堂内所有成员可见。</small></fieldset>
+          <label class="sc-field"><span>关联作业</span><select name="assignmentId"><option value="">通用课堂素材</option>{% for assignment in assignments %}<option value="{{ assignment._id }}"{% if String(item.assignmentId) == String(assignment._id) %} selected{% endif %}>{{ assignment.title }}</option>{% endfor %}</select></label>
+          <label class="sc-field"><span>替换文件（可选）</span><input type="file" name="file" accept=".sb3,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.ogg,.pdf,.txt"><small>单个文件最大 20MB。不选择文件会保留当前素材。</small></label>
+          <div><button class="sc-button" type="submit">保存修改</button></div>
+        </form>
+        <details class="sc-danger-zone"><summary>删除这个素材</summary><form method="post" action="{{ url('scratch_material', materialId=item._id) }}"><input name="operation" type="hidden" value="delete"><button class="sc-button sc-button-danger" type="submit">确认删除素材</button></form></details>
+      </details>
+      {% endif %}
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<section class="sc-panel"><div class="sc-empty"><strong>{{ '还没有上传素材' if isTeacher else '小帮手正在路上' }}</strong><p>{{ '可以先上传一个 Scratch 起始项目。' if isTeacher else '老师分享的素材，会出现在这里。' }}</p></div></section>
+{% endif %}
+{% endblock %}

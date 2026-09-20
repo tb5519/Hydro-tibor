@@ -119,11 +119,23 @@
       <li class="nav__list-item">
         <a href="{{ url('homepage', domainId=UiContext.domain._id) }}" class="nav__logo nav__logo--text">{{ model.system.get('server.name') or 'Hydro' }}</a>
       </li>
+      {% if UiContext.domain.domainType == 'scratch' %}
+        <li class="nav__list-item"><a href="{{ url('scratch_main') }}" class="nav__item{% if page_name == 'scratch_main' %} nav--active{% endif %}">首页</a></li>
+        <li class="nav__list-item"><a href="{{ url('scratch_works') }}" class="nav__item{% if page_name.startsWith('scratch_work') or page_name.startsWith('scratch_editor') %} nav--active{% endif %}">作品</a></li>
+        <li class="nav__list-item"><a href="{{ url('scratch_assignments') }}" class="nav__item{% if (page_name.startsWith('scratch_assignment') and page_name != 'scratch_assignment_create') or page_name == 'scratch_submission' %} nav--active{% endif %}">作业</a></li>
+        <li class="nav__list-item"><a href="{{ url('scratch_materials') }}" class="nav__item{% if page_name.startsWith('scratch_material') %} nav--active{% endif %}">素材</a></li>
+        {% if handler.user.hasPerm(perm.PERM_EDIT_DOMAIN) %}
+          <li class="nav__list-item"><a href="{{ url('scratch_assignment_create') }}" class="nav__item{% if page_name == 'scratch_assignment_create' %} nav--active{% endif %}">发布作业</a></li>
+          <li class="nav__list-item"><a href="{{ url('domain_user') }}" class="nav__item{% if page_name == 'domain_user' %} nav--active{% endif %}">学员管理</a></li>
+          <li class="nav__list-item"><a href="{{ url('domain_dashboard') }}" class="nav__item{% if page_name.startsWith('domain') and page_name != 'domain_user' %} nav--active{% endif %}">域管理</a></li>
+        {% endif %}
+      {% else %}
       {% set domainNavVisibility = UiContext.domain.navVisibility or {} %}
       {% set configurableDomainNavItems = ['problem_mistake', 'training_main', 'contest_main', 'homework_main', 'record_main', 'ranking'] %}
       {%- for item in overrideNav|default(ui.getNodes('Nav')) -%}{% if item.checker(handler) and (item.name not in configurableDomainNavItems or domainNavVisibility[item.name] != false) %}
         {{ nav_item(item) }}
       {% endif %}{%- endfor -%}
+      {% endif %}
     </ol>
     <ol class="nav__list nav__list--secondary clearfix">
     {% if not handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
@@ -146,9 +158,10 @@
           {%- if handler.user.domains|length -%}
           {%- for ddoc in handler.user.domains -%}
             <li class="menu__item">
-              <a href="{{ url('homepage', domainId=ddoc['_id']) }}" class="menu__link">
+              <a href="{{ url('scratch_main' if ddoc.domainType == 'scratch' else 'homepage', domainId=ddoc['_id']) }}" class="menu__link">
                 <span class="icon"><img class="small user-profile-avatar v-center" loading="lazy" src="{{ avatarUrl(ddoc.avatar|default('')) }}" width="20" height="20"></span>
                 {{ ddoc['name'] }}{% if ddoc['name'] != ddoc['_id']%} ({{ ddoc['_id'] }}){% endif %}
+                {% if ddoc.domainType == 'scratch' %} · Scratch{% endif %}
               </a>
             </li>
           {%- endfor -%}

@@ -6,6 +6,7 @@ import Schema from 'schemastery';
 import { Counter } from '@hydrooj/utils';
 import { Udoc } from '../interface';
 import difficultyAlgorithm from '../lib/difficulty';
+import { getOjDomainQuery, isScratchDomain } from '../lib/domain_type';
 import { invalidateSharedRankingSnapshot } from '../lib/shared_ranking';
 import { PRIV, STATUS } from '../model/builtin';
 import domain from '../model/domain';
@@ -117,6 +118,7 @@ export async function calcLevel(domainId: string, report: Report) {
 }
 
 async function runInDomain(domainId: string, report: Report) {
+    if (isScratchDomain(await domain.get(domainId))) return;
     const results: Record<keyof typeof RpTypes, ND> = {};
     const udict = Counter();
     await db.collection('domain.user').updateMany({ domainId }, { $set: { rpInfo: {} } });
@@ -192,7 +194,7 @@ async function runAcrossDomains(domainIds: string[], report: Report) {
 
 export async function run({ domainId }, report: Report) {
     if (!domainId) {
-        const domains = await domain.getMulti().toArray();
+        const domains = await domain.getMulti(getOjDomainQuery()).toArray();
         await report({ message: `Found ${domains.length} domains` });
         for (const i in domains) {
             const start = Date.now();
@@ -210,7 +212,7 @@ export async function run({ domainId }, report: Report) {
         }
     } else await runInDomain(domainId, report);
 
-    const allDomains = await domain.getMulti().project<{ _id: string, rankingMode?: string }>({ _id: 1, rankingMode: 1 }).toArray();
+    const allDomains = await domain.getMulti(getOjDomainQuery()).project<{ _id: string, rankingMode?: string }>({ _id: 1, rankingMode: 1 }).toArray();
     if (allDomains.some((ddoc) => ddoc.rankingMode === 'all')) {
         const start = Date.now();
         const domainIds = allDomains.map((ddoc) => ddoc._id);

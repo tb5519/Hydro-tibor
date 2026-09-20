@@ -3,6 +3,7 @@ import {
 } from 'hydrooj';
 import type { Tdoc } from 'hydrooj/src/interface';
 import { canViewContestLevel } from 'hydrooj/src/lib/contest_access';
+import { isScratchDomain } from 'hydrooj/src/lib/domain_type';
 import workspace from 'hydrooj/src/model/workspace';
 import { ActiveContestTimer, ContestTimerSnapshot, getContestTimerWindow } from '../common/contest-timer';
 
@@ -12,6 +13,7 @@ type TimerContest = Pick<Tdoc,
 
 export async function getActiveContestTimers(that: Handler): Promise<ContestTimerSnapshot> {
   const empty = () => ({ serverNow: Date.now(), contests: [] });
+  if (isScratchDomain(that.domain)) return empty();
   if (!that.user.hasPriv(PRIV.PRIV_USER_PROFILE)) return empty();
   const entryDomain = that.contestEntryContext?.domain || that.domain;
   const entryUser = await UserModel.getById(entryDomain._id, that.user._id, that.session.scope);
@@ -82,6 +84,7 @@ class ActiveContestTimerHandler extends Handler {
 export function apply(ctx: Context) {
   ctx.Route('active_contest_timers', '/active-contest-timers', ActiveContestTimerHandler);
   ctx.on('handler/after', async (that) => {
+    if (isScratchDomain(that.domain)) return;
     if (that.request.json || !that.response.template || !that.user.hasPriv(PRIV.PRIV_USER_PROFILE)) return;
     that.UiContext.contestTimerEndpoint = that.url('active_contest_timers', {
       domainId: that.contestEntryContext?.domain._id || that.domain._id,

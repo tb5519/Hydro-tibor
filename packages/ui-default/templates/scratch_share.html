@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#2563eb">
+  <title>{{ title }} - OneByOne</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=onebyone-one-20260920">
+  <link rel="icon" href="/favicon.ico?v=onebyone-one-20260920" sizes="16x16 32x32 48x48 64x64">
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#eaf1fb;color:#243957;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+    .scratch-public-player{position:relative;width:100%;height:100dvh;min-height:300px;overflow:hidden}
+    iframe{display:block;border:0;width:100%;height:100%;background:#eaf1fb}
+    .scratch-player-status{position:absolute;z-index:2;top:50%;left:50%;transform:translate(-50%,-50%);width:max-content;max-width:calc(100% - 40px);padding:20px 26px;border:1px solid #dce7f6;border-radius:18px;background:#fff;box-shadow:0 12px 40px #24395714;text-align:center;line-height:1.7;font-size:16px}
+    .scratch-player-status[hidden]{display:none}.scratch-player-status[data-error=true]{color:#a73536}
+    .scratch-player-status button{margin-top:12px;padding:9px 22px;border:0;border-radius:10px;background:#2563eb;color:#fff;font:inherit;cursor:pointer}
+    .scratch-player-status button:focus-visible{outline:3px solid #8ebcff;outline-offset:3px}
+  </style>
+</head>
+<body>
+  <main class="scratch-public-player" data-scratch-public-player data-config="{{ UiContext.scratchPlayer|json }}">
+    <div class="scratch-player-status" role="status" aria-live="polite" data-scratch-player-status><span data-scratch-player-message>正在打开作品，小小创意马上登场…</span><br><button type="button" data-scratch-player-retry hidden>重新打开</button></div>
+    <iframe title="{{ title }} · 运行舞台" data-scratch-player-frame sandbox="allow-scripts" allow="autoplay; fullscreen" allowfullscreen referrerpolicy="no-referrer"></iframe>
+    <noscript>请开启 JavaScript 后播放作品。</noscript>
+  </main>
+  <script src="/scratch-player.js?v=20260920-1" defer></script>
+</body>
+</html>

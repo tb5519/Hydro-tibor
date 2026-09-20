@@ -16,6 +16,7 @@ import { DomainDoc, Setting } from '../interface';
 import avatar, { validate } from '../lib/avatar';
 import { getBadgeHonorWall } from '../lib/badge_honor_wall';
 import { getDomainRankingMode } from '../lib/domain_ranking';
+import { DOMAIN_TYPES, DomainType, isScratchDomain } from '../lib/domain_type';
 import { getHomePosterConfig } from '../lib/home_poster';
 import * as mail from '../lib/mail';
 import { getPersonalAcGrowth, invalidatePersonalAcGrowth } from '../lib/personal_ac_growth';
@@ -412,6 +413,10 @@ export class HomeHandler extends Handler {
     }
 
     async get({ domainId }) {
+        if (isScratchDomain(this.domain)) {
+            this.response.redirect = this.url('scratch_main');
+            return;
+        }
         const homepageConfig = this.ctx.setting.get('hydrooj.homepage');
         const info = yaml.load(homepageConfig) as any;
         const hiddenHomepageSections = new Set([
@@ -1177,12 +1182,13 @@ class HomeDomainCreateHandler extends Handler {
     @param('name', Types.Title)
     @param('bulletin', Types.Content)
     @param('avatar', Types.Content, true)
+    @param('domainType', Types.Range(DOMAIN_TYPES), true)
     // eslint-disable-next-line ts/no-shadow
-    async post(_: string, id: string, name: string, bulletin: string, avatar: string) {
+    async post(_: string, id: string, name: string, bulletin: string, avatar: string, domainType: DomainType = 'oj') {
         const doc = await domain.get(id);
         if (doc) throw new DomainAlreadyExistsError(id);
         avatar ||= this.user.avatar || `gravatar:${this.user.mail}`;
-        const domainId = await domain.add(id, this.user._id, name, bulletin);
+        const domainId = await domain.add(id, this.user._id, name, bulletin, undefined, domainType);
         // When this domain is deleted but previously added to user's list we shouldn't push it again
         const push = !this.user.pinnedDomains?.includes(domainId);
         await Promise.all([
@@ -1192,7 +1198,7 @@ class HomeDomainCreateHandler extends Handler {
                 ? user.setById(this.user._id, undefined, undefined, { pinnedDomains: domainId })
                 : Promise.resolve(),
         ]);
-        this.response.redirect = this.url('domain_dashboard', { domainId });
+        this.response.redirect = this.url(domainType === 'scratch' ? 'scratch_main' : 'domain_dashboard', { domainId });
         this.response.body = { domainId };
     }
 }

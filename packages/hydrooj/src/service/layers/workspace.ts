@@ -1,5 +1,6 @@
 import type { KoaContext } from '@hydrooj/framework';
 import { isDomainAvatarImageRequest } from '../../lib/domain_avatar_access';
+import { isScratchShareRequest } from '../../lib/scratch_share_access';
 import workspace from '../../model/workspace';
 
 const WORKSPACE_NEUTRAL_PATHS = [
@@ -16,7 +17,8 @@ const WORKSPACE_NEUTRAL_PATHS = [
 ];
 
 function isWorkspaceNeutralPath(path: string, method: string) {
-    return isDomainAvatarImageRequest(path, method) || WORKSPACE_NEUTRAL_PATHS.some((pattern) => pattern.test(path));
+    return isDomainAvatarImageRequest(path, method) || isScratchShareRequest(path, method)
+        || WORKSPACE_NEUTRAL_PATHS.some((pattern) => pattern.test(path));
 }
 
 /**

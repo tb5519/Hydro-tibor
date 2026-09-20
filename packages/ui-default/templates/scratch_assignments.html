@@ -1,0 +1,9 @@
+{% extends "scratch_base.html" %}
+{% block scratch_content %}
+<div class="sc-heading">
+  <div><div class="sc-eyebrow">{{ '课堂教学' if isTeacher else '一步一步，试试新本领' }}</div><h1>{{ '作业管理' if isTeacher else '我的作业' }}</h1><p class="sc-muted">{{ '发布创作任务，查看学生提交并给予反馈。' if isTeacher else '看看老师的小任务，用积木做出来吧。' }}</p></div>
+  {% if isTeacher %}<a class="sc-button sc-button-primary" href="{{ url('scratch_assignment_create') }}">＋ 发布作业</a>{% endif %}
+</div>
+<section class="sc-panel"><div class="sc-panel-body">{% include "partials/scratch_assignment_list.html" %}</div></section>
+{% if numPages > 1 %}<div class="sc-pagination">{{ paginator.render(page, numPages) }}</div>{% endif %}
+{% endblock %}

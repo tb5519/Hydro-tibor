@@ -1,0 +1,24 @@
+<dialog id="scratch-create-dialog" class="sc-dialog" data-scratch-create-dialog aria-labelledby="scratch-create-title" aria-describedby="scratch-create-description">
+  <div class="sc-dialog-head">
+    <span class="sc-dialog-symbol" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10h18v17H7zM11 10V6h4v4m4 0V6h4v4M7 19h18"/></svg></span>
+    <button class="sc-dialog-close" type="button" data-scratch-dialog-close aria-label="关闭新建作品窗口"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+  </div>
+  <h2 id="scratch-create-title">新点子，要出发啦！</h2>
+  <p id="scratch-create-description" class="sc-muted">先取个名字，再把你的想法做出来。</p>
+  <form class="sc-form sc-spaced" data-scratch-create-form action="{{ url('scratch_works') }}" method="post">
+    <label class="sc-field" for="scratch-create-name"><span>给作品起个名字</span><input id="scratch-create-name" name="title" maxlength="120" required autofocus autocomplete="off" placeholder="例如：小猫的太空冒险"></label>
+    <div class="sc-dialog-actions"><button class="sc-button" type="button" data-scratch-dialog-close>再想一想</button><button class="sc-button sc-button-primary" type="submit">开始创作<span class="icon icon-chevron_right" aria-hidden="true"></span></button></div>
+  </form>
+</dialog>
+
+<dialog id="scratch-share-dialog" class="sc-dialog" data-scratch-share-dialog aria-labelledby="scratch-share-title" aria-describedby="scratch-share-description">
+  <div class="sc-dialog-head">
+    <span class="sc-dialog-symbol" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 5h9v9m0-9L13 19M13 8H8a3 3 0 0 0-3 3v13a3 3 0 0 0 3 3h13a3 3 0 0 0 3-3v-5"/></svg></span>
+    <button class="sc-dialog-close" type="button" data-scratch-dialog-close aria-label="关闭分享作品窗口"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+  </div>
+  <h2 id="scratch-share-title">把小创意分享出去</h2>
+  <p id="scratch-share-description" class="sc-muted">分享的是已保存版本，任何获得链接的人都能播放。</p>
+  <label class="sc-field sc-spaced" for="scratch-share-text"><span>作品分享内容</span><textarea id="scratch-share-text" data-scratch-share-text readonly rows="4" spellcheck="false" aria-describedby="scratch-share-status" placeholder="分享文字和链接会显示在这里"></textarea></label>
+  <p id="scratch-share-status" class="sc-dialog-status" data-scratch-share-status role="status" aria-live="polite" aria-atomic="true"></p>
+  <div class="sc-dialog-actions"><button class="sc-button sc-button-quiet" type="button" data-scratch-revoke-share hidden>关闭分享</button><button class="sc-button" type="button" data-scratch-dialog-close>关闭</button><button class="sc-button sc-button-primary" type="button" data-scratch-copy-share disabled><span class="icon icon-copy" aria-hidden="true"></span>复制分享内容</button></div>
+</dialog>

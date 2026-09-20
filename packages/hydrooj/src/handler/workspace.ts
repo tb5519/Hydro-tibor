@@ -3,6 +3,7 @@ import {
     DomainAlreadyExistsError, ForbiddenError, NotFoundError, UserNotFoundError, ValidationError, VerifyPasswordError,
 } from '../error';
 import type { WorkspaceDoc, WorkspaceMemberDoc, WorkspaceRole } from '../interface';
+import { DOMAIN_TYPES, DomainType } from '../lib/domain_type';
 import { normalizeStudentLevel, STUDENT_LEVELS } from '../lib/student_level';
 import { PERM, PRIV } from '../model/builtin';
 import domain from '../model/domain';
@@ -366,18 +367,20 @@ class WorkspaceDashboardHandler extends WorkspaceScopedHandler {
     @requireSudo
     @post('domainCode', Types.DomainId)
     @post('name', Types.String)
-    async postCreateDomain(domainId: string, domainCode: string, name: string) {
+    @post('domainType', Types.Range(DOMAIN_TYPES), true)
+    async postCreateDomain(domainId: string, domainCode: string, name: string, domainType: DomainType = 'oj') {
         if (!this.canManageStudents()) throw new ForbiddenError();
         const normalizedName = name.trim();
         if (!normalizedName || normalizedName.length > 64) throw new ValidationError('name');
         if (await domain.get(domainCode)) throw new DomainAlreadyExistsError(domainCode);
-        await domain.add(domainCode, this.workspaceDoc.ownerUid, normalizedName, '', this.workspaceDoc._id);
+        await domain.add(domainCode, this.workspaceDoc.ownerUid, normalizedName, '', this.workspaceDoc._id, domainType);
         await syncWorkspaceDomainAccess(this.workspaceDoc._id, domainCode);
         await oplog.log(this, 'workspace.createDomain', {
             workspaceId: this.workspaceDoc._id,
             domainId: domainCode,
+            domainType,
         });
-        this.response.redirect = this.url('domain_dashboard', { domainId: domainCode });
+        this.response.redirect = this.url(domainType === 'scratch' ? 'scratch_main' : 'domain_dashboard', { domainId: domainCode });
     }
 }
 

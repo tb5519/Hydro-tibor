@@ -1,0 +1,55 @@
+{% extends "scratch_base.html" %}
+{% block scratch_content %}
+<div class="sc-heading">
+  <div><div class="sc-eyebrow">{{ '课堂作业' if isTeacher else '老师的小任务' }}</div><h1>{{ assignment.title }}</h1><p class="sc-muted">{% if assignment.deadline %}截止时间 {{ datetimeSpan(assignment.deadline)|safe }}{% else %}{{ '未设置截止时间' if isTeacher else '没有截止时间，可以慢慢试一试' }}{% endif %}</p></div>
+  <div class="sc-actions">{% if isTeacher %}<a class="sc-button" href="{{ url('scratch_assignment_edit', assignmentId=assignment._id) }}">编辑作业</a>{% endif %}<a class="sc-button" href="{{ url('scratch_assignments') }}">所有作业 →</a></div>
+</div>
+<div class="sc-columns">
+  <div><section class="sc-panel">
+    <div class="sc-panel-head"><h2>{{ '创作任务' if isTeacher else '这次要做什么？' }}</h2></div>
+    <div class="sc-panel-body">
+      <div class="sc-description">{{ assignment.description or '发挥你的想象力，完成一个有趣的 Scratch 作品。' }}</div>
+      {% if assignment.templateFileId %}<div class="sc-spaced"><a class="sc-button" href="{{ url('scratch_file', fileId=assignment.templateFileId) }}">下载起始项目</a></div>{% endif %}
+    </div>
+  </section></div>
+  <div><section class="sc-panel">
+    <div class="sc-panel-head"><h2>{{ '课堂进度' if isTeacher else '准备好了吗？' }}</h2></div>
+    <div class="sc-panel-body">
+      {% if isTeacher %}
+        <p>已有 <strong>{{ works|length }}</strong> 份作品、<strong>{{ submissions|length }}</strong> 次提交。</p>
+        <p class="sc-muted sc-spaced">在下方查看学生作品和提交记录。</p>
+      {% else %}
+        <p class="sc-muted">{{ '你的作品还在这里，接着做吧。' if work else '打开积木小天地，把你的想法做出来。' }}</p>
+        <form class="sc-spaced" method="post"><button class="sc-button sc-button-primary" type="submit">{{ '继续创作' if work else '开始做作业' }}</button></form>
+        {% if work %}<div class="sc-spaced"><a class="sc-button" href="{{ url('scratch_work', workId=work._id) }}">查看我的作品</a></div>{% endif %}
+      {% endif %}
+    </div>
+  </section></div>
+</div>
+{% if not isTeacher %}
+<ol class="sc-steps" aria-label="完成作业的三个步骤">
+  <li><span class="sc-step-number">1</span><div><strong>搭一搭积木</strong><p class="sc-muted">试试老师的小任务。</p></div></li>
+  <li><span class="sc-step-number">2</span><div><strong>保存作品</strong><p class="sc-muted">让新点子留在这里。</p></div></li>
+  <li><span class="sc-step-number">3</span><div><strong>提交作业</strong><p class="sc-muted">完成后，交给老师看看。</p></div></li>
+</ol>
+{% endif %}
+{% if materials|length %}
+<section class="sc-panel">
+  <div class="sc-panel-head"><h2>{{ '作业素材' if isTeacher else '老师准备的小帮手' }}</h2></div>
+  <div class="sc-panel-body"><ul class="sc-list">{% for item in materials %}<li class="sc-list-item"><div><h3>{{ item.title }}</h3><p>{{ item.fileName }}</p></div><a class="sc-button" href="{{ url('scratch_file', fileId=item.fileId) }}">下载素材</a></li>{% endfor %}</ul></div>
+</section>
+{% endif %}
+{% if isTeacher and works|length %}<section class="sc-panel"><div class="sc-panel-head"><h2>学生作品</h2></div><div class="sc-panel-body">{% include "partials/scratch_work_cards.html" %}</div></section>{% endif %}
+<section class="sc-panel">
+  <div class="sc-panel-head"><h2>{{ '提交与批改' if isTeacher else '交给老师的作品' }}</h2></div>
+  {% if submissions|length %}
+    {% if isTeacher %}
+    <div class="sc-table-wrap"><table class="sc-table"><thead><tr><th>学生</th><th>提交版本</th><th>提交时间</th><th>状态</th><th>成绩</th><th></th></tr></thead><tbody>{% for item in submissions %}<tr><td>{{ (udict[item.owner].displayName or udict[item.owner].uname) if udict[item.owner] else item.owner }}</td><td>v{{ item.revision }}</td><td>{{ datetimeSpan(item.createdAt)|safe }}</td><td><span class="sc-badge {{ 'sc-badge-success' if item.reviewedAt else 'sc-badge-warm' }}">{{ '已批改' if item.reviewedAt else '待批改' }}</span></td><td>{{ item.grade if item.grade != null else '—' }}</td><td><a class="sc-button" href="{{ url('scratch_submission', submissionId=item._id) }}">批改 / 查看</a></td></tr>{% endfor %}</tbody></table></div>
+    {% else %}
+    <div class="sc-panel-body"><ul class="sc-list">{% for item in submissions %}<li class="sc-list-item"><div><h3>{{ '老师有反馈啦' if item.reviewedAt else '已交给老师' }}</h3><p>提交于 {{ datetimeSpan(item.createdAt)|safe }}</p>{% if item.grade != null %}<span class="sc-badge sc-badge-success">{{ item.grade }}</span>{% endif %}</div><a class="sc-button {{ 'sc-button-primary' if item.reviewedAt else '' }}" href="{{ url('scratch_submission', submissionId=item._id) }}">{{ '查看老师反馈' if item.reviewedAt else '查看提交作品' }}</a></li>{% endfor %}</ul></div>
+    {% endif %}
+  {% else %}
+    <div class="sc-empty"><strong>{{ '还没有提交记录' if isTeacher else '完成后，给老师看看吧' }}</strong><p>{{ '学生在编辑器中提交作业后，会显示在这里。' if isTeacher else '在编辑器里点击“提交作业”，作品就会出现在这里。' }}</p></div>
+  {% endif %}
+</section>
+{% endblock %}

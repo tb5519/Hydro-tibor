@@ -18,6 +18,15 @@
           </ul>
         </blockquote>
         <form method="post">
+          <div class="row"><div class="columns">
+            <label>域类型
+              <select name="domainType">
+                <option value="oj">OJ 编程域</option>
+                <option value="scratch">Scratch 创作域</option>
+              </select>
+            </label>
+            <p class="help-text">Scratch 域提供作品、作业和素材，不参与全域排行榜。创建后域类型固定。</p>
+          </div></div>
             {{ form.form_text({
                 label:'ID',
                 name:'id',

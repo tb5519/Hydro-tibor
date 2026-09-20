@@ -1,0 +1,9 @@
+{% extends "scratch_base.html" %}
+{% block scratch_content %}
+<div class="sc-heading">
+  <div><div class="sc-eyebrow">{{ '课堂创作' if isTeacher else '我的创作小天地' }}</div><h1>{{ '学员作品' if isTeacher else '我的作品' }}</h1><p class="sc-muted">{{ '查看学生的创作，也可以制作自己的示范作品。' if isTeacher else '上次的小点子，今天接着做！' }}</p></div>
+  <button class="sc-button sc-button-primary" type="button" data-scratch-create aria-haspopup="dialog" aria-controls="scratch-create-dialog"><span class="icon icon-add" aria-hidden="true"></span>新建作品</button>
+</div>
+{% include "partials/scratch_work_cards.html" %}
+{% if numPages > 1 %}<div class="sc-pagination">{{ paginator.render(page, numPages) }}</div>{% endif %}
+{% endblock %}

@@ -166,9 +166,9 @@
         {% if domains.length %}
           <div class="teacher-workspace__domains">
             {% for item in domains %}
-              <a class="teacher-workspace__domain" href="{% if canCreateDomain %}{{ url('domain_dashboard', { domainId: item._id }) }}{% else %}{{ url('homepage', { domainId: item._id }) }}{% endif %}">
-                <div><h3>{{ item.name|default(item._id) }}</h3><p>{{ item._id }}</p></div>
-                <span class="teacher-workspace__enter">{% if canCreateDomain %}{{ _('Manage domain') }}{% else %}{{ _('Enter domain') }}{% endif %} →</span>
+              <a class="teacher-workspace__domain" href="{% if item.domainType == 'scratch' %}{{ url('scratch_main', { domainId: item._id }) }}{% elif canCreateDomain %}{{ url('domain_dashboard', { domainId: item._id }) }}{% else %}{{ url('homepage', { domainId: item._id }) }}{% endif %}">
+                <div><h3>{{ item.name|default(item._id) }}</h3><p>{{ item._id }} · {% if item.domainType == 'scratch' %}Scratch 创作域{% else %}OJ 编程域{% endif %}</p></div>
+                <span class="teacher-workspace__enter">{% if canCreateDomain and item.domainType != 'scratch' %}{{ _('Manage domain') }}{% else %}{{ _('Enter domain') }}{% endif %} →</span>
               </a>
             {% endfor %}
           </div>
@@ -183,6 +183,13 @@
           <form method="post" class="teacher-workspace__form">
             <input type="hidden" name="operation" value="create_domain">
             <label class="teacher-workspace__field">
+              <span>域类型</span>
+              <select class="textbox" name="domainType">
+                <option value="oj">OJ 编程域</option>
+                <option value="scratch">Scratch 创作域</option>
+              </select>
+            </label>
+            <label class="teacher-workspace__field">
               <span>{{ _('Domain ID') }}</span>
               <input class="textbox" name="domainCode" placeholder="Z0001" required>
             </label>
@@ -193,6 +200,7 @@
             <button class="rounded primary button" type="submit"><span class="icon icon-add"></span>{{ _('Create Domain') }}</button>
           </form>
           <p class="teacher-workspace__tip">{{ _('Domain IDs are globally unique. After creation, the workspace owner becomes the domain owner automatically.') }}</p>
+          <p class="teacher-workspace__tip">Scratch 域提供作品、作业和素材，不参与全域排行榜。创建后域类型固定。</p>
         {% else %}
           <div class="teacher-workspace__locked">{{ _('Only workspace owners, administrators, and teachers can create domains.') }}</div>
         {% endif %}

@@ -1,0 +1,66 @@
+{% extends "scratch_base.html" %}
+{% block scratch_content %}
+<section class="sc-hero">
+  <div>
+    <div class="sc-eyebrow"><span class="icon icon-star--outline" aria-hidden="true"></span>{{ '欢迎回到 Scratch 课堂' if isTeacher else '小小创作家，欢迎回来！' }}</div>
+    <h1>{% if isTeacher %}陪孩子一起，<br><em>把点子变成作品。</em>{% else %}小小积木，<br>装得下<em>大大想法。</em>{% endif %}</h1>
+    <p>{{ '准备一个小任务，发现孩子们的新点子。' if isTeacher else '搭一搭，试一试，让你的故事动起来！' }}</p>
+    <div class="sc-hero-actions">
+      {% if isTeacher %}
+      <a class="sc-button sc-button-primary" href="{{ url('scratch_assignment_create') }}"><span class="icon icon-add" aria-hidden="true"></span>发布新作业</a>
+      <a class="sc-button" href="{{ url('scratch_works') }}">看看学员作品<span class="icon icon-chevron_right" aria-hidden="true"></span></a>
+      {% else %}
+      <button type="button" class="sc-button sc-button-primary" data-scratch-create aria-haspopup="dialog" aria-controls="scratch-create-dialog"><span class="icon icon-add" aria-hidden="true"></span>开始创作</button>
+      {% if continuationWork %}<a class="sc-button" data-no-instant href="{{ url('scratch_editor', query={workId:continuationWork._id}) }}"><span class="icon icon-play" aria-hidden="true"></span>继续上次作品</a>{% else %}<a class="sc-button" href="{{ url('scratch_works') }}">我的作品<span class="icon icon-chevron_right" aria-hidden="true"></span></a>{% endif %}
+      {% endif %}
+    </div>
+    {% if continuationWork and not isTeacher %}<span class="sc-continue-title">上次做到：{{ continuationWork.title }}</span>{% endif %}
+  </div>
+  <div class="sc-hero-art" aria-hidden="true"><div class="sc-art-orbit"></div>{% include "partials/scratch_mascot.html" %}<div class="sc-toy sc-toy-one"></div><div class="sc-toy sc-toy-two"></div><div class="sc-toy sc-toy-three"></div><span class="sc-speech">一起玩呀！</span><span class="sc-art-star icon icon-star--outline"></span><span class="sc-art-star icon icon-star"></span></div>
+</section>
+
+<div class="sc-home-middle">
+  <section class="sc-panel">
+    <div class="sc-panel-head"><h2><span class="icon icon-flag" aria-hidden="true"></span> {{ '最近的课堂作业' if isTeacher else '我的课堂任务' }}</h2><a href="{{ url('scratch_assignments') }}">全部作业<span class="icon icon-chevron_right" aria-hidden="true"></span></a></div>
+    <div class="sc-panel-body">
+      {% if assignments|length %}
+      {% set task = assignments[0] %}
+      {% set state = assignmentStates[task._id] %}
+      <div class="sc-featured-task">
+        <div class="sc-task-art" aria-hidden="true"><span class="icon icon-star--outline"></span>{% include "partials/scratch_mascot.html" %}</div>
+        <div class="sc-task-content">
+          <h3><a href="{{ url('scratch_assignment', assignmentId=task._id) }}">{{ task.title }}</a></h3>
+          {% if task.description %}<p class="sc-description-preview">{{ task.description }}</p>{% else %}<p>{{ '打开作业，查看学生的创作进度。' if isTeacher else '老师准备了一个小任务，来看看吧！' }}</p>{% endif %}
+          {% if task.deadline %}<p>请在 {{ datetimeSpan(task.deadline)|safe }} 前完成</p>{% endif %}
+          <div class="sc-actions">
+            {% if isTeacher %}<a class="sc-button sc-button-primary" href="{{ url('scratch_assignment', assignmentId=task._id) }}">查看进度</a>
+            {% elif state.reviewed %}<span class="sc-badge sc-badge-success">老师有反馈啦</span><a class="sc-button sc-button-primary" href="{{ url('scratch_submission', submissionId=state.submissionId) }}">看看老师怎么说</a>
+            {% elif state.submitted %}<span class="sc-badge sc-badge-success">已交给老师</span><a class="sc-button" href="{{ url('scratch_submission', submissionId=state.submissionId) }}">查看我的提交</a>
+            {% elif state.hasSavedWork %}<span class="sc-badge sc-badge-warm">创作中</span><a class="sc-button sc-button-primary" data-no-instant href="{{ url('scratch_editor', query={workId:state.workId}) }}">接着做<span class="icon icon-chevron_right" aria-hidden="true"></span></a>
+            {% else %}<span class="sc-badge">等你来试</span><a class="sc-button sc-button-primary" href="{{ url('scratch_assignment', assignmentId=task._id) }}">看看任务<span class="icon icon-chevron_right" aria-hidden="true"></span></a>{% endif %}
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <div class="sc-empty sc-empty-compact"><span class="icon icon-flag" aria-hidden="true"></span><strong>{{ '准备一个新任务吧' if isTeacher else '今天先自由创作吧！' }}</strong><p>{{ '发布后，学生就能在这里找到课堂作业。' if isTeacher else '老师的新任务会出现在这里。' }}</p></div>
+      {% endif %}
+    </div>
+  </section>
+  <aside class="sc-toolbox">
+    <div><h2>创作百宝箱</h2><p>{{ '整理好素材，把灵感送给孩子们。' if isTeacher else '老师准备的素材，让小点子更精彩。' }}</p></div>
+    <div class="sc-tool-icons" aria-hidden="true"><span class="icon icon-emoji"></span><span class="icon icon-insert--image"></span><span class="icon icon-file"></span></div>
+    <a class="sc-button" href="{{ url('scratch_materials') }}">{{ '管理上课素材' if isTeacher else '打开上课素材' }}<span class="icon icon-chevron_right" aria-hidden="true"></span></a>
+  </aside>
+</div>
+
+<section class="sc-home-works">
+  <div class="sc-section-heading"><h2><span class="icon icon-star--outline" aria-hidden="true"></span> {{ '最近的学员作品' if isTeacher else '我的作品' }}</h2><a href="{{ url('scratch_works') }}">查看全部<span class="icon icon-chevron_right" aria-hidden="true"></span></a></div>
+  {% set works = works.slice(0, 3) %}{% include "partials/scratch_work_cards.html" %}
+</section>
+{% if submissions|length %}
+<section class="sc-panel"><div class="sc-panel-head"><h2>{{ '最近的提交' if isTeacher else '我交给老师的作品' }}</h2></div><div class="sc-panel-body"><ul class="sc-list">
+  {% for item in submissions %}<li class="sc-list-item"><div><span class="sc-badge {{ 'sc-badge-success' if item.reviewedAt else 'sc-badge-warm' }}">{{ '老师有反馈啦' if item.reviewedAt else '等待老师查看' }}</span> {% if isTeacher and udict[item.owner] %}{{ udict[item.owner].uname }} · {% endif %}<span class="sc-muted">{{ datetimeSpan(item.createdAt)|safe }} 提交</span></div><a class="sc-button" href="{{ url('scratch_submission', submissionId=item._id) }}">{{ '查看提交' if isTeacher else ('查看老师反馈' if item.reviewedAt else '看看我的提交') }}</a></li>{% endfor %}
+</ul></div></section>
+{% endif %}
+<p class="sc-home-footnote">一步一步，发现自己的可能。</p>
+{% endblock %}

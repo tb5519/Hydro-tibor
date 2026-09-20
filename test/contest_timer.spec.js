@@ -92,6 +92,16 @@ const handler = (uid = 24) => ({
 });
 
 describe('global contest timer access', () => {
+  it('skips OJ timer queries in a Scratch domain', async () => {
+    statusQuery = null;
+    scopeQuery = null;
+    const scratch = handler();
+    scratch.domain.domainType = 'scratch';
+    assert.deepEqual((await getActiveContestTimers(scratch)).contests, []);
+    assert.equal(statusQuery, null);
+    assert.equal(scopeQuery, null);
+  });
+
   it('scopes both status and contest queries to the current workspace and signed-in student', async () => {
     statuses = [];
     const result = await getActiveContestTimers(handler());

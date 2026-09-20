@@ -286,7 +286,7 @@ class WorkspaceModel {
 
     static async getDomains(workspaceId: string) {
         return domain.getMulti(WorkspaceModel.getDomainQuery(workspaceId))
-            .project<DomainDoc>({ _id: 1, name: 1, owner: 1, avatar: 1, workspaceId: 1 })
+            .project<DomainDoc>({ _id: 1, name: 1, owner: 1, avatar: 1, workspaceId: 1, domainType: 1 })
             .sort({ _id: 1 })
             .toArray();
     }

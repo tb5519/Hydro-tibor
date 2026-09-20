@@ -1311,3 +1311,14 @@ Your browser does not support WebAuthn or you are not in secure context.: 您的
 Your Device: 你的设备
 Your permission: 您的权限
 Your role: 您的角色
+scratch_main: Scratch 课堂
+scratch_works: Scratch 作品
+scratch_work: Scratch 作品详情
+scratch_assignments: Scratch 作业
+scratch_assignment_create: 发布 Scratch 作业
+scratch_assignment_edit: 编辑 Scratch 作业
+scratch_assignment: Scratch 作业详情
+scratch_materials: Scratch 上课素材
+scratch_material: Scratch 素材管理
+scratch_submission: Scratch 提交与反馈
+scratch_editor: Scratch 在线编辑器

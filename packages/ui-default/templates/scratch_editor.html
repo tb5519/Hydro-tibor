@@ -1,0 +1,43 @@
+{% extends "layout/basic.html" %}
+{% block content %}
+<div class="scratch-editor-shell {{ 'scratch-editor-player' if UiContext.scratchEditor.readOnly }}" data-scratch-editor>
+  {% if not UiContext.scratchEditor.readOnly %}
+  <div class="scratch-editor-actions" aria-label="作品保存">
+    <button type="button" class="scratch-editor-button scratch-editor-save" data-scratch-save disabled>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2Z"/><path d="M7 3v6h10V3M7 21v-8h10v8"/></svg><span>保存作品</span>
+    </button>
+    {% if UiContext.scratchEditor.canSubmit %}
+    <button type="button" class="scratch-editor-button scratch-editor-submit" data-scratch-submit disabled>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4 20-7ZM22 2 11 13"/></svg><span>提交作业</span>
+    </button>
+    {% endif %}
+  </div>
+  {% endif %}
+  <span class="scratch-editor-status" role="status" aria-live="polite" data-scratch-status data-phase="loading">{{ '正在打开作品…' if UiContext.scratchEditor.readOnly else '正在准备积木…' }}</span>
+  <iframe title="{{ 'Scratch 作品运行舞台' if UiContext.scratchEditor.readOnly else 'Scratch 在线编辑器' }}" data-scratch-frame sandbox="allow-scripts allow-downloads" allow="autoplay; fullscreen" allowfullscreen referrerpolicy="no-referrer"></iframe>
+  <noscript>请开启 JavaScript 后使用在线编辑器。</noscript>
+</div>
+<style>
+.page--scratch_editor .main{padding:48px 0 0;max-width:none;width:100%}
+.page--scratch_editor .footer{display:none}
+.scratch-editor-shell{position:relative;display:flex;height:calc(100dvh - 48px);min-height:440px;background:#eaf1fb;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+.scratch-editor-shell *{box-sizing:border-box}
+.scratch-editor-shell iframe{border:0;width:100%;height:100%;flex:1;min-width:0;background:#eaf1fb}
+.scratch-editor-actions{position:absolute;right:12px;top:4px;z-index:3;display:flex;gap:8px;align-items:center;height:40px}
+.scratch-editor-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:40px;padding:8px 15px;margin:0;border:1px solid #fff7;border-radius:9px;background:#fff;color:#2563eb;font:inherit;font-size:14px;font-weight:700;line-height:1.4;white-space:nowrap;cursor:pointer}
+.scratch-editor-button:hover{background:#edf4ff}
+.scratch-editor-button:focus-visible{outline:3px solid #a5d1ff;outline-offset:2px}
+.scratch-editor-button svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.scratch-editor-save{background:#2563eb;color:#fff;box-shadow:0 2px 0 #1d4ed8}
+.scratch-editor-save:hover{background:#1d4ed8}
+.scratch-editor-button:disabled{opacity:.55;cursor:wait;box-shadow:none}
+.scratch-editor-status{position:absolute;z-index:4;top:60px;left:50%;transform:translateX(-50%);max-width:calc(100% - 28px);padding:9px 16px;border:1px solid #d7e5f7;border-radius:12px;background:#fff;color:#43607e;box-shadow:0 4px 20px #233c6220;font-size:14px;line-height:1.6;pointer-events:none}
+.scratch-editor-status[data-phase=done]{animation:scratch-status-fade 5s forwards}
+.scratch-editor-status[data-error=true]{color:#b42318;border-color:#edc1bd}
+.scratch-editor-player .scratch-editor-status[data-phase=done]{display:none}
+.scratch-editor-shell noscript{position:absolute;top:12px;left:12px;color:#b42318}
+@keyframes scratch-status-fade{0%,75%{opacity:1}100%{opacity:0;visibility:hidden}}
+@media(max-width:600px){.scratch-editor-actions{right:6px;gap:5px}.scratch-editor-button{padding:8px 9px;font-size:12px;gap:4px}.scratch-editor-button svg{display:none}}
+@media(max-width:767px){.page--scratch_editor .main{padding-top:0}.scratch-editor-shell{height:calc(100dvh - 62px)}}
+</style>
+{% endblock %}

@@ -10,3 +10,6 @@
 *.scss text eol=lf
 *.less text eol=lf
 *.html text eol=lf
+
+# Preserve the exact bytes recorded in the prebuilt Scratch release manifest.
+packages/ui-default/public/scratch-editor/** -text

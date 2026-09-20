@@ -72,8 +72,8 @@ git merge-base --is-ancestor HEAD "$EXPECTED_COMMIT" \
     || stop '服务器 master 无法快进到目标提交'
 
 dependency_changes="$(git diff --name-only HEAD "$EXPECTED_COMMIT" -- \
-    ':(glob)**/package.json' yarn.lock package-lock.json pnpm-lock.yaml \
-    .yarnrc.yml .npmrc .yarn/patches | grep -Ev '^(package\.json|packages/hydrooj/package\.json)$' || true)"
+    ':(glob)**/package.json' yarn.lock package-lock.json ':(glob)**/pnpm-lock.yaml' \
+    .yarnrc.yml .npmrc .yarn/patches | grep -Ev '^(package\.json|packages/hydrooj/package\.json|build/favicon/(package\.json|pnpm-lock\.yaml))$' || true)"
 [ -z "$dependency_changes" ] || stop "依赖元数据发生变化，不能直接重启：$dependency_changes"
 
 if ! docker exec -i "$HYDRO_CONTAINER" node - "$EXPECTED_COMMIT" <<'VERIFY_PACKAGE'
@@ -95,6 +95,40 @@ assert.deepStrictEqual(withoutTestScripts(readPackage('HEAD')), withoutTestScrip
 VERIFY_PACKAGE
 then
     stop 'package.json 除测试入口外发生变化，不能直接重启'
+fi
+
+if ! docker exec -i "$HYDRO_CONTAINER" node - "$EXPECTED_COMMIT" <<'VERIFY_FAVICON_TOOL'
+const assert = require('node:assert/strict');
+const childProcess = require('node:child_process');
+const crypto = require('node:crypto');
+
+const expected = process.argv[2];
+const toolFiles = ['build/favicon/package.json', 'build/favicon/pnpm-lock.yaml'];
+const git = (args) => childProcess.execFileSync('git', args, { cwd: '/workspace' });
+const changed = git(['diff', '--name-status', 'HEAD', expected, '--', ...toolFiles]).toString().trim();
+if (changed) {
+  assert.deepStrictEqual(changed.split('\n').sort(), toolFiles.map((file) => `A\t${file}`).sort(),
+    'Only the first addition of both audited favicon tool metadata files is allowed');
+  const rootPackage = JSON.parse(git(['show', `${expected}:package.json`]));
+  assert.deepStrictEqual(rootPackage.workspaces, ['packages/*', 'framework/*', 'plugins/*', 'modules/*'],
+    'The favicon build tool must remain outside the runtime workspaces');
+  for (const [name, command] of Object.entries(rootPackage.scripts || {})) {
+    if (name === 'test' || name.startsWith('test:')) continue;
+    assert(!/(?:build[/\\]favicon|onebyone-favicon-build|@resvg[/\\]resvg-js)/.test(command),
+      'Runtime or lifecycle scripts must not invoke the local favicon tool');
+  }
+  assert.deepStrictEqual(JSON.parse(git(['show', `${expected}:build/favicon/package.json`])), {
+    name: 'onebyone-favicon-build', private: true, type: 'module',
+    scripts: { build: 'node generate.mjs' }, dependencies: { '@resvg/resvg-js': '2.6.2' },
+  }, 'Only the audited private resvg tool with a manual build script is allowed');
+  const lockHash = crypto.createHash('sha256').update(git(['show', `${expected}:build/favicon/pnpm-lock.yaml`])).digest('hex');
+  assert.equal(lockHash, 'dbef81cf001e55c71d9392e94c22b5c8f007008c00959a79ac9167b78b9116e5',
+    'The favicon lock must contain only the audited resvg 2.6.2 platform packages');
+  console.log('已确认 favicon 元数据仅为工作区外的本地构建工具；服务器不安装或运行该工具。');
+}
+VERIFY_FAVICON_TOOL
+then
+    stop 'favicon 构建工具元数据超出允许范围；未更新代码、未安装依赖'
 fi
 
 if ! docker exec -i "$HYDRO_CONTAINER" node - "$EXPECTED_COMMIT" <<'VERIFY_HYDRO_PACKAGE'
@@ -194,6 +228,55 @@ for (const value of Object.values(manifest)) {
 }
 console.log(`已验证 ${checked.size} 个预构建运行资源。`);
 VERIFY_ASSETS
+
+if ! docker exec -i "$HYDRO_CONTAINER" node <<'VERIFY_SCRATCH_ASSETS'
+const assert = require('node:assert/strict');
+const childProcess = require('node:child_process');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const checkout = '/workspace';
+const editorRoot = 'packages/ui-default/public/scratch-editor';
+const tracked = new Set(childProcess.execFileSync('git', ['ls-files', '-z'], { cwd: checkout })
+  .toString().split('\0').filter(Boolean));
+function checkedFile(relative) {
+  assert(tracked.has(relative), `Scratch release file is not committed: ${relative}`);
+  const absolute = path.resolve(checkout, relative);
+  assert(absolute.startsWith(`${checkout}${path.sep}`), `Unsafe Scratch release path: ${relative}`);
+  const stat = fs.lstatSync(absolute);
+  assert(stat.isFile() && stat.size > 0, `Scratch release file is empty or not a regular file: ${relative}`);
+  return absolute;
+}
+async function digestFile(absolute) {
+  const hash = crypto.createHash('sha256');
+  for await (const chunk of fs.createReadStream(absolute)) hash.update(chunk);
+  return hash.digest('hex');
+}
+(async () => {
+  const manifest = JSON.parse(fs.readFileSync(checkedFile(`${editorRoot}/build-manifest.json`), 'utf8'));
+  const upstream = JSON.parse(fs.readFileSync(checkedFile('build/scratch/upstream.json'), 'utf8'));
+  assert.equal(manifest.commit, upstream.commit, 'Scratch build does not match its pinned source');
+  assert.equal(manifest.lockSHA256, await digestFile(checkedFile('build/scratch/package-lock.upstream.json')),
+    'Scratch build does not match its pinned dependency lock');
+  assert(manifest.files && typeof manifest.files === 'object' && !Array.isArray(manifest.files)
+    && Object.keys(manifest.files).length, 'Scratch manifest must contain runtime files');
+  for (const required of ['editor.html', 'source.tar.gz', 'UPSTREAM-LICENSE']) {
+    assert(Object.hasOwn(manifest.files, required), `Scratch manifest is missing: ${required}`);
+  }
+  for (const [relative, expectedHash] of Object.entries(manifest.files)) {
+    assert(relative && !path.isAbsolute(relative) && !relative.includes('\\')
+      && relative.split('/').every((part) => part && part !== '.' && part !== '..'), `Unsafe Scratch asset path: ${relative}`);
+    assert(typeof expectedHash === 'string' && /^[a-f0-9]{64}$/.test(expectedHash), `Invalid Scratch asset digest: ${relative}`);
+    const absolute = checkedFile(`${editorRoot}/${relative}`);
+    assert.equal(await digestFile(absolute), expectedHash, `Scratch release file hash mismatch: ${relative}`);
+  }
+  console.log(`已验证 ${Object.keys(manifest.files).length} 个已提交的独立 Scratch 编辑器产物。`);
+})().catch((error) => { console.error(error.message); process.exitCode = 1; });
+VERIFY_SCRATCH_ASSETS
+then
+    stop '独立 Scratch 预构建产物不完整或未提交；未重启 Hydro 或 Judge'
+fi
 
 docker restart "$HYDRO_CONTAINER" >/dev/null
 hydro_ready=0

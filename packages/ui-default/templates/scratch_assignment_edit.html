@@ -1,0 +1,20 @@
+{% extends "scratch_base.html" %}
+{% block scratch_content %}
+<div class="sc-heading">
+  <div><div class="sc-eyebrow">课堂教学</div><h1>{{ '编辑作业' if assignment else '发布新作业' }}</h1><p class="sc-muted">写清创作目标，给孩子留一点发挥想象的空间。</p></div>
+  <a class="sc-button" href="{{ url('scratch_assignment', assignmentId=assignment._id) if assignment else url('scratch_assignments') }}">{{ '返回作业' if assignment else '返回作业列表' }}</a>
+</div>
+<section class="sc-panel">
+  <div class="sc-panel-head"><h2>这次的创作任务</h2></div>
+  <div class="sc-panel-body"><form class="sc-form" method="post" enctype="multipart/form-data">
+    <label class="sc-field"><span>作业标题</span><input name="title" value="{{ assignment.title if assignment else '' }}" maxlength="120" required placeholder="例如：让小猫和你打个招呼"></label>
+    <label class="sc-field"><span>创作任务</span><textarea name="description" rows="7" maxlength="20000" placeholder="用简短的步骤告诉学生：先做什么，再试什么，完成后要检查什么。">{{ assignment.description if assignment else '' }}</textarea><small>这段文字会展示给学生，可以按步骤换行填写。</small></label>
+    <div class="sc-form-grid">
+      <label class="sc-field"><span>截止时间</span><input name="deadline" type="datetime-local" value="{{ deadlineInput }}"><small>时区：{{ timeZone or 'Asia/Shanghai' }}。留空表示不设置截止时间。</small></label>
+      <label class="sc-field"><span>起始项目（可选）</span><input type="file" name="template" accept=".sb3"><small>上传 .sb3 文件，最大 20MB。{% if assignment.templateFileId %}不选择文件会保留现有模板。{% else %}学生第一次打开作业时，会从这个项目开始。{% endif %}</small></label>
+    </div>
+    {% if assignment.templateFileId %}<p><a class="sc-button" href="{{ url('scratch_file', fileId=assignment.templateFileId) }}">下载当前起始项目</a></p>{% endif %}
+    <div class="sc-actions"><button class="sc-button sc-button-primary" type="submit">{{ '保存修改' if assignment else '发布作业' }}</button><a class="sc-button" href="{{ url('scratch_assignments') }}">取消</a></div>
+  </form></div>
+</section>
+{% endblock %}

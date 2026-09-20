@@ -275,7 +275,10 @@ export default async function (env: { watch?: boolean, production?: boolean, mea
       chunkIds: env.production ? 'deterministic' : 'named',
     },
     plugins: [
-      new CleanWebpackPlugin(),
+      new CleanWebpackPlugin({
+        // The pinned Scratch GUI is built independently and only loaded by its editor page.
+        cleanOnceBeforeBuildPatterns: ['**/*', '!scratch-editor', '!scratch-editor/**'],
+      }),
       new WebpackBar(),
       new webpack.ProvidePlugin({
         $: 'jquery',

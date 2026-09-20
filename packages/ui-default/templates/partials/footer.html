@@ -1,6 +1,6 @@
 <footer class="footer footer--honors">
   <div class="row"><div class="columns">
-    {% if show_topics|default(true) and handler.user.hasPerm(perm.PERM_VIEW_RANKING) %}
+    {% if UiContext.domain.domainType != 'scratch' and show_topics|default(true) and handler.user.hasPerm(perm.PERM_VIEW_RANKING) %}
     <section class="honor-wall" data-honor-wall data-honor-wall-url="{{ url('badge_honor_wall') }}" aria-labelledby="honor-wall-title" aria-busy="true">
       <div class="honor-wall__heading">
         <div>

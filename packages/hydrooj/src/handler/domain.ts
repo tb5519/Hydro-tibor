@@ -16,6 +16,7 @@ import {
     createDomainAvatarTarget, DOMAIN_AVATAR_MAX_SIZE, domainAvatarPath, isOwnedDomainAvatarPath, normalizeDomainAvatar,
 } from '../lib/domain_avatar';
 import { getDomainRankingMode } from '../lib/domain_ranking';
+import { isScratchDomain } from '../lib/domain_type';
 import { getHomePosterConfig } from '../lib/home_poster';
 import { getSharedRankingSnapshot, SharedRankingRow } from '../lib/shared_ranking';
 import { PERM, PERMS_BY_FAMILY, PRIV } from '../model/builtin';
@@ -361,6 +362,7 @@ class DomainDashboardHandler extends ManageHandler {
     }
 
     async postInitDiscussionNode({ domainId }) {
+        if (isScratchDomain(this.domain)) throw new NotFoundError('Discussion');
         const nodes = load(system.get('discussion.nodes'));
         await discussion.flushNodes(domainId);
         for (const category of Object.keys(nodes)) {
@@ -867,9 +869,10 @@ export async function apply(ctx: Context) {
     ctx.Route('domain_ranking_setting', '/domain/ranking-setting', DomainRankingSettingHandler);
     ctx.Route('domain_home_poster', '/domain/home-poster', DomainHomePosterHandler);
     ctx.Route('domain_navigation_setting', '/domain/navigation', DomainNavigationSettingHandler);
-    ctx.injectUI('DomainManage', 'domain_ranking_setting', { family: 'Properties', icon: 'info', before: 'domain_edit' });
-    ctx.injectUI('DomainManage', 'domain_home_poster', { family: 'Properties', icon: 'image', before: 'domain_edit' });
-    ctx.injectUI('DomainManage', 'domain_navigation_setting', { family: 'Properties', icon: 'menu', before: 'domain_edit' });
+    const isOjDomain = (handler) => !isScratchDomain(handler.domain);
+    ctx.injectUI('DomainManage', 'domain_ranking_setting', { family: 'Properties', icon: 'info', before: 'domain_edit' }, isOjDomain);
+    ctx.injectUI('DomainManage', 'domain_home_poster', { family: 'Properties', icon: 'image', before: 'domain_edit' }, isOjDomain);
+    ctx.injectUI('DomainManage', 'domain_navigation_setting', { family: 'Properties', icon: 'menu', before: 'domain_edit' }, isOjDomain);
     ctx.Route('domain_user', '/domain/user', DomainUserHandler);
     ctx.Route('domain_permission', '/domain/permission', DomainPermissionHandler);
     ctx.Route('domain_role', '/domain/role', DomainRoleHandler);

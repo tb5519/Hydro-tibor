@@ -1,0 +1,31 @@
+{% extends "scratch_base.html" %}
+{% block scratch_content %}
+<div class="sc-heading">
+  <div><div class="sc-eyebrow">{{ '作业批改' if isTeacher else '老师看过来' }}</div><h1>{{ assignment.title }}</h1><p class="sc-muted">{% if isTeacher %}{{ (udict[submission.owner].displayName or udict[submission.owner].uname) if udict[submission.owner] else '' }} · 提交版本 v{{ submission.revision }} · {% else %}提交于 {% endif %}{{ datetimeSpan(submission.createdAt)|safe }}</p></div>
+  <a class="sc-button" href="{{ url('scratch_assignment', assignmentId=assignment._id) }}">返回作业 →</a>
+</div>
+<section class="sc-panel">
+  <div class="sc-panel-head"><h2>{{ '本次提交' if isTeacher else '我交给老师的作品' }}</h2><span class="sc-badge {{ 'sc-badge-success' if submission.reviewedAt else 'sc-badge-warm' }}">{{ '已批改' if submission.reviewedAt else '等待老师批改' }}</span></div>
+  <div class="sc-panel-body">
+    <p class="sc-muted">{{ '本次提交内容已保留，不会随学生后续修改而改变。' if isTeacher else '这一份作品已经留给老师啦。继续创作，也不会改掉它。' }}</p>
+    <div class="sc-actions sc-spaced"><a class="sc-button sc-button-primary" data-no-instant href="{{ url('scratch_editor', query={submissionId:submission._id}) }}">打开提交作品</a><a class="sc-button" href="{{ url('scratch_file', fileId=submission.fileId) }}">下载提交文件</a></div>
+  </div>
+</section>
+<section class="sc-panel">
+  <div class="sc-panel-head"><h2>{{ '批改作业' if isTeacher else '老师的反馈' }}</h2></div>
+  <div class="sc-panel-body">
+    {% if isTeacher %}
+    <form class="sc-form" method="post">
+      <label class="sc-field"><span>成绩 / 评价</span><input name="grade" maxlength="40" value="{{ submission.grade if submission.grade != null else '' }}" placeholder="例如：优秀、完成、95 分"></label>
+      <label class="sc-field"><span>给学生的反馈</span><textarea name="feedback" maxlength="20000" rows="6" placeholder="说说作品的亮点，再给一个可以继续尝试的小建议。">{{ submission.feedback or '' }}</textarea></label>
+      <div><button class="sc-button sc-button-primary" type="submit">保存批改</button></div>
+    </form>
+    {% elif submission.reviewedAt %}
+    <div class="sc-feedback-card"><h3>{{ submission.grade or '老师看过你的作品啦' }}</h3><div class="sc-description sc-spaced">{{ submission.feedback or '老师已查看你的作品，继续加油！' }}</div><p class="sc-muted sc-spaced">老师留言于 {{ datetimeSpan(submission.reviewedAt)|safe }}</p></div>
+    {% else %}
+    <div class="sc-empty"><strong>作品已送达，等老师来看看</strong><p>有了新点子，可以回去继续创作。</p></div>
+    {% endif %}
+    {% if work.owner == handler.user._id %}<div class="sc-spaced"><a class="sc-button" data-no-instant href="{{ url('scratch_editor', query={workId:work._id}) }}">继续创作</a></div>{% endif %}
+  </div>
+</section>
+{% endblock %}

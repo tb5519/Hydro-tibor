@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/TurboWarp/scratch-gui.git",
+  "commit": "a2946eeb9a9dca7857d7ab53d766b54288c7a2ff",
+  "version": "3.2.37",
+  "license": "GPL-3.0",
+  "node": "24",
+  "npm": "11.6.0",
+  "publicPath": "/scratch-editor/"
+}

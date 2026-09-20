@@ -14,6 +14,8 @@ import { PermissionError, PrivilegeError } from '../error';
 import type { DomainDoc } from '../interface';
 import type { ContestEntryContext } from '../lib/contest_entry';
 import { isDomainAvatarImageRequest } from '../lib/domain_avatar_access';
+import { isOjDomainPath, isScratchDomain } from '../lib/domain_type';
+import { isScratchShareRequest } from '../lib/scratch_share_access';
 import { Logger } from '../logger';
 import { PERM, PRIV } from '../model/builtin';
 import * as opcount from '../model/opcount';
@@ -45,7 +47,8 @@ const GUEST_ACCESSIBLE_PATHS = [
 ];
 
 function isGuestAccessiblePath(path: string, method: string) {
-    return isDomainAvatarImageRequest(path, method) || GUEST_ACCESSIBLE_PATHS.some((pattern) => pattern.test(path));
+    return isDomainAvatarImageRequest(path, method) || isScratchShareRequest(path, method)
+        || GUEST_ACCESSIBLE_PATHS.some((pattern) => pattern.test(path));
 }
 
 declare module '@hydrooj/framework' {
@@ -132,6 +135,22 @@ export async function apply(ctx: Context) {
 
         applyApiHandler(childContext, 'api', '/api/:op');
         server.setDefaultContext(childContext);
+
+        // The sandboxed editor has an opaque origin and reads only public
+        // editor assets here. Private domain APIs retain their own policy.
+        server.addServerLayer('scratch-editor-cors', async (c, next) => {
+            const editorAsset = /^\/scratch-editor\//.test(c.request.path)
+                && ['GET', 'HEAD'].includes(c.request.method.toUpperCase());
+            await next();
+            if (editorAsset && c.status >= 200 && c.status < 400) {
+                c.set('Access-Control-Allow-Origin', '*');
+                if (/^\/scratch-editor\/(?:editor\.html|build-manifest\.json)$/.test(c.request.path)) {
+                    c.set('Cache-Control', 'no-cache');
+                } else if (/^\/scratch-editor\/js\/(?:[^/]+\/)*[^/]+\.[a-f0-9]{16,64}\.js$/.test(c.request.path)) {
+                    c.set('Cache-Control', 'public, max-age=31536000, immutable');
+                }
+            }
+        });
 
         for (const addon of [...Object.values(global.addons)].reverse()) {
             const dir = resolve(addon, 'public');
@@ -296,6 +315,7 @@ export async function apply(ctx: Context) {
             h.ctx = h.ctx.extend({ domain: h.domain });
         });
         on('handler/create/http', async (h) => {
+            if (isScratchDomain(h.domain) && isOjDomainPath(h.request.path)) throw new NotFoundError(h.request.path);
             const workspaceAccess = await resolveWorkspaceAccess(h.context);
             if (!workspaceAccess.allowed) {
                 if (workspaceAccess.redirect) h.response.redirect = workspaceAccess.redirect;
@@ -319,6 +339,7 @@ export async function apply(ctx: Context) {
             await resolveContestEntry(h);
         });
         on('handler/create/ws', async (h) => {
+            if (isScratchDomain(h.domain) && isOjDomainPath(h.request.path)) throw new NotFoundError(h.request.path);
             const workspaceAccess = await resolveWorkspaceAccess(h.context);
             if (!workspaceAccess.allowed) throw new NotFoundError(h.args.domainId);
             if (h.context.pendingError) throw h.context.pendingError;

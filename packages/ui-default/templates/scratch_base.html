@@ -1,0 +1,8 @@
+{% extends "layout/basic.html" %}
+{% block content %}
+{% include "partials/scratch_style.html" %}
+<div class="row"><div class="columns"><main class="scratch-app">
+  {% block scratch_content %}{% endblock %}
+  {% include "partials/scratch_dialogs.html" %}
+</main></div></div>
+{% endblock %}
