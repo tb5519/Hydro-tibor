@@ -13,6 +13,16 @@
     {% endif %}
   </div>
   {% endif %}
+  <div class="scratch-loading" data-scratch-loading data-step="1">
+    <div class="scratch-loading-card">
+      <div class="scratch-loading-blocks" aria-hidden="true"><span></span><span></span><span></span></div>
+      <h1 data-scratch-loading-title>准备好，创意马上出发</h1>
+      <p data-scratch-loading-hint>正在准备 Scratch 编辑器…</p>
+      <div class="scratch-loading-track" role="progressbar" aria-label="作品加载进度" aria-valuemin="0" aria-valuemax="3" aria-valuenow="1" aria-valuetext="第 1 步，共 3 步：准备编辑器" data-scratch-progress><span></span></div>
+      <ol class="scratch-loading-steps" aria-hidden="true"><li>准备积木</li><li>打开作品</li><li>布置舞台</li></ol>
+      <button type="button" class="scratch-editor-button scratch-editor-save" data-scratch-retry hidden>重新加载</button>
+    </div>
+  </div>
   <span class="scratch-editor-status" role="status" aria-live="polite" data-scratch-status data-phase="loading">{{ '正在打开作品…' if UiContext.scratchEditor.readOnly else '正在准备积木…' }}</span>
   <iframe title="{{ 'Scratch 作品运行舞台' if UiContext.scratchEditor.readOnly else 'Scratch 在线编辑器' }}" data-scratch-frame sandbox="allow-scripts allow-downloads" allow="autoplay; fullscreen" allowfullscreen referrerpolicy="no-referrer"></iframe>
   <noscript>请开启 JavaScript 后使用在线编辑器。</noscript>
@@ -35,6 +45,31 @@
 .scratch-editor-status[data-phase=done]{animation:scratch-status-fade 5s forwards}
 .scratch-editor-status[data-error=true]{color:#b42318;border-color:#edc1bd}
 .scratch-editor-player .scratch-editor-status[data-phase=done]{display:none}
+.scratch-editor-shell:not([data-loaded]) .scratch-editor-actions,.scratch-editor-shell:not([data-loaded]) .scratch-editor-status{visibility:hidden}
+.scratch-loading{position:absolute;inset:0;z-index:5;display:grid;place-items:center;padding:24px;background:radial-gradient(ellipse at 50% 35%,#f8fbff 0,#edf4ff 48%,#e8f0fc 100%)}
+.scratch-loading[hidden],.scratch-loading [hidden]{display:none!important}
+.scratch-loading-card{width:min(100%,430px);padding:40px 34px 30px;text-align:center;border:1px solid #ffffff;border-radius:28px;background:#ffffffdc;box-shadow:0 20px 70px #416caf12}
+.scratch-loading-blocks{display:flex;align-items:flex-end;justify-content:center;gap:9px;height:64px;margin-bottom:26px}
+.scratch-loading-blocks span{position:relative;width:36px;height:38px;border-radius:10px;background:#2563eb;box-shadow:inset 0 -5px 0 #183faa20;animation:scratch-block-bob 1.8s ease-in-out infinite}
+.scratch-loading-blocks span:before{content:"";position:absolute;top:-6px;left:11px;width:14px;height:8px;border-radius:4px 4px 0 0;background:inherit}
+.scratch-loading-blocks span:nth-child(2){height:54px;background:#79aaff;animation-delay:.15s}
+.scratch-loading-blocks span:nth-child(3){height:44px;background:#a5bef7;animation-delay:.3s}
+.scratch-loading h1{margin:0;color:#253b5c;font-size:23px;font-weight:750;line-height:1.45}
+.scratch-loading p{min-height:44px;margin:12px 0 24px;color:#7486a1;font-size:14px;line-height:1.65}
+.scratch-loading-track{height:8px;overflow:hidden;background:#e6edfa;border-radius:99px}
+.scratch-loading-track span{position:relative;display:block;width:30%;height:100%;overflow:hidden;background:#3676ee;border-radius:inherit;transition:width .4s ease}
+.scratch-loading-track span:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,#ffffff80,transparent);animation:scratch-progress-shine 1.7s linear infinite}
+.scratch-loading[data-step="2"] .scratch-loading-track span{width:63%}
+.scratch-loading[data-step="3"] .scratch-loading-track span{width:93%}
+.scratch-loading-steps{display:flex;justify-content:space-between;list-style:none;margin:14px 0 0;padding:0;color:#94a3bd;font-size:12px}
+.scratch-loading-steps li:first-child,.scratch-loading[data-step="2"] .scratch-loading-steps li:nth-child(2),.scratch-loading[data-step="3"] .scratch-loading-steps li{color:#316ada;font-weight:600}
+.scratch-loading[data-error="true"] .scratch-loading-blocks span{animation:none;background:#b4c6e4}
+.scratch-loading[data-error="true"] .scratch-loading-steps{display:none}
+.scratch-loading [data-scratch-retry]{margin:0 auto;padding:10px 24px}
+@keyframes scratch-block-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+@keyframes scratch-progress-shine{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+@media(prefers-reduced-motion:reduce){.scratch-loading-blocks span,.scratch-loading-track span:after{animation:none}.scratch-loading-track span{transition:none}}
+@media(max-width:480px){.scratch-loading{padding:18px}.scratch-loading-card{padding:32px 24px}.scratch-loading h1{font-size:21px}}
 .scratch-editor-shell noscript{position:absolute;top:12px;left:12px;color:#b42318}
 @keyframes scratch-status-fade{0%,75%{opacity:1}100%{opacity:0;visibility:hidden}}
 @media(max-width:600px){.scratch-editor-actions{right:6px;gap:5px}.scratch-editor-button{padding:8px 9px;font-size:12px;gap:4px}.scratch-editor-button svg{display:none}}

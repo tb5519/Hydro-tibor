@@ -71,7 +71,7 @@
 .scratch-app .sc-button:disabled{opacity:.55;cursor:wait}
 .scratch-app .sc-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:21px}
 .scratch-app .sc-card{border:1px solid var(--sc-line);border-radius:20px;overflow:hidden;background:var(--sc-paper);min-width:0}
-.scratch-app .sc-work-card .sc-work-stage{aspect-ratio:4/3;width:100%;position:relative;overflow:hidden;background:#fff;border-bottom:1px solid var(--sc-line)}
+.scratch-app .sc-work-card .sc-work-stage{aspect-ratio:4/3;width:100%;position:relative;overflow:hidden;background:#fff}
 .scratch-app .sc-work-stage img{display:block;position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
 .scratch-app .sc-work-stage img[hidden]{display:none}
 .scratch-app .sc-work-stage-empty{position:absolute;top:46%;left:18px;right:18px;transform:translateY(-50%);text-align:center;color:var(--sc-muted);font-size:14px}
@@ -89,8 +89,12 @@
 .scratch-app .sc-work-edit:hover,.scratch-app .sc-work-share:hover{background:#edf4ff;transform:translateY(-2px)}
 .scratch-app .sc-work-edit svg,.scratch-app .sc-work-share svg{width:23px;height:23px}
 .scratch-app .sc-work-share{position:absolute;z-index:1;top:12px;right:12px}
+.scratch-app .sc-work-meta{position:absolute;right:12px;bottom:12px;z-index:1;max-width:calc(100% - 137px);padding:5px 9px;border:1px solid #d6e4f7;border-radius:10px;background:#fffffff2;color:#526986;box-shadow:0 2px 8px #143d7012;text-align:right;font-size:11px;line-height:1.6}
+.scratch-app .sc-work-kind{display:flex;align-items:center;justify-content:flex-end;gap:4px;white-space:nowrap;font-weight:650}
+.scratch-app .sc-work-owner{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.scratch-app .sc-work-type{flex:none}
+.scratch-app .sc-work-updated{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .scratch-app .sc-card-body{padding:17px 19px 20px}
-.scratch-app .sc-work-card .sc-card-body{padding:12px 17px 15px}
 .scratch-app .sc-card h3 a{color:var(--sc-ink)}
 .scratch-app .sc-card .sc-actions{margin-top:15px}
 .scratch-app .sc-card .sc-button{min-height:46px;padding:9px 13px;font-size:15px}

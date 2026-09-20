@@ -25,6 +25,39 @@ export default new NamedPage('scratch_editor', () => {
   let savedTitle = title;
   let dirty = false;
   let loaded = false;
+  let initializing = false;
+  let loadFailed = false;
+  const loading = document.querySelector<HTMLElement>('[data-scratch-loading]');
+  const loadingTitle = document.querySelector<HTMLElement>('[data-scratch-loading-title]');
+  const loadingHint = document.querySelector<HTMLElement>('[data-scratch-loading-hint]');
+  const progress = document.querySelector<HTMLElement>('[data-scratch-progress]');
+  const retry = document.querySelector<HTMLButtonElement>('[data-scratch-retry]');
+  const controller = new AbortController();
+  const loadStage = (step: number, message: string, hint: string) => {
+    if (!loading || loadFailed) return;
+    loading.dataset.step = String(step);
+    if (loadingTitle) loadingTitle.textContent = message;
+    if (loadingHint) loadingHint.textContent = hint;
+    progress?.setAttribute('aria-valuenow', String(step));
+    progress?.setAttribute('aria-valuetext', `第 ${step} 步，共 3 步：${message}`);
+  };
+  const failLoading = (message: string) => {
+    if (loaded || loadFailed) return;
+    loadFailed = true;
+    controller.abort();
+    clearTimeout(loadTimeout);
+    clearTimeout(slowTimeout);
+    if (loading) loading.dataset.error = 'true';
+    if (loadingTitle) loadingTitle.textContent = '暂时没有打开作品';
+    if (loadingHint) loadingHint.textContent = message;
+    if (retry) retry.hidden = false;
+    if (progress) progress.hidden = true;
+  };
+  const slowTimeout = setTimeout(() => {
+    if (!loaded && !loadFailed && loadingHint) loadingHint.textContent = '第一次打开需要多一点时间，正在认真准备中…';
+  }, 25000);
+  const loadTimeout = setTimeout(() => failLoading('加载时间有点长，请检查网络后重试。'), 180000);
+  retry?.addEventListener('click', () => { if (!loaded) location.reload(); });
   let pending: string | null = null;
   let pendingSubmit = false;
   let phase: 'idle' | 'exporting' | 'uploading' = 'idle';
@@ -81,18 +114,28 @@ export default new NamedPage('scratch_editor', () => {
     if (event.source !== frame.contentWindow || event.origin !== 'null' || event.data?.channel !== channel) return;
     const message = event.data;
     try {
-      if (message.type === 'ready' && !loaded) {
+      if (message.type === 'ready' && !loaded && !initializing && !loadFailed) {
+        initializing = true;
+        loadStage(2, '正在打开你的作品', '读取角色、造型和积木…');
         let project: ArrayBuffer | undefined;
         if (config.projectUrl) {
-          const response = await fetch(sameOriginUrl(config.projectUrl), { credentials: 'same-origin' });
+          const response = await fetch(sameOriginUrl(config.projectUrl), { credentials: 'same-origin', signal: controller.signal });
           if (!response.ok) throw new Error('无法加载作品，请确认仍有此课堂的访问权限。');
+          const length = Number(response.headers.get('content-length'));
+          if (length > config.maxFileSize) throw new Error('作品超过文件大小限制。');
           const blob = await response.blob();
           if (blob.size > config.maxFileSize) throw new Error('作品超过文件大小限制。');
           project = await blob.arrayBuffer();
         }
+        if (loadFailed) return;
+        loadStage(3, '马上就好', config.readOnly ? '正在布置舞台，准备运行作品…' : '正在布置舞台，马上开始创作…');
         send('init', { project, title, readOnly: config.readOnly, mode: config.readOnly ? 'player' : 'editor' }, project ? [project] : []);
-      } else if (message.type === 'loaded') {
+      } else if (message.type === 'loaded' && initializing && !loadFailed) {
         loaded = true;
+        clearTimeout(loadTimeout);
+        clearTimeout(slowTimeout);
+        if (loading) loading.hidden = true;
+        document.querySelector<HTMLElement>('[data-scratch-editor]')?.setAttribute('data-loaded', 'true');
         show(config.readOnly ? '作品已打开' : '准备好了，开始创作吧');
         buttons();
       } else if (message.type === 'titleChanged' && loaded && !config.readOnly) {
@@ -141,7 +184,8 @@ export default new NamedPage('scratch_editor', () => {
       }
     } catch (error) {
       finish();
-      show(error.message || '编辑器操作失败，请重试。', true);
+      if (!loaded) failLoading(error.message || '编辑器加载失败，请重试。');
+      else show(error.message || '编辑器操作失败，请重试。', true);
     }
   });
   window.addEventListener('beforeunload', (event) => {

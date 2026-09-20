@@ -17,10 +17,10 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15.5 4.5 4 4M4 20l4.7-1 11-11a2.8 2.8 0 0 0-4-4l-11 11L4 20Z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>{% endif %}
       </div>
-    </div>
-    <div class="sc-card-body">
-      <p class="sc-card-meta">{% if isTeacher and udict[item.owner] %}{{ udict[item.owner].uname }} · {% endif %}{{ '课堂作业' if item.assignmentId else '自由创作' }}</p>
-      <p class="sc-card-meta">更新于 {{ datetimeSpan(item.updatedAt)|safe }}</p>
+      <div class="sc-work-meta">
+        <p class="sc-work-kind">{% if isTeacher and udict[item.owner] %}<span class="sc-work-owner" title="{{ udict[item.owner].uname }}">{{ udict[item.owner].uname }}</span><span aria-hidden="true">·</span>{% endif %}<span class="sc-work-type">{{ '课堂作业' if item.assignmentId else '自由创作' }}</span></p>
+        <p class="sc-work-updated">更新于 {{ datetimeSpan(item.updatedAt)|safe }}</p>
+      </div>
     </div>
   </article>
 {% endfor %}

@@ -34,6 +34,7 @@ for (const [source, dest] of [
     ['editor.jsx', 'src/playground/editor.jsx'],
     ['editor.ejs', 'src/playground/onebyone.ejs'],
     ['webpack.cjs', 'onebyone.webpack.cjs'],
+    ['paper-sandbox-loader.cjs', 'src/playground/onebyone-paper-sandbox-loader.cjs'],
     ['noop.jsx', 'src/playground/onebyone-noop.jsx'],
     ['storage.js', 'src/lib/tw-persistent-storage.js'],
     ['extensions.jsx', 'src/lib/libraries/extensions/onebyone.jsx']
