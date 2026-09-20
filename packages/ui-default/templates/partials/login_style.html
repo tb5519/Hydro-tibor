@@ -1,0 +1,120 @@
+<style>
+html.page--user_login, html.page--user_login body { background: #fff; color-scheme: light; }
+html.page--user_login.layout--immersive #panel { position: relative; min-height: 100vh; min-height: 100svh; background: #fff !important; color: #253955; }
+html.page--user_login #panel > .main { width: 100%; margin: 0; padding: 0; }
+html.page--user_login #panel > .footer { position: absolute; right: 28px; bottom: 12px; width: auto; margin: 0; padding: 0; background: transparent; color: #8390a5; }
+html.page--user_login #panel > .footer .row { width: auto; margin: 0; }
+html.page--user_login #panel > .footer .footer__extra-link { justify-content: center; }
+html.page--user_login #panel > .footer a, html.page--user_login #panel > .footer .footer__extra-link-item > span { color: #8390a5; font-size: 11px; }
+.one-login, .one-login * { box-sizing: border-box; }
+.one-login { display: grid; grid-template-columns: 1fr 1fr; width: 100%; min-height: 100vh; min-height: 100svh; color: #253955; }
+.one-login__welcome { position: relative; display: flex; flex-direction: column; justify-content: space-between; min-width: 0; padding: 40px clamp(30px, 4vw, 64px) 32px; overflow: hidden; background: radial-gradient(ellipse at 0 10%, #f0f6ff 0%, transparent 65%), linear-gradient(145deg, #e8f0ff, #d6e5ff); }
+.one-login__brand { position: relative; z-index: 2; display: flex; align-items: center; gap: 10px; color: #253955; font-size: 23px; font-weight: 800; letter-spacing: -.6px; }
+.one-login__brand img { width: 36px; height: 36px; border-radius: 10px; }
+.one-login__brand > span { overflow-wrap: anywhere; }
+.one-login__welcome-content { display: flex; flex: 1; flex-direction: column; justify-content: center; align-items: center; width: 100%; padding: 45px 0 30px; }
+.one-login__story { align-self: stretch; position: relative; z-index: 5; text-align: center; }
+.one-login__welcome h1 { margin: 0; color: #243956; font-size: clamp(28px, 2.7vw, 40px); font-weight: 750; line-height: 1.4; letter-spacing: -1px; }
+.one-login__welcome h1 > span { color: #2c62d7; }
+.one-login__welcome-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; position: relative; z-index: 5; color: #7b92b3; font-size: 11px; }
+/* Geometry and interaction poses adapted from CareerCompass (MIT). */
+.one-login__scene { position: relative; isolation: isolate; width: min(100%, 420px, 53vh); aspect-ratio: 450 / 400; margin-top: 70px; user-select: none; pointer-events: none; }
+.one-login__character { position: absolute; bottom: 0; transform: skewX(var(--body-skew, 0deg)); transform-origin: bottom center; transition: transform .7s ease, height .7s ease; }
+.one-login__character--blue { left: 15.55%; width: 40%; height: 100%; border-radius: 10px 10px 0 0; background: #3c70ee; z-index: 1; }
+.one-login__character--navy { left: 53.33%; width: 26.67%; height: 77.5%; border-radius: 9px 9px 0 0; background: #283c5b; z-index: 2; }
+.one-login__character--peach { left: 0; width: 53.33%; height: 50%; border-radius: 55% 55% 0 0 / 70% 70% 0 0; background: #f5b698; z-index: 3; }
+.one-login__character--yellow { left: 68.89%; width: 31.11%; height: 57.5%; border-radius: 50% 50% 0 0 / 31% 31% 0 0; background: #efda83; z-index: 4; }
+.one-login__face { position: absolute; display: flex; align-items: center; gap: 22px; transform: translate(var(--face-x, 0px), var(--face-y, 0px)); transition: transform .35s ease; }
+.one-login__character--blue .one-login__face { left: 25%; top: 10%; gap: clamp(16px, 2.3vw, 28px); }
+.one-login__character--navy .one-login__face { left: 22%; top: 10%; gap: clamp(12px, 1.7vw, 21px); }
+.one-login__character--peach .one-login__face { left: 34%; top: 43%; gap: clamp(20px, 2.7vw, 30px); }
+.one-login__character--yellow .one-login__face { left: 34%; top: 15%; gap: clamp(16px, 2vw, 23px); }
+.one-login__eye { display: flex; justify-content: center; align-items: center; flex: 0 0 auto; width: 18px; height: 18px; overflow: hidden; border-radius: 50%; background: #fff; transition: transform .15s ease; }
+.one-login__eye [data-pupil] { display: block; flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: #26374c; transform: translate(var(--pupil-x, 0px), var(--pupil-y, 0px)); transition: transform .1s ease-out; }
+.one-login__character--navy .one-login__eye { width: 16px; height: 16px; }
+.one-login__character--navy [data-pupil] { width: 6px; height: 6px; }
+.one-login__character--peach .one-login__eye, .one-login__character--yellow .one-login__eye { width: 12px; height: 12px; background: transparent; overflow: visible; }
+.one-login__character--peach [data-pupil], .one-login__character--yellow [data-pupil] { width: 11px; height: 11px; }
+.one-login__mouth { position: absolute; left: 26%; top: 38%; width: 56%; height: 3px; border-radius: 4px; background: #3b4350; transform: translate(var(--face-x, 0px), var(--face-y, 0px)); transition: transform .35s ease; }
+.one-login__ground { position: absolute; z-index: 5; left: -4%; right: -4%; bottom: -1px; height: 1px; background: linear-gradient(90deg, transparent, #8caee455, transparent); }
+[data-login-state="typing"] .one-login__character--blue, [data-login-state="password-hidden"] .one-login__character--blue { height: 110%; transform: skewX(calc(var(--body-skew, 0deg) - 12deg)) translateX(30px); }
+[data-login-glance="true"] .one-login__character--navy { transform: skewX(calc(var(--body-skew, 0deg) + 10deg)) translateX(15px); }
+[data-login-state="password-visible"] .one-login__character { transform: skewX(0deg); }
+[data-blink="true"] .one-login__eye { transform: scaleY(.12); }
+[data-login-motion="off"] .one-login__character, [data-login-motion="off"] .one-login__face, [data-login-motion="off"] .one-login__eye, [data-login-motion="off"] [data-pupil], [data-login-motion="off"] .one-login__mouth { transition: none; }
+.one-login__entry { display: flex; align-items: center; justify-content: center; min-width: 0; padding: 80px 48px; background: #fff; }
+.one-login__card { width: 100%; max-width: 400px; min-width: 0; }
+.one-login__card-heading { text-align: center; }
+.one-login__card-heading h2 { margin: 0 0 14px; color: #223652; font-size: 32px; font-weight: 700; line-height: 1.3; letter-spacing: -.5px; }
+.one-login__card-heading p { margin: 0; color: #8191a9; font-size: 13px; line-height: 1.7; }
+.one-login__form { margin-top: 38px; }
+/* Outrank the shared label:not(...) reset without changing other forms. */
+.one-login__form .one-login__field { display: flex; flex-direction: column; gap: 10px; margin: 0 0 24px; color: #4b5d77; font-size: 13px; font-weight: 600; }
+.one-login__field input { display: block; width: 100%; height: 50px; min-height: 50px; margin: 0; padding: 0 15px; border: 1px solid #dce5f1; border-radius: 25px; outline: none; background: #fff; color: #263b59; font: inherit; font-size: 15px; font-weight: 400; box-shadow: none; transition: border-color .15s, box-shadow .15s, background .15s; }
+.one-login__field input::placeholder { color: #a5b1c3; font-size: 13px; }
+.one-login__field input:hover { border-color: #b9cce7; }
+.one-login__form .one-login__field input:focus { border-color: #2563eb; outline: 2px solid #bed4f8; outline-offset: 2px; background: #fff; box-shadow: 0 0 0 3px #2563eb12; }
+.one-login__options { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0 12px; margin: 0 0 20px; }
+.one-login__options .one-login__remember { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; margin: 0; color: #687d99; font-size: 12px; cursor: pointer; }
+.one-login__remember input[type="checkbox"] { display: block !important; flex: 0 0 18px; appearance: auto; width: 18px; height: 18px; min-width: 18px; margin: 0 !important; accent-color: #2563eb; cursor: pointer; }
+.one-login__remember input:focus-visible { outline: 2px solid #93b8f2; outline-offset: 3px; }
+.one-login__lostpass { display: inline-flex; align-items: center; min-height: 36px; color: #5f86bd; font-size: 12px; text-decoration: none; }
+.one-login__lostpass:visited { color: #5f86bd; }
+.one-login__lostpass:hover { color: #2563eb; text-decoration: underline; }
+.one-login__lostpass--only { justify-content: center; width: 100%; margin-top: 8px; }
+.one-login__submit.button.primary { display: block; width: 100%; height: 50px; min-height: 50px; margin: 0; padding: 0 16px; border: 1px solid #2563eb; border-radius: 25px; background: #2563eb; color: white; font-size: 16px; font-weight: 600; line-height: 48px; box-shadow: 0 5px 12px #2563eb16; transition: background .15s, box-shadow .15s; }
+.one-login__submit.button.primary:hover { border-color: #1d4ed8; background: #1d4ed8; box-shadow: 0 7px 16px #2563eb20; }
+.one-login__submit.button.primary:active { background: #1e40af; }
+.one-login__lostpass:focus-visible, .one-login__submit:focus-visible, .one-login__oauth-button:focus-visible { outline: 3px solid #a1c1f4; outline-offset: 3px; }
+.one-login__divider { display: flex; align-items: center; gap: 12px; margin: 22px 0 17px; color: #a0aec2; font-size: 11px; }
+.one-login__divider::before, .one-login__divider::after { flex: 1; height: 1px; background: #edf1f8; content: ''; }
+.one-login__oauth { display: grid; gap: 10px; }
+.one-login__oauth-button { display: flex; align-items: center; justify-content: center; min-height: 46px; padding: 10px 14px; border: 1px solid #dce5f2; border-radius: 25px; background: #fff; color: #5c769b; font-size: 13px; text-align: center; text-decoration: none; overflow-wrap: anywhere; }
+.one-login__oauth-button:visited { color: #5c769b; }
+.one-login__oauth-button:hover { border-color: #a9c5ec; background: #f4f8ff; color: #2563eb; text-decoration: none; }
+
+.one-login__form .one-login__field > label { display: block; margin: 0; padding: 0; font: inherit; color: inherit; }
+.one-login__password-wrap { position: relative; }
+.one-login__password-wrap input { padding-right: 54px; }
+.one-login__password-toggle { position: absolute; right: 5px; top: 3px; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 10px; border: 0; border-radius: 50%; background: transparent; color: #8b9aad; cursor: pointer; }
+.one-login__password-toggle[hidden], .one-login__password-toggle svg[hidden] { display: none; }
+.one-login__password-toggle:hover { background: #f0f5fe; color: #356dea; }
+.one-login__password-toggle svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.one-login__submit.button.primary { position: relative; display: flex; align-items: center; justify-content: center; gap: 0; padding: 0 22px; line-height: 1; overflow: hidden; box-shadow: none; transition: background .2s, gap .2s, box-shadow .2s; }
+.one-login__submit svg { width: 0; height: 20px; opacity: 0; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: width .2s, opacity .2s; }
+.one-login__submit.button.primary:hover, .one-login__submit.button.primary:focus-visible { gap: 12px; background: #2457cc; border-color: #2457cc; box-shadow: 0 6px 16px #3268e81c; }
+.one-login__submit:hover svg, .one-login__submit:focus-visible svg { width: 20px; opacity: 1; }
+.one-login button:focus-visible, .one-login a:focus-visible { outline: 3px solid #b4ccf7; outline-offset: 3px; }
+@media (min-width: 1600px) { .one-login__entry { padding-right: 10vw; padding-left: 10vw; } .one-login__welcome-content { max-width: 580px; margin: 0 auto; } .one-login__scene { width: 460px; } }
+@media (max-width: 1000px) { .one-login__welcome { padding: 30px; } .one-login__entry { padding: 70px 32px; } .one-login__welcome h1 { max-width: 290px; margin: 0 auto; font-size: 30px; } .one-login__scene { margin-top: 54px; } }
+@media (max-width: 760px) {
+  .one-login { display: flex; flex-direction: column; }
+  .one-login__welcome { padding: 24px 26px 0; }
+  .one-login__brand { gap: 8px; font-size: 21px; }
+  .one-login__brand img { width: 32px; height: 32px; }
+  .one-login__welcome-content { padding: 24px 0 0; }
+  .one-login__story { text-align: center; }
+  .one-login__welcome h1 { max-width: none; font-size: 26px; letter-spacing: -.7px; }
+  .one-login__scene { width: 160px; margin-top: 24px; }
+  .one-login__face { scale: .7; transform-origin: top left; transform: translate(calc(var(--face-x, 0px) * .65), calc(var(--face-y, 0px) * .65)); }
+  .one-login__character--blue .one-login__face { gap: 18px; }
+  .one-login__character--navy .one-login__face { gap: 12px; }
+  .one-login__character--peach .one-login__face { gap: 22px; }
+  .one-login__character--yellow .one-login__face { gap: 15px; }
+  .one-login__mouth { height: 2px; transform: translate(calc(var(--face-x, 0px) * .4), calc(var(--face-y, 0px) * .4)); }
+  [data-login-state="typing"] .one-login__character--blue, [data-login-state="password-hidden"] .one-login__character--blue { transform: skewX(calc(var(--body-skew, 0deg) - 12deg)) translateX(17px); }
+  [data-login-glance="true"] .one-login__character--navy { transform: skewX(calc(var(--body-skew, 0deg) + 10deg)) translateX(8px); }
+  .one-login__welcome-footer { display: none; }
+  .one-login__entry { padding: 28px 28px 26px; }
+  .one-login__card { max-width: 400px; }
+  .one-login__card-heading h2 { font-size: 26px; margin-bottom: 7px; }
+  .one-login__card-heading p { font-size: 12px; }
+  .one-login__form { margin-top: 24px; }
+  .one-login__form .one-login__field { margin-bottom: 22px; gap: 9px; font-size: 13px; }
+  .one-login__field input { font-size: 16px; }
+  .one-login__options { gap: 0 8px; margin-bottom: 17px; }
+  .one-login__lostpass { font-size: 11px; }
+  html.page--user_login #panel > .footer { position: static; padding: 0 24px 18px; }
+}
+@media (prefers-reduced-motion: reduce) { .one-login *, .one-login *::before, .one-login *::after { transition: none !important; animation: none !important; } }
+</style>

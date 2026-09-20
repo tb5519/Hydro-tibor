@@ -18,6 +18,7 @@ import domain from './domain';
 import * as setting from './setting';
 import system from './system';
 import token from './token';
+import workspace from './workspace';
 
 export const coll: Collection<Udoc> = db.collection('user');
 // Virtual user, only for display in contest.
@@ -163,10 +164,26 @@ export class User {
     async private() {
         const user = await new User(this._udoc, this._dudoc, this.scope).init();
         user.avatarUrl = avatar(user.avatar, 128);
-        if (user.pinnedDomains instanceof Array) {
-            const result = await Promise.allSettled(user.pinnedDomains.slice(0, 10).map((i) => domain.get(i)));
-            user.domains = result.map((i) => (i.status === 'fulfilled' ? i.value : null)).filter((i) => i);
+        user.domains = [];
+        if (user._id > 0) {
+            const restrictWorkspace = workspace.isEnabled() && user._id > 1 && !workspace.isPlatformAdmin(user._id);
+            const [joined, assignedWorkspaceIds] = await Promise.all([
+                domain.getJoinedByUser(user._id),
+                restrictWorkspace ? workspace.getAssignedWorkspaceIds(user._id) : Promise.resolve(null),
+            ]);
+            const visible = assignedWorkspaceIds === null ? joined : joined.filter((ddoc) => {
+                const workspaceId = workspace.resolveDomainWorkspaceId(ddoc);
+                return assignedWorkspaceIds.length
+                    ? assignedWorkspaceIds.includes(workspaceId)
+                    : workspaceId === workspace.LEGACY_WORKSPACE_ID;
+            });
+            // Existing pins only preserve ordering; membership controls visibility and effective pins.
+            const preferred = new Map<string, number>((Array.isArray(user.pinnedDomains) ? user.pinnedDomains : [])
+                .filter((id) => typeof id === 'string').map((id, index) => [id, index]));
+            user.domains = visible.sort((a, b) => (preferred.get(a._id) ?? Infinity) - (preferred.get(b._id) ?? Infinity))
+                .map((ddoc) => pick(ddoc, ['_id', 'name', 'avatar', 'domainType', 'owner', 'workspaceId']));
         }
+        user.pinnedDomains = user.domains.map((ddoc) => ddoc._id);
         user._isPrivate = true;
         return user;
     }

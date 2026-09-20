@@ -1,5 +1,6 @@
 import $ from 'jquery';
 import responsiveCutoff from 'vj/breakpoints.json';
+import Dropdown from 'vj/components/dropdown/Dropdown';
 import Notification from 'vj/components/notification';
 import selectUser from 'vj/components/selectUser';
 import { AutoloadPage } from 'vj/misc/Page';
@@ -31,6 +32,72 @@ async function handlerSwitchAccount(ev) {
 
 let $trigger;
 let $menu;
+
+export function bindDomainSwitcher() {
+  const $domainTrigger = $('.domain-switcher');
+  const $button = $domainTrigger.find('.domain-switcher__trigger');
+  if (!$button.length || $button.data('domain-switcher-bound')) return;
+  let $domainMenu = $('#menu-nav-domain');
+  if (!$domainMenu.length) {
+    // Global dropdown initialization can move the menu into a detached drop
+    // before navigation binds; the drop joins the document on its first open.
+    $domainMenu = $(Dropdown.get($domainTrigger)?.dropInstance?.drop).find('#menu-nav-domain');
+  }
+  if (!$domainMenu.length) return;
+  $button.data('domain-switcher-bound', true);
+  const isMobile = () => $(document).width() <= responsiveCutoff.mobile;
+  const dropdown = () => (isMobile() ? null : Dropdown.getOrConstruct($domainTrigger)?.dropInstance);
+  const syncExpanded = () => $button.attr('aria-expanded', String(isMobile() || !!Dropdown.get($domainTrigger)?.dropInstance?.isOpened()));
+  let restoringFocus = false;
+  const open = () => {
+    dropdown()?.open();
+    syncExpanded();
+  };
+  const close = () => {
+    dropdown()?.close();
+    syncExpanded();
+  };
+
+  $domainTrigger.on('vjDropdownShow vjDropdownHide', syncExpanded);
+  $button.on('click', open).on('focus', () => { if (!restoringFocus) open(); });
+  $button.add($domainMenu).on('keydown', (event) => {
+    if (event.key === 'Escape' && !isMobile()) {
+      event.preventDefault();
+      close();
+      restoringFocus = true;
+      $button[0].focus();
+      restoringFocus = false;
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      open();
+      const links = $domainMenu.find('a[href]').get();
+      const current = links.indexOf(document.activeElement);
+      const next = current < 0 ? (event.key === 'ArrowDown' ? 0 : links.length - 1)
+        : (current + (event.key === 'ArrowDown' ? 1 : -1) + links.length) % links.length;
+      links[next]?.focus();
+    }
+  });
+  $button.add($domainMenu).on('focusout', () => {
+    setTimeout(() => {
+      const active = document.activeElement;
+      if (!$domainTrigger[0].contains(active) && !$domainMenu[0].contains(active)) close();
+    }, 0);
+  });
+  const updateViewport = () => {
+    if (isMobile()) {
+      const instance = Dropdown.get($domainTrigger);
+      if (instance) {
+        instance.detach();
+        $domainMenu.appendTo($domainTrigger);
+      }
+    } else {
+      Dropdown.getOrConstruct($domainTrigger);
+    }
+    syncExpanded();
+  };
+  $(window).on('resize.domain-switcher', updateViewport);
+  updateViewport();
+}
 
 function handleNavbar() {
   let fromHide = false;
@@ -88,6 +155,7 @@ function handleNavbar() {
 const navigationPage = new AutoloadPage('navigationPage', () => {
   if (!document.getElementById('panel') || !document.getElementById('menu')) return;
 
+  bindDomainSwitcher();
   $(document).on('click', '[name="nav_logout"]', handleNavLogoutClick);
   $(document).on('click', '[name="nav_switch_account"]', handlerSwitchAccount);
 

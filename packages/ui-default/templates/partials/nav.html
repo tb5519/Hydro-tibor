@@ -152,27 +152,38 @@
       </li>
     {% else %}
     {% if model.system.get('ui-default.domainNavigation') %}
-      <li class="nav__list-item" data-dropdown-pos="bottom right" data-dropdown-custom-class="nav__dropdown" data-dropdown-target="#menu-nav-domain" data-dropdown-disabledconstrainToWindow data-dropdown-trigger-desktop-only>
-        <span class="nav__item"><span class="icon"><img class="small user-profile-avatar v-center" loading="lazy" src="{{ avatarUrl(UiContext.domain.avatar|default('')) }}" width="20" height="20"></span> {{ UiContext.domain.name }} <span class="icon icon-expand_more nojs--hide"></span></span>
-        <ol class="dropdown-target menu" id="menu-nav-domain">
-          {%- if handler.user.domains|length -%}
-          {%- for ddoc in handler.user.domains -%}
-            <li class="menu__item">
-              <a href="{{ url('scratch_main' if ddoc.domainType == 'scratch' else 'homepage', domainId=ddoc['_id']) }}" class="menu__link">
-                <span class="icon"><img class="small user-profile-avatar v-center" loading="lazy" src="{{ avatarUrl(ddoc.avatar|default('')) }}" width="20" height="20"></span>
-                {{ ddoc['name'] }}{% if ddoc['name'] != ddoc['_id']%} ({{ ddoc['_id'] }}){% endif %}
-                {% if ddoc.domainType == 'scratch' %} · Scratch{% endif %}
-              </a>
-            </li>
-          {%- endfor -%}
-          <li class="menu__seperator"></li>
-          {%- endif -%}
-          <li class="menu__item">
-            <a href="{{ url('home_domain') }}" class="menu__link">
-              <span class="icon icon-wrench"></span> {{ _('Manage') }}
-            </a>
-          </li>
-        </ol>
+      <li class="nav__list-item domain-switcher" data-dropdown-pos="bottom right" data-dropdown-custom-class="nav__dropdown domain-switcher-dropdown" data-dropdown-target="#menu-nav-domain" data-dropdown-trigger-desktop-only>
+        <button type="button" class="nav__item domain-switcher__trigger" aria-label="切换课堂，当前：{{ UiContext.domain.name }}" aria-controls="menu-nav-domain" aria-expanded="false">
+          <img class="domain-switcher__trigger-avatar" src="{{ avatarUrl(UiContext.domain.avatar|default(''), 48) }}" width="26" height="26" alt="">
+          <span class="domain-switcher__trigger-name">{{ UiContext.domain.name }}</span>
+          <span class="icon icon-expand_more domain-switcher__chevron" aria-hidden="true"></span>
+        </button>
+        <div class="dropdown-target menu domain-switcher__menu" id="menu-nav-domain">
+          <div class="domain-switcher__header">
+            <span class="domain-switcher__heading">我的课堂</span>
+            <span class="domain-switcher__count">{{ handler.user.domains|length }} 个</span>
+          </div>
+          <ul class="domain-switcher__list" aria-label="已加入的课堂">
+            {%- for ddoc in handler.user.domains -%}
+              {% set currentDomain = ddoc._id == UiContext.domain._id %}
+              <li class="menu__item">
+                <a href="{{ url('scratch_main' if ddoc.domainType == 'scratch' else 'homepage', domainId=ddoc['_id']) }}" class="menu__link domain-switcher__link{% if currentDomain %} is-current{% endif %}"{% if currentDomain %} aria-current="true"{% endif %}>
+                  <span class="domain-switcher__avatar"><img loading="lazy" src="{{ avatarUrl(ddoc.avatar|default(''), 80) }}" width="36" height="36" alt=""></span>
+                  <span class="domain-switcher__details">
+                    <span class="domain-switcher__name">{{ ddoc.name }}</span>
+                    <span class="domain-switcher__meta"><span class="domain-switcher__type">{{ '图形化创作' if ddoc.domainType == 'scratch' else '编程课堂' }}</span><span class="domain-switcher__id" title="课堂编号：{{ ddoc._id }}">{{ ddoc._id }}</span></span>
+                  </span>
+                  {% if currentDomain %}<span class="domain-switcher__current">当前</span>{% else %}<span class="icon icon-chevron_right domain-switcher__arrow" aria-hidden="true"></span>{% endif %}
+                </a>
+              </li>
+            {%- else -%}
+              <li class="domain-switcher__empty">加入课堂后，就可以在这里切换啦。</li>
+            {%- endfor -%}
+          </ul>
+          <div class="domain-switcher__footer">
+            <a href="{{ url('home_domain') }}" class="menu__link domain-switcher__manage"><span class="icon icon-web" aria-hidden="true"></span><span>管理课堂</span><span class="icon icon-chevron_right" aria-hidden="true"></span></a>
+          </div>
+        </div>
       </li>
     {% endif %}
       <li class="nav__list-item" data-dropdown-pos="bottom right" data-dropdown-custom-class="nav__dropdown" data-dropdown-target="#menu-nav-user" data-dropdown-disabledconstrainToWindow data-dropdown-trigger-desktop-only>

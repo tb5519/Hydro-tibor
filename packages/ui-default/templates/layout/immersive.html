@@ -3,12 +3,14 @@
 {% extends "layout/html5.html" %}
 {% block body %}
 
-{% include "partials/nav.html" %}
+{% if page_name != 'user_login' %}{% include "partials/nav.html" %}{% endif %}
 
 <div class="slideout-panel" id="panel">
   <div class="slideout-overlay"></div>
-  {% include "partials/header_mobile.html" %}
-  <div class="nav--placeholder"></div>
+  {% if page_name != 'user_login' %}
+    {% include "partials/header_mobile.html" %}
+    <div class="nav--placeholder"></div>
+  {% endif %}
   <div class="main">
     {% block content %}{% endblock %}
   </div>

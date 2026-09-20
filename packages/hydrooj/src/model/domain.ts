@@ -102,6 +102,15 @@ class DomainModel {
         return coll.find(query);
     }
 
+    static async getJoinedByUser(uid: number): Promise<DomainDoc[]> {
+        if (uid <= 0) return [];
+        const domainIds = await collUser.distinct('domainId', { uid, join: true });
+        if (!domainIds.length) return [];
+        return coll.find({ _id: { $in: domainIds } })
+            .project<DomainDoc>({ _id: 1, name: 1, avatar: 1, domainType: 1, owner: 1, workspaceId: 1 })
+            .sort({ _id: 1 }).toArray();
+    }
+
     static async edit(domainId: string, $set: Partial<DomainDoc>) {
         domainId = domainId.toLowerCase();
         await bus.parallel('domain/before-update', domainId, $set);
@@ -321,6 +330,7 @@ export async function apply(ctx: Context) {
         db.ensureIndexes(
             collUser,
             { key: { domainId: 1, uid: 1 }, name: 'uid', unique: true },
+            { key: { uid: 1, join: 1, domainId: 1 }, name: 'joined_domains' },
             { key: { domainId: 1, rp: -1, uid: 1 }, name: 'rp', sparse: true },
         ),
     ]);

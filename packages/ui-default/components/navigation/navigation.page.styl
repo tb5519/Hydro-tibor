@@ -133,6 +133,211 @@
 .nav__list--secondary .nav__item--round
   margin-left: rem(5px)
 
+.nav .domain-switcher__trigger
+  display: flex
+  align-items: center
+  gap: 9px
+  max-width: 230px
+  height: rem($nav-item-height)
+  padding-left: 14px
+  padding-right: 14px
+  border-right: 0
+  border-bottom: 0
+  border-left: 0
+  background: transparent
+  font: inherit
+  cursor: pointer
+
+  &:focus-visible
+    outline: 2px solid #3b82f6
+    outline-offset: -5px
+    border-radius: 8px
+
+  &[aria-expanded='true']
+    background: #f3f7ff
+    border-top-color: #3b82f6
+
+.domain-switcher__trigger-avatar
+  flex: 0 0 26px
+  object-fit: contain
+  border-radius: 8px
+
+.domain-switcher__trigger-name
+  overflow: hidden
+  white-space: nowrap
+  text-overflow: ellipsis
+
+.domain-switcher__chevron
+  flex: 0 0 auto
+  color: #8a9ab1
+  transition: transform .18s ease
+
+.domain-switcher__trigger[aria-expanded='true'] .domain-switcher__chevron
+  transform: rotate(180deg)
+
+.drop.nav__dropdown.domain-switcher-dropdown
+  overflow: hidden
+  max-height: none
+  border: 1px solid #e2eaf5
+  border-radius: 16px
+  box-shadow: 0 12px 36px rgba(35, 64, 111, .14), 0 2px 6px rgba(35, 64, 111, .04)
+
+#menu-nav-domain
+  width: 336px
+  max-width: calc(100vw - 24px)
+  padding: 0
+  border-radius: 16px
+  background: #fff
+  box-shadow: none
+  color: #263952
+
+  .domain-switcher__header
+    display: flex
+    align-items: center
+    justify-content: space-between
+    padding: 17px 20px 10px
+
+  .domain-switcher__heading
+    font-size: 14px
+    font-weight: 700
+    letter-spacing: .04em
+
+  .domain-switcher__count
+    padding: 3px 9px
+    border-radius: 12px
+    background: #f0f5fc
+    color: #6d829f
+    font-size: 12px
+
+  .domain-switcher__list
+    max-height: unquote('min(420px, calc(100vh - 190px))')
+    margin: 0
+    padding: 4px 10px 10px
+    overflow-y: auto
+    overscroll-behavior: contain
+    list-style: none
+
+  .menu__item + .menu__item
+    margin-top: 4px
+
+  .domain-switcher__link
+    display: flex
+    align-items: center
+    gap: 12px
+    min-height: 76px
+    padding: 12px
+    border: 1px solid transparent
+    border-radius: 12px
+    color: #263952
+    line-height: 1.5
+    transition: background .15s, border-color .15s
+
+    &:visited
+      color: #263952
+
+    &:hover, &:focus-visible
+      border-color: #dce8fa
+      background: #f4f8ff
+      outline: none
+
+    &.is-current
+      border-color: #d9e7ff
+      background: #edf4ff
+
+  .domain-switcher__avatar
+    display: flex
+    align-items: center
+    justify-content: center
+    flex: 0 0 44px
+    width: 44px
+    height: 44px
+    border-radius: 12px
+    background: #f5f8fd
+
+    img
+      object-fit: contain
+      border-radius: 8px
+
+  .is-current .domain-switcher__avatar
+    background: #fff
+
+  .domain-switcher__details
+    flex: 1 1 auto
+    min-width: 0
+
+  .domain-switcher__name
+    display: block
+    font-size: 15px
+    font-weight: 650
+    overflow-wrap: anywhere
+
+  .domain-switcher__meta
+    display: flex
+    flex-wrap: wrap
+    align-items: center
+    gap: 3px 8px
+    margin-top: 3px
+    color: #8190a7
+    font-size: 11px
+    line-height: 1.5
+
+  .domain-switcher__id
+    max-width: 140px
+    padding-left: 8px
+    border-left: 1px solid #dce3ed
+    overflow: hidden
+    text-overflow: ellipsis
+    white-space: nowrap
+
+  .domain-switcher__current
+    flex: 0 0 auto
+    padding: 3px 7px
+    border-radius: 6px
+    background: #dceaff
+    color: #316ac8
+    font-size: 11px
+    font-weight: 600
+
+  .domain-switcher__arrow
+    flex: 0 0 auto
+    margin: 0
+    color: #a2b2c9
+    font-size: 17px
+
+  .domain-switcher__empty
+    padding: 20px 10px
+    color: #7a8ba3
+    font-size: 13px
+    line-height: 1.8
+
+  .domain-switcher__footer
+    padding: 7px 10px
+    border-top: 1px solid #edf1f7
+    background: #fafcff
+
+  .domain-switcher__manage
+    display: flex
+    align-items: center
+    gap: 8px
+    padding: 11px 12px
+    border: 1px solid transparent
+    border-radius: 10px
+    color: #657d9e
+    font-size: 13px
+    line-height: 20px
+
+    .icon
+      margin: 0
+      font-size: 16px
+
+    .icon:last-child
+      margin-left: auto
+
+    &:hover, &:focus-visible
+      color: #2563eb
+      background: #edf4ff
+      outline: none
+
 .nav__logo
   display: block
   height: rem($nav-logo-height)
@@ -209,3 +414,41 @@
 
   .nav__list--secondary
     border-top: 1px solid #666
+
+  .nav .domain-switcher__trigger
+    width: 100%
+    max-width: none
+    padding: 12px 17px
+    justify-content: flex-start
+
+  #menu-nav-domain
+    width: 100%
+    max-width: none
+    border-radius: 0
+
+    .domain-switcher__header
+      padding: 12px 18px 8px
+
+    .domain-switcher__list
+      max-height: 320px
+      padding-left: 8px
+      padding-right: 8px
+
+    .domain-switcher__link
+      gap: 8px
+      padding: 10px 8px
+
+    .domain-switcher__avatar
+      flex-basis: 36px
+      width: 36px
+      height: 36px
+
+      img
+        width: 30px
+        height: 30px
+
+    .domain-switcher__name
+      font-size: 14px
+
+    .domain-switcher__id
+      max-width: 100px

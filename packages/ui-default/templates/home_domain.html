@@ -36,9 +36,10 @@
             <img src="{{ avatarUrl(ddoc.avatar, 32) }}" width="32" height="32">
           </td>
           {% set _star = handler.user.pinnedDomains.includes(ddoc._id) %}
-          <td class="col--name" data-star-action="?id={{ ddoc['_id'] }}" data-star="{{ _star }}">
+          <td class="col--name">
             {{ ddoc['name'] }} ({{ ddoc['_id'] }})
             <span class="text-gray"> · {% if ddoc.domainType == 'scratch' %}Scratch{% else %}OJ{% endif %}</span>
+            {% if _star %}<span class="domain-auto-star" title="加入的课堂会自动显示在顶部切换菜单中"><span class="icon icon-star" aria-hidden="true"></span> 已自动收藏</span>{% endif %}
           </td>
           <td class="col--role">
             {{ role[ddoc._id]|default('default') }}

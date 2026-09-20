@@ -1154,9 +1154,7 @@ class HomeDomainHandler extends Handler {
         let ddocs: DomainDoc[] = [];
         const role: Record<string, string> = {};
         if (!all) {
-            const dudict = await domain.getDictUserByDomainId(this.user._id);
-            const dids = Object.keys(dudict);
-            ddocs = await domain.getMulti({ _id: { $in: dids } }).toArray();
+            ddocs = this.user.domains;
         } else {
             this.checkPriv(PRIV.PRIV_VIEW_ALL_DOMAIN);
             ddocs = await domain.getMulti().toArray();
@@ -1181,13 +1179,10 @@ class HomeDomainHandler extends Handler {
 
     @param('id', Types.DomainId)
     @param('star', Types.Boolean)
-    async postStar({ }, id: string, star = false) {
-        if (star) {
-            const ddoc = await domain.get(id);
-            if (!ddoc) throw new NotFoundError(id);
-            await user.setById(this.user._id, { pinnedDomains: [...this.user.pinnedDomains, id] });
-        } else user.setById(this.user._id, { pinnedDomains: this.user.pinnedDomains.filter((i) => i !== id) });
-        this.back({ star });
+    async postStar({ }, id: string) {
+        if (!this.user.domains.some((ddoc) => ddoc._id === id)) throw new NotFoundError(id);
+        // Joined domains are automatically pinned, including requests from older clients.
+        this.back({ star: true });
     }
 
     @param('id', Types.DomainId)
@@ -1216,14 +1211,9 @@ class HomeDomainCreateHandler extends Handler {
         if (doc) throw new DomainAlreadyExistsError(id);
         avatar ||= this.user.avatar || `gravatar:${this.user.mail}`;
         const domainId = await domain.add(id, this.user._id, name, bulletin, undefined, domainType);
-        // When this domain is deleted but previously added to user's list we shouldn't push it again
-        const push = !this.user.pinnedDomains?.includes(domainId);
         await Promise.all([
             domain.edit(domainId, { avatar }),
             domain.setUserRole(domainId, this.user._id, 'root'),
-            push
-                ? user.setById(this.user._id, undefined, undefined, { pinnedDomains: domainId })
-                : Promise.resolve(),
         ]);
         this.response.redirect = this.url(domainType === 'scratch' ? 'scratch_main' : 'domain_dashboard', { domainId });
         this.response.body = { domainId };
