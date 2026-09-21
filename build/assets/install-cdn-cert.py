@@ -3,7 +3,7 @@
 """Upload an existing certificate only to static.onebyone.run. Python 3.6+.
 
 Default: offline plan. --check validates supplied PEM files offline. --status
-reads CDN status. --apply uploads the existing certificate and enables HTTPS.
+checks the live, trusted HTTPS certificate. --apply uploads the existing certificate and enables HTTPS.
 No purchase, issuance, renewal order, or paid service activation APIs are called.
 
 Official API parameters (reviewed 2026-09-21):
@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import re
+import socket
 import ssl
 import stat
 import subprocess
@@ -107,9 +108,7 @@ def certificate_status(profile=None):
 
 def active_match(rows, digest):
     for row in rows:
-        if row.get('DomainName') != DOMAIN or row.get('ServerCertificateStatus') != 'on':
-            continue
-        if row.get('Status') != 'success':
+        if row.get('DomainName') not in (None, '', DOMAIN) or row.get('ServerCertificateStatus') != 'on':
             continue
         try:
             if fingerprint(row.get('ServerCertificate', '')) == digest:
@@ -117,6 +116,19 @@ def active_match(rows, digest):
         except (Stop, ValueError):
             pass
     return False
+
+
+def tls_fingerprint():
+    # Validate the system trust chain AND this fixed hostname, then pin the local
+    # leaf certificate. Provider metadata alone cannot prove edge deployment.
+    # A TLS handshake sends no HTTP request and does not fetch private content.
+    try:
+        context = ssl.create_default_context()
+        with socket.create_connection((DOMAIN, 443), timeout=10) as connection:
+            with context.wrap_socket(connection, server_hostname=DOMAIN) as secure:
+                return hashlib.sha256(secure.getpeercert(binary_form=True)).hexdigest()
+    except (OSError, ValueError):
+        return None
 
 
 def main(argv=None):
@@ -134,10 +146,8 @@ def main(argv=None):
         print('STATUS plan_only: static.onebyone.run; no file reads or cloud calls')
         return 0
     if args.status:
-        rows = certificate_status(args.profile)
-        enabled = any(x.get('DomainName') == DOMAIN and x.get('Status') == 'success'
-                      and x.get('ServerCertificateStatus') == 'on' for x in rows)
-        print('STATUS ' + ('https_enabled' if enabled else 'https_not_confirmed'))
+        # A valid live TLS certificate is stronger evidence than provider Status.
+        print('STATUS ' + ('https_verified' if tls_fingerprint() else 'https_not_confirmed'))
         return 0
     if not args.cert or not args.key or not 5 <= args.wait_seconds <= 600:
         raise Stop('certificate_and_key_paths_required_or_invalid_wait')
@@ -147,18 +157,21 @@ def main(argv=None):
     if args.check:
         print('SUCCESS local_certificate_valid')
         return 0
-    if active_match(certificate_status(args.profile), digest):
+    if tls_fingerprint() == digest:
         print('SUCCESS certificate_already_active')
         return 0
-    result = cli('SetCdnDomainSSLCertificate', {'DomainName': DOMAIN, 'CertType': 'upload',
-                 'SSLProtocol': 'on', 'CertName': 'onebyone-static-' + digest[:16],
-                 'SSLPub': certificate, 'SSLPri': private_key}, args.profile)
-    if not result.get('RequestId'):
-        raise Stop('certificate_update_unconfirmed')
-    print('SUCCESS certificate_update_accepted')
+    if active_match(certificate_status(args.profile), digest):
+        print('STATUS certificate_configured; waiting_for_verified_edge_certificate')
+    else:
+        result = cli('SetCdnDomainSSLCertificate', {'DomainName': DOMAIN, 'CertType': 'upload',
+                     'SSLProtocol': 'on', 'CertName': 'onebyone-static-' + digest[:16],
+                     'SSLPub': certificate, 'SSLPri': private_key}, args.profile)
+        if not result.get('RequestId'):
+            raise Stop('certificate_update_unconfirmed')
+        print('SUCCESS certificate_update_accepted')
     deadline = time.time() + args.wait_seconds
     while True:
-        if active_match(certificate_status(args.profile), digest):
+        if tls_fingerprint() == digest:
             print('SUCCESS certificate_active')
             return 0
         if time.time() >= deadline:

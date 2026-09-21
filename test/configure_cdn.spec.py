@@ -194,14 +194,17 @@ class CDNTests(unittest.TestCase):
         broad = {'Version': '1', 'Statement': [dict(statement, Resource='*')]}
         self.assertFalse(cdn.policy_equal(broad, cdn.READ_POLICY))
 
-    def test_separate_node_and_browser_cache_and_safe_cors(self):
+    def test_node_ttl_and_private_browser_headers_without_gated_origin_rewrite(self):
         desired = cdn.features(cdn.CONDITION_ID, 'bucket.example')
         headers = [row(x) for x in desired if x['functionName'] in ('set_resp_header', 'origin_response_header')]
         private = [x for x in headers if cdn.parent_id(x) == cdn.CONDITION_ID]
-        self.assertEqual(len(private), 2)
-        incoming = next(x for x in private if x['FunctionName'] == 'origin_response_header')
-        outgoing = next(x for x in private if x['FunctionName'] == 'set_resp_header')
-        self.assertEqual(cdn.arguments(incoming)['header_value'], 'public, max-age=86400')
+        self.assertEqual(len(private), 1)
+        outgoing = private[0]
+        self.assertNotIn('origin_response_header', [x['functionName'] for x in desired])
+        media = next(row(x) for x in desired if x['functionName'] == 'path_based_ttl_set' and cdn.parent_id(row(x)) == cdn.CONDITION_ID)
+        self.assertEqual(cdn.arguments(media)['ttl'], '86400')
+        self.assertEqual(cdn.arguments(media)['swift_no_cache_low'], 'on')
+        self.assertEqual(cdn.arguments(media)['swift_origin_cache_high'], 'off')
         self.assertEqual(cdn.arguments(outgoing)['value'], 'private, no-store')
         self.assertFalse(any(cdn.arguments(x).get('key') == 'Access-Control-Allow-Credentials' for x in headers))
         self.assertNotIn('set_hashkey_args', [x['functionName'] for x in desired])

@@ -101,15 +101,39 @@ function readConfig(override) {
     return config;
 }
 
-export async function uploadRelease(manifest, directory, config, suppliedClient) {
-    const client = suppliedClient || new S3Client({ endpoint: config.endpoint, region: config.region, forcePathStyle: false,
+export function createUploadClient(config) {
+    return new S3Client({ endpoint: config.endpoint, region: config.region, forcePathStyle: false,
+        // OSS accepts Content-MD5 but not SDK 3.726.1's automatic aws-chunked CRC32 stream encoding.
+        requestChecksumCalculation: 'WHEN_REQUIRED',
         maxAttempts: 3, credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey, sessionToken: config.sessionToken } });
+}
+
+/** Only bounded diagnostic fields; never provider messages, request headers, URLs, credentials or stack traces. */
+export function safeFailure(error) {
+    const output = { name: typeof error?.name === 'string' && /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(error.name) ? error.name : 'Error' };
+    const status = error?.$metadata?.httpStatusCode;
+    if (Number.isInteger(status) && status >= 100 && status <= 599) output.httpStatus = status;
+    if (['head-existing', 'upload', 'head-verify'].includes(error?.assetPhase)) output.phase = error.assetPhase;
+    return output;
+}
+
+function requestFailure(error, phase) {
+    const details = safeFailure(error);
+    const failure = new Error('Asset request failed');
+    failure.name = details.name;
+    failure.$metadata = { httpStatusCode: details.httpStatus };
+    failure.assetPhase = phase;
+    return failure;
+}
+
+export async function uploadRelease(manifest, directory, config, suppliedClient) {
+    const client = suppliedClient || createUploadClient(config);
     let uploaded = 0;
     for (const file of manifest.files) {
         const args = { Bucket: config.bucket, Key: file.key };
         let existing;
         try { existing = await client.send(new HeadObjectCommand(args), { abortSignal: AbortSignal.timeout(30_000) }); } catch (error) {
-            if (error?.$metadata?.httpStatusCode !== 404 && !['NotFound', 'NoSuchKey'].includes(error?.name)) throw new Error('Cannot verify existing release objects');
+            if (error?.$metadata?.httpStatusCode !== 404 && !['NotFound', 'NoSuchKey'].includes(error?.name)) throw requestFailure(error, 'head-existing');
         }
         if (existing && (existing.ContentLength !== file.size || existing.Metadata?.sha256 !== file.sha256
             || existing.ContentType !== file.contentType || existing.CacheControl !== file.cacheControl)) {
@@ -121,16 +145,21 @@ export async function uploadRelease(manifest, directory, config, suppliedClient)
             const contentMD5 = Buffer.from(await digest(filename, 'md5'), 'hex').toString('base64');
             const stream = fs.createReadStream(filename);
             try {
-                // Explicit length with SDK 3.726.1 avoids unsupported aws-chunked.
+                // Explicit length plus WHEN_REQUIRED prevents unsupported aws-chunked checksum trailers.
                 await client.send(new PutObjectCommand({ ...args, Body: stream, ContentLength: file.size,
                     ContentMD5: contentMD5,
                     ContentType: file.contentType, CacheControl: file.cacheControl, Metadata: { sha256: file.sha256 } }),
                 { abortSignal: AbortSignal.timeout(10 * 60_000) });
+            } catch (error) {
+                throw requestFailure(error, 'upload');
             } finally { stream.destroy(); }
             if (await digest(filename) !== file.sha256) throw new Error('Release files changed during upload');
             uploaded++;
         }
-        const verified = await client.send(new HeadObjectCommand(args), { abortSignal: AbortSignal.timeout(30_000) });
+        let verified;
+        try { verified = await client.send(new HeadObjectCommand(args), { abortSignal: AbortSignal.timeout(30_000) }); } catch (error) {
+            throw requestFailure(error, 'head-verify');
+        }
         if (verified.ContentLength !== file.size || verified.Metadata?.sha256 !== file.sha256
             || verified.ContentType !== file.contentType || verified.CacheControl !== file.cacheControl) throw new Error(`Uploaded file verification failed: ${file.path}`);
     }
@@ -165,5 +194,8 @@ async function main() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-    main().catch(() => { console.error('Asset synchronization failed. No configuration values or signing details are printed. Check the prepared release and upload permissions.'); process.exitCode = 1; });
+    main().catch((error) => {
+        console.error(`Asset synchronization failed: ${JSON.stringify(safeFailure(error))}. No configuration values or signing details are printed.`);
+        process.exitCode = 1;
+    });
 }

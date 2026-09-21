@@ -168,9 +168,10 @@ def features(condition_id, origin):
                 'swift_origin_cache_high': 'on', 'swift_no_cache_low': 'off', 'swift_follow_cachetime': 'off'}),
         feature('filetype_based_ttl_set', {'file_type': 'html', 'ttl': 300, 'weight': 99,
                 'swift_origin_cache_high': 'on', 'swift_no_cache_low': 'off', 'swift_follow_cachetime': 'off'}),
-        # Incoming header changes edge caching; the outgoing header below protects browsers.
-        feature('origin_response_header', {'header_operation_type': 'add', 'header_name': 'Cache-Control',
-                'header_value': 'public, max-age=86400', 'duplicate': 'off'}, private),
+        # origin_response_header (229) returned ConfigId=0 for this CDN account.
+        # Do not require a gated feature or enable DCDN. Keep the browser private,
+        # request the node TTL below, and verify a real repeated media GET is a HIT.
+        # A missing HIT must be resolved before claiming private media is cached.
         feature('path_based_ttl_set', {'path': '/media/', 'ttl': 86400, 'weight': 90,
                 'swift_origin_cache_high': 'off', 'swift_no_cache_low': 'on', 'swift_follow_cachetime': 'off'}, private),
         feature('set_resp_header', {'key': 'Cache-Control', 'value': 'private, no-store',
