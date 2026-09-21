@@ -50,7 +50,7 @@ The local entry bypasses TurboWarp's homepage, cloud, addons, URL project import
 
 The parent's `init` message selects `mode: 'editor' | 'player' | 'thumbnail'`. Player mode opens a responsive stage and starts the green flag, with native stop/restart/fullscreen controls. Both player and thumbnail mode force read-only access and reject export requests. The iframe must be granted the fullscreen feature for browser fullscreen to be available.
 
-Editor mode retains native local file import/download, editing and the project title. The misleading native new-project action is removed: creation belongs to the classroom. File System Access pickers are disabled in the opaque iframe; imports use a standard file input and exports download an `.sb3`. An in-frame dialog explains that importing replaces the current work's contents, and a successful import always emits `dirty`, including when its filename matches the current title. A committed native title edit emits `{type: 'titleChanged', title}`; initialization does not emit a title change. The parent includes the new title with its next authenticated project save. The native menu reserves its right edge for the parent's preset/save buttons (360px, or 220px below 600px wide).
+Editor mode retains native local file import/download, editing and the project title. The misleading native new-project action is removed: creation belongs to the classroom. File System Access pickers are disabled in the opaque iframe; imports use a standard file input and exports download an `.sb3`. An in-frame dialog explains that importing replaces the current work's contents, and a successful import always emits `dirty`, including when its filename matches the current title. A committed native title edit emits `{type: 'titleChanged', title}`; initialization does not emit a title change. The parent includes the new title with its next authenticated project save. The native menu reserves its right edge for the parent's save/submit buttons (360px, or 220px below 600px wide).
 
 Each of the four native libraries includes a teacher-preset button. In a loaded editable frame it sends `{type: 'openPresetLibrary', kind, targetId}`; the parent may also send `requestPresetLibrary` to open the sprite category. After domain authorization and byte download, the parent sends `{type: 'importPreset', id, kind, title, filename, mime, file: ArrayBuffer, targetId}`. Supported kinds are `sprite`, `costume`, `sound` and `backdrop`; supported bytes are complete `.sprite3`, SVG/PNG/JPEG/WebP images, and MP3/WAV sounds. The server must validate archives and cap uploads before delivery. Imports never receive an asset URL. Sprite archives must contain all referenced media and cannot use custom extensions or fonts. Images pass the native upload sanitizer/decoder; WebP has an explicit rejecting decoder. Imports append to the current project and acknowledge with `presetImported` or retryable `presetImportError`, never the fatal project-load error. Pending/completed request IDs prevent duplicate insertions. Costume/sound imports retain their original target and reject if it was deleted; a costume cannot target the stage, while backgrounds always target the stage. Read-only and unloaded frames do not import.
 
@@ -69,9 +69,13 @@ TurboWarp GUI and scratch-paint modifications are GPL-3.0; original Scratch noti
 ## Domain preset library
 
 Scratch teachers can manage reusable sprites, costumes, sounds and backdrops at
-`/d/<domainId>/domain/scratch-library`. The editor's **老师素材** button and native
-library shortcuts open the same domain-scoped picker. Images have previews and
-sounds load only when played or added. Uploads support multiple files, editable
+`/d/<domainId>/domain/scratch-library`. The **老师素材** button in each native sprite,
+costume, sound and backdrop library opens the domain-scoped picker. Images have previews;
+sprite packages show their actual costumes and cycle visible multi-costume cards every
+250ms. Reduced-motion preferences keep the first costume still. Previews are bounded to
+100 frames / 20MB of expanded archive content, and release resources when hidden or closed.
+Sound cards have a separate play/pause area and add button; sounds load only when played
+or added. Uploads support multiple files, editable
 names and individual results; one failure does not discard successful uploads.
 
 Presets use the domain's existing Scratch storage quota and OSS primary storage

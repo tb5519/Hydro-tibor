@@ -1,4 +1,5 @@
 import { NamedPage } from 'vj/misc/Page';
+import { loadScratchSpritePreview } from '../utils/scratch-preset-preview';
 
 type Kind = 'sprite' | 'costume' | 'sound' | 'backdrop';
 interface Preset {
@@ -36,7 +37,10 @@ export default new NamedPage('scratch_library_manage', () => {
   const uploads: Upload[] = [];
   const controllers = new Set<AbortController>();
   const previewQueue: string[] = [];
-  const previews = new Map<string, { state: string; url?: string }>();
+  const previews = new Map<string, { state: string; url?: string; frames?: string[]; frame?: number; dispose?: () => void; controller?: AbortController }>();
+  const visiblePreviews = new Set<string>();
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+  let animation: number | undefined;
   let selected: Kind = 'sprite';
   let uploading = false;
   let currentUpload: XMLHttpRequest | null = null;
@@ -91,6 +95,8 @@ export default new NamedPage('scratch_library_manage', () => {
   };
   const discardPreview = (id: string) => {
     const preview = previews.get(id);
+    preview?.controller?.abort();
+    preview?.dispose?.();
     if (preview?.url) URL.revokeObjectURL(preview.url);
     previews.delete(id);
     const card = items.get(id)?.card;
@@ -99,6 +105,22 @@ export default new NamedPage('scratch_library_manage', () => {
       media.removeAttribute('src');
       media.hidden = true;
     });
+    if (card) card.querySelector<HTMLElement>('[data-library-placeholder]')!.hidden = false;
+  };
+  const animatePreviews = () => {
+    if (animation !== undefined) window.clearInterval(animation);
+    animation = undefined;
+    if (stopped || document.hidden || reducedMotion?.matches) return;
+    if (![...visiblePreviews].some((id) => (previews.get(id)?.frames?.length || 0) > 1)) return;
+    animation = window.setInterval(() => {
+      for (const id of visiblePreviews) {
+        const preview = previews.get(id);
+        const card = items.get(id)?.card;
+        if (!card || card.hidden || !preview?.frames || preview.frames.length < 2) continue;
+        preview.frame = ((preview.frame || 0) + 1) % preview.frames.length;
+        card.querySelector<HTMLImageElement>('img')!.src = preview.frames[preview.frame];
+      }
+    }, 250);
   };
   const setCard = (item: Preset) => {
     const previous = items.get(item.id);
@@ -136,18 +158,21 @@ export default new NamedPage('scratch_library_manage', () => {
     const timer = window.setTimeout(() => controller.abort(), 180000);
     const button = card.querySelector<HTMLButtonElement>('[data-library-action=preview]')!;
     button.disabled = true;
-    const pending = { state: 'loading' };
+    const pending = { state: 'loading', controller };
     previews.set(id, pending);
     card.querySelector('[data-library-preview-label]')!.textContent = '正在加载预览…';
     try {
-      if (!previewMimes.has(item.mime) || item.size > maxSize) throw new Error('无法预览此文件');
+      const sprite = item.kind === 'sprite' && item.filename.toLowerCase().endsWith('.sprite3');
+      if ((!sprite && !previewMimes.has(item.mime)) || item.size > maxSize) throw new Error('无法预览此文件');
       const response = await fetch(localUrl(item.previewUrl || item.fileUrl), { credentials: 'same-origin', signal: controller.signal });
       if (!response.ok || /text\/html/i.test(response.headers.get('Content-Type') || '')) throw new Error('预览暂时无法加载');
       const blob = await response.blob();
       if (blob.size > maxSize || !blob.size) throw new Error('预览文件过大或为空');
       if (stopped || previews.get(id) !== pending || items.get(id) !== entry) return;
-      const url = URL.createObjectURL(new Blob([blob], { type: item.mime }));
-      previews.set(id, { state: 'ready', url });
+      const preview = sprite ? await loadScratchSpritePreview(blob, controller.signal) : null;
+      if (stopped || previews.get(id) !== pending || items.get(id) !== entry) { preview?.dispose(); return; }
+      const url = preview?.frames[0] || URL.createObjectURL(new Blob([blob], { type: item.mime }));
+      previews.set(id, preview ? { state: 'ready', ...preview, frame: 0 } : { state: 'ready', url });
       if (item.kind === 'sound') {
         const audio = card.querySelector<HTMLAudioElement>('audio')!;
         audio.src = url;
@@ -160,6 +185,7 @@ export default new NamedPage('scratch_library_manage', () => {
         card.querySelector<HTMLElement>('[data-library-placeholder]')!.hidden = true;
       }
       button.hidden = true;
+      animatePreviews();
     } catch {
       if (stopped || previews.get(id) !== pending || items.get(id) !== entry) return;
       previews.set(id, { state: 'error' });
@@ -173,6 +199,7 @@ export default new NamedPage('scratch_library_manage', () => {
     while (previewCount < 2 && previewQueue.length) {
       const id = previewQueue.shift()!;
       const entry = items.get(id);
+      if (previews.get(id)?.state !== 'queued') continue;
       if (!entry || entry.card.hidden) { previews.delete(id); continue; }
       previewCount++;
       void loadPreview(id).finally(() => { previewCount--; pumpPreviews(); });
@@ -185,8 +212,16 @@ export default new NamedPage('scratch_library_manage', () => {
     pumpPreviews();
   };
   const observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver((entries) => {
-    entries.forEach((entry) => { if (entry.isIntersecting) queuePreview((entry.target as HTMLElement).dataset.id!); });
-  }, { rootMargin: '80px' }) : null;
+    entries.forEach((entry) => {
+      const id = (entry.target as HTMLElement).dataset.id!;
+      if (entry.isIntersecting) { visiblePreviews.add(id); queuePreview(id); }
+      else {
+        visiblePreviews.delete(id);
+        if (items.get(id)?.item.filename.toLowerCase().endsWith('.sprite3')) discardPreview(id);
+      }
+    });
+    animatePreviews();
+  }) : null;
   const render = () => {
     const term = search.value.trim().toLocaleLowerCase();
     const counts = { sprite: 0, costume: 0, sound: 0, backdrop: 0 };
@@ -197,14 +232,19 @@ export default new NamedPage('scratch_library_manage', () => {
       observer?.unobserve(card);
       if (!card.hidden) {
         shown++;
-        if (item.kind !== 'sound' && item.mime.startsWith('image/')) {
+        if (item.kind !== 'sound' && (item.mime.startsWith('image/') || item.filename.toLowerCase().endsWith('.sprite3'))) {
           if (observer) observer.observe(card);
           else {
+            visiblePreviews.add(item.id);
             const button = card.querySelector<HTMLButtonElement>('[data-library-action=preview]')!;
             if (!previews.has(item.id)) { button.hidden = false; button.textContent = '查看预览'; }
           }
         }
-      } else card.querySelector<HTMLAudioElement>('audio')?.pause();
+      } else {
+        visiblePreviews.delete(item.id);
+        card.querySelector<HTMLAudioElement>('audio')?.pause();
+        if (item.filename.toLowerCase().endsWith('.sprite3')) discardPreview(item.id);
+      }
     }
     root.querySelectorAll<HTMLElement>('[data-library-count]').forEach((node) => { node.textContent = String(counts[node.dataset.libraryCount!]); });
     root.querySelectorAll<HTMLElement>('[data-library-kind]').forEach((node) => node.setAttribute('aria-pressed', String(node.dataset.libraryKind === selected)));
@@ -214,6 +254,7 @@ export default new NamedPage('scratch_library_manage', () => {
     find('[data-library-empty-message]').textContent = term ? '换个名称或文件名再试试，也可以查看其他分类。' : `上传${labels[selected]}，孩子们就能在编辑器里选用啦。`;
     find('[data-library-clear-search]').hidden = !term;
     pumpPreviews();
+    animatePreviews();
   };
   for (const card of grid.querySelectorAll<HTMLElement>('[data-library-card]')) {
     try {
@@ -465,12 +506,19 @@ export default new NamedPage('scratch_library_manage', () => {
   window.addEventListener('beforeunload', (event) => { if (uploading || saving) { event.preventDefault(); event.returnValue = ''; } });
   window.addEventListener('pagehide', () => {
     stopped = true;
+    visiblePreviews.clear();
+    animatePreviews();
     currentUpload?.abort();
     controllers.forEach((controller) => controller.abort());
     observer?.disconnect();
     previewQueue.length = 0;
     for (const id of previews.keys()) discardPreview(id);
   });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) grid.querySelectorAll<HTMLAudioElement>('audio').forEach((audio) => audio.pause());
+    animatePreviews();
+  });
+  reducedMotion?.addEventListener('change', animatePreviews);
   window.addEventListener('pageshow', (event) => {
     stopped = false;
     if (event.persisted) {

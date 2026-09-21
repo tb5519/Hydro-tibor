@@ -20,7 +20,7 @@ const preset = (id, kind = 'sprite', overrides = {}) => ({
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const response = (body, ok = true) => ({ ok, json: async () => body });
 
-function setup(t, presets = []) {
+function setup(t, presets = [], loadSpritePreview = async () => { throw new Error('unexpected sprite preview'); }) {
     const html = env.render('scratch_library_manage.html', { presets, maxFileSize: 20971520, url: (name) => urls[name] });
     const dom = new JSDOM(html, { url: 'https://onebyone.test/d/art/domain/scratch-library', runScripts: 'outside-only' });
     t.after(() => dom.window.close());
@@ -56,6 +56,7 @@ function setup(t, presets = []) {
     const module = { exports: {} };
     let initialize;
     new window.Function('require', 'module', 'exports', source)((name) => {
+        if (name === '../utils/scratch-preset-preview') return { loadScratchSpritePreview: loadSpritePreview };
         assert.equal(name, 'vj/misc/Page');
         return { NamedPage: class { constructor(pageName, callback) {
             assert.equal(pageName, 'scratch_library_manage', 'NamedPage must match the template filename');
@@ -232,4 +233,31 @@ test('a stale refresh response cannot remove a newly uploaded asset', async (t) 
     await settle();
     assert.equal(h.query('[data-library-count=sprite]').textContent, '1');
     assert(h.query('[data-library-card][data-id=new]'));
+});
+
+test('role package preview shows costume frames, animates only while visible, and releases frames on category changes', async (t) => {
+    let disposed = 0;
+    const h = setup(t, [preset('role', 'sprite', { filename: 'role.sprite3', mime: 'application/x.scratch.sprite3' })],
+        async () => ({ frames: ['blob:costume-red', 'blob:costume-blue'], dispose: () => { disposed++; } }));
+    Object.defineProperty(h.window.document, 'hidden', { configurable: true, value: false });
+    const intervals = new Map();
+    let id = 0;
+    h.window.setInterval = (callback) => { intervals.set(++id, callback); return id; };
+    h.window.clearInterval = (key) => intervals.delete(key);
+    const card = h.query('[data-library-card]');
+    h.observers[0].visible(card);
+    h.requests[0].resolve({ ok: true, headers: { get: () => 'application/x.scratch.sprite3' }, blob: async () => new h.window.Blob(['sprite']) });
+    await settle();
+    const image = card.querySelector('img');
+    assert.equal(image.src, 'blob:costume-red');
+    assert.equal(image.hidden, false);
+    assert.equal(intervals.size, 1);
+    [...intervals.values()][0]();
+    assert.equal(image.src, 'blob:costume-blue');
+    Object.defineProperty(h.window.document, 'hidden', { configurable: true, value: true });
+    h.window.document.dispatchEvent(new h.window.Event('visibilitychange'));
+    assert.equal(intervals.size, 0);
+    h.query('[data-library-kind=sound]').click();
+    assert.equal(disposed, 1);
+    assert.equal(image.hasAttribute('src'), false);
 });

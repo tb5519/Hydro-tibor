@@ -207,11 +207,13 @@ describe('Scratch exclusion in shared RP calculation and reads', () => {
     });
 });
 
-function editorHarness(readOnly = false, editorVersion = 'a'.repeat(64)) {
+function editorHarness(readOnly = false, editorVersion = 'a'.repeat(64), withPresets = false) {
     const listeners = {};
     const outgoing = [];
     const requests = [];
     const timers = new Map();
+    const presetMessages = [];
+    let presetOptions;
     let nextId = 0;
     const element = () => ({
         dataset: {}, disabled: false,
@@ -226,10 +228,19 @@ function editorHarness(readOnly = false, editorVersion = 'a'.repeat(64)) {
         '[data-scratch-save]': save, '[data-scratch-submit]': submit, '[data-scratch-back]': element() };
     const page = load('../../ui-default/pages/scratch_editor.page.ts', {
         'vj/misc/Page': { NamedPage: class { constructor(_, callback) { this.run = callback; } } },
-        '../utils/scratch-preset-picker': { createScratchPresetPicker: () => { throw new Error('No preset library configured in this save-bridge fixture'); } },
+        '../utils/scratch-preset-picker': { createScratchPresetPicker: (options) => {
+            assert(withPresets, 'No preset library configured in this save-bridge fixture');
+            presetOptions = options;
+            return { receive: (message) => {
+                if (!['openPresetLibrary', 'presetImported', 'presetImportError'].includes(message.type)) return false;
+                presetMessages.push(message);
+                return true;
+            } };
+        } },
     }, {
         UiContext: { scratchEditor: { editorVersion, workId: 'work-1', title: '作品', projectUrl: null,
-            saveUrl: '/d/art/scratch/work/work-1/save', revision: 0, maxFileSize: 1024, canSubmit: true, readOnly } },
+            saveUrl: '/d/art/scratch/work/work-1/save', revision: 0, maxFileSize: 1024, canSubmit: true, readOnly,
+            ...(withPresets ? { libraryUrl: '/d/art/scratch/library' } : {}) } },
         document: { querySelector: (selector) => elements[selector] },
         window: { addEventListener: (name, listener) => { listeners[name] = listener; }, confirm: () => false },
         crypto: { randomUUID: () => `id-${++nextId}` },
@@ -249,10 +260,36 @@ function editorHarness(readOnly = false, editorVersion = 'a'.repeat(64)) {
         listeners.beforeunload({ preventDefault: () => { prevented = true; } });
         return prevented;
     };
-    return { message, frame, status, save, submit, outgoing, requests, timers, leavesWithWarning };
+    return { message, frame, status, save, submit, outgoing, requests, timers, leavesWithWarning, presetMessages, presetOptions };
 }
 
 describe('isolated Scratch editor save bridge', () => {
+    it('keeps native teacher-library requests and acknowledgments connected without a host toolbar button', async () => {
+        const editor = editorHarness(false, 'a'.repeat(64), true);
+        await editor.message('ready');
+        await editor.message('loaded');
+        await editor.message('openPresetLibrary', { kind: 'costume', targetId: 'sprite-1' }, { source: {} });
+        assert.equal(editor.presetMessages.length, 0);
+        await editor.message('openPresetLibrary', { kind: 'costume', targetId: 'sprite-1' });
+        assert.equal(editor.presetMessages[0].targetId, 'sprite-1');
+        assert.equal(editor.presetMessages[0].kind, 'costume');
+        editor.presetOptions.onBusy(true);
+        editor.save.click();
+        editor.submit.click();
+        assert.equal(editor.outgoing.filter((item) => item.type === 'export').length, 0);
+        assert(editor.save.disabled && editor.submit.disabled);
+        await editor.message('presetImported', { id: 'asset-1' });
+        assert.equal(editor.presetMessages.at(-1).type, 'presetImported');
+        editor.presetOptions.onBusy(false);
+        editor.save.click();
+        assert.equal(editor.outgoing.filter((item) => item.type === 'export').length, 1);
+        await editor.message('openPresetLibrary', { kind: 'sound', targetId: 'sprite-1' });
+        assert.equal(editor.presetMessages.length, 2);
+        assert.match(editor.status.textContent, /正在保存作品，完成后再添加/);
+        const player = editorHarness(true, 'a'.repeat(64), true);
+        assert.equal(player.presetOptions, undefined);
+    });
+
     it('versions editor and read-only entries before language so old service workers bypass them', () => {
         for (const readOnly of [false, true]) {
             const first = editorHarness(readOnly, 'a'.repeat(64));

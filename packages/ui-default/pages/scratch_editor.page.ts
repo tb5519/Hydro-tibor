@@ -22,7 +22,6 @@ export default new NamedPage('scratch_editor', () => {
   if (!config || !frame || !status) return;
   const save = document.querySelector<HTMLButtonElement>('[data-scratch-save]');
   const submit = document.querySelector<HTMLButtonElement>('[data-scratch-submit]');
-  const library = document.querySelector<HTMLButtonElement>('[data-scratch-library]');
   let presetBusy = false;
   const channel = crypto.randomUUID();
   let revision = config.revision;
@@ -77,7 +76,6 @@ export default new NamedPage('scratch_editor', () => {
   const buttons = () => {
     if (save) save.disabled = !loaded || !!pending || presetBusy;
     if (submit) submit.disabled = !loaded || !!pending || presetBusy;
-    if (library) library.disabled = !loaded || !!pending || presetBusy;
   };
   const send = (type: string, payload: object = {}, transfer: Transferable[] = []) => {
     frame.contentWindow?.postMessage({ channel, type, ...payload }, '*', transfer);
@@ -87,9 +85,6 @@ export default new NamedPage('scratch_editor', () => {
     onBusy: (busy) => { presetBusy = busy; buttons(); },
     onStatus: show,
   }) : null;
-  library?.addEventListener('click', () => {
-    if (loaded && !pending && !presetBusy && presetPicker) send('requestPresetLibrary');
-  });
   const sameOriginUrl = (value: string) => {
     const url = new URL(value, location.href);
     if (url.origin !== location.origin) throw new Error('编辑器接口地址无效');
