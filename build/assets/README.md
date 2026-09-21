@@ -125,3 +125,11 @@ To stop CDN redirects, set `enabled` to `false`, retain the OSS primary-storage 
 For a code rollback, use a release that understands `remoteAsset` records once remote primary writes or migration have begun. Rolling back to code that only reads local files requires a verified reverse migration first. Production updates only pull prepared commits, restart Hydro, wait for health, and restart Judge. Never build UI or Docker images on the production server.
 
 Actual cloud domain, bucket permissions, CORS rules and migration completion are deployment state and must be verified during rollout; this document is not proof that they are configured.
+
+## Cloud verification on 2026-09-21
+
+`static.onebyone.run` is served over trusted HTTPS with the exact certificate issued through Baota for that hostname; the current certificate expires on 2026-12-20. Certificate renewal and publishing the renewed certificate to CDN are separate steps; this rollout does not claim that a Baota-only renewal automatically updates CDN.
+
+Real probes verified public static `200`, gzip, and cache hits. Private media returned `403` without a signature, with an expired signature, and with an incorrect signature, including after warming the cache. Valid signatures returned matching bytes and cache hits even with a new nonce, while browser headers remained `Cache-Control: private, no-store` and CORS was `*`. Four literal/encoded dot-segment attempts returned `404` with OSS retaining the path below `static/`; none returned private media. Probe objects were deleted and OSS absence was verified.
+
+This account does not enable `origin_response_header` (function 229). The verified media edge cache uses `path_based_ttl_set` with origin cache priority disabled and the ignore-no-cache flag enabled; do not silently depend on function 229. Server-to-OSS internal HTTPS PUT/HEAD/GET/DELETE was independently verified. Application rollout and migration completion must still be recorded after their own checks.

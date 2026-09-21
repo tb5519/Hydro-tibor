@@ -52,3 +52,40 @@ it('upload errors retain only a safe name, status and phase without provider mes
         });
     }
 });
+
+it('recreates failed streams, checks ambiguous results before retry, and never overwrites conflicts', async (t) => {
+    const { uploadRelease } = await import(source);
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'asset-sync-retry-test-'));
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const body = Buffer.from('retryable fixture');
+    fs.writeFileSync(path.join(directory, 'app.js'), body);
+    const file = { path: 'app.js', key: 'static/test-v1/app.js', size: body.length,
+        sha256: createHash('sha256').update(body).digest('hex'), contentType: 'text/javascript', cacheControl: 'public' };
+    const metadata = { ContentLength: file.size, Metadata: { sha256: file.sha256 }, ContentType: file.contentType, CacheControl: file.cacheControl };
+    for (const outcome of ['not-committed', 'committed', 'conflict', 'always-timeout']) {
+        let uploaded = false;
+        const streams = [];
+        const client = { async send(command) {
+            if (command.constructor.name === 'HeadObjectCommand') {
+                if (uploaded) return outcome === 'conflict' ? { ...metadata, ContentLength: 1 } : metadata;
+                throw Object.assign(new Error(), { name: 'NotFound', $metadata: { httpStatusCode: 404 } });
+            }
+            streams.push(command.input.Body);
+            const chunks = [];
+            for await (const chunk of command.input.Body) chunks.push(chunk);
+            assert.deepEqual(Buffer.concat(chunks), body);
+            if (streams.length === 1 || outcome === 'always-timeout') {
+                uploaded = outcome === 'committed' || outcome === 'conflict';
+                throw Object.assign(new Error('transient socket timeout'), { name: 'TimeoutError' });
+            }
+            uploaded = true;
+            return {};
+        } };
+        if (outcome === 'conflict') await assert.rejects(uploadRelease({ files: [file] }, directory, { bucket: 'fixture' }, client), /already occupied/);
+        else if (outcome === 'always-timeout') await assert.rejects(uploadRelease({ files: [file] }, directory, { bucket: 'fixture' }, client), { name: 'TimeoutError' });
+        else assert.equal(await uploadRelease({ files: [file] }, directory, { bucket: 'fixture' }, client), 1);
+        assert.equal(streams.length, outcome === 'not-committed' ? 2 : outcome === 'always-timeout' ? 3 : 1);
+        assert.equal(new Set(streams).size, streams.length);
+        assert.equal(streams.every((stream) => stream.destroyed), true);
+    }
+});

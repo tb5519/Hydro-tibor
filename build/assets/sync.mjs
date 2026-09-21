@@ -126,33 +126,59 @@ function requestFailure(error, phase) {
     return failure;
 }
 
+function matchesRelease(file, response) {
+    return response.ContentLength === file.size && response.Metadata?.sha256 === file.sha256
+        && response.ContentType === file.contentType && response.CacheControl === file.cacheControl;
+}
+
+async function existingObject(client, args) {
+    try { return await client.send(new HeadObjectCommand(args), { abortSignal: AbortSignal.timeout(30_000) }); } catch (error) {
+        if (error?.$metadata?.httpStatusCode === 404 || ['NotFound', 'NoSuchKey'].includes(error?.name)) return null;
+        throw requestFailure(error, 'head-existing');
+    }
+}
+
+const retryableUpload = (error) => [429, 500, 502, 503, 504].includes(error?.$metadata?.httpStatusCode)
+    || ['TimeoutError', 'RequestTimeout', 'RequestTimeoutException', 'AbortError', 'SlowDown', 'InternalError'].includes(error?.name)
+    || ['ECONNRESET', 'EPIPE', 'ETIMEDOUT', 'ECONNREFUSED'].includes(error?.code);
+
+async function uploadFile(client, args, file, filename) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+        if (await digest(filename) !== file.sha256) throw new Error('Release files changed after planning');
+        const contentMD5 = Buffer.from(await digest(filename, 'md5'), 'hex').toString('base64');
+        const stream = fs.createReadStream(filename);
+        try {
+            // A fresh stream is required on every attempt; the SDK cannot rewind a failed ReadStream itself.
+            await client.send(new PutObjectCommand({ ...args, Body: stream, ContentLength: file.size,
+                ContentMD5: contentMD5, ContentType: file.contentType, CacheControl: file.cacheControl,
+                Metadata: { sha256: file.sha256 } }), { abortSignal: AbortSignal.timeout(10 * 60_000) });
+            return;
+        } catch (error) {
+            if (!retryableUpload(error) || attempt === 2) throw requestFailure(error, 'upload');
+            stream.destroy();
+            // A timeout can occur after OSS committed the bytes. Verify first and never overwrite a conflicting object.
+            const existing = await existingObject(client, args);
+            if (existing) {
+                if (!matchesRelease(file, existing)) throw new Error(`Release version is already occupied by different content: ${file.path}`);
+                return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+        } finally { stream.destroy(); }
+    }
+}
+
 export async function uploadRelease(manifest, directory, config, suppliedClient) {
     const client = suppliedClient || createUploadClient(config);
     let uploaded = 0;
     for (const file of manifest.files) {
         const args = { Bucket: config.bucket, Key: file.key };
-        let existing;
-        try { existing = await client.send(new HeadObjectCommand(args), { abortSignal: AbortSignal.timeout(30_000) }); } catch (error) {
-            if (error?.$metadata?.httpStatusCode !== 404 && !['NotFound', 'NoSuchKey'].includes(error?.name)) throw requestFailure(error, 'head-existing');
-        }
-        if (existing && (existing.ContentLength !== file.size || existing.Metadata?.sha256 !== file.sha256
-            || existing.ContentType !== file.contentType || existing.CacheControl !== file.cacheControl)) {
+        const existing = await existingObject(client, args);
+        if (existing && !matchesRelease(file, existing)) {
             throw new Error(`Release version is already occupied by different content: ${file.path}`);
         }
         if (!existing) {
             const filename = path.join(directory, file.path);
-            if (await digest(filename) !== file.sha256) throw new Error('Release files changed after planning');
-            const contentMD5 = Buffer.from(await digest(filename, 'md5'), 'hex').toString('base64');
-            const stream = fs.createReadStream(filename);
-            try {
-                // Explicit length plus WHEN_REQUIRED prevents unsupported aws-chunked checksum trailers.
-                await client.send(new PutObjectCommand({ ...args, Body: stream, ContentLength: file.size,
-                    ContentMD5: contentMD5,
-                    ContentType: file.contentType, CacheControl: file.cacheControl, Metadata: { sha256: file.sha256 } }),
-                { abortSignal: AbortSignal.timeout(10 * 60_000) });
-            } catch (error) {
-                throw requestFailure(error, 'upload');
-            } finally { stream.destroy(); }
+            await uploadFile(client, args, file, filename);
             if (await digest(filename) !== file.sha256) throw new Error('Release files changed during upload');
             uploaded++;
         }
@@ -160,8 +186,7 @@ export async function uploadRelease(manifest, directory, config, suppliedClient)
         try { verified = await client.send(new HeadObjectCommand(args), { abortSignal: AbortSignal.timeout(30_000) }); } catch (error) {
             throw requestFailure(error, 'head-verify');
         }
-        if (verified.ContentLength !== file.size || verified.Metadata?.sha256 !== file.sha256
-            || verified.ContentType !== file.contentType || verified.CacheControl !== file.cacheControl) throw new Error(`Uploaded file verification failed: ${file.path}`);
+        if (!matchesRelease(file, verified)) throw new Error(`Uploaded file verification failed: ${file.path}`);
     }
     return uploaded;
 }
