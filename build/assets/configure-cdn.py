@@ -160,7 +160,55 @@ def feature(name, args, parent=None):
     return result
 
 
-def features(condition_id, origin):
+def cache_condition_features():
+    definitions = [
+        ('OneByOne 装饰图片缓存', ['/media/decorations/v1/*'], False),
+        ('OneByOne 其他私有资源', ['/static/*', '/media/decorations/v1/*'], True),
+    ]
+    return [feature('condition', {'rule': compact({'name': name, 'status': 'enable',
+            'match': {'logic': 'and', 'criteria': [{'matchType': 'uri', 'matchObject': '',
+            'matchOperator': 'contains', 'matchValue': values, 'caseSensitive': True, 'negate': negate}]}})})
+            for name, values, negate in definitions]
+
+
+def check_cache_conditions(cli, decoration_id, uncached_id):
+    if (not decoration_id or not uncached_id or not decoration_id.isdigit() or not uncached_id.isdigit()
+            or int(decoration_id) <= 0 or int(uncached_id) <= 0 or decoration_id == uncached_id
+            or CONDITION_ID in (decoration_id, uncached_id)):
+        raise Stop('Two distinct decorative/uncached condition IDs are required')
+    response = cli.call('cdn', 'DescribeCdnDomainConfigs', {'DomainName': DOMAIN, 'FunctionNames': 'condition'})
+    entries = response.get('DomainConfigs', {}).get('DomainConfig', [])
+    for config_id, desired in zip([decoration_id, uncached_id], cache_condition_features()):
+        matches = [x for x in entries if str(x.get('ConfigId')) == config_id]
+        expected = doc(desired['functionArgs'][0]['argValue'])
+        if len(matches) != 1 or matches[0].get('Status') != 'success':
+            raise Stop('Decorative cache condition is missing or not active')
+        actual = doc(arguments(matches[0]).get('rule', '{}'))
+        if any(actual.get(key) != expected[key] for key in ('name', 'status', 'match')):
+            raise Stop('Decorative cache condition scope differs from the approved exact prefixes')
+
+
+def retire_broad_cache_header(cli, condition_id, wait_seconds):
+    # Only after the two replacement headers are verified. Auth and every other header stay untouched.
+    target = feature('set_resp_header', {'key': 'Cache-Control'}, condition_id)
+    matches = [x for x in cli.configs(['set_resp_header']) if identity(x) == identity(target, True)]
+    if len(matches) > 1 or (matches and arguments(matches[0]).get('value') != 'private, no-store'):
+        raise Stop('The old browser cache rule differs; it will not be deleted')
+    if not matches:
+        return
+    config_id = str(matches[0].get('ConfigId', ''))
+    if not config_id.isdigit() or int(config_id) <= 0:
+        raise Stop('The old browser cache rule has no valid ID')
+    # https://help.aliyun.com/en/cdn/developer-reference/usage-notes-on-configid
+    cli.call('cdn', 'DeleteSpecificConfig', {'DomainName': DOMAIN, 'ConfigId': config_id})
+    deadline = time.time() + wait_seconds
+    while any(str(x.get('ConfigId')) == config_id for x in cli.configs(['set_resp_header'])):
+        if time.time() >= deadline:
+            raise Stop('The overlapping browser cache header is still active')
+        time.sleep(5)
+
+
+def features(condition_id, origin, decoration_id=None, uncached_id=None):
     private = condition_id
     output = [
         # Versioned uploader headers remain authoritative: HTML=300, immutable others=1y.
@@ -175,12 +223,17 @@ def features(condition_id, origin):
         feature('path_based_ttl_set', {'path': '/media/', 'ttl': 86400, 'weight': 90,
                 'swift_origin_cache_high': 'off', 'swift_no_cache_low': 'on', 'swift_follow_cachetime': 'off'}, private),
         feature('set_resp_header', {'key': 'Cache-Control', 'value': 'private, no-store',
-                'header_operation_type': 'add', 'duplicate': 'off'}, private),
+                'header_operation_type': 'add', 'duplicate': 'off'}, uncached_id or private),
         feature('gzip', {'enable': 'on'}), feature('brotli', {'enable': 'on'}),
         feature('set_req_host_header', {'domain_name': origin}),
         feature('forward_scheme', {'enable': 'on', 'scheme_origin': 'https'}),
         feature('https_origin_sni', {'enabled': 'on', 'https_origin_sni': origin}),
     ]
+    if bool(decoration_id) != bool(uncached_id):
+        raise Stop('Both non-overlapping browser cache conditions are required')
+    if decoration_id:
+        output.append(feature('set_resp_header', {'key': 'Cache-Control', 'value': 'private, max-age=300',
+                      'header_operation_type': 'add', 'duplicate': 'off'}, decoration_id))
     for key, value in [('Access-Control-Allow-Origin', '*'),
                        ('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS'),
                        ('Access-Control-Allow-Headers', 'Range, Content-Type'),
@@ -312,6 +365,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--config', default=os.path.expanduser('~/onebyone-assets.json'))
     parser.add_argument('--condition-id', default=CONDITION_ID)
+    parser.add_argument('--decoration-condition-id')
+    parser.add_argument('--uncached-condition-id')
     parser.add_argument('--origin', default='onebyone-oss.oss-cn-wulanchabu.aliyuncs.com')
     parser.add_argument('--profile')
     parser.add_argument('--stage', choices=['all', 'auth', 'role', 'features', 'origin'], default='all')
@@ -319,7 +374,14 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--apply', action='store_true')
     mode.add_argument('--check', action='store_true')
+    mode.add_argument('--cache-plan', action='store_true', help='Print only the two non-secret condition definitions; no API calls')
     args = parser.parse_args(argv)
+    if args.cache_plan:
+        print(compact(cache_condition_features()))
+        return 0
+    cache_conditions = bool(args.decoration_condition_id or args.uncached_condition_id)
+    if cache_conditions and not (args.decoration_condition_id and args.uncached_condition_id):
+        raise Stop('Both browser cache condition IDs must be specified')
     if not args.condition_id.isdigit() or args.origin != 'onebyone-oss.oss-cn-wulanchabu.aliyuncs.com':
         raise Stop('Condition/origin does not match the approved deployment')
     if not 5 <= args.wait_seconds <= 600:
@@ -333,6 +395,8 @@ def main(argv=None):
         return 0
     cli = Aliyun(args.profile)
     check_condition(cli, args.condition_id)
+    if cache_conditions:
+        check_cache_conditions(cli, args.decoration_condition_id, args.uncached_condition_id)
     inspect_role(cli)  # Preflight all existing role permissions before any mutations.
     if args.check:
         print('Read-only condition and restricted-role preflight passed. No cloud changes made.')
@@ -350,13 +414,15 @@ def main(argv=None):
     if args.stage in ('all', 'features', 'origin'):
         check_auth(cli, args.condition_id)
     if args.stage in ('all', 'features'):
-        upsert(cli, features(args.condition_id, args.origin), args.wait_seconds)
+        upsert(cli, features(args.condition_id, args.origin, args.decoration_condition_id, args.uncached_condition_id), args.wait_seconds)
+        if cache_conditions:
+            retire_broad_cache_header(cli, args.condition_id, args.wait_seconds)
         print('Cache, response headers, compression and HTTPS origin settings are active.')
     if args.stage in ('all', 'origin'):
         inspect_role(cli, required=True)
         upsert(cli, [feature('l2_oss_key', {'private_oss_auth': 'on'})], args.wait_seconds)
         print('Private OSS origin STS authentication is active.')
-    print('Done. Verify static anonymous 200; media unsigned/expired 403; signed 200; browser private,no-store and repeat edge cache HIT.')
+    print('Done. Verify static anonymous 200; media unsigned/expired 403; signed 200; ordinary media no-store; decorative images private,max-age=300 only when enabled; repeat edge cache HIT.')
     return 0
 
 

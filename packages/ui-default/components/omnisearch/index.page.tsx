@@ -8,7 +8,8 @@ import {
 } from 'vj/utils';
 
 export default new AutoloadPage('omnibar', () => {
-  if (document.documentElement.dataset.layout !== 'basic') return;
+  if (document.documentElement.dataset.layout !== 'basic'
+      || document.documentElement.dataset.page === 'scratch_editor') return;
   const $search = $(`
     <div class='omnibar' data-hotkey="esc:click" style="opacity:0;display:none;">
       <div class='omnibar-main'>

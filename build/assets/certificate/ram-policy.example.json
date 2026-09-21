@@ -1,0 +1,8 @@
+{
+  "Version": "1",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": ["cdn:DescribeDomainCertificateInfo", "cdn:SetCdnDomainSSLCertificate"],
+    "Resource": "acs:cdn:*:REPLACE_WITH_ACCOUNT_ID:domain/static.onebyone.run"
+  }]
+}

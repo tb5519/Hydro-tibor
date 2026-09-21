@@ -39,6 +39,7 @@ async function createApp(t, nodeEnv) {
         '@hydrooj/framework/validator': {},
         '@hydrooj/utils': {},
         '../error': {},
+        '../lib/decorative_image_access': { isHomePosterImageRequest: () => false },
         '../lib/domain_avatar_access': { isDomainAvatarImageRequest: () => false },
         '../lib/scratch_share_access': { isScratchShareRequest: () => false },
         '../lib/domain_type': require('../packages/hydrooj/src/lib/domain_type'),

@@ -30,6 +30,10 @@ base.plugins.push(new webpack.NormalModuleReplacementPlugin(
     /containers[\\/]tw-restore-point-manager\.jsx$/,
     resource => { resource.request = path.resolve(__dirname, 'src/playground/onebyone-noop.jsx'); }
 ));
+base.plugins.push(new webpack.NormalModuleReplacementPlugin(
+    /(?:^|[\\/])tw-svg-sandbox(?:\.js)?$/,
+    resource => { resource.request = path.resolve(__dirname, 'src/playground/onebyone-svg-sandbox.js'); }
+));
 // A nested sandbox gets a distinct opaque origin, so Paper cannot call
 // iframe.contentDocument.open(). Parse SVG in an inert document instead.
 // Apply at compilation so npm ci and the published source archive reproduce it.

@@ -106,7 +106,7 @@ it('returns the original unchanged without a size or with non-whitelisted sizes'
     assert.equal(cacheCalls, 0);
 });
 
-it('returns real 384/768 PNGs with transparency and immutable caching only for the matching version', async (test) => {
+it('returns real 384/768 PNGs with transparency and short private caching for versioned display variants', async (test) => {
     await setup(test);
     for (const size of [384, 768]) {
         const handler = new addon.BadgeAcImageHandler({ _id: 'A', workspaceId: 'teacher' }, { v: 'v1' });
@@ -114,11 +114,12 @@ it('returns real 384/768 PNGs with transparency and immutable caching only for t
         const png = PNG.sync.read(handler.response.body);
         assert.deepEqual([png.width, png.height, png.data[3]], [size, size, 128]);
         assert.equal(handler.response.type, 'image/png');
-        assert.equal(handler.response.headers['Cache-Control'], 'public, max-age=604800, immutable');
+        assert.equal(handler.response.headers['Cache-Control'], 'private, max-age=300');
+        assert.equal(handler.response.headers.Vary, 'Cookie, Authorization');
     }
     const stale = new addon.BadgeAcImageHandler({ _id: 'A', workspaceId: 'teacher' }, { v: 'old-version' });
     await stale.get('A', 2, 384);
-    assert.equal(stale.response.headers['Cache-Control'], 'public, max-age=60');
+    assert.equal(stale.response.headers['Cache-Control'], 'private, max-age=300');
 });
 
 it('checks badge domain ownership before accessing a warm cache, so global IDs cannot leak into a modern domain', async (test) => {
@@ -187,5 +188,5 @@ it('preserves the original on malformed PNG/worker failures and avoids an immuta
     const handler = new addon.BadgeAcImageHandler({ _id: 'Python' }, { v: 'v1' });
     await handler.get('Python', 1, 384);
     assert.strictEqual(handler.response.body, original);
-    assert.equal(handler.response.headers['Cache-Control'], 'public, max-age=60');
+    assert.equal(handler.response.headers['Cache-Control'], 'private, max-age=300');
 });

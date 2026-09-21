@@ -36,6 +36,8 @@ export interface AssetSource {
     /** Include the transformation revision and dimensions for generated previews. */
     variant?: string;
     contentDisposition?: string;
+    /** Only handler-selected decorative images; never request-controlled. */
+    decoration?: 'home-poster' | 'badge';
 }
 
 interface Mirror { key: string; size: number; sha256: string }
@@ -99,6 +101,7 @@ export class AssetDelivery {
     private config: AssetConfig | null = null;
     private configChecked = -Infinity;
     private allowed: Set<string>;
+    private backgroundVersions = new Map<string, string>();
     private mirrors = new Map<string, Mirror>();
     private pending = new Set<string>();
     private failed = new Map<string, number>();
@@ -148,6 +151,9 @@ export class AssetDelivery {
                 if (safePath(relative) && !relative.endsWith('.map') && existsSync(target) && lstatSync(target).isFile()
                     && realpathSync(target).startsWith(`${realpathSync(this.publicRoot)}/`)) {
                     this.allowed.add(relative);
+                    if (/^components\/profile\/backgrounds\/(?:thumbnail\/)?\d+\.jpg$/.test(relative)) {
+                        this.backgroundVersions.set(relative, value.match(/\?[^#]*/)?.[0] || '');
+                    }
                 }
             } catch { /* Invalid manifest entries are never mapped. */ }
         };
@@ -169,7 +175,8 @@ export class AssetDelivery {
             const suffix = path.match(/[?#].*$/)?.[0] || '';
             const relative = decodeURIComponent(path.split(/[?#]/, 1)[0].slice(1));
             if (!safePath(relative) || !this.allowedPaths().has(relative)) return path;
-            return new URL(relative.split('/').map(encodeURIComponent).join('/'), base).toString() + suffix;
+            return new URL(relative.split('/').map(encodeURIComponent).join('/'), base).toString()
+                + (suffix || this.backgroundVersions.get(relative) || '');
         } catch { return path; }
     }
 
@@ -184,6 +191,11 @@ export class AssetDelivery {
         const scratchProject = /^scratch\/[^/]+\/[a-f0-9]{24}\.sb3$/.test(source?.path || '')
             && ['application/octet-stream', 'application/x.scratch.sb3'].includes(type) && source.meta.size <= 20 * 1024 * 1024;
         const extension = scratchProject ? '.sb3' : MEDIA_TYPES[type];
+        if (source?.decoration && (!['home-poster', 'badge'].includes(source.decoration)
+            || !/^image\/(png|jpeg|gif|webp|avif)$/.test(type) || source.meta.size > 8 * 1024 * 1024
+            || (source.decoration === 'home-poster'
+                ? !/^domain\/[^/]+\/home-poster-[\w-]+\.(png|jpe?g|gif|webp|avif)$/i.test(source.path)
+                : !/^(?:domain\/[^/]+\/)?badge\/\d+\/(?:profile-background|ac-effect)-[\w-]+\.(png|jpe?g|gif|webp)$/i.test(source.path)))) return null;
         const maxBytes = !requireUpload && source?.meta?.remoteAsset && !source.variant
             ? 512 * 1024 * 1024 : (this.options.maxBytes ?? 32 * 1024 * 1024);
         if (!config || !base || base.pathname !== '/'
@@ -200,8 +212,12 @@ export class AssetDelivery {
         const etag = typeof source.meta.etag === 'string' ? source.meta.etag : '';
         if ((!etag && !Number.isFinite(modified)) || (!etag && !modified) || etag.length > 1024) return null;
         const scope = sha256(JSON.stringify([config.bucket, config.region, config.endpoint]));
-        const identity = sha256(JSON.stringify([source.path, etag, source.meta.size, modified || 0, source.variant || '', type, source.contentDisposition || '']));
-        return { id: `${scope}:${identity}`, key: `media/v1/${identity}${extension}`, scope, config, source };
+        const identityParts = [source.path, etag, source.meta.size, modified || 0, source.variant || '', type, source.contentDisposition || ''];
+        if (source.decoration) identityParts.push(source.decoration);
+        const identity = sha256(JSON.stringify(identityParts));
+        const prefix = source.decoration === 'home-poster' ? 'static/home-posters/v1'
+            : source.decoration === 'badge' ? 'media/decorations/v1' : 'media/v1';
+        return { id: `${scope}:${identity}`, key: `${prefix}/${identity}${extension}`, scope, config, source };
     }
 
     private readIndex() {
@@ -213,7 +229,7 @@ export class AssetDelivery {
             if (index.version !== 1) return;
             for (const [id, item] of Object.entries(index.entries || {}) as [string, Mirror][]) {
                 if (/^[a-f0-9]{64}:[a-f0-9]{64}$/.test(id) && item
-                    && /^media\/v1\/[a-f0-9]{64}\.[a-z0-9]+$/.test(item.key)
+                    && /^(?:media\/(?:decorations\/)?v1|static\/home-posters\/v1)\/[a-f0-9]{64}\.[a-z0-9]+$/.test(item.key)
                     && /^[a-f0-9]{64}$/.test(item.sha256) && Number.isSafeInteger(item.size) && item.size > 0) {
                     this.mirrors.set(id, item);
                 }
@@ -238,7 +254,7 @@ export class AssetDelivery {
 
     queueAssetMirror(source: AssetSource) {
         // The primary store already owns this object. It must not be copied into a second mirror.
-        if (source?.meta?.remoteAsset && !source.variant) return false;
+        if (source?.meta?.remoteAsset && !source.variant && !source.decoration) return false;
         const job = this.sourceJob(source);
         if (!job) return false;
         this.readIndex();
@@ -257,7 +273,7 @@ export class AssetDelivery {
         const job = this.sourceJob(source, false);
         if (!job) return false;
         const remote = source.meta.remoteAsset;
-        if (remote && !source.variant) {
+        if (remote && !source.variant && !source.decoration) {
             if (remote.bucket !== job.config.bucket || remote.region !== job.config.region
                 || remote.size !== source.meta.size || remote.contentType !== source.meta['Content-Type']
                 || !/^[a-f0-9]{64}$/.test(remote.sha256)
@@ -271,14 +287,17 @@ export class AssetDelivery {
             this.queueAssetMirror(source);
             return false;
         }
-        this.redirect(handler, job.config, mirror.key);
+        this.redirect(handler, job.config, mirror.key, source.decoration);
         return true;
     }
 
-    private redirect(handler: any, config: AssetConfig, key: string) {
+    private redirect(handler: any, config: AssetConfig, key: string, decoration?: AssetSource['decoration']) {
         handler.response.status = 302;
-        handler.response.redirect = signMediaUrl(config.mediaBaseUrl, key, config.mediaSigningKey, this.now());
-        handler.response.addHeader('Cache-Control', 'private, no-store');
+        handler.response.redirect = decoration === 'home-poster' ? new URL(key, config.mediaBaseUrl).toString()
+            : signMediaUrl(config.mediaBaseUrl, key, config.mediaSigningKey, this.now());
+        handler.response.addHeader('Cache-Control', decoration === 'home-poster' ? 'public, max-age=300'
+            : decoration === 'badge' ? 'private, max-age=300' : 'private, no-store');
+        if (decoration === 'badge') handler.response.addHeader('Vary', 'Cookie, Authorization');
         handler.response.addHeader('Referrer-Policy', 'no-referrer');
     }
 
@@ -292,6 +311,7 @@ export class AssetDelivery {
                 region: config.region,
                 forcePathStyle: false,
                 maxAttempts: 2,
+                requestChecksumCalculation: 'WHEN_REQUIRED',
                 credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey, sessionToken: config.sessionToken },
             }));
         }
@@ -307,7 +327,7 @@ export class AssetDelivery {
         const check = () => { if (controller.signal.aborted) throw new Error('Asset mirror timeout'); };
         const operation = (async () => {
             const load = job.source.load || (() => this.options.load
-                ? this.options.load(job.source.path) : import('../model/storage').then((m) => m.default.get(job.source.path)));
+                ? this.options.load(job.source.path) : require('../model/storage').default.get(job.source.path));
             body = await load();
             if (controller.signal.aborted && !Buffer.isBuffer(body)) body.destroy();
             check();
@@ -334,7 +354,9 @@ export class AssetDelivery {
             await client.send(new PutObjectCommand({
                 Bucket: job.config.bucket, Key: job.key, Body: bytes, ContentLength: bytes.length,
                 ContentMD5: createHash('md5').update(bytes).digest('base64'),
-                ContentType: job.source.meta['Content-Type'], CacheControl: 'private, max-age=1800',
+                ContentType: job.source.meta['Content-Type'],
+                CacheControl: job.source.decoration === 'home-poster' ? 'public, max-age=31536000, immutable'
+                    : job.source.decoration === 'badge' ? 'private, max-age=300' : 'private, max-age=1800',
                 ContentDisposition: job.source.contentDisposition,
                 Metadata: { sha256: hash },
             }), { abortSignal: controller.signal });

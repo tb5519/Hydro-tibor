@@ -212,5 +212,54 @@ class CDNTests(unittest.TestCase):
         self.assertIn("ArgName!='auth_key2'", cdn.CONFIG_QUERY)
 
 
+    def test_cache_plan_is_offline_and_uses_only_approved_disjoint_prefixes(self):
+        with patch.object(cdn, 'Aliyun', side_effect=AssertionError('network')), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cdn.main(['--cache-plan']), 0)
+        plan = json.loads(output.getvalue())
+        self.assertEqual(len(plan), 2)
+        rules = [json.loads(item['functionArgs'][0]['argValue']) for item in plan]
+        self.assertEqual(rules[0]['match']['criteria'][0]['matchValue'], ['/media/decorations/v1/*'])
+        self.assertFalse(rules[0]['match']['criteria'][0]['negate'])
+        self.assertEqual(rules[1]['match']['criteria'][0]['matchValue'], ['/static/*', '/media/decorations/v1/*'])
+        self.assertTrue(rules[1]['match']['criteria'][0]['negate'])
+
+    def test_cache_conditions_validate_exact_scope_and_headers_do_not_overlap(self):
+        conditions = [row(item, ident) for item, ident in zip(cdn.cache_condition_features(), [201, 202])]
+        cli = FakeCLI()
+        with patch.object(cli, 'call', return_value={'DomainConfigs': {'DomainConfig': conditions}}):
+            cdn.check_cache_conditions(cli, '201', '202')
+            rule = json.loads(conditions[0]['FunctionArgs']['FunctionArg'][0]['ArgValue'])
+            rule['match']['criteria'][0]['matchValue'] = ['/media/*']
+            conditions[0]['FunctionArgs']['FunctionArg'][0]['ArgValue'] = json.dumps(rule)
+            with self.assertRaises(cdn.Stop):
+                cdn.check_cache_conditions(cli, '201', '202')
+        wanted = cdn.features(cdn.CONDITION_ID, 'bucket.example', '201', '202')
+        headers = [row(x) for x in wanted if x['functionName'] == 'set_resp_header'
+                   and dict((arg['argName'], arg['argValue']) for arg in x['functionArgs']).get('key') == 'Cache-Control']
+        self.assertEqual({cdn.parent_id(x) for x in headers}, {'201', '202'})
+        self.assertEqual({cdn.parent_id(x): cdn.arguments(x)['value'] for x in headers},
+                         {'201': 'private, max-age=300', '202': 'private, no-store'})
+        self.assertNotIn('aliauth', [x['functionName'] for x in wanted])
+
+    def test_retirement_only_removes_the_exact_old_cache_header_and_is_idempotent(self):
+        cli = FakeCLI()
+        old = row(cdn.feature('set_resp_header', {'key': 'Cache-Control', 'value': 'private, no-store'}, cdn.CONDITION_ID), 301)
+        other = row(cdn.feature('set_resp_header', {'key': 'X-Content-Type-Options', 'value': 'nosniff'}), 302)
+        cli.items = [old, other]
+        def delete(product, action, params):
+            self.assertEqual((product, action), ('cdn', 'DeleteSpecificConfig'))
+            self.assertEqual(params, {'DomainName': cdn.DOMAIN, 'ConfigId': '301'})
+            cli.items = [other]
+        with patch.object(cli, 'call', side_effect=delete) as call:
+            cdn.retire_broad_cache_header(cli, cdn.CONDITION_ID, 0)
+            cdn.retire_broad_cache_header(cli, cdn.CONDITION_ID, 0)
+            self.assertEqual(call.call_count, 1)
+        self.assertEqual(cli.items, [other])
+        cli.items = [old, old]
+        with self.assertRaises(cdn.Stop):
+            cdn.retire_broad_cache_header(cli, cdn.CONDITION_ID, 0)
+
+
 if __name__ == '__main__':
     unittest.main()

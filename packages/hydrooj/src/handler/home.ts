@@ -14,11 +14,13 @@ import {
 } from '../error';
 import { DomainDoc, Setting } from '../interface';
 import { tryRedirectAsset } from '../lib/asset_delivery';
+import { isPublicHomePosterPath } from '../lib/decorative_image_access';
 import avatar, { validate } from '../lib/avatar';
 import { getBadgeHonorWall } from '../lib/badge_honor_wall';
 import { getDomainRankingMode } from '../lib/domain_ranking';
 import { DOMAIN_TYPES, DomainType, isScratchDomain } from '../lib/domain_type';
 import { getHomePosterConfig } from '../lib/home_poster';
+import { getImageWarmupPage } from '../lib/image_prewarm';
 import * as mail from '../lib/mail';
 import { getPersonalAcGrowth, invalidatePersonalAcGrowth } from '../lib/personal_ac_growth';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
@@ -640,18 +642,53 @@ export class HomeHandler extends Handler {
     }
 }
 
+class ImageWarmupHandler extends Handler {
+    noCheckPermView = true;
+
+    @param('after', Types.PositiveInt, true)
+    async get({ }, after = 0) {
+        this.checkPriv(PRIV.PRIV_USER_PROFILE);
+        this.response.type = 'application/json';
+        this.response.body = await getImageWarmupPage(this.ctx, this.domain, this.user._id, after);
+        this.response.addHeader('Cache-Control', 'private, no-store');
+    }
+}
+
 class HomePosterImageHandler extends Handler {
     noCheckPermView = true;
 
     async get() {
         const config = getHomePosterConfig(this.domain);
-        if (!config.storagePath) throw new NotFoundError('home-poster');
+        if (!isPublicHomePosterPath(this.domain._id, config.storagePath)) throw new NotFoundError('home-poster');
         const meta = await storage.getMeta(config.storagePath);
-        if (!meta) throw new NotFoundError('home-poster');
-        if (await tryRedirectAsset(this, { path: config.storagePath, meta })) return;
-        this.response.body = await storage.get(config.storagePath);
-        this.response.type = meta['Content-Type'] || lookup(config.storagePath) || 'application/octet-stream';
-        this.response.addHeader('Cache-Control', 'public, max-age=604800, immutable');
+        if (!meta || meta.size > 8 * 1024 * 1024
+            || !/^image\/(png|jpeg|gif|webp|avif)$/.test(`${meta['Content-Type'] || ''}`)) throw new NotFoundError('home-poster');
+        this.response.addHeader('X-Content-Type-Options', 'nosniff');
+        this.response.addHeader('Referrer-Policy', 'no-referrer');
+        // Skip framework context injection even when Accept: application/json requests a redirect.
+        this.response.type = 'application/json';
+        if (await tryRedirectAsset(this, { path: config.storagePath, meta, decoration: 'home-poster' })) return;
+        this.response.type = meta['Content-Type'];
+        this.response.addHeader('Cache-Control', 'public, max-age=300');
+        if (this.request.method.toLowerCase() === 'head') {
+            this.response.body = '';
+            this.response.status = 200;
+            this.context.status = 200;
+            this.context.type = this.response.type;
+            this.context.body = '';
+        } else this.response.body = await storage.get(config.storagePath);
+        this.response.addHeader('Content-Length', `${meta.size}`);
+    }
+
+    async head() { await this.get(); }
+
+    async onerror() {
+        // Public errors must never render the domain layout or inject its metadata.
+        this.response.type = 'text/plain';
+        this.response.status = 404;
+        this.response.body = 'Image not available';
+        this.response.addHeader('Cache-Control', 'no-store');
+        this.response.addHeader('X-Content-Type-Options', 'nosniff');
     }
 }
 
@@ -1276,6 +1313,7 @@ export async function apply(ctx: Context) {
     ctx.on('record/change', invalidatePersonalAcGrowth);
     ctx.Route('homepage', '/', HomeHandler);
     ctx.Route('badge_honor_wall', '/badge-honor-wall', BadgeHonorWallHandler, PERM.PERM_VIEW_RANKING);
+    ctx.Route('image_warmup', '/image-warmup', ImageWarmupHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_poster_image', '/home/poster', HomePosterImageHandler);
     ctx.Route('service_worker_config', '/service-worker-config', ServiceWorkerConfigHandler);
     ctx.Route('point_lottery_prize_image', '/lottery/prize/:filename', PointLotteryPrizeImageHandler);

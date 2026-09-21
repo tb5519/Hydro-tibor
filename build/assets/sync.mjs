@@ -71,6 +71,17 @@ export async function collectRelease(publicRoot, version, repository = root) {
             if (!safeRelative(relative)) throw new Error('Unsafe Scratch asset');
             add(`scratch-editor/${relative}`);
         }
+        if (scratch.files['library-assets/manifest.json']) {
+            const library = JSON.parse(await fsp.readFile(path.join(directory, 'scratch-editor/library-assets/manifest.json'), 'utf8'));
+            if (library.commit !== scratch.commit || !library.files || Array.isArray(library.files)) throw new Error('Invalid Scratch library manifest');
+            for (const [name, info] of Object.entries(library.files)) {
+                if (!/^[a-f0-9]{32}\.(svg|png|wav)$/.test(name)
+                    || scratch.files[`library-assets/${name}`] !== info.sha256
+                    || fs.statSync(path.join(directory, 'scratch-editor/library-assets', name)).size !== info.size) {
+                    throw new Error('Scratch library manifest does not match release');
+                }
+            }
+        }
     }
     extras.forEach((file) => add(file, false));
     const files = [];

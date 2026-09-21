@@ -91,6 +91,10 @@ const PRECACHE = 'ui-resources-cache';
 const DO_NOT_PRECACHE = ['.worker.js', 'fonts'];
 
 function shouldCachePath(path: string) {
+  // Signed private media must obey HTTP expiry and account changes; never persist it in CacheStorage.
+  const parsed = new URL(path, self.location.origin);
+  if (/^\/media\/(?:decorations\/)?v1\//.test(parsed.pathname)
+    || parsed.searchParams.has('auth_key') || parsed.searchParams.has('X-Amz-Signature')) return false;
   if (!path.split('?')[0].split('/').pop()) return false;
   if (!path.split('?')[0].split('/').pop().includes('.')) return false;
   if (process.env.NODE_ENV !== 'production' && (path.includes('.hot-update.') || path.includes('?version='))) return false;
@@ -214,11 +218,12 @@ async function cached(request: Request, cacheKey: string, fetchFunc: () => Promi
     fetchFunc().catch(() => null),
   ]);
   if (response?.status === 206) return response; // partial response cannot be cached
-  if (response?.ok) {
+  if (response?.ok && !/(?:^|,)\s*(?:private|no-store)(?:\s|,|$)/i.test(response.headers.get('Cache-Control') || '')) {
     console.log(`Cached ${url}`);
     cache.put(url, response.clone());
     return response;
   }
+  if (response?.ok) return response;
   console.log(`Failed to cache ${url}`, response);
   // If response fails, re-fetch the original request to prevent
   // errors caused by different headers and do not cache them

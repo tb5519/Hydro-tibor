@@ -1,0 +1,12 @@
+{
+  "version": "2.0",
+  "statement": [{
+    "effect": "allow",
+    "action": [
+      "dnspod:DescribeRecordList",
+      "dnspod:CreateRecord",
+      "dnspod:DeleteRecord"
+    ],
+    "resource": "qcs::dnspod::uin/REPLACE_WITH_ACCOUNT_ID:domain/REPLACE_WITH_ONEBYONE_DOMAIN_ID"
+  }]
+}

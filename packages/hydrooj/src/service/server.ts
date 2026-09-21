@@ -14,6 +14,7 @@ import { PermissionError, PrivilegeError } from '../error';
 import type { DomainDoc } from '../interface';
 import type { ContestEntryContext } from '../lib/contest_entry';
 import { isDomainAvatarImageRequest } from '../lib/domain_avatar_access';
+import { isHomePosterImageRequest } from '../lib/decorative_image_access';
 import { isOjDomainPath, isScratchDomain } from '../lib/domain_type';
 import { isScratchShareRequest } from '../lib/scratch_share_access';
 import { Logger } from '../logger';
@@ -47,7 +48,7 @@ const GUEST_ACCESSIBLE_PATHS = [
 ];
 
 function isGuestAccessiblePath(path: string, method: string) {
-    return isDomainAvatarImageRequest(path, method) || isScratchShareRequest(path, method)
+    return isDomainAvatarImageRequest(path, method) || isHomePosterImageRequest(path, method) || isScratchShareRequest(path, method)
         || GUEST_ACCESSIBLE_PATHS.some((pattern) => pattern.test(path));
 }
 

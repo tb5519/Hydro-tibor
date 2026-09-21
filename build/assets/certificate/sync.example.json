@@ -1,0 +1,7 @@
+{
+  "certPath": "/www/server/panel/vhost/letsencrypt/static.onebyone.run/fullchain.pem",
+  "keyPath": "/www/server/panel/vhost/letsencrypt/static.onebyone.run/privkey.pem",
+  "credentialsPath": "/etc/onebyone/cdn-cert-credentials.json",
+  "statePath": "/var/lib/onebyone-cdn-cert/state.json",
+  "warningDays": 21
+}

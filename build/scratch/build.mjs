@@ -6,6 +6,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import patchLibraries from './patch-libraries.cjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../..');
@@ -54,10 +55,17 @@ for (const [source, dest] of [
     ['editor.ejs', 'src/playground/onebyone.ejs'],
     ['webpack.cjs', 'onebyone.webpack.cjs'],
     ['paper-sandbox-loader.cjs', 'src/playground/onebyone-paper-sandbox-loader.cjs'],
+    ['svg-sandbox.js', 'src/playground/onebyone-svg-sandbox.js'],
+    ['library-loader.js', 'src/lib/onebyone-library-loader.js'],
     ['noop.jsx', 'src/playground/onebyone-noop.jsx'],
     ['storage.js', 'src/lib/tw-persistent-storage.js'],
     ['extensions.jsx', 'src/lib/libraries/extensions/onebyone.jsx']
 ]) fs.copyFileSync(path.join(here, source), path.join(workspace, dest));
+for (const source of ['src/lib/storage.js', 'src/containers/library-item.jsx', 'src/components/library/library.jsx',
+    ...['costume', 'sprite', 'backdrop', 'sound'].map(kind => `src/containers/${kind}-library.jsx`)]) {
+    const original = execFileSync('git', ['show', `${upstream.commit}:${source}`], {cwd: workspace, encoding: 'utf8'});
+    fs.writeFileSync(path.join(workspace, source), patchLibraries(source, original));
+}
 const extensionPath = path.join(workspace, 'src/containers/extension-library.jsx');
 // Preserve the official selector UI but never request the external extension gallery.
 let extensionSource = execFileSync('git', ['show', `${upstream.commit}:src/containers/extension-library.jsx`], {
@@ -140,16 +148,26 @@ run(process.execPath, ['node_modules/webpack/bin/webpack.js', '--config', 'oneby
 fs.rmSync(target, {recursive: true, force: true});
 fs.mkdirSync(target, {recursive: true});
 fs.cpSync(path.join(workspace, 'build'), target, {recursive: true});
+// Prepare all four pinned stock libraries locally, before computing the release
+// manifest. Production never fetches upstream libraries or builds this bundle.
+run(process.execPath, [path.join(here, 'library-assets.mjs'), '--workspace', workspace,
+    '--output', path.join(target, 'library-assets')], repo);
 for (const name of ['LICENSE', 'README.md', 'TRADEMARK']) {
     fs.copyFileSync(path.join(workspace, name), path.join(target, `UPSTREAM-${name}`));
 }
+fs.copyFileSync(path.join(here, 'LIBRARY-CREDITS.md'), path.join(target, 'LIBRARY-CREDITS.md'));
 const lock = fs.readFileSync(path.join(workspace, 'package-lock.json'));
 fs.writeFileSync(path.join(here, 'package-lock.upstream.json'), lock);
 // Retain the corresponding GUI source, build configuration and lock with the binary.
 fs.copyFileSync(path.join(here, 'README.md'), path.join(workspace, 'ONEBYONE-README.md'));
+fs.mkdirSync(path.join(workspace, 'onebyone-library'), {recursive: true});
+for (const name of ['library-assets.mjs', 'library-assets.lock.json', 'upstream.json', 'patch-libraries.cjs', 'LIBRARY-CREDITS.md']) {
+    fs.copyFileSync(path.join(here, name), path.join(workspace, 'onebyone-library', name));
+}
 run('tar', ['-czf', path.join(target, 'source.tar.gz'),
     'src', 'static', 'scripts', 'package.json', 'package-lock.json', 'webpack.config.js',
-    'onebyone.webpack.cjs', '.babelrc', '.browserslistrc', 'LICENSE', 'README.md', 'TRADEMARK', 'ONEBYONE-README.md']);
+    'onebyone.webpack.cjs', '.babelrc', '.browserslistrc', 'LICENSE', 'README.md', 'TRADEMARK', 'ONEBYONE-README.md',
+    'onebyone-library']);
 const sha256 = data => crypto.createHash('sha256').update(data).digest('hex');
 const walk = dir => fs.readdirSync(dir, {withFileTypes: true}).flatMap(entry => {
     const file = path.join(dir, entry.name);

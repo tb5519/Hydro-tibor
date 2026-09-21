@@ -14,10 +14,12 @@ function load(source, dependencies = {}, globals = {}) {
 }
 const share = load(fs.readFileSync(path.join(root, 'lib/scratch_share_access.ts'), 'utf8'));
 const avatar = load(fs.readFileSync(path.join(root, 'lib/domain_avatar_access.ts'), 'utf8'));
+const poster = load(fs.readFileSync(path.join(root, 'lib/decorative_image_access.ts'), 'utf8'));
 const server = fs.readFileSync(path.join(root, 'service/server.ts'), 'utf8');
 const guestSource = server.slice(server.indexOf('const GUEST_ACCESSIBLE_PATHS'), server.indexOf("declare module '@hydrooj/framework'"));
-const guest = load(`${guestSource}\nexport { isGuestAccessiblePath };`, {}, { ...share, ...avatar });
+const guest = load(`${guestSource}\nexport { isGuestAccessiblePath };`, {}, { ...share, ...avatar, ...poster });
 const workspace = load(fs.readFileSync(path.join(root, 'service/layers/workspace.ts'), 'utf8'), {
+    '../../lib/decorative_image_access': poster,
     '../../lib/domain_avatar_access': avatar,
     '../../lib/scratch_share_access': share,
     '../../model/workspace': {

@@ -1,10 +1,13 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
-  ContestModel, Context, Handler, ObjectId, param, PERM, PRIV, ProblemModel, Schema,
+  ContestModel, Context, DomainModel, Handler, ObjectId, param, PERM, PRIV, ProblemModel, Schema,
   SettingModel, SystemModel, Types, UserModel, yaml,
 } from 'hydrooj';
 import { configureBroadcastSanitizer } from 'hydrooj/src/lib/broadcast';
+import { getHomePosterConfig } from 'hydrooj/src/lib/home_poster';
+import { isPublicHomePosterPath } from 'hydrooj/src/lib/decorative_image_access';
+import { staticAssetUrl } from 'hydrooj/src/lib/asset_delivery';
 import convert from 'schemastery-jsonschema';
 import { sanitizeBroadcastHtml } from './backendlib/broadcast';
 import * as contestTimer from './backendlib/contest-timer';
@@ -220,6 +223,21 @@ export function apply(ctx: Context, config: ReturnType<typeof Config>) {
   });
   ctx.on('handler/after', async (that) => {
     that.UiContext.scratchpadThemePreferenceUrl = that.url('home_settings', { category: 'preference' });
+    // Reuse the domain cache; no image/catalog queries on the page-render path. Only selected posters are public.
+    if (that.response.template && !that.response.redirect && !that.request.json && !(that.response.status >= 400)) {
+      const systemDomain = that.domain._id === 'system' ? that.domain : await DomainModel.get('system').catch(() => null);
+      const posters = [systemDomain, that.domain].filter(Boolean).flatMap((domain) => {
+        const poster = getHomePosterConfig(domain);
+        return isPublicHomePosterPath(domain._id, poster.storagePath)
+          ? [that.url('home_poster_image', { domainId: domain._id, query: { v: poster.updatedAt || '' } })] : [];
+      });
+      that.UiContext.imageWarmup = {
+        posters: Array.from(new Set(posters)),
+        catalog: that.user._id > 1 ? that.url('image_warmup') : '',
+        scope: `${that.user._id}:${that.domain._id}`,
+        backgrounds: Array.from({ length: 21 }, (_, index) => staticAssetUrl(`/components/profile/backgrounds/${index + 1}.jpg`)),
+      };
+    }
     that.UiContext.SWConfig = {
       preload: config.serviceWorker.preload,
       hosts: [

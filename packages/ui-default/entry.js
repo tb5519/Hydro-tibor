@@ -1,6 +1,7 @@
 import './polyfill';
 
 import $ from 'jquery';
+import { startImageWarmup } from './utils/image-warmup';
 
 window.Hydro = {
   extraPages: [],
@@ -27,6 +28,7 @@ console.log(
 
 window.UiContext = JSON.parse(window.UiContext);
 window.UserContext = JSON.parse(window.UserContext);
+startImageWarmup(window.UiContext.imageWarmup);
 try {
   __webpack_public_path__ = UiContext.cdn_prefix;
 } catch (e) { }

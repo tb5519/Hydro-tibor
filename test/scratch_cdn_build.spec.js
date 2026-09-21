@@ -50,13 +50,14 @@ function runBuild(assetBase) {
         if (exe === 'git' && args[0] === 'rev-parse') return upstream.commit;
         if (exe === 'git' && args[0] === 'show') {
             const file = args[1].slice(upstream.commit.length + 1);
+            if (/^src\/(lib\/storage\.js|containers\/(?:library-item|(?:costume|sprite|backdrop|sound)-library)\.jsx|components\/library\/library\.jsx)$/.test(file)) return 'mock library source';
             assert(file in sources, `Unexpected upstream source read: ${file}`);
             return sources[file];
         }
         return '';
     };
     const run = () => vm.runInNewContext(buildSource, {
-        require: (name) => name === 'node:fs' ? fakeFs
+        require: (name) => name === './patch-libraries.cjs' ? (_file, source) => source : name === 'node:fs' ? fakeFs
             : name === 'node:child_process' ? { execFileSync } : require(name),
         process: { env, execPath: process.execPath, version: process.version },
         URL, console: { log: () => {} },

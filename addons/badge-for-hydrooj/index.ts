@@ -494,10 +494,14 @@ abstract class BadgeAssetHandler extends Handler {
         if (!assetPath) throw new NotFoundError(`Badge ${this.assetName} ${id} is not exist!`);
         const meta = await storage.getMeta(assetPath);
         if (!meta) throw new NotFoundError(`Badge ${this.assetName} ${id} is not exist!`);
-        if (await assetDelivery.tryRedirectAsset(this, { path: assetPath, meta })) return;
+        if (await assetDelivery.tryRedirectAsset(this, { path: assetPath, meta,
+            ...(['backgroundImagePath', 'acImagePath'].includes(this.assetField) ? { decoration: 'badge' as const } : {}),
+        })) return;
         this.response.body = await storage.get(assetPath);
         this.response.type = meta['Content-Type'] || lookup(assetPath) || 'application/octet-stream';
-        this.response.addHeader('Cache-Control', 'public, max-age=604800, immutable');
+        this.response.addHeader('Cache-Control', 'private, max-age=300');
+        this.response.addHeader('Vary', 'Cookie, Authorization');
+        this.response.addHeader('X-Content-Type-Options', 'nosniff');
     }
 }
 
@@ -529,15 +533,14 @@ export class BadgeAcImageHandler extends BadgeAssetHandler {
             load: () => storage.get(badge.acImagePath!),
         }, size) : null;
         if (await assetDelivery.tryRedirectAsset(this, {
-            path: badge.acImagePath,
+            path: badge.acImagePath, decoration: 'badge',
             meta: preview ? { ...meta, size: preview.byteLength, 'Content-Type': 'image/png', remoteAsset: undefined } : meta,
             ...(preview ? { load: () => preview, variant: `badge-ac-png-area-v1-${size}` } : {}),
         })) return;
         this.response.body = preview || await storage.get(badge.acImagePath);
         this.response.type = preview ? 'image/png' : meta['Content-Type'] || lookup(badge.acImagePath) || 'application/octet-stream';
-        const versionMatches = this.request.query.v && this.request.query.v === badge.acImageUpdatedAt;
-        this.response.addHeader('Cache-Control', preview && versionMatches
-            ? 'public, max-age=604800, immutable' : 'public, max-age=60');
+        this.response.addHeader('Cache-Control', 'private, max-age=300');
+        this.response.addHeader('Vary', 'Cookie, Authorization');
         this.response.addHeader('X-Content-Type-Options', 'nosniff');
     }
 }

@@ -21,10 +21,13 @@ function load(source, globals = {}, dependencies = {}) {
 }
 const read = (file) => fs.readFileSync(path.join(hydro, file), 'utf8');
 const { isInlineRasterImage } = load(read('lib/inline_image.ts'));
+const { isPublicHomePosterPath } = load(read('lib/decorative_image_access.ts'));
 class NotFoundError extends Error {}
 class Handler {
     constructor() {
         this.domain = { _id: 'class-a' };
+        this.request = { method: 'get' };
+        this.context = {};
         this.response = { headers: {}, addHeader(key, value) { this.headers[key] = value; } };
     }
 }
@@ -41,7 +44,7 @@ function handlers(options = {}) {
         async signDownloadLink(...args) { calls.signed.push(args); return '/storage?existing-signature'; },
     };
     const shared = {
-        Handler, NotFoundError, storage, param: () => () => {}, Types: { Range: () => [] }, isInlineRasterImage,
+        Handler, NotFoundError, storage, isPublicHomePosterPath, param: () => () => {}, Types: { Range: () => [] }, isInlineRasterImage,
         lookup: () => 'image/png',
         tryRedirectAsset(handler, source) {
             calls.delivery.push(source);
@@ -56,7 +59,7 @@ function handlers(options = {}) {
     const homeHandlers = load(`${home.slice(home.indexOf('class HomePosterImageHandler'), home.indexOf('class PointLotteryDrawHandler'))}
         export { HomePosterImageHandler, PointLotteryPrizeImageHandler };`, {
         ...shared,
-        getHomePosterConfig: (domain) => ({ storagePath: options.noPoster ? '' : `domain/${domain._id}/home-poster-123.png` }),
+        getHomePosterConfig: (domain) => ({ storagePath: options.noPoster ? '' : options.posterPath || `domain/${domain._id}/home-poster-123.png` }),
         getPointLotteryStoragePrefix: (domain) => `domain/${domain._id}/point-lottery`,
     });
     const misc = read('handler/misc.ts');
@@ -200,11 +203,13 @@ describe('authorized image handler delivery', () => {
 it('keeps media requests behind existing guest and workspace access rules', async () => {
     const avatarAccess = load(read('lib/domain_avatar_access.ts'));
     const shareAccess = load(read('lib/scratch_share_access.ts'));
+    const posterAccess = load(read('lib/decorative_image_access.ts'));
     const server = read('service/server.ts');
     const guestSource = server.slice(server.indexOf('const GUEST_ACCESSIBLE_PATHS'), server.indexOf("declare module '@hydrooj/framework'"));
-    const guest = load(`${guestSource}\nexport { isGuestAccessiblePath };`, { ...avatarAccess, ...shareAccess });
+    const guest = load(`${guestSource}\nexport { isGuestAccessiblePath };`, { ...avatarAccess, ...shareAccess, ...posterAccess });
     const workspace = load(read('service/layers/workspace.ts'), {}, {
         '../../lib/domain_avatar_access': avatarAccess,
+        '../../lib/decorative_image_access': posterAccess,
         '../../lib/scratch_share_access': shareAccess,
         '../../model/workspace': {
             isEnabled: () => true, isPlatformAdmin: () => false,
@@ -213,7 +218,9 @@ it('keeps media requests behind existing guest and workspace access rules', asyn
             LEGACY_WORKSPACE_ID: 'legacy',
         },
     });
-    for (const route of ['/home/poster', '/lottery/prize/lottery-prize-123.png', '/badge/2/background',
+    assert.equal(guest.isGuestAccessiblePath('/home/poster', 'GET'), true);
+    assert.equal(guest.isGuestAccessiblePath('/home/poster', 'POST'), false);
+    for (const route of ['/image-warmup', '/lottery/prize/lottery-prize-123.png', '/badge/2/background',
         '/badge/2/ac-image', '/file/42/.avatar.png', '/file/42/private.sb3']) {
         assert.equal(guest.isGuestAccessiblePath(route, 'GET'), false, route);
         const result = await workspace.resolveWorkspaceAccess({ // eslint-disable-line no-await-in-loop
@@ -244,7 +251,7 @@ it('maps only allowlisted static images and preserves disabled, external and pro
     const enabled = new AssetDelivery({ configPath: config, publicRoot: directory });
     const { assetUrl } = helpers(enabled);
     assert.equal(assetUrl('/favicon.svg?v=brand'), 'https://static.example/static/release-1/favicon.svg?v=brand');
-    assert.equal(assetUrl('/components/profile/backgrounds/1.jpg'), 'https://static.example/static/release-1/components/profile/backgrounds/1.jpg');
+    assert.equal(assetUrl('/components/profile/backgrounds/1.jpg'), 'https://static.example/static/release-1/components/profile/backgrounds/1.jpg?v=hash');
     for (const url of ['https://photos.example/portrait.png', '//photos.example/portrait.png', '/file/42/.avatar.png',
         '/d/private/badge/1/background', '/resource/private.png', '/components/profile/backgrounds/../../private.jpg']) {
         assert.equal(assetUrl(url), url);
@@ -261,4 +268,50 @@ it('maps only allowlisted static images and preserves disabled, external and pro
     const errorPage = env.render('scratch_share_error.html', { message: '<please retry>' });
     assert.match(errorPage, /https:\/\/static\.example\/static\/release-1\/favicon\.svg\?v=onebyone-one-20260920/);
     assert.match(errorPage, /&lt;please retry&gt;/);
+});
+
+it('serves only the selected current-domain poster and commits real safe GET/HEAD/errors through the framework', async () => {
+    const Koa = require('koa');
+    const request = require('supertest');
+    const baseLayer = load(fs.readFileSync(path.join(root, 'framework/framework/base.ts'), 'utf8'), { Blob }, {
+        '@hydrooj/framework': { serializer: () => (_, value) => value },
+        '@hydrooj/utils/lib/utils': { errorMessage: (error) => error },
+        './error': { SystemError: Error, UserFacingError: Error },
+    }).default;
+    const make = (options) => {
+        const f = handlers(options); const app = new Koa();
+        app.use(async (ctx, next) => { ctx.params = {}; await next(); });
+        app.use(baseLayer({ error() {} }, '', ''));
+        app.use(async (ctx) => {
+            const h = new f.HomePosterImageHandler();
+            Object.assign(h, { context: ctx, request: ctx.HydroContext.request, response: ctx.HydroContext.response });
+            ctx.handler = h;
+            ctx.HydroContext.UiContext = { domain: { owner: 42, privateSetting: 'must-not-leak' } };
+            ctx.HydroContext.user = { privateAccount: 'must-not-leak' };
+            try { await h[ctx.method.toLowerCase()](); } catch { await h.onerror(); }
+        });
+        return { http: request(app.callback()), f };
+    };
+    const origin = make({});
+    await origin.http.get('/home/poster').set('X-Hydro-Inject', 'uicontext,usercontext').expect(200).expect('Content-Type', /image\/png/);
+    const head = await origin.http.head('/home/poster').expect(200);
+    assert.equal(head.text, undefined);
+    assert.equal(+head.headers['content-length'], origin.f.bytes.length);
+    assert.equal(origin.f.calls.read.length, 1, 'HEAD must not read image bytes');
+    const cdn = make({ ready: true });
+    const redirected = await cdn.http.get('/home/poster?noTemplate=1').set('Accept', 'application/json')
+        .set('X-Hydro-Inject', 'uicontext,usercontext').expect(302);
+    assert.deepEqual(Object.keys(redirected.body), ['url']);
+    assert.equal(JSON.stringify(redirected.body).includes('must-not-leak'), false);
+    for (const options of [{ missing: true }, { type: 'text/html' }, { posterPath: 'domain/other-class/home-poster-123.png' },
+        { posterPath: 'user/42/private.png' }, { noPoster: true }]) {
+        const missing = make(options);
+        for (const accept of ['application/json', 'text/html']) {
+            const response = await missing.http.get('/home/poster?noTemplate=1').set('Accept', accept)
+                .set('X-Hydro-Inject', 'uicontext,usercontext').expect(404);
+            assert.equal(response.text, 'Image not available');
+            assert.equal(response.headers['cache-control'], 'no-store');
+        }
+        assert.equal(missing.f.calls.read.length, 0);
+    }
 });

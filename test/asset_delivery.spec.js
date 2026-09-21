@@ -432,3 +432,42 @@ it('cleanup can recover a committed migration marker when a crash prevented the 
     const events = fs.readFileSync(manifestPath, 'utf8').trim().split('\n').map(JSON.parse);
     assert.equal(events.find((event) => event.event === 'before').physicalId, 'old/physical.png');
 });
+
+it('publishes only explicit selected-poster copies under static and preserves the private original', async (t) => {
+    const f = fixture(t);
+    const image = source('home-poster-123', Buffer.from('png'), { decoration: 'home-poster' });
+    image.meta.remoteAsset = { key: `media/v1/${'a'.repeat(64)}.png`, sha256: 'b'.repeat(64), size: 3,
+        contentType: 'image/png', bucket: f.config.bucket, region: f.config.region };
+    assert.equal(f.delivery.tryRedirectAsset(handler(), image), false);
+    await f.delivery.waitForAssetMirrors();
+    const h = handler();
+    assert.equal(f.delivery.tryRedirectAsset(h, image), true);
+    assert.match(h.response.redirect, /^https:\/\/static.example.com\/static\/home-posters\/v1\/[a-f0-9]{64}\.png$/);
+    assert.equal(h.response.headers['Cache-Control'], 'public, max-age=300');
+    assert.equal(f.calls[0].input.CacheControl, 'public, max-age=31536000, immutable');
+    assert.equal(f.calls.filter((call) => call.constructor.name === 'PutObjectCommand').length, 1);
+    const again = handler();
+    assert.equal(f.make().tryRedirectAsset(again, image), true);
+    assert.equal(again.response.redirect, h.response.redirect, 'public immutable URL is stable after restart');
+    assert.equal(f.delivery.tryRedirectAsset(handler(), source('private-file', Buffer.from('png'), { decoration: 'home-poster' })), false);
+    assert.equal(f.delivery.queueAssetMirror({ ...image, path: 'scratch/a/aaaaaaaaaaaaaaaaaaaaaaaa.png' }), false);
+});
+
+it('keeps decorative badge copies signed with short session-varying browser cache; ordinary media stays no-store', async (t) => {
+    const f = fixture(t);
+    const image = source('unused', Buffer.from('png'), { path: 'badge/42/profile-background-123.png', decoration: 'badge' });
+    assert.equal(f.delivery.tryRedirectAsset(handler(), image), false);
+    await f.delivery.waitForAssetMirrors();
+    const h = handler();
+    assert.equal(f.delivery.tryRedirectAsset(h, image), true);
+    assert.match(h.response.redirect, /\/media\/decorations\/v1\/[a-f0-9]{64}\.png\?auth_key=/);
+    assert.equal(h.response.headers['Cache-Control'], 'private, max-age=300');
+    assert.equal(h.response.headers.Vary, 'Cookie, Authorization');
+    assert.equal(f.calls[0].input.CacheControl, 'private, max-age=300');
+    const ordinary = { ...image, decoration: undefined };
+    assert.equal(f.delivery.tryRedirectAsset(handler(), ordinary), false, 'ordinary requests cannot reuse decorative cache entries');
+    await f.delivery.waitForAssetMirrors();
+    const privateResponse = handler();
+    assert.equal(f.delivery.tryRedirectAsset(privateResponse, ordinary), true);
+    assert.equal(privateResponse.response.headers['Cache-Control'], 'private, no-store');
+});
