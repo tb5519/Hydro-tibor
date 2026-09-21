@@ -1,0 +1,62 @@
+{% extends "domain_base.html" %}
+{% macro library_icon(kind) %}<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#scl-icon-{{ kind }}"></use></svg>{% endmacro %}
+{% macro library_card(item) %}
+<article class="scl-card" data-library-card data-id="{{ item.id }}" data-title="{{ item.title }}" data-kind="{{ item.kind }}" data-filename="{{ item.filename }}" data-mime="{{ item.mime }}" data-size="{{ item.size }}" data-file-url="{{ item.fileUrl }}" data-preview-url="{{ item.previewUrl }}">
+  <div class="scl-card__preview" data-library-preview>
+    <div class="scl-card__placeholder" data-library-placeholder>{{ library_icon(item.kind or 'sprite') }}<span data-library-preview-label>{% if item.kind == 'sound' %}点击试听{% elif item.kind == 'sprite' and item.filename.toLowerCase().endsWith('.sprite3') %}Scratch 角色包{% else %}素材预览{% endif %}</span></div>
+    <img alt="{{ item.title }}" data-library-image hidden>
+    <button type="button" class="scl-button scl-button--preview" data-library-action="preview"{% if item.kind != 'sound' %} hidden{% endif %}>试听声音</button>
+    <audio controls preload="none" data-library-audio aria-label="{{ item.title }}" hidden></audio>
+  </div>
+  <div class="scl-card__body">
+    <h2 data-library-title>{{ item.title }}</h2>
+    <p class="scl-card__filename" data-library-filename title="{{ item.filename }}">{{ item.filename }}</p>
+    <div class="scl-card__footer"><span data-library-size>{{ (item.size / 1024)|round(1) }} KB</span><div class="scl-card__actions"><button type="button" class="scl-button scl-button--quiet" data-library-action="rename" aria-label="重命名 {{ item.title }}">重命名</button><button type="button" class="scl-button scl-button--quiet scl-button--danger" data-library-action="delete" aria-label="删除 {{ item.title }}">删除</button></div></div>
+  </div>
+</article>
+{% endmacro %}
+{% block domain_content %}
+<div class="scratch-library-manage" data-scratch-library-manage data-upload-url="{{ url('domain_scratch_library') }}" data-list-url="{{ url('scratch_library') }}" data-max-file-size="{{ maxFileSize or 20971520 }}">
+  <svg class="scl-symbols" aria-hidden="true" focusable="false"><defs>
+    <symbol id="scl-icon-sprite" viewBox="0 0 32 32"><path d="m7 13-1-8 8 5h4l8-5-1 8c2 3 2 8-1 11-4 4-12 4-16 0-3-3-3-8-1-11Z"/><path d="M11 17h.1M21 17h.1m-8 4 3 2 3-2M5 19H2m28 0h-3"/></symbol>
+    <symbol id="scl-icon-costume" viewBox="0 0 32 32"><path d="m11 5-8 5 4 7 4-2v12h10V15l4 2 4-7-8-5c-1 5-9 5-10 0Z"/></symbol>
+    <symbol id="scl-icon-sound" viewBox="0 0 32 32"><path d="M13 24V8l13-3v16M13 13l13-3"/><ellipse cx="9" cy="24" rx="4" ry="3"/><ellipse cx="22" cy="21" rx="4" ry="3"/></symbol>
+    <symbol id="scl-icon-backdrop" viewBox="0 0 32 32"><rect x="3" y="5" width="26" height="22" rx="4"/><circle cx="11" cy="12" r="3"/><path d="m4 24 8-8 6 6 5-7 6 9"/></symbol>
+  </defs></svg>
+  <header class="scl-heading"><div><p class="scl-eyebrow">SCRATCH · 教学管理</p><h1>预制素材库</h1><p class="scl-muted">把角色、造型、声音和背景准备好，让孩子们专注创作。</p></div><a class="scl-back" href="{{ url('scratch_main') }}">返回创作课堂 <span aria-hidden="true">↗</span></a></header>
+  <p class="scl-scope">仅本域成员可使用。学生可在编辑器的“老师素材”中选择，上传不会自动公开。</p>
+  <nav class="scl-categories" aria-label="素材分类">
+    {% for kind, label in [['sprite', '角色'], ['costume', '造型'], ['sound', '声音'], ['backdrop', '背景']] %}
+    {% set count = 0 %}{% for item in presets %}{% if item.kind == kind %}{% set count = count + 1 %}{% endif %}{% endfor %}
+    <button type="button" class="scl-category" data-library-kind="{{ kind }}" aria-pressed="false">{{ library_icon(kind) }}<span>{{ label }}<small><b data-library-count="{{ kind }}">{{ count }}</b> 个素材</small></span></button>
+    {% endfor %}
+  </nav>
+  <div class="scl-toolbar"><label class="scl-search"><span class="scl-sr-only">搜索素材名称或文件名</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input type="search" data-library-search placeholder="搜索素材名称或文件名" maxlength="120"></label><button type="button" class="scl-button scl-button--primary" data-library-upload-open><span aria-hidden="true">＋</span> 上传素材</button></div>
+  <div class="scl-results"><p data-library-results role="status" aria-live="polite">共 {{ presets|length }} 个素材</p><button class="scl-button scl-button--quiet" type="button" data-library-refresh>刷新素材库</button></div>
+  <p class="scl-status" data-library-status role="status" aria-live="polite" hidden></p>
+  <div class="scl-grid" data-library-grid>{% for item in presets %}{{ library_card(item) }}{% endfor %}</div>
+  <div class="scl-empty" data-library-empty{% if presets|length %} hidden{% endif %}>{{ library_icon('sprite') }}<h2 data-library-empty-title>素材库准备好啦</h2><p data-library-empty-message>上传第一份素材，为孩子们的创作添一点灵感。</p><button class="scl-button" type="button" data-library-clear-search hidden>清除搜索</button><button class="scl-button scl-button--primary" type="button" data-library-upload-open>上传素材</button></div>
+  <noscript><p class="scl-status">请开启浏览器 JavaScript 后上传和管理素材。</p></noscript>
+  <template data-library-card-template>{{ library_card({kind: 'sprite', filename: '', size: 0}) }}</template>
+
+  <dialog class="scl-dialog scl-dialog--upload" data-library-upload-dialog aria-labelledby="scl-upload-title" aria-describedby="scl-upload-description">
+    <div class="scl-dialog__heading"><div><h2 id="scl-upload-title">上传素材</h2><p id="scl-upload-description">可以一次选择多个文件，逐个上传，结果会分别显示。</p></div><button type="button" class="scl-dialog__close" data-library-dialog-close aria-label="关闭上传窗口">×</button></div>
+    <div class="scl-dialog__body">
+      <label class="scl-field"><span>上传到哪一类？</span><select data-library-upload-kind><option value="sprite">角色</option><option value="costume">造型</option><option value="sound">声音</option><option value="backdrop">背景</option></select></label>
+      <label class="scl-file-picker"><strong>选择素材文件</strong><span data-library-file-help>支持 .sprite3 角色包和 PNG、JPG、WebP、SVG 图片，单个不超过 20MB。</span><input type="file" data-library-files multiple accept=".sprite3,.png,.jpg,.jpeg,.webp,.svg" aria-label="选择要上传的素材文件" aria-describedby="scl-upload-description"></label>
+      <div class="scl-queue-heading"><h3>本次上传 <span data-library-queue-count>0</span></h3><button type="button" class="scl-button scl-button--quiet" data-library-clear-completed hidden>清除成功项</button></div>
+      <p class="scl-muted" data-library-queue-empty>选择文件后，可先修改名称，再开始上传。</p>
+      <ol class="scl-queue" data-library-queue aria-label="各个文件的上传结果"></ol>
+      <p class="scl-status" data-library-upload-status role="status" aria-live="polite" hidden></p>
+    </div>
+    <div class="scl-dialog__footer"><span class="scl-muted">成功的素材会立即出现在素材库中。</span><button type="button" class="scl-button scl-button--primary" data-library-upload-start disabled>开始上传</button></div>
+  </dialog>
+  <dialog class="scl-dialog" data-library-edit-dialog aria-labelledby="scl-edit-title" aria-describedby="scl-edit-description">
+    <form data-library-edit-form>
+      <div class="scl-dialog__heading"><h2 id="scl-edit-title" data-library-edit-heading>重命名素材</h2><button type="button" class="scl-dialog__close" data-library-dialog-close aria-label="关闭窗口">×</button></div>
+      <div class="scl-dialog__body"><p id="scl-edit-description" data-library-edit-description></p><label class="scl-field" data-library-edit-field><span>素材名称</span><input name="title" required maxlength="120" data-library-edit-name autocomplete="off"></label><p class="scl-status" data-library-edit-status role="status" aria-live="polite" hidden></p></div>
+      <div class="scl-dialog__footer"><button type="button" class="scl-button" data-library-dialog-close>取消</button><button type="submit" class="scl-button scl-button--primary" data-library-edit-submit>保存名称</button></div>
+    </form>
+  </dialog>
+</div>
+{% endblock %}

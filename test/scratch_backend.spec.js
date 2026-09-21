@@ -134,6 +134,7 @@ before(async () => {
     await model.apply({ on: (event, callback) => { if (event === 'domain/delete') deleteDomainData = callback; } });
     handlers = load('packages/hydrooj/src/handler/scratch.ts', {
         '../context': {}, '../error': errors,
+        '../lib/scratch_editor_assets': { getScratchEditorVersion: () => 'a'.repeat(64) },
         '../lib/asset_delivery': assetDelivery,
         '../lib/domain_type': { isScratchDomain: (domain) => domain?.domainType === 'scratch' },
         '../lib/scratch_files': scratchFiles, '../model/builtin': { PERM: { PERM_EDIT_DOMAIN: 1n, PERM_VIEW_USER_PRIVATE_INFO: 2n }, PRIV: { PRIV_USER_PROFILE: 1 } },
@@ -165,6 +166,7 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         });
         await handler.prepare();
         assert.equal(handler.actor.uid, 20);
+        assert.equal(handler.UiContext.scratch.editorVersion, 'a'.repeat(64));
         handler.domain.domainType = 'oj';
         await assert.rejects(handler.prepare(), NotFoundError);
         handler.domain.domainType = 'scratch';
@@ -640,7 +642,8 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         await player.get();
         assert.equal(player.response.template, 'scratch_share.html');
         assert.deepEqual(Object.keys(player.response.body).sort(), ['revision', 'title']);
-        assert.deepEqual(Object.keys(player.UiContext.scratchPlayer).sort(), ['maxFileSize', 'projectUrl', 'title']);
+        assert.deepEqual(Object.keys(player.UiContext.scratchPlayer).sort(), ['editorVersion', 'maxFileSize', 'projectUrl', 'title']);
+        assert.equal(player.UiContext.scratchPlayer.editorVersion, 'a'.repeat(64));
         assert.equal(player.UiContext.scratchPlayer.projectUrl, `/scratch_share_project/${share._id}`);
         assert.equal(player.headers['Cache-Control'], 'private, no-store');
         assert.equal(player.headers['X-Content-Type-Options'], 'nosniff');

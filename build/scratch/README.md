@@ -50,7 +50,9 @@ The local entry bypasses TurboWarp's homepage, cloud, addons, URL project import
 
 The parent's `init` message selects `mode: 'editor' | 'player' | 'thumbnail'`. Player mode opens a responsive stage and starts the green flag, with native stop/restart/fullscreen controls. Both player and thumbnail mode force read-only access and reject export requests. The iframe must be granted the fullscreen feature for browser fullscreen to be available.
 
-Editor mode retains native local file import/download, editing and the project title. The misleading native new-project action is removed: creation belongs to the classroom. File System Access pickers are disabled in the opaque iframe; imports use a standard file input and exports download an `.sb3`. An in-frame dialog explains that importing replaces the current work's contents, and a successful import always emits `dirty`, including when its filename matches the current title. A committed native title edit emits `{type: 'titleChanged', title}`; initialization does not emit a title change. The parent includes the new title with its next authenticated project save. The native menu reserves its right edge for the parent's save buttons (264px, or 150px below 600px wide).
+Editor mode retains native local file import/download, editing and the project title. The misleading native new-project action is removed: creation belongs to the classroom. File System Access pickers are disabled in the opaque iframe; imports use a standard file input and exports download an `.sb3`. An in-frame dialog explains that importing replaces the current work's contents, and a successful import always emits `dirty`, including when its filename matches the current title. A committed native title edit emits `{type: 'titleChanged', title}`; initialization does not emit a title change. The parent includes the new title with its next authenticated project save. The native menu reserves its right edge for the parent's preset/save buttons (360px, or 220px below 600px wide).
+
+Each of the four native libraries includes a teacher-preset button. In a loaded editable frame it sends `{type: 'openPresetLibrary', kind, targetId}`; the parent may also send `requestPresetLibrary` to open the sprite category. After domain authorization and byte download, the parent sends `{type: 'importPreset', id, kind, title, filename, mime, file: ArrayBuffer, targetId}`. Supported kinds are `sprite`, `costume`, `sound` and `backdrop`; supported bytes are complete `.sprite3`, SVG/PNG/JPEG/WebP images, and MP3/WAV sounds. The server must validate archives and cap uploads before delivery. Imports never receive an asset URL. Sprite archives must contain all referenced media and cannot use custom extensions or fonts. Images pass the native upload sanitizer/decoder; WebP has an explicit rejecting decoder. Imports append to the current project and acknowledge with `presetImported` or retryable `presetImportError`, never the fatal project-load error. Pending/completed request IDs prevent duplicate insertions. Costume/sound imports retain their original target and reject if it was deleted; a costume cannot target the stage, while backgrounds always target the stage. Read-only and unloaded frames do not import.
 
 Thumbnail mode never starts the VM or green flag. Its initial `init` and later `{type: 'preview', id, project?: ArrayBuffer}` messages respond with `{type: 'thumbnail', id, thumbnail: dataURL | null}` after loading and drawing. Reuse a single frame sequentially to avoid loading a VM per card. Omitting `project` reloads a cached copy of the built-in default project, so the preceding work cannot leak into the next cover. The parent controls queueing, timeouts, file authorization and frame disposal; no thumbnail message can save a project.
 
@@ -63,3 +65,17 @@ The renderer has a separate nested iframe for SVG bounding-box measurement, used
 ## License and source
 
 TurboWarp GUI and scratch-paint modifications are GPL-3.0; original Scratch notices and dependency licenses remain applicable. The SVG renderer replacement preserves its MPL-2.0 attribution. The exact official repository, commit and dependency integrity metadata are in `upstream.json` and `package-lock.upstream.json`. Local modifications include these integration files and the checked substitutions in `build.mjs` and `patch-libraries.cjs`. The public output retains upstream LICENSE, README and TRADEMARK plus `LIBRARY-CREDITS.md` for Scratch's stock artwork and sounds. The source archive includes the mirror script, lock and pinned catalogs. Keep this build directory and the corresponding source available with any redistributed build; do not represent OneByOne as an official Scratch or TurboWarp service.
+
+## Domain preset library
+
+Scratch teachers can manage reusable sprites, costumes, sounds and backdrops at
+`/d/<domainId>/domain/scratch-library`. The editor's **老师素材** button and native
+library shortcuts open the same domain-scoped picker. Images have previews and
+sounds load only when played or added. Uploads support multiple files, editable
+names and individual results; one failure does not discard successful uploads.
+
+Presets use the domain's existing Scratch storage quota and OSS primary storage
+when enabled. Only domain members can fetch them; management requires the domain
+editing permission. The parent page authenticates downloads and transfers bytes
+to the sandboxed editor. Adding a preset copies it into the project, so deleting
+the original preset does not break already-saved projects.

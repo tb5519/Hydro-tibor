@@ -20,11 +20,11 @@
   </style>
 </head>
 <body>
-  <main class="scratch-public-player" data-scratch-public-player data-config="{{ UiContext.scratchPlayer|json }}">
+  <main class="scratch-public-player" data-scratch-public-player data-editor-version="{{ UiContext.scratchPlayer.editorVersion }}" data-config="{{ UiContext.scratchPlayer|json }}">
     <div class="scratch-player-status" role="status" aria-live="polite" data-scratch-player-status><span data-scratch-player-message>正在打开作品，小小创意马上登场…</span><br><button type="button" data-scratch-player-retry hidden>重新打开</button></div>
     <iframe title="{{ title }} · 运行舞台" data-scratch-player-frame sandbox="allow-scripts" allow="autoplay; fullscreen" allowfullscreen referrerpolicy="no-referrer"></iframe>
     <noscript>请开启 JavaScript 后播放作品。</noscript>
   </main>
-  <script src="/scratch-player.js?v=20260920-1" defer></script>
+  <script src="/scratch-player.js?v=20260921-2-{{ UiContext.scratchPlayer.editorVersion }}" defer></script>
 </body>
 </html>

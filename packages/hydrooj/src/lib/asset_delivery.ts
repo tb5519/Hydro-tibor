@@ -188,9 +188,10 @@ export class AssetDelivery {
         const endpoint = httpsUrl(config?.endpoint);
         const contentType = source?.meta?.['Content-Type'];
         const type = typeof contentType === 'string' ? contentType.split(';')[0].trim().toLowerCase() : '';
-        const scratchProject = /^scratch\/[^/]+\/[a-f0-9]{24}\.sb3$/.test(source?.path || '')
-            && ['application/octet-stream', 'application/x.scratch.sb3'].includes(type) && source.meta.size <= 20 * 1024 * 1024;
-        const extension = scratchProject ? '.sb3' : MEDIA_TYPES[type];
+        const scratchProject = /^scratch\/[^/]+\/[a-f0-9]{24}\.(sb3|sprite3)$/.exec(source?.path || '');
+        const scratchArchive = scratchProject && ['application/octet-stream', `application/x.scratch.${scratchProject[1]}`].includes(type)
+            && source.meta.size <= 20 * 1024 * 1024;
+        const extension = scratchArchive ? `.${scratchProject[1]}` : MEDIA_TYPES[type];
         if (source?.decoration && (!['home-poster', 'badge'].includes(source.decoration)
             || !/^image\/(png|jpeg|gif|webp|avif)$/.test(type) || source.meta.size > 8 * 1024 * 1024
             || (source.decoration === 'home-poster'
@@ -277,7 +278,7 @@ export class AssetDelivery {
             if (remote.bucket !== job.config.bucket || remote.region !== job.config.region
                 || remote.size !== source.meta.size || remote.contentType !== source.meta['Content-Type']
                 || !/^[a-f0-9]{64}$/.test(remote.sha256)
-                || !/^media\/v1\/[a-f0-9]{64}\.(png|jpg|jpeg|gif|webp|avif|svg|ico|mp3|ogg|wav|m4a|sb3)$/.test(remote.key)) return false;
+                || !/^media\/v1\/[a-f0-9]{64}\.(png|jpg|jpeg|gif|webp|avif|svg|ico|mp3|ogg|wav|m4a|sb3|sprite3)$/.test(remote.key)) return false;
             this.redirect(handler, job.config, remote.key);
             return true;
         }

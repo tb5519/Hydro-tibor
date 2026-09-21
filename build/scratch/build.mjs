@@ -57,6 +57,7 @@ for (const [source, dest] of [
     ['paper-sandbox-loader.cjs', 'src/playground/onebyone-paper-sandbox-loader.cjs'],
     ['svg-sandbox.js', 'src/playground/onebyone-svg-sandbox.js'],
     ['library-loader.js', 'src/lib/onebyone-library-loader.js'],
+    ['preset-import.js', 'src/lib/onebyone-preset-import.js'],
     ['noop.jsx', 'src/playground/onebyone-noop.jsx'],
     ['storage.js', 'src/lib/tw-persistent-storage.js'],
     ['extensions.jsx', 'src/lib/libraries/extensions/onebyone.jsx']

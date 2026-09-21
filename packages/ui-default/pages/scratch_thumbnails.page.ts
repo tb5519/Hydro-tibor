@@ -97,7 +97,7 @@ export default new NamedPage(['scratch_main', 'scratch_works', 'scratch_assignme
       frame.tabIndex = -1;
       frame.referrerPolicy = 'no-referrer';
       frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:480px;height:400px;border:0;pointer-events:none;';
-      frame.src = `/scratch-editor/editor.html?lang=zh-cn#channel=${encodeURIComponent(channel)}`;
+      frame.src = `/scratch-editor/editor.html?v=${encodeURIComponent(UiContext.scratch?.editorVersion || 'unavailable')}&lang=zh-cn#channel=${encodeURIComponent(channel)}`;
       document.body.appendChild(frame);
       readyTimer = setTimeout(() => reject(new Error('封面加载超时')), 45000);
     });

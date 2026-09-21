@@ -563,3 +563,19 @@ it('the real AWS presigner emits a public virtual-hosted URL even when the inter
     assert.equal(link.searchParams.get('X-Amz-Expires'), '600');
     assert.match(link.searchParams.get('response-content-disposition'), /^attachment;/);
 });
+
+it('stores preset sprite3 archives only in immutable Scratch paths with private attachment metadata', async () => {
+    const spritePath = `scratch/lesson/${'c'.repeat(24)}.sprite3`;
+    assert.equal(eligibleAsset(spritePath, 'application/octet-stream'), true);
+    assert.equal(eligibleAsset(spritePath, 'application/x.scratch.sprite3'), true);
+    assert.equal(eligibleAsset(spritePath, 'image/png'), false);
+    assert.equal(eligibleAsset('user/1/role.sprite3', 'application/octet-stream'), false);
+    assert.equal(eligibleAsset(`scratch/lesson/${'c'.repeat(24)}.sprite3`, 'application/x.scratch.sb3'), false);
+    const result = await remote.put(spritePath, Buffer.from('validated sprite3 archive'), 'application/octet-stream');
+    assert.match(result.key, /\.sprite3$/);
+    assert.equal(assetModule.validRemoteAsset(result), true);
+    const put = calls.find((call) => call.kind === 'PutObjectCommand');
+    assert.equal(put.input.ContentDisposition, 'attachment');
+    assert.equal(put.input.CacheControl, 'private, max-age=0');
+    await assert.rejects(remote.put(spritePath, Buffer.alloc(20 * 1024 * 1024 + 1), 'application/octet-stream'), /limit|large|size/i);
+});

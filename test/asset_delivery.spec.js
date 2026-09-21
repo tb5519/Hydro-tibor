@@ -471,3 +471,21 @@ it('keeps decorative badge copies signed with short session-varying browser cach
     assert.equal(f.delivery.tryRedirectAsset(privateResponse, ordinary), true);
     assert.equal(privateResponse.response.headers['Cache-Control'], 'private, no-store');
 });
+
+it('mirrors and signs validated sprite3 archives without making other archive paths eligible', async (t) => {
+    const f = fixture(t);
+    const bytes = Buffer.from('validated sprite3 archive');
+    const sprite = source('unused', bytes, { path: `scratch/lesson/${'e'.repeat(24)}.sprite3`,
+        meta: { etag: 'immutable-sprite', size: bytes.length, 'Content-Type': 'application/octet-stream' }, contentDisposition: 'attachment' });
+    assert.equal(f.delivery.queueAssetMirror(sprite), true);
+    await f.delivery.waitForAssetMirrors();
+    const reply = handler();
+    assert.equal(f.delivery.tryRedirectAsset(reply, sprite), true);
+    assert.match(new URL(reply.response.redirect).pathname, /\.sprite3$/);
+    assert.equal(reply.response.headers['Cache-Control'], 'private, no-store');
+    const remote = { key: `media/v1/${'f'.repeat(64)}.sprite3`, sha256: 'a'.repeat(64), size: bytes.length,
+        contentType: 'application/octet-stream', bucket: f.config.bucket, region: f.config.region };
+    assert.equal(f.delivery.tryRedirectAsset(handler(), { ...sprite, meta: { ...sprite.meta, remoteAsset: remote } }), true);
+    assert.equal(f.delivery.queueAssetMirror({ ...sprite, path: 'user/1/role.sprite3' }), false);
+    assert.equal(f.delivery.queueAssetMirror({ ...sprite, meta: { ...sprite.meta, size: 20 * 1024 * 1024 + 1 } }), false);
+});

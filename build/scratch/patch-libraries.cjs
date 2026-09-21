@@ -34,7 +34,13 @@ module.exports = (file, input) => {
         replace('handleClose () {\n        this.props.onRequestClose();\n    }', 'handleClose () {\n        if (!this.onebyoneSelecting) this.props.onRequestClose();\n    }');
         replace('await this.props.onItemSelected(this.getFilteredData()[id]);\n            this.handleClose();',
             'await this.props.onItemSelected(this.getFilteredData()[id]);\n            this.onebyoneSelecting = false;\n            this.handleClose();');
-        replace('                <div\n                    className={classNames(styles.libraryScrollGrid, {', `                {(this.state.selecting || this.state.selectionError || this.props.libraryError || this.props.previewError) && (
+        replace('                <div\n                    className={classNames(styles.libraryScrollGrid, {', `                {this.props.onOpenPresetLibrary && (
+                    <div className="onebyone-preset-library">
+                        <button type="button" disabled={!!this.state.selecting} onClick={this.props.onOpenPresetLibrary}>老师素材</button>
+                        <span>看看老师为这个课堂准备了什么</span>
+                    </div>
+                )}
+                {(this.state.selecting || this.state.selectionError || this.props.libraryError || this.props.previewError) && (
                     <div className="onebyone-library-notice" role="status" aria-live="polite">
                         {this.state.selecting ? '正在添加素材，请稍等…' : (this.state.selectionError || this.props.libraryError || this.props.previewError)}
                         {this.props.libraryError && <button type="button" onClick={this.props.onRetryLoad}>重新加载</button>}
@@ -92,6 +98,9 @@ module.exports = (file, input) => {
         replace('                onRequestClose={this.props.onRequestClose}', `                libraryError={this.state.libraryError}
                 previewError={this.state.previewError}
                 onRetryLoad={this.loadLibrary}
+                onOpenPresetLibrary={() => {
+                    if (window.onebyoneOpenPresetLibrary && window.onebyoneOpenPresetLibrary('${kind}')) this.props.onRequestClose();
+                }}
                 onRequestClose={this.props.onRequestClose}`);
         if (kind === 'costume') replace('this.props.vm.addCostumeFromLibrary(item.md5ext, vmCostume);',
             'return prepareAssets(this.props.vm, [item.md5ext]).then(() =>\n            this.props.vm.addCostumeFromLibrary(item.md5ext, vmCostume));');

@@ -104,3 +104,7 @@ wiki_help: Help
 manage_broadcast: Global Broadcast
 domain_broadcast: Domain Broadcast
 You can also upload your avatar to Gravatar and it will be automatically updated here.: You can also upload your avatar to <a href="https://gravatar.com/">Gravatar</a> and it will be automatically updated here.
+
+domain_scratch_library: Preset Library
+domain_scratch_library_item: Manage Preset
+scratch_library: Preset Library

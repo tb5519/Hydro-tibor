@@ -1,0 +1,592 @@
+.scratch-library-manage
+  --scl-blue: #2563eb
+  --scl-ink: #183458
+  --scl-muted: #63758c
+  color: var(--scl-ink)
+  padding: 4px 0 24px
+
+  *, *:before, *:after
+    box-sizing: border-box
+
+  [hidden]
+    display: none !important
+
+  button, input, select
+    font: inherit
+
+  button, a, input, select, audio
+    &:focus-visible
+      outline: 3px solid #93b8ff
+      outline-offset: 3px
+
+  button
+    cursor: pointer
+    &:disabled
+      cursor: default
+      opacity: .6
+
+  h1, h2, h3, p
+    margin: 0
+
+  .scl-symbols, .scl-sr-only
+    position: absolute
+    width: 1px
+    height: 1px
+    overflow: hidden
+    clip-path: inset(50%)
+    white-space: nowrap
+
+  .scl-heading
+    display: flex
+    justify-content: space-between
+    align-items: flex-start
+    flex-wrap: wrap
+    gap: 18px
+    margin-bottom: 20px
+
+    h1
+      font-size: 30px
+      line-height: 1.3
+      font-weight: 750
+      margin: 6px 0 10px
+
+  .scl-eyebrow
+    color: var(--scl-blue)
+    font-size: 11px
+    font-weight: 700
+    letter-spacing: 1.2px
+
+  .scl-muted
+    color: var(--scl-muted)
+    font-size: 13px
+    line-height: 1.7
+
+  .scl-back
+    display: inline-flex
+    gap: 8px
+    align-items: center
+    min-height: 42px
+    color: var(--scl-blue)
+    font-size: 13px
+    white-space: nowrap
+
+  .scl-scope
+    padding: 13px 16px
+    margin-bottom: 24px
+    border-radius: 12px
+    color: #446389
+    background: #edf4ff
+    font-size: 13px
+    line-height: 1.7
+
+  .scl-categories
+    display: grid
+    grid-template-columns: repeat(4, minmax(0, 1fr))
+    gap: 12px
+    margin-bottom: 24px
+
+  .scl-category
+    display: flex
+    align-items: center
+    justify-content: flex-start
+    gap: 12px
+    min-height: 92px
+    padding: 16px
+    border: 1px solid #dce6f2
+    border-radius: 16px
+    text-align: left
+    background: #fff
+    color: var(--scl-ink)
+    transition: border-color .15s, background .15s
+
+    svg
+      width: 34px
+      height: 34px
+      flex: 0 0 34px
+      color: #638cc5
+
+    > span
+      font-size: 17px
+      font-weight: 700
+
+    small
+      display: block
+      margin-top: 7px
+      font-size: 12px
+      font-weight: 400
+      color: var(--scl-muted)
+      white-space: nowrap
+
+    b
+      font-weight: 500
+
+    &:hover
+      border-color: #93b8ff
+
+    &[aria-pressed=true]
+      background: #edf4ff
+      border-color: #76a3f9
+      box-shadow: inset 0 0 0 1px #76a3f9
+      color: var(--scl-blue)
+      svg
+        color: var(--scl-blue)
+
+  .scl-toolbar
+    display: flex
+    align-items: stretch
+    gap: 14px
+
+  .scl-search
+    position: relative
+    display: flex
+    align-items: center
+    flex: 1
+    min-width: 0
+
+    svg
+      position: absolute
+      left: 14px
+      width: 21px
+      height: 21px
+      color: #7590ae
+      pointer-events: none
+
+    input
+      width: 100%
+      min-width: 0
+      min-height: 46px
+      border: 1px solid #dce6f2
+      border-radius: 12px
+      padding: 11px 12px 11px 43px
+      background: #fff
+      color: var(--scl-ink)
+      font-size: 14px
+
+  .scl-button
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    gap: 5px
+    min-height: 42px
+    padding: 10px 16px
+    border: 1px solid #d3e1f3
+    border-radius: 11px
+    background: #fff
+    color: var(--scl-blue)
+    font-weight: 600
+    font-size: 13px
+    line-height: 1.35
+    white-space: nowrap
+
+    &:hover:not(:disabled)
+      background: #edf4ff
+
+  .scl-button--primary
+    background: var(--scl-blue)
+    color: #fff
+    border-color: var(--scl-blue)
+    &:hover:not(:disabled)
+      background: #1d4ed8
+
+  .scl-button--quiet
+    min-height: 36px
+    padding: 7px 9px
+    border-color: transparent
+    background: transparent
+    font-weight: 500
+    font-size: 12px
+
+  .scl-button--danger
+    color: #a75656
+    &:hover:not(:disabled)
+      background: #fff0f0
+
+  .scl-button--delete
+    border-color: #b44343
+    background: #b44343
+    &:hover:not(:disabled)
+      background: #973737
+
+  .scl-results
+    display: flex
+    justify-content: space-between
+    align-items: center
+    gap: 12px
+    margin: 16px 0 12px
+    font-size: 12px
+    color: var(--scl-muted)
+
+  .scl-grid
+    display: grid
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr))
+    gap: 18px
+
+  .scl-card
+    min-width: 0
+    border: 1px solid #dce6f2
+    border-radius: 17px
+    background: #fff
+    overflow: hidden
+
+  .scl-card__preview
+    position: relative
+    display: flex
+    flex-direction: column
+    justify-content: center
+    align-items: center
+    gap: 10px
+    aspect-ratio: 4 / 3
+    min-height: 150px
+    padding: 18px
+    background: #f3f7fc
+    border-bottom: 1px solid #edf1f6
+
+    img
+      position: absolute
+      inset: 0
+      width: 100%
+      height: 100%
+      object-fit: contain
+      padding: 12px
+
+    audio
+      position: relative
+      width: 100%
+      height: 38px
+
+  .scl-card__placeholder
+    display: flex
+    flex-direction: column
+    align-items: center
+    gap: 10px
+    color: #6583ad
+    font-size: 12px
+    text-align: center
+
+    svg
+      width: 48px
+      height: 48px
+
+  .scl-button--preview
+    position: relative
+    min-height: 36px
+    font-size: 12px
+    padding: 7px 12px
+
+  .scl-card__body
+    padding: 14px 14px 8px
+
+    h2
+      font-size: 16px
+      font-weight: 650
+      line-height: 1.5
+      overflow-wrap: anywhere
+
+  .scl-card__filename
+    overflow: hidden
+    white-space: nowrap
+    text-overflow: ellipsis
+    color: var(--scl-muted)
+    font-size: 11px
+    margin-top: 5px
+
+  .scl-card__footer
+    display: flex
+    justify-content: space-between
+    align-items: center
+    flex-wrap: wrap
+    gap: 4px
+    margin-top: 10px
+    color: var(--scl-muted)
+    font-size: 11px
+
+  .scl-card__actions
+    display: flex
+    margin-left: auto
+
+  .scl-empty
+    padding: 42px 20px
+    text-align: center
+    border: 1px dashed #c9dbf2
+    border-radius: 17px
+    background: #f7faff
+
+    > svg
+      width: 56px
+      height: 56px
+      color: #84a6d5
+      margin-bottom: 18px
+
+    h2
+      font-size: 18px
+      font-weight: 650
+
+    p
+      margin: 12px 0 22px
+      color: var(--scl-muted)
+      font-size: 13px
+      line-height: 1.7
+
+  .scl-status
+    padding: 12px 14px
+    margin: 12px 0
+    border-radius: 10px
+    background: #edf4ff
+    color: #365d91
+    font-size: 13px
+    line-height: 1.7
+    overflow-wrap: anywhere
+    &[data-error=true]
+      background: #fff6e8
+      color: #805327
+
+  .scl-dialog
+    width: 480px
+    max-width: calc(100vw - 32px)
+    max-height: calc(100dvh - 40px)
+    padding: 0
+    border: 1px solid #dce6f2
+    border-radius: 20px
+    color: var(--scl-ink)
+    background: #fff
+    box-shadow: 0 24px 90px rgba(18, 45, 85, .2)
+    overflow: auto
+
+    &::backdrop
+      background: rgba(23, 43, 73, .4)
+
+    h2
+      font-size: 21px
+      font-weight: 700
+      line-height: 1.45
+
+    h3
+      font-size: 14px
+      font-weight: 650
+
+  .scl-dialog--upload
+    width: 660px
+
+  .scl-dialog__heading
+    display: flex
+    justify-content: space-between
+    align-items: flex-start
+    gap: 16px
+    padding: 23px 24px 18px
+    border-bottom: 1px solid #e7eef7
+
+    p
+      margin-top: 7px
+      color: var(--scl-muted)
+      font-size: 13px
+      line-height: 1.7
+
+  .scl-dialog__close
+    flex: 0 0 36px
+    width: 36px
+    height: 36px
+    border: 0
+    border-radius: 50%
+    color: #657d9e
+    background: #f2f6fc
+    font-size: 24px
+    line-height: 1
+
+  .scl-dialog__body
+    padding: 20px 24px
+    > p:not(.scl-status)
+      color: var(--scl-muted)
+      font-size: 13px
+      line-height: 1.8
+      margin-bottom: 18px
+
+  .scl-dialog__footer
+    display: flex
+    align-items: center
+    justify-content: flex-end
+    flex-wrap: wrap
+    gap: 12px
+    padding: 16px 24px
+    border-top: 1px solid #e7eef7
+    background: #f7faff
+    .scl-muted
+      flex: 1
+      font-size: 12px
+
+  .scl-field
+    display: flex
+    flex-direction: column
+    gap: 8px
+    min-width: 0
+    font-size: 13px
+    color: var(--scl-ink)
+
+    input, select
+      width: 100%
+      height: 43px
+      padding: 10px 12px
+      border: 1px solid #cfdded
+      border-radius: 10px
+      background: #fff
+      color: var(--scl-ink)
+      line-height: 1.3
+
+    input:disabled
+      background: #f5f8fc
+      color: #70849d
+
+  .scl-file-picker
+    display: flex
+    flex-direction: column
+    align-items: center
+    gap: 10px
+    padding: 23px 16px
+    margin: 18px 0 20px
+    border: 1px dashed #97b8e6
+    border-radius: 14px
+    background: #f4f8ff
+    text-align: center
+    font-size: 13px
+
+    strong
+      color: var(--scl-blue)
+      font-weight: 650
+
+    span
+      color: var(--scl-muted)
+      font-size: 12px
+      line-height: 1.7
+
+    input
+      width: 100%
+      max-width: 330px
+      font-size: 12px
+
+    input::file-selector-button
+      padding: 8px 14px
+      margin-right: 10px
+      border: 1px solid #c2d7f3
+      border-radius: 8px
+      background: #fff
+      color: var(--scl-blue)
+      cursor: pointer
+
+  .scl-queue-heading
+    display: flex
+    justify-content: space-between
+    align-items: center
+    gap: 12px
+    margin-bottom: 12px
+    span
+      color: var(--scl-muted)
+      font-size: 12px
+      margin-left: 4px
+
+  .scl-queue
+    list-style: none
+    margin: 0
+    padding: 0
+
+  .scl-upload-row
+    padding: 14px
+    margin-top: 10px
+    border: 1px solid #dee7f2
+    border-radius: 12px
+    background: #fff
+
+    .scl-field > span
+      overflow-wrap: anywhere
+      color: var(--scl-muted)
+      font-size: 12px
+
+    &[data-state=success]
+      border-color: #a8d2be
+      [data-upload-result]
+        color: #2b7855
+
+    &[data-state=error], &[data-state=invalid], &[data-state=unknown]
+      border-color: #e4c69f
+      [data-upload-result]
+        color: #805327
+
+  .scl-upload-row__result
+    display: flex
+    align-items: center
+    justify-content: space-between
+    flex-wrap: wrap
+    gap: 8px
+    margin-top: 8px
+    font-size: 12px
+    line-height: 1.7
+    color: #597698
+
+    > span
+      flex: 1 1 180px
+
+    progress
+      width: 100%
+      height: 7px
+      accent-color: var(--scl-blue)
+
+@media (max-width: 1100px)
+  .scratch-library-manage
+    .scl-categories
+      gap: 9px
+    .scl-category
+      flex-direction: column
+      align-items: flex-start
+      gap: 10px
+      padding: 14px
+
+@media (max-width: 600px)
+  .scratch-library-manage
+    .scl-heading h1
+      font-size: 26px
+    .scl-categories
+      grid-template-columns: repeat(2, minmax(0, 1fr))
+    .scl-category
+      flex-direction: row
+      align-items: center
+    .scl-toolbar
+      flex-wrap: wrap
+      gap: 10px
+    .scl-search
+      flex-basis: 100%
+    .scl-toolbar > .scl-button
+      width: 100%
+    .scl-grid
+      grid-template-columns: repeat(2, minmax(0, 1fr))
+      gap: 10px
+    .scl-card__body
+      padding: 11px 10px 6px
+    .scl-card__body h2
+      font-size: 14px
+    .scl-card__preview
+      min-height: 140px
+      padding: 10px
+    .scl-card__footer
+      align-items: flex-start
+      flex-direction: column
+    .scl-card__actions
+      margin-left: 0
+    .scl-card__actions .scl-button
+      padding-left: 6px
+      padding-right: 6px
+    .scl-dialog__heading, .scl-dialog__body, .scl-dialog__footer
+      padding: 17px
+
+@media (max-width: 360px)
+  .scratch-library-manage
+    .scl-grid
+      grid-template-columns: minmax(0, 1fr)
+    .scl-category
+      padding: 11px
+      gap: 8px
+      svg
+        width: 27px
+        height: 27px
+        flex-basis: 27px
+
+@media (prefers-reduced-motion: reduce)
+  .scratch-library-manage .scl-category
+    transition: none

@@ -62,6 +62,7 @@ function setup(html, handler = () => config(), project = () => new Blob(['saved 
     const module = { exports: {} };
     vm.runInNewContext(compiled, {
         module, exports: module.exports, document: window.document, window, location: window.location,
+        UiContext: { scratch: { editorVersion: 'a'.repeat(64) } },
         URL, URLSearchParams, AbortController, Blob, ArrayBuffer,
         crypto: { randomUUID: () => `request-${++nextId}` },
         IntersectionObserver: Observer,
@@ -146,6 +147,7 @@ describe('Scratch work cover previews', () => {
             await flush();
             const frame = ui.frames[0];
             assert.equal(frame.getAttribute('sandbox'), 'allow-scripts');
+            assert(frame.src.startsWith(`${origin}/scratch-editor/editor.html?v=${'a'.repeat(64)}&lang=zh-cn#`));
             ui.message(frame, { type: 'ready' }, { source: ui.window });
             ui.message(frame, { type: 'ready' }, { origin });
             ui.message(frame, { type: 'ready', channel: 'unrelated' });

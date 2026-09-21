@@ -1,6 +1,8 @@
 import { NamedPage } from 'vj/misc/Page';
+import { createScratchPresetPicker } from '../utils/scratch-preset-picker';
 
 interface ScratchEditorConfig {
+  editorVersion: string;
   workId: string;
   title: string;
   projectUrl: string | null;
@@ -10,6 +12,7 @@ interface ScratchEditorConfig {
   readOnly: boolean;
   revision: number;
   maxFileSize: number;
+  libraryUrl?: string;
 }
 
 export default new NamedPage('scratch_editor', () => {
@@ -19,6 +22,8 @@ export default new NamedPage('scratch_editor', () => {
   if (!config || !frame || !status) return;
   const save = document.querySelector<HTMLButtonElement>('[data-scratch-save]');
   const submit = document.querySelector<HTMLButtonElement>('[data-scratch-submit]');
+  const library = document.querySelector<HTMLButtonElement>('[data-scratch-library]');
+  let presetBusy = false;
   const channel = crypto.randomUUID();
   let revision = config.revision;
   let title = config.title;
@@ -70,12 +75,21 @@ export default new NamedPage('scratch_editor', () => {
     status.dataset.phase = error ? 'error' : pending ? 'busy' : loaded ? 'done' : 'loading';
   };
   const buttons = () => {
-    if (save) save.disabled = !loaded || !!pending;
-    if (submit) submit.disabled = !loaded || !!pending;
+    if (save) save.disabled = !loaded || !!pending || presetBusy;
+    if (submit) submit.disabled = !loaded || !!pending || presetBusy;
+    if (library) library.disabled = !loaded || !!pending || presetBusy;
   };
   const send = (type: string, payload: object = {}, transfer: Transferable[] = []) => {
     frame.contentWindow?.postMessage({ channel, type, ...payload }, '*', transfer);
   };
+  const presetPicker = !config.readOnly && config.libraryUrl ? createScratchPresetPicker({
+    libraryUrl: config.libraryUrl, send,
+    onBusy: (busy) => { presetBusy = busy; buttons(); },
+    onStatus: show,
+  }) : null;
+  library?.addEventListener('click', () => {
+    if (loaded && !pending && !presetBusy && presetPicker) send('requestPresetLibrary');
+  });
   const sameOriginUrl = (value: string) => {
     const url = new URL(value, location.href);
     if (url.origin !== location.origin) throw new Error('编辑器接口地址无效');
@@ -88,7 +102,7 @@ export default new NamedPage('scratch_editor', () => {
     buttons();
   };
   const saveProject = (shouldSubmit: boolean) => {
-    if (!loaded || pending || config.readOnly || (shouldSubmit && !config.canSubmit)) return;
+    if (!loaded || pending || presetBusy || config.readOnly || (shouldSubmit && !config.canSubmit)) return;
     if (!title || title.length > 120) {
       show('请给作品起一个 1～120 字的名字，再保存。', true);
       return;
@@ -113,6 +127,11 @@ export default new NamedPage('scratch_editor', () => {
   window.addEventListener('message', async (event: MessageEvent) => {
     if (event.source !== frame.contentWindow || event.origin !== 'null' || event.data?.channel !== channel) return;
     const message = event.data;
+    if (loaded && pending && message.type === 'openPresetLibrary') {
+      show('正在保存作品，完成后再添加老师素材。');
+      return;
+    }
+    if (loaded && !pending && presetPicker?.receive(message)) return;
     try {
       if (message.type === 'ready' && !loaded && !initializing && !loadFailed) {
         initializing = true;
@@ -189,7 +208,7 @@ export default new NamedPage('scratch_editor', () => {
     }
   });
   window.addEventListener('beforeunload', (event) => {
-    if (!dirty && !pending) return;
+    if (!dirty && !pending && !presetBusy) return;
     event.preventDefault();
     event.returnValue = '';
   });
@@ -197,5 +216,6 @@ export default new NamedPage('scratch_editor', () => {
     if ((dirty || pending) && !window.confirm('作品还有未保存的修改，确定离开吗？')) event.preventDefault();
   });
   // A dedicated path keeps the editor's many MB of assets out of ordinary pages.
-  frame.src = `/scratch-editor/editor.html?lang=zh-cn#channel=${encodeURIComponent(channel)}`;
+  // Keep v first: older OneByOne service workers bypass URLs containing ?v=.
+  frame.src = `/scratch-editor/editor.html?v=${encodeURIComponent(config.editorVersion || 'unavailable')}&lang=zh-cn#channel=${encodeURIComponent(channel)}`;
 });

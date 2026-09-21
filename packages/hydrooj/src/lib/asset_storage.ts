@@ -66,8 +66,8 @@ export function eligibleAsset(path: string, contentType: string) {
     if (typeof path !== 'string' || /[\\\u0000-\u001f?#%]/.test(path)
         || path.split('/').some((part) => !part || part === '.' || part === '..')) return false;
     const ext = extname(path).toLowerCase();
-    if (ext === '.sb3') return /^scratch\/[^/]+\/[a-f0-9]{24}\.sb3$/.test(path)
-        && ['application/octet-stream', 'application/x.scratch.sb3'].includes(contentType);
+    if (['.sb3', '.sprite3'].includes(ext)) return /^scratch\/[^/]+\/[a-f0-9]{24}\.(?:sb3|sprite3)$/.test(path)
+        && ['application/octet-stream', `application/x.scratch${ext}`].includes(contentType);
     if (!TYPES[ext]?.includes(contentType)) return false;
     return /^scratch\/[^/]+\/[a-f0-9]{24}\.[a-z0-9]+$/.test(path)
         || /^user\/\d+\/[^/]+$/.test(path)
@@ -81,7 +81,7 @@ export function eligibleAsset(path: string, contentType: string) {
 }
 
 export function validRemoteAsset(asset: RemoteAsset) {
-    return asset && /^media\/v1\/[a-f0-9]{64}\.(png|jpe?g|gif|webp|avif|svg|ico|mp3|ogg|wav|m4a|sb3)$/.test(asset.key)
+    return asset && /^media\/v1\/[a-f0-9]{64}\.(png|jpe?g|gif|webp|avif|svg|ico|mp3|ogg|wav|m4a|sb3|sprite3)$/.test(asset.key)
         && /^[a-f0-9]{64}$/.test(asset.sha256) && Number.isSafeInteger(asset.size) && asset.size > 0
         && typeof asset.contentType === 'string' && typeof asset.bucket === 'string' && typeof asset.region === 'string';
 }
@@ -205,7 +205,7 @@ export class AssetStorage {
     private async putUnlocked(path: string, file: string | Buffer | Readable, contentType: string, onPrepared?: (asset: RemoteAsset) => Promise<void>) {
         const config = this.config(true);
         if (!config.storageEnabled || !eligibleAsset(path, contentType)) throw new Error('File is not enabled for OSS primary storage');
-        const maxBytes = Math.min(this.options.maxBytes ?? 512 * 1024 * 1024, path.endsWith('.sb3') ? 20 * 1024 * 1024 : Infinity);
+        const maxBytes = Math.min(this.options.maxBytes ?? 512 * 1024 * 1024, /\.(?:sb3|sprite3)$/.test(path) ? 20 * 1024 * 1024 : Infinity);
         const hash = createHash('sha256');
         const md5 = createHash('md5');
         let size = 0;
@@ -244,7 +244,7 @@ export class AssetStorage {
             await client.send(new PutObjectCommand({
                 Bucket: remote.bucket, Key: remote.key, Body: input, ContentLength: size,
                 ContentType: contentType, ContentMD5: md5.digest('base64'), Metadata: { sha256: remote.sha256 },
-                ...(path.endsWith('.sb3') ? { ContentDisposition: 'attachment' } : {}),
+                ...(/\.(?:sb3|sprite3)$/.test(path) ? { ContentDisposition: 'attachment' } : {}),
                 CacheControl: 'private, max-age=0',
             }), { abortSignal: AbortSignal.timeout(this.options.timeoutMs ?? 300_000) });
             await this.verify(remote);

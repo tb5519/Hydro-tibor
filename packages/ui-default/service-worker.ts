@@ -90,7 +90,14 @@ self.addEventListener('notificationclick', (event) => {
 const PRECACHE = 'ui-resources-cache';
 const DO_NOT_PRECACHE = ['.worker.js', 'fonts'];
 
+function isScratchEntry(path: string) {
+  return /\/scratch-editor\/[^/]+\.html$/.test(new URL(path, self.location.origin).pathname);
+}
+
 function shouldCachePath(path: string) {
+  // The HTML entry selects a build. Cache only its versioned JS/assets, so
+  // deployments cannot leave students running an old editor indefinitely.
+  if (isScratchEntry(path)) return false;
   // Signed private media must obey HTTP expiry and account changes; never persist it in CacheStorage.
   const parsed = new URL(path, self.location.origin);
   if (/^\/media\/(?:decorations\/)?v1\//.test(parsed.pathname)
@@ -145,12 +152,19 @@ self.addEventListener('install', (event) => event.waitUntil((async () => {
 })()));
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
-  const valid = [PRECACHE];
-  caches.keys().then((names) => names
-    .filter((name) => name.startsWith('precache-'))
-    .filter((name) => !valid.includes(name))
-    .map((p) => caches.delete(p)));
+  event.waitUntil((async () => {
+    const names = await caches.keys();
+    await Promise.all(names.map(async (name) => {
+      if (name.startsWith('precache-')) await caches.delete(name);
+      else if (name === PRECACHE || name === 'assets') {
+        const cache = await caches.open(name);
+        const entries = await cache.keys();
+        await Promise.all(entries.filter((entry) => isScratchEntry(entry.url))
+          .map((entry) => cache.delete(entry)));
+      }
+    }));
+    await self.clients.claim();
+  })());
 });
 
 async function get(request: Request) {

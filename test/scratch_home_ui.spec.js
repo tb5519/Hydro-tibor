@@ -56,6 +56,7 @@ before(async () => {
     await model.apply({ on() {} });
     handlers = load('packages/hydrooj/src/handler/scratch.ts', {
         '../context': {}, '../error': {}, '../lib/domain_type': {}, '../lib/scratch_files': {},
+        '../lib/scratch_editor_assets': { getScratchEditorVersion: () => 'a'.repeat(64) },
         '../lib/asset_delivery': { tryRedirectAsset: () => false },
         '../model/builtin': {}, '../model/domain': {}, '../model/scratch': model,
         '../model/storage': {}, '../model/user': {}, '../service/server': { Handler: class {} },

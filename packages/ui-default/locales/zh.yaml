@@ -1322,3 +1322,7 @@ scratch_materials: Scratch 上课素材
 scratch_material: Scratch 素材管理
 scratch_submission: Scratch 提交与反馈
 scratch_editor: Scratch 在线编辑器
+
+domain_scratch_library: 预制素材库
+domain_scratch_library_item: 管理预制素材
+scratch_library: 预制素材库

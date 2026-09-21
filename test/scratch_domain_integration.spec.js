@@ -207,7 +207,7 @@ describe('Scratch exclusion in shared RP calculation and reads', () => {
     });
 });
 
-function editorHarness(readOnly = false) {
+function editorHarness(readOnly = false, editorVersion = 'a'.repeat(64)) {
     const listeners = {};
     const outgoing = [];
     const requests = [];
@@ -226,8 +226,9 @@ function editorHarness(readOnly = false) {
         '[data-scratch-save]': save, '[data-scratch-submit]': submit, '[data-scratch-back]': element() };
     const page = load('../../ui-default/pages/scratch_editor.page.ts', {
         'vj/misc/Page': { NamedPage: class { constructor(_, callback) { this.run = callback; } } },
+        '../utils/scratch-preset-picker': { createScratchPresetPicker: () => { throw new Error('No preset library configured in this save-bridge fixture'); } },
     }, {
-        UiContext: { scratchEditor: { workId: 'work-1', title: '作品', projectUrl: null,
+        UiContext: { scratchEditor: { editorVersion, workId: 'work-1', title: '作品', projectUrl: null,
             saveUrl: '/d/art/scratch/work/work-1/save', revision: 0, maxFileSize: 1024, canSubmit: true, readOnly } },
         document: { querySelector: (selector) => elements[selector] },
         window: { addEventListener: (name, listener) => { listeners[name] = listener; }, confirm: () => false },
@@ -252,6 +253,20 @@ function editorHarness(readOnly = false) {
 }
 
 describe('isolated Scratch editor save bridge', () => {
+    it('versions editor and read-only entries before language so old service workers bypass them', () => {
+        for (const readOnly of [false, true]) {
+            const first = editorHarness(readOnly, 'a'.repeat(64));
+            const next = editorHarness(readOnly, 'b'.repeat(64));
+            assert(first.frame.src.startsWith(`/scratch-editor/editor.html?v=${'a'.repeat(64)}&lang=zh-cn#`));
+            assert(next.frame.src.startsWith(`/scratch-editor/editor.html?v=${'b'.repeat(64)}&lang=zh-cn#`));
+            const forged = editorHarness(readOnly, '#channel=forged&x=https://other.test');
+            const url = new URL(forged.frame.src, 'https://onebyone.test');
+            assert.equal(url.origin, 'https://onebyone.test');
+            assert.equal(url.searchParams.get('v'), '#channel=forged&x=https://other.test');
+            assert.notEqual(url.hash, '#channel=forged');
+        }
+    });
+
     it('rejects foreign windows/origins and never gives a read-only preview a save action', async () => {
         const editor = editorHarness(true);
         await editor.message('ready', {}, { source: {} });

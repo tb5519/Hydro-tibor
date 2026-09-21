@@ -47,6 +47,7 @@ function browser(t, html, url) {
 
 function player(t, config = {}) {
     const settings = {
+        editorVersion: 'a'.repeat(64),
         projectUrl: '/d/art/scratch/share/public-token/project', title: '小猫的故事', maxFileSize: 20 * 1024 * 1024, ...config,
     };
     const html = env.render('scratch_share.html', { title: settings.title, UiContext: { scratchPlayer: settings } });
@@ -125,6 +126,8 @@ describe('public Scratch player template and bridge', () => {
         assert.equal(h.frame.getAttribute('referrerpolicy'), 'no-referrer');
         assert(!h.document.documentElement.outerHTML.includes('window.UiContext'));
         assert.match(h.frame.src, /#channel=test-player-channel$/);
+        assert(h.frame.src.startsWith(`https://onebyone.test/scratch-editor/editor.html?v=${'a'.repeat(64)}&lang=zh-cn#`));
+        assert.equal(h.document.querySelector('script[src]').getAttribute('src'), `/scratch-player.js?v=20260921-2-${'a'.repeat(64)}`);
         await h.message('ready', {}, { source: h.window });
         await h.message('ready', {}, { origin: 'https://onebyone.test' });
         await h.message('ready', { channel: 'foreign-channel' });

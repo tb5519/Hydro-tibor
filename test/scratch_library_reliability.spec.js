@@ -74,10 +74,10 @@ it('catalog failure shows a retry state and stale or unmounted results never ove
     assert.equal(c.state.data, null);
 });
 
-function loadComponent(file, libraryHelpers) {
+function loadComponent(file, libraryHelpers, globals = {}) {
     const raw = execFileSync('git', ['show', `HEAD:${file}`], { cwd: workspace, encoding: 'utf8' });
     class Component { constructor(props) { this.props = props; } setState(update) { Object.assign(this.state, update); } }
-    const React = { Component, PureComponent: Component };
+    const React = { Component, PureComponent: Component, createElement: (type, props, ...children) => ({ type, props, children }) };
     const type = () => type;
     type.isRequired = type;
     const PropTypes = new Proxy(type, { get: (_target, key) => key === '__esModule' ? false : type });
@@ -93,7 +93,7 @@ function loadComponent(file, libraryHelpers) {
         return {};
     };
     vm.runInNewContext(transformSync(patch(file, raw), { format: 'cjs', loader: 'jsx' }).code,
-        { module, exports: module.exports, require: requireMock, setTimeout, clearTimeout, Promise, console });
+        { module, exports: module.exports, require: requireMock, setTimeout, clearTimeout, Promise, console, ...globals });
     return module.exports.default;
 }
 
@@ -133,6 +133,23 @@ it('chooser stays open on failure, prevents duplicate pending inserts and closes
         assert.match(c.state.selectionError, /重试/); assert.equal(close, 0);
         const retry = c.handleSelect(0); settle.resolve(); await retry;
         assert.equal(close, 1); assert.equal(c.state.selecting, false);
+    });
+
+it('all four native libraries offer a teacher preset action with the correct kind and close only when accepted',
+    { skip: !workspace }, () => {
+        for (const kind of ['costume', 'sprite', 'backdrop', 'sound']) {
+            const opened = []; let close = 0; let accepted = false;
+            const C = loadComponent(`src/containers/${kind}-library.jsx`, helpers(), {
+                window: { onebyoneOpenPresetLibrary(value) { opened.push(value); return accepted; } },
+            });
+            const c = new C({ vm: fakeVM(), intl: { formatMessage: value => value.defaultMessage },
+                onRequestClose: () => { close++; } });
+            const action = c.render().props.onOpenPresetLibrary;
+            assert.equal(typeof action, 'function');
+            action(); assert.equal(close, 0);
+            accepted = true; action(); assert.equal(close, 1);
+            assert.deepEqual(opened, [kind, kind]);
+        }
     });
 
 it('the global search autoloader creates no floating button or shortcut on the Scratch editor page', () => {

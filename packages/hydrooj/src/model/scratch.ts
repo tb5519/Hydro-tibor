@@ -5,7 +5,7 @@ import { Context } from '../context';
 import { NotFoundError, PermissionError, ValidationError } from '../error';
 import type { RemoteAsset } from '../interface';
 import { queueAssetMirror } from '../lib/asset_delivery';
-import { validateScratchArchive, validateScratchMaterial, validateScratchThumbnail } from '../lib/scratch_files';
+import { SCRATCH_PRESET_KINDS, ScratchPresetKind, validateScratchArchive, validateScratchMaterial, validateScratchPreset, validateScratchThumbnail } from '../lib/scratch_files';
 import { Logger } from '../logger';
 import db from '../service/db';
 import storage from './storage';
@@ -27,12 +27,16 @@ export interface ScratchSubmission extends ScratchVersion {
 }
 export interface ScratchFile extends ScratchDoc {
     path: string; filename: string; size: number; mime: string;
-    workId?: ObjectId; purpose?: 'thumbnail'; assignmentId?: ObjectId; materialId?: ObjectId;
+    workId?: ObjectId; purpose?: 'thumbnail'; assignmentId?: ObjectId; materialId?: ObjectId; presetId?: ObjectId;
 }
 export interface ScratchMaterial extends ScratchDoc {
     title: string; category: string; recipientIds: number[]; fileId: ObjectId;
     fileName: string; size: number; assignmentId: ObjectId | null;
 }
+export interface ScratchPreset extends ScratchDoc {
+    title: string; kind: ScratchPresetKind; fileId: ObjectId; filename: string; mime: string; size: number;
+}
+export const SCRATCH_MAX_PRESETS = 500;
 export interface ScratchShare {
     _id: string; domainId: string; workId: ObjectId; fileId: ObjectId; revision: number; title: string; createdAt: Date;
 }
@@ -41,16 +45,25 @@ export interface ScratchShare {
 // background mirror must use this same identity, including for shared snapshots.
 export function fileAssetSource(file: ScratchFile, remoteAsset?: RemoteAsset) {
     const thumbnail = file.purpose === 'thumbnail';
-    if (thumbnail ? !(file.mime === 'image/png' && file.path.endsWith('.png'))
-        : !(file.mime === 'application/x.scratch.sb3' && file.path.endsWith('.sb3'))) return null;
+    const preset = !!file.presetId;
+    const archive = file.mime === 'application/x.scratch.sb3' || file.mime === 'application/x.scratch.sprite3';
+    const presetTypes = {
+        sprite3: 'application/x.scratch.sprite3', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+        webp: 'image/webp', svg: 'image/svg+xml', wav: 'audio/wav', mp3: 'audio/mpeg',
+    };
+    const extension = /\.([a-z0-9]+)$/.exec(file.path)?.[1];
+    if (preset ? presetTypes[extension] !== file.mime
+        || file.path !== `scratch/${file.domainId}/${file._id}.${extension}`
+        : thumbnail ? !(file.mime === 'image/png' && file.path.endsWith('.png'))
+            : !(file.mime === 'application/x.scratch.sb3' && file.path.endsWith('.sb3'))) return null;
     return {
         path: file.path,
         meta: {
             etag: file._id.toHexString(), size: file.size, lastModified: file.createdAt,
-            'Content-Type': thumbnail ? 'image/png' : 'application/octet-stream',
+            'Content-Type': archive ? 'application/octet-stream' : file.mime,
             ...(remoteAsset ? { remoteAsset } : {}),
         },
-        contentDisposition: thumbnail ? 'inline' : 'attachment; filename="project.sb3"',
+        contentDisposition: thumbnail ? 'inline' : preset ? 'attachment' : 'attachment; filename="project.sb3"',
         load: () => storage.get(file.path),
     };
 }
@@ -74,6 +87,7 @@ declare module '../service/db' {
         'scratch.submission': ScratchSubmission;
         'scratch.file': ScratchFile;
         'scratch.material': ScratchMaterial;
+        'scratch.preset': ScratchPreset;
         'scratch.share': ScratchShare;
         'scratch.quota': { _id: string, bytes: number };
     }
@@ -85,6 +99,7 @@ export const versions = db.collection('scratch.version');
 export const submissions = db.collection('scratch.submission');
 export const files = db.collection('scratch.file');
 export const materials = db.collection('scratch.material');
+export const presets = db.collection('scratch.preset');
 export const shares = db.collection('scratch.share');
 export const quotas = db.collection('scratch.quota');
 
@@ -130,7 +145,10 @@ export async function getMaterial(actor: ScratchActor, _id: ObjectId) {
 export async function getFile(actor: ScratchActor, _id: ObjectId) {
     const doc = await files.findOne({ domainId: actor.domainId, _id });
     if (!doc) throw new NotFoundError('Scratch 文件');
-    if (doc.materialId) await getMaterial(actor, doc.materialId);
+    if (doc.presetId) {
+        const preset = await getPreset(actor, doc.presetId);
+        if (!preset.fileId.equals(doc._id)) throw new NotFoundError('Scratch 预制素材');
+    } else if (doc.materialId) await getMaterial(actor, doc.materialId);
     else if (doc.workId) await getWork(actor, doc.workId);
     else if (doc.assignmentId) {
         const assignment = await getAssignment(actor, doc.assignmentId);
@@ -173,10 +191,10 @@ async function releaseFileBytes(actor: ScratchActor, size: number) {
 }
 
 async function putFile(
-    actor: ScratchActor, upload: { filepath: string, originalFilename?: string }, relation: Partial<ScratchFile>, project: boolean,
+    actor: ScratchActor, upload: { filepath: string, originalFilename?: string }, relation: Partial<ScratchFile>, project: boolean, presetKind?: ScratchPresetKind,
 ) {
     const filename = cleanText(upload.originalFilename?.split(/[\\/]/).pop(), 'file', 200, project ? '作品.sb3' : '素材.txt');
-    const meta = project
+    const meta = presetKind ? await validateScratchPreset(upload.filepath, filename, presetKind) : project
         ? { size: await validateScratchArchive(upload.filepath), mime: 'application/x.scratch.sb3', extension: '.sb3' }
         : await validateScratchMaterial(upload.filepath, filename);
     await reserveFileBytes(actor, meta.size);
@@ -218,6 +236,7 @@ async function removeFile(actor: ScratchActor, _id: ObjectId) {
         versions.countDocuments({ domainId: actor.domainId, fileId: _id }),
         submissions.countDocuments({ domainId: actor.domainId, fileId: _id }),
         shares.countDocuments({ domainId: actor.domainId, fileId: _id }),
+        presets.countDocuments({ domainId: actor.domainId, fileId: _id }),
     ]);
     if (references.some(Boolean)) return;
     await storage.del([doc.path], actor.uid);
@@ -341,6 +360,50 @@ export async function deleteMaterial(actor: ScratchActor, _id: ObjectId) {
     requireTeacher(actor);
     const doc = await getMaterial(actor, _id);
     await materials.deleteOne({ domainId: actor.domainId, _id });
+    await removeFile(actor, doc.fileId);
+}
+
+
+export function listPresets(actor: ScratchActor) {
+    return presets.find({ domainId: actor.domainId }).sort({ createdAt: -1, _id: -1 }).limit(SCRATCH_MAX_PRESETS);
+}
+export async function getPreset(actor: ScratchActor, _id: ObjectId) {
+    const doc = await presets.findOne({ domainId: actor.domainId, _id });
+    if (!doc) throw new NotFoundError('Scratch 预制素材');
+    return doc;
+}
+export async function createPreset(
+    actor: ScratchActor, input: { title: string, kind: ScratchPresetKind }, upload: { filepath: string, originalFilename?: string },
+) {
+    requireTeacher(actor);
+    if (!SCRATCH_PRESET_KINDS.includes(input.kind)) throw new ValidationError('kind');
+    const title = cleanText(input.title, 'title', 120);
+    if (await presets.countDocuments({ domainId: actor.domainId }) >= SCRATCH_MAX_PRESETS) {
+        throw new ValidationError('file', null, '每个 Scratch 域最多保留 500 个预制素材，请先清理不需要的素材。');
+    }
+    const doc: ScratchPreset = { ...base(actor), title, kind: input.kind, fileId: null, filename: '', mime: '', size: 0 };
+    const file = await putFile(actor, upload, { presetId: doc._id }, false, input.kind);
+    Object.assign(doc, { fileId: file._id, filename: file.filename, mime: file.mime, size: file.size });
+    try {
+        await presets.insertOne(doc);
+    } catch (error) {
+        await removeFile(actor, file._id);
+        throw error;
+    }
+    return doc;
+}
+export async function renamePreset(actor: ScratchActor, _id: ObjectId, title: string) {
+    requireTeacher(actor);
+    const doc = await presets.findOneAndUpdate({ domainId: actor.domainId, _id }, {
+        $set: { title: cleanText(title, 'title', 120), updatedAt: new Date() },
+    }, { returnDocument: 'after' });
+    if (!doc) throw new NotFoundError('Scratch 预制素材');
+    return doc;
+}
+export async function deletePreset(actor: ScratchActor, _id: ObjectId) {
+    requireTeacher(actor);
+    const doc = await getPreset(actor, _id);
+    await presets.deleteOne({ domainId: actor.domainId, _id });
     await removeFile(actor, doc.fileId);
 }
 
@@ -557,7 +620,7 @@ export async function apply(ctx: Context) {
     ctx.on('domain/delete', async (domainId) => {
         const docs = await files.find({ domainId }).toArray();
         await storage.del(docs.map((doc) => doc.path));
-        await Promise.all([assignments, works, versions, submissions, materials, files, shares].map((collection) => collection.deleteMany({ domainId })));
+        await Promise.all([assignments, works, versions, submissions, materials, presets, files, shares].map((collection) => collection.deleteMany({ domainId })));
         await quotas.deleteOne({ _id: domainId });
     });
     await Promise.all([
@@ -568,6 +631,7 @@ export async function apply(ctx: Context) {
         db.ensureIndexes(versions, { key: { domainId: 1, workId: 1, revision: -1 }, name: 'scratch_versions', unique: true }),
         db.ensureIndexes(submissions, { key: { domainId: 1, workId: 1, revision: -1 }, name: 'scratch_submissions', unique: true },
             { key: { domainId: 1, assignmentId: 1, createdAt: -1 }, name: 'scratch_assignment_submissions' }),
+        db.ensureIndexes(presets, { key: { domainId: 1, createdAt: -1, _id: -1 }, name: 'scratch_presets' }),
         db.ensureIndexes(materials, { key: { domainId: 1, category: 1 }, name: 'scratch_materials' }),
         db.ensureIndexes(files, { key: { domainId: 1, workId: 1 }, name: 'scratch_files' }),
         db.ensureIndexes(shares, { key: { domainId: 1, workId: 1, revision: 1 }, name: 'scratch_share_revision', unique: true },

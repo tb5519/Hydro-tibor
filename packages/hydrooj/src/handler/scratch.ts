@@ -4,6 +4,7 @@ import { Context } from '../context';
 import { CsrfTokenError, NotFoundError, PermissionError, ValidationError } from '../error';
 import { tryRedirectAsset } from '../lib/asset_delivery';
 import { isScratchDomain } from '../lib/domain_type';
+import { getScratchEditorVersion } from '../lib/scratch_editor_assets';
 import { SCRATCH_MAX_FILE_SIZE } from '../lib/scratch_files';
 import { PERM, PRIV } from '../model/builtin';
 import domain from '../model/domain';
@@ -37,7 +38,7 @@ export class ScratchHandler extends Handler {
             }
         }
         this.actor = { domainId: this.domain._id, uid: this.user._id, isTeacher };
-        this.UiContext.scratch = { domainId: this.domain._id, isTeacher };
+        this.UiContext.scratch = { domainId: this.domain._id, isTeacher, editorVersion: getScratchEditorVersion() };
         this.response.addHeader('Cache-Control', 'private, no-store');
     }
 
@@ -290,8 +291,10 @@ export class ScratchEditorHandler extends ScratchHandler {
         const readOnly = !!submission || work.owner !== this.user._id || query.readOnly === 'true' || query.readonly === 'true';
         const fileId = submission?.fileId || work.currentFileId || assignment?.templateFileId;
         this.UiContext.scratchEditor = {
+            editorVersion: getScratchEditorVersion(),
             workId: work._id.toHexString(), title: work.title, projectUrl: fileId ? this.url('scratch_file', { fileId }) : null,
             saveUrl: readOnly ? null : this.url('scratch_save', { workId: work._id }),
+            libraryUrl: readOnly ? null : this.url('scratch_library'),
             backUrl: submission ? this.url('scratch_submission', { submissionId: submission._id }) : this.url('scratch_work', { workId: work._id }),
             canSubmit: !readOnly && !!assignment && (!assignment.deadline || assignment.deadline.getTime() >= Date.now()),
             readOnly, revision: work.revision, maxFileSize: SCRATCH_MAX_FILE_SIZE,
@@ -376,6 +379,7 @@ export class ScratchShareHandler extends Handler {
     async get() {
         const { share } = this.shared;
         this.UiContext.scratchPlayer = {
+            editorVersion: getScratchEditorVersion(),
             title: share.title, projectUrl: this.url('scratch_share_project', { token: share._id }), maxFileSize: SCRATCH_MAX_FILE_SIZE,
         };
         this.response.template = 'scratch_share.html';

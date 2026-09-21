@@ -3,6 +3,9 @@
 <div class="scratch-editor-shell {{ 'scratch-editor-player' if UiContext.scratchEditor.readOnly }}" data-scratch-editor>
   {% if not UiContext.scratchEditor.readOnly %}
   <div class="scratch-editor-actions" aria-label="作品保存">
+    <button type="button" class="scratch-editor-button" data-scratch-library disabled>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v13H4zM3 4h18v3H3zM9 11h6"/></svg><span>老师素材</span>
+    </button>
     <button type="button" class="scratch-editor-button scratch-editor-save" data-scratch-save disabled>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2Z"/><path d="M7 3v6h10V3M7 21v-8h10v8"/></svg><span>保存作品</span>
     </button>
@@ -74,5 +77,38 @@
 @keyframes scratch-status-fade{0%,75%{opacity:1}100%{opacity:0;visibility:hidden}}
 @media(max-width:600px){.scratch-editor-actions{right:6px;gap:5px}.scratch-editor-button{padding:8px 9px;font-size:12px;gap:4px}.scratch-editor-button svg{display:none}}
 @media(max-width:767px){.page--scratch_editor .main{padding-top:0}.scratch-editor-shell{height:calc(100dvh - 62px)}}
+.scratch-preset-picker{width:min(860px,calc(100vw - 32px));max-height:calc(100dvh - 40px);padding:28px;border:0;border-radius:24px;background:#f8fbff;color:#253b5c;box-shadow:0 24px 100px #15346640;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+.scratch-preset-picker::backdrop{background:#17305480;backdrop-filter:blur(3px)}
+.scratch-preset-picker *{box-sizing:border-box}
+.scratch-preset-picker header{display:flex;justify-content:space-between;align-items:center;gap:16px}
+.scratch-preset-picker header p{margin:0 0 4px;color:#6783ab;font-size:12px;letter-spacing:.08em}
+.scratch-preset-picker h2{margin:0;font-size:28px;font-weight:750;color:#253b5c}
+.scratch-preset-picker button{font:inherit;cursor:pointer}
+.scratch-preset-picker button:disabled{opacity:.55;cursor:wait}
+.scratch-preset-picker button:focus-visible,.scratch-preset-picker input:focus-visible{outline:3px solid #91baff;outline-offset:3px}
+.scratch-preset-picker [data-close]{width:40px;height:40px;border:1px solid #dce7f7;border-radius:50%;background:white;color:#567191;font-size:26px;line-height:1}
+.scratch-preset-intro{margin:12px 0 22px;color:#7486a1;font-size:15px}
+.scratch-preset-controls{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.scratch-preset-tabs{display:flex;gap:6px;background:#e8effb;padding:5px;border-radius:14px}
+.scratch-preset-tabs button{padding:9px 19px;border:0;border-radius:10px;background:none;color:#5e7698;font-weight:700}
+.scratch-preset-tabs button[aria-pressed=true]{background:#2563eb;color:white;box-shadow:0 3px 8px #2563eb25}
+.scratch-preset-controls input{width:210px;min-height:42px;padding:10px 14px;border:1px solid #dce7f7;border-radius:12px;background:white;color:#253b5c;font:inherit;font-size:14px}
+.scratch-preset-feedback{min-height:32px;padding:10px 0 6px;font-size:14px;color:#526f97}
+.scratch-preset-feedback[data-error=true]{color:#b42318}
+.scratch-preset-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:14px;max-height:min(52dvh,500px);min-height:210px;overflow-y:auto;padding:4px 4px 12px;overscroll-behavior:contain}
+.scratch-preset-card{align-self:start;overflow:hidden;border:1px solid #dce7f7;border-radius:17px;background:white;transition:box-shadow .15s,border-color .15s}
+.scratch-preset-card:hover{border-color:#90b9ff;box-shadow:0 5px 18px #2c62ae15}
+.scratch-preset-add{display:flex;align-items:stretch;flex-direction:column;width:100%;gap:10px;padding:12px;border:0;background:transparent;color:#253b5c;text-align:left}
+.scratch-preset-picture{display:flex;height:112px;align-items:center;justify-content:center;overflow:hidden;border-radius:10px;background:linear-gradient(140deg,#eff5ff,#f8faff);color:#79a7f8;font-size:48px}
+.scratch-preset-picture img{display:block;max-width:100%;max-height:100%;object-fit:contain;font-size:13px;color:#8ba0bc}
+.scratch-preset-add strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;line-height:1.6}
+.scratch-preset-add-label{align-self:stretch;border-radius:9px;padding:8px;text-align:center;font-size:13px;font-weight:700;color:#2563eb;background:#edf4ff}
+.scratch-preset-listen{width:calc(100% - 24px);margin:0 12px 12px;padding:6px;border:1px solid #dce7f7;border-radius:9px;background:white;color:#52749e;font-size:13px!important}
+.scratch-preset-empty{grid-column:1/-1;align-self:center;text-align:center;padding:40px 16px}
+.scratch-preset-empty strong{display:block;font-size:18px;color:#4b6587}
+.scratch-preset-empty p{margin:12px 0;color:#8194af;font-size:14px}
+.scratch-preset-picker footer{display:flex;align-items:center;justify-content:space-between;padding-top:14px;border-top:1px solid #e3ebf7;color:#8194af;font-size:13px}
+.scratch-preset-picker footer button{border:0;background:none;color:#2563eb;padding:8px}
+@media(max-width:600px){.scratch-preset-picker{padding:20px;max-height:calc(100dvh - 24px)}.scratch-preset-picker h2{font-size:23px}.scratch-preset-tabs{width:100%;justify-content:space-between}.scratch-preset-tabs button{padding:9px 13px}.scratch-preset-controls input{width:100%}.scratch-preset-grid{grid-template-columns:repeat(2,minmax(0,1fr));max-height:45dvh;gap:10px}.scratch-preset-picture{height:90px}}
 </style>
 {% endblock %}

@@ -14,6 +14,8 @@ async function harness() {
     const state = { scratchGui: { projectTitle: '默认作品' } };
     const defaultProject = new Uint8Array([1, 2, 3]).buffer;
     let props;
+    let presetAllowed;
+    const presetRequests = [];
     const project = {
         extensionManager: { loadExtensionURL: async () => {} },
         renderer: {
@@ -56,6 +58,16 @@ async function harness() {
         '../reducers/mode': { setPlayer: (player) => ({ type: 'player', player }) },
         '../reducers/theme': { setTheme: () => ({ type: 'theme' }) },
         '../lib/themes': { Theme: { light: { set: () => ({}) } }, ACCENT_BLUE: 'blue' },
+        '../lib/onebyone-preset-import': {
+            createPresetBridge: (instance, canImport) => {
+                assert.equal(instance, project);
+                presetAllowed = canImport;
+                return {
+                    open: () => canImport(),
+                    receive: async (message) => presetRequests.push({ type: message.type, allowed: canImport() }),
+                };
+            },
+        },
         './app-target': (value) => { props = value; },
     };
     const code = transformSync(fs.readFileSync(path.resolve(__dirname, '../build/scratch/editor.jsx'), 'utf8'), {
@@ -84,10 +96,28 @@ async function harness() {
     const message = (type, data = {}, source = parent) => listeners.message({
         source, data: { type, channel: 'local-test', ...data },
     });
-    return { message, sent, calls, store, listeners, props };
+    return { message, sent, calls, store, listeners, props, presetAllowed, presetRequests };
 }
 
 describe('native Scratch editor modes', () => {
+    it('grants teacher asset import only to an initialized, loaded editable project', async () => {
+        for (const mode of ['editor', 'player', 'thumbnail']) {
+            const editor = await harness();
+            assert.equal(editor.presetAllowed(), false, 'The bridge cannot modify the default project before init');
+            await editor.message('requestPresetLibrary');
+            assert.equal(editor.presetRequests.at(-1).allowed, false);
+            await editor.message('init', { mode, readOnly: false });
+            await editor.message('importPreset', { id: 'asset' });
+            assert.equal(editor.presetRequests.at(-1).allowed, mode === 'editor');
+            const count = editor.presetRequests.length;
+            await editor.message('importPreset', { id: 'outside' }, {});
+            assert.equal(editor.presetRequests.length, count, 'A different source never reaches the import bridge');
+        }
+        const readonly = await harness();
+        await readonly.message('init', { mode: 'editor', readOnly: true });
+        assert.equal(readonly.presetAllowed(), false);
+    });
+
     it('loads a player directly into the stage, starts it, and never grants export', async () => {
         const editor = await harness();
         assert.equal(editor.props.showOpenFilePicker, null);

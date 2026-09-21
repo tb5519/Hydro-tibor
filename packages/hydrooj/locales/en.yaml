@@ -132,3 +132,7 @@ user_register: Register
 user_sudo: Entering Sudo Mode
 wiki_about: About
 wiki_help: Help
+
+domain_scratch_library: Preset Library
+domain_scratch_library_item: Manage Preset
+scratch_library: Preset Library

@@ -13,6 +13,7 @@ import {setTheme} from '../reducers/theme';
 import {Theme, ACCENT_BLUE} from '../lib/themes';
 import TWFullScreenHOC from '../lib/tw-embed-fullscreen-hoc.jsx';
 import render from './app-target';
+import {createPresetBridge} from '../lib/onebyone-preset-import';
 
 // This iframe deliberately has an opaque origin: never enable allow-same-origin.
 // No untrusted extension source can reach the VM, including imports from .sb3.
@@ -45,9 +46,12 @@ let exporting = false;
 let previewing = false;
 let mode = 'thumbnail';
 let defaultProject;
+let projectLoaded = false;
 const send = (type, payload = {}, transfer = []) => {
     if (channel && parent !== window) parent.postMessage({channel, type, ...payload}, '*', transfer);
 };
+const presets = createPresetBridge(vm, () => initialized && projectLoaded && mode === 'editor' && !readOnly, send);
+window.onebyoneOpenPresetLibrary = kind => presets.open(kind);
 // Browser confirm() and the File System Access API are unavailable to an
 // opaque sandbox. Keep local imports usable without relaxing that boundary.
 window.onebyoneConfirmProjectReplacement = () => new Promise(resolve => {
@@ -132,6 +136,10 @@ const loadPreview = async message => {
 window.addEventListener('message', async event => {
     if (event.source !== parent || !channel || event.data?.channel !== channel) return;
     const message = event.data;
+    if (message.type === 'requestPresetLibrary' || message.type === 'importPreset') {
+        await presets.receive(message);
+        return;
+    }
     try {
         if (message.type === 'init' && !initialized) {
             initialized = true;
@@ -168,6 +176,7 @@ window.addEventListener('message', async event => {
                 if (!readOnly && mode === 'editor') send('dirty');
             });
             if (mode === 'player') vm.greenFlag();
+            projectLoaded = true;
             send('loaded');
         } else if (message.type === 'preview' && initialized && mode === 'thumbnail' && readOnly) {
             await loadPreview(message);

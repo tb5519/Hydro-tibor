@@ -56,5 +56,6 @@
   });
   window.addEventListener('pagehide', () => { stopped = true; controller.abort(); clearTimeout(timer); }, { once: true });
   window.addEventListener('pageshow', (event) => { if (event.persisted) location.reload(); });
-  frame.src = `/scratch-editor/editor.html?lang=zh-cn#channel=${encodeURIComponent(channel)}`;
+  // v must be first so older site service workers bypass their entry cache.
+  frame.src = `/scratch-editor/editor.html?v=${encodeURIComponent(root.dataset.editorVersion || 'unavailable')}&lang=zh-cn#channel=${encodeURIComponent(channel)}`;
 })();
