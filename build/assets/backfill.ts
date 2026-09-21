@@ -47,7 +47,7 @@ async function runtimeDependencies(): Promise<Dependencies> {
     if (!storage?.migrateToRemote || !storage?.cleanupLocalMirror) {
         throw new Error('Asset backfill requires an initialized storage model or explicit data-only dependencies');
     }
-    const { eligibleAsset } = await import('../../packages/hydrooj/src/lib/asset_storage');
+    const { eligibleAsset } = require('../../packages/hydrooj/src/lib/asset_storage') as typeof import('../../packages/hydrooj/src/lib/asset_storage');
     return { storage, eligibleAsset };
 }
 
@@ -169,9 +169,10 @@ export async function main(args = process.argv.slice(2)) {
     const config = JSON.parse(readFileSync(values['database-config'], 'utf8'));
     const uri = config.url || config.uri || `${config.protocol || 'mongodb'}://${config.username
         ? `${encodeURIComponent(config.username)}:${encodeURIComponent(config.password || '')}@` : ''}${config.host || '127.0.0.1'}:${config.port || 27017}/${config.name || 'hydro'}`;
-    const { MongoClient } = await import('mongodb');
-    const { AssetStorage, eligibleAsset } = await import('../../packages/hydrooj/src/lib/asset_storage');
-    const { createAssetStorageModel } = await import('../../packages/hydrooj/src/lib/asset_storage_model');
+    // @hydrooj/register installs CommonJS TypeScript hooks; native import() bypasses them.
+    const { MongoClient } = require('mongodb') as typeof import('mongodb');
+    const { AssetStorage, eligibleAsset } = require('../../packages/hydrooj/src/lib/asset_storage') as typeof import('../../packages/hydrooj/src/lib/asset_storage');
+    const { createAssetStorageModel } = require('../../packages/hydrooj/src/lib/asset_storage_model') as typeof import('../../packages/hydrooj/src/lib/asset_storage_model');
     const connection = new MongoClient(uri, { serverSelectionTimeoutMS: 10_000 });
     const assetStorage = new AssetStorage({ configPath: values['asset-config'] });
     if (mode === 'apply' && !assetStorage.shouldStore('scratch/probe/000000000000000000000000.sb3', 'application/octet-stream')) {
