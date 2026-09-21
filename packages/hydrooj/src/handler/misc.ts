@@ -6,6 +6,8 @@ import {
     AccessDeniedError, FileExistsError, FileLimitExceededError, FileUploadError, NotFoundError,
     ValidationError,
 } from '../error';
+import { tryRedirectAsset } from '../lib/asset_delivery';
+import { isInlineRasterImage } from '../lib/inline_image';
 import { PRIV } from '../model/builtin';
 import * as oplog from '../model/oplog';
 import storage from '../model/storage';
@@ -99,6 +101,11 @@ export class FSDownloadHandler extends Handler {
             target,
             size: file?.size || 0,
         });
+        // Download attachments retain their original disposition. Inline raster
+        // images and account avatars use the same authenticated delivery path.
+        if ((noDisposition || /^\.avatar\.(?:jpg|jpeg|png)$/.test(filename)) && file
+            && isInlineRasterImage(filename, file)
+            && await tryRedirectAsset(this, { path: target, meta: file })) return;
         try {
             this.response.redirect = await storage.signDownloadLink(
                 target, noDisposition ? undefined : filename, false, 'user',

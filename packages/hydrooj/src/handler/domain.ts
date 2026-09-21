@@ -11,6 +11,7 @@ import {
     RoleAlreadyExistError, UserNotFoundError, ValidationError,
 } from '../error';
 import type { DomainDoc } from '../interface';
+import { tryRedirectAsset } from '../lib/asset_delivery';
 import avatar from '../lib/avatar';
 import {
     createDomainAvatarTarget, DOMAIN_AVATAR_MAX_SIZE, domainAvatarPath, isOwnedDomainAvatarPath, normalizeDomainAvatar,
@@ -339,7 +340,9 @@ class DomainAvatarImageHandler extends Handler {
     @param('filename', Types.String)
     async get({ }, filename: string) {
         const target = domainAvatarPath(this.domain._id, filename);
-        if (!await storage.getMeta(target)) throw new NotFoundError('avatar');
+        const meta = await storage.getMeta(target);
+        if (!meta) throw new NotFoundError('avatar');
+        if (await tryRedirectAsset(this, { path: target, meta: { ...meta, 'Content-Type': 'image/png' } })) return;
         this.response.body = await storage.get(target);
         this.response.type = 'image/png';
         this.response.addHeader('Cache-Control', 'public, max-age=604800, immutable');

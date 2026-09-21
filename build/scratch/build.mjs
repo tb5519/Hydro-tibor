@@ -10,6 +10,25 @@ import {fileURLToPath} from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../..');
 const upstream = JSON.parse(fs.readFileSync(path.join(here, 'upstream.json')));
+// Keep this a build-time value: no request or project data may select a script host.
+const resolveAssetBase = value => {
+    const fail = () => { throw new Error('SCRATCH_ASSET_BASE must be an HTTPS URL or a safe absolute path without credentials, query or fragment.'); };
+    if (typeof value !== 'string' || !value || /[\s\\?#]/.test(value)) return fail();
+    const absolute = /^(https:\/\/[^/?#]+)(\/[^?#]*)?$/i.exec(value);
+    let url;
+    if (absolute) {
+        try { url = new URL(value); } catch { return fail(); }
+        if (url.protocol !== 'https:' || !url.hostname || url.username || url.password || absolute[1].includes('@')) return fail();
+    } else if (!value.startsWith('/') || value.startsWith('//')) return fail();
+    // URL parsing normalizes dot segments; reject them before parsing can hide them.
+    // Simple URL-safe segments also exclude encoded separators and traversal.
+    const pathname = absolute ? absolute[2] || '/' : value;
+    if (!/^\/(?:[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*)?\/?$/.test(pathname)
+        || pathname.startsWith('//') || pathname.split('/').some(segment => segment === '.' || segment === '..')) return fail();
+    const base = url ? url.href : pathname;
+    return base.endsWith('/') ? base : `${base}/`;
+};
+const assetBase = resolveAssetBase(process.env.SCRATCH_ASSET_BASE ?? upstream.publicPath);
 const workspace = process.env.SCRATCH_BUILD_DIR || path.join(os.tmpdir(), `onebyone-turbowarp-${upstream.commit}`);
 const target = path.join(repo, 'packages/ui-default/public/scratch-editor');
 const run = (exe, args, cwd = workspace, extra = {}) => execFileSync(exe, args, {
@@ -116,7 +135,7 @@ downloaderSource = downloaderSource.replace(
 fs.writeFileSync(downloaderPath, downloaderSource);
 fs.rmSync(path.join(workspace, 'build'), {recursive: true, force: true});
 run(process.execPath, ['node_modules/webpack/bin/webpack.js', '--config', 'onebyone.webpack.cjs', '--bail'], workspace, {
-    NODE_ENV: 'production', ROOT: upstream.publicPath, CI: '1', NODE_OPTIONS: '--max-old-space-size=8192'
+    NODE_ENV: 'production', ROOT: assetBase, CI: '1', NODE_OPTIONS: '--max-old-space-size=8192'
 });
 fs.rmSync(target, {recursive: true, force: true});
 fs.mkdirSync(target, {recursive: true});
@@ -141,6 +160,8 @@ const files = Object.fromEntries(walk(target).filter(file => !file.endsWith('/bu
 ]));
 fs.writeFileSync(path.join(target, 'build-manifest.json'), `${JSON.stringify({
     ...upstream,
+    publicPath: assetBase,
+    assetBase,
     lockSHA256: sha256(lock),
     node: process.version,
     source: `${upstream.repository.replace(/\.git$/, '')}/tree/${upstream.commit}`,

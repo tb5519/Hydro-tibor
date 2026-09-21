@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
-const { before, after, describe, it } = require('node:test');
+const { before, beforeEach, after, describe, it } = require('node:test');
 const { transformSync } = require('esbuild');
 const { MongoClient, ObjectId } = require('mongodb');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -36,6 +36,27 @@ let scratchFiles;
 let deleteDomainData;
 let temp;
 const blobs = new Map();
+const remoteAssets = new Map();
+const mirrorCalls = [];
+const redirectCalls = [];
+const originReads = [];
+const readyPaths = new Set();
+let mirrorResult = () => false;
+const assetDelivery = {
+    queueAssetMirror(source) {
+        mirrorCalls.push(source);
+        return mirrorResult(source);
+    },
+    tryRedirectAsset(handler, source) {
+        redirectCalls.push(source);
+        if (!source || !readyPaths.has(source.path)) return false;
+        handler.response.status = 302;
+        handler.response.redirect = `https://media.example.test/media/v1/${source.meta.etag}.sb3?auth_key=test-signature`;
+        handler.response.addHeader('Cache-Control', 'private, no-store');
+        handler.response.addHeader('Referrer-Policy', 'no-referrer');
+        return true;
+    },
+};
 let counter = 0;
 const teacher = { domainId: 'scratch-a', uid: 10, isTeacher: true };
 const alice = { domainId: 'scratch-a', uid: 20, isTeacher: false };
@@ -63,6 +84,31 @@ function thumbnailHandler(actor, workId) {
         url: (name, { fileId }) => `/${name}/${fileId}`, limitRate: async () => {},
     });
 }
+function fileHandler(actor, fileId) {
+    const handler = new handlers.ScratchFileHandler();
+    const headers = {};
+    Object.assign(handler, {
+        actor, request: { params: { fileId: fileId.toHexString() } }, headers,
+        response: {
+            addHeader: (key, value) => { headers[key] = value; },
+            attachment: (name, bytes) => { handler.attachmentName = name; handler.response.body = bytes; },
+        },
+    });
+    return handler;
+}
+function publicProjectHandler(token, domainId = alice.domainId) {
+    const handler = new handlers.ScratchShareProjectHandler();
+    const headers = {};
+    Object.assign(handler, {
+        domain: { _id: domainId, domainType: 'scratch' }, user: { _id: 0 }, headers, context: {},
+        request: { method: 'get', params: { token } },
+        response: {
+            addHeader: (key, value) => { headers[key] = value; },
+            attachment: (name, bytes) => { handler.attachmentName = name; handler.response.body = bytes; },
+        },
+    });
+    return handler;
+}
 before(async () => {
     temp = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-backend-test-'));
     mongod = await MongoMemoryServer.create();
@@ -76,22 +122,32 @@ before(async () => {
         put: async (key, filepath) => { blobs.set(key, Buffer.isBuffer(filepath) ? filepath : fs.readFileSync(filepath)); },
         del: async (keys) => { keys.forEach((key) => blobs.delete(key)); },
         copy: async (source, dest) => { assert(blobs.has(source)); blobs.set(dest, Buffer.from(blobs.get(source))); },
-        get: async (key) => blobs.get(key),
+        get: async (key) => { originReads.push(key); return blobs.get(key); },
+        getMeta: async (key) => ({ remoteAsset: remoteAssets.get(key) }),
     };
     scratchFiles = load('packages/hydrooj/src/lib/scratch_files.ts', { '../error': errors });
     model = load('packages/hydrooj/src/model/scratch.ts', {
         '../context': {}, '../error': errors, '../lib/scratch_files': scratchFiles, '../logger': { Logger: class { warn() {} } },
+        '../lib/asset_delivery': assetDelivery,
         '../service/db': db, './storage': storage,
     });
     await model.apply({ on: (event, callback) => { if (event === 'domain/delete') deleteDomainData = callback; } });
     handlers = load('packages/hydrooj/src/handler/scratch.ts', {
         '../context': {}, '../error': errors,
+        '../lib/asset_delivery': assetDelivery,
         '../lib/domain_type': { isScratchDomain: (domain) => domain?.domainType === 'scratch' },
         '../lib/scratch_files': scratchFiles, '../model/builtin': { PERM: { PERM_EDIT_DOMAIN: 1n, PERM_VIEW_USER_PRIVATE_INFO: 2n }, PRIV: { PRIV_USER_PROFILE: 1 } },
         '../model/domain': { collUser: database.collection('domain.user') }, '../model/scratch': model,
         '../model/storage': storage,
         '../model/user': { getListForRender: async () => ({}) }, '../service/server': { Handler: class {} },
     });
+});
+beforeEach(() => {
+    mirrorCalls.length = 0;
+    redirectCalls.length = 0;
+    originReads.length = 0;
+    readyPaths.clear();
+    mirrorResult = () => false;
 });
 after(async () => {
     await client?.close();
@@ -764,5 +820,200 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         assert.equal(await model.files.countDocuments({ workId: work._id }), 0);
         assert.equal((await model.getWork(alice, work._id)).revision, 0);
         await model.saveWork(alice, work._id, 0, upload());
+    });
+});
+
+describe('Scratch permission-gated CDN delivery', () => {
+    it('passes the verified primary OSS descriptor to private and shared reads without fetching project bytes', async () => {
+        const work = await model.createWork(alice, 'OSS primary');
+        const saved = await model.saveWork(alice, work._id, 0, upload());
+        const file = await model.getFile(alice, saved.work.currentFileId);
+        const remoteAsset = {
+            key: `media/v1/${'a'.repeat(64)}.sb3`, sha256: 'b'.repeat(64), size: file.size,
+            contentType: 'application/octet-stream', bucket: 'onebyone-oss', region: 'cn-wulanchabu',
+        };
+        remoteAssets.set(file.path, remoteAsset);
+        readyPaths.add(file.path);
+        const handler = fileHandler(alice, file._id);
+        await handler.get();
+        assert.equal(handler.response.status, 302);
+        assert.equal(redirectCalls.at(-1).meta.remoteAsset, remoteAsset);
+        assert.equal(originReads.length, 0);
+        const shared = Object.assign(Object.create(handlers.ScratchShareProjectHandler.prototype), {
+            shared: { file }, response: { addHeader() {} },
+        });
+        await shared.get();
+        assert.equal(shared.response.status, 302);
+        assert.equal(redirectCalls.at(-1).meta.remoteAsset, remoteAsset);
+        assert.equal(originReads.length, 0);
+    });
+
+    it('queues immutable saved projects, thumbnails and material copies with the same identity used for reads', async () => {
+        const work = await model.createWork(alice, 'CDN identity');
+        const saved = await model.saveWork(alice, work._id, 0, upload(), false, undefined, thumbnailData().data);
+        for (const id of [saved.work.currentFileId, saved.work.thumbnailFileId]) {
+            const file = await model.getFile(alice, id);
+            const queued = mirrorCalls.find((source) => source.path === file.path);
+            assert(queued, 'successful primary storage must schedule this immutable file');
+            assert.equal(queued.meta.etag, file._id.toHexString());
+            assert.equal(queued.meta.size, file.size);
+            assert.equal(queued.meta.lastModified.getTime(), file.createdAt.getTime());
+            assert.equal(queued.meta['Content-Type'], file.purpose === 'thumbnail' ? 'image/png' : 'application/octet-stream');
+            assert.equal(queued.contentDisposition, file.purpose === 'thumbnail' ? 'inline' : 'attachment; filename="project.sb3"');
+            assert.deepEqual(queued.meta, model.fileAssetSource(file).meta);
+            assert((await queued.load()).equals(blobs.get(file.path)));
+        }
+        const material = await model.writeMaterial(teacher, { title: 'CDN copy', category: '', recipientIds: [alice.uid] }, upload());
+        const copy = await model.createWorkFromMaterial(alice, material._id);
+        const original = await model.getFile(teacher, material.fileId);
+        const copied = await model.getFile(alice, copy.currentFileId);
+        const queuedCopy = mirrorCalls.find((source) => source.path === copied.path);
+        assert(queuedCopy);
+        assert.equal(queuedCopy.meta.etag, copied._id.toHexString());
+        assert.notEqual(queuedCopy.meta.etag, original._id.toHexString());
+        assert.notEqual(queuedCopy.path, original.path);
+        assert((await queuedCopy.load()).equals(blobs.get(original.path)));
+    });
+
+    it('does not sign, mirror or read bytes before domain, owner and material-recipient authorization succeeds', async () => {
+        const work = await model.createWork(alice, 'private CDN work');
+        const saved = await model.saveWork(alice, work._id, 0, upload(), false, undefined, thumbnailData().data);
+        const material = await model.writeMaterial(teacher, { title: 'targeted CDN material', category: '', recipientIds: [alice.uid] }, upload());
+        for (const fileId of [saved.work.currentFileId, saved.work.thumbnailFileId, material.fileId]) {
+            const file = await model.getFile(alice, fileId);
+            readyPaths.add(file.path);
+        }
+        mirrorCalls.length = 0;
+        for (const fileId of [saved.work.currentFileId, saved.work.thumbnailFileId, material.fileId]) {
+            await assert.rejects(fileHandler(bob, fileId).get(), PermissionError);
+            await assert.rejects(fileHandler(foreign, fileId).get(), NotFoundError);
+        }
+        await assert.rejects(model.saveWork(bob, work._id, 1, upload()), PermissionError);
+        await assert.rejects(model.createWorkFromMaterial(bob, material._id), PermissionError);
+        await assert.rejects(model.saveWork(alice, work._id, 1, upload({ targets: [] })), ValidationError);
+        assert.equal(redirectCalls.length, 0);
+        assert.equal(mirrorCalls.length, 0);
+        assert.equal(originReads.length, 0);
+    });
+
+    it('redirects only ready authorized project and thumbnail mirrors and otherwise preserves origin responses', async () => {
+        const work = await model.createWork(alice, 'CDN fallback');
+        const saved = await model.saveWork(alice, work._id, 0, upload(), false, undefined, thumbnailData().data);
+        for (const fileId of [saved.work.currentFileId, saved.work.thumbnailFileId]) {
+            const file = await model.getFile(alice, fileId);
+            const fallback = fileHandler(alice, fileId);
+            await fallback.get();
+            assert.equal(fallback.response.redirect, undefined);
+            assert(fallback.response.body.equals(blobs.get(file.path)));
+            assert.equal(fallback.response.type, file.purpose === 'thumbnail' ? 'image/png' : 'application/octet-stream');
+            assert.equal(fallback.headers['X-Content-Type-Options'], 'nosniff');
+            if (!file.purpose) assert.match(fallback.headers['Content-Security-Policy'], /sandbox/);
+            readyPaths.add(file.path);
+            const reads = originReads.length;
+            const redirected = fileHandler(alice, fileId);
+            await redirected.get();
+            assert.equal(redirected.response.status, 302);
+            assert.match(redirected.response.redirect, /^https:\/\/media\.example\.test\/media\/v1\//);
+            assert.match(redirected.response.redirect, /auth_key=/);
+            assert.equal(redirected.response.body, undefined);
+            assert.equal(redirected.headers['Cache-Control'], 'private, no-store');
+            assert.equal(redirected.headers['Referrer-Policy'], 'no-referrer');
+            assert.equal(originReads.length, reads, 'a ready mirror must not load the origin bytes again');
+        }
+    });
+
+    it('authorizes each public snapshot before redirecting, keeps HEAD bodyless, and refuses revoked or foreign tokens', async () => {
+        const work = await model.createWork(alice, 'shared CDN snapshot');
+        await model.saveWork(alice, work._id, 0, upload(project('fixed snapshot')));
+        const share = await model.shareWork(alice, work._id);
+        const file = (await model.getPublicShare(alice.domainId, share._id)).file;
+        const fallback = publicProjectHandler(share._id);
+        await fallback.prepare();
+        await fallback.get();
+        assert(fallback.response.body.equals(blobs.get(file.path)));
+        assert.equal(fallback.response.redirect, undefined);
+        assert.equal(fallback.headers['Cache-Control'], 'private, no-store');
+        await model.saveWork(alice, work._id, 1, upload(project('new private draft')));
+        readyPaths.add(file.path);
+        const redirected = publicProjectHandler(share._id);
+        await redirected.prepare();
+        const reads = originReads.length;
+        await redirected.get();
+        assert.equal(redirected.response.status, 302);
+        assert.equal(redirectCalls.at(-1).meta.etag, file._id.toHexString(), 'sharing must retain the saved snapshot identity');
+        assert.equal(originReads.length, reads);
+        const calls = redirectCalls.length;
+        const head = publicProjectHandler(share._id);
+        head.request.method = 'head';
+        await head.prepare();
+        await head.head();
+        assert.equal(head.context.status, 200);
+        assert.equal(head.response.body, '');
+        assert.equal(head.headers['Content-Length'], String(file.size));
+        assert.equal(redirectCalls.length, calls, 'HEAD must not mint a download capability');
+        await model.revokeWorkShares(alice, work._id);
+        const mirrored = mirrorCalls.length;
+        for (const handler of [publicProjectHandler(share._id), publicProjectHandler(share._id, foreign.domainId),
+            publicProjectHandler('0'.repeat(64))]) {
+            await assert.rejects(handler.prepare(), NotFoundError);
+            assert.equal(handler.response.redirect, undefined);
+        }
+        assert.equal(redirectCalls.length, calls);
+        assert.equal(mirrorCalls.length, mirrored);
+        assert.equal(originReads.length, reads);
+    });
+
+    it('keeps non-SB3 classroom materials on the original attachment route instead of disguising them as projects', async () => {
+        for (const [filename, bytes] of [['notes.txt', Buffer.from('Lesson notes')],
+            ['handout.pdf', Buffer.from('%PDF-1.7\nfixture')], ['picture.png', thumbnailData().image]]) {
+            const filepath = path.join(temp, `${counter++}-${filename}`);
+            fs.writeFileSync(filepath, bytes);
+            const queued = mirrorCalls.length;
+            const material = await model.writeMaterial(teacher, { title: filename, category: '', recipientIds: [alice.uid] },
+                { filepath, originalFilename: filename });
+            const file = await model.getFile(alice, material.fileId);
+            assert.equal(model.fileAssetSource(file), null);
+            assert.equal(mirrorCalls.length, queued);
+            readyPaths.add(file.path);
+            const attempts = redirectCalls.length;
+            const handler = fileHandler(alice, file._id);
+            await handler.get();
+            assert.equal(redirectCalls.length, attempts);
+            assert.equal(handler.response.redirect, undefined);
+            assert.equal(handler.attachmentName, filename);
+            assert.equal(handler.response.type, 'application/octet-stream');
+            assert(handler.response.body.equals(bytes));
+        }
+    });
+
+    it('requires a matching immutable file classification before making an asset source', () => {
+        const file = { _id: new ObjectId(), path: 'scratch/test/valid.sb3', size: 42,
+            mime: 'application/x.scratch.sb3', createdAt: new Date() };
+        assert(model.fileAssetSource(file));
+        assert(model.fileAssetSource({ ...file, purpose: 'thumbnail', mime: 'image/png', path: 'scratch/test/thumb.png' }));
+        for (const changed of [
+            { mime: 'application/pdf' }, { path: 'scratch/test/image.png' }, { mime: 'application/octet-stream' },
+            { purpose: 'thumbnail' }, { purpose: 'thumbnail', mime: 'image/png' },
+            { purpose: 'thumbnail', mime: 'image/svg+xml', path: 'scratch/test/thumb.png' },
+            { purpose: undefined, mime: 'image/png', path: 'scratch/test/material.png' },
+        ]) assert.equal(model.fileAssetSource({ ...file, ...changed }), null);
+    });
+
+    it('does not await mirror network work before completing the primary project save', async () => {
+        const work = await model.createWork(alice, 'nonblocking CDN save');
+        mirrorResult = () => new Promise(() => {});
+        let timeout;
+        try {
+            const saved = await Promise.race([
+                model.saveWork(alice, work._id, 0, upload()),
+                new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('save waited for mirror')), 1500); }),
+            ]);
+            assert.equal(saved.work.revision, 1);
+            assert.equal(mirrorCalls.length, 1);
+            const file = await model.getFile(alice, saved.work.currentFileId);
+            assert(blobs.has(file.path));
+        } finally {
+            clearTimeout(timeout);
+        }
     });
 });

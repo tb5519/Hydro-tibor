@@ -3,7 +3,7 @@ import { lookup } from 'mime-types';
 import moment from 'moment-timezone';
 import { ObjectId } from 'mongodb';
 import {
-    Context, Handler, NotFoundError, param, PERM, PermissionError, PRIV, STATUS, Types, ValidationError,
+    assetDelivery, Context, Handler, NotFoundError, param, PERM, PermissionError, PRIV, STATUS, Types, ValidationError,
 } from 'hydrooj';
 import {
     awardWeeklyAutomaticBadge, getAutomaticBadgeManagement, importLegacyLotteryAutomaticBadges,
@@ -494,6 +494,7 @@ abstract class BadgeAssetHandler extends Handler {
         if (!assetPath) throw new NotFoundError(`Badge ${this.assetName} ${id} is not exist!`);
         const meta = await storage.getMeta(assetPath);
         if (!meta) throw new NotFoundError(`Badge ${this.assetName} ${id} is not exist!`);
+        if (await assetDelivery.tryRedirectAsset(this, { path: assetPath, meta })) return;
         this.response.body = await storage.get(assetPath);
         this.response.type = meta['Content-Type'] || lookup(assetPath) || 'application/octet-stream';
         this.response.addHeader('Cache-Control', 'public, max-age=604800, immutable');
@@ -527,6 +528,11 @@ export class BadgeAcImageHandler extends BadgeAssetHandler {
             size: meta.size,
             load: () => storage.get(badge.acImagePath!),
         }, size) : null;
+        if (await assetDelivery.tryRedirectAsset(this, {
+            path: badge.acImagePath,
+            meta: preview ? { ...meta, size: preview.byteLength, 'Content-Type': 'image/png', remoteAsset: undefined } : meta,
+            ...(preview ? { load: () => preview, variant: `badge-ac-png-area-v1-${size}` } : {}),
+        })) return;
         this.response.body = preview || await storage.get(badge.acImagePath);
         this.response.type = preview ? 'image/png' : meta['Content-Type'] || lookup(badge.acImagePath) || 'application/octet-stream';
         const versionMatches = this.request.query.v && this.request.query.v === badge.acImageUpdatedAt;

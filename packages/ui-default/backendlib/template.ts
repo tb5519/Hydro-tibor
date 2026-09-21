@@ -8,6 +8,7 @@ import { cac } from 'cac';
 import { convert } from 'html-to-text';
 import jsesc from 'jsesc';
 import nunjucks from 'nunjucks';
+import { assetUrl } from './asset_url';
 import markdown from './markdown';
 import { ensureTag, xss } from './markdown-it-xss';
 import * as misc from './misc';
@@ -135,6 +136,7 @@ class Nunjucks extends nunjucks.Environment {
     this.addGlobal('size', misc.size);
     this.addGlobal('utils', { status, getAlphabeticId, buildQueryString: misc.buildQueryString });
     this.addGlobal('avatarUrl', avatar);
+    this.addGlobal('assetUrl', assetUrl);
     this.addGlobal('formatSeconds', misc.formatSeconds);
     this.addGlobal('model', global.Hydro.model);
     this.addGlobal('lib', { difficulty: difficultyAlgorithm });

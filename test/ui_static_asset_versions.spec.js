@@ -78,6 +78,7 @@ describe('independent static asset content versions', () => {
 // No local service, browser cache, or fixture-only HTML can hide an unversioned URL.
 const templateRoot = path.join(__dirname, '../packages/ui-default/templates');
 const env = new nunjucks.Environment(new nunjucks.FileSystemLoader(templateRoot, { noCache: true }), { autoescape: true });
+env.addGlobal('assetUrl', (value, fallback = value) => fallback);
 env.addFilter('json', JSON.stringify);
 env.addFilter('jsesc', (value) => jsesc(value, { isScriptContext: true }));
 

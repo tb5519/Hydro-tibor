@@ -20,6 +20,7 @@ class FixtureLoader extends nunjucks.Loader {
     }
 }
 const env = new nunjucks.Environment(new FixtureLoader(), { autoescape: true });
+env.addGlobal('assetUrl', (value, fallback = value) => fallback);
 const translations = {
     Username: '用户名', Password: '密码', Login: '登录', 'Remember me': '记住我',
     'Forgot password or username?': '忘记密码或用户名？',

@@ -13,6 +13,7 @@ import {
     UserNotFoundError, ValidationError, VerifyPasswordError,
 } from '../error';
 import { DomainDoc, Setting } from '../interface';
+import { tryRedirectAsset } from '../lib/asset_delivery';
 import avatar, { validate } from '../lib/avatar';
 import { getBadgeHonorWall } from '../lib/badge_honor_wall';
 import { getDomainRankingMode } from '../lib/domain_ranking';
@@ -647,6 +648,7 @@ class HomePosterImageHandler extends Handler {
         if (!config.storagePath) throw new NotFoundError('home-poster');
         const meta = await storage.getMeta(config.storagePath);
         if (!meta) throw new NotFoundError('home-poster');
+        if (await tryRedirectAsset(this, { path: config.storagePath, meta })) return;
         this.response.body = await storage.get(config.storagePath);
         this.response.type = meta['Content-Type'] || lookup(config.storagePath) || 'application/octet-stream';
         this.response.addHeader('Cache-Control', 'public, max-age=604800, immutable');
@@ -672,6 +674,7 @@ class PointLotteryPrizeImageHandler extends Handler {
         const target = `${getPointLotteryStoragePrefix(this.domain)}/${filename}`;
         const meta = await storage.getMeta(target);
         if (!meta) throw new NotFoundError(filename);
+        if (await tryRedirectAsset(this, { path: target, meta })) return;
         this.response.body = await storage.get(target);
         this.response.type = meta['Content-Type'] || lookup(target) || 'application/octet-stream';
         this.response.addHeader('Cache-Control', 'public, max-age=604800, immutable');

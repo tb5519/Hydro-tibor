@@ -233,7 +233,7 @@ function editorHarness(readOnly = false) {
         window: { addEventListener: (name, listener) => { listeners[name] = listener; }, confirm: () => false },
         crypto: { randomUUID: () => `id-${++nextId}` },
         location: { href: 'https://onebyone.test/d/art/scratch/editor', origin: 'https://onebyone.test' },
-        URL, ArrayBuffer, Blob, FormData,
+        URL, ArrayBuffer, Blob, FormData, AbortController,
         setTimeout: (callback) => { const id = ++nextId; timers.set(id, callback); return id; },
         clearTimeout: (id) => timers.delete(id),
         fetch: (url, options) => new Promise((resolve) => requests.push({ url, options, resolve })),

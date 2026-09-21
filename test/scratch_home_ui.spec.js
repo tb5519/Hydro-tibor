@@ -46,6 +46,7 @@ before(async () => {
     const database = client.db('scratch_home_ui_test');
     model = load('packages/hydrooj/src/model/scratch.ts', {
         '../context': {}, '../error': {}, '../lib/scratch_files': {}, '../logger': { Logger: class {} },
+        '../lib/asset_delivery': { queueAssetMirror: () => false },
         '../service/db': {
             collection: (name) => database.collection(name),
             ensureIndexes: (collection, ...indexes) => collection.createIndexes(indexes),
@@ -55,6 +56,7 @@ before(async () => {
     await model.apply({ on() {} });
     handlers = load('packages/hydrooj/src/handler/scratch.ts', {
         '../context': {}, '../error': {}, '../lib/domain_type': {}, '../lib/scratch_files': {},
+        '../lib/asset_delivery': { tryRedirectAsset: () => false },
         '../model/builtin': {}, '../model/domain': {}, '../model/scratch': model,
         '../model/storage': {}, '../model/user': {}, '../service/server': { Handler: class {} },
     });

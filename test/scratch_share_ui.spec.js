@@ -12,6 +12,7 @@ const actionsCode = transformSync(fs.readFileSync(path.join(root, 'pages/scratch
     loader: 'ts', format: 'cjs',
 }).code;
 const env = new nunjucks.Environment(new nunjucks.FileSystemLoader(path.join(root, 'templates')), { autoescape: true });
+env.addGlobal('assetUrl', (value, fallback = value) => fallback);
 env.addFilter('json', (value) => JSON.stringify(value));
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const deferred = () => {
@@ -164,6 +165,28 @@ describe('public Scratch player template and bridge', () => {
             assert.equal(h.retry.hidden, false);
             assert.equal(h.frame.isConnected, false);
         }
+    });
+
+    it('accepts bytes after the authorized share endpoint follows a CDN redirect without exposing its signed URL to the VM', async (t) => {
+        const h = player(t);
+        await h.message('ready');
+        const first = h.requests[0];
+        assert.equal(first.url, 'https://onebyone.test/d/art/scratch/share/public-token/project');
+        assert.equal(first.options.credentials, 'omit');
+        const finalUrl = 'https://media.example.test/media/v1/snapshot.sb3?auth_key=short-lived-capability';
+        // Browser fetch follows redirects; this is its final response, not a
+        // separately trusted project URL supplied by public page metadata.
+        first.resolve({ ...projectResponse('mirrored-sb3-bytes'), redirected: true, url: finalUrl });
+        await settle();
+        assert.equal(h.requests.length, 1);
+        assert.equal(h.outgoing.length, 1);
+        assert.equal(h.outgoing[0].data.mode, 'player');
+        assert.equal(h.outgoing[0].data.readOnly, true);
+        assert.equal(Buffer.from(h.outgoing[0].data.project).toString(), 'mirrored-sb3-bytes');
+        assert(!JSON.stringify(h.outgoing[0].data).includes('auth_key'));
+        assert(!h.document.documentElement.outerHTML.includes('short-lived-capability'));
+        await h.message('loaded');
+        assert.equal(h.status.hidden, true);
     });
 
     it('reports revoked shares, oversized files and VM errors without injecting error HTML', async (t) => {

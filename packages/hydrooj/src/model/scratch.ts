@@ -3,6 +3,8 @@ import { randomBytes } from 'crypto';
 import { ObjectId } from 'mongodb';
 import { Context } from '../context';
 import { NotFoundError, PermissionError, ValidationError } from '../error';
+import type { RemoteAsset } from '../interface';
+import { queueAssetMirror } from '../lib/asset_delivery';
 import { validateScratchArchive, validateScratchMaterial, validateScratchThumbnail } from '../lib/scratch_files';
 import { Logger } from '../logger';
 import db from '../service/db';
@@ -33,6 +35,35 @@ export interface ScratchMaterial extends ScratchDoc {
 }
 export interface ScratchShare {
     _id: string; domainId: string; workId: ObjectId; fileId: ObjectId; revision: number; title: string; createdAt: Date;
+}
+
+// Each saved file has a new immutable ObjectId. Both download routes and the
+// background mirror must use this same identity, including for shared snapshots.
+export function fileAssetSource(file: ScratchFile, remoteAsset?: RemoteAsset) {
+    const thumbnail = file.purpose === 'thumbnail';
+    if (thumbnail ? !(file.mime === 'image/png' && file.path.endsWith('.png'))
+        : !(file.mime === 'application/x.scratch.sb3' && file.path.endsWith('.sb3'))) return null;
+    return {
+        path: file.path,
+        meta: {
+            etag: file._id.toHexString(), size: file.size, lastModified: file.createdAt,
+            'Content-Type': thumbnail ? 'image/png' : 'application/octet-stream',
+            ...(remoteAsset ? { remoteAsset } : {}),
+        },
+        contentDisposition: thumbnail ? 'inline' : 'attachment; filename="project.sb3"',
+        load: () => storage.get(file.path),
+    };
+}
+
+async function mirrorFile(file: ScratchFile) {
+    try {
+        const meta = await storage.getMeta(file.path);
+        const source = fileAssetSource(file, meta?.remoteAsset);
+        if (source) queueAssetMirror(source);
+    } catch (error) {
+        // Delivery is optional; the verified primary copy has already been saved.
+        logger.warn('Unable to prepare Scratch asset delivery', error);
+    }
 }
 
 declare module '../service/db' {
@@ -159,6 +190,7 @@ async function putFile(
         await releaseFileBytes(actor, meta.size);
         throw error;
     }
+    await mirrorFile(doc);
     return doc;
 }
 async function putThumbnail(actor: ScratchActor, workId: ObjectId, buffer: Buffer) {
@@ -175,6 +207,7 @@ async function putThumbnail(actor: ScratchActor, workId: ObjectId, buffer: Buffe
         await releaseFileBytes(actor, doc.size);
         throw error;
     }
+    await mirrorFile(doc);
     return doc;
 }
 async function removeFile(actor: ScratchActor, _id: ObjectId) {
@@ -230,6 +263,7 @@ export async function createWorkFromMaterial(actor: ScratchActor, materialId: Ob
         await files.insertOne(file);
         await versions.insertOne({ ...base(actor), workId: work._id, fileId: file._id, revision: 1 });
         await works.updateOne({ domainId: actor.domainId, _id: work._id }, { $set: { currentFileId: file._id, revision: 1 } });
+        await mirrorFile(file);
         return getWork(actor, work._id);
     } catch (error) {
         await works.deleteOne({ domainId: actor.domainId, _id: work._id });

@@ -24,12 +24,14 @@ import {
 import {
     DomainDoc, ProblemDoc, ProblemSearchOptions, ProblemStatusDoc, RecordDoc, User,
 } from '../interface';
+import { tryRedirectAsset } from '../lib/asset_delivery';
 import avatar from '../lib/avatar';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
 import { canViewContestLevel } from '../lib/contest_access';
 import {
     authorizeHomeworkReview, loadHomeworkReviewRecord, loadHomeworkReviewRecords, publicHomeworkReviewRecord, rejectHomeworkReviewMutation,
 } from '../lib/homework_review';
+import { isInlineRasterImage } from '../lib/inline_image';
 import { getMistakePromptState } from '../lib/mistake_prompt';
 import { loadObjectiveCorrectAnswers } from '../lib/objective_correct_answers';
 import { buildObjectiveMergedReview } from '../lib/objective_merged_review';
@@ -1383,6 +1385,8 @@ export class ProblemFileDownloadHandler extends ProblemDetailHandler {
             target,
             size: file?.size || 0,
         });
+        if (type === 'additional_file' && noDisposition && file && isInlineRasterImage(filename, file)
+            && await tryRedirectAsset(this, { path: target, meta: file })) return;
         this.response.redirect = await storage.signDownloadLink(
             target, noDisposition ? undefined : filename, false, 'user',
         );

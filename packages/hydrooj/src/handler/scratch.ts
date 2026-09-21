@@ -2,6 +2,7 @@ import moment from 'moment-timezone';
 import { ObjectId } from 'mongodb';
 import { Context } from '../context';
 import { CsrfTokenError, NotFoundError, PermissionError, ValidationError } from '../error';
+import { tryRedirectAsset } from '../lib/asset_delivery';
 import { isScratchDomain } from '../lib/domain_type';
 import { SCRATCH_MAX_FILE_SIZE } from '../lib/scratch_files';
 import { PERM, PRIV } from '../model/builtin';
@@ -424,6 +425,9 @@ export class ScratchShareProjectHandler extends ScratchShareHandler {
     async get() {
         this.response.type = 'application/octet-stream';
         this.response.addHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+        const meta = await storage.getMeta(this.shared.file.path);
+        const source = scratch.fileAssetSource(this.shared.file, meta?.remoteAsset);
+        if (source && tryRedirectAsset(this, source)) return;
         this.response.attachment('project.sb3', await storage.get(this.shared.file.path));
     }
 
@@ -438,6 +442,11 @@ export class ScratchShareProjectHandler extends ScratchShareHandler {
 export class ScratchFileHandler extends ScratchHandler {
     async get() {
         const file = await scratch.getFile(this.actor, this.routeId('fileId'));
+        // getFile has already checked work ownership / material recipients.
+        // The CDN object is private and this route only issues a short-lived URL.
+        const meta = await storage.getMeta(file.path);
+        const source = scratch.fileAssetSource(file, meta?.remoteAsset);
+        if (source && tryRedirectAsset(this, source)) return;
         if (file.purpose === 'thumbnail') {
             this.response.body = await storage.get(file.path);
             this.response.type = 'image/png';

@@ -48,6 +48,7 @@ export { default as mime } from './lib/mime';
 export { default as difficultyAlgorithm } from './lib/difficulty';
 export { default as rating } from './lib/rating';
 export { default as avatar } from './lib/avatar';
+export * as assetDelivery from './lib/asset_delivery';
 export { parseConfig as testdataConfig } from './lib/testdataConfig';
 export { sendMail } from './lib/mail';
 export { UiContextBase } from './service/layers/base';

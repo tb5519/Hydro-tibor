@@ -24,6 +24,21 @@ NODE_ENV=production ROOT=/scratch-editor/ CI=1 NODE_OPTIONS=--max-old-space-size
 
 Run those commands in the extracted source directory on a development machine; the generated browser files go into `build/`.
 
+## Optional CDN assets
+
+`SCRATCH_ASSET_BASE` changes the asset directory at build time. With no setting it remains `/scratch-editor/`. For example, build locally with:
+
+```sh
+SCRATCH_ASSET_BASE=https://cdn.example.com/releases/classroom-v1/scratch-editor/ node build/scratch/build.mjs
+node build/scratch/verify.mjs
+```
+
+The value must be an absolute HTTPS URL or a same-site absolute path. Credentials, query strings, fragments, protocol-relative URLs, dot segments, encoded segments and backslashes are rejected. Directory segments may contain letters, digits, `.`, `_`, `~` and `-`; a trailing slash is added when omitted. Version directories are supported. `ROOT`, Webpack's public path, lazy chunks and the GUI's blocks-media base use this same directory; changing only the first script URL is insufficient. The build manifest records the actual `assetBase` and `publicPath`. To reproduce a CDN build from `source.tar.gz`, set `ROOT` in the extraction command above to the manifest's `assetBase`.
+
+The iframe entry stays on this website at `/scratch-editor/editor.html` in editor, player and thumbnail modes. Only its public assets move to the configured directory. Upload the contents of the prepared `scratch-editor` directory under that exact CDN prefix before publishing the matching same-site HTML. Keep earlier hashed assets available for existing tabs. Initial and lazy-loaded scripts use anonymous CORS; the CDN must send `Access-Control-Allow-Origin: *` for public assets, including fonts, because the sandbox has an opaque origin. Do not enable credentialed CORS or put private projects, thumbnails or API responses in this public upload.
+
+Serve JavaScript, SVG and font files with their correct content types and enable gzip/Brotli for compressible files. Hashed assets can use immutable long-term caching; an immutable version directory also covers otherwise stable blocks-media names. Revalidate the same-site `editor.html` and `build-manifest.json`. Source archives and license notices remain available with the release but are never preloaded by the editor. The CDN setting does not change the separate official Scratch costume/sound asset service, account requests, the save bridge or iframe sandbox.
+
 ## Integration and boundaries
 
 `scratch_editor.page.ts` loads the editor only on the editor page. The iframe uses `sandbox="allow-scripts allow-downloads"`, intentionally without `allow-same-origin`. Public editor resources need `Access-Control-Allow-Origin: *` so fonts and WebGL resources work from its opaque origin; private project APIs must retain ordinary authentication and origin checks.

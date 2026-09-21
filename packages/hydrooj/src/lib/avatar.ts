@@ -1,5 +1,6 @@
 import { Types } from '@hydrooj/framework/validator';
 import { md5 } from '../utils';
+import { staticAssetUrl } from './asset_delivery';
 
 type AvatarProvider = (src: string, size: number) => string;
 
@@ -8,7 +9,7 @@ export const providers: Record<string, AvatarProvider> = {
         + `${md5((email || '').toString().trim().toLowerCase())}?d=mm&s=${size || 32}`,
     qq: (id) => `//q1.qlogo.cn/g?b=qq&nk=${(/(\d+)/.exec(id) || ['', ''])[1]}&s=160`,
     github: (id, size) => `//github.com/${id}.png?size=${Math.min(size, 460)}`,
-    url: (url) => url,
+    url: (url) => staticAssetUrl(url),
 };
 
 function avatar(src: string, size = 64, fallback = '') {

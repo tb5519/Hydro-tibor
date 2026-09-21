@@ -25,14 +25,14 @@ const oldFilename = 'avatar-00000000-0000-4000-8000-000000000001.png';
 function handlers(options = {}) {
     const source = fs.readFileSync(path.join(project, 'packages/hydrooj/src/handler/domain.ts'), 'utf8');
     const code = source.slice(source.indexOf('class DomainAvatarUploadHandler'), source.indexOf('class DomainDashboardHandler'));
-    const calls = { put: [], del: [], edit: [], get: [], permission: [] };
+    const calls = { put: [], del: [], edit: [], get: [], permission: [], delivery: [] };
     class ManageHandler {}
     class Handler {}
     class NotFoundError extends Error {}
     const storage = {
         put: async (...args) => { calls.put.push(args); },
         del: async (...args) => { calls.del.push(args); },
-        getMeta: async () => options.missingImage ? null : { 'Content-Type': 'image/png' },
+        getMeta: async () => options.missingImage ? null : { 'Content-Type': 'image/png', size: makePng().length, etag: 'avatar-v1' },
         get: async (target) => { calls.get.push(target); return makePng(); },
     };
     const mod = { exports: {} };
@@ -42,6 +42,13 @@ function handlers(options = {}) {
         module: mod, exports: mod.exports, ManageHandler, Handler, ...avatar,
         ValidationError, NotFoundError, PERM: { PERM_EDIT_DOMAIN: 128n },
         param: () => () => {}, Types: { String: 'string' }, storage,
+        tryRedirectAsset: (handler, source) => {
+            calls.delivery.push(source);
+            if (!options.mirrorReady) return false;
+            handler.response.redirect = 'https://media.example.test/avatar.png?auth_key=short-lived';
+            handler.response.status = 302;
+            return true;
+        },
         readFile: async () => options.image || makePng(),
         domain: { edit: async (...args) => { calls.edit.push(args); if (options.editFails) throw new Error('Database unavailable'); } },
     });
@@ -183,5 +190,19 @@ describe('domain avatar upload and serving handlers', () => {
         await assert.rejects(h.image.get({}, '../private-file'), ValidationError);
         const missing = handlers({ missingImage: true });
         await assert.rejects(missing.image.get({}, oldFilename));
+        assert.deepEqual(missing.calls.delivery, []);
+        assert.equal(h.calls.delivery.length, 1);
+    });
+
+    it('redirects only the validated current-domain avatar when its mirror is ready', async () => {
+        const h = handlers({ mirrorReady: true });
+        await h.image.get({ domainId: 'other-domain' }, oldFilename);
+        assert.equal(h.calls.delivery[0].path, `domain/allowed-class/${oldFilename}`);
+        assert.equal(h.calls.delivery[0].meta['Content-Type'], 'image/png');
+        assert.deepEqual(h.calls.get, []);
+        assert.equal(h.image.response.status, 302);
+        assert.equal(h.image.response.body, undefined);
+        await assert.rejects(h.image.get({}, '../private-file'), ValidationError);
+        assert.equal(h.calls.delivery.length, 1);
     });
 });

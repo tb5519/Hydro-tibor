@@ -592,6 +592,15 @@ export interface Schedule {
     [key: string]: any;
 }
 
+export interface RemoteAsset {
+    key: string;
+    sha256: string;
+    size: number;
+    contentType: string;
+    bucket: string;
+    region: string;
+}
+
 export interface FileNode {
     /** File Path In S3 */
     _id: string;
@@ -609,6 +618,10 @@ export interface FileNode {
     owner?: number;
     operator?: number[];
     meta?: Record<string, string | number>;
+    /** Verified OSS primary bytes. Local _id/link storage is not consulted when present. */
+    remoteAsset?: RemoteAsset;
+    /** Migration-only local identity retained until verified cleanup completes. */
+    localMirrorId?: string;
 }
 
 export interface EventDoc {

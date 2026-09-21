@@ -7,7 +7,7 @@
 {{ set(UiContext, 'udoc', udoc if canViewUserPresence else Object.assign({}, udoc, { loginat: null })) }}
 <style>
   .user-profile-bg {
-    background-image: url("{{ udoc.backgroundImage }}"), url("/components/profile/backgrounds/1.jpg");
+    background-image: url("{{ assetUrl(udoc.backgroundImage|default('')) }}"), url("{{ assetUrl('/components/profile/backgrounds/1.jpg') }}");
   }
 
   .user-profile-bg--badge {

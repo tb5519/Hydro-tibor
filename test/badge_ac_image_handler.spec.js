@@ -10,6 +10,8 @@ const { BadgeAcImageCache } = require('../addons/badge-for-hydrooj/ac_image_cach
 let fixtures = {};
 let cache;
 let cacheCalls = 0;
+let deliveryCalls = [];
+let storageReads = [];
 class Handler {
     constructor(domain, query = {}) {
         this.domain = domain;
@@ -26,7 +28,7 @@ const badgeModel = {
 };
 const storageStub = {
     async getMeta(filename) { return fixtures.images[filename]?.meta || null; },
-    async get(filename) { return fixtures.images[filename]?.bytes; },
+    async get(filename) { storageReads.push(filename); return fixtures.images[filename]?.bytes; },
 };
 const previousHydro = global.Hydro;
 const originalLoad = Module._load;
@@ -36,7 +38,17 @@ try {
     Module._load = function patchedLoad(request, parent, isMain) {
         if (parent?.filename?.endsWith('/addons/badge-for-hydrooj/index.ts')) {
             if (request === 'hydrooj') {
-                return { Handler, NotFoundError, param: () => () => {}, PRIV: {}, PERM: {}, STATUS: {}, Types: {} };
+                return {
+                    Handler, NotFoundError, param: () => () => {}, PRIV: {}, PERM: {}, STATUS: {}, Types: {},
+                    assetDelivery: { tryRedirectAsset(handler, source) {
+                        deliveryCalls.push(source);
+                        if (!fixtures.mirrorReady) return false;
+                        handler.response.status = 302;
+                        handler.response.redirect = 'https://media.example.test/badge.png?auth_key=short-lived';
+                        handler.response.addHeader('Cache-Control', 'private, no-store');
+                        return true;
+                    } },
+                };
             }
             if (request === 'hydrooj/src/model/storage') return storageStub;
             if (request === 'hydrooj/src/model/workspace') {
@@ -67,6 +79,8 @@ async function setup(test) {
     test.after(() => fs.rm(directory, { recursive: true, force: true }));
     cache = new BadgeAcImageCache(directory);
     cacheCalls = 0;
+    deliveryCalls = [];
+    storageReads = [];
     const data = Buffer.alloc(1000 * 1000 * 4, 128);
     const bytes = PNG.sync.write({ width: 1000, height: 1000, data });
     fixtures = {
@@ -112,11 +126,47 @@ it('checks badge domain ownership before accessing a warm cache, so global IDs c
     const globalHandler = new addon.BadgeAcImageHandler({ _id: 'Python' }, { v: 'v1' });
     await globalHandler.get('Python', 1, 384);
     assert.equal(cacheCalls, 1);
+    assert.equal(deliveryCalls.length, 1);
     const modern = new addon.BadgeAcImageHandler({ _id: 'A', workspaceId: 'teacher' }, { v: 'v1' });
     await assert.rejects(modern.get('A', 1, 384), NotFoundError);
     const sibling = new addon.BadgeAcImageHandler({ _id: 'B', workspaceId: 'teacher' }, { v: 'v1' });
     await assert.rejects(sibling.get('B', 2, 384), NotFoundError);
     assert.equal(cacheCalls, 1);
+    assert.equal(deliveryCalls.length, 1);
+});
+
+it('keeps each delivered AC preview identity tied to its dimensions, byte length and original etag', async (test) => {
+    await setup(test);
+    fixtures.mirrorReady = true;
+    fixtures.images['A.png'].meta.remoteAsset = { key: 'media/original.png', sha256: 'original-content', size: fixtures.images['A.png'].bytes.length,
+        contentType: 'image/png', bucket: 'asset-bucket', region: 'asset-region' };
+    for (const size of [384, 768]) {
+        const handler = new addon.BadgeAcImageHandler({ _id: 'A', workspaceId: 'teacher' }, { v: 'v1' });
+        await handler.get('A', 2, size); // eslint-disable-line no-await-in-loop
+        assert.equal(handler.response.status, 302);
+        assert.equal(handler.response.headers['Cache-Control'], 'private, no-store');
+        assert.equal(handler.response.body, undefined);
+        const delivered = deliveryCalls.at(-1);
+        const preview = await delivered.load(); // eslint-disable-line no-await-in-loop
+        const png = PNG.sync.read(preview);
+        assert.deepEqual([png.width, png.height], [size, size]);
+        assert.equal(delivered.meta.size, preview.length);
+        assert.equal(delivered.meta.etag, 'original-etag');
+        assert.equal(delivered.meta['Content-Type'], 'image/png');
+        assert.equal(delivered.meta.remoteAsset, undefined, 'the preview must never use the remote original image descriptor');
+        assert.equal(delivered.path, 'A.png');
+        assert.equal(delivered.variant, `badge-ac-png-area-v1-${size}`);
+    }
+});
+
+it('serves ready original mirrors without reading the primary object', async (test) => {
+    await setup(test);
+    fixtures.mirrorReady = true;
+    const handler = new addon.BadgeAcImageHandler({ _id: 'Python' });
+    await handler.get('Python', 1);
+    assert.equal(handler.response.status, 302);
+    assert.deepEqual(storageReads, []);
+    assert.equal(deliveryCalls[0].variant, undefined);
 });
 
 it('falls back to the original content type without invoking a PNG decoder for non-PNG metadata', async (test) => {
