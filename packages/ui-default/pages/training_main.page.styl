@@ -1,48 +1,770 @@
-.page--training_main
-  .training__title
-    line-height: 1.2
-    margin-bottom: 0.4em
-    font-size: rem($font-size-title)
+html.page--training_main > body > .main
+  background: var(--ui-v2-bg, #f1f5f9)
 
-  .training__intro
-    color: lighten($text-1-color, 20%)
-    font-size: rem($font-size-secondary)
-    margin: 1em 0
+.ui-v2-training-main
+  color: var(--ui-v2-text)
+  padding-bottom: rem(16px)
 
-  .training__item
-    padding-left: rem(5px)
+  *, *::before, *::after
+    box-sizing: border-box
 
-  .training__participants
-    width: rem(80px)
+  a
+    transition: color 0.16s ease, border-color 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease
 
-  .training__progress
-    line-height: rem(17px)
-    vertical-align: top
+  .training-visually-hidden
+    position: absolute !important
+    width: 1px !important
+    height: 1px !important
+    padding: 0 !important
+    margin: -1px !important
+    overflow: hidden !important
+    clip: rect(0, 0, 0, 0) !important
+    white-space: nowrap !important
+    border: 0 !important
 
-  .training__progress-bar
-    display: inline-block
-    width: rem(100px)
-    height: rem(5px)
-    position: relative
-    background: #EEE
-    margin: rem(6px 0)
+  .training-page-head
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: rem(24px)
+    margin-bottom: rem(24px)
+    padding: rem(24px 26px)
+    border: 1px solid var(--ui-v2-border)
+    border-radius: var(--ui-v2-radius)
+    background: linear-gradient(135deg, var(--ui-v2-surface) 0%, var(--ui-v2-surface-muted) 100%)
+    box-shadow: var(--ui-v2-shadow-sm)
+
+  .training-page-head__copy
+    min-width: rem(190px)
+
+  .training-page-head__eyebrow
+    display: flex
+    align-items: center
+    gap: rem(7px)
+    margin-bottom: rem(7px)
+    color: var(--ui-v2-accent)
+    font-size: rem(12px)
+    font-weight: 700
+    letter-spacing: 0.08em
     line-height: 1
-    vertical-align: top
+    text-transform: uppercase
 
-  .training__progress-track
-    position: absolute
-    left: 0
-    top: 0
+  .training-page-head__title
+    margin: 0
+    color: var(--ui-v2-text)
+    font-size: rem(26px)
+    font-weight: 700
+    letter-spacing: -0.025em
+    line-height: 1.25
+
+  .training-page-head__actions
+    display: flex
+    flex: 1
+    align-items: center
+    justify-content: flex-end
+    gap: rem(12px)
+    min-width: 0
+
+  .training-create-button
+    display: inline-flex
+    flex: 0 0 auto
+    align-items: center
+    justify-content: center
+    gap: rem(7px)
+    min-height: rem(42px)
+    padding: rem(0 16px)
+    border: 1px solid var(--ui-v2-accent)
+    border-radius: var(--ui-v2-radius-sm)
+    background: var(--ui-v2-accent)
+    box-shadow: 0 rem(4px) rem(12px) rgba(37, 99, 235, 0.18)
+    color: #fff
+    font-size: rem(14px)
+    font-weight: 650
+    white-space: nowrap
+
+    &:hover, &:focus
+      background: #1d4ed8
+      border-color: #1d4ed8
+      box-shadow: 0 rem(6px) rem(18px) rgba(37, 99, 235, 0.24)
+      color: #fff
+      text-decoration: none
+      transform: translateY(rem(-1px))
+
+    &:focus-visible
+      outline: rem(3px) solid rgba(37, 99, 235, 0.22)
+      outline-offset: rem(2px)
+
+  .training-search
+    display: flex
+    flex: 0 1 rem(430px)
+    align-items: center
+    min-width: rem(260px)
+    height: rem(42px)
+    overflow: hidden
+    border: 1px solid var(--ui-v2-border)
+    border-radius: var(--ui-v2-radius-sm)
+    background: var(--ui-v2-surface)
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03)
+
+    &:focus-within
+      border-color: #93c5fd
+      box-shadow: 0 0 0 rem(3px) rgba(37, 99, 235, 0.12)
+
+  .training-search__icon
+    flex: 0 0 auto
+    margin-left: rem(13px)
+    color: #94a3b8
+    font-size: rem(16px)
+
+  .training-search input[type='search']
+    flex: 1 1 auto
+    width: auto
+    min-width: 0
     height: 100%
-    width: 0%
-    background-color: green
+    margin: 0
+    padding: rem(0 10px)
+    border: 0
+    outline: 0
+    background: transparent
+    box-shadow: none
+    color: var(--ui-v2-text)
+    font-size: rem(14px)
 
-  .secondary.training__list
-    .training__item
-      margin-bottom: rem(15px)
-    .training__title
-      font-size: rem($font-size)
+    &::placeholder
+      color: #94a3b8
+      opacity: 1
 
-    &.my
-      .training-status--icon
-        font-size: rem($font-size-icon * 1.2)
+    &::-webkit-search-cancel-button
+      cursor: pointer
+
+  .training-search__reset
+    flex: 0 0 auto
+    padding: rem(5px 8px)
+    border-radius: rem(6px)
+    color: var(--ui-v2-text-muted)
+    font-size: rem(12px)
+    line-height: 1
+
+    &:hover, &:focus
+      background: var(--ui-v2-surface-muted)
+      color: var(--ui-v2-accent)
+      text-decoration: none
+
+  .training-search__submit
+    align-self: stretch
+    flex: 0 0 auto
+    min-width: rem(66px)
+    margin: 0
+    padding: rem(0 15px)
+    border: 0
+    border-left: 1px solid var(--ui-v2-border)
+    background: var(--ui-v2-surface-muted)
+    color: var(--ui-v2-accent)
+    cursor: pointer
+    font-size: rem(14px)
+    font-weight: 650
+
+    &:hover, &:focus
+      background: var(--ui-v2-accent-soft)
+
+    &:focus-visible
+      outline: rem(2px) solid var(--ui-v2-accent)
+      outline-offset: rem(-3px)
+
+  .training-page-layout
+    display: flex
+    align-items: flex-start
+
+  .training-page-layout__main,
+  .training-page-layout__aside
+    float: none
+
+  .training-catalog
+    min-width: 0
+
+  .training-card-list
+    display: flex
+    flex-direction: column
+    gap: rem(14px)
+    margin: 0
+    padding: 0
+    list-style: none
+
+  .training-card-list__item
+    margin: 0
+    padding: 0
+
+  .training-card
+    display: grid
+    grid-template-columns: minmax(0, 1fr) rem(132px)
+    overflow: hidden
+    border: 1px solid var(--ui-v2-border)
+    border-radius: var(--ui-v2-radius)
+    background: var(--ui-v2-surface)
+    box-shadow: var(--ui-v2-shadow-sm)
+    transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease
+
+    &:hover
+      border-color: var(--ui-v2-border-strong)
+      box-shadow: var(--ui-v2-shadow)
+      transform: translateY(rem(-2px))
+
+    &.is-enrolled
+      border-left: rem(3px) solid var(--ui-v2-accent)
+
+    &.is-done
+      border-left-color: #22a447
+
+  .training-card__body
+    min-width: 0
+    padding: rem(21px 22px 20px)
+
+  .training-card__heading
+    display: flex
+    align-items: flex-start
+    justify-content: space-between
+    gap: rem(14px)
+
+  .training-card__title
+    min-width: 0
+    margin: 0
+    color: var(--ui-v2-text)
+    font-size: rem(19px)
+    font-weight: 680
+    letter-spacing: -0.012em
+    line-height: 1.4
+
+    a
+      color: inherit
+
+      &:hover, &:focus
+        color: var(--ui-v2-accent)
+        text-decoration: none
+
+      &:focus-visible
+        border-radius: rem(4px)
+        outline: rem(3px) solid rgba(37, 99, 235, 0.18)
+        outline-offset: rem(2px)
+
+  .training-card__status
+    display: inline-flex
+    flex: 0 0 auto
+    align-items: center
+    gap: rem(5px)
+    min-height: rem(26px)
+    padding: rem(4px 9px)
+    border: 1px solid var(--ui-v2-border)
+    border-radius: rem(999px)
+    background: var(--ui-v2-surface-muted)
+    color: var(--ui-v2-text-muted)
+    font-size: rem(12px)
+    font-weight: 650
+    line-height: 1.2
+
+  .training-card__status--progress
+    border-color: #bfdbfe
+    background: var(--ui-v2-accent-soft)
+    color: var(--ui-v2-accent)
+
+  .training-card__status--done
+    border-color: #bbf7d0
+    background: #f0fdf4
+    color: #16823a
+
+  .training-card__intro
+    display: -webkit-box
+    overflow: hidden
+    -webkit-box-orient: vertical
+    -webkit-line-clamp: 2
+    margin: rem(10px 0 13px)
+    color: var(--ui-v2-text-muted)
+    font-size: rem(14px)
+    line-height: 1.65
+
+    p
+      margin: 0
+
+  .training-card__meta
+    display: flex
+    flex-wrap: wrap
+    gap: rem(7px 16px)
+    margin: 0
+    padding: 0
+    color: var(--ui-v2-text-muted)
+    font-size: rem(13px)
+    line-height: 1.4
+    list-style: none
+
+    li
+      display: inline-flex
+      align-items: center
+      gap: rem(6px)
+
+    .icon
+      color: #94a3b8
+      font-size: rem(14px)
+
+  .training-card__progress
+    margin-top: rem(15px)
+    padding-top: rem(13px)
+    border-top: 1px solid #edf2f7
+
+  .training-card__progress-copy
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: rem(12px)
+    margin-bottom: rem(7px)
+    color: var(--ui-v2-text-muted)
+    font-size: rem(12px)
+    line-height: 1.3
+
+    strong
+      color: var(--ui-v2-text)
+      font-size: rem(13px)
+      font-weight: 700
+
+  .training-progress-bar
+    display: block
+    width: 100%
+    height: rem(7px)
+    overflow: hidden
+    border-radius: rem(999px)
+    background: #e8eef6
+
+  .training-progress-bar__track
+    display: block
+    height: 100%
+    border-radius: inherit
+    background: linear-gradient(90deg, var(--ui-v2-accent) 0%, #38bdf8 100%)
+
+  .is-done .training-progress-bar__track
+    background: linear-gradient(90deg, #22a447 0%, #4ade80 100%)
+
+  .training-card__action
+    display: flex
+    align-items: stretch
+    padding: rem(14px)
+    border-left: 1px solid var(--ui-v2-border)
+    background: linear-gradient(180deg, var(--ui-v2-surface-muted) 0%, var(--ui-v2-surface) 100%)
+
+  .training-card__cta
+    display: flex
+    width: 100%
+    min-height: rem(44px)
+    align-items: center
+    justify-content: center
+    gap: rem(6px)
+    align-self: center
+    padding: rem(9px 11px)
+    border: 1px solid var(--ui-v2-border-strong)
+    border-radius: rem(9px)
+    background: var(--ui-v2-surface)
+    color: var(--ui-v2-text)
+    font-size: rem(13px)
+    font-weight: 650
+    text-align: center
+
+    .icon
+      color: #94a3b8
+      font-size: rem(12px)
+
+    &:hover, &:focus
+      border-color: #93c5fd
+      background: var(--ui-v2-accent-soft)
+      color: var(--ui-v2-accent)
+      text-decoration: none
+
+      .icon
+        color: inherit
+        transform: translateX(rem(2px))
+
+    &:focus-visible
+      outline: rem(3px) solid rgba(37, 99, 235, 0.18)
+      outline-offset: rem(2px)
+
+  .training-card__cta--primary
+    border-color: var(--ui-v2-accent)
+    background: var(--ui-v2-accent)
+    color: #fff
+
+    .icon
+      color: #fff
+
+    &:hover, &:focus
+      border-color: #1d4ed8
+      background: #1d4ed8
+      color: #fff
+
+  .training-pagination
+    margin-top: rem(18px)
+    overflow: hidden
+    border: 1px solid var(--ui-v2-border)
+    border-radius: var(--ui-v2-radius-sm)
+    background: var(--ui-v2-surface)
+    box-shadow: var(--ui-v2-shadow-sm)
+
+    .pager
+      margin: 0
+      border: 0
+
+    .pager__item.current
+      color: var(--ui-v2-accent)
+
+  .training-sidebar-sticky
+    position: sticky
+    top: rem(72px)
+
+  .training-side-panel
+    overflow: hidden
+    border: 1px solid var(--ui-v2-border)
+    border-radius: var(--ui-v2-radius)
+    background: var(--ui-v2-surface)
+    box-shadow: var(--ui-v2-shadow-sm)
+
+  .training-side-panel__header
+    padding: rem(16px 17px)
+    border-bottom: 1px solid var(--ui-v2-border)
+    background: linear-gradient(180deg, var(--ui-v2-surface-muted) 0%, var(--ui-v2-surface) 100%)
+
+    h2
+      display: flex
+      align-items: center
+      gap: rem(8px)
+      margin: 0
+      color: var(--ui-v2-text)
+      font-size: rem(15px)
+      font-weight: 700
+      line-height: 1.35
+
+    .icon
+      color: var(--ui-v2-accent)
+
+  .training-side-panel__body
+    padding: rem(6px)
+
+  .training-quick-list
+    display: flex
+    flex-direction: column
+    gap: rem(3px)
+    max-height: calc(100vh - 190px)
+    margin: 0
+    padding: 0
+    overflow-y: auto
+    list-style: none
+    overscroll-behavior: contain
+
+    &:empty
+      display: none
+
+    &:not(:empty) + .training-quick-empty
+      display: none
+
+  .training-quick-list__item
+    margin: 0
+    padding: 0
+
+  .training-quick-card
+    display: block
+    padding: rem(11px)
+    border: 1px solid transparent
+    border-radius: rem(9px)
+    color: var(--ui-v2-text)
+
+    &:hover, &:focus
+      border-color: var(--ui-v2-border)
+      background: var(--ui-v2-surface-muted)
+      color: var(--ui-v2-accent)
+      text-decoration: none
+
+    &:focus-visible
+      outline: rem(3px) solid rgba(37, 99, 235, 0.18)
+      outline-offset: rem(-1px)
+
+  .training-quick-card__heading
+    display: flex
+    align-items: flex-start
+    justify-content: space-between
+    gap: rem(8px)
+
+    > .icon
+      flex: 0 0 auto
+      margin-top: rem(3px)
+      color: #94a3b8
+      font-size: rem(11px)
+
+  .training-quick-card__title
+    display: -webkit-box
+    min-width: 0
+    overflow: hidden
+    -webkit-box-orient: vertical
+    -webkit-line-clamp: 2
+    color: inherit
+    font-size: rem(13px)
+    font-weight: 650
+    line-height: 1.45
+
+  .training-quick-card__meta
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: rem(8px)
+    margin-top: rem(8px)
+    color: var(--ui-v2-text-muted)
+    font-size: rem(11px)
+    line-height: 1.2
+
+    strong
+      color: var(--ui-v2-text)
+      font-size: rem(11px)
+      font-weight: 700
+
+  .training-progress-bar--compact
+    height: rem(5px)
+    margin-top: rem(6px)
+
+  .training-quick-empty
+    display: flex
+    align-items: center
+    justify-content: center
+    gap: rem(7px)
+    min-height: rem(96px)
+    padding: rem(18px)
+    color: #94a3b8
+    font-size: rem(13px)
+    text-align: center
+
+  .training-empty
+    display: flex
+    min-height: rem(300px)
+    align-items: center
+    justify-content: center
+    flex-direction: column
+    gap: rem(12px)
+    padding: rem(42px 24px)
+    border: 1px solid var(--ui-v2-border)
+    border-radius: var(--ui-v2-radius)
+    background: var(--ui-v2-surface)
+    box-shadow: var(--ui-v2-shadow-sm)
+    color: var(--ui-v2-text-muted)
+    text-align: center
+
+    p
+      margin: 0
+      font-size: rem(15px)
+
+  .training-empty__icon
+    display: inline-flex
+    width: rem(48px)
+    height: rem(48px)
+    align-items: center
+    justify-content: center
+    border-radius: rem(14px)
+    background: var(--ui-v2-accent-soft)
+    color: var(--ui-v2-accent)
+    font-size: rem(20px)
+
+  .training-empty__action
+    display: inline-flex
+    align-items: center
+    gap: rem(6px)
+    padding: rem(9px 14px)
+    border: 1px solid var(--ui-v2-border-strong)
+    border-radius: rem(9px)
+    background: var(--ui-v2-surface-muted)
+    color: var(--ui-v2-text)
+    font-size: rem(13px)
+    font-weight: 650
+
+    &:hover, &:focus
+      border-color: #93c5fd
+      background: var(--ui-v2-accent-soft)
+      color: var(--ui-v2-accent)
+      text-decoration: none
+
+  @media screen and (max-width: 1023px)
+    .training-page-head
+      align-items: flex-start
+      flex-direction: column
+
+    .training-page-head__actions
+      width: 100%
+      justify-content: flex-start
+
+    .training-search
+      flex: 1 1 auto
+
+    .training-page-layout
+      display: block
+
+    .training-page-layout__main,
+    .training-page-layout__aside
+      width: 100%
+
+    .training-page-layout__aside
+      margin-top: rem(16px)
+
+    .training-sidebar-sticky
+      position: static
+
+    .training-quick-list
+      max-height: none
+
+    .training-card
+      grid-template-columns: minmax(0, 1fr) rem(118px)
+
+  +mobile()
+    padding: rem(14px 0 24px)
+
+    .training-page-head
+      gap: rem(16px)
+      margin-bottom: rem(14px)
+      padding: rem(18px 16px)
+      border-radius: rem(12px)
+
+    .training-page-head__title
+      font-size: rem(22px)
+
+    .training-page-head__actions
+      align-items: stretch
+      flex-direction: column
+      gap: rem(9px)
+
+    .training-create-button
+      width: 100%
+
+    .training-search
+      flex: none
+      width: 100%
+      min-width: 0
+
+    .training-search__submit
+      min-width: rem(58px)
+      padding: rem(0 11px)
+
+    .training-page-layout
+      display: block
+
+    .training-page-layout__main,
+    .training-page-layout__aside
+      width: 100%
+
+    .training-page-layout__aside
+      margin-top: rem(14px)
+
+    .training-card-list
+      gap: rem(11px)
+
+    .training-card
+      display: block
+      border-radius: rem(12px)
+
+      &:hover
+        transform: none
+
+    .training-card__body
+      padding: rem(17px 16px 15px)
+
+    .training-card__heading
+      align-items: flex-start
+      flex-direction: column-reverse
+      gap: rem(9px)
+
+    .training-card__title
+      font-size: rem(17px)
+
+    .training-card__intro
+      margin: rem(9px 0 12px)
+
+    .training-card__meta
+      gap: rem(7px 13px)
+
+    .training-card__action
+      padding: rem(0 16px 16px)
+      border-left: 0
+      background: var(--ui-v2-surface)
+
+    .training-card__cta
+      justify-content: space-between
+
+    .training-sidebar-sticky
+      position: static
+
+    .training-side-panel
+      border-radius: rem(12px)
+
+    .training-quick-list
+      max-height: none
+
+    .training-empty
+      min-height: rem(230px)
+      border-radius: rem(12px)
+
+    .training-pagination
+      margin-bottom: 0
+
+@media (prefers-reduced-motion: reduce)
+  .ui-v2-training-main
+    a,
+    .training-card
+      transition: none
+
+    .training-card:hover,
+    .training-create-button:hover,
+    .training-create-button:focus
+      transform: none
+
+html.theme--dark.page--training_main > body > .main
+  background: #111827
+
+.theme--dark.page--training_main
+  .ui-v2-training-main
+    --ui-v2-surface: #1e293b
+    --ui-v2-surface-muted: #172033
+    --ui-v2-border: #334155
+    --ui-v2-border-strong: #475569
+    --ui-v2-text: #e5edf8
+    --ui-v2-text-muted: #a8b5c8
+    --ui-v2-accent: #7db2ff
+    --ui-v2-accent-soft: #243b58
+
+  .training-page-head,
+  .training-card__action,
+  .training-side-panel__header
+    background: linear-gradient(135deg, #1e293b 0%, #172033 100%)
+
+  .training-search,
+  .training-card__cta,
+  .training-empty,
+  .training-side-panel,
+  .training-pagination
+    background: #1e293b
+
+  .training-search__submit,
+  .training-empty__action
+    background: #243247
+
+  .training-card__progress
+    border-color: #334155
+
+  .training-progress-bar
+    background: #344256
+
+  .training-card__status--progress
+    border-color: #3d5f88
+    background: #223a58
+    color: #9fc7ff
+
+  .training-card__status--done
+    border-color: #36634f
+    background: #1d392f
+    color: #92d7b3
+
+  .training-card__status--outside
+    border-color: #475569
+    background: #283548
+    color: #b5c1d2
+
+  .training-quick-card:hover,
+  .training-quick-card:focus
+    background: #243247

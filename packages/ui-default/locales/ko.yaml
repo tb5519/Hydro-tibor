@@ -453,6 +453,7 @@ Not Attended: 참여하지 않음
 Not available: 불가능
 Not Claimed: 없음
 Not Enrolled: 참가하지 않음
+Not joined yet: 아직 참여하지 않았습니다
 Not started with a number: 숫자로 시작하지 않음
 Not wrapped with space: 공백 없음
 Numeric PID: 문제 번호
@@ -603,6 +604,7 @@ Scoreboard (Hidden): 점수판 (비공개)
 Scoreboard: 점수판
 Scripts: 스크립트
 Search: 검색
+Search training...: 학습 계획 검색…
 Secret (visible to admins): 비공개 (관리자 조회 가능)
 Secret: 비공개
 Section: 단락
@@ -823,3 +825,18 @@ You've already claimed this homework.: 이미 숙제를 받음
 You've already voted.: 이미 투표함
 Your permission: 당신의 권한
 Your role: 당신의 역할
+Enrollment Settings: 참가 설정
+Control how learners discover this plan and how its participant count is presented.: 학습자가 훈련을 찾는 방법과 참가 인원 표시 방식을 설정합니다.
+Allow learners to join: 학습자의 자율 참가 허용
+When enabled, learners can find this plan in Training and enroll themselves.: 켜면 학습자가 훈련 메뉴에서 이 계획을 찾아 직접 참가할 수 있습니다.
+Initial participant count: 기본 참가 인원
+This number is shown immediately; each new participant is added on top of it.: 이 인원이 먼저 표시되며 새 참가자는 여기에 더해집니다.
+Manage Students: 학습자 관리
+Add Students: 학습자 추가
+Select students to add: 추가할 학습자 선택
+Only teachers can see this roster and add students.: 참가 명단 확인과 학습자 추가는 교사만 할 수 있습니다.
+Search enrolled students: 참가 학습자 검색
+No students enrolled yet.: 아직 참가한 학습자가 없습니다.
+Students added.: 학습자를 추가했습니다.
+Show more: 더 보기
+Show less: 접기

@@ -339,6 +339,12 @@ export interface TrainingDoc extends Omit<Tdoc, 'docType'> {
     docType: document['TYPE_TRAINING'];
     description: string;
     pin?: number;
+    /** Whether a learner may discover and enroll in this training without an assignment. */
+    allowSelfEnroll?: boolean;
+    /** Configured participant count shown when the display baseline was last saved. */
+    initialAttendCount?: number;
+    /** Real participant count captured when initialAttendCount was last saved. */
+    initialAttendActualCount?: number;
     dag: TrainingNode[];
 }
 

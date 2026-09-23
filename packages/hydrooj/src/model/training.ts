@@ -23,11 +23,15 @@ export async function getListStatus(domainId: string, uid: number, tids: ObjectI
 
 export async function enroll(domainId: string, tid: ObjectId, uid: number) {
     try {
-        await document.setIfNotStatus(domainId, document.TYPE_TRAINING, tid, uid, 'enroll', 1, 1, {});
+        const status = await document.setIfNotStatus(
+            domainId, document.TYPE_TRAINING, tid, uid, 'enroll', 1, 1, {},
+        );
+        if (!status) throw new TrainingAlreadyEnrollError(tid, uid);
     } catch (e) {
+        if (e instanceof TrainingAlreadyEnrollError) throw e;
         throw new TrainingAlreadyEnrollError(tid, uid);
     }
-    return await document.inc(domainId, document.TYPE_TRAINING, tid, 'attend', 1);
+    return document.inc(domainId, document.TYPE_TRAINING, tid, 'attend', 1);
 }
 
 export function setStatus(domainId: string, tid: ObjectId, uid: number, $set: any) {
@@ -37,6 +41,7 @@ export function setStatus(domainId: string, tid: ObjectId, uid: number, $set: an
 export function add(
     domainId: string, title: string, content: string,
     owner: number, dag: TrainingNode[] = [], description = '', pin = 0,
+    allowSelfEnroll = true, initialAttendCount = 0,
 ) {
     return document.add(domainId, content, owner, document.TYPE_TRAINING, null, null, null, {
         dag,
@@ -44,7 +49,24 @@ export function add(
         description,
         attend: 0,
         pin,
+        allowSelfEnroll,
+        initialAttendCount,
+        initialAttendActualCount: 0,
     });
+}
+
+export function canSelfEnroll(tdoc: TrainingDoc) {
+    return tdoc.allowSelfEnroll !== false;
+}
+
+export function getDisplayAttend(tdoc: TrainingDoc) {
+    const actual = Math.max(0, Number.isFinite(+tdoc.attend) ? Math.floor(+tdoc.attend) : 0);
+    if (tdoc.initialAttendCount === undefined) return actual;
+    const initial = Math.max(0, Number.isFinite(+tdoc.initialAttendCount)
+        ? Math.floor(+tdoc.initialAttendCount) : 0);
+    const actualAtSave = Math.max(0, Number.isFinite(+tdoc.initialAttendActualCount)
+        ? Math.floor(+tdoc.initialAttendActualCount) : 0);
+    return initial + Math.max(0, actual - actualAtSave);
 }
 
 export function edit(domainId: string, tid: ObjectId, $set: Partial<TrainingDoc>) {
@@ -113,6 +135,8 @@ export async function getList(domainId: string, tids: ObjectId[]) {
 
 global.Hydro.model.training = {
     getPids,
+    canSelfEnroll,
+    getDisplayAttend,
     isDone,
     isProgress,
     isOpen,

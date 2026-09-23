@@ -227,7 +227,20 @@ export class HomeHandler extends Handler {
 
     async getTraining(domainId: string, limit = 10) {
         if (!this.user.hasPerm(PERM.PERM_VIEW_TRAINING)) return [[], {}];
-        const tdocs = await training.getMulti(domainId)
+        const enrolledStatuses = this.user.hasPriv(PRIV.PRIV_USER_PROFILE)
+            ? await training.getMultiStatus(domainId, { uid: this.user._id, enroll: 1 }).toArray()
+            : [];
+        const enrolledTids = enrolledStatuses.map((status) => status.docId);
+        const canViewAllTraining = this.user.hasPerm(PERM.PERM_EDIT_DOMAIN)
+            || this.user.hasPerm(PERM.PERM_EDIT_TRAINING);
+        const trainingQuery = canViewAllTraining ? {} : {
+            $or: [
+                { allowSelfEnroll: { $ne: false } },
+                { owner: this.user._id },
+                ...(enrolledTids.length ? [{ docId: { $in: enrolledTids } }] : []),
+            ],
+        };
+        const tdocs = await training.getMulti(domainId, trainingQuery)
             .sort({ pin: -1, _id: 1 }).limit(limit).toArray();
         const tsdict = await training.getListStatus(
             domainId, this.user._id, tdocs.map((tdoc) => tdoc.docId),

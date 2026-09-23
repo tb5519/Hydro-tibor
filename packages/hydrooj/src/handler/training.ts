@@ -3,10 +3,12 @@ import { escapeRegExp, pick } from 'lodash';
 import { Filter, ObjectId } from 'mongodb';
 import { sortFiles } from '@hydrooj/utils/lib/utils';
 import {
-    FileLimitExceededError, FileUploadError, ProblemNotFoundError, ValidationError,
+    FileLimitExceededError, FileUploadError, ProblemNotFoundError, TrainingAlreadyEnrollError,
+    TrainingSelfEnrollDisabledError, ValidationError,
 } from '../error';
 import { Tdoc, TrainingDoc } from '../interface';
 import { PERM, PRIV, STATUS } from '../model/builtin';
+import domain from '../model/domain';
 import * as oplog from '../model/oplog';
 import problem from '../model/problem';
 import storage from '../model/storage';
@@ -64,29 +66,36 @@ class TrainingMainHandler extends Handler {
         const query: Filter<TrainingDoc> = {};
         if (q) query.title = { $regex: new RegExp(escapeRegExp(q), 'i') };
         await this.ctx.parallel('training/list', query, this);
+
+        const hasUserProfile = this.user.hasPriv(PRIV.PRIV_USER_PROFILE);
+        const canViewAllTraining = this.user.hasPerm(PERM.PERM_EDIT_DOMAIN)
+            || this.user.hasPerm(PERM.PERM_EDIT_TRAINING);
+        const enrolledTsdocs = hasUserProfile
+            ? await training.getMultiStatus(domainId, { uid: this.user._id, enroll: 1 }).toArray()
+            : [];
+        const enrolledTids = enrolledTsdocs.map((tsdoc) => tsdoc.docId);
+        if (!canViewAllTraining) {
+            const visibleTraining: Filter<TrainingDoc>[] = [
+                { allowSelfEnroll: { $ne: false } },
+                { owner: this.user._id },
+            ];
+            if (enrolledTids.length) visibleTraining.push({ docId: { $in: enrolledTids } });
+            const visibilityQuery: Filter<TrainingDoc> = { $or: visibleTraining };
+            query.$and = [...(query.$and || []), visibilityQuery];
+        }
+
         const [tdocs, tpcount] = await this.paginate(
             training.getMulti(domainId, query),
             page,
             'training',
         );
-        const tids: Set<ObjectId> = new Set();
-        for (const tdoc of tdocs) tids.add(tdoc.docId);
         const tsdict = {};
         let tdict = {};
-        if (this.user.hasPriv(PRIV.PRIV_USER_PROFILE)) {
-            const enrolledTids: Set<ObjectId> = new Set();
-            const tsdocs = await training.getMultiStatus(domainId, {
-                uid: this.user._id,
-                $or: [{ docId: { $in: Array.from(tids) } }, { enroll: 1 }],
-            }).toArray();
-            for (const tsdoc of tsdocs) {
+        if (hasUserProfile) {
+            for (const tsdoc of enrolledTsdocs) {
                 tsdict[tsdoc.docId] = tsdoc;
-                enrolledTids.add(tsdoc.docId);
             }
-            for (const tid of tids) enrolledTids.delete(tid);
-            if (enrolledTids.size) {
-                tdict = await training.getList(domainId, Array.from(enrolledTids));
-            }
+            if (enrolledTids.length) tdict = await training.getList(domainId, enrolledTids);
         }
         for (const tdoc of tdocs) tdict[tdoc.docId.toHexString()] = tdoc;
         this.response.template = 'training_main.html';
@@ -102,12 +111,17 @@ class TrainingDetailHandler extends Handler {
     async get(domainId: string, tid: ObjectId, uid = this.user._id) {
         const tdoc = await training.get(domainId, tid);
         await this.ctx.parallel('training/get', tdoc, this);
+        const canManageTraining = this.user.hasPerm(PERM.PERM_EDIT_TRAINING)
+            || this.user.hasPerm(PERM.PERM_EDIT_DOMAIN);
+        const canEditTraining = canManageTraining
+            || (this.user.own(tdoc) && this.user.hasPerm(PERM.PERM_EDIT_TRAINING_SELF));
         let enrollUsers: number[] = [];
         let shouldCompare = false;
         const pids = training.getPids(tdoc.dag);
-        if (this.user.hasPriv(PRIV.PRIV_USER_PROFILE) && this.ctx.setting.get('training.enrolled-users')) {
+        if (canManageTraining) {
             enrollUsers = (await training.getMultiStatus(domainId, { docId: tid, uid: { $gt: 1 }, enroll: 1 })
                 .project({ uid: 1 }).limit(500).toArray()).map((x) => +x.uid);
+            if (uid !== this.user._id && !enrollUsers.includes(uid)) uid = this.user._id;
             shouldCompare = uid !== this.user._id;
         } else uid = this.user._id;
         const canViewHidden = this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN) || this.user._id;
@@ -154,15 +168,15 @@ class TrainingDetailHandler extends Handler {
             donePids: Array.from(donePids),
             done: doneNids.size === tdoc.dag.length,
         });
-        const groups = this.user.hasPerm(PERM.PERM_EDIT_DOMAIN)
+        const groups = canManageTraining && this.user.hasPerm(PERM.PERM_EDIT_DOMAIN)
             ? await user.listGroup(domainId) : [];
-        const trainingDirectProblemLinks = this.user.own(tdoc)
-            || this.user.hasPerm(PERM.PERM_EDIT_TRAINING);
+        const trainingDirectProblemLinks = canEditTraining;
         this.response.body = {
             tdoc, tsdoc, pids, pdict, psdict, ndict, nsdict, udoc, udict, selfPsdict, groups, missing,
-            trainingDirectProblemLinks,
+            trainingDirectProblemLinks, canManageTraining, canEditTraining,
+            viewingUid: uid, isComparingUser: shouldCompare,
         };
-        this.response.body.tdoc.description = this.response.body.tdoc.description
+        this.response.body.tdoc.description = (this.response.body.tdoc.description || '')
             .replace(/\(file:\/\//g, `(./${tdoc.docId}/file/`)
             .replace(/="file:\/\//g, `="./${tdoc.docId}/file/`);
         this.response.pjax = 'partials/training_detail.html';
@@ -173,7 +187,34 @@ class TrainingDetailHandler extends Handler {
     async postEnroll(domainId: string, tid: ObjectId) {
         this.checkPriv(PRIV.PRIV_USER_PROFILE);
         const tdoc = await training.get(domainId, tid);
+        if (!training.canSelfEnroll(tdoc)) throw new TrainingSelfEnrollDisabledError(tid);
         await training.enroll(domainId, tdoc.docId, this.user._id);
+        this.back();
+    }
+
+    @param('tid', Types.ObjectId)
+    @param('uids', Types.NumericArray)
+    async postAddUser(domainId: string, tid: ObjectId, uids: number[]) {
+        await training.get(domainId, tid);
+        const canManageTraining = this.user.hasPerm(PERM.PERM_EDIT_TRAINING)
+            || this.user.hasPerm(PERM.PERM_EDIT_DOMAIN);
+        if (!canManageTraining) this.checkPerm(PERM.PERM_EDIT_TRAINING);
+
+        const uniqueUids = Array.from(new Set(uids.filter((uid) => uid > 1)));
+        if (!uniqueUids.length) throw new ValidationError('uids');
+        const domainUsers = await domain.getMultiUserInDomain(domainId, {
+            uid: { $in: uniqueUids },
+            join: true,
+        }).project({ uid: 1 }).toArray();
+        if (domainUsers.length !== uniqueUids.length) throw new ValidationError('uids');
+
+        await Promise.all(uniqueUids.map(async (uid) => {
+            try {
+                await training.enroll(domainId, tid, uid);
+            } catch (e) {
+                if (!(e instanceof TrainingAlreadyEnrollError)) throw e;
+            }
+        }));
         this.back();
     }
 
@@ -203,7 +244,10 @@ class TrainingEditHandler extends Handler {
 
     async get() {
         this.response.template = 'training_edit.html';
-        this.response.body = { page_name: this.tdoc ? 'training_edit' : 'training_create' };
+        this.response.body = {
+            page_name: this.tdoc ? 'training_edit' : 'training_create',
+            initialAttendCount: this.tdoc?.initialAttendCount ?? this.tdoc?.attend ?? 0,
+        };
         if (this.tdoc) {
             this.response.body.tdoc = this.tdoc;
             this.response.body.dag = JSON.stringify(this.tdoc.dag, null, 2);
@@ -216,20 +260,30 @@ class TrainingEditHandler extends Handler {
     @param('dag', Types.Content)
     @param('pin', Types.UnsignedInt)
     @param('description', Types.Content)
+    @param('allowSelfEnroll', Types.Boolean)
+    @param('initialAttendCount', Types.UnsignedInt)
     async post(
         domainId: string, tid: ObjectId,
         title: string, content: string,
         _dag: string, pin = 0, description: string,
+        allowSelfEnroll = false, initialAttendCount = 0,
     ) {
         if ((!!this.tdoc?.pin) !== (!!pin)) this.checkPerm(PERM.PERM_PIN_TRAINING);
+        if (initialAttendCount > 1000000) throw new ValidationError('initialAttendCount');
         const dag = await _parseDagJson(domainId, _dag);
         const pids = training.getPids(dag);
         assert(pids.length, new ValidationError('dag', null, 'Please specify at least one problem'));
         if (!tid) {
-            tid = await training.add(domainId, title, content, this.user._id, dag, description, pin);
+            tid = await training.add(
+                domainId, title, content, this.user._id, dag, description, pin,
+                allowSelfEnroll, initialAttendCount,
+            );
         } else {
+            const initialAttendChanged = this.tdoc.initialAttendCount === undefined
+                || this.tdoc.initialAttendCount !== initialAttendCount;
             await training.edit(domainId, tid, {
-                title, content, dag, description, pin,
+                title, content, dag, description, pin, allowSelfEnroll, initialAttendCount,
+                ...(initialAttendChanged ? { initialAttendActualCount: this.tdoc.attend || 0 } : {}),
             });
         }
         this.response.body = { tid };

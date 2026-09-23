@@ -19,6 +19,34 @@
               </label>
             </div>
           </div>
+          {% set selfEnrollEnabled = not tdoc or tdoc.allowSelfEnroll != false %}
+          <div class="row"><div class="columns">
+            <section class="training-edit-settings" aria-labelledby="training-access-title">
+              <div class="training-edit-settings__heading">
+                <h2 id="training-access-title">{{ _('Enrollment Settings') }}</h2>
+                <p>{{ _('Control how learners discover this plan and how its participant count is presented.') }}</p>
+              </div>
+              <div class="training-edit-settings__grid">
+                <label class="training-edit-setting training-edit-setting--toggle">
+                  <span class="training-edit-setting__control">
+                    <input type="checkbox" name="allowSelfEnroll" value="on"{% if selfEnrollEnabled %} checked{% endif %}>
+                    <span class="training-edit-setting__switch" aria-hidden="true"></span>
+                  </span>
+                  <span class="training-edit-setting__copy">
+                    <strong>{{ _('Allow learners to join') }}</strong>
+                    <small>{{ _('When enabled, learners can find this plan in Training and enroll themselves.') }}</small>
+                  </span>
+                </label>
+                <label class="training-edit-setting training-edit-setting--number">
+                  <span class="training-edit-setting__copy">
+                    <strong>{{ _('Initial participant count') }}</strong>
+                    <small>{{ _('This number is shown immediately; each new participant is added on top of it.') }}</small>
+                  </span>
+                  <input type="number" name="initialAttendCount" min="0" max="1000000" step="1" value="{{ initialAttendCount|default(0) }}" class="textbox" inputmode="numeric">
+                </label>
+              </div>
+            </section>
+          </div></div>
           <div class="row"><div class="columns">
             <label>
               {{ _('Introduce') }}

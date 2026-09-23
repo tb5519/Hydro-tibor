@@ -1,0 +1,148 @@
+.page--training_edit,
+.page--training_create
+  .training-edit-settings
+    margin: rem(8px 0 20px)
+    padding: rem(18px)
+    border: 1px solid #dce7f3
+    border-radius: rem(12px)
+    background: linear-gradient(145deg, #f8fbff, #fff)
+
+  .training-edit-settings__heading
+    display: flex
+    align-items: baseline
+    justify-content: space-between
+    gap: rem(12px 20px)
+    margin-bottom: rem(14px)
+
+    h2,
+    p
+      margin: 0
+
+    h2
+      color: #1e3655
+      font-size: rem(16px)
+      font-weight: 700
+
+    p
+      color: #718096
+      font-size: rem(12px)
+
+  .training-edit-settings__grid
+    display: grid
+    grid-template-columns: minmax(0, 1.35fr) minmax(rem(250px), 1fr)
+    gap: rem(12px)
+
+  .training-edit-setting
+    display: flex
+    align-items: center
+    gap: rem(13px)
+    min-height: rem(80px)
+    margin: 0
+    padding: rem(14px)
+    border: 1px solid #e3eaf2
+    border-radius: rem(10px)
+    background: #fff
+
+  .training-edit-setting__copy
+    display: flex
+    min-width: 0
+    flex: 1 1 auto
+    flex-direction: column
+    gap: rem(4px)
+
+    strong
+      color: #273b55
+      font-size: rem(14px)
+      font-weight: 700
+
+    small
+      color: #7a899c
+      font-size: rem(12px)
+      font-weight: 400
+      line-height: 1.5
+
+  .training-edit-setting__control
+    position: relative
+    display: inline-flex
+    flex: 0 0 auto
+
+    input
+      position: absolute
+      width: 1px
+      height: 1px
+      opacity: 0
+
+      &:focus-visible + .training-edit-setting__switch
+        outline: rem(3px) solid rgba(37, 99, 235, .2)
+        outline-offset: rem(2px)
+
+      &:checked + .training-edit-setting__switch
+        border-color: #2563eb
+        background: #2563eb
+
+        &:after
+          transform: translateX(rem(20px))
+
+  .training-edit-setting__switch
+    position: relative
+    display: inline-block
+    width: rem(44px)
+    height: rem(24px)
+    border: 1px solid #cbd5e1
+    border-radius: rem(999px)
+    background: #e2e8f0
+    cursor: pointer
+    transition: background .15s ease, border-color .15s ease
+
+    &:after
+      position: absolute
+      top: rem(2px)
+      left: rem(2px)
+      width: rem(18px)
+      height: rem(18px)
+      border-radius: 50%
+      background: #fff
+      box-shadow: 0 rem(1px) rem(4px) rgba(15, 23, 42, .2)
+      content: ''
+      transition: transform .15s ease
+
+  .training-edit-setting--number
+    .textbox
+      width: rem(112px)
+      margin: 0
+      text-align: right
+
+@media (max-width: 720px)
+  .page--training_edit,
+  .page--training_create
+    .training-edit-settings__heading
+      align-items: flex-start
+      flex-direction: column
+
+    .training-edit-settings__grid
+      grid-template-columns: minmax(0, 1fr)
+
+    .training-edit-setting--number
+      align-items: flex-start
+      flex-direction: column
+
+      .textbox
+        width: 100%
+
+.theme--dark.page--training_edit,
+.theme--dark.page--training_create
+  .training-edit-settings
+    border-color: #334155
+    background: linear-gradient(145deg, #172033, #1e293b)
+
+  .training-edit-settings__heading h2,
+  .training-edit-setting__copy strong
+    color: #e5edf8
+
+  .training-edit-settings__heading p,
+  .training-edit-setting__copy small
+    color: #a8b5c8
+
+  .training-edit-setting
+    border-color: #334155
+    background: #1e293b

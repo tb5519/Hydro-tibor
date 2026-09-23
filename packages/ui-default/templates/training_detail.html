@@ -1,120 +1,215 @@
 {% extends "layout/basic.html" %}
 {% block content %}
-<div class="row" data-sticky-parent>
-  {%- if Object.keys(udict).length -%}
-  <div class="medium-2 columns mobile--hide">
-    <div data-sticky="large"><div class="section side">
-      <ol class="menu">
-        <li class="menu__item nojs--hide">
-          <form method="get" id="searchForm">
-            <select name="group" class="select"{% if not groups.length %} style="display:none"{% endif %}>
+{% set totalProblemCount = pids|length %}
+{% set enrolledDoneCount = tsdoc['donePids']|length if tsdoc['enroll'] and tsdoc['donePids'] else 0 %}
+{% set rawTrainingProgress = (100 * enrolledDoneCount / totalProblemCount)|round|int if totalProblemCount else 0 %}
+{% set trainingProgress = 100 if rawTrainingProgress > 100 else (0 if rawTrainingProgress < 0 else rawTrainingProgress) %}
+{% set hasUserProfile = handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
+{% set continueNodeId = tdoc['dag'][0]['_id'] if tdoc['dag']|length else '' %}
+
+<div class="ui-v2-training-detail">
+  <section class="ui-v2-training-detail__hero{% if tsdoc['enroll'] and tsdoc['done'] %} is-done{% elif tsdoc['enroll'] %} is-progress{% endif %}">
+    <div class="ui-v2-training-detail__hero-main">
+      <div class="ui-v2-training-detail__hero-copy">
+        <div class="ui-v2-training-detail__eyebrow">
+          <span>{{ _('Training') }}</span>
+          {% if hasUserProfile %}
+            <span class="ui-v2-training-detail__status-chip{% if tsdoc['enroll'] and tsdoc['done'] %} is-done{% elif tsdoc['enroll'] %} is-progress{% else %} is-neutral{% endif %}">
+              <span class="icon {% if tsdoc['enroll'] and tsdoc['done'] %}icon-check{% elif tsdoc['enroll'] %}icon-schedule{% else %}icon-info--circle{% endif %}" aria-hidden="true"></span>
+              {% if tsdoc['enroll'] %}{{ _('Completed' if tsdoc['done'] else 'In Progress') }}{% else %}{{ _('Not Enrolled') }}{% endif %}
+            </span>
+          {% endif %}
+        </div>
+        <h1 data-emoji-enabled>{{ tdoc.title }}</h1>
+        {% if tdoc['content'] %}
+          <p class="ui-v2-training-detail__intro">{{ tdoc['content'] }}</p>
+        {% endif %}
+        <dl class="ui-v2-training-detail__meta">
+          <div><dt>{{ _('Created By') }}</dt><dd>{{ user.render_inline(udoc, badge=false) }}</dd></div>
+          <div><dt>{{ _('Enrollees') }}</dt><dd>{{ model.training.getDisplayAttend(tdoc) }}</dd></div>
+          <div><dt>{{ _('Section') }}</dt><dd>{{ tdoc['dag']|length }}</dd></div>
+          <div><dt>{{ _('Problem') }}</dt><dd>{{ totalProblemCount }}</dd></div>
+        </dl>
+        <div class="ui-v2-training-detail__hero-actions">
+          {% if not hasUserProfile %}
+            <a class="button rounded primary" href="{{ url('user_login') }}">{{ _('Login') }}</a>
+          {% elif not tsdoc['enroll'] and model.training.canSelfEnroll(tdoc) %}
+            <form action="" method="POST">
+              <input type="hidden" name="operation" value="enroll">
+              <button class="button rounded primary" type="submit">
+                <span class="icon icon-add" aria-hidden="true"></span> {{ _('Enroll Training') }}
+              </button>
+            </form>
+          {% elif tsdoc['enroll'] and continueNodeId %}
+            <a class="button rounded primary" href="#node-{{ continueNodeId }}" data-training-section-link>
+              <span class="icon icon-chevron_right" aria-hidden="true"></span>
+              {% if tsdoc['done'] %}{{ _('View problems') }}{% else %}{{ _('Continue') }}{% endif %}
+            </a>
+          {% endif %}
+          {% if canEditTraining %}
+            <a class="button rounded ui-v2-training-detail__secondary-button" href="{{ url('training_edit', tid=tdoc.docId) }}">
+              <span class="icon icon-edit" aria-hidden="true"></span> {{ _('Edit') }}
+            </a>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="ui-v2-training-detail__hero-progress">
+        <div class="ui-v2-training-detail__progress-heading">
+          <span>{{ _('Progress') }}</span>
+          <strong>{{ trainingProgress }}%</strong>
+        </div>
+        <div class="ui-v2-training-detail__progress-count">{{ _('Completed') }} {{ enrolledDoneCount }} / {{ totalProblemCount }}</div>
+        <div class="ui-v2-training-detail__progress-track" role="progressbar" aria-label="{{ _('Progress') }}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ trainingProgress }}">
+          <span style="width: {{ trainingProgress }}%"></span>
+        </div>
+      </div>
+
+      {% if tdoc.description %}
+        <section class="ui-v2-training-detail__hero-description" data-training-description>
+          <div class="ui-v2-training-detail__description-heading">
+            <h2>{{ _('Description') }}</h2>
+            <button type="button" data-training-description-toggle aria-expanded="false" hidden>
+              <span data-training-description-toggle-label>{{ _('Show more') }}</span>
+              <span class="icon icon-chevron-down" aria-hidden="true"></span>
+            </button>
+          </div>
+          <div class="ui-v2-training-detail__description-content typo richmedia" data-training-description-content>
+            {{ tdoc.description|markdown|safe }}
+          </div>
+        </section>
+      {% endif %}
+    </div>
+  </section>
+
+  <div class="ui-v2-training-detail__layout">
+    <main class="ui-v2-training-detail__main">
+      {% if not hasUserProfile or not tsdoc['enroll'] or missing.length %}
+        <div class="ui-v2-training-detail__notices typo">
+          {% if not hasUserProfile %}
+            <blockquote class="typo note">
+              <p>{{ _('Login to join training plan') }}</p>
+            </blockquote>
+          {% elif not tsdoc['enroll'] %}
+            <blockquote class="typo note">
+              <p>{{ _('page.training_detail.invalid_when_not_enrolled') }}</p>
+            </blockquote>
+          {% endif %}
+          {% if missing.length %}
+            <blockquote class="warn">
+              <p>{{ _('Some problems in the training are missing or you do not have permission to view them.') }}</p>
+              <p>{{ missing|join(', ') }}</p>
+            </blockquote>
+          {% endif %}
+        </div>
+      {% endif %}
+
+      {% include "partials/training_detail.html" %}
+    </main>
+
+    <aside class="ui-v2-training-detail__sidebar" aria-label="{{ _('Progress') }}">
+      <section class="ui-v2-training-detail__side-card ui-v2-training-detail__summary-card">
+        <div class="ui-v2-training-detail__side-card-header">
+          <h2>{{ _('Progress') }}</h2>
+          {% if hasUserProfile %}
+            <span class="ui-v2-training-detail__status-chip{% if tsdoc['enroll'] and tsdoc['done'] %} is-done{% elif tsdoc['enroll'] %} is-progress{% else %} is-neutral{% endif %}">
+              {% if tsdoc['enroll'] %}{{ _('Completed' if tsdoc['done'] else 'In Progress') }}{% else %}{{ _('Not Enrolled') }}{% endif %}
+            </span>
+          {% endif %}
+        </div>
+        <div class="ui-v2-training-detail__side-progress">
+          <strong>{{ trainingProgress }}%</strong>
+          <span>{{ _('Completed') }} {{ enrolledDoneCount }} / {{ totalProblemCount }}</span>
+        </div>
+        <div class="ui-v2-training-detail__progress-track" role="progressbar" aria-label="{{ _('Progress') }}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ trainingProgress }}">
+          <span style="width: {{ trainingProgress }}%"></span>
+        </div>
+        <dl class="ui-v2-training-detail__summary-meta">
+          <div><dt>{{ _('Enrollees') }}</dt><dd>{{ model.training.getDisplayAttend(tdoc) }}</dd></div>
+          <div><dt>{{ _('Created By') }}</dt><dd>{{ user.render_inline(udoc, badge=false) }}</dd></div>
+        </dl>
+
+        {% if canManageTraining %}
+          <button class="ui-v2-training-detail__select-user" type="button" data-training-user-drawer-open aria-controls="training-user-drawer" aria-expanded="false">
+            <span class="icon icon-account--circle" aria-hidden="true"></span>
+            <span>{{ _('Manage Students') }}</span>
+            <span class="icon icon-chevron_right" aria-hidden="true"></span>
+          </button>
+        {% endif %}
+
+        <div class="ui-v2-training-detail__side-actions">
+          {% if canEditTraining %}
+            <a href="{{ url('training_files', tid=tdoc.docId) }}"><span class="icon icon-file" aria-hidden="true"></span>{{ _('Files') }}</a>
+          {% endif %}
+          <a href="{{ url('wiki_help', anchor='training') }}"><span class="icon icon-help" aria-hidden="true"></span>{{ _('Help') }}</a>
+        </div>
+      </section>
+
+      <nav class="ui-v2-training-detail__side-card ui-v2-training-detail__outline" aria-label="{{ _('tasks_list') }}">
+        <ol class="menu">
+          {{ sidemenu.render_item('list', 'training_detail', {tid:tdoc._id}, label='tasks_list', menu_item='training_detail') }}
+        </ol>
+      </nav>
+    </aside>
+  </div>
+
+  {% if canManageTraining %}
+    <div class="ui-v2-training-detail__user-drawer" id="training-user-drawer" data-training-user-drawer aria-hidden="true">
+      <button class="ui-v2-training-detail__drawer-backdrop" type="button" data-training-user-drawer-close aria-label="{{ _('CLOSE') }}"></button>
+      <section class="ui-v2-training-detail__drawer-panel" role="dialog" aria-modal="true" aria-labelledby="training-user-drawer-title" tabindex="-1">
+        <header class="ui-v2-training-detail__drawer-header">
+          <h2 id="training-user-drawer-title">{{ _('Manage Students') }}</h2>
+          <button type="button" class="ui-v2-training-detail__drawer-close" data-training-user-drawer-close aria-label="{{ _('CLOSE') }}">
+            <span class="icon icon-close" aria-hidden="true"></span>
+          </button>
+        </header>
+        <form class="ui-v2-training-detail__add-users" data-training-add-users>
+          <input type="hidden" name="operation" value="add_user">
+          <label for="training-add-users">{{ _('Add Students') }}</label>
+          <div class="ui-v2-training-detail__add-users-row">
+            <input id="training-add-users" name="training_add_users" type="text" class="textbox" data-training-add-users-input placeholder="{{ _('Select students to add') }}" autocomplete="off">
+            <button class="button rounded primary" type="submit">{{ _('Add') }}</button>
+          </div>
+          <p>{{ _('Only teachers can see this roster and add students.') }}</p>
+        </form>
+        {% if Object.keys(udict).length %}
+          <form method="get" id="searchForm" class="ui-v2-training-detail__user-search">
+            <label class="ui-v2-training-detail__visually-hidden" for="training-user-search">{{ _('Search enrolled students') }}</label>
+            <select name="group" class="select"{% if not groups.length %} style="display:none"{% endif %} aria-label="{{ _('All') }}">
               <option value="all" selected>{{ _('All') }}</option>
               {% for group in groups %}
                 <option value="{{ group.uids.join(',') }}">{{ group.name }}</option>
               {% endfor %}
             </select>
-            <input name="uid" type="text" class="search__input textbox" placeholder="{{ _('Select User') }}">
+            <input id="training-user-search" name="uid" type="search" class="search__input textbox" placeholder="{{ _('Search enrolled students') }}" autocomplete="off">
           </form>
-        </li>
-        <ul class="enroll_user_menu">
-        {%- for uid, udoc in udict -%}
-        <li class="menu__item enroll_user_menu_item" data-uid="{{ uid }}" data-uname="{{ udoc.uname }}" {% if handler.user.hasPerm(perm.PERM_VIEW_USER_PRIVATE_INFO) and udoc.displayName %}data-displayname="{{ udoc.displayName }}"{% endif %}>
-          <a href="./{{ tdoc._id }}?uid={{ uid }}" class="menu__link{% if (handler.request.query.uid or handler.user._id) == uid %} active{% endif %}">
-            <span class="user-profile-link">
-              <img class="small user-profile-avatar v-center" loading="lazy" src="{{ avatarUrl(udoc.avatar|default('')) }}" width="20" height="20">
-              <span class="user-profile-name">
-                {% if handler.user.hasPerm(perm.PERM_VIEW_USER_PRIVATE_INFO) and udoc.displayName and udoc.displayName != udoc.uname %}
-                  {{ udoc.displayName }} ({{ udoc.uname }})
-                {% else %}
-                  {{ udoc.uname }}
-                {% endif %}
-              </span>
-            </span>
-          </a>
-        </li>
-        {%- endfor -%}
-        </ul>
-      </ol>
-    </div></div>
-  </div>
-  <div class="medium-7 columns">
-  {%- else -%}
-  <div class="medium-9 columns">
-  {%- endif -%}
-    <div class="section">
-      <div class="section__body typo">
-        {{ tdoc['content'] }}
-      </div>
-      <div class="section__body typo richmedia">
-        {% if not handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
-          <blockquote class="typo note">
-            <p>{{ _('Login to join training plan') }}</p>
-          </blockquote>
-        {% elif not tsdoc.enroll %}
-          <blockquote class="typo note">
-            <p>{{ _('page.training_detail.invalid_when_not_enrolled') }}</p>
-          </blockquote>
+          <ul class="enroll_user_menu">
+            {%- for uid, enrolledUser in udict -%}
+              <li class="enroll_user_menu_item" data-uid="{{ uid }}" data-uname="{{ enrolledUser.uname }}"{% if handler.user.hasPerm(perm.PERM_VIEW_USER_PRIVATE_INFO) and enrolledUser.displayName %} data-displayname="{{ enrolledUser.displayName }}"{% endif %}>
+                <a href="./{{ tdoc._id }}?uid={{ uid }}" data-no-instant{% if viewingUid == uid %} class="active" aria-current="page"{% endif %}>
+                  <span class="user-profile-link">
+                    <img class="small user-profile-avatar v-center" loading="lazy" src="{{ avatarUrl(enrolledUser.avatar|default('')) }}" width="32" height="32" alt="">
+                    <span class="user-profile-name">
+                      {% if handler.user.hasPerm(perm.PERM_VIEW_USER_PRIVATE_INFO) and enrolledUser.displayName and enrolledUser.displayName != enrolledUser.uname %}
+                        {{ enrolledUser.displayName }} ({{ enrolledUser.uname }})
+                      {% else %}
+                        {{ enrolledUser.uname }}
+                      {% endif %}
+                    </span>
+                  </span>
+                  <span class="icon icon-chevron_right" aria-hidden="true"></span>
+                </a>
+              </li>
+            {%- endfor -%}
+          </ul>
+        {% else %}
+          <div class="ui-v2-training-detail__roster-empty">
+            <span class="icon icon-account--circle" aria-hidden="true"></span>
+            <p>{{ _('No students enrolled yet.') }}</p>
+          </div>
         {% endif %}
-        {% if missing.length %}
-          <blockquote class="warn">
-            <p>{{ _('Some problems in the training are missing or you do not have permission to view them.') }}</p>
-            <p>{{ missing|join(', ') }}</p>
-          </blockquote>
-        {% endif %}
-        {{ tdoc.description|default('')|markdown|safe }}
-      </div>
+      </section>
     </div>
-    <div class="section">
-      {% include "partials/training_detail.html" %}
-    </div>
-  </div>
-  <div class="medium-3 columns" data-sticky="large">
-    <div class="section side">
-      <div>
-        <ol class="menu">
-        {% if not tsdoc['enroll'] and handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
-          <li class="menu__item">
-            <form action="" method="POST">
-              <input type="hidden" name="operation" value="enroll">
-              <button class="menu__link" type="submit">
-                <span class="icon icon-add"></span> {{ _('Enroll Training') }}
-              </button>
-            </form>
-          </li>
-        {% endif %}
-        {% if handler.user.own(tdoc) or handler.user.hasPerm(perm.PERM_EDIT_TRAINING) %}
-          <li class="menu__item"><a class="menu__link" href="{{ url('training_edit', tid=tdoc.docId) }}">
-            <span class="icon icon-edit"></span>  {{ _('Edit') }}
-          </a></li>
-          <li class="menu__item"><a class="menu__link" href="{{ url('training_files', tid=tdoc.docId) }}">
-            <span class="icon icon-file"></span> {{ _('Files') }}
-          </a></li>
-        {% endif %}
-          <li class="menu__item"><a class="menu__link" href="{{ url('wiki_help', anchor='training') }}">
-            <span class="icon icon-help"></span> {{ _('Help') }}
-          </a></li>
-          <li class="menu__seperator"></li>
-        </ol>
-      </div>
-      <div class="section__body typo">
-        <dl class="large horizontal">
-        {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
-          <dt>{{ _('Status') }}</dt><dd>{% if tsdoc['enroll'] %}{{ _('Completed' if tsdoc['done'] else 'In Progress') }}{% else %}{{ _('Not Enrolled') }}{% endif %}</dd>
-        {% endif %}
-          {% if tsdoc['enroll'] %}
-          <dt>{{ _('Progress') }}</dt><dd>{{ _('Completed') }} {{ (100 * tsdoc['donePids']|length / pids|length)|round|int }}%</dd>
-          {% endif %}
-          <dt>{{ _('Enrollees') }}</dt><dd>{{ tdoc.attend|default(0) }}</dd>
-          <dt>{{ _('Created By') }}</dt>
-          <dd>{{ user.render_inline(udoc, badge=false) }}</dd>
-        </dl>
-      </div>
-    </div>
-    <div class="section side">
-      <ol class="menu">
-        {{ sidemenu.render_item('list', 'training_detail', {tid:tdoc._id}, label='tasks_list', menu_item='training_detail') }}
-      </ol>
-    </div>
-  </div>
+  {% endif %}
 </div>
 {% endblock %}

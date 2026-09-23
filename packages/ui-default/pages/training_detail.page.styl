@@ -1,48 +1,1216 @@
+html.page--training_detail > body > .main
+  background: var(--ui-v2-bg, #f1f5f9)
+  padding-top: rem(32px)
+  padding-bottom: rem(56px)
+
 .page--training_detail
-  .col--status
-    width: rem(150px)
+  .ui-v2-training-detail
+    box-sizing: border-box
+    width: calc(100% - 30px)
+    max-width: rem(1200px)
+    margin: 0 auto
+    color: var(--ui-v2-text, #0f172a)
+
+  .ui-v2-training-detail__hero,
+  .ui-v2-training-detail__side-card,
+  .training__section,
+  .ui-v2-training-detail__notices,
+  .ui-v2-training-detail__empty--page
+    border: 1px solid var(--ui-v2-border, #e2e8f0)
+    border-radius: var(--ui-v2-radius, 14px)
+    background: var(--ui-v2-surface, #fff)
+    box-shadow: var(--ui-v2-shadow-sm, 0 4px 14px rgba(15, 23, 42, .06))
+
+  .ui-v2-training-detail__hero
+    overflow: hidden
+    margin-bottom: rem(18px)
+    border-color: #d9e7f7
+    background: linear-gradient(135deg, #fff 0%, #f6faff 72%, #eef6ff 100%)
+
+  .ui-v2-training-detail__hero-main
+    display: grid
+    grid-template-columns: minmax(0, 1fr) minmax(rem(220px), rem(290px))
+    gap: rem(18px 28px)
+    align-items: start
+    padding: rem(22px 26px)
+
+  .ui-v2-training-detail__hero-copy
+    min-width: 0
+
+  .ui-v2-training-detail__eyebrow
+    display: flex
+    flex-wrap: wrap
+    align-items: center
+    gap: rem(10px)
+    margin-bottom: rem(8px)
+    color: var(--ui-v2-accent, #2563eb)
+    font-size: rem(12px)
+    font-weight: 700
+    letter-spacing: .08em
+    text-transform: uppercase
+
+  .ui-v2-training-detail__hero h1
+    margin: 0
+    color: var(--ui-v2-text, #0f172a)
+    font-size: clamp(rem(26px), 2.5vw, rem(34px))
+    font-weight: 720
+    line-height: 1.18
+    letter-spacing: -.025em
+
+  .ui-v2-training-detail__intro
+    max-width: rem(850px)
+    margin: rem(9px 0 0)
+    color: var(--ui-v2-text-muted, #64748b)
+    font-size: rem(16px)
+    line-height: 1.55
+    white-space: normal
+
+  .ui-v2-training-detail__meta
+    display: flex
+    flex-wrap: wrap
+    gap: rem(8px 22px)
+    margin: rem(12px 0 0)
+
+    > div
+      display: inline-flex
+      align-items: center
+      gap: rem(6px)
+      min-width: 0
+
+    dt,
+    dd
+      margin: 0
+      font-size: rem(13px)
+      line-height: 1.5
+
+    dt
+      color: #8391a5
+
+      &:after
+        content: ':'
+
+    dd
+      color: #334155
+      font-weight: 600
+
+    .user-profile-link
+      display: inline-flex
+      align-items: center
+
+  .ui-v2-training-detail__hero-actions
+    display: flex
+    flex-wrap: wrap
+    align-items: center
+    gap: rem(10px)
+    margin-top: rem(15px)
+
+    form
+      margin: 0
+
+    .button
+      display: inline-flex
+      align-items: center
+      justify-content: center
+      gap: rem(7px)
+      min-height: rem(38px)
+      height: auto
+      margin: 0
+      padding: rem(0 20px)
+      border-radius: rem(10px)
+      line-height: rem(36px)
+
+    .button.primary
+      border-color: var(--ui-v2-accent, #2563eb)
+      background: var(--ui-v2-accent, #2563eb)
+      box-shadow: 0 rem(6px) rem(16px) rgba(37, 99, 235, .18)
+
+      &:hover,
+      &:focus
+        border-color: #1d4ed8
+        background: #1d4ed8
+
+  .ui-v2-training-detail__secondary-button
+    border-color: var(--ui-v2-border-strong, #cbd5e1) !important
+    background: rgba(255, 255, 255, .82) !important
+    box-shadow: none !important
+    color: #334155 !important
+
+    &:hover,
+    &:focus
+      border-color: #93b8e8 !important
+      background: #fff !important
+      color: var(--ui-v2-accent, #2563eb) !important
+
+  .ui-v2-training-detail__hero-progress
+    align-self: center
+    min-width: 0
+    padding: rem(16px)
+    border: 1px solid rgba(148, 179, 216, .35)
+    border-radius: rem(13px)
+    background: rgba(255, 255, 255, .74)
+
+  .ui-v2-training-detail__progress-heading
+    display: flex
+    align-items: baseline
+    justify-content: space-between
+    gap: rem(16px)
+    color: var(--ui-v2-text-muted, #64748b)
+    font-size: rem(13px)
+
+    strong
+      color: var(--ui-v2-accent, #2563eb)
+      font-size: rem(28px)
+      font-variant-numeric: tabular-nums
+      line-height: 1
+
+  .is-done .ui-v2-training-detail__progress-heading strong
+    color: #168657
+
+  .ui-v2-training-detail__progress-count
+    margin-top: rem(6px)
+    color: #74849a
+    font-size: rem(13px)
+    font-variant-numeric: tabular-nums
+
+  .ui-v2-training-detail__progress-track
+    display: block
+    height: rem(8px)
+    margin-top: rem(12px)
+    overflow: hidden
+    border-radius: rem(999px)
+    background: #e2eaf4
+
+    > span
+      display: block
+      height: 100%
+      border-radius: inherit
+      background: linear-gradient(90deg, var(--ui-v2-accent, #2563eb), #60a5fa)
+
+  .is-done .ui-v2-training-detail__progress-track > span,
+  .training__section-chip.is-done + .ui-v2-training-detail__progress-track > span
+    background: linear-gradient(90deg, #1f9d68, #55cf97)
+
+  .ui-v2-training-detail__hero-description
+    grid-column: 1 / -1
+    min-width: 0
+    padding-top: rem(14px)
+    border-top: 1px solid rgba(148, 179, 216, .28)
+
+    &.is-expanded
+      .ui-v2-training-detail__description-content
+        max-height: none
+
+      [data-training-description-toggle] .icon
+        transform: rotate(180deg)
+
+  .ui-v2-training-detail__description-heading
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: rem(12px)
+    margin-bottom: rem(7px)
+
+    h2
+      margin: 0
+      color: var(--ui-v2-text, #0f172a)
+      font-size: rem(14px)
+      font-weight: 700
+
+    button
+      display: inline-flex
+      align-items: center
+      gap: rem(4px)
+      min-height: rem(28px)
+      padding: rem(0 7px)
+      border: 0
+      border-radius: rem(7px)
+      background: transparent
+      color: var(--ui-v2-accent, #2563eb)
+      cursor: pointer
+      font-size: rem(12px)
+
+      &[hidden]
+        display: none
+
+      &:hover,
+      &:focus-visible
+        background: rgba(37, 99, 235, .08)
+        outline: none
+
+      .icon
+        transition: transform .16s ease
+
+  .ui-v2-training-detail__description-content
     position: relative
+    max-height: rem(76px)
+    overflow: hidden
+    color: #475569
+    font-size: rem(14px)
+    line-height: 1.6
 
-    &.col--status--sm
-      width: rem(84px)
+    > :first-child
+      margin-top: 0
 
-  .col--tried, .col--ac, .col--difficulty
-    width: rem(70px)
-    text-align: center
+    > :last-child
+      margin-bottom: 0
 
-  .col--status
-    border-right: 1px solid $table-border-color
+  .ui-v2-training-detail__status-chip,
+  .training__section-chip
+    display: inline-flex
+    align-items: center
+    gap: rem(5px)
+    flex: 0 0 auto
+    padding: rem(4px 9px)
+    border: 1px solid transparent
+    border-radius: rem(999px)
+    font-size: rem(12px)
+    font-weight: 700
+    line-height: 1.25
+    letter-spacing: 0
+    text-transform: none
 
-  .col--tried, .col--difficulty
-    border-left: 1px solid $table-border-color
+    &.is-done
+      border-color: #b9ead4
+      background: #ecf9f3
+      color: #168657
 
-  +mobile()
-    .col--status,
-    .col--tried,
-    .col--difficulty
-      display: none
+    &.is-progress
+      border-color: #bfdbfe
+      background: #eff6ff
+      color: var(--ui-v2-accent, #2563eb)
 
-    .col--ac
-      border-left: 1px solid $table-border-color
+    &.is-open,
+    &.is-neutral
+      border-color: #dbe3ed
+      background: #f8fafc
+      color: #64748b
+
+    &.is-invalid
+      border-color: #fecaca
+      background: #fff1f2
+      color: #c2414b
+
+  .ui-v2-training-detail__layout
+    display: grid
+    grid-template-columns: minmax(0, 1fr) rem(300px)
+    gap: rem(24px)
+    align-items: start
+
+  .ui-v2-training-detail__main
+    min-width: 0
+
+  .ui-v2-training-detail__notices
+    margin-bottom: rem(18px)
+    padding: rem(18px 20px)
+
+    blockquote
+      margin: 0
+
+      + blockquote
+        margin-top: rem(12px)
+
+  .ui-v2-training-detail__sidebar
+    position: sticky
+    top: rem(72px)
+    display: grid
+    gap: rem(16px)
+    min-width: 0
+
+  .ui-v2-training-detail__side-card
+    overflow: hidden
+
+  .ui-v2-training-detail__summary-card
+    padding: rem(20px)
+
+  .ui-v2-training-detail__side-card-header
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: rem(10px)
+
+    h2
+      margin: 0
+      color: var(--ui-v2-text, #0f172a)
+      font-size: rem(16px)
+      font-weight: 700
+
+  .ui-v2-training-detail__side-progress
+    display: flex
+    align-items: baseline
+    justify-content: space-between
+    gap: rem(10px)
+    margin-top: rem(18px)
+
+    strong
+      color: var(--ui-v2-accent, #2563eb)
+      font-size: rem(24px)
+      font-variant-numeric: tabular-nums
+
+    span
+      color: var(--ui-v2-text-muted, #64748b)
+      font-size: rem(12px)
+      font-variant-numeric: tabular-nums
+
+  .ui-v2-training-detail__summary-meta
+    margin: rem(18px 0 0)
+    padding-top: rem(14px)
+    border-top: 1px solid var(--ui-v2-border, #e2e8f0)
+
+    > div
+      display: grid
+      grid-template-columns: rem(70px) minmax(0, 1fr)
+      gap: rem(10px)
+      align-items: center
+
+      + div
+        margin-top: rem(10px)
+
+    dt,
+    dd
+      margin: 0
+      font-size: rem(13px)
+
+    dt
+      color: #8391a5
+
+    dd
+      min-width: 0
+      color: #334155
+
+  .ui-v2-training-detail__select-user
+    display: flex
+    align-items: center
+    gap: rem(8px)
+    width: 100%
+    min-height: rem(42px)
+    margin-top: rem(18px)
+    padding: rem(0 12px)
+    border: 1px solid #c7dcf5
+    border-radius: rem(10px)
+    background: #f6faff
+    color: #245e9d
+    cursor: pointer
+    font-size: rem(13px)
+    font-weight: 650
+    text-align: left
+
+    span:nth-child(2)
+      flex: 1 1 auto
+
+    &:hover,
+    &:focus-visible
+      border-color: #83b4ed
+      background: #eef6ff
+      outline: none
+
+  .ui-v2-training-detail__side-actions
+    display: flex
+    flex-wrap: wrap
+    gap: rem(8px 16px)
+    margin-top: rem(16px)
+    padding-top: rem(14px)
+    border-top: 1px solid var(--ui-v2-border, #e2e8f0)
+
+    a
+      display: inline-flex
+      align-items: center
+      gap: rem(5px)
+      color: var(--ui-v2-text-muted, #64748b)
+      font-size: rem(12px)
+
+      &:hover,
+      &:focus
+        color: var(--ui-v2-accent, #2563eb)
+
+  .ui-v2-training-detail__outline
+    .menu
+      margin: 0
+      padding: rem(6px 0)
+
+    #menu-item-training_detail > .menu__link
+      border-left: 0
+      color: var(--ui-v2-text, #0f172a)
+      font-weight: 700
+
+      &.active
+        background: transparent
+        color: var(--ui-v2-text, #0f172a)
+
+    #menu-item-training_detail > ul
+      max-height: calc(70vh - 190px)
+      overflow-x: hidden
+      overflow-y: auto
+      padding: rem(0 8px 10px)
+
+      .menu__link
+        margin: rem(2px 0)
+        padding: rem(9px 10px)
+        overflow: hidden
+        border: 0
+        border-radius: rem(8px)
+        color: var(--ui-v2-text-muted, #64748b)
+        font-size: rem(12px)
+        line-height: 1.45
+        text-overflow: ellipsis
+        white-space: nowrap
+
+        &:hover,
+        &:focus,
+        &.is-current
+          background: var(--ui-v2-accent-soft, #eff6ff)
+          color: var(--ui-v2-accent, #2563eb)
+
+  .ui-v2-training-detail__viewing-user-note
+    margin: rem(0 0 16px)
+
+  .ui-v2-training-detail__chapter-toolbar
+    display: flex
+    justify-content: flex-end
+    gap: rem(8px)
+    margin: rem(0 0 10px)
+
+    button
+      display: inline-flex
+      align-items: center
+      gap: rem(4px)
+      min-height: rem(34px)
+      padding: rem(0 11px)
+      border: 1px solid var(--ui-v2-border, #e2e8f0)
+      border-radius: rem(8px)
+      background: rgba(255, 255, 255, .9)
+      color: var(--ui-v2-text-muted, #64748b)
+      cursor: pointer
+      font-size: rem(12px)
+
+      &:hover,
+      &:focus-visible
+        border-color: #a8c8ed
+        color: var(--ui-v2-accent, #2563eb)
+        outline: none
 
   .training__section
-    &.invalid
-      .training__problems
-        opacity: 0.6
+    overflow: hidden
+    margin-bottom: rem(16px)
 
-    &.collapsed .collapsed--hidden,
-    &.expanded .expanded--hidden
-      display: none
+    &.animating
+      pointer-events: none
 
     &.collapsed .training__section__detail
       display: none
 
-  #menu-item-training_detail ul
-    max-height: calc(85vh - 345px)
-    overflow-y: auto
-    overflow-x: hidden
+    &.expanded .training__section-chevron
+      transform: rotate(180deg)
+
+    &.invalid .training__problems
+      background: #fafbfc
+
+  .training__section-header
+    margin: 0
+    background: linear-gradient(180deg, #fbfdff 0%, #fff 100%)
+
+  .training__section-heading
+    margin: 0
+    font-size: inherit
+
+  .training__section-toggle
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: rem(20px)
+    width: 100%
+    min-height: rem(82px)
+    padding: rem(17px 20px)
+    border: 0
+    background: transparent
+    color: inherit
+    cursor: pointer
+    text-align: left
+
+    &:hover
+      background: #f8fbff
+
+    &:focus-visible
+      position: relative
+      z-index: 1
+      outline: rem(3px) solid rgba(37, 99, 235, .2)
+      outline-offset: rem(-3px)
+
+  .training__section-title-wrap
+    min-width: 0
+    flex: 1 1 auto
+
+  .training__section-title
+    display: block
+    color: #1e3655
+    font-size: rem(19px)
+    font-weight: 690
+    line-height: 1.35
+    scroll-margin-top: rem(78px)
+
+  .training__section-subtitle
+    display: block
+    margin-top: rem(5px)
+    overflow: hidden
+    color: var(--ui-v2-text-muted, #64748b)
+    font-size: rem(13px)
+    font-weight: 400
+    line-height: 1.45
+    text-overflow: ellipsis
+    white-space: nowrap
+
+  .training__section-summary
+    display: flex
+    align-items: center
+    justify-content: flex-end
+    gap: rem(9px)
+    flex: 0 0 auto
+    color: var(--ui-v2-text-muted, #64748b)
+    font-size: rem(12px)
+    font-weight: 500
+
+  .training__section-count,
+  .training__section-percent
+    font-variant-numeric: tabular-nums
+    white-space: nowrap
+
+  .training__section-percent
+    min-width: rem(34px)
+    color: #475569
+    font-weight: 700
+    text-align: right
+
+  .training__section-chevron
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    width: rem(28px)
+    height: rem(28px)
+    border-radius: 50%
+    background: #f1f5f9
+    color: #64748b
+    transition: transform .18s ease
+
+  .training__section__detail
+    border-top: 1px solid var(--ui-v2-border, #e2e8f0)
+
+    .section__body
+      padding: rem(18px 20px)
+
+      &.no-padding
+        padding: 0
+
+  .training__section-content
+    border-bottom: 1px solid var(--ui-v2-border, #e2e8f0)
+
+    > :first-child
+      margin-top: 0
+
+    > :last-child
+      margin-bottom: 0
+
+  .training__problems
+    overflow: hidden
+
+    .data-table
+      width: 100%
+      margin: 0
+      table-layout: fixed
+
+      th
+        padding: rem(11px 12px)
+        background: #f8fafc
+        color: #718096
+        font-size: rem(12px)
+        font-weight: 650
+
+      td
+        padding: rem(12px)
+        vertical-align: middle
+
+      tbody tr
+        transition: background-color .14s ease
+
+        &:hover
+          background: #f8fbff
+
+    .col--status
+      position: relative
+      width: rem(145px)
+      border-right: 1px solid var(--ui-v2-border, #e2e8f0)
+
+      &.col--status--sm
+        width: rem(82px)
+
+    .col--tried,
+    .col--ac,
+    .col--difficulty
+      width: rem(74px)
+      text-align: center
+      font-variant-numeric: tabular-nums
+
+    .col--tried,
+    .col--difficulty
+      border-left: 1px solid var(--ui-v2-border, #e2e8f0)
+
+    .col--problem-name
+      overflow-wrap: anywhere
+
+      a
+        color: #274766
+        font-weight: 600
+
+        &:hover,
+        &:focus
+          color: var(--ui-v2-accent, #2563eb)
+
+  .ui-v2-training-detail__empty
+    padding: rem(28px 20px)
+    color: var(--ui-v2-text-muted, #64748b)
+    text-align: center
+
+  .ui-v2-training-detail__empty--page
+    padding: rem(48px 20px)
+
+  .ui-v2-training-detail__visually-hidden
+    position: absolute !important
+    width: 1px !important
+    height: 1px !important
+    padding: 0 !important
+    overflow: hidden !important
+    clip: rect(0, 0, 0, 0) !important
+    white-space: nowrap !important
+    border: 0 !important
+
+  .ui-v2-training-detail__user-drawer
+    position: fixed
+    z-index: 1200
+    inset: 0
+    visibility: hidden
+    pointer-events: none
+
+    &.is-open
+      visibility: visible
+      pointer-events: auto
+
+      .ui-v2-training-detail__drawer-backdrop
+        opacity: 1
+
+      .ui-v2-training-detail__drawer-panel
+        transform: translateX(0)
+
+  .ui-v2-training-detail__drawer-backdrop
+    position: absolute
+    inset: 0
+    width: 100%
+    height: 100%
+    padding: 0
+    border: 0
+    background: rgba(15, 23, 42, .48)
+    cursor: default
+    opacity: 0
+    transition: opacity .18s ease
+    backdrop-filter: blur(rem(3px))
+
+  .ui-v2-training-detail__drawer-panel
+    position: absolute
+    top: rem($nav-item-height)
+    right: 0
+    bottom: 0
+    display: flex
+    flex-direction: column
+    width: calc(100vw - rem(28px))
+    max-width: rem(380px)
+    height: auto
+    background: #fff
+    box-shadow: rem(-18px 0 48px) rgba(15, 23, 42, .18)
+    transform: translateX(100%)
+    transition: transform .2s ease
+
+    &:focus
+      outline: none
+
+  .ui-v2-training-detail__drawer-header
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: rem(12px)
+    padding: rem(20px)
+    border-bottom: 1px solid var(--ui-v2-border, #e2e8f0)
+
+    h2
+      margin: 0
+      color: var(--ui-v2-text, #0f172a)
+      font-size: rem(19px)
+      font-weight: 700
+
+  .ui-v2-training-detail__drawer-close
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    width: rem(40px)
+    height: rem(40px)
+    padding: 0
+    border: 0
+    border-radius: rem(9px)
+    background: transparent
+    color: #64748b
+    cursor: pointer
+
+    &:hover,
+    &:focus-visible
+      background: var(--ui-v2-accent-soft, #eff6ff)
+      color: var(--ui-v2-accent, #2563eb)
+      outline: none
+
+  .ui-v2-training-detail__add-users
+    padding: rem(16px 20px)
+    border-bottom: 1px solid var(--ui-v2-border, #e2e8f0)
+    background: #f8fbff
+
+    > label
+      display: block
+      margin-bottom: rem(8px)
+      color: var(--ui-v2-text, #0f172a)
+      font-size: rem(13px)
+      font-weight: 700
+
+    > p
+      margin: rem(8px 0 0)
+      color: var(--ui-v2-text-muted, #64748b)
+      font-size: rem(11px)
+      line-height: 1.45
+
+  .ui-v2-training-detail__add-users-row
+    display: grid
+    grid-template-columns: minmax(0, 1fr) auto
+    gap: rem(8px)
+    align-items: start
+
+    .textbox
+      width: 100%
+      min-height: rem(40px)
+      margin: 0
+
+    .button
+      min-height: rem(40px)
+      margin: 0
+      padding: rem(0 14px)
+
+  .ui-v2-training-detail__roster-empty
+    display: grid
+    place-items: center
+    gap: rem(8px)
+    padding: rem(36px 20px)
+    color: var(--ui-v2-text-muted, #64748b)
+    text-align: center
+
+    .icon
+      color: #a5b4c7
+      font-size: rem(28px)
+
+    p
+      margin: 0
+      font-size: rem(13px)
+
+  .ui-v2-training-detail__user-search
+    display: grid
+    grid-template-columns: auto minmax(0, 1fr)
+    gap: rem(8px)
+    padding: rem(16px 20px)
+    border-bottom: 1px solid var(--ui-v2-border, #e2e8f0)
+
+    .select,
+    .textbox
+      width: 100%
+      height: rem(42px)
+      margin: 0
+      border: 1px solid var(--ui-v2-border-strong, #cbd5e1)
+      border-radius: rem(9px)
+      background: #fff
+
+    .select
+      min-width: rem(94px)
 
   .enroll_user_menu
-    max-height: 85vh
-    overflow-y: auto
+    flex: 1 1 auto
+    max-height: none
+    margin: 0
+    padding: rem(8px 12px 24px)
     overflow-x: hidden
+    overflow-y: auto
+    list-style: none
+
+  .enroll_user_menu_item
+    margin: rem(3px 0)
+
+    &.is-filtered-out
+      display: none
+
+    > a
+      display: flex
+      align-items: center
+      gap: rem(10px)
+      min-height: rem(50px)
+      padding: rem(7px 10px)
+      border: 1px solid transparent
+      border-radius: rem(10px)
+      color: #334155
+
+      > .user-profile-link
+        display: flex
+        align-items: center
+        gap: rem(10px)
+        min-width: 0
+        flex: 1 1 auto
+
+      .user-profile-avatar
+        flex: 0 0 auto
+        width: rem(32px)
+        height: rem(32px)
+
+      .user-profile-name
+        overflow: hidden
+        text-overflow: ellipsis
+        white-space: nowrap
+
+      > .icon
+        flex: 0 0 auto
+        color: #94a3b8
+
+      &:hover,
+      &:focus,
+      &.active
+        border-color: #d3e4f8
+        background: var(--ui-v2-accent-soft, #eff6ff)
+        color: var(--ui-v2-accent, #2563eb)
+        text-decoration: none
+
+body.training-user-drawer-open
+  overflow: hidden
+
+@media (max-width: 1100px)
+  .page--training_detail
+    .ui-v2-training-detail__layout
+      grid-template-columns: minmax(0, 1fr)
+
+    .ui-v2-training-detail__sidebar
+      position: static
+      top: auto
+      order: -1
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)
+
+    .ui-v2-training-detail__outline #menu-item-training_detail > ul
+      max-height: rem(230px)
+
+@media (max-width: 720px)
+  html.page--training_detail > body > .main
+    padding-top: rem(16px)
+    padding-bottom: rem(36px)
+
+  .page--training_detail
+    .ui-v2-training-detail
+      width: calc(100% - 20px)
+
+    .ui-v2-training-detail__hero-main
+      grid-template-columns: minmax(0, 1fr)
+      gap: rem(20px)
+      padding: rem(22px 18px)
+
+    .ui-v2-training-detail__hero h1
+      font-size: rem(27px)
+
+    .ui-v2-training-detail__intro
+      font-size: rem(14px)
+
+    .ui-v2-training-detail__meta
+      display: grid
+      grid-template-columns: repeat(2, minmax(0, 1fr))
+
+    .ui-v2-training-detail__hero-progress
+      padding: rem(16px)
+
+    .ui-v2-training-detail__hero-actions
+      align-items: stretch
+
+      form,
+      .button
+        flex: 1 1 rem(145px)
+
+      form .button
+        width: 100%
+
+    .ui-v2-training-detail__add-users-row
+      grid-template-columns: minmax(0, 1fr)
+
+      .button
+        width: 100%
+
+    .ui-v2-training-detail__sidebar
+      grid-template-columns: minmax(0, 1fr)
+
+    .ui-v2-training-detail__notices
+      padding: rem(18px)
+
+    .ui-v2-training-detail__chapter-toolbar
+      justify-content: stretch
+
+      button
+        flex: 1 1 0
+        justify-content: center
+        min-height: rem(40px)
+
+    .training__section-toggle
+      align-items: flex-start
+      flex-direction: column
+      gap: rem(12px)
+      padding: rem(16px)
+
+    .training__section-summary
+      width: 100%
+      justify-content: flex-start
+      flex-wrap: wrap
+
+    .training__section-chevron
+      margin-left: auto
+
+    .training__section__detail .section__body
+      padding: rem(16px)
+
+    .training__problems
+      padding: rem(10px) !important
+      background: #f8fafc
+
+      .data-table,
+      .data-table tbody
+        display: block
+        width: 100%
+
+      .data-table colgroup,
+      .data-table thead
+        display: none
+
+      .data-table tr
+        display: flex
+        flex-wrap: wrap
+        align-items: center
+        gap: rem(7px 12px)
+        margin: rem(0 0 10px)
+        padding: rem(13px)
+        border: 1px solid var(--ui-v2-border, #e2e8f0)
+        border-radius: rem(11px)
+        background: #fff
+
+        &:last-child
+          margin-bottom: 0
+
+      .data-table td
+        display: inline-flex
+        align-items: center
+        width: auto
+        padding: 0
+        border: 0
+        font-size: rem(12px)
+        text-align: left
+
+      .data-table .col--name
+        order: -2
+        flex: 1 0 100%
+        width: 100%
+        padding-bottom: rem(10px)
+        border-bottom: 1px solid var(--ui-v2-border, #e2e8f0)
+        font-size: rem(14px)
+
+      .data-table .col--status
+        order: -1
+        flex: 1 1 auto
+        min-height: rem(24px)
+        border-left-width: rem(3px)
+        border-right: 0
+
+      .data-table .col--tried,
+      .data-table .col--ac,
+      .data-table .col--difficulty
+        color: #475569
+
+        &:before
+          content: attr(data-label) ':'
+          margin-right: rem(4px)
+          color: #94a3b8
+
+    .ui-v2-training-detail__drawer-panel
+      width: 100%
+
+@media (prefers-reduced-motion: reduce)
+  .page--training_detail
+    .training__section-chevron,
+    .ui-v2-training-detail__drawer-backdrop,
+    .ui-v2-training-detail__drawer-panel,
+    .training__problems .data-table tbody tr
+      transition: none
+
+html.theme--dark.page--training_detail > body > .main
+  background: #111827
+
+.theme--dark.page--training_detail
+  .ui-v2-training-detail
+    --ui-v2-surface: #1e293b
+    --ui-v2-surface-muted: #172033
+    --ui-v2-border: #334155
+    --ui-v2-border-strong: #475569
+    --ui-v2-text: #e5edf8
+    --ui-v2-text-muted: #a8b5c8
+    --ui-v2-accent: #7db2ff
+    --ui-v2-accent-soft: #243b58
+    color: var(--ui-v2-text)
+
+  .ui-v2-training-detail__hero
+    border-color: #38506e
+    background: linear-gradient(135deg, #1e293b 0%, #1a2739 72%, #203752 100%)
+
+  .ui-v2-training-detail__hero-progress
+    border-color: #40546d
+    background: rgba(15, 23, 42, .48)
+
+  .ui-v2-training-detail__hero-description
+    border-color: #3a4a60
+
+  .ui-v2-training-detail__description-content
+    color: #c1ccdc
+
+  .ui-v2-training-detail__meta dd,
+  .ui-v2-training-detail__summary-meta dd,
+  .training__section-percent,
+  .training__problems .col--tried,
+  .training__problems .col--ac,
+  .training__problems .col--difficulty
+    color: #d1dbea
+
+  .ui-v2-training-detail__meta dt,
+  .ui-v2-training-detail__summary-meta dt,
+  .ui-v2-training-detail__progress-count
+    color: #91a1b8
+
+  .ui-v2-training-detail__secondary-button
+    border-color: #52647a !important
+    background: #253347 !important
+    color: #dbe7f5 !important
+
+    &:hover,
+    &:focus
+      border-color: #7399c5 !important
+      background: #2a3a50 !important
+      color: #a9ccff !important
+
+  .ui-v2-training-detail__progress-track
+    background: #344256
+
+  .ui-v2-training-detail__status-chip,
+  .training__section-chip
+    &.is-done
+      border-color: #36634f
+      background: #1d392f
+      color: #92d7b3
+
+    &.is-progress
+      border-color: #3d5f88
+      background: #223a58
+      color: #9fc7ff
+
+    &.is-open,
+    &.is-neutral
+      border-color: #475569
+      background: #283548
+      color: #b5c1d2
+
+    &.is-invalid
+      border-color: #70404a
+      background: #472a33
+      color: #f4a4ad
+
+  .ui-v2-training-detail__select-user
+    border-color: #405e82
+    background: #213853
+    color: #b5d4ff
+
+    &:hover,
+    &:focus-visible
+      border-color: #668fbe
+      background: #294564
+
+  .ui-v2-training-detail__chapter-toolbar button
+    border-color: #415168
+    background: #1e293b
+    color: #a8b5c8
+
+  .training__section-header
+    background: linear-gradient(180deg, #202d40 0%, #1e293b 100%)
+
+  .training__section-toggle:hover
+    background: #233249
+
+  .training__section-title
+    color: #dbeafe
+
+  .training__section-chevron
+    background: #2b3b51
+    color: #b7c5d8
+
+  .training__section__detail,
+  .training__section-content,
+  .ui-v2-training-detail__side-actions,
+  .ui-v2-training-detail__summary-meta
+    border-color: #334155
+
+  .training__section.invalid .training__problems,
+  .training__problems .data-table th
+    background: #172033
+
+  .training__problems .data-table tbody tr:hover
+    background: #223149
+
+  .training__problems .col--problem-name a
+    color: #c8dcf3
+
+  .ui-v2-training-detail__drawer-panel
+    background: #1e293b
+
+  .ui-v2-training-detail__drawer-header,
+  .ui-v2-training-detail__user-search,
+  .ui-v2-training-detail__add-users
+    border-color: #334155
+
+  .ui-v2-training-detail__add-users
+    background: #172033
+
+    .textbox
+      border-color: #475569
+      background: #182334
+      color: #e5edf8
+
+  .ui-v2-training-detail__user-search
+    .select,
+    .textbox
+      border-color: #475569
+      background: #182334
+      color: #e5edf8
+
+  .enroll_user_menu_item > a
+    color: #d7e1ef
+
+    &:hover,
+    &:focus,
+    &.active
+      border-color: #405e82
+      background: #243b58
+      color: #a9ccff
+
+  @media (max-width: 720px)
+    .training__problems
+      background: #172033
+
+      .data-table tr
+        border-color: #334155
+        background: #1e293b
+
+      .data-table .col--name
+        border-color: #334155

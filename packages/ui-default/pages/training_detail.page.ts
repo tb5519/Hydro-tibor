@@ -1,85 +1,282 @@
 import $ from 'jquery';
 import _ from 'lodash';
+import UserSelectAutoComplete from 'vj/components/autocomplete/UserSelectAutoComplete';
+import Notification from 'vj/components/notification';
 import { NamedPage } from 'vj/misc/Page';
-import pjax from 'vj/utils/pjax';
+import { i18n, pjax, request } from 'vj/utils';
 import { slideDown, slideUp } from 'vj/utils/slide';
 
-type SectionAction = 'expand' | 'collapse';
 type SectionState = 'expanded' | 'collapsed';
 
-function action2state(action: SectionAction): SectionState {
-  return action === 'expand' ? 'expanded' : 'collapsed';
+let drawerRestoreFocus: HTMLElement | null = null;
+
+function prefersReducedMotion() {
+  return typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-async function setSectionState($section: JQuery<HTMLElement>, state: SectionState) {
-  if ($section.is(`.${state}, .animating`)) return;
-  $section.addClass('animating');
-  const $detail = $section.find('.training__section__detail');
-  if (state === 'expanded') {
-    await slideDown($detail, 300, { opacity: 0 }, { opacity: 1 });
-  } else {
-    await slideUp($detail, 300, { opacity: 1 }, { opacity: 0 });
+function syncSectionAccessibility($section: JQuery<HTMLElement>, state: SectionState) {
+  const expanded = state === 'expanded';
+  $section.find('[data-training-section-toggle]').first().attr('aria-expanded', String(expanded));
+  $section.find('.training__section__detail').first().attr('aria-hidden', String(!expanded));
+}
+
+async function setSectionState(
+  $section: JQuery<HTMLElement>,
+  state: SectionState,
+  animate = true,
+) {
+  if (!$section.length || $section.hasClass('animating')) return;
+  if ($section.hasClass(state)) {
+    syncSectionAccessibility($section, state);
+    return;
   }
-  $section.addClass(state);
-  $section.removeClass(state === 'expanded' ? 'collapsed' : 'expanded');
-  $section.removeClass('animating');
+
+  const $detail = $section.find('.training__section__detail').first();
+  const reduceMotion = prefersReducedMotion() || !animate;
+  $section.addClass('animating');
+  syncSectionAccessibility($section, state);
+
+  try {
+    if (state === 'expanded') {
+      if (reduceMotion) $detail.show();
+      else await slideDown($detail, 200, { opacity: 0 }, { opacity: 1 });
+      $section.removeClass('collapsed').addClass('expanded');
+    } else {
+      if (reduceMotion) $detail.hide();
+      else await slideUp($detail, 200, { opacity: 1 }, { opacity: 0 });
+      $section.removeClass('expanded').addClass('collapsed');
+    }
+  } finally {
+    $section.removeClass('animating');
+  }
 }
 
-async function handleSection(ev: JQuery.ClickEvent<Document>, type: SectionAction) {
-  const $section = $(ev.currentTarget).closest('.training__section');
-  await setSectionState($section, action2state(type));
+async function handleSectionToggle(ev: JQuery.ClickEvent<Document>) {
+  const $toggle = $(ev.currentTarget);
+  const $section = $toggle.closest<HTMLElement>('.training__section');
+  const state: SectionState = $toggle.attr('aria-expanded') === 'true' ? 'collapsed' : 'expanded';
+  await setSectionState($section, state);
 }
 
-function searchUser() {
-  const val = $('input[name=uid]').val().toString().toLowerCase();
-  const group = $('select[name=group]').val().toString().toLowerCase();
-  $('.enroll_user_menu_item').each((i, e) => {
-    const $item = $(e);
-    const $username = $item.data('uname').toString().toLowerCase();
-    const $displayName = $item.data('displayname')?.toString().toLowerCase();
-    const $uid = $item.data('uid').toString();
-    $item.toggle((($displayName?.includes(val) || $username.includes(val)) && (group === 'all' || group.split(',').includes($uid))) || $uid === val);
+async function setAllSections(state: SectionState) {
+  const tasks = $('.training__section').get().map((section) => (
+    setSectionState($(section), state)
+  ));
+  await Promise.all(tasks);
+}
+
+function setActiveOutline(hash: string) {
+  $('#menu-item-training_detail > ul > li > a[href^="#"]').each((index, link) => {
+    $(link).toggleClass('is-current', $(link).attr('href') === hash);
   });
 }
 
-function selectUser(ev) {
-  ev.preventDefault();
-  if ($('.enroll_user_menu_item:visible').length === 1) {
-    $('.enroll_user_menu_item:visible').first().find('a')[0].click();
-  }
-}
-
-function handleChooseUser(ev) {
-  ev.preventDefault();
-  $('.enroll_user_menu_item .active').removeClass('active');
-  $(ev.currentTarget).addClass('active');
-  pjax.request({ url: ev.currentTarget.href });
-}
-
-async function handleSidebarClick(ev: JQuery.ClickEvent<Document>) {
-  const id = $(ev.currentTarget).attr('href');
-  const $section = $(id).closest('.training__section');
+async function revealAndScroll(hash: string, smooth = true) {
+  if (!hash.startsWith('#node-')) return;
+  const heading = document.getElementById(hash.slice(1));
+  if (!heading) return;
+  const $section = $(heading).closest<HTMLElement>('.training__section');
   await setSectionState($section, 'expanded');
+  heading.scrollIntoView({
+    behavior: smooth && !prefersReducedMotion() ? 'smooth' : 'auto',
+    block: 'start',
+  });
+  setActiveOutline(hash);
+}
+
+async function handleSectionLink(ev: MouseEvent) {
+  if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button !== 0) return;
+  const target = ev.target instanceof Element ? ev.target : null;
+  const link = target?.closest<HTMLAnchorElement>(
+    '[data-training-section-link], #menu-item-training_detail > ul > li > a[href^="#"]',
+  );
+  if (!link) return;
+  const hash = link.hash;
+  if (!hash.startsWith('#node-')) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  if (window.location.hash !== hash) {
+    window.history.pushState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
+  }
+  await revealAndScroll(hash);
 }
 
 async function handleHashChange() {
-  const id = window.location.hash;
-  if (id.startsWith('#node-')) {
-    const $section = $(id).closest('.training__section');
-    await setSectionState($section, 'expanded');
+  await revealAndScroll(window.location.hash, false);
+}
+
+function initializeSections() {
+  $('.training__section').each((index, section) => {
+    const $section = $(section);
+    const state: SectionState = $section.hasClass('expanded') ? 'expanded' : 'collapsed';
+    $section.find('.training__section__detail').first().toggle(state === 'expanded');
+    syncSectionAccessibility($section, state);
+  });
+
+  const $preferredSection = $('[data-training-section-state="progress"]').first().length
+    ? $('[data-training-section-state="progress"]').first()
+    : $('[data-training-section-state="open"]').first();
+  const $fallbackSection = $preferredSection.length ? $preferredSection : $('.training__section').first();
+  const preferredHeadingId = $fallbackSection.find('[data-heading]').first().attr('id');
+  if (preferredHeadingId) $('[data-training-section-link]').attr('href', `#${preferredHeadingId}`);
+}
+
+function initializeDescription() {
+  $('[data-training-description]').each((index, element) => {
+    const $section = $(element);
+    const content = $section.find<HTMLElement>('[data-training-description-content]').get(0);
+    const $toggle = $section.find<HTMLButtonElement>('[data-training-description-toggle]');
+    if (!content || !$toggle.length) return;
+    $section.removeClass('is-expanded');
+    $toggle.attr('aria-expanded', 'false');
+    $toggle.find('[data-training-description-toggle-label]').text(i18n('Show more'));
+    $toggle.prop('hidden', content.scrollHeight <= content.clientHeight + 2);
+  });
+}
+
+function toggleDescription(ev: JQuery.ClickEvent<Document>) {
+  const $toggle = $(ev.currentTarget);
+  const $section = $toggle.closest('[data-training-description]');
+  const expanded = !$section.hasClass('is-expanded');
+  $section.toggleClass('is-expanded', expanded);
+  $toggle.attr('aria-expanded', String(expanded));
+  $toggle.find('[data-training-description-toggle-label]').text(i18n(expanded ? 'Show less' : 'Show more'));
+}
+
+function searchUser() {
+  const $drawer = $('[data-training-user-drawer]');
+  const val = String($drawer.find('input[name=uid]').val() || '').trim().toLowerCase();
+  const group = String($drawer.find('select[name=group]').val() || 'all').toLowerCase();
+  const groupUids = group === 'all' ? [] : group.split(',');
+
+  $drawer.find('.enroll_user_menu_item').each((index, element) => {
+    const $item = $(element);
+    const username = String($item.data('uname') || '').toLowerCase();
+    const displayName = String($item.data('displayname') || '').toLowerCase();
+    const uid = String($item.data('uid') || '');
+    const matchesText = !val || displayName.includes(val) || username.includes(val) || uid === val;
+    const matchesGroup = group === 'all' || groupUids.includes(uid);
+    const visible = matchesText && matchesGroup;
+    $item.toggleClass('is-filtered-out', !visible).attr('aria-hidden', String(!visible));
+  });
+}
+
+function selectUser(ev: JQuery.SubmitEvent) {
+  ev.preventDefault();
+  const $visible = $('[data-training-user-drawer] .enroll_user_menu_item:not(.is-filtered-out)');
+  if ($visible.length !== 1) return;
+  const link = $visible.first().find('a').get(0) as HTMLAnchorElement | undefined;
+  if (link) window.location.assign(link.href);
+}
+
+function openUserDrawer(ev: JQuery.ClickEvent<Document>) {
+  const $drawer = $('[data-training-user-drawer]');
+  if (!$drawer.length) return;
+  drawerRestoreFocus = ev.currentTarget as HTMLElement;
+  $drawer.addClass('is-open').attr('aria-hidden', 'false');
+  $('[data-training-user-drawer-open]').attr('aria-expanded', 'true');
+  document.body.classList.add('training-user-drawer-open');
+  window.setTimeout(() => {
+    const search = $drawer.find<HTMLInputElement>('[data-training-add-users-input], input[name=uid]').get(0);
+    (search || $drawer.find<HTMLElement>('[role=dialog]').get(0))?.focus();
+  }, 0);
+}
+
+function closeUserDrawer() {
+  const $drawer = $('[data-training-user-drawer]');
+  if (!$drawer.hasClass('is-open')) return;
+  $drawer.removeClass('is-open').attr('aria-hidden', 'true');
+  $('[data-training-user-drawer-open]').attr('aria-expanded', 'false');
+  document.body.classList.remove('training-user-drawer-open');
+  drawerRestoreFocus?.focus();
+  drawerRestoreFocus = null;
+}
+
+function handleDrawerKeydown(ev: JQuery.KeyDownEvent<Document>) {
+  const $drawer = $('[data-training-user-drawer].is-open');
+  if (!$drawer.length) return;
+  if (ev.key === 'Escape') {
+    ev.preventDefault();
+    closeUserDrawer();
+    return;
+  }
+  if (ev.key !== 'Tab') return;
+
+  const $focusable = $drawer.find('.ui-v2-training-detail__drawer-panel')
+    .find<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')
+    .filter(':visible');
+  if (!$focusable.length) return;
+  const first = $focusable.get(0);
+  const last = $focusable.get($focusable.length - 1);
+  if (ev.shiftKey && document.activeElement === first) {
+    ev.preventDefault();
+    last.focus();
+  } else if (!ev.shiftKey && document.activeElement === last) {
+    ev.preventDefault();
+    first.focus();
   }
 }
 
+function navigateToUser(ev: JQuery.ClickEvent<Document>) {
+  if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button !== 0) return;
+  ev.preventDefault();
+  const destination = new URL((ev.currentTarget as HTMLAnchorElement).href, window.location.href);
+  if (window.location.hash.startsWith('#node-')) destination.hash = window.location.hash;
+  window.location.assign(destination.href);
+}
+
 const page = new NamedPage('training_detail', () => {
-  $('.search__input').on('input', _.debounce(searchUser, 500));
-  $('select[name=group]').on('change', searchUser);
-  $('#searchForm').on('submit', selectUser);
-  $(document).on('click', '[name="training__section__expand"]', (ev) => handleSection(ev, 'expand'));
-  $(document).on('click', '[name="training__section__collapse"]', (ev) => handleSection(ev, 'collapse'));
-  $(document).on('click', '.enroll_user_menu_item > a', (ev) => handleChooseUser(ev));
-  $(document).on('click', '#menu-item-training_detail > ul > li > a', (ev) => handleSidebarClick(ev));
-  window.addEventListener('hashchange', handleHashChange);
-  $(handleHashChange);
+  initializeSections();
+  initializeDescription();
+
+  const $document = $(document);
+  const $addUsersInput = $('[data-training-add-users-input]');
+  const addUsersSelect = $addUsersInput.length
+    ? UserSelectAutoComplete.getOrConstruct<UserSelectAutoComplete<true>>(
+      $addUsersInput, { multi: true, height: 'auto' },
+    )
+    : null;
+  $document.off('.trainingDetail');
+  document.removeEventListener('click', handleSectionLink, true);
+  document.addEventListener('click', handleSectionLink, true);
+  $document.on('click.trainingDetail', '[data-training-section-toggle]', handleSectionToggle);
+  $document.on('click.trainingDetail', '[data-training-expand-all]', () => setAllSections('expanded'));
+  $document.on('click.trainingDetail', '[data-training-collapse-all]', () => setAllSections('collapsed'));
+  $document.on('click.trainingDetail', '[data-training-description-toggle]', toggleDescription);
+  $document.on('click.trainingDetail', '[data-training-user-drawer-open]', openUserDrawer);
+  $document.on('click.trainingDetail', '[data-training-user-drawer-close]', closeUserDrawer);
+  $document.on('click.trainingDetail', '.enroll_user_menu_item > a', navigateToUser);
+  $document.on('keydown.trainingDetail', handleDrawerKeydown);
+  $document.on('submit.trainingDetail', '[data-training-add-users]', async (ev) => {
+    ev.preventDefault();
+    const uids = addUsersSelect?.value() || [];
+    if (!uids.length) {
+      addUsersSelect?.focus();
+      return;
+    }
+    const $form = $(ev.currentTarget);
+    const $button = $form.find<HTMLButtonElement>('button[type=submit]');
+    $button.prop('disabled', true);
+    try {
+      await request.post('', { operation: 'add_user', uids: uids.join(',') });
+      Notification.success(i18n('Students added.'));
+      closeUserDrawer();
+      await pjax.request({ push: false });
+    } catch (error) {
+      Notification.error([error.message, ...(error.params || [])].join(' '));
+      $button.prop('disabled', false);
+    }
+  });
+  $('#searchForm').off('.trainingDetail').on('submit.trainingDetail', selectUser);
+  $('[data-training-user-drawer] .search__input')
+    .off('.trainingDetail')
+    .on('input.trainingDetail', _.debounce(searchUser, 200));
+  $('[data-training-user-drawer] select[name=group]')
+    .off('.trainingDetail')
+    .on('change.trainingDetail', searchUser);
+  $(window).off('hashchange.trainingDetail').on('hashchange.trainingDetail', handleHashChange);
+  handleHashChange();
 });
 
 export default page;

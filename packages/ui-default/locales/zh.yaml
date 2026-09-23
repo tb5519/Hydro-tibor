@@ -1012,6 +1012,7 @@ Scripts: 脚本
 Search contests...: 搜索比赛...
 Search homeworks...: 搜索作业...
 Search: 搜索
+Search training...: 搜索训练计划…
 Secret (visible to admins): 保密（对管理员可见）
 Secret: 保密
 Section: 章节
@@ -1322,7 +1323,19 @@ scratch_materials: Scratch 上课素材
 scratch_material: Scratch 素材管理
 scratch_submission: Scratch 提交与反馈
 scratch_editor: Scratch 在线编辑器
-
 domain_scratch_library: 预制素材库
 domain_scratch_library_item: 管理预制素材
 scratch_library: 预制素材库
+Enrollment Settings: 参加设置
+Control how learners discover this plan and how its participant count is presented.: 控制学员如何发现训练计划，以及参加人数的展示方式。
+Allow learners to join: 允许学员主动加入
+When enabled, learners can find this plan in Training and enroll themselves.: 开启后，学员可在“训练”中找到并自行加入本计划。
+Initial participant count: 默认初始参加人数
+This number is shown immediately; each new participant is added on top of it.: 页面会立即显示此人数；之后每新增一位学员都会在此基础上累加。
+Manage Students: 管理学员
+Add Students: 添加学员
+Select students to add: 选择要添加的学员
+Only teachers can see this roster and add students.: 仅老师可查看参加名单并添加学员。
+Search enrolled students: 搜索已参加学员
+No students enrolled yet.: 暂无学员参加。
+Students added.: 已添加学员。
