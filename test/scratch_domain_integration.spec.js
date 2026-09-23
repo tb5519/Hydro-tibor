@@ -348,7 +348,7 @@ describe('isolated Scratch editor save bridge', () => {
         editor.requests[1].resolve({ ok: true, json: async () => ({ ok: true, revision: 2 }) });
         await secondUpload;
         assert.equal(editor.leavesWithWarning(), false);
-        assert.match(editor.status.textContent, /版本 2/);
+        assert.match(editor.status.textContent, /作品已保存/);
     });
 
     it('saves native title edits with their matching snapshot and preserves later title changes', async () => {
