@@ -28,13 +28,14 @@ class ValidationError extends Error {
     }
 }
 
-function load(filename, dependencies, source) {
+function load(filename, dependencies, source, globals = {}) {
     const module = { exports: {} };
     vm.runInNewContext(transformSync(source || fs.readFileSync(path.join(root, filename), 'utf8'), {
         loader: 'ts', format: 'cjs', tsconfigRaw: { compilerOptions: { experimentalDecorators: true } },
     }).code, {
         module, exports: module.exports, global: { Hydro: { model: {} } }, Date,
         require: (name) => Object.hasOwn(dependencies, name) ? dependencies[name] : require(name),
+        ...globals,
     });
     return module.exports;
 }
@@ -156,6 +157,18 @@ describe('student domain membership invariants', () => {
         assert.equal((await domain.collUser.findOne({ domainId: 'class-only', uid: 20 })).join, true);
     });
 
+    it('does not count a deleted domain membership as the remaining domain', async () => {
+        await addDomains(['class-only']);
+        await domain.collUser.insertOne({ domainId: 'deleted-domain', uid: 20, join: true });
+        let mutated = false;
+        await assert.rejects(membership.withDomainMembershipRemoval([20], ['class-only'], async () => {
+            mutated = true;
+            await domain.setJoin('class-only', 20, false);
+        }), (error) => error instanceof ValidationError && /至少保留一个域/.test(error.message));
+        assert.equal(mutated, false);
+        assert.equal((await domain.collUser.findOne({ domainId: 'class-only', uid: 20 })).join, true);
+    });
+
     it('moves the login default to an actually joined fallback after removal', async () => {
         await addDomains(['class-a', 'class-b']);
         await users.coll.updateOne({ _id: 20 }, { $set: { defaultDomain: 'class-a' } });
@@ -186,6 +199,66 @@ describe('student domain membership invariants', () => {
         assert.equal(joined.length, 1);
         assert.equal((await users.coll.findOne({ _id: 20 })).defaultDomain, joined[0].domainId);
         assert.equal((await users.coll.findOne({ _id: 20 }))._domainMembershipLock, undefined);
+    });
+
+    it('management removal retains old records and per-domain statistics, then joining restores access', async () => {
+        await addDomains(['class-a', 'class-b']);
+        await domain.collUser.updateOne({ domainId: 'class-a', uid: 20 }, { $set: {
+            displayName: 'Original Name', nSubmit: 17, nAccept: 7,
+        } });
+        await users.coll.updateOne({ _id: 20 }, { $set: { defaultDomain: 'class-a' } });
+        await database.collection('record').insertOne({ domainId: 'class-a', uid: 20, pid: 1000, code: 'answer' });
+
+        const source = fs.readFileSync(path.join(root, 'handler/manage.ts'), 'utf8');
+        const start = source.indexOf('class SystemUserManagementHandler extends SystemHandler');
+        const end = source.indexOf('\nclass SystemLotteryHandler extends Handler', start);
+        assert.ok(start >= 0 && end > start);
+        const managedDomains = [{ id: 'class-a', name: 'Class A' }, { id: 'class-b', name: 'Class B' }];
+        const logs = [];
+        class SystemHandler {
+            constructor() { this.response = {}; }
+            url(route, args) { return { route, ...args }; }
+        }
+        const Handler = load('handler/manage.ts', {}, `${source.slice(start, end)}\nmodule.exports = SystemUserManagementHandler;`, {
+            SystemHandler, requireSudo: () => {}, param: () => () => {},
+            Types: { Int: {}, DomainId: {}, Range: () => ({}), Username: {}, Email: {}, Password: {}, String: {} },
+            MANAGED_STUDENT_SORTS: [], MANAGED_STUDENT_SORT_DIRECTIONS: [], CPP_EDITOR_MODES: [], STUDENT_LEVELS: [],
+            getManagedDomains: async () => managedDomains,
+            getManagedStudent: async (uid) => await domain.collUser.findOne({
+                domainId: { $in: managedDomains.map((item) => item.id) }, uid, join: true,
+            }) && { _id: uid },
+            withDomainMembershipRemoval: membership.withDomainMembershipRemoval,
+            domain, user: users,
+            oplog: { log: async (_, operation, detail) => logs.push({ operation, ...detail }) },
+            UserNotFoundError: class extends Error {}, ValidationError,
+        });
+        const handler = new Handler();
+        await handler.postRemoveStudentDomain('system', 20, 'class-a');
+        const removed = await domain.collUser.findOne({ domainId: 'class-a', uid: 20 });
+        assert.equal(removed.join, false);
+        assert.equal(removed.role, 'guest');
+        assert.equal(removed.blockedByStudentManagement, true);
+        assert.equal(removed.displayName, 'Original Name');
+        assert.equal(removed.nSubmit, 17);
+        assert.equal(removed.nAccept, 7);
+        assert.equal((await users.getById('class-a', 20))._dudoc.blockedByStudentManagement, true);
+        assert.equal((await users.coll.findOne({ _id: 20 })).defaultDomain, 'class-b');
+        assert.equal(await database.collection('record').countDocuments({ domainId: 'class-a', uid: 20 }), 1);
+
+        await assert.rejects(handler.postRemoveStudentDomain('system', 20, 'class-b'),
+            (error) => error instanceof ValidationError && /至少保留一个域/.test(error.message));
+        assert.equal((await domain.collUser.findOne({ domainId: 'class-b', uid: 20 })).join, true);
+        await handler.postAddStudentDomain('system', 20, 'class-a');
+        const restored = await domain.collUser.findOne({ domainId: 'class-a', uid: 20 });
+        assert.equal(restored.join, true);
+        assert.equal(restored.role, 'default');
+        assert.equal(restored.blockedByStudentManagement, false);
+        assert.equal(restored.displayName, 'Original Name');
+        assert.equal(restored.nSubmit, 17);
+        assert.equal(restored.nAccept, 7);
+        assert.equal((await users.getById('class-a', 20))._dudoc.blockedByStudentManagement, false);
+        assert.equal(await database.collection('record').countDocuments({ domainId: 'class-a', uid: 20 }), 1);
+        assert.deepEqual(logs.map((entry) => entry.operation), ['manage.removeStudentDomain', 'manage.addStudentDomain']);
     });
 });
 

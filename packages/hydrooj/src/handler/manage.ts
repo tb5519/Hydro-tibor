@@ -12,6 +12,7 @@ import {
     VerifyPasswordError,
 } from '../error';
 import type { CppEditorMode } from '../interface';
+import { withDomainMembershipRemoval } from '../lib/domain_membership';
 import {
     bindPointLotteryBadgePrizes, buildPointLotteryConfigFromForm, ensureGlobalPointLotteryState,
     getPointLotteryBadges, getPointLotteryBadgeUpgradeBadgeIdsFromForm,
@@ -22,6 +23,7 @@ import { normalizeStudentLevel, STUDENT_LEVELS } from '../lib/student_level';
 import { Logger } from '../logger';
 import { PERM, PRIV, STATUS } from '../model/builtin';
 import domain from '../model/domain';
+import * as oplog from '../model/oplog';
 import record from '../model/record';
 import * as setting from '../model/setting';
 import storage from '../model/storage';
@@ -899,8 +901,11 @@ async function getManagedStudentDomains(uid: number, allDomains: ManagedStudentD
         domain.collUser.find({ uid, join: true }).project<{ domainId: string }>({ domainId: 1 }).toArray(),
         user.coll.findOne({ _id: uid }, { projection: { defaultDomain: 1 } }),
     ]);
-    const joinedDomainIds = new Set(memberships.map((membership) => membership.domainId.toLowerCase()));
-    const domains = allDomains.filter((item) => joinedDomainIds.has(item.id.toLowerCase()));
+    const joinedDomainIds = new Set(memberships.map((membership) => membership.domainId));
+    const domains = allDomains.filter((item) => joinedDomainIds.has(item.id));
+    const joinedDomainCount = memberships.length
+        ? await domain.coll.countDocuments({ _id: { $in: memberships.map((membership) => membership.domainId) } })
+        : 0;
     const storedDefaultDomain = typeof userDoc?.defaultDomain === 'string'
         ? userDoc.defaultDomain.toLowerCase()
         : '';
@@ -911,6 +916,7 @@ async function getManagedStudentDomains(uid: number, allDomains: ManagedStudentD
     return {
         domains,
         selectedDefaultDomain,
+        joinedDomainCount,
     };
 }
 
@@ -934,7 +940,7 @@ class SystemUserManagementHandler extends SystemHandler {
         if (uid && !selectedStudent) throw new UserNotFoundError(uid);
         const selectedStudentDomainState = selectedStudent
             ? await getManagedStudentDomains(selectedStudent.uid, allDomains)
-            : { domains: [], selectedDefaultDomain: '' };
+            : { domains: [], selectedDefaultDomain: '', joinedDomainCount: 0 };
         this.response.template = 'manage_user_management.html';
         this.response.body = {
             students,
@@ -942,6 +948,7 @@ class SystemUserManagementHandler extends SystemHandler {
             selectedStudent,
             selectedStudentDomains: selectedStudentDomainState.domains,
             selectedStudentDefaultDomain: selectedStudentDomainState.selectedDefaultDomain,
+            selectedStudentJoinedDomainCount: selectedStudentDomainState.joinedDomainCount,
             allDomains,
             saved,
             sort,
@@ -996,6 +1003,76 @@ class SystemUserManagementHandler extends SystemHandler {
 
     @requireSudo
     @param('uid', Types.Int)
+    @param('domainCode', Types.DomainId)
+    @param('sort', Types.Range(MANAGED_STUDENT_SORTS), true)
+    @param('order', Types.Range(MANAGED_STUDENT_SORT_DIRECTIONS), true)
+    async postAddStudentDomain(
+        domainId: string, uid: number, domainCode: string,
+        sort: ManagedStudentSort = 'submit', order: ManagedStudentSortDirection = 'desc',
+    ) {
+        const managedDomains = await getManagedDomains();
+        const target = await getManagedStudent(uid, managedDomains);
+        if (!target) throw new UserNotFoundError(uid);
+        const targetDomain = managedDomains.find((item) => item.id.toLowerCase() === domainCode.toLowerCase());
+        if (!targetDomain) throw new ValidationError('domainCode');
+
+        await withDomainMembershipRemoval([uid], [], async () => {
+            if (!await domain.coll.findOne({ _id: targetDomain.id }, { projection: { _id: 1 } })) {
+                throw new ValidationError('domainCode');
+            }
+            const existing = await domain.collUser.findOne({ domainId: targetDomain.id, uid, join: true });
+            if (existing) throw new ValidationError('domainCode', '', '学员已加入该域。');
+            await domain.setUserInDomain(targetDomain.id, uid, {
+                join: true,
+                role: 'default',
+                blockedByStudentManagement: false,
+            });
+            const account = await user.coll.findOne({ _id: uid }, { projection: { defaultDomain: 1 } });
+            const hasValidDefault = account?.defaultDomain && await domain.collUser.findOne({
+                domainId: account.defaultDomain, uid, join: true,
+            });
+            if (!hasValidDefault) await user.setById(uid, { defaultDomain: targetDomain.id });
+        }, 'domainCode');
+        await oplog.log(this, 'manage.addStudentDomain', { uid, domainId: targetDomain.id });
+        this.response.redirect = this.url('manage_user_management', { query: { uid, saved: 1, sort, order } });
+    }
+
+    @requireSudo
+    @param('uid', Types.Int)
+    @param('domainCode', Types.DomainId)
+    @param('sort', Types.Range(MANAGED_STUDENT_SORTS), true)
+    @param('order', Types.Range(MANAGED_STUDENT_SORT_DIRECTIONS), true)
+    async postRemoveStudentDomain(
+        domainId: string, uid: number, domainCode: string,
+        sort: ManagedStudentSort = 'submit', order: ManagedStudentSortDirection = 'desc',
+    ) {
+        const managedDomains = await getManagedDomains();
+        const target = await getManagedStudent(uid, managedDomains);
+        if (!target) throw new UserNotFoundError(uid);
+        const targetDomain = managedDomains.find((item) => item.id.toLowerCase() === domainCode.toLowerCase());
+        if (!targetDomain) throw new ValidationError('domainCode');
+        const targetDoc = await domain.get(targetDomain.id);
+        if (!targetDoc) throw new ValidationError('domainCode');
+        if (targetDoc.owner === uid) throw new ValidationError('domainCode', '', '不能从所属域移除域负责人。');
+
+        await withDomainMembershipRemoval([uid], [targetDomain.id], async () => {
+            const existing = await domain.collUser.findOne({ domainId: targetDomain.id, uid, join: true });
+            if (!existing) throw new ValidationError('domainCode', '', '学员未加入该域。');
+            await domain.setUserInDomain(targetDomain.id, uid, {
+                join: false,
+                role: 'guest',
+                blockedByStudentManagement: true,
+            });
+        }, 'domainCode');
+        await oplog.log(this, 'manage.removeStudentDomain', { uid, domainId: targetDomain.id });
+        const stillManaged = await getManagedStudent(uid, managedDomains);
+        this.response.redirect = this.url('manage_user_management', {
+            query: { ...(stillManaged ? { uid } : {}), saved: 1, sort, order },
+        });
+    }
+
+    @requireSudo
+    @param('uid', Types.Int)
     @param('password', Types.Password)
     @param('verifyPassword', Types.Password)
     @param('sort', Types.Range(MANAGED_STUDENT_SORTS), true)
@@ -1037,32 +1114,34 @@ class SystemUserManagementHandler extends SystemHandler {
         const normalizedSchool = normalizeManagedStudentText(school, 'school');
         const normalizedStudentId = normalizeManagedStudentText(studentId, 'studentId');
         const effectiveMail = mail?.trim() || target.mail;
-        const domainState = await getManagedStudentDomains(uid, await getManagedDomains());
         const requestedDefaultDomain = normalizeManagedStudentText(defaultDomain, 'defaultDomain');
-        const selectedDefaultDomain = domainState.domains.find(
-            (item) => item.id.toLowerCase() === (requestedDefaultDomain || domainState.selectedDefaultDomain).toLowerCase(),
-        )?.id;
-        if (!selectedDefaultDomain) throw new ValidationError('defaultDomain');
-        const [sameNameUser, sameMailUser] = await Promise.all([
-            uname === target.uname ? null : user.getByUname(domainId, uname),
-            effectiveMail === target.mail ? null : user.getByEmail(domainId, effectiveMail),
-        ]);
-        if (sameNameUser && sameNameUser._id !== uid) throw new UserAlreadyExistError(uname);
-        if (sameMailUser && sameMailUser._id !== uid) throw new UserAlreadyExistError(effectiveMail);
-        await user.setById(uid, {
-            uname,
-            unameLower: uname.toLowerCase(),
-            mail: effectiveMail,
-            mailLower: handleMailLower(effectiveMail),
-            school: normalizedSchool,
-            studentId: normalizedStudentId,
-            defaultDomain: selectedDefaultDomain,
-            cppEditorMode,
-            studentLevel: studentLevel ?? target.studentLevel,
-        });
-        await domain.updateUserInDomain(selectedDefaultDomain, uid, {
-            $set: { displayName: normalizedDisplayName },
-        });
+        await withDomainMembershipRemoval([uid], [], async () => {
+            const domainState = await getManagedStudentDomains(uid, await getManagedDomains());
+            const selectedDefaultDomain = domainState.domains.find(
+                (item) => item.id.toLowerCase() === (requestedDefaultDomain || domainState.selectedDefaultDomain).toLowerCase(),
+            )?.id;
+            if (!selectedDefaultDomain) throw new ValidationError('defaultDomain');
+            const [sameNameUser, sameMailUser] = await Promise.all([
+                uname === target.uname ? null : user.getByUname(domainId, uname),
+                effectiveMail === target.mail ? null : user.getByEmail(domainId, effectiveMail),
+            ]);
+            if (sameNameUser && sameNameUser._id !== uid) throw new UserAlreadyExistError(uname);
+            if (sameMailUser && sameMailUser._id !== uid) throw new UserAlreadyExistError(effectiveMail);
+            await user.setById(uid, {
+                uname,
+                unameLower: uname.toLowerCase(),
+                mail: effectiveMail,
+                mailLower: handleMailLower(effectiveMail),
+                school: normalizedSchool,
+                studentId: normalizedStudentId,
+                defaultDomain: selectedDefaultDomain,
+                cppEditorMode,
+                studentLevel: studentLevel ?? target.studentLevel,
+            });
+            await domain.updateUserInDomain(selectedDefaultDomain, uid, {
+                $set: { displayName: normalizedDisplayName },
+            });
+        }, 'defaultDomain');
         this.response.redirect = this.url('manage_user_management', { query: { uid, saved: 1, sort, order } });
     }
 }

@@ -1,7 +1,6 @@
 {% import "components/paginator.html" as paginator with context %}
 {% import "components/record.html" as record with context %}
 {% import "components/problem.html" as problem with context %}
-{% import "components/problem_activity.html" as problemActivity with context %}
 {% import "components/nothing.html" as nothing with context %}
 <div data-fragment-id="problem_list">
 {% if pdocs.length or canFilterStudentUnaccepted %}
@@ -83,7 +82,7 @@
         <td class="col--name col--problem-name" data-star-action="{{ url('problem_detail', pid=pdoc.docId) }}" {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %} data-star="{{ psdoc.star }}"{% endif %}>
           {{ problem.render_problem_title(pdoc) }}
         </td>
-        <td class="col--ac-tried">{{ activity.nAccept }} / {{ activity.nSubmit }} {{ problemActivity.marker(activity) }}</td>
+        <td class="col--ac-tried">{{ activity.nAccept }} / {{ activity.nSubmit }}</td>
         <td class="col--difficulty">{{ pdoc['difficulty'] or lib.difficulty(pdoc.nSubmit, pdoc.nAccept) or _('(None)') }}</td>
       </tr>
     {%- endfor -%}

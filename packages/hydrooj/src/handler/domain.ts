@@ -715,6 +715,11 @@ class DomainJoinHandler extends Handler {
             workspace.getAssignedWorkspaceIds(this.user._id),
         ]);
         if (!ddoc) throw new NotFoundError(target);
+        if (dudoc?.blockedByStudentManagement && !dudoc.join
+            && !this.user.hasPriv(PRIV.PRIV_MANAGE_ALL_DOMAIN)
+            && !workspace.isPlatformAdmin(this.user._id)) {
+            throw new DomainJoinForbiddenError(target, '请联系管理员重新加入该域。');
+        }
         if (!workspace.isPlatformAdmin(this.user._id)) {
             const targetWorkspaceId = workspace.resolveDomainWorkspaceId(ddoc);
             const allowed = assignedWorkspaceIds.length

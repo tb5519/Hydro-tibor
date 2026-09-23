@@ -94,9 +94,17 @@ export async function withDomainMembershipRemoval<T>(
                 .sort({ domainId: 1 })
                 .toArray()
             : [];
+        const retainedDomainIds = Array.from(new Set(retained.map((membership) => membership.domainId)));
+        const existingDomains = retainedDomainIds.length
+            ? await domain.coll.find({ _id: { $in: retainedDomainIds } })
+                .project<{ _id: string }>({ _id: 1 }).toArray()
+            : [];
+        const existingDomainIds = new Set(existingDomains.map((item) => item._id));
         const fallback = new Map<number, string>();
         for (const membership of retained) {
-            if (!fallback.has(membership.uid)) fallback.set(membership.uid, membership.domainId);
+            if (existingDomainIds.has(membership.domainId) && !fallback.has(membership.uid)) {
+                fallback.set(membership.uid, membership.domainId);
+            }
         }
         if (guardedUids.some((uid) => !fallback.has(uid))) {
             throw new ValidationError(validationField, '', LAST_DOMAIN_MESSAGE);

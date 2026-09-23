@@ -144,6 +144,7 @@ describe('teacher-managed student learning levels', () => {
                 getManagedDomains: async () => [{ id: 'class-a', name: 'Class A' }],
                 getManagedStudent: async () => (available ? target : null),
                 getManagedStudentDomains: async () => ({ domains: [{ id: 'class-a' }], selectedDefaultDomain: 'class-a' }),
+                withDomainMembershipRemoval: async (_uids, _domains, action) => action(),
                 normalizeManagedStudentText: (value) => value.trim(), handleMailLower: (value) => value.toLowerCase(),
                 user: { setById: async (uid, fields) => writes.push({ uid, ...fields }) },
                 domain: { updateUserInDomain: async () => {} },

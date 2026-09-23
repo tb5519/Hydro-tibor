@@ -1,5 +1,4 @@
 {% extends "layout/basic.html" %}
-{% import "components/problem_activity.html" as problemActivity with context %}
 {% block content %}
 {% set homeworkReview = UiContext.homeworkReview %}
 {% set activity = lib.problemActivity(handler.domain, pdoc) %}
@@ -429,11 +428,11 @@
           {% endif %}
           {% if not tdoc %}
             {% if UiContext.problemRecordPicker %}
-            <a class="problem__tag-item interactive" href="{{ url('record_main', query={pid:pdoc.docId}) }}" data-problem-record-picker="all">{{ _('Tried') }}: {{ activity.nSubmit }} {{ problemActivity.marker(activity) }}</a>
-            <a class="problem__tag-item interactive" href="{{ url('record_main', query={pid:pdoc.docId, status:1}) }}" data-problem-record-picker="accepted">{{ _('Accepted') }}: {{ activity.nAccept if ((not tdoc) or showAccept) else '?' }} {{ problemActivity.marker(activity) }}</a>
+            <a class="problem__tag-item interactive" href="{{ url('record_main', query={pid:pdoc.docId}) }}" data-problem-record-picker="all">{{ _('Tried') }}: {{ activity.nSubmit }}</a>
+            <a class="problem__tag-item interactive" href="{{ url('record_main', query={pid:pdoc.docId, status:1}) }}" data-problem-record-picker="accepted">{{ _('Accepted') }}: {{ activity.nAccept if ((not tdoc) or showAccept) else '?' }}</a>
             {% else %}
-            <span class="problem__tag-item">{{ _('Tried') }}: {{ activity.nSubmit }} {{ problemActivity.marker(activity) }}</span>
-            <span class="problem__tag-item">{{ _('Accepted') }}: {{ activity.nAccept if ((not tdoc) or showAccept) else '?' }} {{ problemActivity.marker(activity) }}</span>
+            <span class="problem__tag-item">{{ _('Tried') }}: {{ activity.nSubmit }}</span>
+            <span class="problem__tag-item">{{ _('Accepted') }}: {{ activity.nAccept if ((not tdoc) or showAccept) else '?' }}</span>
             {% endif %}
             <span class="problem__tag-item">{{ _('Difficulty') }}: {{ pdoc['difficulty'] or lib.difficulty(pdoc.nSubmit, pdoc.nAccept) or _('(None)') }}</span>
             <span class="problem__tag-item interactive">{{ _('Uploaded By') }}: {{ user.render_inline(udoc, badge=false) }}</span>

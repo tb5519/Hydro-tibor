@@ -83,24 +83,17 @@ describe('problem activity display', () => {
         assert.equal(corrupt.nAccept, corrupt.nSubmit - 1);
     });
 
-    it('renders a disclosed marker only beside seeded counts', () => {
+    it('renders seeded counts as plain numbers', () => {
         const env = new nunjucks.Environment(new nunjucks.FileSystemLoader(templates), { autoescape: true });
-        const source = `{% import "components/problem_activity.html" as component with context %}
-          {% set display = lib.problemActivity(domain, pdoc) %}
-          <span>{{ display.nAccept }} / {{ display.nSubmit }} {{ component.marker(display) }}</span>`;
+        const source = `{% set display = lib.problemActivity(domain, pdoc) %}
+          <span>{{ display.nAccept }} / {{ display.nSubmit }}</span>`;
         const seeded = env.renderString(source, {
             lib: { problemActivity: activity.getProblemActivityDisplay },
             domain: { _id: 'system', name: 'Python' },
             pdoc: { docId: 3, nSubmit: 1, nAccept: 1 },
         });
-        assert.match(seeded, /problem-activity-seeded/);
-        assert.match(seeded, /title="含平台初始活跃度"/);
-        const real = env.renderString(source, {
-            lib: { problemActivity: activity.getProblemActivityDisplay },
-            domain: { _id: 'other', name: 'Other' },
-            pdoc: { docId: 3, nSubmit: 1, nAccept: 1 },
-        });
-        assert.doesNotMatch(real, /problem-activity-seeded/);
+        assert.match(seeded, /<span>\d+ \/ \d+<\/span>/);
+        assert.doesNotMatch(seeded, /problem-activity-seeded|初始活跃度|icon-info/);
     });
 
     it('wires all requested surfaces while retaining real-count difficulty inputs', () => {
@@ -114,7 +107,7 @@ describe('problem activity display', () => {
         for (const file of files) {
             const source = fs.readFileSync(path.join(templates, file), 'utf8');
             assert.match(source, /lib\.problemActivity\(handler\.domain, pdoc\)/, file);
-            assert.match(source, /problemActivity\.marker\(activity\)/, file);
+            assert.doesNotMatch(source, /problemActivity\.marker|problem-activity-seeded|初始活跃度/, file);
             assert.match(source, /lib\.difficulty\(pdoc\.nSubmit, pdoc\.nAccept\)/, file);
             assert.doesNotThrow(() => env.getTemplate(file), file);
         }

@@ -280,7 +280,13 @@
     display: flex;
     flex-wrap: wrap;
     align-items: flex-start;
-    gap: .35rem;
+    gap: .65rem .7rem;
+    padding: .3rem .25rem .2rem 0;
+  }
+  .student-management__domain-chip {
+    position: relative;
+    display: inline-flex;
+    min-width: 0;
   }
   .student-management__domain-choice {
     position: relative;
@@ -291,7 +297,7 @@
     min-height: 1.9rem;
     border: 1px solid #d9e5f4;
     border-radius: 7px;
-    padding: .24rem .42rem;
+    padding: .24rem 1.05rem .24rem .42rem;
     background: #fbfdff;
     cursor: pointer;
     transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
@@ -351,6 +357,149 @@
     white-space: nowrap;
   }
   .student-management__domain-choice > input:checked ~ .student-management__domain-default { display: inline-flex !important; }
+  .student-management__domain-remove {
+    position: absolute;
+    z-index: 1;
+    top: -.48rem;
+    right: -.4rem;
+    display: inline-grid;
+    place-items: center;
+    width: 1.15rem;
+    height: 1.15rem;
+    border: 1px solid #fecaca;
+    border-radius: 50%;
+    padding: 0;
+    color: #b91c1c;
+    background: #fff;
+    box-shadow: 0 2px 6px rgba(127, 29, 29, .12);
+    cursor: pointer;
+    font-size: .9rem;
+    font-weight: 700;
+    line-height: 1;
+    transition: background .16s ease, color .16s ease, transform .16s ease;
+  }
+  .student-management__domain-remove:hover,
+  .student-management__domain-remove:focus-visible {
+    color: #fff;
+    background: #dc2626;
+    outline: 2px solid rgba(220, 38, 38, .25);
+    outline-offset: 2px;
+    transform: scale(1.08);
+  }
+  .student-management__domain-add {
+    display: inline-flex;
+    align-items: center;
+    gap: .2rem;
+    min-height: 1.9rem;
+    border: 1px dashed #93c5fd;
+    border-radius: 8px;
+    padding: .25rem .55rem;
+    color: #1d4ed8;
+    background: #f3f8ff;
+    cursor: pointer;
+    font-size: .75rem;
+    font-weight: 750;
+    transition: border-color .16s ease, background .16s ease;
+  }
+  .student-management__domain-add:hover,
+  .student-management__domain-add:focus-visible {
+    border-color: #2563eb;
+    background: #dbeafe;
+    outline: none;
+  }
+  .student-domain-dialog[hidden] { display: none; }
+  .student-domain-dialog [hidden] { display: none !important; }
+  .student-domain-dialog {
+    position: fixed;
+    z-index: 1010;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 1rem;
+  }
+  .student-domain-dialog__backdrop {
+    position: absolute;
+    inset: 0;
+    border: 0;
+    background: rgba(15, 23, 42, .54);
+  }
+  .student-domain-dialog__panel {
+    position: relative;
+    width: min(27rem, 100%);
+    max-height: calc(100vh - 2rem);
+    overflow: auto;
+    border: 1px solid #bfdbfe;
+    border-radius: 18px;
+    padding: 1.3rem;
+    background: linear-gradient(145deg, #fff, #f8fbff);
+    box-shadow: 0 26px 65px rgba(15, 23, 42, .28);
+    animation: student-create-dialog-enter .22s cubic-bezier(.22, 1, .36, 1);
+  }
+  .student-domain-dialog__icon {
+    display: inline-grid;
+    place-items: center;
+    width: 2.65rem;
+    height: 2.65rem;
+    border-radius: 13px;
+    color: #1d4ed8;
+    background: #dbeafe;
+    font-size: 1.2rem;
+  }
+  .student-domain-dialog.is-remove .student-domain-dialog__icon {
+    color: #b91c1c;
+    background: #fee2e2;
+  }
+  .student-domain-dialog__close {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    display: inline-grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 50%;
+    color: #64748b;
+    background: #fff;
+    cursor: pointer;
+  }
+  .student-domain-dialog__close:hover,
+  .student-domain-dialog__close:focus-visible { color: #1d4ed8; background: #eff6ff; outline: none; }
+  .student-domain-dialog__title { margin: .8rem 0 .35rem; color: #0f172a; font-size: 1.2rem; }
+  .student-domain-dialog__description { margin: 0; color: #475569; font-size: .88rem; line-height: 1.6; }
+  .student-domain-dialog__selected {
+    margin-top: 1rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: .7rem .8rem;
+    color: #1e293b;
+    background: #fff;
+    font-size: .88rem;
+    font-weight: 700;
+  }
+  .student-domain-dialog__selected small { margin-left: .4rem; color: #64748b; font-weight: 400; }
+  .student-domain-dialog__field { display: grid; gap: .4rem; margin-top: 1rem; color: #334155; font-size: .85rem; font-weight: 700; }
+  .student-domain-dialog__field select { width: 100%; }
+  .student-domain-dialog__note {
+    display: flex;
+    align-items: flex-start;
+    gap: .45rem;
+    margin-top: 1rem;
+    border: 1px solid #dbeafe;
+    border-radius: 10px;
+    padding: .7rem .8rem;
+    color: #475569;
+    background: #f1f7ff;
+    font-size: .78rem;
+    line-height: 1.5;
+  }
+  .student-domain-dialog__error { margin: .8rem 0 0; color: #b91c1c; font-size: .82rem; line-height: 1.5; }
+  .student-domain-dialog__actions { display: flex; justify-content: flex-end; gap: .55rem; margin-top: 1.2rem; }
+  .student-domain-dialog__actions .button { margin: 0; }
+  .student-domain-dialog__confirm.is-danger { border-color: #dc2626; background: #dc2626; }
+  .student-domain-dialog__confirm.is-danger:hover,
+  .student-domain-dialog__confirm.is-danger:focus-visible { background: #b91c1c; }
+  .student-domain-dialog__confirm:disabled { cursor: wait; opacity: .7; }
   .student-management__sort {
     display: flex;
     align-items: center;
@@ -644,7 +793,8 @@
     flex-wrap: wrap;
     margin-top: .1rem;
   }
-  body.student-create-dialog-open { overflow: hidden; }
+  body.student-create-dialog-open,
+  body.student-domain-dialog-open { overflow: hidden; }
   @keyframes student-create-dialog-enter {
     from { opacity: 0; transform: translateY(.7rem) scale(.985); }
     to { opacity: 1; transform: translateY(0) scale(1); }
@@ -672,6 +822,9 @@
     .student-management__sort label { flex: 1; }
     .student-management__sort select { flex: 1; min-width: 0; }
     .student-management__domains-row { align-items: flex-start; }
+    .student-domain-dialog { padding: .65rem; }
+    .student-domain-dialog__panel { padding: 1rem; }
+    .student-domain-dialog__actions .button { flex: 1; }
     .student-management__cpp-mode-options { grid-template-columns: 1fr; }
     .student-create-dialog { padding: .65rem; }
     .student-create-dialog__form { grid-template-columns: 1fr; }
@@ -781,18 +934,21 @@
                   <input type="hidden" name="uid" value="{{ selectedStudent.uid }}">
                   <input type="hidden" name="sort" value="{{ sort }}">
                   <input type="hidden" name="order" value="{{ order }}">
-                  <div class="student-management__domains-field" role="radiogroup" aria-labelledby="student-default-domain-label">
+                  <div class="student-management__domains-field">
                     <div class="student-management__domains-row">
                       <span class="student-management__domains-label" id="student-default-domain-label">{{ _('已加入的域') }}</span>
                     {% if selectedStudentDomains.length %}
-                      <div class="student-management__domains">
+                      <div class="student-management__domains" role="radiogroup" aria-labelledby="student-default-domain-label">
                         {% for joinedDomain in selectedStudentDomains %}
-                          <label class="student-management__domain-choice" title="{{ _('设为默认登录域') }}">
-                            <input type="radio" name="defaultDomain" value="{{ joinedDomain.id }}"{% if selectedStudentDefaultDomain == joinedDomain.id %} checked{% endif %} required>
-                            <span class="student-management__domain-check"><span class="icon icon-check" aria-hidden="true"></span></span>
-                            <span class="student-management__domain-info"><strong>{{ joinedDomain.name }}</strong><small>{{ joinedDomain.id }}</small></span>
-                            <span class="student-management__domain-default">{{ _('默认') }}</span>
-                          </label>
+                          <span class="student-management__domain-chip">
+                            <label class="student-management__domain-choice" title="{{ _('设为默认登录域') }}">
+                              <input type="radio" name="defaultDomain" value="{{ joinedDomain.id }}"{% if selectedStudentDefaultDomain == joinedDomain.id %} checked{% endif %} required>
+                              <span class="student-management__domain-check"><span class="icon icon-check" aria-hidden="true"></span></span>
+                              <span class="student-management__domain-info"><strong>{{ joinedDomain.name }}</strong><small>{{ joinedDomain.id }}</small></span>
+                              <span class="student-management__domain-default">{{ _('默认') }}</span>
+                            </label>
+                            <button class="student-management__domain-remove" type="button" data-student-domain-remove data-domain-id="{{ joinedDomain.id }}" data-domain-name="{{ joinedDomain.name }}" aria-label="从 {{ joinedDomain.name }} 移除这位学员" title="从此域移除">×</button>
+                          </span>
                         {% endfor %}
                       </div>
                       {% if not selectedStudentDefaultDomain %}
@@ -802,6 +958,9 @@
                       <input type="hidden" name="defaultDomain" value="">
                       <span class="student-management__hint">{{ _('暂无可选择的域') }}</span>
                     {% endif %}
+                      <button class="student-management__domain-add" type="button" data-student-domain-add-open>
+                        <span class="icon icon-add" aria-hidden="true"></span>{{ _('加入新域') }}
+                      </button>
                     </div>
                   </div>
                   <label>
@@ -869,6 +1028,36 @@
                     <span class="student-management__hint">{{ _('用户名必须保持唯一；邮箱如填写也必须唯一。显示姓名保存在选定的默认域中。') }}</span>
                   </div>
                 </form>
+                <div class="student-domain-dialog" data-student-domain-dialog data-student-name="{{ selectedStudent.displayName }}" data-student-joined-count="{{ selectedStudentJoinedDomainCount }}" role="dialog" aria-modal="true" aria-labelledby="student-domain-dialog-title" hidden>
+                  <button class="student-domain-dialog__backdrop" type="button" data-student-domain-close aria-label="关闭域管理弹窗" tabindex="-1"></button>
+                  <section class="student-domain-dialog__panel">
+                    <button class="student-domain-dialog__close" type="button" data-student-domain-close aria-label="关闭"><span class="icon icon-close" aria-hidden="true"></span></button>
+                    <span class="student-domain-dialog__icon" aria-hidden="true"><span class="icon icon-add" data-student-domain-icon></span></span>
+                    <h3 class="student-domain-dialog__title" id="student-domain-dialog-title" data-student-domain-title></h3>
+                    <p class="student-domain-dialog__description" data-student-domain-description></p>
+                    <form method="post" data-student-domain-form>
+                      <input type="hidden" name="operation" data-student-domain-operation>
+                      <input type="hidden" name="uid" value="{{ selectedStudent.uid }}">
+                      <input type="hidden" name="sort" value="{{ sort }}">
+                      <input type="hidden" name="order" value="{{ order }}">
+                      <input type="hidden" name="domainCode" data-student-domain-code>
+                      <div class="student-domain-dialog__selected" data-student-domain-selected hidden></div>
+                      <label class="student-domain-dialog__field" data-student-domain-field hidden>
+                        <span>{{ _('选择要加入的域') }}</span>
+                        <select class="textbox" data-student-domain-select>
+                          <option value="">{{ _('请选择域') }}</option>
+                          {% for item in allDomains %}<option value="{{ item.id }}">{{ item.name }} · {{ item.id }}</option>{% endfor %}
+                        </select>
+                      </label>
+                      <div class="student-domain-dialog__note"><span class="icon icon-info" aria-hidden="true"></span><span data-student-domain-note></span></div>
+                      <p class="student-domain-dialog__error" data-student-domain-error role="alert" hidden></p>
+                      <div class="student-domain-dialog__actions">
+                        <button class="rounded button" type="button" data-student-domain-close>{{ _('取消') }}</button>
+                        <button class="rounded primary button student-domain-dialog__confirm" type="submit" data-student-domain-confirm></button>
+                      </div>
+                    </form>
+                  </section>
+                </div>
                 <details class="student-management__password">
                   <summary>{{ _('需要重置登录密码？') }}</summary>
                   <form method="post" class="student-management__password-form">
@@ -1029,8 +1218,157 @@
       if (!addForm.reportValidity()) event.preventDefault();
     });
 
+    let domainDialogPreviousFocus = null;
+    const domainDialogError = (dialog, message) => {
+      const error = dialog.querySelector('[data-student-domain-error]');
+      error.textContent = message;
+      error.hidden = !message;
+    };
+    const closeDomainDialog = () => {
+      const dialog = document.querySelector('[data-student-domain-dialog]:not([hidden])');
+      if (!dialog || dialog.dataset.busy === 'true') return;
+      dialog.hidden = true;
+      document.body.classList.remove('student-domain-dialog-open');
+      domainDialogPreviousFocus?.focus({ preventScroll: true });
+      domainDialogPreviousFocus = null;
+    };
+    const openDomainDialog = (trigger, operation) => {
+      const editor = trigger.closest('[data-student-editor]');
+      const dialog = editor?.querySelector('[data-student-domain-dialog]');
+      if (!dialog) return;
+      const joinedIds = new Set(Array.from(editor.querySelectorAll('.student-management__domain-chip input[name="defaultDomain"]'))
+        .map((input) => input.value.toLowerCase()));
+      const title = dialog.querySelector('[data-student-domain-title]');
+      const description = dialog.querySelector('[data-student-domain-description]');
+      const note = dialog.querySelector('[data-student-domain-note]');
+      const selected = dialog.querySelector('[data-student-domain-selected]');
+      const field = dialog.querySelector('[data-student-domain-field]');
+      const select = dialog.querySelector('[data-student-domain-select]');
+      const confirmButton = dialog.querySelector('[data-student-domain-confirm]');
+      const code = dialog.querySelector('[data-student-domain-code]');
+      const icon = dialog.querySelector('[data-student-domain-icon]');
+      dialog.querySelector('[data-student-domain-operation]').value = operation;
+      dialog.classList.toggle('is-remove', operation === 'remove_student_domain');
+      domainDialogError(dialog, '');
+      confirmButton.disabled = false;
+      const studentName = dialog.dataset.studentName;
+      if (operation === 'remove_student_domain') {
+        const domainName = trigger.dataset.domainName;
+        const domainId = trigger.dataset.domainId;
+        code.value = domainId;
+        title.textContent = '移出这个域？';
+        description.textContent = `确定将 ${studentName} 从「${domainName}」移出吗？`;
+        note.textContent = '移出后将无法访问该域。原有提交、成绩等数据会保留，再次加入后仍可查看。';
+        selected.textContent = `${domainName} · ${domainId}`;
+        selected.hidden = false;
+        field.hidden = true;
+        icon.className = 'icon icon-close';
+        confirmButton.textContent = '确认移出';
+        confirmButton.classList.add('is-danger');
+        if (Number(dialog.dataset.studentJoinedCount) <= 1) {
+          domainDialogError(dialog, '学员至少需要保留一个域。请先加入新域，再移出当前域。');
+          confirmButton.disabled = true;
+        }
+      } else {
+        code.value = '';
+        title.textContent = '加入新域';
+        description.textContent = `为 ${studentName} 选择要加入的域。`;
+        note.textContent = '加入后即可访问该域，并可继续使用曾在此域保存的提交和成绩。';
+        selected.hidden = true;
+        field.hidden = false;
+        icon.className = 'icon icon-add';
+        confirmButton.textContent = '确认加入';
+        confirmButton.classList.remove('is-danger');
+        const available = Array.from(select.options).filter((option) => {
+          if (!option.value) return false;
+          const isJoined = joinedIds.has(option.value.toLowerCase());
+          option.disabled = isJoined;
+          option.hidden = isJoined;
+          return !isJoined;
+        });
+        select.value = '';
+        if (!available.length) {
+          domainDialogError(dialog, '这位学员已加入全部可选域。');
+          confirmButton.disabled = true;
+        }
+      }
+      domainDialogPreviousFocus = trigger;
+      dialog.hidden = false;
+      document.body.classList.add('student-domain-dialog-open');
+      window.requestAnimationFrame(() => {
+        if (operation === 'add_student_domain' && !confirmButton.disabled) select.focus();
+        else dialog.querySelector('.student-domain-dialog__close').focus();
+      });
+    };
+    document.addEventListener('click', (event) => {
+      const remove = event.target.closest('[data-student-domain-remove]');
+      if (remove) return openDomainDialog(remove, 'remove_student_domain');
+      const add = event.target.closest('[data-student-domain-add-open]');
+      if (add) return openDomainDialog(add, 'add_student_domain');
+      if (event.target.closest('[data-student-domain-close]')) closeDomainDialog();
+    });
+    document.addEventListener('submit', async (event) => {
+      const form = event.target.closest('[data-student-domain-form]');
+      if (!form) return;
+      event.preventDefault();
+      const dialog = form.closest('[data-student-domain-dialog]');
+      if (dialog.dataset.busy === 'true') return;
+      const operation = form.querySelector('[data-student-domain-operation]').value;
+      const code = form.querySelector('[data-student-domain-code]');
+      if (operation === 'add_student_domain') code.value = form.querySelector('[data-student-domain-select]').value;
+      if (!code.value) {
+        domainDialogError(dialog, '请先选择一个域。');
+        form.querySelector('[data-student-domain-select]').focus();
+        return;
+      }
+      const confirmButton = form.querySelector('[data-student-domain-confirm]');
+      const buttonText = confirmButton.textContent;
+      domainDialogError(dialog, '');
+      dialog.dataset.busy = 'true';
+      confirmButton.disabled = true;
+      confirmButton.textContent = operation === 'remove_student_domain' ? '正在移出…' : '正在加入…';
+      try {
+        const response = await fetch(form.action || window.location.href, {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: new FormData(form),
+        });
+        if (!response.ok || !response.redirected || new URL(response.url).pathname !== window.location.pathname) {
+          const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+          const serverMessage = page.querySelector('.error__text-container > p')?.textContent.trim();
+          throw new Error(response.status === 401 || response.status === 403
+            ? '登录状态已变化，请刷新页面后重试。'
+            : serverMessage || '操作没有完成，请稍后重试。');
+        }
+        window.location.assign(response.url);
+      } catch (error) {
+        domainDialogError(dialog, error.message || '操作没有完成，请稍后重试。');
+        confirmButton.disabled = false;
+        confirmButton.textContent = buttonText;
+      } finally {
+        delete dialog.dataset.busy;
+      }
+    });
+
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') closeAddDialog();
+      if (event.key === 'Escape') {
+        closeAddDialog();
+        closeDomainDialog();
+      }
+      const dialog = document.querySelector('[data-student-domain-dialog]:not([hidden])');
+      if (!dialog || event.key !== 'Tab') return;
+      const focusable = Array.from(dialog.querySelectorAll('button:not([disabled]), select:not([disabled])'))
+        .filter((element) => !element.closest('[hidden]') && element.tabIndex !== -1);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     });
 
     const input = document.querySelector('[data-student-search]');

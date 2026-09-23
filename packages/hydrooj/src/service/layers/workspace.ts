@@ -1,6 +1,6 @@
 import type { KoaContext } from '@hydrooj/framework';
-import { isDomainAvatarImageRequest } from '../../lib/domain_avatar_access';
 import { isHomePosterImageRequest } from '../../lib/decorative_image_access';
+import { isDomainAvatarImageRequest } from '../../lib/domain_avatar_access';
 import { isScratchShareRequest } from '../../lib/scratch_share_access';
 import workspace from '../../model/workspace';
 
@@ -29,11 +29,22 @@ function isWorkspaceNeutralPath(path: string, method: string) {
  */
 export async function resolveWorkspaceAccess(ctx: KoaContext) {
     const currentUser = ctx.HydroContext.user;
-    if (!workspace.isEnabled() || !currentUser || currentUser._id <= 1
-        || workspace.isPlatformAdmin(currentUser._id)
+    if (!currentUser || currentUser._id <= 1 || workspace.isPlatformAdmin(currentUser._id)
         || isWorkspaceNeutralPath(ctx.request.path, ctx.request.method)) {
         return { allowed: true, redirect: '' };
     }
+    // A student removed by management has an explicit membership tombstone.
+    // The normal guest role can still view public domain pages, so block the
+    // removed account at the shared HTTP/WS gate until an administrator joins
+    // them again. Never-joined visitors have no tombstone and keep existing access.
+    const membership = (currentUser as typeof currentUser & {
+        _dudoc?: { domainId?: string, join?: boolean, blockedByStudentManagement?: boolean };
+    })._dudoc;
+    if (membership?.domainId === ctx.domainInfo?._id && membership.join === false
+        && membership.blockedByStudentManagement) {
+        return { allowed: false, redirect: '' };
+    }
+    if (!workspace.isEnabled()) return { allowed: true, redirect: '' };
     const assignedWorkspaceIds = await workspace.getAssignedWorkspaceIds(currentUser._id);
     const currentWorkspaceId = workspace.resolveDomainWorkspaceId(ctx.domainInfo);
     const allowed = assignedWorkspaceIds.length

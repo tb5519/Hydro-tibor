@@ -1,6 +1,5 @@
 {% import "components/record.html" as record with context %}
 {% import "components/problem.html" as problem with context %}
-{% import "components/problem_activity.html" as problemActivity with context %}
 {% set expanded = 0 %}
 <div data-fragment-id="training_detail" class="ui-v2-training-detail__chapters">
   {% if canManageTraining and isComparingUser %}
@@ -134,8 +133,8 @@
                           show_tags=false
                         ) }}
                       </td>
-                      <td class="col--tried" data-label="{{ _('Tried') }}">{{ activity.nSubmit }} {{ problemActivity.marker(activity) }}</td>
-                      <td class="col--ac" data-label="{{ _('AC') }}">{{ activity.nAccept }} {{ problemActivity.marker(activity) }}</td>
+                      <td class="col--tried" data-label="{{ _('Tried') }}">{{ activity.nSubmit }}</td>
+                      <td class="col--ac" data-label="{{ _('AC') }}">{{ activity.nAccept }}</td>
                       <td class="col--difficulty" data-label="{{ _('Difficulty') }}">{{ pdoc['difficulty'] or (lib.difficulty(pdoc.nSubmit, pdoc.nAccept) if pdoc.nSubmit else _('(None)')) or _('(None)') }}</td>
                     </tr>
                   {% else %}
