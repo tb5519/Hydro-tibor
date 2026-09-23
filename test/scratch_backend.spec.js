@@ -140,7 +140,10 @@ before(async () => {
         '../lib/scratch_files': scratchFiles, '../model/builtin': { PERM: { PERM_EDIT_DOMAIN: 1n, PERM_VIEW_USER_PRIVATE_INFO: 2n }, PRIV: { PRIV_USER_PROFILE: 1 } },
         '../model/domain': { collUser: database.collection('domain.user') }, '../model/scratch': model,
         '../model/storage': storage,
-        '../model/user': { getListForRender: async () => ({}) }, '../service/server': { Handler: class {} },
+        '../model/user': {
+            coll: database.collection('user'),
+            getListForRender: async () => ({}),
+        }, '../service/server': { Handler: class {} },
     });
 });
 beforeEach(() => {
@@ -278,7 +281,99 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         assert.equal(editor.UiContext.scratchEditor.readOnly, false);
         assert.equal(editor.UiContext.scratchEditor.saveForStudent, true);
         assert.equal(editor.UiContext.scratchEditor.saveUrl, '/scratch_save');
+        assert.equal(editor.UiContext.scratchEditor.locale, 'zh-cn');
+        assert.equal(editor.UiContext.scratchEditor.languageUrl, '/scratch_language');
         assert.equal(editor.UiContext.scratchEditor.canSubmit, false);
+    });
+
+    it('remembers the Scratch language per student across works and teacher edits', async () => {
+        await database.collection('user').insertMany([
+            { _id: alice.uid, uname: 'alice' },
+            { _id: bob.uid, uname: 'bob' },
+            { _id: teacher.uid, uname: 'teacher' },
+        ]);
+        const first = await model.createWork(bob, 'first language work');
+        const second = await model.createWork(bob, 'second language work');
+        const aliceWork = await model.createWork(alice, 'alice language work');
+        const editor = (actor, workId, query = {}) => Object.assign(Object.create(handlers.ScratchEditorHandler.prototype), {
+            actor, user: { _id: actor.uid }, domain: { _id: actor.domainId }, UiContext: {},
+            request: { query: { workId: workId.toHexString(), ...query } },
+            url: (name) => `/${name}`,
+            renderScratch: async () => {},
+        });
+        const studentSession = '11111111-1111-4111-8111-111111111111';
+        const teacherSession = '22222222-2222-4222-8222-222222222222';
+        const language = (actor, workId, locale, sequence = '1', session = actor.isTeacher ? teacherSession : studentSession) => Object.assign(Object.create(handlers.ScratchLanguageHandler.prototype), {
+            actor, request: { params: { workId: workId.toHexString() }, body: { locale, session, sequence } },
+            response: {}, limitRate: async () => {},
+        });
+
+        const firstOpen = editor(bob, first._id);
+        await firstOpen.get();
+        assert.equal(firstOpen.UiContext.scratchEditor.locale, 'zh-cn');
+        const changed = language(bob, first._id, 'en');
+        await changed.post();
+        assert.equal(changed.response.body.ok, true);
+        assert.equal(changed.response.body.locale, 'en');
+        assert.equal(changed.response.type, 'application/json');
+        assert.equal((await database.collection('user').findOne({ _id: bob.uid })).scratchEditorLocale, 'en');
+
+        const teacherOpen = editor(teacher, second._id);
+        await teacherOpen.get();
+        assert.equal(teacherOpen.UiContext.scratchEditor.locale, 'en');
+        assert.equal(teacherOpen.UiContext.scratchEditor.languageUrl, '/scratch_language');
+        const teacherChange = language(teacher, second._id, 'ja-Hira');
+        await teacherChange.post();
+        const teacherSaved = await database.collection('user').findOne({ _id: bob.uid });
+        assert.equal(teacherSaved.scratchEditorLocale, 'ja-Hira');
+        assert.equal(teacherSaved.scratchEditorLocaleRevision.session, teacherSession);
+        assert.equal(teacherSaved.scratchEditorLocaleRevision.sequence, 1);
+        assert.equal((await database.collection('user').findOne({ _id: teacher.uid })).scratchEditorLocale, undefined);
+        const studentOpen = editor(bob, first._id);
+        await studentOpen.get();
+        assert.equal(studentOpen.UiContext.scratchEditor.locale, 'ja-Hira');
+
+        const readOnlyOpen = editor(teacher, first._id, { readOnly: 'true' });
+        await readOnlyOpen.get();
+        assert.equal(readOnlyOpen.UiContext.scratchEditor.locale, 'ja-Hira');
+        assert.equal(readOnlyOpen.UiContext.scratchEditor.languageUrl, null);
+        const aliceOpen = editor(alice, aliceWork._id);
+        await aliceOpen.get();
+        assert.equal(aliceOpen.UiContext.scratchEditor.locale, 'zh-cn');
+
+        for (const locale of ['en-US', 'ja-hira', '__proto__', '', 12, null]) {
+            await assert.rejects(language(teacher, first._id, locale).post(), ValidationError);
+        }
+        await assert.rejects(language(alice, first._id, 'fr').post(), PermissionError);
+        await assert.rejects(language(foreign, first._id, 'fr').post(), NotFoundError);
+        assert.equal((await database.collection('user').findOne({ _id: bob.uid })).scratchEditorLocale, 'ja-Hira');
+        assert.equal((await database.collection('user').findOne({ _id: alice.uid })).scratchEditorLocale, undefined);
+
+        for (const [sequence, session] of [
+            ['0', teacherSession], ['1000000001', teacherSession], ['1.5', teacherSession],
+            ['NaN', teacherSession], [null, teacherSession], ['1', 'not-a-uuid'], ['1', null],
+        ]) {
+            await assert.rejects(language(teacher, second._id, 'fr', sequence, session).post(), ValidationError);
+        }
+        const missingSequence = language(teacher, second._id, 'fr');
+        delete missingSequence.request.body.sequence;
+        await assert.rejects(missingSequence.post(), ValidationError);
+        const missingSession = language(teacher, second._id, 'fr');
+        delete missingSession.request.body.session;
+        await assert.rejects(missingSession.post(), ValidationError);
+        const newest = language(teacher, second._id, 'fr', '2', teacherSession);
+        await newest.post();
+        const delayed = language(teacher, second._id, 'en', '1', teacherSession);
+        await delayed.post();
+        assert.equal(delayed.response.body.ok, true);
+        assert.equal(delayed.response.body.locale, 'fr');
+        assert.equal((await database.collection('user').findOne({ _id: bob.uid })).scratchEditorLocale, 'fr');
+        const nextSession = '33333333-3333-4333-8333-333333333333';
+        await language(bob, first._id, 'pt-br', '1', nextSession).post();
+        const latest = await database.collection('user').findOne({ _id: bob.uid });
+        assert.equal(latest.scratchEditorLocale, 'pt-br');
+        assert.equal(latest.scratchEditorLocaleRevision.session, nextSession);
+        assert.equal(latest.scratchEditorLocaleRevision.sequence, 1);
     });
 
     it('resolves duplicate assignment starts to one student work and enforces teacher-only assignment writes', async () => {

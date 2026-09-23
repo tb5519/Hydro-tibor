@@ -7,6 +7,8 @@ interface ScratchEditorConfig {
   title: string;
   projectUrl: string | null;
   saveUrl: string;
+  languageUrl: string | null;
+  locale: string;
   backUrl: string;
   canSubmit: boolean;
   readOnly: boolean;
@@ -94,6 +96,39 @@ export default new NamedPage('scratch_editor', () => {
     const url = new URL(value, location.href);
     if (url.origin !== location.origin) throw new Error('编辑器接口地址无效');
     return url.href;
+  };
+  let savedLocale = config.locale || 'zh-cn';
+  let selectedLocale = savedLocale;
+  let localeSequence = 0;
+  let savingLocale = false;
+  const postLocale = async (locale: string, sequence: number) => {
+    if (!config.languageUrl) throw new Error('语言设置接口不可用');
+    const body = new FormData();
+    body.append('locale', locale);
+    body.append('session', channel);
+    body.append('sequence', String(sequence));
+    return fetch(sameOriginUrl(config.languageUrl), {
+      method: 'POST', body, credentials: 'same-origin', keepalive: true,
+      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    });
+  };
+  const persistLocale = async () => {
+    if (savingLocale || !config.languageUrl) return;
+    savingLocale = true;
+    while (selectedLocale !== savedLocale) {
+      const locale = selectedLocale;
+      const sequence = localeSequence;
+      try {
+        const response = await postLocale(locale, sequence);
+        const result = await response.json();
+        if (!response.ok || !result.ok || typeof result.locale !== 'string') throw new Error('语言设置保存失败');
+        savedLocale = result.locale;
+      } catch {
+        if (!pending) show('语言已切换，但设置暂时没能保存。请检查网络，刷新页面后再选择语言。', true);
+        break;
+      }
+    }
+    savingLocale = false;
   };
   const finish = () => {
     pending = null;
@@ -190,6 +225,11 @@ export default new NamedPage('scratch_editor', () => {
         dirty = true;
         changes += 1;
         if (!pending) show('名称已修改，记得保存作品');
+      } else if (message.type === 'localeChanged' && loaded && !config.readOnly) {
+        if (typeof message.locale !== 'string' || !/^[a-z]{2,3}(?:-[a-zA-Z0-9]{2,8})?$/.test(message.locale)) return;
+        selectedLocale = message.locale;
+        localeSequence += 1;
+        void persistLocale();
       } else if (message.type === 'dirty' && loaded && !config.readOnly) {
         dirty = true;
         changes += 1;
@@ -240,10 +280,17 @@ export default new NamedPage('scratch_editor', () => {
     event.preventDefault();
     event.returnValue = '';
   });
+  // A rapid final choice can still be queued behind an earlier request when
+  // the tab closes. Keepalive sends it now; the server ignores older sequence
+  // numbers from this editor session if they arrive later.
+  window.addEventListener('pagehide', () => {
+    if (config.readOnly || !config.languageUrl || (!savingLocale && selectedLocale === savedLocale)) return;
+    void postLocale(selectedLocale, localeSequence).catch(() => {});
+  });
   document.querySelector('[data-scratch-back]')?.addEventListener('click', (event) => {
     if ((dirty || pending) && !window.confirm('作品还有未保存的修改，确定离开吗？')) event.preventDefault();
   });
   // A dedicated path keeps the editor's many MB of assets out of ordinary pages.
   // Keep v first: older OneByOne service workers bypass URLs containing ?v=.
-  frame.src = `/scratch-editor/editor.html?v=${encodeURIComponent(config.editorVersion || 'unavailable')}&lang=zh-cn#channel=${encodeURIComponent(channel)}`;
+  frame.src = `/scratch-editor/editor.html?v=${encodeURIComponent(config.editorVersion || 'unavailable')}&lang=${encodeURIComponent(config.locale || 'zh-cn')}#channel=${encodeURIComponent(channel)}`;
 });

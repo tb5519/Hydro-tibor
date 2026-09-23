@@ -9,6 +9,7 @@ const { transformSync } = require('esbuild');
 const root = path.resolve(__dirname, '..');
 const buildFile = path.join(root, 'build/scratch/build.mjs');
 const upstream = require('../build/scratch/upstream.json');
+const localeDetector = fs.readFileSync(path.join(__dirname, 'fixtures/scratch_detect_locale_upstream.txt'), 'utf8');
 const buildSource = transformSync(fs.readFileSync(buildFile, 'utf8'), {
     format: 'cjs', platform: 'node', define: { 'import.meta.url': JSON.stringify(pathToFileURL(buildFile).href) },
 }).code;
@@ -21,6 +22,7 @@ function runBuild(assetBase) {
     const sources = {
         'src/containers/extension-library.jsx': 'const fetchLibrary = async () => {\n}\ncomponentDidMount () {\n}',
         'src/reducers/mode.js': '    switch (action.type) {\n}',
+        'src/lib/detect-locale.js': localeDetector,
         'src/components/menu-bar/menu-bar.jsx': [
             '<MenuItem isRtl={this.props.isRtl} onClick={this.handleClickNew}>New</MenuItem>',
             '<ChangeUsername>Username</ChangeUsername>',
@@ -57,7 +59,9 @@ function runBuild(assetBase) {
         return '';
     };
     const run = () => vm.runInNewContext(buildSource, {
-        require: (name) => name === './patch-libraries.cjs' ? (_file, source) => source : name === 'node:fs' ? fakeFs
+        require: (name) => name === './patch-libraries.cjs' ? (_file, source) => source
+            : name === './patch-locale.cjs' ? require('../build/scratch/patch-locale.cjs')
+                : name === 'node:fs' ? fakeFs
             : name === 'node:child_process' ? { execFileSync } : require(name),
         process: { env, execPath: process.execPath, version: process.version },
         URL, console: { log: () => {} },
@@ -105,6 +109,8 @@ describe('Scratch CDN build configuration', () => {
             assert.equal(manifest.commit, upstream.commit);
             assert(manifest.files['editor.html']);
             assert(manifest.files['source.tar.gz']);
+            assert(build.writes.get('/isolated-test-upstream/src/lib/detect-locale.js')
+                .includes('const supported = supportedLocales.find('));
             const { config, HtmlWebpackPlugin } = configureWebpack(invocation.options.env.ROOT);
             assert.equal(config.output.publicPath, expected);
             assert.equal(config.output.crossOriginLoading, 'anonymous');

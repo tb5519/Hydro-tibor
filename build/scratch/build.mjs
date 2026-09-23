@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import patchLibraries from './patch-libraries.cjs';
+import patchLocale from './patch-locale.cjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../..');
@@ -91,6 +92,13 @@ const modeSource = execFileSync('git', ['show', `${upstream.commit}:src/reducers
     case 'onebyone/SET_EMBEDDED':
         return Object.assign({}, state, {isEmbedded: action.isEmbedded});`);
 fs.writeFileSync(modePath, modeSource);
+// Prefer the authenticated parent's language over the iframe's own storage.
+// Match case-insensitively while keeping canonical keys such as ja-Hira.
+const localePath = path.join(workspace, 'src/lib/detect-locale.js');
+const localeSource = execFileSync('git', ['show', `${upstream.commit}:src/lib/detect-locale.js`], {
+    cwd: workspace, encoding: 'utf8'
+});
+fs.writeFileSync(localePath, patchLocale(localeSource));
 // Preserve native local file/edit controls without account, cloud, remote
 // feedback or a nonfunctional restore-point menu in the isolated classroom.
 const menuPath = path.join(workspace, 'src/components/menu-bar/menu-bar.jsx');
@@ -162,7 +170,8 @@ fs.writeFileSync(path.join(here, 'package-lock.upstream.json'), lock);
 // Retain the corresponding GUI source, build configuration and lock with the binary.
 fs.copyFileSync(path.join(here, 'README.md'), path.join(workspace, 'ONEBYONE-README.md'));
 fs.mkdirSync(path.join(workspace, 'onebyone-library'), {recursive: true});
-for (const name of ['library-assets.mjs', 'library-assets.lock.json', 'upstream.json', 'patch-libraries.cjs', 'LIBRARY-CREDITS.md']) {
+for (const name of ['library-assets.mjs', 'library-assets.lock.json', 'upstream.json', 'patch-libraries.cjs',
+    'patch-locale.cjs', 'LIBRARY-CREDITS.md']) {
     fs.copyFileSync(path.join(here, name), path.join(workspace, 'onebyone-library', name));
 }
 run('tar', ['-czf', path.join(target, 'source.tar.gz'),

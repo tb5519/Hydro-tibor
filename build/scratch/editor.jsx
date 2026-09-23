@@ -208,7 +208,7 @@ render(<Editor
     showOpenFilePicker={null}
     showSaveFilePicker={null}
     canEditTitle
-    canChangeLanguage={false}
+    canChangeLanguage
     canChangeTheme={false}
     canUseCloud={false}
     hasCloudPermission={false}
@@ -218,6 +218,16 @@ render(<Editor
     onProjectLoaded={async () => {
         if (!notifiedReady) {
             notifiedReady = true;
+            const store = window.ReduxStore;
+            let previousLocale = store.getState().locales.locale;
+            document.documentElement.lang = previousLocale;
+            store.subscribe(() => {
+                const locale = store.getState().locales.locale;
+                if (locale === previousLocale) return;
+                previousLocale = locale;
+                document.documentElement.lang = locale;
+                if (projectLoaded && !readOnly && mode === 'editor') send('localeChanged', {locale});
+            });
             defaultProject = await (await vm.saveProjectSb3()).arrayBuffer();
             send('ready');
         }

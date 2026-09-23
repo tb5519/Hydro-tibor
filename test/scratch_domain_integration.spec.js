@@ -207,7 +207,7 @@ describe('Scratch exclusion in shared RP calculation and reads', () => {
     });
 });
 
-function editorHarness(readOnly = false, editorVersion = 'a'.repeat(64), withPresets = false) {
+function editorHarness(readOnly = false, editorVersion = 'a'.repeat(64), withPresets = false, locale = 'zh-cn') {
     const listeners = {};
     const outgoing = [];
     const requests = [];
@@ -239,7 +239,8 @@ function editorHarness(readOnly = false, editorVersion = 'a'.repeat(64), withPre
         } },
     }, {
         UiContext: { scratchEditor: { editorVersion, workId: 'work-1', title: '作品', projectUrl: null,
-            saveUrl: '/d/art/scratch/work/work-1/save', revision: 0, maxFileSize: 1024, canSubmit: true, readOnly,
+            saveUrl: '/d/art/scratch/work/work-1/save', languageUrl: '/d/art/scratch/work/work-1/language', locale,
+            revision: 0, maxFileSize: 1024, canSubmit: true, readOnly,
             ...(withPresets ? { libraryUrl: '/d/art/scratch/library' } : {}) } },
         document: { querySelector: (selector) => elements[selector] },
         window: { addEventListener: (name, listener) => { listeners[name] = listener; }, confirm: () => false },
@@ -260,7 +261,8 @@ function editorHarness(readOnly = false, editorVersion = 'a'.repeat(64), withPre
         listeners.beforeunload({ preventDefault: () => { prevented = true; } });
         return prevented;
     };
-    return { message, frame, status, save, submit, outgoing, requests, timers, leavesWithWarning, presetMessages, presetOptions };
+    return { message, frame, status, save, submit, outgoing, requests, timers, leavesWithWarning,
+        pagehide: () => listeners.pagehide(), presetMessages, presetOptions };
 }
 
 describe('isolated Scratch editor save bridge', () => {
@@ -302,6 +304,58 @@ describe('isolated Scratch editor save bridge', () => {
             assert.equal(url.searchParams.get('v'), '#channel=forged&x=https://other.test');
             assert.notEqual(url.hash, '#channel=forged');
         }
+        const english = editorHarness(false, 'a'.repeat(64), false, 'en');
+        assert(new URL(english.frame.src, 'https://onebyone.test').searchParams.get('lang') === 'en');
+    });
+
+    it('persists language changes without saving the project and keeps the latest rapid choice', async () => {
+        const editor = editorHarness();
+        await editor.message('ready');
+        await editor.message('loaded');
+        await editor.message('localeChanged', { locale: 'en' });
+        assert.equal(editor.requests.length, 1);
+        assert.equal(editor.requests[0].url, 'https://onebyone.test/d/art/scratch/work/work-1/language');
+        assert.equal(editor.requests[0].options.body.get('locale'), 'en');
+        assert.equal(editor.requests[0].options.body.get('sequence'), '1');
+        assert.match(editor.requests[0].options.body.get('session'), /^id-\d+$/);
+        assert.equal(editor.requests[0].options.keepalive, true);
+        await editor.message('localeChanged', { locale: 'ja' });
+        assert.equal(editor.requests.length, 1);
+        editor.requests[0].resolve({ ok: true, json: async () => ({ ok: true, locale: 'en' }) });
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(editor.requests.length, 2);
+        assert.equal(editor.requests[1].options.body.get('locale'), 'ja');
+        assert.equal(editor.requests[1].options.body.get('sequence'), '2');
+        editor.requests[1].resolve({ ok: true, json: async () => ({ ok: true, locale: 'ja' }) });
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(editor.requests.length, 2);
+        assert.equal(editor.outgoing.filter((message) => message.type === 'export').length, 0);
+        assert.equal(editor.leavesWithWarning(), false);
+
+        const player = editorHarness(true);
+        await player.message('ready');
+        await player.message('loaded');
+        await player.message('localeChanged', { locale: 'en' });
+        assert.equal(player.requests.length, 0);
+    });
+
+    it('sends a queued final language on pagehide before an older request resolves', async () => {
+        const editor = editorHarness();
+        await editor.message('ready');
+        await editor.message('loaded');
+        await editor.message('localeChanged', { locale: 'en' });
+        await editor.message('localeChanged', { locale: 'zh-cn' });
+        assert.equal(editor.requests.length, 1);
+        editor.pagehide();
+        assert.equal(editor.requests.length, 2);
+        assert.equal(editor.requests[1].options.body.get('locale'), 'zh-cn');
+        assert.equal(editor.requests[1].options.body.get('sequence'), '2');
+        assert.equal(editor.requests[1].options.body.get('session'), editor.requests[0].options.body.get('session'));
+        assert.equal(editor.requests[1].options.keepalive, true);
+        editor.requests[1].resolve({ ok: true, json: async () => ({ ok: true, locale: 'zh-cn' }) });
+        editor.requests[0].resolve({ ok: true, json: async () => ({ ok: true, locale: 'zh-cn' }) });
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(editor.requests.length, 2);
     });
 
     it('rejects foreign windows/origins and never gives a read-only preview a save action', async () => {

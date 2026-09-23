@@ -11,11 +11,12 @@ async function harness() {
     const sent = [];
     const calls = [];
     const subscribers = [];
-    const state = { scratchGui: { projectTitle: '默认作品' } };
+    const state = { scratchGui: { projectTitle: '默认作品' }, locales: { locale: 'zh-cn' } };
     const defaultProject = new Uint8Array([1, 2, 3]).buffer;
     let props;
     let presetAllowed;
     const presetRequests = [];
+    const documentElement = { dataset: {} };
     const project = {
         extensionManager: { loadExtensionURL: async () => {} },
         renderer: {
@@ -36,6 +37,7 @@ async function harness() {
         subscribe: (callback) => subscribers.push(callback),
         dispatch(action) {
             if (action.type === 'title') state.scratchGui.projectTitle = action.title;
+            if (action.type === 'locale') state.locales.locale = action.locale;
             subscribers.forEach((callback) => callback());
         },
     };
@@ -79,7 +81,7 @@ async function harness() {
         location: { hash: '#channel=local-test' },
         process: { env: { ROOT: '/scratch-editor/' } },
         document: {
-            documentElement: { dataset: {} },
+            documentElement,
             createElement: () => ({
                 getContext: () => ({ fillRect: () => {}, drawImage: () => {} }),
                 toDataURL: () => 'data:image/png;base64,cover',
@@ -96,7 +98,7 @@ async function harness() {
     const message = (type, data = {}, source = parent) => listeners.message({
         source, data: { type, channel: 'local-test', ...data },
     });
-    return { message, sent, calls, store, listeners, props, presetAllowed, presetRequests };
+    return { message, sent, calls, store, listeners, props, presetAllowed, presetRequests, documentElement };
 }
 
 describe('native Scratch editor modes', () => {
@@ -168,6 +170,39 @@ describe('native Scratch editor modes', () => {
             'importing a file with the same title must still mark the host work as unsaved');
         await editor.message('preview', { id: 'wrong-mode', project: new Uint8Array([4]).buffer });
         assert(!editor.calls.some((call) => Array.isArray(call)));
+    });
+
+    it('offers native language selection and reports only changed locales in an editable project', async () => {
+        const editor = await harness();
+        assert.equal(editor.props.canChangeLanguage, true);
+        assert.equal(editor.documentElement.lang, 'zh-cn');
+        editor.store.dispatch({ type: 'locale', locale: 'en' });
+        assert.equal(editor.documentElement.lang, 'en');
+        assert(!editor.sent.some((message) => message.type === 'localeChanged'));
+        await editor.message('init', { mode: 'editor', readOnly: false });
+        assert(!editor.sent.some((message) => message.type === 'localeChanged'),
+            'initial locale must not be mistaken for a user change');
+        editor.store.dispatch({ type: 'locale', locale: 'es' });
+        assert.equal(editor.documentElement.lang, 'es');
+        editor.store.dispatch({ type: 'locale', locale: 'es' });
+        editor.store.dispatch({ type: 'unchanged' });
+        editor.store.dispatch({ type: 'locale', locale: 'zh-cn' });
+        assert.deepEqual(editor.sent.filter((message) => message.type === 'localeChanged').map((message) => message.locale),
+            ['es', 'zh-cn']);
+    });
+
+    it('never reports language changes from player, thumbnail, or read-only mode', async () => {
+        for (const options of [
+            { mode: 'player', readOnly: false },
+            { mode: 'thumbnail', readOnly: false },
+            { mode: 'editor', readOnly: true },
+        ]) {
+            const editor = await harness();
+            await editor.message('init', options);
+            editor.store.dispatch({ type: 'locale', locale: 'en' });
+            assert.equal(editor.documentElement.lang, 'en');
+            assert(!editor.sent.some((message) => message.type === 'localeChanged'));
+        }
     });
 });
 
