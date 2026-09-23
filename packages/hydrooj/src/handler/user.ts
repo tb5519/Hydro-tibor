@@ -1,5 +1,6 @@
 import { generateAuthenticationOptions, verifyAuthenticationResponse } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
+import { escapeRegExp } from 'lodash';
 import moment from 'moment-timezone';
 import { Binary } from 'mongodb';
 import Schema from 'schemastery';
@@ -747,8 +748,37 @@ const UserApi = {
         search: Schema.string(),
         limit: Schema.number().step(1),
         exact: Schema.boolean(),
+        joinedOnly: Schema.boolean(),
     }), async (c, arg) => {
         const auto = (arg.ids?.length && arg.ids) || arg.auto || [];
+        if (arg.joinedOnly) {
+            const domainId = c.domain._id;
+            const search = arg.search?.trim() || '';
+            if (!auto.length && !search) return [];
+            const members = await domain.getMultiUserInDomain(domainId, { join: true, uid: { $gt: 1 } })
+                .project({ uid: 1, displayName: 1 }).toArray();
+            const memberUids = members.map((member) => member.uid);
+            if (!memberUids.length) return [];
+            const limit = Math.max(1, Math.min(arg.limit || 10, 10));
+            const names = auto.map((value) => `${value}`.trim().toLowerCase());
+            const prefix = new RegExp(`^${escapeRegExp(search)}`, 'i');
+            const matches = auto.length ? [
+                { _id: { $in: names.map(Number).filter(Number.isSafeInteger) } },
+                { unameLower: { $in: names } },
+                { mailLower: { $in: names } },
+            ] : [
+                { _id: Number.isSafeInteger(+search) ? +search : -1 },
+                { unameLower: arg.exact ? search.toLowerCase() : prefix },
+                { mailLower: search.toLowerCase() },
+                { _id: { $in: members.filter((member) => (arg.exact
+                    ? member.displayName === search : prefix.test(member.displayName || ''))).map((member) => member.uid) } },
+            ];
+            const candidates = await user.getMulti({ _id: { $in: memberUids }, $or: matches })
+                .sort({ _id: 1 }).limit(auto.length ? 50 : limit).project({ _id: 1 }).toArray();
+            const result = (await Promise.all(candidates.map((candidate) => user.getById(domainId, candidate._id)))).filter(Boolean);
+            for (const udoc of result) udoc.avatarUrl = avatar(udoc.avatar);
+            return result;
+        }
         if (auto.length) {
             const maybeId = auto.filter((i) => !Number.isNaN(+i));
             const result = [];

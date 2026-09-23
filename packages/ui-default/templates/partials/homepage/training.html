@@ -1,50 +1,52 @@
 {% set tdocs = payload[0] %}
 {% set tsdict = payload[1] %}
 {% if tdocs.length %}
-  <div class="section page--training_main">
-    <div class="section__header">
-      <h1 class="section__title">{{ _('Training') }}</h1>
-    </div>
-    <ol class="section__list all primary training__list">
+  <section class="section training-home" aria-labelledby="homepage-training-title">
+    <header class="section__header training-home__header">
+      <h2 id="homepage-training-title" class="section__title">{{ _('Training') }}</h2>
+      <a class="training-home__more" href="{{ url('training_main') }}" aria-label="{{ _('All Training Plans') }}">{{ _('More') }}<span class="icon icon-chevron_right" aria-hidden="true"></span></a>
+    </header>
+    <ol class="training-home__list">
       {%- for tdoc in tdocs -%}
-        <li class="section__list__item training__item">
-          <div class="media">
-            <div class="media__left middle">
-              <div class="training__participants numbox">
-                <div class="numbox__num large">{{ model.training.getDisplayAttend(tdoc) }}</div>
-                <div class="numbox__text">{{ _('Enrolled') }}</div>
-              </div>
-            </div>
-            <div class="media__body middle">
-              <h1 class="training__title"><a href="{{ url('training_detail', tid=tdoc.docId) }}" data-emoji-enabled>{{ tdoc.title }}</a></h1>
-              <div class="training__intro typo">
-                <p>{{ tdoc['content'] }}</p>
-              </div>
-              <ul class="supplementary list training__progress">
-                <li>
-                  <span class="icon icon-flag text-blue"></span> {{ _('{0} sections').format(tdoc['dag']|length) }}, {{ _('{0} problems').format(model.training.getPids(tdoc.dag)|length) }}
-                </li>
-                <li>
-                {% if tsdict[tdoc.docId]['enroll'] %}
-                  {% if not tsdict[tdoc.docId]['done'] %}
-                  <span class="icon training-status--icon progress"></span>
-                  <span class="training-status--text progress">{{ _('Completed') }} {{ (100 * tsdict[tdoc.docId]['donePids']|length / model.training.getPids(tdoc.dag)|length)|round|int }}%</span>
-                  {% else %}
-                  <span class="icon training-status--icon done"></span>
-                  <span class="training-status--text done">{{ _('Completed') }} 100%</span>
-                  {% endif %}
-                {% elif handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
-                  <span class="icon training-status--icon outside"></span> <span class="training-status--text outside">{{ _('Not Enrolled') }}</span>
-                {% endif %}
-                </li>
+        {% set tsdoc = tsdict[tdoc.docId] %}
+        {% set enrolled = tsdoc and tsdoc['enroll'] %}
+        {% set problemCount = model.training.getPids(tdoc.dag)|length %}
+        {% set progress = 0 %}
+        {% if enrolled and problemCount %}
+          {% set progress = (100 * tsdoc['donePids']|length / problemCount)|round|int %}
+        {% endif %}
+        {% if enrolled and tsdoc['done'] %}
+          {% set progress = 100 %}
+        {% elif progress > 100 %}
+          {% set progress = 100 %}
+        {% endif %}
+        <li class="training-home__item">
+          <a class="training-home__entry{% if enrolled %} is-enrolled{% endif %}{% if tsdoc and tsdoc['done'] %} is-done{% endif %}" href="{{ url('training_detail', tid=tdoc.docId) }}" aria-labelledby="homepage-training-{{ tdoc.docId }}">
+            <div class="training-home__copy">
+              <h3 id="homepage-training-{{ tdoc.docId }}" class="training-home__title" data-emoji-enabled>{{ tdoc.title }}</h3>
+              {% if tdoc['content'] %}
+                <p class="training-home__intro">{{ tdoc['content'] }}</p>
+              {% endif %}
+              <ul class="training-home__meta">
+                <li><span class="icon icon-stack" aria-hidden="true"></span>{{ _('{0} sections').format(tdoc['dag']|length) }}</li>
+                <li><span class="icon icon-book" aria-hidden="true"></span>{{ _('{0} problems').format(problemCount) }}</li>
+                <li><span class="icon icon-user--multiple" aria-hidden="true"></span>{{ _('Enrollees') }} {{ model.training.getDisplayAttend(tdoc) }}</li>
               </ul>
             </div>
-          </div>
+            <div class="training-home__action">
+              {% if enrolled %}
+                <div class="training-home__progress">
+                  <div class="training-home__progress-label"><span>{% if tsdoc['done'] %}{{ _('Completed') }}{% else %}{{ _('In Progress') }}{% endif %}</span><strong>{{ progress }}%</strong></div>
+                  <div class="training-home__progress-bar" role="progressbar" aria-label="{{ _('Completed') }} {{ progress }}%" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ progress }}"><span style="width: {{ progress }}%"></span></div>
+                </div>
+              {% elif handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
+                <span class="training-home__status">{{ _('Not Enrolled') }}</span>
+              {% endif %}
+              <span class="training-home__cta">{% if enrolled and not tsdoc['done'] %}{{ _('Continue') }}{% else %}{{ _('View Details') }}{% endif %}<span class="icon icon-chevron_right" aria-hidden="true"></span></span>
+            </div>
+          </a>
         </li>
       {%- endfor -%}
     </ol>
-    <ul class="pager pager-bottom"><li>
-      <a class="pager__item next link" href="{{ url('training_main') }}">{{ _('More') }} ></a>
-    </li></ul>
-  </div>
+  </section>
 {% endif %}

@@ -9,7 +9,7 @@
           <h1 id="training-page-title" class="training-page-head__title">{{ _('All Training Plans') }}</h1>
         </div>
         <div class="training-page-head__actions">
-          {% if handler.user.hasPerm(perm.PERM_CREATE_TRAINING) %}
+          {% if canCreateTraining %}
             <a href="{{ url('training_create') }}" class="training-create-button">
               <span class="icon icon-add" aria-hidden="true"></span>
               <span>{{ _('New Training Plan') }}</span>
@@ -38,7 +38,7 @@
             <p>{{ _('Sorry, there are no training plans.') }}</p>
             {% if q %}
               <a class="training-empty__action" href="{{ url('training_main') }}">{{ _('Reset') }}</a>
-            {% elif handler.user.hasPerm(perm.PERM_CREATE_TRAINING) %}
+            {% elif canCreateTraining %}
               <a class="training-empty__action" href="{{ url('training_create') }}"><span class="icon icon-add" aria-hidden="true"></span>{{ _('New Training Plan') }}</a>
             {% endif %}
           </div>

@@ -6,17 +6,21 @@ import { api } from 'vj/utils';
 
 interface UserSelectAutoCompleteProps extends AutoCompleteProps<Udoc> {
   apiMethod?: 'users' | 'problemFilterStudents';
+  joinedOnly?: boolean;
 }
 
 const UserSelectAutoComplete = forwardRef<AutoCompleteHandle<Udoc>, UserSelectAutoCompleteProps>(({
   apiMethod = 'users',
+  joinedOnly = false,
   ...props
 }, ref) => (
   <AutoComplete<Udoc>
     ref={ref as any}
-    cacheKey={apiMethod === 'users' ? 'user' : undefined}
-    queryItems={(query) => api(apiMethod, { search: query }, ['_id', 'uname', 'displayName', 'avatarUrl'])}
-    fetchItems={(ids) => api(apiMethod, { auto: ids }, ['_id', 'uname', 'displayName'])}
+    cacheKey={apiMethod === 'users' && !joinedOnly ? 'user' : undefined}
+    queryItems={(query) => api(apiMethod,
+      { search: query, ...(joinedOnly ? { joinedOnly: true } : {}) }, ['_id', 'uname', 'displayName', 'avatarUrl'])}
+    fetchItems={(ids) => api(apiMethod,
+      { auto: ids, ...(joinedOnly ? { joinedOnly: true } : {}) }, ['_id', 'uname', 'displayName'])}
     itemText={(user) => user.uname + (user.displayName ? ` (${user.displayName})` : '')}
     itemKey={(user) => ((props.multi || /^[+-]?\d+$/.test(user.uname.trim())) ? user._id.toString() : user.uname)}
     renderItem={(user) => (
@@ -46,6 +50,7 @@ const UserSelectAutoComplete = forwardRef<AutoCompleteHandle<Udoc>, UserSelectAu
 
 UserSelectAutoComplete.propTypes = {
   apiMethod: PropTypes.oneOf(['users', 'problemFilterStudents']),
+  joinedOnly: PropTypes.bool,
   width: PropTypes.string,
   height: PropTypes.string,
   listStyle: PropTypes.object,

@@ -1,0 +1,220 @@
+.training-home
+  overflow: hidden
+  color: var(--ui-v2-text)
+
+  *, *::before, *::after
+    box-sizing: border-box
+
+  .training-home__header
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: rem(16px)
+    border-bottom: 1px solid var(--ui-v2-border)
+
+  .training-home__more
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    gap: rem(3px)
+    min-height: rem(36px)
+    margin: rem(-6px -6px -6px 0)
+    padding: rem(0 6px)
+    border-radius: rem(6px)
+    color: var(--ui-v2-accent)
+    font-size: rem(13px)
+    white-space: nowrap
+
+    &:hover, &:focus-visible
+      background: var(--ui-v2-accent-soft)
+      color: var(--ui-v2-accent)
+      text-decoration: none
+
+    &:focus-visible
+      outline: rem(2px) solid var(--ui-v2-accent)
+      outline-offset: rem(2px)
+
+  .training-home__list,
+  .training-home__meta
+    margin: 0
+    padding: 0
+    list-style: none
+
+  .training-home__item
+    margin: 0
+    padding: 0
+
+    & + .training-home__item
+      border-top: 1px solid var(--ui-v2-border)
+
+  .training-home__entry
+    display: grid
+    grid-template-columns: minmax(0, 1fr) rem(112px)
+    align-items: center
+    gap: rem(24px)
+    padding: rem(18px)
+    color: var(--ui-v2-text)
+    text-decoration: none
+    transition: background-color 0.15s ease
+
+    &:hover, &:focus-visible
+      background: var(--ui-v2-surface-muted)
+      color: var(--ui-v2-text)
+      text-decoration: none
+
+      .training-home__title
+        color: var(--ui-v2-accent)
+
+    &:focus-visible
+      outline: rem(2px) solid var(--ui-v2-accent)
+      outline-offset: rem(-3px)
+
+  .training-home__copy
+    min-width: 0
+
+  .training-home__title
+    margin: 0
+    color: var(--ui-v2-text)
+    font-size: rem(17px)
+    font-weight: 650
+    line-height: 1.5
+    overflow-wrap: anywhere
+
+  .training-home__intro
+    display: -webkit-box
+    margin: rem(6px 0 0)
+    overflow: hidden
+    color: var(--ui-v2-text-muted)
+    font-size: rem(13px)
+    line-height: 1.6
+    overflow-wrap: anywhere
+    -webkit-box-orient: vertical
+    -webkit-line-clamp: 2
+
+  .training-home__meta
+    display: flex
+    flex-wrap: wrap
+    gap: rem(5px 14px)
+    margin-top: rem(10px)
+    color: var(--ui-v2-text-muted)
+    font-size: rem(12px)
+    line-height: 1.5
+
+    li
+      display: inline-flex
+      align-items: center
+      gap: rem(5px)
+      white-space: nowrap
+
+    .icon
+      color: var(--ui-v2-text-muted)
+      opacity: 0.8
+
+  .training-home__action
+    display: flex
+    flex-direction: column
+    align-items: stretch
+    justify-content: center
+    gap: rem(10px)
+    min-width: 0
+
+  .training-home__progress-label
+    display: flex
+    justify-content: space-between
+    gap: rem(8px)
+    margin-bottom: rem(6px)
+    color: var(--ui-v2-text-muted)
+    font-size: rem(12px)
+    line-height: 1.5
+    white-space: nowrap
+
+    strong
+      color: var(--ui-v2-accent)
+      font-weight: 650
+      font-variant-numeric: tabular-nums
+
+  .training-home__progress-bar
+    height: rem(4px)
+    overflow: hidden
+    border-radius: rem(4px)
+    background: var(--ui-v2-border)
+
+    > span
+      display: block
+      height: 100%
+      border-radius: inherit
+      background: var(--ui-v2-accent)
+
+  .training-home__status
+    color: var(--ui-v2-text-muted)
+    font-size: rem(12px)
+    line-height: 1.5
+    text-align: center
+
+  .training-home__cta
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    gap: rem(7px)
+    min-height: rem(36px)
+    padding: rem(6px 10px)
+    border: 1px solid var(--ui-v2-border)
+    border-radius: rem(8px)
+    background: var(--ui-v2-surface)
+    color: var(--ui-v2-accent)
+    font-size: rem(13px)
+    font-weight: 600
+    line-height: 1.5
+    white-space: nowrap
+
+  .is-enrolled:not(.is-done) .training-home__cta
+    border-color: transparent
+    background: var(--ui-v2-accent-soft)
+
+  .is-done
+    .training-home__progress-label strong
+      color: #168348
+
+    .training-home__progress-bar > span
+      background: #22a447
+
+  @media (max-width: 600px)
+    .training-home__entry
+      grid-template-columns: minmax(0, 1fr)
+      gap: rem(12px)
+      padding: rem(16px)
+
+    .training-home__title
+      font-size: rem(16px)
+
+    .training-home__action
+      flex-direction: row
+      align-items: center
+      justify-content: space-between
+      gap: rem(20px)
+
+    .training-home__progress
+      flex: 0 1 rem(160px)
+
+    .training-home__cta
+      min-width: rem(96px)
+
+    .training-home__status
+      text-align: left
+
+  @media (prefers-reduced-motion: reduce)
+    .training-home__entry
+      transition: none
+
+.theme--dark .training-home
+  --ui-v2-surface: #1e293b
+  --ui-v2-surface-muted: #172033
+  --ui-v2-border: #334155
+  --ui-v2-text: #e5edf8
+  --ui-v2-text-muted: #a8b5c8
+  --ui-v2-accent: #7db2ff
+  --ui-v2-accent-soft: #243b58
+  background: var(--ui-v2-surface)
+
+  .is-done .training-home__progress-label strong
+    color: #92d7b3

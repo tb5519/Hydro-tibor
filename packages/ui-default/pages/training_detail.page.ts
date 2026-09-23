@@ -3,7 +3,7 @@ import _ from 'lodash';
 import UserSelectAutoComplete from 'vj/components/autocomplete/UserSelectAutoComplete';
 import Notification from 'vj/components/notification';
 import { NamedPage } from 'vj/misc/Page';
-import { i18n, pjax, request } from 'vj/utils';
+import { i18n, request } from 'vj/utils';
 import { slideDown, slideUp } from 'vj/utils/slide';
 
 type SectionState = 'expanded' | 'collapsed';
@@ -89,7 +89,7 @@ async function handleSectionLink(ev: MouseEvent) {
   if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button !== 0) return;
   const target = ev.target instanceof Element ? ev.target : null;
   const link = target?.closest<HTMLAnchorElement>(
-    '[data-training-section-link], #menu-item-training_detail > ul > li > a[href^="#"]',
+    '[data-training-section-link], [data-training-prerequisite-link], #menu-item-training_detail > ul > li > a[href^="#"]',
   );
   if (!link) return;
   const hash = link.hash;
@@ -126,12 +126,22 @@ function initializeDescription() {
   $('[data-training-description]').each((index, element) => {
     const $section = $(element);
     const content = $section.find<HTMLElement>('[data-training-description-content]').get(0);
+    const preview = $section.find<HTMLElement>('[data-training-description-preview]').get(0);
     const $toggle = $section.find<HTMLButtonElement>('[data-training-description-toggle]');
-    if (!content || !$toggle.length) return;
+    if (!content || !preview || !$toggle.length) return;
+    content.hidden = false;
+    const hasLongContent = content.scrollHeight > 110;
+    // Use actual instructions for the preview, rather than repeating the document title.
+    const excerpt = Array.from(content.querySelectorAll('p, li'))
+      .map((item) => item.textContent?.trim()).filter(Boolean).join(' ')
+      || content.textContent?.trim() || '';
+    preview.textContent = excerpt;
+    preview.hidden = !hasLongContent;
+    content.hidden = hasLongContent;
     $section.removeClass('is-expanded');
-    $toggle.attr('aria-expanded', 'false');
-    $toggle.find('[data-training-description-toggle-label]').text(i18n('Show more'));
-    $toggle.prop('hidden', content.scrollHeight <= content.clientHeight + 2);
+    $toggle.attr('aria-expanded', String(!hasLongContent));
+    $toggle.find('[data-training-description-toggle-label]').text(i18n('Expand description'));
+    $toggle.prop('hidden', !hasLongContent);
   });
 }
 
@@ -140,8 +150,10 @@ function toggleDescription(ev: JQuery.ClickEvent<Document>) {
   const $section = $toggle.closest('[data-training-description]');
   const expanded = !$section.hasClass('is-expanded');
   $section.toggleClass('is-expanded', expanded);
+  $section.find('[data-training-description-content]').prop('hidden', !expanded);
+  $section.find('[data-training-description-preview]').prop('hidden', expanded);
   $toggle.attr('aria-expanded', String(expanded));
-  $toggle.find('[data-training-description-toggle-label]').text(i18n(expanded ? 'Show less' : 'Show more'));
+  $toggle.find('[data-training-description-toggle-label]').text(i18n(expanded ? 'Collapse description' : 'Expand description'));
 }
 
 function searchUser() {
@@ -178,7 +190,10 @@ function openUserDrawer(ev: JQuery.ClickEvent<Document>) {
   $('[data-training-user-drawer-open]').attr('aria-expanded', 'true');
   document.body.classList.add('training-user-drawer-open');
   window.setTimeout(() => {
-    const search = $drawer.find<HTMLInputElement>('[data-training-add-users-input], input[name=uid]').get(0);
+    // The autocomplete replaces the original input with a visible React input.
+    const $search = $drawer.find<HTMLInputElement>('[data-training-add-users] input').filter(':visible').first();
+    $search.attr('aria-label', i18n('Select students to add')).attr('placeholder', i18n('Select students to add'));
+    const search = $search.get(0) || $drawer.find<HTMLInputElement>('input[name=uid]').get(0);
     (search || $drawer.find<HTMLElement>('[role=dialog]').get(0))?.focus();
   }, 0);
 }
@@ -229,12 +244,15 @@ function navigateToUser(ev: JQuery.ClickEvent<Document>) {
 const page = new NamedPage('training_detail', () => {
   initializeSections();
   initializeDescription();
+  if (typeof window.matchMedia === 'function') {
+    $('[data-training-outline]').prop('open', !window.matchMedia('(max-width: 1100px)').matches);
+  }
 
   const $document = $(document);
   const $addUsersInput = $('[data-training-add-users-input]');
   const addUsersSelect = $addUsersInput.length
     ? UserSelectAutoComplete.getOrConstruct<UserSelectAutoComplete<true>>(
-      $addUsersInput, { multi: true, height: 'auto' },
+      $addUsersInput, { multi: true, height: 'auto', joinedOnly: true },
     )
     : null;
   $document.off('.trainingDetail');
@@ -262,7 +280,7 @@ const page = new NamedPage('training_detail', () => {
       await request.post('', { operation: 'add_user', uids: uids.join(',') });
       Notification.success(i18n('Students added.'));
       closeUserDrawer();
-      await pjax.request({ push: false });
+      window.location.reload();
     } catch (error) {
       Notification.error([error.message, ...(error.params || [])].join(' '));
       $button.prop('disabled', false);

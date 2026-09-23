@@ -20,7 +20,7 @@
             </span>
           {% endif %}
         </div>
-        <h1 data-emoji-enabled>{{ tdoc.title }}</h1>
+        <h1 class="ui-v2-training-detail__title" data-emoji-enabled>{{ tdoc.title }}</h1>
         {% if tdoc['content'] %}
           <p class="ui-v2-training-detail__intro">{{ tdoc['content'] }}</p>
         {% endif %}
@@ -69,12 +69,13 @@
         <section class="ui-v2-training-detail__hero-description" data-training-description>
           <div class="ui-v2-training-detail__description-heading">
             <h2>{{ _('Description') }}</h2>
-            <button type="button" data-training-description-toggle aria-expanded="false" hidden>
-              <span data-training-description-toggle-label>{{ _('Show more') }}</span>
+            <button type="button" data-training-description-toggle aria-controls="training-description-content" aria-expanded="false" hidden>
+              <span data-training-description-toggle-label>{{ _('Expand description') }}</span>
               <span class="icon icon-chevron-down" aria-hidden="true"></span>
             </button>
           </div>
-          <div class="ui-v2-training-detail__description-content typo richmedia" data-training-description-content>
+          <p class="ui-v2-training-detail__description-preview" data-training-description-preview hidden></p>
+          <div id="training-description-content" class="ui-v2-training-detail__description-content typo richmedia" data-training-description-content>
             {{ tdoc.description|markdown|safe }}
           </div>
         </section>
@@ -84,15 +85,15 @@
 
   <div class="ui-v2-training-detail__layout">
     <main class="ui-v2-training-detail__main">
-      {% if not hasUserProfile or not tsdoc['enroll'] or missing.length %}
+      {% if (not trainingDirectProblemLinks and (not hasUserProfile or not tsdoc['enroll'])) or missing.length %}
         <div class="ui-v2-training-detail__notices typo">
-          {% if not hasUserProfile %}
+          {% if not trainingDirectProblemLinks and not hasUserProfile %}
             <blockquote class="typo note">
               <p>{{ _('Login to join training plan') }}</p>
             </blockquote>
-          {% elif not tsdoc['enroll'] %}
+          {% elif not trainingDirectProblemLinks and not tsdoc['enroll'] %}
             <blockquote class="typo note">
-              <p>{{ _('page.training_detail.invalid_when_not_enrolled') }}</p>
+              <p>{{ _('Join this plan to start practicing.') if model.training.canSelfEnroll(tdoc) else _('Ask your teacher to add you to this plan.') }}</p>
             </blockquote>
           {% endif %}
           {% if missing.length %}
@@ -146,9 +147,14 @@
       </section>
 
       <nav class="ui-v2-training-detail__side-card ui-v2-training-detail__outline" aria-label="{{ _('tasks_list') }}">
-        <ol class="menu">
-          {{ sidemenu.render_item('list', 'training_detail', {tid:tdoc._id}, label='tasks_list', menu_item='training_detail') }}
-        </ol>
+        <details id="menu-item-training_detail" data-training-outline open>
+          <summary>{{ _('tasks_list') }}<span class="icon icon-expand_more" aria-hidden="true"></span></summary>
+          <ul class="menu">
+            {% for node in tdoc.dag %}
+              <li class="menu__item"><a class="menu__link" href="#node-{{ node._id }}">{{ _('Section') }} {{ node._id }}. {{ node.title.split('\n')[0] }}</a></li>
+            {% endfor %}
+          </ul>
+        </details>
       </nav>
     </aside>
   </div>

@@ -49,7 +49,7 @@ html.page--training_detail > body > .main
     letter-spacing: .08em
     text-transform: uppercase
 
-  .ui-v2-training-detail__hero h1
+  .ui-v2-training-detail__title
     margin: 0
     color: var(--ui-v2-text, #0f172a)
     font-size: clamp(rem(26px), 2.5vw, rem(34px))
@@ -197,9 +197,6 @@ html.page--training_detail > body > .main
     border-top: 1px solid rgba(148, 179, 216, .28)
 
     &.is-expanded
-      .ui-v2-training-detail__description-content
-        max-height: none
-
       [data-training-description-toggle] .icon
         transform: rotate(180deg)
 
@@ -220,8 +217,8 @@ html.page--training_detail > body > .main
       display: inline-flex
       align-items: center
       gap: rem(4px)
-      min-height: rem(28px)
-      padding: rem(0 7px)
+      min-height: rem(36px)
+      padding: rem(0 10px)
       border: 0
       border-radius: rem(7px)
       background: transparent
@@ -241,18 +238,58 @@ html.page--training_detail > body > .main
         transition: transform .16s ease
 
   .ui-v2-training-detail__description-content
-    position: relative
-    max-height: rem(76px)
-    overflow: hidden
+    overflow-wrap: anywhere
+    overflow-x: auto
     color: #475569
     font-size: rem(14px)
     line-height: 1.6
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6
+      margin: rem(16px 0 8px)
+      color: var(--ui-v2-text, #0f172a)
+      font-size: rem(16px)
+      font-weight: 650
+      line-height: 1.5
+      letter-spacing: normal
+
+    h1
+      font-size: rem(18px)
+
+    p,
+    ul,
+    ol
+      margin-top: rem(8px)
+      margin-bottom: rem(8px)
+
+    img,
+    video
+      max-width: 100%
 
     > :first-child
       margin-top: 0
 
     > :last-child
       margin-bottom: 0
+
+  .ui-v2-training-detail__description-preview
+    display: -webkit-box
+    -webkit-box-orient: vertical
+    -webkit-line-clamp: 3
+    overflow: hidden
+    margin: 0
+    color: var(--ui-v2-text-muted, #64748b)
+    font-size: rem(14px)
+    line-height: 1.65
+    overflow-wrap: anywhere
+
+  .ui-v2-training-detail__description-content[hidden],
+  .ui-v2-training-detail__description-preview[hidden]
+    display: none
 
   .ui-v2-training-detail__status-chip,
   .training__section-chip
@@ -286,9 +323,9 @@ html.page--training_detail > body > .main
       color: #64748b
 
     &.is-invalid
-      border-color: #fecaca
-      background: #fff1f2
-      color: #c2414b
+      border-color: #dbe3ed
+      background: #f1f5f9
+      color: #64748b
 
   .ui-v2-training-detail__layout
     display: grid
@@ -427,14 +464,27 @@ html.page--training_detail > body > .main
       margin: 0
       padding: rem(6px 0)
 
-    #menu-item-training_detail > .menu__link
-      border-left: 0
+    summary
+      display: flex
+      align-items: center
+      justify-content: space-between
+      gap: rem(12px)
+      min-height: rem(48px)
+      padding: rem(12px 20px)
       color: var(--ui-v2-text, #0f172a)
       font-weight: 700
+      cursor: pointer
+      list-style: none
 
-      &.active
-        background: transparent
-        color: var(--ui-v2-text, #0f172a)
+      &::-webkit-details-marker
+        display: none
+
+      &:focus-visible
+        outline: 2px solid var(--ui-v2-accent, #2563eb)
+        outline-offset: -3px
+
+    details[open] > summary .icon
+      transform: rotate(180deg)
 
     #menu-item-training_detail > ul
       max-height: calc(70vh - 190px)
@@ -608,6 +658,50 @@ html.page--training_detail > body > .main
     > :last-child
       margin-bottom: 0
 
+  .training__prerequisites
+    display: flex
+    gap: rem(12px)
+    padding: rem(18px 20px)
+    background: var(--ui-v2-surface-subtle, #f8fafc)
+    color: var(--ui-v2-text-muted, #64748b)
+    font-size: rem(13px)
+    line-height: 1.6
+
+    > .icon
+      padding-top: rem(2px)
+
+    > div
+      flex: 1
+      min-width: 0
+
+    p,
+    ul
+      margin: 0
+
+    ul
+      margin-top: rem(6px)
+      list-style: none
+
+    a
+      display: flex
+      justify-content: space-between
+      align-items: center
+      gap: rem(14px)
+      min-height: rem(36px)
+      color: var(--ui-v2-accent, #2563eb)
+      overflow-wrap: anywhere
+
+      > span
+        flex-shrink: 0
+        font-variant-numeric: tabular-nums
+
+      &:hover
+        text-decoration: underline
+
+      &:focus-visible
+        outline: 2px solid var(--ui-v2-accent, #2563eb)
+        outline-offset: 2px
+
   .training__problems
     overflow: hidden
 
@@ -653,6 +747,7 @@ html.page--training_detail > body > .main
       border-left: 1px solid var(--ui-v2-border, #e2e8f0)
 
     .col--problem-name
+      white-space: normal
       overflow-wrap: anywhere
 
       a
@@ -898,6 +993,33 @@ body.training-user-drawer-open
       top: auto
       order: -1
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)
+      align-items: start
+
+    .ui-v2-training-detail__summary-card
+      display: flex
+      align-items: center
+      flex-wrap: wrap
+      gap: rem(10px 16px)
+      padding: rem(10px 16px)
+
+      > .ui-v2-training-detail__side-card-header,
+      > .ui-v2-training-detail__side-progress,
+      > .ui-v2-training-detail__progress-track,
+      > .ui-v2-training-detail__summary-meta
+        display: none
+
+      .ui-v2-training-detail__select-user
+        flex: 1 1 rem(160px)
+        width: auto
+        margin: 0
+
+      .ui-v2-training-detail__side-actions
+        margin: 0
+        padding: 0
+        border: 0
+
+        a
+          min-height: rem(28px)
 
     .ui-v2-training-detail__outline #menu-item-training_detail > ul
       max-height: rem(230px)
@@ -916,7 +1038,7 @@ body.training-user-drawer-open
       gap: rem(20px)
       padding: rem(22px 18px)
 
-    .ui-v2-training-detail__hero h1
+    .ui-v2-training-detail__title
       font-size: rem(27px)
 
     .ui-v2-training-detail__intro
@@ -1123,9 +1245,13 @@ html.theme--dark.page--training_detail > body > .main
       color: #b5c1d2
 
     &.is-invalid
-      border-color: #70404a
-      background: #472a33
-      color: #f4a4ad
+      border-color: #475569
+      background: #283548
+      color: #b5c1d2
+
+  .training__prerequisites
+    background: #172033
+    color: #b5c1d2
 
   .ui-v2-training-detail__select-user
     border-color: #405e82

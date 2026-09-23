@@ -10,15 +10,15 @@
 
   {% if tdoc['dag']|length %}
     <div class="ui-v2-training-detail__chapter-toolbar" role="group" aria-label="{{ _('Section') }}">
-      <button type="button" data-training-expand-all><span class="icon icon-expand_more" aria-hidden="true"></span>{{ _('expand') }}</button>
-      <button type="button" data-training-collapse-all><span class="icon icon-expand_less" aria-hidden="true"></span>{{ _('collapse') }}</button>
+      <button type="button" data-training-expand-all><span class="icon icon-expand_more" aria-hidden="true"></span>{{ _('Expand all sections') }}</button>
+      <button type="button" data-training-collapse-all><span class="icon icon-expand_less" aria-hidden="true"></span>{{ _('Collapse all sections') }}</button>
     </div>
   {% endif %}
 
   {%- for node in tdoc['dag'] -%}
     {% set sectionExpanded = expanded < 5 and (nsdict[node['_id']]['isProgress'] or nsdict[node['_id']]['isOpen']) %}
     {% if sectionExpanded %}{% set expanded = expanded + 1 %}{% endif %}
-    <section data-heading-extract-to="#menu-item-training_detail" class="training__section{% if sectionExpanded %} expanded{% else %} collapsed{% endif %}{% if nsdict[node['_id']]['isInvalid'] %} invalid{% endif %}" data-training-section data-training-section-state="{% if nsdict[node['_id']]['isDone'] %}done{% elif nsdict[node['_id']]['isProgress'] %}progress{% elif nsdict[node['_id']]['isOpen'] %}open{% else %}invalid{% endif %}">
+    <section class="training__section{% if sectionExpanded %} expanded{% else %} collapsed{% endif %}{% if nsdict[node['_id']]['isInvalid'] %} invalid{% endif %}" data-training-section data-training-section-state="{% if nsdict[node['_id']]['isDone'] %}done{% elif nsdict[node['_id']]['isProgress'] %}progress{% elif nsdict[node['_id']]['isOpen'] %}open{% else %}invalid{% endif %}">
       <header class="training__section-header">
         <h2 class="training__section-heading">
           <button type="button" class="training__section-toggle" data-training-section-toggle aria-expanded="{{ 'true' if sectionExpanded else 'false' }}" aria-controls="training-section-detail-{{ node['_id'] }}" aria-labelledby="node-{{ node['_id'] }}">
@@ -38,7 +38,7 @@
                 {% elif nsdict[node['_id']]['isOpen'] %}
                   {{ _('Open') }}
                 {% else %}
-                  {{ _('Invalid') }}
+                  {{ _('Locked') }}
                 {% endif %}
               </span>
               <span class="icon icon-expand_more training__section-chevron" aria-hidden="true"></span>
@@ -49,15 +49,18 @@
 
       <div class="training__section__detail" id="training-section-detail-{{ node['_id'] }}">
         {% if nsdict[node['_id']]['isInvalid'] %}
-          <div class="section__body">
-            <blockquote class="typo note">
-              <p>{{ _('This section cannot be challenged at present, so please complete the following sections first') }}:</p>
+          <div class="training__prerequisites">
+            <span class="icon icon-info" aria-hidden="true"></span>
+            <div>
+              <p>{{ _('Complete these sections to unlock') }}</p>
               <ul>
                 {%- for nid in node['requireNids'] -%}
-                  <li>{{ _('Section') }} {{ _(nid) }}. {{ ndict[nid]['title'] }} ({{ _('Completed') }} {{ nsdict[nid]['progress'] }}%)</li>
+                  {% if not nsdict[nid]['isDone'] %}
+                    <li><a href="#node-{{ nid }}" data-training-prerequisite-link>{{ _('Section') }} {{ nid }}. {{ ndict[nid]['title'].split('\n')[0] }}<span>{{ nsdict[nid]['progress'] }}% <span class="icon icon-chevron_right" aria-hidden="true"></span></span></a></li>
+                  {% endif %}
                 {%- endfor -%}
               </ul>
-            </blockquote>
+            </div>
           </div>
         {% endif %}
         {% if node['content'] %}
@@ -66,10 +69,11 @@
           </div>
         {% endif %}
 
+        {% if not nsdict[node['_id']]['isInvalid'] or trainingDirectProblemLinks %}
         <div class="section__body no-padding training__problems">
           {% set should_compare = canManageTraining and isComparingUser and tsdoc['enroll'] %}
           {% if node['pids']|length %}
-            <table class="data-table">
+            <table class="data-table" data-table-native>
               <colgroup>
                 {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
                   {% if should_compare %}
@@ -121,7 +125,7 @@
                           {% endif %}
                         {% endif %}
                       {% endif %}
-                      <td class="col--name col--problem-name"{% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %} data-star-action="{{ url('problem_detail', pid=pdoc.docId) }}" data-star="{{ psdoc.star }}"{% endif %}>
+                      <td class="col--name col--problem-name"{% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %} data-star-action="{{ url('problem_detail', pid=pdoc.docId) }}" data-star="{{ self_psdoc.star if should_compare else psdoc.star }}"{% endif %}>
                         {{ problem.render_problem_title(
                           pdoc,
                           invalid=not trainingDirectProblemLinks and (not tsdoc['enroll'] or nsdict[node['_id']]['isInvalid']),
@@ -154,6 +158,7 @@
             <div class="ui-v2-training-detail__empty">{{ _('No problem.') }}</div>
           {% endif %}
         </div>
+        {% endif %}
       </div>
     </section>
   {%- endfor -%}

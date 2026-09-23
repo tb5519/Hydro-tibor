@@ -3,10 +3,11 @@ import { escapeRegExp, pick } from 'lodash';
 import { Filter, ObjectId } from 'mongodb';
 import { sortFiles } from '@hydrooj/utils/lib/utils';
 import {
-    FileLimitExceededError, FileUploadError, ProblemNotFoundError, TrainingAlreadyEnrollError,
+    FileLimitExceededError, FileUploadError, PermissionError, ProblemNotFoundError, TrainingAlreadyEnrollError,
     TrainingSelfEnrollDisabledError, ValidationError,
 } from '../error';
 import { Tdoc, TrainingDoc } from '../interface';
+import { canManageTrainingPlans } from '../lib/training_access';
 import { PERM, PRIV, STATUS } from '../model/builtin';
 import domain from '../model/domain';
 import * as oplog from '../model/oplog';
@@ -68,8 +69,7 @@ class TrainingMainHandler extends Handler {
         await this.ctx.parallel('training/list', query, this);
 
         const hasUserProfile = this.user.hasPriv(PRIV.PRIV_USER_PROFILE);
-        const canViewAllTraining = this.user.hasPerm(PERM.PERM_EDIT_DOMAIN)
-            || this.user.hasPerm(PERM.PERM_EDIT_TRAINING);
+        const canViewAllTraining = canManageTrainingPlans(this.user);
         const enrolledTsdocs = hasUserProfile
             ? await training.getMultiStatus(domainId, { uid: this.user._id, enroll: 1 }).toArray()
             : [];
@@ -100,7 +100,7 @@ class TrainingMainHandler extends Handler {
         for (const tdoc of tdocs) tdict[tdoc.docId.toHexString()] = tdoc;
         this.response.template = 'training_main.html';
         this.response.body = {
-            tdocs, page, tpcount, tsdict, tdict, q,
+            tdocs, page, tpcount, tsdict, tdict, q, canCreateTraining: canViewAllTraining,
         };
     }
 }
@@ -111,10 +111,8 @@ class TrainingDetailHandler extends Handler {
     async get(domainId: string, tid: ObjectId, uid = this.user._id) {
         const tdoc = await training.get(domainId, tid);
         await this.ctx.parallel('training/get', tdoc, this);
-        const canManageTraining = this.user.hasPerm(PERM.PERM_EDIT_TRAINING)
-            || this.user.hasPerm(PERM.PERM_EDIT_DOMAIN);
-        const canEditTraining = canManageTraining
-            || (this.user.own(tdoc) && this.user.hasPerm(PERM.PERM_EDIT_TRAINING_SELF));
+        const canManageTraining = canManageTrainingPlans(this.user);
+        const canEditTraining = canManageTraining;
         let enrollUsers: number[] = [];
         let shouldCompare = false;
         const pids = training.getPids(tdoc.dag);
@@ -195,10 +193,8 @@ class TrainingDetailHandler extends Handler {
     @param('tid', Types.ObjectId)
     @param('uids', Types.NumericArray)
     async postAddUser(domainId: string, tid: ObjectId, uids: number[]) {
+        if (!canManageTrainingPlans(this.user)) throw new PermissionError(PERM.PERM_EDIT_TRAINING);
         await training.get(domainId, tid);
-        const canManageTraining = this.user.hasPerm(PERM.PERM_EDIT_TRAINING)
-            || this.user.hasPerm(PERM.PERM_EDIT_DOMAIN);
-        if (!canManageTraining) this.checkPerm(PERM.PERM_EDIT_TRAINING);
 
         const uniqueUids = Array.from(new Set(uids.filter((uid) => uid > 1)));
         if (!uniqueUids.length) throw new ValidationError('uids');
@@ -220,8 +216,8 @@ class TrainingDetailHandler extends Handler {
 
     @param('tid', Types.ObjectId)
     async postDelete(domainId: string, tid: ObjectId) {
+        if (!canManageTrainingPlans(this.user)) throw new PermissionError(PERM.PERM_EDIT_TRAINING);
         const tdoc = await training.get(domainId, tid);
-        if (!this.user.own(tdoc)) this.checkPerm(PERM.PERM_EDIT_TRAINING);
         await Promise.all([
             training.del(domainId, tid),
             storage.del(tdoc.files?.map((i) => `training/${domainId}/${tid}/${i.name}`) || [], this.user._id),
@@ -235,11 +231,8 @@ class TrainingEditHandler extends Handler {
 
     @param('tid', Types.ObjectId, true)
     async prepare(domainId: string, tid: ObjectId) {
-        if (tid) {
-            this.tdoc = await training.get(domainId, tid);
-            if (!this.user.own(this.tdoc)) this.checkPerm(PERM.PERM_EDIT_TRAINING);
-            else this.checkPerm(PERM.PERM_EDIT_TRAINING_SELF);
-        } else this.checkPerm(PERM.PERM_CREATE_TRAINING);
+        if (!canManageTrainingPlans(this.user)) throw new PermissionError(PERM.PERM_EDIT_TRAINING);
+        if (tid) this.tdoc = await training.get(domainId, tid);
     }
 
     async get() {
@@ -247,6 +240,7 @@ class TrainingEditHandler extends Handler {
         this.response.body = {
             page_name: this.tdoc ? 'training_edit' : 'training_create',
             initialAttendCount: this.tdoc?.initialAttendCount ?? this.tdoc?.attend ?? 0,
+            canEditTraining: canManageTrainingPlans(this.user),
         };
         if (this.tdoc) {
             this.response.body.tdoc = this.tdoc;
@@ -296,16 +290,15 @@ export class TrainingFilesHandler extends Handler {
 
     @param('tid', Types.ObjectId)
     async prepare(domainId: string, tid: ObjectId) {
+        if (!canManageTrainingPlans(this.user)) throw new PermissionError(PERM.PERM_EDIT_TRAINING);
         this.tdoc = await training.get(domainId, tid);
-        if (!this.user.own(this.tdoc)) this.checkPerm(PERM.PERM_EDIT_TRAINING);
-        else this.checkPerm(PERM.PERM_EDIT_TRAINING_SELF);
     }
 
     @param('tid', Types.ObjectId)
     async get(domainId: string, tid: ObjectId) {
-        if (!this.user.own(this.tdoc)) this.checkPerm(PERM.PERM_EDIT_TRAINING);
         this.response.body = {
             tdoc: this.tdoc,
+            canEditTraining: canManageTrainingPlans(this.user),
             tsdoc: await training.getStatus(domainId, this.tdoc.docId, this.user._id),
             udoc: await user.getById(domainId, this.tdoc.owner),
             files: sortFiles(this.tdoc.files || []),
