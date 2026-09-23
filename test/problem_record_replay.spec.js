@@ -115,7 +115,7 @@ function harness(options = {}) {
         },
         '../model/user': { getById: async (_, uid) => ({ _id: uid, displayName: `学员 ${uid}`, uname: 'student' }) },
         './record_list_scope': { canManageRecordList: canManage },
-        './contest_access': { canViewContestLevel: () => true },
+        './contest_access': { canViewContestLevel: () => options.contestLevelVisible !== false },
         './record_visibility': {
             getHiddenSuperAdminUids: async () => options.hiddenUids || [],
             appendHiddenSuperAdminFilter: (query, ids) => ({ ...query, $and: [{ uid: { $nin: ids } }] }),
@@ -137,8 +137,20 @@ describe('problem record picker permissions', () => {
             const h = harness(options);
             assert.equal(h.canUseProblemRecordPicker(h.handler.user), false);
             await assert.rejects(h.listProblemSubmissionRecords(h.handler, 'class-a', h.pdoc), PermissionError);
-            await assert.rejects(h.loadProblemRecordReplay(h.handler, 'class-a', h.pdoc, rid(1)), PermissionError);
+            await assert.rejects(h.loadProblemRecordReplay(h.handler, 'class-a', h.pdoc, rid(1)),
+                options.manager === false ? RecordNotFoundError : PermissionError);
         }
+    });
+
+    it('allows an ordinary learner to replay only their own exact record', async () => {
+        const own = harness({
+            manager: false,
+            permissions: [PERM.PERM_VIEW_PROBLEM],
+            docs: [makeRecord(1, { uid: 10 })],
+        });
+        assert.equal((await own.loadProblemRecordReplay(own.handler, 'class-a', own.pdoc, rid(1))).uid, 10);
+        const other = harness({ manager: false, permissions: [PERM.PERM_VIEW_PROBLEM] });
+        await assert.rejects(other.loadProblemRecordReplay(other.handler, 'class-a', other.pdoc, rid(1)), RecordNotFoundError);
     });
 
     it('requires the current domain and a visible problem before querying submissions', async () => {
@@ -211,6 +223,26 @@ describe('record replay scope and original result', () => {
         assert.equal((await h.loadProblemRecordReplay(h.handler, 'class-a', h.pdoc, rid(1))).uid, 10);
         const other = harness({ docs: [makeRecord(1, { contest: tid })], contestVisible: false, selfVisible: true });
         await assert.rejects(other.loadProblemRecordReplay(other.handler, 'class-a', other.pdoc, rid(1)), RecordNotFoundError);
+    });
+
+    it('enforces contest level access and keeps an owner replay grade hidden after projection', async () => {
+        const forbidden = harness({
+            manager: false, permissions: [PERM.PERM_VIEW_PROBLEM], contestLevelVisible: false,
+            docs: [makeRecord(1, { uid: 10, contest: tid })], selfVisible: true,
+        });
+        await assert.rejects(forbidden.loadProblemRecordReplay(forbidden.handler, 'class-a', forbidden.pdoc, rid(1)),
+            RecordNotFoundError);
+        const hidden = harness({
+            objective: true, manager: false, permissions: [PERM.PERM_VIEW_PROBLEM],
+            docs: [makeRecord(1, { uid: 10, contest: tid, lang: '_', code: '1: A' })],
+            contestVisible: false, selfVisible: false,
+        });
+        const replay = await hidden.loadProblemRecordReplay(hidden.handler, 'class-a', hidden.pdoc, rid(1));
+        assert.deepEqual(plain(replay.objective.answers), { 1: 'A' });
+        assert.deepEqual(plain(replay.objective.feedback), { rid: rid(1).toString(), state: 'hidden' });
+        assert.equal(replay.score, undefined);
+        assert.equal(replay.status, undefined);
+        assert.deepEqual(plain(replay.record.testCases), []);
     });
 
     it('returns only whitelisted original result metadata, keeping teacher identity separate', async () => {
@@ -414,8 +446,9 @@ describe('objective merged replay permissions and pagination', () => {
 describe('record replay handler integration', () => {
     it('guards context combinations, only loads imports on reads, and keeps original feedback separate from teacher history', () => {
         const source = fs.readFileSync(path.join(root, 'packages/hydrooj/src/handler/problem.ts'), 'utf8');
-        assert.match(source, /else assertRecordReplayRequest\(fromRecord, tid, reviewUid, mergedUid\)/);
+        assert.match(source, /else \{\s*assertRecordReplayRequest\(fromRecord, tid, reviewUid, mergedUid\)/);
         assert.match(source, /if \(isReadRequest && fromRecord\)\s*\{\s*this\.UiContext\.recordReplay = await loadProblemRecordReplay/);
+        assert.match(source, /this\.UiContext\.objectiveAnswerSheet = \{ rid: this\.UiContext\.recordReplay\.rid \}/);
         assert.match(source, /!this\.UiContext\.homeworkReview && !this\.UiContext\.recordReplay/);
         const recordSource = fs.readFileSync(path.join(root, 'packages/hydrooj/src/handler/record.ts'), 'utf8');
         assert.match(recordSource, /@route\('pid', Types\.ProblemId\)/);

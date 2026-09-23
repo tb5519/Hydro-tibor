@@ -84,11 +84,12 @@ export async function loadObjective() {
   let feedback: ObjectiveFeedback | undefined;
   let stateMessage = '';
   const merged = UiContext.objectiveMergedReview;
+  const answerSheet = UiContext.objectiveAnswerSheet;
   const mergedQuestions = new Map((merged?.questions || []).map((question) => [question.id, question]));
   const latestMergedAttempts = new Map((merged?.questions || []).map((question) => [question.id, question.attempts[question.attempts.length - 1]]));
-  const readOnly = !!UiContext.homeworkReview || !!merged;
-  const replay = !readOnly && UiContext.recordReplay?.objective ? UiContext.recordReplay : null;
-  let replayResultActive = !!replay && UiContext.recordReplayResultActive === true;
+  const readOnly = !!UiContext.homeworkReview || !!merged || !!answerSheet;
+  const replay = !UiContext.homeworkReview && !merged && UiContext.recordReplay?.objective ? UiContext.recordReplay : null;
+  let replayResultActive = !answerSheet && !!replay && UiContext.recordReplayResultActive === true;
   const loggedOut = !UserContext._id;
   let resultDialog: InfoDialog;
   const active = () => !disposed && statement.isConnected;
@@ -306,7 +307,7 @@ export async function loadObjective() {
             </span>
           </div>
           <div className="objective-replay-source__footer">
-            <span>{replayResultActive ? '已填入我的作答，可修改后提交' : '已提交我的作答'}</span>
+            <span>{answerSheet ? '只读查看该次作答' : replayResultActive ? '已填入我的作答，可修改后提交' : '已提交我的作答'}</span>
             <a href={replay.recordUrl}>原记录 <span aria-hidden="true">↗</span></a>
           </div>
         </div>}

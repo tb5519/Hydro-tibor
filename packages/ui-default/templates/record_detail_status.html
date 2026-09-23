@@ -1,29 +1,49 @@
-<div class="section visible" id="status" data-status="{{ rdoc.status }}">
-  <div class="section__header">
-    <h1 class="section__title">
-      <span class="icon record-status--icon {{ model.builtin.STATUS_CODES[rdoc['status']] }}"></span>
-      {% if typeof(rdoc['score']) == 'number' %}
-      <span style="color: {{ utils.status.getScoreColor(rdoc.score|default(0)) }}">{{ rdoc.score|default(0) }}</span>
-      {% endif %}
-      <span class="record-status--text {{ model.builtin.STATUS_CODES[rdoc['status']] }}">
-        {{ model.builtin.STATUS_TEXTS[rdoc['status']] }}
+{% set _canViewTestcaseData = canViewTestcaseData|default(false) %}
+<div class="section visible record-detail__status-card" id="status" data-status="{{ rdoc.status }}">
+  <div class="section__header record-detail__status-header">
+    <div class="record-detail__status-heading">
+      <span class="record-detail__status-mark" aria-hidden="true">
+        <span class="icon record-status--icon {{ model.builtin.STATUS_CODES[rdoc['status']] }}"></span>
       </span>
-      {% if rdoc.progress %}{{ rdoc.progress|int }}%{% endif %}
-    </h1>
+      <div class="record-detail__status-copy">
+        <span class="record-detail__eyebrow">评测结果</span>
+        <h1 class="section__title">
+          {% if typeof(rdoc['score']) == 'number' %}
+          <span class="record-detail__score" style="color: {{ utils.status.getScoreColor(rdoc.score|default(0)) }}">{{ rdoc.score|default(0) }}</span>
+          {% endif %}
+          <span class="record-status--text {{ model.builtin.STATUS_CODES[rdoc['status']] }}">
+            {{ model.builtin.STATUS_TEXTS[rdoc['status']] }}
+          </span>
+        </h1>
+      </div>
+    </div>
+    {% if rdoc.progress %}<span class="record-detail__progress">{{ rdoc.progress|int }}%</span>{% endif %}
   </div>
 {% if rdoc.compilerTexts.length %}
-  <div class="section__body">
+  <div class="section__body record-detail__judge-message">
     <pre class="compiler-text">{{ rdoc.compilerTexts|join('\n')|ansi|safe }}<div class="compiler-text-mask"><p><span class="icon icon-expand_more">{{ _('Expand') }}</span></p></div></pre>
   </div>
 {% endif %}
 {% if rdoc.judgeTexts.length %}
-  <div class="section__body">
+  <div class="section__body record-detail__judge-message">
     <pre class="judge-text">{{ formatJudgeTexts(rdoc.judgeTexts)|ansi|safe }}</pre>
   </div>
 {% endif %}
 {% if rdoc.testCases.length %}
-  <div class="section__body no-padding">
-    <table class="data-table record_detail__table">
+  {% if _canViewTestcaseData %}
+  <div class="section__body record-testdata__toolbar" data-testcase-controls>
+    <div class="record-testdata__privacy-note">
+      <span class="icon icon-security" aria-hidden="true"></span>
+      <span><strong>当前测试数据</strong><small>仅老师与管理员可见，不会向学员展示</small></span>
+    </div>
+    <div class="record-testdata__toolbar-actions" role="group" aria-label="测试点数据展开控制">
+      <button type="button" data-testcase-expand-all><span class="icon icon-expand_more" aria-hidden="true"></span>{{ _('Expand all sections') }}</button>
+      <button type="button" data-testcase-collapse-all><span class="icon icon-expand_less" aria-hidden="true"></span>{{ _('Collapse all sections') }}</button>
+    </div>
+  </div>
+  {% endif %}
+  <div class="section__body no-padding record-detail__table-wrap">
+    <table class="data-table record_detail__table{% if _canViewTestcaseData %} record_detail__table--with-data{% endif %}">
       <colgroup>
         <col class="col--case">
         <col class="col--status">
@@ -65,9 +85,24 @@
         </tr>
         {% endif %}
         {%- for rcdoc in rcdocs|sort(false,false,'id') -%}
-          <tr class="{{ 'subtask-case' if rcdocs.length == 1 else 'case' }}">
+          {% set _caseSubtaskId = rcdoc.subtaskId|default(1) %}
+          {% set _caseId = rcdoc.id|default(loop.index) %}
+          {% if _canViewTestcaseData %}
+            {% set _caseGroupData = testcaseData[_caseSubtaskId]|default({}) %}
+            {% set _caseData = _caseGroupData[_caseId]|default({}) %}
+            {% set _inputData = _caseData.input|default({}) %}
+            {% set _outputData = _caseData.output|default({}) %}
+          {% endif %}
+          <tr class="{{ 'subtask-case' if rcdocs.length == 1 else 'case' }} record-detail__case-row{% if _canViewTestcaseData %} is-expandable{% endif %}"{% if _canViewTestcaseData %} data-testcase-row{% endif %}>
             <td class="col--case record-status--border {{ model.builtin.STATUS_CODES[rcdoc['status']] }}">
-              #{{ subtaskId|int|default(1) }}{% if rcdocs.length > 1 %}-{{ rcdoc.id|default(loop.index) }}{% endif %}
+              {% if _canViewTestcaseData %}
+              <button type="button" class="record-testdata__toggle" data-testcase-toggle data-testcase-state="{{ model.builtin.STATUS_CODES[rcdoc['status']] }}" aria-expanded="false" aria-controls="testcase-data-{{ rdoc._id }}-{{ _caseSubtaskId }}-{{ _caseId }}" aria-label="查看测试点 #{{ subtaskId|int|default(1) }}{% if rcdocs.length > 1 %}-{{ _caseId }}{% endif %} 的输入输出数据">
+                <span>#{{ subtaskId|int|default(1) }}{% if rcdocs.length > 1 %}-{{ _caseId }}{% endif %}</span>
+                <span class="icon icon-expand_more" aria-hidden="true"></span>
+              </button>
+              {% else %}
+                #{{ subtaskId|int|default(1) }}{% if rcdocs.length > 1 %}-{{ _caseId }}{% endif %}
+              {% endif %}
             </td>
             <td class="col--status">
               <span class="icon record-status--icon {{ model.builtin.STATUS_CODES[rcdoc['status']] }}"></span>
@@ -84,6 +119,55 @@
             <td class="col--time">{% if rcdoc['status'] == STATUS.STATUS_TIME_LIMIT_EXCEEDED or rcdoc['status'] == STATUS.STATUS_MEMORY_LIMIT_EXCEEDED or rcdoc['status'] == STATUS.STATUS_OUTPUT_LIMIT_EXCEEDED %}&ge;{% endif %}{{ rcdoc.time|round|int }}ms</td>
             <td class="col--memory">{% if rcdoc['status'] == STATUS.STATUS_TIME_LIMIT_EXCEEDED or rcdoc['status'] == STATUS.STATUS_MEMORY_LIMIT_EXCEEDED or rcdoc['status'] == STATUS.STATUS_OUTPUT_LIMIT_EXCEEDED %}&ge;{% endif %}{{ size(rcdoc.memory, 1024) }}</td>
           </tr>
+          {% if _canViewTestcaseData %}
+          <tr class="record-testdata__detail" id="testcase-data-{{ rdoc._id }}-{{ _caseSubtaskId }}-{{ _caseId }}" data-testcase-detail hidden>
+            <td colspan="4">
+              {% if not _caseData.input and not _caseData.output %}
+              <div class="record-testdata__unavailable" role="status">
+                <span class="icon icon-info--circle" aria-hidden="true"></span>
+                <div><strong>该测试点数据暂不可用</strong><span>引用题、历史配置或缺失文件可能无法映射到当前测试数据。</span></div>
+              </div>
+              {% else %}
+              <div class="record-testdata__grid">
+                <section class="record-testdata__card{% if not _inputData or _inputData.missing %} is-unavailable{% endif %}" aria-labelledby="testcase-input-title-{{ rdoc._id }}-{{ _caseSubtaskId }}-{{ _caseId }}">
+                  <header class="record-testdata__card-header">
+                    <div>
+                      <strong id="testcase-input-title-{{ rdoc._id }}-{{ _caseSubtaskId }}-{{ _caseId }}">{{ _('Input') }}</strong>
+                      {% if _inputData.name %}<span title="{{ _inputData.name }}">{{ _inputData.name }}</span>{% endif %}
+                    </div>
+                    {% if _inputData and not _inputData.missing %}
+                    <button type="button" class="record-testdata__copy" data-testcase-copy aria-controls="testcase-input-content-{{ rdoc._id }}-{{ _caseSubtaskId }}-{{ _caseId }}" aria-label="复制测试点输入"><span class="icon icon-copy" aria-hidden="true"></span>{{ _('Copy') }}</button>
+                    {% endif %}
+                  </header>
+                  {% if not _inputData or _inputData.missing %}
+                    <div class="record-testdata__empty"><span class="icon icon-file" aria-hidden="true"></span>输入文件不可用</div>
+                  {% else %}
+                    <pre id="testcase-input-content-{{ rdoc._id }}-{{ _caseSubtaskId }}-{{ _caseId }}" tabindex="0" aria-label="测试点输入内容">{{ _inputData.content|default('') }}</pre>
+                    {% if _inputData.truncated %}<p class="record-testdata__truncated"><span class="icon icon-info" aria-hidden="true"></span>内容较长，当前仅显示预览{% if _inputData.size %}（完整文件 {{ size(_inputData.size) }}）{% endif %}</p>{% endif %}
+                  {% endif %}
+                </section>
+                <section class="record-testdata__card{% if not _outputData or _outputData.missing %} is-unavailable{% endif %}" aria-labelledby="testcase-output-title-{{ rdoc._id }}-{{ _caseSubtaskId }}-{{ _caseId }}">
+                  <header class="record-testdata__card-header">
+                    <div>
+                      <strong id="testcase-output-title-{{ rdoc._id }}-{{ _caseSubtaskId }}-{{ _caseId }}">标准输出</strong>
+                      {% if _outputData.name %}<span title="{{ _outputData.name }}">{{ _outputData.name }}</span>{% endif %}
+                    </div>
+                    {% if _outputData and not _outputData.missing %}
+                    <button type="button" class="record-testdata__copy" data-testcase-copy aria-controls="testcase-output-content-{{ rdoc._id }}-{{ _caseSubtaskId }}-{{ _caseId }}" aria-label="复制测试点标准输出"><span class="icon icon-copy" aria-hidden="true"></span>{{ _('Copy') }}</button>
+                    {% endif %}
+                  </header>
+                  {% if not _outputData or _outputData.missing %}
+                    <div class="record-testdata__empty"><span class="icon icon-file" aria-hidden="true"></span>输出文件不可用</div>
+                  {% else %}
+                    <pre id="testcase-output-content-{{ rdoc._id }}-{{ _caseSubtaskId }}-{{ _caseId }}" tabindex="0" aria-label="测试点标准输出内容">{{ _outputData.content|default('') }}</pre>
+                    {% if _outputData.truncated %}<p class="record-testdata__truncated"><span class="icon icon-info" aria-hidden="true"></span>内容较长，当前仅显示预览{% if _outputData.size %}（完整文件 {{ size(_outputData.size) }}）{% endif %}</p>{% endif %}
+                  {% endif %}
+                </section>
+              </div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endif %}
         {%- endfor -%}
       {%- endfor -%}
       </tbody>

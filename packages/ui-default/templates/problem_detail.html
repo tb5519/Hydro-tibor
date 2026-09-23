@@ -1,6 +1,8 @@
 {% extends "layout/basic.html" %}
+{% import "components/problem_activity.html" as problemActivity with context %}
 {% block content %}
 {% set homeworkReview = UiContext.homeworkReview %}
+{% set activity = lib.problemActivity(handler.domain, pdoc) %}
 <script>
 {{ set(UiContext, {
   problemId: pdoc.pid|default(pdoc.docId),
@@ -45,8 +47,15 @@
   {{ set(UiContext, 'pretestConnUrl', '') }}
   {{ set(UiContext, 'getRecordDetailUrl', url('record_detail', rid='{rid}')) }}
 {% endif %}
+{% if UiContext.objectiveAnswerSheet %}
+  {{ set(UiContext, 'postSubmitUrl', '') }}
+{% endif %}
 {% if pdoc.config.type == 'objective' %}
-  {{ set(UiContext, 'objectiveSubmitFeedbackUrl', '' if UiContext.objectiveMergedReview else url('objective_submit_feedback', query={tid:tdoc.docId, reviewUid:homeworkReview.uid} if homeworkReview else ({tid:tdoc.docId} if tdoc else {})) + ('&rid={rid}' if tdoc else '?rid={rid}')) }}
+  {% if UiContext.objectiveAnswerSheet %}
+    {{ set(UiContext, 'objectiveSubmitFeedbackUrl', url('objective_submit_feedback', query={answerSheet:'true', fromRecord:UiContext.objectiveAnswerSheet.rid, pid:pdoc.docId}) + '&rid={rid}') }}
+  {% else %}
+    {{ set(UiContext, 'objectiveSubmitFeedbackUrl', '' if UiContext.objectiveMergedReview else url('objective_submit_feedback', query={tid:tdoc.docId, reviewUid:homeworkReview.uid} if homeworkReview else ({tid:tdoc.docId} if tdoc else {})) + ('&rid={rid}' if tdoc else '?rid={rid}')) }}
+  {% endif %}
 {% endif %}
 </script>
 {% if badgeAcFirstEligible and badgeAcTheme and (badgeAcTheme.acImage or badgeAcTheme.themeSound) %}
@@ -420,11 +429,11 @@
           {% endif %}
           {% if not tdoc %}
             {% if UiContext.problemRecordPicker %}
-            <a class="problem__tag-item interactive" href="{{ url('record_main', query={pid:pdoc.docId}) }}" data-problem-record-picker="all">{{ _('Tried') }}: {{ pdoc.nSubmit }}</a>
-            <a class="problem__tag-item interactive" href="{{ url('record_main', query={pid:pdoc.docId, status:1}) }}" data-problem-record-picker="accepted">{{ _('Accepted') }}: {{ pdoc.nAccept if ((not tdoc) or showAccept) else '?' }}</a>
+            <a class="problem__tag-item interactive" href="{{ url('record_main', query={pid:pdoc.docId}) }}" data-problem-record-picker="all">{{ _('Tried') }}: {{ activity.nSubmit }} {{ problemActivity.marker(activity) }}</a>
+            <a class="problem__tag-item interactive" href="{{ url('record_main', query={pid:pdoc.docId, status:1}) }}" data-problem-record-picker="accepted">{{ _('Accepted') }}: {{ activity.nAccept if ((not tdoc) or showAccept) else '?' }} {{ problemActivity.marker(activity) }}</a>
             {% else %}
-            <span class="problem__tag-item">{{ _('Tried') }}: {{ pdoc.nSubmit }}</span>
-            <span class="problem__tag-item">{{ _('Accepted') }}: {{ pdoc.nAccept if ((not tdoc) or showAccept) else '?' }}</span>
+            <span class="problem__tag-item">{{ _('Tried') }}: {{ activity.nSubmit }} {{ problemActivity.marker(activity) }}</span>
+            <span class="problem__tag-item">{{ _('Accepted') }}: {{ activity.nAccept if ((not tdoc) or showAccept) else '?' }} {{ problemActivity.marker(activity) }}</span>
             {% endif %}
             <span class="problem__tag-item">{{ _('Difficulty') }}: {{ pdoc['difficulty'] or lib.difficulty(pdoc.nSubmit, pdoc.nAccept) or _('(None)') }}</span>
             <span class="problem__tag-item interactive">{{ _('Uploaded By') }}: {{ user.render_inline(udoc, badge=false) }}</span>

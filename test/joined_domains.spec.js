@@ -17,8 +17,16 @@ let database;
 let domain;
 let users;
 let workspace;
+let membership;
 let options;
 let commands;
+
+class ValidationError extends Error {
+    constructor(...params) {
+        super(params[2] || 'Validation failed');
+        this.params = params;
+    }
+}
 
 function load(filename, dependencies, source) {
     const module = { exports: {} };
@@ -69,7 +77,10 @@ beforeEach(async () => {
     const db = { collection: (name) => database.collection(name),
         ensureIndexes: (collection, ...indexes) => collection.createIndexes(indexes) };
     const system = { get: (key) => options[key] };
-    const utils = { ArgMethod: () => {}, randomstring: () => 'random', buildProjection: () => ({}) };
+    const utils = {
+        ArgMethod: () => {}, randomstring: () => 'random', buildProjection: () => ({}),
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    };
     const domainModule = load('model/domain.ts', {
         '../service/db': db, '../service/bus': bus, '../utils': utils,
         '../lib/domain_type': { getDomainType: (doc) => doc.domainType || 'oj' },
@@ -90,6 +101,12 @@ beforeEach(async () => {
     });
     users = userModule.default;
     Object.assign(userRef, userModule);
+    membership = load('lib/domain_membership.ts', {
+        '../error': { ValidationError },
+        '../model/domain': { __esModule: true, default: domain },
+        '../model/user': { __esModule: true, default: users },
+        '../utils': { sleep: utils.sleep },
+    });
     await domainModule.apply({ on: bus.on });
     await users.coll.insertOne(account());
     commands = [];
@@ -98,6 +115,78 @@ beforeEach(async () => {
 after(async () => {
     await client?.close();
     await mongod?.stop();
+});
+
+describe('student domain membership invariants', () => {
+    it('creates a managed account in only its selected initial domain while preserving the legacy default', async () => {
+        await domain.coll.insertMany(['class-only', 'system'].map((id) => ({
+            _id: id, lower: id, name: id, roles: {},
+        })));
+        const managedUid = await users.createInDomain(
+            'class-only', 'managed@test.invalid', 'managed', 'password', 30,
+        );
+        const legacyUid = await users.create('legacy@test.invalid', 'legacy', 'password', 31);
+        assert.equal(managedUid, 30);
+        assert.equal(legacyUid, 31);
+        assert.deepEqual(
+            (await domain.collUser.find({ uid: managedUid, join: true }).toArray()).map((item) => item.domainId),
+            ['class-only'],
+        );
+        assert.equal((await users.coll.findOne({ _id: managedUid })).defaultDomain, 'class-only');
+        assert.deepEqual(
+            (await domain.collUser.find({ uid: legacyUid, join: true }).toArray()).map((item) => item.domainId),
+            ['system'],
+        );
+        assert.equal((await users.coll.findOne({ _id: legacyUid })).defaultDomain, 'system');
+    });
+
+    it('rejects removal of the only joined domain with a clear message and performs no mutation', async () => {
+        await addDomains(['class-only']);
+        await users.coll.updateOne({ _id: 20 }, { $set: { defaultDomain: 'class-only' } });
+        let mutated = false;
+        await assert.rejects(
+            membership.withDomainMembershipRemoval([20], ['class-only'], async () => {
+                mutated = true;
+                await domain.setJoin('class-only', 20, false);
+            }, 'uids'),
+            (error) => error instanceof ValidationError
+                && error.message === '学员至少保留一个域，请先加入其他域后再移除。',
+        );
+        assert.equal(mutated, false);
+        assert.equal((await domain.collUser.findOne({ domainId: 'class-only', uid: 20 })).join, true);
+    });
+
+    it('moves the login default to an actually joined fallback after removal', async () => {
+        await addDomains(['class-a', 'class-b']);
+        await users.coll.updateOne({ _id: 20 }, { $set: { defaultDomain: 'class-a' } });
+        await membership.withDomainMembershipRemoval([20], ['class-a'], async () => {
+            await domain.setJoin('class-a', 20, false);
+        }, 'uids');
+        assert.equal((await domain.collUser.findOne({ domainId: 'class-a', uid: 20 })).join, false);
+        assert.equal((await domain.collUser.findOne({ domainId: 'class-b', uid: 20 })).join, true);
+        assert.equal((await users.coll.findOne({ _id: 20 })).defaultDomain, 'class-b');
+    });
+
+    it('serializes concurrent removals so two domains cannot both become unjoined', async () => {
+        await addDomains(['class-a', 'class-b']);
+        await users.coll.updateOne({ _id: 20 }, { $set: { defaultDomain: 'class-a' } });
+        const remove = (domainId, delayMs) => membership.withDomainMembershipRemoval(
+            [20], [domainId], async () => {
+                if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+                await domain.setJoin(domainId, 20, false);
+            }, 'uids',
+        );
+        const results = await Promise.allSettled([
+            remove('class-a', 75),
+            remove('class-b', 0),
+        ]);
+        assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+        assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+        const joined = await domain.collUser.find({ uid: 20, join: true }).toArray();
+        assert.equal(joined.length, 1);
+        assert.equal((await users.coll.findOne({ _id: 20 })).defaultDomain, joined[0].domainId);
+        assert.equal((await users.coll.findOne({ _id: 20 }))._domainMembershipLock, undefined);
+    });
 });
 
 describe('joined domains are the authoritative automatic favorites', () => {

@@ -1,6 +1,8 @@
 {% import "components/record.html" as record with context %}
 {% import "components/problem.html" as problem with context %}
 {% import "components/user.html" as user with context %}
+{% import "components/problem_activity.html" as problemActivity with context %}
+{% set activity = lib.problemActivity(handler.domain, pdoc) %}
 <div class="section__body typo" data-fragment-id="problem-sidebar-information">
   <dl class="large horizontal">
     <dt>{{ _('ID') }}</dt>
@@ -16,9 +18,9 @@
       {{ problem.render_problem_tags(pdoc, true) }}
     </dd>
     <dt>{{ _('# Submissions') }}</dt>
-    <dd><a href="{{ url('record_main', query={pid:pdoc.docId}) }}">{{ pdoc.nSubmit }}</a></dd>
+    <dd><a href="{{ url('record_main', query={pid:pdoc.docId}) }}">{{ activity.nSubmit }}</a> {{ problemActivity.marker(activity) }}</dd>
     <dt>{{ _('Accepted') }}</dt>
-    <dd>{{ pdoc.nAccept }}</dd>
+    <dd>{{ activity.nAccept }} {{ problemActivity.marker(activity) }}</dd>
     <dt>{{ _('Uploaded By') }}</dt>
     <dd>{{ user.render_inline(owner_udoc, badge=false) }}</dd>
   </dl>

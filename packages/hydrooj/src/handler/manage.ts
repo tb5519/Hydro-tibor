@@ -976,7 +976,7 @@ class SystemUserManagementHandler extends SystemHandler {
         const joinTarget = managedDomain ? await domain.get(managedDomain.id) : null;
         if (!joinTarget) throw new ValidationError('joinDomain');
         const accountMail = mail?.trim() || `${randomstring(12)}@invalid.local`;
-        const uid = await user.create(accountMail, uname, password);
+        const uid = await user.createInDomain(joinTarget._id, accountMail, uname, password);
         await Promise.all([
             domain.setUserInDomain(joinTarget._id, uid, {
                 join: true,

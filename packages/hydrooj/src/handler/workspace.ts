@@ -3,6 +3,7 @@ import {
     DomainAlreadyExistsError, ForbiddenError, NotFoundError, UserNotFoundError, ValidationError, VerifyPasswordError,
 } from '../error';
 import type { WorkspaceDoc, WorkspaceMemberDoc, WorkspaceRole } from '../interface';
+import { withDomainMembershipRemoval } from '../lib/domain_membership';
 import { DOMAIN_TYPES, DomainType } from '../lib/domain_type';
 import { normalizeStudentLevel, STUDENT_LEVELS } from '../lib/student_level';
 import { PERM, PRIV } from '../model/builtin';
@@ -32,16 +33,6 @@ async function syncWorkspaceDomainAccess(workspaceId: string, domainId: string) 
     await Promise.all(accounts
         .filter((account) => !account.defaultDomain)
         .map((account) => user.setById(account._id, { defaultDomain: domainId })));
-}
-
-async function resetDefaultDomainAfterWorkspaceRemoval(uid: number, removedWorkspaceId: string) {
-    const account = await user.coll.findOne({ _id: uid }, { projection: { defaultDomain: 1 } });
-    if (!account?.defaultDomain) return;
-    const currentDomain = await domain.get(account.defaultDomain);
-    if (!currentDomain || workspace.resolveDomainWorkspaceId(currentDomain) !== removedWorkspaceId) return;
-    const nextWorkspace = await workspace.getPrimaryForUser(uid) || await workspace.getPrimaryForStudent(uid);
-    const nextDomains = nextWorkspace ? await workspace.getDomains(nextWorkspace._id) : [];
-    await user.setById(uid, { defaultDomain: nextDomains[0]?._id || '' });
 }
 
 class WorkspaceFeatureHandler extends Handler {
@@ -471,12 +462,15 @@ class WorkspaceMembersHandler extends WorkspaceScopedHandler {
     async postRemoveMember(domainId: string, uid: number) {
         const current = await workspace.getMember(this.workspaceDoc._id, uid);
         if (!current || current.role === 'owner') throw new ValidationError('uid');
-        await workspace.disableMember(this.workspaceDoc._id, uid);
         const domains = await workspace.getDomains(this.workspaceDoc._id);
-        await Promise.all(domains.map((item) => domain.setUserInDomain(
-            item._id, uid, { join: false, role: 'default' },
-        )));
-        await resetDefaultDomainAfterWorkspaceRemoval(uid, this.workspaceDoc._id);
+        await withDomainMembershipRemoval([uid], domains.map((item) => item._id), async () => {
+            await Promise.all([
+                workspace.disableMember(this.workspaceDoc._id, uid),
+                ...domains.map((item) => domain.setUserInDomain(
+                    item._id, uid, { join: false, role: 'default' },
+                )),
+            ]);
+        }, 'uid');
         await oplog.log(this, 'workspace.removeMember', {
             workspaceId: this.workspaceDoc._id,
             uid,
@@ -626,11 +620,14 @@ class WorkspaceStudentsHandler extends WorkspaceScopedHandler {
             domainId: { $in: domains.map((item) => item._id) }, uid, join: true,
         });
         if (!joined) throw new ValidationError('uid');
-        await Promise.all(domains.map((item) => domain.setUserInDomain(
-            item._id, uid, { join: false, role: 'default' },
-        )));
-        await workspace.disableStudent(this.workspaceDoc._id, uid);
-        await resetDefaultDomainAfterWorkspaceRemoval(uid, this.workspaceDoc._id);
+        await withDomainMembershipRemoval([uid], domains.map((item) => item._id), async () => {
+            await Promise.all([
+                workspace.disableStudent(this.workspaceDoc._id, uid),
+                ...domains.map((item) => domain.setUserInDomain(
+                    item._id, uid, { join: false, role: 'default' },
+                )),
+            ]);
+        }, 'uid');
         await oplog.log(this, 'workspace.removeStudent', {
             workspaceId: this.workspaceDoc._id,
             uid,
@@ -659,7 +656,7 @@ class WorkspaceStudentsHandler extends WorkspaceScopedHandler {
         if (!normalizedDisplayName || normalizedDisplayName.length > 64) throw new ValidationError('displayName');
         const targetDomain = await this.getWorkspaceDomain(domainCode);
         const accountMail = mail?.trim() || `${randomstring(12)}@invalid.local`;
-        const uid = await user.create(accountMail, uname, password);
+        const uid = await user.createInDomain(targetDomain._id, accountMail, uname, password);
         await Promise.all([
             domain.setUserInDomain(targetDomain._id, uid, {
                 join: true,

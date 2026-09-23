@@ -12,17 +12,18 @@
 {% if typeof(rdoc['status']) === 'number' and not rev %}
   {{ set(UiContext, 'socketUrl', "d/" + UiContext.domainId + "/record-detail-conn?rid=" + rdoc._id + "&tid=" + handler.contestEntryContext.contest.docId if handler.contestEntryContext else "record-detail-conn?domainId=" + rdoc.domainId + "&rid=" + rdoc._id) }}
 {% endif %}
-<div class="row">
-  <div class="medium-9 columns collapsed">
+<div class="record-detail">
+<div class="row record-detail__layout">
+  <div class="medium-9 columns collapsed record-detail__main">
     {% if typeof(rdoc['status']) === 'number' %}
       {% include 'record_detail_status.html' %}
     {% endif %}
     {% if rdoc['code'] or rdoc.files.code %}
-    <div class="section">
+    <div class="section record-detail__code-card">
       <div class="section__header">
         <h1 class="section__title">{{ _('Code') }}</h1>
         <div class="section__tools">
-          <a class="primary rounded button" href="?download=true">
+          <a class="primary rounded button record-detail__download" href="?download=true">
             <span class="icon icon-download"></span>
             {% if rdoc.files.hack %}{{ _('Download Hack Input') }}{% else %}{{ _('Download') }}{% endif %}
           </a>
@@ -34,7 +35,7 @@
     </div>
     {% endif %}
     {% if _isPretest and rdoc.input and rdoc.input.length %}
-    <div class="section">
+    <div class="section record-detail__pretest-card">
       <div class="section__header">
         <h1 class="section__title">{{ _('Pretest Data') }}</h1>
       </div>
@@ -47,13 +48,13 @@
     </div>
     {% endif %}
   </div>
-  <div class="medium-3 columns">
-    <div class="section side">
+  <aside class="medium-3 columns record-detail__aside">
+    <div class="section side record-detail__info-card">
       <div class="section__header">
         <h1 class="section__title">{{ _('Information') }}</h1>
       </div>
     {% if handler.user.hasPerm(perm.PERM_REJUDGE) and not rdoc.files.hack and not _isPretest %}
-      <div class="section__body no-padding">
+      <div class="section__body no-padding record-detail__admin-actions">
         <ol class="menu">
           <li class="menu__item">
             <form method="post">
@@ -73,7 +74,7 @@
       </div>
     {% endif %}
     {% if handler.user.hasPerm(perm.PERM_SUBMIT_PROBLEM) and pdoc.config.hackable and rdoc.status === STATUS.STATUS_ACCEPTED and rdoc.uid !== handler.user._id %}
-      <div class="section__body no-padding">
+      <div class="section__body no-padding record-detail__admin-actions">
         <ol class="menu">
           <li class="menu__item">
             <a class="menu__link" href="{{ url('problem_hack', pid=pdoc.pid|default(pdoc.docId), rid=rdoc._id, query={tid:rdoc.contest} if rdoc.contest else {}) }}">
@@ -83,8 +84,8 @@
         </ol>
       </div>
     {% endif %}
-      <div class="section__body typo no-media">
-        <dl class="large horizontal">
+      <div class="section__body typo no-media record-detail__meta">
+        <dl class="large horizontal record-detail__meta-list">
           <dt>{{ _('Submit By') }}</dt>
           <dd>{{ user.render_inline(udoc, modbadge=false) }}</dd>
           {% if rdoc.hackTarget %}
@@ -128,7 +129,7 @@
       </div>
     </div>
     {% if allRevs|length %}
-      <div class="section side">
+      <div class="section side record-detail__history-card">
         <div class="section__header">
           <h1 class="section__title">{{ _('History') }}</h1>
         </div>
@@ -150,6 +151,7 @@
         </div>
       </div>
     {% endif %}
-  </div>
+  </aside>
+</div>
 </div>
 {% endblock %}

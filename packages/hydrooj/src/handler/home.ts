@@ -17,6 +17,7 @@ import { tryRedirectAsset } from '../lib/asset_delivery';
 import { isPublicHomePosterPath } from '../lib/decorative_image_access';
 import avatar, { validate } from '../lib/avatar';
 import { getBadgeHonorWall } from '../lib/badge_honor_wall';
+import { withDomainMembershipRemoval } from '../lib/domain_membership';
 import { getDomainRankingMode } from '../lib/domain_ranking';
 import { DOMAIN_TYPES, DomainType, isScratchDomain } from '../lib/domain_type';
 import { getHomePosterConfig } from '../lib/home_poster';
@@ -1243,7 +1244,9 @@ class HomeDomainHandler extends Handler {
         if (id === 'system') throw new BadRequestError();
         const ddoc = await domain.get(id);
         if (!ddoc) throw new NotFoundError(id);
-        await domain.setJoin(id, this.user._id, false);
+        await withDomainMembershipRemoval([this.user._id], [id], async () => {
+            await domain.setJoin(id, this.user._id, false);
+        }, 'id');
         this.back();
     }
 }

@@ -136,6 +136,7 @@ const handlers = loadSource('handler/record.ts', {
         RecordNotFoundError: Error, UserNotFoundError: Error,
     },
     '../lib/badge_ac_theme': {}, '../lib/record_list_scope': scope,
+    '../lib/record_testcase_data': { loadRecordTestcaseData: async () => null },
     '../lib/contest_access': contestAccess,
     '../lib/homework_review': {}, '../lib/objective_submission': {}, '../lib/problem_record_replay': {},
     '../lib/record_visibility': {

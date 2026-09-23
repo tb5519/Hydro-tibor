@@ -696,10 +696,17 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
     @query('reviewUid', Types.PositiveInt, true)
     @query('fromRecord', Types.ObjectId, true)
     @query('mergedUid', Types.PositiveInt, true)
-    async _prepare(domainId: string, pid: number | string, tid?: ObjectId, reviewUid?: number, fromRecord?: ObjectId, mergedUid?: number) {
+    @query('answerSheet', Types.Boolean)
+    async _prepare(
+        domainId: string, pid: number | string, tid?: ObjectId, reviewUid?: number,
+        fromRecord?: ObjectId, mergedUid?: number, answerSheet = false,
+    ) {
         const isReadRequest = ['GET', 'HEAD'].includes((this.request.method || 'GET').toUpperCase());
         if (!isReadRequest) rejectHomeworkReviewMutation(this.request);
-        else assertRecordReplayRequest(fromRecord, tid, reviewUid, mergedUid);
+        else {
+            assertRecordReplayRequest(fromRecord, tid, reviewUid, mergedUid);
+            if (answerSheet && !fromRecord) throw new ValidationError('answerSheet');
+        }
         this.pdoc = await problem.get(domainId, pid);
         if (!this.pdoc) throw new ProblemNotFoundError(domainId, pid);
         const reviewStudent = reviewUid === undefined ? null
@@ -831,6 +838,11 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
         }
         if (isReadRequest && fromRecord) {
             this.UiContext.recordReplay = await loadProblemRecordReplay(this, domainId, this.pdoc, fromRecord);
+            if (answerSheet) {
+                if (!this.UiContext.recordReplay.objective) throw new ValidationError('answerSheet');
+                this.UiContext.objectiveAnswerSheet = { rid: this.UiContext.recordReplay.rid };
+                this.UiContext.objectiveInitialSubmission = this.UiContext.recordReplay.objective;
+            }
         }
         if (isReadRequest && mergedUid !== undefined) {
             this.UiContext.objectiveMergedReview = await loadProblemMergedReview(this, domainId, this.pdoc, mergedUid);

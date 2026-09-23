@@ -346,7 +346,7 @@ class UserModel {
     @ArgMethod
     static async create(
         mail: string, uname: string, password: string,
-        uid?: number, regip: string = '127.0.0.1', priv: number = system.get('default.priv'),
+        uid?: number, regip: string = '127.0.0.1', priv: number = system.get('default.priv'), initialDomainId = 'system',
     ) {
         let autoAlloc = false;
         if (typeof uid !== 'number') {
@@ -373,11 +373,12 @@ class UserModel {
                     loginat: new Date(),
                     loginip: regip,
                     priv,
+                    defaultDomain: initialDomainId,
                     avatar: `gravatar:${mail}`,
                 });
                 // eslint-disable-next-line no-await-in-loop
                 await domain.collUser.updateOne(
-                    { uid, domainId: 'system' },
+                    { uid, domainId: initialDomainId },
                     { $set: { join: true } },
                     { upsert: true },
                 );
@@ -401,6 +402,13 @@ class UserModel {
                 throw e;
             }
         }
+    }
+
+    static createInDomain(
+        initialDomainId: string, mail: string, uname: string, password: string,
+        uid?: number, regip: string = '127.0.0.1', priv: number = system.get('default.priv'),
+    ) {
+        return UserModel.create(mail, uname, password, uid, regip, priv, initialDomainId);
     }
 
     @ArgMethod

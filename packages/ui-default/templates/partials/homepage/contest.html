@@ -7,7 +7,8 @@
     </div>
     <ol class="section__list contest__list">
       {%- for tdoc in tdocs -%}
-        <li class="section__list__item contest__item contest-type--{{ tdoc.rule }}{% if tdoc.pinned %} contest__item--pinned{% endif %} {% if model.contest.isOngoing(tdoc, tsdoc) %}{{ 'live' }}{% elif model.contest.isUpcoming(tdoc) %}{{ 'ready' }}{% endif %}"{% if tdoc.pinned %} style="background: linear-gradient(90deg, rgba(255,247,222,.98) 0%, rgba(238,246,255,.96) 62%, rgba(255,255,255,.98) 100%); border-left-color: #f2b544; box-shadow: inset 0 0 0 1px rgba(242,181,68,.26), 0 4px 16px rgba(46,107,255,.08);"{% endif %}>
+        {% set highlightPinned = tdoc.pinned and not model.contest.isDone(tdoc) %}
+        <li class="section__list__item contest__item contest-type--{{ tdoc.rule }}{% if highlightPinned %} contest__item--pinned{% endif %} {% if model.contest.isOngoing(tdoc, tsdoc) %}{{ 'live' }}{% elif model.contest.isUpcoming(tdoc) %}{{ 'ready' }}{% endif %}"{% if highlightPinned %} style="background: linear-gradient(90deg, rgba(255,247,222,.98) 0%, rgba(238,246,255,.96) 62%, rgba(255,255,255,.98) 100%); border-left-color: #f2b544; box-shadow: inset 0 0 0 1px rgba(242,181,68,.26), 0 4px 16px rgba(46,107,255,.08);"{% endif %}>
           <div class="media">
             <div class="media__left medium">
               <div class="contest__date numbox">

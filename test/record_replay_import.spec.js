@@ -11,12 +11,16 @@ const source = esbuild.buildSync({
 const key = '10/class-a/1002';
 const rid = '6aa000000000000000000002';
 function harness(options = {}) {
-    const dom = new JSDOM('', { url: `https://example.test/d/class-a/p/P1002?fromRecord=${rid}&draftImport=00000000-0000-4000-8000-000000000001` });
+    const query = options.answerSheet
+        ? `fromRecord=${rid}&answerSheet=true`
+        : `fromRecord=${rid}&draftImport=00000000-0000-4000-8000-000000000001`;
+    const dom = new JSDOM('', { url: `https://example.test/d/class-a/p/P1002?${query}` });
     const context = {
         pdoc: { domainId: 'class-a', docId: 1002, config: { type: options.objective ? 'objective' : 'default' } },
         recordReplay: { rid, code: 'print("source")', lang: 'py.py3', objective: options.objective ? {
             answers: { 1: 'A', 2: ['B', 'C'] }, feedback: { complete: true, score: 30, totalScore: 50 },
         } : undefined },
+        ...(options.answerSheet ? { objectiveAnswerSheet: { rid } } : {}),
     };
     const solutions = new Map([[`${key}#objective`, '{"1":"old"}'], ['20/class-a/1002#objective', 'student']]);
     const local = dom.window.localStorage;
@@ -79,6 +83,17 @@ it('objective import preserves source grade and subsequent edits across reload',
     assert.equal(h.solutions.get('20/class-a/1002#objective'), 'student');
     h.solutions.set(`${key}#objective`, '{}'); await h.prepareRecordReplayDraft();
     assert.equal(h.solutions.get(`${key}#objective`), '{}');
+});
+it('prepares a bound read-only answer sheet without reading or replacing the current draft', async (t) => {
+    const h = harness({ objective: true, answerSheet: true }); t.after(h.close);
+    await h.prepareRecordReplayDraft();
+    assert.deepEqual(h.context.objectiveInitialSubmission, h.context.recordReplay.objective);
+    assert.equal(h.context.recordReplayResultActive, false);
+    assert.equal(h.solutions.get(`${key}#objective`), '{"1":"old"}');
+    assert.equal(h.dom.window.sessionStorage.length, 0);
+    assert.deepEqual(h.writes, []);
+    h.rememberRecordReplaySubmission({ 1: 'C' }, { state: 'complete', score: 50 });
+    assert.deepEqual(h.context.objectiveInitialSubmission, h.context.recordReplay.objective);
 });
 it('teacher pending and completed results replace source grade on reload', async (t) => {
     const h = harness({ objective: true }); t.after(h.close);

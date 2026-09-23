@@ -423,6 +423,33 @@ describe('objective answer submission UI', { concurrency: false }, () => {
         assert.equal(h.calls.dialogs.length, 0);
     });
 
+    it('shows a record-list answer sheet as the exact read-only attempt without touching the viewer draft', async (t) => {
+        const source = replayOptions();
+        const h = await harness({
+            ...source,
+            url: `https://example.test/p/P5983?fromRecord=${sourceRid}&answerSheet=true`,
+            saved: { value: JSON.stringify({ 1: 'B', 4: 'viewer draft' }) },
+            context: {
+                ...source.context,
+                objectiveAnswerSheet: { rid: sourceRid },
+                recordReplayResultActive: false,
+            },
+        });
+        t.after(() => h.close());
+        assert.equal(h.doc.querySelector('[name="1"][value="A"]').checked, true);
+        assert.equal(h.doc.querySelector('[name="2"][value="B"]').checked, true);
+        assert.equal(h.doc.querySelector('[name="4"]').value, '');
+        assert.ok([...h.doc.querySelectorAll('.objective-input')].every((input) => input.disabled));
+        assert.equal(h.doc.querySelector('.objective-submit'), null);
+        assert.equal(h.doc.querySelector('.objective-clear'), null);
+        assert.match(h.doc.querySelector('.objective-replay-source__footer').textContent, /只读查看该次作答/);
+        assert.equal(h.doc.querySelector('.objective-nav-result-label').textContent, '本次得分');
+        assert.deepEqual(h.calls.load, []);
+        assert.deepEqual(h.calls.save, []);
+        assert.deepEqual(h.calls.post, []);
+        assert.deepEqual(h.calls.get, []);
+    });
+
     it('switches to the teacher’s score on submission and remembers pending and completed results for refresh', async (t) => {
         const result = deferred();
         const h = await harness({ ...replayOptions(), get: () => result.promise });
@@ -1009,5 +1036,33 @@ describe('merged objective review page shell', () => {
                 assert.equal(UiContext[key], '', `${key} is disabled in a merged view`);
             }
         }
+    });
+
+    it('binds read-only answer-sheet polling to its source record and disables submission', () => {
+        const source = fs.readFileSync(path.join(uiRoot, 'templates/problem_detail.html'), 'utf8');
+        const script = source.match(/<script>([\s\S]*?)<\/script>/)[1];
+        const UiContext = { objectiveAnswerSheet: { rid: sourceRid } };
+        env.renderString(script, {
+            UiContext,
+            pdoc,
+            homeworkReview: null,
+            tdoc: null,
+            handler: { user: { _id: 10, codeLang: '', codeTemplate: '' }, args: { domainId: 'class-a' } },
+            url: (route, options = {}) => {
+                const query = new URLSearchParams(options.query || {}).toString();
+                return `/${route}${query ? `?${query}` : ''}`;
+            },
+            set(target, key, value) {
+                if (typeof key === 'string') target[key] = value;
+                else Object.assign(target, key);
+                return '';
+            },
+        });
+        assert.equal(UiContext.postSubmitUrl, '');
+        const polling = new URL(UiContext.objectiveSubmitFeedbackUrl.replace('{rid}', sourceRid), 'https://example.test');
+        assert.equal(polling.searchParams.get('answerSheet'), 'true');
+        assert.equal(polling.searchParams.get('fromRecord'), sourceRid);
+        assert.equal(polling.searchParams.get('pid'), '1000');
+        assert.equal(polling.searchParams.get('rid'), sourceRid);
     });
 });

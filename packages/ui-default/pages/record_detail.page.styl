@@ -1,38 +1,636 @@
 .page--record_detail
+  --record-detail-page: #f3f6fa
+  --record-detail-surface: #ffffff
+  --record-detail-surface-soft: #f8fafc
+  --record-detail-surface-blue: #f2f7fd
+  --record-detail-border: #e1e8f0
+  --record-detail-border-strong: #ccd8e6
+  --record-detail-text: #273b55
+  --record-detail-muted: #6d8099
+  --record-detail-faint: #91a0b2
+  --record-detail-accent: #3e7cce
+  --record-detail-accent-soft: #e8f2ff
+  --record-detail-admin: #6b62b5
+  --record-detail-admin-soft: #f1effd
+  --record-detail-code: #f7f9fc
+  --record-detail-shadow: 0 8px 28px rgba(39, 59, 85, .07)
+
+  > body > #panel > .main
+    background: var(--record-detail-page)
+    padding-top: rem(34px)
+    padding-bottom: rem(52px)
+
+  .record-detail
+    color: var(--record-detail-text)
+
+  .record-detail__layout
+    align-items: flex-start
+
+  .record-detail .section
+    overflow: hidden
+    border: 1px solid var(--record-detail-border)
+    border-radius: rem(13px)
+    background: var(--record-detail-surface)
+    box-shadow: var(--record-detail-shadow)
+
+  .record-detail .record-detail__status-card
+    // Keep the injected sticky table header attached to the viewport.
+    overflow: visible
+
+    .record-detail__status-header
+      border-radius: rem(12px 12px 0 0)
+
+  .record-detail .section__header
+    min-height: rem(68px)
+    padding: rem(17px 22px)
+    border-bottom: 1px solid var(--record-detail-border)
+    background: linear-gradient(180deg, var(--record-detail-surface-soft), var(--record-detail-surface))
+
+  .record-detail .section__header .section__title
+    color: var(--record-detail-text)
+    font-weight: 650
+
+  .record-detail .section__tools
+    top: 50%
+    right: rem(20px)
+    transform: translateY(-50%)
+
+  .record-detail__download
+    display: inline-flex
+    align-items: center
+    gap: rem(6px)
+    height: rem(36px)
+    margin: 0
+    padding: rem(0 14px)
+    border: 0
+    border-radius: rem(8px)
+    background: var(--record-detail-accent)
+    box-shadow: none
+    line-height: rem(36px)
+
+  .record-detail__status-header
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: rem(18px)
+    min-height: rem(96px) !important
+    padding: rem(20px 24px) !important
+    background: linear-gradient(120deg, var(--record-detail-surface) 0%, var(--record-detail-surface-blue) 100%) !important
+
+  .record-detail__status-heading
+    display: flex
+    align-items: center
+    min-width: 0
+    gap: rem(15px)
+
+  .record-detail__status-mark
+    display: inline-flex
+    flex: 0 0 auto
+    align-items: center
+    justify-content: center
+    width: rem(50px)
+    height: rem(50px)
+    border: 1px solid var(--record-detail-border)
+    border-radius: rem(14px)
+    background: var(--record-detail-surface)
+    box-shadow: 0 5px 14px rgba(39, 59, 85, .08)
+
+    .record-status--icon
+      margin: 0
+      font-size: rem(25px)
+      line-height: 1
+
+  .record-detail__status-copy
+    min-width: 0
+
+    h1.section__title
+      display: flex
+      align-items: baseline
+      flex-wrap: wrap
+      gap: rem(9px)
+      margin: rem(2px) 0 0
+      font-size: rem(25px)
+      line-height: 1.25
+
+  .record-detail__eyebrow
+    display: block
+    color: var(--record-detail-muted)
+    font-size: rem(12px)
+    font-weight: 700
+    letter-spacing: .08em
+
+  .record-detail__score
+    font-size: rem(30px)
+    font-weight: 750
+
+  .record-detail__progress
+    flex: 0 0 auto
+    padding: rem(6px 10px)
+    border: 1px solid #eadfa9
+    border-radius: rem(999px)
+    color: #947318
+    background: #fff9dd
+    font-size: rem(13px)
+    font-weight: 700
+
+  .record-detail__judge-message
+    border-bottom: 1px solid var(--record-detail-border)
+
+    pre
+      margin: 0
+      border: 1px solid var(--record-detail-border)
+      border-radius: rem(9px)
+      background: var(--record-detail-code)
 
   .compiler-text
-    padding: rem(20px 0)
+    padding: rem(18px)
     font-size: rem($font-size-small)
+
     &:empty
       display: none
 
   .compiler-text-mask
     display: none
 
+  .record-testdata__toolbar
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: rem(14px)
+    padding: rem(13px 20px) !important
+    border-bottom: 1px solid var(--record-detail-border)
+    background: var(--record-detail-admin-soft)
+
+  .record-testdata__privacy-note
+    display: flex
+    align-items: center
+    min-width: 0
+    gap: rem(10px)
+    color: var(--record-detail-admin)
+
+    > .icon
+      display: inline-flex
+      flex: 0 0 auto
+      align-items: center
+      justify-content: center
+      width: rem(34px)
+      height: rem(34px)
+      border-radius: rem(9px)
+      background: rgba(107, 98, 181, .11)
+      font-size: rem(18px)
+
+    > span:last-child
+      min-width: 0
+
+    strong, small
+      display: block
+
+    strong
+      color: var(--record-detail-text)
+      font-size: rem(13px)
+      font-weight: 700
+
+    small
+      margin-top: rem(2px)
+      color: var(--record-detail-muted)
+      font-size: rem(11px)
+      line-height: 1.4
+
+  .record-testdata__toolbar-actions
+    display: flex
+    flex: 0 0 auto
+    gap: rem(7px)
+
+    button
+      display: inline-flex
+      align-items: center
+      gap: rem(4px)
+      padding: rem(6px 9px)
+      border: 1px solid rgba(107, 98, 181, .22)
+      border-radius: rem(7px)
+      color: var(--record-detail-admin)
+      background: var(--record-detail-surface)
+      cursor: pointer
+      font-size: rem(11px)
+      line-height: 1.3
+
+      &:hover
+        border-color: rgba(107, 98, 181, .45)
+        background: rgba(255, 255, 255, .65)
+
+      &:focus-visible
+        outline: 2px solid rgba(107, 98, 181, .36)
+        outline-offset: 2px
+
+  .record-detail__table-wrap
+    // The table helper injects a sticky header. Making this wrapper an
+    // overflow container offsets that header and lets it cover the first row.
+    overflow: visible
+
+  .record_detail__table
+    color: var(--record-detail-text)
+    font-size: rem(14px)
+
+    thead > tr
+      color: var(--record-detail-muted)
+      background: var(--record-detail-surface-soft)
+
+    th
+      height: rem(48px)
+      padding-top: rem(10px)
+      padding-bottom: rem(10px)
+      color: var(--record-detail-muted)
+      font-size: rem(12px)
+      font-weight: 650
+
+    td
+      height: rem(52px)
+      padding-top: rem(10px)
+      padding-bottom: rem(10px)
+      border-color: var(--record-detail-border)
+
+    tr
+      border-color: var(--record-detail-border)
+
+    tbody tr:nth-child(even)
+      background: var(--record-detail-surface-soft)
+
+    .record-detail__case-row
+      transition: background .15s ease
+
+      &:hover, &.is-expanded
+        background: var(--record-detail-surface-blue) !important
+
+    .col--time, .col--memory
+      color: var(--record-detail-muted)
+      font-variant-numeric: tabular-nums
+
+    .message
+      margin-left: rem(6px)
+
   .col--case
-    width: rem(70px)
+    width: rem(76px)
+
+  .record_detail__table--with-data .col--case
+    width: rem(104px)
 
   .col--memory, .col--time
-    width: rem(120px)
+    width: rem(118px)
 
   .col--case, .col--status
-    border-right: 1px solid $table-border-color
-  
+    border-right: 1px solid var(--record-detail-border)
+
+  .record-testdata__toggle
+    display: flex
+    align-items: center
+    justify-content: space-between
+    width: 100%
+    min-height: rem(34px)
+    padding: rem(4px 2px)
+    border: 0
+    color: inherit
+    background: transparent
+    cursor: pointer
+    font: inherit
+    font-weight: 650
+    text-align: left
+
+    .icon
+      color: var(--record-detail-faint)
+      font-size: rem(17px)
+      transition: transform .18s ease, color .18s ease
+
+    &:hover .icon
+      color: var(--record-detail-accent)
+
+    &[aria-expanded="true"] .icon
+      color: var(--record-detail-accent)
+      transform: rotate(180deg)
+
+    &:focus-visible
+      border-radius: rem(5px)
+      outline: 2px solid rgba(62, 124, 206, .32)
+      outline-offset: 1px
+
+  .record-testdata__detail[hidden]
+    display: none !important
+
+  .record_detail__table tbody tr.record-testdata__detail
+    background: var(--record-detail-surface-blue) !important
+
+    > td
+      height: auto
+      padding: 0 !important
+      overflow: visible
+      border-top: 1px solid var(--record-detail-border-strong)
+      white-space: normal
+
+  .record-testdata__grid
+    display: grid
+    grid-template-columns: repeat(2, minmax(0, 1fr))
+    gap: rem(14px)
+    padding: rem(16px 18px 19px)
+
+  .record-testdata__card
+    min-width: 0
+    overflow: hidden
+    border: 1px solid var(--record-detail-border-strong)
+    border-radius: rem(10px)
+    background: var(--record-detail-surface)
+    box-shadow: 0 3px 10px rgba(39, 59, 85, .04)
+
+  .record-testdata__card-header
+    display: flex
+    align-items: center
+    justify-content: space-between
+    min-height: rem(44px)
+    gap: rem(10px)
+    padding: rem(8px 11px 8px 13px)
+    border-bottom: 1px solid var(--record-detail-border)
+    background: var(--record-detail-surface-soft)
+
+    > div
+      display: flex
+      align-items: baseline
+      min-width: 0
+      gap: rem(8px)
+
+    strong
+      flex: 0 0 auto
+      color: var(--record-detail-text)
+      font-size: rem(12px)
+      font-weight: 700
+
+    div > span
+      overflow: hidden
+      color: var(--record-detail-muted)
+      font-family: $code-font-family
+      font-size: rem(10px)
+      text-overflow: ellipsis
+      white-space: nowrap
+
+  .record-testdata__copy
+    display: inline-flex
+    flex: 0 0 auto
+    align-items: center
+    gap: rem(4px)
+    padding: rem(5px 7px)
+    border: 1px solid var(--record-detail-border)
+    border-radius: rem(6px)
+    color: var(--record-detail-muted)
+    background: var(--record-detail-surface)
+    cursor: pointer
+    font-size: rem(10px)
+
+    &:hover
+      border-color: #a9c4e7
+      color: var(--record-detail-accent)
+      background: var(--record-detail-accent-soft)
+
+    &:focus-visible
+      outline: 2px solid rgba(62, 124, 206, .32)
+      outline-offset: 2px
+
+  .record-testdata__card pre
+    max-height: rem(330px)
+    min-height: rem(124px)
+    margin: 0
+    padding: rem(14px 15px)
+    overflow: auto
+    border: 0
+    border-radius: 0
+    color: var(--record-detail-text)
+    background: var(--record-detail-code)
+    font-family: $code-font-family
+    font-size: rem(12px)
+    line-height: 1.65
+    tab-size: 4
+    white-space: pre
+    word-break: normal
+
+    &:focus-visible
+      outline: 2px solid rgba(62, 124, 206, .3)
+      outline-offset: -2px
+
+  .record-testdata__truncated
+    display: flex
+    align-items: center
+    gap: rem(5px)
+    margin: 0
+    padding: rem(7px 12px)
+    border-top: 1px solid #eadfb9
+    color: #866f2f
+    background: #fff9e8
+    font-size: rem(10px)
+    line-height: 1.5
+
+  .record-testdata__empty
+    display: flex
+    align-items: center
+    justify-content: center
+    min-height: rem(124px)
+    gap: rem(7px)
+    color: var(--record-detail-faint)
+    background: var(--record-detail-surface-soft)
+    font-size: rem(12px)
+
+  .record-testdata__unavailable
+    display: flex
+    align-items: center
+    gap: rem(12px)
+    margin: rem(16px 18px 19px)
+    padding: rem(16px)
+    border: 1px dashed var(--record-detail-border-strong)
+    border-radius: rem(10px)
+    color: var(--record-detail-muted)
+    background: var(--record-detail-surface)
+
+    > .icon
+      flex: 0 0 auto
+      color: var(--record-detail-faint)
+      font-size: rem(22px)
+
+    strong, span
+      display: block
+
+    strong
+      margin-bottom: rem(3px)
+      color: var(--record-detail-text)
+      font-size: rem(12px)
+
+    span
+      font-size: rem(11px)
+      line-height: 1.55
+
   .subtask
-    background-color: #fff !important
-    height: rem(30px)
+    height: rem(32px)
+    background: var(--record-detail-surface) !important
+
     td
-      padding-top: 0 
-      padding-bottom: 0 
+      height: rem(32px)
+      padding-top: 0
+      padding-bottom: 0
+      color: var(--record-detail-muted)
+      font-size: rem(11px)
+      font-weight: 650
+
+  .record-detail__aside
+    position: sticky
+    top: rem(72px)
+
+  .record-detail__aside .section
+    box-shadow: 0 5px 20px rgba(39, 59, 85, .06)
+
+  .record-detail__admin-actions
+    border-bottom: 1px solid var(--record-detail-border)
+    background: var(--record-detail-surface-soft)
+
+    .menu
+      display: grid
+      grid-template-columns: repeat(auto-fit, minmax(rem(105px), 1fr))
+      gap: rem(7px)
+      padding: rem(10px)
+
+    .menu__link
+      display: flex
+      align-items: center
+      justify-content: center
+      padding: rem(8px 10px)
+      border: 1px solid var(--record-detail-border)
+      border-radius: rem(7px)
+      background: var(--record-detail-surface)
+      color: var(--record-detail-muted)
+      text-align: center
+
+      &:not(.disabled):hover
+        border-color: #b8cbe2
+        color: var(--record-detail-accent)
+        background: var(--record-detail-accent-soft)
+
+  .record-detail__meta
+    padding-top: rem(15px) !important
+    padding-bottom: rem(17px) !important
+
+  .record-detail__meta-list,
+  .record-detail__summary
+    display: grid
+    grid-template-columns: minmax(rem(72px), .82fr) minmax(0, 1.18fr)
+    gap: rem(11px 10px)
+    overflow: visible !important
+
+    dt, dd
+      float: none !important
+      width: auto !important
+      min-width: 0
+      margin: 0 !important
+      line-height: 1.45 !important
+
+    dt
+      color: var(--record-detail-muted)
+
+    dd
+      overflow-wrap: anywhere
+      color: var(--record-detail-text)
+
+  .record-detail__summary
+    margin-top: rem(16px) !important
+    padding-top: rem(15px)
+    border-top: 1px solid var(--record-detail-border)
+
+    dd
+      font-variant-numeric: tabular-nums
+      font-weight: 650
+
+  .record-detail__history-card .menu__link
+    border-left-width: rem(3px)
+    color: var(--record-detail-muted)
+
+  .record-detail__code-card .section__body,
+  .record-detail__pretest-card .section__body
+    padding-top: rem(18px)
+    padding-bottom: rem(18px)
+
+    > pre,
+    > .code-toolbar > pre
+      margin-bottom: 0
+      border: 1px solid var(--record-detail-border)
+      border-radius: rem(9px)
+      background: var(--record-detail-code)
+
+  .record-detail a:focus-visible,
+  .record-detail button:focus-visible
+    outline-color: rgba(62, 124, 206, .4)
 
   +mobile()
+    > body > #panel > .main
+      padding-top: rem(18px)
+      padding-bottom: rem(28px)
+
+    .record-detail .section
+      margin-right: 0
+      margin-left: 0
+      border-radius: rem(10px)
+
+    .record-detail__status-header
+      min-height: rem(82px) !important
+      padding: rem(16px) !important
+
+    .record-detail__status-mark
+      width: rem(43px)
+      height: rem(43px)
+      border-radius: rem(11px)
+
+      .record-status--icon
+        font-size: rem(21px)
+
+    .record-detail__status-copy h1.section__title
+      font-size: rem(20px)
+
+    .record-detail__score
+      font-size: rem(24px)
+
+    .record-testdata__toolbar
+      align-items: flex-start
+      flex-direction: column
+
+    .record-testdata__toolbar-actions
+      width: 100%
+
+      button
+        flex: 1 1 0
+        justify-content: center
+
+    .record-testdata__grid
+      grid-template-columns: minmax(0, 1fr)
+      padding: rem(13px)
+
+    .record-testdata__unavailable
+      margin: rem(13px)
+
+    .record-testdata__card pre
+      max-height: rem(260px)
+      min-height: rem(105px)
+
+    .col--case
+      width: rem(62px)
+
+    .record_detail__table--with-data .col--case
+      width: rem(92px)
+
     .col--time
-      width: rem(70px)
+      width: rem(72px)
 
     .col--memory
-      width: rem(100px)
+      width: rem(88px)
 
-// dont hide compiler text if compile error
+    .record-detail__aside
+      position: static
+
+    .record-detail__meta-list,
+    .record-detail__summary
+      grid-template-columns: minmax(rem(78px), .7fr) minmax(0, 1.3fr)
+
+// Don't hide compiler text if compile error.
 .hasjs .collapsed #status:not([data-status="7"])
   .compiler-text
     max-height: rem(250px)
@@ -50,6 +648,37 @@
 
   .compiler-text-mask
     height: rem(50px)
-    background-image: linear-gradient(to bottom, transparent, #ffffff 25px)
+    background-image: linear-gradient(to bottom, transparent, var(--record-detail-surface) rem(25px))
+
     p
       text-align: center
+
+.theme--dark.page--record_detail
+  --record-detail-page: #121820
+  --record-detail-surface: #202a36
+  --record-detail-surface-soft: #25313e
+  --record-detail-surface-blue: #202f40
+  --record-detail-border: #344456
+  --record-detail-border-strong: #465a70
+  --record-detail-text: #e1e9f3
+  --record-detail-muted: #a5b4c7
+  --record-detail-faint: #8393a8
+  --record-detail-accent: #7fb0ed
+  --record-detail-accent-soft: #293f58
+  --record-detail-admin: #b7acec
+  --record-detail-admin-soft: #2c2d47
+  --record-detail-code: #18212b
+  --record-detail-shadow: none
+
+  .record-detail__progress
+    border-color: #665a31
+    color: #e2c66c
+    background: #3b351f
+
+  .record-testdata__toolbar-actions button:hover
+    background: rgba(37, 49, 62, .85)
+
+  .record-testdata__truncated
+    border-color: #665a31
+    color: #ddc678
+    background: #39331f

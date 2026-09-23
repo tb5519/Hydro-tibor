@@ -8,6 +8,7 @@ import record from '../model/record';
 import { langs } from '../model/setting';
 import user from '../model/user';
 import type { Handler } from '../service/server';
+import { canViewContestLevel } from './contest_access';
 import { buildObjectiveMergedReview } from './objective_merged_review';
 import { buildObjectiveInitialSubmission, loadObjectiveSubmissionConfig } from './objective_submission';
 import { canManageRecordList } from './record_list_scope';
@@ -43,8 +44,14 @@ export function problemRecordListFilter(pid: number, accepted = false, cursor?: 
 }
 
 /** Match RecordDetail's result and source permissions before exposing a snapshot. */
-async function createRecordReader(handler: Handler, domainId: string, pdoc: ProblemDoc) {
-    if (!canUseProblemRecordPicker(handler.user)) throw new PermissionError(PERM.PERM_VIEW_RECORD);
+async function createRecordReader(handler: Handler, domainId: string, pdoc: ProblemDoc, allowOwnRecord = false) {
+    const hasRecordManagement = canManageRecordList(handler.user);
+    const canManageRecords = canUseProblemRecordPicker(handler.user);
+    const canReadOwnRecord = allowOwnRecord && handler.user.hasPriv(PRIV.PRIV_USER_PROFILE)
+        && handler.user.hasPerm(PERM.PERM_VIEW_PROBLEM);
+    if ((hasRecordManagement && !canManageRecords) || (!canManageRecords && !canReadOwnRecord)) {
+        throw new PermissionError(PERM.PERM_VIEW_RECORD);
+    }
     if (pdoc.domainId !== domainId) throw new ProblemNotFoundError(domainId, pdoc.docId);
     if (!problem.canViewBy(pdoc, handler.user)) throw new PermissionError(PERM.PERM_VIEW_PROBLEM_HIDDEN);
     const [hiddenUids, self] = await Promise.all([
@@ -57,7 +64,12 @@ async function createRecordReader(handler: Handler, domainId: string, pdoc: Prob
     }>>();
     async function read(rdoc: RecordDoc) {
         if (!isFormalProblemRecord(rdoc, domainId, pdoc.docId) || hiddenUids.includes(rdoc.uid)) return null;
+        // The list picker remains administrative. The answer-sheet replay may also
+        // be opened by the owner, but a guessed RID must never expose another user.
+        if (!canManageRecords && rdoc.uid !== handler.user._id) return null;
+        const ownRecordReplay = allowOwnRecord && rdoc.uid === handler.user._id;
         let visibleRecord = rdoc;
+        let resultHidden = false;
         let canViewCode = rdoc.uid === handler.user._id
             || handler.user.hasPriv(PRIV.PRIV_READ_RECORD_CODE)
             || handler.user.hasPerm(PERM.PERM_READ_RECORD_CODE)
@@ -71,19 +83,38 @@ async function createRecordReader(handler: Handler, domainId: string, pdoc: Prob
                 ]).then(([tdoc, tsdoc]) => ({ tdoc, tsdoc })));
             }
             const { tdoc, tsdoc } = await contestCache.get(key);
-            if (!tdoc || tdoc.domainId !== domainId || !tdoc.pids.includes(pdoc.docId)) return null;
+            if (!tdoc || tdoc.domainId !== domainId || !tdoc.pids.includes(pdoc.docId)
+                || !canViewContestLevel(handler.user, tdoc)) return null;
             const canView = handler.user.own(tdoc) || contest.canShowRecord.call(handler, tdoc)
                 || (rdoc.uid === handler.user._id && contest.canShowSelfRecord.call(handler, tdoc, true));
-            if (!canView) return null;
             visibleRecord = handler.user.own(tdoc) || handler.user.hasPerm(PERM.PERM_EDIT_CONTEST)
                 ? rdoc : contest.applyProjection(tdoc, { ...rdoc }, handler.user);
             // A partially projected result must not leak its original grade through the picker.
-            if (visibleRecord.status === undefined || (rdoc.score !== undefined && visibleRecord.score === undefined)
-                || (visibleRecord.testCases?.length || 0) !== (rdoc.testCases?.length || 0)) return null;
+            resultHidden = !canView || visibleRecord.status === undefined
+                || (rdoc.score !== undefined && visibleRecord.score === undefined)
+                || (visibleRecord.testCases?.length || 0) !== (rdoc.testCases?.length || 0);
+            if (resultHidden && !ownRecordReplay) return null;
+            if (resultHidden) {
+                // Contest policy, rather than a plugin projection, is the security
+                // boundary. Keep the owner's submitted answers but strip every
+                // result field even when a custom projection accidentally retains it.
+                visibleRecord = {
+                    ...visibleRecord,
+                    status: undefined,
+                    score: undefined,
+                    time: undefined,
+                    memory: undefined,
+                    testCases: [],
+                } as RecordDoc;
+            }
             canViewCode ||= handler.user.own(tdoc)
                 || (tdoc.allowViewCode && contest.isDone(tdoc) && !!tsdoc?.attend);
         }
-        return { rdoc: visibleRecord, canImport: canViewCode && typeof rdoc.code === 'string' && !rdoc.files?.code };
+        return {
+            rdoc: visibleRecord,
+            canImport: canViewCode && typeof rdoc.code === 'string' && !rdoc.files?.code,
+            resultHidden,
+        };
     }
     return { hiddenUids, read };
 }
@@ -194,16 +225,17 @@ function publicReplayRecord(rdoc: RecordDoc) {
 }
 
 export async function loadProblemRecordReplay(handler: Handler, domainId: string, pdoc: ProblemDoc, rid: ObjectId) {
-    const reader = await createRecordReader(handler, domainId, pdoc);
+    const reader = await createRecordReader(handler, domainId, pdoc, true);
     const rdoc = await record.get(domainId, rid);
     if (!isFormalProblemRecord(rdoc, domainId, pdoc.docId)) throw new RecordNotFoundError(domainId, rid);
     const visible = await reader.read(rdoc);
     if (!visible?.canImport) throw new RecordNotFoundError(domainId, rid);
     const owner = await user.getById(domainId, rdoc.uid);
     const publicRecord = publicReplayRecord(visible.rdoc);
-    const objective = typeof pdoc.config === 'object' && pdoc.config?.type === 'objective'
+    const objective = await isObjectiveProblem(pdoc)
         ? buildObjectiveInitialSubmission({ ...publicRecord, code: rdoc.code } as RecordDoc,
-            (await loadObjectiveSubmissionConfig(domainId, pdoc.docId)).config)
+            (await loadObjectiveSubmissionConfig(domainId, pdoc.docId)).config,
+            visible.resultHidden ? { rid: rdoc._id.toString(), state: 'hidden' } : undefined)
         : undefined;
     return {
         ...recordMetadata(handler, pdoc, visible.rdoc, owner?.displayName || owner?.uname || '已注销学员'),

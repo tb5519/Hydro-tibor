@@ -12,8 +12,10 @@ import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
 import { canViewContestLevel } from '../lib/contest_access';
 import { authorizeHomeworkReview, isHomeworkReviewRecord } from '../lib/homework_review';
 import { buildObjectiveInitialSubmission, loadObjectiveSubmissionConfig, loadOwnObjectiveRecordSubmission } from '../lib/objective_submission';
-import { listProblemMergedSubmissions, listProblemSubmissionRecords } from '../lib/problem_record_replay';
+import { listProblemMergedSubmissions, listProblemSubmissionRecords, loadProblemRecordReplay } from '../lib/problem_record_replay';
 import { canManageRecordList } from '../lib/record_list_scope';
+import type { RecordTestcaseData } from '../lib/record_testcase_data';
+import { loadRecordTestcaseData } from '../lib/record_testcase_data';
 import {
     appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
 } from '../lib/record_visibility';
@@ -204,7 +206,8 @@ export class RecordListHandler extends ContestDetailBaseHandler {
                 tid
                     ? problem.getList(domainId, rdocs.map((rdoc) => rdoc.pid), true, false, problem.PROJECTION_CONTEST_LIST)
                     : this.user.hasPerm(PERM.PERM_VIEW_PROBLEM)
-                        ? problem.getList(domainId, rdocs.map((rdoc) => rdoc.pid), canViewHiddenProblem, false, problem.PROJECTION_LIST)
+                        ? problem.getList(domainId, rdocs.map((rdoc) => rdoc.pid), canViewHiddenProblem, false,
+                            problem.PROJECTION_LIST.concat('config'))
                         : Object.fromEntries(uniqBy(rdocs, 'pid').map((rdoc) => [rdoc.pid, { ...problem.default, pid: rdoc.pid }])),
                 tid ? {} : getHomeworkTdocsForRecords(rdocs),
             ]);
@@ -322,6 +325,10 @@ export class RecordDetailHandler extends ContestDetailBaseHandler {
             rdoc.input = [];
         } else if (download) return await this.download();
         if (isPretestRecord && typeof rdoc.input === 'string') rdoc.input = [rdoc.input];
+        const testcaseData = await loadRecordTestcaseData(
+            this.user, rdoc.domainId, rdoc.pid, rdoc.testCases,
+        );
+        if (testcaseData !== null) this.response.addHeader('Cache-Control', 'private, no-store');
         const badgeAcFirstEligible = rdoc.uid === this.user._id
             ? !(await hasAcceptedFormalRecordBefore(rdoc))
             : false;
@@ -334,6 +341,8 @@ export class RecordDetailHandler extends ContestDetailBaseHandler {
             rev,
             allRevs,
             isPretestRecord,
+            canViewTestcaseData: testcaseData !== null,
+            testcaseData: testcaseData || {},
             badgeAcTheme: rdoc.uid === this.user._id
                 ? await getActiveBadgeAcTheme(this.ctx, this.user, this.url.bind(this), this.domain)
                 : null,
@@ -544,6 +553,8 @@ export class RecordDetailConnectionHandler extends ConnectionHandler {
     applyProjection = false;
     noTemplate = false;
     canViewCode = false;
+    canViewTestcaseData = false;
+    testcaseData: RecordTestcaseData = {};
 
     @param('rid', Types.ObjectId)
     @param('noTemplate', Types.Boolean, true)
@@ -578,6 +589,12 @@ export class RecordDetailConnectionHandler extends ConnectionHandler {
             if (!problem.canViewBy(pdoc, this.user)) throw new PermissionError(PERM.PERM_VIEW_PROBLEM_HIDDEN);
         }
 
+        // A live record can have only some results when the connection opens.
+        // Prepare the bounded configured preview so later results also have data.
+        const testcaseData = await loadRecordTestcaseData(this.user, rdoc.domainId, rdoc.pid);
+        this.canViewTestcaseData = testcaseData !== null;
+        this.testcaseData = testcaseData || {};
+
         this.pdoc = pdoc;
         this.noTemplate = noTemplate;
         this.throttleSend = throttle(this.sendUpdate, 1000, { trailing: true });
@@ -591,7 +608,12 @@ export class RecordDetailConnectionHandler extends ConnectionHandler {
         } else {
             this.send({
                 status: rdoc.status,
-                status_html: await this.renderHTML('record_detail_status.html', { rdoc, pdoc: this.pdoc }),
+                status_html: await this.renderHTML('record_detail_status.html', {
+                    rdoc,
+                    pdoc: this.pdoc,
+                    canViewTestcaseData: this.canViewTestcaseData,
+                    testcaseData: this.testcaseData,
+                }),
                 summary_html: await this.renderHTML('record_detail_summary.html', { rdoc, pdoc: this.pdoc }),
             });
         }
@@ -719,10 +741,29 @@ export class ObjectiveSubmitFeedbackHandler extends Handler {
     @param('rid', Types.ObjectId)
     @param('tid', Types.ObjectId, true)
     @param('reviewUid', Types.Int, true)
-    async get(domainId: string, rid: ObjectId, tid?: ObjectId, reviewUid?: number) {
+    @param('answerSheet', Types.Boolean)
+    @param('fromRecord', Types.ObjectId, true)
+    @param('pid', Types.ProblemId, true)
+    async get(
+        domainId: string, rid: ObjectId, tid?: ObjectId, reviewUid?: number,
+        answerSheet = false, fromRecord?: ObjectId, pid?: number | string,
+    ) {
         this.checkPriv(PRIV.PRIV_USER_PROFILE);
+        if (answerSheet) {
+            if (tid !== undefined || reviewUid !== undefined || !fromRecord?.equals(rid) || pid === undefined) {
+                throw new ValidationError('answerSheet');
+            }
+        } else if (fromRecord !== undefined || pid !== undefined) throw new ValidationError('answerSheet');
         const rdoc = await record.get(domainId, rid);
         if (!rdoc) throw new RecordNotFoundError(domainId, rid);
+        if (answerSheet) {
+            const pdoc = await problem.get(domainId, pid);
+            if (!pdoc || pdoc.docId !== rdoc.pid) throw new RecordNotFoundError(domainId, rid);
+            const replay = await loadProblemRecordReplay(this, domainId, pdoc, rid);
+            if (!replay.objective) throw new ProblemConfigError();
+            this.response.body = { objective: replay.objective.feedback };
+            return;
+        }
         if (reviewUid !== undefined) {
             const homework = tid ? await contest.get(domainId, tid) : null;
             if (!homework) throw new RecordNotFoundError(domainId, rid);

@@ -13,9 +13,17 @@ function replayKey() {
 /** A selection replaces only the teacher's draft, once; reloading preserves edits. */
 export async function prepareRecordReplayDraft() {
   if (UiContext.objectiveMergedReview || !UiContext.recordReplay) return;
+  const replay = UiContext.recordReplay;
+  if (UiContext.objectiveAnswerSheet) {
+    if (UiContext.objectiveAnswerSheet.rid !== replay.rid || !replay.objective) {
+      throw new Error('答题卡与提交记录不匹配。');
+    }
+    UiContext.recordReplayResultActive = false;
+    UiContext.objectiveInitialSubmission = replay.objective;
+    return;
+  }
   const markerKey = replayKey();
   if (!markerKey) throw new Error('请选择一条提交记录后再填入作答。');
-  const replay = UiContext.recordReplay;
   const existing = sessionStorage.getItem(markerKey);
   let marker = existing ? JSON.parse(existing) : null;
   if (marker && marker.rid !== replay.rid) throw new Error('记录选择已失效，请重新选择。');
@@ -60,7 +68,7 @@ export async function prepareRecordReplayDraft() {
 
 /** Keep a teacher's new grade when refreshing the imported-answer page. */
 export function rememberRecordReplaySubmission(answers, feedback) {
-  if (UiContext.objectiveMergedReview || !UiContext.recordReplay || !feedback) return;
+  if (UiContext.objectiveMergedReview || UiContext.objectiveAnswerSheet || !UiContext.recordReplay || !feedback) return;
   UiContext.recordReplayResultActive = false;
   UiContext.objectiveInitialSubmission = { answers, feedback };
   try {

@@ -105,13 +105,14 @@ function feedbackHandler(options = {}) {
     const end = source.indexOf('\nexport async function apply', start);
     const imports = `
         import { Handler, param, Types, PRIV, PERM, record, problem, contest,
-            RecordNotFoundError, ProblemNotFoundError, PermissionError, ProblemConfigError,
+            RecordNotFoundError, ProblemNotFoundError, PermissionError, ProblemConfigError, ValidationError,
             buildObjectiveInitialSubmission, loadObjectiveSubmissionConfig, loadOwnObjectiveRecordSubmission,
-            authorizeHomeworkReview, isHomeworkReviewRecord } from 'dependencies';
+            loadProblemRecordReplay, authorizeHomeworkReview, isHomeworkReviewRecord } from 'dependencies';
     `;
     const document = makeRecord(options.record);
     const sourceReads = [];
     const reviewCalls = [];
+    const replayCalls = [];
     const dependencies = {
         Handler: class {
             user = { _id: options.uid ?? 12, own: () => !!options.owner, hasPerm: () => !!options.editor };
@@ -128,8 +129,10 @@ function feedbackHandler(options = {}) {
             PROJECTION_PUBLIC: ['config', 'reference'], canViewBy: () => options.problemVisible !== false,
             get: async (domainId, pid, projection, raw) => {
                 sourceReads.push({ domainId, pid, raw });
-                if (options.reference && domainId === 'class-a') return { reference: { domainId: 'source-class', pid: 22 } };
-                return { config };
+                if (options.reference && domainId === 'class-a') {
+                    return { docId: 5983, domainId, reference: { domainId: 'source-class', pid: 22 } };
+                }
+                return { docId: Number(pid), domainId, config };
             },
         },
         contest: {
@@ -150,11 +153,17 @@ function feedbackHandler(options = {}) {
         ProblemNotFoundError: class ProblemNotFoundError extends Error {},
         PermissionError: class PermissionError extends Error {},
         ProblemConfigError: class ProblemConfigError extends Error {},
+        ValidationError: class ValidationError extends Error {},
         authorizeHomeworkReview: async (viewer, domain, homework, pid, uid) => {
             reviewCalls.push({ pid, uid, tid: homework.docId.toString() });
             if (!options.reviewAuthorized) throw new Error('Review denied');
         },
         ...helpers,
+    };
+    dependencies.loadProblemRecordReplay = async (_handler, domainId, pdoc, recordId) => {
+        replayCalls.push({ domainId, pid: pdoc.docId, rid: recordId.toString() });
+        if (options.replayDenied) throw new dependencies.PermissionError();
+        return { objective: dependencies.buildObjectiveInitialSubmission(document, config) };
     };
     dependencies.isHomeworkReviewRecord = loadModule(
         fs.readFileSync(path.join(root, 'packages/hydrooj/src/lib/homework_review.ts'), 'utf8'), {
@@ -181,8 +190,13 @@ function feedbackHandler(options = {}) {
     return {
         sourceReads,
         reviewCalls,
+        replayCalls,
         async get(domainId = 'class-a', tid, reviewUid) {
             await handler.get(domainId, rid, tid, reviewUid);
+            return plain(handler.response.body);
+        },
+        async answerSheet({ fromRecord = rid, pid = 5983, recordId = rid, tid, reviewUid } = {}) {
+            await handler.get('class-a', recordId, tid, reviewUid, true, fromRecord, pid);
             return plain(handler.response.body);
         },
     };
@@ -234,6 +248,16 @@ describe('objective feedback authorization', () => {
         assert.equal(result.objective.score, 20);
         assert.deepEqual(review.reviewCalls, [{ pid: 5983, uid: 12, tid: tid.toString() }]);
         assert.ok(!JSON.stringify(result).includes('secret'));
+    });
+    it('binds read-only answer-sheet polling to the same record and problem replay authorization', async () => {
+        const answerSheet = feedbackHandler({ uid: 13 });
+        const response = await answerSheet.answerSheet();
+        assert.equal(response.objective.score, 20);
+        assert.deepEqual(answerSheet.replayCalls, [{ domainId: 'class-a', pid: 5983, rid: rid.toString() }]);
+        await assert.rejects(feedbackHandler().answerSheet({ fromRecord: new ObjectId() }), { name: 'Error' });
+        await assert.rejects(feedbackHandler().answerSheet({ pid: 5984 }), { name: 'Error' });
+        await assert.rejects(feedbackHandler().answerSheet({ tid: new ObjectId() }), { name: 'Error' });
+        await assert.rejects(feedbackHandler({ replayDenied: true }).answerSheet(), { name: 'Error' });
     });
     it('rejects other contests, pretests, targets and domains even after review management authorization', async () => {
         const tid = new ObjectId();

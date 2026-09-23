@@ -281,7 +281,11 @@ describe('problem record picker', () => {
         const start = source.indexOf('{% if UiContext.problemRecordPicker %}');
         const section = source.slice(start, source.indexOf('{% endif %}', start) + '{% endif %}'.length);
         const env = new nunjucks.Environment(null, { autoescape: true });
-        const data = { UiContext: {}, pdoc: { docId: 3, nSubmit: 14, nAccept: 1 }, _: (text) => text, url: () => '/record' };
+        const data = {
+            UiContext: {}, pdoc: { docId: 3, nSubmit: 14, nAccept: 1 },
+            activity: { nSubmit: 14, nAccept: 1, seeded: false }, problemActivity: { marker: () => '' },
+            _: (text) => text, url: () => '/record',
+        };
         const student = new JSDOM(env.renderString(section, data));
         assert.equal(student.window.document.querySelectorAll('a, [tabindex], .interactive').length, 0);
         assert.equal(student.window.document.querySelectorAll('span.problem__tag-item').length, 2);

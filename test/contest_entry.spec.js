@@ -371,8 +371,9 @@ describe('global contest URL generation', () => {
     });
 
     it('renders objective polling URLs with one query delimiter and a replaceable record placeholder', () => {
-        const template = fs.readFileSync(resolve(__dirname, '../packages/ui-default/templates/problem_detail.html'), 'utf8')
-            .match(/\{% if pdoc\.config\.type == 'objective' %\}([\s\S]*?)\{% endif %\}/)[1];
+        const source = fs.readFileSync(resolve(__dirname, '../packages/ui-default/templates/problem_detail.html'), 'utf8');
+        const start = source.indexOf("{% if pdoc.config.type == 'objective' %}");
+        const template = source.slice(start, source.indexOf('</script>', start));
         for (const scenario of [
             { name: 'practice', tdoc: null, context: undefined, domainId: 'C0001' },
             { name: 'local contest', tdoc: entry.contest, context: undefined, domainId: 'system' },
@@ -381,6 +382,8 @@ describe('global contest URL generation', () => {
             const UiContext = {};
             nunjucks.renderString(template, {
                 UiContext,
+                pdoc: { docId: 2001, config: { type: 'objective' } },
+                homeworkReview: null,
                 tdoc: scenario.tdoc,
                 set: (target, name, value) => { target[name] = value; return ''; },
                 url: (name, options) => {

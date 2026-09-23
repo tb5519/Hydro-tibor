@@ -56,6 +56,7 @@ declare global {
   let UiContext: Record<string, any> & { // eslint-disable-line
     objectiveMergedReview?: import('./common/objective-merged-review').ObjectiveMergedReview;
     objectiveCorrectAnswers?: Record<string, string | string[]>;
+    objectiveAnswerSheet?: { rid: string };
     problemRecordPicker?: { url: string, ownUrl?: string, allowMerged?: boolean };
   };
 }

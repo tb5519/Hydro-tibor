@@ -12,6 +12,7 @@ import { assetUrl } from './asset_url';
 import markdown from './markdown';
 import { ensureTag, xss } from './markdown-it-xss';
 import * as misc from './misc';
+import { getProblemActivityDisplay } from './problem-activity';
 
 const argv = cac().parse();
 
@@ -139,7 +140,10 @@ class Nunjucks extends nunjucks.Environment {
     this.addGlobal('assetUrl', assetUrl);
     this.addGlobal('formatSeconds', misc.formatSeconds);
     this.addGlobal('model', global.Hydro.model);
-    this.addGlobal('lib', { difficulty: difficultyAlgorithm });
+    this.addGlobal('lib', {
+      difficulty: difficultyAlgorithm,
+      problemActivity: getProblemActivityDisplay,
+    });
     this.addGlobal('ui', global.Hydro.ui);
     this.addGlobal('isIE', (str) => {
       if (!str) return false;

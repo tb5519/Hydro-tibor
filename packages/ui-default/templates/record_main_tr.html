@@ -5,7 +5,11 @@
   {% set _isPretest = rdoc.contest and rdoc.contest.toString() == '000000000000000000000000' %}
   {% set homeworkTdoc = (homeworkTdocs[rdoc.domainId + '/' + rdoc.contest.toHexString()] if not tdoc and rdoc.contest and not _isPretest else none) %}
   {% set recordTdoc = tdoc or homeworkTdoc %}
-  {{ record.render_status_td(rdoc, allDomain = allDomain) }}
+  {% set answerSheetUrl = none %}
+  {% if pdoc and pdoc.config and pdoc.config.type == 'objective' and rdoc.lang == '_' and not _isPretest %}
+    {% set answerSheetUrl = url('problem_detail', pid=pdoc.pid|default(pdoc.docId), domainId=rdoc.domainId, query={fromRecord:rdoc._id, answerSheet:'true'}) %}
+  {% endif %}
+  {{ record.render_status_td(rdoc, allDomain = allDomain, detailUrl = answerSheetUrl) }}
   <td class="col--problem col--problem-name">
   {% if handler.user.hasPerm(perm.PERM_REJUDGE) and not rdoc.files.hack and not _isPretest %}
     <form class="form--inline" method="post" action="{{ url('record_detail', rid=rdoc._id, domainId=rdoc.domainId) }}">

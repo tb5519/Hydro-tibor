@@ -211,6 +211,18 @@ describe('record list presentation', () => {
         }
     });
 
+    it('opens an objective status on the exact read-only answer sheet while programming statuses keep record detail', () => {
+        const objective = fixture();
+        objective.rdocs[0].lang = '_';
+        objective.pdict[1001].config = { type: 'objective' };
+        objective.model.setting.langs._ = { display: '客观题' };
+        const objectiveLink = render(objective).document.querySelector('.record-status--text');
+        assert.equal(objectiveLink.getAttribute('href'), '/d/python/p/P1001?fromRecord=rec-1&answerSheet=true');
+        assert.equal(new URL(objectiveLink.href).searchParams.get('fromRecord'), 'rec-1');
+        assert.equal(new URL(objectiveLink.href).searchParams.get('answerSheet'), 'true');
+        assert.equal(render().document.querySelector('.record-status--text').getAttribute('href'), '/d/python/record/rec-1');
+    });
+
     it('keeps manager rejudge/cancel operations and original form actions without changing their availability', () => {
         const original = fixture();
         original.handler.user.hasPerm = (permission) => permission === 'rejudge';

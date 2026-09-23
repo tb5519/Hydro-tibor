@@ -16,6 +16,7 @@ import avatar from '../lib/avatar';
 import {
     createDomainAvatarTarget, DOMAIN_AVATAR_MAX_SIZE, domainAvatarPath, isOwnedDomainAvatarPath, normalizeDomainAvatar,
 } from '../lib/domain_avatar';
+import { withDomainMembershipRemoval } from '../lib/domain_membership';
 import { getDomainRankingMode } from '../lib/domain_ranking';
 import { isScratchDomain } from '../lib/domain_type';
 import { getHomePosterConfig } from '../lib/home_poster';
@@ -508,11 +509,13 @@ class DomainUserHandler extends ManageHandler {
         const needUpdate = uids.filter((uid) => original.find((i) => i.uid === uid)?.join);
         if (!needUpdate.length) return;
         const target = needUpdate.length > 1 ? needUpdate : needUpdate[0];
-        await Promise.all([
-            domain.setJoin(domainId, target, false),
-            domain.setUserRole(domainId, target, 'guest'),
-            oplog.log(this, 'domain.kick', { uids: needUpdate }),
-        ]);
+        await withDomainMembershipRemoval(needUpdate, [domainId], async () => {
+            await Promise.all([
+                domain.setJoin(domainId, target, false),
+                domain.setUserRole(domainId, target, 'guest'),
+            ]);
+        });
+        await oplog.log(this, 'domain.kick', { uids: needUpdate });
         const msg = JSON.stringify({
             message: 'You have been kicked from domain {0} by {1}.',
             params: [this.domain.name, this.user.uname],
