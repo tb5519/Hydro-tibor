@@ -496,9 +496,15 @@
   .student-domain-dialog__error { margin: .8rem 0 0; color: #b91c1c; font-size: .82rem; line-height: 1.5; }
   .student-domain-dialog__actions { display: flex; justify-content: flex-end; gap: .55rem; margin-top: 1.2rem; }
   .student-domain-dialog__actions .button { margin: 0; }
-  .student-domain-dialog__confirm.is-danger { border-color: #dc2626; background: #dc2626; }
-  .student-domain-dialog__confirm.is-danger:hover,
-  .student-domain-dialog__confirm.is-danger:focus-visible { background: #b91c1c; }
+  .student-domain-dialog__actions .button.student-domain-dialog__confirm.is-danger {
+    border-color: #dc2626;
+    background: #dc2626;
+  }
+  .student-domain-dialog__actions .button.student-domain-dialog__confirm.is-danger:hover,
+  .student-domain-dialog__actions .button.student-domain-dialog__confirm.is-danger:focus-visible {
+    border-color: #b91c1c;
+    background: #b91c1c;
+  }
   .student-domain-dialog__confirm:disabled { cursor: wait; opacity: .7; }
   .student-management__sort {
     display: flex;
