@@ -199,6 +199,88 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         assert.equal((await model.listWorks(foreign).toArray()).length, 0);
     });
 
+    it('lets a teacher explicitly save the current student work without changing its owner', async () => {
+        const work = await model.createWork(alice, 'teacher can help');
+        await model.saveWork(alice, work._id, 0, upload(project('student version')));
+        await assert.rejects(model.saveWork(teacher, work._id, 1, upload(project('unconfirmed'))), PermissionError);
+        await assert.rejects(model.saveWork(teacher, work._id, 1, upload(), true, work.title, undefined, true), ValidationError);
+        const saved = await model.saveWork(teacher, work._id, 1, upload(project('teacher correction')),
+            false, work.title, undefined, true);
+        assert.equal(saved.work.owner, alice.uid);
+        assert.equal(saved.work.revision, 2);
+        assert.equal(await model.versions.countDocuments({ workId: work._id }), 1);
+        assert.equal((await model.getFile(alice, saved.work.currentFileId)).owner, teacher.uid);
+        await assert.rejects(model.saveWork(bob, work._id, 2, upload(), false, work.title, undefined, true), PermissionError);
+    });
+
+    it('copies a work into an independent file and replaces a same-named older free work', async () => {
+        const first = await model.createWork(alice, 'single title');
+        const firstSaved = await model.saveWork(alice, first._id, 0, upload(project('old work')));
+        const oldFile = await model.getFile(alice, firstSaved.work.currentFileId);
+        assert((await model.createWork(alice, first.title))._id.equals(first._id));
+        const copy = await model.copyWork(alice, first._id);
+        assert.notEqual(copy.title, first.title);
+        assert(!copy._id.equals(first._id));
+        assert(!copy.currentFileId.equals(firstSaved.work.currentFileId));
+        assert(blobs.get((await model.getFile(alice, copy.currentFileId)).path).equals(blobs.get(oldFile.path)));
+        await model.saveWork(alice, copy._id, 1, upload(project('replacement')), false, first.title);
+        assert.equal(await model.works.findOne({ _id: first._id }), null);
+        assert.equal(await model.files.findOne({ _id: oldFile._id }), null);
+        assert.equal(blobs.has(oldFile.path), false);
+        assert.equal(await model.versions.countDocuments({ workId: copy._id }), 1);
+        assert.equal((await model.getWork(alice, copy._id)).title, first.title);
+    });
+
+    it('filters teacher gallery by a member and serves popup actions as JSON', async () => {
+        await database.collection('domain.user').insertOne({ domainId: teacher.domainId, uid: bob.uid, join: true });
+        const bobWork = await model.createWork(bob, 'Bob gallery work');
+        const gallery = Object.assign(Object.create(handlers.ScratchWorksHandler.prototype), {
+            actor: teacher, domain: { _id: teacher.domainId }, request: { query: { owner: String(bob.uid) } },
+            paginate: async (cursor) => [await cursor.toArray(), 1, 1],
+            renderScratch: async (_template, body) => { gallery.body = body; },
+        });
+        await gallery.get();
+        assert(gallery.body.works.some((work) => work._id.equals(bobWork._id)));
+        assert(gallery.body.works.every((work) => work.owner === bob.uid));
+        assert(gallery.body.studentOptions.some((option) => option.uid === bob.uid));
+        assert.equal(gallery.body.selectedOwner, bob.uid);
+        gallery.request.query.owner = '999999';
+        await assert.rejects(gallery.get(), ValidationError);
+
+        const action = Object.assign(Object.create(handlers.ScratchWorkHandler.prototype), {
+            actor: teacher, response: {}, request: {
+                json: false, headers: { accept: 'application/json' }, params: { workId: bobWork._id.toHexString() },
+                body: { title: 'Bob renamed' },
+            },
+        });
+        await action.post();
+        assert.equal(action.response.body.title, 'Bob renamed');
+        action.request.body = { operation: 'copy' };
+        await action.postCopy();
+        assert.equal(action.response.body.ok, true);
+        const copyId = new ObjectId(action.response.body.workId);
+        assert.equal((await model.getWork(teacher, copyId)).owner, teacher.uid);
+        action.request.body = { operation: 'delete' };
+        await action.postDelete();
+        assert.equal(action.response.body.ok, true);
+        assert.equal(await model.works.findOne({ _id: bobWork._id }), null);
+    });
+
+    it('opens a student work in teacher edit mode with explicit deputy-save context', async () => {
+        const work = await model.createWork(bob, 'edit together');
+        const editor = Object.assign(Object.create(handlers.ScratchEditorHandler.prototype), {
+            actor: teacher, user: { _id: teacher.uid }, domain: { _id: teacher.domainId }, UiContext: {},
+            request: { query: { workId: work._id.toHexString() } },
+            url: (name) => `/${name}`,
+            renderScratch: async () => {},
+        });
+        await editor.get();
+        assert.equal(editor.UiContext.scratchEditor.readOnly, false);
+        assert.equal(editor.UiContext.scratchEditor.saveForStudent, true);
+        assert.equal(editor.UiContext.scratchEditor.saveUrl, '/scratch_save');
+        assert.equal(editor.UiContext.scratchEditor.canSubmit, false);
+    });
+
     it('resolves duplicate assignment starts to one student work and enforces teacher-only assignment writes', async () => {
         await assert.rejects(model.writeAssignment(alice, { title: 'forbidden', description: '', deadline: null }), PermissionError);
         const assignment = await model.writeAssignment(teacher, { title: 'lesson', description: 'Create a cat', deadline: null }, null, upload());
@@ -209,7 +291,7 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         await assert.rejects(model.getFile(foreign, assignment.templateFileId), NotFoundError);
     });
 
-    it('keeps submitted bytes and grade unchanged after many draft saves and restoration', async () => {
+    it('keeps submission evidence while replacing old draft versions and bytes', async () => {
         const assignment = await model.writeAssignment(teacher, { title: 'immutable lesson', description: '', deadline: null });
         const work = await model.createWork(alice, 'first', assignment._id);
         const submitted = await model.saveWork(alice, work._id, 0, upload(project('submitted')), true);
@@ -223,17 +305,15 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         assert.equal(unchanged.feedback, 'Keep practicing!');
         assert(unchanged.fileId.equals(submitted.submission.fileId));
         assert(blobs.get(original.path).equals(originalBytes));
-        assert.equal(await model.versions.countDocuments({ domainId: alice.domainId, workId: work._id }), 11);
-        const initialVersion = await model.versions.findOne({ workId: work._id, revision: 1 });
-        const restored = await model.restoreVersion(alice, work._id, initialVersion._id, 14);
-        assert.equal(restored.revision, 15);
-        assert(restored.currentFileId.equals(original._id));
-        for (let revision = 15; revision <= 26; revision++) await model.saveWork(alice, work._id, revision, upload(project(`restored-draft-${revision}`)));
+        assert.equal(await model.versions.countDocuments({ domainId: alice.domainId, workId: work._id }), 1);
+        assert.equal(await model.versions.findOne({ workId: work._id, revision: 1 }), null);
         assert(blobs.get(original.path).equals(originalBytes));
-        assert.equal(await model.versions.countDocuments({ domainId: alice.domainId, workId: work._id }), 11);
+        assert.equal(await model.files.countDocuments({ domainId: alice.domainId, workId: work._id }), 2);
         await assert.rejects(model.getSubmission(bob, submitted.submission._id), PermissionError);
         await assert.rejects(model.getSubmission(foreign, submitted.submission._id), NotFoundError);
-        await assert.rejects(model.deleteWork(alice, work._id), ValidationError);
+        await model.deleteWork(alice, work._id);
+        assert.equal(await model.submissions.countDocuments({ workId: work._id }), 0);
+        assert.equal(blobs.has(original.path), false);
     });
 
     it('rejects stale and concurrent saves without orphaned revisions or overwrites', async () => {
@@ -437,6 +517,7 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         const work = await model.createWork(alice, 'cache race');
         await model.saveWork(alice, work._id, 0, upload());
         const originalQuota = (await model.quotas.findOne({ _id: alice.domainId })).bytes;
+        const originalProjectSize = (await model.getFile(alice, (await model.getWork(alice, work._id)).currentFileId)).size;
         const { image, data } = thumbnailData();
         const insert = model.files.insertOne.bind(model.files);
         let cachedFileId;
@@ -477,7 +558,8 @@ describe('Scratch native backend isolation and immutable submissions', () => {
                 assert.equal(await model.files.findOne({ _id: cachedFileId }), null);
                 assert.equal(blobs.has(cachedFilePath), false);
                 const newProject = await model.getFile(alice, result.work.currentFileId);
-                assert.equal((await model.quotas.findOne({ _id: alice.domainId })).bytes, originalQuota + newProject.size);
+                assert.equal((await model.quotas.findOne({ _id: alice.domainId })).bytes,
+                    originalQuota - originalProjectSize + newProject.size);
             }
         }
         const afterSave = await model.getWork(alice, work._id);
@@ -485,9 +567,9 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         const blobCountAfterSave = blobs.size;
         await assert.rejects(model.cacheWorkThumbnail(alice, work._id, 1, data), ValidationError);
         assert.deepEqual(await model.getWork(alice, work._id), afterSave);
-        assert.equal(await model.files.countDocuments({ workId: work._id }), 2);
+        assert.equal(await model.files.countDocuments({ workId: work._id }), 1);
         assert.equal(await model.files.countDocuments({ workId: work._id, purpose: 'thumbnail' }), 0);
-        assert.equal(await model.versions.countDocuments({ workId: work._id }), 2);
+        assert.equal(await model.versions.countDocuments({ workId: work._id }), 1);
         assert.equal((await model.quotas.findOne({ _id: alice.domainId })).bytes, quotaAfterSave);
         assert.equal(blobs.size, blobCountAfterSave);
     });
@@ -516,7 +598,7 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         assert.equal(await model.files.countDocuments({ workId: work._id, purpose: 'thumbnail' }), 1);
     });
 
-    it('clears and releases stale stage covers after saves without a snapshot and after restoring another revision', async () => {
+    it('clears stale covers and removes replaced draft files', async () => {
         const work = await model.createWork(alice, 'cover follows content');
         const { data } = thumbnailData();
         const first = await model.saveWork(alice, work._id, 0, upload(project('original stage')), false, undefined, data);
@@ -526,19 +608,10 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         assert.equal(second.work.thumbnailFileId, undefined);
         assert.equal(await model.files.findOne({ _id: originalCover._id }), null);
         assert.equal(blobs.has(originalCover.path), false);
-        const cachedFileId = await model.cacheWorkThumbnail(alice, work._id, 2, data);
-        const cachedCover = await model.getFile(alice, cachedFileId);
-        const quotaBeforeRestore = (await model.quotas.findOne({ _id: alice.domainId })).bytes;
-        const restored = await model.restoreVersion(alice, work._id, originalVersion._id, 2);
-        assert.equal(restored.revision, 3);
-        assert(restored.currentFileId.equals(originalVersion.fileId));
-        assert.equal(restored.thumbnailFileId, undefined);
-        assert.equal(await model.files.findOne({ _id: cachedFileId }), null);
-        assert.equal(blobs.has(cachedCover.path), false);
-        assert.equal((await model.quotas.findOne({ _id: alice.domainId })).bytes, quotaBeforeRestore - cachedCover.size);
-        assert.equal(await model.files.countDocuments({ workId: work._id, purpose: 'thumbnail' }), 0);
-        await model.cacheWorkThumbnail(alice, work._id, 3, data);
-        assert.equal(await model.versions.countDocuments({ workId: work._id }), 3);
+        assert.equal(await model.versions.findOne({ _id: originalVersion._id }), null);
+        assert.equal(await model.files.findOne({ _id: originalVersion.fileId }), null);
+        await model.cacheWorkThumbnail(alice, work._id, 2, data);
+        assert.equal(await model.versions.countDocuments({ workId: work._id }), 1);
     });
 
     it('shares only saved work with unguessable tokens, authorizes owners and teachers, and keeps same-revision sharing idempotent', async () => {
@@ -781,25 +854,6 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         await model.quotas.updateOne({ _id: teacher.domainId }, { $set: { bytes: originalQuota.bytes + file.size } });
     });
 
-    it('recovers from a failed restore without leaving a revision that blocks subsequent saves', async () => {
-        const work = await model.createWork(alice, 'restore failure');
-        await model.saveWork(alice, work._id, 0, upload());
-        const version = await model.versions.findOne({ workId: work._id, revision: 1 });
-        const update = model.works.updateOne.bind(model.works);
-        model.works.updateOne = async (query, patch, ...args) => {
-            if (patch.$set?.currentFileId) throw new Error('transient write failure');
-            return update(query, patch, ...args);
-        };
-        try {
-            await assert.rejects(model.restoreVersion(alice, work._id, version._id, 1), /transient write failure/);
-        } finally {
-            model.works.updateOne = update;
-        }
-        assert.equal(await model.versions.countDocuments({ workId: work._id }), 1);
-        const saved = await model.saveWork(alice, work._id, 1, upload());
-        assert.equal(saved.work.revision, 2);
-    });
-
     it('reconciles staged revisions after a process dies and its save lease expires', async () => {
         const work = await model.createWork(alice, 'restart during save');
         const first = await model.saveWork(alice, work._id, 0, upload());
@@ -813,7 +867,7 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         const next = await model.saveWork(alice, work._id, 1, upload());
         assert.equal(next.work.revision, 2);
         assert.equal(await model.submissions.countDocuments({ workId: work._id }), 0);
-        assert.equal(await model.versions.countDocuments({ workId: work._id }), 2);
+        assert.equal(await model.versions.countDocuments({ workId: work._id }), 1);
         assert.equal(blobs.has(staleFile.path), false);
     });
 

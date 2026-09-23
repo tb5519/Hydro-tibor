@@ -83,7 +83,7 @@
           {{ problem.render_problem_title(pdoc) }}
         </td>
         <td class="col--ac-tried">{{ activity.nAccept }} / {{ activity.nSubmit }}</td>
-        <td class="col--difficulty">{{ pdoc['difficulty'] or lib.difficulty(pdoc.nSubmit, pdoc.nAccept) or _('(None)') }}</td>
+        <td class="col--difficulty">{{ pdoc['difficulty'] or lib.difficulty(pdoc.nSubmit, pdoc.nAccept) or 10 }}</td>
       </tr>
     {%- endfor -%}
     </tbody>

@@ -1,20 +1,17 @@
 {% extends "scratch_base.html" %}
 {% block scratch_content %}
 <div class="sc-heading">
-  <div><div class="sc-eyebrow">{{ '作业作品' if work.assignmentId else '自由创作' }}</div><h1>{{ work.title }}</h1><p class="sc-muted">{{ '最近保存' if work.currentFileId else '创建于' }} {{ datetimeSpan(work.updatedAt)|safe }}{% if isTeacher %} · 当前 v{{ work.revision }}{% endif %}</p></div>
-  <div class="sc-actions"><a class="sc-button" data-no-instant href="{{ url('scratch_editor', query={workId:work._id,readOnly:true}) }}">运行作品</a>{% if work.owner == handler.user._id %}<a class="sc-button sc-button-primary" data-no-instant href="{{ url('scratch_editor', query={workId:work._id}) }}">继续创作</a>{% endif %}</div>
+  <div><div class="sc-eyebrow">{{ '作业作品' if work.assignmentId else '自由创作' }}</div><h1>{{ work.title }}</h1><p class="sc-muted">{{ '最近保存' if work.currentFileId else '创建于' }} {{ datetimeSpan(work.updatedAt)|safe }}</p></div>
+  <div class="sc-actions"><a class="sc-button" data-no-instant href="{{ url('scratch_editor', query={workId:work._id,readOnly:true}) }}">运行作品</a>{% if work.owner == handler.user._id or isTeacher %}<a class="sc-button {{ 'sc-button-assist' if work.owner != handler.user._id else 'sc-button-primary' }}" data-no-instant href="{{ url('scratch_editor', query={workId:work._id}) }}">{{ '代学员编辑' if work.owner != handler.user._id else '继续创作' }}</a>{% endif %}</div>
 </div>
 {% if assignment %}<p class="sc-note">老师的小任务：<a href="{{ url('scratch_assignment', assignmentId=assignment._id) }}">{{ assignment.title }}</a></p>{% endif %}
-{% if work.owner == handler.user._id %}
-<section class="sc-panel"><div class="sc-panel-body"><form class="sc-inline-form" method="post"><label class="sc-field"><span>给作品起个名字</span><input name="title" value="{{ work.title }}" maxlength="80" required></label><button class="sc-button" type="submit">修改名称</button></form></div></section>
-{% endif %}
 {% if submissions|length %}
 <section class="sc-panel">
   <div class="sc-panel-head"><h2>{{ '提交记录' if isTeacher else '交给老师的作品' }}</h2></div>
   <div class="sc-panel-body"><ul class="sc-list">
     {% for item in submissions %}
     <li class="sc-list-item">
-      <div><h3>{{ '已批改' if item.reviewedAt else '等待老师批改' }}</h3><p>{{ datetimeSpan(item.createdAt)|safe }}{% if isTeacher %} · v{{ item.revision }}{% endif %}</p>{% if item.grade != null %}<span class="sc-badge sc-badge-success">{{ item.grade }}</span>{% endif %}</div>
+      <div><h3>{{ '已批改' if item.reviewedAt else '等待老师批改' }}</h3><p>{{ datetimeSpan(item.createdAt)|safe }}</p>{% if item.grade != null %}<span class="sc-badge sc-badge-success">{{ item.grade }}</span>{% endif %}</div>
       <a class="sc-button {{ 'sc-button-primary' if item.reviewedAt else '' }}" href="{{ url('scratch_submission', submissionId=item._id) }}">{{ '查看提交与反馈' if isTeacher else ('查看老师反馈' if item.reviewedAt else '查看提交作品') }}</a>
     </li>
     {% endfor %}
@@ -29,27 +26,11 @@
     <details class="sc-spaced sc-version-details"><summary>从电脑上传作品</summary>
       <form class="sc-form sc-spaced" action="{{ url('scratch_save', workId=work._id) }}" method="post" enctype="multipart/form-data">
         <input type="hidden" name="revision" value="{{ work.revision }}">
-        <label class="sc-field"><span>选择 Scratch 作品文件</span><input name="file" type="file" accept=".sb3" required><small>请选择 .sb3 文件，最大 20MB。上传后会成为这个作品的新草稿。</small></label>
-        <div><button class="sc-button" type="submit">上传并保存草稿</button></div>
+        <label class="sc-field"><span>选择 Scratch 作品文件</span><input name="file" type="file" accept=".sb3" required><small>请选择 .sb3 文件，最大 20MB。上传后会覆盖这个作品的当前版本。</small></label>
+        <div><button class="sc-button" type="submit">上传并保存</button></div>
       </form>
     </details>
     {% endif %}
   </div>
 </section>
-<section class="sc-panel"><div class="sc-panel-body">
-  <details class="sc-version-details"{% if isTeacher %} open{% endif %}>
-    <summary>历史版本 · 看看以前的作品</summary>
-    <p class="sc-muted sc-spaced">保留最近 10 个草稿，已提交的作品单独保存。恢复旧版本后，可以接着创作。</p>
-    {% if versions|length %}
-    <div class="sc-table-wrap sc-spaced"><table class="sc-table"><thead><tr><th>版本</th><th>保存时间</th><th>类型</th><th></th></tr></thead><tbody>
-      {% for item in versions %}
-      <tr><td>v{{ item.revision }}</td><td>{{ datetimeSpan(item.createdAt)|safe }}</td><td>{{ '已提交' if item.kind == 'submission' else '草稿' }}</td><td><div class="sc-actions"><a class="sc-button" href="{{ url('scratch_file', fileId=item.fileId) }}">下载 .sb3</a>{% if work.owner == handler.user._id and item.revision != work.revision %}<form method="post"><input type="hidden" name="operation" value="restore"><input type="hidden" name="versionId" value="{{ item._id }}"><input type="hidden" name="revision" value="{{ work.revision }}"><button class="sc-button" type="submit">恢复为新版本</button></form>{% endif %}</div></td></tr>
-      {% endfor %}
-    </tbody></table></div>
-    {% else %}<div class="sc-empty">点击“保存作品”后，就能在这里找到以前的作品。</div>{% endif %}
-  </details>
-</div></section>
-{% if work.owner == handler.user._id and not work.assignmentId and not submissions|length %}
-<details class="sc-danger-zone"><summary>删除这个作品</summary><p class="sc-muted sc-spaced">删除后，这个作品将从作品集中移除。想要留住它，请先下载 .sb3 文件。</p><form method="post"><input type="hidden" name="operation" value="delete"><button class="sc-button sc-button-danger" type="submit">确认删除作品</button></form></details>
-{% endif %}
 {% endblock %}

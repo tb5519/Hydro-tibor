@@ -10,6 +10,8 @@ interface ScratchEditorConfig {
   backUrl: string;
   canSubmit: boolean;
   readOnly: boolean;
+  saveForStudent: boolean;
+  ownerName: string;
   revision: number;
   maxFileSize: number;
   libraryUrl?: string;
@@ -23,6 +25,9 @@ export default new NamedPage('scratch_editor', () => {
   const save = document.querySelector<HTMLButtonElement>('[data-scratch-save]');
   const submit = document.querySelector<HTMLButtonElement>('[data-scratch-submit]');
   let presetBusy = false;
+  const teacherSaveDialog = document.querySelector<HTMLDialogElement>('[data-scratch-teacher-save-dialog]');
+  const teacherSaveTitle = teacherSaveDialog?.querySelector<HTMLElement>('[data-scratch-teacher-save-title]');
+  const teacherSaveConfirm = teacherSaveDialog?.querySelector<HTMLButtonElement>('[data-scratch-teacher-save-confirm]');
   const channel = crypto.randomUUID();
   let revision = config.revision;
   let title = config.title;
@@ -97,7 +102,7 @@ export default new NamedPage('scratch_editor', () => {
     buttons();
   };
   const saveProject = (shouldSubmit: boolean) => {
-    if (!loaded || pending || presetBusy || config.readOnly || (shouldSubmit && !config.canSubmit)) return;
+    if (!loaded || pending || presetBusy || config.readOnly || (shouldSubmit && (!config.canSubmit || config.saveForStudent))) return;
     if (!title || title.length > 120) {
       show('请给作品起一个 1～120 字的名字，再保存。', true);
       return;
@@ -108,7 +113,7 @@ export default new NamedPage('scratch_editor', () => {
     savedChanges = changes;
     savedTitle = title;
     buttons();
-    show(shouldSubmit ? '正在保存并提交作业…' : '正在保存作品…');
+    show(shouldSubmit ? '正在保存并提交作业…' : config.saveForStudent ? '正在代学员保存…' : '正在保存作品…');
     send('export', { id: pending });
     timeout = setTimeout(() => {
       finish();
@@ -117,7 +122,34 @@ export default new NamedPage('scratch_editor', () => {
       show('操作超时，保存结果待确认。请在新标签页检查作品，保留本页以免丢失修改。', true);
     }, 60000);
   };
-  save?.addEventListener('click', () => saveProject(false));
+  save?.addEventListener('click', () => {
+    if (!config.saveForStudent) {
+      saveProject(false);
+      return;
+    }
+    if (!loaded || pending || !teacherSaveDialog) return;
+    if (!title || title.length > 120) {
+      show('请给作品起一个 1～120 字的名字，再保存。', true);
+      return;
+    }
+    if (teacherSaveTitle) teacherSaveTitle.textContent = title;
+    teacherSaveDialog.showModal();
+  });
+  teacherSaveDialog?.querySelectorAll<HTMLButtonElement>('[data-scratch-teacher-save-cancel]').forEach((button) => {
+    button.addEventListener('click', () => teacherSaveDialog?.close());
+  });
+  teacherSaveDialog?.addEventListener('close', () => save?.focus());
+  teacherSaveDialog?.addEventListener('click', (event) => {
+    if (event.target !== teacherSaveDialog) return;
+    const rect = teacherSaveDialog.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+      teacherSaveDialog?.close();
+    }
+  });
+  teacherSaveConfirm?.addEventListener('click', () => {
+    teacherSaveDialog?.close();
+    saveProject(false);
+  });
   submit?.addEventListener('click', () => saveProject(true));
   window.addEventListener('message', async (event: MessageEvent) => {
     if (event.source !== frame.contentWindow || event.origin !== 'null' || event.data?.channel !== channel) return;
@@ -161,7 +193,7 @@ export default new NamedPage('scratch_editor', () => {
       } else if (message.type === 'dirty' && loaded && !config.readOnly) {
         dirty = true;
         changes += 1;
-        if (!pending) show('有修改尚未保存，记得点「保存作品」');
+        if (!pending) show(`有修改尚未保存，记得点「${config.saveForStudent ? '代学员保存' : '保存作品'}」`);
       } else if (message.type === 'exported' && pending && phase === 'exporting' && message.id === pending && !config.readOnly) {
         phase = 'uploading';
         clearTimeout(timeout);
@@ -176,6 +208,7 @@ export default new NamedPage('scratch_editor', () => {
         form.append('revision', String(revision));
         form.append('submit', String(shouldSubmit));
         form.append('title', savedTitle);
+        if (config.saveForStudent) form.append('teacherSave', 'true');
         if (typeof message.thumbnail === 'string' && message.thumbnail.length < 2 * 1024 * 1024) {
           form.append('thumbnail', message.thumbnail);
         }
@@ -192,7 +225,7 @@ export default new NamedPage('scratch_editor', () => {
         dirty = changes !== requestChanges;
         send('saved');
         if (pending === currentRequest) finish();
-        show(`${shouldSubmit ? '作业已提交' : '作品已保存'} · 版本 ${revision}${dirty ? '，还有新修改未保存' : ''}`);
+        show(`${shouldSubmit ? '作业已提交' : config.saveForStudent ? `已为 ${config.ownerName || '学员'} 保存作品` : '作品已保存'}${dirty ? '，还有新修改未保存' : ''}`);
       } else if (message.type === 'error') {
         throw new Error(String(message.message || '编辑器操作失败'));
       }

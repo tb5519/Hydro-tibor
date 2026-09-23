@@ -3,8 +3,8 @@
 <div class="scratch-editor-shell {{ 'scratch-editor-player' if UiContext.scratchEditor.readOnly }}" data-scratch-editor>
   {% if not UiContext.scratchEditor.readOnly %}
   <div class="scratch-editor-actions" aria-label="作品保存">
-    <button type="button" class="scratch-editor-button scratch-editor-save" data-scratch-save disabled>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2Z"/><path d="M7 3v6h10V3M7 21v-8h10v8"/></svg><span>保存作品</span>
+    <button type="button" class="scratch-editor-button scratch-editor-save{% if UiContext.scratchEditor.saveForStudent %} scratch-editor-save-for-student{% endif %}" data-scratch-save{% if UiContext.scratchEditor.saveForStudent %} aria-haspopup="dialog" aria-controls="scratch-teacher-save-dialog"{% endif %} disabled>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2Z"/><path d="M7 3v6h10V3M7 21v-8h10v8"/></svg><span>{{ '代学员保存' if UiContext.scratchEditor.saveForStudent else '保存作品' }}</span>
     </button>
     {% if UiContext.scratchEditor.canSubmit %}
     <button type="button" class="scratch-editor-button scratch-editor-submit" data-scratch-submit disabled>
@@ -12,6 +12,14 @@
     </button>
     {% endif %}
   </div>
+  {% endif %}
+  {% if UiContext.scratchEditor.saveForStudent %}
+  <dialog id="scratch-teacher-save-dialog" class="scratch-teacher-save-dialog" data-scratch-teacher-save-dialog aria-labelledby="scratch-teacher-save-title" aria-describedby="scratch-teacher-save-description">
+    <div class="scratch-teacher-save-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 2.8 19.4a1.1 1.1 0 0 0 1 1.6h16.4a1.1 1.1 0 0 0 1-1.6L12 3.5Z"/><path d="M12 9v5m0 3h.01"/></svg></div>
+    <h2 id="scratch-teacher-save-title">确认代学员保存？</h2>
+    <p id="scratch-teacher-save-description">当前修改将覆盖 <strong>{{ UiContext.scratchEditor.ownerName or '这位学员' }}</strong> 的作品《<span data-scratch-teacher-save-title>{{ UiContext.scratchEditor.title }}</span>》。保存后，学员打开作品就会看到你修改的内容，原内容无法找回。</p>
+    <div class="scratch-teacher-save-actions"><button type="button" class="scratch-teacher-save-cancel" data-scratch-teacher-save-cancel>取消</button><button type="button" class="scratch-teacher-save-confirm" data-scratch-teacher-save-confirm>确认代学员保存</button></div>
+  </dialog>
   {% endif %}
   <div class="scratch-loading" data-scratch-loading data-step="1">
     <div class="scratch-loading-card">
@@ -40,7 +48,22 @@
 .scratch-editor-button svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .scratch-editor-save{background:#2563eb;color:#fff;box-shadow:0 2px 0 #1d4ed8}
 .scratch-editor-save:hover{background:#1d4ed8}
+.scratch-editor-save-for-student{border-color:#f6d17b;background:#fff3cd;color:#7a4b0f;box-shadow:0 2px 0 #e7c56d}
+.scratch-editor-save-for-student:hover{background:#ffe8a8}
 .scratch-editor-button:disabled{opacity:.55;cursor:wait;box-shadow:none}
+.scratch-teacher-save-dialog{width:min(440px,calc(100vw - 32px));max-width:none;max-height:calc(100dvh - 32px);margin:auto;padding:30px;border:1px solid #f2d998;border-radius:22px;background:#fffdf8;color:#26364c;box-shadow:0 26px 90px #142f4b40;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;overflow:auto}
+.scratch-teacher-save-dialog::backdrop{background:#142b4b8c;backdrop-filter:blur(4px)}
+.scratch-teacher-save-symbol{display:grid;place-items:center;width:48px;height:48px;margin-bottom:20px;border-radius:14px;background:#fff1c9;color:#a8670e}
+.scratch-teacher-save-symbol svg{width:26px;height:26px}
+.scratch-teacher-save-dialog h2{margin:0 0 12px;font-size:23px;font-weight:800;line-height:1.4}
+.scratch-teacher-save-dialog p{margin:0;color:#5d6b7d;font-size:15px;line-height:1.8;overflow-wrap:anywhere}
+.scratch-teacher-save-dialog p strong{color:#26364c}
+.scratch-teacher-save-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:26px}
+.scratch-teacher-save-actions button{min-height:42px;padding:9px 16px;border:1px solid #dbe3ed;border-radius:10px;background:#fff;color:#40556e;font:inherit;font-size:14px;font-weight:700;cursor:pointer}
+.scratch-teacher-save-actions button:hover{background:#f4f7fb}
+.scratch-teacher-save-actions button:focus-visible{outline:3px solid #a5d1ff;outline-offset:2px}
+.scratch-teacher-save-actions .scratch-teacher-save-confirm{border-color:#e9bd64;background:#f8d58b;color:#50320e}
+.scratch-teacher-save-actions .scratch-teacher-save-confirm:hover{background:#f5c96c}
 .scratch-editor-status{position:absolute;z-index:4;top:60px;left:50%;transform:translateX(-50%);max-width:calc(100% - 28px);padding:9px 16px;border:1px solid #d7e5f7;border-radius:12px;background:#fff;color:#43607e;box-shadow:0 4px 20px #233c6220;font-size:14px;line-height:1.6;pointer-events:none}
 .scratch-editor-status[data-phase=done]{animation:scratch-status-fade 5s forwards}
 .scratch-editor-status[data-error=true]{color:#b42318;border-color:#edc1bd}
@@ -73,6 +96,7 @@
 .scratch-editor-shell noscript{position:absolute;top:12px;left:12px;color:#b42318}
 @keyframes scratch-status-fade{0%,75%{opacity:1}100%{opacity:0;visibility:hidden}}
 @media(max-width:600px){.scratch-editor-actions{right:6px;gap:5px}.scratch-editor-button{padding:8px 9px;font-size:12px;gap:4px}.scratch-editor-button svg{display:none}}
+@media(max-width:480px){.scratch-teacher-save-dialog{padding:24px}.scratch-teacher-save-actions{flex-direction:column-reverse}.scratch-teacher-save-actions button{width:100%}}
 @media(max-width:767px){.page--scratch_editor .main{padding-top:0}.scratch-editor-shell{height:calc(100dvh - 62px)}}
 .scratch-preset-picker{width:min(860px,calc(100vw - 32px));max-height:calc(100dvh - 40px);padding:28px;border:0;border-radius:24px;background:#f8fbff;color:#253b5c;box-shadow:0 24px 100px #15346640;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
 .scratch-preset-picker::backdrop{background:#17305480;backdrop-filter:blur(3px)}

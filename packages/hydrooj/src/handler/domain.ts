@@ -32,7 +32,7 @@ import system from '../model/system';
 import user from '../model/user';
 import workspace from '../model/workspace';
 import {
-    Handler, Mutation, param, post, Query, query, requireSudo, Types,
+    Handler, Mutation, param, post, Query, query, Types,
 } from '../service/server';
 import { log2 } from '../utils';
 
@@ -231,7 +231,6 @@ class DomainHomePosterHandler extends ManageHandler {
         };
     }
 
-    @requireSudo
     @param('operation', Types.String)
     async postUpload(domainId: string) {
         const file = this.request.files?.file;
@@ -257,7 +256,6 @@ class DomainHomePosterHandler extends ManageHandler {
         this.response.redirect = this.url('domain_home_poster', { query: { saved: 1 } });
     }
 
-    @requireSudo
     @param('operation', Types.String)
     async postClear(domainId: string) {
         const oldConfig = getHomePosterConfig(this.domain);
@@ -380,7 +378,6 @@ class DomainDashboardHandler extends ManageHandler {
         this.back();
     }
 
-    @requireSudo
     async postDelete({ domainId }) {
         if (domainId === 'system') throw new CannotDeleteSystemDomainError();
         if (this.domain.owner !== this.user._id) throw new OnlyOwnerCanDeleteDomainError();
@@ -418,7 +415,6 @@ class DomainDashboardHandler extends ManageHandler {
 }
 
 class DomainUserHandler extends ManageHandler {
-    @requireSudo
     @param('format', Types.Range(['default', 'raw']), true)
     async get({ domainId }, format = 'default') {
         const [dudocs, roles] = await Promise.all([
@@ -488,7 +484,6 @@ class DomainUserHandler extends ManageHandler {
         if (uids.includes(this.domain.owner)) throw new ForbiddenError();
     }
 
-    @requireSudo
     @param('uids', Types.NumericArray)
     @param('role', Types.Role)
     @param('join', Types.Boolean)
@@ -502,7 +497,6 @@ class DomainUserHandler extends ManageHandler {
         this.back();
     }
 
-    @requireSudo
     @param('uids', Types.NumericArray)
     async postKick({ domainId }, uids: number[]) {
         const original = await domain.getMultiUserInDomain(domainId, { uid: { $in: uids } }).toArray();
@@ -526,7 +520,6 @@ class DomainUserHandler extends ManageHandler {
 }
 
 class DomainPermissionHandler extends ManageHandler {
-    @requireSudo
     async get({ domainId }) {
         const roles = await domain.getRoles(domainId);
         this.response.template = 'domain_permission.html';
@@ -535,7 +528,6 @@ class DomainPermissionHandler extends ManageHandler {
         };
     }
 
-    @requireSudo
     async post({ domainId }) {
         const roles = {};
         for (const [role, list] of Object.entries(this.request.body)) {
@@ -558,7 +550,6 @@ class DomainPermissionHandler extends ManageHandler {
 }
 
 class DomainRoleHandler extends ManageHandler {
-    @requireSudo
     async get({ domainId }) {
         const roles = await domain.getRoles(domainId, true);
         this.response.template = 'domain_role.html';
@@ -578,7 +569,6 @@ class DomainRoleHandler extends ManageHandler {
         this.back();
     }
 
-    @requireSudo
     @param('roles', Types.ArrayOf(Types.Role))
     async postDelete(domainId: string, roles: string[]) {
         if (new Set(roles).intersection(new Set(['root', 'default', 'guest'])).size > 0) {
@@ -607,7 +597,6 @@ class DomainJoinApplicationsHandler extends ManageHandler {
         this.response.template = 'domain_join_applications.html';
     }
 
-    @requireSudo
     @post('method', Types.Range([domain.JOIN_METHOD_NONE, domain.JOIN_METHOD_ALL, domain.JOIN_METHOD_CODE]))
     @post('role', Types.Role, true)
     @post('group', Types.Name, true)
@@ -641,7 +630,6 @@ class DomainAddStudentHandler extends ManageHandler {
         this.response.body = { domain: this.domain, added };
     }
 
-    @requireSudo
     @param('uidOrName', Types.UidOrName)
     async postAddStudent(domainId: string, uidOrName: string) {
         const targetKey = uidOrName.trim();

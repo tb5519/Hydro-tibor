@@ -11,6 +11,32 @@
   </form>
 </dialog>
 
+<dialog id="scratch-manage-dialog" class="sc-dialog sc-manage-dialog" data-scratch-manage-dialog aria-labelledby="scratch-manage-title" aria-describedby="scratch-manage-description">
+  <div class="sc-dialog-head">
+    <span class="sc-dialog-symbol" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 23-1 4 4-1L25 11l-3-3L7 23ZM19 11l3 3M7 7h9M7 13h5"/></svg></span>
+    <button class="sc-dialog-close" type="button" data-scratch-dialog-close aria-label="关闭管理作品窗口"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+  </div>
+  <h2 id="scratch-manage-title">管理作品</h2>
+  <p id="scratch-manage-description" class="sc-muted">修改名称，或将当前作品复制成独立的新作品。</p>
+  <form class="sc-form sc-spaced" data-scratch-manage-form>
+    <label class="sc-field" for="scratch-manage-name"><span>作品名称</span><input id="scratch-manage-name" name="title" maxlength="120" required autocomplete="off"></label>
+    <div class="sc-dialog-actions"><button class="sc-button sc-button-primary" type="submit" data-scratch-manage-rename>保存名称</button></div>
+  </form>
+  <div class="sc-manage-option">
+    <div><strong>复制副本</strong><p>生成独立作品，之后可以分别编辑和保存。</p></div>
+    <button class="sc-button" type="button" data-scratch-manage-copy>复制</button>
+  </div>
+  <div class="sc-manage-option sc-manage-option-danger">
+    <div><strong>删除作品</strong><p>删除后无法恢复。</p></div>
+    <button class="sc-button sc-button-danger" type="button" data-scratch-manage-delete>删除</button>
+  </div>
+  <div class="sc-manage-confirm" data-scratch-manage-confirm hidden>
+    <p data-scratch-manage-confirm-message>确定删除这个作品吗？</p>
+    <div class="sc-dialog-actions"><button class="sc-button" type="button" data-scratch-manage-cancel>取消</button><button class="sc-button sc-button-danger" type="button" data-scratch-manage-delete-confirm>确认删除</button></div>
+  </div>
+  <p class="sc-dialog-status" data-scratch-manage-status role="status" aria-live="polite" aria-atomic="true"></p>
+</dialog>
+
 <dialog id="scratch-share-dialog" class="sc-dialog" data-scratch-share-dialog aria-labelledby="scratch-share-title" aria-describedby="scratch-share-description">
   <div class="sc-dialog-head">
     <span class="sc-dialog-symbol" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 5h9v9m0-9L13 19M13 8H8a3 3 0 0 0-3 3v13a3 3 0 0 0 3 3h13a3 3 0 0 0 3-3v-5"/></svg></span>

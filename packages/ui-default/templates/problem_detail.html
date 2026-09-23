@@ -434,7 +434,7 @@
             <span class="problem__tag-item">{{ _('Tried') }}: {{ activity.nSubmit }}</span>
             <span class="problem__tag-item">{{ _('Accepted') }}: {{ activity.nAccept if ((not tdoc) or showAccept) else '?' }}</span>
             {% endif %}
-            <span class="problem__tag-item">{{ _('Difficulty') }}: {{ pdoc['difficulty'] or lib.difficulty(pdoc.nSubmit, pdoc.nAccept) or _('(None)') }}</span>
+            <span class="problem__tag-item">{{ _('Difficulty') }}: {{ pdoc['difficulty'] or lib.difficulty(pdoc.nSubmit, pdoc.nAccept) or 10 }}</span>
             <span class="problem__tag-item interactive">{{ _('Uploaded By') }}: {{ user.render_inline(udoc, badge=false) }}</span>
           {% endif %}
           {% if pdoc.tag.length %}

@@ -2,8 +2,15 @@
 {% block scratch_content %}
 <div class="sc-heading">
   <div><div class="sc-eyebrow">{{ '课堂创作' if isTeacher else '我的创作小天地' }}</div><h1>{{ '学员作品' if isTeacher else '我的作品' }}</h1><p class="sc-muted">{{ '查看学生的创作，也可以制作自己的示范作品。' if isTeacher else '上次的小点子，今天接着做！' }}</p></div>
-  <button class="sc-button sc-button-primary" type="button" data-scratch-create aria-haspopup="dialog" aria-controls="scratch-create-dialog"><span class="icon icon-add" aria-hidden="true"></span>新建作品</button>
+  <div class="sc-heading-actions">
+    {% if isTeacher %}<form class="sc-owner-filter" method="get" action="{{ url('scratch_works') }}" data-scratch-owner-filter>
+      <label for="scratch-owner-filter">查看学员</label>
+      <select id="scratch-owner-filter" name="owner" aria-label="按学员筛选作品"><option value="">全部学员</option>{% for student in studentOptions %}<option value="{{ student.uid }}"{% if selectedOwner == student.uid %} selected{% endif %}>{{ student.uname }}</option>{% endfor %}</select>
+      <noscript><button class="sc-button" type="submit">筛选</button></noscript>
+    </form>{% endif %}
+    <button class="sc-button sc-button-primary" type="button" data-scratch-create aria-haspopup="dialog" aria-controls="scratch-create-dialog"><span class="icon icon-add" aria-hidden="true"></span>新建作品</button>
+  </div>
 </div>
 {% include "partials/scratch_work_cards.html" %}
-{% if numPages > 1 %}<div class="sc-pagination">{{ paginator.render(page, numPages) }}</div>{% endif %}
+{% if numPages > 1 %}<div class="sc-pagination">{{ paginator.render(page, numPages, add_qs=utils.buildQueryString(owner=selectedOwner or '')) }}</div>{% endif %}
 {% endblock %}

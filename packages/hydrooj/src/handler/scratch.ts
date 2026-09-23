@@ -132,8 +132,31 @@ export class ScratchMainHandler extends ScratchHandler {
 export class ScratchWorksHandler extends ScratchHandler {
     async get() {
         const page = Math.max(1, Math.floor(+this.request.query.page || 1));
-        const [works, numPages, count] = await this.paginate(scratch.listWorks(this.actor), page, 50);
-        await this.renderScratch('scratch_works.html', { works, page, numPages, count });
+        const ownerQuery = this.request.query.owner;
+        let selectedOwner: number = null;
+        if (ownerQuery !== undefined && ownerQuery !== '') {
+            if (typeof ownerQuery !== 'string' || !/^[1-9]\d*$/.test(ownerQuery)) throw new ValidationError('owner');
+            selectedOwner = +ownerQuery;
+            if (!Number.isSafeInteger(selectedOwner) || selectedOwner < 1) throw new ValidationError('owner');
+            if (!this.actor.isTeacher && selectedOwner !== this.actor.uid) throw new PermissionError('Scratch 作品访问');
+            if (this.actor.isTeacher && selectedOwner !== this.actor.uid
+                && !await domain.collUser.findOne({ domainId: this.domain._id, uid: selectedOwner, join: true })) {
+                throw new ValidationError('owner', null, '请选择当前域的学员。');
+            }
+        }
+        const [works, numPages, count] = await this.paginate(scratch.listWorks(this.actor, undefined, selectedOwner), page, 50);
+        let studentOptions: { uid: number, uname: string }[] = [];
+        if (this.actor.isTeacher) {
+            const owners = await scratch.works.distinct('owner', { domainId: this.domain._id });
+            const members = await domain.collUser.find({ domainId: this.domain._id, uid: { $in: owners }, join: true })
+                .project<{ uid: number }>({ uid: 1 }).toArray();
+            const ids = members.map((member) => member.uid);
+            if (owners.includes(this.actor.uid) && !ids.includes(this.actor.uid)) ids.push(this.actor.uid);
+            const names = await user.getListForRender(this.domain._id, ids, false);
+            studentOptions = ids.map((uid) => ({ uid, uname: names[uid]?.displayName || names[uid]?.uname || String(uid) }))
+                .sort((a, b) => a.uname.localeCompare(b.uname, 'zh-CN'));
+        }
+        await this.renderScratch('scratch_works.html', { works, page, numPages, count, studentOptions, selectedOwner });
     }
 
     async post() {
@@ -145,36 +168,45 @@ export class ScratchWorksHandler extends ScratchHandler {
     }
 }
 export class ScratchWorkHandler extends ScratchHandler {
+    wantsJson() {
+        return this.request.json || `${this.request.headers.accept || ''}`.includes('application/json');
+    }
+
     async get() {
         const work = await scratch.getWork(this.actor, this.routeId('workId'));
-        const [versions, submissions, assignment] = await Promise.all([
-            scratch.versions.find({ domainId: this.domain._id, workId: work._id }).sort({ revision: -1 }).limit(60).toArray(),
+        const [submissions, assignment] = await Promise.all([
             scratch.listSubmissions(this.actor, { workId: work._id }).limit(50).toArray(),
             work.assignmentId ? scratch.getAssignment(this.actor, work.assignmentId) : null,
         ]);
-        const submittedRevisions = new Set(submissions.map((submission) => submission.revision));
-        await this.renderScratch('scratch_work.html', {
-            work, versions: versions.map((version) => ({ ...version, kind: submittedRevisions.has(version.revision) ? 'submission' : 'draft' })),
-            submissions, assignment,
-        });
+        await this.renderScratch('scratch_work.html', { work, submissions, assignment });
     }
 
     async post() {
         if (this.request.body.operation) return;
-        await scratch.renameWork(this.actor, this.routeId('workId'), this.request.body.title);
-        this.response.redirect = this.url('scratch_work', { workId: this.routeId('workId') });
+        const workId = this.routeId('workId');
+        await scratch.renameWork(this.actor, workId, this.request.body.title);
+        if (this.wantsJson()) {
+            this.response.type = 'application/json';
+            this.response.body = { ok: true, workId: workId.toHexString(), title: `${this.request.body.title}`.trim() };
+        } else this.response.redirect = this.url('scratch_work', { workId });
+    }
+
+    async postCopy() {
+        const work = await scratch.copyWork(this.actor, this.routeId('workId'));
+        if (this.wantsJson()) {
+            this.response.type = 'application/json';
+            this.response.body = { ok: true, workId: work._id.toHexString(), title: work.title };
+        } else this.response.redirect = this.url('scratch_editor', { query: { workId: work._id } });
     }
 
     async postDelete() {
         await scratch.deleteWork(this.actor, this.routeId('workId'));
-        this.response.redirect = this.url('scratch_works');
+        if (this.wantsJson()) {
+            this.response.type = 'application/json';
+            this.response.body = { ok: true };
+        } else this.response.redirect = this.url('scratch_works');
     }
 
-    async postRestore() {
-        await scratch.restoreVersion(this.actor, this.routeId('workId'),
-            objectId(this.request.body.versionId, 'versionId'), +this.request.body.revision);
-        this.response.redirect = this.url('scratch_editor', { query: { workId: this.routeId('workId') } });
-    }
 }
 export class ScratchAssignmentsHandler extends ScratchHandler {
     async get() {
@@ -288,7 +320,11 @@ export class ScratchEditorHandler extends ScratchHandler {
             return;
         }
         const assignment = work.assignmentId ? await scratch.getAssignment(this.actor, work.assignmentId) : null;
-        const readOnly = !!submission || work.owner !== this.user._id || query.readOnly === 'true' || query.readonly === 'true';
+        const readOnly = !!submission || (work.owner !== this.user._id && !this.actor.isTeacher)
+            || query.readOnly === 'true' || query.readonly === 'true';
+        const saveForStudent = !readOnly && this.actor.isTeacher && work.owner !== this.user._id;
+        const ownerDict = saveForStudent ? await user.getListForRender(this.domain._id, [work.owner], false) : null;
+        const ownerName = ownerDict?.[work.owner]?.displayName || ownerDict?.[work.owner]?.uname || String(work.owner);
         const fileId = submission?.fileId || work.currentFileId || assignment?.templateFileId;
         this.UiContext.scratchEditor = {
             editorVersion: getScratchEditorVersion(),
@@ -296,8 +332,8 @@ export class ScratchEditorHandler extends ScratchHandler {
             saveUrl: readOnly ? null : this.url('scratch_save', { workId: work._id }),
             libraryUrl: readOnly ? null : this.url('scratch_library'),
             backUrl: submission ? this.url('scratch_submission', { submissionId: submission._id }) : this.url('scratch_work', { workId: work._id }),
-            canSubmit: !readOnly && !!assignment && (!assignment.deadline || assignment.deadline.getTime() >= Date.now()),
-            readOnly, revision: work.revision, maxFileSize: SCRATCH_MAX_FILE_SIZE,
+            canSubmit: !readOnly && !saveForStudent && !!assignment && (!assignment.deadline || assignment.deadline.getTime() >= Date.now()),
+            readOnly, saveForStudent, ownerName, revision: work.revision, maxFileSize: SCRATCH_MAX_FILE_SIZE,
         };
         await this.renderScratch('scratch_editor.html', { work, assignment, submission });
     }
@@ -307,8 +343,11 @@ export class ScratchSaveHandler extends ScratchHandler {
         await this.limitRate('scratch_save', 60, 12);
         const submit = this.request.body.submit;
         if (submit !== undefined && !['true', 'false', true, false].includes(submit)) throw new ValidationError('submit');
+        const teacherSave = this.request.body.teacherSave;
+        if (teacherSave !== undefined && !['true', 'false', true, false].includes(teacherSave)) throw new ValidationError('teacherSave');
         const { work, submission } = await scratch.saveWork(this.actor, this.routeId('workId'), +this.request.body.revision,
-            this.upload(), submit === 'true' || submit === true, this.request.body.title, this.request.body.thumbnail);
+            this.upload(), submit === 'true' || submit === true, this.request.body.title, this.request.body.thumbnail,
+            teacherSave === 'true' || teacherSave === true);
         this.response.body = {
             ok: true, workId: work._id.toHexString(), revision: work.revision, title: work.title,
             projectUrl: this.url('scratch_file', { fileId: work.currentFileId }),

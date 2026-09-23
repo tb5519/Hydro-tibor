@@ -1,11 +1,11 @@
 {% if works|length %}
 <div class="sc-grid">
 {% for item in works %}
-  <article class="sc-card sc-work-card">
+  <article class="sc-card sc-work-card" data-scratch-work-card>
     <div class="sc-work-stage"{% if not item.thumbnailFileId %} data-scratch-thumbnail="{{ url('scratch_thumbnail', workId=item._id) }}"{% endif %}>
       <img data-scratch-thumbnail-image {% if item.thumbnailFileId %}loading="lazy" src="{{ url('scratch_file', fileId=item.thumbnailFileId) }}"{% else %}hidden{% endif %} alt="{{ item.title }} 的舞台截图" width="480" height="360">
       {% if not item.thumbnailFileId %}<span class="sc-work-stage-empty" data-scratch-thumbnail-placeholder>正在准备封面…</span>{% endif %}
-      <h3 class="sc-work-nameplate"><a href="{{ url('scratch_work', workId=item._id) }}" title="{{ item.title }}">{{ item.title }}</a></h3>
+      <h3 class="sc-work-nameplate"><button type="button" data-scratch-manage="{{ url('scratch_work', workId=item._id) }}" data-title="{{ item.title }}" title="管理作品：{{ item.title }}" aria-label="管理作品：{{ item.title }}" aria-haspopup="dialog" aria-controls="scratch-manage-dialog">{{ item.title }}</button></h3>
       {% if item.owner == handler.user._id or isTeacher %}<button class="sc-work-share" type="button" data-scratch-share="{{ url('scratch_share_create', workId=item._id) }}" data-title="{{ item.title }}" aria-label="分享作品：{{ item.title }}" aria-haspopup="dialog" aria-controls="scratch-share-dialog" title="分享作品">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6m0-6L10 14M9 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>{% endif %}
@@ -13,16 +13,13 @@
         <a class="sc-work-play" data-no-instant href="{{ url('scratch_editor', query={workId:item._id,readOnly:true}) }}" aria-label="播放作品：{{ item.title }}" title="播放作品">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.6a1 1 0 0 1 1.5-.86l10.2 6.4a1 1 0 0 1 0 1.72L9.5 19.26A1 1 0 0 1 8 18.4Z" fill="currentColor"/></svg>
         </a>
-        {% if item.owner == handler.user._id %}<a class="sc-work-edit" data-no-instant href="{{ url('scratch_editor', query={workId:item._id}) }}" aria-label="编辑作品：{{ item.title }}" title="编辑作品">
+        {% if item.owner == handler.user._id or isTeacher %}<a class="sc-work-edit{{ ' sc-work-edit-assist' if item.owner != handler.user._id else '' }}" data-no-instant href="{{ url('scratch_editor', query={workId:item._id}) }}" aria-label="{{ '代学员编辑作品：' if item.owner != handler.user._id else '编辑作品：' }}{{ item.title }}" title="{{ '代学员编辑' if item.owner != handler.user._id else '编辑作品' }}">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15.5 4.5 4 4M4 20l4.7-1 11-11a2.8 2.8 0 0 0-4-4l-11 11L4 20Z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>{% endif %}
       </div>
-      <div class="sc-work-meta">
-        <p class="sc-work-kind">{% if isTeacher and udict[item.owner] %}<span class="sc-work-owner" title="{{ udict[item.owner].uname }}">{{ udict[item.owner].uname }}</span><span aria-hidden="true">·</span>{% endif %}<span class="sc-work-type">{{ '课堂作业' if item.assignmentId else '自由创作' }}</span></p>
-        <p class="sc-work-updated">更新于 {{ datetimeSpan(item.updatedAt)|safe }}</p>
-      </div>
+      <p class="sc-work-meta"><span class="sc-work-owner" title="{{ udict[item.owner].uname if udict[item.owner] else '我' }}">{{ udict[item.owner].uname if udict[item.owner] else '我' }}</span><span class="sc-work-meta-dot" aria-hidden="true">·</span><span class="sc-work-updated">{{ datetimeSpan(item.updatedAt)|safe }}</span></p>
     </div>
   </article>
 {% endfor %}
 </div>
-{% else %}<div class="sc-empty"><strong>{{ '还没有学员保存作品' if isTeacher else '你的创意，从这里开始' }}</strong><p>{{ '学员保存后的作品会显示在这里。' if isTeacher else '新建一个作品，试着让角色动起来吧！' }}</p></div>{% endif %}
+{% else %}<div class="sc-empty"><strong>{{ '这位学员还没有作品' if selectedOwner else ('还没有学员保存作品' if isTeacher else '你的创意，从这里开始') }}</strong><p>{{ '换一位学员，或查看全部作品。' if selectedOwner else ('学员保存后的作品会显示在这里。' if isTeacher else '新建一个作品，试着让角色动起来吧！') }}</p>{% if selectedOwner %}<div class="sc-actions"><a class="sc-button" href="{{ url('scratch_works') }}">查看全部作品</a></div>{% endif %}</div>{% endif %}

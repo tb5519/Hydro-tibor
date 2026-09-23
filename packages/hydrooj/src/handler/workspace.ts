@@ -12,7 +12,7 @@ import * as oplog from '../model/oplog';
 import user from '../model/user';
 import workspace from '../model/workspace';
 import {
-    Handler, param, post, requireSudo, route, Types,
+    Handler, param, post, route, Types,
 } from '../service/server';
 import { randomstring } from '../utils';
 
@@ -158,7 +158,6 @@ class PlatformWorkspaceHandler extends PlatformAdminHandler {
         });
     }
 
-    @requireSudo
     @post('name', Types.String, true)
     @post('owner', Types.String, true)
     async postCreate(domainId: string, name = '', owner = '') {
@@ -355,7 +354,6 @@ class WorkspaceDashboardHandler extends WorkspaceScopedHandler {
         };
     }
 
-    @requireSudo
     @post('domainCode', Types.DomainId)
     @post('name', Types.String)
     @post('domainType', Types.Range(DOMAIN_TYPES), true)
@@ -403,7 +401,6 @@ class WorkspaceMembersHandler extends WorkspaceScopedHandler {
         };
     }
 
-    @requireSudo
     @post('account', Types.UidOrName)
     @post('role', Types.Range(WORKSPACE_MEMBER_ROLES))
     async postAddMember(domainId: string, account: string, role: WorkspaceRole) {
@@ -435,7 +432,6 @@ class WorkspaceMembersHandler extends WorkspaceScopedHandler {
         });
     }
 
-    @requireSudo
     @post('uid', Types.Int)
     @post('role', Types.Range(WORKSPACE_MEMBER_ROLES))
     async postUpdateMember(domainId: string, uid: number, role: WorkspaceRole) {
@@ -457,7 +453,6 @@ class WorkspaceMembersHandler extends WorkspaceScopedHandler {
         });
     }
 
-    @requireSudo
     @post('uid', Types.Int)
     async postRemoveMember(domainId: string, uid: number) {
         const current = await workspace.getMember(this.workspaceDoc._id, uid);
@@ -555,7 +550,6 @@ class WorkspaceStudentsHandler extends WorkspaceScopedHandler {
         };
     }
 
-    @requireSudo
     @post('uid', Types.Int)
     @post('studentLevel', Types.Range(STUDENT_LEVELS.map((level) => level.value)))
     async postUpdateLevel(domainId: string, uid: number, studentLevel: number) {
@@ -580,7 +574,6 @@ class WorkspaceStudentsHandler extends WorkspaceScopedHandler {
         });
     }
 
-    @requireSudo
     @post('account', Types.UidOrName)
     @post('domainCode', Types.DomainId)
     async postAddExisting(domainId: string, account: string, domainCode: string) {
@@ -609,7 +602,6 @@ class WorkspaceStudentsHandler extends WorkspaceScopedHandler {
         });
     }
 
-    @requireSudo
     @post('uid', Types.Int)
     async postRemoveStudent(domainId: string, uid: number) {
         if (!this.canManageStudents()) throw new ForbiddenError();
@@ -638,7 +630,6 @@ class WorkspaceStudentsHandler extends WorkspaceScopedHandler {
         });
     }
 
-    @requireSudo
     @post('uname', Types.Username)
     @post('mail', Types.Email, true)
     @post('password', Types.Password)

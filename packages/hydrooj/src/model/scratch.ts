@@ -156,8 +156,8 @@ export async function getFile(actor: ScratchActor, _id: ObjectId) {
     } else throw new PermissionError('Scratch 文件访问');
     return doc;
 }
-export function listWorks(actor: ScratchActor, assignmentId?: ObjectId) {
-    return works.find({ domainId: actor.domainId, ...(!actor.isTeacher ? { owner: actor.uid } : {}),
+export function listWorks(actor: ScratchActor, assignmentId?: ObjectId, owner?: number) {
+    return works.find({ domainId: actor.domainId, ...(!actor.isTeacher ? { owner: actor.uid } : owner ? { owner } : {}),
         ...(assignmentId ? { assignmentId } : {}) }).sort({ updatedAt: -1 });
 }
 export function listAssignments(actor: ScratchActor) {
@@ -244,17 +244,24 @@ async function removeFile(actor: ScratchActor, _id: ObjectId) {
     if (removed.deletedCount) await releaseFileBytes(actor, doc.size);
 }
 
-export async function createWork(actor: ScratchActor, title: string, assignmentId: ObjectId = null) {
+export async function createWork(actor: ScratchActor, title: string, assignmentId: ObjectId = null, reuseTitle = true) {
     const assignment = assignmentId ? await getAssignment(actor, assignmentId) : null;
+    const cleanTitle = cleanText(title, 'title', 120, assignment?.title || '我的 Scratch 作品');
     if (assignment) {
         const existing = await works.findOne({ domainId: actor.domainId, owner: actor.uid, assignmentId });
+        if (existing) return existing;
+    } else if (reuseTitle) {
+        // A title is the name of one free creation for its author. Opening a
+        // same-named creation should continue it rather than allocate another.
+        const existing = await works.findOne({ domainId: actor.domainId, owner: actor.uid, assignmentId: null, title: cleanTitle },
+            { sort: { updatedAt: -1 } });
         if (existing) return existing;
     }
     if (await works.countDocuments({ domainId: actor.domainId, owner: actor.uid }) >= 200) {
         throw new ValidationError('title', null, '每人最多保留 200 个作品。');
     }
     const doc: ScratchWork = {
-        ...base(actor), title: cleanText(title, 'title', 120, assignment?.title || '我的 Scratch 作品'),
+        ...base(actor), title: cleanTitle,
         assignmentId, currentFileId: null, revision: 0,
     };
     try {
@@ -269,7 +276,10 @@ export async function createWorkFromMaterial(actor: ScratchActor, materialId: Ob
     const material = await getMaterial(actor, materialId);
     const source = await getFile(actor, material.fileId);
     if (source.mime !== 'application/x.scratch.sb3') throw new ValidationError('materialId', null, '只有 SB3 素材可以直接创建作品。');
-    const work = await createWork(actor, title || material.title);
+    const workTitle = cleanText(title || material.title, 'title', 120);
+    const existing = await works.findOne({ domainId: actor.domainId, owner: actor.uid, assignmentId: null, title: workTitle });
+    if (existing) return existing;
+    const work = await createWork(actor, workTitle, null, false);
     const file: ScratchFile = {
         ...base(actor), filename: source.filename, size: source.size, mime: source.mime, path: '', workId: work._id,
     };
@@ -294,10 +304,69 @@ export async function createWorkFromMaterial(actor: ScratchActor, materialId: Ob
     }
 }
 export async function renameWork(actor: ScratchActor, _id: ObjectId, title: string) {
-    await getWork(actor, _id, true);
-    await works.updateOne({ domainId: actor.domainId, _id, owner: actor.uid }, {
+    await getWork(actor, _id);
+    await works.updateOne({ domainId: actor.domainId, _id }, {
         $set: { title: cleanText(title, 'title', 120), updatedAt: new Date() },
     });
+}
+
+async function copyWorkFile(actor: ScratchActor, workId: ObjectId, sourceId: ObjectId, thumbnail = false) {
+    const source = await files.findOne({ domainId: actor.domainId, _id: sourceId });
+    if (!source) throw new NotFoundError('Scratch 文件');
+    const file: ScratchFile = {
+        ...base(actor), workId, ...(thumbnail ? { purpose: 'thumbnail' as const } : {}),
+        path: '', filename: source.filename, size: source.size, mime: source.mime,
+    };
+    file.path = `scratch/${actor.domainId}/${file._id}${thumbnail ? '.png' : '.sb3'}`;
+    await reserveFileBytes(actor, file.size);
+    try {
+        await storage.copy(source.path, file.path);
+        await files.insertOne(file);
+    } catch (error) {
+        await storage.del([file.path], actor.uid);
+        await releaseFileBytes(actor, file.size);
+        throw error;
+    }
+    await mirrorFile(file);
+    return file;
+}
+
+export async function copyWork(actor: ScratchActor, sourceId: ObjectId) {
+    const source = await getWork(actor, sourceId);
+    const assignment = source.assignmentId ? await getAssignment(actor, source.assignmentId) : null;
+    const sourceFileId = source.currentFileId || assignment?.templateFileId;
+    if (await works.countDocuments({ domainId: actor.domainId, owner: actor.uid }) >= 200) {
+        throw new ValidationError('title', null, '每人最多保留 200 个作品。');
+    }
+    const stem = source.title.slice(0, 110);
+    let title = `${stem}（副本）`;
+    for (let number = 2; await works.findOne({ domainId: actor.domainId, owner: actor.uid, assignmentId: null, title }); number++) {
+        title = `${stem.slice(0, 110 - String(number).length)}（副本 ${number}）`;
+    }
+    const work: ScratchWork = {
+        ...base(actor), title, assignmentId: null, currentFileId: null, revision: 0,
+    };
+    let project: ScratchFile;
+    let thumbnail: ScratchFile;
+    try {
+        if (sourceFileId) {
+            project = await copyWorkFile(actor, work._id, sourceFileId);
+            work.currentFileId = project._id;
+            work.revision = 1;
+            await versions.insertOne({ ...base(actor), workId: work._id, fileId: project._id, revision: 1 });
+        }
+        if (source.thumbnailFileId) {
+            thumbnail = await copyWorkFile(actor, work._id, source.thumbnailFileId, true);
+            work.thumbnailFileId = thumbnail._id;
+        }
+        await works.insertOne(work);
+        return work;
+    } catch (error) {
+        await versions.deleteMany({ domainId: actor.domainId, workId: work._id });
+        if (project) await removeFile(actor, project._id);
+        if (thumbnail) await removeFile(actor, thumbnail._id);
+        throw error;
+    }
 }
 
 export interface AssignmentInput { title: string, description: string, deadline: Date | null }
@@ -407,11 +476,10 @@ export async function deletePreset(actor: ScratchActor, _id: ObjectId) {
     await removeFile(actor, doc.fileId);
 }
 
-async function pruneVersions(actor: ScratchActor, workId: ObjectId) {
-    // Submitted revisions are immutable records; retain ten additional drafts.
-    const submitted = await submissions.find({ domainId: actor.domainId, workId }).project<{ revision: number }>({ revision: 1 }).toArray();
-    const old = await versions.find({ domainId: actor.domainId, workId, revision: { $nin: submitted.map((doc) => doc.revision) } })
-        .sort({ revision: -1 }).skip(10).toArray();
+async function pruneVersions(actor: ScratchActor, workId: ObjectId, currentRevision: number) {
+    // Keep one editable version. Submitted files and published shares retain
+    // their own references, so grading and existing links remain valid.
+    const old = await versions.find({ domainId: actor.domainId, workId, revision: { $ne: currentRevision } }).toArray();
     for (const version of old) {
         await versions.deleteOne({ domainId: actor.domainId, _id: version._id });
         await removeFile(actor, version.fileId);
@@ -420,12 +488,13 @@ async function pruneVersions(actor: ScratchActor, workId: ObjectId) {
 
 // The short Mongo lease serializes a work across processes/tabs. The optimistic
 // revision check stops stale browser saves from silently overwriting newer work.
-async function lockWork(actor: ScratchActor, workId: ObjectId, revision: number) {
-    await getWork(actor, workId, true);
+async function lockWork(actor: ScratchActor, workId: ObjectId, revision: number, teacherWrite = false) {
+    const work = await getWork(actor, workId, !teacherWrite);
+    if (teacherWrite && (!actor.isTeacher || work.owner === actor.uid)) throw new PermissionError('Scratch 代学员保存');
     if (!Number.isSafeInteger(revision) || revision < 0) throw new ValidationError('revision');
     const token = new ObjectId();
     const doc = await works.findOneAndUpdate({
-        domainId: actor.domainId, _id: workId, owner: actor.uid, revision,
+        domainId: actor.domainId, _id: workId, owner: work.owner, revision,
         $or: [{ savingUntil: { $exists: false } }, { savingUntil: { $lt: new Date() } }],
     }, { $set: { savingToken: token, savingUntil: new Date(Date.now() + 10 * 60 * 1000) } }, { returnDocument: 'after' });
     if (!doc) throw new ValidationError('revision', null, '作品已在其他窗口更新，或正在保存。请刷新后重试。');
@@ -446,9 +515,11 @@ async function lockWork(actor: ScratchActor, workId: ObjectId, revision: number)
 }
 export async function saveWork(
     actor: ScratchActor, workId: ObjectId, revision: number, upload: { filepath: string, originalFilename?: string },
-    submit = false, title?: string, thumbnailData?: string,
+    submit = false, title?: string, thumbnailData?: string, teacherSave = false,
 ) {
-    const work = await getWork(actor, workId, true);
+    const work = await getWork(actor, workId, !teacherSave);
+    if (teacherSave && (!actor.isTeacher || work.owner === actor.uid)) throw new PermissionError('Scratch 代学员保存');
+    if (teacherSave && submit) throw new ValidationError('submit', null, '老师代学员保存时不能代提交作业。');
     const assignment = work.assignmentId ? await getAssignment(actor, work.assignmentId) : null;
     if (submit && (!assignment || (assignment.deadline && assignment.deadline.getTime() < Date.now()))) {
         throw new ValidationError('submit', null, '当前作品不能提交，或已超过作业截止时间。');
@@ -458,7 +529,7 @@ export async function saveWork(
     }
     const cleanTitle = title === undefined ? work.title : cleanText(title, 'title', 120);
     const thumbnailBuffer = await validateScratchThumbnail(thumbnailData);
-    const { token, doc: lockedWork } = await lockWork(actor, workId, revision);
+    const { token, doc: lockedWork } = await lockWork(actor, workId, revision, teacherSave);
     let file: ScratchFile;
     let thumbnail: ScratchFile;
     let published = false;
@@ -488,7 +559,14 @@ export async function saveWork(
         if (lockedWork.thumbnailFileId) {
             await removeFile(actor, lockedWork.thumbnailFileId).catch((error) => logger.warn('Could not remove old Scratch thumbnail: %s', error));
         }
-        await pruneVersions(actor, workId).catch((error) => logger.warn('Could not prune old Scratch drafts: %s', error));
+        await pruneVersions(actor, workId, revision + 1).catch((error) => logger.warn('Could not prune old Scratch drafts: %s', error));
+        if (!work.assignmentId) {
+            const duplicates = await works.find({ domainId: actor.domainId, owner: work.owner, assignmentId: null,
+                title: cleanTitle, _id: { $ne: workId } }).project<{ _id: ObjectId }>({ _id: 1 }).toArray();
+            for (const duplicate of duplicates) {
+                await deleteWork(actor, duplicate._id).catch((error) => logger.warn('Could not remove duplicate Scratch work: %s', error));
+            }
+        }
         return { work: await getWork(actor, workId), submission };
     } finally {
         if (!published && file) {
@@ -497,30 +575,6 @@ export async function saveWork(
             await removeFile(actor, file._id);
             if (thumbnail) await removeFile(actor, thumbnail._id);
         }
-        await works.updateOne({ domainId: actor.domainId, _id: workId, savingToken: token }, { $unset: { savingToken: '', savingUntil: '' } });
-    }
-}
-export async function restoreVersion(actor: ScratchActor, workId: ObjectId, versionId: ObjectId, revision: number) {
-    const version = await versions.findOne({ domainId: actor.domainId, _id: versionId, workId });
-    if (!version) throw new NotFoundError('Scratch 版本');
-    const { token, doc } = await lockWork(actor, workId, revision);
-    const next: ScratchVersion = { ...base(actor), workId, fileId: version.fileId, revision: revision + 1 };
-    let published = false;
-    try {
-        await versions.insertOne(next);
-        const result = await works.updateOne({ domainId: actor.domainId, _id: workId, savingToken: token, revision }, {
-            $set: { currentFileId: version.fileId, revision: revision + 1, updatedAt: new Date() },
-            $unset: { thumbnailFileId: '' },
-        });
-        if (!result.matchedCount) throw new ValidationError('revision', null, '恢复状态发生变化，请刷新重试。');
-        published = true;
-        if (doc.thumbnailFileId) {
-            await removeFile(actor, doc.thumbnailFileId).catch((error) => logger.warn('Could not remove old Scratch thumbnail: %s', error));
-        }
-        await pruneVersions(actor, workId).catch((error) => logger.warn('Could not prune old Scratch drafts: %s', error));
-        return getWork(actor, workId);
-    } finally {
-        if (!published) await versions.deleteOne({ domainId: actor.domainId, _id: next._id });
         await works.updateOne({ domainId: actor.domainId, _id: workId, savingToken: token }, { $unset: { savingToken: '', savingUntil: '' } });
     }
 }
@@ -604,14 +658,13 @@ export async function getPublicShare(domainId: string, token: unknown) {
 }
 
 export async function deleteWork(actor: ScratchActor, workId: ObjectId) {
-    const work = await getWork(actor, workId, true);
-    if (work.assignmentId || await submissions.countDocuments({ domainId: actor.domainId, workId })) {
-        throw new ValidationError('workId', null, '已关联作业或提交记录的作品不能删除。');
-    }
-    const { token } = await lockWork(actor, workId, work.revision);
+    const work = await getWork(actor, workId);
+    const { token } = await lockWork(actor, workId, work.revision, actor.isTeacher && work.owner !== actor.uid);
     const docs = await files.find({ domainId: actor.domainId, workId }).toArray();
-    await works.deleteOne({ domainId: actor.domainId, _id: workId, savingToken: token });
+    const removed = await works.deleteOne({ domainId: actor.domainId, _id: workId, savingToken: token });
+    if (!removed.deletedCount) throw new ValidationError('workId', null, '作品正在被其他窗口修改，请刷新后重试。');
     await versions.deleteMany({ domainId: actor.domainId, workId });
+    await submissions.deleteMany({ domainId: actor.domainId, workId });
     await shares.deleteMany({ domainId: actor.domainId, workId });
     for (const file of docs) await removeFile(actor, file._id);
 }

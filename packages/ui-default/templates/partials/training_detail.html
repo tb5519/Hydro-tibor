@@ -135,7 +135,7 @@
                       </td>
                       <td class="col--tried" data-label="{{ _('Tried') }}">{{ activity.nSubmit }}</td>
                       <td class="col--ac" data-label="{{ _('AC') }}">{{ activity.nAccept }}</td>
-                      <td class="col--difficulty" data-label="{{ _('Difficulty') }}">{{ pdoc['difficulty'] or (lib.difficulty(pdoc.nSubmit, pdoc.nAccept) if pdoc.nSubmit else _('(None)')) or _('(None)') }}</td>
+                      <td class="col--difficulty" data-label="{{ _('Difficulty') }}">{{ pdoc['difficulty'] or lib.difficulty(pdoc.nSubmit, pdoc.nAccept) or 10 }}</td>
                     </tr>
                   {% else %}
                     {% set pdoc = {'_id': pid, 'hidden': true, 'title': '*'} %}
