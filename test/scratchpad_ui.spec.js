@@ -43,7 +43,7 @@ async function harness(name, options = {}) {
     const execute = (code) => {
         const mod = { exports: {} };
         vm.runInNewContext(code, {
-            module: mod, exports: mod.exports, window: dom.window, CustomEvent: dom.window.CustomEvent, setTimeout,
+            module: mod, exports: mod.exports, React, window: dom.window, CustomEvent: dom.window.CustomEvent, setTimeout,
             UiContext: { pdoc: { config: { type: 'default' } }, canViewRecord: true,
                 postSubmitUrl: '/submit', getSubmissionsUrl: '/submissions', ...options.context },
             require(id) {
@@ -134,7 +134,11 @@ describe('scratchpad controls and result presentation', () => {
             }
             assert.equal(h.posts.length, 0);
             assert.ok(h.document.querySelector('[data-global-hotkey="alt+r"]'));
-            assert.equal(h.document.querySelector('[data-homework-review-copy]'), null);
+            const copyButton = h.document.querySelector('[data-homework-review-copy]');
+            assert.ok(copyButton);
+            assert.equal(copyButton.disabled, true);
+            assert.match(copyButton.textContent, /复制到我的作答/);
+            assert.match(copyButton.title, /该学员尚未提交/);
         } finally { await h.close(); }
     });
 

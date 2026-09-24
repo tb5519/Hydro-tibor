@@ -172,6 +172,11 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
     }
     if (langInfo?.pretest === false) canUsePretest = false;
     if (review) canUsePretest = false;
+    const copyReviewTitle = !review?.rid
+      ? '该学员尚未提交，暂无可复制的作答'
+      : review.ownAnswerUrl
+        ? '替换你的本题草稿，修改后可自行递交'
+        : '当前账号没有这道题的独立作答权限';
     return (
       <Toolbar role="toolbar" aria-label="代码编辑工具栏">
         <div className="scratchpad__toolbar__actions">
@@ -229,12 +234,12 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
             <span className="scratchpad__toolbar__wait" role="status">原语言已停用，请先切换语言</span>
           )}
           {review && <span className="scratchpad__review-label">{review.name} 的作答<span>只读</span></span>}
-          {review?.rid && (
+          {review && (
             <ToolbarButton
               className="scratchpad__toolbar__copy-review"
               data-homework-review-copy
-              disabled={!review.ownAnswerUrl}
-              title={review.ownAnswerUrl ? '替换你的本题草稿，修改后可自行递交' : '当前账号没有这道题的独立作答权限'}
+              disabled={!review.rid || !review.ownAnswerUrl}
+              title={copyReviewTitle}
             >
               <Icon name="copy" />
               <span>复制到我的作答</span>

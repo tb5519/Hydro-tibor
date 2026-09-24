@@ -49,7 +49,7 @@ function renderSidebar(kind = 'normal', role = 'student', options = {}) {
         tdoc: { docId: '6aa000000000000000000001', rule: kind === 'homework' ? 'homework' : 'acm' },
         tsdoc: {}, mode: options.mode || 'contest',
         model: { contest: { isOngoing: () => true, isExtended: () => false, isDone: () => false } },
-        UiContext: { canManageProblemSidebar: canManageRecordList(viewer), homeworkReview: {
+        UiContext: { canManageProblemSidebar: canManageRecordList(viewer), homeworkReview: options.review || {
             name: '学员', rid: '6aa000000000000000000002', ownAnswerUrl: '/p/P1002', returnUrl: '/homework/1?uid=20',
         } },
     });
@@ -105,6 +105,18 @@ describe('problem sidebar administrative entrances', () => {
         const document = renderSidebar('review', 'teacher');
         assert.ok(document.querySelector('[data-homework-review-copy]'));
         assert.equal(document.querySelector('[name="problem-sidebar__copy"]'), null);
+    });
+
+    it('shows the copy action as unavailable when the student has not submitted', () => {
+        const document = renderSidebar('review', 'teacher', { review: {
+            name: '学员', rid: '', ownAnswerUrl: '/p/P1002', returnUrl: '/homework/1?uid=20',
+        } });
+        const button = document.querySelector('[data-homework-review-copy]');
+        assert.ok(button);
+        assert.equal(button.disabled, true);
+        assert.match(button.textContent, /复制到我的作答/);
+        assert.match(button.title, /该学员尚未提交/);
+        assert.match(document.querySelector('.problem-review-heading__hint:last-child').textContent, /暂无可复制的作答/);
     });
 
     it('preserves contest and cross-domain submission context while correction returns to ordinary practice', () => {
