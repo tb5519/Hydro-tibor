@@ -107,16 +107,16 @@ describe('problem sidebar administrative entrances', () => {
         assert.equal(document.querySelector('[name="problem-sidebar__copy"]'), null);
     });
 
-    it('shows the copy action as unavailable when the student has not submitted', () => {
+    it('offers the teacher answer link when the student has not submitted', () => {
         const document = renderSidebar('review', 'teacher', { review: {
             name: '学员', rid: '', ownAnswerUrl: '/p/P1002', returnUrl: '/homework/1?uid=20',
         } });
         const button = document.querySelector('[data-homework-review-copy]');
         assert.ok(button);
-        assert.equal(button.disabled, true);
+        assert.equal(button.disabled, false);
         assert.match(button.textContent, /复制到我的作答/);
-        assert.match(button.title, /该学员尚未提交/);
-        assert.match(document.querySelector('.problem-review-heading__hint:last-child').textContent, /暂无可复制的作答/);
+        assert.match(button.title, /打开我的作答/);
+        assert.match(document.querySelector('.problem-review-heading__hint:last-child').textContent, /保留原有草稿/);
     });
 
     it('preserves contest and cross-domain submission context while correction returns to ordinary practice', () => {

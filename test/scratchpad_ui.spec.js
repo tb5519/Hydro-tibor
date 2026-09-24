@@ -124,8 +124,10 @@ describe('scratchpad controls and result presentation', () => {
         } finally { await h.close(); }
     });
 
-    it('identifies the reviewed student and offers no teacher submission or self-test controls', async () => {
-        const h = await harness('ScratchpadToolbarContainer', { context: { homeworkReview: { uid: 23, name: '小明' } } });
+    it('opens the teacher answer for an unsubmitted review without offering submission or self-test controls', async () => {
+        const h = await harness('ScratchpadToolbarContainer', { context: {
+            homeworkReview: { uid: 23, name: '小明', rid: '', ownAnswerUrl: '/d/class-a/p/P1002' },
+        } });
         try {
             assert.match(h.document.querySelector('.scratchpad__review-label').textContent, /小明 的作答.*只读/);
             assert.equal(h.document.querySelector('.select').disabled, true);
@@ -136,9 +138,11 @@ describe('scratchpad controls and result presentation', () => {
             assert.ok(h.document.querySelector('[data-global-hotkey="alt+r"]'));
             const copyButton = h.document.querySelector('[data-homework-review-copy]');
             assert.ok(copyButton);
-            assert.equal(copyButton.disabled, true);
+            assert.equal(copyButton.disabled, false);
             assert.match(copyButton.textContent, /复制到我的作答/);
-            assert.match(copyButton.title, /该学员尚未提交/);
+            assert.match(copyButton.title, /打开我的作答/);
+            await h.click('[data-homework-review-copy]');
+            assert.equal(h.posts.length, 0);
         } finally { await h.close(); }
     });
 

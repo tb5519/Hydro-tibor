@@ -5,11 +5,16 @@ export async function copyHomeworkReviewToOwnDraft() {
   if (UiContext.objectiveMergedReview) throw new Error('合并作答仅供查看，请返回题目后自行作答。');
   const review = UiContext.homeworkReview;
   const pdoc = UiContext.pdoc;
-  if (!review?.rid || !UserContext._id) throw new Error('该学员暂无可复制的作答。');
+  if (!review || !UserContext._id) throw new Error('无法打开我的作答。');
   if (!review.ownAnswerUrl) throw new Error('当前账号没有这道题的独立作答权限。');
   const target = new URL(review.ownAnswerUrl, window.location.href);
   if (target.origin !== window.location.origin || target.searchParams.has('reviewUid') || target.searchParams.has('tid')) {
     throw new Error('作答入口无效，请刷新页面后重试。');
+  }
+  if (!review.rid) {
+    // No student submission exists; open the teacher's editor without replacing their draft.
+    if (pdoc.config?.type !== 'objective') target.searchParams.set('scratchpad', '1');
+    return target.toString();
   }
   // Homework review must not write to the student's key or the homework's key.
   const key = `${UserContext._id}/${pdoc.domainId}/${pdoc.docId}`;

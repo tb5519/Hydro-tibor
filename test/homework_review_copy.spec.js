@@ -113,6 +113,21 @@ describe('copying reviewed answers into the teacher’s own draft', () => {
         assert.equal(h.values.get(`${teacherKey}#lang`), 'cpp');
     });
 
+    it('opens the teacher editor without changing any draft when the student has not submitted', async (t) => {
+        const h = harness({ review: { rid: '', code: '', lang: '' } });
+        t.after(h.close);
+        const target = new URL(await h.copy());
+        assert.equal(target.pathname, '/d/class-a/p/P1002');
+        assert.equal(target.searchParams.get('scratchpad'), '1');
+        assert.equal(target.searchParams.has('tid'), false);
+        assert.equal(target.searchParams.has('reviewUid'), false);
+        assert.equal(h.values.get(teacherKey), 'old teacher code');
+        assert.equal(h.values.get(`${teacherKey}#lang`), 'cpp');
+        assert.deepEqual(h.writes, []);
+        assert.deepEqual(h.dbWrites, []);
+        assert.equal(h.location.href, reviewUrl);
+    });
+
     it('copies objective answer values only, excluding grades and invalid values', async (t) => {
         const h = harness({ objective: true, initialSubmission: {
             answers: { 1: 'A', '2-1': ['B', 'C'], 3: '', 4: [], 5: { nested: true }, 6: ['A', 9], unknown: 'D' },
@@ -143,13 +158,13 @@ describe('copying reviewed answers into the teacher’s own draft', () => {
         assert.equal(missing.dbWrites.length, 0);
     });
 
-    it('refuses to save when no record, no signed-in teacher or no ordinary problem permission exists', async () => {
+    it('refuses to navigate without a signed-in teacher or ordinary problem permission', async () => {
         await Promise.all([
-            { review: { rid: '' } }, { uid: 0 }, { review: { ownAnswerUrl: '' } },
+            { uid: 0 }, { review: { ownAnswerUrl: '' } },
         ].map(async (options) => {
             const h = harness(options);
             try {
-                await assert.rejects(h.copy(), /暂无可复制|没有这道题/);
+                await assert.rejects(h.copy(), /无法打开|没有这道题/);
                 assert.equal(h.writes.length, 0);
                 assert.equal(h.dbWrites.length, 0);
                 assert.equal(h.location.href, reviewUrl);
@@ -160,14 +175,14 @@ describe('copying reviewed answers into the teacher’s own draft', () => {
     it('rejects cross-origin and review or homework targets before writing any draft', async () => {
         await Promise.all([
             'https://elsewhere.test/p/P1002', '/d/class-a/p/P1002?tid=123', '/d/class-a/p/P1002?reviewUid=20',
-        ].map(async (ownAnswerUrl) => {
-            const h = harness({ review: { ownAnswerUrl } });
+        ].flatMap((ownAnswerUrl) => ['', '6aa000000000000000000002'].map(async (rid) => {
+            const h = harness({ review: { ownAnswerUrl, rid } });
             try {
                 await assert.rejects(h.copy(), /作答入口无效/);
                 assert.equal(h.writes.length, 0);
                 assert.equal(h.dbWrites.length, 0);
             } finally { h.close(); }
-        }));
+        })));
     });
 
     it('restores both previous code and language after a one-time save failure', async (t) => {

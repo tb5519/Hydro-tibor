@@ -7,10 +7,10 @@
     <strong>{{ review.name }}</strong>
     <span class="problem-review-heading__hint">{% if merged %}汇总 {{ merged.submissionCount }} 次提交 · 只读查看{% else %}{{ '已提交 · 只读查看' if review.rid else '该学员尚未提交' }}{% endif %}</span>
     {% if not merged %}
-    <button type="button" class="problem-review-copy" data-homework-review-copy{% if not review.rid %} disabled title="该学员尚未提交，暂无可复制的作答"{% elif not review.ownAnswerUrl %} disabled title="当前账号没有这道题的独立作答权限"{% endif %}>
+    <button type="button" class="problem-review-copy" data-homework-review-copy{% if not review.ownAnswerUrl %} disabled title="当前账号没有这道题的独立作答权限"{% elif not review.rid %} title="该学员尚未提交，打开我的作答以演示讲解"{% endif %}>
       <span class="icon icon-copy"></span> 复制到我的作答
     </button>
-    <span class="problem-review-heading__hint">{{ '替换你的本题草稿，修改后可自行递交' if review.rid else '该学员尚未提交，暂无可复制的作答' }}</span>
+    <span class="problem-review-heading__hint">{{ '替换你的本题草稿，修改后可自行递交' if review.rid else '打开我的作答以演示讲解，保留原有草稿' }}</span>
     {% endif %}
   </div>
   {% endif %}
