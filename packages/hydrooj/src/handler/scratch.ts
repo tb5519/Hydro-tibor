@@ -338,14 +338,21 @@ export class ScratchEditorHandler extends ScratchHandler {
         const ownerDict = saveForStudent ? await user.getListForRender(this.domain._id, [work.owner], false) : null;
         const ownerName = ownerDict?.[work.owner]?.displayName || ownerDict?.[work.owner]?.uname || String(work.owner);
         const fileId = submission?.fileId || work.currentFileId || assignment?.templateFileId;
-        const ownerPreference = await user.coll.findOne({ _id: work.owner }, { projection: { scratchEditorLocale: 1 } });
+        // Assign each editable page a server-ordered generation. A delayed request
+        // from an older tab cannot replace a choice already saved by a newer tab.
+        const ownerPreference = readOnly
+            ? await user.coll.findOne({ _id: work.owner }, { projection: { scratchEditorLocale: 1 } })
+            : await user.coll.findOneAndUpdate({ _id: work.owner },
+                { $inc: { scratchEditorLocaleSessionCounter: 1 } },
+                { returnDocument: 'after', projection: { scratchEditorLocale: 1, scratchEditorLocaleSessionCounter: 1 } });
         const locale = ownerPreference?.scratchEditorLocale;
         this.UiContext.scratchEditor = {
             editorVersion: getScratchEditorVersion(),
             workId: work._id.toHexString(), title: work.title, projectUrl: fileId ? this.url('scratch_file', { fileId }) : null,
             saveUrl: readOnly ? null : this.url('scratch_save', { workId: work._id }),
             locale: SCRATCH_EDITOR_LOCALES.has(locale) ? locale : DEFAULT_SCRATCH_EDITOR_LOCALE,
-            languageUrl: readOnly ? null : this.url('scratch_language', { workId: work._id }),
+            languageUrl: readOnly || !ownerPreference ? null : this.url('scratch_language', { workId: work._id }),
+            languageGeneration: ownerPreference?.scratchEditorLocaleSessionCounter || null,
             libraryUrl: readOnly ? null : this.url('scratch_library'),
             backUrl: submission ? this.url('scratch_submission', { submissionId: submission._id }) : this.url('scratch_work', { workId: work._id }),
             canSubmit: !readOnly && !saveForStudent && !!assignment && (!assignment.deadline || assignment.deadline.getTime() >= Date.now()),
@@ -357,7 +364,7 @@ export class ScratchEditorHandler extends ScratchHandler {
 export class ScratchLanguageHandler extends ScratchHandler {
     async post() {
         await this.limitRate('scratch_language', 60, 60);
-        const { locale, session, sequence: rawSequence } = this.request.body;
+        const { locale, session, generation: rawGeneration, sequence: rawSequence } = this.request.body;
         if (typeof locale !== 'string' || !SCRATCH_EDITOR_LOCALES.has(locale)) throw new ValidationError('locale');
         if (typeof session !== 'string'
             || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(session)) {
@@ -368,20 +375,32 @@ export class ScratchLanguageHandler extends ScratchHandler {
         }
         const sequence = Number(rawSequence);
         if (!Number.isSafeInteger(sequence) || sequence < 1 || sequence > 1_000_000_000) throw new ValidationError('sequence');
+        if (typeof rawGeneration !== 'number'
+            && (typeof rawGeneration !== 'string' || !/^[1-9]\d*$/.test(rawGeneration))) {
+            throw new ValidationError('generation');
+        }
+        const generation = Number(rawGeneration);
+        if (!Number.isSafeInteger(generation) || generation < 1 || generation > 1_000_000_000) {
+            throw new ValidationError('generation');
+        }
         const work = await scratch.getWork(this.actor, this.routeId('workId'));
         const updated = await user.coll.findOneAndUpdate({
             _id: work.owner,
+            scratchEditorLocaleSessionCounter: { $gte: generation },
             $or: [
-                { 'scratchEditorLocaleRevision.session': { $ne: session } },
-                { 'scratchEditorLocaleRevision.sequence': { $lt: sequence } },
+                { 'scratchEditorLocaleRevision.generation': { $exists: false } },
+                { 'scratchEditorLocaleRevision.generation': { $lt: generation } },
+                { 'scratchEditorLocaleRevision.generation': generation,
+                    'scratchEditorLocaleRevision.session': session,
+                    'scratchEditorLocaleRevision.sequence': { $lt: sequence } },
             ],
         }, {
-            $set: { scratchEditorLocale: locale, scratchEditorLocaleRevision: { session, sequence } },
+            $set: { scratchEditorLocale: locale, scratchEditorLocaleRevision: { session, generation, sequence } },
         }, { returnDocument: 'after', projection: { scratchEditorLocale: 1 } });
         const current = updated || await user.coll.findOne({ _id: work.owner }, { projection: { scratchEditorLocale: 1 } });
         if (!current) throw new NotFoundError('Scratch 作品作者');
         this.response.body = {
-            ok: true,
+            ok: true, accepted: !!updated,
             locale: SCRATCH_EDITOR_LOCALES.has(current.scratchEditorLocale)
                 ? current.scratchEditorLocale : DEFAULT_SCRATCH_EDITOR_LOCALE,
         };

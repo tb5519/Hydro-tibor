@@ -239,7 +239,7 @@ function editorHarness(readOnly = false, editorVersion = 'a'.repeat(64), withPre
         } },
     }, {
         UiContext: { scratchEditor: { editorVersion, workId: 'work-1', title: '作品', projectUrl: null,
-            saveUrl: '/d/art/scratch/work/work-1/save', languageUrl: '/d/art/scratch/work/work-1/language', locale,
+            saveUrl: '/d/art/scratch/work/work-1/save', languageUrl: '/d/art/scratch/work/work-1/language', languageGeneration: 1, locale,
             revision: 0, maxFileSize: 1024, canSubmit: true, readOnly,
             ...(withPresets ? { libraryUrl: '/d/art/scratch/library' } : {}) } },
         document: { querySelector: (selector) => elements[selector] },
@@ -316,6 +316,7 @@ describe('isolated Scratch editor save bridge', () => {
         assert.equal(editor.requests.length, 1);
         assert.equal(editor.requests[0].url, 'https://onebyone.test/d/art/scratch/work/work-1/language');
         assert.equal(editor.requests[0].options.body.get('locale'), 'en');
+        assert.equal(editor.requests[0].options.body.get('generation'), '1');
         assert.equal(editor.requests[0].options.body.get('sequence'), '1');
         assert.match(editor.requests[0].options.body.get('session'), /^id-\d+$/);
         assert.equal(editor.requests[0].options.keepalive, true);
@@ -325,6 +326,7 @@ describe('isolated Scratch editor save bridge', () => {
         await new Promise((resolve) => setImmediate(resolve));
         assert.equal(editor.requests.length, 2);
         assert.equal(editor.requests[1].options.body.get('locale'), 'ja');
+        assert.equal(editor.requests[1].options.body.get('generation'), '1');
         assert.equal(editor.requests[1].options.body.get('sequence'), '2');
         editor.requests[1].resolve({ ok: true, json: async () => ({ ok: true, locale: 'ja' }) });
         await new Promise((resolve) => setImmediate(resolve));
@@ -356,6 +358,18 @@ describe('isolated Scratch editor save bridge', () => {
         editor.requests[0].resolve({ ok: true, json: async () => ({ ok: true, locale: 'zh-cn' }) });
         await new Promise((resolve) => setImmediate(resolve));
         assert.equal(editor.requests.length, 2);
+    });
+
+    it('stops retrying when a newer editor tab has saved the language', async () => {
+        const editor = editorHarness();
+        await editor.message('ready');
+        await editor.message('loaded');
+        await editor.message('localeChanged', { locale: 'en' });
+        editor.requests[0].resolve({ ok: true, json: async () => ({ ok: true, accepted: false, locale: 'fr' }) });
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(editor.requests.length, 1);
+        assert.match(editor.status.textContent, /其他窗口已更新语言/);
+        assert.equal(editor.status.dataset.error, 'true');
     });
 
     it('rejects foreign windows/origins and never gives a read-only preview a save action', async () => {

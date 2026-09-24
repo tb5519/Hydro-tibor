@@ -105,7 +105,8 @@ export interface Udoc extends Record<string, any> {
     /** Preferred language in the Scratch editor, shared across this student's works. */
     scratchEditorLocale?: string;
     /** Orders language changes from one Scratch editor page. */
-    scratchEditorLocaleRevision?: { session: string, sequence: number };
+    scratchEditorLocaleSessionCounter?: number;
+    scratchEditorLocaleRevision?: { session: string, generation: number, sequence: number };
 }
 
 export interface VUdoc {

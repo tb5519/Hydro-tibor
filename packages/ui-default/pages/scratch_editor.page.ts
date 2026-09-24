@@ -8,6 +8,7 @@ interface ScratchEditorConfig {
   projectUrl: string | null;
   saveUrl: string;
   languageUrl: string | null;
+  languageGeneration: number | null;
   locale: string;
   backUrl: string;
   canSubmit: boolean;
@@ -102,10 +103,11 @@ export default new NamedPage('scratch_editor', () => {
   let localeSequence = 0;
   let savingLocale = false;
   const postLocale = async (locale: string, sequence: number) => {
-    if (!config.languageUrl) throw new Error('语言设置接口不可用');
+    if (!config.languageUrl || !config.languageGeneration) throw new Error('语言设置接口不可用');
     const body = new FormData();
     body.append('locale', locale);
     body.append('session', channel);
+    body.append('generation', String(config.languageGeneration));
     body.append('sequence', String(sequence));
     return fetch(sameOriginUrl(config.languageUrl), {
       method: 'POST', body, credentials: 'same-origin', keepalive: true,
@@ -123,6 +125,10 @@ export default new NamedPage('scratch_editor', () => {
         const result = await response.json();
         if (!response.ok || !result.ok || typeof result.locale !== 'string') throw new Error('语言设置保存失败');
         savedLocale = result.locale;
+        if (result.accepted === false) {
+          if (!pending) show('其他窗口已更新语言。请刷新本页后再选择，才能保存新的语言设置。', true);
+          break;
+        }
       } catch {
         if (!pending) show('语言已切换，但设置暂时没能保存。请检查网络，刷新页面后再选择语言。', true);
         break;

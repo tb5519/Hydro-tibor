@@ -282,7 +282,7 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         assert.equal(editor.UiContext.scratchEditor.saveForStudent, true);
         assert.equal(editor.UiContext.scratchEditor.saveUrl, '/scratch_save');
         assert.equal(editor.UiContext.scratchEditor.locale, 'zh-cn');
-        assert.equal(editor.UiContext.scratchEditor.languageUrl, '/scratch_language');
+        assert.equal(editor.UiContext.scratchEditor.languageUrl, null); // the fixture has no owner user document
         assert.equal(editor.UiContext.scratchEditor.canSubmit, false);
     });
 
@@ -303,14 +303,15 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         });
         const studentSession = '11111111-1111-4111-8111-111111111111';
         const teacherSession = '22222222-2222-4222-8222-222222222222';
-        const language = (actor, workId, locale, sequence = '1', session = actor.isTeacher ? teacherSession : studentSession) => Object.assign(Object.create(handlers.ScratchLanguageHandler.prototype), {
-            actor, request: { params: { workId: workId.toHexString() }, body: { locale, session, sequence } },
+        const language = (actor, workId, locale, sequence = '1', session = actor.isTeacher ? teacherSession : studentSession, generation = '1') => Object.assign(Object.create(handlers.ScratchLanguageHandler.prototype), {
+            actor, request: { params: { workId: workId.toHexString() }, body: { locale, session, sequence, generation } },
             response: {}, limitRate: async () => {},
         });
 
         const firstOpen = editor(bob, first._id);
         await firstOpen.get();
         assert.equal(firstOpen.UiContext.scratchEditor.locale, 'zh-cn');
+        assert.equal(firstOpen.UiContext.scratchEditor.languageGeneration, 1);
         const changed = language(bob, first._id, 'en');
         await changed.post();
         assert.equal(changed.response.body.ok, true);
@@ -322,24 +323,29 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         await teacherOpen.get();
         assert.equal(teacherOpen.UiContext.scratchEditor.locale, 'en');
         assert.equal(teacherOpen.UiContext.scratchEditor.languageUrl, '/scratch_language');
-        const teacherChange = language(teacher, second._id, 'ja-Hira');
+        assert.equal(teacherOpen.UiContext.scratchEditor.languageGeneration, 2);
+        const teacherChange = language(teacher, second._id, 'ja-Hira', '1', teacherSession, '2');
         await teacherChange.post();
         const teacherSaved = await database.collection('user').findOne({ _id: bob.uid });
         assert.equal(teacherSaved.scratchEditorLocale, 'ja-Hira');
         assert.equal(teacherSaved.scratchEditorLocaleRevision.session, teacherSession);
+        assert.equal(teacherSaved.scratchEditorLocaleRevision.generation, 2);
         assert.equal(teacherSaved.scratchEditorLocaleRevision.sequence, 1);
         assert.equal((await database.collection('user').findOne({ _id: teacher.uid })).scratchEditorLocale, undefined);
         const studentOpen = editor(bob, first._id);
         await studentOpen.get();
         assert.equal(studentOpen.UiContext.scratchEditor.locale, 'ja-Hira');
+        assert.equal(studentOpen.UiContext.scratchEditor.languageGeneration, 3);
 
         const readOnlyOpen = editor(teacher, first._id, { readOnly: 'true' });
         await readOnlyOpen.get();
         assert.equal(readOnlyOpen.UiContext.scratchEditor.locale, 'ja-Hira');
         assert.equal(readOnlyOpen.UiContext.scratchEditor.languageUrl, null);
+        assert.equal(readOnlyOpen.UiContext.scratchEditor.languageGeneration, null);
         const aliceOpen = editor(alice, aliceWork._id);
         await aliceOpen.get();
         assert.equal(aliceOpen.UiContext.scratchEditor.locale, 'zh-cn');
+        assert.equal(aliceOpen.UiContext.scratchEditor.languageGeneration, 1);
 
         for (const locale of ['en-US', 'ja-hira', '__proto__', '', 12, null]) {
             await assert.rejects(language(teacher, first._id, locale).post(), ValidationError);
@@ -353,7 +359,10 @@ describe('Scratch native backend isolation and immutable submissions', () => {
             ['0', teacherSession], ['1000000001', teacherSession], ['1.5', teacherSession],
             ['NaN', teacherSession], [null, teacherSession], ['1', 'not-a-uuid'], ['1', null],
         ]) {
-            await assert.rejects(language(teacher, second._id, 'fr', sequence, session).post(), ValidationError);
+            await assert.rejects(language(teacher, second._id, 'fr', sequence, session, '2').post(), ValidationError);
+        }
+        for (const generation of ['0', '1000000001', '1.5', 'NaN', null]) {
+            await assert.rejects(language(teacher, second._id, 'fr', '2', teacherSession, generation).post(), ValidationError);
         }
         const missingSequence = language(teacher, second._id, 'fr');
         delete missingSequence.request.body.sequence;
@@ -361,19 +370,31 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         const missingSession = language(teacher, second._id, 'fr');
         delete missingSession.request.body.session;
         await assert.rejects(missingSession.post(), ValidationError);
-        const newest = language(teacher, second._id, 'fr', '2', teacherSession);
+        const missingGeneration = language(teacher, second._id, 'fr');
+        delete missingGeneration.request.body.generation;
+        await assert.rejects(missingGeneration.post(), ValidationError);
+        const newest = language(teacher, second._id, 'fr', '2', teacherSession, '2');
         await newest.post();
-        const delayed = language(teacher, second._id, 'en', '1', teacherSession);
+        const delayed = language(teacher, second._id, 'en', '1', teacherSession, '2');
         await delayed.post();
         assert.equal(delayed.response.body.ok, true);
         assert.equal(delayed.response.body.locale, 'fr');
         assert.equal((await database.collection('user').findOne({ _id: bob.uid })).scratchEditorLocale, 'fr');
         const nextSession = '33333333-3333-4333-8333-333333333333';
-        await language(bob, first._id, 'pt-br', '1', nextSession).post();
+        await language(bob, first._id, 'pt-br', '1', nextSession, '3').post();
         const latest = await database.collection('user').findOne({ _id: bob.uid });
         assert.equal(latest.scratchEditorLocale, 'pt-br');
         assert.equal(latest.scratchEditorLocaleRevision.session, nextSession);
+        assert.equal(latest.scratchEditorLocaleRevision.generation, 3);
         assert.equal(latest.scratchEditorLocaleRevision.sequence, 1);
+        const oldTab = language(teacher, second._id, 'en', '3', teacherSession, '2');
+        await oldTab.post();
+        assert.equal(oldTab.response.body.accepted, false);
+        assert.equal(oldTab.response.body.locale, 'pt-br');
+        const futureTab = language(teacher, second._id, 'fr', '1', teacherSession, '4');
+        await futureTab.post();
+        assert.equal(futureTab.response.body.accepted, false);
+        assert.equal((await database.collection('user').findOne({ _id: bob.uid })).scratchEditorLocale, 'pt-br');
     });
 
     it('resolves duplicate assignment starts to one student work and enforces teacher-only assignment writes', async () => {
