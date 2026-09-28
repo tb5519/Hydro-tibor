@@ -5,6 +5,7 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {restoreCatalog, restorationSHA256} from './restore-catalogs.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const upstream = JSON.parse(await fs.readFile(path.join(here, 'upstream.json'), 'utf8'));
 const lockPath = path.join(here, 'library-assets.lock.json');
@@ -42,9 +43,9 @@ export async function prepareLibraryAssets({workspace, outputDir, cacheDir, writ
     const catalogs = []; const catalogHashes = {};
     for (const name of ['costumes', 'sprites', 'sounds', 'backdrops']) {
         const relative = `src/lib/libraries/${name}.json`;
-        // Read committed content, never locally edited catalogs.
+        // Derive catalogs from the pinned commit plus the checked-in classic entries.
         const bytes = hasGit
-            ? execFileSync('git', ['show', `${commit}:${relative}`], {cwd: workspace, maxBuffer: 10 * 1024 * 1024})
+            ? restoreCatalog(name, execFileSync('git', ['show', `${commit}:${relative}`], {cwd: workspace, maxBuffer: 10 * 1024 * 1024}))
             : await fs.readFile(path.join(workspace, relative));
         catalogHashes[name] = hash(bytes);
         const current = await fs.readFile(path.join(workspace, relative));
@@ -55,7 +56,7 @@ export async function prepareLibraryAssets({workspace, outputDir, cacheDir, writ
     let lock;
     if (!writeLock) {
         lock = JSON.parse(await fs.readFile(lockPath, 'utf8'));
-        if (lock.commit !== commit || JSON.stringify(lock.catalogHashes) !== JSON.stringify(catalogHashes)
+        if (lock.commit !== commit || lock.restorationSHA256 !== restorationSHA256 || JSON.stringify(lock.catalogHashes) !== JSON.stringify(catalogHashes)
             || JSON.stringify(Object.keys(lock.files).sort()) !== JSON.stringify(names)) throw new Error('Library lock does not match pinned catalogs');
     }
     cacheDir = path.resolve(cacheDir || path.join(here, '../../.cache/scratch-library'));
@@ -98,7 +99,7 @@ export async function prepareLibraryAssets({workspace, outputDir, cacheDir, writ
         }
     };
     await Promise.all(Array.from({length: 6}, worker));
-    const manifest = {version: 1, repository: upstream.repository, commit, catalogHashes,
+    const manifest = {version: 2, repository: upstream.repository, commit, restorationSHA256, catalogHashes,
         source: 'https://assets.scratch.mit.edu/internalapi/asset/',
         files: Object.fromEntries(names.map(name => [name, files[name]]))};
     if (writeLock) await fs.writeFile(lockPath, `${JSON.stringify(manifest, null, 2)}\n`);

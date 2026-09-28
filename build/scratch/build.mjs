@@ -150,6 +150,8 @@ downloaderSource = downloaderSource.replace(
     'showSaveFilePicker: null'
 );
 fs.writeFileSync(downloaderPath, downloaderSource);
+// Restore native catalogs before webpack creates the searchable library chunks.
+run(process.execPath, [path.join(here, 'restore-catalogs.mjs'), '--workspace', workspace], repo);
 fs.rmSync(path.join(workspace, 'build'), {recursive: true, force: true});
 run(process.execPath, ['node_modules/webpack/bin/webpack.js', '--config', 'onebyone.webpack.cjs', '--bail'], workspace, {
     NODE_ENV: 'production', ROOT: assetBase, CI: '1', NODE_OPTIONS: '--max-old-space-size=8192'
@@ -171,7 +173,7 @@ fs.writeFileSync(path.join(here, 'package-lock.upstream.json'), lock);
 fs.copyFileSync(path.join(here, 'README.md'), path.join(workspace, 'ONEBYONE-README.md'));
 fs.mkdirSync(path.join(workspace, 'onebyone-library'), {recursive: true});
 for (const name of ['library-assets.mjs', 'library-assets.lock.json', 'upstream.json', 'patch-libraries.cjs',
-    'patch-locale.cjs', 'LIBRARY-CREDITS.md']) {
+    'patch-locale.cjs', 'restore-catalogs.mjs', 'classic-library.json', 'LIBRARY-CREDITS.md']) {
     fs.copyFileSync(path.join(here, name), path.join(workspace, 'onebyone-library', name));
 }
 run('tar', ['-czf', path.join(target, 'source.tar.gz'),

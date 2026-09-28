@@ -13,7 +13,14 @@ https://mitscratch.freshdesk.com/en/support/solutions/articles/4000156892-may-i-
 
 Scratch and its contributors retain their applicable copyrights and attribution.
 This mirror does not grant additional rights or permission to use Scratch marks.
-The pinned TurboWarp catalogs already omit the stock trademarked characters.
+The pinned TurboWarp catalogs omit several classic characters. OneByOne restores
+those original entries in its built-in sprite and costume catalogs using the
+pinned historical catalog recorded in `classic-library.json`. Original names,
+tags, rotation centers, costumes and sounds are retained, and all media are
+mirrored unchanged. The restoration is separate from teacher-uploaded materials.
+The source commits and catalog hashes are recorded in that file; the release
+asset manifest records its SHA-256. These characters remain Scratch marks; their
+inclusion does not imply endorsement or affiliation.
 Retain this notice, the upstream notices and the corresponding catalog metadata
 when redistributing this library. OneByOne is not an official Scratch service.
 

@@ -1,0 +1,934 @@
+{
+  "version": 1,
+  "repository": "https://github.com/TurboWarp/scratch-gui.git",
+  "sourceCommit": "0219b184716fa4c7e68c345f3db9568c89a40d85",
+  "removalCommit": "b4d6dfc9cfbec5e3182f3b904e1133fc69773822",
+  "sourceCatalogHashes": {
+    "sprites": "7b50c718221949ff3a78096f0df3af7e0d649f002c05df597d55044c1cee65ac",
+    "costumes": "975fbe59fe4b58e6cac69695ab4a5e722b85dd209f06cba0b5e6c2cd62f1fe97",
+    "sounds": "672a319037416befa40658a36fe6350181e4a8cc7c98659b5063fb67e286e4b8",
+    "backdrops": "ab5ad4666e1d8fbf1e3ad407a335366154a7872ada2a60ad9923d1a42594c4fa"
+  },
+  "baseCommit": "a2946eeb9a9dca7857d7ab53d766b54288c7a2ff",
+  "baseCatalogHashes": {
+    "costumes": "f5eaa95ab1d0c90e9f8bfd2df173ef926208c66a5f486cbcb78068f92f59c5d6",
+    "sprites": "e12c042e362c78d155712023b4ae24b818d99e2fd77083c89084137fcd0bceed",
+    "sounds": "672a319037416befa40658a36fe6350181e4a8cc7c98659b5063fb67e286e4b8",
+    "backdrops": "ab5ad4666e1d8fbf1e3ad407a335366154a7872ada2a60ad9923d1a42594c4fa"
+  },
+  "catalogs": {
+    "sprites": [
+      {
+        "name": "Cat",
+        "tags": [
+          "animals",
+          "cat",
+          "kitten",
+          "kitty",
+          "mammal",
+          "orange",
+          "scratch cat"
+        ],
+        "isStage": false,
+        "variables": {},
+        "costumes": [
+          {
+            "assetId": "bcf454acf82e4504149f7ffe07081dbc",
+            "name": "cat-a",
+            "bitmapResolution": 1,
+            "md5ext": "bcf454acf82e4504149f7ffe07081dbc.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 48,
+            "rotationCenterY": 50
+          },
+          {
+            "assetId": "0fb9be3e8397c983338cb71dc84d0b25",
+            "name": "cat-b",
+            "bitmapResolution": 1,
+            "md5ext": "0fb9be3e8397c983338cb71dc84d0b25.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 46,
+            "rotationCenterY": 53
+          }
+        ],
+        "sounds": [
+          {
+            "assetId": "83c36d806dc92327b9e7049a565c6bff",
+            "name": "Meow",
+            "dataFormat": "wav",
+            "format": "",
+            "rate": 44100,
+            "sampleCount": 37376,
+            "md5ext": "83c36d806dc92327b9e7049a565c6bff.wav"
+          }
+        ],
+        "blocks": {}
+      },
+      {
+        "name": "Cat Flying",
+        "tags": [
+          "animals",
+          "cat",
+          "kitty",
+          "kitten"
+        ],
+        "isStage": false,
+        "variables": {},
+        "costumes": [
+          {
+            "assetId": "a1ab94c8172c3b97ed9a2bf7c32172cd",
+            "name": "cat flying-a",
+            "bitmapResolution": 1,
+            "md5ext": "a1ab94c8172c3b97ed9a2bf7c32172cd.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 55,
+            "rotationCenterY": 37
+          },
+          {
+            "assetId": "6667936a2793aade66c765c329379ad0",
+            "name": "cat flying-b",
+            "bitmapResolution": 1,
+            "md5ext": "6667936a2793aade66c765c329379ad0.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 44,
+            "rotationCenterY": 46
+          }
+        ],
+        "sounds": [
+          {
+            "assetId": "83a9787d4cb6f3b7632b4ddfebf74367",
+            "name": "Pop",
+            "dataFormat": "wav",
+            "format": "",
+            "rate": 44100,
+            "sampleCount": 1032,
+            "md5ext": "83a9787d4cb6f3b7632b4ddfebf74367.wav"
+          }
+        ],
+        "blocks": {}
+      },
+      {
+        "name": "Giga",
+        "tags": [
+          "fantasy",
+          "drawing"
+        ],
+        "isStage": false,
+        "variables": {},
+        "costumes": [
+          {
+            "assetId": "92161a11e851ecda94cbbb985018fed6",
+            "name": "giga-a",
+            "bitmapResolution": 1,
+            "md5ext": "92161a11e851ecda94cbbb985018fed6.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 72,
+            "rotationCenterY": 96
+          },
+          {
+            "assetId": "bc706a7648342aaacac9050378b40c43",
+            "name": "giga-b",
+            "bitmapResolution": 1,
+            "md5ext": "bc706a7648342aaacac9050378b40c43.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 72,
+            "rotationCenterY": 96
+          },
+          {
+            "assetId": "337b338b2b10176221e638ac537854e6",
+            "name": "giga-c",
+            "bitmapResolution": 1,
+            "md5ext": "337b338b2b10176221e638ac537854e6.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 73,
+            "rotationCenterY": 96
+          },
+          {
+            "assetId": "db15886cfdcb5e2f4459e9074e3990a1",
+            "name": "giga-d",
+            "bitmapResolution": 1,
+            "md5ext": "db15886cfdcb5e2f4459e9074e3990a1.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 73,
+            "rotationCenterY": 96
+          }
+        ],
+        "sounds": [
+          {
+            "assetId": "83a9787d4cb6f3b7632b4ddfebf74367",
+            "name": "pop",
+            "dataFormat": "wav",
+            "format": "",
+            "rate": 44100,
+            "sampleCount": 1032,
+            "md5ext": "83a9787d4cb6f3b7632b4ddfebf74367.wav"
+          }
+        ],
+        "blocks": {}
+      },
+      {
+        "name": "Giga Walking",
+        "tags": [
+          "fantasy",
+          "walking"
+        ],
+        "isStage": false,
+        "variables": {},
+        "costumes": [
+          {
+            "assetId": "3afad833094d8dff1c4ff79edcaa13d0",
+            "name": "Giga walk1",
+            "bitmapResolution": 1,
+            "md5ext": "3afad833094d8dff1c4ff79edcaa13d0.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 70,
+            "rotationCenterY": 107
+          },
+          {
+            "assetId": "d27716e022fb5f747d7b09fe6eeeca06",
+            "name": "Giga walk2",
+            "bitmapResolution": 1,
+            "md5ext": "d27716e022fb5f747d7b09fe6eeeca06.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 71,
+            "rotationCenterY": 107
+          },
+          {
+            "assetId": "db55131bf54f96e8986d9b30730e42ce",
+            "name": "Giga walk3",
+            "bitmapResolution": 1,
+            "md5ext": "db55131bf54f96e8986d9b30730e42ce.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 71,
+            "rotationCenterY": 107
+          }
+        ],
+        "sounds": [
+          {
+            "assetId": "83a9787d4cb6f3b7632b4ddfebf74367",
+            "name": "pop",
+            "dataFormat": "wav",
+            "format": "",
+            "rate": 44100,
+            "sampleCount": 1032,
+            "md5ext": "83a9787d4cb6f3b7632b4ddfebf74367.wav"
+          }
+        ],
+        "blocks": {}
+      },
+      {
+        "name": "Gobo",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "jenkins",
+          "ganglia"
+        ],
+        "isStage": false,
+        "variables": {},
+        "costumes": [
+          {
+            "assetId": "f505a4e9eab5e40e2669a4462dba4c90",
+            "name": "gobo-a",
+            "bitmapResolution": 1,
+            "md5ext": "f505a4e9eab5e40e2669a4462dba4c90.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 47,
+            "rotationCenterY": 55
+          },
+          {
+            "assetId": "5c0896569305ab177d87caa31aad2a72",
+            "name": "gobo-b",
+            "bitmapResolution": 1,
+            "md5ext": "5c0896569305ab177d87caa31aad2a72.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 47,
+            "rotationCenterY": 55
+          },
+          {
+            "assetId": "9d8021c216fb92cc708e1e96f3ed2b52",
+            "name": "gobo-c",
+            "bitmapResolution": 1,
+            "md5ext": "9d8021c216fb92cc708e1e96f3ed2b52.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 47,
+            "rotationCenterY": 55
+          }
+        ],
+        "sounds": [
+          {
+            "assetId": "83a9787d4cb6f3b7632b4ddfebf74367",
+            "name": "pop",
+            "dataFormat": "wav",
+            "format": "",
+            "rate": 44100,
+            "sampleCount": 1032,
+            "md5ext": "83a9787d4cb6f3b7632b4ddfebf74367.wav"
+          }
+        ],
+        "blocks": {}
+      },
+      {
+        "name": "Nano",
+        "tags": [
+          "fantasy",
+          "drawing"
+        ],
+        "isStage": false,
+        "variables": {},
+        "costumes": [
+          {
+            "assetId": "a62e560863c0e49b12e5d57e13d084f1",
+            "name": "nano-a",
+            "bitmapResolution": 1,
+            "md5ext": "a62e560863c0e49b12e5d57e13d084f1.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 61,
+            "rotationCenterY": 60
+          },
+          {
+            "assetId": "d12aead3e3c2917e7eba8b2b90a7afd2",
+            "name": "nano-b",
+            "bitmapResolution": 1,
+            "md5ext": "d12aead3e3c2917e7eba8b2b90a7afd2.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 61,
+            "rotationCenterY": 60
+          },
+          {
+            "assetId": "8f2f4a70e87262ef478ce60567b6208a",
+            "name": "nano-c",
+            "bitmapResolution": 1,
+            "md5ext": "8f2f4a70e87262ef478ce60567b6208a.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 61,
+            "rotationCenterY": 60
+          },
+          {
+            "assetId": "a4e2034751fa650fd5fd69432c110104",
+            "name": "nano-d",
+            "bitmapResolution": 1,
+            "md5ext": "a4e2034751fa650fd5fd69432c110104.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 61,
+            "rotationCenterY": 60
+          }
+        ],
+        "sounds": [
+          {
+            "assetId": "83a9787d4cb6f3b7632b4ddfebf74367",
+            "name": "pop",
+            "dataFormat": "wav",
+            "format": "",
+            "rate": 44100,
+            "sampleCount": 1032,
+            "md5ext": "83a9787d4cb6f3b7632b4ddfebf74367.wav"
+          }
+        ],
+        "blocks": {}
+      },
+      {
+        "name": "Pico",
+        "tags": [
+          "fantasy",
+          "drawing"
+        ],
+        "isStage": false,
+        "variables": {},
+        "costumes": [
+          {
+            "assetId": "e7ce31db37f7abd2901499db2e9ad83a",
+            "name": "pico-a",
+            "bitmapResolution": 1,
+            "md5ext": "e7ce31db37f7abd2901499db2e9ad83a.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 55,
+            "rotationCenterY": 66
+          },
+          {
+            "assetId": "a7597b1f0c13455d335a3d4fe77da528",
+            "name": "pico-b",
+            "bitmapResolution": 1,
+            "md5ext": "a7597b1f0c13455d335a3d4fe77da528.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 55,
+            "rotationCenterY": 66
+          },
+          {
+            "assetId": "bcc0e8a5dda3a813608902b887c87bb4",
+            "name": "pico-c",
+            "bitmapResolution": 1,
+            "md5ext": "bcc0e8a5dda3a813608902b887c87bb4.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 55,
+            "rotationCenterY": 66
+          },
+          {
+            "assetId": "d6dfa2efe58939af4c85755feb3c0375",
+            "name": "pico-d",
+            "bitmapResolution": 1,
+            "md5ext": "d6dfa2efe58939af4c85755feb3c0375.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 55,
+            "rotationCenterY": 66
+          }
+        ],
+        "sounds": [
+          {
+            "assetId": "83a9787d4cb6f3b7632b4ddfebf74367",
+            "name": "pop",
+            "dataFormat": "wav",
+            "format": "",
+            "rate": 44100,
+            "sampleCount": 1032,
+            "md5ext": "83a9787d4cb6f3b7632b4ddfebf74367.wav"
+          }
+        ],
+        "blocks": {}
+      },
+      {
+        "name": "Pico Walking",
+        "tags": [
+          "fantasy",
+          "walking"
+        ],
+        "isStage": false,
+        "variables": {},
+        "costumes": [
+          {
+            "assetId": "c8f58f31cabf4acabb3f828730061276",
+            "name": "Pico walk1",
+            "bitmapResolution": 1,
+            "md5ext": "c8f58f31cabf4acabb3f828730061276.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 54,
+            "rotationCenterY": 71
+          },
+          {
+            "assetId": "52a60eccb624530fd3a24fc41fbad6e5",
+            "name": "Pico walk2",
+            "bitmapResolution": 1,
+            "md5ext": "52a60eccb624530fd3a24fc41fbad6e5.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 54,
+            "rotationCenterY": 71
+          },
+          {
+            "assetId": "702bd644d01ea8eda2ea122daeea7d74",
+            "name": "Pico walk3",
+            "bitmapResolution": 1,
+            "md5ext": "702bd644d01ea8eda2ea122daeea7d74.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 54,
+            "rotationCenterY": 70
+          },
+          {
+            "assetId": "22fb16ae7cc18187a7adaf2852f07884",
+            "name": "Pico walk4",
+            "bitmapResolution": 1,
+            "md5ext": "22fb16ae7cc18187a7adaf2852f07884.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 54,
+            "rotationCenterY": 70
+          }
+        ],
+        "sounds": [
+          {
+            "assetId": "83a9787d4cb6f3b7632b4ddfebf74367",
+            "name": "pop",
+            "dataFormat": "wav",
+            "format": "",
+            "rate": 44100,
+            "sampleCount": 1032,
+            "md5ext": "83a9787d4cb6f3b7632b4ddfebf74367.wav"
+          }
+        ],
+        "blocks": {}
+      },
+      {
+        "name": "Tera",
+        "tags": [
+          "fantasy",
+          "drawing"
+        ],
+        "isStage": false,
+        "variables": {},
+        "costumes": [
+          {
+            "assetId": "18f9a11ecdbd3ad8719beb176c484d41",
+            "name": "tera-a",
+            "bitmapResolution": 1,
+            "md5ext": "18f9a11ecdbd3ad8719beb176c484d41.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 49,
+            "rotationCenterY": 63
+          },
+          {
+            "assetId": "365d4de6c99d71f1370f7c5e636728af",
+            "name": "tera-b",
+            "bitmapResolution": 1,
+            "md5ext": "365d4de6c99d71f1370f7c5e636728af.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 49,
+            "rotationCenterY": 64
+          },
+          {
+            "assetId": "2daca5f43efc2d29fb089879448142e9",
+            "name": "tera-c",
+            "bitmapResolution": 1,
+            "md5ext": "2daca5f43efc2d29fb089879448142e9.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 49,
+            "rotationCenterY": 63
+          },
+          {
+            "assetId": "5456a723f3b35eaa946b974a59888793",
+            "name": "tera-d",
+            "bitmapResolution": 1,
+            "md5ext": "5456a723f3b35eaa946b974a59888793.svg",
+            "dataFormat": "svg",
+            "rotationCenterX": 49,
+            "rotationCenterY": 63
+          }
+        ],
+        "sounds": [
+          {
+            "assetId": "83a9787d4cb6f3b7632b4ddfebf74367",
+            "name": "pop",
+            "dataFormat": "wav",
+            "format": "",
+            "rate": 44100,
+            "sampleCount": 1032,
+            "md5ext": "83a9787d4cb6f3b7632b4ddfebf74367.wav"
+          }
+        ],
+        "blocks": {}
+      }
+    ],
+    "costumes": [
+      {
+        "name": "Cat Flying-a",
+        "tags": [
+          "animals",
+          "cat",
+          "kitty",
+          "kitten"
+        ],
+        "assetId": "a1ab94c8172c3b97ed9a2bf7c32172cd",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "a1ab94c8172c3b97ed9a2bf7c32172cd.svg",
+        "rotationCenterX": 55,
+        "rotationCenterY": 37
+      },
+      {
+        "name": "Cat Flying-b",
+        "tags": [
+          "animals",
+          "cat",
+          "kitty",
+          "kitten"
+        ],
+        "assetId": "6667936a2793aade66c765c329379ad0",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "6667936a2793aade66c765c329379ad0.svg",
+        "rotationCenterX": 44,
+        "rotationCenterY": 46
+      },
+      {
+        "name": "Cat-a",
+        "tags": [
+          "animals",
+          "cat",
+          "kitten",
+          "kitty",
+          "mammal",
+          "orange",
+          "scratch cat"
+        ],
+        "assetId": "bcf454acf82e4504149f7ffe07081dbc",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "bcf454acf82e4504149f7ffe07081dbc.svg",
+        "rotationCenterX": 48,
+        "rotationCenterY": 50
+      },
+      {
+        "name": "Cat-b",
+        "tags": [
+          "animals",
+          "cat",
+          "kitten",
+          "kitty",
+          "mammal",
+          "orange",
+          "scratch cat"
+        ],
+        "assetId": "0fb9be3e8397c983338cb71dc84d0b25",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "0fb9be3e8397c983338cb71dc84d0b25.svg",
+        "rotationCenterX": 46,
+        "rotationCenterY": 53
+      },
+      {
+        "name": "Giga Walk1",
+        "tags": [
+          "fantasy",
+          "walking"
+        ],
+        "assetId": "3afad833094d8dff1c4ff79edcaa13d0",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "3afad833094d8dff1c4ff79edcaa13d0.svg",
+        "rotationCenterX": 70,
+        "rotationCenterY": 107
+      },
+      {
+        "name": "Giga Walk2",
+        "tags": [
+          "fantasy",
+          "walking"
+        ],
+        "assetId": "d27716e022fb5f747d7b09fe6eeeca06",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "d27716e022fb5f747d7b09fe6eeeca06.svg",
+        "rotationCenterX": 71,
+        "rotationCenterY": 107
+      },
+      {
+        "name": "Giga Walk3",
+        "tags": [
+          "fantasy",
+          "walking"
+        ],
+        "assetId": "db55131bf54f96e8986d9b30730e42ce",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "db55131bf54f96e8986d9b30730e42ce.svg",
+        "rotationCenterX": 71,
+        "rotationCenterY": 107
+      },
+      {
+        "name": "Giga-a",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "happy"
+        ],
+        "assetId": "92161a11e851ecda94cbbb985018fed6",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "92161a11e851ecda94cbbb985018fed6.svg",
+        "rotationCenterX": 72,
+        "rotationCenterY": 96
+      },
+      {
+        "name": "Giga-b",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "happy"
+        ],
+        "assetId": "bc706a7648342aaacac9050378b40c43",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "bc706a7648342aaacac9050378b40c43.svg",
+        "rotationCenterX": 72,
+        "rotationCenterY": 96
+      },
+      {
+        "name": "Giga-c",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "happy"
+        ],
+        "assetId": "337b338b2b10176221e638ac537854e6",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "337b338b2b10176221e638ac537854e6.svg",
+        "rotationCenterX": 73,
+        "rotationCenterY": 96
+      },
+      {
+        "name": "Giga-d",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "mad"
+        ],
+        "assetId": "db15886cfdcb5e2f4459e9074e3990a1",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "db15886cfdcb5e2f4459e9074e3990a1.svg",
+        "rotationCenterX": 73,
+        "rotationCenterY": 96
+      },
+      {
+        "name": "Gobo-a",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "jenkins",
+          "ganglia"
+        ],
+        "assetId": "f505a4e9eab5e40e2669a4462dba4c90",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "f505a4e9eab5e40e2669a4462dba4c90.svg",
+        "rotationCenterX": 47,
+        "rotationCenterY": 55
+      },
+      {
+        "name": "Gobo-b",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "jenkins",
+          "ganglia"
+        ],
+        "assetId": "5c0896569305ab177d87caa31aad2a72",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "5c0896569305ab177d87caa31aad2a72.svg",
+        "rotationCenterX": 47,
+        "rotationCenterY": 55
+      },
+      {
+        "name": "Gobo-c",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "jenkins",
+          "ganglia"
+        ],
+        "assetId": "9d8021c216fb92cc708e1e96f3ed2b52",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "9d8021c216fb92cc708e1e96f3ed2b52.svg",
+        "rotationCenterX": 47,
+        "rotationCenterY": 55
+      },
+      {
+        "name": "Nano-a",
+        "tags": [
+          "fantasy",
+          "drawing"
+        ],
+        "assetId": "a62e560863c0e49b12e5d57e13d084f1",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "a62e560863c0e49b12e5d57e13d084f1.svg",
+        "rotationCenterX": 61,
+        "rotationCenterY": 60
+      },
+      {
+        "name": "Nano-b",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "happy"
+        ],
+        "assetId": "d12aead3e3c2917e7eba8b2b90a7afd2",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "d12aead3e3c2917e7eba8b2b90a7afd2.svg",
+        "rotationCenterX": 61,
+        "rotationCenterY": 60
+      },
+      {
+        "name": "Nano-c",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "happy"
+        ],
+        "assetId": "8f2f4a70e87262ef478ce60567b6208a",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "8f2f4a70e87262ef478ce60567b6208a.svg",
+        "rotationCenterX": 61,
+        "rotationCenterY": 60
+      },
+      {
+        "name": "Nano-d",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "angry"
+        ],
+        "assetId": "a4e2034751fa650fd5fd69432c110104",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "a4e2034751fa650fd5fd69432c110104.svg",
+        "rotationCenterX": 61,
+        "rotationCenterY": 60
+      },
+      {
+        "name": "Pico Walk1",
+        "tags": [
+          "fantasy",
+          "walking"
+        ],
+        "assetId": "c8f58f31cabf4acabb3f828730061276",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "c8f58f31cabf4acabb3f828730061276.svg",
+        "rotationCenterX": 54,
+        "rotationCenterY": 71
+      },
+      {
+        "name": "Pico Walk2",
+        "tags": [
+          "fantasy",
+          "walking"
+        ],
+        "assetId": "52a60eccb624530fd3a24fc41fbad6e5",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "52a60eccb624530fd3a24fc41fbad6e5.svg",
+        "rotationCenterX": 54,
+        "rotationCenterY": 71
+      },
+      {
+        "name": "Pico Walk3",
+        "tags": [
+          "fantasy",
+          "walking"
+        ],
+        "assetId": "702bd644d01ea8eda2ea122daeea7d74",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "702bd644d01ea8eda2ea122daeea7d74.svg",
+        "rotationCenterX": 54,
+        "rotationCenterY": 70
+      },
+      {
+        "name": "Pico Walk4",
+        "tags": [
+          "fantasy",
+          "walking"
+        ],
+        "assetId": "22fb16ae7cc18187a7adaf2852f07884",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "22fb16ae7cc18187a7adaf2852f07884.svg",
+        "rotationCenterX": 54,
+        "rotationCenterY": 70
+      },
+      {
+        "name": "Pico-a",
+        "tags": [
+          "fantasy",
+          "drawing"
+        ],
+        "assetId": "e7ce31db37f7abd2901499db2e9ad83a",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "e7ce31db37f7abd2901499db2e9ad83a.svg",
+        "rotationCenterX": 55,
+        "rotationCenterY": 66
+      },
+      {
+        "name": "Pico-b",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "happy"
+        ],
+        "assetId": "a7597b1f0c13455d335a3d4fe77da528",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "a7597b1f0c13455d335a3d4fe77da528.svg",
+        "rotationCenterX": 55,
+        "rotationCenterY": 66
+      },
+      {
+        "name": "Pico-c",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "happy"
+        ],
+        "assetId": "bcc0e8a5dda3a813608902b887c87bb4",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "bcc0e8a5dda3a813608902b887c87bb4.svg",
+        "rotationCenterX": 55,
+        "rotationCenterY": 66
+      },
+      {
+        "name": "Pico-d",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "angry"
+        ],
+        "assetId": "d6dfa2efe58939af4c85755feb3c0375",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "d6dfa2efe58939af4c85755feb3c0375.svg",
+        "rotationCenterX": 55,
+        "rotationCenterY": 66
+      },
+      {
+        "name": "Tera-a",
+        "tags": [
+          "fantasy",
+          "drawing"
+        ],
+        "assetId": "18f9a11ecdbd3ad8719beb176c484d41",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "18f9a11ecdbd3ad8719beb176c484d41.svg",
+        "rotationCenterX": 49,
+        "rotationCenterY": 63
+      },
+      {
+        "name": "Tera-b",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "happy"
+        ],
+        "assetId": "365d4de6c99d71f1370f7c5e636728af",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "365d4de6c99d71f1370f7c5e636728af.svg",
+        "rotationCenterX": 49,
+        "rotationCenterY": 64
+      },
+      {
+        "name": "Tera-c",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "happy"
+        ],
+        "assetId": "2daca5f43efc2d29fb089879448142e9",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "2daca5f43efc2d29fb089879448142e9.svg",
+        "rotationCenterX": 49,
+        "rotationCenterY": 63
+      },
+      {
+        "name": "Tera-d",
+        "tags": [
+          "fantasy",
+          "drawing",
+          "angry"
+        ],
+        "assetId": "5456a723f3b35eaa946b974a59888793",
+        "bitmapResolution": 1,
+        "dataFormat": "svg",
+        "md5ext": "5456a723f3b35eaa946b974a59888793.svg",
+        "rotationCenterX": 49,
+        "rotationCenterY": 63
+      }
+    ]
+  }
+}

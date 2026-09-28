@@ -54,6 +54,8 @@ module.exports = (file, input) => {
         const kind = /src\/containers\/(costume|sprite|backdrop|sound)-library\.jsx/.exec(file)?.[1];
         if (!kind) throw new Error(`Unexpected library source: ${file}`);
         const getter = `get${kind[0].toUpperCase()}${kind.slice(1)}Library`;
+        // These native libraries now include the restored classic entries.
+        if (kind === 'sprite' || kind === 'costume') replace('                removedTrademarks\n', '');
         replace("import bindAll from 'lodash.bindall';", "import bindAll from 'lodash.bindall';\nimport {loadLibrary, prepareAssets} from '../lib/onebyone-library-loader';");
         if (kind !== 'sound') {
             replace(`data: ${getter}()`, 'data: null');

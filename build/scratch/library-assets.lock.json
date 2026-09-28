@@ -1,10 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "repository": "https://github.com/TurboWarp/scratch-gui.git",
   "commit": "a2946eeb9a9dca7857d7ab53d766b54288c7a2ff",
+  "restorationSHA256": "5aaaf12a5ccfedecc4646d2351df0c23a64dd2fef4ab2bfef6d52627163d0f25",
   "catalogHashes": {
-    "costumes": "f5eaa95ab1d0c90e9f8bfd2df173ef926208c66a5f486cbcb78068f92f59c5d6",
-    "sprites": "e12c042e362c78d155712023b4ae24b818d99e2fd77083c89084137fcd0bceed",
+    "costumes": "d1fc708d12b3116ff76559389bf8aeeafb8ac7a4512ba7cfd00ed20f3eeb65ba",
+    "sprites": "4bc2659b8d1b796a9277b9f6ced6455795fa547a272f6dd8b20227c24c8f7a07",
     "sounds": "672a319037416befa40658a36fe6350181e4a8cc7c98659b5063fb67e286e4b8",
     "backdrops": "ab5ad4666e1d8fbf1e3ad407a335366154a7872ada2a60ad9923d1a42594c4fa"
   },
@@ -440,6 +441,11 @@
       "size": 2230,
       "contentType": "image/svg+xml"
     },
+    "0fb9be3e8397c983338cb71dc84d0b25.svg": {
+      "sha256": "6c438b5dd181e6ca0bfe74d36c1503e13ebce02681d3c384d68d923d6164573a",
+      "size": 6223,
+      "contentType": "image/svg+xml"
+    },
     "0fbca8db08d46419416c0f104345bc53.wav": {
       "sha256": "64b59bfbde9ee94b2e54ed3bf9917097d570175e399b65736e4a269ed07b2a25",
       "size": 18492,
@@ -695,6 +701,11 @@
       "size": 275516,
       "contentType": "audio/wav"
     },
+    "18f9a11ecdbd3ad8719beb176c484d41.svg": {
+      "sha256": "16e7d3359518586fda60b172b547a7fa1718b8754bf978df32739d6bbfd1179b",
+      "size": 10091,
+      "contentType": "image/svg+xml"
+    },
     "19211d5ecd34214b6aba947790e63bb0.wav": {
       "sha256": "f0e18467a434ceace93acc1e581f91148f2863364737eb8fe57522929c12bb59",
       "size": 346092,
@@ -938,6 +949,11 @@
     "22d94ee5daf557284465425a61186234.svg": {
       "sha256": "d97eeb353c7a7869e5fc57418dba541a36b337e53c584faa54512bc5d676703c",
       "size": 6012,
+      "contentType": "image/svg+xml"
+    },
+    "22fb16ae7cc18187a7adaf2852f07884.svg": {
+      "sha256": "6bb297395ac6fd9a0b0037ac0dba6e554a4d93706008232cafb8c80aa7f98d2d",
+      "size": 7605,
       "contentType": "image/svg+xml"
     },
     "23330150c0a09180083b597cbfeca99a.svg": {
@@ -1205,6 +1221,11 @@
       "size": 4916,
       "contentType": "image/svg+xml"
     },
+    "2daca5f43efc2d29fb089879448142e9.svg": {
+      "sha256": "99c3d7e8c44533b33f87db1f9ddfd42eb247c5f569ab21151379149189269ac7",
+      "size": 10480,
+      "contentType": "image/svg+xml"
+    },
     "2dbcfae6a55738f94bbb40aa5fcbf7ce.wav": {
       "sha256": "fa8d0c0480df4f3f66141f6cd219de2995596a41a773e6c09728e46ec5ab2390",
       "size": 82284,
@@ -1325,6 +1346,11 @@
       "size": 13884,
       "contentType": "audio/wav"
     },
+    "337b338b2b10176221e638ac537854e6.svg": {
+      "sha256": "75ee6ae3dd7ad4a36af58bb58947dc677c9acbbe9448eb8d4eaf513edd329e75",
+      "size": 14855,
+      "contentType": "image/svg+xml"
+    },
     "33b537168f3c2eb3dafeb739c22f38a6.svg": {
       "sha256": "007bb5e58666349c346219bce2053c0ffb755725ebba0792ec4daef1989b9080",
       "size": 18318,
@@ -1394,6 +1420,11 @@
       "sha256": "fbb42a9528443a8b5886997de2aaf6c52edf0226df4abf4bf84058fc5239c25d",
       "size": 11528,
       "contentType": "audio/wav"
+    },
+    "365d4de6c99d71f1370f7c5e636728af.svg": {
+      "sha256": "f05e0165cadbe4a614b35469340d819e13c0e1783b2d5fa24df4690c40f4bcb6",
+      "size": 9719,
+      "contentType": "image/svg+xml"
     },
     "366c7edbd4dd5cca68bf62902999bd66.wav": {
       "sha256": "a2e95a2acbced6f3389002c27c50bccbc1f7b48b7ee7bc16a1df20a22d67f694",
@@ -1503,6 +1534,11 @@
     "3ab169f52ea3783270d28ef035a5a7c5.svg": {
       "sha256": "bea9b9ebec64f62fbd866946eea9921125e18cda731f2843d9b9254746c4fad5",
       "size": 46514,
+      "contentType": "image/svg+xml"
+    },
+    "3afad833094d8dff1c4ff79edcaa13d0.svg": {
+      "sha256": "3325c4cd1e4594e36597293d318f1815555d946e337dd9da84d762d23d633b19",
+      "size": 16153,
       "contentType": "image/svg+xml"
     },
     "3b0e1717859808cecf1a45e2a32dc201.svg": {
@@ -2120,6 +2156,11 @@
       "size": 8863,
       "contentType": "image/svg+xml"
     },
+    "52a60eccb624530fd3a24fc41fbad6e5.svg": {
+      "sha256": "180d438ec3b4f7bfc20f4372f6126643a434b9da37c86e43752a45ff16df2c15",
+      "size": 7581,
+      "contentType": "image/svg+xml"
+    },
     "52cf0926d9bab8774194a37eba636c0e.wav": {
       "sha256": "5e0e487bf3b9573d91898e62dbfa211a00163741672c375992ffb544b8381df0",
       "size": 7228,
@@ -2149,6 +2190,11 @@
       "sha256": "5533817d02832572aa21f5389a6e9ebdb64c086ce4965cc86fc1d89ad3390d38",
       "size": 16332,
       "contentType": "audio/wav"
+    },
+    "5456a723f3b35eaa946b974a59888793.svg": {
+      "sha256": "5b62003669dca8e499474ae27cb31c42c1dad89e024f848fefae660cb639349c",
+      "size": 11228,
+      "contentType": "image/svg+xml"
     },
     "548bdf23904e409c1fcc0992f44d0b4c.png": {
       "sha256": "ad2d6867f17c839ed5dda9aa1c0a56c0404a3bf574de955fe84316db6c3d2225",
@@ -2384,6 +2430,11 @@
       "sha256": "cf9e1cbdd3bfa5cf44c31bdda7c7f07375f5dfa6b81f5238aece4db090450244",
       "size": 5498,
       "contentType": "image/png"
+    },
+    "5c0896569305ab177d87caa31aad2a72.svg": {
+      "sha256": "d56c2fa2fb78eb83af5c24c4281c395910748d4578ed3cb9401cb1e5bc55fba0",
+      "size": 6401,
+      "contentType": "image/svg+xml"
     },
     "5c1d38d02ae9c4df7851a6e9d52f25b4.svg": {
       "sha256": "6813a62e0fbd7686b3803c5fbbe6148962295cbe0e534568148c07f88400a037",
@@ -2685,6 +2736,11 @@
       "size": 1471,
       "contentType": "image/svg+xml"
     },
+    "6667936a2793aade66c765c329379ad0.svg": {
+      "sha256": "92c47fbbb736b239ce9d6b6afafcd7ef3f7780c96ca4d6f1cb7a3b983f4ed389",
+      "size": 8915,
+      "contentType": "image/svg+xml"
+    },
     "667d6c527b79321d398e85b526f15b99.wav": {
       "sha256": "f3a2dc1e61bbc0b6dd8d5e3179a1a5f172d38248b238bd9bacb717b08da7777b",
       "size": 48300,
@@ -2974,6 +3030,11 @@
       "sha256": "33d3181704c700abf214b835779ec8763c6e3c50f48ef17378c53e31440dca36",
       "size": 60889,
       "contentType": "image/png"
+    },
+    "702bd644d01ea8eda2ea122daeea7d74.svg": {
+      "sha256": "8995aef7f4d2e24fa3a05fe6ed5b8bf21167412fa12ac680a7e1f48a2890d89a",
+      "size": 7703,
+      "contentType": "image/svg+xml"
     },
     "705035328ac53d5ce1aa5a1ed1c2d172.svg": {
       "sha256": "b770f4b15b90f0b32bc4acf7fbead9f2ca6c34059574f92f5bf82d2b00e2c5e2",
@@ -3700,6 +3761,11 @@
       "size": 10875,
       "contentType": "image/svg+xml"
     },
+    "8f2f4a70e87262ef478ce60567b6208a.svg": {
+      "sha256": "9c84766887d97626df5be88e4c7ddbb9123a0efc4e1b8cf746475715fe09ff5f",
+      "size": 12626,
+      "contentType": "image/svg+xml"
+    },
     "8f439476a738251043d488d7a4bc6870.svg": {
       "sha256": "1fbe0ea81256f83c18b588910c58986302a6fc428b2ca0c6d593e70eadb423f9",
       "size": 59799,
@@ -3808,6 +3874,11 @@
     "920f14335615fff9b8c55fccb8971984.svg": {
       "sha256": "8d030e4aa8b4b5258ab9c402529ffa1b8c406e95488b8b3fe581e731e950ae56",
       "size": 60735,
+      "contentType": "image/svg+xml"
+    },
+    "92161a11e851ecda94cbbb985018fed6.svg": {
+      "sha256": "c8825993780c3a65ac638a2a859ee887ceab53fbfa7d588cca601ff70adc0397",
+      "size": 15635,
       "contentType": "image/svg+xml"
     },
     "92692e0c0f376797274392484ba74133.svg": {
@@ -4080,6 +4151,11 @@
       "size": 89753,
       "contentType": "image/svg+xml"
     },
+    "9d8021c216fb92cc708e1e96f3ed2b52.svg": {
+      "sha256": "5ce587564ba4990151b4d5b469146d76f77fa2a4929e606903ac7e5cbeb7c0d7",
+      "size": 6935,
+      "contentType": "image/svg+xml"
+    },
     "9dd59a4514b5373d4f665db78e145636.svg": {
       "sha256": "23584a6d908baa531d3e70d42325e7469ea1a664299d0362bc38d0ad2e29a72f",
       "size": 10037,
@@ -4154,6 +4230,11 @@
       "sha256": "11104d5a6a64891d559ba0bb4738df5d6ad51e614c8e1ec422cc38fd9e0afa1b",
       "size": 52870,
       "contentType": "image/png"
+    },
+    "a1ab94c8172c3b97ed9a2bf7c32172cd.svg": {
+      "sha256": "4a163ec40af23cbeca3b9f313c559319084984f921395733277a5495eb66ae31",
+      "size": 10384,
+      "contentType": "image/svg+xml"
     },
     "a22da98e5e63de7b2883355afd0184f0.png": {
       "sha256": "1f9f9a2ab42bf035b6c02db13d2b5fe35a394b9eddf78e952a068c119fe2a1b8",
@@ -4235,6 +4316,11 @@
       "size": 1551,
       "contentType": "image/svg+xml"
     },
+    "a4e2034751fa650fd5fd69432c110104.svg": {
+      "sha256": "b0c5f732d0bab0ea4d0092ccc7e3fdf851bb0dca0e3cb25e3178bb06d8db4dc3",
+      "size": 13411,
+      "contentType": "image/svg+xml"
+    },
     "a504d785629f2d1ca6b87e80b334d5e8.svg": {
       "sha256": "615744c4c30319af6110d57a2b17b21f8440a52e78a7d611cda9f278ab53c56f",
       "size": 15355,
@@ -4270,6 +4356,11 @@
       "size": 29756,
       "contentType": "audio/wav"
     },
+    "a62e560863c0e49b12e5d57e13d084f1.svg": {
+      "sha256": "94183833559f8c5af9749a275830a5d48555c1dd3b581c6a9dceaf7a7ebf32e8",
+      "size": 11355,
+      "contentType": "image/svg+xml"
+    },
     "a634fcb87894520edbd7a534d1479ec4.wav": {
       "sha256": "5ad4caf9e896d7283885a94fbf2d904b04d5b23afd696f3318a81cfd4d1b2ef4",
       "size": 55356,
@@ -4298,6 +4389,11 @@
     "a73f354dc045bbbc5a491d9367192a80.svg": {
       "sha256": "cdf463ff4e421a7d94146b504ffa5b4fb84349472ad5d64e21f477d82c96219a",
       "size": 2678,
+      "contentType": "image/svg+xml"
+    },
+    "a7597b1f0c13455d335a3d4fe77da528.svg": {
+      "sha256": "f091daf0c320a83d84dcb131fe6bfc96e9af38e92e4a0b462fd33e715be6d90e",
+      "size": 8842,
       "contentType": "image/svg+xml"
     },
     "a77f9693f87288d023a4632cf019776e.svg": {
@@ -4760,9 +4856,24 @@
       "size": 9934,
       "contentType": "image/svg+xml"
     },
+    "bc706a7648342aaacac9050378b40c43.svg": {
+      "sha256": "8282c4eb8e207c80ac5b04b0b13a4d51bd2f258a0434cc31065fadeadf588204",
+      "size": 14948,
+      "contentType": "image/svg+xml"
+    },
+    "bcc0e8a5dda3a813608902b887c87bb4.svg": {
+      "sha256": "59fe298c20c5c11e2bf61a63fb5f896e1d4907cf74cbc1ec5c7926d78306f607",
+      "size": 10818,
+      "contentType": "image/svg+xml"
+    },
     "bceae719ba1ec230afec56f14a1e4d52.svg": {
       "sha256": "bf2c8eeb2c674d91583396f2248ccdd51f8f2dba96875dd36b5ea6a67ce216fb",
       "size": 9497,
+      "contentType": "image/svg+xml"
+    },
+    "bcf454acf82e4504149f7ffe07081dbc.svg": {
+      "sha256": "0f561db6723a721bd54c7f303072846023bb5b39be0846fcf098ae4b93f7df98",
+      "size": 6158,
       "contentType": "image/svg+xml"
     },
     "bd0581902cd6cc13888520776bf1620c.svg": {
@@ -5055,6 +5166,11 @@
       "size": 12572,
       "contentType": "image/svg+xml"
     },
+    "c8f58f31cabf4acabb3f828730061276.svg": {
+      "sha256": "0db7ea84adc8f093d84f5c6d92f704999bbad37676a5893bc0a669c4464da347",
+      "size": 7858,
+      "contentType": "image/svg+xml"
+    },
     "c904610d770398b98872a708a2f75611.wav": {
       "sha256": "61386f516262a9c9709755bdf8da44f594f61a7745b35ae9e04341d2edec903b",
       "size": 50236,
@@ -5305,6 +5421,11 @@
       "size": 3072,
       "contentType": "image/png"
     },
+    "d12aead3e3c2917e7eba8b2b90a7afd2.svg": {
+      "sha256": "9836dfc6a54648c8b0b8849d1b5083a8f1a90de86248c0589ff9ad6445afe458",
+      "size": 14773,
+      "contentType": "image/svg+xml"
+    },
     "d139f89665962dcaab4cb2b246359ba1.svg": {
       "sha256": "6913bb2e02232832247734cb580b0629d536bc45bf3960183a03734df2a251bd",
       "size": 24201,
@@ -5344,6 +5465,11 @@
       "sha256": "08aa789e67d8722d914173c676155806f3daa37c29ee4bdd3252748507f93f00",
       "size": 163984,
       "contentType": "image/png"
+    },
+    "d27716e022fb5f747d7b09fe6eeeca06.svg": {
+      "sha256": "128559ef9ed7cefa21128b82c69b84b740e612e013364d3fbe354481c08c0d2d",
+      "size": 15959,
+      "contentType": "image/svg+xml"
     },
     "d27ed8d953fe8f03c00f4d733d31d2cc.wav": {
       "sha256": "ddc43d25270ae20d7461697dcb92ce19dd34d31978fc8691c3876f266cb6f115",
@@ -5475,6 +5601,11 @@
       "size": 2945,
       "contentType": "image/png"
     },
+    "d6dfa2efe58939af4c85755feb3c0375.svg": {
+      "sha256": "01f98a19764fb4f0de92647b7723a64cdb41217883b803a18568581ebd631908",
+      "size": 7498,
+      "contentType": "image/svg+xml"
+    },
     "d6ff94dc7e24200c28015ee5d6373140.svg": {
       "sha256": "054511a4a37daa1088da7805ead3b41828b3611904b5be9037ed1bc64d7d005a",
       "size": 14440,
@@ -5605,6 +5736,11 @@
       "size": 562,
       "contentType": "image/svg+xml"
     },
+    "db15886cfdcb5e2f4459e9074e3990a1.svg": {
+      "sha256": "a2b0579805e65127110acc454cb88e2037959a6fce3c60f9c44545af6d218a27",
+      "size": 15647,
+      "contentType": "image/svg+xml"
+    },
     "db3f436fcb6fb28828a4c932b60feb5e.svg": {
       "sha256": "a421048c19b796639c813671b05a16308670a346535c26dfe7a26f03bf162d1f",
       "size": 18208,
@@ -5618,6 +5754,11 @@
     "db4d97cbf24e2b8af665bfbf06f67fa0.svg": {
       "sha256": "5bb810e241651af6b283d6bd35829632d64252ef66eb09d014484c0e0d091997",
       "size": 7668,
+      "contentType": "image/svg+xml"
+    },
+    "db55131bf54f96e8986d9b30730e42ce.svg": {
+      "sha256": "f796e88e900f482c0e3388e6b15075e3d4a2ae723c5b1dd47d169edc634fb168",
+      "size": 16146,
       "contentType": "image/svg+xml"
     },
     "db6c03113f71b91f22a9f3351f90e5bf.png": {
@@ -5958,6 +6099,11 @@
     "e7c147730f19d284bcd7b3f00af19bb6.svg": {
       "sha256": "27016673732aa3307b9bfb0dc7f932cc6d3d2d2b11257c024338cc826d18c99a",
       "size": 3994,
+      "contentType": "image/svg+xml"
+    },
+    "e7ce31db37f7abd2901499db2e9ad83a.svg": {
+      "sha256": "07d752a91174201b6d3ed0af088000f3904ed86e65fa10df851b7dca1fb850be",
+      "size": 15176,
       "contentType": "image/svg+xml"
     },
     "e7dfb630116153533989ff839c1973a5.wav": {
@@ -6303,6 +6449,11 @@
     "f5008785e74590689afca4b578d108a4.svg": {
       "sha256": "9112905f3182654f662e3f3922d7549678d0ec067f6c5124f646f6d515e5b613",
       "size": 23476,
+      "contentType": "image/svg+xml"
+    },
+    "f505a4e9eab5e40e2669a4462dba4c90.svg": {
+      "sha256": "8bb4943e34144167272136d77a0458cfaf4af90a4d14b1cbb9464b1012fd3218",
+      "size": 6103,
       "contentType": "image/svg+xml"
     },
     "f522b08c5757569ad289d67bce290cd0.svg": {
