@@ -37,6 +37,10 @@ export interface ScratchPreset extends ScratchDoc {
     title: string; kind: ScratchPresetKind; fileId: ObjectId; filename: string; mime: string; size: number;
 }
 export const SCRATCH_MAX_PRESETS = 500;
+export interface ScratchCommunityWork extends ScratchDoc {
+    title: string; titleKey: string; instructions: string; workId: ObjectId; snapshotWorkId: ObjectId;
+    fileId: ObjectId; thumbnailFileId: ObjectId | null; revision: number;
+}
 export interface ScratchShare {
     _id: string; domainId: string; workId: ObjectId; fileId: ObjectId; revision: number; title: string; createdAt: Date;
 }
@@ -89,6 +93,7 @@ declare module '../service/db' {
         'scratch.material': ScratchMaterial;
         'scratch.preset': ScratchPreset;
         'scratch.share': ScratchShare;
+        'scratch.community': ScratchCommunityWork;
         'scratch.quota': { _id: string, bytes: number };
     }
 }
@@ -101,6 +106,7 @@ export const files = db.collection('scratch.file');
 export const materials = db.collection('scratch.material');
 export const presets = db.collection('scratch.preset');
 export const shares = db.collection('scratch.share');
+export const community = db.collection('scratch.community');
 export const quotas = db.collection('scratch.quota');
 
 function base(actor: ScratchActor): ScratchDoc {
@@ -236,6 +242,7 @@ async function removeFile(actor: ScratchActor, _id: ObjectId) {
         versions.countDocuments({ domainId: actor.domainId, fileId: _id }),
         submissions.countDocuments({ domainId: actor.domainId, fileId: _id }),
         shares.countDocuments({ domainId: actor.domainId, fileId: _id }),
+        community.countDocuments({ domainId: actor.domainId, $or: [{ fileId: _id }, { thumbnailFileId: _id }] }),
         presets.countDocuments({ domainId: actor.domainId, fileId: _id }),
     ]);
     if (references.some(Boolean)) return;
@@ -564,7 +571,7 @@ export async function saveWork(
             const duplicates = await works.find({ domainId: actor.domainId, owner: work.owner, assignmentId: null,
                 title: cleanTitle, _id: { $ne: workId } }).project<{ _id: ObjectId }>({ _id: 1 }).toArray();
             for (const duplicate of duplicates) {
-                await deleteWork(actor, duplicate._id).catch((error) => logger.warn('Could not remove duplicate Scratch work: %s', error));
+                await deleteWork(actor, duplicate._id, workId).catch((error) => logger.warn('Could not remove duplicate Scratch work: %s', error));
             }
         }
         return { work: await getWork(actor, workId), submission };
@@ -648,6 +655,86 @@ export async function revokeWorkShares(actor: ScratchActor, workId: ObjectId) {
     }
 }
 
+function communityTitleKey(title: string) {
+    return title.normalize('NFKC').trim();
+}
+
+export function listCommunityWorks(actor: ScratchActor, query = '', mine = false) {
+    const q = cleanText(query, 'q', 80, ' ').trim();
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return community.find({ domainId: actor.domainId, ...(mine ? { owner: actor.uid } : {}),
+        ...(q ? { title: { $regex: escaped, $options: 'i' } } : {}),
+    }).sort({ updatedAt: -1, _id: -1 });
+}
+
+export async function getCommunityWork(actor: ScratchActor, _id: ObjectId) {
+    const doc = await community.findOne({ domainId: actor.domainId, _id });
+    if (!doc) throw new NotFoundError('社区作品');
+    return doc;
+}
+
+export async function getWorkCommunityPublication(actor: ScratchActor, workId: ObjectId) {
+    const work = await getWork(actor, workId);
+    const publication = await community.findOne({ domainId: actor.domainId, owner: work.owner, titleKey: communityTitleKey(work.title) });
+    return { work, publication };
+}
+
+export async function getCommunityFile(actor: ScratchActor, _id: ObjectId, thumbnail = false) {
+    const doc = await getCommunityWork(actor, _id);
+    const fileId = thumbnail ? doc.thumbnailFileId : doc.fileId;
+    if (!fileId) throw new NotFoundError('社区作品文件');
+    const file = await files.findOne({ domainId: actor.domainId, _id: fileId, workId: doc.snapshotWorkId,
+        ...(thumbnail ? { purpose: 'thumbnail', mime: 'image/png' } : { mime: 'application/x.scratch.sb3' }),
+    });
+    if (!file) throw new NotFoundError('社区作品文件');
+    return file;
+}
+
+async function removeCommunityFiles(actor: ScratchActor, doc: ScratchCommunityWork) {
+    for (const fileId of [doc?.fileId, doc?.thumbnailFileId].filter(Boolean)) {
+        await removeFile(actor, fileId).catch((error) => logger.warn('Could not remove old Scratch community file: %s', error));
+    }
+}
+
+export async function publishCommunityWork(actor: ScratchActor, workId: ObjectId, instructions: unknown = '') {
+    if (typeof instructions !== 'string' || instructions.trim().length > 300) throw new ValidationError('instructions');
+    const { doc, token } = await lockSharedWork(actor, workId);
+    try {
+        if (!doc.currentFileId || doc.revision < 1) throw new ValidationError('workId', null, '先保存作品，再邀请小伙伴来玩吧。');
+        const identity = { domainId: actor.domainId, owner: doc.owner, titleKey: communityTitleKey(doc.title) };
+        const now = new Date();
+        const initial = { _id: new ObjectId(), ...identity, createdAt: now };
+        const fields = { title: doc.title, instructions: instructions.trim(), workId, snapshotWorkId: workId,
+            fileId: doc.currentFileId, thumbnailFileId: doc.thumbnailFileId || null, revision: doc.revision, updatedAt: now };
+        let previous: ScratchCommunityWork = null;
+        // Distinct source works can have the same title. Their work leases are
+        // separate, so the unique identity and atomic upsert are both required.
+        for (let attempt = 0; ; attempt++) {
+            try {
+                previous = await community.findOneAndUpdate(identity, { $set: fields, $setOnInsert: initial },
+                    { upsert: true, returnDocument: 'before' });
+                break;
+            } catch (error) {
+                if (error.code !== 11000 || attempt >= 2) throw error;
+            }
+        }
+        const publication: ScratchCommunityWork = { ...(previous || initial), ...fields };
+        if (previous) await removeCommunityFiles(actor, previous);
+        return { publication, updated: !!previous };
+    } finally {
+        await works.updateOne({ domainId: actor.domainId, _id: workId, savingToken: token }, { $unset: { savingToken: '', savingUntil: '' } });
+    }
+}
+
+export async function unpublishCommunityWork(actor: ScratchActor, _id: ObjectId) {
+    const doc = await getCommunityWork(actor, _id);
+    requireOwner(actor, doc);
+    // Only the community entry is removed. Drafts, submissions and external
+    // links retain their separate references to immutable files.
+    const removed = await community.findOneAndDelete({ domainId: actor.domainId, _id, owner: doc.owner });
+    if (removed) await removeCommunityFiles(actor, removed);
+}
+
 export async function getPublicShare(domainId: string, token: unknown) {
     if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) throw new NotFoundError('分享作品');
     const share = await shares.findOne({ domainId, _id: token });
@@ -657,23 +744,41 @@ export async function getPublicShare(domainId: string, token: unknown) {
     return { share, file };
 }
 
-export async function deleteWork(actor: ScratchActor, workId: ObjectId) {
+export async function deleteWork(actor: ScratchActor, workId: ObjectId, mergeIntoWorkId?: ObjectId) {
     const work = await getWork(actor, workId);
+    if (mergeIntoWorkId) {
+        const target = await getWork(actor, mergeIntoWorkId);
+        if (target._id.equals(workId) || target.owner !== work.owner || communityTitleKey(target.title) !== communityTitleKey(work.title)) {
+            throw new ValidationError('workId');
+        }
+    }
     const { token } = await lockWork(actor, workId, work.revision, actor.isTeacher && work.owner !== actor.uid);
-    const docs = await files.find({ domainId: actor.domainId, workId }).toArray();
-    const removed = await works.deleteOne({ domainId: actor.domainId, _id: workId, savingToken: token });
-    if (!removed.deletedCount) throw new ValidationError('workId', null, '作品正在被其他窗口修改，请刷新后重试。');
-    await versions.deleteMany({ domainId: actor.domainId, workId });
-    await submissions.deleteMany({ domainId: actor.domainId, workId });
-    await shares.deleteMany({ domainId: actor.domainId, workId });
-    for (const file of docs) await removeFile(actor, file._id);
+    try {
+        if (mergeIntoWorkId) {
+            // Same-title draft consolidation keeps the published snapshot exactly
+            // as it was; only its future editing destination moves to the survivor.
+            await community.updateMany({ domainId: actor.domainId, workId }, { $set: { workId: mergeIntoWorkId } });
+        }
+        const docs = await files.find({ domainId: actor.domainId, workId }).toArray();
+        const removed = await works.deleteOne({ domainId: actor.domainId, _id: workId, savingToken: token });
+        if (!removed.deletedCount) throw new ValidationError('workId', null, '作品正在被其他窗口修改，请刷新后重试。');
+        await versions.deleteMany({ domainId: actor.domainId, workId });
+        await submissions.deleteMany({ domainId: actor.domainId, workId });
+        await shares.deleteMany({ domainId: actor.domainId, workId });
+        const published = await community.find({ domainId: actor.domainId, workId }).toArray();
+        await community.deleteMany({ domainId: actor.domainId, workId });
+        for (const doc of published) await removeCommunityFiles(actor, doc);
+        for (const file of docs) await removeFile(actor, file._id);
+    } finally {
+        await works.updateOne({ domainId: actor.domainId, _id: workId, savingToken: token }, { $unset: { savingToken: '', savingUntil: '' } });
+    }
 }
 
 export async function apply(ctx: Context) {
     ctx.on('domain/delete', async (domainId) => {
         const docs = await files.find({ domainId }).toArray();
         await storage.del(docs.map((doc) => doc.path));
-        await Promise.all([assignments, works, versions, submissions, materials, presets, files, shares].map((collection) => collection.deleteMany({ domainId })));
+        await Promise.all([assignments, works, versions, submissions, materials, presets, files, shares, community].map((collection) => collection.deleteMany({ domainId })));
         await quotas.deleteOne({ _id: domainId });
     });
     await Promise.all([
@@ -687,6 +792,12 @@ export async function apply(ctx: Context) {
         db.ensureIndexes(presets, { key: { domainId: 1, createdAt: -1, _id: -1 }, name: 'scratch_presets' }),
         db.ensureIndexes(materials, { key: { domainId: 1, category: 1 }, name: 'scratch_materials' }),
         db.ensureIndexes(files, { key: { domainId: 1, workId: 1 }, name: 'scratch_files' }),
+        db.ensureIndexes(community,
+            { key: { domainId: 1, owner: 1, titleKey: 1 }, name: 'scratch_community_author_title', unique: true },
+            { key: { domainId: 1, updatedAt: -1, _id: -1 }, name: 'scratch_community_recent' },
+            { key: { domainId: 1, workId: 1 }, name: 'scratch_community_work' },
+            { key: { domainId: 1, fileId: 1 }, name: 'scratch_community_file' },
+            { key: { domainId: 1, thumbnailFileId: 1 }, name: 'scratch_community_thumbnail' }),
         db.ensureIndexes(shares, { key: { domainId: 1, workId: 1, revision: 1 }, name: 'scratch_share_revision', unique: true },
             { key: { domainId: 1, fileId: 1 }, name: 'scratch_share_file' }),
     ]);

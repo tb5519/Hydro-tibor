@@ -450,6 +450,96 @@ export class ScratchThumbnailHandler extends ScratchHandler {
         this.response.body = { ok: true, thumbnailUrl: this.url('scratch_file', { fileId }) };
     }
 }
+export class ScratchCommunityHandler extends ScratchHandler {
+    async get() {
+        const page = Math.max(1, Math.floor(+this.request.query.page || 1));
+        const query = this.request.query.q;
+        if (query !== undefined && typeof query !== 'string') throw new ValidationError('q');
+        const q = scratch.cleanText(query, 'q', 80, ' ').trim();
+        const mine = ['1', 'true'].includes(`${this.request.query.mine || ''}`);
+        const [communityWorks, pcount, count] = await this.paginate(scratch.listCommunityWorks(this.actor, q, mine), page, 24);
+        await this.renderScratch('scratch_community.html', { communityWorks, page, pcount, count, q, mine });
+    }
+}
+
+export class ScratchCommunityPublishHandler extends ScratchHandler {
+    async get() {
+        const { work, publication } = await scratch.getWorkCommunityPublication(this.actor, this.routeId('workId'));
+        this.response.type = 'application/json';
+        this.response.body = { ok: true, title: work.title, revision: work.revision,
+            thumbnailUrl: work.thumbnailFileId ? this.url('scratch_file', { fileId: work.thumbnailFileId }) : null,
+            publication: publication ? { id: publication._id.toHexString(), title: publication.title,
+                instructions: publication.instructions, revision: publication.revision,
+                url: this.url('scratch_community_work', { communityId: publication._id }) } : null };
+    }
+
+    async post() {
+        await this.limitRate('scratch_community_publish', 60, 30);
+        const { publication, updated } = await scratch.publishCommunityWork(this.actor, this.routeId('workId'), this.request.body.instructions ?? '');
+        this.response.type = 'application/json';
+        this.response.body = { ok: true, id: publication._id.toHexString(), title: publication.title, revision: publication.revision, updated,
+            url: this.url('scratch_community_work', { communityId: publication._id }) };
+    }
+}
+
+export class ScratchCommunityWorkHandler extends ScratchHandler {
+    async get() {
+        const communityWork = await scratch.getCommunityWork(this.actor, this.routeId('communityId'));
+        const isOwner = communityWork.owner === this.actor.uid;
+        const canEdit = isOwner && !!await scratch.works.findOne({ domainId: this.actor.domainId,
+            _id: communityWork.workId, owner: this.actor.uid });
+        const projectConfig = { editorVersion: getScratchEditorVersion(), title: communityWork.title,
+            projectUrl: this.url('scratch_community_project', { communityId: communityWork._id }),
+            maxFileSize: SCRATCH_MAX_FILE_SIZE, memberOnly: true };
+        this.UiContext.scratchPlayer = projectConfig;
+        await this.renderScratch('scratch_community_detail.html', { communityWork, projectConfig,
+            isOwner, canManage: isOwner || this.actor.isTeacher, canEdit });
+    }
+
+    async postUnpublish() {
+        await this.limitRate('scratch_community_publish', 60, 30);
+        await scratch.unpublishCommunityWork(this.actor, this.routeId('communityId'));
+        this.response.type = 'application/json';
+        this.response.body = { ok: true, url: this.url('scratch_community') };
+    }
+}
+
+export class ScratchCommunityProjectHandler extends ScratchHandler {
+    thumbnail = false;
+
+    async get() {
+        const file = await scratch.getCommunityFile(this.actor, this.routeId('communityId'), this.thumbnail);
+        // Community access is checked on every request. A reusable CDN URL must
+        // not turn classroom-only snapshots into externally accessible links.
+        this.response.addHeader('X-Content-Type-Options', 'nosniff');
+        this.response.addHeader('Cache-Control', 'private, no-store');
+        if (this.thumbnail) {
+            this.response.type = 'image/png';
+            this.response.body = await storage.get(file.path);
+        } else {
+            this.response.attachment('project.sb3', await storage.get(file.path));
+            this.response.type = 'application/octet-stream';
+            this.response.addHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+        }
+    }
+
+    async head() {
+        const file = await scratch.getCommunityFile(this.actor, this.routeId('communityId'), this.thumbnail);
+        this.response.type = this.thumbnail ? 'image/png' : 'application/octet-stream';
+        this.response.body = '';
+        this.response.addHeader('Cache-Control', 'private, no-store');
+        this.response.addHeader('X-Content-Type-Options', 'nosniff');
+        this.response.addHeader('Content-Length', file.size.toString());
+        if (!this.thumbnail) this.response.addHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+        this.context.status = 200;
+        this.context.type = this.response.type;
+    }
+}
+
+export class ScratchCommunityThumbnailHandler extends ScratchCommunityProjectHandler {
+    thumbnail = true;
+}
+
 export class ScratchShareCreateHandler extends ScratchHandler {
     async post() {
         if (this.request.body.operation) return;
@@ -588,6 +678,11 @@ export async function apply(ctx: Context) {
     ctx.Route('scratch_submission', '/scratch/submission/:submissionId', ScratchSubmissionHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_editor', '/scratch/editor', ScratchEditorHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_thumbnail', '/scratch/work/:workId/thumbnail', ScratchThumbnailHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_community', '/scratch/community', ScratchCommunityHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_community_publish', '/scratch/work/:workId/community', ScratchCommunityPublishHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_community_work', '/scratch/community/:communityId', ScratchCommunityWorkHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_community_project', '/scratch/community/:communityId/project', ScratchCommunityProjectHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_community_thumbnail', '/scratch/community/:communityId/thumbnail', ScratchCommunityThumbnailHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_share_create', '/scratch/work/:workId/share', ScratchShareCreateHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_share', '/scratch/share/:token', ScratchShareHandler);
     ctx.Route('scratch_share_project', '/scratch/share/:token/project', ScratchShareProjectHandler);

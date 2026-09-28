@@ -84,8 +84,8 @@ const shareResponse = (data, ok = true) => ({ ok, json: async () => data });
 
 function actions(t) {
     const html = `<button type="button" data-scratch-create>开始创作</button>
-      <button type="button" data-scratch-share="/d/art/scratch/work/one/share">分享作品一</button>
-      <button type="button" data-scratch-share="/d/art/scratch/work/two/share">分享作品二</button>` +
+      <button type="button" data-scratch-share="/d/art/scratch/work/one/share" data-community-url="/d/art/scratch/work/one/community">分享作品一</button>
+      <button type="button" data-scratch-share="/d/art/scratch/work/two/share" data-community-url="/d/art/scratch/work/two/community">分享作品二</button>` +
       env.render('partials/scratch_dialogs.html', { url: () => '/d/art/scratch/works' });
     const h = browser(t, html, 'https://onebyone.test/d/art/scratch/works');
     h.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
@@ -110,10 +110,17 @@ function actions(t) {
         status: h.document.querySelector('[data-scratch-share-status]'),
         copy: h.document.querySelector('[data-scratch-copy-share]'),
         revoke: h.document.querySelector('[data-scratch-revoke-share]'),
+        external: h.document.querySelector('[data-scratch-share-destination=external]'),
+        community: h.document.querySelector('[data-scratch-share-destination=community]'),
+        publish: h.document.querySelector('[data-scratch-community-submit]'),
+        communityForm: h.document.querySelector('[data-scratch-community-form]'),
+        instructions: h.document.querySelector('[data-scratch-community-instructions]'),
+        communityStatus: h.document.querySelector('[data-scratch-community-status]'),
     };
 }
 async function openShare(h, title = '我的作品') {
     h.share[0].click();
+    h.external.click();
     h.requests.at(-1).resolve(shareResponse({ ok: true, title, url: '/d/art/scratch/share/token' }));
     await settle();
 }
@@ -121,13 +128,13 @@ async function openShare(h, title = '我的作品') {
 describe('public Scratch player template and bridge', () => {
     it('escapes public metadata and requires the exact frame, opaque origin and channel', async (t) => {
         const h = player(t, { title: '"><img src=x onerror=alert(1)> & 小猫' });
-        assert.equal(h.document.querySelector('img'), null);
+        assert.equal(h.document.querySelector('img[onerror]'), null);
         assert.equal(h.frame.getAttribute('sandbox'), 'allow-scripts');
         assert.equal(h.frame.getAttribute('referrerpolicy'), 'no-referrer');
         assert(!h.document.documentElement.outerHTML.includes('window.UiContext'));
         assert.match(h.frame.src, /#channel=test-player-channel$/);
         assert(h.frame.src.startsWith(`https://onebyone.test/scratch-editor/editor.html?v=${'a'.repeat(64)}&lang=zh-cn#`));
-        assert.equal(h.document.querySelector('script[src]').getAttribute('src'), `/scratch-player.js?v=20260921-2-${'a'.repeat(64)}`);
+        assert.equal(h.document.querySelector('script[src]').getAttribute('src'), `/scratch-player.js?v=20260928-community-1-${'a'.repeat(64)}`);
         await h.message('ready', {}, { source: h.window });
         await h.message('ready', {}, { origin: 'https://onebyone.test' });
         await h.message('ready', { channel: 'foreign-channel' });
@@ -275,7 +282,7 @@ describe('Scratch create and share dialogs', () => {
         assert.equal(h.requests[0].options.body.toString(), '');
         assert(h.text.value.includes(title));
         assert(h.text.value.includes('https://onebyone.test/d/art/scratch/share/token'));
-        assert.equal(h.document.querySelector('img'), null);
+        assert.equal(h.document.querySelector('img[onerror]'), null);
         assert.equal(h.copy.disabled, false);
         assert.equal(h.revoke.hidden, false);
         assert.equal(h.status.dataset.error, 'false');
@@ -290,6 +297,7 @@ describe('Scratch create and share dialogs', () => {
         ]) {
             const h = actions(t);
             h.share[0].click();
+    h.external.click();
             h.requests[0].resolve(shareResponse(result));
             await settle();
             assert.equal(h.text.value, '');
@@ -301,6 +309,7 @@ describe('Scratch create and share dialogs', () => {
         const foreign = actions(t);
         foreign.share[0].dataset.scratchShare = 'https://evil.test/create';
         foreign.share[0].click();
+    foreign.external.click();
         await settle();
         assert.equal(foreign.requests.length, 0);
         assert.match(foreign.status.textContent, /分享地址无效/);
@@ -325,11 +334,13 @@ describe('Scratch create and share dialogs', () => {
     it('aborts closing requests and prevents late responses or clipboard results from polluting a new dialog', async (t) => {
         const h = actions(t);
         h.share[0].click();
+    h.external.click();
         const first = h.requests[0];
         h.shareDialog.close();
         assert.equal(first.options.signal.aborted, true);
         assert.equal(h.document.activeElement, h.share[0]);
         h.share[1].click();
+    h.external.click();
         const second = h.requests[1];
         second.resolve(shareResponse({ ok: true, title: '作品二', url: '/d/art/scratch/share/two' }));
         await settle();
@@ -342,6 +353,7 @@ describe('Scratch create and share dialogs', () => {
         h.copy.click();
         h.shareDialog.close();
         h.share[0].click();
+    h.external.click();
         pendingCopy.resolve();
         await settle();
         assert.equal(h.status.textContent, '正在准备分享链接…');
@@ -378,11 +390,13 @@ describe('Scratch create and share dialogs', () => {
     it('restores sharing after BFCache navigation and aborts every later page departure', async (t) => {
         const h = actions(t);
         h.share[0].click();
+    h.external.click();
         h.window.dispatchEvent(new h.window.Event('pagehide'));
         assert.equal(h.requests[0].options.signal.aborted, true);
         assert.equal(h.shareDialog.open, false);
         h.window.dispatchEvent(new h.window.PageTransitionEvent('pageshow', { persisted: true }));
         h.share[1].click();
+    h.external.click();
         h.requests[0].resolve(shareResponse({ ok: true, title: '旧请求', url: '/d/art/scratch/share/old' }));
         h.requests[1].resolve(shareResponse({ ok: true, title: '恢复后的作品', url: '/d/art/scratch/share/restored' }));
         await settle();
@@ -391,8 +405,98 @@ describe('Scratch create and share dialogs', () => {
         assert.equal(h.copy.disabled, false);
         h.shareDialog.close();
         h.share[0].click();
+    h.external.click();
         h.window.dispatchEvent(new h.window.Event('pagehide'));
         assert.equal(h.requests[2].options.signal.aborted, true, 'pagehide listener must remain active after the first visit');
         assert.equal(h.shareDialog.open, false);
+    });
+});
+
+describe('classroom community share flow', () => {
+    it('opens a destination choice without publishing or creating an external link', (t) => {
+        const h = actions(t);
+        h.share[0].click();
+        assert.equal(h.requests.length, 0);
+        assert.equal(h.document.querySelector('[data-scratch-share-pane=choice]').hidden, false);
+        assert.equal(h.document.activeElement, h.community);
+        h.shareDialog.close();
+        assert.equal(h.requests.length, 0);
+    });
+
+    it('reads publication state, keeps same-title update explicit, and posts the saved work exactly once', async (t) => {
+        const h = actions(t);
+        h.share[0].click();
+        h.community.click();
+        assert.equal(h.requests.length, 1);
+        assert.equal(h.requests[0].options.method, 'GET');
+        assert.equal(h.requests[0].options.credentials, 'same-origin');
+        assert.equal(h.requests[0].url, 'https://onebyone.test/d/art/scratch/work/one/community');
+        assert.equal(h.publish.disabled, true);
+        h.requests[0].resolve(shareResponse({ ok: true, title: '小猫快跑', revision: 3,
+            publication: { id: 'original', instructions: '方向键移动', revision: 2 } }));
+        await settle();
+        assert.equal(h.instructions.value, '方向键移动');
+        assert.equal(h.publish.textContent, '更新社区作品');
+        assert.equal(h.document.querySelector('[data-scratch-community-update-note]').hidden, false);
+        h.instructions.value = '  空格跳跃  ';
+        const submit = () => h.communityForm.dispatchEvent(new h.window.Event('submit', { bubbles: true, cancelable: true }));
+        submit();
+        submit();
+        assert.equal(h.requests.length, 2, 'double click cannot publish twice');
+        assert.equal(h.requests[1].options.method, 'POST');
+        assert.equal(h.requests[1].options.body.get('instructions'), '空格跳跃');
+        h.requests[1].resolve(shareResponse({ ok: true, id: 'original', updated: true, url: '/d/art/scratch/community/original' }));
+        await settle();
+        assert.equal(h.document.querySelector('[data-scratch-share-pane=success]').hidden, false);
+        assert.match(h.document.querySelector('[data-scratch-community-success-title]').textContent, /已更新/);
+        assert.equal(h.document.querySelector('[data-scratch-community-view]').href, 'https://onebyone.test/d/art/scratch/community/original');
+        assert(h.requests.every((r) => !r.url.endsWith('/share')), 'community never creates public share tokens');
+    });
+
+    it('does not publish when preparation fails and discards a late response after switching destination', async (t) => {
+        const h = actions(t);
+        h.share[0].click();
+        h.community.click();
+        h.requests[0].resolve(shareResponse({ ok: false, message: '请先保存作品' }, false));
+        await settle();
+        assert.equal(h.publish.disabled, true);
+        assert.match(h.communityStatus.textContent, /请先保存/);
+        h.document.querySelector('[data-scratch-share-pane=community] [data-scratch-share-back]').click();
+        h.community.click();
+        const late = h.requests[1];
+        h.document.querySelector('[data-scratch-share-pane=community] [data-scratch-share-back]').click();
+        assert.equal(late.options.signal.aborted, true);
+        h.external.click();
+        late.resolve(shareResponse({ ok: true, title: '过期信息', publication: null }));
+        h.requests[2].resolve(shareResponse({ ok: true, title: '当前作品', url: '/d/art/scratch/share/current' }));
+        await settle();
+        assert.equal(h.document.querySelector('[data-scratch-share-pane=external]').hidden, false);
+        assert.match(h.text.value, /当前作品/);
+        assert.equal(h.publish.disabled, true);
+    });
+
+    it('recovers from failed publication without losing instructions and rejects overlong or foreign URLs', async (t) => {
+        const h = actions(t);
+        h.share[0].click();
+        h.community.click();
+        h.requests[0].resolve(shareResponse({ ok: true, title: '作品', publication: null }));
+        await settle();
+        h.instructions.value = '字'.repeat(301);
+        const submit = () => h.communityForm.dispatchEvent(new h.window.Event('submit', { bubbles: true, cancelable: true }));
+        submit();
+        assert.equal(h.requests.length, 1);
+        h.instructions.value = '方向键移动';
+        h.instructions.dispatchEvent(new h.window.Event('input'));
+        submit();
+        h.requests[1].resolve(shareResponse({ ok: false, message: '稍后再试' }, false));
+        await settle();
+        assert.equal(h.instructions.value, '方向键移动');
+        assert.equal(h.publish.disabled, false);
+        assert.equal(h.communityStatus.dataset.error, 'true');
+        submit();
+        h.requests[2].resolve(shareResponse({ ok: true, url: 'https://evil.test/community' }));
+        await settle();
+        assert.equal(h.document.querySelector('[data-scratch-share-pane=success]').hidden, true);
+        assert.equal(h.communityStatus.dataset.error, 'true');
     });
 });

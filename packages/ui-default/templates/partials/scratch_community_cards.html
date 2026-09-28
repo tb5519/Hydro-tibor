@@ -1,0 +1,18 @@
+<div class="sc-grid sc-community-grid">
+{% for item in communityWorks %}
+  <article class="sc-card sc-community-card">
+    <a class="sc-community-card-link" href="{{ url('scratch_community_work', communityId=item._id) }}" aria-label="玩一玩 {{ item.title }}，{{ udict[item.owner].uname if udict[item.owner] else '课堂小伙伴' }} 的作品">
+      <div class="sc-community-cover">
+        {% if item.thumbnailFileId %}<img loading="lazy" src="{{ url('scratch_community_thumbnail', communityId=item._id) }}" alt="{{ item.title }} 的舞台截图" width="480" height="360">
+        {% else %}<span class="sc-community-cover-placeholder" aria-hidden="true"><svg viewBox="0 0 80 80"><rect x="15" y="18" width="50" height="42" rx="12"/><path d="m34 30 16 9-16 9Z"/></svg><span>小创意，等你打开</span></span>{% endif %}
+        <span class="sc-community-card-play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z"/></svg><span>玩一玩</span></span>
+      </div>
+      <div class="sc-community-card-body">
+        <div class="sc-community-card-heading"><h3>{{ item.title }}</h3>{% if item.owner == handler.user._id %}<span class="sc-community-mine-badge">我的</span>{% endif %}</div>
+        <p class="sc-community-card-instructions">{{ item.instructions or '打开作品，发现里面的小惊喜。' }}</p>
+        <div class="sc-community-card-meta"><span class="sc-community-author"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6" r="3"/><path d="M4 17v-2a6 6 0 0 1 12 0v2"/></svg><span>{{ udict[item.owner].uname if udict[item.owner] else '课堂小伙伴' }}</span></span><span class="sc-community-updated">{{ datetimeSpan(item.updatedAt)|safe }}</span></div>
+      </div>
+    </a>
+  </article>
+{% endfor %}
+</div>

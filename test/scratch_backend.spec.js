@@ -730,6 +730,214 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         assert.equal(await model.versions.countDocuments({ workId: work._id }), 1);
     });
 
+    it('publishes only saved classroom snapshots and retains external links independently through updates and withdrawal', async () => {
+        const work = await model.createWork(alice, 'community snapshot retention');
+        await assert.rejects(model.publishCommunityWork(alice, work._id), ValidationError);
+        await model.saveWork(alice, work._id, 0, upload(project('community first')), false, undefined, thumbnailData().data);
+        const first = await model.publishCommunityWork(alice, work._id, '  方向键移动  ');
+        assert.equal(first.updated, false);
+        assert.equal(first.publication.instructions, '方向键移动');
+        const firstFile = await model.getCommunityFile(bob, first.publication._id);
+        const firstCover = await model.getCommunityFile(bob, first.publication._id, true);
+        await assert.rejects(model.getFile(bob, firstFile._id), PermissionError);
+        await assert.rejects(model.getWork(bob, work._id), PermissionError);
+        await assert.rejects(model.getCommunityFile(foreign, first.publication._id), NotFoundError);
+        const external = await model.shareWork(alice, work._id);
+        await model.saveWork(alice, work._id, 1, upload(project('private second')), false, undefined, thumbnailData().data);
+        assert((await model.getCommunityFile(bob, first.publication._id))._id.equals(firstFile._id));
+        assert((await model.getCommunityFile(bob, first.publication._id, true))._id.equals(firstCover._id));
+        assert(blobs.has(firstFile.path));
+        assert(blobs.has(firstCover.path));
+        const second = await model.publishCommunityWork(alice, work._id, '空格键开始');
+        assert.equal(second.updated, true);
+        assert(second.publication._id.equals(first.publication._id));
+        assert.equal(second.publication.createdAt.getTime(), first.publication.createdAt.getTime());
+        assert.equal(second.publication.revision, 2);
+        assert(!(await model.getCommunityFile(bob, first.publication._id))._id.equals(firstFile._id));
+        assert(!blobs.has(firstCover.path));
+        assert(blobs.has(firstFile.path), 'the old external link still owns its immutable file');
+        await assert.rejects(model.unpublishCommunityWork(bob, first.publication._id), PermissionError);
+        await model.unpublishCommunityWork(teacher, first.publication._id);
+        await assert.rejects(model.getCommunityFile(bob, first.publication._id), NotFoundError);
+        assert((await model.getPublicShare(alice.domainId, external._id)).file._id.equals(firstFile._id));
+        await model.revokeWorkShares(alice, work._id);
+        assert(!blobs.has(firstFile.path));
+        assert((await model.getWork(alice, work._id)).currentFileId);
+    });
+
+    it('deduplicates normalized author/title under concurrent publication without merging different learners or classrooms', async () => {
+        const names = ['Community Ｃａｔ', 'Community Cat'];
+        const candidates = [];
+        for (const name of names) {
+            const work = await model.createWork(alice, name, null, false);
+            await model.saveWork(alice, work._id, 0, upload(project(name)));
+            candidates.push(work);
+        }
+        const published = await Promise.all(candidates.map((work) => model.publishCommunityWork(alice, work._id)));
+        assert(published[0].publication._id.equals(published[1].publication._id));
+        assert.equal(published.filter((result) => result.updated).length, 1);
+        assert.equal(await model.community.countDocuments({ domainId: alice.domainId, owner: alice.uid, titleKey: 'Community Cat' }), 1);
+        const snapshot = await model.getCommunityFile(bob, published[0].publication._id);
+        assert(candidates.some((work) => work._id.equals(snapshot.workId)));
+        for (const actor of [bob, foreign]) {
+            const work = await model.createWork(actor, names[1]);
+            await model.saveWork(actor, work._id, 0, upload());
+            const other = await model.publishCommunityWork(actor, work._id);
+            assert(!other.publication._id.equals(published[0].publication._id));
+        }
+        const existing = await model.getWorkCommunityPublication(alice, candidates[0]._id);
+        assert(existing.publication._id.equals(published[0].publication._id));
+        await assert.rejects(model.publishCommunityWork(bob, candidates[0]._id), PermissionError);
+        await assert.rejects(model.publishCommunityWork(foreign, candidates[0]._id), NotFoundError);
+        await assert.rejects(model.publishCommunityWork(alice, candidates[0]._id, '长'.repeat(301)), ValidationError);
+        await assert.rejects(model.publishCommunityWork(alice, candidates[0]._id, { body: 'invalid' }), ValidationError);
+    });
+
+    it('moves editing references on automatic same-title draft merging while preserving the published snapshot', async () => {
+        const old = await model.createWork(alice, 'community automatic merge');
+        await model.saveWork(alice, old._id, 0, upload(project('public old')), false, undefined, thumbnailData().data);
+        const { publication } = await model.publishCommunityWork(alice, old._id, '原来的玩法');
+        const firstFile = await model.getCommunityFile(bob, publication._id);
+        const firstCover = await model.getCommunityFile(bob, publication._id, true);
+        const replacement = await model.createWork(alice, old.title, null, false);
+        await model.saveWork(alice, replacement._id, 0, upload(project('private new')));
+        await assert.rejects(model.getWork(alice, old._id), NotFoundError);
+        const moved = await model.getCommunityWork(bob, publication._id);
+        assert(moved.workId.equals(replacement._id));
+        assert(moved.snapshotWorkId.equals(old._id));
+        assert(moved.fileId.equals(firstFile._id));
+        assert.equal(moved.instructions, '原来的玩法');
+        assert(blobs.has(firstFile.path));
+        assert(blobs.has(firstCover.path));
+        assert((await model.getCommunityFile(bob, publication._id))._id.equals(firstFile._id));
+        const updated = await model.publishCommunityWork(alice, replacement._id);
+        assert(updated.publication._id.equals(publication._id));
+        assert(updated.publication.snapshotWorkId.equals(replacement._id));
+        assert(!blobs.has(firstFile.path));
+        assert(!blobs.has(firstCover.path));
+    });
+
+    it('withdraws a deleted original or merged survivor and cleans both old snapshot files and domain community data', async () => {
+        const old = await model.createWork(alice, 'community delete merged source');
+        await model.saveWork(alice, old._id, 0, upload(), false, undefined, thumbnailData().data);
+        const { publication } = await model.publishCommunityWork(alice, old._id);
+        const firstFile = await model.getCommunityFile(bob, publication._id);
+        const firstCover = await model.getCommunityFile(bob, publication._id, true);
+        const replacement = await model.createWork(alice, old.title, null, false);
+        await model.saveWork(alice, replacement._id, 0, upload());
+        await model.deleteWork(alice, replacement._id);
+        await assert.rejects(model.getCommunityWork(bob, publication._id), NotFoundError);
+        assert(!blobs.has(firstFile.path));
+        assert(!blobs.has(firstCover.path));
+        const isolated = { domainId: 'community-delete-domain', uid: alice.uid, isTeacher: false };
+        const work = await model.createWork(isolated, 'domain publication');
+        await model.saveWork(isolated, work._id, 0, upload(), false, undefined, thumbnailData().data);
+        await model.publishCommunityWork(isolated, work._id);
+        const docs = await model.files.find({ domainId: isolated.domainId }).toArray();
+        await deleteDomainData(isolated.domainId);
+        assert.equal(await model.community.countDocuments({ domainId: isolated.domainId }), 0);
+        assert(docs.every((file) => !blobs.has(file.path)));
+    });
+
+    it('searches literal titles and scopes community lists by classroom and author', async () => {
+        for (const [actor, title] of [[alice, 'Browse [A]+'], [bob, 'Browse [A]+'], [foreign, 'Browse [A]+'], [alice, 'Browse other']]) {
+            const work = await model.createWork(actor, title);
+            await model.saveWork(actor, work._id, 0, upload());
+            await model.publishCommunityWork(actor, work._id);
+        }
+        const classroom = await model.listCommunityWorks(alice, '[A]+').toArray();
+        assert.equal(classroom.length, 2);
+        assert(classroom.every((doc) => doc.domainId === alice.domainId));
+        const mine = await model.listCommunityWorks(alice, 'Browse', true).toArray();
+        assert.equal(mine.length, 2);
+        assert(mine.every((doc) => doc.owner === alice.uid));
+        await assert.rejects(async () => model.listCommunityWorks(alice, 'x'.repeat(81)), ValidationError);
+    });
+
+    it('provides publishing status and member-only detail data with owner editing and teacher withdrawal controls', async () => {
+        const work = await model.createWork(alice, 'community API contract');
+        await model.saveWork(alice, work._id, 0, upload(), false, undefined, thumbnailData().data);
+        const makeHandler = (Class, actor = alice, communityId) => Object.assign(new Class(), {
+            actor, UiContext: {}, user: { _id: actor.uid, hasPerm: () => actor.isTeacher },
+            request: { params: { workId: work._id.toHexString(), communityId: communityId?.toHexString() },
+                body: { instructions: '按绿色旗子开始' }, query: {} }, response: {},
+            limitRate: async () => {}, url: (name, params = {}) => `/${name}/${params.communityId || params.fileId || ''}`,
+            paginate: async (cursor) => { const docs = await cursor.toArray(); return [docs, 1, docs.length]; },
+        });
+        const publisher = makeHandler(handlers.ScratchCommunityPublishHandler);
+        await publisher.get();
+        assert.equal(publisher.response.body.publication, null);
+        assert.equal(publisher.response.body.title, work.title);
+        assert.match(publisher.response.body.thumbnailUrl, /^\/scratch_file\//);
+        await publisher.post();
+        assert.equal(publisher.response.body.updated, false);
+        const id = new ObjectId(publisher.response.body.id);
+        await publisher.get();
+        assert.equal(publisher.response.body.publication.id, id.toHexString());
+        assert.equal(publisher.response.body.publication.instructions, '按绿色旗子开始');
+        for (const [actor, canManage, canEdit] of [[alice, true, true], [bob, false, false], [teacher, true, false]]) {
+            const detail = makeHandler(handlers.ScratchCommunityWorkHandler, actor, id);
+            await detail.get();
+            assert.equal(detail.response.template, 'scratch_community_detail.html');
+            assert.equal(detail.response.body.canManage, canManage);
+            assert.equal(detail.response.body.canEdit, canEdit);
+            assert.equal(detail.UiContext.scratchPlayer.memberOnly, true);
+            assert.equal(detail.UiContext.scratchPlayer.projectUrl, `/scratch_community_project/${id}`);
+        }
+        const gallery = makeHandler(handlers.ScratchCommunityHandler);
+        gallery.request.query = { q: 'community API contract', mine: '1' };
+        await gallery.get();
+        assert.equal(gallery.response.body.count, 1);
+        assert.equal(gallery.response.body.communityWorks[0].title, work.title);
+        assert.equal(gallery.response.body.mine, true);
+        const unauthorised = makeHandler(handlers.ScratchCommunityWorkHandler, bob, id);
+        await assert.rejects(unauthorised.postUnpublish(), PermissionError);
+        const moderator = makeHandler(handlers.ScratchCommunityWorkHandler, teacher, id);
+        await moderator.postUnpublish();
+        assert.equal(moderator.response.body.ok, true);
+        await assert.rejects(moderator.get(), NotFoundError);
+    });
+
+    it('serves community project and cover only through authenticated no-store routes without CDN redirects', async () => {
+        const work = await model.createWork(alice, 'community authenticated delivery');
+        await model.saveWork(alice, work._id, 0, upload(), false, undefined, thumbnailData().data);
+        const { publication } = await model.publishCommunityWork(alice, work._id);
+        const makeHandler = (Class, actor = bob) => {
+            const handler = new Class();
+            const headers = {};
+            Object.assign(handler, { actor, headers, context: {}, UiContext: {},
+                domain: { _id: actor.domainId, domainType: 'scratch' },
+                user: { _id: actor.uid, hasPerm: () => actor.isTeacher }, checkPriv: () => {},
+                request: { method: 'get', headers: {}, host: 'onebyone.test', params: { communityId: publication._id.toHexString() } },
+                response: { addHeader: (key, value) => { headers[key] = value; },
+                    attachment: (name, bytes) => { handler.response.body = bytes; } },
+            });
+            return handler;
+        };
+        await database.collection('domain.user').updateOne({ domainId: bob.domainId, uid: bob.uid }, { $set: { join: true } }, { upsert: true });
+        for (const [Class, thumbnail] of [[handlers.ScratchCommunityProjectHandler, false], [handlers.ScratchCommunityThumbnailHandler, true]]) {
+            const file = await model.getCommunityFile(bob, publication._id, thumbnail);
+            readyPaths.add(file.path);
+            const handler = makeHandler(Class);
+            await handler.prepare();
+            await handler.get();
+            assert(handler.response.body.equals(blobs.get(file.path)));
+            assert.equal(handler.response.redirect, undefined);
+            assert.equal(handler.headers['Cache-Control'], 'private, no-store');
+            assert.equal(handler.response.type, thumbnail ? 'image/png' : 'application/octet-stream');
+            await handler.head();
+            assert.equal(handler.context.status, 200);
+            assert.equal(handler.response.body, '');
+            assert.equal(handler.headers['Content-Length'], `${file.size}`);
+            const outsider = makeHandler(Class, { ...bob, uid: 999999 });
+            await assert.rejects(outsider.prepare(), PermissionError);
+            await assert.rejects(makeHandler(Class, foreign).get(), NotFoundError);
+        }
+        assert.equal(redirectCalls.length, 0);
+        await model.unpublishCommunityWork(alice, publication._id);
+        await assert.rejects(makeHandler(handlers.ScratchCommunityProjectHandler).get(), NotFoundError);
+    });
+
     it('shares only saved work with unguessable tokens, authorizes owners and teachers, and keeps same-revision sharing idempotent', async () => {
         const work = await model.createWork(alice, 'a shared creation');
         await assert.rejects(model.shareWork(alice, work._id), ValidationError);
