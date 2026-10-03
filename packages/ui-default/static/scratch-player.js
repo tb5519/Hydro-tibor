@@ -8,13 +8,16 @@
   if (!root || !frame || !status || !message || !retry) return;
   const channel = crypto.randomUUID();
   const controller = new AbortController();
+  let config;
   let memberOnly = false;
-  try { memberOnly = JSON.parse(root.dataset.config)?.memberOnly === true; } catch { /* Report malformed config when the frame is ready. */ }
+  try { config = JSON.parse(root.dataset.config); memberOnly = config?.memberOnly === true; } catch { /* Report malformed config when the frame is ready. */ }
   let stopped = false;
   let initialized = false;
   let sentProject = false;
   let loaded = false;
+  let runtime = null;
   const fail = (text) => {
+    runtime?.stop();
     clearTimeout(timer);
     controller.abort();
     stopped = true;
@@ -26,6 +29,125 @@
   };
   const timer = setTimeout(() => fail('作品加载有点慢，请检查网络后重新打开。'), memberOnly ? 300000 : 120000);
   retry.addEventListener('click', () => location.reload());
+  // Only the authenticated parent owns metrics. A sandbox receives neither
+  // session IDs nor endpoint URLs, and loading/idle/hidden time earns no credit.
+  const createRuntimeTracker = () => {
+    if (!memberOnly || typeof config?.metricsUrl !== 'string') return null;
+    let endpoint;
+    try { endpoint = new URL(config.metricsUrl, location.href); } catch { return null; }
+    if (endpoint.origin !== location.origin || !['http:', 'https:'].includes(endpoint.protocol)) return null;
+    let running = false;
+    let ended = false;
+    let current = null;
+    let previousDone = Promise.resolve();
+    const now = () => performance.now();
+    const wanted = () => loaded && running && !ended && !document.hidden;
+    const announce = (summary) => window.dispatchEvent(new CustomEvent('scratch-community-metrics', { detail: summary }));
+    const post = async (body) => {
+      const abort = new AbortController();
+      const timeout = setTimeout(() => abort.abort(), 10000);
+      try {
+        const response = await fetch(endpoint.href, {
+          method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
+          headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+          body: new URLSearchParams(body), signal: abort.signal, keepalive: true,
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error('Metrics temporarily unavailable');
+        announce(result);
+        return result;
+      } finally { clearTimeout(timeout); }
+    };
+    const accrue = (session) => {
+      if (session.lastTick === null || session.closed) return;
+      const time = now();
+      // A sleeping computer or heavily delayed timer is not an hour of play.
+      session.milliseconds += Math.max(0, Math.min(time - session.lastTick, 15000));
+      session.lastTick = time;
+    };
+    const finish = (session) => {
+      if (session.finished) return;
+      session.finished = true;
+      session.done();
+    };
+    const flush = async (session) => {
+      if (!session.id || session.sending || session.finished) return;
+      session.sending = true;
+      try {
+        do {
+          if (!session.pending) {
+            const seconds = Math.min(30, Math.floor(session.milliseconds / 1000));
+            if (!seconds) break;
+            session.milliseconds -= seconds * 1000;
+            session.pending = { operation: 'runtimeHeartbeat', sessionId: session.id, seq: ++session.seq, seconds };
+          }
+          // On a lost response retry this exact sequence and duration. The
+          // server makes that request idempotent even if it already committed.
+          const result = await post(session.pending);
+          session.pending = null;
+          if (result.sessionExpired) {
+            session.closed = true;
+            if (current === session) current = null;
+            break;
+          }
+        } while (session.closed && session.milliseconds >= 1000);
+      } catch { /* Playback continues; retry a pending heartbeat on the next tick. */ }
+      finally {
+        session.sending = false;
+        if (session.closed) finish(session);
+      }
+    };
+    const sync = () => {
+      if (!wanted()) {
+        if (current) {
+          const session = current;
+          current = null;
+          accrue(session);
+          session.closed = true;
+          void flush(session);
+        }
+        return;
+      }
+      if (current) return;
+      const session = { id: null, requestId: crypto.randomUUID(), closed: false, finished: false,
+        lastTick: null, milliseconds: 0, seq: 0, pending: null, sending: false, done: null };
+      current = session;
+      const preceding = previousDone;
+      previousDone = new Promise((resolve) => { session.done = resolve; });
+      void (async () => {
+        // Finish the previous visible run before rotating its server session.
+        // This also prevents a slow start response from reviving a stopped run.
+        await preceding;
+        if (session.closed) { finish(session); return; }
+        try {
+          const result = await post({ operation: 'runtimeStart', requestId: session.requestId });
+          if (typeof result.sessionId !== 'string' || !result.sessionId) throw new Error('Invalid runtime session');
+          session.id = result.sessionId;
+          session.lastTick = now();
+          if (session.closed) finish(session);
+        } catch {
+          session.closed = true;
+          if (current === session) current = null;
+          finish(session);
+        }
+      })();
+    };
+    const heartbeat = setInterval(() => {
+      sync();
+      if (current) { accrue(current); void flush(current); }
+    }, 15000);
+    document.addEventListener('visibilitychange', sync);
+    return {
+      setRunning(value) { running = value; sync(); },
+      stop() {
+        ended = true;
+        clearInterval(heartbeat);
+        document.removeEventListener('visibilitychange', sync);
+        sync();
+      },
+    };
+  };
+  runtime = createRuntimeTracker();
   const downloadProject = async () => {
     const config = JSON.parse(root.dataset.config);
     const url = new URL(config.projectUrl, location.href);
@@ -65,6 +187,8 @@
         loaded = true;
         clearTimeout(timer);
         status.hidden = true;
+      } else if (event.data.type === 'runState' && loaded && typeof event.data.running === 'boolean') {
+        runtime?.setRunning(event.data.running);
       } else if (event.data.type === 'error') {
         throw new Error(loaded ? '作品暂时无法运行，请重新打开。' : '这个作品暂时无法打开，请稍后重试。');
       }
@@ -72,7 +196,7 @@
       if (!stopped) fail(error.name === 'AbortError' ? '作品加载已停止，请重新打开。' : error.message);
     }
   });
-  window.addEventListener('pagehide', () => { stopped = true; controller.abort(); clearTimeout(timer); }, { once: true });
+  window.addEventListener('pagehide', () => { runtime?.stop(); stopped = true; controller.abort(); clearTimeout(timer); }, { once: true });
   window.addEventListener('pageshow', (event) => { if (event.persisted) location.reload(); });
   // v must be first so older site service workers bypass their entry cache.
   frame.src = `/scratch-editor/editor.html?v=${encodeURIComponent(root.dataset.editorVersion || 'unavailable')}&lang=zh-cn#channel=${encodeURIComponent(channel)}`;

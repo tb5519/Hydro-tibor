@@ -1,3 +1,4 @@
+{% from "partials/scratch_community_metrics.html" import duration %}
 <div class="sc-grid sc-community-grid">
 {% for item in communityWorks %}
   <article class="sc-card sc-community-card">
@@ -10,6 +11,7 @@
       <div class="sc-community-card-body">
         <div class="sc-community-card-heading"><h3>{{ item.title }}</h3>{% if item.owner == handler.user._id %}<span class="sc-community-mine-badge">我的</span>{% endif %}</div>
         <p class="sc-community-card-instructions">{{ item.instructions or '打开作品，发现里面的小惊喜。' }}</p>
+        <div class="sc-community-card-metrics"><span aria-label="{{ item.likes or 0 }} 次点赞"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 17s-7-4.3-7-9a4 4 0 0 1 7-2.6A4 4 0 0 1 17 8c0 4.7-7 9-7 9Z"/></svg>{{ item.likes or 0 }}</span><span><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l3 2"/></svg>运行 {{ duration(item.runtimeSeconds or 0) }}</span></div>
         <div class="sc-community-card-meta"><span class="sc-community-author"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6" r="3"/><path d="M4 17v-2a6 6 0 0 1 12 0v2"/></svg><span>{{ udict[item.owner].uname if udict[item.owner] else '课堂小伙伴' }}</span></span><span class="sc-community-updated">{{ datetimeSpan(item.updatedAt)|safe }}</span></div>
       </div>
     </a>

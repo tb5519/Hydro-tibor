@@ -50,6 +50,14 @@ The local entry bypasses TurboWarp's homepage, cloud, addons, URL project import
 
 The parent's `init` message selects `mode: 'editor' | 'player' | 'thumbnail'`. Player mode opens a responsive stage and starts the green flag, with native stop/restart/fullscreen controls. Both player and thumbnail mode force read-only access and reject export requests. The iframe must be granted the fullscreen feature for browser fullscreen to be available.
 
+After `loaded`, player mode forwards VM `PROJECT_RUN_START` / `PROJECT_RUN_STOP`
+as `{type: 'runState', running: boolean}`. The authenticated community parent
+counts only visible time while project threads are running; loading, an idle
+stage, hidden tabs and editor/thumbnail modes do not count. Session IDs and
+metrics endpoints remain exclusively in the parent. Heartbeats are small,
+idempotent requests every 15 seconds, with a final keepalive flush on stop,
+visibility changes and page exit. Public external shares do not record metrics.
+
 Editor mode retains native local file import/download, editing and the project title. The misleading native new-project action is removed: creation belongs to the classroom. File System Access pickers are disabled in the opaque iframe; imports use a standard file input and exports download an `.sb3`. An in-frame dialog explains that importing replaces the current work's contents, and a successful import always emits `dirty`, including when its filename matches the current title. A committed native title edit emits `{type: 'titleChanged', title}`; initialization does not emit a title change. The parent includes the new title with its next authenticated project save. The native menu reserves its right edge for the parent's save/submit buttons (360px, or 220px below 600px wide).
 
 Each of the four native libraries includes a teacher-preset button. In a loaded editable frame it sends `{type: 'openPresetLibrary', kind, targetId}`; the parent may also send `requestPresetLibrary` to open the sprite category. After domain authorization and byte download, the parent sends `{type: 'importPreset', id, kind, title, filename, mime, file: ArrayBuffer, targetId}`. Supported kinds are `sprite`, `costume`, `sound` and `backdrop`; supported bytes are complete `.sprite3`, SVG/PNG/JPEG/WebP images, and MP3/WAV sounds. The server must validate archives and cap uploads before delivery. Imports never receive an asset URL. Sprite archives must contain all referenced media and cannot use custom extensions or fonts. Images pass the native upload sanitizer/decoder; WebP has an explicit rejecting decoder. Imports append to the current project and acknowledge with `presetImported` or retryable `presetImportError`, never the fatal project-load error. Pending/completed request IDs prevent duplicate insertions. Costume/sound imports retain their original target and reject if it was deleted; a costume cannot target the stage, while backgrounds always target the stage. Read-only and unloaded frames do not import.
@@ -83,3 +91,28 @@ when enabled. Only domain members can fetch them; management requires the domain
 editing permission. The parent page authenticates downloads and transfers bytes
 to the sandboxed editor. Adding a preset copies it into the project, so deleting
 the original preset does not break already-saved projects.
+
+## Classroom community engagement
+
+Community cards and detail pages show cumulative likes and runtime. Learners can
+like each publication once per calendar day in Asia/Shanghai; teachers can add
+likes repeatedly. A teacher-only analytics endpoint exposes per-member likes and
+actual runtime, and records teacher-added likes and runtime separately. Learner
+responses and HTML never include those private participant records.
+
+The default ranking is `(5 * likes + 2 * sqrt(runtimeSeconds / 60)) /
+(max(0, daysSinceFirstPublication) + 2)^0.8`. Likes have more weight, the square
+root limits the influence of very long runs, and age decay helps new creations.
+Sorting happens before pagination; equal scores fall back to the most recently
+updated publication. The latest option orders by publication update time.
+Updating the same author's same-title publication preserves its identity and
+statistics; it does not reset its first-publication age. Teacher-assisted sharing
+retains the original learner as author.
+
+Runtime starts with this release; earlier playback is not reconstructed. The
+authenticated parent counts executing VM threads only while its page is visible,
+and sends bounded, idempotent heartbeats. Loading, stopped projects, background
+tabs and external public shares are excluded. A single server lease per member
+and publication prevents overlapping tabs from adding the same wall time twice.
+Teacher additions affect the public totals and ranking while retaining their
+separate origin in the private analytics view.

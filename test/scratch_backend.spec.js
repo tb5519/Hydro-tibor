@@ -22,10 +22,15 @@ function load(relative, dependencies) {
     vm.runInNewContext(transformSync(fs.readFileSync(path.join(root, relative), 'utf8'), {
         loader: 'ts', format: 'cjs',
     }).code, {
-        module, exports: module.exports, Buffer, Blob, URL, Date, setTimeout,
+        module, exports: module.exports, Buffer, Blob, URL, Date: dependencies.__Date || Date, setTimeout,
         require: (name) => Object.hasOwn(dependencies, name) ? dependencies[name] : require(name),
     });
     return module.exports;
+}
+let metricNow = null;
+class MetricDate extends Date {
+    constructor(...args) { super(); return new Date(...(args.length ? args : [metricNow ?? Date.now()])); }
+    static now() { return metricNow ?? Date.now(); }
 }
 let mongod;
 let client;
@@ -127,6 +132,7 @@ before(async () => {
     };
     scratchFiles = load('packages/hydrooj/src/lib/scratch_files.ts', { '../error': errors });
     model = load('packages/hydrooj/src/model/scratch.ts', {
+        __Date: MetricDate,
         '../context': {}, '../error': errors, '../lib/scratch_files': scratchFiles, '../logger': { Logger: class { warn() {} } },
         '../lib/asset_delivery': assetDelivery,
         '../service/db': db, './storage': storage,
@@ -147,6 +153,7 @@ before(async () => {
     });
 });
 beforeEach(() => {
+    metricNow = null;
     mirrorCalls.length = 0;
     redirectCalls.length = 0;
     originReads.length = 0;
@@ -1503,5 +1510,236 @@ describe('Scratch permission-gated CDN delivery', () => {
         } finally {
             clearTimeout(timeout);
         }
+    });
+});
+
+
+describe('Scratch community engagement and private teacher analytics', () => {
+    async function publish(title, actor = alice) {
+        const work = await model.createWork(actor, title);
+        await model.saveWork(actor, work._id, 0, upload());
+        return { work, ...(await model.publishCommunityWork(actor, work._id)) };
+    }
+    const key = (suffix) => `metric-request-000-${suffix}`;
+    function metricHandler(Class, actor, id, body = {}) {
+        return Object.assign(new Class(), { actor, response: {},
+            request: { params: { communityId: id.toHexString() }, body }, limitRate: async () => {} });
+    }
+    it('records only one student like across concurrent requests and permits a new like after Shanghai midnight', async () => {
+        const { publication } = await publish('daily concurrent hearts');
+        metricNow = Date.parse('2026-10-02T15:59:59.000Z');
+        await Promise.all(Array.from({ length: 20 }, (_, i) => model.likeCommunityWork(alice, publication._id, key(i))));
+        const today = await model.getCommunityMetrics(alice, publication._id);
+        assert.equal(today.likes, 1);
+        assert.equal(today.likedToday, true);
+        assert.equal(today.canLike, false);
+        assert(await model.communityEvents.findOne({ communityId: publication._id, _id: { $regex: ':day:2026-10-02$' } }));
+        metricNow += 1000;
+        assert.equal((await model.getCommunityMetrics(alice, publication._id)).canLike, true);
+        await model.likeCommunityWork(alice, publication._id, key('tomorrow'));
+        assert.equal((await model.getCommunityMetrics(alice, publication._id)).likes, 2);
+        await model.likeCommunityWork(bob, publication._id, key('bob'));
+        assert.equal((await model.getCommunityMetrics(alice, publication._id)).likes, 3);
+    });
+    it('allows unlimited distinct teacher likes but deduplicates retries and manual adjustments atomically', async () => {
+        const { publication } = await publish('teacher encouragement');
+        await Promise.all(Array.from({ length: 20 }, () => model.likeCommunityWork(teacher, publication._id, key('same'))));
+        await Promise.all(Array.from({ length: 12 }, (_, i) => model.likeCommunityWork(teacher, publication._id, key(i))));
+        await Promise.all(Array.from({ length: 12 }, () => model.adjustCommunityMetrics(teacher, publication._id, key('adjust'), 7, 123)));
+        const summary = await model.getCommunityMetrics(bob, publication._id);
+        assert.equal(summary.likes, 20);
+        assert.equal(summary.runtimeSeconds, 123);
+        const analytics = await model.getCommunityAnalytics(teacher, publication._id);
+        assert.equal(analytics.teacherLikes, 20);
+        assert.equal(analytics.studentLikes, 0);
+        assert.equal(analytics.actualRuntimeSeconds, 0);
+        assert.equal(analytics.manualRuntimeSeconds, 123);
+        assert.equal(analytics.participants[0].uid, teacher.uid);
+        assert.equal(analytics.participants[0].likes, 20);
+        assert.equal((await model.getCommunityMetrics(teacher, publication._id)).canLike, true);
+        await assert.rejects(model.adjustCommunityMetrics(alice, publication._id, key('evil'), 999, 999), PermissionError);
+    });
+    it('counts actual runtime once with wall-clock allowance, delayed final flush, sequence replay, and concurrent heartbeats', async () => {
+        const { publication } = await publish('runtime exactly once');
+        metricNow = Date.parse('2026-10-03T03:00:00Z');
+        const started = await model.startCommunityRuntime(alice, publication._id, key('start'));
+        const retry = await model.startCommunityRuntime(alice, publication._id, key('start'));
+        assert.equal(retry.sessionId, started.sessionId);
+        metricNow += 20000; // The first 15-second client snapshot arrived five seconds late.
+        const first = await model.heartbeatCommunityRuntime(alice, publication._id, started.sessionId, 1, 15);
+        assert.equal(first.runtimeSeconds, 15);
+        assert.equal(first.accepted, true);
+        const final = await model.heartbeatCommunityRuntime(alice, publication._id, started.sessionId, 2, 5);
+        assert.equal(final.runtimeSeconds, 20); // Final flush does not lose network-delay allowance.
+        const replay = await model.heartbeatCommunityRuntime(alice, publication._id, started.sessionId, 2, 5);
+        assert.equal(replay.accepted, false);
+        assert.equal(replay.sessionExpired, false);
+        assert.equal(replay.runtimeSeconds, 20);
+        metricNow += 10000;
+        await Promise.all(Array.from({ length: 20 }, () => model.heartbeatCommunityRuntime(alice, publication._id, started.sessionId, 3, 30)));
+        assert.equal((await model.getCommunityMetrics(alice, publication._id)).runtimeSeconds, 30); // capped by server time
+        metricNow += 45000;
+        const capped = await model.heartbeatCommunityRuntime(alice, publication._id, started.sessionId, 4, 30);
+        assert.equal(capped.runtimeSeconds, 60); // at most 30 credited per heartbeat
+        const analytics = await model.getCommunityAnalytics(teacher, publication._id);
+        assert.equal(analytics.actualRuntimeSeconds, 60);
+        assert.equal(analytics.participants.find((row) => row.uid === alice.uid).runtimeSeconds, 60);
+    });
+    it('invalidates previous tabs, rejects foreign tokens and discards expired intervals without losing past totals', async () => {
+        const { publication } = await publish('runtime active lease');
+        metricNow = Date.parse('2026-10-03T04:00:00Z');
+        const old = await model.startCommunityRuntime(alice, publication._id, key('tab1'));
+        metricNow += 15000;
+        await model.heartbeatCommunityRuntime(alice, publication._id, old.sessionId, 1, 15);
+        const next = await model.startCommunityRuntime(alice, publication._id, key('tab2'));
+        assert.notEqual(next.sessionId, old.sessionId);
+        assert.equal((await model.heartbeatCommunityRuntime(alice, publication._id, old.sessionId, 2, 15)).sessionExpired, true);
+        assert.equal((await model.heartbeatCommunityRuntime(bob, publication._id, next.sessionId, 1, 15)).sessionExpired, true);
+        metricNow += 61000;
+        const expired = await model.heartbeatCommunityRuntime(alice, publication._id, next.sessionId, 1, 30);
+        assert.equal(expired.sessionExpired, true);
+        assert.equal(expired.runtimeSeconds, 15);
+        const resumed = await model.startCommunityRuntime(alice, publication._id, key('resume'));
+        metricNow += 10000;
+        assert.equal((await model.heartbeatCommunityRuntime(alice, publication._id, resumed.sessionId, 1, 10)).runtimeSeconds, 25);
+    });
+    it('keeps participant identities and manual/real breakdown out of student responses, including the author', async () => {
+        const { publication } = await publish('private participants');
+        await model.likeCommunityWork(alice, publication._id, key('private'));
+        await model.adjustCommunityMetrics(teacher, publication._id, key('private-adjust'), 3, 60);
+        for (const actor of [alice, bob]) {
+            const handler = metricHandler(handlers.ScratchCommunityMetricsHandler, actor, publication._id);
+            await handler.get();
+            assert.deepEqual(Object.keys(handler.response.body).sort(), ['canLike', 'isTeacher', 'likedToday', 'likes', 'ok', 'runtimeLabel', 'runtimeSeconds'].sort());
+            const forbidden = metricHandler(handlers.ScratchCommunityAnalyticsHandler, actor, publication._id);
+            await assert.rejects(forbidden.get(), PermissionError);
+            forbidden.request.body = { requestId: key('malicious'), likes: 3, runtimeSeconds: 60 };
+            await assert.rejects(forbidden.postAdjust(), PermissionError);
+        }
+        const admin = metricHandler(handlers.ScratchCommunityAnalyticsHandler, teacher, publication._id);
+        await admin.get();
+        assert.equal(admin.response.body.studentLikes, 1);
+        assert.equal(admin.response.body.teacherLikes, 3);
+        assert(admin.response.body.participants.every((row) => typeof row.name === 'string'));
+        assert.equal(admin.response.body.participants.find((row) => row.uid === alice.uid).likes, 1);
+        const gallery = await model.pageCommunityWorks(bob, 'private participants');
+        const card = gallery.communityWorks[0];
+        assert.equal(card.likes, 4);
+        assert.equal(card.runtimeSeconds, 60);
+        for (const field of ['participants', 'studentLikes', 'teacherLikes', 'actualRuntimeSeconds', 'manualRuntimeSeconds']) assert(!Object.hasOwn(card, field));
+    });
+    it('sorts heat across the entire classroom before pagination and supports newest updates with literal search', async () => {
+        const actor = { ...teacher, domainId: 'engagement-ranking' };
+        const now = new Date();
+        const docs = Array.from({ length: 27 }, (_, i) => ({ _id: new ObjectId(), domainId: actor.domainId, owner: alice.uid,
+            title: `Rank [A]+ ${i}`, titleKey: `Rank [A]+ ${i}`, instructions: '', workId: new ObjectId(), snapshotWorkId: new ObjectId(),
+            fileId: new ObjectId(), thumbnailFileId: null, revision: 1, createdAt: new Date(now - 86400000), updatedAt: new Date(now.getTime() + i * 1000) }));
+        await model.community.insertMany(docs);
+        await model.adjustCommunityMetrics(actor, docs[0]._id, key('old-hot'), 20, 120);
+        await model.adjustCommunityMetrics(actor, docs[1]._id, key('second'), 10, 600);
+        const first = await model.pageCommunityWorks(actor, '[A]+', false, 'hot', 1, 24);
+        assert.equal(first.count, 27);
+        assert.equal(first.pcount, 2);
+        assert(first.communityWorks[0]._id.equals(docs[0]._id));
+        assert(first.communityWorks[1]._id.equals(docs[1]._id));
+        const second = await model.pageCommunityWorks(actor, '[A]+', false, 'hot', 2, 24);
+        assert.equal(second.communityWorks.length, 3);
+        assert(!second.communityWorks.some((doc) => first.communityWorks.some((other) => doc._id.equals(other._id))));
+        const recent = await model.pageCommunityWorks(actor, '[A]+', false, 'latest', 1, 24);
+        assert(recent.communityWorks[0]._id.equals(docs[26]._id));
+        assert.equal((await model.pageCommunityWorks({ ...actor, uid: bob.uid }, '[A]+', true)).count, 0);
+        assert.equal((await model.pageCommunityWorks({ ...actor, domainId: 'elsewhere' }, '[A]+')).count, 0);
+        // A 100-day-old work with more likes yields to a recent work, demonstrating age decay.
+        await model.community.updateOne({ _id: docs[0]._id }, { $set: { createdAt: new Date(now - 100 * 86400000) } });
+        const decayed = await model.pageCommunityWorks(actor, '[A]+');
+        assert(decayed.communityWorks[0]._id.equals(docs[1]._id));
+    });
+    it('preserves student attribution and all engagement when a teacher republishes an updated student work', async () => {
+        const { work, publication } = await publish('same author version');
+        await model.likeCommunityWork(bob, publication._id, key('version-like'));
+        await model.adjustCommunityMetrics(teacher, publication._id, key('version-runtime'), 0, 120);
+        await model.saveWork(alice, work._id, 1, upload(project('new version')));
+        const updated = await model.publishCommunityWork(teacher, work._id, '老师帮助分享');
+        assert(updated.publication._id.equals(publication._id));
+        assert.equal(updated.publication.owner, alice.uid);
+        assert.equal(updated.publication.createdAt.getTime(), publication.createdAt.getTime());
+        assert.equal(updated.publication.revision, 2);
+        assert.equal((await model.getCommunityMetrics(bob, publication._id)).likes, 1);
+        assert.equal((await model.getCommunityMetrics(bob, publication._id)).runtimeSeconds, 120);
+    });
+    it('rejects cross-class and withdrawn metrics before writes and removes engagement on domain deletion', async () => {
+        const actor = { ...alice, domainId: 'metrics-delete-domain' };
+        const admin = { ...teacher, domainId: actor.domainId };
+        const { publication } = await publish('isolation metrics', actor);
+        await assert.rejects(model.getCommunityMetrics(foreign, publication._id), NotFoundError);
+        await assert.rejects(model.likeCommunityWork(foreign, publication._id, key('foreign')), NotFoundError);
+        await assert.rejects(model.getCommunityAnalytics(foreign, publication._id), NotFoundError);
+        await model.likeCommunityWork(actor, publication._id, key('cleanup'));
+        await model.startCommunityRuntime(actor, publication._id, key('cleanup-start'));
+        await model.unpublishCommunityWork(admin, publication._id);
+        await assert.rejects(model.likeCommunityWork(actor, publication._id, key('withdrawn')), NotFoundError);
+        await assert.rejects(model.getCommunityAnalytics(admin, publication._id), NotFoundError);
+        await deleteDomainData(actor.domainId);
+        assert.equal(await model.communityEvents.countDocuments({ domainId: actor.domainId }), 0);
+        assert.equal(await model.communityRuntimes.countDocuments({ domainId: actor.domainId }), 0);
+    });
+    it('aggregates metrics using configured prefixed and mapped collection names', async () => {
+        const mappedDb = {
+            collection: (name) => database.collection(name === 'scratch.community.event' ? 'custom-engagement-events' : `tenant-prefix.${name}`),
+            ensureIndexes: (collection, ...indexes) => collection.createIndexes(indexes),
+        };
+        const prefixed = load('packages/hydrooj/src/model/scratch.ts', {
+            __Date: MetricDate, '../context': {}, '../error': errors, '../lib/scratch_files': scratchFiles,
+            '../logger': { Logger: class { warn() {} } }, '../lib/asset_delivery': assetDelivery,
+            '../service/db': mappedDb, './storage': {},
+        });
+        await prefixed.apply({ on() {} });
+        const id = new ObjectId();
+        const now = new Date();
+        const doc = { _id: id, domainId: alice.domainId, owner: alice.uid, title: 'prefixed metrics', titleKey: 'prefixed metrics',
+            instructions: '', workId: new ObjectId(), snapshotWorkId: new ObjectId(), fileId: new ObjectId(),
+            thumbnailFileId: null, revision: 1, createdAt: now, updatedAt: now };
+        await prefixed.community.insertOne(doc);
+        // A hardcoded lookup would read this unrelated table and return the wrong totals.
+        await model.communityEvents.insertOne({ _id: 'misleading-unprefixed-row', communityId: id, domainId: alice.domainId,
+            uid: alice.uid, isTeacher: false, likes: 999, manualRuntimeSeconds: 999, createdAt: now });
+        await prefixed.likeCommunityWork(alice, id, key('namespace-like'));
+        await prefixed.adjustCommunityMetrics(teacher, id, key('namespace-adjust'), 2, 60);
+        metricNow = now.getTime();
+        const started = await prefixed.startCommunityRuntime(alice, id, key('namespace-start'));
+        metricNow += 15000;
+        await prefixed.heartbeatCommunityRuntime(alice, id, started.sessionId, 1, 15);
+        const summary = await prefixed.getCommunityMetrics(alice, id);
+        assert.equal(summary.likes, 3);
+        assert.equal(summary.runtimeSeconds, 75);
+        const analytics = await prefixed.getCommunityAnalytics(teacher, id);
+        assert.equal(analytics.actualRuntimeSeconds, 15);
+        assert.equal(analytics.manualRuntimeSeconds, 60);
+        const page = await prefixed.pageCommunityWorks(alice, 'prefixed metrics');
+        assert.equal(page.communityWorks[0].likes, 3);
+        assert.equal(page.communityWorks[0].runtimeSeconds, 75);
+    });
+    it('rejects non-finite, fractional, unsafe and array pagination values before Mongo aggregation', async () => {
+        for (const page of ['Infinity', '-Infinity', 'NaN', '1e100', '1.5', '0', '-1', ['1'], '9007199254740991']) {
+            const handler = metricHandler(handlers.ScratchCommunityHandler, alice, new ObjectId());
+            handler.request.query = { page };
+            await assert.rejects(handler.get(), ValidationError);
+        }
+        for (const page of [Infinity, NaN, Number.MAX_SAFE_INTEGER, 1.5, 0, -1]) {
+            await assert.rejects(model.pageCommunityWorks(alice, '', false, 'hot', page), ValidationError);
+        }
+    });
+    it('validates metrics payloads instead of accepting negatives, fractions, missing idempotency keys, and excess intervals', async () => {
+        const { publication } = await publish('metrics invalid inputs');
+        await assert.rejects(model.likeCommunityWork(alice, publication._id, ''), ValidationError);
+        for (const pair of [[-1, 0], [0, -1], [1.5, 0], [0, 1.5], [0, 0], [null, 5], [5, ''], [NaN, 1]]) {
+            await assert.rejects(model.adjustCommunityMetrics(teacher, publication._id, key('invalid'), ...pair), ValidationError);
+        }
+        const started = await model.startCommunityRuntime(alice, publication._id, key('validate-start'));
+        for (const [seq, seconds] of [[0, 1], [-1, 1], [1, 31], [1, -1], [1, 0.5], [1.5, 1]]) {
+            await assert.rejects(model.heartbeatCommunityRuntime(alice, publication._id, started.sessionId, seq, seconds), ValidationError);
+        }
+        await assert.rejects(model.heartbeatCommunityRuntime(alice, publication._id, 'invented-token', 1, 1), ValidationError);
+        assert.equal((await model.getCommunityMetrics(alice, publication._id)).runtimeSeconds, 0);
     });
 });

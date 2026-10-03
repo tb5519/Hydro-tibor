@@ -41,6 +41,15 @@ export interface ScratchCommunityWork extends ScratchDoc {
     title: string; titleKey: string; instructions: string; workId: ObjectId; snapshotWorkId: ObjectId;
     fileId: ObjectId; thumbnailFileId: ObjectId | null; revision: number;
 }
+export interface ScratchCommunityEvent {
+    _id: string; domainId: string; communityId: ObjectId; uid: number; isTeacher: boolean;
+    likes: number; manualRuntimeSeconds: number; createdAt: Date;
+}
+export interface ScratchCommunityRuntime {
+    _id: string; domainId: string; communityId: ObjectId; uid: number; isTeacher: boolean;
+    runtimeSeconds: number; sessionId: string; startRequestId: string; lastSeq: number; lastHeartbeatAt: Date;
+    sessionStartedAt: Date; sessionRuntimeSeconds: number;
+}
 export interface ScratchShare {
     _id: string; domainId: string; workId: ObjectId; fileId: ObjectId; revision: number; title: string; createdAt: Date;
 }
@@ -94,6 +103,8 @@ declare module '../service/db' {
         'scratch.preset': ScratchPreset;
         'scratch.share': ScratchShare;
         'scratch.community': ScratchCommunityWork;
+        'scratch.community.event': ScratchCommunityEvent;
+        'scratch.community.runtime': ScratchCommunityRuntime;
         'scratch.quota': { _id: string, bytes: number };
     }
 }
@@ -107,6 +118,8 @@ export const materials = db.collection('scratch.material');
 export const presets = db.collection('scratch.preset');
 export const shares = db.collection('scratch.share');
 export const community = db.collection('scratch.community');
+export const communityEvents = db.collection('scratch.community.event');
+export const communityRuntimes = db.collection('scratch.community.runtime');
 export const quotas = db.collection('scratch.quota');
 
 function base(actor: ScratchActor): ScratchDoc {
@@ -673,6 +686,184 @@ export async function getCommunityWork(actor: ScratchActor, _id: ObjectId) {
     return doc;
 }
 
+// Events are authoritative: no counter write can be lost between an idempotency
+// check and increment. Totals and ranking use the same aggregation before paging.
+function communityMetricStages() {
+    return [
+        { $lookup: { from: communityEvents.collectionName, let: { id: '$_id', domain: '$domainId' }, pipeline: [
+            { $match: { $expr: { $and: [{ $eq: ['$communityId', '$$id'] }, { $eq: ['$domainId', '$$domain'] }] } } },
+            { $group: { _id: null, likes: { $sum: '$likes' }, manualRuntimeSeconds: { $sum: '$manualRuntimeSeconds' },
+                studentLikes: { $sum: { $cond: ['$isTeacher', 0, '$likes'] } }, teacherLikes: { $sum: { $cond: ['$isTeacher', '$likes', 0] } } } },
+        ], as: '_events' } },
+        { $lookup: { from: communityRuntimes.collectionName, let: { id: '$_id', domain: '$domainId' }, pipeline: [
+            { $match: { $expr: { $and: [{ $eq: ['$communityId', '$$id'] }, { $eq: ['$domainId', '$$domain'] }] } } },
+            { $group: { _id: null, seconds: { $sum: '$runtimeSeconds' } } },
+        ], as: '_runtime' } },
+        { $set: {
+            likes: { $ifNull: [{ $arrayElemAt: ['$_events.likes', 0] }, 0] },
+            studentLikes: { $ifNull: [{ $arrayElemAt: ['$_events.studentLikes', 0] }, 0] },
+            teacherLikes: { $ifNull: [{ $arrayElemAt: ['$_events.teacherLikes', 0] }, 0] },
+            actualRuntimeSeconds: { $ifNull: [{ $arrayElemAt: ['$_runtime.seconds', 0] }, 0] },
+            manualRuntimeSeconds: { $ifNull: [{ $arrayElemAt: ['$_events.manualRuntimeSeconds', 0] }, 0] },
+        } },
+        { $set: { runtimeSeconds: { $add: ['$actualRuntimeSeconds', '$manualRuntimeSeconds'] } } },
+        { $unset: ['_events', '_runtime'] },
+    ];
+}
+
+export function communityRuntimeLabel(seconds: number) {
+    if (seconds < 60) return `${seconds} 秒`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+    return `${Math.floor(seconds / 3600)} 小时 ${Math.floor(seconds % 3600 / 60)} 分`;
+}
+
+export async function pageCommunityWorks(actor: ScratchActor, query = '', mine = false, sort = 'hot', page = 1, pageSize = 24) {
+    if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1
+        || !Number.isSafeInteger((page - 1) * pageSize)) throw new ValidationError('page');
+    const q = cleanText(query, 'q', 80, ' ').trim();
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = { domainId: actor.domainId, ...(mine ? { owner: actor.uid } : {}),
+        ...(q ? { title: { $regex: escaped, $options: 'i' } } : {}) };
+    const count = await community.countDocuments(match);
+    const docs = await community.aggregate<ScratchCommunityWork & { likes: number, runtimeSeconds: number }>([
+        { $match: match }, ...communityMetricStages(),
+        { $set: { hotScore: { $divide: [
+            { $add: [{ $multiply: [5, '$likes'] }, { $multiply: [2, { $sqrt: { $divide: ['$runtimeSeconds', 60] } }] }] },
+            { $pow: [{ $add: [{ $max: [0, { $divide: [{ $subtract: ['$$NOW', '$createdAt'] }, 86400000] }] }, 2] }, 0.8] },
+        ] } } },
+        { $sort: sort === 'latest' ? { updatedAt: -1, _id: -1 } : { hotScore: -1, updatedAt: -1, _id: -1 } },
+        { $skip: (page - 1) * pageSize }, { $limit: pageSize },
+        // The public list receives totals only, never the teacher breakdown.
+        { $unset: ['studentLikes', 'teacherLikes', 'actualRuntimeSeconds', 'manualRuntimeSeconds', 'hotScore'] },
+    ]).toArray();
+    return { communityWorks: docs.map((doc) => ({ ...doc, runtimeLabel: communityRuntimeLabel(doc.runtimeSeconds) })),
+        count, pcount: Math.ceil(count / pageSize) };
+}
+
+function communityDay(now = new Date()) {
+    // A single classroom day is used for all learners, including those abroad.
+    return new Date(now.getTime() + 8 * 3600000).toISOString().slice(0, 10);
+}
+function metricRequestId(value: unknown) {
+    if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{16,100}$/.test(value)) throw new ValidationError('requestId');
+    return value;
+}
+function metricInteger(value: unknown, field: string, max: number) {
+    if (typeof value !== 'number' && typeof value !== 'string') throw new ValidationError(field);
+    const number = +value;
+    if (`${value}`.trim() === '' || !Number.isSafeInteger(number) || number < 0 || number > max) throw new ValidationError(field);
+    return number;
+}
+function studentLikeId(actor: ScratchActor, id: ObjectId, now = new Date()) {
+    return `${actor.domainId}:${id}:${actor.uid}:day:${communityDay(now)}`;
+}
+async function communityTotals(actor: ScratchActor, id: ObjectId) {
+    const doc = await community.aggregate([{ $match: { _id: id, domainId: actor.domainId } }, ...communityMetricStages()]).next();
+    if (!doc) throw new NotFoundError('社区作品');
+    return doc;
+}
+export async function getCommunityMetrics(actor: ScratchActor, id: ObjectId) {
+    const totals = await communityTotals(actor, id);
+    const likedToday = !actor.isTeacher && !!await communityEvents.findOne({ _id: studentLikeId(actor, id) }, { projection: { _id: 1 } });
+    return { ok: true, likes: totals.likes, runtimeSeconds: totals.runtimeSeconds,
+        runtimeLabel: communityRuntimeLabel(totals.runtimeSeconds), likedToday, canLike: actor.isTeacher || !likedToday, isTeacher: actor.isTeacher };
+}
+async function insertCommunityEvent(event: ScratchCommunityEvent) {
+    try {
+        await communityEvents.updateOne({ _id: event._id }, { $setOnInsert: event }, { upsert: true });
+    } catch (error) {
+        // Concurrent retries of one event have exactly one authoritative row.
+        if (error.code !== 11000) throw error;
+    }
+}
+export async function likeCommunityWork(actor: ScratchActor, id: ObjectId, requestId: unknown) {
+    await getCommunityWork(actor, id);
+    const key = metricRequestId(requestId);
+    await insertCommunityEvent({ _id: actor.isTeacher ? `${actor.domainId}:${id}:${actor.uid}:like:${key}` : studentLikeId(actor, id),
+        domainId: actor.domainId, communityId: id, uid: actor.uid, isTeacher: actor.isTeacher,
+        likes: 1, manualRuntimeSeconds: 0, createdAt: new Date() });
+    return getCommunityMetrics(actor, id);
+}
+export async function adjustCommunityMetrics(actor: ScratchActor, id: ObjectId, requestId: unknown, likes: unknown, seconds: unknown) {
+    requireTeacher(actor);
+    await getCommunityWork(actor, id);
+    const key = metricRequestId(requestId);
+    const likeCount = metricInteger(likes, 'likes', 1000000);
+    const runtimeSeconds = metricInteger(seconds, 'runtimeSeconds', 31536000);
+    if (!likeCount && !runtimeSeconds) throw new ValidationError('likes', null, '请输入要增加的点赞数或运行时长。');
+    await insertCommunityEvent({ _id: `${actor.domainId}:${id}:${actor.uid}:adjust:${key}`,
+        domainId: actor.domainId, communityId: id, uid: actor.uid, isTeacher: true,
+        likes: likeCount, manualRuntimeSeconds: runtimeSeconds, createdAt: new Date() });
+}
+export async function getCommunityAnalytics(actor: ScratchActor, id: ObjectId) {
+    requireTeacher(actor);
+    const totals = await communityTotals(actor, id);
+    const eventActors = await communityEvents.aggregate<{ _id: number, likes: number, isTeacher: boolean }>([
+        { $match: { domainId: actor.domainId, communityId: id } },
+        { $group: { _id: '$uid', likes: { $sum: '$likes' }, isTeacher: { $max: '$isTeacher' } } },
+    ]).toArray();
+    const runtimes = await communityRuntimes.find({ domainId: actor.domainId, communityId: id },
+        { projection: { uid: 1, isTeacher: 1, runtimeSeconds: 1 } }).toArray();
+    const participants = new Map<number, { uid: number, isTeacher: boolean, likes: number, runtimeSeconds: number }>();
+    for (const row of eventActors) participants.set(row._id, { uid: row._id, isTeacher: row.isTeacher, likes: row.likes, runtimeSeconds: 0 });
+    for (const row of runtimes) {
+        const existing = participants.get(row.uid);
+        participants.set(row.uid, { uid: row.uid, isTeacher: row.isTeacher || existing?.isTeacher || false,
+            likes: existing?.likes || 0, runtimeSeconds: row.runtimeSeconds });
+    }
+    return { ok: true, likes: totals.likes, runtimeSeconds: totals.runtimeSeconds,
+        actualRuntimeSeconds: totals.actualRuntimeSeconds, manualRuntimeSeconds: totals.manualRuntimeSeconds,
+        studentLikes: totals.studentLikes, teacherLikes: totals.teacherLikes,
+        participants: [...participants.values()].sort((a, b) => b.runtimeSeconds - a.runtimeSeconds || b.likes - a.likes || a.uid - b.uid) };
+}
+export async function startCommunityRuntime(actor: ScratchActor, id: ObjectId, requestId: unknown) {
+    await getCommunityWork(actor, id);
+    const key = metricRequestId(requestId);
+    const _id = `${actor.domainId}:${id}:${actor.uid}`;
+    const sessionId = randomBytes(24).toString('hex');
+    const now = new Date();
+    let session: ScratchCommunityRuntime;
+    for (let attempt = 0; ; attempt++) {
+        try {
+            session = await communityRuntimes.findOneAndUpdate({ _id }, [{ $set: {
+                domainId: actor.domainId, communityId: id, uid: actor.uid, isTeacher: actor.isTeacher,
+                runtimeSeconds: { $ifNull: ['$runtimeSeconds', 0] },
+                sessionId: { $cond: [{ $eq: ['$startRequestId', key] }, '$sessionId', sessionId] },
+                lastSeq: { $cond: [{ $eq: ['$startRequestId', key] }, '$lastSeq', 0] },
+                lastHeartbeatAt: { $cond: [{ $eq: ['$startRequestId', key] }, '$lastHeartbeatAt', now] },
+                sessionStartedAt: { $cond: [{ $eq: ['$startRequestId', key] }, '$sessionStartedAt', now] },
+                sessionRuntimeSeconds: { $cond: [{ $eq: ['$startRequestId', key] }, '$sessionRuntimeSeconds', 0] },
+                startRequestId: key,
+            } }], { upsert: true, returnDocument: 'after' });
+            break;
+        } catch (error) {
+            if (error.code !== 11000 || attempt >= 2) throw error;
+        }
+    }
+    return { ...await getCommunityMetrics(actor, id), sessionId: session.sessionId };
+}
+export async function heartbeatCommunityRuntime(actor: ScratchActor, id: ObjectId, token: unknown, sequence: unknown, seconds: unknown) {
+    await getCommunityWork(actor, id);
+    if (typeof token !== 'string' || !/^[a-f0-9]{48}$/.test(token)) throw new ValidationError('sessionId');
+    const seq = metricInteger(sequence, 'seq', Number.MAX_SAFE_INTEGER);
+    const requestedSeconds = metricInteger(seconds, 'seconds', 30);
+    if (!seq) throw new ValidationError('seq');
+    const _id = `${actor.domainId}:${id}:${actor.uid}`;
+    const session = await communityRuntimes.findOne({ _id });
+    const now = new Date();
+    const elapsed = session ? now.getTime() - session.lastHeartbeatAt.getTime() : Infinity;
+    const sessionExpired = !session || session.sessionId !== token || elapsed > 60000;
+    let accepted = false;
+    if (!sessionExpired && seq > session.lastSeq) {
+        const allowance = Math.floor((now.getTime() - session.sessionStartedAt.getTime()) / 1000) - session.sessionRuntimeSeconds;
+        const credit = Math.min(requestedSeconds, 30, Math.max(0, allowance));
+        const result = await communityRuntimes.updateOne({ _id, sessionId: token, lastSeq: session.lastSeq,
+            lastHeartbeatAt: session.lastHeartbeatAt }, { $set: { lastSeq: seq, lastHeartbeatAt: now }, $inc: { runtimeSeconds: credit, sessionRuntimeSeconds: credit } });
+        accepted = !!result.modifiedCount;
+    }
+    return { ...await getCommunityMetrics(actor, id), accepted, sessionExpired };
+}
+
 export async function getWorkCommunityPublication(actor: ScratchActor, workId: ObjectId) {
     const work = await getWork(actor, workId);
     const publication = await community.findOne({ domainId: actor.domainId, owner: work.owner, titleKey: communityTitleKey(work.title) });
@@ -778,7 +969,7 @@ export async function apply(ctx: Context) {
     ctx.on('domain/delete', async (domainId) => {
         const docs = await files.find({ domainId }).toArray();
         await storage.del(docs.map((doc) => doc.path));
-        await Promise.all([assignments, works, versions, submissions, materials, presets, files, shares, community].map((collection) => collection.deleteMany({ domainId })));
+        await Promise.all([assignments, works, versions, submissions, materials, presets, files, shares, community, communityEvents, communityRuntimes].map((collection) => collection.deleteMany({ domainId })));
         await quotas.deleteOne({ _id: domainId });
     });
     await Promise.all([
@@ -798,6 +989,8 @@ export async function apply(ctx: Context) {
             { key: { domainId: 1, workId: 1 }, name: 'scratch_community_work' },
             { key: { domainId: 1, fileId: 1 }, name: 'scratch_community_file' },
             { key: { domainId: 1, thumbnailFileId: 1 }, name: 'scratch_community_thumbnail' }),
+        db.ensureIndexes(communityEvents, { key: { domainId: 1, communityId: 1, uid: 1 }, name: 'scratch_community_events' }),
+        db.ensureIndexes(communityRuntimes, { key: { domainId: 1, communityId: 1, uid: 1 }, name: 'scratch_community_runtimes', unique: true }),
         db.ensureIndexes(shares, { key: { domainId: 1, workId: 1, revision: 1 }, name: 'scratch_share_revision', unique: true },
             { key: { domainId: 1, fileId: 1 }, name: 'scratch_share_file' }),
     ]);

@@ -21,6 +21,8 @@ const routes = {
     scratch_community: '/d/art/scratch/community',
     scratch_works: '/d/art/scratch/works',
     scratch_community_work: ({ communityId }) => `/d/art/scratch/community/${communityId}`,
+    scratch_community_metrics: ({ communityId }) => `/d/art/scratch/community/${communityId}/metrics`,
+    scratch_community_analytics: ({ communityId }) => `/d/art/scratch/community/${communityId}/analytics`,
     scratch_community_thumbnail: ({ communityId }) => `/d/art/scratch/community/${communityId}/thumbnail`,
     scratch_community_publish: ({ workId }) => `/d/art/scratch/work/${workId}/community`,
     scratch_share_create: ({ workId }) => `/d/art/scratch/work/${workId}/share`,
@@ -43,7 +45,8 @@ const player = { editorVersion: 'a'.repeat(64), title: item.title, projectUrl: '
 const base = {
     url, handler: { user: { _id: 7 } }, UiContext: { scratchPlayer: player },
     communityWorks: [item], communityWork: item, udict: { 7: { uname: '小豆' } },
-    page: 1, pcount: 1, count: 1, mine: false, q: '', isOwner: true, canEdit: true, canManage: true,
+    page: 1, pcount: 1, count: 1, mine: false, q: '', sort: 'hot', isOwner: true, canEdit: true, canManage: true,
+    communityMetrics: { likes: 9, runtimeSeconds: 452, likedToday: false, canLike: true, isTeacher: false },
     datetimeSpan: () => new nunjucks.runtime.SafeString('<time datetime="2026-09-28">刚刚</time>'),
     paginator: { render: (page, count) => new nunjucks.runtime.SafeString(`<nav aria-label="翻页">${page}/${count}</nav>`) },
     utils: { buildQueryString: (values) => new URLSearchParams(values).toString() },
@@ -76,6 +79,12 @@ describe('Scratch classroom community templates', () => {
             communityWorks: [{ ...item, thumbnailFileId: null }], mine: true, q: '太空',
         });
         assert.equal(document.querySelector('#scratch-community-search').maxLength, 80);
+        assert.equal(document.querySelector('.sc-community-sort [aria-current=page]').textContent, '热门');
+        assert.equal(document.querySelector('.sc-community-search [name=sort]').value, 'hot');
+        for (const link of document.querySelectorAll('.sc-community-sort a')) {
+            assert.equal(new URL(link.href).searchParams.get('q'), '太空');
+            assert.equal(new URL(link.href).searchParams.get('mine'), '1');
+        }
         assert.equal(document.querySelector('#scratch-community-search').value, '太空');
         assert.equal(document.querySelector('.sc-community-search [name=mine]').value, '1');
         assert.equal(document.querySelector('.sc-community-tabs [aria-current=page]').textContent, '我的分享');
@@ -107,7 +116,7 @@ describe('Scratch classroom community templates', () => {
         assert.deepEqual(JSON.parse(root.dataset.config), player);
         assert.equal(root.querySelector('iframe').getAttribute('sandbox'), 'allow-scripts');
         assert.equal(root.querySelector('iframe').hasAttribute('allowfullscreen'), true);
-        assert.match(document.querySelector('script[src]').src, /scratch-player\.js\?v=20261003-community-2-/);
+        assert.match(document.querySelector('script[src]').src, /scratch-player\.js\?v=20261004-community-metrics-v1-/);
         assert.equal(document.querySelector('[data-community-direct]').getAttribute('data-community-url'), '/d/art/scratch/work/work-one/community');
         assert.ok(document.querySelector('[data-scratch-community-unpublish]'));
         assert.ok(document.querySelector('[data-scratch-community-unpublish-dialog]'));
@@ -118,10 +127,42 @@ describe('Scratch classroom community templates', () => {
         assert.ok(peer.querySelector('[data-scratch-public-player]'));
         assert.equal(peer.querySelector('.sc-community-manage'), null);
         assert.equal(peer.querySelector('[data-scratch-community-unpublish-dialog]'), null);
-        const teacher = render(t, 'scratch_community_detail.html', { isOwner: false, canEdit: false, canManage: true });
+        const teacher = render(t, 'scratch_community_detail.html', { isOwner: false, canEdit: false, canManage: true, communityMetrics: { ...base.communityMetrics, isTeacher: true } });
         assert.ok(teacher.querySelector('[data-scratch-community-unpublish]'));
         assert.equal(teacher.querySelector('[data-community-direct]'), null);
         assert.equal(teacher.querySelector('a[data-no-instant]'), null);
+        assert.ok(teacher.querySelector('[data-community-analytics]'));
+        assert.ok(teacher.querySelector('[data-community-analytics-dialog]'));
+        assert.equal(peer.querySelector('[data-community-analytics]'), null);
+        assert.equal(peer.querySelector('[data-community-analytics-dialog]'), null);
+        assert.equal(peer.querySelector('[data-community-participants]'), null);
+    });
+
+    it('renders student metrics without private member details and marks the daily like limit', (t) => {
+        const document = render(t, 'scratch_community_detail.html', {
+            communityMetrics: { ...base.communityMetrics, likedToday: true, canLike: false },
+        });
+        assert.equal(document.querySelector('[data-community-like-count]').textContent, '9');
+        assert.equal(document.querySelector('[data-community-runtime]').textContent, '7 分 32 秒');
+        assert.equal(document.querySelector('[data-community-like]').disabled, true);
+        assert.equal(document.querySelector('[data-community-like]').getAttribute('aria-pressed'), 'true');
+        assert.match(document.querySelector('[data-community-like-hint]').textContent, /北京时间/);
+        assert.equal(document.querySelector('[data-community-analytics-dialog]'), null);
+    });
+
+    it('supports latest sorting and preserves it across search, mine and pagination', (t) => {
+        let paginationQuery;
+        const document = render(t, 'scratch_community.html', {
+            sort: 'latest', q: '猫', mine: true, pcount: 2,
+            paginator: { render: (page, count, args) => { paginationQuery = args.add_qs; return ''; } },
+            communityWorks: [{ ...item, likes: 12, runtimeSeconds: 7201 }],
+        });
+        assert.equal(document.querySelector('.sc-community-sort [aria-current=page]').textContent, '最新');
+        assert.equal(document.querySelector('.sc-community-search [name=sort]').value, 'latest');
+        for (const link of document.querySelectorAll('.sc-community-tabs a')) assert.equal(new URL(link.href).searchParams.get('sort'), 'latest');
+        assert.match(paginationQuery, /sort=latest/);
+        assert.match(document.querySelector('.sc-community-card-metrics').textContent, /12/);
+        assert.match(document.querySelector('.sc-community-card-metrics').textContent, /2 小时/);
     });
 
     it('escapes child supplied names, instructions, search and player config without breaking attributes', (t) => {

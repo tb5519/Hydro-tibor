@@ -50,6 +50,13 @@ let projectLoaded = false;
 const send = (type, payload = {}, transfer = []) => {
     if (channel && parent !== window) parent.postMessage({channel, type, ...payload}, '*', transfer);
 };
+// Runtime events describe executing project threads, rather than time spent
+// loading or looking at an idle stage. Only the player parent uses these events.
+const sendRunState = running => {
+    if (initialized && projectLoaded && mode === 'player') send('runState', {running});
+};
+vm.on('PROJECT_RUN_START', () => sendRunState(true));
+vm.on('PROJECT_RUN_STOP', () => sendRunState(false));
 const presets = createPresetBridge(vm, () => initialized && projectLoaded && mode === 'editor' && !readOnly, send);
 window.onebyoneOpenPresetLibrary = kind => presets.open(kind);
 // Browser confirm() and the File System Access API are unavailable to an
@@ -175,9 +182,11 @@ window.addEventListener('message', async event => {
             vm.runtime.on('PROJECT_LOADED', () => {
                 if (!readOnly && mode === 'editor') send('dirty');
             });
-            if (mode === 'player') vm.greenFlag();
             projectLoaded = true;
             send('loaded');
+            // postMessage preserves this ordering: the parent must know the
+            // project is loaded before receiving the first running state.
+            if (mode === 'player') vm.greenFlag();
         } else if (message.type === 'preview' && initialized && mode === 'thumbnail' && readOnly) {
             await loadPreview(message);
         } else if (message.type === 'export' && initialized && mode === 'editor' && !readOnly && !exporting) {

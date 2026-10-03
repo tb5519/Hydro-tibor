@@ -452,13 +452,18 @@ export class ScratchThumbnailHandler extends ScratchHandler {
 }
 export class ScratchCommunityHandler extends ScratchHandler {
     async get() {
-        const page = Math.max(1, Math.floor(+this.request.query.page || 1));
+        const rawPage = this.request.query.page;
+        const page = rawPage === undefined ? 1 : +rawPage;
+        if ((rawPage !== undefined && typeof rawPage !== 'string') || !Number.isSafeInteger(page) || page < 1) {
+            throw new ValidationError('page');
+        }
         const query = this.request.query.q;
         if (query !== undefined && typeof query !== 'string') throw new ValidationError('q');
         const q = scratch.cleanText(query, 'q', 80, ' ').trim();
         const mine = ['1', 'true'].includes(`${this.request.query.mine || ''}`);
-        const [communityWorks, pcount, count] = await this.paginate(scratch.listCommunityWorks(this.actor, q, mine), page, 24);
-        await this.renderScratch('scratch_community.html', { communityWorks, page, pcount, count, q, mine });
+        const sort = this.request.query.sort === 'latest' ? 'latest' : 'hot';
+        const { communityWorks, pcount, count } = await scratch.pageCommunityWorks(this.actor, q, mine, sort, page, 24);
+        await this.renderScratch('scratch_community.html', { communityWorks, page, pcount, count, q, mine, sort });
     }
 }
 
@@ -490,9 +495,11 @@ export class ScratchCommunityWorkHandler extends ScratchHandler {
             _id: communityWork.workId, owner: this.actor.uid });
         const projectConfig = { editorVersion: getScratchEditorVersion(), title: communityWork.title,
             projectUrl: this.url('scratch_community_project', { communityId: communityWork._id }),
+            metricsUrl: this.url('scratch_community_metrics', { communityId: communityWork._id }),
             maxFileSize: SCRATCH_MAX_FILE_SIZE, memberOnly: true };
         this.UiContext.scratchPlayer = projectConfig;
-        await this.renderScratch('scratch_community_detail.html', { communityWork, projectConfig,
+        const communityMetrics = await scratch.getCommunityMetrics(this.actor, communityWork._id);
+        await this.renderScratch('scratch_community_detail.html', { communityWork, projectConfig, communityMetrics,
             isOwner, canManage: isOwner || this.actor.isTeacher, canEdit });
     }
 
@@ -501,6 +508,49 @@ export class ScratchCommunityWorkHandler extends ScratchHandler {
         await scratch.unpublishCommunityWork(this.actor, this.routeId('communityId'));
         this.response.type = 'application/json';
         this.response.body = { ok: true, url: this.url('scratch_community') };
+    }
+}
+
+export class ScratchCommunityMetricsHandler extends ScratchHandler {
+    async get() {
+        this.response.type = 'application/json';
+        this.response.body = await scratch.getCommunityMetrics(this.actor, this.routeId('communityId'));
+    }
+
+    async postLike() {
+        await this.limitRate('scratch_community_like', 60, 120);
+        this.response.type = 'application/json';
+        this.response.body = await scratch.likeCommunityWork(this.actor, this.routeId('communityId'), this.request.body.requestId);
+    }
+
+    async postRuntimeStart() {
+        await this.limitRate('scratch_community_runtime_start', 60, 120);
+        this.response.type = 'application/json';
+        this.response.body = await scratch.startCommunityRuntime(this.actor, this.routeId('communityId'), this.request.body.requestId);
+    }
+
+    async postRuntimeHeartbeat() {
+        await this.limitRate('scratch_community_runtime_heartbeat', 60, 120);
+        const { sessionId, seq, seconds } = this.request.body;
+        this.response.type = 'application/json';
+        this.response.body = await scratch.heartbeatCommunityRuntime(this.actor, this.routeId('communityId'), sessionId, seq, seconds);
+    }
+}
+
+export class ScratchCommunityAnalyticsHandler extends ScratchHandler {
+    async get() {
+        const analytics = await scratch.getCommunityAnalytics(this.actor, this.routeId('communityId'));
+        const names = await user.getListForRender(this.actor.domainId, analytics.participants.map((row) => row.uid), false);
+        this.response.type = 'application/json';
+        this.response.body = { ...analytics, participants: analytics.participants.map((row) => ({ ...row,
+            name: names[row.uid]?.displayName || names[row.uid]?.uname || `课堂成员 ${row.uid}` })) };
+    }
+
+    async postAdjust() {
+        await this.limitRate('scratch_community_adjust', 60, 120);
+        const { requestId, likes, runtimeSeconds } = this.request.body;
+        await scratch.adjustCommunityMetrics(this.actor, this.routeId('communityId'), requestId, likes, runtimeSeconds);
+        await this.get();
     }
 }
 
@@ -704,6 +754,8 @@ export async function apply(ctx: Context) {
     ctx.Route('scratch_community', '/scratch/community', ScratchCommunityHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_community_publish', '/scratch/work/:workId/community', ScratchCommunityPublishHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_community_work', '/scratch/community/:communityId', ScratchCommunityWorkHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_community_metrics', '/scratch/community/:communityId/metrics', ScratchCommunityMetricsHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_community_analytics', '/scratch/community/:communityId/analytics', ScratchCommunityAnalyticsHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_community_project', '/scratch/community/:communityId/project', ScratchCommunityProjectHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_community_thumbnail', '/scratch/community/:communityId/thumbnail', ScratchCommunityThumbnailHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_share_create', '/scratch/work/:workId/share', ScratchShareCreateHandler, PRIV.PRIV_USER_PROFILE);

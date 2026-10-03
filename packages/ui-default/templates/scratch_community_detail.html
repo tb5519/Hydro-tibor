@@ -1,5 +1,6 @@
 {% extends "scratch_base.html" %}
 {% block scratch_content %}
+{% from "partials/scratch_community_metrics.html" import duration %}
 <a class="sc-community-back" href="{{ url('scratch_community') }}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6M8 12h13"/></svg>回到创作社区</a>
 <div class="sc-community-detail-heading">
   <div><span class="sc-community-scope">本课堂的小伙伴可见</span><h1>{{ communityWork.title }}</h1><p class="sc-community-detail-meta"><span>{{ udict[communityWork.owner].uname if udict[communityWork.owner] else '课堂小伙伴' }} 的创意</span><span aria-hidden="true">·</span><span>更新于 {{ datetimeSpan(communityWork.updatedAt)|safe }}</span></p></div>
@@ -14,17 +15,40 @@
     </div>
     <div class="sc-community-stage-foot"><span><span class="sc-community-flag" aria-hidden="true">⚑</span>点绿旗开始，点红色按钮停止</span><span>用舞台右上角按钮放大</span></div>
   </section>
+  <section class="sc-community-metrics" aria-label="作品互动" data-community-metrics data-runtime-seconds="{{ communityMetrics.runtimeSeconds or 0 }}" data-metrics-url="{{ url('scratch_community_metrics', communityId=communityWork._id) }}" data-liked-today="{{ 'true' if communityMetrics.likedToday else 'false' }}" data-can-like="{{ 'false' if communityMetrics.canLike == false else 'true' }}" data-is-teacher="{{ 'true' if communityMetrics.isTeacher else 'false' }}">
+    <div class="sc-community-like-group"><button class="sc-community-like" type="button" data-community-like aria-pressed="{{ 'true' if communityMetrics.likedToday else 'false' }}"{% if communityMetrics.canLike == false %} disabled{% endif %}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20S3 14.5 3 8.7a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 5.8-9 11.3-9 11.3Z"/></svg><span data-community-like-label>{{ '今天已点赞' if communityMetrics.likedToday and not communityMetrics.isTeacher else '给创意点赞' }}</span><strong data-community-like-count>{{ communityMetrics.likes or 0 }}</strong></button><span class="sc-community-like-hint" data-community-like-hint>{{ '老师可多次送出鼓励' if communityMetrics.isTeacher else ('明天再来送一份鼓励吧 · 北京时间' if communityMetrics.likedToday else '每件作品每天可点赞一次 · 北京时间') }}</span></div>
+    <div class="sc-community-runtime"><span class="sc-community-runtime-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg></span><div><span>累计运行</span><strong data-community-runtime>{{ duration(communityMetrics.runtimeSeconds or 0) }}</strong></div></div>
+    <p class="sc-community-metrics-status" data-community-like-status role="status" aria-live="polite"></p>
+  </section>
   <aside class="sc-community-detail-aside">
     <section class="sc-community-howto"><span class="sc-community-side-icon" aria-hidden="true"><svg viewBox="0 0 28 28"><path d="M8 10h12a4 4 0 0 1 3.9 3l2 7a2 2 0 0 1-3.3 2l-4-4H9.4l-4 4a2 2 0 0 1-3.3-2l2-7A4 4 0 0 1 8 10ZM14 10V5m-5 8v5m-2.5-2.5h5M20 14h.01M23 17h.01"/></svg></span><h2>怎么玩？</h2><p class="sc-description">{{ communityWork.instructions or '作者还没写玩法说明。先点一下绿旗，试试这个小创意吧！' }}</p></section>
     <div class="sc-community-encouragement"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9Z"/></svg><p>每个作品里，都藏着一个<br>值得发现的小点子。</p></div>
     {% if canEdit or canManage %}<section class="sc-community-manage" aria-label="管理社区分享">
-      <h2>{{ '我的作品' if isOwner else '老师管理' }}</h2>
+      <h2>{{ '老师管理' if communityMetrics.isTeacher else '我的作品' }}</h2>
+      {% if communityMetrics.isTeacher %}<button class="sc-button" type="button" data-community-analytics="{{ url('scratch_community_analytics', communityId=communityWork._id) }}" aria-haspopup="dialog" aria-controls="scratch-community-analytics-dialog"><svg class="sc-community-data-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 3v14h14M7 13V9m4 4V5m4 8V7"/></svg>作品数据管理</button>{% endif %}
       {% if canEdit %}<a class="sc-button" data-no-instant href="{{ url('scratch_editor', query={workId:communityWork.workId}) }}"><span class="icon icon-edit" aria-hidden="true"></span>继续创作</a>
       <button class="sc-button sc-button-primary" type="button" data-scratch-share="{{ url('scratch_share_create', workId=communityWork.workId) }}" data-community-url="{{ url('scratch_community_publish', workId=communityWork.workId) }}" data-community-direct data-title="{{ communityWork.title }}"{% if communityWork.thumbnailFileId %} data-thumbnail="{{ url('scratch_community_thumbnail', communityId=communityWork._id, query={v:communityWork.updatedAt.getTime()}) }}"{% endif %} aria-haspopup="dialog" aria-controls="scratch-share-dialog">更新社区作品</button><p>保存新版本后，再更新给小伙伴看。</p>{% endif %}
       {% if canManage %}<button class="sc-community-withdraw" type="button" data-scratch-community-unpublish="{{ url('scratch_community_work', communityId=communityWork._id) }}" data-community-return="{{ url('scratch_community') }}" aria-haspopup="dialog" aria-controls="scratch-community-unpublish-dialog">从社区撤下</button>{% endif %}
     </section>{% endif %}
   </aside>
 </div>
-<script src="/scratch-player.js?v=20261003-community-2-{{ UiContext.scratchPlayer.editorVersion }}" defer></script>
+<script src="/scratch-player.js?v=20261004-community-metrics-v1-{{ UiContext.scratchPlayer.editorVersion }}" defer></script>
 {% if canManage %}<dialog id="scratch-community-unpublish-dialog" class="sc-dialog" data-scratch-community-unpublish-dialog aria-labelledby="scratch-community-unpublish-title" aria-describedby="scratch-community-unpublish-description"><div class="sc-dialog-head"><span class="sc-dialog-symbol" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 20v6h18v-6M16 22V5m-6 6 6-6 6 6"/></svg></span><button class="sc-dialog-close" type="button" data-scratch-community-unpublish-cancel aria-label="关闭撤下作品窗口"><span aria-hidden="true">×</span></button></div><h2 id="scratch-community-unpublish-title">从社区撤下这个作品？</h2><p id="scratch-community-unpublish-description" class="sc-muted">小伙伴将无法在社区中看到和游玩它。原作品仍保留在“我的作品”中，之后可以重新分享。</p><p class="sc-dialog-status" data-scratch-community-unpublish-status role="status" aria-live="polite"></p><div class="sc-dialog-actions"><button class="sc-button" type="button" data-scratch-community-unpublish-cancel>先留着</button><button class="sc-button sc-button-danger" type="button" data-scratch-community-unpublish-confirm>确认撤下</button></div></dialog>{% endif %}
+{% if communityMetrics.isTeacher %}
+<dialog id="scratch-community-analytics-dialog" class="sc-dialog sc-community-analytics-dialog" data-community-analytics-dialog aria-labelledby="scratch-community-analytics-title" aria-describedby="scratch-community-analytics-description">
+  <div class="sc-community-analytics-heading"><div><span class="sc-community-analytics-eyebrow">老师专属</span><h2 id="scratch-community-analytics-title">作品数据管理</h2></div><button class="sc-dialog-close" type="button" data-community-analytics-close aria-label="关闭作品数据管理"><span aria-hidden="true">×</span></button></div>
+  <p id="scratch-community-analytics-description" class="sc-muted">{{ communityWork.title }}<span class="sc-community-analytics-privacy">学员只看到累计运行时长和点赞总数。</span></p>
+  <p class="sc-dialog-status" data-community-analytics-status role="status" aria-live="polite"></p><button class="sc-button" type="button" data-community-analytics-retry hidden>重新加载</button>
+  <div data-community-analytics-content hidden>
+    <div class="sc-community-analytics-totals"><section><span>点赞总数</span><strong data-analytics-likes>0</strong><p>学员 <b data-analytics-student-likes>0</b> · 老师 <b data-analytics-teacher-likes>0</b></p></section><section><span>累计运行</span><strong data-analytics-runtime>0 秒</strong><p>实际运行 <b data-analytics-actual-runtime>0 秒</b><br>老师增加 <b data-analytics-manual-runtime>0 秒</b></p></section></div>
+    <form class="sc-community-adjust-form" data-community-adjust-form>
+      <div class="sc-community-adjust-heading"><h3>给创意添一份鼓励</h3><span>增加后，所有小伙伴都能看到</span></div>
+      <div class="sc-community-adjust-fields"><label class="sc-field"><span>增加点赞</span><div class="sc-community-number-unit"><input type="number" inputmode="numeric" min="0" max="10000" step="1" value="0" name="likes" required data-community-adjust-likes><span>次</span></div></label><fieldset class="sc-field"><legend>增加运行时长</legend><div class="sc-community-time-inputs"><div class="sc-community-number-unit"><input type="number" inputmode="numeric" min="0" max="525599" step="1" value="0" name="minutes" aria-label="增加运行分钟数" required data-community-adjust-minutes><span>分</span></div><div class="sc-community-number-unit"><input type="number" inputmode="numeric" min="0" max="59" step="1" value="0" name="seconds" aria-label="增加运行秒数" required data-community-adjust-seconds><span>秒</span></div></div></fieldset><button class="sc-button sc-button-primary" type="submit" data-community-adjust-submit>确认增加</button></div>
+      <p class="sc-community-adjust-note">老师点赞不限次数；可只增加点赞或运行时长。</p><p class="sc-dialog-status" data-community-adjust-status role="status" aria-live="polite"></p>
+    </form>
+    <section class="sc-community-participants"><div class="sc-community-participants-heading"><h3>互动明细</h3><span>仅老师可见 · 实际运行时长</span></div><p class="sc-community-participants-empty" data-community-participants-empty hidden>还没有小伙伴来互动，邀请大家来玩一玩吧。</p><div class="sc-community-participants-scroll" data-community-participants-table><table><thead><tr><th scope="col">课堂成员</th><th scope="col">点赞次数</th><th scope="col">运行时长</th></tr></thead><tbody data-community-participants></tbody></table></div></section>
+  </div>
+  <div class="sc-dialog-actions"><button class="sc-button" type="button" data-community-analytics-close>完成</button></div>
+</dialog>
+{% endif %}
 {% endblock %}

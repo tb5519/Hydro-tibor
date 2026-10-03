@@ -157,7 +157,7 @@ describe('public Scratch player template and bridge', () => {
         assert(!h.document.documentElement.outerHTML.includes('window.UiContext'));
         assert.match(h.frame.src, /#channel=test-player-channel$/);
         assert(h.frame.src.startsWith(`https://onebyone.test/scratch-editor/editor.html?v=${'a'.repeat(64)}&lang=zh-cn#`));
-        assert.equal(h.document.querySelector('script[src]').getAttribute('src'), `/scratch-player.js?v=20261003-community-2-${'a'.repeat(64)}`);
+        assert.equal(h.document.querySelector('script[src]').getAttribute('src'), `/scratch-player.js?v=20261004-community-metrics-v1-${'a'.repeat(64)}`);
         await h.message('ready', {}, { source: h.window });
         await h.message('ready', {}, { origin: 'https://onebyone.test' });
         await h.message('ready', { channel: 'foreign-channel' });

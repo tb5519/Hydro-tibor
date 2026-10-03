@@ -15,7 +15,7 @@ function player(t, config = {}) {
       <div data-scratch-player-status><span data-scratch-player-message>加载中</span>
       <button data-scratch-player-retry hidden>重新打开</button></div>
       <iframe data-scratch-player-frame sandbox="allow-scripts"></iframe></main>`, {
-        url: 'https://onebyone.test/d/art/scratch/community/123', runScripts: 'outside-only',
+        url: 'https://onebyone.test/d/art/scratch/community/123', runScripts: 'outside-only', pretendToBeVisual: true,
     });
     t.after(() => dom.window.close());
     const { window } = dom;
@@ -24,11 +24,17 @@ function player(t, config = {}) {
         projectUrl: '/d/art/scratch/community/123/project', title: '星球旅行', maxFileSize: 20 * 1024 * 1024,
         memberOnly: true, ...config,
     });
-    Object.defineProperty(window.crypto, 'randomUUID', { value: () => 'community-channel' });
+    let uuid = 0;
+    Object.defineProperty(window.crypto, 'randomUUID', { value: () => uuid++ ? `runtime-request-${uuid}` : 'community-channel' });
     const timers = new Map();
+    const intervals = new Map();
     let timerId = 0;
+    let clock = 0;
+    Object.defineProperty(window.performance, 'now', { value: () => clock });
     window.setTimeout = (callback, delay) => { timers.set(++timerId, { callback, delay }); return timerId; };
     window.clearTimeout = (id) => timers.delete(id);
+    window.setInterval = (callback, delay) => { intervals.set(++timerId, { callback, delay }); return timerId; };
+    window.clearInterval = (id) => intervals.delete(id);
     const requests = [];
     window.fetch = (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject }));
     window.eval(playerCode);
@@ -43,7 +49,20 @@ function player(t, config = {}) {
         await settle();
     };
     return {
-        window, frame, outgoing, requests, message, timers,
+        window, frame, outgoing, requests, message, timers, intervals,
+        async advance(milliseconds, tick = true) {
+            clock += milliseconds;
+            if (tick) for (const interval of intervals.values()) interval.callback();
+            await settle();
+        },
+        async visible(value) {
+            Object.defineProperty(window.document, 'hidden', { configurable: true, value: !value });
+            window.document.dispatchEvent(new window.Event('visibilitychange'));
+            await settle();
+        },
+        run: async (running, overrides = {}) => message('runState', {
+            data: { type: 'runState', channel: 'community-channel', running }, ...overrides,
+        }),
         status: window.document.querySelector('[data-scratch-player-status]'),
         text: window.document.querySelector('[data-scratch-player-message]'),
         retry: window.document.querySelector('[data-scratch-player-retry]'),
@@ -174,6 +193,179 @@ describe('classroom-only Scratch player', () => {
             h.requests[0].resolve(projectResponse());
             await settle();
             assert.equal(h.outgoing.length, 0);
+        }
+    });
+});
+
+const metricsUrl = '/d/art/scratch/community/123/metrics';
+const jsonResponse = (body) => ({ ok: true, json: async () => ({ ok: true, ...body }) });
+const body = (request) => Object.fromEntries(request.options.body.entries());
+const boot = async (h) => {
+    h.requests[0].resolve(projectResponse());
+    await h.message('ready');
+    await h.message('loaded');
+};
+const start = async (h, sessionId = 'session-1') => {
+    await h.run(true);
+    const request = h.requests.at(-1);
+    assert.equal(body(request).operation, 'runtimeStart');
+    request.resolve(jsonResponse({ sessionId, likes: 2, runtimeSeconds: 10 }));
+    await settle();
+    return request;
+};
+
+describe('authenticated community runtime', () => {
+    it('counts actual running only, after loaded, and authenticates the metrics endpoint without sending it to Scratch', async (t) => {
+        const h = player(t, { metricsUrl });
+        const updates = [];
+        h.window.addEventListener('scratch-community-metrics', event => updates.push(event.detail));
+        await h.run(true);
+        await h.advance(15000);
+        assert.equal(h.requests.length, 1, 'loading is not playing');
+        await boot(h);
+        await h.advance(15000);
+        assert.equal(h.requests.length, 1, 'a loaded idle stage is not playing');
+        const initial = await start(h);
+        assert.equal(initial.url, `https://onebyone.test${metricsUrl}`);
+        assert.equal(initial.options.credentials, 'same-origin');
+        assert.equal(initial.options.redirect, 'error');
+        assert.equal(initial.options.keepalive, true);
+        await h.advance(15000);
+        const heartbeat = h.requests.at(-1);
+        assert.deepEqual(body(heartbeat), { operation: 'runtimeHeartbeat', sessionId: 'session-1', seq: '1', seconds: '15' });
+        heartbeat.resolve(jsonResponse({ accepted: true, sessionExpired: false, likes: 2, runtimeSeconds: 25 }));
+        await settle();
+        assert.equal(updates.at(-1).runtimeSeconds, 25);
+        assert.equal(h.outgoing.length, 1);
+        assert(!JSON.stringify(h.outgoing).includes('metrics'));
+        assert(!JSON.stringify(h.outgoing).includes('session-1'));
+    });
+
+    it('rejects running messages from another frame, origin or channel and non-boolean states', async (t) => {
+        const h = player(t, { metricsUrl });
+        await boot(h);
+        await h.run(true, { source: h.window });
+        await h.run(true, { origin: 'https://onebyone.test' });
+        await h.run(true, { data: { type: 'runState', channel: 'other', running: true } });
+        await h.run('true');
+        await h.advance(15000);
+        assert.equal(h.requests.length, 1);
+    });
+
+    it('flushes a stopped run before starting another, excluding the idle gap', async (t) => {
+        const h = player(t, { metricsUrl });
+        await boot(h);
+        await start(h);
+        await h.advance(5100, false);
+        await h.run(false);
+        const flush = h.requests.at(-1);
+        assert.equal(body(flush).seconds, '5');
+        await h.advance(60000);
+        await h.run(true);
+        assert.equal(h.requests.at(-1), flush, 'the preceding final heartbeat has not completed');
+        flush.resolve(jsonResponse({ accepted: true }));
+        await settle();
+        const second = h.requests.at(-1);
+        assert.equal(body(second).operation, 'runtimeStart');
+        assert.notEqual(body(second).requestId, body(h.requests[1]).requestId);
+        second.resolve(jsonResponse({ sessionId: 'session-2' }));
+        await settle();
+        await h.advance(3000, false);
+        await h.run(false);
+        assert.deepEqual(body(h.requests.at(-1)), { operation: 'runtimeHeartbeat', sessionId: 'session-2', seq: '1', seconds: '3' });
+    });
+
+    it('flushes when hidden and starts a fresh session when visible, without crediting hidden time', async (t) => {
+        const h = player(t, { metricsUrl });
+        await boot(h);
+        await start(h);
+        await h.advance(4000, false);
+        await h.visible(false);
+        const flush = h.requests.at(-1);
+        assert.equal(body(flush).seconds, '4');
+        flush.resolve(jsonResponse({ accepted: true }));
+        await settle();
+        await h.advance(90000);
+        assert.equal(h.requests.length, 3);
+        await h.visible(true);
+        assert.equal(body(h.requests.at(-1)).operation, 'runtimeStart');
+        h.requests.at(-1).resolve(jsonResponse({ sessionId: 'visible-again' }));
+        await settle();
+        await h.advance(15000);
+        assert.equal(body(h.requests.at(-1)).seconds, '15');
+    });
+
+    it('retries an uncertain heartbeat using the identical sequence instead of crediting it twice', async (t) => {
+        const h = player(t, { metricsUrl });
+        await boot(h);
+        await start(h);
+        await h.advance(15000);
+        const original = body(h.requests.at(-1));
+        h.requests.at(-1).reject(new TypeError('response lost'));
+        await settle();
+        assert.equal(h.status.hidden, true, 'metrics errors must not interrupt playback');
+        await h.advance(15000);
+        assert.deepEqual(body(h.requests.at(-1)), original);
+        h.requests.at(-1).resolve(jsonResponse({ accepted: false, sessionExpired: false, runtimeSeconds: 25 }));
+        await settle();
+        await h.advance(15000);
+        assert.equal(body(h.requests.at(-1)).seq, '2');
+        assert.equal(body(h.requests.at(-1)).seconds, '30', 'the unreported active period remains pending');
+    });
+
+    it('rotates an expired session and does not turn a delayed timer into unbounded runtime', async (t) => {
+        const h = player(t, { metricsUrl });
+        await boot(h);
+        await start(h);
+        await h.advance(3600000);
+        assert.equal(body(h.requests.at(-1)).seconds, '15');
+        h.requests.at(-1).resolve(jsonResponse({ accepted: false, sessionExpired: true }));
+        await settle();
+        await h.advance(15000);
+        assert.equal(body(h.requests.at(-1)).operation, 'runtimeStart');
+    });
+
+    it('ignores late session-start responses after stop and flushes bounded keepalive data on page exit', async (t) => {
+        const h = player(t, { metricsUrl });
+        await boot(h);
+        await h.run(true);
+        const initial = h.requests.at(-1);
+        await h.advance(7000, false);
+        await h.run(false);
+        initial.resolve(jsonResponse({ sessionId: 'late' }));
+        await settle();
+        await h.advance(15000);
+        assert.equal(h.requests.length, 2, 'a stopped run is not revived by its network response');
+        await start(h, 'final');
+        await h.advance(6500, false);
+        h.window.dispatchEvent(new h.window.Event('pagehide'));
+        await settle();
+        assert.equal(h.intervals.size, 0);
+        const flush = h.requests.at(-1);
+        assert.equal(body(flush).seconds, '6');
+        assert.equal(flush.options.keepalive, true);
+        assert.equal(flush.options.signal.aborted, false);
+        await h.advance(15000);
+        assert.equal(h.requests.at(-1), flush);
+    });
+
+    it('stops counting after a player error and leaves public shares and cross-origin metric URLs untracked', async (t) => {
+        const h = player(t, { metricsUrl });
+        await boot(h);
+        await start(h);
+        await h.advance(2000, false);
+        await h.message('error');
+        assert.equal(body(h.requests.at(-1)).seconds, '2');
+        assert.equal(h.intervals.size, 0);
+        assert.equal(h.frame.isConnected, false);
+        for (const config of [{ metricsUrl: 'https://outside.test/metrics' }, { metricsUrl, memberOnly: false }]) {
+            const other = player(t, config);
+            if (!config.memberOnly && config.memberOnly !== undefined) await other.message('ready');
+            await boot(other);
+            await other.run(true);
+            await other.advance(15000);
+            assert.equal(other.requests.length, 1);
+            assert.equal(other.intervals.size, 0);
         }
     });
 });

@@ -15,27 +15,29 @@
 </section>
 <div class="sc-community-toolbar">
   <nav class="sc-community-tabs" aria-label="筛选社区作品">
-    <a href="{{ url('scratch_community', query={q:q}) }}"{% if not mine %} aria-current="page"{% endif %}>全部作品</a>
-    <a href="{{ url('scratch_community', query={mine:1,q:q}) }}"{% if mine %} aria-current="page"{% endif %}>我的分享</a>
+    <a href="{{ url('scratch_community', query={q:q,sort:sort}) }}"{% if not mine %} aria-current="page"{% endif %}>全部作品</a>
+    <a href="{{ url('scratch_community', query={mine:1,q:q,sort:sort}) }}"{% if mine %} aria-current="page"{% endif %}>我的分享</a>
   </nav>
   <form class="sc-community-search" action="{{ url('scratch_community') }}" method="get" role="search">
     {% if mine %}<input type="hidden" name="mine" value="1">{% endif %}
+    <input type="hidden" name="sort" value="{{ sort or 'hot' }}">
     <label class="sc-community-sr-only" for="scratch-community-search">搜索作品名称</label>
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4.5 4.5"/></svg>
     <input id="scratch-community-search" type="search" name="q" value="{{ q }}" maxlength="80" placeholder="发现一个小创意…" autocomplete="off">
     <button type="submit">搜索</button>
   </form>
 </div>
-<div class="sc-community-results-head"><h2>{{ '我的分享' if mine else '小伙伴的创意' }}{% if count %}<span>{{ count }} 个作品</span>{% endif %}</h2><span>最近更新</span></div>
+<div class="sc-community-results-head"><h2>{{ '我的分享' if mine else '小伙伴的创意' }}{% if count %}<span>{{ count }} 个作品</span>{% endif %}</h2><nav class="sc-community-sort" aria-label="作品排序"><a href="{{ url('scratch_community', query={q:q,mine:1 if mine else '',sort:'hot'}) }}"{% if sort != 'latest' %} aria-current="page"{% endif %}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11 2c1 4-4 5-2 8 1-1 2-2 3-2 2 2 4 4 3 7a5.5 5.5 0 0 1-10-4c0-2 2-4 3-5 0 2 1 2 1 2 2-2 2-4 2-6Z"/></svg>热门</a><a href="{{ url('scratch_community', query={q:q,mine:1 if mine else '',sort:'latest'}) }}"{% if sort == 'latest' %} aria-current="page"{% endif %}>最新</a></nav></div>
+<p class="sc-community-sort-note">{{ '按最近更新，发现刚刚登场的小创意。' if sort == 'latest' else '综合点赞、运行时长和分享时间，发现大家喜欢的创意。' }}</p>
 {% if communityWorks|length %}
   {% include "partials/scratch_community_cards.html" %}
-  {% if pcount > 1 %}<div class="sc-pagination">{{ paginator.render(page, pcount, add_qs=utils.buildQueryString(q=q, mine=1 if mine else '')) }}</div>{% endif %}
+  {% if pcount > 1 %}<div class="sc-pagination">{{ paginator.render(page, pcount, add_qs=utils.buildQueryString(q=q, mine=1 if mine else '', sort=sort or 'hot')) }}</div>{% endif %}
 {% else %}
   <div class="sc-empty sc-community-empty">
     <span class="sc-community-empty-art" aria-hidden="true"><svg viewBox="0 0 64 64"><rect x="10" y="12" width="44" height="36" rx="9"/><path d="m27 23 14 7-14 8ZM22 55h20M32 48v7"/></svg></span>
     <strong>{{ '还没找到这个小创意' if q else ('把你的第一个创意带过来吧' if mine else '第一个登场的创意，会是谁的呢？') }}</strong>
     <p>{{ '试试更短的作品名称，或者看看其他作品。' if q else ('在“我的作品”中点击分享，邀请小伙伴来玩。' if mine else '分享一件自己的作品，让这个小天地热闹起来。') }}</p>
-    <div class="sc-actions">{% if q %}<a class="sc-button" href="{{ url('scratch_community', query={mine:1 if mine else ''}) }}">清除搜索</a>{% endif %}<a class="sc-button sc-button-primary" href="{{ url('scratch_works') }}">去我的作品</a></div>
+    <div class="sc-actions">{% if q %}<a class="sc-button" href="{{ url('scratch_community', query={mine:1 if mine else '',sort:sort or 'hot'}) }}">清除搜索</a>{% endif %}<a class="sc-button sc-button-primary" href="{{ url('scratch_works') }}">去我的作品</a></div>
   </div>
 {% endif %}
 {% endblock %}

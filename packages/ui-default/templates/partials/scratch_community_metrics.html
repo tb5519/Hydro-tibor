@@ -1,0 +1,7 @@
+{% macro duration(value) -%}
+{%- set seconds = value or 0 -%}
+{%- if seconds >= 3600 -%}{{ (seconds / 3600)|round(0, 'floor') }} 小时{% if seconds % 3600 >= 60 %} {{ ((seconds % 3600) / 60)|round(0, 'floor') }} 分{% endif %}
+{%- elif seconds >= 60 -%}{{ (seconds / 60)|round(0, 'floor') }} 分{% if seconds % 60 %} {{ seconds % 60 }} 秒{% endif %}
+{%- else -%}{{ seconds }} 秒
+{%- endif -%}
+{%- endmacro %}
