@@ -11,6 +11,9 @@ const playerCode = fs.readFileSync(path.join(root, 'static/scratch-player.js'), 
 const actionsCode = transformSync(fs.readFileSync(path.join(root, 'pages/scratch_actions.page.ts'), 'utf8'), {
     loader: 'ts', format: 'cjs',
 }).code;
+const pageCode = transformSync(fs.readFileSync(path.join(root, 'misc/Page.ts'), 'utf8'), {
+    loader: 'ts', format: 'cjs',
+}).code;
 const env = new nunjucks.Environment(new nunjucks.FileSystemLoader(path.join(root, 'templates')), { autoescape: true });
 env.addGlobal('assetUrl', (value, fallback = value) => fallback);
 env.addFilter('json', (value) => JSON.stringify(value));
@@ -82,22 +85,42 @@ const projectResponse = (data = 'sb3-bytes', headers = {}) => ({
 });
 const shareResponse = (data, ok = true) => ({ ok, json: async () => data });
 
-function actions(t) {
-    const html = `<button type="button" data-scratch-create>开始创作</button>
+function actions(t, templateName = 'scratch_works.html') {
+    let body = `<button type="button" data-scratch-create>开始创作</button>
       <button type="button" data-scratch-share="/d/art/scratch/work/one/share" data-community-url="/d/art/scratch/work/one/community">分享作品一</button>
       <button type="button" data-scratch-share="/d/art/scratch/work/two/share" data-community-url="/d/art/scratch/work/two/community">分享作品二</button>` +
       env.render('partials/scratch_dialogs.html', { url: () => '/d/art/scratch/works' });
+    if (templateName === 'scratch_community_detail.html') {
+        const template = fs.readFileSync(path.join(root, 'templates', templateName), 'utf8')
+            .replace('{% extends "scratch_base.html" %}', '');
+        body = env.renderString(template, {
+            canEdit: true, canManage: true, isOwner: true,
+            communityWork: { title: '星球旅行', workId: 'one', _id: 'original', owner: 10 },
+            UiContext: { scratchPlayer: {} }, datetimeSpan: () => '刚刚',
+            url: (name) => ({
+                scratch_share_create: '/d/art/scratch/work/one/share',
+                scratch_community_publish: '/d/art/scratch/work/one/community',
+            })[name] || '/d/art/scratch/community',
+        }) + env.render('partials/scratch_dialogs.html', { url: () => '/d/art/scratch/works' });
+    }
+    const html = `<html data-page="${templateName.split('.')[0]}"><body>${body}</body></html>`;
     const h = browser(t, html, 'https://onebyone.test/d/art/scratch/works');
     h.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
     h.window.HTMLDialogElement.prototype.close = function () {
         this.removeAttribute('open');
         this.dispatchEvent(new h.window.Event('close'));
     };
+    const pages = { exports: {} };
+    h.window.Hydro = {};
+    new h.window.Function('module', 'exports', 'process', pageCode)(pages, pages.exports, { env: { NODE_ENV: 'test' } });
     const module = { exports: {} };
     new h.window.Function('require', 'module', 'exports', actionsCode)((name) => {
         assert.equal(name, 'vj/misc/Page');
-        return { NamedPage: class { constructor(_, callback) { callback(); } } };
+        return pages.exports;
     }, module, module.exports);
+    const pageName = h.document.documentElement.dataset.page;
+    const page = module.exports.default;
+    if (page.isNameMatch(pageName)) page.afterLoading(pageName);
     return {
         ...h,
         create: h.document.querySelector('[data-scratch-create]'),
@@ -134,7 +157,7 @@ describe('public Scratch player template and bridge', () => {
         assert(!h.document.documentElement.outerHTML.includes('window.UiContext'));
         assert.match(h.frame.src, /#channel=test-player-channel$/);
         assert(h.frame.src.startsWith(`https://onebyone.test/scratch-editor/editor.html?v=${'a'.repeat(64)}&lang=zh-cn#`));
-        assert.equal(h.document.querySelector('script[src]').getAttribute('src'), `/scratch-player.js?v=20260928-community-1-${'a'.repeat(64)}`);
+        assert.equal(h.document.querySelector('script[src]').getAttribute('src'), `/scratch-player.js?v=20261003-community-2-${'a'.repeat(64)}`);
         await h.message('ready', {}, { source: h.window });
         await h.message('ready', {}, { origin: 'https://onebyone.test' });
         await h.message('ready', { channel: 'foreign-channel' });
@@ -413,6 +436,29 @@ describe('Scratch create and share dialogs', () => {
 });
 
 describe('classroom community share flow', () => {
+    it('binds the actual community detail page and updates its existing publication directly', async (t) => {
+        const h = actions(t, 'scratch_community_detail.html');
+        assert.equal(h.share.length, 1, 'use the actual detail template update button');
+        h.share[0].click();
+        assert.equal(h.shareDialog.open, true);
+        assert.equal(h.document.querySelector('[data-scratch-share-pane=community]').hidden, false);
+        assert.equal(h.requests.length, 1);
+        assert.equal(h.requests[0].options.method, 'GET');
+        assert.equal(h.requests[0].url, 'https://onebyone.test/d/art/scratch/work/one/community');
+        h.requests[0].resolve(shareResponse({ ok: true, title: '星球旅行', revision: 3,
+            publication: { id: 'original', instructions: '方向键移动', revision: 2 } }));
+        await settle();
+        assert.equal(h.publish.textContent, '更新社区作品');
+        assert.equal(h.instructions.value, '方向键移动');
+        h.communityForm.dispatchEvent(new h.window.Event('submit', { bubbles: true, cancelable: true }));
+        assert.equal(h.requests.length, 2);
+        assert.equal(h.requests[1].options.method, 'POST');
+        h.requests[1].resolve(shareResponse({ ok: true, id: 'original', updated: true, url: '/d/art/scratch/community/original' }));
+        await settle();
+        assert.equal(h.document.querySelector('[data-scratch-share-pane=success]').hidden, false);
+        assert.match(h.document.querySelector('[data-scratch-community-success-title]').textContent, /已更新/);
+    });
+
     it('opens a destination choice without publishing or creating an external link', (t) => {
         const h = actions(t);
         h.share[0].click();

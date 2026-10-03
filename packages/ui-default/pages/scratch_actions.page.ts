@@ -1,6 +1,6 @@
 import { NamedPage } from 'vj/misc/Page';
 
-export default new NamedPage(['scratch_main', 'scratch_works', 'scratch_assignment', 'scratch_community', 'scratch_community_work'], () => {
+export default new NamedPage(['scratch_main', 'scratch_works', 'scratch_assignment', 'scratch_community', 'scratch_community_detail'], () => {
   const createDialog = document.querySelector<HTMLDialogElement>('[data-scratch-create-dialog]');
   const shareDialog = document.querySelector<HTMLDialogElement>('[data-scratch-share-dialog]');
   const createForm = document.querySelector<HTMLFormElement>('[data-scratch-create-form]');

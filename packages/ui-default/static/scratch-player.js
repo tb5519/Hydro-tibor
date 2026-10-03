@@ -26,32 +26,39 @@
   };
   const timer = setTimeout(() => fail('作品加载有点慢，请检查网络后重新打开。'), memberOnly ? 300000 : 120000);
   retry.addEventListener('click', () => location.reload());
+  const downloadProject = async () => {
+    const config = JSON.parse(root.dataset.config);
+    const url = new URL(config.projectUrl, location.href);
+    if (url.origin !== location.origin || !['http:', 'https:'].includes(url.protocol)) throw new Error('分享地址无效。');
+    // The application authorizes the initial URL before issuing its existing
+    // signed CDN redirect. same-origin credentials never accompany a CDN hop.
+    const response = await fetch(url.href, {
+      credentials: memberOnly ? 'same-origin' : 'omit', signal: controller.signal, referrerPolicy: 'no-referrer',
+      ...(memberOnly ? { cache: 'no-cache' } : {}),
+    });
+    const contentType = response.headers?.get('content-type') || '';
+    if (!response.ok || (memberOnly && /^(?:text\/html|application\/json)/i.test(contentType))) throw new Error(memberOnly
+      ? '作品暂时无法访问，请返回当前课堂的创作社区后重新打开。'
+      : '分享已关闭或无法访问，请向作者获取新的链接。');
+    const maxSize = Math.min(Number(config.maxFileSize) || 0, 20 * 1024 * 1024);
+    if (+response.headers.get('content-length') > maxSize) throw new Error('作品文件过大，暂时无法播放。');
+    const blob = await response.blob();
+    if (blob.size > maxSize) throw new Error('作品文件过大，暂时无法播放。');
+    const project = await blob.arrayBuffer();
+    if (memberOnly && !stopped && !initialized) message.textContent = '作品已读取，正在准备播放器…';
+    return { project, title: config.title };
+  };
+  let pendingProject;
   window.addEventListener('message', async (event) => {
     if (stopped || event.source !== frame.contentWindow || event.origin !== 'null' || event.data?.channel !== channel) return;
     try {
       if (event.data.type === 'ready' && !initialized) {
         initialized = true;
-        const config = JSON.parse(root.dataset.config);
-        const url = new URL(config.projectUrl, location.href);
-        if (url.origin !== location.origin || !['http:', 'https:'].includes(url.protocol)) throw new Error('分享地址无效。');
-        if (memberOnly) message.textContent = '正在读取作品，请稍等。作品较大时可能需要几分钟…';
-        // A classroom snapshot is served through its authenticated same-origin
-        // route. Do not follow login or asset redirects with this private mode.
-        const response = await fetch(url.href, {
-          credentials: memberOnly ? 'same-origin' : 'omit', signal: controller.signal, referrerPolicy: 'no-referrer',
-          ...(memberOnly ? { redirect: 'error', cache: 'no-store' } : {}),
-        });
-        if (!response.ok || (memberOnly && response.redirected)) throw new Error(memberOnly
-          ? '作品暂时无法访问，请返回当前课堂的创作社区后重新打开。'
-          : '分享已关闭或无法访问，请向作者获取新的链接。');
-        const maxSize = Math.min(Number(config.maxFileSize) || 0, 20 * 1024 * 1024);
-        if (+response.headers.get('content-length') > maxSize) throw new Error('作品文件过大，暂时无法播放。');
-        const blob = await response.blob();
-        if (blob.size > maxSize) throw new Error('作品文件过大，暂时无法播放。');
-        const project = await blob.arrayBuffer();
-        if (stopped) return;
+        if (memberOnly) message.textContent = '正在读取作品，请稍等…';
+        const result = await (pendingProject || downloadProject());
+        if (stopped || !result) return;
         frame.contentWindow.postMessage({ channel, type: 'init', mode: 'player', readOnly: true,
-          title: config.title, project }, '*', [project]);
+          title: result.title, project: result.project }, '*', [result.project]);
         sentProject = true;
         if (memberOnly) message.textContent = '作品已读取，正在准备舞台…';
       } else if (event.data.type === 'loaded' && sentProject) {
@@ -69,4 +76,13 @@
   window.addEventListener('pageshow', (event) => { if (event.persisted) location.reload(); });
   // v must be first so older site service workers bypass their entry cache.
   frame.src = `/scratch-editor/editor.html?v=${encodeURIComponent(root.dataset.editorVersion || 'unavailable')}&lang=zh-cn#channel=${encodeURIComponent(channel)}`;
+  if (memberOnly) {
+    message.textContent = '正在准备播放器，同时读取作品…';
+    // Start the authorized download while Scratch boots, and handle early
+    // failures immediately even if the iframe never reaches its ready event.
+    pendingProject = downloadProject().catch((error) => {
+      if (!stopped) fail(error.name === 'AbortError' ? '作品加载已停止，请重新打开。' : error.message);
+      return null;
+    });
+  }
 })();

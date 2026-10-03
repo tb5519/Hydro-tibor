@@ -63,7 +63,7 @@ describe('Scratch classroom community templates', () => {
         assert.equal(card.querySelectorAll('a').length, 1);
         assert.equal(card.querySelectorAll('button').length, 0);
         assert.equal(card.querySelector('a').pathname, '/d/art/scratch/community/pub-one');
-        assert.equal(card.querySelector('img').getAttribute('src'), '/d/art/scratch/community/pub-one/thumbnail');
+        assert.equal(card.querySelector('img').getAttribute('src'), `/d/art/scratch/community/pub-one/thumbnail?v=${item.updatedAt.getTime()}`);
         assert.ok(!document.body.innerHTML.includes('private-thumbnail-id'));
         assert.match(card.textContent, /小豆/);
         assert.match(card.textContent, /方向键移动/);
@@ -107,7 +107,7 @@ describe('Scratch classroom community templates', () => {
         assert.deepEqual(JSON.parse(root.dataset.config), player);
         assert.equal(root.querySelector('iframe').getAttribute('sandbox'), 'allow-scripts');
         assert.equal(root.querySelector('iframe').hasAttribute('allowfullscreen'), true);
-        assert.match(document.querySelector('script[src]').src, /scratch-player\.js\?v=20260928-community-1-/);
+        assert.match(document.querySelector('script[src]').src, /scratch-player\.js\?v=20261003-community-2-/);
         assert.equal(document.querySelector('[data-community-direct]').getAttribute('data-community-url'), '/d/art/scratch/work/work-one/community');
         assert.ok(document.querySelector('[data-scratch-community-unpublish]'));
         assert.ok(document.querySelector('[data-scratch-community-unpublish-dialog]'));

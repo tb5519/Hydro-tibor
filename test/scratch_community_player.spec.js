@@ -57,7 +57,8 @@ describe('classroom-only Scratch player', () => {
         await h.message('ready', { source: h.window });
         await h.message('ready', { origin: 'https://onebyone.test' });
         await h.message('ready', { data: { type: 'ready', channel: 'another-channel' } });
-        assert.equal(h.requests.length, 0);
+        assert.equal(h.requests.length, 1, 'download starts while the iframe is booting');
+        assert.equal(h.outgoing.length, 0, 'untrusted ready messages cannot receive project bytes');
         await h.message('ready');
         await h.message('ready');
         assert.equal(h.requests.length, 1);
@@ -65,8 +66,8 @@ describe('classroom-only Scratch player', () => {
         const request = h.requests[0];
         assert.equal(request.url, 'https://onebyone.test/d/art/scratch/community/123/project');
         assert.equal(request.options.credentials, 'same-origin');
-        assert.equal(request.options.redirect, 'error');
-        assert.equal(request.options.cache, 'no-store');
+        assert.equal(request.options.redirect, undefined, 'authorized endpoint can redirect to the signed CDN');
+        assert.equal(request.options.cache, 'no-cache', 'revalidate the classroom endpoint on every visit');
         assert.equal(request.options.referrerPolicy, 'no-referrer');
         request.resolve(projectResponse());
         await settle();
@@ -111,8 +112,8 @@ describe('classroom-only Scratch player', () => {
         }
     });
 
-    it('does not load redirects or denied membership responses into the VM', async (t) => {
-        for (const response of [projectResponse({ ok: false }), projectResponse({ redirected: true })]) {
+    it('does not load denied membership or a login HTML response into the VM', async (t) => {
+        for (const response of [projectResponse({ ok: false }), projectResponse({ redirected: true, headers: { get: (name) => name === 'content-type' ? 'text/html; charset=utf-8' : null } })]) {
             const h = player(t);
             await h.message('ready');
             h.requests[0].resolve(response);
@@ -123,6 +124,44 @@ describe('classroom-only Scratch player', () => {
             assert.match(h.text.textContent, /当前课堂的创作社区/);
             assert.equal(h.retry.hidden, false);
         }
+    });
+
+    it('downloads before iframe readiness, follows the authorized CDN and never exposes its signed URL to the VM', async (t) => {
+        const h = player(t);
+        assert.equal(h.requests.length, 1);
+        const signedUrl = 'https://media.onebyone.test/media/v1/project.sb3?auth_key=temporary-token';
+        h.requests[0].resolve(projectResponse({ redirected: true, url: signedUrl }));
+        await settle();
+        assert.equal(h.outgoing.length, 0, 'completed bytes wait until the correct sandbox is ready');
+        assert.match(h.text.textContent, /作品已读取/);
+        await h.message('ready');
+        assert.equal(h.requests.length, 1);
+        assert.equal(h.outgoing.length, 1);
+        assert(!JSON.stringify(h.outgoing[0]).includes('auth_key'));
+        assert(!h.window.document.documentElement.outerHTML.includes('temporary-token'));
+    });
+
+    it('handles a failed prefetch immediately even if the iframe never becomes ready', async (t) => {
+        const h = player(t);
+        h.requests[0].reject(new TypeError('Network failed'));
+        await settle();
+        assert.equal(h.frame.isConnected, false);
+        assert.equal(h.status.dataset.error, 'true');
+        assert.equal(h.retry.hidden, false);
+        assert.equal(h.timers.size, 0);
+        await h.message('ready');
+        assert.equal(h.requests.length, 1);
+        assert.equal(h.outgoing.length, 0);
+    });
+
+    it('cancels a prefetch when leaving before the iframe is ready', async (t) => {
+        const h = player(t);
+        h.window.dispatchEvent(new h.window.Event('pagehide'));
+        assert.equal(h.requests[0].options.signal.aborted, true);
+        h.requests[0].resolve(projectResponse());
+        await settle();
+        await h.message('ready');
+        assert.equal(h.outgoing.length, 0);
     });
 
     it('does not transfer bytes arriving after leaving the classroom page or timing out', async (t) => {

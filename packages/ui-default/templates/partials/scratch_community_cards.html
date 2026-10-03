@@ -3,7 +3,7 @@
   <article class="sc-card sc-community-card">
     <a class="sc-community-card-link" href="{{ url('scratch_community_work', communityId=item._id) }}" aria-label="玩一玩 {{ item.title }}，{{ udict[item.owner].uname if udict[item.owner] else '课堂小伙伴' }} 的作品">
       <div class="sc-community-cover">
-        {% if item.thumbnailFileId %}<img loading="lazy" src="{{ url('scratch_community_thumbnail', communityId=item._id) }}" alt="{{ item.title }} 的舞台截图" width="480" height="360">
+        {% if item.thumbnailFileId %}<img loading="lazy" src="{{ url('scratch_community_thumbnail', communityId=item._id, query={v:item.updatedAt.getTime()}) }}" alt="{{ item.title }} 的舞台截图" width="480" height="360">
         {% else %}<span class="sc-community-cover-placeholder" aria-hidden="true"><svg viewBox="0 0 80 80"><rect x="15" y="18" width="50" height="42" rx="12"/><path d="m34 30 16 9-16 9Z"/></svg><span>小创意，等你打开</span></span>{% endif %}
         <span class="sc-community-card-play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z"/></svg><span>玩一玩</span></span>
       </div>

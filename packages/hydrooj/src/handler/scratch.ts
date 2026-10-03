@@ -507,30 +507,53 @@ export class ScratchCommunityWorkHandler extends ScratchHandler {
 export class ScratchCommunityProjectHandler extends ScratchHandler {
     thumbnail = false;
 
+    private fileHeaders(file: scratch.ScratchFile) {
+        this.response.type = this.thumbnail ? 'image/png' : 'application/octet-stream';
+        this.response.addHeader('X-Content-Type-Options', 'nosniff');
+        // Browsers may retain the immutable bytes, but every reuse must pass
+        // classroom membership and publication checks before revalidation.
+        this.response.addHeader('Cache-Control', 'private, no-cache');
+        this.response.addHeader('Vary', 'Cookie, Authorization');
+        this.response.addHeader('ETag', `"${file._id.toHexString()}"`);
+        if (!this.thumbnail) this.response.addHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    }
+
+    private notModified(file: scratch.ScratchFile) {
+        const etag = `"${file._id.toHexString()}"`;
+        const condition = this.request.headers?.['if-none-match'];
+        if (typeof condition !== 'string' || !condition.split(',').some((value) => {
+            const tag = value.trim().replace(/^W\//, '');
+            return tag === etag || tag === '*';
+        })) return false;
+        // Do not use response.etag: the generic response layer changes that
+        // property to a public cache policy. This route always stays private.
+        this.response.status = 304;
+        this.response.body = '';
+        this.context.status = 304;
+        return true;
+    }
+
     async get() {
         const file = await scratch.getCommunityFile(this.actor, this.routeId('communityId'), this.thumbnail);
-        // Community access is checked on every request. A reusable CDN URL must
-        // not turn classroom-only snapshots into externally accessible links.
-        this.response.addHeader('X-Content-Type-Options', 'nosniff');
-        this.response.addHeader('Cache-Control', 'private, no-store');
-        if (this.thumbnail) {
-            this.response.type = 'image/png';
-            this.response.body = await storage.get(file.path);
-        } else {
-            this.response.attachment('project.sb3', await storage.get(file.path));
-            this.response.type = 'application/octet-stream';
-            this.response.addHeader('Content-Security-Policy', "default-src 'none'; sandbox");
-        }
+        this.fileHeaders(file);
+        if (this.notModified(file)) return;
+        // Membership was checked by prepare(), and the publication and its
+        // snapshot are still present. Reuse the same short-lived, signed media
+        // delivery as private Scratch files; never create a public share token.
+        const meta = await storage.getMeta(file.path);
+        const source = scratch.fileAssetSource(file, meta?.remoteAsset);
+        if (source && tryRedirectAsset(this, source)) return;
+        this.response.addHeader('Content-Length', file.size.toString());
+        if (this.thumbnail) this.response.body = await storage.get(file.path);
+        else this.response.attachment('project.sb3', await storage.get(file.path));
     }
 
     async head() {
         const file = await scratch.getCommunityFile(this.actor, this.routeId('communityId'), this.thumbnail);
-        this.response.type = this.thumbnail ? 'image/png' : 'application/octet-stream';
+        this.fileHeaders(file);
+        if (this.notModified(file)) return;
         this.response.body = '';
-        this.response.addHeader('Cache-Control', 'private, no-store');
-        this.response.addHeader('X-Content-Type-Options', 'nosniff');
         this.response.addHeader('Content-Length', file.size.toString());
-        if (!this.thumbnail) this.response.addHeader('Content-Security-Policy', "default-src 'none'; sandbox");
         this.context.status = 200;
         this.context.type = this.response.type;
     }

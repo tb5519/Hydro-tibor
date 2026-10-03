@@ -898,17 +898,18 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         await assert.rejects(moderator.get(), NotFoundError);
     });
 
-    it('serves community project and cover only through authenticated no-store routes without CDN redirects', async () => {
+    it('delivers community snapshots through authorized signed CDN URLs with complete origin fallbacks', async () => {
         const work = await model.createWork(alice, 'community authenticated delivery');
         await model.saveWork(alice, work._id, 0, upload(), false, undefined, thumbnailData().data);
         const { publication } = await model.publishCommunityWork(alice, work._id);
-        const makeHandler = (Class, actor = bob) => {
+        const makeHandler = (Class, actor = bob, requestHeaders = {}) => {
             const handler = new Class();
             const headers = {};
             Object.assign(handler, { actor, headers, context: {}, UiContext: {},
                 domain: { _id: actor.domainId, domainType: 'scratch' },
-                user: { _id: actor.uid, hasPerm: () => actor.isTeacher }, checkPriv: () => {},
-                request: { method: 'get', headers: {}, host: 'onebyone.test', params: { communityId: publication._id.toHexString() } },
+                user: { _id: actor.uid, hasPerm: () => actor.isTeacher },
+                checkPriv: () => { if (!actor.uid) throw new PermissionError('Login required'); },
+                request: { method: 'get', headers: requestHeaders, host: 'onebyone.test', params: { communityId: publication._id.toHexString() } },
                 response: { addHeader: (key, value) => { headers[key] = value; },
                     attachment: (name, bytes) => { handler.response.body = bytes; } },
             });
@@ -917,25 +918,131 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         await database.collection('domain.user').updateOne({ domainId: bob.domainId, uid: bob.uid }, { $set: { join: true } }, { upsert: true });
         for (const [Class, thumbnail] of [[handlers.ScratchCommunityProjectHandler, false], [handlers.ScratchCommunityThumbnailHandler, true]]) {
             const file = await model.getCommunityFile(bob, publication._id, thumbnail);
+            const etag = `"${file._id.toHexString()}"`;
+            const fallback = makeHandler(Class);
+            await fallback.prepare();
+            await fallback.get();
+            assert(fallback.response.body.equals(blobs.get(file.path)));
+            assert.equal(fallback.response.redirect, undefined);
+            assert.equal(fallback.headers['Cache-Control'], 'private, no-cache');
+            assert.equal(fallback.headers.Vary, 'Cookie, Authorization');
+            assert.equal(fallback.headers.ETag, etag);
+            assert.equal(fallback.headers['Content-Length'], `${file.size}`);
+            assert.equal(fallback.response.type, thumbnail ? 'image/png' : 'application/octet-stream');
+            const reads = originReads.length;
+            const head = makeHandler(Class);
+            await head.prepare();
+            await head.head();
+            assert.equal(head.context.status, 200);
+            assert.equal(head.response.body, '');
+            assert.equal(head.headers['Content-Length'], `${file.size}`);
+            assert.equal(head.headers['Cache-Control'], 'private, no-cache');
+            assert.equal(originReads.length, reads, 'HEAD must not download OSS bytes');
+            for (const method of ['get', 'head']) {
+                const cached = makeHandler(Class, bob, { 'if-none-match': `"another-file", W/${etag}` });
+                const calls = redirectCalls.length;
+                await cached.prepare();
+                await cached[method]();
+                assert.equal(cached.context.status, 304);
+                assert.equal(cached.response.status, 304);
+                assert.equal(cached.response.body, '');
+                assert.equal(cached.headers['Cache-Control'], 'private, no-cache');
+                assert.equal(cached.response.etag, undefined, 'the framework etag helper would incorrectly make this public');
+                assert.equal(originReads.length, reads);
+                assert.equal(redirectCalls.length, calls, 'revalidation needs neither media signing nor origin bytes');
+            }
+            const remote = { key: `media/v1/${'a'.repeat(64)}.${thumbnail ? 'png' : 'sb3'}`, sha256: 'b'.repeat(64),
+                size: file.size, contentType: thumbnail ? 'image/png' : 'application/octet-stream', bucket: 'test', region: 'test-region' };
+            remoteAssets.set(file.path, remote);
             readyPaths.add(file.path);
-            const handler = makeHandler(Class);
-            await handler.prepare();
-            await handler.get();
-            assert(handler.response.body.equals(blobs.get(file.path)));
-            assert.equal(handler.response.redirect, undefined);
-            assert.equal(handler.headers['Cache-Control'], 'private, no-store');
-            assert.equal(handler.response.type, thumbnail ? 'image/png' : 'application/octet-stream');
-            await handler.head();
-            assert.equal(handler.context.status, 200);
-            assert.equal(handler.response.body, '');
-            assert.equal(handler.headers['Content-Length'], `${file.size}`);
-            const outsider = makeHandler(Class, { ...bob, uid: 999999 });
-            await assert.rejects(outsider.prepare(), PermissionError);
-            await assert.rejects(makeHandler(Class, foreign).get(), NotFoundError);
+            const accelerated = makeHandler(Class);
+            await accelerated.prepare();
+            await accelerated.get();
+            assert.equal(accelerated.response.status, 302);
+            assert.match(accelerated.response.redirect, /^https:\/\/media\.example\.test\/media\/v1\//);
+            assert.match(accelerated.response.redirect, /auth_key=/);
+            assert.equal(accelerated.headers['Cache-Control'], 'private, no-store');
+            assert.equal(accelerated.headers['Referrer-Policy'], 'no-referrer');
+            assert.equal(accelerated.headers['Content-Length'], undefined, 'a redirect must not claim the project byte length');
+            assert.equal(accelerated.response.body, undefined);
+            assert.equal(redirectCalls.at(-1).meta.remoteAsset, remote);
+            assert.equal(originReads.length, reads, 'ready CDN media must bypass the application byte stream');
+            for (const actor of [{ ...bob, uid: 999999 }, { ...bob, uid: 0 }, foreign]) {
+                const calls = redirectCalls.length;
+                for (const method of ['get', 'head']) {
+                    const denied = makeHandler(Class, actor, { 'if-none-match': etag });
+                    await assert.rejects(async () => { await denied.prepare(); await denied[method](); },
+                        actor === foreign ? NotFoundError : PermissionError);
+                    assert.equal(denied.response.redirect, undefined);
+                    assert.notEqual(denied.context.status, 304);
+                }
+                assert.equal(redirectCalls.length, calls, 'authorization must precede signing and conditional-cache responses');
+                assert.equal(originReads.length, reads);
+            }
         }
-        assert.equal(redirectCalls.length, 0);
+        const calls = redirectCalls.length;
+        const reads = originReads.length;
         await model.unpublishCommunityWork(alice, publication._id);
-        await assert.rejects(makeHandler(handlers.ScratchCommunityProjectHandler).get(), NotFoundError);
+        for (const Class of [handlers.ScratchCommunityProjectHandler, handlers.ScratchCommunityThumbnailHandler]) {
+            for (const method of ['get', 'head']) {
+                const removed = makeHandler(Class, bob, { 'if-none-match': '*' });
+                await removed.prepare();
+                await assert.rejects(removed[method](), NotFoundError);
+                assert.equal(removed.response.redirect, undefined);
+                assert.notEqual(removed.context.status, 304);
+            }
+        }
+        assert.equal(redirectCalls.length, calls, 'withdrawn works must not receive new signed access');
+        assert.equal(originReads.length, reads);
+    });
+
+    it('revalidates community files over HTTP after membership checks and invalidates previous snapshot etags', async () => {
+        const work = await model.createWork(alice, 'community conditional HTTP delivery');
+        await model.saveWork(alice, work._id, 0, upload(project('first published version')), false, undefined, thumbnailData().data);
+        const { publication } = await model.publishCommunityWork(alice, work._id);
+        const first = await model.getCommunityFile(bob, publication._id);
+        const baseLayer = load('node_modules/@hydrooj/framework/base.ts', {
+            '@hydrooj/framework': { serializer: () => (_, value) => value },
+            '@hydrooj/utils/lib/utils': { errorMessage: (error) => error },
+            './error': { SystemError: Error, UserFacingError: Error },
+        }).default;
+        const app = new Koa();
+        app.use(async (ctx, next) => { ctx.params = { communityId: publication._id.toHexString() }; await next(); });
+        app.use(baseLayer({ error() {} }, '', ''));
+        app.use(async (ctx) => {
+            const Class = ctx.path.endsWith('/thumbnail') ? handlers.ScratchCommunityThumbnailHandler : handlers.ScratchCommunityProjectHandler;
+            const handler = new Class();
+            Object.assign(handler, {
+                context: ctx, request: ctx.HydroContext.request, response: ctx.HydroContext.response,
+                domain: { _id: alice.domainId, domainType: 'scratch' }, UiContext: {},
+                user: { _id: bob.uid, hasPerm: () => false }, checkPriv: () => {},
+            });
+            ctx.handler = handler;
+            await handler.prepare();
+            await handler[ctx.method.toLowerCase()]();
+        });
+        await database.collection('domain.user').updateOne({ domainId: bob.domainId, uid: bob.uid }, { $set: { join: true } }, { upsert: true });
+        const http = request(app.callback());
+        const firstEtag = `"${first._id.toHexString()}"`;
+        for (const route of ['/project', '/thumbnail']) {
+            const response = await http.get(route).expect(200);
+            assert.equal(response.headers['cache-control'], 'private, no-cache');
+            assert.equal(response.headers.vary, 'Cookie, Authorization');
+            assert.equal(+response.headers['content-length'], response.body.length);
+            const head = await http.head(route).expect(200);
+            assert.equal(head.headers.etag, response.headers.etag);
+            assert.equal(head.headers['content-length'], response.headers['content-length']);
+            for (const method of ['get', 'head']) {
+                const cached = await http[method](route).set('If-None-Match', response.headers.etag).expect(304);
+                assert.equal(cached.headers['cache-control'], 'private, no-cache');
+                assert.equal(cached.headers.etag, response.headers.etag);
+            }
+        }
+        await model.saveWork(alice, work._id, 1, upload(project('new published version')), false, undefined, thumbnailData().data);
+        await model.publishCommunityWork(alice, work._id);
+        const updated = await http.get('/project').set('If-None-Match', firstEtag).expect(200);
+        assert.notEqual(updated.headers.etag, firstEtag, 'a new published file must not return the previous snapshot as 304');
+        assert(updated.body.equals(blobs.get((await model.getCommunityFile(bob, publication._id)).path)));
     });
 
     it('shares only saved work with unguessable tokens, authorizes owners and teachers, and keeps same-revision sharing idempotent', async () => {

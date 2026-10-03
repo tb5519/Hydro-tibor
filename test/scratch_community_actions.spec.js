@@ -10,7 +10,11 @@ const root = path.resolve(__dirname, '../packages/ui-default');
 const actionsCode = transformSync(fs.readFileSync(path.join(root, 'pages/scratch_community.page.ts'), 'utf8'), {
     loader: 'ts', format: 'cjs',
 }).code;
-const template = fs.readFileSync(path.join(root, 'templates/scratch_community_detail.html'), 'utf8')
+const pageCode = transformSync(fs.readFileSync(path.join(root, 'misc/Page.ts'), 'utf8'), {
+    loader: 'ts', format: 'cjs',
+}).code;
+const templateName = 'scratch_community_detail.html';
+const template = fs.readFileSync(path.join(root, 'templates', templateName), 'utf8')
     .replace('{% extends "scratch_base.html" %}', '');
 const env = new nunjucks.Environment(null, { autoescape: true });
 env.addFilter('json', JSON.stringify);
@@ -19,11 +23,12 @@ const response = (result, ok = true) => ({ ok, json: async () => result });
 
 function actions(t, canManage = true) {
     const endpoint = '/d/art/scratch/community/123';
-    const html = env.renderString(template, {
+    const body = env.renderString(template, {
         canManage, canEdit: false, communityWork: { title: '星球旅行', instructions: '方向键移动', owner: 10 },
         UiContext: { scratchPlayer: {} }, datetimeSpan: () => '刚刚',
         url: (name) => name === 'scratch_community_work' ? endpoint : '/d/art/scratch/community',
     });
+    const html = `<html data-page="${templateName.split('.')[0]}"><body>${body}</body></html>`;
     const dom = new JSDOM(html, { url: `https://onebyone.test${endpoint}`, runScripts: 'outside-only' });
     t.after(() => dom.window.close());
     const { window } = dom;
@@ -41,11 +46,18 @@ function actions(t, canManage = true) {
     window.clearTimeout = (id) => timers.delete(id);
     const navigations = [];
     const location = { href: window.location.href, origin: window.location.origin, assign: (url) => navigations.push(url) };
+    const pages = { exports: {} };
+    window.Hydro = {};
+    new window.Function('module', 'exports', 'process', pageCode)(pages, pages.exports, { env: { NODE_ENV: 'test' } });
     const module = { exports: {} };
     new window.Function('require', 'module', 'exports', 'location', actionsCode)((name) => {
         assert.equal(name, 'vj/misc/Page');
-        return { NamedPage: class { constructor(pageName, callback) { assert.equal(pageName, 'scratch_community_work'); callback(); } } };
+        return pages.exports;
     }, module, module.exports, location);
+    // The real loader matches the rendered template name, not the route name.
+    const pageName = document.documentElement.dataset.page;
+    const page = module.exports.default;
+    if (page.isNameMatch(pageName)) page.afterLoading(pageName);
     return {
         window, document, requests, navigations, timers,
         trigger: document.querySelector('[data-scratch-community-unpublish]'),

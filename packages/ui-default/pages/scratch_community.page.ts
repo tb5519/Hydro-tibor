@@ -1,6 +1,6 @@
 import { NamedPage } from 'vj/misc/Page';
 
-export default new NamedPage('scratch_community_work', () => {
+export default new NamedPage('scratch_community_detail', () => {
   const trigger = document.querySelector<HTMLButtonElement>('[data-scratch-community-unpublish]');
   const dialog = document.querySelector<HTMLDialogElement>('[data-scratch-community-unpublish-dialog]');
   const confirm = document.querySelector<HTMLButtonElement>('[data-scratch-community-unpublish-confirm]');
