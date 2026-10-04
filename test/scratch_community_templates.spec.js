@@ -46,7 +46,7 @@ const base = {
     url, handler: { user: { _id: 7 } }, UiContext: { scratchPlayer: player },
     communityWorks: [item], communityWork: item, udict: { 7: { uname: '小豆' } },
     page: 1, pcount: 1, count: 1, mine: false, q: '', sort: 'hot', isOwner: true, canEdit: true, canManage: true,
-    communityMetrics: { likes: 9, runtimeSeconds: 452, likedToday: false, canLike: true, isTeacher: false },
+    communityMetrics: { likes: 9, favorites: 5, favorited: false, favoriteRevision: 7, runtimeSeconds: 452, likedToday: false, canLike: true, isTeacher: false },
     datetimeSpan: () => new nunjucks.runtime.SafeString('<time datetime="2026-09-28">刚刚</time>'),
     paginator: { render: (page, count) => new nunjucks.runtime.SafeString(`<nav aria-label="翻页">${page}/${count}</nav>`) },
     utils: { buildQueryString: (values) => new URLSearchParams(values).toString() },
@@ -64,7 +64,13 @@ describe('Scratch classroom community templates', () => {
         assert.match(document.querySelector('.sc-community-scope').textContent, /本课堂/);
         const card = document.querySelector('.sc-community-card');
         assert.equal(card.querySelectorAll('a').length, 1);
-        assert.equal(card.querySelectorAll('button').length, 0);
+        assert.equal(card.querySelectorAll('button').length, 1);
+        assert.equal(card.querySelector('a button'), null);
+        assert.equal(card.dataset.communityId, 'pub-one');
+        assert.equal(card.querySelector('[data-community-favorite]').dataset.metricsUrl, '/d/art/scratch/community/pub-one/metrics');
+        assert.equal(card.querySelector('[data-community-favorite]').getAttribute('aria-pressed'), 'false');
+        assert.match(card.querySelector('[data-community-favorite]').getAttribute('aria-label'), /收藏 小猫的太空冒险/);
+        assert.ok(card.querySelector('[data-community-favorite-status][role="status"]'));
         assert.equal(card.querySelector('a').pathname, '/d/art/scratch/community/pub-one');
         assert.equal(card.querySelector('img').getAttribute('src'), `/d/art/scratch/community/pub-one/thumbnail?v=${item.updatedAt.getTime()}`);
         assert.ok(!document.body.innerHTML.includes('private-thumbnail-id'));
@@ -161,10 +167,112 @@ describe('Scratch classroom community templates', () => {
         });
         assert.equal(document.querySelector('.sc-community-sort [aria-current=page]').textContent, '最新');
         assert.equal(document.querySelector('.sc-community-search [name=sort]').value, 'latest');
-        for (const link of document.querySelectorAll('.sc-community-tabs a')) assert.equal(new URL(link.href).searchParams.get('sort'), 'latest');
+        for (const link of document.querySelectorAll('.sc-community-tabs a')) {
+            assert.equal(new URL(link.href).searchParams.get('sort'), link.classList.contains('sc-community-favorites-tab') ? 'saved' : 'latest');
+        }
         assert.match(paginationQuery, /sort=latest/);
         assert.match(document.querySelector('.sc-community-card-metrics').textContent, /12/);
         assert.match(document.querySelector('.sc-community-card-metrics').textContent, /2 小时/);
+    });
+
+    it('keeps favorites, search and all three sort choices scoped without leaking saved sort into other tabs', (t) => {
+        let paginationQuery;
+        const document = render(t, 'scratch_community.html', {
+            favorites: true, mine: false, sort: 'saved', q: '太空', pcount: 2,
+            communityWorks: [{ ...item, favorites: 13, favorited: true, favoriteRevision: 4 }],
+            paginator: { render: (page, count, args) => { paginationQuery = args.add_qs; return ''; } },
+        });
+        assert.equal(document.querySelector('h1').textContent, '我的收藏✦');
+        assert.ok(document.querySelector('.sc-community-hero-favorites[data-community-favorites-view]'));
+        assert.equal(document.querySelector('.sc-community-tabs [aria-current=page]').textContent, '我的收藏');
+        assert.equal(document.querySelectorAll('.sc-community-tabs [aria-current=page]').length, 1);
+        assert.equal(document.querySelector('.sc-community-search [name=favorites]').value, '1');
+        assert.equal(document.querySelector('.sc-community-search [name=mine]'), null);
+        assert.equal(document.querySelector('.sc-community-search [name=sort]').value, 'saved');
+        assert.equal(document.querySelector('.sc-community-sort [aria-current=page]').textContent, '最近收藏');
+        assert.equal(document.querySelectorAll('.sc-community-sort a').length, 3);
+        for (const link of document.querySelectorAll('.sc-community-sort a')) {
+            const query = new URL(link.href).searchParams;
+            assert.equal(query.get('favorites'), '1');
+            assert.equal(query.get('q'), '太空');
+            assert.equal(query.has('mine'), false);
+        }
+        for (const link of document.querySelectorAll('.sc-community-tabs a:not(.sc-community-favorites-tab)')) {
+            const query = new URL(link.href).searchParams;
+            assert.equal(query.get('sort'), 'hot');
+            assert.equal(query.has('favorites'), false);
+            assert.equal(query.get('q'), '太空');
+        }
+        const pagination = new URLSearchParams(paginationQuery);
+        assert.equal(pagination.get('favorites'), '1');
+        assert.equal(pagination.get('sort'), 'saved');
+        assert.equal(pagination.get('q'), '太空');
+        const button = document.querySelector('[data-community-favorite]');
+        assert.equal(button.dataset.favorited, 'true');
+        assert.equal(button.dataset.favoriteRevision, '4');
+        assert.equal(button.getAttribute('aria-pressed'), 'true');
+        assert.equal(button.querySelector('[data-community-favorite-label]').textContent, '已收藏');
+        assert.match(button.getAttribute('aria-label'), /取消收藏 小猫的太空冒险/);
+        assert.equal(document.querySelector('[data-community-favorite-count]').textContent, '13');
+    });
+
+    it('starts a favorites visit with saved order and offers a useful empty collection or clear-search action', (t) => {
+        const common = { favorites: true, sort: undefined, communityWorks: [], count: 0 };
+        const empty = render(t, 'scratch_community.html', common);
+        assert.equal(empty.querySelector('.sc-community-sort [aria-current=page]').textContent, '最近收藏');
+        assert.match(empty.querySelector('.sc-community-empty strong').textContent, /想再玩的创意/);
+        assert.match(empty.querySelector('.sc-community-empty p').textContent, /点一下星星/);
+        const explore = empty.querySelector('.sc-community-empty .sc-button-primary');
+        assert.equal(explore.textContent, '去逛逛社区');
+        assert.equal(explore.pathname, '/d/art/scratch/community');
+        assert.equal(explore.search, '');
+        const search = render(t, 'scratch_community.html', { ...common, q: '不存在', sort: 'latest' });
+        assert.match(search.querySelector('.sc-community-empty strong').textContent, /收藏里暂时没有/);
+        const clear = [...search.querySelectorAll('.sc-community-empty a')].find((link) => link.textContent === '清除搜索');
+        const query = new URL(clear.href).searchParams;
+        assert.equal(query.get('favorites'), '1');
+        assert.equal(query.get('sort'), 'latest');
+        assert.equal(query.has('q'), false);
+        assert.equal(query.has('mine'), false);
+    });
+
+    it('offers one reversible personal favorite independently of the daily like limit', (t) => {
+        const document = render(t, 'scratch_community_detail.html', {
+            communityMetrics: { ...base.communityMetrics, favorited: true, likedToday: true, canLike: false },
+        });
+        const root = document.querySelector('[data-community-metrics]');
+        const button = root.querySelector('[data-community-favorite]');
+        assert.equal(root.dataset.favorited, 'true');
+        assert.equal(button.disabled, false);
+        assert.equal(button.getAttribute('aria-pressed'), 'true');
+        assert.equal(button.dataset.communityId, 'pub-one');
+        assert.equal(button.dataset.favoriteRevision, '7');
+        assert.equal(button.dataset.metricsUrl, root.dataset.metricsUrl);
+        assert.equal(button.querySelector('[data-community-favorite-count]').textContent, '5');
+        assert.equal(button.querySelector('[data-community-favorite-label]').textContent, '已收藏');
+        assert.equal(new URL(root.querySelector('.sc-community-favorite-hint a').href).searchParams.get('favorites'), '1');
+        assert.ok(root.querySelector('[data-community-favorite-status][role="status"][aria-live="polite"]'));
+        assert.equal(root.querySelector('[data-community-like]').disabled, true);
+        assert.equal(document.querySelector('[data-community-adjust-favorites]'), null);
+        assert.equal(document.querySelector('[data-analytics-actual-favorites]'), null);
+    });
+
+    it('separates teacher-added favorites from personal saves and includes private member favorite state', (t) => {
+        const document = render(t, 'scratch_community_detail.html', {
+            communityMetrics: { ...base.communityMetrics, isTeacher: true },
+        });
+        const dialog = document.querySelector('[data-community-analytics-dialog]');
+        for (const selector of ['[data-analytics-favorites]', '[data-analytics-actual-favorites]', '[data-analytics-manual-favorites]']) {
+            assert.ok(dialog.querySelector(selector));
+        }
+        const input = dialog.querySelector('[data-community-adjust-favorites]');
+        assert.equal(input.name, 'favorites');
+        assert.equal(input.type, 'number');
+        assert.equal(input.min, '0');
+        assert.equal(input.step, '1');
+        assert.equal(input.value, '0');
+        assert.match(dialog.querySelector('.sc-community-adjust-note').textContent, /不会把作品放进任何学员的“我的收藏”/);
+        assert.deepEqual([...dialog.querySelectorAll('thead th')].map((cell) => cell.textContent), ['课堂成员', '点赞次数', '收藏', '运行时长']);
     });
 
     it('escapes child supplied names, instructions, search and player config without breaking attributes', (t) => {

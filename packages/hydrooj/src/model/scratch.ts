@@ -44,7 +44,11 @@ export interface ScratchCommunityWork extends ScratchDoc {
 }
 export interface ScratchCommunityEvent {
     _id: string; domainId: string; communityId: ObjectId; uid: number; isTeacher: boolean;
-    likes: number; manualRuntimeSeconds: number; createdAt: Date;
+    likes: number; manualRuntimeSeconds: number; favorites?: number; createdAt: Date;
+}
+export interface ScratchCommunityFavorite {
+    _id: string; domainId: string; communityId: ObjectId; uid: number; isTeacher: boolean;
+    active: boolean; savedAt: Date; revision: number;
 }
 export interface ScratchCommunityRuntime {
     _id: string; domainId: string; communityId: ObjectId; uid: number; isTeacher: boolean;
@@ -110,6 +114,7 @@ declare module '../service/db' {
         'scratch.share': ScratchShare;
         'scratch.community': ScratchCommunityWork;
         'scratch.community.event': ScratchCommunityEvent;
+        'scratch.community.favorite': ScratchCommunityFavorite;
         'scratch.community.runtime': ScratchCommunityRuntime;
         'scratch.community.state': ScratchCommunityState;
         'scratch.quota': { _id: string, bytes: number };
@@ -126,6 +131,7 @@ export const presets = db.collection('scratch.preset');
 export const shares = db.collection('scratch.share');
 export const community = db.collection('scratch.community');
 export const communityEvents = db.collection('scratch.community.event');
+export const communityFavorites = db.collection('scratch.community.favorite');
 export const communityRuntimes = db.collection('scratch.community.runtime');
 export const communityStates = db.collection('scratch.community.state');
 export const quotas = db.collection('scratch.quota');
@@ -755,26 +761,39 @@ export async function syncCommunityState(actor: ScratchActor, id: ObjectId, inpu
 
 // Events are authoritative: no counter write can be lost between an idempotency
 // check and increment. Totals and ranking use the same aggregation before paging.
-function communityMetricStages() {
+function communityMetricStages(uid: number) {
     return [
         { $lookup: { from: communityEvents.collectionName, let: { id: '$_id', domain: '$domainId' }, pipeline: [
             { $match: { $expr: { $and: [{ $eq: ['$communityId', '$$id'] }, { $eq: ['$domainId', '$$domain'] }] } } },
-            { $group: { _id: null, likes: { $sum: '$likes' }, manualRuntimeSeconds: { $sum: '$manualRuntimeSeconds' },
+            { $group: { _id: null, likes: { $sum: '$likes' }, manualFavorites: { $sum: '$favorites' }, manualRuntimeSeconds: { $sum: '$manualRuntimeSeconds' },
                 studentLikes: { $sum: { $cond: ['$isTeacher', 0, '$likes'] } }, teacherLikes: { $sum: { $cond: ['$isTeacher', '$likes', 0] } } } },
         ], as: '_events' } },
+        { $lookup: { from: communityFavorites.collectionName, let: { id: '$_id', domain: '$domainId' }, pipeline: [
+            { $match: { $expr: { $and: [{ $eq: ['$communityId', '$$id'] }, { $eq: ['$domainId', '$$domain'] }] } } },
+            { $group: { _id: null, count: { $sum: { $cond: ['$active', 1, 0] } },
+                mine: { $max: { $cond: [{ $and: [{ $eq: ['$uid', uid] }, '$active'] }, 1, 0] } },
+                revision: { $max: { $cond: [{ $eq: ['$uid', uid] }, '$revision', 0] } },
+                savedAt: { $max: { $cond: [{ $eq: ['$uid', uid] }, '$savedAt', null] } } } },
+        ], as: '_favorites' } },
         { $lookup: { from: communityRuntimes.collectionName, let: { id: '$_id', domain: '$domainId' }, pipeline: [
             { $match: { $expr: { $and: [{ $eq: ['$communityId', '$$id'] }, { $eq: ['$domainId', '$$domain'] }] } } },
             { $group: { _id: null, seconds: { $sum: '$runtimeSeconds' } } },
         ], as: '_runtime' } },
         { $set: {
             likes: { $ifNull: [{ $arrayElemAt: ['$_events.likes', 0] }, 0] },
+            actualFavorites: { $ifNull: [{ $arrayElemAt: ['$_favorites.count', 0] }, 0] },
+            manualFavorites: { $ifNull: [{ $arrayElemAt: ['$_events.manualFavorites', 0] }, 0] },
+            favorited: { $eq: [{ $arrayElemAt: ['$_favorites.mine', 0] }, 1] },
+            favoriteRevision: { $ifNull: [{ $arrayElemAt: ['$_favorites.revision', 0] }, 0] },
+            favoriteSavedAt: { $ifNull: [{ $arrayElemAt: ['$_favorites.savedAt', 0] }, null] },
             studentLikes: { $ifNull: [{ $arrayElemAt: ['$_events.studentLikes', 0] }, 0] },
             teacherLikes: { $ifNull: [{ $arrayElemAt: ['$_events.teacherLikes', 0] }, 0] },
             actualRuntimeSeconds: { $ifNull: [{ $arrayElemAt: ['$_runtime.seconds', 0] }, 0] },
             manualRuntimeSeconds: { $ifNull: [{ $arrayElemAt: ['$_events.manualRuntimeSeconds', 0] }, 0] },
         } },
-        { $set: { runtimeSeconds: { $add: ['$actualRuntimeSeconds', '$manualRuntimeSeconds'] } } },
-        { $unset: ['_events', '_runtime'] },
+        { $set: { runtimeSeconds: { $add: ['$actualRuntimeSeconds', '$manualRuntimeSeconds'] },
+            favorites: { $add: ['$actualFavorites', '$manualFavorites'] } } },
+        { $unset: ['_events', '_runtime', '_favorites'] },
     ];
 }
 
@@ -784,24 +803,43 @@ export function communityRuntimeLabel(seconds: number) {
     return `${Math.floor(seconds / 3600)} 小时 ${Math.floor(seconds % 3600 / 60)} 分`;
 }
 
-export async function pageCommunityWorks(actor: ScratchActor, query = '', mine = false, sort = 'hot', page = 1, pageSize = 24) {
+export async function pageCommunityWorks(actor: ScratchActor, query = '', mine = false, sort?: string, page = 1, pageSize = 24, favorites = false) {
     if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1
         || !Number.isSafeInteger((page - 1) * pageSize)) throw new ValidationError('page');
+    if (mine && favorites) throw new ValidationError('favorites');
+    const order = sort || (favorites ? 'saved' : 'hot');
+    if (!['hot', 'latest', ...(favorites ? ['saved'] : [])].includes(order)) throw new ValidationError('sort');
     const q = cleanText(query, 'q', 80, ' ').trim();
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const match = { domainId: actor.domainId, ...(mine ? { owner: actor.uid } : {}),
         ...(q ? { title: { $regex: escaped, $options: 'i' } } : {}) };
-    const count = await community.countDocuments(match);
-    const docs = await community.aggregate<ScratchCommunityWork & { likes: number, runtimeSeconds: number }>([
-        { $match: match }, ...communityMetricStages(),
+    // Start from live classroom publications, so withdrawn or foreign favorites
+    // never appear. Filter and count in Mongo before pagination, not in memory.
+    const favoriteFilter = favorites ? [
+        { $lookup: { from: communityFavorites.collectionName, let: { id: '$_id', domain: '$domainId' }, pipeline: [
+            { $match: { uid: actor.uid, active: true,
+                $expr: { $and: [{ $eq: ['$communityId', '$$id'] }, { $eq: ['$domainId', '$$domain'] }] } } },
+            { $limit: 1 },
+        ], as: '_myFavorite' } },
+        { $match: { '_myFavorite.0': { $exists: true } } },
+        { $unset: '_myFavorite' },
+    ] : [];
+    const count = favorites ? (await community.aggregate([
+        { $match: match }, ...favoriteFilter, { $count: 'count' },
+    ]).next())?.count || 0 : await community.countDocuments(match);
+    const docs = await community.aggregate<ScratchCommunityWork & { likes: number, favorites: number, favorited: boolean, favoriteRevision: number, runtimeSeconds: number }>([
+        { $match: match }, ...favoriteFilter, ...communityMetricStages(actor.uid),
         { $set: { hotScore: { $divide: [
-            { $add: [{ $multiply: [5, '$likes'] }, { $multiply: [2, { $sqrt: { $divide: ['$runtimeSeconds', 60] } }] }] },
+            { $add: [{ $multiply: [15, '$favorites'] }, { $multiply: [5, '$likes'] },
+                { $multiply: [2, { $sqrt: { $divide: ['$runtimeSeconds', 60] } }] }] },
             { $pow: [{ $add: [{ $max: [0, { $divide: [{ $subtract: ['$$NOW', '$createdAt'] }, 86400000] }] }, 2] }, 0.8] },
         ] } } },
-        { $sort: sort === 'latest' ? { updatedAt: -1, _id: -1 } : { hotScore: -1, updatedAt: -1, _id: -1 } },
+        { $sort: order === 'saved' ? { favoriteSavedAt: -1, _id: -1 }
+            : order === 'latest' ? { updatedAt: -1, _id: -1 } : { hotScore: -1, updatedAt: -1, _id: -1 } },
         { $skip: (page - 1) * pageSize }, { $limit: pageSize },
-        // The public list receives totals only, never the teacher breakdown.
-        { $unset: ['studentLikes', 'teacherLikes', 'actualRuntimeSeconds', 'manualRuntimeSeconds', 'hotScore'] },
+        // The public list receives totals and the viewer's own membership only.
+        { $unset: ['studentLikes', 'teacherLikes', 'actualRuntimeSeconds', 'manualRuntimeSeconds',
+            'actualFavorites', 'manualFavorites', 'favoriteSavedAt', 'hotScore'] },
     ]).toArray();
     return { communityWorks: docs.map((doc) => ({ ...doc, runtimeLabel: communityRuntimeLabel(doc.runtimeSeconds) })),
         count, pcount: Math.ceil(count / pageSize) };
@@ -825,14 +863,14 @@ function studentLikeId(actor: ScratchActor, id: ObjectId, now = new Date()) {
     return `${actor.domainId}:${id}:${actor.uid}:day:${communityDay(now)}`;
 }
 async function communityTotals(actor: ScratchActor, id: ObjectId) {
-    const doc = await community.aggregate([{ $match: { _id: id, domainId: actor.domainId } }, ...communityMetricStages()]).next();
+    const doc = await community.aggregate([{ $match: { _id: id, domainId: actor.domainId } }, ...communityMetricStages(actor.uid)]).next();
     if (!doc) throw new NotFoundError('社区作品');
     return doc;
 }
 export async function getCommunityMetrics(actor: ScratchActor, id: ObjectId) {
     const totals = await communityTotals(actor, id);
     const likedToday = !actor.isTeacher && !!await communityEvents.findOne({ _id: studentLikeId(actor, id) }, { projection: { _id: 1 } });
-    return { ok: true, likes: totals.likes, runtimeSeconds: totals.runtimeSeconds,
+    return { ok: true, likes: totals.likes, favorites: totals.favorites, favorited: totals.favorited, favoriteRevision: totals.favoriteRevision, runtimeSeconds: totals.runtimeSeconds,
         runtimeLabel: communityRuntimeLabel(totals.runtimeSeconds), likedToday, canLike: actor.isTeacher || !likedToday, isTeacher: actor.isTeacher };
 }
 async function insertCommunityEvent(event: ScratchCommunityEvent) {
@@ -851,16 +889,49 @@ export async function likeCommunityWork(actor: ScratchActor, id: ObjectId, reque
         likes: 1, manualRuntimeSeconds: 0, createdAt: new Date() });
     return getCommunityMetrics(actor, id);
 }
-export async function adjustCommunityMetrics(actor: ScratchActor, id: ObjectId, requestId: unknown, likes: unknown, seconds: unknown) {
+export async function favoriteCommunityWork(actor: ScratchActor, id: ObjectId, favorited: unknown, requestId: unknown, revision: unknown) {
+    if (![true, false, 'true', 'false'].includes(favorited as boolean | string)) throw new ValidationError('favorited');
+    metricRequestId(requestId);
+    const expectedRevision = metricInteger(revision, 'favoriteRevision', Number.MAX_SAFE_INTEGER - 1);
+    const active = favorited === true || favorited === 'true';
+    await getCommunityWork(actor, id);
+    const _id = `${actor.domainId}:${id}:${actor.uid}`;
+    const now = new Date();
+    // Retain the row and revision on cancellation. CAS makes a delayed old save
+    // harmless after cancellation, without storing an unbounded request history.
+    // Repeated saves neither advance savedAt nor add a second contribution.
+    try {
+        await communityFavorites.updateOne({ _id, revision: expectedRevision }, [{ $set: {
+            domainId: actor.domainId, communityId: id, uid: actor.uid, isTeacher: actor.isTeacher,
+            savedAt: active ? { $cond: [{ $eq: ['$active', true] }, '$savedAt', now] }
+                : { $ifNull: ['$savedAt', now] },
+            revision: { $add: [{ $ifNull: ['$revision', 0] }, { $cond: [
+                { $eq: [{ $ifNull: ['$active', false] }, active] }, 0, 1,
+            ] }] },
+            active,
+        } }], { upsert: expectedRevision === 0 });
+    } catch (error) {
+        // Competing first writes (or replay of revision zero) use one row.
+        if (error.code !== 11000) throw error;
+    }
+    try {
+        return await getCommunityMetrics(actor, id);
+    } catch (error) {
+        if (error instanceof NotFoundError) await communityFavorites.deleteOne({ _id });
+        throw error;
+    }
+}
+export async function adjustCommunityMetrics(actor: ScratchActor, id: ObjectId, requestId: unknown, likes: unknown, seconds: unknown, favorites: unknown = 0) {
     requireTeacher(actor);
     await getCommunityWork(actor, id);
     const key = metricRequestId(requestId);
     const likeCount = metricInteger(likes, 'likes', 1000000);
     const runtimeSeconds = metricInteger(seconds, 'runtimeSeconds', 31536000);
-    if (!likeCount && !runtimeSeconds) throw new ValidationError('likes', null, '请输入要增加的点赞数或运行时长。');
+    const favoriteCount = metricInteger(favorites, 'favorites', 1000000);
+    if (!likeCount && !runtimeSeconds && !favoriteCount) throw new ValidationError('likes', null, '请输入要增加的点赞数、收藏数或运行时长。');
     await insertCommunityEvent({ _id: `${actor.domainId}:${id}:${actor.uid}:adjust:${key}`,
         domainId: actor.domainId, communityId: id, uid: actor.uid, isTeacher: true,
-        likes: likeCount, manualRuntimeSeconds: runtimeSeconds, createdAt: new Date() });
+        likes: likeCount, favorites: favoriteCount, manualRuntimeSeconds: runtimeSeconds, createdAt: new Date() });
 }
 export async function getCommunityAnalytics(actor: ScratchActor, id: ObjectId) {
     requireTeacher(actor);
@@ -871,14 +942,22 @@ export async function getCommunityAnalytics(actor: ScratchActor, id: ObjectId) {
     ]).toArray();
     const runtimes = await communityRuntimes.find({ domainId: actor.domainId, communityId: id },
         { projection: { uid: 1, isTeacher: 1, runtimeSeconds: 1 } }).toArray();
-    const participants = new Map<number, { uid: number, isTeacher: boolean, likes: number, runtimeSeconds: number }>();
-    for (const row of eventActors) participants.set(row._id, { uid: row._id, isTeacher: row.isTeacher, likes: row.likes, runtimeSeconds: 0 });
+    const saved = await communityFavorites.find({ domainId: actor.domainId, communityId: id, active: true },
+        { projection: { uid: 1, isTeacher: 1 } }).toArray();
+    const participants = new Map<number, { uid: number, isTeacher: boolean, likes: number, runtimeSeconds: number, favorited: boolean }>();
+    for (const row of eventActors) participants.set(row._id, { uid: row._id, isTeacher: row.isTeacher, likes: row.likes, runtimeSeconds: 0, favorited: false });
     for (const row of runtimes) {
         const existing = participants.get(row.uid);
         participants.set(row.uid, { uid: row.uid, isTeacher: row.isTeacher || existing?.isTeacher || false,
-            likes: existing?.likes || 0, runtimeSeconds: row.runtimeSeconds });
+            likes: existing?.likes || 0, runtimeSeconds: row.runtimeSeconds, favorited: false });
     }
-    return { ok: true, likes: totals.likes, runtimeSeconds: totals.runtimeSeconds,
+    for (const row of saved) {
+        const existing = participants.get(row.uid);
+        participants.set(row.uid, { uid: row.uid, isTeacher: row.isTeacher || existing?.isTeacher || false,
+            likes: existing?.likes || 0, runtimeSeconds: existing?.runtimeSeconds || 0, favorited: true });
+    }
+    return { ok: true, likes: totals.likes, favorites: totals.favorites, runtimeSeconds: totals.runtimeSeconds,
+        actualFavorites: totals.actualFavorites, manualFavorites: totals.manualFavorites,
         actualRuntimeSeconds: totals.actualRuntimeSeconds, manualRuntimeSeconds: totals.manualRuntimeSeconds,
         studentLikes: totals.studentLikes, teacherLikes: totals.teacherLikes,
         participants: [...participants.values()].sort((a, b) => b.runtimeSeconds - a.runtimeSeconds || b.likes - a.likes || a.uid - b.uid) };
@@ -990,7 +1069,10 @@ export async function unpublishCommunityWork(actor: ScratchActor, _id: ObjectId)
     // Only the community entry is removed. Drafts, submissions and external
     // links retain their separate references to immutable files.
     const removed = await community.findOneAndDelete({ domainId: actor.domainId, _id, owner: doc.owner });
-    if (removed) await removeCommunityFiles(actor, removed);
+    if (removed) {
+        await communityFavorites.deleteMany({ domainId: actor.domainId, communityId: _id });
+        await removeCommunityFiles(actor, removed);
+    }
 }
 
 export async function getPublicShare(domainId: string, token: unknown) {
@@ -1025,7 +1107,10 @@ export async function deleteWork(actor: ScratchActor, workId: ObjectId, mergeInt
         await shares.deleteMany({ domainId: actor.domainId, workId });
         const published = await community.find({ domainId: actor.domainId, workId }).toArray();
         await community.deleteMany({ domainId: actor.domainId, workId });
-        for (const doc of published) await removeCommunityFiles(actor, doc);
+        for (const doc of published) {
+            await communityFavorites.deleteMany({ domainId: actor.domainId, communityId: doc._id });
+            await removeCommunityFiles(actor, doc);
+        }
         for (const file of docs) await removeFile(actor, file._id);
     } finally {
         await works.updateOne({ domainId: actor.domainId, _id: workId, savingToken: token }, { $unset: { savingToken: '', savingUntil: '' } });
@@ -1036,7 +1121,7 @@ export async function apply(ctx: Context) {
     ctx.on('domain/delete', async (domainId) => {
         const docs = await files.find({ domainId }).toArray();
         await storage.del(docs.map((doc) => doc.path));
-        await Promise.all([assignments, works, versions, submissions, materials, presets, files, shares, community, communityEvents, communityRuntimes, communityStates].map((collection) => collection.deleteMany({ domainId })));
+        await Promise.all([assignments, works, versions, submissions, materials, presets, files, shares, community, communityEvents, communityFavorites, communityRuntimes, communityStates].map((collection) => collection.deleteMany({ domainId })));
         await quotas.deleteOne({ _id: domainId });
     });
     await Promise.all([
@@ -1056,6 +1141,9 @@ export async function apply(ctx: Context) {
             { key: { domainId: 1, workId: 1 }, name: 'scratch_community_work' },
             { key: { domainId: 1, fileId: 1 }, name: 'scratch_community_file' },
             { key: { domainId: 1, thumbnailFileId: 1 }, name: 'scratch_community_thumbnail' }),
+        db.ensureIndexes(communityFavorites,
+            { key: { domainId: 1, communityId: 1, uid: 1 }, name: 'scratch_community_favorite_member', unique: true },
+            { key: { domainId: 1, uid: 1, active: 1, savedAt: -1 }, name: 'scratch_community_favorite_saved' }),
         db.ensureIndexes(communityEvents, { key: { domainId: 1, communityId: 1, uid: 1 }, name: 'scratch_community_events' }),
         db.ensureIndexes(communityRuntimes, { key: { domainId: 1, communityId: 1, uid: 1 }, name: 'scratch_community_runtimes', unique: true }),
         db.ensureIndexes(communityStates, { key: { domainId: 1, communityId: 1 }, name: 'scratch_community_states', unique: true }),

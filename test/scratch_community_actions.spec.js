@@ -21,14 +21,17 @@ env.addFilter('json', JSON.stringify);
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const response = (result, ok = true) => ({ ok, json: async () => result });
 
-function actions(t, canManage = true, isTeacher = false) {
+function actions(t, canManage = true, isTeacher = false, gallery = false) {
     const endpoint = '/d/art/scratch/community/123';
-    const body = env.renderString(template, {
-        canManage, canEdit: false, communityMetrics: { likes: 3, runtimeSeconds: 65, likedToday: false, canLike: true, isTeacher }, communityWork: { title: '星球旅行', instructions: '方向键移动', owner: 10 },
+    const selectedTemplate = gallery ? fs.readFileSync(path.join(root, 'templates/scratch_community.html'), 'utf8').replace('{% extends \"scratch_base.html\" %}', '') : template;
+    const body = env.renderString(selectedTemplate, {
+        canManage, canEdit: false, communityMetrics: { likes: 3, favorites: 2, favorited: false, favoriteRevision: 0, runtimeSeconds: 65, likedToday: false, canLike: true, isTeacher }, communityWork: { _id: '123', title: '星球旅行', instructions: '方向键移动', owner: 10 },
+        communityWorks: ['123', '456'].map((_id) => ({ _id, title: `星球旅行 ${_id}`, owner: 10, updatedAt: new Date(), favorites: 2, favorited: true, favoriteRevision: 1 })),
+        favorites: true, sort: 'saved', count: 2, udict: { 10: { uname: '小豆' } }, handler: { user: { _id: 20 } },
         UiContext: { scratchPlayer: {} }, datetimeSpan: () => '刚刚',
-        url: (name) => ({ scratch_community_work: endpoint, scratch_community_metrics: `${endpoint}/metrics`, scratch_community_analytics: `${endpoint}/analytics` }[name] || '/d/art/scratch/community'),
+        url: (name, params = {}) => { const target = `/d/art/scratch/community/${params.communityId || '123'}`; return ({ scratch_community_work: target, scratch_community_metrics: `${target}/metrics`, scratch_community_analytics: `${target}/analytics` }[name] || '/d/art/scratch/community'); },
     });
-    const html = `<html data-page="${templateName.split('.')[0]}"><body>${body}</body></html>`;
+    const html = `<html data-page="${gallery ? 'scratch_community' : templateName.split('.')[0]}"><body>${body}</body></html>`;
     const dom = new JSDOM(html, { url: `https://onebyone.test${endpoint}`, runScripts: 'outside-only' });
     t.after(() => dom.window.close());
     const { window } = dom;
@@ -181,8 +184,8 @@ describe('Scratch community withdrawal confirmation', () => {
     });
 });
 
-const summary = (extra = {}) => ({ ok: true, likes: 4, runtimeSeconds: 125, likedToday: true, canLike: false, isTeacher: false, ...extra });
-const analytics = (extra = {}) => ({ ok: true, likes: 14, runtimeSeconds: 425, actualRuntimeSeconds: 125,
+const summary = (extra = {}) => ({ ok: true, likes: 4, favorites: 2, favorited: false, favoriteRevision: 0, runtimeSeconds: 125, likedToday: true, canLike: false, isTeacher: false, ...extra });
+const analytics = (extra = {}) => ({ ok: true, likes: 14, favorites: 2, actualFavorites: 2, manualFavorites: 0, runtimeSeconds: 425, actualRuntimeSeconds: 125,
     manualRuntimeSeconds: 300, studentLikes: 4, teacherLikes: 10, participants: [], ...extra });
 const select = (h, name) => h.document.querySelector(`[data-${name}]`);
 
@@ -269,7 +272,7 @@ describe('Scratch community encouragement and private analytics', () => {
         assert.equal(rows.length, 2);
         assert.equal(rows[0].children[0].textContent, name);
         assert.equal(rows[0].querySelector('img'), null);
-        assert.equal(rows[0].children[2].textContent, '2 分 5 秒');
+        assert.equal(rows[0].children[3].textContent, '2 分 5 秒');
         assert.match(rows[1].textContent, /老师/);
         select(h, 'community-analytics-close').click();
         assert.equal(select(h, 'community-analytics-dialog').open, false);
@@ -357,5 +360,176 @@ describe('Scratch community encouragement and private analytics', () => {
         h.requests[0].reject(new h.window.DOMException('Aborted', 'AbortError'));
         await settle();
         assert.equal(h.timers.size, 0);
+    });
+});
+
+describe('Scratch community personal favorites', () => {
+    it('saves once, disables repeat clicks, and cancels with a decreasing total and current revision', async (t) => {
+        const h = actions(t, false);
+        const button = select(h, 'community-favorite');
+        button.click(); button.click();
+        assert.equal(h.requests.length, 1);
+        const first = h.requests[0];
+        assert.equal(first.options.body.get('operation'), 'favorite');
+        assert.equal(first.options.body.get('favorited'), 'true');
+        assert.equal(first.options.body.get('favoriteRevision'), '0');
+        assert.equal(first.options.credentials, 'same-origin');
+        assert.equal(button.disabled, true);
+        first.resolve(response(summary({ favorites: 3, favorited: true, favoriteRevision: 1 })));
+        await settle();
+        assert.equal(button.getAttribute('aria-pressed'), 'true');
+        assert.equal(button.disabled, false);
+        assert.equal(select(h, 'community-favorite-count').textContent, '3');
+        assert.match(select(h, 'community-favorite-status').textContent, /我的收藏/);
+        button.click();
+        assert.equal(h.requests[1].options.body.get('favorited'), 'false');
+        assert.equal(h.requests[1].options.body.get('favoriteRevision'), '1');
+        h.requests[1].resolve(response(summary({ favorites: 2, favorited: false, favoriteRevision: 2 })));
+        await settle();
+        assert.equal(button.getAttribute('aria-pressed'), 'false');
+        assert.equal(select(h, 'community-favorite-count').textContent, '2');
+        assert.match(select(h, 'community-favorite-status').textContent, /已取消收藏/);
+    });
+
+    it('retries an ambiguous save with exactly the original desired state and revision', async (t) => {
+        const h = actions(t, false);
+        const button = select(h, 'community-favorite');
+        button.click();
+        const body = h.requests[0].options.body.toString();
+        h.requests[0].reject(new h.window.TypeError('Network failed'));
+        await settle();
+        assert.equal(button.getAttribute('aria-pressed'), 'false');
+        assert.match(select(h, 'community-favorite-status').textContent, /不会重复收藏/);
+        button.click();
+        assert.equal(h.requests[1].options.body.toString(), body);
+        h.requests[1].resolve(response(summary({ favorites: 3, favorited: true, favoriteRevision: 1 })));
+        await settle();
+        assert.equal(button.getAttribute('aria-pressed'), 'true');
+        button.click();
+        assert.notEqual(h.requests[2].options.body.get('requestId'), new URLSearchParams(body).get('requestId'));
+    });
+
+    it('adopts a newer server state after another tab changed it without claiming the requested save succeeded', async (t) => {
+        const h = actions(t, false);
+        select(h, 'community-favorite').click();
+        h.requests[0].resolve(response(summary({ favorites: 2, favorited: false, favoriteRevision: 2 })));
+        await settle();
+        assert.equal(select(h, 'community-favorite').getAttribute('aria-pressed'), 'false');
+        assert.match(select(h, 'community-favorite-status').textContent, /同步最新/);
+        select(h, 'community-favorite').click();
+        assert.equal(h.requests[1].options.body.get('favoriteRevision'), '2');
+    });
+
+    it('ignores old heartbeat and visibility responses after a local favorite action', async (t) => {
+        const h = actions(t, false);
+        Object.defineProperty(h.document, 'visibilityState', { value: 'visible', configurable: true });
+        h.document.dispatchEvent(new h.window.Event('visibilitychange'));
+        assert.equal(h.requests.length, 1, 'tab return shares one metrics request');
+        select(h, 'community-favorite').click();
+        h.requests[1].resolve(response(summary({ favorites: 3, favorited: true, favoriteRevision: 1 })));
+        await settle();
+        h.requests[0].resolve(response(summary({ favorites: 2, favorited: false, favoriteRevision: 0 })));
+        h.window.dispatchEvent(new h.window.CustomEvent('scratch-community-metrics', {
+            detail: summary({ favorites: 2, favorited: false, favoriteRevision: 0 }),
+        }));
+        await settle();
+        assert.equal(select(h, 'community-favorite-count').textContent, '3');
+        assert.equal(select(h, 'community-favorite').getAttribute('aria-pressed'), 'true');
+    });
+
+    it('initializes real gallery cards, keeps actions independent, and retains a canceled card for recovery', async (t) => {
+        const h = actions(t, false, false, true);
+        const cards = [...h.document.querySelectorAll('[data-community-card]')];
+        const button = cards[0].querySelector('[data-community-favorite]');
+        assert.equal(button.closest('a'), null);
+        button.click();
+        assert.equal(h.requests.length, 1);
+        assert.equal(h.requests[0].url, 'https://onebyone.test/d/art/scratch/community/123/metrics');
+        assert.equal(h.requests[0].options.body.get('favorited'), 'false');
+        h.requests[0].resolve(response(summary({ favorites: 1, favorited: false, favoriteRevision: 2 })));
+        await settle();
+        assert.equal(cards[0].isConnected, true);
+        assert.equal(button.getAttribute('aria-pressed'), 'false');
+        assert.equal(cards[0].querySelector('[data-community-favorite-count]').textContent, '1');
+        assert.equal(cards[1].querySelector('[data-community-favorite]').getAttribute('aria-pressed'), 'true');
+        assert.equal(cards[1].querySelector('[data-community-favorite-count]').textContent, '2');
+        assert.equal(h.navigations.length, 0);
+    });
+
+    it('lets teachers add only favorites without bookmarking the work or duplicating an ambiguous adjustment', async (t) => {
+        const h = actions(t, true, true);
+        select(h, 'community-analytics').click();
+        h.requests[0].resolve(response(analytics()));
+        await settle();
+        const form = select(h, 'community-adjust-form');
+        select(h, 'community-adjust-favorites').value = '8';
+        const submit = () => form.dispatchEvent(new h.window.Event('submit', { bubbles: true, cancelable: true }));
+        submit();
+        assert.equal(h.requests.length, 2);
+        const body = h.requests[1].options.body.toString();
+        assert.equal(h.requests[1].options.body.get('favorites'), '8');
+        assert.equal(h.requests[1].options.body.get('likes'), '0');
+        assert.equal(h.requests[1].options.body.get('runtimeSeconds'), '0');
+        h.requests[1].reject(new h.window.TypeError('Network failed'));
+        await settle();
+        submit();
+        assert.equal(h.requests[2].options.body.toString(), body);
+        h.requests[2].resolve(response(analytics({ favorites: 10, manualFavorites: 8,
+            participants: [{ uid: 20, name: '小豆', likes: 1, favorited: true, runtimeSeconds: 30 }] })));
+        await settle();
+        assert.equal(select(h, 'community-favorite-count').textContent, '10');
+        assert.equal(select(h, 'community-favorite').getAttribute('aria-pressed'), 'false');
+        assert.equal(select(h, 'analytics-manual-favorites').textContent, '8');
+        assert.equal(select(h, 'community-participants').children[0].children[2].textContent, '已收藏');
+        assert.equal(select(h, 'community-adjust-favorites').value, '0');
+    });
+
+    it('does not let an older teacher analytics response undo a newly canceled favorite', async (t) => {
+        const h = actions(t, true, true);
+        const button = select(h, 'community-favorite');
+        button.click();
+        h.requests[0].resolve(response(summary({ favorites: 3, favorited: true, favoriteRevision: 1 })));
+        await settle();
+        select(h, 'community-analytics').click();
+        button.click();
+        h.requests[2].resolve(response(summary({ favorites: 2, favorited: false, favoriteRevision: 2 })));
+        await settle();
+        h.requests[1].resolve(response(analytics({ favorites: 3 })));
+        await settle();
+        assert.equal(select(h, 'community-favorite-count').textContent, '2');
+        assert.equal(button.getAttribute('aria-pressed'), 'false');
+    });
+
+    it('does not let a pre-adjustment visibility read overwrite a teacher favorite increase', async (t) => {
+        const h = actions(t, true, true);
+        select(h, 'community-analytics').click();
+        h.requests[0].resolve(response(analytics()));
+        await settle();
+        Object.defineProperty(h.document, 'visibilityState', { value: 'visible', configurable: true });
+        h.document.dispatchEvent(new h.window.Event('visibilitychange'));
+        select(h, 'community-adjust-favorites').value = '5';
+        select(h, 'community-adjust-form').dispatchEvent(new h.window.Event('submit', { bubbles: true, cancelable: true }));
+        h.requests[2].resolve(response(analytics({ favorites: 7, manualFavorites: 5 })));
+        await settle();
+        h.requests[1].resolve(response(summary({ favorites: 2, favorited: false, favoriteRevision: 0 })));
+        await settle();
+        assert.equal(select(h, 'community-favorite-count').textContent, '7');
+    });
+
+    it('keeps the initialized endpoint and aborts an in-flight gallery operation on exit', async (t) => {
+        const h = actions(t, false, false, true);
+        const buttons = [...h.document.querySelectorAll('[data-community-favorite]')];
+        buttons[0].click();
+        h.window.dispatchEvent(new h.window.Event('pagehide'));
+        assert.equal(h.requests[0].options.signal.aborted, true);
+        h.requests[0].reject(new h.window.DOMException('Aborted', 'AbortError'));
+        await settle();
+        assert.equal(h.timers.size, 0);
+        // A malformed URL must never reach fetch, including gallery actions.
+        const unsafe = actions(t, false);
+        // Endpoint captured at initialization cannot be rewritten by a later DOM mutation.
+        select(unsafe, 'community-favorite').dataset.metricsUrl = 'https://evil.test/metrics';
+        select(unsafe, 'community-favorite').click();
+        assert.equal(unsafe.requests[0].url, 'https://onebyone.test/d/art/scratch/community/123/metrics');
     });
 });

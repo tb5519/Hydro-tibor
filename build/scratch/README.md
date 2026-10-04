@@ -94,14 +94,14 @@ the original preset does not break already-saved projects.
 
 ## Classroom community engagement
 
-Community cards and detail pages show cumulative likes and runtime. Learners can
+Community cards and detail pages show cumulative favorites, likes and runtime. Learners can
 like each publication once per calendar day in Asia/Shanghai; teachers can add
 likes repeatedly. A teacher-only analytics endpoint exposes per-member likes and
-actual runtime, and records teacher-added likes and runtime separately. Learner
+actual runtime, and records teacher-added favorites, likes and runtime separately. Learner
 responses and HTML never include those private participant records.
 
-The default ranking is `(5 * likes + 2 * sqrt(runtimeSeconds / 60)) /
-(max(0, daysSinceFirstPublication) + 2)^0.8`. Likes have more weight, the square
+The default ranking is `(15 * favorites + 5 * likes + 2 * sqrt(runtimeSeconds / 60)) /
+(max(0, daysSinceFirstPublication) + 2)^0.8`. Favorites weigh three times a like; the square
 root limits the influence of very long runs, and age decay helps new creations.
 Sorting happens before pagination; equal scores fall back to the most recently
 updated publication. The latest option orders by publication update time.
@@ -123,6 +123,16 @@ A single server lease per member and publication prevents overlapping tabs from
 adding the same wall time twice.
 Teacher additions affect the public totals and ranking while retaining their
 separate origin in the private analytics view.
+
+Community favorites are one active membership per classroom, publication and
+member. Canceling removes the contribution; re-saving never stacks counts.
+Revision checks prevent stale tabs or retries from restoring an old bookmark.
+"My favorites" defaults to the most recently saved works, with search and optional
+hot/latest order. Updating the same publication keeps its bookmarks; withdrawn
+works are unavailable. Teacher-added favorite totals remain separate from actual
+bookmarks and never put a work into a student's personal collection.
+
+Only teachers can inspect individual members' current favorite state.
 
 ## Shared community runtime data
 

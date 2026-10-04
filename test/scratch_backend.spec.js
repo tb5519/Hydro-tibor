@@ -1784,7 +1784,7 @@ describe('Scratch community engagement and private teacher analytics', () => {
         for (const actor of [alice, bob]) {
             const handler = metricHandler(handlers.ScratchCommunityMetricsHandler, actor, publication._id);
             await handler.get();
-            assert.deepEqual(Object.keys(handler.response.body).sort(), ['canLike', 'isTeacher', 'likedToday', 'likes', 'ok', 'runtimeLabel', 'runtimeSeconds'].sort());
+            assert.deepEqual(Object.keys(handler.response.body).sort(), ['canLike', 'favorites', 'favorited', 'favoriteRevision', 'isTeacher', 'likedToday', 'likes', 'ok', 'runtimeLabel', 'runtimeSeconds'].sort());
             const forbidden = metricHandler(handlers.ScratchCommunityAnalyticsHandler, actor, publication._id);
             await assert.rejects(forbidden.get(), PermissionError);
             forbidden.request.body = { requestId: key('malicious'), likes: 3, runtimeSeconds: 60 };
@@ -1800,7 +1800,7 @@ describe('Scratch community engagement and private teacher analytics', () => {
         const card = gallery.communityWorks[0];
         assert.equal(card.likes, 4);
         assert.equal(card.runtimeSeconds, 60);
-        for (const field of ['participants', 'studentLikes', 'teacherLikes', 'actualRuntimeSeconds', 'manualRuntimeSeconds']) assert(!Object.hasOwn(card, field));
+        for (const field of ['participants', 'studentLikes', 'teacherLikes', 'actualFavorites', 'manualFavorites', 'actualRuntimeSeconds', 'manualRuntimeSeconds']) assert(!Object.hasOwn(card, field));
     });
     it('sorts heat across the entire classroom before pagination and supports newest updates with literal search', async () => {
         const actor = { ...teacher, domainId: 'engagement-ranking' };
@@ -1879,7 +1879,8 @@ describe('Scratch community engagement and private teacher analytics', () => {
         await model.communityEvents.insertOne({ _id: 'misleading-unprefixed-row', communityId: id, domainId: alice.domainId,
             uid: alice.uid, isTeacher: false, likes: 999, manualRuntimeSeconds: 999, createdAt: now });
         await prefixed.likeCommunityWork(alice, id, key('namespace-like'));
-        await prefixed.adjustCommunityMetrics(teacher, id, key('namespace-adjust'), 2, 60);
+        await prefixed.adjustCommunityMetrics(teacher, id, key('namespace-adjust'), 2, 60, 3);
+        await prefixed.favoriteCommunityWork(alice, id, true, key('namespace-favorite'), 0);
         metricNow = now.getTime();
         const started = await prefixed.startCommunityRuntime(alice, id, key('namespace-start'));
         metricNow += 15000;
@@ -1893,6 +1894,9 @@ describe('Scratch community engagement and private teacher analytics', () => {
         const page = await prefixed.pageCommunityWorks(alice, 'prefixed metrics');
         assert.equal(page.communityWorks[0].likes, 3);
         assert.equal(page.communityWorks[0].runtimeSeconds, 75);
+        assert.equal(page.communityWorks[0].favorites, 4);
+        assert.equal(page.communityWorks[0].favorited, true);
+        assert.equal((await prefixed.pageCommunityWorks(alice, 'prefixed metrics', false, 'saved', 1, 24, true)).count, 1);
     });
     it('rejects non-finite, fractional, unsafe and array pagination values before Mongo aggregation', async () => {
         for (const page of ['Infinity', '-Infinity', 'NaN', '1e100', '1.5', '0', '-1', ['1'], '9007199254740991']) {
@@ -1916,5 +1920,202 @@ describe('Scratch community engagement and private teacher analytics', () => {
         }
         await assert.rejects(model.heartbeatCommunityRuntime(alice, publication._id, 'invented-token', 1, 1), ValidationError);
         assert.equal((await model.getCommunityMetrics(alice, publication._id)).runtimeSeconds, 0);
+    });
+});
+
+describe('Scratch community favorites and saved collection', () => {
+    const key = (suffix) => `favorite-request-000-${suffix}`;
+    async function publish(title, actor = alice) {
+        const work = await model.createWork(actor, title);
+        await model.saveWork(actor, work._id, 0, upload());
+        return { work, ...(await model.publishCommunityWork(actor, work._id)) };
+    }
+    const save = (actor, id, active, revision = 0, suffix = 'save') => model.favoriteCommunityWork(actor, id, active, key(suffix), revision);
+    it('uses one membership under concurrency, preserves saved date on retries and cannot replay an old save after cancel', async () => {
+        const { publication } = await publish('favorite concurrent retries');
+        metricNow = Date.parse('2026-10-05T02:00:00Z');
+        await Promise.all(Array.from({ length: 20 }, (_, i) => save(bob, publication._id, true, 0, `${i}`)));
+        let summary = await model.getCommunityMetrics(bob, publication._id);
+        assert.equal(summary.favorites, 1);
+        assert.equal(summary.favorited, true);
+        assert.equal(summary.favoriteRevision, 1);
+        const row = await model.communityFavorites.findOne({ communityId: publication._id, uid: bob.uid });
+        assert.equal(row.savedAt.getTime(), metricNow);
+        metricNow += 120000;
+        await save(bob, publication._id, true, 1, 'same-state');
+        const duplicate = await model.communityFavorites.findOne({ _id: row._id });
+        assert.equal(duplicate.savedAt.getTime(), row.savedAt.getTime());
+        assert.equal(duplicate.revision, 1);
+        summary = await save(bob, publication._id, false, 1, 'cancel');
+        assert.equal(summary.favorites, 0);
+        assert.equal(summary.favorited, false);
+        assert.equal(summary.favoriteRevision, 2);
+        const replay = await save(bob, publication._id, true, 0, '0');
+        assert.equal(replay.favorites, 0);
+        assert.equal(replay.favorited, false);
+        assert.equal(replay.favoriteRevision, 2);
+        summary = await save(bob, publication._id, true, 2, 'resave');
+        assert.equal(summary.favorites, 1);
+        assert.equal(summary.favoriteRevision, 3);
+        assert.equal((await model.communityFavorites.findOne({ _id: row._id })).savedAt.getTime(), metricNow);
+        assert.equal(await model.communityFavorites.countDocuments({ communityId: publication._id }), 1);
+        await save(alice, publication._id, true, 0, 'other-member');
+        assert.equal((await model.getCommunityMetrics(bob, publication._id)).favorites, 2);
+    });
+    it('keeps manual teacher counts idempotent and separate from real memberships and student-visible data', async () => {
+        const { publication } = await publish('favorite manual privacy');
+        await save(alice, publication._id, true);
+        await save(bob, publication._id, true);
+        await Promise.all(Array.from({ length: 12 }, () => model.adjustCommunityMetrics(teacher, publication._id, key('manual'), 0, 0, 7)));
+        const summary = await model.getCommunityMetrics(bob, publication._id);
+        assert.equal(summary.favorites, 9);
+        assert.equal(summary.favorited, true);
+        assert.equal(await model.communityFavorites.countDocuments({ communityId: publication._id }), 2);
+        assert.equal((await model.getCommunityMetrics(teacher, publication._id)).favorited, false);
+        const analytics = await model.getCommunityAnalytics(teacher, publication._id);
+        assert.equal(analytics.actualFavorites, 2);
+        assert.equal(analytics.manualFavorites, 7);
+        assert.equal(analytics.participants.find((row) => row.uid === alice.uid).favorited, true);
+        assert.equal(analytics.participants.find((row) => row.uid === bob.uid).favorited, true);
+        assert.equal(analytics.participants.find((row) => row.uid === teacher.uid).favorited, false);
+        for (const prop of ['participants', 'actualFavorites', 'manualFavorites', 'uid']) assert(!Object.hasOwn(summary, prop));
+        const card = (await model.pageCommunityWorks(bob, 'favorite manual privacy')).communityWorks[0];
+        assert.equal(card.favorites, 9);
+        assert.equal(card.favorited, true);
+        assert.equal(card.favoriteRevision, 1);
+        for (const prop of ['participants', 'actualFavorites', 'manualFavorites', 'favoriteSavedAt', 'uid']) assert(!Object.hasOwn(card, prop));
+        await assert.rejects(model.getCommunityAnalytics(alice, publication._id), PermissionError);
+        await assert.rejects(model.adjustCommunityMetrics(bob, publication._id, key('forbidden'), 0, 0, 99), PermissionError);
+        await save(alice, publication._id, false, 1, 'remove');
+        assert.equal((await model.getCommunityMetrics(bob, publication._id)).favorites, 8);
+    });
+    it('sorts favorites by saved date by default and paginates only live saved works with literal search', async () => {
+        const actor = { ...teacher, domainId: 'favorite-pagination' };
+        const now = new Date();
+        const docs = Array.from({ length: 29 }, (_, i) => ({ _id: new ObjectId(), domainId: actor.domainId, owner: alice.uid,
+            title: `Saved [B]+ ${i}`, titleKey: `Saved [B]+ ${i}`, instructions: '', workId: new ObjectId(), snapshotWorkId: new ObjectId(),
+            fileId: new ObjectId(), thumbnailFileId: null, revision: 1, createdAt: now, updatedAt: new Date(+now + i * 1000) }));
+        await model.community.insertMany(docs);
+        metricNow = +now;
+        for (const doc of docs.slice(0, 27).reverse()) {
+            metricNow += 1000;
+            await save(actor, doc._id, true);
+        }
+        const first = await model.pageCommunityWorks(actor, '[B]+', false, undefined, 1, 24, true);
+        assert.equal(first.count, 27);
+        assert.equal(first.pcount, 2);
+        assert.equal(first.communityWorks.length, 24);
+        assert(first.communityWorks[0]._id.equals(docs[0]._id));
+        const second = await model.pageCommunityWorks(actor, '[B]+', false, 'saved', 2, 24, true);
+        assert.equal(second.communityWorks.length, 3);
+        assert(!second.communityWorks.some((doc) => first.communityWorks.some((other) => other._id.equals(doc._id))));
+        const latest = await model.pageCommunityWorks(actor, '[B]+', false, 'latest', 1, 24, true);
+        assert(latest.communityWorks[0]._id.equals(docs[26]._id));
+        await model.adjustCommunityMetrics(actor, docs[15]._id, key('hot-saved'), 0, 0, 2);
+        const hot = await model.pageCommunityWorks(actor, '[B]+', false, 'hot', 1, 24, true);
+        assert(hot.communityWorks[0]._id.equals(docs[15]._id));
+        assert.equal((await model.pageCommunityWorks({ ...actor, uid: bob.uid }, '[B]+', false, undefined, 1, 24, true)).count, 0);
+        assert.equal((await model.pageCommunityWorks(foreign, '[B]+', false, undefined, 1, 24, true)).count, 0);
+        // Orphan/stale favorite rows cannot inflate the count or leak withdrawn work.
+        await model.community.deleteOne({ _id: docs[0]._id });
+        await save(actor, docs[1]._id, false, 1, 'unsave');
+        const remaining = await model.pageCommunityWorks(actor, '[B]+', false, undefined, 1, 24, true);
+        assert.equal(remaining.count, 25);
+        assert(remaining.communityWorks[0]._id.equals(docs[2]._id));
+        assert.equal((await model.pageCommunityWorks(actor, '[B]+ 2', false, undefined, 1, 24, true)).count, 8);
+        const normal = await model.pageCommunityWorks(actor, '[B]+', false, 'latest', 1, 100);
+        assert.equal(normal.count, 28);
+        assert.equal(normal.communityWorks.find((doc) => doc._id.equals(docs[1]._id)).favorited, false);
+        assert.equal(normal.communityWorks.find((doc) => doc._id.equals(docs[1]._id)).favoriteRevision, 2);
+        await assert.rejects(model.pageCommunityWorks(actor, '', true, undefined, 1, 24, true), ValidationError);
+        await assert.rejects(model.pageCommunityWorks(actor, '', false, 'saved'), ValidationError);
+    });
+    it('weights one favorite above two likes while retaining the existing time decay and latest order', async () => {
+        const actor = { ...teacher, domainId: 'favorite-heat' };
+        const now = new Date();
+        const docs = ['favorite', 'likes'].map((label) => ({ _id: new ObjectId(), domainId: actor.domainId, owner: alice.uid,
+            title: label, titleKey: label, instructions: '', workId: new ObjectId(), snapshotWorkId: new ObjectId(),
+            fileId: new ObjectId(), thumbnailFileId: null, revision: 1, createdAt: now, updatedAt: now }));
+        await model.community.insertMany(docs);
+        await save(actor, docs[0]._id, true);
+        await model.adjustCommunityMetrics(actor, docs[1]._id, key('two-likes'), 2, 0);
+        assert((await model.pageCommunityWorks(actor)).communityWorks[0]._id.equals(docs[0]._id));
+        await save(actor, docs[0]._id, false, 1, 'remove-heat');
+        assert((await model.pageCommunityWorks(actor)).communityWorks[0]._id.equals(docs[1]._id));
+        await save(actor, docs[0]._id, true, 2, 'return-heat');
+        assert.equal((await model.getCommunityMetrics(actor, docs[0]._id)).favorites, 1);
+        await model.community.updateOne({ _id: docs[0]._id }, { $set: { createdAt: new Date(+now - 100 * 86400000) } });
+        assert((await model.pageCommunityWorks(actor)).communityWorks[0]._id.equals(docs[1]._id));
+    });
+    it('retains saved membership on same-name updates and cleans it when withdrawn, deleted or classroom removed', async () => {
+        const actor = { ...alice, domainId: 'favorite-cleanup' };
+        const viewer = { ...bob, domainId: actor.domainId };
+        const { work, publication } = await publish('same title favorite', actor);
+        await save(viewer, publication._id, true);
+        const replacement = await model.createWork(actor, work.title, null, false);
+        await model.saveWork(actor, replacement._id, 0, upload(project('replacement')));
+        const updated = await model.publishCommunityWork(actor, replacement._id);
+        assert(updated.publication._id.equals(publication._id));
+        assert.equal((await model.getCommunityMetrics(viewer, publication._id)).favorited, true);
+        assert.equal((await model.pageCommunityWorks(viewer, '', false, undefined, 1, 24, true)).count, 1);
+        await model.unpublishCommunityWork(actor, publication._id);
+        assert.equal(await model.communityFavorites.countDocuments({ communityId: publication._id }), 0);
+        await assert.rejects(save(viewer, publication._id, true, 1), NotFoundError);
+        assert.equal((await model.pageCommunityWorks(viewer, '', false, undefined, 1, 24, true)).count, 0);
+        const again = await model.publishCommunityWork(actor, replacement._id);
+        assert(!again.publication._id.equals(publication._id));
+        assert.equal((await model.getCommunityMetrics(viewer, again.publication._id)).favorites, 0);
+        await save(viewer, again.publication._id, true);
+        await model.deleteWork(actor, replacement._id);
+        assert.equal(await model.communityFavorites.countDocuments({ communityId: again.publication._id }), 0);
+        const { publication: last } = await publish('domain delete favorite', actor);
+        await save(viewer, last._id, true);
+        await deleteDomainData(actor.domainId);
+        assert.equal(await model.communityFavorites.countDocuments({ domainId: actor.domainId }), 0);
+    });
+    it('gates the favorite endpoint by membership and origin and validates strict intent, revision and teacher count', async () => {
+        const { publication } = await publish('favorite API permissions');
+        const make = (actor, origin = 'https://onebyone.test') => Object.assign(new handlers.ScratchCommunityMetricsHandler(), {
+            domain: { _id: actor.domainId, domainType: 'scratch' }, user: { _id: actor.uid, hasPerm: () => actor.isTeacher },
+            checkPriv() {}, UiContext: {}, response: { addHeader() {} }, limitRate: async () => {},
+            request: { method: 'post', host: 'onebyone.test', headers: { origin }, params: { communityId: publication._id.toHexString() },
+                body: { favorited: 'true', favoriteRevision: '0', requestId: key('http-save') } },
+        });
+        await database.collection('domain.user').updateOne({ domainId: alice.domainId, uid: alice.uid }, { $set: { join: true } }, { upsert: true });
+        const member = make(alice);
+        await member.prepare();
+        await member.postFavorite();
+        assert.equal(member.response.body.favorited, true);
+        assert.equal(member.response.body.favoriteRevision, 1);
+        await assert.rejects(make({ ...alice, uid: 999111 }).prepare(), PermissionError);
+        await assert.rejects(make(alice, 'https://evil.test').prepare(), CsrfTokenError);
+        await assert.rejects(save(foreign, publication._id, true), NotFoundError);
+        for (const invalid of ['1', '0', '', 'TRUE', null, undefined, 1, 0, [], {}]) {
+            await assert.rejects(save(bob, publication._id, invalid), ValidationError);
+        }
+        for (const revision of [undefined, null, -1, 1.5, '', NaN, Infinity, Number.MAX_SAFE_INTEGER]) {
+            await assert.rejects(model.favoriteCommunityWork(bob, publication._id, true, key('invalid'), revision), ValidationError);
+        }
+        await assert.rejects(model.favoriteCommunityWork(bob, publication._id, true, '', 0), ValidationError);
+        for (const count of [-1, 1.5, '', NaN, Infinity, null, {}, [], 1000001]) {
+            await assert.rejects(model.adjustCommunityMetrics(teacher, publication._id, key('bad-count'), 0, 0, count), ValidationError);
+        }
+        assert.equal((await model.getCommunityMetrics(bob, publication._id)).favoriteRevision, 0);
+        for (const query of [{ mine: '1', favorites: '1' }, { sort: 'saved' }, { favorites: '1', sort: 'unknown' }]) {
+            const gallery = Object.assign(new handlers.ScratchCommunityHandler(), { actor: alice, request: { query } });
+            await assert.rejects(gallery.get(), ValidationError);
+        }
+        const gallery = Object.assign(new handlers.ScratchCommunityHandler(), { actor: alice, request: { query: { favorites: '1', q: 'favorite API permissions' } },
+            renderScratch: async (template, body) => { gallery.rendered = body; } });
+        await gallery.get();
+        assert.equal(gallery.rendered.favorites, true);
+        assert.equal(gallery.rendered.sort, 'saved');
+        assert.equal(gallery.rendered.count, 1);
+        const admin = Object.assign(new handlers.ScratchCommunityAnalyticsHandler(), { actor: teacher, response: {}, limitRate: async () => {},
+            request: { params: { communityId: publication._id.toHexString() }, body: { requestId: key('admin-http'), likes: '0', runtimeSeconds: '0', favorites: '4' } } });
+        await admin.postAdjust();
+        assert.equal(admin.response.body.actualFavorites, 1);
+        assert.equal(admin.response.body.manualFavorites, 4);
+        assert.equal(admin.response.body.favorites, 5);
     });
 });

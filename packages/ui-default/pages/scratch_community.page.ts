@@ -2,6 +2,9 @@ import { NamedPage } from 'vj/misc/Page';
 
 interface CommunityMetrics {
   likes: number;
+  favorites: number;
+  favorited?: boolean;
+  favoriteRevision?: number;
   runtimeSeconds: number;
   likedToday?: boolean;
   canLike?: boolean;
@@ -12,7 +15,9 @@ interface CommunityAnalytics extends CommunityMetrics {
   manualRuntimeSeconds: number;
   studentLikes: number;
   teacherLikes: number;
-  participants: { uid: number; name: string; isTeacher: boolean; likes: number; runtimeSeconds: number }[];
+  actualFavorites: number;
+  manualFavorites: number;
+  participants: { uid: number; name: string; isTeacher: boolean; likes: number; favorited: boolean; runtimeSeconds: number }[];
 }
 
 function formatDuration(value: number) {
@@ -22,7 +27,127 @@ function formatDuration(value: number) {
   return `${seconds} 秒`;
 }
 
-function initMetrics() {
+const controllers = new Set<AbortController>();
+async function api<T>(rawUrl: string, data?: Record<string, string>, controller = new AbortController()): Promise<T> {
+  const endpoint = new URL(rawUrl, location.href);
+  if (!rawUrl || endpoint.origin !== location.origin || !['http:', 'https:'].includes(endpoint.protocol)) throw new Error('作品地址无效，请刷新后重试。');
+  controllers.add(controller);
+  const timer = setTimeout(() => controller.abort(), 30000);
+  try {
+    const response = await fetch(endpoint.href, {
+      method: data ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      ...(data ? { body: new URLSearchParams(data) } : {}),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(response.status === 403 ? '暂时无法操作，请刷新页面确认登录状态。' : '暂时无法完成，请重试。');
+    return result;
+  } catch (error) {
+    if (['AbortError', 'TypeError', 'SyntaxError'].includes(error.name)) throw new Error('网络有点慢，请重试。');
+    throw error;
+  } finally { clearTimeout(timer); controllers.delete(controller); }
+}
+
+function initFavorites() {
+  const groups = new Map<string, {
+    controls: { button: HTMLButtonElement; root: HTMLElement }[];
+    favorited: boolean; revision: number; count: number; version: number; busy: boolean;
+    pending: { favorited: boolean; revision: number; requestId: string } | null;
+  }>();
+  document.querySelectorAll<HTMLButtonElement>('[data-community-favorite]').forEach((button) => {
+    const root = button.closest<HTMLElement>('[data-community-card], [data-community-metrics]');
+    if (!root) return;
+    const endpoint = button.dataset.metricsUrl || '';
+    let state = groups.get(endpoint);
+    if (!state) {
+      state = { controls: [], favorited: button.dataset.favorited === 'true',
+        revision: Number(button.dataset.favoriteRevision) || 0,
+        count: Number(root.querySelector('[data-community-favorite-count]')?.textContent) || 0,
+        version: 0, busy: false, pending: null };
+      groups.set(endpoint, state);
+    }
+    state.controls.push({ button, root });
+  });
+  for (const [endpoint, state] of groups) {
+    const render = () => state.controls.forEach(({ button, root }) => {
+      button.disabled = state.busy;
+      button.setAttribute('aria-busy', String(state.busy));
+      button.setAttribute('aria-pressed', String(state.favorited));
+      button.dataset.favorited = String(state.favorited);
+      button.dataset.favoriteRevision = String(state.revision);
+      root.dataset.favorited = String(state.favorited);
+      const action = state.pending && !state.busy ? '重试本次操作' : state.favorited ? '取消收藏' : '收藏';
+      button.setAttribute('aria-label', `${action} ${button.dataset.title || '这个作品'}`);
+      button.title = action;
+      const label = button.querySelector<HTMLElement>('[data-community-favorite-label]');
+      if (label) label.textContent = state.busy ? '正在保存…' : state.pending ? '重试' : state.favorited ? '已收藏' : '收藏';
+      root.querySelectorAll<HTMLElement>('[data-community-favorite-count]').forEach((el) => { el.textContent = String(state.count); });
+    });
+    const status = (text: string, error = false) => state.controls.forEach(({ root }) => {
+      const element = root.querySelector<HTMLElement>('[data-community-favorite-status]');
+      if (element) { element.textContent = text; element.dataset.error = String(error); }
+    });
+    const accept = (data: CommunityMetrics) => {
+      if (typeof data.favorited !== 'boolean' || !Number.isSafeInteger(data.favorites) || data.favorites < 0
+        || !Number.isSafeInteger(data.favoriteRevision) || data.favoriteRevision < state.revision) {
+        throw new Error('收藏状态尚未确认，请重试。');
+      }
+      state.favorited = data.favorited;
+      state.revision = data.favoriteRevision;
+      state.count = data.favorites;
+    };
+    state.controls.forEach(({ button }) => button.addEventListener('click', async (event) => {
+      event.preventDefault();
+      if (state.busy) return;
+      state.pending ||= { favorited: !state.favorited, revision: state.revision, requestId: crypto.randomUUID() };
+      const pending = state.pending;
+      state.busy = true;
+      state.version++;
+      render();
+      status(pending.favorited ? '正在放进我的收藏…' : '正在取消收藏…');
+      try {
+        const result = await api<CommunityMetrics>(endpoint, { operation: 'favorite', favorited: String(pending.favorited),
+          favoriteRevision: String(pending.revision), requestId: pending.requestId });
+        accept(result);
+        state.pending = null;
+        status(result.favorited !== pending.favorited ? '已同步最新收藏状态，请按需再次操作。'
+          : result.favorited ? '已收藏，下次在“我的收藏”里找我。' : '已取消收藏，想玩时可以再收藏。');
+      } catch (error) {
+        status(`${error.message} 再点一次可重试，不会重复收藏。`, true);
+      } finally { state.busy = false; render(); }
+    }));
+    // Only the open work needs a refresh on tab return. Gallery toggles use a
+    // server revision, so an older tab cannot undo a more recent change.
+    if (state.controls.some(({ root }) => root.hasAttribute('data-community-metrics'))) {
+      document.addEventListener('visibilitychange', async () => {
+        if (document.visibilityState !== 'visible' || state.busy || state.pending) return;
+        const version = state.version;
+        try {
+          const result = await api<CommunityMetrics>(endpoint);
+          if (state.version !== version || state.busy || state.pending) return;
+          accept(result);
+          render();
+          window.dispatchEvent(new CustomEvent('scratch-community-current-metrics', { detail: result }));
+        } catch { /* Keep the last confirmed state; retry on the next action. */ }
+      });
+    }
+    render();
+  }
+  return {
+    version: (endpoint: string) => groups.get(endpoint)?.version || 0,
+    renderTotal(endpoint: string, count: number, version: number) {
+      const state = groups.get(endpoint);
+      if (!state || state.version !== version || state.busy || state.pending || !Number.isSafeInteger(count) || count < 0) return;
+      // Invalidate reads issued before an acknowledged teacher adjustment.
+      state.version++;
+      state.count = count;
+      state.controls.forEach(({ root }) => root.querySelectorAll<HTMLElement>('[data-community-favorite-count]')
+        .forEach((el) => { el.textContent = String(count); }));
+    },
+  };
+}
+
+function initMetrics(favorites: ReturnType<typeof initFavorites>) {
   const root = document.querySelector<HTMLElement>('[data-community-metrics]');
   if (!root) return;
   const like = root.querySelector<HTMLButtonElement>('[data-community-like]');
@@ -36,7 +161,6 @@ function initMetrics() {
   let likeRequestId = '';
   let latestLikes = Number(root.querySelector('[data-community-like-count]')?.textContent) || 0;
   let latestRuntime = Number(root.dataset.runtimeSeconds) || 0;
-  const controllers = new Set<AbortController>();
   const writeText = (selector: string, text: string) => document.querySelectorAll<HTMLElement>(selector).forEach((el) => { el.textContent = text; });
   const setStatus = (element: HTMLElement | null, message: string, error = false) => {
     if (element) { element.textContent = message; element.dataset.error = String(error); }
@@ -50,25 +174,6 @@ function initMetrics() {
     if (likeLabel) likeLabel.textContent = likedToday && !teacher ? '今天已点赞' : '给创意点赞';
     if (likeHint) likeHint.textContent = teacher ? '老师可多次送出鼓励' : `${likedToday ? '明天再来送一份鼓励吧' : '每件作品每天可点赞一次'} · 北京时间`;
   };
-  async function api<T>(rawUrl: string, data?: Record<string, string>, controller = new AbortController()): Promise<T> {
-    const endpoint = new URL(rawUrl, location.href);
-    if (!rawUrl || endpoint.origin !== location.origin || !['http:', 'https:'].includes(endpoint.protocol)) throw new Error('作品地址无效，请刷新后重试。');
-    controllers.add(controller);
-    const timer = setTimeout(() => controller.abort(), 30000);
-    try {
-      const response = await fetch(endpoint.href, {
-        method: data ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
-        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-        ...(data ? { body: new URLSearchParams(data) } : {}),
-      });
-      const result = await response.json();
-      if (!response.ok || !result.ok) throw new Error(response.status === 403 ? '暂时无法操作，请刷新页面确认登录状态。' : '暂时无法完成，请重试。');
-      return result;
-    } catch (error) {
-      if (['AbortError', 'TypeError', 'SyntaxError'].includes(error.name)) throw new Error('网络有点慢，请重试。');
-      throw error;
-    } finally { clearTimeout(timer); controllers.delete(controller); }
-  }
   like?.addEventListener('click', async () => {
     if (liking || !canLike) return;
     liking = true;
@@ -89,10 +194,8 @@ function initMetrics() {
       renderMetrics({ likes: event.detail.likes, runtimeSeconds: event.detail.runtimeSeconds });
     }
   });
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && !liking) {
-      api<CommunityMetrics>(root.dataset.metricsUrl).then(renderMetrics).catch(() => {});
-    }
+  window.addEventListener('scratch-community-current-metrics', (event: CustomEvent<CommunityMetrics>) => {
+    if (!liking && event.detail && typeof event.detail === 'object') renderMetrics(event.detail);
   });
 
   const analyticsTrigger = document.querySelector<HTMLButtonElement>('[data-community-analytics]');
@@ -107,10 +210,12 @@ function initMetrics() {
   const adjustStatus = form?.querySelector<HTMLElement>('[data-community-adjust-status]');
   let analyticsRequest: AbortController | null = null;
   let adjusting = false;
-  let pendingAdjustment: { operation: string; requestId: string; likes: string; runtimeSeconds: string } | null = null;
-  const renderAnalytics = (data: CommunityAnalytics) => {
+  let pendingAdjustment: { operation: string; requestId: string; likes: string; favorites: string; runtimeSeconds: string } | null = null;
+  const renderAnalytics = (data: CommunityAnalytics, favoriteVersion: number) => {
     renderMetrics(data);
+    favorites.renderTotal(root.dataset.metricsUrl, data.favorites, favoriteVersion);
     const values = {
+      favorites: String(data.favorites || 0), 'actual-favorites': String(data.actualFavorites || 0), 'manual-favorites': String(data.manualFavorites || 0),
       likes: String(data.likes), 'student-likes': String(data.studentLikes), 'teacher-likes': String(data.teacherLikes),
       runtime: formatDuration(data.runtimeSeconds), 'actual-runtime': formatDuration(data.actualRuntimeSeconds),
       'manual-runtime': formatDuration(data.manualRuntimeSeconds),
@@ -132,9 +237,12 @@ function initMetrics() {
         }
         const likes = document.createElement('td');
         likes.textContent = String(participant.likes);
+        const favorite = document.createElement('td');
+        favorite.textContent = participant.favorited ? '已收藏' : '—';
+        favorite.className = participant.favorited ? 'sc-community-participant-saved' : '';
         const runtime = document.createElement('td');
         runtime.textContent = formatDuration(participant.runtimeSeconds);
-        row.append(name, likes, runtime);
+        row.append(name, likes, favorite, runtime);
         rows.append(row);
       });
     }
@@ -158,9 +266,10 @@ function initMetrics() {
     if (retry) retry.hidden = true;
     setStatus(analyticsStatus, '正在读取作品数据…');
     try {
+      const favoriteVersion = favorites.version(root.dataset.metricsUrl);
       const data = await api<CommunityAnalytics>(analyticsTrigger.dataset.communityAnalytics, undefined, controller);
       if (analyticsRequest !== controller || !analyticsDialog.open) return;
-      renderAnalytics(data);
+      renderAnalytics(data, favoriteVersion);
       setStatus(analyticsStatus, '');
       setAdjustBusy();
     } catch (error) {
@@ -189,32 +298,35 @@ function initMetrics() {
     if (!pendingAdjustment) {
       if (!form.reportValidity()) return;
       const likes = Number(form.querySelector<HTMLInputElement>('[data-community-adjust-likes]').value);
+      const favoriteCount = Number(form.querySelector<HTMLInputElement>('[data-community-adjust-favorites]').value);
       const minutes = Number(form.querySelector<HTMLInputElement>('[data-community-adjust-minutes]').value);
       const seconds = Number(form.querySelector<HTMLInputElement>('[data-community-adjust-seconds]').value);
-      if (![likes, minutes, seconds].every((value) => Number.isSafeInteger(value) && value >= 0) || seconds > 59 || !(likes || minutes || seconds)) {
-        setStatus(adjustStatus, '请填写要增加的点赞次数或运行时长，至少有一项大于 0。', true);
+      if (![likes, favoriteCount, minutes, seconds].every((value) => Number.isSafeInteger(value) && value >= 0) || seconds > 59 || !(likes || favoriteCount || minutes || seconds)) {
+        setStatus(adjustStatus, '请填写要增加的点赞、收藏或运行时长，至少有一项大于 0。', true);
         return;
       }
-      pendingAdjustment = { operation: 'adjust', requestId: crypto.randomUUID(), likes: String(likes), runtimeSeconds: String(minutes * 60 + seconds) };
+      pendingAdjustment = { operation: 'adjust', requestId: crypto.randomUUID(), likes: String(likes), favorites: String(favoriteCount), runtimeSeconds: String(minutes * 60 + seconds) };
     }
     adjusting = true;
     setAdjustBusy();
     setStatus(adjustStatus, '正在增加，完成后小伙伴就能看到…');
     try {
+      const favoriteVersion = favorites.version(root.dataset.metricsUrl);
       const data = await api<CommunityAnalytics>(analyticsTrigger.dataset.communityAnalytics, pendingAdjustment);
       pendingAdjustment = null;
-      renderAnalytics(data);
+      renderAnalytics(data, favoriteVersion);
       form.reset();
       setStatus(adjustStatus, '已增加，社区里的数据也已更新。');
     } catch (error) {
       setStatus(adjustStatus, `${error.message} 点击“重试本次增加”会继续刚才的操作，不会重复计数。`, true);
     } finally { adjusting = false; setAdjustBusy(); }
   });
-  window.addEventListener('pagehide', () => controllers.forEach((controller) => controller.abort()));
 }
 
-export default new NamedPage('scratch_community_detail', () => {
-  initMetrics();
+export default new NamedPage(['scratch_community', 'scratch_community_detail'], () => {
+  const favorites = initFavorites();
+  initMetrics(favorites);
+  window.addEventListener('pagehide', () => controllers.forEach((controller) => controller.abort()));
   const trigger = document.querySelector<HTMLButtonElement>('[data-scratch-community-unpublish]');
   const dialog = document.querySelector<HTMLDialogElement>('[data-scratch-community-unpublish-dialog]');
   const confirm = document.querySelector<HTMLButtonElement>('[data-scratch-community-unpublish-confirm]');

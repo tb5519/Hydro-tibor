@@ -1,7 +1,7 @@
 {% from "partials/scratch_community_metrics.html" import duration %}
 <div class="sc-grid sc-community-grid">
 {% for item in communityWorks %}
-  <article class="sc-card sc-community-card">
+  <article class="sc-card sc-community-card" data-community-card data-community-id="{{ item._id }}">
     <a class="sc-community-card-link" href="{{ url('scratch_community_work', communityId=item._id) }}" aria-label="玩一玩 {{ item.title }}，{{ udict[item.owner].uname if udict[item.owner] else '课堂小伙伴' }} 的作品">
       <div class="sc-community-cover">
         {% if item.thumbnailFileId %}<img loading="lazy" src="{{ url('scratch_community_thumbnail', communityId=item._id, query={v:item.updatedAt.getTime()}) }}" alt="{{ item.title }} 的舞台截图" width="480" height="360">
@@ -11,10 +11,12 @@
       <div class="sc-community-card-body">
         <div class="sc-community-card-heading"><h3>{{ item.title }}</h3>{% if item.owner == handler.user._id %}<span class="sc-community-mine-badge">我的</span>{% endif %}</div>
         <p class="sc-community-card-instructions">{{ item.instructions or '打开作品，发现里面的小惊喜。' }}</p>
-        <div class="sc-community-card-metrics"><span aria-label="{{ item.likes or 0 }} 次点赞"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 17s-7-4.3-7-9a4 4 0 0 1 7-2.6A4 4 0 0 1 17 8c0 4.7-7 9-7 9Z"/></svg>{{ item.likes or 0 }}</span><span><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l3 2"/></svg>运行 {{ duration(item.runtimeSeconds or 0) }}</span></div>
+        <div class="sc-community-card-metrics"><span aria-label="{{ item.likes or 0 }} 次点赞"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 17s-7-4.3-7-9a4 4 0 0 1 7-2.6A4 4 0 0 1 17 8c0 4.7-7 9-7 9Z"/></svg>{{ item.likes or 0 }}</span><span class="sc-community-card-favorite-count"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m10 2 2.5 5.1 5.6.8-4 3.9.9 5.5-5-2.6-5 2.6.9-5.5-4-3.9 5.6-.8Z"/></svg><span data-community-favorite-count>{{ item.favorites or 0 }}</span><span class="sc-community-sr-only">次收藏</span></span><span><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l3 2"/></svg>运行 {{ duration(item.runtimeSeconds or 0) }}</span></div>
         <div class="sc-community-card-meta"><span class="sc-community-author"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6" r="3"/><path d="M4 17v-2a6 6 0 0 1 12 0v2"/></svg><span>{{ udict[item.owner].uname if udict[item.owner] else '课堂小伙伴' }}</span></span><span class="sc-community-updated">{{ datetimeSpan(item.updatedAt)|safe }}</span></div>
       </div>
     </a>
+    <button class="sc-community-favorite sc-community-card-favorite" type="button" data-community-favorite data-metrics-url="{{ url('scratch_community_metrics', communityId=item._id) }}" data-community-id="{{ item._id }}" data-favorited="{{ 'true' if item.favorited else 'false' }}" data-favorite-revision="{{ item.favoriteRevision or 0 }}" data-title="{{ item.title }}" aria-pressed="{{ 'true' if item.favorited else 'false' }}" aria-label="{{ '取消收藏' if item.favorited else '收藏' }} {{ item.title }}" title="{{ '已收藏，点击取消' if item.favorited else '收藏，下次接着玩' }}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9Z"/></svg><span data-community-favorite-label>{{ '已收藏' if item.favorited else '收藏' }}</span></button>
+    <p class="sc-community-card-status" data-community-favorite-status role="status" aria-live="polite"></p>
   </article>
 {% endfor %}
 </div>

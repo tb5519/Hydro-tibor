@@ -461,9 +461,12 @@ export class ScratchCommunityHandler extends ScratchHandler {
         if (query !== undefined && typeof query !== 'string') throw new ValidationError('q');
         const q = scratch.cleanText(query, 'q', 80, ' ').trim();
         const mine = ['1', 'true'].includes(`${this.request.query.mine || ''}`);
-        const sort = this.request.query.sort === 'latest' ? 'latest' : 'hot';
-        const { communityWorks, pcount, count } = await scratch.pageCommunityWorks(this.actor, q, mine, sort, page, 24);
-        await this.renderScratch('scratch_community.html', { communityWorks, page, pcount, count, q, mine, sort });
+        const favorites = ['1', 'true'].includes(`${this.request.query.favorites || ''}`);
+        if (mine && favorites) throw new ValidationError('favorites');
+        const sort = this.request.query.sort ?? (favorites ? 'saved' : 'hot');
+        if (typeof sort !== 'string' || !['hot', 'latest', ...(favorites ? ['saved'] : [])].includes(sort)) throw new ValidationError('sort');
+        const { communityWorks, pcount, count } = await scratch.pageCommunityWorks(this.actor, q, mine, sort, page, 24, favorites);
+        await this.renderScratch('scratch_community.html', { communityWorks, page, pcount, count, q, mine, favorites, sort });
     }
 }
 
@@ -525,6 +528,13 @@ export class ScratchCommunityMetricsHandler extends ScratchHandler {
         this.response.body = await scratch.likeCommunityWork(this.actor, this.routeId('communityId'), this.request.body.requestId);
     }
 
+    async postFavorite() {
+        await this.limitRate('scratch_community_favorite', 60, 120);
+        this.response.type = 'application/json';
+        const { favorited, requestId, favoriteRevision } = this.request.body;
+        this.response.body = await scratch.favoriteCommunityWork(this.actor, this.routeId('communityId'), favorited, requestId, favoriteRevision);
+    }
+
     async postRuntimeStart() {
         await this.limitRate('scratch_community_runtime_start', 60, 120);
         this.response.type = 'application/json';
@@ -563,8 +573,8 @@ export class ScratchCommunityAnalyticsHandler extends ScratchHandler {
 
     async postAdjust() {
         await this.limitRate('scratch_community_adjust', 60, 120);
-        const { requestId, likes, runtimeSeconds } = this.request.body;
-        await scratch.adjustCommunityMetrics(this.actor, this.routeId('communityId'), requestId, likes, runtimeSeconds);
+        const { requestId, likes, runtimeSeconds, favorites = 0 } = this.request.body;
+        await scratch.adjustCommunityMetrics(this.actor, this.routeId('communityId'), requestId, likes, runtimeSeconds, favorites);
         await this.get();
     }
 }

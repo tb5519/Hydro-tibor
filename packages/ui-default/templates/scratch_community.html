@@ -1,43 +1,53 @@
 {% extends "scratch_base.html" %}
 {% block scratch_content %}
-<section class="sc-community-hero" aria-labelledby="sc-community-title">
+{% set activeSort = sort or ('saved' if favorites else 'hot') %}
+{% set communitySort = 'hot' if activeSort == 'saved' else activeSort %}
+<section class="sc-community-hero{% if favorites %} sc-community-hero-favorites{% endif %}" aria-labelledby="sc-community-title"{% if favorites %} data-community-favorites-view{% endif %}>
   <div class="sc-community-hero-copy">
+    {% if favorites %}
+    <span class="sc-community-scope sc-community-favorites-scope"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m10 2 2.5 5.1 5.6.8-4 3.9.9 5.5-5-2.6-5 2.6.9-5.5-4-3.9 5.6-.8Z"/></svg>为下一次好好收藏</span>
+    <h1 id="sc-community-title">我的收藏<span class="sc-community-title-spark" aria-hidden="true">✦</span></h1>
+    <p>还想再玩的作品，都在这里等你。<br>不用再翻找，点开就能继续玩。</p>
+    <a class="sc-button sc-button-primary" href="{{ url('scratch_community') }}">去逛逛社区<svg class="sc-community-explore-arrow" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h13m-5-5 5 5-5 5"/></svg></a>
+    {% else %}
     <span class="sc-community-scope"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm5.5-.5a2.5 2.5 0 1 0 0-5M2 17v-2a4 4 0 0 1 4-4h3a4 4 0 0 1 4 4v2m2-6a3 3 0 0 1 3 3v3"/></svg>本课堂的小伙伴可见</span>
     <h1 id="sc-community-title">创作社区<span class="sc-community-title-spark" aria-hidden="true">✦</span></h1>
     <p>来玩玩同学的小点子，也让自己的创意被看见。</p>
     <a class="sc-button sc-button-primary" href="{{ url('scratch_works') }}"><span class="icon icon-add" aria-hidden="true"></span>分享我的作品</a>
+    {% endif %}
   </div>
   <div class="sc-community-hero-art" aria-hidden="true">
     <span class="sc-community-art-orbit"></span><span class="sc-community-art-spark">✦</span>
-    <div class="sc-community-art-window"><span class="sc-community-art-dots"><i></i><i></i><i></i></span><svg viewBox="0 0 120 80"><path d="m45 18 39 22-39 22Z" fill="currentColor"/><path d="M20 21v11M14.5 26.5h11M95 57v11M89.5 62.5h11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></div>
-    <span class="sc-community-art-note">你的创意，大家来玩！</span><span class="sc-community-art-block"></span>
+    <div class="sc-community-art-window"><span class="sc-community-art-dots"><i></i><i></i><i></i></span><svg viewBox="0 0 120 80">{% if favorites %}<path d="m60 8 10 20 22 3-16 16 4 22-20-10-20 10 4-22-16-16 22-3Z" fill="currentColor"/>{% else %}<path d="m45 18 39 22-39 22Z" fill="currentColor"/>{% endif %}<path d="M20 21v11M14.5 26.5h11M95 57v11M89.5 62.5h11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></div>
+    <span class="sc-community-art-note">{{ '喜欢的创意，下次接着玩！' if favorites else '你的创意，大家来玩！' }}</span><span class="sc-community-art-block"></span>
   </div>
 </section>
 <div class="sc-community-toolbar">
   <nav class="sc-community-tabs" aria-label="筛选社区作品">
-    <a href="{{ url('scratch_community', query={q:q,sort:sort}) }}"{% if not mine %} aria-current="page"{% endif %}>全部作品</a>
-    <a href="{{ url('scratch_community', query={mine:1,q:q,sort:sort}) }}"{% if mine %} aria-current="page"{% endif %}>我的分享</a>
+    <a href="{{ url('scratch_community', query={q:q,sort:communitySort}) }}"{% if not mine and not favorites %} aria-current="page"{% endif %}>全部作品</a>
+    <a href="{{ url('scratch_community', query={mine:1,q:q,sort:communitySort}) }}"{% if mine and not favorites %} aria-current="page"{% endif %}>我的分享</a>
+    <a class="sc-community-favorites-tab" href="{{ url('scratch_community', query={favorites:1,q:q,sort:activeSort if favorites else 'saved'}) }}"{% if favorites %} aria-current="page"{% endif %}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m10 2 2.5 5.1 5.6.8-4 3.9.9 5.5-5-2.6-5 2.6.9-5.5-4-3.9 5.6-.8Z"/></svg>我的收藏</a>
   </nav>
   <form class="sc-community-search" action="{{ url('scratch_community') }}" method="get" role="search">
-    {% if mine %}<input type="hidden" name="mine" value="1">{% endif %}
-    <input type="hidden" name="sort" value="{{ sort or 'hot' }}">
+    {% if favorites %}<input type="hidden" name="favorites" value="1">{% elif mine %}<input type="hidden" name="mine" value="1">{% endif %}
+    <input type="hidden" name="sort" value="{{ activeSort }}">
     <label class="sc-community-sr-only" for="scratch-community-search">搜索作品名称</label>
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4.5 4.5"/></svg>
-    <input id="scratch-community-search" type="search" name="q" value="{{ q }}" maxlength="80" placeholder="发现一个小创意…" autocomplete="off">
+    <input id="scratch-community-search" type="search" name="q" value="{{ q }}" maxlength="80" placeholder="{{ '在收藏里找一找…' if favorites else '发现一个小创意…' }}" autocomplete="off">
     <button type="submit">搜索</button>
   </form>
 </div>
-<div class="sc-community-results-head"><h2>{{ '我的分享' if mine else '小伙伴的创意' }}{% if count %}<span>{{ count }} 个作品</span>{% endif %}</h2><nav class="sc-community-sort" aria-label="作品排序"><a href="{{ url('scratch_community', query={q:q,mine:1 if mine else '',sort:'hot'}) }}"{% if sort != 'latest' %} aria-current="page"{% endif %}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11 2c1 4-4 5-2 8 1-1 2-2 3-2 2 2 4 4 3 7a5.5 5.5 0 0 1-10-4c0-2 2-4 3-5 0 2 1 2 1 2 2-2 2-4 2-6Z"/></svg>热门</a><a href="{{ url('scratch_community', query={q:q,mine:1 if mine else '',sort:'latest'}) }}"{% if sort == 'latest' %} aria-current="page"{% endif %}>最新</a></nav></div>
-<p class="sc-community-sort-note">{{ '按最近更新，发现刚刚登场的小创意。' if sort == 'latest' else '综合点赞、运行时长和分享时间，发现大家喜欢的创意。' }}</p>
+<div class="sc-community-results-head"><h2>{{ '想再玩的创意' if favorites else ('我的分享' if mine else '小伙伴的创意') }}{% if count %}<span>{{ count }} 个作品</span>{% endif %}</h2><nav class="sc-community-sort" aria-label="作品排序">{% if favorites %}<a href="{{ url('scratch_community', query={q:q,favorites:1,sort:'saved'}) }}"{% if activeSort == 'saved' %} aria-current="page"{% endif %}>最近收藏</a>{% endif %}<a href="{{ url('scratch_community', query={q:q,mine:1 if mine and not favorites else '',favorites:1 if favorites else '',sort:'hot'}) }}"{% if activeSort == 'hot' %} aria-current="page"{% endif %}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11 2c1 4-4 5-2 8 1-1 2-2 3-2 2 2 4 4 3 7a5.5 5.5 0 0 1-10-4c0-2 2-4 3-5 0 2 1 2 1 2 2-2 2-4 2-6Z"/></svg>热门</a><a href="{{ url('scratch_community', query={q:q,mine:1 if mine and not favorites else '',favorites:1 if favorites else '',sort:'latest'}) }}"{% if activeSort == 'latest' %} aria-current="page"{% endif %}>最新</a></nav></div>
+<p class="sc-community-sort-note">{{ '最近收藏的作品放在前面，喜欢的创意随时回来玩。' if activeSort == 'saved' else ('按最近更新，发现刚刚登场的小创意。' if activeSort == 'latest' else '综合收藏、点赞、运行时长和分享时间，发现大家喜欢的创意。') }}</p>
 {% if communityWorks|length %}
   {% include "partials/scratch_community_cards.html" %}
-  {% if pcount > 1 %}<div class="sc-pagination">{{ paginator.render(page, pcount, add_qs=utils.buildQueryString(q=q, mine=1 if mine else '', sort=sort or 'hot')) }}</div>{% endif %}
+  {% if pcount > 1 %}<div class="sc-pagination">{{ paginator.render(page, pcount, add_qs=utils.buildQueryString(q=q, mine=1 if mine and not favorites else '', favorites=1 if favorites else '', sort=activeSort)) }}</div>{% endif %}
 {% else %}
-  <div class="sc-empty sc-community-empty">
-    <span class="sc-community-empty-art" aria-hidden="true"><svg viewBox="0 0 64 64"><rect x="10" y="12" width="44" height="36" rx="9"/><path d="m27 23 14 7-14 8ZM22 55h20M32 48v7"/></svg></span>
-    <strong>{{ '还没找到这个小创意' if q else ('把你的第一个创意带过来吧' if mine else '第一个登场的创意，会是谁的呢？') }}</strong>
-    <p>{{ '试试更短的作品名称，或者看看其他作品。' if q else ('在“我的作品”中点击分享，邀请小伙伴来玩。' if mine else '分享一件自己的作品，让这个小天地热闹起来。') }}</p>
-    <div class="sc-actions">{% if q %}<a class="sc-button" href="{{ url('scratch_community', query={mine:1 if mine else '',sort:sort or 'hot'}) }}">清除搜索</a>{% endif %}<a class="sc-button sc-button-primary" href="{{ url('scratch_works') }}">去我的作品</a></div>
+  <div class="sc-empty sc-community-empty{% if favorites %} sc-community-empty-favorites{% endif %}">
+    <span class="sc-community-empty-art" aria-hidden="true"><svg viewBox="0 0 64 64">{% if favorites %}<path d="m32 8 7.4 15 16.6 2.4-12 11.7 2.8 16.5L32 45.8l-14.8 7.8L20 37.1 8 25.4 24.6 23Z"/>{% else %}<rect x="10" y="12" width="44" height="36" rx="9"/><path d="m27 23 14 7-14 8ZM22 55h20M32 48v7"/>{% endif %}</svg></span>
+    <strong>{{ '收藏里暂时没有这个作品' if q and favorites else ('还没找到这个小创意' if q else ('把想再玩的创意收藏起来' if favorites else ('把你的第一个创意带过来吧' if mine else '第一个登场的创意，会是谁的呢？'))) }}</strong>
+    <p>{{ '试试更短的作品名称，或者看看其他作品。' if q else ('看到喜欢的作品，点一下星星。下次来这里，就能马上找到。' if favorites else ('在“我的作品”中点击分享，邀请小伙伴来玩。' if mine else '分享一件自己的作品，让这个小天地热闹起来。')) }}</p>
+    <div class="sc-actions">{% if q %}<a class="sc-button" href="{{ url('scratch_community', query={mine:1 if mine and not favorites else '',favorites:1 if favorites else '',sort:activeSort}) }}">清除搜索</a>{% endif %}{% if favorites %}<a class="sc-button sc-button-primary" href="{{ url('scratch_community') }}">去逛逛社区</a>{% else %}<a class="sc-button sc-button-primary" href="{{ url('scratch_works') }}">去我的作品</a>{% endif %}</div>
   </div>
 {% endif %}
 {% endblock %}
