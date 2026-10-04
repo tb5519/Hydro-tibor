@@ -15,7 +15,7 @@ function player(t, config = {}) {
       <div data-scratch-player-status><span data-scratch-player-message>加载中</span>
       <button data-scratch-player-retry hidden>重新打开</button></div>
       <iframe data-scratch-player-frame sandbox="allow-scripts"></iframe>
-      <span data-community-state-status></span></main>`, {
+      <span data-community-state-status></span><span data-community-runtime-hint></span></main>`, {
         url: 'https://onebyone.test/d/art/scratch/community/123', runScripts: 'outside-only', pretendToBeVisual: true,
     });
     t.after(() => dom.window.close());
@@ -39,6 +39,12 @@ function player(t, config = {}) {
     const requests = [];
     window.fetch = (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject }));
     const frame = window.document.querySelector('iframe');
+    const inputListeners = new Map();
+    const addDocumentListener = window.document.addEventListener.bind(window.document);
+    window.document.addEventListener = (name, callback, options) => {
+        inputListeners.set(name, callback);
+        return addDocumentListener(name, callback, options);
+    };
     window.eval(playerCode);
     const source = frame.contentWindow;
     const outgoing = [];
@@ -51,6 +57,12 @@ function player(t, config = {}) {
     };
     return {
         window, frame, outgoing, requests, message, timers, intervals,
+        activity: (overrides = {}) => message('userActivity', overrides),
+        async input(type, trusted = true) {
+            inputListeners.get(type)?.({ isTrusted: trusted });
+            await settle();
+        },
+        runtimeHint: window.document.querySelector('[data-community-runtime-hint]'),
         async advance(milliseconds, tick = true) {
             clock += milliseconds;
             if (tick) for (const interval of intervals.values()) interval.callback();
@@ -262,6 +274,7 @@ describe('authenticated community runtime', () => {
         const flush = h.requests.at(-1);
         assert.equal(body(flush).seconds, '5');
         await h.advance(60000);
+        await h.activity();
         await h.run(true);
         assert.equal(h.requests.at(-1), flush, 'the preceding final heartbeat has not completed');
         flush.resolve(jsonResponse({ accepted: true }));
@@ -289,6 +302,8 @@ describe('authenticated community runtime', () => {
         await h.advance(90000);
         assert.equal(h.requests.length, 3);
         await h.visible(true);
+        assert.equal(h.requests.length, 3, 'visibility does not grant activity after 60 idle seconds');
+        await h.activity();
         assert.equal(body(h.requests.at(-1)).operation, 'runtimeStart');
         h.requests.at(-1).resolve(jsonResponse({ sessionId: 'visible-again' }));
         await settle();
@@ -323,6 +338,8 @@ describe('authenticated community runtime', () => {
         h.requests.at(-1).resolve(jsonResponse({ accepted: false, sessionExpired: true }));
         await settle();
         await h.advance(15000);
+        assert.equal(h.requests.length, 3, 'a long-idle run must not rotate sessions automatically');
+        await h.activity();
         assert.equal(body(h.requests.at(-1)).operation, 'runtimeStart');
     });
 
@@ -575,5 +592,101 @@ describe('community shared-data closing and error recovery', () => {
         assert.match(label.textContent, /尚未保存/);
         h.requests.at(-1).resolve(stateResponse({ revision: 2, values: changedList.map(({ before, ...entry }) => entry) })); await settle();
         assert.equal(label.textContent, '课堂共享数据已同步'); assert.equal(label.dataset.error, 'false');
+    });
+});
+
+describe('community runtime inactivity cutoff', () => {
+    const accept = async (h) => {
+        h.requests.at(-1).resolve(jsonResponse({ accepted: true, sessionExpired: false }));
+        await settle();
+    };
+    it('stops exactly at 60 idle seconds and resumes without crediting the idle gap or pausing the game', async (t) => {
+        const h = player(t, { metricsUrl }); await boot(h); await start(h);
+        for (let i = 0; i < 3; i++) { await h.advance(15000); await accept(h); }
+        await h.advance(15000, false); await fireTimer(h, 60000);
+        assert.equal(body(h.requests.at(-1)).seconds, '15'); await accept(h);
+        assert.match(h.runtimeHint.textContent, /已暂停计时/);
+        assert.equal(h.requests.filter(r => r.options.body?.get('operation') === 'runtimeHeartbeat')
+            .reduce((sum, r) => sum + +body(r).seconds, 0), 60);
+        const count = h.requests.length;
+        await h.advance(120000); await h.run(true); await h.message('loaded');
+        assert.equal(h.requests.length, count, 'neither VM activity nor duplicate loaded renews a deadline');
+        assert.equal(h.frame.isConnected, true); assert.equal(h.status.hidden, true);
+        assert.equal(h.outgoing.length, 1, 'no stop/pause command is sent to Scratch');
+        await h.activity();
+        assert.equal(body(h.requests.at(-1)).operation, 'runtimeStart');
+        h.requests.at(-1).resolve(jsonResponse({ sessionId: 'after-idle' })); await settle();
+        await h.advance(15000);
+        assert.equal(body(h.requests.at(-1)).seconds, '15');
+        assert.match(h.runtimeHint.textContent, /正在计时/);
+    });
+
+    it('expires against the old deadline before a late input even when the timeout has not fired', async (t) => {
+        const h = player(t, { metricsUrl }); await boot(h); await start(h);
+        for (let i = 0; i < 3; i++) { await h.advance(15000); await accept(h); }
+        await h.advance(25000, false); await h.activity();
+        assert.equal(body(h.requests.at(-1)).seconds, '15', 'only 45s to 60s is eligible, not 45s to 70s');
+        await accept(h);
+        assert.equal(body(h.requests.at(-1)).operation, 'runtimeStart');
+        h.requests.at(-1).resolve(jsonResponse({ sessionId: 'new-visible-run' })); await settle();
+        await h.advance(3000, false); await h.run(false);
+        assert.equal(body(h.requests.at(-1)).seconds, '3');
+    });
+
+    it('re-arms the original timeout when intervening input moved the deadline', async (t) => {
+        const h = player(t, { metricsUrl }); await boot(h); await start(h);
+        for (let i = 0; i < 3; i++) { await h.advance(15000); await accept(h); }
+        await h.activity(); // Deadline moves from 60s to 105s.
+        await h.advance(15000); await accept(h); await fireTimer(h, 60000);
+        assert.match(h.runtimeHint.textContent, /正在计时/);
+        assert([...h.timers.values()].some(timer => timer.delay === 45000));
+        for (let i = 0; i < 2; i++) { await h.advance(15000); await accept(h); }
+        await h.advance(15000, false); await fireTimer(h, 45000);
+        assert.equal(body(h.requests.at(-1)).seconds, '15'); await accept(h);
+        assert.match(h.runtimeHint.textContent, /已暂停计时/);
+    });
+
+    it('accepts real parent keyboard, mouse and touch input but ignores synthetic, foreign-frame and hidden input', async (t) => {
+        for (const inputType of ['keydown', 'pointermove', 'touchstart', 'touchend', 'mouseup', 'wheel']) {
+            const h = player(t, { metricsUrl }); await boot(h); await start(h);
+            await h.advance(60001); await accept(h);
+            const count = h.requests.length;
+            await h.input(inputType, false);
+            await h.activity({ source: h.window });
+            await h.activity({ origin: 'https://onebyone.test' });
+            await h.activity({ data: { type: 'userActivity', channel: 'other' } });
+            await h.visible(false); await h.input(inputType); await h.activity(); await h.visible(true);
+            assert.equal(h.requests.length, count, inputType);
+            await h.input(inputType);
+            assert.equal(body(h.requests.at(-1)).operation, 'runtimeStart', inputType);
+        }
+    });
+
+    it('keeps extending active play beyond the first minute, and a stopped project earns no time on input', async (t) => {
+        const h = player(t, { metricsUrl }); await boot(h); await start(h);
+        for (let i = 0; i < 8; i++) {
+            await h.advance(15000); await accept(h); await h.activity();
+            assert.match(h.runtimeHint.textContent, /正在计时/);
+        }
+        assert.equal(h.requests.filter(r => r.options.body?.get('operation') === 'runtimeHeartbeat')
+            .reduce((sum, r) => sum + +body(r).seconds, 0), 120);
+        await h.run(false); const count = h.requests.length;
+        await h.input('keydown'); await h.advance(15000);
+        assert.equal(h.requests.length, count);
+    });
+
+    it('does not revive a start response that arrived after inactivity, and disposes input/timer effects on exit', async (t) => {
+        const h = player(t, { metricsUrl }); await boot(h); await h.run(true);
+        const slowStart = h.requests.at(-1);
+        await h.advance(60001, false);
+        slowStart.resolve(jsonResponse({ sessionId: 'too-late' })); await settle();
+        await h.advance(15000);
+        assert.equal(h.requests.length, 2);
+        await h.activity(); assert.equal(body(h.requests.at(-1)).operation, 'runtimeStart');
+        h.requests.at(-1).resolve(jsonResponse({ sessionId: 'valid' })); await settle();
+        h.window.dispatchEvent(new h.window.Event('pagehide')); await settle();
+        const count = h.requests.length;
+        await h.input('keydown'); await h.activity(); await h.advance(90000);
+        assert.equal(h.requests.length, count); assert.equal(h.intervals.size, 0);
     });
 });

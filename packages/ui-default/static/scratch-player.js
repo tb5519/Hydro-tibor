@@ -43,7 +43,18 @@
     let current = null;
     let previousDone = Promise.resolve();
     const now = () => performance.now();
-    const wanted = () => loaded && running && !ended && !document.hidden;
+    const IDLE_MS = 60000;
+    let lastActivity = null;
+    let idleTimer = null;
+    const hint = document.querySelector('[data-community-runtime-hint]');
+    const recentActivity = () => lastActivity !== null && now() < lastActivity + IDLE_MS;
+    const wanted = () => loaded && running && !ended && !document.hidden && recentActivity();
+    const updateHint = () => {
+      if (!hint) return;
+      const text = ended || !running ? '作品停止时暂停计时' : document.hidden ? '页面在后台，计时已暂停' :
+        recentActivity() ? '正在计时 · 60 秒无操作后暂停' : '已暂停计时 · 操作作品后继续';
+      if (hint.textContent !== text) hint.textContent = text;
+    };
     const announce = (summary) => window.dispatchEvent(new CustomEvent('scratch-community-metrics', { detail: summary }));
     const post = async (body) => {
       const abort = new AbortController();
@@ -62,7 +73,7 @@
     };
     const accrue = (session) => {
       if (session.lastTick === null || session.closed) return;
-      const time = now();
+      const time = Math.min(now(), lastActivity + IDLE_MS);
       // A sleeping computer or heavily delayed timer is not an hour of play.
       session.milliseconds += Math.max(0, Math.min(time - session.lastTick, 15000));
       session.lastTick = time;
@@ -100,6 +111,7 @@
       }
     };
     const sync = () => {
+      updateHint();
       if (!wanted()) {
         if (current) {
           const session = current;
@@ -125,8 +137,14 @@
           const result = await post({ operation: 'runtimeStart', requestId: session.requestId });
           if (typeof result.sessionId !== 'string' || !result.sessionId) throw new Error('Invalid runtime session');
           session.id = result.sessionId;
+          // A delayed start cannot revive a run whose activity window expired.
+          if (session.closed || !wanted()) {
+            session.closed = true;
+            if (current === session) current = null;
+            finish(session);
+            return;
+          }
           session.lastTick = now();
-          if (session.closed) finish(session);
         } catch {
           session.closed = true;
           if (current === session) current = null;
@@ -134,17 +152,50 @@
         }
       })();
     };
+    const armIdleTimer = () => {
+      if (ended || idleTimer !== null || lastActivity === null) return;
+      idleTimer = setTimeout(() => {
+        idleTimer = null;
+        sync();
+        // Input may have moved the deadline without rescheduling on every
+        // mouse movement. Recheck the current deadline before closing a run.
+        if (recentActivity()) armIdleTimer();
+      }, Math.max(0, lastActivity + IDLE_MS - now()));
+    };
+    const activity = () => {
+      if (!loaded || ended || document.hidden) return;
+      // Expire against the OLD deadline first: a late event must never credit
+      // the idle gap, even if the browser delayed its inactivity timer.
+      sync();
+      lastActivity = now();
+      armIdleTimer();
+      sync();
+    };
+    const inputTypes = ['keydown', 'keyup', 'pointerdown', 'pointermove', 'pointerup',
+      'mousedown', 'mousemove', 'mouseup', 'touchstart', 'touchmove', 'touchend', 'wheel'];
+    const onInput = (event) => { if (event.isTrusted) activity(); };
+    for (const type of inputTypes) document.addEventListener(type, onInput, { capture: true, passive: true });
     const heartbeat = setInterval(() => {
       sync();
       if (current) { accrue(current); void flush(current); }
     }, 15000);
     document.addEventListener('visibilitychange', sync);
     return {
+      loaded() {
+        if (lastActivity !== null || ended) return;
+        lastActivity = now();
+        armIdleTimer();
+        sync();
+      },
+      activity,
       setRunning(value) { running = value; sync(); },
       stop() {
         ended = true;
         clearInterval(heartbeat);
+        clearTimeout(idleTimer);
+        idleTimer = null;
         document.removeEventListener('visibilitychange', sync);
+        for (const type of inputTypes) document.removeEventListener(type, onInput, { capture: true });
         sync();
       },
     };
@@ -302,12 +353,15 @@
           title: result.title, project: result.project, ...(state ? {communityState: state} : {}) }, '*', [result.project]);
         sentProject = true;
         if (memberOnly) message.textContent = '作品已读取，正在准备舞台…';
-      } else if (event.data.type === 'loaded' && sentProject) {
+      } else if (event.data.type === 'loaded' && sentProject && !loaded) {
         loaded = true;
+        runtime?.loaded();
         clearTimeout(timer);
         status.hidden = true;
       } else if (event.data.type === 'runState' && loaded && typeof event.data.running === 'boolean') {
         runtime?.setRunning(event.data.running);
+      } else if (event.data.type === 'userActivity' && loaded) {
+        runtime?.activity();
       } else if (event.data.type === 'error') {
         throw new Error(loaded ? '作品暂时无法运行，请重新打开。' : '这个作品暂时无法打开，请稍后重试。');
       }

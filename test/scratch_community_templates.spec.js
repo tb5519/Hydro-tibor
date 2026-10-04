@@ -116,8 +116,9 @@ describe('Scratch classroom community templates', () => {
         assert.deepEqual(JSON.parse(root.dataset.config), player);
         assert.equal(root.querySelector('iframe').getAttribute('sandbox'), 'allow-scripts');
         assert.equal(root.querySelector('iframe').hasAttribute('allowfullscreen'), true);
-        assert.match(document.querySelector('script[src]').src, /scratch-player\.js\?v=20261004-community-state-v1-/);
+        assert.match(document.querySelector('script[src]').src, /scratch-player\.js\?v=20261004-community-idle-v1-/);
         assert.ok(document.querySelector('[data-community-state-status][role="status"]'));
+        assert.match(document.querySelector('[data-community-runtime-hint]').textContent, /60 秒无操作/);
         assert.equal(document.querySelector('[data-community-direct]').getAttribute('data-community-url'), '/d/art/scratch/work/work-one/community');
         assert.ok(document.querySelector('[data-scratch-community-unpublish]'));
         assert.ok(document.querySelector('[data-scratch-community-unpublish-dialog]'));

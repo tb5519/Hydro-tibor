@@ -111,9 +111,16 @@ retains the original learner as author.
 
 Runtime starts with this release; earlier playback is not reconstructed. The
 authenticated parent counts executing VM threads only while its page is visible,
-and sends bounded, idempotent heartbeats. Loading, stopped projects, background
-tabs and external public shares are excluded. A single server lease per member
-and publication prevents overlapping tabs from adding the same wall time twice.
+and sends bounded, idempotent heartbeats. After the player loads, accounting has
+a 60-second activity window. Trusted keyboard, mouse, pointer or touch input in
+the page or player renews that window; 60 seconds without input pauses accounting.
+Further input resumes accounting only when the project is running and the page
+is visible. Idle gaps are never credited later. Loading, stopped projects,
+background tabs and external public shares are excluded; background input does
+not extend the activity window. Pausing accounting does not stop the project or
+its shared-data synchronization. There is no per-member daily runtime cap.
+A single server lease per member and publication prevents overlapping tabs from
+adding the same wall time twice.
 Teacher additions affect the public totals and ranking while retaining their
 separate origin in the private analytics view.
 

@@ -62,6 +62,7 @@ for (const [source, dest] of [
     ['preset-import.js', 'src/lib/onebyone-preset-import.js'],
     ['player-monitor-layout.js', 'src/lib/onebyone-player-monitor-layout.js'],
     ['community-state.js', 'src/lib/onebyone-community-state.js'],
+    ['player-activity.js', 'src/lib/onebyone-player-activity.js'],
     ['noop.jsx', 'src/playground/onebyone-noop.jsx'],
     ['storage.js', 'src/lib/tw-persistent-storage.js'],
     ['extensions.jsx', 'src/lib/libraries/extensions/onebyone.jsx']

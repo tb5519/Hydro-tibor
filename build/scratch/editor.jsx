@@ -15,6 +15,7 @@ import TWFullScreenHOC from '../lib/tw-embed-fullscreen-hoc.jsx';
 import render from './app-target';
 import {createPresetBridge} from '../lib/onebyone-preset-import';
 import {createCommunityStateBridge} from '../lib/onebyone-community-state';
+import {createPlayerActivityBridge} from '../lib/onebyone-player-activity';
 
 // This iframe deliberately has an opaque origin: never enable allow-same-origin.
 // No untrusted extension source can reach the VM, including imports from .sb3.
@@ -52,6 +53,7 @@ let communityState = null;
 const send = (type, payload = {}, transfer = []) => {
     if (channel && parent !== window) parent.postMessage({channel, type, ...payload}, '*', transfer);
 };
+createPlayerActivityBridge(() => initialized && projectLoaded && mode === 'player', send);
 // Runtime events describe executing project threads, rather than time spent
 // loading or looking at an idle stage. Only the player parent uses these events.
 const sendRunState = running => {

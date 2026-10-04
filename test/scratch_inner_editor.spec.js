@@ -15,6 +15,7 @@ async function harness() {
     const defaultProject = new Uint8Array([1, 2, 3]).buffer;
     let props;
     let presetAllowed;
+    let activityAllowed;
     const presetRequests = [];
     const documentElement = { dataset: {} };
     const project = {
@@ -71,6 +72,7 @@ async function harness() {
             },
         },
         '../lib/onebyone-community-state': { createCommunityStateBridge: () => null },
+        '../lib/onebyone-player-activity': { createPlayerActivityBridge: canReport => { activityAllowed = canReport; } },
         './app-target': (value) => { props = value; },
     };
     const code = transformSync(fs.readFileSync(path.resolve(__dirname, '../build/scratch/editor.jsx'), 'utf8'), {
@@ -99,10 +101,18 @@ async function harness() {
     const message = (type, data = {}, source = parent) => listeners.message({
         source, data: { type, channel: 'local-test', ...data },
     });
-    return { message, sent, calls, store, listeners, props, presetAllowed, presetRequests, documentElement };
+    return { message, sent, calls, store, listeners, props, presetAllowed, activityAllowed, presetRequests, documentElement };
 }
 
 describe('native Scratch editor modes', () => {
+    it('allows trusted activity reporting only for a loaded player', async () => {
+        for (const mode of ['editor', 'player', 'thumbnail']) {
+            const editor = await harness();
+            assert.equal(editor.activityAllowed(), false);
+            await editor.message('init', { mode });
+            assert.equal(editor.activityAllowed(), mode === 'player');
+        }
+    });
     it('grants teacher asset import only to an initialized, loaded editable project', async () => {
         for (const mode of ['editor', 'player', 'thumbnail']) {
             const editor = await harness();

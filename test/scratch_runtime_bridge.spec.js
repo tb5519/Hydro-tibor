@@ -11,6 +11,9 @@ const code = transformSync(source, { format: 'cjs', loader: 'jsx' }).code;
 const communityCode = transformSync(fs.readFileSync(path.join(__dirname, '../build/scratch/community-state.js'), 'utf8'), {
     format: 'cjs', loader: 'js',
 }).code;
+const activityCode = transformSync(fs.readFileSync(path.join(__dirname, '../build/scratch/player-activity.js'), 'utf8'), {
+    format: 'cjs', loader: 'js',
+}).code;
 
 function bridge() {
     const sent = [];
@@ -32,11 +35,14 @@ function bridge() {
         addEventListener: (name, listener) => listeners.set(name, listener),
         removeEventListener: (name) => listeners.delete(name),
         setInterval: () => 1, clearInterval() {}, setTimeout: () => 1,
+        performance: { now: () => 1000 },
         document,
         ReduxStore: { dispatch() {}, subscribe() {}, getState: () => ({ scratchGui: { projectTitle: '作品' } }) },
     };
     const communityModule = { exports: {} };
     vm.runInNewContext(communityCode, { module: communityModule, exports: communityModule.exports, window, TextEncoder });
+    const activityModule = { exports: {} };
+    vm.runInNewContext(activityCode, { module: activityModule, exports: activityModule.exports, window });
     const dependencies = {
         './import-first': {}, react: { createElement: () => ({}) },
         redux: { compose: () => identity }, '../containers/gui.jsx': () => {},
@@ -49,6 +55,7 @@ function bridge() {
         '../lib/tw-embed-fullscreen-hoc.jsx': identity, './app-target': () => {},
         '../lib/onebyone-preset-import': { createPresetBridge: () => ({}) },
         '../lib/onebyone-community-state': communityModule.exports,
+        '../lib/onebyone-player-activity': activityModule.exports,
     };
     vm.runInNewContext(code, {
         require(name) { assert(Object.hasOwn(dependencies, name), `Unexpected dependency: ${name}`); return dependencies[name]; },
@@ -56,6 +63,9 @@ function bridge() {
         URLSearchParams, ArrayBuffer, Set, process: { env: {} },
     });
     return { machine, sent, parent,
+        input(name = 'keydown', isTrusted = true) {
+            listeners.get(`document:${name}`)?.({ isTrusted });
+        },
         init(mode, overrides = {}, data = {}) {
             return listeners.get('message')({ source: parent,
                 data: { channel: 'runtime-channel', type: 'init', mode, project: new ArrayBuffer(0), readOnly: mode !== 'editor', ...data },
@@ -68,6 +78,21 @@ function bridge() {
 }
 
 describe('isolated Scratch runtime bridge', () => {
+    it('forwards trusted user activity only after the player loads, without treating automatic runs as activity', async () => {
+        const h = bridge();
+        h.input();
+        assert.equal(h.sent.length, 0);
+        await h.init('player');
+        assert.equal(h.sent.filter(item => item.type === 'userActivity').length, 0);
+        h.input('keydown', false);
+        assert.equal(h.sent.filter(item => item.type === 'userActivity').length, 0);
+        h.input();
+        assert.deepEqual(JSON.parse(JSON.stringify(h.sent.at(-1))), { channel: 'runtime-channel', type: 'userActivity' });
+        const editor = bridge();
+        await editor.init('editor');
+        editor.input();
+        assert.equal(editor.sent.filter(item => item.type === 'userActivity').length, 0);
+    });
     it('sends loaded before the first actual project running event and forwards later stops/restarts', async () => {
         const h = bridge();
         h.machine.emit('PROJECT_RUN_START');
