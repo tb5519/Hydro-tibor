@@ -47,6 +47,7 @@ before(async () => {
     model = load('packages/hydrooj/src/model/scratch.ts', {
         '../context': {}, '../error': {}, '../lib/scratch_files': {}, '../logger': { Logger: class {} },
         '../lib/asset_delivery': { queueAssetMirror: () => false },
+        '../lib/scratch_state': {},
         '../service/db': {
             collection: (name) => database.collection(name),
             ensureIndexes: (collection, ...indexes) => collection.createIndexes(indexes),

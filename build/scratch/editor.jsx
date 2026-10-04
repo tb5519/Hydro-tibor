@@ -14,6 +14,7 @@ import {Theme, ACCENT_BLUE} from '../lib/themes';
 import TWFullScreenHOC from '../lib/tw-embed-fullscreen-hoc.jsx';
 import render from './app-target';
 import {createPresetBridge} from '../lib/onebyone-preset-import';
+import {createCommunityStateBridge} from '../lib/onebyone-community-state';
 
 // This iframe deliberately has an opaque origin: never enable allow-same-origin.
 // No untrusted extension source can reach the VM, including imports from .sb3.
@@ -47,6 +48,7 @@ let previewing = false;
 let mode = 'thumbnail';
 let defaultProject;
 let projectLoaded = false;
+let communityState = null;
 const send = (type, payload = {}, transfer = []) => {
     if (channel && parent !== window) parent.postMessage({channel, type, ...payload}, '*', transfer);
 };
@@ -164,6 +166,7 @@ window.addEventListener('message', async event => {
             }
             vm.stopAll();
             if (message.project instanceof ArrayBuffer) await vm.loadProject(message.project);
+            if (mode === 'player') communityState = createCommunityStateBridge(vm, message.communityState, send);
             window.ReduxStore.dispatch(setProjectTitle(String(message.title || 'Scratch 作品')));
             window.ReduxStore.dispatch(setProjectUnchanged());
             let previousTitle = window.ReduxStore.getState().scratchGui.projectTitle;
@@ -187,6 +190,10 @@ window.addEventListener('message', async event => {
             // postMessage preserves this ordering: the parent must know the
             // project is loaded before receiving the first running state.
             if (mode === 'player') vm.greenFlag();
+        } else if (message.type === 'communityStateSaved' && initialized && mode === 'player') {
+            communityState?.receive(message);
+        } else if (message.type === 'flushCommunityState' && initialized && mode === 'player') {
+            communityState?.flush(true);
         } else if (message.type === 'preview' && initialized && mode === 'thumbnail' && readOnly) {
             await loadPreview(message);
         } else if (message.type === 'export' && initialized && mode === 'editor' && !readOnly && !exporting) {

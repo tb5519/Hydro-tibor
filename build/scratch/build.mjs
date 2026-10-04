@@ -8,6 +8,7 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import patchLibraries from './patch-libraries.cjs';
 import patchLocale from './patch-locale.cjs';
+import patchMonitor from './patch-monitor.cjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../..');
@@ -59,6 +60,8 @@ for (const [source, dest] of [
     ['svg-sandbox.js', 'src/playground/onebyone-svg-sandbox.js'],
     ['library-loader.js', 'src/lib/onebyone-library-loader.js'],
     ['preset-import.js', 'src/lib/onebyone-preset-import.js'],
+    ['player-monitor-layout.js', 'src/lib/onebyone-player-monitor-layout.js'],
+    ['community-state.js', 'src/lib/onebyone-community-state.js'],
     ['noop.jsx', 'src/playground/onebyone-noop.jsx'],
     ['storage.js', 'src/lib/tw-persistent-storage.js'],
     ['extensions.jsx', 'src/lib/libraries/extensions/onebyone.jsx']
@@ -99,6 +102,12 @@ const localeSource = execFileSync('git', ['show', `${upstream.commit}:src/lib/de
     cwd: workspace, encoding: 'utf8'
 });
 fs.writeFileSync(localePath, patchLocale(localeSource));
+// Player-only monitor geometry must not rewrite the editor's saved positions.
+const monitorPath = path.join(workspace, 'src/containers/monitor.jsx');
+const monitorSource = execFileSync('git', ['show', `${upstream.commit}:src/containers/monitor.jsx`], {
+    cwd: workspace, encoding: 'utf8'
+});
+fs.writeFileSync(monitorPath, patchMonitor(monitorSource));
 // Preserve native local file/edit controls without account, cloud, remote
 // feedback or a nonfunctional restore-point menu in the isolated classroom.
 const menuPath = path.join(workspace, 'src/components/menu-bar/menu-bar.jsx');
@@ -173,7 +182,7 @@ fs.writeFileSync(path.join(here, 'package-lock.upstream.json'), lock);
 fs.copyFileSync(path.join(here, 'README.md'), path.join(workspace, 'ONEBYONE-README.md'));
 fs.mkdirSync(path.join(workspace, 'onebyone-library'), {recursive: true});
 for (const name of ['library-assets.mjs', 'library-assets.lock.json', 'upstream.json', 'patch-libraries.cjs',
-    'patch-locale.cjs', 'restore-catalogs.mjs', 'classic-library.json', 'LIBRARY-CREDITS.md']) {
+    'patch-locale.cjs', 'patch-monitor.cjs', 'restore-catalogs.mjs', 'classic-library.json', 'LIBRARY-CREDITS.md']) {
     fs.copyFileSync(path.join(here, name), path.join(workspace, 'onebyone-library', name));
 }
 run('tar', ['-czf', path.join(target, 'source.tar.gz'),

@@ -14,7 +14,8 @@ function player(t, config = {}) {
     const dom = new JSDOM(`<main data-scratch-public-player>
       <div data-scratch-player-status><span data-scratch-player-message>加载中</span>
       <button data-scratch-player-retry hidden>重新打开</button></div>
-      <iframe data-scratch-player-frame sandbox="allow-scripts"></iframe></main>`, {
+      <iframe data-scratch-player-frame sandbox="allow-scripts"></iframe>
+      <span data-community-state-status></span></main>`, {
         url: 'https://onebyone.test/d/art/scratch/community/123', runScripts: 'outside-only', pretendToBeVisual: true,
     });
     t.after(() => dom.window.close());
@@ -37,8 +38,8 @@ function player(t, config = {}) {
     window.clearInterval = (id) => intervals.delete(id);
     const requests = [];
     window.fetch = (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject }));
-    window.eval(playerCode);
     const frame = window.document.querySelector('iframe');
+    window.eval(playerCode);
     const source = frame.contentWindow;
     const outgoing = [];
     source.postMessage = (data, origin, transfer) => outgoing.push({ data, origin, transfer });
@@ -367,5 +368,212 @@ describe('authenticated community runtime', () => {
             assert.equal(other.requests.length, 1);
             assert.equal(other.intervals.size, 0);
         }
+    });
+});
+
+const stateUrl = '/d/art/scratch/community/123/state';
+const stateFileId = '0123456789abcdef01234567';
+const stateConfig = { stateUrl, stateFileId };
+const stateResponse = (extra = {}) => jsonResponse({ fileId: stateFileId, revision: 0, values: [], ...extra });
+const changedList = [{ key: '["stage","names"]', kind: 'list', before: [], value: ['小明'] }];
+const syncState = (h, changes = changedList, extra = {}, overrides = {}) => h.message('communityStateSync', {
+    data: { type: 'communityStateSync', channel: 'community-channel', id: 1, baseRevision: 0, changes, ...extra }, ...overrides,
+});
+const bootState = async (h, extra = {}) => {
+    h.requests.find((request) => request.url.endsWith('/state')).resolve(stateResponse(extra));
+    h.requests.find((request) => request.url.endsWith('/project')).resolve(projectResponse());
+    await h.message('ready');
+    await h.message('loaded');
+};
+const fireTimer = async (h, delay) => {
+    for (const [id, timer] of [...h.timers]) if (timer.delay === delay) { h.timers.delete(id); timer.callback(); }
+    await settle();
+};
+
+describe('authenticated community shared data', () => {
+    it('fetches with member credentials in parallel, waits for state before init and keeps endpoint/session identifiers outside the sandbox', async (t) => {
+        const h = player(t, stateConfig);
+        assert.equal(h.requests.length, 2);
+        const state = h.requests.find((request) => request.url.endsWith('/state'));
+        const project = h.requests.find((request) => request.url.endsWith('/project'));
+        assert.equal(state.options.credentials, 'same-origin');
+        assert.equal(state.options.method, 'GET');
+        assert.equal(state.options.redirect, 'error');
+        assert.equal(state.options.cache, 'no-store');
+        assert.equal(state.options.headers['X-Requested-With'], 'XMLHttpRequest');
+        project.resolve(projectResponse()); await h.message('ready');
+        assert.equal(h.outgoing.length, 0, 'existing leaderboard must be restored before green flag starts');
+        state.resolve(stateResponse({ revision: 7, values: changedList.map(({ before, ...entry }) => entry) }));
+        await settle();
+        const init = h.outgoing[0].data;
+        assert.deepEqual(JSON.parse(JSON.stringify(init.communityState)), { revision: 7, values: changedList.map(({ before, ...entry }) => entry) });
+        assert(!JSON.stringify(init).includes('/state'));
+        assert(!JSON.stringify(init).includes(stateFileId));
+        assert(!JSON.stringify(init).includes('runtime-request'));
+        assert(!JSON.stringify(init).includes('clientId'));
+        assert.equal(init.readOnly, true);
+        await h.message('loaded');
+        assert.equal(h.status.hidden, true);
+    });
+
+    it('rejects foreign state endpoints without credentials or project bytes escaping', async (t) => {
+        for (const endpoint of ['https://outside.test/state', '//outside.test/state', 'data:application/json,{}', 'javascript:alert(1)']) {
+            const h = player(t, { ...stateConfig, stateUrl: endpoint });
+            assert.equal(h.requests.length, 0, endpoint);
+            assert.equal(h.status.dataset.error, 'true');
+            await h.message('ready');
+            assert.equal(h.outgoing.length, 0);
+        }
+    });
+
+    it('ignores state messages before loaded and from the wrong frame, non-opaque origin or channel', async (t) => {
+        const h = player(t, stateConfig);
+        await syncState(h); assert.equal(h.requests.length, 2);
+        await bootState(h);
+        await syncState(h, changedList, {}, { source: h.window });
+        await syncState(h, changedList, {}, { origin: 'https://onebyone.test' });
+        await syncState(h, changedList, { channel: 'someone-else' });
+        for (const bad of [{ id: 0 }, { id: '1' }, { baseRevision: -1 }, { baseRevision: '0' }, { changes: {} }]) await syncState(h, changedList, bad);
+        assert.equal(h.requests.length, 2);
+        await syncState(h);
+        assert.equal(h.requests.length, 3);
+        const sent = body(h.requests.at(-1));
+        assert.equal(sent.operation, 'sync'); assert.equal(sent.seq, '1'); assert.equal(sent.fileId, stateFileId);
+        assert.deepEqual(JSON.parse(sent.changes), changedList);
+        assert.equal(h.requests.at(-1).options.keepalive, true);
+    });
+
+    it('retries a lost save with identical request UUID, client and sequence, then increments only the next mutation', async (t) => {
+        const h = player(t, stateConfig); await bootState(h); await syncState(h);
+        const original = h.requests.at(-1); const originalBody = body(original);
+        original.reject(new TypeError('response lost')); await settle();
+        assert.equal(h.status.hidden, true, 'temporary persistence failures do not interrupt the game');
+        assert.match(h.window.document.querySelector('[data-community-state-status]').textContent, /重试/);
+        await fireTimer(h, 3000);
+        const retryRequest = h.requests.at(-1);
+        assert.deepEqual(body(retryRequest), originalBody, 'server idempotency depends on all retry identifiers being unchanged');
+        retryRequest.resolve(stateResponse({ revision: 1, values: changedList.map(({ before, ...entry }) => entry) })); await settle();
+        const ack = h.outgoing.at(-1).data;
+        assert.equal(ack.type, 'communityStateSaved'); assert.equal(ack.id, 1); assert.equal(ack.revision, 1);
+        assert(!JSON.stringify(ack).includes('clientId'));
+        await syncState(h, changedList, { id: 2, baseRevision: 1 });
+        const next = body(h.requests.at(-1));
+        assert.equal(next.seq, '2'); assert.equal(next.clientId, originalBody.clientId);
+        assert.notEqual(next.requestId, originalBody.requestId);
+    });
+
+    it('uses GET for unchanged polls without consuming the server write sequence', async (t) => {
+        const h = player(t, stateConfig); await bootState(h);
+        await syncState(h, []);
+        const poll = h.requests.at(-1); assert.equal(poll.options.method, 'GET'); assert.equal(poll.options.body, undefined);
+        poll.resolve(stateResponse({ revision: 3, values: [] })); await settle();
+        assert.equal(h.outgoing.at(-1).data.revision, 3);
+        await syncState(h, changedList, { id: 2, baseRevision: 3 });
+        assert.equal(body(h.requests.at(-1)).seq, '1');
+    });
+
+    it('retries a temporary server error without treating its missing file ID as a publication change', async (t) => {
+        const h = player(t, stateConfig); await bootState(h); await syncState(h);
+        const first = h.requests.at(-1);
+        first.resolve({ ok: false, status: 503, json: async () => ({ error: 'temporarily unavailable' }) });
+        await settle(); await fireTimer(h, 3000);
+        assert.notEqual(h.requests.at(-1), first);
+        assert.deepEqual(body(h.requests.at(-1)), body(first));
+        h.requests.at(-1).resolve(stateResponse({ revision: 1, values: changedList.map(({ before, ...entry }) => entry) }));
+        await settle();
+        assert.equal(h.outgoing.at(-1).data.type, 'communityStateSaved');
+    });
+
+    it('does not enable shared class data on any external share configuration', async (t) => {
+        for (const memberOnly of [false, undefined, 'true', 1]) {
+            const h = player(t, { ...stateConfig, memberOnly, projectUrl: '/d/art/scratch/share/token/project' });
+            assert.equal(h.requests.length, 0);
+            await h.message('ready');
+            assert.equal(h.requests.length, 1); assert.equal(h.requests[0].options.credentials, 'omit');
+            h.requests[0].resolve(projectResponse()); await settle(); await h.message('loaded'); await syncState(h);
+            assert.equal(h.requests.length, 1);
+            assert.equal(h.outgoing[0].data.communityState, undefined);
+        }
+    });
+
+    it('blocks a mismatched initial snapshot or a permanently rejected write instead of overwriting newer data', async (t) => {
+        const mismatch = player(t, stateConfig);
+        mismatch.requests[0].resolve(stateResponse({ fileId: 'new-snapshot' })); await settle();
+        assert.equal(mismatch.status.dataset.error, 'true'); assert.equal(mismatch.frame.isConnected, false);
+        assert.equal(mismatch.requests[1].options.signal.aborted, true);
+        await mismatch.message('ready'); assert.equal(mismatch.outgoing.length, 0);
+        for (const response of [stateResponse({ fileId: 'new-snapshot' }), { ok: false, status: 409, json: async () => ({ ok: false, fileId: stateFileId }) }]) {
+            const h = player(t, stateConfig); await bootState(h); await syncState(h);
+            h.requests.at(-1).resolve(response); await settle();
+            assert.match(h.window.document.querySelector('[data-community-state-status]').textContent, /未保存/);
+            const count = h.requests.length;
+            await fireTimer(h, 3000); await syncState(h, changedList, { id: 2 });
+            assert.equal(h.requests.length, count, 'permanent errors cannot loop writes or advance over an incompatible snapshot');
+            assert.equal(h.outgoing.length, 1);
+        }
+    });
+
+    it('requests a flush on hiding and accepts only trusted final changes after pagehide with keepalive', async (t) => {
+        const h = player(t, stateConfig); await bootState(h);
+        await h.visible(false);
+        assert.equal(h.outgoing.at(-1).data.type, 'flushCommunityState');
+        h.window.dispatchEvent(new h.window.Event('pagehide')); await settle();
+        const previous = h.requests.length;
+        await syncState(h, changedList, {}, { source: h.window });
+        await syncState(h, changedList, {}, { origin: 'https://onebyone.test' });
+        await syncState(h, changedList, { channel: 'other' });
+        await h.message('ready'); await h.run(true);
+        assert.equal(h.requests.length, previous);
+        await syncState(h);
+        assert.equal(h.requests.length, previous + 1, 'child pagehide message is asynchronous and may arrive after the parent pagehide');
+        const final = h.requests.at(-1);
+        assert.equal(final.options.keepalive, true); assert.equal(final.options.signal.aborted, false);
+        final.reject(new TypeError('closing connection')); await settle(); await fireTimer(h, 3000);
+        assert.equal(h.requests.at(-1), final, 'navigation does not leave a background retry loop');
+    });
+
+    it('flushes an already-pending retry on exit using the original mutation identity and rejects all data after fatal playback failure', async (t) => {
+        const h = player(t, stateConfig); await bootState(h); await syncState(h);
+        const first = h.requests.at(-1); first.reject(new TypeError('offline')); await settle();
+        h.window.dispatchEvent(new h.window.Event('pagehide')); await settle();
+        const final = h.requests.at(-1); assert.notEqual(final, first); assert.deepEqual(body(final), body(first));
+        assert.equal(final.options.keepalive, true); assert.equal(final.options.signal.aborted, false);
+        const failed = player(t, stateConfig); await bootState(failed); await failed.message('error');
+        const count = failed.requests.length; await syncState(failed);
+        assert.equal(failed.requests.length, count);
+    });
+});
+
+
+describe('community shared-data closing and error recovery', () => {
+    it('acknowledges a completed closing save so the iframe can flush changes made while it was pending', async (t) => {
+        const h = player(t, stateConfig); await bootState(h); await syncState(h);
+        const first = h.requests.at(-1);
+        h.window.dispatchEvent(new h.window.Event('pagehide')); await settle();
+        first.resolve(stateResponse({ revision: 1, values: changedList.map(({ before, ...entry }) => entry) })); await settle();
+        assert.equal(h.outgoing.at(-1).data.type, 'communityStateSaved');
+        const finalChanges = [{ ...changedList[0], before: ['小明'], value: ['小明', '小红'] }];
+        await syncState(h, finalChanges, { id: 2, baseRevision: 1 });
+        const final = h.requests.at(-1);
+        assert.notEqual(final, first); assert.equal(final.options.keepalive, true);
+        assert.equal(body(final).seq, '2'); assert.deepEqual(JSON.parse(body(final).changes), finalChanges);
+    });
+
+    it('preserves an unsaved-value warning through an older in-flight save, and clears it only after a later valid write succeeds', async (t) => {
+        const h = player(t, stateConfig); await bootState(h); await syncState(h);
+        const first = h.requests.at(-1); const label = h.window.document.querySelector('[data-community-state-status]');
+        await h.message('communityStateError', { source: h.window });
+        assert(!/超出/.test(label.textContent), 'untrusted errors cannot alter the status');
+        await h.message('communityStateError');
+        assert.match(label.textContent, /尚未保存/); assert.equal(label.dataset.error, 'true');
+        first.resolve(stateResponse({ revision: 1, values: [] })); await settle();
+        assert.match(label.textContent, /尚未保存/, 'an older successful request does not account for the newly invalid values');
+        await syncState(h, [], { id: 2, baseRevision: 1 });
+        h.requests.at(-1).resolve(stateResponse({ revision: 1, values: [] })); await settle();
+        assert.match(label.textContent, /尚未保存/, 'an unchanged poll is not a successful correction');
+        await syncState(h, changedList, { id: 3, baseRevision: 1 });
+        assert.match(label.textContent, /尚未保存/);
+        h.requests.at(-1).resolve(stateResponse({ revision: 2, values: changedList.map(({ before, ...entry }) => entry) })); await settle();
+        assert.equal(label.textContent, '课堂共享数据已同步'); assert.equal(label.dataset.error, 'false');
     });
 });

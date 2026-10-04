@@ -70,6 +70,7 @@ async function harness() {
                 };
             },
         },
+        '../lib/onebyone-community-state': { createCommunityStateBridge: () => null },
         './app-target': (value) => { props = value; },
     };
     const code = transformSync(fs.readFileSync(path.resolve(__dirname, '../build/scratch/editor.jsx'), 'utf8'), {

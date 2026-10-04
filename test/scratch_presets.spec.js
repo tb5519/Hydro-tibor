@@ -73,6 +73,7 @@ before(async () => {
     files = load('packages/hydrooj/src/lib/scratch_files.ts', { '../error': errors });
     model = load('packages/hydrooj/src/model/scratch.ts', {
         '../error': errors, '../lib/scratch_files': files, '../lib/asset_delivery': delivery,
+        '../lib/scratch_state': {},
         '../logger': { Logger: class { warn() {} } }, './storage': storage,
         '../service/db': { collection: (name) => db.collection(name), ensureIndexes: (coll, ...indexes) => coll.createIndexes(indexes) },
     });

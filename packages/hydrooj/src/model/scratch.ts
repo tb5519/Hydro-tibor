@@ -6,6 +6,7 @@ import { NotFoundError, PermissionError, ValidationError } from '../error';
 import type { RemoteAsset } from '../interface';
 import { queueAssetMirror } from '../lib/asset_delivery';
 import { SCRATCH_PRESET_KINDS, ScratchPresetKind, validateScratchArchive, validateScratchMaterial, validateScratchPreset, validateScratchThumbnail } from '../lib/scratch_files';
+import { mergeScratchState, ScratchStateValue, validateScratchStateChanges } from '../lib/scratch_state';
 import { Logger } from '../logger';
 import db from '../service/db';
 import storage from './storage';
@@ -49,6 +50,11 @@ export interface ScratchCommunityRuntime {
     _id: string; domainId: string; communityId: ObjectId; uid: number; isTeacher: boolean;
     runtimeSeconds: number; sessionId: string; startRequestId: string; lastSeq: number; lastHeartbeatAt: Date;
     sessionStartedAt: Date; sessionRuntimeSeconds: number;
+}
+export interface ScratchCommunityState {
+    _id: string; domainId: string; communityId: ObjectId; fileId: ObjectId; revision: number;
+    values: ScratchStateValue[]; clientFloorRevision: number; updatedAt: Date;
+    clients: { id: string, uid: number, seq: number, requestId: string, revision: number }[];
 }
 export interface ScratchShare {
     _id: string; domainId: string; workId: ObjectId; fileId: ObjectId; revision: number; title: string; createdAt: Date;
@@ -105,6 +111,7 @@ declare module '../service/db' {
         'scratch.community': ScratchCommunityWork;
         'scratch.community.event': ScratchCommunityEvent;
         'scratch.community.runtime': ScratchCommunityRuntime;
+        'scratch.community.state': ScratchCommunityState;
         'scratch.quota': { _id: string, bytes: number };
     }
 }
@@ -120,6 +127,7 @@ export const shares = db.collection('scratch.share');
 export const community = db.collection('scratch.community');
 export const communityEvents = db.collection('scratch.community.event');
 export const communityRuntimes = db.collection('scratch.community.runtime');
+export const communityStates = db.collection('scratch.community.state');
 export const quotas = db.collection('scratch.quota');
 
 function base(actor: ScratchActor): ScratchDoc {
@@ -686,6 +694,65 @@ export async function getCommunityWork(actor: ScratchActor, _id: ObjectId) {
     return doc;
 }
 
+function stateResponse(publication: ScratchCommunityWork, state?: ScratchCommunityState) {
+    // Session sequencing and member identities are never exposed to players.
+    return { ok: true, fileId: publication.fileId.toHexString(), revision: state?.revision || 0, values: state?.values || [] };
+}
+export async function getCommunityState(actor: ScratchActor, id: ObjectId) {
+    const publication = await getCommunityWork(actor, id);
+    const state = await communityStates.findOne({ _id: `${actor.domainId}:${id}`, domainId: actor.domainId });
+    return stateResponse(publication, state);
+}
+
+export async function syncCommunityState(actor: ScratchActor, id: ObjectId, input: {
+    requestId: unknown, clientId: unknown, seq: unknown, fileId: unknown, baseRevision: unknown, changes: unknown,
+}) {
+    const requestId = metricRequestId(input.requestId);
+    const clientId = metricRequestId(input.clientId);
+    const seq = metricInteger(input.seq, 'seq', Number.MAX_SAFE_INTEGER);
+    const baseRevision = metricInteger(input.baseRevision, 'baseRevision', Number.MAX_SAFE_INTEGER);
+    if (!seq || typeof input.fileId !== 'string' || !/^[a-f0-9]{24}$/.test(input.fileId)) throw new ValidationError('fileId');
+    const changes = validateScratchStateChanges(input.changes);
+    const _id = `${actor.domainId}:${id}`;
+    // All changed variables and parallel lists commit together. A CAS retry
+    // rebases the delta against another child's accepted append, preserving it.
+    for (let attempt = 0; attempt < 30; attempt++) {
+        const publication = await getCommunityWork(actor, id);
+        if (publication.fileId.toHexString() !== input.fileId) {
+            throw new ValidationError('fileId', null, '作品已更新，请重新打开后继续。');
+        }
+        const previous = await communityStates.findOne({ _id, domainId: actor.domainId });
+        const revision = previous?.revision || 0;
+        const clients = previous?.clients || [];
+        const client = clients.find((entry) => entry.id === clientId && entry.uid === actor.uid);
+        if (baseRevision > revision) throw new ValidationError('baseRevision');
+        if (client && seq <= client.seq) {
+            if (seq === client.seq && requestId !== client.requestId) throw new ValidationError('requestId');
+            return { ...stateResponse(publication, previous), accepted: true };
+        }
+        if (baseRevision < (previous?.clientFloorRevision || 0) || seq !== (client?.seq || 0) + 1) {
+            throw new ValidationError('seq', null, '运行数据连接已过期，请重新打开作品。');
+        }
+        const values = mergeScratchState(previous?.values || [], changes);
+        const nextClients = clients.filter((entry) => entry !== client);
+        nextClients.push({ id: clientId, uid: actor.uid, seq, requestId, revision: revision + 1 });
+        const evicted = nextClients.length > 256 ? nextClients.shift() : null;
+        const next: ScratchCommunityState = { _id, domainId: actor.domainId, communityId: id,
+            fileId: publication.fileId, revision: revision + 1, values, clients: nextClients, updatedAt: new Date(),
+            clientFloorRevision: Math.max(previous?.clientFloorRevision || 0, evicted?.revision || 0) };
+        try {
+            if (previous) {
+                const result = await communityStates.replaceOne({ _id, domainId: actor.domainId, revision }, next);
+                if (!result.modifiedCount) continue;
+            } else await communityStates.insertOne(next);
+            return { ...stateResponse(publication, next), accepted: true };
+        } catch (error) {
+            if (error.code !== 11000) throw error;
+        }
+    }
+    throw new ValidationError('changes', null, '同时保存的同学较多，请稍后再试。');
+}
+
 // Events are authoritative: no counter write can be lost between an idempotency
 // check and increment. Totals and ranking use the same aggregation before paging.
 function communityMetricStages() {
@@ -969,7 +1036,7 @@ export async function apply(ctx: Context) {
     ctx.on('domain/delete', async (domainId) => {
         const docs = await files.find({ domainId }).toArray();
         await storage.del(docs.map((doc) => doc.path));
-        await Promise.all([assignments, works, versions, submissions, materials, presets, files, shares, community, communityEvents, communityRuntimes].map((collection) => collection.deleteMany({ domainId })));
+        await Promise.all([assignments, works, versions, submissions, materials, presets, files, shares, community, communityEvents, communityRuntimes, communityStates].map((collection) => collection.deleteMany({ domainId })));
         await quotas.deleteOne({ _id: domainId });
     });
     await Promise.all([
@@ -991,6 +1058,7 @@ export async function apply(ctx: Context) {
             { key: { domainId: 1, thumbnailFileId: 1 }, name: 'scratch_community_thumbnail' }),
         db.ensureIndexes(communityEvents, { key: { domainId: 1, communityId: 1, uid: 1 }, name: 'scratch_community_events' }),
         db.ensureIndexes(communityRuntimes, { key: { domainId: 1, communityId: 1, uid: 1 }, name: 'scratch_community_runtimes', unique: true }),
+        db.ensureIndexes(communityStates, { key: { domainId: 1, communityId: 1 }, name: 'scratch_community_states', unique: true }),
         db.ensureIndexes(shares, { key: { domainId: 1, workId: 1, revision: 1 }, name: 'scratch_share_revision', unique: true },
             { key: { domainId: 1, fileId: 1 }, name: 'scratch_share_file' }),
     ]);

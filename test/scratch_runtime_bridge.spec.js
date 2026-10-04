@@ -8,6 +8,9 @@ const { transformSync } = require('esbuild');
 
 const source = fs.readFileSync(path.join(__dirname, '../build/scratch/editor.jsx'), 'utf8');
 const code = transformSync(source, { format: 'cjs', loader: 'jsx' }).code;
+const communityCode = transformSync(fs.readFileSync(path.join(__dirname, '../build/scratch/community-state.js'), 'utf8'), {
+    format: 'cjs', loader: 'js',
+}).code;
 
 function bridge() {
     const sent = [];
@@ -21,6 +24,19 @@ function bridge() {
     });
     const parent = { postMessage: data => sent.push(data) };
     const identity = value => value;
+    const document = { documentElement: { dataset: {} },
+        addEventListener: (name, listener) => listeners.set(`document:${name}`, listener),
+        removeEventListener: (name) => listeners.delete(`document:${name}`),
+    };
+    const window = {
+        addEventListener: (name, listener) => listeners.set(name, listener),
+        removeEventListener: (name) => listeners.delete(name),
+        setInterval: () => 1, clearInterval() {}, setTimeout: () => 1,
+        document,
+        ReduxStore: { dispatch() {}, subscribe() {}, getState: () => ({ scratchGui: { projectTitle: '作品' } }) },
+    };
+    const communityModule = { exports: {} };
+    vm.runInNewContext(communityCode, { module: communityModule, exports: communityModule.exports, window, TextEncoder });
     const dependencies = {
         './import-first': {}, react: { createElement: () => ({}) },
         redux: { compose: () => identity }, '../containers/gui.jsx': () => {},
@@ -32,21 +48,21 @@ function bridge() {
         '../lib/themes': { Theme: { light: { set: () => ({}) } }, ACCENT_BLUE: 'blue' },
         '../lib/tw-embed-fullscreen-hoc.jsx': identity, './app-target': () => {},
         '../lib/onebyone-preset-import': { createPresetBridge: () => ({}) },
-    };
-    const window = {
-        addEventListener: (name, listener) => listeners.set(name, listener),
-        ReduxStore: { dispatch() {}, subscribe() {}, getState: () => ({ scratchGui: { projectTitle: '作品' } }) },
+        '../lib/onebyone-community-state': communityModule.exports,
     };
     vm.runInNewContext(code, {
         require(name) { assert(Object.hasOwn(dependencies, name), `Unexpected dependency: ${name}`); return dependencies[name]; },
-        window, parent, document: { documentElement: { dataset: {} } }, location: { hash: '#channel=runtime-channel' },
+        window, parent, document, location: { hash: '#channel=runtime-channel' },
         URLSearchParams, ArrayBuffer, Set, process: { env: {} },
     });
     return { machine, sent, parent,
-        init(mode, overrides = {}) {
+        init(mode, overrides = {}, data = {}) {
             return listeners.get('message')({ source: parent,
-                data: { channel: 'runtime-channel', type: 'init', mode, project: new ArrayBuffer(0), readOnly: mode !== 'editor' },
+                data: { channel: 'runtime-channel', type: 'init', mode, project: new ArrayBuffer(0), readOnly: mode !== 'editor', ...data },
                 ...overrides });
+        },
+        message(type, data = {}, source = parent, channel = 'runtime-channel') {
+            return listeners.get('message')({ source, data: { type, channel, ...data } });
         },
     };
 }
@@ -83,5 +99,48 @@ describe('isolated Scratch runtime bridge', () => {
         h.machine.emit('PROJECT_RUN_START');
         h.machine.emit('PROJECT_RUN_STOP');
         assert.deepEqual(h.sent.map(item => item.type), ['loaded']);
+    });
+
+    it('restores community variables after loading the SB3 and before starting scripts, then protects saved/flush messages by parent and channel', async () => {
+        const h = bridge();
+        const score = { id: 'score', type: '', value: 0 };
+        const names = { id: 'names', type: 'list', value: [] };
+        h.machine.loadProject = async () => {
+            h.machine.runtime.targets = [{ isStage: true, variables: { score, names } }];
+        };
+        const order = [];
+        h.machine.start = () => order.push(['start', score.value, [...names.value]]);
+        h.machine.greenFlag = () => { order.push(['run', score.value, [...names.value]]); h.machine.emit('PROJECT_RUN_START'); };
+        await h.init('player', {}, { communityState: { revision: 3, values: [
+            { key: '["stage","","score"]', kind: 'variable', value: 15 },
+            { key: '["stage","","names"]', kind: 'list', value: ['王五'] },
+        ] } });
+        assert.deepEqual(order, [['start', 15, ['王五']], ['run', 15, ['王五']]]);
+        score.value = 20;
+        await h.message('flushCommunityState', {}, {});
+        await h.message('flushCommunityState', {}, h.parent, 'wrong');
+        assert.equal(h.sent.filter(item => item.type === 'communityStateSync').length, 0);
+        await h.message('flushCommunityState');
+        const pending = h.sent.at(-1);
+        assert.equal(pending.type, 'communityStateSync');
+        const ack = { id: pending.id, revision: 4, values: [{ key: '["stage","","score"]', kind: 'variable', value: 30 }] };
+        await h.message('communityStateSaved', ack, {});
+        await h.message('communityStateSaved', ack, h.parent, 'wrong');
+        assert.equal(score.value, 20);
+        await h.message('communityStateSaved', ack);
+        assert.equal(score.value, 30);
+    });
+
+    it('never restores community state or handles state messages in an editable author project', async () => {
+        const h = bridge();
+        const score = { id: 'score', type: '', value: 0 };
+        h.machine.runtime.targets = [{ isStage: true, variables: { score } }];
+        await h.init('editor', {}, { communityState: { revision: 3, values: [
+            { key: '["stage","","score"]', kind: 'variable', value: 999 },
+        ] } });
+        assert.equal(score.value, 0);
+        score.value = 20;
+        await h.message('flushCommunityState');
+        assert.equal(h.sent.filter(item => item.type === 'communityStateSync').length, 0);
     });
 });

@@ -38,6 +38,7 @@ let database;
 let model;
 let handlers;
 let scratchFiles;
+let scratchState;
 let deleteDomainData;
 let temp;
 const blobs = new Map();
@@ -131,10 +132,12 @@ before(async () => {
         getMeta: async (key) => ({ remoteAsset: remoteAssets.get(key) }),
     };
     scratchFiles = load('packages/hydrooj/src/lib/scratch_files.ts', { '../error': errors });
+    scratchState = load('packages/hydrooj/src/lib/scratch_state.ts', { '../error': errors });
     model = load('packages/hydrooj/src/model/scratch.ts', {
         __Date: MetricDate,
         '../context': {}, '../error': errors, '../lib/scratch_files': scratchFiles, '../logger': { Logger: class { warn() {} } },
         '../lib/asset_delivery': assetDelivery,
+        '../lib/scratch_state': scratchState,
         '../service/db': db, './storage': storage,
     });
     await model.apply({ on: (event, callback) => { if (event === 'domain/delete') deleteDomainData = callback; } });
@@ -1514,6 +1517,177 @@ describe('Scratch permission-gated CDN delivery', () => {
 });
 
 
+describe('Scratch community shared variables and lists', () => {
+    const plain = (value) => JSON.parse(JSON.stringify(value));
+    const key = (name) => JSON.stringify(['stage', name]);
+    const variable = (name, before, value) => ({ key: key(name), kind: 'variable', before, value });
+    const list = (name, before, value) => ({ key: key(name), kind: 'list', before, value });
+    async function publish(title, actor = alice) {
+        const work = await model.createWork(actor, title);
+        await model.saveWork(actor, work._id, 0, upload());
+        return { work, ...(await model.publishCommunityWork(actor, work._id)) };
+    }
+    function input(publication, changes, suffix = 'first', extra = {}) {
+        return { fileId: publication.fileId.toHexString(), requestId: `state-request-000-${suffix}`,
+            clientId: `state-client-000-${suffix}`, seq: 1, baseRevision: 0, changes: JSON.stringify(changes), ...extra };
+    }
+    it('persists every ordinary scalar type and both list columns without changing the saved project', async () => {
+        const { work, publication } = await publish('persistent runtime values');
+        const file = await model.getCommunityFile(alice, publication._id);
+        const original = Buffer.from(blobs.get(file.path));
+        const initial = await model.getCommunityState(bob, publication._id);
+        assert.deepEqual(plain(initial), { ok: true, fileId: publication.fileId.toHexString(), revision: 0, values: [] });
+        await model.syncCommunityState(bob, publication._id, input(publication, [
+            variable('score', 0, 15), variable('player', '', '王五'), variable('ready', false, true),
+            list('names', [], ['王五']), list('scores', [], [15]),
+        ]));
+        const reopened = await model.getCommunityState(alice, publication._id);
+        assert.deepEqual(plain(reopened.values).map((item) => item.value), [15, '王五', true, ['王五'], [15]]);
+        assert.equal(reopened.revision, 1);
+        assert.deepEqual(Object.keys(reopened).sort(), ['fileId', 'ok', 'revision', 'values']);
+        assert.deepEqual(blobs.get(file.path), original);
+        assert.equal((await model.getWork(alice, work._id)).revision, 1);
+    });
+    it('atomically merges concurrent paired list appends and duplicate network retries', async () => {
+        const { publication } = await publish('concurrent classroom leaderboard');
+        const inputs = Array.from({ length: 15 }, (_, i) => input(publication, [
+            list('names', [], [`玩家${i}`]), list('scores', [], [i]),
+        ], `parallel-${i}`));
+        await Promise.all(inputs.flatMap((body, i) => [
+            model.syncCommunityState(i % 2 ? alice : bob, publication._id, body),
+            model.syncCommunityState(i % 2 ? alice : bob, publication._id, body),
+        ]));
+        const state = await model.getCommunityState(teacher, publication._id);
+        const names = state.values.find((item) => item.key === key('names')).value;
+        const scores = state.values.find((item) => item.key === key('scores')).value;
+        assert.equal(state.revision, inputs.length);
+        assert.equal(names.length, inputs.length);
+        assert.equal(scores.length, inputs.length);
+        for (let index = 0; index < names.length; index++) assert.equal(names[index], `玩家${scores[index]}`);
+        assert.equal(new Set(names).size, inputs.length);
+    });
+    it('honors deliberate list resets and later scalar replacements while rebasing independent appends', async () => {
+        const { publication } = await publish('list reset semantics');
+        const first = input(publication, [variable('score', 0, 15), list('names', [], ['甲'])]);
+        await model.syncCommunityState(alice, publication._id, first);
+        await model.syncCommunityState(bob, publication._id, input(publication,
+            [variable('score', 0, 3), list('names', [], ['乙'])], 'another'));
+        const reset = await model.syncCommunityState(alice, publication._id, {
+            ...first, requestId: 'state-request-000-reset', seq: 2, baseRevision: 2,
+            changes: [variable('score', 3, 0), list('names', ['甲', '乙'], [])],
+        });
+        assert.deepEqual(plain(reset.values).map((item) => item.value), [0, []]);
+        assert.deepEqual(plain(scratchState.mergeScratchList(['old', 'other'], ['old'], ['new', 'old'])), ['new', 'old', 'other']);
+    });
+    it('preserves both concurrent interior leaderboard insertions and keeps their names paired with scores', async () => {
+        const { publication } = await publish('middle insertion leaderboard');
+        await model.syncCommunityState(alice, publication._id, input(publication,
+            [list('names', [], ['A', 'C']), list('scores', [], [90, 30])], 'initial-rows'));
+        const first = input(publication, [list('names', ['A', 'C'], ['A', 'B', 'C']),
+            list('scores', [90, 30], [90, 60, 30])], 'middle-b', { baseRevision: 1 });
+        const second = input(publication, [list('names', ['A', 'C'], ['A', 'D', 'C']),
+            list('scores', [90, 30], [90, 50, 30])], 'middle-d', { baseRevision: 1 });
+        await Promise.all([model.syncCommunityState(alice, publication._id, first), model.syncCommunityState(bob, publication._id, second)]);
+        const state = await model.getCommunityState(teacher, publication._id);
+        const names = state.values.find((item) => item.key === key('names')).value;
+        const scores = state.values.find((item) => item.key === key('scores')).value;
+        assert.equal(names.length, 4);
+        assert.equal(scores.length, 4);
+        const expected = { A: 90, B: 60, C: 30, D: 50 };
+        names.forEach((name, index) => assert.equal(scores[index], expected[name]));
+        assert.deepEqual(plain(scratchState.mergeScratchList(['A', 'X', 'B', 'C'], ['A', 'B', 'C'], ['A', 'B', 'Y', 'C'])),
+            ['A', 'X', 'B', 'Y', 'C']);
+        assert.deepEqual(plain(scratchState.mergeScratchList([90, 60, 60, 30], [90, 60, 30], [90, 60, 50, 30])),
+            [90, 60, 60, 50, 30]);
+    });
+    it('validates bounded payloads and keeps variable keys as inert data', async () => {
+        const { publication } = await publish('safe shared data');
+        const payloads = [null, {}, '[', [{ key: 'a', kind: 'unknown', before: 0, value: 1 }],
+            [variable('bad', 0, { $set: 'bad' })], [variable('bad', 0, null)], [variable('bad', 0, Infinity)],
+            [list('bad', [], [undefined])], [list('bad', [], Array(10001).fill(1))],
+            [variable('bad', '', 'x'.repeat(8193))], [variable('x', 0, 1), variable('x', 1, 2)],
+            Array.from({ length: 1001 }, (_, i) => variable(`${i}`, 0, 1)),
+            Array.from({ length: 100 }, (_, i) => variable(`${i}`, '', 'x'.repeat(8192)))];
+        for (const changes of payloads) {
+            await assert.rejects(model.syncCommunityState(alice, publication._id,
+                { ...input(publication, []), changes }), ValidationError);
+        }
+        assert.equal((await model.getCommunityState(alice, publication._id)).revision, 0);
+        const safe = await model.syncCommunityState(alice, publication._id, input(publication,
+            [{ key: '__proto__', kind: 'variable', before: '', value: 'safe' },
+                { key: '$where.a', kind: 'variable', before: 0, value: 1 }]));
+        assert.deepEqual(plain(safe.values).map((entry) => entry.key), ['__proto__', '$where.a']);
+        assert.equal({}.polluted, undefined);
+    });
+    it('fences request sequences, retains duplicate protection after many other writes, and rejects evicted ancient retries', async () => {
+        const { publication } = await publish('runtime retry sequencing');
+        const first = input(publication, [list('names', [], ['甲'])]);
+        await model.syncCommunityState(alice, publication._id, first);
+        await assert.rejects(model.syncCommunityState(alice, publication._id, { ...first, seq: 3 }), ValidationError);
+        await assert.rejects(model.syncCommunityState(alice, publication._id,
+            { ...first, requestId: 'changed-same-sequence' }), ValidationError);
+        // Simulate older accepted browser sessions without creating hundreds of games.
+        const id = `${alice.domainId}:${publication._id}`;
+        const stored = await model.communityStates.findOne({ _id: id });
+        stored.clients.push(...Array.from({ length: 255 }, (_, i) => ({ id: `prior-browser-client-${i}`, uid: bob.uid,
+            seq: 1, requestId: `prior-browser-request-${i}`, revision: i + 2 })));
+        stored.revision = 256;
+        await model.communityStates.replaceOne({ _id: id }, stored);
+        const retry = await model.syncCommunityState(alice, publication._id, first);
+        assert.equal(retry.revision, 256);
+        assert.deepEqual(plain(retry.values[0].value), ['甲']);
+        await model.syncCommunityState(bob, publication._id, input(publication, [list('names', ['甲'], ['甲', '乙'])],
+            'new-browser', { baseRevision: 256 }));
+        await assert.rejects(model.syncCommunityState(alice, publication._id, first), ValidationError);
+        assert.deepEqual(plain((await model.getCommunityState(alice, publication._id)).values[0].value), ['甲', '乙']);
+    });
+    it('preserves compatible keys on publication update while rejecting stale versions, withdrawn works and other domains', async () => {
+        const actor = { ...alice, domainId: 'state-isolation' };
+        const { work, publication } = await publish('shared state update', actor);
+        await model.syncCommunityState(actor, publication._id, input(publication, [variable('score', 0, 10)]));
+        await assert.rejects(model.getCommunityState(foreign, publication._id), NotFoundError);
+        await assert.rejects(model.syncCommunityState(foreign, publication._id, input(publication, [variable('score', 0, 20)])), NotFoundError);
+        await model.saveWork(actor, work._id, 1, upload(project('updated visual')));
+        const updated = await model.publishCommunityWork(actor, work._id);
+        const state = await model.getCommunityState(actor, publication._id);
+        assert.equal(state.fileId, updated.publication.fileId.toHexString());
+        assert.equal(state.values[0].value, 10);
+        await assert.rejects(model.syncCommunityState(actor, publication._id, input(publication,
+            [variable('score', 10, 100)], 'old-project', { baseRevision: state.revision })), ValidationError);
+        await model.unpublishCommunityWork(actor, publication._id);
+        await assert.rejects(model.getCommunityState(actor, publication._id), NotFoundError);
+        await assert.rejects(model.syncCommunityState(actor, publication._id, input(updated.publication, [])), NotFoundError);
+        await deleteDomainData(actor.domainId);
+        assert.equal(await model.communityStates.countDocuments({ domainId: actor.domainId }), 0);
+    });
+    it('wires the state handler to the shared model and enforces membership and mutation origin', async () => {
+        const { publication } = await publish('state API security');
+        const make = (method, actor, origin = 'https://onebyone.test') => Object.assign(new handlers.ScratchCommunityStateHandler(), {
+            domain: { _id: actor.domainId, domainType: 'scratch' }, user: { _id: actor.uid, hasPerm: () => actor.isTeacher },
+            UiContext: {}, checkPriv: () => { if (!actor.uid) throw new PermissionError(); }, limitRate: async () => {},
+            request: { method, host: 'onebyone.test', headers: { origin }, params: { communityId: publication._id.toHexString() },
+                body: input(publication, [variable('score', 0, 9)]), query: {} },
+            response: { headers: {}, addHeader(name, value) { this.headers[name] = value; } },
+        });
+        await database.collection('domain.user').updateOne({ domainId: bob.domainId, uid: bob.uid }, { $set: { join: true } }, { upsert: true });
+        const writer = make('post', bob);
+        await writer.prepare();
+        await writer.postSync();
+        assert.equal(writer.response.headers['Cache-Control'], 'private, no-store');
+        assert.equal(writer.response.body.values[0].value, 9);
+        const reader = make('get', teacher);
+        await reader.prepare();
+        await reader.get();
+        assert.equal(reader.response.body.values[0].value, 9);
+        await assert.rejects(make('post', bob, 'https://outside.test').prepare(), CsrfTokenError);
+        await assert.rejects(make('get', { ...bob, uid: 0 }).prepare(), PermissionError);
+        await assert.rejects(make('get', { ...bob, uid: 99999 }).prepare(), PermissionError);
+        const otherDomain = make('get', foreign);
+        await otherDomain.prepare();
+        await assert.rejects(otherDomain.get(), NotFoundError);
+    });
+});
+
 describe('Scratch community engagement and private teacher analytics', () => {
     async function publish(title, actor = alice) {
         const work = await model.createWork(actor, title);
@@ -1691,6 +1865,7 @@ describe('Scratch community engagement and private teacher analytics', () => {
         const prefixed = load('packages/hydrooj/src/model/scratch.ts', {
             __Date: MetricDate, '../context': {}, '../error': errors, '../lib/scratch_files': scratchFiles,
             '../logger': { Logger: class { warn() {} } }, '../lib/asset_delivery': assetDelivery,
+            '../lib/scratch_state': scratchState,
             '../service/db': mappedDb, './storage': {},
         });
         await prefixed.apply({ on() {} });

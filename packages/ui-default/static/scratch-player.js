@@ -16,8 +16,10 @@
   let sentProject = false;
   let loaded = false;
   let runtime = null;
+  let sharedState = null;
   const fail = (text) => {
     runtime?.stop();
+    sharedState?.stop(true);
     clearTimeout(timer);
     controller.abort();
     stopped = true;
@@ -148,6 +150,110 @@
     };
   };
   runtime = createRuntimeTracker();
+  const createSharedState = () => {
+    if (!memberOnly || typeof config?.stateUrl !== 'string') return null;
+    const endpoint = new URL(config.stateUrl, location.href);
+    if (endpoint.origin !== location.origin || !['http:', 'https:'].includes(endpoint.protocol)) throw new Error('作品数据地址无效。');
+    const label = document.querySelector('[data-community-state-status]');
+    const clientId = crypto.randomUUID();
+    let sequence = 0;
+    let pending = null;
+    let retryTimer = null;
+    let ending = false;
+    let blocked = false;
+    let localError = false;
+    let localErrorGeneration = 0;
+    const show = (text, error = false) => {
+      if (label) { label.textContent = text; label.dataset.error = String(error); }
+    };
+    const request = async (body) => {
+      const abort = new AbortController();
+      const timeout = setTimeout(() => abort.abort(), 12000);
+      try {
+        const response = await fetch(endpoint.href, { method: body ? 'POST' : 'GET', credentials: 'same-origin',
+          cache: 'no-store', redirect: 'error', headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+          ...(body ? { body, keepalive: new Blob([body.toString()]).size < 60000 } : {}), signal: abort.signal });
+        const result = await response.json();
+        if (!response.ok || !result.ok || result.fileId !== config.stateFileId ||
+            !Number.isSafeInteger(result.revision) || !Array.isArray(result.values)) {
+          const error = new Error('作品数据暂时无法读取。请返回社区重新打开，避免覆盖已有数据。');
+          error.permanent = [400, 403, 404, 409].includes(response.status) ||
+            (response.ok && result.ok && result.fileId !== config.stateFileId);
+          throw error;
+        }
+        return result;
+      } finally { clearTimeout(timeout); }
+    };
+    const send = async () => {
+      if (!pending || pending.sending || blocked) return;
+      const current = pending;
+      current.sending = true;
+      if (current.body && !localError) show('正在保存课堂共享数据…');
+      try {
+        const result = await request(current.body);
+        if (pending !== current) return;
+        pending = null;
+        if (current.body && current.errorGeneration === localErrorGeneration) localError = false;
+        if (!localError) show('课堂共享数据已同步');
+        if (!blocked && frame.isConnected) frame.contentWindow.postMessage({ channel, type: 'communityStateSaved', id: current.id,
+          revision: result.revision, values: result.values }, '*');
+      } catch (error) {
+        if (error.permanent) {
+          blocked = true;
+          if (!localError) show('共享数据未保存，请返回社区重新打开作品。', true);
+        } else {
+          if (!localError) show('连接暂时中断，共享数据正在重试保存…', true);
+          if (!ending) retryTimer = setTimeout(() => { retryTimer = null; void send(); }, 3000);
+        }
+      } finally { current.sending = false; }
+    };
+    const flushFrame = () => {
+      if (!loaded || ending || blocked || stopped) return;
+      frame.contentWindow.postMessage({ channel, type: 'flushCommunityState' }, '*');
+    };
+    const onVisibility = () => { if (document.hidden) flushFrame(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    return {
+      flushFrame,
+      reportError() {
+        if (blocked) return;
+        localError = true;
+        localErrorGeneration++;
+        show('作品运行数据超出保存限制，本次变化尚未保存。', true);
+      },
+      async load() {
+        const state = await request();
+        show('课堂共享数据已同步');
+        return { revision: state.revision, values: state.values };
+      },
+      receive(data) {
+        if (blocked || pending || !Number.isSafeInteger(data.id) || data.id < 1 ||
+            !Number.isSafeInteger(data.baseRevision) || data.baseRevision < 0 || !Array.isArray(data.changes)) return;
+        const changes = JSON.stringify(data.changes);
+        if (data.changes.length > 1000 || new Blob([changes]).size > 512 * 1024) {
+          blocked = true;
+          show('共享数据过大，本次更改未保存，请老师检查作品。', true);
+          return;
+        }
+        pending = { id: data.id, sending: false, errorGeneration: localErrorGeneration, body: data.changes.length ? new URLSearchParams({ operation: 'sync',
+          requestId: crypto.randomUUID(), clientId, seq: ++sequence, fileId: config.stateFileId,
+          baseRevision: data.baseRevision, changes }) : null };
+        void send();
+      },
+      stop(disable = false) {
+        ending = true;
+        blocked = blocked || disable;
+        clearTimeout(retryTimer);
+        document.removeEventListener('visibilitychange', onVisibility);
+        void send();
+      },
+    };
+  };
+  let pendingState;
+  try {
+    sharedState = createSharedState();
+    if (sharedState) pendingState = sharedState.load().catch((error) => { if (!stopped) fail(error.message); return null; });
+  } catch (error) { fail(error.message); }
   const downloadProject = async () => {
     const config = JSON.parse(root.dataset.config);
     const url = new URL(config.projectUrl, location.href);
@@ -172,15 +278,28 @@
   };
   let pendingProject;
   window.addEventListener('message', async (event) => {
-    if (stopped || event.source !== frame.contentWindow || event.origin !== 'null' || event.data?.channel !== channel) return;
+    if (event.source !== frame.contentWindow || event.origin !== 'null' || event.data?.channel !== channel) return;
     try {
+      // The iframe's pagehide/visibility flush arrives asynchronously. Accept
+      // that final trusted state after our own pagehide, using keepalive; every
+      // other late message still stops at the page lifecycle boundary.
+      if (event.data.type === 'communityStateSync' && loaded) {
+        sharedState?.receive(event.data);
+        return;
+      }
+      if (event.data.type === 'communityStateError' && loaded) {
+        sharedState?.reportError();
+        return;
+      }
+      if (stopped) return;
       if (event.data.type === 'ready' && !initialized) {
         initialized = true;
         if (memberOnly) message.textContent = '正在读取作品，请稍等…';
         const result = await (pendingProject || downloadProject());
+        const state = pendingState ? await pendingState : null;
         if (stopped || !result) return;
         frame.contentWindow.postMessage({ channel, type: 'init', mode: 'player', readOnly: true,
-          title: result.title, project: result.project }, '*', [result.project]);
+          title: result.title, project: result.project, ...(state ? {communityState: state} : {}) }, '*', [result.project]);
         sentProject = true;
         if (memberOnly) message.textContent = '作品已读取，正在准备舞台…';
       } else if (event.data.type === 'loaded' && sentProject) {
@@ -196,11 +315,18 @@
       if (!stopped) fail(error.name === 'AbortError' ? '作品加载已停止，请重新打开。' : error.message);
     }
   });
-  window.addEventListener('pagehide', () => { runtime?.stop(); stopped = true; controller.abort(); clearTimeout(timer); }, { once: true });
+  window.addEventListener('pagehide', () => {
+    sharedState?.flushFrame();
+    runtime?.stop();
+    sharedState?.stop();
+    stopped = true;
+    controller.abort();
+    clearTimeout(timer);
+  }, { once: true });
   window.addEventListener('pageshow', (event) => { if (event.persisted) location.reload(); });
   // v must be first so older site service workers bypass their entry cache.
   frame.src = `/scratch-editor/editor.html?v=${encodeURIComponent(root.dataset.editorVersion || 'unavailable')}&lang=zh-cn#channel=${encodeURIComponent(channel)}`;
-  if (memberOnly) {
+  if (memberOnly && !stopped) {
     message.textContent = '正在准备播放器，同时读取作品…';
     // Start the authorized download while Scratch boots, and handle early
     // failures immediately even if the iframe never reaches its ready event.

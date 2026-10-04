@@ -496,6 +496,8 @@ export class ScratchCommunityWorkHandler extends ScratchHandler {
         const projectConfig = { editorVersion: getScratchEditorVersion(), title: communityWork.title,
             projectUrl: this.url('scratch_community_project', { communityId: communityWork._id }),
             metricsUrl: this.url('scratch_community_metrics', { communityId: communityWork._id }),
+            stateUrl: this.url('scratch_community_state', { communityId: communityWork._id }),
+            stateFileId: communityWork.fileId.toHexString(),
             maxFileSize: SCRATCH_MAX_FILE_SIZE, memberOnly: true };
         this.UiContext.scratchPlayer = projectConfig;
         const communityMetrics = await scratch.getCommunityMetrics(this.actor, communityWork._id);
@@ -534,6 +536,19 @@ export class ScratchCommunityMetricsHandler extends ScratchHandler {
         const { sessionId, seq, seconds } = this.request.body;
         this.response.type = 'application/json';
         this.response.body = await scratch.heartbeatCommunityRuntime(this.actor, this.routeId('communityId'), sessionId, seq, seconds);
+    }
+}
+
+export class ScratchCommunityStateHandler extends ScratchHandler {
+    async get() {
+        this.response.type = 'application/json';
+        this.response.body = await scratch.getCommunityState(this.actor, this.routeId('communityId'));
+    }
+
+    async postSync() {
+        await this.limitRate('scratch_community_state', 60, 180);
+        this.response.type = 'application/json';
+        this.response.body = await scratch.syncCommunityState(this.actor, this.routeId('communityId'), this.request.body);
     }
 }
 
@@ -755,6 +770,7 @@ export async function apply(ctx: Context) {
     ctx.Route('scratch_community_publish', '/scratch/work/:workId/community', ScratchCommunityPublishHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_community_work', '/scratch/community/:communityId', ScratchCommunityWorkHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_community_metrics', '/scratch/community/:communityId/metrics', ScratchCommunityMetricsHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_community_state', '/scratch/community/:communityId/state', ScratchCommunityStateHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_community_analytics', '/scratch/community/:communityId/analytics', ScratchCommunityAnalyticsHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_community_project', '/scratch/community/:communityId/project', ScratchCommunityProjectHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_community_thumbnail', '/scratch/community/:communityId/thumbnail', ScratchCommunityThumbnailHandler, PRIV.PRIV_USER_PROFILE);

@@ -1,0 +1,30 @@
+{% if badgeAcTheme and (badgeAcTheme.acImage or badgeAcTheme.themeSound) %}
+<script>
+  (function () {
+    var connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (connection && connection.saveData) return;
+    var theme = JSON.parse('{{ badgeAcTheme|json|jsesc|safe }}');
+    var cache = window.__hydroBadgeAcPrefetch || (window.__hydroBadgeAcPrefetch = {});
+    var preload = function (url, type, rel) {
+      if (!url || cache[url]) return;
+      var link = document.createElement('link');
+      link.rel = rel;
+      link.as = type;
+      link.href = url;
+      link.setAttribute('fetchpriority', 'low');
+      cache[url] = true;
+      document.head.appendChild(link);
+    };
+    // Start the exact display variant during HTML parsing. Waiting for load +
+    // idle can miss a quick first AC; rel=prefetch alone also does not decode it.
+    preload(theme.acImage, 'image', 'preload');
+    var sound = function () { preload(theme.themeSound, 'audio', 'prefetch'); };
+    var scheduleSound = function () {
+      if (window.requestIdleCallback) window.requestIdleCallback(sound, { timeout: 8000 });
+      else window.setTimeout(sound, 2000);
+    };
+    if (document.readyState === 'complete') scheduleSound();
+    else window.addEventListener('load', scheduleSound, { once: true });
+  }());
+</script>
+{% endif %}

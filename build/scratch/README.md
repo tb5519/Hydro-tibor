@@ -116,3 +116,27 @@ tabs and external public shares are excluded. A single server lease per member
 and publication prevents overlapping tabs from adding the same wall time twice.
 Teacher additions affect the public totals and ranking while retaining their
 separate origin in the private analytics view.
+
+## Shared community runtime data
+
+Community playback persists ordinary stage/sprite variables and lists in a
+separate classroom/publication state document. All members of that classroom
+use the same data. The initial saved values are restored before the green flag;
+changed values save about once per second and idle players poll every five
+seconds. The stage footer reports sync success or an unsaved/network condition.
+External links and editable source projects retain their existing behavior.
+
+Keys identify original targets and stable Scratch variable IDs. Clone-local
+variables and temporary procedure arguments do not survive a run. Compatible
+IDs survive same-title publication updates; stale open versions cannot write.
+Ordinary scripts still behave normally: a block that sets a variable to zero or
+clears a list deliberately changes that shared value. This is shared program
+data, not a paused VM snapshot or a replay of sprites, threads and timers.
+
+All changed fields commit together using a revision CAS. Incremental list
+insertions are rebased against concurrent additions; explicit replacements and
+scalar assignments use the latest accepted value. Per-browser sequences make
+uncertain network retries idempotent. The authenticated parent owns endpoints,
+credentials and request IDs; the opaque iframe exchanges bounded values only.
+State is limited to 512 KB, 1,000 values, 10,000 items per list and 8,192 characters
+per string. Invalid/oversized data is reported, never silently shown as saved.
