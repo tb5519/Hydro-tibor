@@ -1,21 +1,21 @@
 {% extends "layout/basic.html" %}
 {% block content %}
 <div class="problem-create-shell problem-objective-shell">
-  <a class="problem-create-back" href="{{ url('problem_create') }}"><span aria-hidden="true">←</span> 返回类型选择</a>
+  <a class="problem-create-back" href="{{ url('problem_objective') }}"><span aria-hidden="true">←</span> 返回客观题工作台</a>
   <header class="problem-create-heading problem-create-heading--compact">
-    <span class="problem-create-eyebrow">题库 · 客观题</span>
+    <span class="problem-create-eyebrow">题库 · 客观题工作台</span>
     <h1>{% if page_name == 'problem_edit_objective' %}编辑客观题{% else %}创建一道客观题{% endif %}</h1>
-    <p>写好题干，选定答案，再为它贴上知识点标签。</p>
+    <p>每次录入一道题，积累可重复组卷的素材。题目仅老师可见。</p>
   </header>
+  {% include "problem_objective_tabs.html" %}
   <div data-objective-editor data-initial="{{ {
     objective: objective|default({}),
     title: pdoc.title|default(''),
     pid: pdoc.pid|default(''),
     tags: pdoc.tag|default([]),
-    hidden: pdoc.hidden|default(false),
     difficulty: pdoc.difficulty|default(''),
     editing: page_name == 'problem_edit_objective',
-    cancelUrl: url('problem_detail', pid=pdoc.docId) if pdoc else url('problem_create')
+    cancelUrl: url('problem_objective')
   }|json }}">
     <div class="objective-card objective-loading" role="status">正在准备题目编辑器…</div>
   </div>

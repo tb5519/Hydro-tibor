@@ -4,7 +4,8 @@ import { describe, it } from 'node:test';
 import { STATUS } from '@hydrooj/common';
 import { judge } from '../../hydrojudge/src/judge/objective';
 import {
-    objectiveConfig, objectiveContent, ObjectiveQuestion, parseObjective, parseObjectiveTags,
+    buildObjectivePaper, objectiveConfig, objectiveContent, ObjectivePaper, ObjectiveQuestion,
+    parseObjective, parseObjectivePaper, parseObjectiveTags, rewriteObjectiveFiles,
 } from '../src/lib/objective';
 import { parseConfig } from '../src/lib/testdataConfig';
 
@@ -130,5 +131,109 @@ describe('compatibility with the objective judge', () => {
         assert.equal((await score(question, '1: B')).score, 100);
         assert.equal((await score(question, '1: A')).score, 0);
         assert.equal((await score(question, '{}')).score, 0);
+    });
+});
+
+describe('objective paper assembly', () => {
+    const paper: ObjectivePaper = {
+        version: 1,
+        items: [
+            { sourceId: 30, score: 20, title: 'source title', tags: ['循环'], objective: single },
+            { sourceId: 12, score: 50, title: 'multiple', tags: ['Python'], objective: parse({ kind: 'multiple', answers: ['A', 'C'] }) },
+            { sourceId: 90, score: 30, title: 'judge', tags: ['基础'], objective: parse({ kind: 'judge', answers: ['B'] }) },
+        ],
+    };
+
+    it('preserves teacher-selected order and strips extra request fields', () => {
+        assert.deepEqual(parseObjectivePaper(JSON.stringify({
+            version: 1, answers: ['spoofed'], items: [{ id: 20, score: 30, objective: single }, { id: 2, score: 70 }],
+        })), { version: 1, items: [{ id: 20, score: 30 }, { id: 2, score: 70 }] });
+    });
+
+    for (const [name, changes] of Object.entries({
+        'unknown version': { version: 2 },
+        'no items': { items: [] },
+        'too many items': { items: Array.from({ length: 101 }, (_, index) => ({ id: index + 1, score: 1 })) },
+        'duplicate source IDs': { items: [{ id: 2, score: 50 }, { id: 2, score: 50 }] },
+        'string source ID': { items: [{ id: '2', score: 10 }] },
+        'nonpositive source ID': { items: [{ id: 0, score: 10 }] },
+        'fractional source ID': { items: [{ id: 2.5, score: 10 }] },
+        'unsafe source ID': { items: [{ id: Number.MAX_SAFE_INTEGER + 1, score: 10 }] },
+        'string score': { items: [{ id: 2, score: '10' }] },
+        'zero score': { items: [{ id: 2, score: 0 }] },
+        'oversized score': { items: [{ id: 2, score: 101 }] },
+        'fractional score': { items: [{ id: 2, score: 1.5 }] },
+        'excess total score': { items: Array.from({ length: 11 }, (_, index) => ({ id: index + 1, score: 100 })) },
+        'null item': { items: [null] },
+    })) {
+        it(`rejects ${name}`, () => assert.throws(() => parseObjectivePaper(JSON.stringify({
+            version: 1, items: [{ id: 1, score: 100 }], ...changes,
+        })), { name: 'ValidationError' }));
+    }
+
+    it('rejects malformed paper data', () => {
+        for (const value of ['{', 'null', '[]', 'x'.repeat(20001)]) {
+            assert.throws(() => parseObjectivePaper(value), { name: 'ValidationError' });
+        }
+    });
+
+    it('numbers controls uniquely and does not publish private titles, keys or analysis', async () => {
+        const built = buildObjectivePaper(paper, '完成下面三道题。');
+        assert.ok(built.content.startsWith('完成下面三道题。'));
+        assert.match(built.content, /第 1 题 · 单选题（20 分）/);
+        assert.match(built.content, /\{\{ select\(1\) \}\}/);
+        assert.match(built.content, /\{\{ multiselect\(2\) \}\}/);
+        assert.match(built.content, /\{\{ select\(3\) \}\}/);
+        assert.equal(built.content.includes(single.analysis), false);
+        assert.equal(built.content.includes('source title'), false);
+        assert.equal(built.content.includes('answers'), false);
+        assert.deepEqual(load(built.config), { type: 'objective', answers: { 1: ['A', 20], 2: [['A', 'C'], 50], 3: ['B', 30] } });
+        const publicConfig = await parseConfig(built.config, ['config.yaml']);
+        assert.equal(publicConfig.count, 3);
+        assert.equal('answers' in publicConfig, false);
+    });
+
+    it('grades all question kinds with teacher-configured weights and existing partial credit', async () => {
+        const built = buildObjectivePaper(paper);
+        let result: any;
+        const grade = async (submission: string) => {
+            await judge({
+                config: load(built.config), code: { content: Buffer.from(submission) },
+                next: () => {}, end: (value) => { result = value; },
+            } as any);
+            return result.score;
+        };
+        assert.equal(await grade('1: A\n2: [C, A]\n3: B'), 100);
+        assert.equal(await grade('1: A\n2: [A]\n3: B'), 75);
+        assert.equal(await grade('1: B\n2: [A, B]\n3: A'), 0);
+    });
+
+    it('prevents answer controls in the optional introduction', () => {
+        assert.throws(() => buildObjectivePaper(paper, 'Extra {{ select(42) }}'), { name: 'ValidationError' });
+        assert.throws(() => buildObjectivePaper(paper, 'x'.repeat(20001)), { name: 'ValidationError' });
+    });
+
+    it('rewrites statement asset names without publishing analysis assets or changing the source', () => {
+        const original = parse({
+            stem: '![图](file://%E5%BE%AA%E7%8E%AF.png?width=200)',
+            options: ['![同图](file://%E5%BE%AA%E7%8E%AF.png)', '![另一图](file://second.png)'],
+            analysis: '![解答](file://private-answer.png)',
+        });
+        const filenames: string[] = [];
+        const rewritten = rewriteObjectiveFiles(original, (filename) => {
+            filenames.push(filename);
+            return `q1-${filename}`;
+        });
+        assert.deepEqual(filenames, ['循环.png', '循环.png', 'second.png']);
+        assert.equal(rewritten.stem, '![图](file://q1-%E5%BE%AA%E7%8E%AF.png?width=200)');
+        assert.equal(rewritten.analysis, original.analysis);
+        assert.ok(original.stem.startsWith('![图](file://%E5%BE%AA'));
+        assert.equal(objectiveContent(rewritten).includes('private-answer'), false);
+    });
+
+    it('rejects invalid or traversing statement attachment references', () => {
+        for (const name of ['%zz.png', '../private.png', '..%2fprivate.png', '..%5cprivate.png', '%00.png', '?x=1']) {
+            assert.throws(() => rewriteObjectiveFiles(parse({ stem: `![图](file://${name})` }), (value) => value), { name: 'ValidationError' });
+        }
     });
 });

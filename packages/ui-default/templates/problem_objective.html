@@ -1,0 +1,20 @@
+{% extends "layout/basic.html" %}
+{% block content %}
+<div class="problem-create-shell problem-objective-workbench-shell">
+  <a class="problem-create-back" href="{{ url('problem_main') }}"><span aria-hidden="true">←</span> 返回题库</a>
+  <header class="problem-create-heading problem-create-heading--compact">
+    <span class="problem-create-eyebrow">题库 · 客观题工作台</span>
+    <h1>把好题，组成一份好练习</h1>
+    <p>从知识点出发挑选题目，安排顺序与分值，准备好后再发布给学员。</p>
+  </header>
+  {% include "problem_objective_tabs.html" %}
+  <div data-objective-workbench data-initial="{{ {
+    itemsUrl: url('problem_objective_items'),
+    publishUrl: url('problem_objective'),
+    createUrl: url('problem_create_objective')
+  }|json }}">
+    <div class="objective-card objective-loading" role="status">正在打开客观题素材库…</div>
+  </div>
+  <noscript><p class="objective-form-error">请启用 JavaScript，以使用选题、排序和组卷功能。</p></noscript>
+</div>
+{% endblock %}

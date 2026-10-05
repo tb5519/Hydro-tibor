@@ -34,7 +34,8 @@ import {
 import { isInlineRasterImage } from '../lib/inline_image';
 import { getMistakePromptState } from '../lib/mistake_prompt';
 import {
-    objectiveConfig, objectiveContent, parseObjective, parseObjectiveTags,
+    buildObjectivePaper, objectiveConfig, objectiveContent, ObjectivePaper, parseObjective, parseObjectivePaper, parseObjectiveTags,
+    rewriteObjectiveFiles,
 } from '../lib/objective';
 import { loadObjectiveCorrectAnswers } from '../lib/objective_correct_answers';
 import { buildObjectiveMergedReview } from '../lib/objective_merged_review';
@@ -50,6 +51,7 @@ import {
 import { PERM, PRIV, STATUS } from '../model/builtin';
 import * as contest from '../model/contest';
 import * as discussion from '../model/discussion';
+import * as document from '../model/document';
 import domain from '../model/domain';
 import * as mistake from '../model/mistake';
 import * as oplog from '../model/oplog';
@@ -216,7 +218,7 @@ async function buildAutoProblemCategories(domainId: string, udoc: User): Promise
 
 const defaultSearch = async (domainId: string, q: string, options?: ProblemSearchOptions) => {
     const escaped = escapeRegExp(q.toLowerCase());
-    const projection: (keyof ProblemDoc)[] = ['domainId', 'docId', 'pid'];
+    const projection: (keyof ProblemDoc)[] = ['domainId', 'docId', 'pid', 'objectiveKind'];
     const $regex = new RegExp(q.length >= 2 ? escaped : `^${escaped}`, 'gim');
     const textFilter: Filter<ProblemDoc> = { $or: [{ pid: { $regex } }, { title: { $regex } }, { tag: q }] };
     const excludedDocIds = new Set(options?.excludeDocIds || []);
@@ -227,6 +229,8 @@ const defaultSearch = async (domainId: string, q: string, options?: ProblemSearc
     if (!exactPdoc && /^P\d+$/.test(q)) {
         exactPdoc = await problem.get(domainId, +q.substring(1), projection);
     }
+    // Exact-ID lookup must use the same source exclusion as the paginated catalog.
+    if (problem.isObjectiveSource(exactPdoc)) exactPdoc = null;
     if (exactPdoc && excludedDocIds.has(exactPdoc.docId)) exactPdoc = null;
     const normalFilter: Filter<ProblemDoc> = exactPdoc
         ? { $and: [filter, { docId: { $ne: exactPdoc.docId } }] }
@@ -723,6 +727,11 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
         }
         this.pdoc = await problem.get(domainId, pid);
         if (!this.pdoc) throw new ProblemNotFoundError(domainId, pid);
+        // Check before the contest branch: possession of a contest link never exposes a source question.
+        if (problem.isObjectiveSource(this.pdoc)) {
+            this.checkPerm(PERM.PERM_VIEW_PROBLEM);
+            this.checkPerm(PERM.PERM_CREATE_PROBLEM);
+        }
         const reviewStudent = reviewUid === undefined ? null
             : await authorizeHomeworkReview(this.user, this.domain, this.tdoc, this.pdoc.docId, reviewUid);
         if (reviewStudent) this.tsdoc = await contest.getStatus(domainId, tid, reviewUid);
@@ -746,6 +755,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             ddoc = await domain.get(this.pdoc.reference.domainId);
             const pdoc = await problem.get(this.pdoc.reference.domainId, this.pdoc.reference.pid);
             if (!ddoc || !pdoc) throw new ProblemNotFoundError(this.pdoc.reference.domainId, this.pdoc.reference.pid);
+            if (problem.isObjectiveSource(pdoc)) throw new ProblemNotFoundError(this.pdoc.reference.domainId, this.pdoc.reference.pid);
             this.pdoc.config = pdoc.config;
             this.pdoc.additional_file = pdoc.additional_file;
         }
@@ -1206,6 +1216,7 @@ export class ProblemEditHandler extends ProblemManageHandler {
         this.response.body.additional_file = sortFiles(this.pdoc.additional_file || []);
         this.response.body.statementLangs = this.ctx.i18n.langs(false);
         if (this.pdoc.objectiveKind) {
+            this.checkPerm(PERM.PERM_CREATE_PROBLEM);
             if (this.pdoc.reference) throw new ProblemIsReferencedError('edit objective question');
             const privateDoc = await problem.get(this.pdoc.domainId, this.pdoc.docId, ['objective']);
             if (!privateDoc?.objective) throw new ProblemConfigError();
@@ -1232,6 +1243,7 @@ export class ProblemEditHandler extends ProblemManageHandler {
         if (typeof newPid !== 'string') newPid = `P${newPid}`;
         if (newPid !== this.pdoc.pid && await problem.get(domainId, newPid)) throw new ProblemAlreadyExistError(newPid);
         if (this.pdoc.objectiveKind) {
+            this.checkPerm(PERM.PERM_CREATE_PROBLEM);
             if (this.pdoc.reference) throw new ProblemIsReferencedError('edit objective question');
             const question = parseObjective(objective);
             const tags = parseObjectiveTags(tag);
@@ -1243,7 +1255,7 @@ export class ProblemEditHandler extends ProblemManageHandler {
             try {
                 await problem.addTestdata(domainId, this.pdoc.docId, 'config.yaml', Buffer.from(config), this.user._id);
                 await problem.edit(domainId, this.pdoc.docId, {
-                    title, content: statement, pid: newPid, hidden, tag: tags, difficulty, html: false,
+                    title, content: statement, pid: newPid, hidden: true, tag: tags, difficulty, html: false,
                     objective: question, objectiveKind: question.kind, config,
                 });
             } catch (error) {
@@ -1257,7 +1269,7 @@ export class ProblemEditHandler extends ProblemManageHandler {
                 });
                 throw error;
             }
-            this.response.redirect = this.url('problem_detail', { pid: newPid || this.pdoc.docId });
+            this.response.redirect = this.url('problem_objective', {}, { saved: this.pdoc.docId });
             return;
         }
         if (!content) throw new ValidationError('content');
@@ -1672,12 +1684,11 @@ export class ProblemCreateObjectiveHandler extends Handler {
     @post('title', Types.Title)
     @post('objective', Types.Content)
     @post('pid', Types.ProblemId, true, (i) => /^(?:[a-z0-9]{1,10}-)?[a-z][a-z0-9]*$/i.test(i))
-    @post('hidden', Types.Boolean)
     @post('difficulty', Types.PositiveInt, (i) => +i <= 10, true)
     @post('tag', Types.Content, true, null, parseCategory)
     async post(
         domainId: string, title: string, objective: string, pid: string | number = '',
-        hidden = false, difficulty = 0, tag: string[] = [],
+        difficulty = 0, tag: string[] = [],
     ) {
         const question = parseObjective(objective);
         const tags = parseObjectiveTags(tag);
@@ -1685,7 +1696,7 @@ export class ProblemCreateObjectiveHandler extends Handler {
         const config = objectiveConfig(question);
         if (typeof pid !== 'string') pid = `P${pid}`;
         if (pid && await problem.get(domainId, pid)) throw new ProblemAlreadyExistError(pid);
-        // Publish only after both the question and its judging configuration exist.
+        // Source questions always stay in the teacher's workspace, including legacy callers posting hidden=false.
         const docId = await problem.add(domainId, pid, title, content, this.user._id, tags, {
             hidden: true, difficulty, objective: question, objectiveKind: question.kind,
         });
@@ -1694,7 +1705,115 @@ export class ProblemCreateObjectiveHandler extends Handler {
             await copyObjectiveFiles(domainId, docId, content, this.user);
             // addTestdata's legacy event listeners run asynchronously; make the configuration
             // immediately available before the new question is visible or the request redirects.
-            await problem.edit(domainId, docId, { hidden, config });
+            await problem.edit(domainId, docId, { hidden: true, config });
+        } catch (error) {
+            await problem.del(domainId, docId);
+            throw error;
+        }
+        this.response.body = { pid: pid || docId };
+        this.response.redirect = this.url('problem_objective', {}, { added: docId });
+    }
+}
+
+export class ProblemObjectiveItemsHandler extends Handler {
+    @query('q', Types.String, true)
+    @query('kind', Types.Range(['single', 'multiple', 'judge']), true)
+    @query('tag', Types.String, true)
+    @query('page', Types.PositiveInt, true)
+    @query('pageSize', Types.PositiveInt, true)
+    async get(domainId: string, q = '', kind?: string, tag = '', page = 1, pageSize = 20) {
+        if (q.length > 200 || tag.length > 40 || page > 100000) throw new ValidationError('q');
+        pageSize = Math.min(pageSize, 50);
+        const sourceQuery: Filter<ProblemDoc> = { objectiveKind: { $in: ['single', 'multiple', 'judge'] }, reference: { $exists: false } };
+        const filter: Filter<ProblemDoc> = { ...sourceQuery };
+        if (kind) filter.objectiveKind = kind as ProblemDoc['objectiveKind'];
+        if (tag.trim()) filter.tag = tag.trim();
+        if (q.trim()) {
+            const regex = new RegExp(escapeRegExp(q.trim()), 'i');
+            filter.$or = [{ title: regex }, { pid: regex }, { 'objective.stem': regex }, { tag: regex }];
+        }
+        const [docs, total, tags] = await Promise.all([
+            document.getMulti(domainId, document.TYPE_PROBLEM, filter,
+                ['docId', 'pid', 'title', 'tag', 'difficulty', 'objectiveKind', 'objective'])
+                .sort({ docId: -1 }).skip((page - 1) * pageSize).limit(pageSize).toArray(),
+            document.count(domainId, document.TYPE_PROBLEM, filter),
+            document.coll.distinct('tag', { domainId, docType: document.TYPE_PROBLEM, ...sourceQuery }),
+        ]);
+        this.response.body = {
+            items: docs.map((doc) => ({
+                ...pick(doc, ['docId', 'pid', 'title', 'tag', 'difficulty', 'objectiveKind']),
+                objective: doc.objective,
+                editUrl: this.url('problem_edit', { pid: doc.pid || doc.docId }),
+                fileBaseUrl: this.url('problem_detail', { pid: doc.pid || doc.docId }),
+            })),
+            total,
+            page,
+            pageSize,
+            tags: tags.filter((value): value is string => typeof value === 'string').sort((a, b) => a.localeCompare(b, 'zh')),
+        };
+    }
+}
+
+export class ProblemObjectiveHandler extends Handler {
+    async get() {
+        this.response.template = 'problem_objective.html';
+        this.response.body = { page_name: 'problem_objective' };
+    }
+
+    @post('title', Types.Title)
+    @post('paper', Types.Content)
+    @post('pid', Types.ProblemId, true, (i) => /^(?:[a-z0-9]{1,10}-)?[a-z][a-z0-9]*$/i.test(i))
+    @post('content', Types.Content, true)
+    @post('tag', Types.Content, true, null, parseCategory)
+    async post(domainId: string, title: string, paper: string, pid: string | number = '', content = '', tag: string[] = []) {
+        const selection = parseObjectivePaper(paper);
+        if (typeof pid !== 'string') pid = `P${pid}`;
+        if (pid && await problem.get(domainId, pid)) throw new ProblemAlreadyExistError(pid);
+        const sourceIds = selection.items.map((item) => item.id);
+        const docs = await document.getMulti(domainId, document.TYPE_PROBLEM, {
+            docId: { $in: sourceIds }, objectiveKind: { $in: ['single', 'multiple', 'judge'] }, reference: { $exists: false },
+        }, ['docId', 'title', 'tag', 'objective', 'additional_file']).toArray();
+        const sources = new Map(docs.map((doc) => [doc.docId, doc]));
+        const files: { sourceId: number, oldName: string, newName: string }[] = [];
+        const snapshot: ObjectivePaper = {
+            version: 1,
+            items: selection.items.map(({ id, score }, index) => {
+                const source = sources.get(id);
+                if (!source?.objective) throw new ValidationError('paper', null, '部分原题已不存在，请刷新题目列表后重新选择');
+                const question = parseObjective(JSON.stringify(source.objective));
+                const renamed = new Map<string, string>();
+                const objective = rewriteObjectiveFiles(question, (filename) => {
+                    if (!source.additional_file?.some((file) => file.name === filename)) {
+                        throw new ValidationError('paper', null, `第 ${index + 1} 题缺少附件，请先编辑原题`);
+                    }
+                    if (!renamed.has(filename)) {
+                        const newName = `q${index + 1}-${files.length + 1}-${sanitize(filename)}`;
+                        renamed.set(filename, newName);
+                        files.push({ sourceId: id, oldName: filename, newName });
+                    }
+                    return renamed.get(filename);
+                });
+                return { sourceId: id, score, objective, title: source.title, tags: [...source.tag] };
+            }),
+        };
+        const built = buildObjectivePaper(snapshot, content);
+        const explicitTags = tag.map((value) => value.trim()).filter(Boolean);
+        const tags = explicitTags.length ? parseObjectiveTags(explicitTags)
+            : [...new Set(snapshot.items.flatMap((item) => item.tags))].slice(0, 20);
+        const docId = await problem.add(domainId, pid, title, built.content, this.user._id, tags, {
+            hidden: true, objectivePaper: snapshot,
+        });
+        try {
+            await problem.addTestdata(domainId, docId, 'config.yaml', Buffer.from(built.config), this.user._id);
+            const copies = await Promise.allSettled(files.map(async ({ sourceId, oldName, newName }) => {
+                await storage.copy(`problem/${domainId}/${sourceId}/additional_file/${oldName}`,
+                    `problem/${domainId}/${docId}/additional_file/${newName}`);
+                await problem.addAdditionalFile(domainId, docId, newName, '', this.user._id, true);
+            }));
+            const failed = copies.find((result) => result.status === 'rejected');
+            if (failed?.status === 'rejected') throw failed.reason;
+            // The configured paper becomes a normal catalog problem only after all copies succeed.
+            await problem.edit(domainId, docId, { hidden: false, config: built.config });
         } catch (error) {
             await problem.del(domainId, docId);
             throw error;
@@ -1713,7 +1832,10 @@ export const ProblemApi = {
         async (ctx, args) => {
             const pdoc = await problem.get(args.domainId, args.id);
             if (!pdoc) return null;
-            if (pdoc.hidden) ctx.checkPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN);
+            if (problem.isObjectiveSource(pdoc)) {
+                const actor = await user.getById(args.domainId, ctx.user._id);
+                if (!problem.canViewBy(pdoc, actor)) throw new PermissionError(PERM.PERM_CREATE_PROBLEM);
+            } else if (pdoc.hidden) ctx.checkPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN);
             return pdoc;
         },
     ),
@@ -1724,7 +1846,7 @@ export const ProblemApi = {
         }),
         async (ctx, args) => {
             const pdocs = await problem.getList(args.domainId, args.ids, ctx.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN) || ctx.user._id,
-                undefined, undefined, true);
+                false, undefined, true);
             return args.ids.map((id) => pdocs[+id]).filter((i) => i);
         },
     ),
@@ -1860,7 +1982,11 @@ export async function apply(ctx: Context) {
     ctx.Route('problem_solution_reply_raw', '/p/:pid/solution/:psid/:psrid/raw', ProblemSolutionRawHandler, PERM.PERM_VIEW_PROBLEM);
     ctx.Route('problem_statistics', '/p/:pid/stat', ProblemStatisticsHandler, PERM.PERM_VIEW_PROBLEM);
     ctx.Route('problem_create', '/problem/create', ProblemCreateHandler, PERM.PERM_CREATE_PROBLEM);
-    ctx.Route('problem_create_objective', '/problem/create/objective', ProblemCreateObjectiveHandler, PERM.PERM_CREATE_PROBLEM);
+    ctx.Route('problem_create_objective', '/problem/create/objective', ProblemCreateObjectiveHandler,
+        PERM.PERM_VIEW_PROBLEM, PERM.PERM_CREATE_PROBLEM);
+    ctx.Route('problem_objective', '/problem/objective', ProblemObjectiveHandler, PERM.PERM_VIEW_PROBLEM, PERM.PERM_CREATE_PROBLEM);
+    ctx.Route('problem_objective_items', '/problem/objective/items', ProblemObjectiveItemsHandler,
+        PERM.PERM_VIEW_PROBLEM, PERM.PERM_CREATE_PROBLEM);
     await ctx.inject(['api'], ({ api }) => {
         api.provide(ProblemApi);
     });

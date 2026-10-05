@@ -57,6 +57,7 @@ let hiddenUids;
 let allowScoreboard;
 let allowSelfRecord;
 let allowOtherRecord;
+let objectiveSourceIds;
 
 function same(a, b) {
     return a instanceof ObjectId && b instanceof ObjectId ? a.equals(b) : a === b;
@@ -110,9 +111,11 @@ const userModel = {
 };
 const problemModel = {
     PROJECTION_LIST: [], PROJECTION_CONTEST_LIST: [], default: {},
-    async get(domainId, pid) { return { docId: +pid, domainId, pid }; },
+    async get(domainId, pid) { return { docId: +pid, domainId, pid, objectiveKind: objectiveSourceIds.includes(+pid) ? 'single' : undefined }; },
+    getMulti() { return cursor(objectiveSourceIds.map((docId) => ({ docId }))); },
     async getList(domainId, pids) { return Object.fromEntries(pids.map((pid) => [pid, { docId: pid }])); },
-    canViewBy: () => true,
+    isObjectiveSource: (pdoc) => !!pdoc?.objectiveKind,
+    canViewBy: (pdoc, viewer) => !pdoc?.objectiveKind || viewer.hasPerm(PERM.PERM_CREATE_PROBLEM),
 };
 const contestModel = {
     async get(domainId, tid) { return domainId === 'A' && same(tid, contestId) ? tdoc : null; },
@@ -183,6 +186,7 @@ async function socket(viewer = account(), options = {}) {
 beforeEach(() => {
     calls = [];
     hiddenUids = [];
+    objectiveSourceIds = [];
     allowScoreboard = true;
     allowSelfRecord = true;
     allowOtherRecord = true;
@@ -225,6 +229,16 @@ describe('record list manager capability and navigation', () => {
 });
 
 describe('HTTP record list ownership boundary', () => {
+    it('excludes old source-question submissions before pagination, including contest and full-status lists', async () => {
+        objectiveSourceIds = [1];
+        fixtures.push({ ...fixtures[0], _id: new ObjectId(), pid: 2 });
+        assert.deepEqual((await http()).response.body.rdocs.map((row) => row.pid), [2]);
+        assert.deepEqual((await http(account(), { full: true })).response.body.rdocs.map((row) => row.pid), [2]);
+        fixtures.push({ ...fixtures[0], _id: new ObjectId(), contest: contestId });
+        assert.equal((await http(account(), { tid: contestId })).response.body.rdocs.length, 0);
+        assert.ok((await http(teacher())).response.body.rdocs.some((row) => row.pid === 1));
+    });
+
     it('defaults to only the student’s own current-domain formal submissions', async () => {
         const result = await http();
         assert.deepEqual(result.response.body.rdocs.map((row) => row.uid), [12]);
@@ -314,6 +328,19 @@ describe('HTTP record list ownership boundary', () => {
 });
 
 describe('record-conn ownership boundary', () => {
+    it('never broadcasts source-question records to learners, even through contest and no-template subscriptions', async () => {
+        objectiveSourceIds = [1];
+        const regular = await socket();
+        await regular.onRecordChange(fixtures[0]);
+        assert.equal(regular.deliveries.length, 0);
+        const contest = await socket(account(), { tid: contestId });
+        await contest.onRecordChange({ ...fixtures[0], contest: contestId });
+        assert.equal(contest.deliveries.length, 0);
+        const teacherConnection = await socket(teacher());
+        await teacherConnection.onRecordChange(fixtures[0]);
+        assert.equal(teacherConnection.deliveries.length, 1);
+    });
+
     it('binds all student subscriptions to self regardless of the requested username', async () => {
         for (const uidOrName of [undefined, '13', 'student-b', 'does-not-exist']) {
             calls = [];

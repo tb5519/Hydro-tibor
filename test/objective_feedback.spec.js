@@ -127,6 +127,7 @@ function feedbackHandler(options = {}) {
         },
         problem: {
             PROJECTION_PUBLIC: ['config', 'reference'], canViewBy: () => options.problemVisible !== false,
+            isObjectiveSource: (pdoc) => !!pdoc?.objectiveKind,
             get: async (domainId, pid, projection, raw) => {
                 sourceReads.push({ domainId, pid, raw });
                 if (options.reference && domainId === 'class-a') {

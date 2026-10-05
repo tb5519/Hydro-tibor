@@ -74,6 +74,7 @@ interface ProblemCreateOptions {
     hidden?: boolean;
     objectiveKind?: ProblemDoc['objectiveKind'];
     objective?: ProblemDoc['objective'];
+    objectivePaper?: ProblemDoc['objectivePaper'];
     reference?: { domainId: string, pid: number };
 }
 
@@ -83,6 +84,15 @@ const PROJECTION_BASE: Field[] = [
 ];
 
 export class ProblemModel {
+    static isObjectiveSource(pdoc?: Partial<ProblemDoc>) {
+        return !!pdoc?.objectiveKind;
+    }
+
+    /** Teaching materials are never part of the published problem catalog. */
+    static catalogQuery(query: Filter<ProblemDoc>): Filter<ProblemDoc> {
+        return { ...query, $and: [...(query.$and || []), { objectiveKind: { $exists: false } }] };
+    }
+
     static PROJECTION_CONTEST_LIST: Field[] = [
         ...PROJECTION_BASE, 'config',
     ];
@@ -151,7 +161,7 @@ export class ProblemModel {
         domainId: string, pid: string = '', title: string, content: string, owner: number,
         tag: string[] = [], meta: ProblemCreateOptions = {},
     ) {
-        const [doc] = await ProblemModel.getMulti(domainId, {})
+        const [doc] = await ProblemModel.getMulti(domainId, {}, undefined, true)
             .withReadPreference('primary')
             .sort({ docId: -1 }).limit(1).project({ docId: 1 })
             .toArray();
@@ -171,7 +181,7 @@ export class ProblemModel {
         const args: Partial<ProblemDoc> = {
             title,
             tag,
-            hidden: meta.hidden || false,
+            hidden: meta.objectiveKind ? true : meta.hidden || false,
             nSubmit: 0,
             nAccept: 0,
             sort: sortable(pid || `P${docId}`, ddoc?.namespaces),
@@ -183,6 +193,7 @@ export class ProblemModel {
         if (meta.reference) args.reference = meta.reference;
         if (meta.objectiveKind) args.objectiveKind = meta.objectiveKind;
         if (meta.objective) args.objective = meta.objective;
+        if (meta.objectivePaper) args.objectivePaper = meta.objectivePaper;
         await bus.parallel('problem/before-add', domainId, content, owner, docId, args);
         const result = await document.add(domainId, content, owner, document.TYPE_PROBLEM, docId, null, null, args);
         args.content = content;
@@ -213,8 +224,9 @@ export class ProblemModel {
         return res;
     }
 
-    static getMulti(domainId: string, query: Filter<ProblemDoc>, projection = ProblemModel.PROJECTION_LIST) {
-        return document.getMulti(domainId, document.TYPE_PROBLEM, query, projection).sort({ sort: 1 });
+    static getMulti(domainId: string, query: Filter<ProblemDoc>, projection = ProblemModel.PROJECTION_LIST, includeObjectiveSources = false) {
+        return document.getMulti(domainId, document.TYPE_PROBLEM,
+            includeObjectiveSources ? query : ProblemModel.catalogQuery(query), projection).sort({ sort: 1 });
     }
 
     /** @deprecated */
@@ -222,9 +234,10 @@ export class ProblemModel {
         domainId: string, query: Filter<ProblemDoc>,
         page: number, pageSize: number,
         projection = ProblemModel.PROJECTION_LIST,
+        includeObjectiveSources = false,
     ): Promise<[ProblemDoc[], number, number]> {
         return await db.paginate(
-            document.getMulti(domainId, document.TYPE_PROBLEM, query, projection).sort({ sort: 1, docId: 1 }),
+            ProblemModel.getMulti(domainId, query, projection, includeObjectiveSources).sort({ sort: 1, docId: 1 }),
             page, pageSize,
         );
     }
@@ -238,6 +251,9 @@ export class ProblemModel {
     }
 
     static async edit(domainId: string, _id: number, $set: Partial<ProblemDoc>): Promise<ProblemDoc> {
+        if ($set.objectiveKind || ($set.hidden === false && ProblemModel.isObjectiveSource(
+            await document.get(domainId, document.TYPE_PROBLEM, _id, ['objectiveKind']),
+        ))) $set.hidden = true;
         const delpid = $set.pid === '';
         const ddoc = await DomainModel.get(domainId);
         const $unset = delpid ? { pid: '' } : {};
@@ -256,6 +272,7 @@ export class ProblemModel {
     static async copy(domainId: string, _id: number, target: string, pid?: string, hidden?: boolean) {
         const original = await ProblemModel.get(domainId, _id);
         if (!original) throw new ProblemNotFoundError(domainId, _id);
+        if (ProblemModel.isObjectiveSource(original)) throw new ValidationError('pid', null, '请先在客观题工作区组题发布');
         if (original.reference) throw new ValidationError('reference');
         if (pid && (/^[0-9]+$/.test(pid) || await ProblemModel.get(target, pid))) pid = '';
         if (!pid && original.pid && !await ProblemModel.get(target, original.pid)) pid = original.pid;
@@ -280,8 +297,8 @@ export class ProblemModel {
         return document.inc(domainId, document.TYPE_PROBLEM, _id, field as any, n);
     }
 
-    static count(domainId: string, query: Filter<ProblemDoc>) {
-        return document.count(domainId, document.TYPE_PROBLEM, query);
+    static count(domainId: string, query: Filter<ProblemDoc>, includeObjectiveSources = false) {
+        return document.count(domainId, document.TYPE_PROBLEM, includeObjectiveSources ? query : ProblemModel.catalogQuery(query));
     }
 
     static async del(domainId: string, docId: number) {
@@ -379,6 +396,7 @@ export class ProblemModel {
     }
 
     static async random(domainId: string, query: Filter<ProblemDoc>) {
+        query = ProblemModel.catalogQuery(query);
         const pcount = await document.count(domainId, document.TYPE_PROBLEM, query);
         if (!pcount) return null;
         const pdoc = await document.getMulti(domainId, document.TYPE_PROBLEM, query)
@@ -389,11 +407,13 @@ export class ProblemModel {
     static async getList(
         domainId: string, pids: number[], canViewHidden: number | boolean = false,
         doThrow = true, projection = ProblemModel.PROJECTION_PUBLIC, indexByDocIdOnly = false,
+        includeObjectiveSources = false,
     ): Promise<ProblemDict> {
         if (!pids?.length) return {};
         const r: Record<number, ProblemDoc> = {};
         const l: Record<string, ProblemDoc> = {};
-        const q: any = { docId: { $in: pids } };
+        const ids: Filter<ProblemDoc> = { docId: { $in: pids } };
+        const q = includeObjectiveSources ? ids : ProblemModel.catalogQuery(ids);
         const projectionExpr = buildProjection(projection.includes('config') ? [...projection, 'data', 'reference'] : projection);
         let pdocs = await document.getMulti(domainId, document.TYPE_PROBLEM, q)
             .project<ProblemDoc>(projectionExpr).toArray();
@@ -472,6 +492,7 @@ export class ProblemModel {
 
     static canViewBy(pdoc: ProblemDoc, udoc: User) {
         if (!udoc.hasPerm(PERM.PERM_VIEW_PROBLEM)) return false;
+        if (ProblemModel.isObjectiveSource(pdoc)) return udoc.hasPerm(PERM.PERM_CREATE_PROBLEM);
         if (udoc.own(pdoc)) return true;
         if (udoc.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN)) return true;
         if (pdoc.hidden) return false;

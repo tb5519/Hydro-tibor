@@ -1,0 +1,790 @@
+.problem-objective-workbench-shell
+  max-width: 1240px
+
+.objective-workbench-tabs
+  display: flex
+  align-items: center
+  gap: 6px
+  margin: 0 0 26px
+  padding: 5px
+  border-bottom: 1px solid #dfe6ee
+
+  > a
+    display: flex
+    align-items: center
+    gap: 8px
+    padding: 12px 23px
+    border-radius: 8px
+    color: #7a8b9d
+    font-size: 14px
+    font-weight: 500
+
+    > span
+      font-size: 18px
+      line-height: 1
+
+    &:hover
+      background: #edf3f7
+      color: #3979c9
+
+    &.is-active
+      color: #237d68
+      background: #e7f2ed
+      font-weight: 600
+
+  .objective-workbench-tabs__note
+    margin-left: auto
+    padding: 0 12px
+    color: #8c9ba9
+    font-size: 11px
+
+.objective-assembly
+  display: grid
+  grid-template-columns: minmax(0, 1fr) 370px
+  align-items: start
+  gap: 26px
+
+.objective-library,
+.objective-paper
+  min-width: 0
+
+.objective-library__toolbar
+  padding: 24px
+
+.objective-library__heading
+  display: flex
+  align-items: center
+  justify-content: space-between
+  gap: 16px
+  margin-bottom: 22px
+
+  h2
+    margin: 0 0 7px
+    color: var(--objective-ink)
+    font-size: 17px
+    font-weight: 600
+
+  p
+    margin: 0
+    font-size: 11px
+    line-height: 1.7
+    color: #91a0b0
+
+.objective-text-link
+  flex-shrink: 0
+  padding: 0
+  border: 0
+  background: transparent
+  color: #547fa8
+  font-size: 11px !important
+  line-height: 1.8
+  white-space: nowrap
+
+  &:hover
+    color: #3979c9
+
+.problem-create-shell .objective-search
+  display: flex
+  align-items: center
+  gap: 10px
+  margin: 0
+  padding: 11px 13px
+  border: 1px solid #e0e7ed
+  border-radius: 9px
+  background: #f9fbfd
+
+  &:focus-within
+    background: #fff
+    border-color: #98b8d9
+    box-shadow: 0 0 0 3px rgba(57, 121, 201, .07)
+
+  svg
+    width: 19px
+    height: 19px
+    color: #95a8bd
+    flex: 0 0 19px
+
+  input
+    width: 100%
+    min-width: 0
+    padding: 0
+    border: 0
+    background: transparent
+    font-size: 12px
+    line-height: 1.8
+    color: var(--objective-ink)
+
+    &:focus
+      outline: 0
+
+    &::placeholder
+      color: #96a5b6
+
+  button
+    background: transparent
+    border: 0
+    color: #8d9eaf
+    font-size: 18px
+    padding: 0 3px
+
+.objective-library__filters
+  display: flex
+  align-items: center
+  justify-content: space-between
+  gap: 12px
+  margin-top: 16px
+
+  select
+    max-width: 160px
+    min-width: 0
+    padding: 7px 22px 7px 9px
+    border: 1px solid #e5eaf0
+    border-radius: 6px
+    background-color: #fff
+    color: #72869a
+    font-size: 11px
+
+.objective-kind-filter
+  display: flex
+  gap: 4px
+
+  button
+    padding: 7px 9px
+    border: 0
+    border-radius: 5px
+    background: transparent
+    color: #8494a6
+    font-size: 11px
+    white-space: nowrap
+
+    &.is-active
+      background: #eef4fb
+      color: #4f7fab
+      font-weight: 600
+
+.objective-library__count
+  display: flex
+  align-items: center
+  justify-content: space-between
+  min-height: 46px
+  padding: 0 4px
+  color: #8e9daf
+  font-size: 11px
+
+  button
+    border: 0
+    background: none
+    color: #688baa
+    font-size: 11px
+    padding: 5px 0
+
+.objective-materials
+  display: flex
+  flex-direction: column
+  gap: 12px
+
+  &.is-loading
+    opacity: .6
+
+.objective-material
+  padding: 20px 22px
+  transition: border-color .15s, box-shadow .15s
+
+  &:hover
+    border-color: #bfd1de
+    box-shadow: 0 5px 14px rgba(28, 51, 82, .04)
+
+  &.is-selected
+    border-color: #adcfbf
+
+.objective-material__top
+  display: flex
+  align-items: center
+  gap: 10px
+  margin-bottom: 10px
+  color: #a0aebd
+  font-size: 10px
+
+.objective-material__kind
+  border-radius: 5px
+  padding: 4px 7px
+  background: #edf4fc
+  color: #668cb2
+
+.objective-material__kind--multiple
+  background: #f0eff9
+  color: #8a7eb0
+
+.objective-material__kind--judge
+  background: #eef6f2
+  color: #6c9a87
+
+.objective-material__difficulty
+  margin-left: auto
+
+.objective-material__main
+  display: flex
+  align-items: center
+  justify-content: space-between
+  gap: 16px
+
+.objective-material__title
+  padding: 0
+  border: 0
+  background: none
+  color: #33475d
+  font-size: 15px !important
+  font-weight: 600 !important
+  line-height: 1.8
+  text-align: left
+  overflow-wrap: anywhere
+
+  &:hover
+    color: #3979c9
+
+.objective-pick
+  flex: 0 0 auto
+  padding: 8px 12px
+  border: 1px solid #d4e2ec
+  border-radius: 7px
+  background: #fff
+  color: #658aad
+  font-size: 11px !important
+  white-space: nowrap
+
+  &:hover:not(:disabled)
+    background: #f2f7fc
+
+  &.is-selected
+    border-color: #c9dfd4
+    background: #eef7f2
+    color: #39876d
+
+.objective-material__bottom
+  display: flex
+  justify-content: space-between
+  align-items: center
+  gap: 14px
+  margin-top: 14px
+
+.objective-material__tags
+  display: flex
+  flex-wrap: wrap
+  gap: 5px
+
+  button
+    padding: 3px 7px
+    border: 0
+    border-radius: 4px
+    background: #f5f7fa
+    color: #8595a7
+    font-size: 10px
+    line-height: 1.6
+    overflow-wrap: anywhere
+
+    &:hover
+      background: #edf3fa
+      color: #5c85ac
+
+.objective-material-preview
+  margin-top: 20px
+  padding-top: 19px
+  border-top: 1px dashed #e2e9ef
+
+  .objective-preview__options
+    margin-top: 16px
+
+.objective-material__edit
+  display: flex
+  align-items: center
+  justify-content: space-between
+  gap: 12px
+  padding-top: 18px
+
+  > span
+    color: #a1adba
+    font-size: 10px
+
+.objective-pagination
+  display: flex
+  justify-content: center
+  align-items: center
+  gap: 24px
+  margin-top: 24px
+  color: #94a1b1
+  font-size: 11px
+
+  button
+    padding: 8px 10px
+    border: 1px solid #e2e9f0
+    border-radius: 6px
+    background: #fff
+    color: #70869e
+    font-size: 11px
+
+.objective-empty
+  padding: 52px 28px
+  text-align: center
+
+  h3
+    margin: 17px 0 10px
+    color: #536b83
+    font-size: 17px
+    font-weight: 500
+
+  p
+    max-width: 300px
+    margin: 0 auto 24px
+    color: #95a2b2
+    font-size: 12px
+    line-height: 1.9
+
+.objective-empty__icon
+  display: inline-flex
+  justify-content: center
+  align-items: center
+  width: 56px
+  height: 56px
+  border-radius: 16px
+  background: #edf5f1
+  color: #6b9b84
+  font-size: 30px
+
+.objective-secondary-button
+  display: inline-flex
+  align-items: center
+  justify-content: center
+  padding: 10px 17px
+  border: 1px solid #cfdfd7
+  border-radius: 7px
+  background: #f7fbf9
+  color: #448770
+  font-size: 12px
+
+  &:hover
+    background: #edf6f1
+    color: #237d68
+
+.objective-paper
+  position: sticky
+  top: 82px
+
+  > fieldset
+    padding: 0
+    margin: 0
+    min-width: 0
+    border: 0
+
+.objective-paper__card
+  padding: 24px
+  border-top: 3px solid #8fbaaa
+
+.objective-paper__heading
+  display: flex
+  align-items: center
+  justify-content: space-between
+
+  div > span
+    color: #98a7b6
+    font-size: 10px
+    letter-spacing: 1px
+
+  h2
+    margin: 8px 0 0
+    color: #34495e
+    font-size: 19px
+    font-weight: 600
+
+.objective-paper__status
+  padding: 5px 8px
+  border-radius: 5px
+  background: #f4f6f8
+  color: #98a6b5
+  font-size: 10px
+
+.objective-paper__summary
+  display: flex
+  flex-wrap: wrap
+  gap: 0 32px
+  margin: 24px 0 20px
+  padding: 18px
+  border-radius: 9px
+  background: #f5f9f7
+
+  > div
+    display: flex
+    align-items: baseline
+    gap: 7px
+
+  strong
+    color: #477e6b
+    font-size: 28px
+    line-height: 1.2
+    font-weight: 600
+
+    &.has-error
+      color: #b5635d
+
+  span
+    color: #8d9f98
+    font-size: 11px
+
+  p
+    flex: 0 0 100%
+    margin: 10px 0 0
+    color: #8ca096
+    font-size: 10px
+    line-height: 1.6
+
+.objective-selection
+  max-height: 390px
+  overflow-y: auto
+  scrollbar-width: thin
+  scrollbar-color: #d8e2e8 transparent
+
+.objective-selection__empty
+  padding: 22px 8px 28px
+  text-align: center
+  border: 1px dashed #dce5ec
+  border-radius: 8px
+
+  > span
+    color: #bdcbd7
+    font-size: 25px
+
+  p
+    margin: 9px 0 7px
+    font-size: 12px
+    color: #8396a9
+
+  small
+    display: block
+    color: #a4b0bd
+    font-size: 10px
+    line-height: 1.7
+
+.objective-selection__list
+  margin: 0
+  padding: 0
+  list-style: none
+
+  li
+    padding: 14px 3px
+    border-bottom: 1px solid #edf1f5
+
+    &:first-child
+      padding-top: 2px
+
+    &:last-child
+      border: 0
+
+.objective-selection__row
+  display: flex
+  align-items: flex-start
+  gap: 10px
+
+.objective-selection__index
+  flex: 0 0 22px
+  width: 22px
+  height: 22px
+  border-radius: 5px
+  background: #f0f4f8
+  color: #889db0
+  text-align: center
+  font-size: 11px
+  line-height: 22px
+
+.objective-selection__content
+  min-width: 0
+  flex: 1
+
+  > span
+    display: block
+    margin-top: 4px
+    color: #a2adba
+    font-size: 10px
+
+.objective-selection__title
+  display: block
+  padding: 0
+  border: 0
+  background: none
+  color: #576b81
+  font-size: 12px !important
+  line-height: 1.7
+  text-align: left
+  overflow-wrap: anywhere
+
+  &:hover
+    color: #3979c9
+
+.objective-selection__remove
+  flex: 0 0 22px
+  border: 0
+  padding: 0
+  border-radius: 4px
+  background: none
+  color: #a0afbd
+  font-size: 18px !important
+
+  &:hover
+    color: #ba7971
+    background: #fff4f1
+
+.objective-selection__actions
+  display: flex
+  align-items: center
+  justify-content: space-between
+  gap: 12px
+  margin-top: 10px
+  padding-left: 32px
+
+  > div
+    display: flex
+    gap: 5px
+
+  button
+    width: 26px
+    height: 26px
+    border: 1px solid #e6ecf1
+    border-radius: 4px
+    background: #fff
+    color: #859aaf
+    font-size: 14px
+
+.problem-create-shell .objective-selection__actions label
+  display: flex
+  align-items: center
+  gap: 6px
+  margin: 0
+  color: #8d9bac
+  font-size: 10px
+
+  input
+    width: 51px
+    min-width: 0
+    border: 1px solid #dfe7ee
+    border-radius: 4px
+    padding: 4px 3px 4px 7px
+    background: #fff
+    color: #647c94
+    font-size: 11px
+
+    &[aria-invalid='true']
+      border-color: #d79a96
+
+.objective-paper__details
+  margin-top: 24px
+  padding-top: 23px
+  border-top: 1px solid #eaf0f4
+
+  .objective-label
+    font-size: 12px
+
+    small
+      float: right
+      color: #a1adba
+      font-size: 10px
+      font-weight: 400
+
+.objective-paper__more
+  margin-top: 17px
+
+  summary
+    display: flex
+    justify-content: space-between
+    align-items: center
+    padding: 3px 0
+    color: #8b9aad
+    font-size: 11px
+    list-style: none
+    cursor: pointer
+
+    &::-webkit-details-marker
+      display: none
+
+  &[open] summary
+    margin-bottom: 20px
+
+    > span
+      transform: rotate(180deg)
+
+  .objective-field
+    margin-bottom: 18px
+
+.objective-paper__publish
+  margin-top: 21px
+  padding-top: 19px
+  border-top: 1px solid #eaf0f4
+
+  p
+    margin: 0 0 14px
+    color: #8294a6
+    font-size: 11px
+    line-height: 1.8
+
+  .objective-submit
+    width: 100%
+    border-color: #378b73
+    background: #378b73
+    box-shadow: 0 3px 7px rgba(35, 125, 104, .12)
+
+    &:hover:not(:disabled)
+      background: #267c63
+
+  small
+    display: block
+    margin-top: 12px
+    color: #a1aeba
+    font-size: 9px
+    line-height: 1.8
+    text-align: center
+
+.objective-announcement
+  position: absolute
+  width: 1px
+  height: 1px
+  padding: 0
+  margin: -1px
+  overflow: hidden
+  clip: rect(0, 0, 0, 0)
+  white-space: nowrap
+  border: 0
+
+.objective-mobile-basket
+  display: none
+
+@media screen and (max-width: 1080px)
+  .objective-assembly
+    grid-template-columns: minmax(0, 1fr) 330px
+    gap: 20px
+
+  .objective-library__toolbar,
+  .objective-paper__card
+    padding: 20px
+
+  .objective-library__filters
+    flex-wrap: wrap
+
+    select
+      max-width: 100%
+      flex: 1
+
+@media screen and (max-width: 800px)
+  .problem-objective-workbench-shell
+    padding-bottom: 58px
+
+  .objective-assembly
+    grid-template-columns: minmax(0, 1fr)
+
+  .objective-paper
+    position: static
+    scroll-margin-top: 84px
+
+  .objective-paper__card
+    padding: 24px
+
+  .objective-selection
+    max-height: none
+
+  .objective-mobile-basket
+    position: fixed
+    left: 0
+    right: 0
+    bottom: 0
+    z-index: 30
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 16px
+    padding: 13px 22px calc(13px + env(safe-area-inset-bottom))
+    border-top: 1px solid #dce7e1
+    background: rgba(255, 255, 255, .97)
+    box-shadow: 0 -3px 16px rgba(28, 51, 82, .04)
+    color: #7d8f9d
+    font-size: 12px
+
+    strong
+      color: #378b73
+      font-size: 16px
+      font-weight: 600
+
+    i
+      margin: 0 7px
+      font-style: normal
+      color: #bcc8d0
+
+    button
+      border: 0
+      padding: 8px 14px
+      border-radius: 6px
+      background: #edf5f1
+      color: #39836b
+      font-size: 12px
+
+@media screen and (max-width: 560px)
+  .objective-workbench-tabs
+    gap: 2px
+    margin-bottom: 20px
+    padding: 4px 0
+
+    > a
+      padding: 11px 16px
+      font-size: 13px
+
+    .objective-workbench-tabs__note
+      padding-right: 0
+      font-size: 9px
+
+  .objective-library__toolbar,
+  .objective-paper__card
+    padding: 20px 16px
+
+  .objective-library__heading
+    gap: 10px
+
+    h2
+      font-size: 16px
+
+    p
+      font-size: 10px
+
+    > a
+      font-size: 10px !important
+
+  .objective-library__filters
+    gap: 10px
+
+    select
+      flex: 1 0 100%
+
+  .objective-kind-filter
+    gap: 7px
+
+    button
+      padding: 7px 11px
+
+  .objective-material
+    padding: 18px 16px
+
+  .objective-material__main
+    gap: 10px
+
+  .objective-material__title
+    font-size: 14px !important
+
+  .objective-material__number
+    max-width: 130px
+    overflow: hidden
+    text-overflow: ellipsis
+    white-space: nowrap
+
+  .objective-pick
+    padding: 8px 10px
+
+  .objective-empty
+    padding: 38px 20px
+
+@media (prefers-reduced-motion: reduce)
+  .objective-material
+    transition: none

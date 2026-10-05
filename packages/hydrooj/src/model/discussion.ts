@@ -314,6 +314,8 @@ export async function getListVnodes(domainId: string, ddocs: any, getHidden = fa
         const vnode = await getVnode(domainId, ddoc.parentType, ddoc.parentId.toString());
         res[ddoc.parentType] ||= {};
         if (viewer && ddoc.parentType === document.TYPE_CONTEST && !canViewContestLevel(viewer, vnode)) return;
+        if (ddoc.parentType === document.TYPE_PROBLEM && problem.isObjectiveSource(vnode)
+            && (!viewer || !problem.canViewBy(vnode, viewer))) return;
         if (!getHidden && vnode.hidden) return;
         if (vnode.assign?.length && new Set(vnode.assign).intersection(new Set(assign)).size) return;
         res[ddoc.parentType][ddoc.parentId] = vnode;
@@ -325,6 +327,7 @@ export async function getListVnodes(domainId: string, ddocs: any, getHidden = fa
 export function checkVNodeVisibility(type: number, vnode: any, user: User) {
     if (type === document.TYPE_CONTEST && !canViewContestLevel(user, vnode)) return false;
     if (type === document.TYPE_PROBLEM) {
+        if (problem.isObjectiveSource(vnode) && !problem.canViewBy(vnode, user)) return false;
         if (vnode.hidden && !user.own(vnode) && !user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN)) return false;
     }
     if ([document.TYPE_CONTEST, document.TYPE_TRAINING].includes(type as any)) {

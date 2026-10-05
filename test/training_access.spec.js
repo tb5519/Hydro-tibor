@@ -22,9 +22,10 @@ const { PERM, PRIV } = load('packages/common/permission.ts');
 const access = load('packages/hydrooj/src/lib/training_access.ts', { '../model/builtin': { PERM, PRIV } });
 class PermissionError extends Error {}
 class ValidationError extends Error {}
+class ProblemNotFoundError extends Error {}
 const tid = new ObjectId();
 const dag = [{ _id: 1, title: 'Chapter', pids: [1], requireNids: [] }];
-function fixture(permissions = PERM.PERM_DEFAULT, privileges = PRIV.PRIV_USER_PROFILE, owner = 42) {
+function fixture(permissions = PERM.PERM_DEFAULT, privileges = PRIV.PRIV_USER_PROFILE, owner = 42, objectiveKind) {
     const writes = [];
     const statusReads = [];
     const document = { docId: tid, _id: tid, owner, dag, attend: 2, title: 'Existing plan', allowSelfEnroll: true, files: [] };
@@ -62,12 +63,15 @@ function fixture(permissions = PERM.PERM_DEFAULT, privileges = PRIV.PRIV_USER_PR
     };
     const handlers = load('packages/hydrooj/src/handler/training.ts', {
         '@hydrooj/utils/lib/utils': { sortFiles: (files) => files },
-        '../error': { PermissionError, ValidationError, TrainingAlreadyEnrollError: class extends Error {} },
+        '../error': { PermissionError, ValidationError, ProblemNotFoundError, TrainingAlreadyEnrollError: class extends Error {} },
         '../lib/training_access': access,
         '../model/builtin': { PERM, PRIV, STATUS: { STATUS_ACCEPTED: 1 } },
         '../model/domain': { getMultiUserInDomain: () => cursor([{ uid: 24 }]) },
         '../model/oplog': {},
-        '../model/problem': { get: async () => ({ docId: 1 }), getList: async () => ({ 1: { docId: 1 } }), getListStatus: async () => ({}) },
+        '../model/problem': {
+            get: async () => ({ docId: 1, objectiveKind }), isObjectiveSource: (pdoc) => !!pdoc?.objectiveKind,
+            getList: async () => ({ 1: { docId: 1 } }), getListStatus: async () => ({}),
+        },
         '../model/storage': { del: async () => { writes.push(['files-delete']); }, put: async () => { writes.push(['files-upload']); }, getMeta: async () => ({ size: 10 }) },
         '../model/system': { get: () => 1000 },
         '../model/training': training,
@@ -86,6 +90,12 @@ async function editDispatch(handler, method, editTid) {
 }
 
 describe('training teacher authorization', () => {
+    it('rejects private question sources in a training even when the author is a teacher', async () => {
+        const h = fixture(PERM.PERM_ALL, PRIV.PRIV_USER_PROFILE, 42, 'single');
+        await assert.rejects(editDispatch(h.make('training_create'), 'post'), ValidationError);
+        assert.deepEqual(h.writes, []);
+    });
+
     it('rejects direct GET and POST create/edit even when a default learner owns the plan', async () => {
         assert.ok(PERM.PERM_DEFAULT & PERM.PERM_CREATE_TRAINING);
         assert.ok(PERM.PERM_DEFAULT & PERM.PERM_EDIT_TRAINING_SELF);

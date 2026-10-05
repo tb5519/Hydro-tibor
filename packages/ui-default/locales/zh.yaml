@@ -899,6 +899,7 @@ Problem Type: 题目类型
 problem_config: 评测设置
 problem_create: 创建题目
 problem_create_select: 选择题目类型
+problem_objective: 客观题工作台
 problem_create_objective: 创建客观题
 problem_edit_objective: 编辑客观题
 problem_edit: 编辑题目

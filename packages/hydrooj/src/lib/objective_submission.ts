@@ -59,6 +59,7 @@ export async function loadOwnObjectiveRecordSubmission(
         throw new RecordNotFoundError(domainId, rdoc?._id);
     }
     const { pdoc, config } = await loadObjectiveSubmissionConfig(domainId, rdoc.pid);
+    if (problem.isObjectiveSource(pdoc) && !problem.canViewBy(pdoc, handler.user)) throw new RecordNotFoundError(domainId, rdoc._id);
     let visibleRecord = rdoc;
     if (rdoc.contest) {
         const tdoc = await contest.get(domainId, rdoc.contest);

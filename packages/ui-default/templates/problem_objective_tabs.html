@@ -1,0 +1,5 @@
+<nav class="objective-workbench-tabs" aria-label="客观题工作台">
+  <a href="{{ url('problem_objective') }}" class="{% if page_name == 'problem_objective' %}is-active{% endif %}" {% if page_name == 'problem_objective' %}aria-current="page"{% endif %}><span aria-hidden="true">▦</span> 组题</a>
+  <a href="{{ url('problem_create_objective') }}" class="{% if page_name != 'problem_objective' %}is-active{% endif %}" {% if page_name != 'problem_objective' %}aria-current="page"{% endif %}><span aria-hidden="true">＋</span> 创建题目</a>
+  <span class="objective-workbench-tabs__note">素材仅老师可见</span>
+</nav>

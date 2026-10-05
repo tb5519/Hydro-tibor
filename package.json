@@ -21,6 +21,7 @@
         "test": "node -r @hydrooj/register packages/common/tests/subtask.spec.ts && node -r @hydrooj/register test/contest_entry.spec.js && node -r @hydrooj/register packages/hydrooj/tests/objective.spec.ts && node test/entry.js",
         "test:contest-entry": "node -r @hydrooj/register test/contest_entry.spec.js",
         "test:objective": "node -r @hydrooj/register packages/hydrooj/tests/objective.spec.ts",
+        "test:objective:integration": "node test/objective_workbench.integration.js",
         "benchmark": "cross-env BENCHMARK=true node test/entry.js",
         "oxlint": "cd framework/eslint-config && node -r @hydrooj/register build.ts && cd ../../ && oxlint --config framework/eslint-config/.oxlintrc.json",
         "lint": "eslint --flag v10_config_lookup_from_file packages plugins modules framework --ext .ts,.tsx,.jsx,.vue,.yaml,.yml --fix",

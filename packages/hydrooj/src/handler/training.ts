@@ -40,7 +40,7 @@ async function _parseDagJson(domainId: string, _dag: string): Promise<Tdoc['dag'
             const tasks = [];
             for (const i in node.pids) {
                 tasks.push(problem.get(domainId, node.pids[i]).then((pdoc) => {
-                    if (!pdoc) throw new ProblemNotFoundError(domainId, node.pids[i]);
+                    if (!pdoc || problem.isObjectiveSource(pdoc)) throw new ProblemNotFoundError(domainId, node.pids[i]);
                     node.pids[i] = pdoc.docId;
                 }));
             }

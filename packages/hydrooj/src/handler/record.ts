@@ -193,6 +193,16 @@ export class RecordListHandler extends ContestDetailBaseHandler {
                 : { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] } as any;
         }
         appendHiddenSuperAdminFilter(q, await getHiddenSuperAdminUids(this.user));
+        if (!this.user.hasPerm(PERM.PERM_CREATE_PROBLEM) || !this.user.hasPerm(PERM.PERM_VIEW_PROBLEM)) {
+            const sources = await problem.getMulti(allDomain ? '' : domainId,
+                { objectiveKind: { $exists: true }, ...allDomain ? { domainId: { $exists: true } } : {} }, ['domainId', 'docId'], true).toArray();
+            if (sources.length) {
+                q.$and ||= [];
+                q.$and.push(allDomain
+                    ? { $nor: sources.map((pdoc) => ({ domainId: pdoc.domainId, pid: pdoc.docId })) }
+                    : { pid: { $nin: sources.map((pdoc) => pdoc.docId) } });
+            }
+        }
         let cursor = record.getMulti(allDomain ? '' : domainId, q).sort('_id', -1);
         if (!full) cursor = cursor.project(buildProjection(record.PROJECTION_LIST));
         const limit = full ? 10 : system.get('pagination.record');
@@ -248,6 +258,8 @@ export class RecordDetailHandler extends ContestDetailBaseHandler {
         this.rdoc = await record.get(domainId, rid);
         if (!this.rdoc) throw new RecordNotFoundError(rid);
         if (!(await canViewRecordOwner(this.user, this.rdoc.uid))) throw new RecordNotFoundError(rid);
+        const pdoc = await problem.get(domainId, this.rdoc.pid);
+        if (problem.isObjectiveSource(pdoc) && !problem.canViewBy(pdoc, this.user)) throw new RecordNotFoundError(rid);
         if (this.rdoc.uid !== this.user._id) this.checkPerm(PERM.PERM_VIEW_RECORD);
     }
 
@@ -513,6 +525,7 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
             user.getById(this.args.domainId, rdoc.uid),
             problem.get(rdoc.domainId, rdoc.pid),
         ]);
+        if (problem.isObjectiveSource(pdoc) && !problem.canViewBy(pdoc, this.user)) return;
         const tdoc = this.tid ? this.tdoc : null;
         const homeworkTdocs = tdoc ? {} : await getHomeworkTdocsForRecords([rdoc]);
         if (pdoc && !rdoc.contest) {
@@ -577,6 +590,7 @@ export class RecordDetailConnectionHandler extends ConnectionHandler {
             problem.get(rdoc.domainId, rdoc.pid),
             problem.getStatus(domainId, rdoc.pid, this.user._id),
         ]);
+        if (problem.isObjectiveSource(pdoc) && !problem.canViewBy(pdoc, this.user)) throw new RecordNotFoundError(rid);
 
         this.canViewCode = rdoc.uid === this.user._id;
         this.canViewCode ||= rdoc.contest?.toHexString() === record.RECORD_PRETEST.toHexString()
@@ -662,6 +676,8 @@ export class ContestSubmitFeedbackConnectionHandler extends ConnectionHandler {
         }
         const tdoc = await contest.get(domainId, rdoc.contest);
         if (!tdoc || !canViewContestLevel(this.user, tdoc)) throw new RecordNotFoundError(domainId, rid);
+        const pdoc = await problem.get(domainId, rdoc.pid);
+        if (problem.isObjectiveSource(pdoc) && !problem.canViewBy(pdoc, this.user)) throw new RecordNotFoundError(rid);
         this.rid = rid.toString();
         await this.onRecordChange(rdoc);
     }
@@ -703,6 +719,8 @@ export class ContestSubmitFeedbackHandler extends Handler {
         }
         const tdoc = await contest.get(domainId, rdoc.contest);
         if (!tdoc || !canViewContestLevel(this.user, tdoc)) throw new RecordNotFoundError(domainId, rid);
+        const pdoc = await problem.get(domainId, rdoc.pid);
+        if (problem.isObjectiveSource(pdoc) && !problem.canViewBy(pdoc, this.user)) throw new RecordNotFoundError(rid);
 
         this.response.body = {
             rdoc: {

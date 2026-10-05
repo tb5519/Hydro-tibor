@@ -324,7 +324,8 @@ export class HomeHandler extends Handler {
         const ddocs = await discussion.getMulti(domainId).limit(limit).toArray();
         const vndict = await discussion.getListVnodes(domainId, ddocs, this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN), this.user.group, this.user);
         this.collectUser(ddocs.map((ddoc) => ddoc.owner));
-        return [ddocs.filter((ddoc) => ddoc.parentType !== document.TYPE_CONTEST || vndict[ddoc.parentType]?.[ddoc.parentId.toString()]), vndict];
+        return [ddocs.filter((ddoc) => (ddoc.parentType !== document.TYPE_CONTEST && ddoc.parentType !== document.TYPE_PROBLEM)
+            || vndict[ddoc.parentType]?.[ddoc.parentId.toString()]), vndict];
     }
 
     async getRanking(domainId: string, limit = 50) {

@@ -206,6 +206,8 @@ declare module './model/problem' {
         objectiveKind?: import('./lib/objective').ObjectiveKind;
         /** Private authoring data. Never include in public projections or UiContext. */
         objective?: import('./lib/objective').ObjectiveQuestion;
+        /** Private source snapshots and answer keys for a published objective paper. */
+        objectivePaper?: import('./lib/objective').ObjectivePaper;
         reference?: {
             domainId: string;
             pid: number;

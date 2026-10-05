@@ -85,7 +85,8 @@ class DiscussionMainHandler extends Handler {
         ]);
         this.response.template = 'discussion_main_or_node.html';
         this.response.body = {
-            ddocs: ddocs.filter((ddoc) => ddoc.parentType !== document.TYPE_CONTEST || vndict[ddoc.parentType]?.[ddoc.parentId.toString()]),
+            ddocs: ddocs.filter((ddoc) => (ddoc.parentType !== document.TYPE_CONTEST && ddoc.parentType !== document.TYPE_PROBLEM)
+                || vndict[ddoc.parentType]?.[ddoc.parentId.toString()]),
             dpcount, udict, page, page_name: 'discussion_main', vndict, vnode: {}, vnodes,
         };
     }

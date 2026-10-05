@@ -48,11 +48,12 @@ function fixture(records = [], options = {}) {
         './objective_feedback': feedback,
         '../model/problem': {
             PROJECTION_PUBLIC: ['config', 'reference'],
+            isObjectiveSource: (pdoc) => !!pdoc?.objectiveKind,
             canViewBy: () => options.problemVisible !== false,
             get: async (domainId, pid, projection, raw) => {
                 reads.push({ domainId, pid, raw });
                 if (options.reference && domainId === 'class-a') return { docId: 12, reference: { domainId: 'source', pid: 33 } };
-                return { docId: pid, config: options.rawConfig || config };
+                return { docId: pid, config: options.rawConfig || config, objectiveKind: options.objectiveKind };
             },
         },
         '../model/contest': {
@@ -99,6 +100,20 @@ function fixture(records = [], options = {}) {
 }
 
 describe('restoring the latest own objective submission', () => {
+    it('denies legacy source-question feedback even to an attending learner with an own submission', async () => {
+        await Promise.all([undefined, ids.homework, ids.contest].map(async (contest) => {
+            const f = fixture([record(1, { contest })], { objectiveKind: 'single', problemVisible: false, attend: true });
+            await assert.rejects(f.restore(contest), (error) => error.constructor.name === 'RecordNotFoundError');
+        }));
+    });
+
+    it('retains teacher access to source feedback and learner access to published papers without a source marker', async () => {
+        const teacher = fixture([record(1)], { objectiveKind: 'single', problemVisible: true });
+        assert.equal((await teacher.restore()).feedback.rid, rid(1).toString());
+        const paper = fixture([record(1, { contest: ids.contest })], { problemVisible: false, attend: true });
+        assert.equal((await paper.restore(ids.contest)).feedback.rid, rid(1).toString());
+    });
+
     it('restores the latest attempt, including pending or lower scores, rather than the best historical answer', async () => {
         const older = record(1, { score: 110, code: '1: "old best answer"' });
         const newer = record(2, { status: 20, score: 0, code: '1: "new incomplete answer"' });

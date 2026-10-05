@@ -20,7 +20,6 @@ interface InitialData {
   title?: string;
   pid?: string;
   tags?: string[];
-  hidden?: boolean;
   difficulty?: number | string;
   editing: boolean;
   cancelUrl: string;
@@ -59,7 +58,6 @@ function ObjectiveEditor({ initial }: { initial: InitialData }) {
   const [tags, setTags] = useState(Array.from(new Set(initial.tags || [])));
   const [tagInput, setTagInput] = useState('');
   const [pid, setPid] = useState(initial.pid || '');
-  const [hidden, setHidden] = useState(!!initial.hidden);
   const [difficulty, setDifficulty] = useState(String(initial.difficulty || ''));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState('');
@@ -82,7 +80,6 @@ function ObjectiveEditor({ initial }: { initial: InitialData }) {
     tags,
     tagInput,
     pid,
-    hidden,
     difficulty,
   });
   const original = useRef(snapshot);
@@ -156,7 +153,7 @@ function ObjectiveEditor({ initial }: { initial: InitialData }) {
     setTags(submittedTags);
     setTagInput('');
     const nextErrors: Record<string, string> = {};
-    if (!title.trim()) nextErrors.title = '请填写题目标题，方便在题库中找到它。';
+    if (!title.trim()) nextErrors.title = '请填写题目标题，方便在素材库中找到它。';
     if (!stem.trim()) nextErrors.stem = '请填写题干。';
     if (stem.length > 20000) nextErrors.stem = '题干不能超过 20,000 字。';
     if (activeOptions.some((option) => !option.trim())) nextErrors.options = '请补全每个选项，或删除不需要的选项。';
@@ -195,7 +192,6 @@ function ObjectiveEditor({ initial }: { initial: InitialData }) {
       const result = await request.post(window.location.href, {
         title: title.trim(),
         pid: pid.trim(),
-        hidden: hidden ? 'on' : '',
         difficulty: difficulty || '',
         tag: submittedTags.join(', '),
         objective: JSON.stringify(objective),
@@ -482,7 +478,7 @@ function ObjectiveEditor({ initial }: { initial: InitialData }) {
             <div className="objective-settings-fields">
               <div className="objective-field">
                 <label className="objective-label" htmlFor="objective-pid">
-                  题号
+                  素材编号
                 </label>
                 <input
                   id="objective-pid"
@@ -510,12 +506,7 @@ function ObjectiveEditor({ initial }: { initial: InitialData }) {
                   ))}
                 </select>
               </div>
-              <label className="objective-hidden">
-                <input type="checkbox" checked={hidden} onChange={(event) => setHidden(event.target.checked)} />
-                <span>
-                  暂时隐藏这道题<small>开启后，普通学员不会在题库中看到它。</small>
-                </span>
-              </label>
+
             </div>
           </details>
         </div>
@@ -526,7 +517,7 @@ function ObjectiveEditor({ initial }: { initial: InitialData }) {
           </div>
         )}
         <div className="objective-submit-bar">
-          <span>{initial.editing ? '保存后返回题目详情' : '创建后即可在题库中查看这道题'}</span>
+          <span>保存至教师素材库，组卷发布后学员才可见</span>
           <div>
             <a
               href={initial.cancelUrl}
@@ -543,7 +534,7 @@ function ObjectiveEditor({ initial }: { initial: InitialData }) {
               disabled={submitting}
               // This form owns its pending state; bypass the legacy document-wide five-second click lock.
               onClick={(event) => event.stopPropagation()}>
-              {submitting ? '正在保存…' : initial.editing ? '保存修改' : '创建客观题'}
+              {submitting ? '正在保存…' : initial.editing ? '保存修改' : '保存到素材库'}
               <span aria-hidden="true">{submitting ? '' : ' →'}</span>
             </button>
           </div>
