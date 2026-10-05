@@ -203,6 +203,9 @@ declare module './model/problem' {
         stats?: any;
         difficulty?: number;
         sort?: string;
+        objectiveKind?: import('./lib/objective').ObjectiveKind;
+        /** Private authoring data. Never include in public projections or UiContext. */
+        objective?: import('./lib/objective').ObjectiveQuestion;
         reference?: {
             domainId: string;
             pid: number;

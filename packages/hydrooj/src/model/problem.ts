@@ -72,12 +72,14 @@ interface ProblemImportOptions {
 interface ProblemCreateOptions {
     difficulty?: number;
     hidden?: boolean;
+    objectiveKind?: ProblemDoc['objectiveKind'];
+    objective?: ProblemDoc['objective'];
     reference?: { domainId: string, pid: number };
 }
 
 const PROJECTION_BASE: Field[] = [
     '_id', 'domainId', 'docType', 'docId', 'pid',
-    'owner', 'title',
+    'owner', 'title', 'objectiveKind',
 ];
 
 export class ProblemModel {
@@ -179,6 +181,8 @@ export class ProblemModel {
         if (pid) args.pid = pid;
         if (meta.difficulty) args.difficulty = meta.difficulty;
         if (meta.reference) args.reference = meta.reference;
+        if (meta.objectiveKind) args.objectiveKind = meta.objectiveKind;
+        if (meta.objective) args.objective = meta.objective;
         await bus.parallel('problem/before-add', domainId, content, owner, docId, args);
         const result = await document.add(domainId, content, owner, document.TYPE_PROBLEM, docId, null, null, args);
         args.content = content;
@@ -257,6 +261,7 @@ export class ProblemModel {
         if (!pid && original.pid && !await ProblemModel.get(target, original.pid)) pid = original.pid;
         const $set = { hidden: hidden || original.hidden, reference: { domainId, pid: _id } } as any;
         if (typeof original.difficulty === 'number') $set.difficulty = original.difficulty;
+        if (original.objectiveKind) $set.objectiveKind = original.objectiveKind;
         return await ProblemModel.add(
             target, pid, original.title, original.content,
             original.owner, original.tag, $set,

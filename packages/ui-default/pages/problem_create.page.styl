@@ -1,0 +1,1003 @@
+.page--problem_create_select,
+.page--problem_create_objective,
+.page--problem_edit_objective
+  > body > .slideout-panel > .main
+    background: #f5f7fa
+    padding-top: 72px
+    padding-bottom: 56px
+
+.problem-create-shell
+  --objective-ink: #203047
+  --objective-muted: #708096
+  --objective-line: #e3e9f0
+  --objective-blue: #3979c9
+  --objective-green: #23836b
+  box-sizing: border-box
+  max-width: 1160px
+  margin: 0 auto
+  padding: 0 24px
+  color: var(--objective-ink)
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif
+
+  *, *:before, *:after
+    box-sizing: border-box
+
+  button, input, textarea, select
+    font: inherit
+
+  button, a, input, textarea, select, summary
+    &:focus-visible
+      outline: 3px solid rgba(57, 121, 201, .32)
+      outline-offset: 3px
+
+  a
+    text-decoration: none
+
+  button
+    cursor: pointer
+
+  button:disabled
+    cursor: not-allowed
+    opacity: .45
+
+.problem-create-back
+  display: inline-flex
+  align-items: center
+  gap: 8px
+  color: var(--objective-muted)
+  font-size: 13px
+  line-height: 24px
+
+  &:hover
+    color: var(--objective-blue)
+
+.problem-create-heading
+  margin: 48px 0 36px
+
+  h1
+    margin: 12px 0 14px
+    font-size: 32px
+    font-weight: 650
+    line-height: 1.35
+    letter-spacing: -.7px
+
+  p
+    margin: 0
+    font-size: 15px
+    line-height: 1.7
+    color: var(--objective-muted)
+
+.problem-create-eyebrow
+  color: var(--objective-blue)
+  font-size: 12px
+  font-weight: 600
+  letter-spacing: 1px
+
+.problem-create-select
+  max-width: 1020px
+
+.problem-create-types
+  display: grid
+  grid-template-columns: repeat(2, minmax(0, 1fr))
+  gap: 24px
+
+.problem-create-type
+  position: relative
+  display: flex
+  flex-direction: column
+  align-items: flex-start
+  padding: 32px
+  border: 1px solid #dde5ee
+  border-radius: 18px
+  background: #fff
+  color: var(--objective-ink)
+  box-shadow: 0 5px 18px rgba(28, 51, 82, .025)
+  transition: border-color .18s, box-shadow .18s, transform .18s
+
+  &:hover
+    color: var(--objective-ink)
+    border-color: #a9c3e5
+    box-shadow: 0 12px 30px rgba(28, 51, 82, .065)
+    transform: translateY(-3px)
+
+  h2
+    margin: 9px 0 14px
+    color: var(--objective-ink)
+    font-size: 25px
+    font-weight: 600
+    line-height: 1.3
+
+  p
+    margin: 0
+    color: var(--objective-muted)
+    font-size: 14px
+    line-height: 1.85
+
+.problem-create-type__icon
+  display: flex
+  align-items: center
+  justify-content: center
+  width: 56px
+  height: 56px
+  margin-bottom: 28px
+  background: #eef4fc
+  color: var(--objective-blue)
+  border-radius: 15px
+
+  svg
+    width: 32px
+    height: 32px
+
+.problem-create-type__eyebrow
+  color: var(--objective-muted)
+  font-size: 12px
+
+.problem-create-type__tags
+  display: flex
+  flex-wrap: wrap
+  gap: 7px
+  margin: 24px 0 32px
+
+  span
+    background: #f5f7fa
+    border: 1px solid #edf0f4
+    border-radius: 6px
+    color: #697a90
+    padding: 5px 9px
+    font-size: 11px
+
+.problem-create-type__action
+  display: flex
+  justify-content: space-between
+  align-items: center
+  width: 100%
+  margin-top: auto
+  padding-top: 22px
+  border-top: 1px solid #edf0f4
+  color: var(--objective-blue)
+  font-weight: 600
+  font-size: 14px
+
+  span
+    font-size: 20px
+    font-weight: 400
+
+.problem-create-type--objective
+  background: linear-gradient(150deg, #fff 55%, #f6fbf9)
+  border-color: #d2e5dd
+
+  &:hover
+    border-color: #8cbca9
+
+  .problem-create-type__icon
+    color: var(--objective-green)
+    background: #eaf6f0
+
+  .problem-create-type__action
+    color: var(--objective-green)
+
+.problem-create-type__badge
+  position: absolute
+  top: 32px
+  right: 32px
+  padding: 5px 9px
+  font-size: 11px
+  border-radius: 5px
+  color: var(--objective-green)
+  background: #edf7f2
+
+.problem-create-footnote
+  margin-top: 28px
+  color: var(--objective-muted)
+  font-size: 12px
+  line-height: 1.8
+  text-align: center
+
+  span
+    color: #8499b0
+    margin-right: 5px
+
+.problem-create-heading--compact
+  margin: 30px 0 28px
+
+  h1
+    font-size: 28px
+    margin: 8px 0 10px
+
+  p
+    font-size: 14px
+
+.objective-workspace
+  display: grid
+  grid-template-columns: minmax(0, 1fr) 340px
+  gap: 24px
+  align-items: start
+
+.objective-editor,
+.objective-kind-fieldset,
+.objective-options-fieldset
+  padding: 0
+  margin: 0
+  border: 0
+  min-width: 0
+
+.objective-card
+  border: 1px solid var(--objective-line)
+  border-radius: 14px
+  padding: 26px
+  background: #fff
+  box-shadow: 0 3px 12px rgba(28, 51, 82, .025)
+
+.objective-editor > .objective-card
+  margin-bottom: 18px
+
+.objective-section-heading
+  display: flex
+  align-items: center
+  gap: 10px
+  margin-bottom: 28px
+
+  h2
+    margin: 0
+    font-size: 16px
+    font-weight: 600
+    color: var(--objective-ink)
+
+  > span:last-child:not(:first-child)
+    font-size: 11px
+    color: #8794a5
+    margin-left: auto
+
+.objective-step
+  display: inline-flex
+  align-items: center
+  justify-content: center
+  width: 25px
+  height: 25px
+  flex: 0 0 25px
+  border-radius: 7px
+  background: #eff4fb
+  color: #6b8aad
+  font-size: 11px
+  font-weight: 600
+
+.problem-create-shell .objective-label
+  display: block
+  margin-bottom: 10px
+  color: #364960
+  font-size: 13px
+  font-weight: 600
+  line-height: 1.5
+
+  > span
+    margin-left: 3px
+    color: #5a91cc
+
+.objective-label-row
+  display: flex
+  align-items: baseline
+  justify-content: space-between
+  gap: 12px
+
+  > span
+    color: #8895a5
+    font-size: 11px
+
+.objective-kinds
+  display: grid
+  grid-template-columns: repeat(3, minmax(0, 1fr))
+  gap: 8px
+  margin-bottom: 26px
+
+.problem-create-shell .objective-kind
+  display: flex
+  gap: 9px
+  align-items: flex-start
+  min-width: 0
+  padding: 14px 10px
+  border: 1px solid var(--objective-line)
+  border-radius: 9px
+  background: #fff
+  cursor: pointer
+  transition: background .15s, border-color .15s
+
+  &.is-selected
+    border-color: #94b6df
+    background: #f4f8fd
+
+  input
+    margin: 2px 0 0
+    flex: 0 0 14px
+    accent-color: var(--objective-blue)
+    width: 14px
+    height: 14px
+
+  strong
+    display: block
+    font-size: 13px
+    line-height: 1.4
+    font-weight: 600
+
+  small
+    display: block
+    color: #8694a5
+    font-size: 10px
+    margin-top: 5px
+    line-height: 1.5
+
+.objective-field
+  margin-bottom: 24px
+
+  &:last-child
+    margin-bottom: 0
+
+.problem-create-shell .objective-input
+  display: block
+  width: 100%
+  padding: 11px 13px
+  border: 1px solid #dce4ed
+  border-radius: 8px
+  background: #fff
+  color: var(--objective-ink)
+  font-size: 13px
+  line-height: 1.65
+  box-shadow: none
+  transition: border-color .15s, box-shadow .15s
+
+  &::placeholder
+    color: #a0aaba
+
+  &:focus
+    outline: 0
+    border-color: #8ab0df
+    box-shadow: 0 0 0 3px rgba(57, 121, 201, .08)
+
+  &[aria-invalid='true']
+    border-color: #d79a96
+
+.problem-create-shell textarea.objective-input
+  resize: vertical
+  min-height: 108px
+
+.problem-create-shell .objective-stem
+  min-height: 180px
+
+.objective-help
+  margin: -2px 0 12px
+  color: #8794a5
+  font-size: 11px
+  line-height: 1.65
+
+.objective-options
+  display: flex
+  flex-direction: column
+  gap: 10px
+
+.objective-option
+  display: flex
+  align-items: flex-start
+  gap: 10px
+  padding: 11px 12px
+  border: 1px solid #e3e9ef
+  border-radius: 9px
+  background: #fff
+  transition: border-color .15s, background .15s
+
+  &:focus-within
+    border-color: #8ab0df
+
+  &.is-correct
+    border-color: #acd3c1
+    background: #f5fbf8
+
+.problem-create-shell .objective-answer-toggle
+  display: inline-flex
+  align-items: center
+  gap: 11px
+  min-height: 26px
+  cursor: pointer
+
+  input
+    width: 15px
+    height: 15px
+    flex: 0 0 15px
+    margin: 0
+    accent-color: var(--objective-green)
+
+.objective-option-letter
+  font-size: 13px
+  font-weight: 600
+  color: #63788e
+  line-height: 1.5
+
+.problem-create-shell .objective-option-input
+  flex: 1
+  min-width: 0
+  min-height: 44px
+  resize: vertical
+  border: 0
+  padding: 3px 0
+  background: transparent
+  font-size: 13px
+  line-height: 1.6
+  color: var(--objective-ink)
+
+  &::placeholder
+    color: #a3adba
+
+  &:focus
+    outline: 0
+
+.objective-remove-option
+  display: flex
+  align-items: center
+  justify-content: center
+  width: 26px
+  height: 26px
+  border: 0
+  padding: 0
+  border-radius: 5px
+  background: transparent
+  color: #98a5b4
+  font-size: 20px !important
+
+  &:hover:not(:disabled)
+    color: #bc6d66
+    background: #fff0ee
+
+.objective-option-footer
+  display: flex
+  align-items: center
+  justify-content: space-between
+  margin-top: 13px
+  gap: 8px
+
+  > span
+    color: #94a0ae
+    font-size: 10px
+
+.objective-add-option
+  border: 0
+  padding: 4px 0
+  background: transparent
+  color: var(--objective-blue)
+  font-size: 12px !important
+
+.objective-options--judge
+  flex-direction: row
+
+  .objective-option
+    flex: 1
+    align-items: center
+    min-height: 52px
+
+.objective-judge-correct
+  margin-left: auto
+  color: var(--objective-green)
+  font-size: 10px
+
+.objective-tag-editor
+  display: flex
+  flex-wrap: wrap
+  align-items: center
+  gap: 7px
+  min-height: 48px
+  padding: 8px 10px
+  border: 1px solid #dce4ed
+  border-radius: 8px
+
+  &:focus-within
+    border-color: #8ab0df
+    box-shadow: 0 0 0 3px rgba(57, 121, 201, .08)
+
+  &.has-error
+    border-color: #d79a96
+
+  input
+    flex: 1
+    min-width: 150px
+    width: 150px
+    border: 0
+    background: transparent
+    padding: 3px 2px
+    font-size: 12px
+    line-height: 1.7
+    color: var(--objective-ink)
+
+    &:focus
+      outline: 0
+
+    &::placeholder
+      color: #a0aaba
+
+.objective-tag
+  display: inline-flex
+  align-items: center
+  gap: 6px
+  padding: 4px 6px 4px 9px
+  border-radius: 5px
+  background: #edf4fc
+  color: #4d7cae
+  font-size: 11px
+  line-height: 1.5
+  overflow-wrap: anywhere
+
+  button
+    padding: 0 3px
+    border: 0
+    background: transparent
+    color: #7b9ec5
+    font-size: 15px
+    line-height: 1
+
+.objective-tag-suggestions
+  display: flex
+  align-items: center
+  flex-wrap: wrap
+  gap: 8px
+  margin-top: 12px
+  font-size: 10px
+
+  > span
+    color: #8e9aaa
+    margin-right: 3px
+
+  button
+    border: 0
+    border-radius: 4px
+    background: #f5f7fa
+    padding: 4px 7px
+    color: #718298
+    font-size: 10px
+    line-height: 1.4
+
+    &:hover
+      color: #3979c9
+      background: #edf4fc
+
+.objective-settings
+  padding-top: 18px
+  padding-bottom: 18px
+
+  summary
+    display: flex
+    align-items: center
+    gap: 10px
+    cursor: pointer
+    font-size: 14px
+    font-weight: 600
+    list-style: none
+
+    &::-webkit-details-marker
+      display: none
+
+    small
+      font-size: 11px
+      font-weight: 400
+      color: #94a0ae
+
+  details[open] .objective-settings-chevron
+    transform: rotate(180deg)
+
+.objective-settings-chevron
+  margin-left: auto
+  color: #91a0b0
+
+.objective-settings-fields
+  display: grid
+  grid-template-columns: repeat(2, minmax(0, 1fr))
+  gap: 0 18px
+  padding-top: 24px
+
+.problem-create-shell .objective-hidden
+  display: flex
+  align-items: flex-start
+  gap: 10px
+  grid-column: 1 / -1
+  font-size: 13px
+  cursor: pointer
+
+  input
+    width: 15px
+    height: 15px
+    margin: 2px 0 0
+    accent-color: var(--objective-blue)
+
+  small
+    display: block
+    color: #8d9aab
+    font-size: 11px
+    margin-top: 6px
+
+.objective-submit-bar
+  display: flex
+  align-items: center
+  justify-content: space-between
+  gap: 14px
+  padding: 8px 0
+
+  > span
+    color: #8c99aa
+    font-size: 11px
+
+  > div
+    display: flex
+    align-items: center
+    gap: 20px
+    flex-shrink: 0
+
+.objective-cancel
+  font-size: 12px
+  color: #7e8c9f
+
+.objective-submit
+  border: 1px solid #3979c9
+  border-radius: 8px
+  padding: 12px 21px
+  background: #3979c9
+  color: #fff
+  font-size: 13px !important
+  font-weight: 600 !important
+  box-shadow: 0 3px 7px rgba(57, 121, 201, .12)
+
+  &:hover:not(:disabled)
+    background: #2c6dbe
+
+.objective-error
+  margin: 7px 0 0
+  color: #b5635d
+  font-size: 11px
+  line-height: 1.6
+
+.objective-form-error
+  border: 1px solid #ecc7c3
+  border-radius: 9px
+  padding: 15px 18px
+  margin: 18px 0
+  color: #ae5c56
+  background: #fff8f7
+  font-size: 13px
+  line-height: 1.65
+
+  small
+    display: block
+    font-size: 11px
+    margin-top: 5px
+
+.objective-preview-column
+  min-width: 0
+  height: 100%
+
+.objective-preview-sticky
+  position: sticky
+  top: 24px
+
+.objective-preview
+  overflow: hidden
+  padding: 0
+
+.objective-preview__header
+  display: flex
+  align-items: center
+  justify-content: space-between
+  padding: 18px 22px
+  border-bottom: 1px solid #edf1f5
+
+  h2
+    font-size: 13px
+    font-weight: 600
+    margin: 0
+
+  > span
+    display: inline-flex
+    align-items: center
+    gap: 6px
+    font-size: 10px
+    color: #8c9aab
+
+  i
+    width: 5px
+    height: 5px
+    background: #65b694
+    border-radius: 50%
+
+.objective-preview__body
+  padding: 24px 22px
+  max-height: calc(100vh - 230px)
+  overflow-y: auto
+  overflow-wrap: anywhere
+
+  > h3
+    margin: 13px 0 18px
+    font-size: 18px
+    font-weight: 600
+    line-height: 1.6
+
+.objective-preview__kind
+  padding: 4px 8px
+  border-radius: 5px
+  background: #edf4fc
+  color: #5c88b7
+  font-size: 10px
+
+.objective-preview__placeholder
+  color: #a2acba
+  font-size: 12px
+  line-height: 1.8
+  margin: 0
+
+.objective-markdown
+  font-size: 12px
+  line-height: 1.85
+  color: #4a5c72
+  overflow-wrap: anywhere
+
+  > :first-child
+    margin-top: 0
+
+  > :last-child
+    margin-bottom: 0
+
+  pre
+    padding: 10px
+    font-size: 11px
+    border-radius: 6px
+
+  img
+    max-width: 100%
+
+  .katex-display
+    overflow-x: auto
+
+.objective-preview__options
+  display: flex
+  flex-direction: column
+  gap: 9px
+  margin-top: 22px
+
+.objective-preview__option
+  display: flex
+  align-items: flex-start
+  gap: 10px
+  padding: 11px 12px
+  border: 1px solid #e9edf2
+  border-radius: 7px
+  background: #fafbfd
+
+  > .objective-markdown,
+  > .objective-preview__placeholder
+    flex: 1
+    min-width: 0
+
+  &.is-correct
+    background: #f1f9f5
+    border-color: #c4e3d5
+
+.objective-preview__letter
+  color: #8191a3
+  font-size: 12px
+  font-weight: 600
+  line-height: 1.85
+
+.objective-preview__check
+  margin-left: auto
+  color: #4a9b7f
+  line-height: 1.6
+
+.objective-preview__answer
+  display: flex
+  gap: 10px
+  margin-top: 19px
+  font-size: 11px
+  line-height: 1.6
+
+  span
+    color: #98a3b1
+
+  strong
+    color: #558875
+    font-weight: 500
+
+.objective-preview__tags
+  display: flex
+  flex-wrap: wrap
+  gap: 6px
+  margin-top: 18px
+
+  span
+    border-radius: 4px
+    padding: 4px 7px
+    color: #718ba9
+    background: #f1f5fa
+    font-size: 10px
+    line-height: 1.5
+
+.objective-preview__analysis
+  border-top: 1px dashed #e4eaf1
+  margin-top: 23px
+  padding-top: 19px
+
+  h4
+    font-size: 11px
+    font-weight: 600
+    color: #70859e
+    margin: 0 0 10px
+
+.objective-preview__note
+  margin: 0
+  padding: 12px 15px
+  border-top: 1px solid #edf1f5
+  background: #fafbfd
+  text-align: center
+  color: #9aa6b4
+  font-size: 10px
+  line-height: 1.6
+
+.objective-preview-tip
+  display: flex
+  align-items: flex-start
+  gap: 10px
+  padding: 22px 10px
+  color: #91a4b9
+
+  > span
+    font-size: 22px
+    line-height: 1.3
+
+  p
+    margin: 0
+    font-size: 11px
+    line-height: 1.9
+    color: #8c9aaa
+
+  strong
+    display: block
+    color: #71869e
+    font-weight: 500
+    margin-bottom: 5px
+
+.objective-loading
+  padding: 50px
+  text-align: center
+  font-size: 13px
+  color: #8b9aac
+
+@media screen and (max-width: 1000px)
+  .objective-workspace
+    grid-template-columns: minmax(0, 1fr) 290px
+    gap: 18px
+
+  .objective-card
+    padding: 22px
+
+  .objective-preview
+    padding: 0
+
+  .objective-kinds
+    gap: 6px
+
+  .problem-create-shell .objective-kind
+    padding: 12px 8px
+    gap: 6px
+
+  .problem-create-shell .objective-kind small
+    display: none
+
+  .objective-submit-bar > span
+    max-width: 130px
+    line-height: 1.7
+
+@media screen and (max-width: 800px)
+  .objective-workspace
+    grid-template-columns: minmax(0, 1fr)
+
+  .objective-preview-sticky
+    position: static
+
+  .objective-preview__body
+    max-height: none
+
+  .problem-create-shell .objective-kind small
+    display: block
+
+  .objective-submit-bar > span
+    max-width: none
+
+  .problem-create-type
+    padding: 26px
+
+  .problem-create-types
+    gap: 18px
+
+@media screen and (max-width: 560px)
+  .problem-create-shell
+    padding: 0 16px
+
+  .problem-create-heading
+    margin: 28px 0 25px
+
+    h1
+      font-size: 26px
+
+    p
+      font-size: 13px
+
+  .problem-create-types
+    grid-template-columns: minmax(0, 1fr)
+    gap: 16px
+
+  .problem-create-type
+    padding: 25px
+
+  .problem-create-type__icon
+    margin-bottom: 22px
+
+  .problem-create-type__tags
+    margin: 20px 0
+
+  .problem-create-footnote
+    padding: 0 8px
+
+  .objective-card
+    padding: 20px 16px
+
+  .objective-preview
+    padding: 0
+
+  .objective-section-heading
+    margin-bottom: 24px
+
+    h2
+      font-size: 15px
+
+    > span:last-child:not(:first-child)
+      font-size: 10px
+
+  .objective-kinds
+    gap: 6px
+
+  .problem-create-shell .objective-kind
+    gap: 7px
+    padding: 12px 9px
+
+    small
+      display: none
+
+  .objective-label-row > span
+    font-size: 10px
+
+  .objective-option
+    padding: 10px
+    gap: 8px
+
+  .problem-create-shell .objective-answer-toggle
+    gap: 8px
+
+  .objective-option-footer
+    flex-wrap: wrap
+
+  .objective-judge-correct
+    font-size: 9px
+
+  .objective-settings-fields
+    gap: 0 12px
+
+  .objective-submit-bar
+    align-items: flex-end
+
+    > span
+      max-width: 120px
+      font-size: 10px
+
+    > div
+      gap: 15px
+
+  .objective-submit
+    padding: 11px 15px
+
+@media (prefers-reduced-motion: reduce)
+  .problem-create-type
+    transition: none
+
+    &:hover
+      transform: none

@@ -898,6 +898,9 @@ Problem Tags: 题目标签
 Problem Type: 题目类型
 problem_config: 评测设置
 problem_create: 创建题目
+problem_create_select: 选择题目类型
+problem_create_objective: 创建客观题
+problem_edit_objective: 编辑客观题
 problem_edit: 编辑题目
 problem_import: 导入题目
 problem_main: 题库

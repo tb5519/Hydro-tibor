@@ -33,6 +33,9 @@ import {
 } from '../lib/homework_review';
 import { isInlineRasterImage } from '../lib/inline_image';
 import { getMistakePromptState } from '../lib/mistake_prompt';
+import {
+    objectiveConfig, objectiveContent, parseObjective, parseObjectiveTags,
+} from '../lib/objective';
 import { loadObjectiveCorrectAnswers } from '../lib/objective_correct_answers';
 import { buildObjectiveMergedReview } from '../lib/objective_merged_review';
 import { loadObjectiveSubmissionConfig, loadOwnObjectiveSubmission } from '../lib/objective_submission';
@@ -120,6 +123,17 @@ function wrapBeginnerCppCode(code: string) {
 }
 
 export const parseCategory = (value: string) => value.replace(/，/g, ',').split(',').map((e) => e.trim());
+
+async function copyObjectiveFiles(domainId: string, docId: number, content: string, udoc: User) {
+    const files = new Set(Array.from(content.matchAll(/file:\/\/([\w-]+\.[a-zA-Z0-9]+)/g)).map((i) => i[1]));
+    const results = await Promise.allSettled([...files].filter((file) => udoc._files?.some((i) => i.name === file)).map(async (file) => {
+        // Keep the uploaded draft intact if saving the question fails.
+        await storage.copy(`user/${udoc._id}/${file}`, `problem/${domainId}/${docId}/additional_file/${file}`);
+        await problem.addAdditionalFile(domainId, docId, file, '', udoc._id, true);
+    }));
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
+}
 
 function buildQuery(udoc: User) {
     const q: Filter<ProblemDoc> = {};
@@ -1191,22 +1205,63 @@ export class ProblemEditHandler extends ProblemManageHandler {
     async get() {
         this.response.body.additional_file = sortFiles(this.pdoc.additional_file || []);
         this.response.body.statementLangs = this.ctx.i18n.langs(false);
+        if (this.pdoc.objectiveKind) {
+            if (this.pdoc.reference) throw new ProblemIsReferencedError('edit objective question');
+            const privateDoc = await problem.get(this.pdoc.domainId, this.pdoc.docId, ['objective']);
+            if (!privateDoc?.objective) throw new ProblemConfigError();
+            this.response.body.objective = privateDoc.objective;
+            this.response.body.page_name = 'problem_edit_objective';
+            this.response.template = 'problem_objective_edit.html';
+            return;
+        }
         this.response.template = 'problem_edit.html';
     }
 
     @route('pid', Types.ProblemId)
     @post('title', Types.Title)
-    @post('content', Types.Content)
+    @post('content', Types.Content, true)
     @post('pid', Types.ProblemId, true, (i) => /^(?:[a-z0-9]{1,10}-)?[a-z][a-z0-9]*$/i.test(i))
     @post('hidden', Types.Boolean)
     @post('tag', Types.Content, true, null, parseCategory)
     @post('difficulty', Types.PositiveInt, (i) => +i <= 10, true)
+    @post('objective', Types.Content, true)
     async post(
         domainId: string, pid: string | number, title: string, content: string,
-        newPid: string | number = '', hidden = false, tag: string[] = [], difficulty = 0,
+        newPid: string | number = '', hidden = false, tag: string[] = [], difficulty = 0, objective?: string,
     ) {
         if (typeof newPid !== 'string') newPid = `P${newPid}`;
         if (newPid !== this.pdoc.pid && await problem.get(domainId, newPid)) throw new ProblemAlreadyExistError(newPid);
+        if (this.pdoc.objectiveKind) {
+            if (this.pdoc.reference) throw new ProblemIsReferencedError('edit objective question');
+            const question = parseObjective(objective);
+            const tags = parseObjectiveTags(tag);
+            const statement = objectiveContent(question);
+            const config = objectiveConfig(question);
+            const original = await problem.get(domainId, this.pdoc.docId, ['objective', 'config'], true);
+            if (!original?.objective) throw new ProblemConfigError();
+            await copyObjectiveFiles(domainId, this.pdoc.docId, statement, this.user);
+            try {
+                await problem.addTestdata(domainId, this.pdoc.docId, 'config.yaml', Buffer.from(config), this.user._id);
+                await problem.edit(domainId, this.pdoc.docId, {
+                    title, content: statement, pid: newPid, hidden, tag: tags, difficulty, html: false,
+                    objective: question, objectiveKind: question.kind, config,
+                });
+            } catch (error) {
+                // Restore the answer key as well as authoring data if a save only partly succeeded.
+                await problem.addTestdata(domainId, this.pdoc.docId, 'config.yaml', Buffer.from(String(original.config || '')), this.user._id);
+                await problem.edit(domainId, this.pdoc.docId, {
+                    ...pick(this.pdoc, ['title', 'content', 'hidden', 'tag', 'difficulty', 'html', 'objectiveKind']),
+                    pid: this.pdoc.pid || '',
+                    objective: original.objective,
+                    config: original.config,
+                });
+                throw error;
+            }
+            this.response.redirect = this.url('problem_detail', { pid: newPid || this.pdoc.docId });
+            return;
+        }
+        if (!content) throw new ValidationError('content');
+        if (objective) throw new ValidationError('objective');
         const $update: Partial<ProblemDoc> = {
             title, content, pid: newPid, hidden, tag: tag ?? [], difficulty, html: false,
         };
@@ -1568,11 +1623,12 @@ export class ProblemStatisticsHandler extends ProblemDetailHandler {
 }
 
 export class ProblemCreateHandler extends Handler {
-    async get() {
-        this.response.body.statementLangs = this.ctx.i18n.langs(false);
-        this.response.template = 'problem_edit.html';
+    @query('type', Types.Range(['traditional']), true)
+    async get(domainId: string, type?: string) {
+        this.response.template = type === 'traditional' ? 'problem_edit.html' : 'problem_create_select.html';
         this.response.body = {
-            page_name: 'problem_create',
+            page_name: type === 'traditional' ? 'problem_create' : 'problem_create_select',
+            statementLangs: this.ctx.i18n.langs(false),
             additional_file: [],
         };
     }
@@ -1604,6 +1660,47 @@ export class ProblemCreateHandler extends Handler {
         await Promise.all(tasks);
         this.response.body = { pid: pid || docId };
         this.response.redirect = this.url('problem_files', { pid: pid || docId });
+    }
+}
+
+export class ProblemCreateObjectiveHandler extends Handler {
+    async get() {
+        this.response.template = 'problem_objective_edit.html';
+        this.response.body = { page_name: 'problem_create_objective', additional_file: [] };
+    }
+
+    @post('title', Types.Title)
+    @post('objective', Types.Content)
+    @post('pid', Types.ProblemId, true, (i) => /^(?:[a-z0-9]{1,10}-)?[a-z][a-z0-9]*$/i.test(i))
+    @post('hidden', Types.Boolean)
+    @post('difficulty', Types.PositiveInt, (i) => +i <= 10, true)
+    @post('tag', Types.Content, true, null, parseCategory)
+    async post(
+        domainId: string, title: string, objective: string, pid: string | number = '',
+        hidden = false, difficulty = 0, tag: string[] = [],
+    ) {
+        const question = parseObjective(objective);
+        const tags = parseObjectiveTags(tag);
+        const content = objectiveContent(question);
+        const config = objectiveConfig(question);
+        if (typeof pid !== 'string') pid = `P${pid}`;
+        if (pid && await problem.get(domainId, pid)) throw new ProblemAlreadyExistError(pid);
+        // Publish only after both the question and its judging configuration exist.
+        const docId = await problem.add(domainId, pid, title, content, this.user._id, tags, {
+            hidden: true, difficulty, objective: question, objectiveKind: question.kind,
+        });
+        try {
+            await problem.addTestdata(domainId, docId, 'config.yaml', Buffer.from(config), this.user._id);
+            await copyObjectiveFiles(domainId, docId, content, this.user);
+            // addTestdata's legacy event listeners run asynchronously; make the configuration
+            // immediately available before the new question is visible or the request redirects.
+            await problem.edit(domainId, docId, { hidden, config });
+        } catch (error) {
+            await problem.del(domainId, docId);
+            throw error;
+        }
+        this.response.body = { pid: pid || docId };
+        this.response.redirect = this.url('problem_detail', { pid: pid || docId });
     }
 }
 
@@ -1763,6 +1860,7 @@ export async function apply(ctx: Context) {
     ctx.Route('problem_solution_reply_raw', '/p/:pid/solution/:psid/:psrid/raw', ProblemSolutionRawHandler, PERM.PERM_VIEW_PROBLEM);
     ctx.Route('problem_statistics', '/p/:pid/stat', ProblemStatisticsHandler, PERM.PERM_VIEW_PROBLEM);
     ctx.Route('problem_create', '/problem/create', ProblemCreateHandler, PERM.PERM_CREATE_PROBLEM);
+    ctx.Route('problem_create_objective', '/problem/create/objective', ProblemCreateObjectiveHandler, PERM.PERM_CREATE_PROBLEM);
     await ctx.inject(['api'], ({ api }) => {
         api.provide(ProblemApi);
     });

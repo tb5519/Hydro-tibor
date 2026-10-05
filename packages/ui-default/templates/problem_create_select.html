@@ -1,0 +1,35 @@
+{% extends "layout/basic.html" %}
+{% block content %}
+<div class="problem-create-shell problem-create-select">
+  <a class="problem-create-back" href="{{ url('problem_main') }}"><span aria-hidden="true">←</span> 返回题库</a>
+  <header class="problem-create-heading">
+    <span class="problem-create-eyebrow">题库 · 创建题目</span>
+    <h1>从一道好题开始</h1>
+    <p>选择适合的录入方式，让每一道题都各得其所。</p>
+  </header>
+  <div class="problem-create-types">
+    <a class="problem-create-type" href="{{ url('problem_create') }}?type=traditional">
+      <span class="problem-create-type__icon" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="none"><path d="M11 10 5 16l6 6m10-12 6 6-6 6m-3-17-4 22" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      <span class="problem-create-type__eyebrow">熟悉的创建方式</span>
+      <h2>传统题目</h2>
+      <p>沿用原有编辑器，自由编写题面，配置测试数据或整套客观题试卷。</p>
+      <div class="problem-create-type__tags"><span>编程题</span><span>整套试卷</span><span>自由题面</span></div>
+      <span class="problem-create-type__action">使用原有编辑器 <span aria-hidden="true">→</span></span>
+    </a>
+    <a class="problem-create-type problem-create-type--objective" href="{{ url('problem_create_objective') }}">
+      <span class="problem-create-type__badge">新增</span>
+      <span class="problem-create-type__icon" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="none"><rect x="5" y="4" width="22" height="24" rx="4" stroke="currentColor" stroke-width="1.8"/><path d="m10 12 2 2 4-4m3 2h3m-12 8h3m6 0h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      <span class="problem-create-type__eyebrow">一题一录，积累知识点题库</span>
+      <h2>客观题</h2>
+      <p>独立录入一道选择题或判断题，标记答案与知识点，为灵活组题做好准备。</p>
+      <div class="problem-create-type__tags"><span>单选题</span><span>多选题</span><span>判断题</span></div>
+      <span class="problem-create-type__action">创建一道客观题 <span aria-hidden="true">→</span></span>
+    </a>
+  </div>
+  <p class="problem-create-footnote"><span aria-hidden="true">✧</span> 每道客观题都有自己的知识点标签，让后续的分类练习更有针对性。</p>
+</div>
+{% endblock %}
