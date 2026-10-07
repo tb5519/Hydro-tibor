@@ -19,7 +19,7 @@ function record(index, status, extra = {}) {
     };
 }
 
-function loadState(records) {
+function loadState(records, homeworkId) {
     const source = fs.readFileSync(path.join(root, 'packages/hydrooj/src/lib/mistake_prompt.ts'), 'utf8');
     const module = { exports: {} };
     const model = {
@@ -28,7 +28,9 @@ function loadState(records) {
         getMulti(domainId, query) {
             const filtered = records.filter((r) => r.domainId === domainId && r.uid === query.uid && r.pid === query.pid
                 && query.status.$in.includes(r.status) && !Object.hasOwn(r, 'input')
-                && !query.contest.$nin.includes(r.contest?.toString()));
+                && (query.contest.$in
+                    ? query.contest.$in.some((value) => (value?.toString() || null) === (r.contest?.toString() || null))
+                    : !query.contest.$nin.includes(r.contest?.toString())));
             const cursor = {
                 project() { return cursor; },
                 sort(order) {
@@ -49,7 +51,7 @@ function loadState(records) {
             throw new Error(`Unexpected import ${name}`);
         },
     });
-    return module.exports.getMistakePromptState('class-a', 12, 1000);
+    return module.exports.getMistakePromptState('class-a', 12, 1000, homeworkId);
 }
 
 describe('mistake prompt formal submission history', () => {
@@ -86,6 +88,15 @@ describe('mistake prompt formal submission history', () => {
         assert.equal((await loadState([
             record(2, AC), record(1, WA, { contest: new ObjectId('aaaaaaaaaaaaaaaaaaaaaaaa') }),
         ])).eligible, true);
+    });
+    it('uses ordinary practice and the current homework while excluding another contest or homework', async () => {
+        const homeworkId = new ObjectId('aaaaaaaaaaaaaaaaaaaaaaaa');
+        const other = new ObjectId('bbbbbbbbbbbbbbbbbbbbbbbb');
+        assert.equal((await loadState([record(1, WA), record(2, AC, { contest: homeworkId })], homeworkId)).eligible, true);
+        assert.equal((await loadState([record(1, WA, { contest: other }), record(2, AC, { contest: homeworkId })], homeworkId)).eligible, false);
+        assert.equal((await loadState([
+            record(1, WA, { contest: homeworkId }), record(2, AC, { contest: homeworkId }), record(3, WA, { contest: other }),
+        ], homeworkId)).latestRid, record(2, AC)._id.toString());
     });
 });
 

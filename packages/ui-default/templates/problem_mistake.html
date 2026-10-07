@@ -146,7 +146,7 @@
               <strong class="mistake-importance__value">{{ importance }}</strong>
             </div>
             <div class="mistake-problem">
-              <h2 class="mistake-problem__title">{{ problem.render_problem_title(pdoc, show_tags=false) }}</h2>
+              <h2 class="mistake-problem__title"><a href="{{ problemUrls[mdoc.pid] }}" data-no-instant><b>{{ pdoc.pid|default(pdoc.docId) }}</b>&nbsp;&nbsp;{{ pdoc.title }}</a></h2>
               {{ problem.render_problem_tags(pdoc) }}
               <div class="mistake-problem__meta">
                 <span class="mistake-status mistake-status--{{ 'mastered' if mdoc.status == 'mastered' else 'review' }}">{{ '已掌握' if mdoc.status == 'mastered' else '待复盘' }}</span>
@@ -160,14 +160,18 @@
             </div>
             <div class="mistake-action">
               <div class="mistake-action__main">
-                <form method="post" action="{{ url('problem_detail', pid=pdoc.pid|default(pdoc.docId)) }}" data-mistake-action>
+                {% if practiceAllowed[mdoc.pid] %}
+                <form method="post" action="{{ problemUrls[mdoc.pid] }}" data-mistake-action>
                   <input type="hidden" name="operation" value="start_mistake_practice">
                   <button class="mistake-action__button mistake-action__button--practice" type="submit" title="从空白代码开始新一轮练习">
                     <span class="icon icon-refresh" aria-hidden="true"></span>重新练习
                   </button>
                 </form>
-                {% if mdoc.practiceToken %}
-                  <form method="post" action="{{ url('problem_detail', pid=pdoc.pid|default(pdoc.docId)) }}" data-mistake-action>
+                {% else %}
+                  <a class="mistake-action__button mistake-action__button--practice" href="{{ problemUrls[mdoc.pid] }}">查看作业题</a>
+                {% endif %}
+                {% if mdoc.practiceToken and practiceAllowed[mdoc.pid] %}
+                  <form method="post" action="{{ problemUrls[mdoc.pid] }}" data-mistake-action>
                     <input type="hidden" name="operation" value="deepen_mistake">
                     <input type="hidden" name="practiceToken" value="{{ mdoc.practiceToken }}">
                     <button class="mistake-action__button mistake-action__button--deepen" type="submit"{% if not canDeepen %} disabled{% endif %} title="{{ '这一轮已加深，下次重新练习后可再标记' if not canDeepen else '这次还没掌握？重要性 +1，让它排到更前面' }}">
@@ -177,13 +181,15 @@
                 {% endif %}
               </div>
               <div class="mistake-action__secondary">
-                {% if mdoc.practiceToken or mdoc.status != 'mastered' %}
+                {% if not practiceAllowed[mdoc.pid] %}
+                  <p class="mistake-action__hint">作业已截止，仍可查看题目并整理错题。</p>
+                {% elif mdoc.practiceToken or mdoc.status != 'mastered' %}
                   <p class="mistake-action__hint">{{ '重新练习后可加深标记' if not mdoc.practiceToken else ('下次练习后可再次加深' if not canDeepen else '还没掌握？加深一次，重要性 +1') }}</p>
                 {% else %}
                   <p class="mistake-action__hint">已掌握，也可以再挑战一次</p>
                 {% endif %}
                 {% if mdoc.status != 'mastered' %}
-                  <form method="post" action="{{ url('problem_detail', pid=pdoc.pid|default(pdoc.docId)) }}" data-mistake-action>
+                  <form method="post" action="{{ problemUrls[mdoc.pid] }}" data-mistake-action>
                     <input type="hidden" name="operation" value="master_mistake">
                     <button class="mistake-action__button mistake-action__button--mastered" type="submit"><span class="icon icon-check" aria-hidden="true"></span>标记已掌握</button>
                   </form>

@@ -7,7 +7,10 @@ const { transformSync } = require('esbuild');
 const { ObjectId } = require('mongodb');
 
 const root = path.resolve(__dirname, '..');
-const PERM = { PERM_EDIT_HOMEWORK: 1n, PERM_EDIT_HOMEWORK_SELF: 2n, PERM_EDIT_DOMAIN: 4n, PERM_SUBMIT_PROBLEM: 8n };
+const PERM = {
+    PERM_EDIT_HOMEWORK: 1n, PERM_EDIT_HOMEWORK_SELF: 2n, PERM_EDIT_DOMAIN: 4n, PERM_SUBMIT_PROBLEM: 8n,
+    PERM_VIEW_HOMEWORK: 16n, PERM_VIEW_HIDDEN_HOMEWORK: 32n, PERM_VIEW_HIDDEN_CONTEST: 64n,
+};
 const PRIV = { PRIV_USER_PROFILE: 1, PRIV_EDIT_SYSTEM: 2, PRIV_MANAGE_ALL_DOMAIN: 4, PRIV_JUDGE: 8 };
 const STATUS = { STATUS_ACCEPTED: 1, STATUS_WRONG_ANSWER: 2, STATUS_WAITING: 0, STATUS_JUDGING: 20, STATUS_COMPILING: 21, STATUS_FETCHED: 22 };
 const tid = new ObjectId('6aa000000000000000000001');
@@ -234,10 +237,10 @@ function problemHandler(options = {}) {
         url(name, args) {
             if (name === 'problem_submission_records') return `/d/${args.domainId}/p/${args.pid}/submission-records`;
             if (name === 'problem_detail') {
-                assert.equal(args.query, undefined);
                 assert.equal(args.tid, undefined);
                 assert.equal(args.reviewUid, undefined);
-                return `/d/${args.domainId}/p/${args.pid}`;
+                const query = Object.keys(args.query || {}).length ? `?${new URLSearchParams(args.query)}` : '';
+                return `/d/${args.domainId || this.domain._id}/p/${args.pid}${query}`;
             }
             return `/homework/${args.tid}?uid=${args.query.uid}`;
         }
@@ -248,23 +251,32 @@ function problemHandler(options = {}) {
         loader: 'ts', format: 'cjs', tsconfigRaw: { compilerOptions: { experimentalDecorators: true } },
     }).code;
     const mod = { exports: {} };
+    const contestModel = {
+        isNotStarted: () => true, isDone: () => false, canShowSelfRecord: () => true,
+        getStatus: async () => ({ detail: { 1002: { rid: bestRid } } }),
+        getRelated: async () => [],
+    };
+    const problemModel = {
+        get: async () => pdoc, canViewBy: () => options.normalVisible !== false,
+        isObjectiveSource: (doc) => !!doc?.objectiveKind,
+        getStatus: async (_domain, _pid, uid) => { statusUids.push(uid); return null; },
+    };
+    const mistakeAccess = compileLib('mistake_access', {
+        '../error': { ContestNotFoundError: class extends Error {} },
+        '../model/builtin': { PERM }, '../model/contest': contestModel,
+        '../model/problem': problemModel, '../model/user': { listGroup: async () => [] },
+        './homework_review': helpers,
+    });
     vm.runInNewContext(code, {
-        module: mod, exports: mod.exports, ...require('lodash'), ...helpers,
+        module: mod, exports: mod.exports, ...require('lodash'), ...helpers, ...mistakeAccess,
         PERM, PRIV, STATUS, Time: { minute: 60000 },
         route: () => () => {}, query: () => () => {}, param: () => () => {},
         Types: new Proxy({}, { get: () => () => {} }),
         ContestDetailBaseHandler: BaseHandler, ContestNotLiveError,
         ContestNotAttendedError: class extends Error {}, ContestNotFoundError: class extends Error {},
         ProblemNotFoundError: class extends Error {}, PermissionError,
-        contest: {
-            isNotStarted: () => true, isDone: () => false, canShowSelfRecord: () => true,
-            getStatus: async () => ({ detail: { 1002: { rid: bestRid } } }),
-            getRelated: async () => [],
-        },
-        problem: {
-            get: async () => pdoc, canViewBy: () => options.normalVisible !== false,
-            getStatus: async (_domain, _pid, uid) => { statusUids.push(uid); return null; },
-        },
+        contest: contestModel,
+        problem: problemModel,
         user: { getById: async () => ({ _id: 10 }) },
         solution: { count: async () => 0 }, discussion: { count: async () => 0 },
         setting: { langs: { python3: {} } },
@@ -273,7 +285,7 @@ function problemHandler(options = {}) {
         assertRecordReplayRequest: (fromRecord) => { assert.equal(fromRecord, undefined); },
         canUseProblemRecordPicker: () => true,
         canManageRecordList: (viewer) => viewer.hasPerm(PERM.PERM_EDIT_HOMEWORK),
-        mistake: { getPracticeState: () => null },
+        mistake: { get: async () => null, getPracticeState: () => null },
         loadOwnObjectiveSubmission: async (...args) => { ownLoads.push(args); return null; },
         loadObjectiveCorrectAnswers: async () => undefined,
         buildObjectiveMergedReview: objectiveDependencies['./objective_merged_review'].buildObjectiveMergedReview,
@@ -321,13 +333,14 @@ describe('problem page homework review integration', () => {
         await h.handler._prepare('class-a', 1002, tid, 20);
         assert.equal(h.handler.UiContext.homeworkReview.code, 'print("student")');
         assert.equal(h.handler.UiContext.homeworkReview.ownAnswerUrl, '');
-        await assert.rejects(h.handler._prepare('class-a', 1002), PermissionError);
+        const normal = problemHandler({ standalone: true, normalVisible: false });
+        await assert.rejects(normal.handler._prepare('class-a', 1002), PermissionError);
     });
 
     it('does not let ordinary students bypass contest entry by adding reviewUid', async () => {
         const h = problemHandler({ viewer: { _id: 30, own: () => false, hasPerm: () => false } });
         await assert.rejects(h.handler._prepare('class-a', 1002, tid, 20), PermissionError);
-        await assert.rejects(h.handler._prepare('class-a', 1002, tid), h.ContestNotLiveError);
+        await assert.rejects(h.handler._prepare('class-a', 1002, tid), PermissionError);
     });
 
     it('defaults objective homework review to all student attempts without importing any teacher draft or standard answer', async () => {

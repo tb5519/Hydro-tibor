@@ -85,6 +85,19 @@ describe('mistake practice draft reset', () => {
         assert.equal(switched.code, '');
         assert.equal(h.reducer().code, '');
     });
+    it('starts an explicitly requested homework practice round without clearing the regular problem draft', () => {
+        const homework = { _id: 'homework-id', rule: 'homework' };
+        const homeworkKey = `${cacheKey}@homework-id`;
+        const h = editorHarness({ tdoc: homework }, {
+            [cacheKey]: 'regular draft', [homeworkKey]: 'previous homework attempt',
+        });
+        assert.equal(h.reducer().code, '');
+        assert.equal(h.memory.get(cacheKey), 'regular draft');
+        h.memory.set(homeworkKey, 'new homework attempt');
+        assert.equal(h.reducer().code, 'new homework attempt', 'reload must preserve this round');
+        h.context.mistakePractice = null;
+        assert.equal(h.reducer().code, 'new homework attempt', 'normal homework entry must preserve work');
+    });
     it('leaves normal entry, invalid tokens, unsupported problems and contests untouched', () => {
         for (const override of [
             { mistakePractice: null },
@@ -110,6 +123,7 @@ function renderPanel(canDeepen = true) {
     env.addGlobal('url', (name) => name === 'problem_detail' ? '/d/system/p/1000' : '/d/system/mistakes');
     return env.render('partials/mistake_practice.html', {
         canUseMistake: true,
+        mistakeActionUrl: '/d/system/p/1000',
         pdoc: { docId: 1000 },
         mistakePractice: { token: TOKEN1, importance: 1, canDeepen },
     });

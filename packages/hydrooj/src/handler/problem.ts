@@ -32,6 +32,7 @@ import {
     authorizeHomeworkReview, loadHomeworkReviewRecord, loadHomeworkReviewRecords, publicHomeworkReviewRecord, rejectHomeworkReviewMutation,
 } from '../lib/homework_review';
 import { isInlineRasterImage } from '../lib/inline_image';
+import { canAccessHomeworkProblem, loadMistakeHomework } from '../lib/mistake_access';
 import { getMistakePromptState } from '../lib/mistake_prompt';
 import {
     buildObjectivePaper, objectiveConfig, objectiveContent, ObjectivePaper, parseObjective, parseObjectivePaper, parseObjectiveTags,
@@ -582,6 +583,23 @@ export class ProblemMistakeHandler extends Handler {
             problem.getList(domainId, pids, this.user._id, false, problem.PROJECTION_LIST, true),
             problem.getListStatus(domainId, this.user._id, pids),
         ]);
+        const problemUrls: Record<number, string> = {};
+        const practiceAllowed: Record<number, boolean> = {};
+        await Promise.all(mdocs.map(async (mdoc) => {
+            if (pdict[mdoc.pid]) {
+                problemUrls[mdoc.pid] = this.url('problem_detail', { pid: pdict[mdoc.pid].pid || mdoc.pid });
+                practiceAllowed[mdoc.pid] = true;
+                return;
+            }
+            if (!mdoc.homeworkId) return;
+            const pdoc = await problem.get(domainId, mdoc.pid);
+            if (!pdoc) return;
+            const source = await loadMistakeHomework(this.user, domainId, mdoc, pdoc);
+            if (!source) return;
+            pdict[mdoc.pid] = pick(pdoc, problem.PROJECTION_LIST) as ProblemDoc;
+            problemUrls[mdoc.pid] = this.url('problem_detail', { pid: pdoc.pid || mdoc.pid, query: { tid: source.homework.docId } });
+            practiceAllowed[mdoc.pid] = contest.isOngoing(source.homework, source.status);
+        }));
         const visibleMdocs = mdocs.filter((mdoc) => pdict[mdoc.pid]);
         this.response.template = 'problem_mistake.html';
         this.response.body = {
@@ -591,6 +609,8 @@ export class ProblemMistakeHandler extends Handler {
             mdocs: visibleMdocs,
             pdict,
             psdict,
+            problemUrls,
+            practiceAllowed,
             status,
             page_name: 'problem_mistake',
             title: this.translate('problem_mistake'),
@@ -708,6 +728,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
     udoc: User;
     psdoc: ProblemStatusDoc;
     mistakePromptState: Awaited<ReturnType<typeof getMistakePromptState>>;
+    reviewMistakeStudent?: User;
 
     @route('pid', Types.ProblemId, true)
     @query('tid', Types.ObjectId, true)
@@ -720,13 +741,19 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
         fromRecord?: ObjectId, mergedUid?: number, answerSheet = false,
     ) {
         const isReadRequest = ['GET', 'HEAD'].includes((this.request.method || 'GET').toUpperCase());
-        if (!isReadRequest) rejectHomeworkReviewMutation(this.request);
+        const isReviewMistakeAction = !isReadRequest && this.constructor === ProblemDetailHandler
+            && this.request.body?.operation === 'add_review_mistake' && reviewUid !== undefined
+            && this.request.body?.reviewUid === undefined && this.request.body?.uid === undefined
+            && this.request.body?.tid === undefined && this.request.body?.mergedUid === undefined
+            && this.request.body?.fromRecord === undefined && mergedUid === undefined && !fromRecord;
+        if (!isReadRequest && !isReviewMistakeAction) rejectHomeworkReviewMutation(this.request);
         else {
             assertRecordReplayRequest(fromRecord, tid, reviewUid, mergedUid);
             if (answerSheet && !fromRecord) throw new ValidationError('answerSheet');
         }
         this.pdoc = await problem.get(domainId, pid);
         if (!this.pdoc) throw new ProblemNotFoundError(domainId, pid);
+        tid ||= this.tdoc?.docId;
         // Check before the contest branch: possession of a contest link never exposes a source question.
         if (problem.isObjectiveSource(this.pdoc)) {
             this.checkPerm(PERM.PERM_VIEW_PROBLEM);
@@ -734,9 +761,14 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
         }
         const reviewStudent = reviewUid === undefined ? null
             : await authorizeHomeworkReview(this.user, this.domain, this.tdoc, this.pdoc.docId, reviewUid);
+        if (isReviewMistakeAction) this.reviewMistakeStudent = reviewStudent;
         if (reviewStudent) this.tsdoc = await contest.getStatus(domainId, tid, reviewUid);
         if (tid) {
             if (!this.tdoc?.pids?.includes(this.pdoc.docId)) throw new ContestNotFoundError(domainId, tid);
+            if (!reviewStudent && this.tdoc.rule === 'homework'
+                && !await canAccessHomeworkProblem(this.user, domainId, this.pdoc, this.tdoc, this.tsdoc)) {
+                throw new PermissionError(PERM.PERM_VIEW_HOMEWORK);
+            }
             if (!reviewStudent && contest.isNotStarted(this.tdoc)) throw new ContestNotLiveError(tid);
             if (!reviewStudent && !contest.isDone(this.tdoc, this.tsdoc) && (!this.tsdoc?.attend || !this.tsdoc.startAt)) {
                 throw new ContestNotAttendedError(tid);
@@ -793,13 +825,17 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
         const codeLang = this.pdoc.config && typeof this.pdoc.config === 'object'
             ? pickPreferredCodeLang(this.pdoc.config.langs || [], this.user, preferredCodeDomain)
             : this.user.codeLang;
-        const canUseMistake = !tid && isProgrammingProblem && this.user.hasPerm(PERM.PERM_SUBMIT_PROBLEM);
+        const canUseMistake = (!tid || this.tdoc?.rule === 'homework') && !reviewStudent && !fromRecord && mergedUid === undefined
+            && isProgrammingProblem && !problem.isObjectiveSource(this.pdoc) && this.user.hasPerm(PERM.PERM_SUBMIT_PROBLEM);
+        const mistakeActionUrl = this.url('problem_detail', {
+            pid: this.pdoc.docId, query: tid ? { tid } : {},
+        });
         const mistakeDoc = canUseMistake
             ? await mistake.get(domainId, this.user._id, this.pdoc.docId)
             : null;
         let showMistakePrompt = false;
         if (canUseMistake) {
-            this.mistakePromptState = await getMistakePromptState(domainId, this.user._id, this.pdoc.docId);
+            this.mistakePromptState = await getMistakePromptState(domainId, this.user._id, this.pdoc.docId, tid);
             showMistakePrompt = !mistakeDoc && this.mistakePromptState.eligible
                 && Date.now() - this.mistakePromptState.latestSubmitAt <= 10 * Time.minute;
         }
@@ -814,6 +850,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             mistakePractice: mistake.getPracticeState(mistakeDoc, this.request.query.mistakePractice),
             isMistakeSupported: isProgrammingProblem,
             canUseMistake,
+            mistakeActionUrl,
             codeLang,
             cppEditorMode: getCppEditorMode(this.user),
             cppStarterTemplate: getCppEditorMode(this.user) === 'preset' ? CPP_STARTER_TEMPLATE : '',
@@ -843,6 +880,14 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
                     ? this.url('problem_detail', { domainId, pid: this.pdoc.pid || this.pdoc.docId }) : '',
             };
             this.response.body.homeworkReview = this.UiContext.homeworkReview;
+            if (isProgrammingProblem && !problem.isObjectiveSource(this.pdoc)) {
+                const reviewMistake = await mistake.get(domainId, reviewStudent._id, this.pdoc.docId);
+                this.UiContext.homeworkReviewMistake = {
+                    url: this.url('problem_detail', { pid: this.pdoc.docId, query: { tid, reviewUid: reviewStudent._id } }),
+                    studentName: reviewStudent.displayName || reviewStudent.uname,
+                    added: !!reviewMistake && reviewMistake.status !== 'mastered',
+                };
+            }
             if (isObjective) {
                 const [records, { config }] = await Promise.all([
                     loadHomeworkReviewRecords(domainId, this.pdoc.docId, reviewUid, this.tdoc),
@@ -986,16 +1031,28 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
 
     async postAddMistake() {
         this.checkPerm(PERM.PERM_SUBMIT_PROBLEM);
+        if (!this.response.body.canUseMistake) throw new ValidationError('mistake');
         if (!this.pdoc.config || typeof this.pdoc.config !== 'object' || ['objective', 'submit_answer'].includes(this.pdoc.config.type)) {
             throw new ValidationError('type');
         }
-        await mistake.add(this.args.domainId, this.user._id, this.pdoc.docId, 'manual');
-        this.back();
+        await mistake.add(this.args.domainId, this.user._id, this.pdoc.docId, 'manual', this.tdoc?.docId);
+        this.back({ mistakeStatus: 'review' });
+    }
+
+    async postAddReviewMistake() {
+        if (!this.reviewMistakeStudent || !this.UiContext.homeworkReviewMistake) throw new ValidationError('reviewUid');
+        const student = await authorizeHomeworkReview(this.user, this.domain, this.tdoc, this.pdoc.docId, this.reviewMistakeStudent._id);
+        await mistake.add(this.args.domainId, student._id, this.pdoc.docId, 'manual', this.tdoc.docId);
+        this.back({ reviewMistakeAdded: true, mistakeStudentName: student.displayName || student.uname });
     }
 
     private checkMistakePractice() {
         this.checkPerm(PERM.PERM_SUBMIT_PROBLEM);
-        if (this.tdoc || this.args.tid) throw new ValidationError('tid');
+        if ((this.tdoc || this.args.tid) && (this.tdoc?.rule !== 'homework' || !this.response.body?.canUseMistake
+            || !contest.isOngoing(this.tdoc, this.tsdoc))) throw new ValidationError('tid');
+        if (this.args.reviewUid !== undefined || this.args.fromRecord !== undefined || this.args.mergedUid !== undefined) {
+            throw new ValidationError('mistake');
+        }
         if (!this.pdoc.config || typeof this.pdoc.config !== 'object' || ['objective', 'submit_answer'].includes(this.pdoc.config.type)) {
             throw new ValidationError('type');
         }
@@ -1008,7 +1065,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
         this.response.redirect = this.url('problem_detail', {
             domainId: this.args.domainId,
             pid: this.pdoc.pid || this.pdoc.docId,
-            query: { scratchpad: '1', mistakePractice: mdoc.practiceToken },
+            query: { scratchpad: '1', mistakePractice: mdoc.practiceToken, ...(this.tdoc ? { tid: this.tdoc.docId } : {}) },
         });
     }
 
@@ -1022,8 +1079,9 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
 
     async postMasterMistake() {
         this.checkPerm(PERM.PERM_SUBMIT_PROBLEM);
+        if (!this.response.body.canUseMistake) throw new ValidationError('mistake');
         await mistake.master(this.args.domainId, this.user._id, this.pdoc.docId);
-        this.back();
+        this.back({ mistakeStatus: 'mastered' });
     }
 }
 

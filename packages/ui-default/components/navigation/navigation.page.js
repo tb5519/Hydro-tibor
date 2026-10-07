@@ -48,7 +48,6 @@ export function bindDomainSwitcher() {
   const isMobile = () => $(document).width() <= responsiveCutoff.mobile;
   const dropdown = () => (isMobile() ? null : Dropdown.getOrConstruct($domainTrigger)?.dropInstance);
   const syncExpanded = () => $button.attr('aria-expanded', String(isMobile() || !!Dropdown.get($domainTrigger)?.dropInstance?.isOpened()));
-  let restoringFocus = false;
   const open = () => {
     dropdown()?.open();
     syncExpanded();
@@ -59,14 +58,13 @@ export function bindDomainSwitcher() {
   };
 
   $domainTrigger.on('vjDropdownShow vjDropdownHide', syncExpanded);
-  $button.on('click', open).on('focus', () => { if (!restoringFocus) open(); });
+  // The click-only Drop instance handles pointer/native button activation and
+  // outside clicks. Focus and hover must never open the classroom switcher.
   $button.add($domainMenu).on('keydown', (event) => {
     if (event.key === 'Escape' && !isMobile()) {
       event.preventDefault();
       close();
-      restoringFocus = true;
       $button[0].focus();
-      restoringFocus = false;
     } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       open();

@@ -1,0 +1,11 @@
+{% if canUseMistake %}
+  <li class="menu__item scratchpad--hide">
+    <form method="post" action="{{ mistakeActionUrl }}" data-mistake-action>
+      <input type="hidden" name="operation" value="{{ 'master_mistake' if mistakeDoc and mistakeDoc.status != 'mastered' else 'add_mistake' }}">
+      <button type="submit" class="menu__link">
+        <span class="icon {{ 'icon-check' if mistakeDoc and mistakeDoc.status != 'mastered' else 'icon-flag' }}"></span>
+        <span data-mistake-action-label>{{ '标记已掌握' if mistakeDoc and mistakeDoc.status != 'mastered' else '加入错题集' }}</span>
+      </button>
+    </form>
+  </li>
+{% endif %}

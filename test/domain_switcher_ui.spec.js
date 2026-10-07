@@ -12,6 +12,13 @@ const uiRoot = path.resolve(__dirname, '../packages/ui-default');
 const pageCode = transformSync(fs.readFileSync(path.join(uiRoot, 'components/navigation/navigation.page.js'), 'utf8'), {
     loader: 'js', format: 'cjs',
 }).code;
+const dropdownCode = transformSync(fs.readFileSync(path.join(uiRoot, 'components/dropdown/Dropdown.js'), 'utf8'), {
+    loader: 'js', format: 'cjs',
+}).code;
+const attachedObjectCode = transformSync(fs.readFileSync(path.join(uiRoot, 'components/DOMAttachedObject.ts'), 'utf8'), {
+    loader: 'ts', format: 'cjs',
+}).code;
+const dropCode = fs.readFileSync(require.resolve('tether-drop'), 'utf8');
 const templateRoot = path.join(uiRoot, 'templates');
 const navTemplate = fs.readFileSync(path.join(templateRoot, 'partials/nav.html'), 'utf8');
 const mobileWidth = require(path.join(uiRoot, 'breakpoints.json')).mobile;
@@ -50,84 +57,127 @@ function harness(width = 1280, { preAttach = false } = {}) {
     const menu = window.document.getElementById('menu-nav-domain');
     const links = [...menu.querySelectorAll('a[href]')];
     const outside = window.document.getElementById('outside');
-    const timers = [];
-    const calls = { constructed: 0, detached: 0, open: 0, close: 0 };
-    let opened = false;
-    let instance = null;
-    const dropdown = {
-        get: () => instance,
-        getOrConstruct: () => {
-            if (instance) return instance;
-            calls.constructed += 1;
-            // Tether moves content into a detached drop during construction;
-            // the drop only joins the document on its first open.
-            const drop = window.document.createElement('div');
-            drop.appendChild(menu);
-            const dropInstance = {
-                drop,
-                isOpened: () => opened,
-                open: () => {
-                    calls.open += 1;
-                    if (!drop.parentNode) window.document.body.appendChild(drop);
-                    opened = true;
-                    $(trigger).trigger('vjDropdownShow');
-                },
-                close: () => { calls.close += 1; opened = false; $(trigger).trigger('vjDropdownHide'); },
-            };
-            const onHover = () => dropInstance.open();
-            trigger.addEventListener('mouseenter', onHover);
-            instance = {
-                dropInstance,
-                detach: () => {
-                    calls.detached += 1;
-                    opened = false;
-                    drop.remove();
-                    trigger.removeEventListener('mouseenter', onHover);
-                    instance = null;
-                },
-            };
-            return instance;
-        },
-        attachAll: () => { if (viewport > mobileWidth) dropdown.getOrConstruct(); },
+    const timers = new Map();
+    let timerId = 0;
+    const schedule = (callback) => {
+        timers.set(++timerId, callback);
+        return timerId;
     };
+    const cancel = (id) => timers.delete(id);
+    const calls = { constructed: 0, detached: 0, open: 0, close: 0 };
+    function load(code, dependencies) {
+        const mod = { exports: {} };
+        vm.runInNewContext(code, {
+            module: mod, exports: mod.exports, window, document: window.document, $, console,
+            setTimeout: schedule, clearTimeout: cancel, process: { env: { NODE_ENV: 'production' } },
+            require: (name) => {
+                assert.ok(Object.hasOwn(dependencies, name), `Unexpected UI dependency ${name}`);
+                return dependencies[name];
+            },
+        });
+        return mod.exports;
+    }
+    // Only positioning is stubbed: exercise the real Drop event wiring and our
+    // real Dropdown adapter, including global attachment and outside clicks.
+    function Evented() { this.handlers = {}; }
+    Evented.prototype.on = function on(event, callback) { (this.handlers[event] ||= []).push(callback); };
+    Evented.prototype.trigger = function triggerEvent(event) {
+        for (const callback of this.handlers[event] || []) callback();
+    };
+    function Tether() {}
+    Tether.prototype.enable = () => {};
+    Tether.prototype.disable = () => {};
+    Tether.prototype.position = () => {};
+    Tether.prototype.destroy = () => {};
+    Tether.Utils = {
+        extend: Object.assign,
+        addClass: (element, classes) => element.classList.add(...classes.split(/\s+/).filter(Boolean)),
+        removeClass: (element, classes) => element.classList.remove(...classes.split(/\s+/).filter(Boolean)),
+        hasClass: (element, name) => element.classList.contains(name),
+        Evented,
+    };
+    const Drop = load(dropCode, { tether: Tether });
+    function RecordedDrop(options) {
+        calls.constructed += 1;
+        const instance = new Drop(options);
+        const open = instance.open.bind(instance);
+        const close = instance.close.bind(instance);
+        instance.open = (...args) => {
+            calls.open += 1;
+            return open(...args);
+        };
+        instance.close = (...args) => {
+            calls.close += 1;
+            return close(...args);
+        };
+        return instance;
+    }
+    const DOMAttachedObject = load(attachedObjectCode, { jquery: $ }).default;
+    const dropdown = load(dropdownCode, {
+        'tether-drop': RecordedDrop,
+        'vj/breakpoints.json': { mobile: mobileWidth },
+        'vj/components/DOMAttachedObject': DOMAttachedObject,
+        'vj/utils': { mediaQuery: { isBelow: (cutoff) => viewport <= cutoff }, zIndexManager: { getNext: () => 10 } },
+    }).default;
+    const detach = dropdown.prototype.detach;
+    dropdown.prototype.detach = function detachRecorded() {
+        calls.detached += 1;
+        return detach.call(this);
+    };
+    const selectUser = () => {};
     const dependencies = {
         jquery: $,
         'vj/breakpoints.json': { mobile: mobileWidth },
         'vj/components/dropdown/Dropdown': dropdown,
         'vj/components/notification': {},
-        'vj/components/selectUser': () => {},
+        'vj/components/selectUser': selectUser,
         'vj/misc/Page': { AutoloadPage: class {} },
         'vj/utils': {},
     };
-    const mod = { exports: {} };
-    vm.runInNewContext(pageCode, {
-        module: mod, exports: mod.exports, window, document: window.document,
-        setTimeout: (callback) => timers.push(callback),
-        require: (name) => {
-            assert.ok(Object.hasOwn(dependencies, name), `Unexpected navigation dependency ${name}`);
-            return dependencies[name];
-        },
-    });
-    const bind = mod.exports.bindDomainSwitcher;
-    if (preAttach) dropdown.attachAll();
+    const bind = load(pageCode, dependencies).bindDomainSwitcher;
+    if (preAttach) dropdown.attachAll(trigger);
     const beforeBinding = { constructed: calls.constructed, menuInDocument: menu.isConnected };
     bind();
     return {
         window, $, trigger, button, menu, links, outside, calls, bind, beforeBinding,
-        isOpened: () => opened,
+        dropdown,
+        isOpened: () => !!dropdown.get($(trigger))?.dropInstance?.isOpened(),
+        hover: (target = trigger) => {
+            target.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }));
+        },
         key: (target, key) => {
             const event = new window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
             target.dispatchEvent(event);
             return event;
         },
-        flush: () => { while (timers.length) timers.shift()(); },
+        flush: () => {
+            while (timers.size) {
+                const [id, callback] = timers.entries().next().value;
+                timers.delete(id);
+                callback();
+            }
+        },
         resize: (nextWidth) => { viewport = nextWidth; $(window).trigger('resize'); },
-        cleanup: () => window.close(),
+        cleanup: () => { dropdown.detachAll(); window.close(); },
     };
 }
 
 describe('domain switcher keyboard and pointer behavior', () => {
-    it('binds the initially detached menu after global dropdown initialization for click, keyboard, and hover', () => {
+    it('stays closed when the pointer hovers or keyboard focus lands on the classroom button', () => {
+        const app = harness(1280, { preAttach: true });
+        try {
+            app.hover();
+            app.hover(app.button);
+            app.button.focus();
+            app.flush();
+            assert.equal(app.window.document.activeElement, app.button);
+            assert.equal(app.isOpened(), false);
+            assert.equal(app.calls.open, 0);
+            assert.equal(app.button.getAttribute('aria-expanded'), 'false');
+        } finally { app.cleanup(); }
+    });
+
+    it('binds the initially detached menu for click and keyboard without enabling hover', () => {
         const app = harness(1280, { preAttach: true });
         try {
             assert.equal(app.beforeBinding.constructed, 1);
@@ -146,9 +196,10 @@ describe('domain switcher keyboard and pointer behavior', () => {
             assert.equal(app.window.document.activeElement, app.button);
             assert.equal(app.button.getAttribute('aria-expanded'), 'false');
             assert.equal(app.calls.open, opensBeforeEscape, 'restoring focus must not reopen the menu');
-            app.trigger.dispatchEvent(new app.window.MouseEvent('mouseenter'));
-            assert.equal(app.isOpened(), true);
-            assert.equal(app.button.getAttribute('aria-expanded'), 'true', 'existing hover events must update expanded state');
+            app.hover();
+            app.flush();
+            assert.equal(app.isOpened(), false);
+            assert.equal(app.button.getAttribute('aria-expanded'), 'false', 'hover must not reopen the dismissed menu');
             app.bind();
             const opensBeforeClick = app.calls.open;
             app.button.click();
@@ -196,6 +247,64 @@ describe('domain switcher keyboard and pointer behavior', () => {
         } finally { app.cleanup(); }
     });
 
+    it('toggles once per click, ignores pointer departure, and closes when clicking outside without moving focus', () => {
+        const app = harness();
+        try {
+            app.button.focus();
+            app.button.click();
+            assert.equal(app.isOpened(), true);
+            assert.equal(app.calls.open, 1, 'the navigation binding must not duplicate Drop activation');
+            app.trigger.dispatchEvent(new app.window.MouseEvent('mouseout', { bubbles: true }));
+            app.menu.dispatchEvent(new app.window.MouseEvent('mouseout', { bubbles: true }));
+            app.flush();
+            assert.equal(app.isOpened(), true, 'a clicked menu stays open while the pointer moves away');
+            app.menu.querySelector('.domain-switcher__header').click();
+            assert.equal(app.isOpened(), true, 'clicks inside the menu are not outside clicks');
+            app.button.click();
+            assert.equal(app.isOpened(), false, 'clicking the trigger again dismisses the menu');
+            assert.equal(app.button.getAttribute('aria-expanded'), 'false');
+            app.button.click();
+            assert.equal(app.isOpened(), true);
+            app.window.document.body.click();
+            assert.equal(app.window.document.activeElement, app.button, 'outside background clicks need not blur the button');
+            assert.equal(app.isOpened(), false);
+            assert.equal(app.button.getAttribute('aria-expanded'), 'false');
+        } finally { app.cleanup(); }
+    });
+
+    it('keeps native Enter and Space activation available and accepts their synthesized button click', () => {
+        const app = harness();
+        try {
+            app.button.focus();
+            for (const key of ['Enter', ' ']) {
+                assert.equal(app.key(app.button, key).defaultPrevented, false);
+                app.button.dispatchEvent(new app.window.MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 }));
+                assert.equal(app.isOpened(), key === 'Enter');
+            }
+            assert.equal(app.button.type, 'button');
+            assert.equal(app.calls.open, 1);
+        } finally { app.cleanup(); }
+    });
+
+    it('retains hover activation for unrelated dropdowns with no click-only setting', () => {
+        const app = harness();
+        try {
+            const target = app.window.document.createElement('button');
+            const content = app.window.document.createElement('div');
+            content.id = 'legacy-menu';
+            target.setAttribute('data-dropdown-target', '#legacy-menu');
+            app.window.document.body.append(target, content);
+            const legacy = app.dropdown.getOrConstruct(app.$(target)).dropInstance;
+            app.hover(target);
+            app.flush();
+            assert.equal(legacy.isOpened(), true);
+            assert.equal(app.isOpened(), false, 'other menu activation never opens the classroom switcher');
+            target.dispatchEvent(new app.window.MouseEvent('mouseout', { bubbles: true }));
+            app.flush();
+            assert.equal(legacy.isOpened(), false);
+        } finally { app.cleanup(); }
+    });
+
     it('moves focus with ArrowDown/ArrowUp and wraps across classroom and management links', () => {
         const app = harness();
         try {
@@ -218,7 +327,7 @@ describe('domain switcher keyboard and pointer behavior', () => {
         } finally { app.cleanup(); }
     });
 
-    it('closes on Escape and restores trigger focus without reopening through its focus handler', () => {
+    it('closes on Escape and restores trigger focus without reopening', () => {
         const app = harness();
         try {
             app.button.focus();
@@ -237,6 +346,7 @@ describe('domain switcher keyboard and pointer behavior', () => {
         const app = harness();
         try {
             app.button.focus();
+            app.button.click();
             assert.equal(app.key(app.button, 'Tab').defaultPrevented, false, 'normal Tab navigation should remain native');
             app.links[0].focus();
             app.flush();
@@ -255,7 +365,7 @@ describe('domain switcher keyboard and pointer behavior', () => {
         try {
             app.bind();
             app.bind();
-            app.$(app.button).triggerHandler('click');
+            app.button.click();
             assert.equal(app.calls.open, 1);
             assert.equal(app.calls.constructed, 1);
             app.key(app.button, 'ArrowDown');
@@ -319,10 +429,10 @@ describe('joined-domain menu templates', () => {
         const links = [...document.querySelectorAll('.domain-switcher__link')];
         assert.equal(links.length, 15);
         assert.equal(document.querySelector('.domain-switcher__count').textContent.trim(), '15 个');
-        links.forEach((link, index) => {
+        for (const [index, link] of links.entries()) {
             assert.equal(link.getAttribute('href'), `/d/class-${index}/${index % 2 ? 'scratch' : ''}`);
             assert.equal(link.querySelector('.domain-switcher__name').textContent, domains[index].name);
-        });
+        }
         const current = document.querySelectorAll('.domain-switcher__link[aria-current]');
         assert.equal(current.length, 1);
         assert.equal(current[0], links[2]);

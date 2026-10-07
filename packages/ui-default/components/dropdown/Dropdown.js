@@ -19,6 +19,7 @@ export default class Dropdown extends DOMAttachedObject {
     this.options = {
       target: null,
       position: $dom.attr('data-dropdown-pos') || 'bottom left',
+      openOn: $dom.attr('data-dropdown-open-on') || 'hover',
       ...options,
     };
     this.dropInstance = new Drop({
@@ -26,7 +27,7 @@ export default class Dropdown extends DOMAttachedObject {
       classes: `dropdown ${$dom.attr('data-dropdown-custom-class') || ''}`,
       content: this.options.target || $.find($dom.attr('data-dropdown-target'))[0],
       position: this.options.position,
-      openOn: 'hover',
+      openOn: this.options.openOn,
       constrainToWindow: $dom.attr('data-dropdown-disabledconstrainToWindow') === undefined,
       constrainToScrollParent: false,
     });

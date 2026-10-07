@@ -12,6 +12,8 @@ import {
 import { createBadgeAcThemePlayer } from '../components/badge_ac_effect';
 import { ContestPoints } from '../components/contest_points';
 import { copyHomeworkReviewToOwnDraft } from '../components/homework_review_copy';
+import { bindHomeworkReviewMistake } from '../components/homework_review_mistake';
+import { bindMistakeActions } from '../components/mistake_actions';
 import { bindMistakePracticeActions } from '../components/mistake_practice';
 import { loadObjective } from '../components/objective/objective';
 import { bindProblemRecordPicker } from '../components/problem_record_picker';
@@ -112,6 +114,8 @@ class ProblemPageExtender {
 
 const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homework_detail_problem'], async () => {
   bindMistakePracticeActions(document, (url, data) => request.post(url, data));
+  bindMistakeActions(document, (url, data) => request.post(url, data), Notification);
+  bindHomeworkReviewMistake(document, UiContext.homeworkReviewMistake, (url, data) => request.post(url, data), Notification);
   bindProblemRecordPicker();
   try {
     if (!UiContext.objectiveMergedReview) await prepareRecordReplayDraft();
@@ -120,10 +124,24 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     Notification.error(`填入未完成：${error.message || '请检查浏览器是否允许保存草稿。'}`);
   }
   let mistakePromptDismissed = false;
-  $(document).off('click.mistakePromptClose').on('click.mistakePromptClose', '[data-mistake-prompt-close]', (event) => {
-    event.preventDefault();
+  function closeMistakePrompt(returnFocus = false) {
     mistakePromptDismissed = true;
     $('.problem-mistake-float').addClass('problem-mistake-float--hidden');
+    $('[data-mistake-prompt-open]').attr('aria-expanded', 'false');
+    if (returnFocus) $('[data-mistake-prompt-open]').get(0)?.focus();
+  }
+  $(document).off('click.mistakePromptClose').on('click.mistakePromptClose', '[data-mistake-prompt-close]', (event) => {
+    event.preventDefault();
+    closeMistakePrompt(true);
+  });
+  $(document).off('keydown.mistakePrompt').on('keydown.mistakePrompt', (event) => {
+    if (event.key === 'Escape' && $('.problem-mistake-float:not(.problem-mistake-float--hidden)').length) {
+      closeMistakePrompt(!!$(document.activeElement).closest('.problem-mistake-float').length);
+    }
+  });
+  $(document).off('click.mistakePromptOutside').on('click.mistakePromptOutside', (event) => {
+    if (!$(event.target).closest('.problem-mistake-float, [data-mistake-prompt-open]').length
+      && $('.problem-mistake-float:not(.problem-mistake-float--hidden)').length) closeMistakePrompt();
   });
   let copyingReview = false;
   $(document).off('click.homeworkReviewCopy').on('click.homeworkReviewCopy', '[data-homework-review-copy]', async (event) => {
@@ -287,7 +305,23 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     if (mistakePromptDismissed) return;
     updateMistakePromptPosition();
     $('.problem-mistake-float').removeClass('problem-mistake-float--hidden');
+    $('[data-mistake-prompt-open]').attr('aria-expanded', 'true');
   }
+
+  $(document).off('click.mistakePromptOpen').on('click.mistakePromptOpen', '[data-mistake-prompt-open]', (event) => {
+    event.preventDefault();
+    if (!UiContext.canUseMistake || UiContext.homeworkReview) return;
+    const $prompt = $('.problem-mistake-float');
+    if (!$prompt.length) return;
+    if (!$prompt.hasClass('problem-mistake-float--hidden')) {
+      closeMistakePrompt();
+      return;
+    }
+    updateMistakePromptPosition();
+    $prompt.removeClass('problem-mistake-float--hidden');
+    $('[data-mistake-prompt-open]').attr('aria-expanded', 'true');
+    $prompt.find('[data-mistake-prompt-close]').get(0)?.focus();
+  });
 
   function getRecordId(rdoc) {
     const id = rdoc?._id ?? rdoc?.rid ?? rdoc?.recordId ?? rdoc?.id;

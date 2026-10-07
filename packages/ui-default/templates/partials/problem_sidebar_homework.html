@@ -28,6 +28,9 @@
         <span class="icon icon-send"></span> {{ _('Open in Problem Set') }}
       </a></li>
     {% endif %}
+    {% if page_name == 'homework_detail_problem' %}
+      {% include "partials/problem_mistake_action.html" %}
+    {% endif %}
     {% if handler.user.own(pdoc, perm.PERM_EDIT_PROBLEM_SELF) or handler.user.hasPerm(perm.PERM_EDIT_PROBLEM) %}
       <li class="menu__seperator"></li>
       <li class="menu__item"><a class="menu__link{% if page_name == 'problem_edit' %} active{% endif %}" href="{{ url('problem_edit', pid=pdoc.pid|default(pdoc.docId)) }}">

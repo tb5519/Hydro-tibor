@@ -11,6 +11,16 @@
       <span class="icon icon-copy"></span> 复制到我的作答
     </button>
     <span class="problem-review-heading__hint">{{ '替换你的本题草稿，修改后可自行递交' if review.rid else '打开我的作答以演示讲解，保留原有草稿' }}</span>
+    {% if UiContext.homeworkReviewMistake %}
+    <form method="post" action="{{ UiContext.homeworkReviewMistake.url }}" data-homework-review-mistake-form>
+      <input type="hidden" name="operation" value="add_review_mistake">
+      <button type="submit" class="problem-review-copy" data-homework-review-mistake title="加入 {{ UiContext.homeworkReviewMistake.studentName }} 的错题集"{% if UiContext.homeworkReviewMistake.added %} disabled{% endif %}>
+        <span class="icon icon-flag"></span>
+        <span data-homework-review-mistake-label>{{ '已加入学员错题集' if UiContext.homeworkReviewMistake.added else '加入学员错题集' }}</span>
+      </button>
+      <span class="problem-review-heading__hint">归入 {{ UiContext.homeworkReviewMistake.studentName }} 的错题集，方便之后复盘。</span>
+    </form>
+    {% endif %}
     {% endif %}
   </div>
   {% endif %}

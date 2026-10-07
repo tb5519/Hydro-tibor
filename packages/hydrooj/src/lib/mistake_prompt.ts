@@ -1,14 +1,15 @@
+import type { ObjectId } from 'mongodb';
 import { NORMAL_STATUS, STATUS } from '../model/builtin';
 import record from '../model/record';
 
 /** Only real judged submissions count, never a scratchpad test run. */
-export async function getMistakePromptState(domainId: string, uid: number, pid: number) {
+export async function getMistakePromptState(domainId: string, uid: number, pid: number, homeworkId?: ObjectId) {
     const query = {
         uid,
         pid,
         status: { $in: NORMAL_STATUS },
         input: { $exists: false },
-        contest: { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] },
+        contest: homeworkId ? { $in: [null, homeworkId] } : { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] },
     };
     const [first, latest] = await Promise.all([
         record.getMulti(domainId, query).project({ _id: 1, status: 1 }).sort({ _id: 1 }).limit(1).next(),

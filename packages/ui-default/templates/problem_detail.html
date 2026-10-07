@@ -15,7 +15,8 @@
   canUseMistake: canUseMistake,
   mistakePractice: mistakePractice,
   showMistakePrompt: showMistakePrompt,
-  mistakePromptUrl: url('problem_detail', pid=pdoc.docId),
+  mistakePromptUrl: mistakeActionUrl,
+  mistakeActionUrl: mistakeActionUrl,
   badgeAcTheme: badgeAcTheme,
   badgeAcFirstEligible: badgeAcFirstEligible
 }) }}
@@ -312,21 +313,21 @@
     }
   }
 </style>
-<div class="problem-mistake-float{{ '' if showMistakePrompt else ' problem-mistake-float--hidden' }}" data-mistake-state="{{ mistakeDoc.status if mistakeDoc else '' }}">
+<div id="problem-mistake-prompt" role="dialog" aria-labelledby="problem-mistake-title" class="problem-mistake-float{{ '' if showMistakePrompt else ' problem-mistake-float--hidden' }}" data-mistake-state="{{ mistakeDoc.status if mistakeDoc else '' }}">
   <button type="button" class="problem-mistake-float__close" data-mistake-prompt-close aria-label="关闭错题集提示" title="关闭">
     <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
   </button>
   {% if mistakeDoc and mistakeDoc.status != 'mastered' %}
-    <div class="problem-mistake-float__title">已加入错题集</div>
+    <div class="problem-mistake-float__title" id="problem-mistake-title">已加入错题集</div>
     <div class="problem-mistake-float__text">复盘完成后可以标记已掌握。</div>
-    <form class="problem-mistake-float__form" method="post" action="{{ url('problem_detail', pid=pdoc.docId) }}">
+    <form class="problem-mistake-float__form" method="post" action="{{ mistakeActionUrl }}" data-mistake-action>
       <input type="hidden" name="operation" value="master_mistake">
       <button class="problem-mistake-float__button secondary" type="submit">标记已掌握</button>
     </form>
   {% else %}
-    <div class="problem-mistake-float__title">{{ '已掌握本题' if mistakeDoc and mistakeDoc.status == 'mastered' else '需要之后复盘？' }}</div>
-    <div class="problem-mistake-float__text">本题经过多次提交才 AC，加入错题集，之后再练习巩固。</div>
-    <form class="problem-mistake-float__form" method="post" action="{{ url('problem_detail', pid=pdoc.docId) }}">
+    <div class="problem-mistake-float__title" id="problem-mistake-title">{{ '已掌握本题' if mistakeDoc and mistakeDoc.status == 'mastered' else '需要之后复盘？' }}</div>
+    <div class="problem-mistake-float__text">收进错题集，之后再练习巩固。</div>
+    <form class="problem-mistake-float__form" method="post" action="{{ mistakeActionUrl }}" data-mistake-action>
       <input type="hidden" name="operation" value="add_mistake">
       <button class="problem-mistake-float__button" type="submit">{{ '重新加入错题集' if mistakeDoc and mistakeDoc.status == 'mastered' else '加入错题集' }}</button>
     </form>

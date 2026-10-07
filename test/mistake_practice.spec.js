@@ -142,6 +142,15 @@ describe('mistake importance and isolated practice sessions', () => {
         assert.equal(await mistake.get('Other', 12, 1000), null);
     });
 
+    it('stores a homework navigation context without letting an ordinary re-add erase it', async () => {
+        const homeworkId = new ObjectId();
+        const added = await mistake.add('Python', 12, 1000, 'manual', homeworkId);
+        assert.equal(added.homeworkId.toString(), homeworkId.toString());
+        const again = await mistake.add('Python', 12, 1000, 'manual');
+        assert.equal(again.homeworkId.toString(), homeworkId.toString());
+        assert.equal(docs.length, 1);
+    });
+
     it('sorts importance first, then recency and id, with legacy entries equal to importance 1', async () => {
         const timestamp = new Date('2026-09-06T00:00:00Z');
         docs.push(

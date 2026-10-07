@@ -153,7 +153,7 @@
       </li>
     {% else %}
     {% if model.system.get('ui-default.domainNavigation') %}
-      <li class="nav__list-item domain-switcher" data-dropdown-pos="bottom right" data-dropdown-custom-class="nav__dropdown domain-switcher-dropdown" data-dropdown-target="#menu-nav-domain" data-dropdown-trigger-desktop-only>
+      <li class="nav__list-item domain-switcher" data-dropdown-pos="bottom right" data-dropdown-custom-class="nav__dropdown domain-switcher-dropdown" data-dropdown-target="#menu-nav-domain" data-dropdown-open-on="click" data-dropdown-trigger-desktop-only>
         <button type="button" class="nav__item domain-switcher__trigger" aria-label="切换课堂，当前：{{ UiContext.domain.name }}" aria-controls="menu-nav-domain" aria-expanded="false">
           <img class="domain-switcher__trigger-avatar" src="{{ avatarUrl(UiContext.domain.avatar|default(''), 48) }}" width="26" height="26" alt="">
           <span class="domain-switcher__trigger-name">{{ UiContext.domain.name }}</span>

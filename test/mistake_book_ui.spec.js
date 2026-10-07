@@ -57,6 +57,8 @@ function context(overrides = {}) {
             tag: ['Python 语法', '循环'],
         }])),
         psdict: { 1: { rid: 'record-1', status: 2, score: 30 }, 2: { rid: 'record-2', status: 1, score: 100 } },
+        problemUrls: Object.fromEntries([1, 2, 3, 4].map((pid) => [pid, `/d/class-a/p/P${pid}`])),
+        practiceAllowed: { 1: true, 2: true, 3: true, 4: true },
         model: { builtin: {
             STATUS_CODES: { 1: 'pass', 2: 'fail' },
             STATUS_TEXTS: { 1: 'Accepted', 2: 'Wrong Answer' },
@@ -110,6 +112,21 @@ describe('mistake book template', () => {
         }
         assert.equal(document.querySelectorAll('a[href*="scratchpad"]').length, 0);
         assert.match(document.querySelector('.mistake-book__help').textContent, /每轮练习可加深标记一次/);
+    });
+
+    it('preserves authorized homework context and offers reading instead of submitting after the deadline', () => {
+        const urls = Object.fromEntries([1, 2, 3, 4].map((pid) => [pid, `/d/class-a/p/P${pid}?tid=homework-${pid}`]));
+        const document = render({ problemUrls: urls, practiceAllowed: { 1: true, 2: false, 3: true, 4: true } }).window.document;
+        const live = document.querySelector('[data-mistake-pid="1"]');
+        const ended = document.querySelector('[data-mistake-pid="2"]');
+        assert.equal(formFor(live, 'start_mistake_practice').getAttribute('action'), urls[1]);
+        assert.equal(formFor(live, 'deepen_mistake').getAttribute('action'), urls[1]);
+        assert.equal(ended.querySelector('.mistake-problem__title a').getAttribute('href'), urls[2]);
+        assert.equal(formFor(ended, 'start_mistake_practice'), undefined);
+        assert.equal(formFor(ended, 'deepen_mistake'), undefined);
+        assert.equal(formFor(ended, 'master_mistake').getAttribute('action'), urls[2]);
+        assert.equal(ended.querySelector('.mistake-action__button--practice').textContent, '查看作业题');
+        assert.match(ended.textContent, /作业已截止/);
     });
 
     it('allows one deepen per token and clearly distinguishes unused, used and not-started rounds', () => {
@@ -178,6 +195,7 @@ describe('mistake book template', () => {
         original.pdict[1].title = payload;
         original.pdict[1].tag = [payload];
         original.pdict[1].pid = payload;
+        original.problemUrls[1] = `/d/class-a/p/${encodeURIComponent(payload)}`;
         original.mdocs[0].practiceToken = payload;
         const document = render(original).window.document;
         const card = document.querySelector('[data-mistake-pid="1"]');

@@ -18,6 +18,7 @@ export interface MistakeDoc {
     practiceToken?: string;
     practiceStartedAt?: Date;
     deepenedPracticeToken?: string;
+    homeworkId?: ObjectId;
 }
 
 export const coll = db.collection('mistake') as unknown as Collection<MistakeDoc>;
@@ -95,7 +96,7 @@ export async function deepen(domainId: string, uid: number, pid: number, practic
     ));
 }
 
-export async function add(domainId: string, uid: number, pid: number, source: MistakeSource = 'manual') {
+export async function add(domainId: string, uid: number, pid: number, source: MistakeSource = 'manual', homeworkId?: ObjectId) {
     const now = new Date();
     await coll.updateOne(
         { domainId, uid, pid },
@@ -104,6 +105,7 @@ export async function add(domainId: string, uid: number, pid: number, source: Mi
                 status: 'review',
                 source,
                 updatedAt: now,
+                ...(homeworkId ? { homeworkId } : {}),
             },
             $setOnInsert: {
                 _id: new ObjectId(),
