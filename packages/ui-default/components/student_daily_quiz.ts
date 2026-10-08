@@ -625,11 +625,10 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
         || item.count < 1
         || item.count > 20
         || item.points.length !== item.count
-        || item.points.some((point) => !Number.isInteger(point) || point < 0 || point > 100)
-        || item.tags.length > 20,
+        || item.points.some((point) => !Number.isInteger(point) || point < 0 || point > 100),
     );
     if (invalid || !Number.isInteger(policy.cooldownRounds) || policy.cooldownRounds < 1 || policy.cooldownRounds > 30) {
-      message('请检查题数（1–20）、积分（0–100）与间隔轮数（1–30），最多选择 20 个知识点。', true);
+      message('请检查题数（1–20）、积分（0–100）与间隔轮数（1–30）。', true);
       return;
     }
     if (active.length > 10 || active.reduce((sum, item) => sum + item.count, 0) > 50) {

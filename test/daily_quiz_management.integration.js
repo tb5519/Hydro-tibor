@@ -85,7 +85,9 @@ async function run() {
     const policy = {
         version: 1, enabled: true, cooldownRounds: 3,
         domains: [
-            { domainId: firstDomain, enabled: true, count: 2, tags: ['基础运算', '循环'], points: [0, 3] },
+            { domainId: firstDomain, enabled: true, count: 2,
+                // Matching tags beyond position 20 must survive saving and daily selection.
+                tags: [...Array.from({ length: 24 }, (_, index) => `知识点${index + 1}`), '基础运算', '循环'], points: [0, 3] },
             { domainId: secondDomain, enabled: true, count: 1, tags: ['循环'], points: [2] },
         ],
     };
@@ -115,7 +117,7 @@ async function run() {
         assert.equal(entry.dailyQuizEnabled, false);
         assert.deepEqual(entry.domainIds.sort(), [firstDomain, secondDomain].sort());
     });
-    await check('An authorized admin saves per-domain question counts, tags and per-question rewards', async () => {
+    await check('An authorized admin saves more than 20 knowledge tags without truncating the policy', async () => {
         const response = await save(admin, studentId, policy);
         status(response, 200);
         assert.equal(response.body.saved, true);

@@ -47,9 +47,9 @@ export function parsePolicy(input: unknown, allowedDomainIds: string[]): DailyQu
             || ids.has(item.domainId) || typeof item.enabled !== 'boolean') invalid('请选择学员已加入的域，且不能重复');
         ids.add(item.domainId);
         if (!Number.isInteger(item.count) || item.count < 1 || item.count > 20) invalid('每个域每天可设置 1 至 20 题');
-        if (!Array.isArray(item.tags) || item.tags.length > 20
+        if (!Array.isArray(item.tags)
             || item.tags.some((tag: unknown) => typeof tag !== 'string' || !tag.trim() || tag.trim().length > 40)) {
-            invalid('知识点最多选择 20 个，每个不超过 40 字');
+            invalid('知识点名称不能为空，每个不超过 40 字');
         }
         if (!Array.isArray(item.points) || item.points.length !== item.count
             || item.points.some((points: unknown) => !Number.isInteger(points) || Number(points) < 0 || Number(points) > 100)) {

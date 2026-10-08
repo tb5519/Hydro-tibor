@@ -23,6 +23,32 @@ const response = (name, other = {}) => ({ ok: true, json: async () => ({ selecte
 } }) });
 
 describe('daily quiz knowledge tag catalog refresh', () => {
+    it('saves every selected knowledge tag when the selection exceeds 20', async (t) => {
+        const h = harness(t);
+        h.change('[data-daily-enabled]', true, 'change');
+        const names = Array.from({ length: 32 }, (_, index) => `知识点${index + 1}`);
+        h.dom.window.fetch = async () => ({ ok: true, json: async () => ({ selectedDailyQuiz: {
+            ...daily, domains: [{ ...daily.domains[0], availableCount: names.length,
+                tags: names.map((name) => ({ name, count: 1 })), questionTags: names.map((name) => [name]) }, daily.domains[1]],
+        } }) });
+        h.refresh();
+        await settle();
+        for (const name of names) h.tag(name).click();
+        assert.match(h.$('[data-daily-pool="system"]').textContent, /32 道素材/);
+        let saved;
+        h.dom.window.fetch = async (url, options) => {
+            saved = JSON.parse(options.body.get('policy'));
+            return { ok: true, json: async () => ({ saved: true }) };
+        };
+        h.$('[data-student-daily-form]').dispatchEvent(new h.dom.window.Event('submit', { bubbles: true, cancelable: true }));
+        await settle();
+        assert.deepEqual(saved.domains[0].tags, names);
+        assert.equal(h.$('[data-daily-save]').disabled, false);
+        const event = new h.dom.window.Event('beforeunload', { cancelable: true });
+        h.dom.window.dispatchEvent(event);
+        assert.equal(event.defaultPrevented, false, 'a successful large selection is no longer an unsaved edit');
+    });
+
     it('refreshes tags, counts and selected missing tags without replacing any unsaved settings or focused controls', async (t) => {
         const h = harness(t);
         h.change('[data-daily-enabled]', true, 'change');
