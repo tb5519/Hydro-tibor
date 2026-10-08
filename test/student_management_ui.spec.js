@@ -189,6 +189,84 @@ describe('student management workspace', () => {
 });
 
 describe('daily quiz teacher configuration and reports', () => {
+    it('applies the default reward immediately to every question and saves the displayed total without an extra button', async (t) => {
+        const { dom, $, change, submit } = harness(t);
+        assert.equal([...dom.window.document.querySelectorAll('button')].some((button) => /应用到本课堂所有题/.test(button.textContent)), false);
+        change('[data-daily-enabled]', true, 'change');
+        change('[aria-label="Python 训练默认积分"]', '4');
+        assert.equal($('[data-daily-point="system:0"]').value, '4');
+        assert.equal($('[data-daily-point="system:1"]').value, '4');
+        assert.equal($('[data-daily-point="S0001:0"]').value, '2', 'other classrooms retain their own rewards');
+        assert.match($('.student-daily-summary').textContent, /最多 10 积分/);
+        let posted;
+        dom.window.fetch = async (url, options) => {
+            posted = JSON.parse(options.body.get('policy'));
+            return { ok: true, json: async () => ({ saved: true }) };
+        };
+        submit('[data-student-daily-form]');
+        await settle();
+        assert.deepEqual(posted.domains.map((domain) => domain.points), [[4, 4], [2]]);
+        assert.match($('[data-daily-feedback]').textContent, /已保存/);
+    });
+
+    it('uses the default reward for added questions while retaining deliberate per-question exceptions', async (t) => {
+        const { dom, $, change, submit } = harness(t);
+        change('[data-daily-enabled]', true, 'change');
+        change('[aria-label="Python 训练默认积分"]', '2');
+        change('[data-daily-point="system:1"]', '7');
+        change('[data-daily-count="system"]', '4');
+        assert.deepEqual([0, 1, 2, 3].map((index) => $(`[data-daily-point="system:${index}"]`).value), ['2', '7', '2', '2']);
+        assert.match($('.student-daily-summary').textContent, /最多 15 积分/);
+        let posted;
+        dom.window.fetch = async (url, options) => {
+            posted = JSON.parse(options.body.get('policy'));
+            return { ok: true, json: async () => ({ saved: true }) };
+        };
+        submit('[data-student-daily-form]');
+        await settle();
+        assert.deepEqual(posted.domains[0].points, [2, 7, 2, 2]);
+    });
+
+    it('accepts zero as the default for existing and added questions', async (t) => {
+        const { dom, $, change, submit } = harness(t);
+        change('[data-daily-enabled]', true, 'change');
+        change('[aria-label="Python 训练默认积分"]', '0');
+        change('[data-daily-count="system"]', '3');
+        assert.deepEqual([0, 1, 2].map((index) => $(`[data-daily-point="system:${index}"]`).value), ['0', '0', '0']);
+        assert.match($('.student-daily-summary').textContent, /最多 2 积分/);
+        let posted;
+        dom.window.fetch = async (url, options) => {
+            posted = JSON.parse(options.body.get('policy'));
+            return { ok: true, json: async () => ({ saved: true }) };
+        };
+        submit('[data-student-daily-form]');
+        await settle();
+        assert.deepEqual(posted.domains[0].points, [0, 0, 0]);
+    });
+
+    it('does not turn an empty default reward into zero and blocks saving until it is completed', async (t) => {
+        const { dom, $, change, submit } = harness(t);
+        change('[data-daily-enabled]', true, 'change');
+        change('[aria-label="Python 训练默认积分"]', '');
+        assert.equal($('[data-daily-point="system:0"]').value, '');
+        assert.equal($('[data-daily-point="system:1"]').value, '');
+        let calls = 0;
+        let posted;
+        dom.window.fetch = async (url, options) => {
+            calls++;
+            posted = JSON.parse(options.body.get('policy'));
+            return { ok: true, json: async () => ({ saved: true }) };
+        };
+        submit('[data-student-daily-form]');
+        assert.equal(calls, 0);
+        assert.match($('[data-daily-feedback]').textContent, /积分/);
+        change('[aria-label="Python 训练默认积分"]', '1');
+        submit('[data-student-daily-form]');
+        await settle();
+        assert.equal(calls, 1);
+        assert.deepEqual(posted.domains[0].points, [1, 1]);
+    });
+
     it('starts disabled, totals enabled domains, preserves zero-point rewards and exact OR tag counts', (t) => {
         const { $, change } = harness(t);
         assert.equal($('[data-daily-enabled]').checked, false);

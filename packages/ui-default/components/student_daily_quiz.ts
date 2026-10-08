@@ -211,9 +211,7 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
     count.dataset.dailyCount = domain.id;
     const defaultPoints = numberInput(entry.points[0] ?? 1, 0, 100, `${domain.name}默认积分`);
     const pointsField = field('每题默认积分', defaultPoints);
-    const applyPoints = el('button', 'student-text-button', '应用到本课堂所有题');
-    applyPoints.type = 'button';
-    pointsField.append(applyPoints);
+    pointsField.append(el('small', 'student-daily-help', '默认每题相同；如需例外，可在下方逐题设置。'));
     fields.append(field('每天几道题', count), pointsField);
     const poolMessage = el('p', 'student-daily-help');
     poolMessage.dataset.dailyPool = domain.id;
@@ -228,7 +226,10 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
     const tagSearch = el('input', 'textbox');
     tagSearch.type = 'search';
     tagSearch.placeholder = '搜索知识点';
-    tags.append(el('strong', '', '知识点范围'), el('p', 'student-daily-help', '不选表示全部；选多个时，包含任一知识点即可。'));
+    tags.append(
+      el('strong', '', '知识点范围'),
+      el('p', 'student-daily-help', '不选表示全部；选多个时，包含任一知识点即可。新增的同标签选择题也会自动加入选题范围。'),
+    );
     const tagList = el('div', 'student-daily-tag-list');
     const tagChoices = [...domain.tags];
     entry.tags.filter((tag) => !tagChoices.some((item) => item.name === tag)).forEach((tag) => tagChoices.push({ name: tag, count: 0 }));
@@ -280,8 +281,7 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
       updatePool();
       updateSummary();
     });
-    applyPoints.addEventListener('click', () => {
-      if (!defaultPoints.reportValidity()) return;
+    defaultPoints.addEventListener('input', () => {
       entry.points = entry.points.map(() => defaultPoints.valueAsNumber);
       renderPoints();
       updateSummary();
