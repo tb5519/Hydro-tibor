@@ -34,9 +34,15 @@ describe('student management workspace', () => {
     it('protects unsaved profile changes on student switches and domain actions', async (t) => {
         const { dom, $, change } = harness(t);
         let requests = 0;
-        dom.window.fetch = async () => { requests++; throw new Error('unexpected'); };
+        dom.window.fetch = async () => {
+            requests++;
+            throw new Error('unexpected');
+        };
         let confirms = 0;
-        dom.window.confirm = () => { confirms++; return false; };
+        dom.window.confirm = () => {
+            confirms++;
+            return false;
+        };
         change('[name="displayName"]', '尚未保存');
         $('[data-student-note][data-student-uid="45"]').click();
         $('[data-student-domain-add-open]').click();
@@ -66,6 +72,52 @@ describe('student management workspace', () => {
         assert.equal($('[data-student-editor]').dataset.studentUid, '45');
         assert.equal($('[data-student-panel="learning"]').hidden, false);
     });
+
+    it('keeps the roster stable throughout a slow student switch and repeated clicks', async (t) => {
+        const { dom, $ } = harness(t);
+        const roster = $('[data-student-notes]');
+        const note = $('[data-student-note][data-student-uid="45"]');
+        const avatar = note.querySelector('img');
+        const identity = note.querySelector('[data-student-display-name]');
+        roster.scrollTop = 160;
+        let requests = 0;
+        let finish;
+        dom.window.fetch = () => {
+            requests++;
+            return new Promise((resolve) => { finish = resolve; });
+        };
+        note.click();
+        assert.equal($('[data-student-detail-host]').getAttribute('aria-busy'), 'true');
+        assert.equal($('[data-student-list-feedback]').hidden, true, 'loading must not insert a row above the roster');
+        note.click();
+        assert.equal(requests, 1);
+        assert.equal($('[data-student-list-feedback]').hidden, true, 'repeated clicks must not move the roster either');
+        roster.scrollTop = 240;
+        finish({ ok: true, text: async () => render({ selectedStudent: students[1] }) });
+        await settle();
+        assert.equal($('[data-student-editor]').dataset.studentUid, '45');
+        assert.equal(note.querySelector('img'), avatar, 'unchanged avatars are not reloaded');
+        assert.equal(note.querySelector('[data-student-display-name]'), identity);
+        assert.equal(roster.scrollTop, 240, 'scrolling while the request is pending is preserved');
+        assert.equal(note.getAttribute('aria-expanded'), 'true');
+        assert.equal($('[data-student-detail-host]').hasAttribute('aria-busy'), false);
+    });
+
+    for (const stacked of [false, true]) {
+        it(`scrolls to the detail only when the layout is ${stacked ? 'stacked' : 'side by side'}`, async (t) => {
+            const { dom, $ } = harness(t);
+            dom.window.innerWidth = stacked ? 1200 : 700;
+            $('.student-management__roster').getBoundingClientRect = () => ({ top: 200, bottom: 700, height: 500 });
+            const host = $('[data-student-detail-host]');
+            host.getBoundingClientRect = () => ({ top: stacked ? 720 : 200 });
+            const scrolls = [];
+            host.scrollIntoView = (options) => scrolls.push(options);
+            dom.window.fetch = async () => ({ ok: true, text: async () => render({ selectedStudent: students[1] }) });
+            $('[data-student-note][data-student-uid="45"]').click();
+            await settle();
+            assert.equal(scrolls.length, stacked ? 1 : 0, 'use the actual content layout rather than viewport width');
+        });
+    }
 
     it('preserves the current profile when switching receives a sudo page', async (t) => {
         const { dom, $ } = harness(t);
@@ -174,7 +226,10 @@ describe('daily quiz teacher configuration and reports', () => {
         assert.match($('[data-daily-feedback]').textContent, /验证.*保留/);
         assert.equal($('[data-daily-point="system:1"]').value, '7');
         assert.equal($('[data-daily-save]').disabled, false);
-        dom.window.fetch = async () => { calls++; return { ok: true, json: async () => ({ saved: true }) }; };
+        dom.window.fetch = async () => {
+            calls++;
+            return { ok: true, json: async () => ({ saved: true }) };
+        };
         submit('[data-student-daily-form]');
         await settle();
         assert.equal(calls, 2);
@@ -270,7 +325,10 @@ describe('daily quiz teacher configuration and reports', () => {
     it('validates integer rewards before sending and preserves independent panels with keyboard tabs', (t) => {
         const { dom, $, change, submit } = harness(t);
         let calls = 0;
-        dom.window.fetch = async () => { calls++; throw new Error('unexpected'); };
+        dom.window.fetch = async () => {
+            calls++;
+            throw new Error('unexpected');
+        };
         change('[data-daily-enabled]', true, 'change');
         change('[data-daily-point="system:0"]', '-1');
         submit('[data-student-daily-form]');

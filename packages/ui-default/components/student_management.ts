@@ -17,6 +17,7 @@ export function bindStudentManagement(doc: Document) {
   const search = query<HTMLInputElement>('[data-student-search]');
   const domainFilter = query<HTMLSelectElement>('[data-student-domain-filter]');
   const quizFilter = query<HTMLSelectElement>('[data-student-quiz-filter]');
+  const roster = query<HTMLElement>('[data-student-notes]');
   const host = query<HTMLElement>('[data-student-detail-host]');
   const addDialog = query<HTMLElement>('[data-student-add-dialog]');
   const addForm = query<HTMLFormElement>('[data-student-add-form]');
@@ -42,8 +43,9 @@ export function bindStudentManagement(doc: Document) {
     node.classList.toggle('is-error', error);
   }
   function guard() {
-    if (pending.size || daily.isPending() || switching) {
-      feedback('[data-student-list-feedback]', '正在保存或切换学员，请稍候。', true);
+    if (switching) return false;
+    if (pending.size || daily.isPending()) {
+      feedback('[data-student-list-feedback]', '正在保存，请稍候。', true);
       return false;
     }
     return !isDirty() || win.confirm('还有未保存的修改。继续后这些修改将被放弃，确定继续吗？');
@@ -156,7 +158,7 @@ export function bindStudentManagement(doc: Document) {
     const previous = currentUrl;
     switching = true;
     host.setAttribute('aria-busy', 'true');
-    feedback('[data-student-list-feedback]', '正在打开学员资料…');
+    feedback('[data-student-list-feedback]', '');
     try {
       const response = await win.fetch(url.href, { credentials: 'same-origin', headers: { Accept: 'text/html' } });
       if (!response.ok) throw new Error('暂时无法读取学员资料。');
@@ -166,12 +168,15 @@ export function bindStudentManagement(doc: Document) {
       if (!nextHost || (url.searchParams.has('uid') && !nextHost.querySelector('[data-student-editor]'))) {
         throw new Error('身份验证可能已过期，请在另一个窗口完成验证后重试。当前修改已保留。');
       }
+      const rosterScrollTop = roster.scrollTop;
       host.replaceChildren(...[...nextHost.childNodes].map((node) => doc.importNode(node, true)));
       const nextNotes = all<HTMLElement>('[data-student-note]', next);
       all<HTMLElement>('[data-student-note]').forEach((note) => {
         const fresh = nextNotes.find((item) => item.dataset.studentUid === note.dataset.studentUid);
         if (!fresh) return;
-        note.replaceChildren(...[...fresh.childNodes].map((node) => doc.importNode(node, true)));
+        if (note.innerHTML !== fresh.innerHTML) {
+          note.replaceChildren(...[...fresh.childNodes].map((node) => doc.importNode(node, true)));
+        }
         Object.assign(note.dataset, fresh.dataset);
       });
       setUrl(url, push);
@@ -183,7 +188,11 @@ export function bindStudentManagement(doc: Document) {
       });
       filterRoster(true);
       feedback('[data-student-list-feedback]', '');
-      if (win.innerWidth < 900) host.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+      roster.scrollTop = rosterScrollTop;
+      const rosterBounds = roster.closest<HTMLElement>('.student-management__roster').getBoundingClientRect();
+      if (rosterBounds.height && host.getBoundingClientRect().top >= rosterBounds.bottom) {
+        host.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+      }
       return true;
     } catch (error) {
       if (!push) setUrl(new win.URL(previous));

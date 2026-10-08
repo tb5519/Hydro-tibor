@@ -1,6 +1,5 @@
-{% extends "layout/basic.html" %}
-{% block content %}
-<div class="row student-management-page"><div class="columns">
+{% extends "manage_base.html" %}
+{% block manage_content %}
 <div class="student-management" data-student-management>
   <nav class="student-management__breadcrumb" aria-label="管理导航"><a href="{{ url('manage_dashboard') }}">← 控制面板</a><span>·</span><a href="{{ url('manage_training_dashboard') }}">训练看板</a></nav>
   <header class="student-management__hero">
@@ -294,5 +293,4 @@
     </section>
   </div>
 </div>
-</div></div>
 {% endblock %}

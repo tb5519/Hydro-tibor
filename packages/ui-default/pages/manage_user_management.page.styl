@@ -849,7 +849,7 @@
 
 /* Student workspace: calm roster, persistent detail, explicit settings. */
 .page--manage_user_management .main { background: #f4f7fa; }
-.student-management { color: #24354b; gap: 24px; }
+.student-management { color: #24354b; gap: 24px; container: student-management / inline-size; }
 .student-management [hidden] { display: none !important; }
 .student-management button, .student-management input, .student-management select { font: inherit; }
 .student-management button:focus-visible, .student-management a:focus-visible { outline: 3px solid #c7d9ed; outline-offset: 3px; }
@@ -872,7 +872,7 @@
 .student-management__sort label { font-size: 12px; color: #9aa7b5; }
 .student-management__sort select { border: 0; padding: 5px 2px; min-width: 0; font-size: 12px; background: none; color: #71869c; }
 .student-management__sort-direction { width: 27px; height: 27px; border-color: #e5ebf1; font-size: 14px; color: #8097ac; }
-.student-management__list { gap: 7px; max-height: calc(100vh - 330px); min-height: 180px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #d6e1eb transparent; padding: 2px; }
+.student-management__list { gap: 7px; max-height: calc(100vh - 330px); min-height: 180px; overflow-y: auto; overflow-anchor: none; scrollbar-width: thin; scrollbar-color: #d6e1eb transparent; padding: 2px; }
 .student-note { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; min-height: 0; gap: 9px; padding: 13px 10px; border: 1px solid transparent; border-radius: 8px; background: #fff; box-shadow: none; }
 .student-note::before { display: none; }
 .student-note:hover, .student-note:focus-visible { transform: none; box-shadow: none; background: #f7fafd; border-color: #e4edf5; }
@@ -887,7 +887,8 @@
 .student-note__summary i { font-style: normal; color: #bbc6d0; padding: 0 3px; }
 .student-note__quiz { color: #9eacb9; }
 .student-note__quiz.is-enabled { color: #4f927a; }
-.student-detail-host { min-width: 0; }
+.student-detail-host { min-width: 0; scroll-margin-top: 85px; }
+.student-detail-host[aria-busy='true'] { opacity: .65; cursor: progress; }
 .student-management__editor { padding: 24px; border-radius: 12px; box-shadow: 0 3px 14px rgba(27,49,74,.025); min-height: 550px; }
 .student-management__editor-heading { margin-bottom: 22px; }
 .student-management__editor-heading h2 { font-size: 20px; font-weight: 600; }
@@ -1075,7 +1076,6 @@
 }
 
 
-.student-management-page { max-width: 1280px; }
 .page--manage_user_management .student-management,
 .page--manage_user_management .student-management *,
 .page--manage_user_management .student-management *::before,
@@ -1083,7 +1083,7 @@
 .student-management__breadcrumb { display: flex; align-items: center; gap: 12px; margin: 0; font-size: 13px; color: #a8b5c0; }
 .student-management__breadcrumb a { color: #8499aa; }
 .student-management__breadcrumb a:hover { color: #497da6; }
-.student-management__workspace { grid-template-columns: minmax(280px, .78fr) minmax(0, 1.65fr); }
+.student-management__workspace { grid-template-columns: minmax(220px, .68fr) minmax(0, 1.6fr); gap: 16px; }
 .student-management__search .textbox { width: 100%; min-width: 0; }
 .student-daily-date-tools { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(180px, 1fr) auto; align-items: end; }
 .student-daily-refresh { height: 38px; padding: 0 12px; border: 1px solid #dce5ee; border-radius: 6px; background: #fff; color: #62849c; font-size: 12px; cursor: pointer; white-space: nowrap; }
@@ -1097,5 +1097,24 @@
 @media (max-width: 560px) {
   .student-daily-date-tools { grid-template-columns: minmax(0, 1fr); }
   .student-daily-refresh { justify-self: start; }
+}
+@container student-management (max-width: 780px) {
+  .student-management__hero h1 { font-size: 22px; }
+  .student-management__editor { padding: 20px 16px; }
+  .student-management__roster { padding: 18px 12px; }
+  .student-editor-panel, .student-daily-fields { grid-template-columns: minmax(0, 1fr); }
+  .student-management__cpp-mode, .student-editor-panel__intro { grid-column: 1; }
+  .student-editor-tabs { gap: 2px; }
+  .student-editor-tabs button { padding: 10px 9px; }
+  .student-daily-date-tools { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .student-daily-refresh { justify-self: start; }
+  .student-daily-points-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container student-management (max-width: 660px) {
+  .student-management__workspace { grid-template-columns: minmax(0, 1fr); }
+  .student-management__list { max-height: 260px; min-height: 0; }
+}
+@container student-management (max-width: 420px) {
+  .student-daily-date-tools { grid-template-columns: minmax(0, 1fr); }
 }
 }
