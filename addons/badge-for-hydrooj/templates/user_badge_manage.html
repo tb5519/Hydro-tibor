@@ -1,80 +1,96 @@
 {% extends "layout/basic.html" %}
 {% block content %}
+<style>
+  .badge-gallery { color: #263b55; padding: 8px 0 28px; }
+  .badge-gallery * { box-sizing: border-box; }
+  .badge-gallery a { text-decoration: none; }
+  .badge-gallery__back { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 26px; color: #74869d; font-size: 14px; }
+  .badge-gallery__back:hover { color: #3678cd; }
+  .badge-gallery__header { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 28px; }
+  .badge-gallery__title-row { display: flex; align-items: center; gap: 14px; }
+  .badge-gallery__title { margin: 0; color: #25374e; font-size: 30px; line-height: 1.4; font-weight: 700; letter-spacing: .02em; }
+  .badge-gallery__count { padding: 5px 12px; border: 1px solid #dce5f0; border-radius: 20px; background: #fff; color: #6d8098; font-size: 13px; white-space: nowrap; }
+  .badge-gallery__intro { margin: 10px 0 0; color: #6b7c93; font-size: 14px; line-height: 1.7; }
+  .badge-gallery__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+  .badge-gallery__card { display: flex; flex-direction: column; min-width: 0; margin: 0; padding: 20px; overflow: hidden; border: 1px solid #e1e8f1; border-radius: 22px; background: #fff; box-shadow: 0 4px 18px rgba(43, 67, 102, .035); }
+  .badge-gallery__art { position: relative; display: grid; place-items: center; aspect-ratio: 4 / 3; overflow: hidden; isolation: isolate; border-radius: 15px; background: radial-gradient(ellipse at 50% 60%, #f0f5fc, transparent 70%); }
+  .badge-gallery__art img { display: block; width: 100%; height: 100%; min-height: 0; position: absolute; inset: 0; padding: 12px; object-fit: contain; filter: drop-shadow(0 8px 10px rgba(65, 94, 141, .12)); }
+  .badge-gallery__fallback { display: flex; align-items: center; flex-direction: column; gap: 14px; padding: 24px; text-align: center; }
+  .badge-gallery__fallback svg { width: 66px; height: 66px; color: #94accd; }
+  .badge-gallery__short { display: inline-block; max-width: 100%; padding: 7px 14px; border-radius: 20px; background: #e7edf6; color: #526b8d; font-size: 14px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+  .badge-gallery__body { display: flex; justify-content: center; padding: 18px 8px 6px; }
+  .badge-gallery__name { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .badge-gallery__validity { display: flex; align-items: center; gap: 7px; margin: 0; color: #7f8da1; font-size: 13px; line-height: 1.7; }
+  .badge-gallery__validity svg { flex-shrink: 0; margin-top: 3px; }
+  .badge-gallery__validity strong { color: #65758b; font-weight: 500; }
+  .badge-gallery__validity--permanent { color: #7d9a91; }
+  .badge-gallery__validity--permanent strong { color: #527566; }
+  .badge-gallery__validity time { color: #826f57; font-variant-numeric: tabular-nums; }
+  .badge-gallery a:focus-visible, .badge-gallery button:focus-visible { outline: 3px solid #83ace5; outline-offset: 4px; }
+  .badge-gallery__pagination { margin-top: 28px; text-align: center; }
+  .badge-gallery__empty { display: flex; flex-direction: column; align-items: center; padding: 66px 24px 72px; border: 1px solid #e0e7f1; border-radius: 24px; background: radial-gradient(ellipse at 50% 15%, #eff5ff, #fff 60%); text-align: center; }
+  .badge-gallery__empty-icon { display: grid; place-items: center; width: 104px; height: 104px; margin-bottom: 26px; border: 1px solid #dfe8f6; border-radius: 30px; background: #f7faff; box-shadow: 0 10px 24px rgba(112, 143, 190, .07); color: #83a2ce; }
+  .badge-gallery__empty h2 { margin: 0 0 12px; color: #3e536f; font-size: 22px; font-weight: 600; line-height: 1.5; }
+  .badge-gallery__empty p { max-width: 380px; margin: 0; color: #8b9ab0; font-size: 14px; line-height: 1.9; }
+  @media (max-width: 1000px) { .badge-gallery__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; } }
+  @media (max-width: 600px) {
+    .badge-gallery { padding-top: 12px; }
+    .badge-gallery__back { margin-bottom: 20px; }
+    .badge-gallery__header { align-items: stretch; flex-direction: column; gap: 18px; margin-bottom: 22px; }
+    .badge-gallery__title { font-size: 26px; }
+    .badge-gallery__grid { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+    .badge-gallery__body { padding: 16px 4px 4px; }
+    .badge-gallery__empty { padding: 48px 22px; }
+    .badge-gallery__empty h2 { font-size: 20px; }
+  }
+</style>
+{% macro medal(size=24) %}
+<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="m14 28-3 15 13-6 13 6-3-15" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="24" cy="19" r="14" fill="currentColor" fill-opacity=".08" stroke="currentColor" stroke-width="2"/><path d="m24 10 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L24 10Z" fill="currentColor" fill-opacity=".18" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+{% endmacro %}
 <div class="row">
   <div class="medium-12 columns">
-    <div class="section">
-      <div class="section__header">
-        <h1 class="section__title">{{ _('user_badge_manage') }}</h1>
-      </div>
-      {% if not ddocs.length %}
-      {{ nothing.render("Sorry, You don't have any badge.") }}
-      {% else %}
-      <div class="section__body">
-        <blockquote class="note typo">
-          <ul>
-          <li>{{ _('Hover over a badge to view its title; click a badge to open its introduction page.') }}</li>
-          <li>{{ _('If you have any questions about badge validity, please contact the administrator.') }}</li>
-          </ul>
-        </blockquote>
-        <div class="row">
-          <div class="medium-9 columns">
-            <h3>{{ _('Current Badge') }}：
-              {% if current_badge %}
-              {{ user.render_inline(handler.user, badge=false) }}
-              {% set _badge = current_badge.split('#') %}
-              <a href="{{ url('badge_detail', { id: _badge[0] }) }}" class="user-profile-badge v-center" style="background-color:#{{ _badge[2] }}{% if _badge[3] %};color:#{{ _badge[3] }}{% endif %}" {%if _badge[4] %} data-tooltip="{{ _badge[4] }}" {% endif %} >{{ _badge[1] }}</a>
-              {% else %}
-              {{ _('No Badge Enabled') }}
-              {% endif %}
-            </h3>
-          </div>
-          <div class="medium-3 columns" style="display: flex;">
-            {{ _('Reset Badge') }}：
-            <form method="post">
-              <button class="typo-a" name="operation" value="reset" type="submit">{{ _('Reset') }}</button>
-            </form>
-          </div>
+    <div class="badge-gallery">
+      <a class="badge-gallery__back" href="{{ url('user_detail', uid=handler.user._id) }}"><span aria-hidden="true">←</span> 返回我的主页</a>
+      <header class="badge-gallery__header">
+        <div>
+          <div class="badge-gallery__title-row"><h1 class="badge-gallery__title">我的徽章</h1><span class="badge-gallery__count">{{ badgeCollection.total }} 枚收藏</span></div>
+          <p class="badge-gallery__intro">每一次进步，都值得珍藏。</p>
         </div>
+      </header>
+      {% if badgeCards.length %}
+      <div class="badge-gallery__grid">
+        {% for badge in badgeCards %}
+        <article class="badge-gallery__card" aria-labelledby="badge-gallery-title-{{ badge.id }}">
+          <a class="badge-gallery__art" href="{{ badge.detailUrl }}" aria-label="查看{{ badge.title }}的介绍">
+            {% if badge.acImage %}
+            <img src="{{ badge.acImage }}" alt="{{ badge.title }}的 AC 图片" loading="lazy" decoding="async">
+            {% else %}
+            <span class="badge-gallery__fallback">{{ medal(66) }}<span class="badge-gallery__short"{% if badge.backgroundColor or badge.fontColor %} style="{% if badge.backgroundColor %}background-color:{{ badge.backgroundColor }};{% endif %}{% if badge.fontColor %}color:{{ badge.fontColor }};{% endif %}"{% endif %}>{{ badge.short or badge.title }}</span></span>
+            {% endif %}
+          </a>
+          <div class="badge-gallery__body">
+            <h2 class="badge-gallery__name" id="badge-gallery-title-{{ badge.id }}">{{ badge.title }}</h2>
+            {% if badge.expiresAt %}
+            <p class="badge-gallery__validity">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="7.25" stroke="currentColor" stroke-width="1.5"/><path d="M10 5.5V10l3 1.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span><time datetime="{{ badge.expiresAt }}">{{ badge.expiryLabel }}</time> 到期</span>
+            </p>
+            {% else %}
+            <p class="badge-gallery__validity badge-gallery__validity--permanent">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 2.3 16 5v4.4c0 3.4-2.3 6.2-6 8.2-3.7-2-6-4.8-6-8.2V5l6-2.7Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="m7 9.6 2 2 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <strong>永久</strong>
+            </p>
+            {% endif %}
+          </div>
+        </article>
+        {% endfor %}
       </div>
-      <div class="section__body no-padding">
-          <table class="data-table">
-          <colgroup>
-            <col class="col--id">
-            <col class="col--title">
-            <col class="col--preview">
-            <col class="col--getat">
-            <col class="col--actions">
-          </colgroup>
-          <thead>
-            <tr>
-            <th class="col--id">{{ _('badge ID') }}</th>
-            <th class="col--title">{{ _('badge title') }}</th>
-            <th class="col--preview">{{ _('badge preview') }}</th>
-            <th class="col--getat">{{ _('get at') }}</th>
-            <th class="col--actions">{{ _('Action') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {%- for ddoc in ddocs -%}
-            {%- set bdoc = bdocs[ddoc.badgeId|string] -%}
-            <tr>
-            <td class="col--id">{{ ddoc.badgeId }}</td>
-            <td class="col--title">{{ bdoc.title }}</td>
-            <td class="col--preview">
-              <a href="{{ url('badge_detail', { id: ddoc.badgeId }) }}" class="user-profile-badge v-center" style="background-color:{{ bdoc.backgroundColor }};color:{{ bdoc.fontColor }};" data-tooltip="{{ bdoc.title }}">{{ bdoc.short }}</a>
-            </td>
-            <td class="col--getat">{{ datetimeSpan(ddoc.getAt, false, 'YYYY-MM-DD')|safe}}</td>
-            <td class="col--actions">
-              <form method="post">
-                <input type="hidden" name="badgeId" value="{{ ddoc.badgeId }}">
-                <button class="typo-a" name="operation" value="enable" type="submit">{{ _('Enable') }}</button>
-              </form>
-            </td>
-            </tr>
-            {%- endfor -%}
-          </tbody>
-          </table>
-          {{ paginator.render(page, dpcount) }}
+      {% if dpcount > 1 %}<div class="badge-gallery__pagination">{{ paginator.render(page, dpcount) }}</div>{% endif %}
+      {% else %}
+      <div class="badge-gallery__empty">
+        <div class="badge-gallery__empty-icon">{{ medal(68) }}</div>
+        <h2>你的第一枚徽章，正在路上</h2>
+        <p>获得的徽章会出现在这里，<br>陪你记录每一次进步。</p>
       </div>
       {% endif %}
     </div>

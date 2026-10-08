@@ -10,6 +10,7 @@ import {
     migrateWeeklyAutomaticBadge, nextWeeklyAutomaticBadgeExpiry, updateAutomaticBadge,
 } from 'hydrooj/src/lib/automatic_badge';
 import { getSharedRankingSnapshot } from 'hydrooj/src/lib/shared_ranking';
+import { getUserBadgeGallery } from 'hydrooj/src/lib/user_badge_gallery';
 import DomainModel from 'hydrooj/src/model/domain';
 import RecordModel from 'hydrooj/src/model/record';
 import storage from 'hydrooj/src/model/storage';
@@ -244,30 +245,25 @@ async function assignSpecialBadges(ctx: Context) {
     ]);
 }
 
-class UserBadgeManageHandler extends Handler {
+export class UserBadgeManageHandler extends Handler {
     @param('page', Types.PositiveInt, true)
-    async get(_: string, page = 1, userId = this.user._id) {
-        const domainId = getBadgeDomainScope(this);
-        const [ddocs, dpcount] = await this.ctx.db.paginate(
-            await UserBadgeModel.userBadgeGetMulti(this.ctx, userId, domainId),
-            page,
-            10,
-        );
-        const result = await (await BadgeModel.badgeGetMulti(this.ctx, domainId)).toArray();
-        const bdocs = Object.fromEntries(result.reduce((acc, item) => {
-            acc.set(item._id, item);
-            return acc;
-        }, new Map<number, Badge>()));
+    async get(_: string, page = 1) {
+        const gallery = await getUserBadgeGallery(this.ctx, this.domain, this.user._id);
+        const pageSize = 24;
+        const dpcount = Math.max(1, Math.ceil(gallery.badgeCollection.total / pageSize));
+        page = Math.min(page, dpcount);
         this.response.template = 'user_badge_manage.html';
-        const currentUser = await this.ctx.db.collection('user').findOne({ _id: userId });
-        const current_badge = domainId
-            ? (currentUser?.badgeDomainId === domainId ? currentUser.badge : '')
-            : (!currentUser?.badgeDomainId ? currentUser?.badge : '');
-        this.response.body = { ddocs, bdocs, dpcount, page, current_badge };
+        this.response.body = {
+            ...gallery, badgeCards: gallery.badgeCards.slice((page - 1) * pageSize, page * pageSize), dpcount, page,
+        };
     }
 
     @param('badgeId', Types.PositiveInt, true)
     async postEnable(_: string, badgeId: number) {
+        const gallery = await getUserBadgeGallery(this.ctx, this.domain, this.user._id);
+        if (!gallery.badgeCards.some((badge) => badge.id === badgeId)) {
+            throw new ValidationError('badgeId', null, '这枚徽章暂不可佩戴，请刷新页面查看当前收藏。');
+        }
         await UserBadgeModel.userBadgeSel(this.ctx, this.user._id, badgeId, getBadgeDomainScope(this));
         this.response.redirect = this.url('user_badge_manage');
     }

@@ -16,6 +16,8 @@ import { TokenDoc, Udoc, User } from '../interface';
 import avatar from '../lib/avatar';
 import { contestLevelQuery } from '../lib/contest_access';
 import { sendMail } from '../lib/mail';
+import { selectProfileBadgeSound } from '../lib/profile_badge_sound';
+import { getUserBadgeGallery } from '../lib/user_badge_gallery';
 import { verifyTFA } from '../lib/verifyTFA';
 import BlackListModel from '../model/blacklist';
 import { PERM, PRIV, STATUS } from '../model/builtin';
@@ -541,6 +543,11 @@ class UserDetailHandler extends Handler {
             ownedBadges: udoc.ownedBadges,
             badgeProfileBackgroundBadgeId: themePreference?.badgeProfileBackgroundBadgeId,
         });
+        // Resolve the visited member's valid collection, never the visitor's own theme.
+        const badgeGallery = udoc.ownedBadges.some((badge) => badge.themeSound)
+            ? await getUserBadgeGallery(this.ctx, this.domain, uid) : null;
+        const profileBadgeSound = badgeGallery
+            ? selectProfileBadgeSound(udoc.ownedBadges, badgeGallery.badgeCards, badgeProfileBackground.selectedId) : null;
         const pdocs: ProblemDoc[] = [];
         const acInfo: Record<string, number> = {};
         const canViewHidden = this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN) || this.user._id;
@@ -565,7 +572,7 @@ class UserDetailHandler extends Handler {
             .project({ docId: 1, title: 1, rule: 1 }).sort({ _id: -1 }).toArray();
         this.response.template = 'user_detail.html';
         this.response.body = {
-            isSelfProfile, udoc, sdoc, pdocs, tags, tdocs, badgeProfileBackground,
+            isSelfProfile, udoc, sdoc, pdocs, tags, tdocs, badgeProfileBackground, profileBadgeSound,
         };
         if (this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_SOLUTION)) {
             const psdocs = await SolutionModel.getByUser(domainId, uid).limit(10).toArray();

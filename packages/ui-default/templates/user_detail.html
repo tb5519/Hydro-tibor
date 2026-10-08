@@ -145,6 +145,9 @@
               {% if isSelfProfile and badgeProfileBackground.currentTheme %}
                 <p class="ui-v2-current-badge-theme">当前主题：{{ badgeProfileBackground.currentTheme.name }}</p>
               {% endif %}
+              {% if profileBadgeSound.themeSound %}
+                <span hidden data-profile-badge-sound="{{ profileBadgeSound.themeSound }}" data-profile-badge-sound-name="{{ profileBadgeSound.name }}"></span>
+              {% endif %}
               <p>
                 {{ _('Registered at') }} {{ datetimeSpan(udoc['regat'])|safe }}{% if canViewUserPresence %},
                 {{ _('last login at') }} {{ datetimeSpan(udoc['loginat'])|safe }},
