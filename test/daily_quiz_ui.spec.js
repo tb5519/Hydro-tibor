@@ -126,19 +126,21 @@ describe('daily quiz learner page', () => {
         } finally { dom.window.close(); }
     });
 
-    it('shows one accessible question with progress, tags, safe Markdown, and no unsubmitted solution', async () => {
+    it('shows one accessible question with progress and safe Markdown while hiding tags and unsubmitted solutions', async () => {
         const h = await harness(initial({ state: state({ current: question({
             stem: '**题干** <img src=x onerror=alert(1)> [坏链接](javascript:alert(1)) $x^2$',
+            tags: ['PRIVATE_TAG_LOOP', 'PRIVATE_TAG_BASE'],
             answers: ['B'], analysis: 'PRIVATE_UNSUBMITTED_EXPLANATION',
         }) }) }));
         try {
             assert.equal(h.query('[role=progressbar]').getAttribute('aria-valuenow'), '0');
-            assert.match(h.query('.daily-quiz__meta').textContent, /单选题.*Python 训练.*循环/s);
+            assert.match(h.query('.daily-quiz__meta').textContent, /单选题.*Python 训练/s);
+            assert.equal(h.query('.daily-quiz__tag'), null);
             assert.equal(h.dom.window.document.querySelectorAll('input[type=radio]').length, 3);
             const input = h.query('input[value=A]');
             assert.equal(h.dom.window.document.getElementById(input.getAttribute('aria-describedby')).textContent.trim(), 'print(1)');
             assert.equal(h.query('[data-daily-quiz-feedback]'), null);
-            assert.doesNotMatch(h.dom.window.document.body.textContent, /PRIVATE_UNSUBMITTED_EXPLANATION|正确答案：/);
+            assert.doesNotMatch(h.dom.window.document.body.textContent, /PRIVATE_TAG_|PRIVATE_UNSUBMITTED_EXPLANATION|正确答案：/);
             assert.equal(h.query('img[onerror]'), null);
             assert.equal(h.query('a[href^="javascript:"]'), null);
             assert.equal(h.query('.daily-quiz__question strong').textContent, '题干');
@@ -197,6 +199,8 @@ describe('daily quiz learner page', () => {
             assert(h.query('[data-daily-quiz-feedback]').classList.contains('is-correct'));
             assert(h.query('.daily-quiz__feedback-icon .daily-quiz__checkmark'));
             assert.equal(h.query('.daily-quiz__award').getAttribute('aria-label'), '本题获得 5 积分');
+            assert.equal(h.query('.daily-quiz__analysis'), null, 'correct answers do not show an explanation');
+            assert.match(h.query('button[type=submit]').textContent, /下一题/);
             assert.equal(h.dom.window.location.pathname, '/daily-quiz');
         } finally { await h.cleanup(); }
     });
@@ -217,24 +221,34 @@ describe('daily quiz learner page', () => {
             assert.equal(h.query('.daily-quiz__checkmark'), null, 'incorrect feedback must not play the success effect');
             assert.equal(h.query('.daily-quiz__analysis strong').textContent, 'A');
             assert.equal(h.query('.daily-quiz__analysis script'), null);
+            assert.match(h.query('button[type=submit]').textContent, /知道了/);
             assert.equal(h.dom.window.document.activeElement, h.query('[data-daily-quiz-feedback]'));
             assert.equal(h.focuses[0].options.preventScroll, true, 'refreshing feedback must preserve the page top');
             assert.equal(h.calls.length, 0, 'refresh must not resubmit or award points again');
         } finally { await h.cleanup(); }
     });
 
-    it('keeps the current feedback when next fails, then opens exactly the next question', async () => {
-        const h = await harness(initial({ state: answerResult().state }), async () => { throw new Error('稍后重试'); });
+    it('keeps a wrong answer explanation after acknowledgement fails, then confirms into exactly the next question', async () => {
+        const saved = feedback({ correct: false, selectedAnswers: ['B'], earnedPoints: 0 });
+        const h = await harness(initial({ state: state({ answered: 1, current: question({ feedback: saved }) }) }),
+            async () => { throw new Error('稍后重试'); });
         try {
-            await h.submit();
+            assert.equal(h.calls.length, 0, 'showing an explanation must wait for acknowledgement');
+            assert.match(h.query('button[type=submit]').textContent, /知道了/);
+            await h.click('button[type=submit]');
             assert.deepEqual(h.calls[0].body, { operation: 'next', sessionId: 'session-1', questionId: 1 });
             assert(h.query('[data-daily-quiz-feedback]'));
-            assert.equal(h.query('input[value=A]').checked, true);
-            h.setPost(async () => ({ state: state({ answered: 1, earnedPoints: 5,
+            assert(h.query('.daily-quiz__analysis'));
+            assert.equal(h.query('input[value=B]').checked, true);
+            assert.match(h.query('button[type=submit]').textContent, /知道了/);
+            h.setPost(async () => ({ state: state({ answered: 1, earnedPoints: 0,
                 current: question({ id: 2, position: 2, domainName: 'C++ 训练', kind: 'multiple' }) }) }));
-            await h.submit();
+            await h.click('button[type=submit]');
+            assert.equal(h.calls.length, 2);
+            assert.deepEqual(h.calls[1].body, { operation: 'next', sessionId: 'session-1', questionId: 1 });
             assert.match(h.query('.daily-quiz__meta').textContent, /多选题.*C\+\+ 训练.*第 2 题/s);
             assert.equal(h.query('[data-daily-quiz-feedback]'), null);
+            assert.equal(h.query('.daily-quiz__analysis'), null);
             assert.equal(h.query('input:checked'), null);
             assert.equal(h.query('[role=progressbar]').getAttribute('aria-valuenow'), '1');
             assert.equal(h.dom.window.document.activeElement, h.query('.daily-quiz__question'));
@@ -242,7 +256,7 @@ describe('daily quiz learner page', () => {
         } finally { await h.cleanup(); }
     });
 
-    it('lets an incorrect last answer finish after showing feedback and offers the safe original destination', async () => {
+    it('waits for acknowledgement of an incorrect last answer explanation before showing completion', async () => {
         const last = state({ total: 1, possiblePoints: 5, current: question({ total: 1 }) });
         const done = state({ total: 1, answered: 1, possiblePoints: 5, required: false, completed: true,
             current: question({ total: 1, feedback: feedback({ correct: false, selectedAnswers: ['B'], earnedPoints: 0 }) }) });
@@ -251,10 +265,13 @@ describe('daily quiz learner page', () => {
             await h.click('input[value=B]');
             await h.submit();
             assert(h.query('[data-daily-quiz-feedback]'));
+            assert(h.query('.daily-quiz__analysis'));
             assert.equal(h.query('[data-daily-quiz-complete]'), null);
-            assert.match(h.query('button[type=submit]').textContent, /完成今日问答/);
+            assert.match(h.query('button[type=submit]').textContent, /知道了/);
+            assert.equal(h.calls.length, 1, 'the last explanation must not be skipped automatically');
             h.setPost(async () => ({ state: { ...done, current: null } }));
-            await h.submit();
+            await h.click('button[type=submit]');
+            assert.deepEqual(h.calls[1].body, { operation: 'next', sessionId: 'session-1', questionId: 1 });
             assert(h.query('[data-daily-quiz-complete]'));
             assert.equal(h.query('input'), null);
             assert.match(h.query('.daily-quiz__stats').textContent, /1完成题目\+0今日积分/);
@@ -262,6 +279,37 @@ describe('daily quiz learner page', () => {
             assert.equal(h.dom.window.document.activeElement, h.query('h1'));
         } finally { await h.cleanup(); }
     });
+
+    for (const last of [false, true]) {
+        it(`hides a correct answer explanation and retains the normal ${last ? 'completion' : 'next'} action`, async () => {
+            const saved = feedback({ analysis: 'PRIVATE_CORRECT_EXPLANATION' });
+            const h = await harness(initial({ state: state({ answered: last ? 2 : 1, earnedPoints: 5,
+                completed: last, required: !last, current: question({ feedback: saved }) }) }));
+            try {
+                assert.equal(h.query('.daily-quiz__analysis'), null);
+                assert.doesNotMatch(h.dom.window.document.body.textContent, /PRIVATE_CORRECT_EXPLANATION|知道了|看过解析/);
+                assert.match(h.query('button[type=submit]').textContent, last ? /完成今日问答/ : /下一题/);
+                assert(h.query('[data-daily-quiz-feedback]').classList.contains('is-correct'));
+                assert.equal(h.calls.length, 0);
+            } finally { await h.cleanup(); }
+        });
+
+        for (const analysis of ['', ' \n\t ']) {
+            const explanation = analysis ? 'whitespace-only' : 'empty';
+            it(`hides a wrong answer's ${explanation} explanation and retains the ${last ? 'completion' : 'next'} action`, async () => {
+                const saved = feedback({ correct: false, selectedAnswers: ['B'], earnedPoints: 0, analysis });
+                const h = await harness(initial({ state: state({ answered: last ? 2 : 1,
+                    completed: last, required: !last, current: question({ feedback: saved }) }) }));
+                try {
+                    assert.equal(h.query('.daily-quiz__analysis'), null);
+                    assert.doesNotMatch(h.dom.window.document.body.textContent, /知道了|看懂这道题|看过解析/);
+                    assert.match(h.query('button[type=submit]').textContent, last ? /完成今日问答/ : /下一题/);
+                    assert(h.query('[data-daily-quiz-feedback]').classList.contains('is-incorrect'));
+                    assert.equal(h.calls.length, 0);
+                } finally { await h.cleanup(); }
+            });
+        }
+    }
 
     it('never treats a missing confirmation or another session as a successful save', async () => {
         const h = await harness(initial(), async () => ({ state: state({ sessionId: 'somebody-else' }) }));

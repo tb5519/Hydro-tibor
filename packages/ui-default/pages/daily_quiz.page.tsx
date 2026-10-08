@@ -86,6 +86,11 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
   const completedRef = useRef<HTMLHeadingElement>(null);
   const current = state.current;
   const feedback = current?.feedback;
+  const needsAcknowledgement = !!feedback && !feedback.correct && !!feedback.analysis?.trim();
+  const continueLabel = needsAcknowledgement ? '知道了' : state.completed ? '完成今日问答' : '下一题';
+  const actionHint = !feedback ? '不着急，先想清楚再提交。'
+    : needsAcknowledgement ? '看懂题解后，点击“知道了”继续。'
+      : feedback.correct ? '答对了，继续吧。' : '记住正确答案，下次再试试。';
   const complete = !current && (state.completed || !state.required);
   const multiple = current?.kind === 'multiple';
   const activeAnswers = feedback?.selectedAnswers || selection;
@@ -176,7 +181,6 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
             <div className="daily-quiz__meta">
               <span className="daily-quiz__kind">{multiple ? '多选题' : '单选题'}</span>
               <span>{current.domainName}</span>
-              {(current.tags || []).map((tag) => <span className="daily-quiz__tag" key={tag}>{tag}</span>)}
               <span className="daily-quiz__question-number">第 {current.position} 题</span>
             </div>
             <div className="daily-quiz__question" ref={questionRef} tabIndex={-1} role="group" aria-label={`第 ${current.position} 题`}>
@@ -252,21 +256,21 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
                   <div><dt>你的选择</dt><dd className={feedback.correct ? 'is-correct' : 'is-incorrect'}>{feedback.selectedAnswers.join('、')}</dd></div>
                   <div><dt>正确答案</dt><dd className="is-correct">{feedback.answers.join('、')}</dd></div>
                 </dl>
-                {feedback.analysis && (
-                  <div className="daily-quiz__analysis"><h3>看懂这道题</h3><Markdown value={feedback.analysis} /></div>
+                {needsAcknowledgement && (
+                  <div className="daily-quiz__analysis"><h3>题解</h3><Markdown value={feedback.analysis} /></div>
                 )}
               </div>
             )}
             {error && <div className="daily-quiz__error" role="alert">{error}<small>当前选择已保留，可以直接重试。</small></div>}
             <div className="daily-quiz__actions">
-              <p>{feedback ? '看过解析，再继续下一步。' : '不着急，先想清楚再提交。'}</p>
+              <p>{actionHint}</p>
               <button
                 className="daily-quiz__primary"
                 type="submit"
                 disabled={pending}
                 aria-busy={pending}
                 onClick={(event) => event.stopPropagation()}>
-                {pending ? feedback ? '正在继续…' : '正在保存…' : feedback ? state.completed ? '完成今日问答' : '下一题' : '提交答案'}
+                {pending ? feedback ? '正在继续…' : '正在保存…' : feedback ? continueLabel : '提交答案'}
                 <span aria-hidden="true">→</span>
               </button>
             </div>
