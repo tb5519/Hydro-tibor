@@ -1,0 +1,7 @@
+{% extends "scratch_base.html" %}
+{% block scratch_content %}
+<div data-scratch-objective-quiz data-initial="{{ UiContext.scratchObjectiveQuiz|json }}">
+  <section class="sc-panel"><div class="sc-panel-body" role="status">正在准备课堂练习…</div></section>
+</div>
+<noscript><div class="sc-empty">请启用 JavaScript 后进行课堂练习。</div></noscript>
+{% endblock %}

@@ -1,0 +1,372 @@
+.scratch-app
+  .sc-assignment-form [hidden], .sc-assignment-paper[hidden]
+    display: none !important
+
+  .sc-assignment-sr-only
+    position: absolute
+    width: 1px
+    height: 1px
+    padding: 0
+    margin: -1px
+    overflow: hidden
+    clip: rect(0, 0, 0, 0)
+    white-space: nowrap
+    border: 0
+
+  .sc-assignment-caption
+    font-size: 13px
+
+  .sc-assignment-modes
+    display: grid
+    grid-template-columns: repeat(3, minmax(0, 1fr))
+    gap: 13px
+    border: 0
+    padding: 0
+    margin: 0
+    min-width: 0
+
+  .sc-assignment-mode
+    position: relative
+    cursor: pointer
+    margin: 0
+    min-width: 0
+
+    input
+      position: absolute
+      top: 18px
+      right: 17px
+      margin: 0
+      width: 18px
+      height: 18px
+      accent-color: var(--sc-blue)
+      z-index: 1
+      cursor: pointer
+
+    & input:checked + .sc-assignment-mode-body
+      border-color: var(--sc-blue)
+      box-shadow: inset 0 0 0 1px var(--sc-blue)
+      background: var(--sc-soft)
+
+    & input:focus-visible + .sc-assignment-mode-body
+      outline: 3px solid #80aaff
+      outline-offset: 3px
+
+  .sc-assignment-mode-body
+    display: flex
+    flex-direction: column
+    padding: 19px
+    border: 1px solid var(--sc-line)
+    border-radius: 17px
+    background: var(--sc-paper)
+    height: 100%
+    transition: background .15s, border-color .15s
+
+    strong
+      display: block
+      font-size: 17px
+      margin-top: 11px
+      color: var(--sc-ink)
+
+    small
+      margin-top: 4px
+      font-size: 13px
+      line-height: 1.6
+      color: var(--sc-muted)
+
+  .sc-assignment-mode-icon
+    display: grid
+    place-items: center
+    width: 38px
+    height: 38px
+    background: var(--sc-soft)
+    border-radius: 12px
+    color: var(--sc-blue)
+    font-size: 23px
+    font-weight: 700
+
+  .sc-assignment-section
+    border-top: 1px solid var(--sc-line)
+    padding-top: 24px
+
+  .sc-assignment-section-heading
+    display: flex
+    justify-content: space-between
+    align-items: center
+    gap: 14px
+    flex-wrap: wrap
+    margin-bottom: 16px
+
+    .sc-button
+      min-height: 40px
+      font-size: 14px
+      padding: 8px 14px
+
+  .sc-assignment-summary
+    display: flex
+    justify-content: space-between
+    align-items: center
+    gap: 8px 16px
+    flex-wrap: wrap
+    padding: 16px 0 13px
+    font-size: 14px
+
+    strong
+      color: var(--sc-blue)
+      font-weight: 700
+
+    > span
+      color: var(--sc-muted)
+      font-size: 13px
+
+  .sc-assignment-papers
+    display: grid
+    gap: 9px
+    max-height: 430px
+    overflow-y: auto
+    padding: 3px
+    margin: -3px
+    scrollbar-gutter: stable
+
+  .sc-assignment-paper
+    position: relative
+    display: flex
+    align-items: flex-start
+    gap: 13px
+    padding: 16px
+    margin: 0
+    border: 1px solid var(--sc-line)
+    border-radius: 14px
+    background: var(--sc-paper)
+    cursor: pointer
+    min-width: 0
+
+    input
+      flex: none
+      width: 18px
+      height: 18px
+      margin: 4px 0 0
+      accent-color: var(--sc-blue)
+      cursor: pointer
+
+    &:has(input:checked)
+      border-color: #92b5ee
+      background: var(--sc-soft)
+
+    &:has(input:focus-visible)
+      outline: 2px solid #80aaff
+      outline-offset: 1px
+
+    &:hover
+      border-color: #92b5ee
+
+  .sc-assignment-paper-body
+    flex: 1
+    min-width: 0
+
+    strong
+      display: block
+      color: var(--sc-ink)
+      font-size: 15px
+      overflow-wrap: anywhere
+
+  .sc-assignment-paper-meta
+    display: block
+    margin-top: 3px
+    font-size: 13px
+    color: var(--sc-muted)
+
+  .sc-assignment-paper-tags
+    display: flex
+    gap: 6px
+    flex-wrap: wrap
+    margin-top: 9px
+
+    > span
+      border: 1px solid var(--sc-line)
+      border-radius: 6px
+      padding: 1px 6px
+      background: var(--sc-paper)
+      color: var(--sc-muted)
+      font-size: 12px
+      overflow-wrap: anywhere
+
+  .sc-assignment-paper-check
+    visibility: hidden
+    color: var(--sc-blue)
+    font-size: 16px
+    font-weight: 700
+
+  .sc-assignment-paper input:checked ~ .sc-assignment-paper-check
+    visibility: visible
+
+  .sc-assignment-no-papers
+    background: var(--sc-soft)
+
+  .sc-assignment-validation
+    margin-top: 13px
+    padding: 11px 15px
+    color: var(--sc-warm-ink)
+    background: var(--sc-warm)
+    border-radius: 10px
+    font-size: 14px
+
+  .sc-assignment-deadline
+    max-width: 400px
+
+  .sc-assignment-footer
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 15px
+    flex-wrap: wrap
+    padding: 0 0 20px
+
+    > p
+      font-size: 14px
+
+  .sc-assignment-task
+    padding: 19px
+    border: 1px solid var(--sc-line)
+    border-radius: 16px
+    background: var(--sc-paper)
+
+    + .sc-assignment-task
+      margin-top: 13px
+
+    h3
+      font-size: 18px
+      margin-bottom: 7px
+
+    p
+      font-size: 14px
+
+    .sc-button
+      width: 100%
+      margin-top: 14px
+
+    form
+      margin: 0
+
+  .sc-assignment-task-objective
+    background: var(--sc-soft)
+    border-color: #ccddf7
+
+  .sc-assignment-task-complete
+    background: var(--sc-success)
+    border-color: #c8e4d7
+
+  .sc-assignment-progress
+    display: block
+    appearance: none
+    width: 100%
+    height: 7px
+    margin-top: 15px
+    border: 0
+    border-radius: 10px
+    background: var(--sc-line)
+    overflow: hidden
+
+    &::-webkit-progress-bar
+      background: var(--sc-line)
+      border-radius: 10px
+
+    &::-webkit-progress-value
+      background: var(--sc-blue)
+      border-radius: 10px
+
+    &::-moz-progress-bar
+      background: var(--sc-blue)
+      border-radius: 10px
+
+  .sc-assignment-progress-copy
+    display: flex
+    justify-content: space-between
+    gap: 12px
+    margin-top: 8px
+    color: var(--sc-muted)
+    font-size: 13px
+
+  .sc-assignment-stat
+    display: flex
+    align-items: baseline
+    gap: 8px
+    margin: 5px 0 12px
+
+    strong
+      font-size: 31px
+      font-weight: 800
+      color: var(--sc-blue)
+      line-height: 1.2
+
+  .sc-assignment-type
+    margin-top: 7px
+
+  .sc-assignment-results .sc-button
+    min-height: 38px
+    padding: 7px 11px
+    font-size: 13px
+    white-space: nowrap
+
+  .sc-assignment-results th, .sc-assignment-results td
+    white-space: nowrap
+
+@media(max-width: 540px)
+  .scratch-app
+    .sc-assignment-modes
+      grid-template-columns: 1fr
+      gap: 9px
+
+    .sc-assignment-mode-body
+      display: grid
+      grid-template-columns: 39px minmax(0, 1fr)
+      column-gap: 12px
+      padding: 14px 42px 14px 15px
+
+      strong
+        margin-top: 0
+        font-size: 16px
+
+      small
+        grid-column: 2
+        margin-top: 1px
+
+    .sc-assignment-mode-icon
+      grid-row: 1 / 3
+      align-self: center
+
+    .sc-assignment-mode input
+      top: 26px
+      right: 15px
+
+    .sc-assignment-footer
+      align-items: stretch
+
+      > .sc-actions
+        width: 100%
+
+        .sc-button
+          flex: 1
+
+    .sc-assignment-task
+      padding: 17px
+
+@media(prefers-reduced-motion: reduce)
+  .scratch-app .sc-assignment-mode-body
+    transition: none
+
+.theme--dark .scratch-app
+  .sc-assignment-mode-icon, .sc-assignment-summary strong, .sc-assignment-stat strong, .sc-assignment-paper-check
+    color: #bdd7ff
+
+  .sc-assignment-task-objective
+    border-color: #47658c
+
+  .sc-assignment-task-complete
+    border-color: #467160
+
+  .sc-assignment-paper:hover, .sc-assignment-paper:has(input:checked)
+    border-color: #7098cc
+
+  .sc-assignment-mode input:checked + .sc-assignment-mode-body
+    border-color: #7098cc
+    box-shadow: inset 0 0 0 1px #7098cc

@@ -1,32 +1,53 @@
 {% extends "scratch_base.html" %}
 {% block scratch_content %}
+{% set hasProject = assignment.projectRequired != false %}
+{% set hasQuestions = assignment.objectiveQuiz.total > 0 %}
 <div class="sc-heading">
   <div><div class="sc-eyebrow">{{ '课堂作业' if isTeacher else '老师的小任务' }}</div><h1>{{ assignment.title }}</h1><p class="sc-muted">{% if assignment.deadline %}截止时间 {{ datetimeSpan(assignment.deadline)|safe }}{% else %}{{ '未设置截止时间' if isTeacher else '没有截止时间，可以慢慢试一试' }}{% endif %}</p></div>
   <div class="sc-actions">{% if isTeacher %}<a class="sc-button" href="{{ url('scratch_assignment_edit', assignmentId=assignment._id) }}">编辑作业</a>{% endif %}<a class="sc-button" href="{{ url('scratch_assignments') }}">所有作业 →</a></div>
 </div>
 <div class="sc-columns">
   <div><section class="sc-panel">
-    <div class="sc-panel-head"><h2>{{ '创作任务' if isTeacher else '这次要做什么？' }}</h2></div>
+    <div class="sc-panel-head"><h2>{{ '任务说明' if isTeacher else '这次要做什么？' }}</h2></div>
     <div class="sc-panel-body">
-      <div class="sc-description">{{ assignment.description or '发挥你的想象力，完成一个有趣的 Scratch 作品。' }}</div>
-      {% if assignment.templateFileId %}<div class="sc-spaced"><a class="sc-button" href="{{ url('scratch_file', fileId=assignment.templateFileId) }}">下载起始项目</a></div>{% endif %}
+      <div class="sc-description">{{ assignment.description or ('发挥你的想象力，完成一个有趣的 Scratch 作品。' if hasProject else '认真读题，选出你的答案。每一道题，都是一次小小的进步。') }}</div>
+      {% if hasProject and assignment.templateFileId %}<div class="sc-spaced"><a class="sc-button" href="{{ url('scratch_file', fileId=assignment.templateFileId) }}">下载起始项目</a></div>{% endif %}
     </div>
   </section></div>
   <div><section class="sc-panel">
-    <div class="sc-panel-head"><h2>{{ '课堂进度' if isTeacher else '准备好了吗？' }}</h2></div>
+    <div class="sc-panel-head"><h2>{{ '课堂进度' if isTeacher else '我的任务清单' }}</h2></div>
     <div class="sc-panel-body">
-      {% if isTeacher %}
+      {% if hasQuestions %}
+      <div class="sc-assignment-task sc-assignment-task-objective {% if objectiveQuiz.completed and not isTeacher %}sc-assignment-task-complete{% endif %}">
+        <h3>{{ '知识小练习' if not isTeacher else '客观题练习' }}</h3>
+        {% if isTeacher %}
+        <div class="sc-assignment-stat"><strong>{{ assignment.objectiveQuiz.total }}</strong><span class="sc-muted">道题</span></div>
+        <p class="sc-muted">在下方查看 {{ objectiveResults|length }} 位学员的完成进度和具体作答。</p>
+        {% else %}
+        <p class="sc-muted">{{ '认真思考的你，真棒！' if objectiveQuiz.completed else ('上次的答案已保存，接着来吧。' if objectiveQuiz.answered else '读一读，想一想，选出你的答案。') }}</p>
+        <progress class="sc-assignment-progress" value="{{ objectiveQuiz.answered or 0 }}" max="{{ objectiveQuiz.total }}" aria-label="客观题完成进度"></progress>
+        <div class="sc-assignment-progress-copy"><span>{{ '已完成' if objectiveQuiz.completed else '已回答' }} {{ objectiveQuiz.answered or 0 }} / {{ objectiveQuiz.total }} 题</span>{% if objectiveQuiz.completed %}<span>答对 {{ objectiveQuiz.correct }} 题</span>{% endif %}</div>
+        <a class="sc-button sc-button-primary" href="{{ objectiveQuiz.url }}">{{ '查看答题结果' if objectiveQuiz.completed else ('继续答题' if objectiveQuiz.answered else '开始答题') }}<span class="icon icon-chevron_right" aria-hidden="true"></span></a>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if hasProject %}
+      <div class="sc-assignment-task">
+        <h3>Scratch 作品</h3>
+        {% if isTeacher %}
         <p>已有 <strong>{{ works|length }}</strong> 份作品、<strong>{{ submissions|length }}</strong> 次提交。</p>
         <p class="sc-muted sc-spaced">在下方查看学生作品和提交记录。</p>
-      {% else %}
+        {% else %}
         <p class="sc-muted">{{ '你的作品还在这里，接着做吧。' if work else '打开积木小天地，把你的想法做出来。' }}</p>
-        <form class="sc-spaced" method="post"><button class="sc-button sc-button-primary" type="submit">{{ '继续创作' if work else '开始做作业' }}</button></form>
-        {% if work %}<div class="sc-spaced"><a class="sc-button" href="{{ url('scratch_work', workId=work._id) }}">查看我的作品</a></div>{% endif %}
+        <form method="post"><button class="sc-button {% if not hasQuestions %}sc-button-primary{% endif %}" type="submit">{{ '继续创作' if work else '开始创作' }}</button></form>
+        {% if work %}<a class="sc-button sc-button-soft" href="{{ url('scratch_work', workId=work._id) }}">查看我的作品</a>{% endif %}
+        {% endif %}
+      </div>
       {% endif %}
     </div>
   </section></div>
 </div>
-{% if not isTeacher %}
+{% if hasProject and not isTeacher %}
 <ol class="sc-steps" aria-label="完成作业的三个步骤">
   <li><span class="sc-step-number">1</span><div><strong>搭一搭积木</strong><p class="sc-muted">试试老师的小任务。</p></div></li>
   <li><span class="sc-step-number">2</span><div><strong>保存作品</strong><p class="sc-muted">让新点子留在这里。</p></div></li>
@@ -39,6 +60,17 @@
   <div class="sc-panel-body"><ul class="sc-list">{% for item in materials %}<li class="sc-list-item"><div><h3>{{ item.title }}</h3><p>{{ item.fileName }}</p></div><a class="sc-button" href="{{ url('scratch_file', fileId=item.fileId) }}">下载素材</a></li>{% endfor %}</ul></div>
 </section>
 {% endif %}
+{% if isTeacher and hasQuestions %}
+<section class="sc-panel sc-assignment-results">
+  <div class="sc-panel-head"><div><h2>客观题答题情况</h2><p class="sc-muted sc-assignment-caption">查看每位学员的进度，以及具体答对、答错的题目。</p></div><span class="sc-badge">{{ assignment.objectiveQuiz.total }} 道题</span></div>
+  {% if objectiveResults|length %}
+  <div class="sc-table-wrap"><table class="sc-table"><thead><tr><th>学员</th><th>完成进度</th><th>答对题数</th><th>得分</th><th>最近作答</th><th><span class="sc-assignment-sr-only">操作</span></th></tr></thead><tbody>
+    {% for item in objectiveResults %}<tr><td>{{ (udict[item.uid].displayName or udict[item.uid].uname) if udict[item.uid] else item.uid }}</td><td><span class="sc-badge {{ 'sc-badge-success' if item.completed else 'sc-badge-warm' }}">{{ '已完成' if item.completed else ('答题中' if item.answered else '未开始') }} · {{ item.answered }} / {{ item.total }}</span></td><td>{{ item.correct }} 题</td><td><strong>{{ item.score }}</strong> / {{ item.totalScore }}</td><td>{{ datetimeSpan(item.updatedAt)|safe if item.updatedAt else '—' }}</td><td><a class="sc-button" href="{{ item.url }}">查看作答</a></td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<div class="sc-empty"><strong>等孩子们来试一试</strong><p>学员开始答题后，完成情况和每道题的作答会显示在这里。</p></div>{% endif %}
+</section>
+{% endif %}
+{% if hasProject %}
 {% if isTeacher and works|length %}<section class="sc-panel"><div class="sc-panel-head"><h2>学生作品</h2></div><div class="sc-panel-body">{% include "partials/scratch_work_cards.html" %}</div></section>{% endif %}
 <section class="sc-panel">
   <div class="sc-panel-head"><h2>{{ '提交与批改' if isTeacher else '交给老师的作品' }}</h2></div>
@@ -52,4 +84,5 @@
     <div class="sc-empty"><strong>{{ '还没有提交记录' if isTeacher else '完成后，给老师看看吧' }}</strong><p>{{ '学生在编辑器中提交作业后，会显示在这里。' if isTeacher else '在编辑器里点击“提交作业”，作品就会出现在这里。' }}</p></div>
   {% endif %}
 </section>
+{% endif %}
 {% endblock %}

@@ -34,6 +34,7 @@
           {% if task.deadline %}<p>请在 {{ datetimeSpan(task.deadline)|safe }} 前完成</p>{% endif %}
           <div class="sc-actions">
             {% if isTeacher %}<a class="sc-button sc-button-primary" href="{{ url('scratch_assignment', assignmentId=task._id) }}">查看进度</a>
+            {% elif task.objectiveQuiz.total %}<span class="sc-badge">{{ task.objectiveQuiz.total }} 道小练习{% if task.projectRequired != false %} + 作品创作{% endif %}</span><a class="sc-button sc-button-primary" href="{{ url('scratch_assignment', assignmentId=task._id) }}">看看任务<span class="icon icon-chevron_right" aria-hidden="true"></span></a>
             {% elif state.reviewed %}<span class="sc-badge sc-badge-success">老师有反馈啦</span><a class="sc-button sc-button-primary" href="{{ url('scratch_submission', submissionId=state.submissionId) }}">看看老师怎么说</a>
             {% elif state.submitted %}<span class="sc-badge sc-badge-success">已交给老师</span><a class="sc-button" href="{{ url('scratch_submission', submissionId=state.submissionId) }}">查看我的提交</a>
             {% elif state.hasSavedWork %}<span class="sc-badge sc-badge-warm">创作中</span><a class="sc-button sc-button-primary" data-no-instant href="{{ url('scratch_editor', query={workId:state.workId}) }}">接着做<span class="icon icon-chevron_right" aria-hidden="true"></span></a>

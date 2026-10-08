@@ -13,9 +13,9 @@ import { Context } from '../context';
 import { PermissionError, PrivilegeError } from '../error';
 import type { DomainDoc } from '../interface';
 import type { ContestEntryContext } from '../lib/contest_entry';
-import { isDomainAvatarImageRequest } from '../lib/domain_avatar_access';
 import { isHomePosterImageRequest } from '../lib/decorative_image_access';
-import { isOjDomainPath, isScratchDomain } from '../lib/domain_type';
+import { isDomainAvatarImageRequest } from '../lib/domain_avatar_access';
+import { isOjDomainPath, isScratchDomain, scratchObjectiveRoute } from '../lib/domain_type';
 import { isScratchShareRequest } from '../lib/scratch_share_access';
 import { Logger } from '../logger';
 import { PERM, PRIV } from '../model/builtin';
@@ -316,7 +316,21 @@ export async function apply(ctx: Context) {
             h.ctx = h.ctx.extend({ domain: h.domain });
         });
         on('handler/create/http', async (h) => {
-            if (isScratchDomain(h.domain) && isOjDomainPath(h.request.path)) throw new NotFoundError(h.request.path);
+            if (isScratchDomain(h.domain) && isOjDomainPath(h.request.path)) {
+                const route = scratchObjectiveRoute(h.request.path);
+                if (!route || !h.user.hasPerm(PERM.PERM_EDIT_DOMAIN)) throw new NotFoundError(h.request.path);
+                if ('pid' in route) {
+                    const problem = require('../model/problem').default;
+                    const doc = await problem.get(h.domain._id, route.pid, ['objectiveKind', 'objectivePaper']);
+                    if (!doc?.objectiveKind && !doc?.objectivePaper) throw new NotFoundError(h.request.path);
+                    if (!['GET', 'HEAD'].includes(h.request.method.toUpperCase())
+                        && ((route.action !== 'edit' && route.action !== 'files')
+                            || (route.action === 'files' && (h.request.body.type !== 'additional_file'
+                                || !['upload_file', 'rename_files', 'delete_files', 'get_links'].includes(h.request.body.operation))))) {
+                        throw new NotFoundError(h.request.path);
+                    }
+                }
+            }
             const workspaceAccess = await resolveWorkspaceAccess(h.context);
             if (!workspaceAccess.allowed) {
                 if (workspaceAccess.redirect) h.response.redirect = workspaceAccess.redirect;

@@ -1,3 +1,4 @@
+import { lookup } from 'mime-types';
 import moment from 'moment-timezone';
 import { ObjectId } from 'mongodb';
 import { Context } from '../context';
@@ -9,6 +10,7 @@ import { SCRATCH_MAX_FILE_SIZE } from '../lib/scratch_files';
 import { PERM, PRIV } from '../model/builtin';
 import domain from '../model/domain';
 import * as scratch from '../model/scratch';
+import * as scratchObjective from '../model/scratch_objective';
 import storage from '../model/storage';
 import user from '../model/user';
 import { Handler } from '../service/server';
@@ -38,7 +40,9 @@ export class ScratchHandler extends Handler {
         if (!isScratchDomain(this.domain)) throw new NotFoundError('Scratch 域');
         this.checkPriv(PRIV.PRIV_USER_PROFILE);
         const isTeacher = this.user.hasPerm(PERM.PERM_EDIT_DOMAIN);
-        if (!isTeacher && !await domain.collUser.findOne({ domainId: this.domain._id, uid: this.user._id, join: true })) {
+        if (!isTeacher && !await domain.collUser.findOne({
+            domainId: this.domain._id, uid: this.user._id, join: true, blockedByStudentManagement: { $ne: true },
+        })) {
             throw new PermissionError('请先加入该 Scratch 域');
         }
         if (this.request.method.toLowerCase() === 'post') {
@@ -67,9 +71,14 @@ export class ScratchHandler extends Handler {
                 for (const uid of doc?.recipientIds || []) uids.add(uid);
             }
         }
+        const publicDoc = (doc: any) => (doc?.objectiveQuiz?.items ? { ...doc, objectiveQuiz: {
+            paperIds: doc.objectiveQuiz.paperIds, total: doc.objectiveQuiz.items.length,
+        } } : doc);
+        const publicBody = Object.fromEntries(Object.entries(body).map(([key, value]) => [key,
+            Array.isArray(value) ? value.map(publicDoc) : publicDoc(value)]));
         this.response.template = template;
         this.response.body = {
-            ...body, isTeacher: this.actor.isTeacher, domainId: this.actor.domainId,
+            ...publicBody, isTeacher: this.actor.isTeacher, domainId: this.actor.domainId,
             udict: await user.getListForRender(this.actor.domainId, [...uids], this.user.hasPerm(PERM.PERM_VIEW_USER_PRIVATE_INFO)),
         };
     }
@@ -92,7 +101,21 @@ export class ScratchHandler extends Handler {
             if (!time.isValid()) throw new ValidationError('deadline');
             parsed = time.toDate();
         }
-        return { title, description, deadline: parsed };
+        const { projectRequired, objectivePaperIds, assignmentMode } = this.request.body;
+        if (assignmentMode !== undefined && !['project', 'objective', 'mixed'].includes(assignmentMode)) throw new ValidationError('assignmentMode');
+        if (projectRequired !== undefined && ![true, false, 'true', 'false', '1', '0'].includes(projectRequired)) {
+            throw new ValidationError('projectRequired');
+        }
+        if (assignmentMode) {
+            const ids = assignmentMode === 'project' ? [] : scratchObjective.parsePaperIds(objectivePaperIds);
+            if (assignmentMode !== 'project' && !ids.length) throw new ValidationError('objectivePaperIds', null, '请先选择一套客观题');
+            return { title, description, deadline: parsed, projectRequired: assignmentMode !== 'objective', objectivePaperIds: ids };
+        }
+        return {
+            title, description, deadline: parsed,
+            ...(projectRequired !== undefined ? { projectRequired: [true, 'true', '1'].includes(projectRequired) } : {}),
+            ...(objectivePaperIds !== undefined ? { objectivePaperIds: scratchObjective.parsePaperIds(objectivePaperIds) } : {}),
+        };
     }
 
     async materialInput() {
@@ -218,7 +241,6 @@ export class ScratchWorkHandler extends ScratchHandler {
             this.response.body = { ok: true };
         } else this.response.redirect = this.url('scratch_works');
     }
-
 }
 export class ScratchAssignmentsHandler extends ScratchHandler {
     async get() {
@@ -234,7 +256,13 @@ export class ScratchAssignmentEditHandler extends ScratchHandler {
         const assignment = id ? await scratch.getAssignment(this.actor, id) : null;
         const deadlineInput = assignment?.deadline
             ? moment(assignment.deadline).tz(this.user.timeZone || 'Asia/Shanghai').format('YYYY-MM-DDTHH:mm') : '';
-        await this.renderScratch('scratch_assignment_edit.html', { assignment, deadlineInput, timeZone: this.user.timeZone || 'Asia/Shanghai' });
+        const objectivePapers = await scratchObjective.listPapers(this.actor);
+        const selectedPaper = Number(this.request.query.objectivePaperId);
+        await this.renderScratch('scratch_assignment_edit.html', {
+            assignment, deadlineInput, timeZone: this.user.timeZone || 'Asia/Shanghai',
+            objectivePapers,
+            selectedObjectivePaperIds: !assignment && objectivePapers.some((paper) => paper.docId === selectedPaper) ? [selectedPaper] : null,
+        });
     }
 
     async post() {
@@ -254,13 +282,66 @@ export class ScratchAssignmentHandler extends ScratchHandler {
             scratch.listSubmissions(this.actor, { assignmentId: assignment._id }).limit(500).toArray(),
             scratch.listMaterials(this.actor, assignment._id).limit(100).toArray(),
         ]);
-        await this.renderScratch('scratch_assignment.html', { assignment, work, works, submissions, materials });
+        const quizUrl = (uid?: number) => this.url('scratch_objective_quiz', { assignmentId: assignment._id, query: uid ? { uid } : {} });
+        const quizState = assignment.objectiveQuiz ? await scratchObjective.getState(this.actor, assignment) : null;
+        const objectiveQuiz = quizState ? {
+            total: quizState.total, answered: quizState.answered, correct: quizState.correct, score: quizState.score,
+            totalScore: quizState.totalScore, completed: quizState.completed, url: quizUrl(),
+        } : null;
+        const objectiveResults = this.actor.isTeacher ? (await scratchObjective.getResults(this.actor, assignment))
+            .map((item) => ({ ...item, url: quizUrl(item.uid) })) : [];
+        // Assignment JSON is a public page contract; never expose stored answer keys in the snapshot.
+        const publicAssignment = { ...assignment, objectiveQuiz: assignment.objectiveQuiz ? {
+            paperIds: assignment.objectiveQuiz.paperIds, total: assignment.objectiveQuiz.items.length,
+        } : null };
+        await this.renderScratch('scratch_assignment.html', {
+            assignment: publicAssignment, work, works, submissions, materials, objectiveQuiz, objectiveResults,
+        });
     }
 
     async post() {
         const assignment = await scratch.getAssignment(this.actor, this.routeId('assignmentId'));
         const work = await scratch.createWork(this.actor, assignment.title, assignment._id);
         this.response.redirect = this.url('scratch_editor', { query: { workId: work._id } });
+    }
+}
+export class ScratchObjectiveQuizHandler extends ScratchHandler {
+    async state() {
+        const assignment = await scratch.getAssignment(this.actor, this.routeId('assignmentId'));
+        const uid = this.request.query.uid ? Number(this.request.query.uid) : this.actor.uid;
+        if (!Number.isSafeInteger(uid) || uid < 1) throw new ValidationError('uid');
+        const state = await scratchObjective.getState(this.actor, assignment, uid,
+            (filename) => this.url('scratch_objective_file', { assignmentId: assignment._id, filename }));
+        const student = await user.getById(this.actor.domainId, uid);
+        return { ...state, studentName: student?.displayName || student?.uname || `${uid}`,
+            actionUrl: this.url('scratch_objective_quiz', { assignmentId: assignment._id }),
+            backUrl: this.url('scratch_assignment', { assignmentId: assignment._id }) };
+    }
+
+    async get() {
+        const scratchObjectiveQuiz = await this.state();
+        this.UiContext.scratchObjectiveQuiz = scratchObjectiveQuiz;
+        await this.renderScratch('scratch_objective_quiz.html', { scratchObjectiveQuiz });
+    }
+
+    async postAnswer() {
+        await this.limitRate('scratch_objective_answer', 60, 120);
+        const assignment = await scratch.getAssignment(this.actor, this.routeId('assignmentId'));
+        if (typeof this.request.body.revision !== 'string') throw new ValidationError('revision');
+        await scratchObjective.answer(this.actor, assignment, this.request.body.questionId, this.request.body.answers, this.request.body.revision);
+        this.response.body = { state: await this.state() };
+    }
+}
+
+export class ScratchObjectiveFileHandler extends ScratchHandler {
+    async get() {
+        const assignment = await scratch.getAssignment(this.actor, this.routeId('assignmentId'));
+        const filename = this.request.params.filename;
+        const target = await scratchObjective.getFile(this.actor, assignment, filename);
+        this.response.body = await storage.get(target);
+        this.response.type = lookup(filename) || 'application/octet-stream';
+        this.response.addHeader('X-Content-Type-Options', 'nosniff');
+        if (!/\.(?:png|jpe?g|gif|webp|avif)$/i.test(filename)) this.response.disposition = `attachment; filename="${encodeURIComponent(filename)}"`;
     }
 }
 export class ScratchMaterialsHandler extends ScratchHandler {
@@ -771,6 +852,8 @@ export async function apply(ctx: Context) {
     ctx.Route('scratch_assignment_create', '/scratch/assignment/create', ScratchAssignmentEditHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_assignment_edit', '/scratch/assignment/:assignmentId/edit', ScratchAssignmentEditHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_assignment', '/scratch/assignment/:assignmentId', ScratchAssignmentHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_objective_quiz', '/scratch/assignment/:assignmentId/quiz', ScratchObjectiveQuizHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_objective_file', '/scratch/assignment/:assignmentId/quiz/file/:filename', ScratchObjectiveFileHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_materials', '/scratch/materials', ScratchMaterialsHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_material', '/scratch/material/:materialId', ScratchMaterialHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_submission', '/scratch/submission/:submissionId', ScratchSubmissionHandler, PRIV.PRIV_USER_PROFILE);

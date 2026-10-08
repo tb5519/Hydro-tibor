@@ -1,9 +1,10 @@
 {% extends "layout/basic.html" %}
 {% block content %}
-<div class="problem-create-shell problem-objective-shell">
+{% set scratchMode = UiContext.domain.domainType == 'scratch' %}
+<div class="problem-create-shell problem-objective-shell{% if scratchMode %} problem-create-shell--scratch{% endif %}">
   <a class="problem-create-back" href="{{ url('problem_objective') }}"><span aria-hidden="true">←</span> 返回客观题工作台</a>
   <header class="problem-create-heading problem-create-heading--compact">
-    <span class="problem-create-eyebrow">题库 · 客观题工作台</span>
+    <span class="problem-create-eyebrow">{{ 'Scratch 课堂 · 客观题工作台' if scratchMode else '题库 · 客观题工作台' }}</span>
     <h1>{% if page_name == 'problem_edit_objective' %}编辑客观题{% else %}创建一道客观题{% endif %}</h1>
     <p>每次录入一道题，积累可重复组卷的素材。题目仅老师可见。</p>
   </header>

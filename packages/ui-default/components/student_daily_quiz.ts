@@ -86,6 +86,10 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
   let pending = false;
   let reportRequest = 0;
   let reportFilter = 'all';
+  let catalogRequest = 0;
+  let catalogController: AbortController | null = null;
+  const lifetime = new win.AbortController();
+  const domainCatalogViews = new Map<string, () => void>();
   let subtab = new win.URL(win.location.href).searchParams.get('quizView') === 'settings' ? 'settings' : 'records';
   function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = '') {
     const node = doc.createElement(tag);
@@ -142,7 +146,6 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
     settingsButton.setAttribute('aria-pressed', `${value === 'settings'}`);
     updateUrl('quizView', value);
   }
-  settingsButton.addEventListener('click', () => selectSubtab('settings'));
   selectSubtab(subtab);
 
   const overview = el('div', 'student-daily-overview');
@@ -161,7 +164,15 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
   const cooldown = numberInput(policy.cooldownRounds, 1, 30, '题目间隔轮数');
   cooldown.dataset.dailyCooldown = '';
   global.append(field('错题复习间隔', cooldown), el('p', 'student-daily-help', '答对的题不再出现；答错的题隔几轮再复习，默认间隔 3 轮。'));
-  content.replaceChildren(overview, global);
+  const catalogTools = el('div', 'student-daily-catalog-tools');
+  const catalogRefresh = el('button', 'student-daily-refresh', '刷新题目标签');
+  catalogRefresh.type = 'button';
+  catalogRefresh.dataset.dailyCatalogRefresh = '';
+  const catalogStatus = el('p', 'student-daily-catalog-status', '题目标签会根据当前课堂的选择题素材更新。');
+  catalogStatus.dataset.dailyCatalogStatus = '';
+  catalogStatus.setAttribute('role', 'status');
+  catalogTools.append(catalogRefresh, catalogStatus);
+  content.replaceChildren(overview, global, catalogTools);
   const domainViews: { fieldset: HTMLFieldSetElement, checkbox: HTMLInputElement }[] = [];
   function updateSummary() {
     const active = policy.domains.filter((item) => item.enabled);
@@ -197,7 +208,8 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
     const card = el('details', 'student-daily-domain');
     card.open = entry.enabled;
     const heading = el('summary');
-    heading.append(el('strong', '', domain.name), el('span', 'student-daily-help', `${domain.availableCount} 道可用素材`));
+    const availableLabel = el('span', 'student-daily-help', `${domain.availableCount} 道可用素材`);
+    heading.append(el('strong', '', domain.name), availableLabel);
     const switchLabel = el('label', 'student-daily-domain-switch');
     const checkbox = el('input');
     checkbox.type = 'checkbox';
@@ -231,31 +243,56 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
       el('p', 'student-daily-help', '不选表示全部；选多个时，包含任一知识点即可。新增的同标签选择题也会自动加入选题范围。'),
     );
     const tagList = el('div', 'student-daily-tag-list');
-    const tagChoices = [...domain.tags];
-    entry.tags.filter((tag) => !tagChoices.some((item) => item.name === tag)).forEach((tag) => tagChoices.push({ name: tag, count: 0 }));
-    tagChoices.forEach((tag) => {
-      const label = el('label');
-      label.dataset.tag = tag.name;
-      const input = el('input');
-      input.type = 'checkbox';
-      input.checked = entry.tags.includes(tag.name);
-      input.setAttribute('aria-label', `${domain.name}知识点：${tag.name}`);
-      input.addEventListener('change', () => {
-        entry.tags = input.checked ? [...entry.tags, tag.name] : entry.tags.filter((value) => value !== tag.name);
-        updatePool();
-      });
-      label.append(input, doc.createTextNode(tag.name), el('small', '', `${tag.count}`));
-      tagList.append(label);
-    });
+    const emptyTags = el('p', 'student-daily-help', '还没有带标签的选择题素材。');
     tagSearch.setAttribute('aria-label', `${domain.name}搜索知识点`);
-    tagSearch.addEventListener('input', () => {
+    function filterTags() {
       [...tagList.children].forEach((label: HTMLElement) => {
         label.hidden = !label.dataset.tag.toLowerCase().includes(tagSearch.value.trim().toLowerCase());
       });
+    }
+    tagSearch.addEventListener('input', filterTags);
+    tags.append(tagSearch, tagList, emptyTags);
+    function updateTags() {
+      const previousScroll = tagList.scrollTop;
+      const focusedTag = doc.activeElement?.closest<HTMLElement>('[data-tag]');
+      const hadTagFocus = focusedTag && tagList.contains(focusedTag);
+      const tagChoices = [...(domain.tags || [])];
+      entry.tags.filter((tag) => !tagChoices.some((item) => item.name === tag)).forEach((tag) => tagChoices.push({ name: tag, count: 0 }));
+      const labels = new Map([...tagList.querySelectorAll<HTMLLabelElement>('label[data-tag]')].map((label) => [label.dataset.tag, label]));
+      for (const [name, label] of labels) {
+        if (!tagChoices.some((tag) => tag.name === name)) label.remove();
+      }
+      for (const tag of tagChoices) {
+        let label = labels.get(tag.name);
+        if (!label) {
+          label = el('label');
+          label.dataset.tag = tag.name;
+          const input = el('input');
+          input.type = 'checkbox';
+          input.checked = entry.tags.includes(tag.name);
+          input.setAttribute('aria-label', `${domain.name}知识点：${tag.name}`);
+          input.addEventListener('change', () => {
+            entry.tags = input.checked ? [...entry.tags, tag.name] : entry.tags.filter((value) => value !== tag.name);
+            updatePool();
+          });
+          label.append(input, doc.createTextNode(tag.name), el('small'));
+          tagList.append(label);
+        }
+        label.querySelector('small').textContent = `${tag.count}`;
+      }
+      const lostFocus = hadTagFocus && !tagList.contains(focusedTag);
+      tagSearch.hidden = tagChoices.length <= 6 && !tagSearch.value && doc.activeElement !== tagSearch && !lostFocus;
+      emptyTags.hidden = tagChoices.length > 0;
+      filterTags();
+      tagList.scrollTop = previousScroll;
+      if (lostFocus) tagSearch.focus({ preventScroll: true });
+    }
+    domainCatalogViews.set(domain.id, () => {
+      availableLabel.textContent = `${domain.availableCount} 道可用素材`;
+      updateTags();
+      updatePool();
     });
-    if (tagChoices.length > 6) tags.append(tagSearch);
-    tags.append(tagList);
-    if (!tagChoices.length) tags.append(el('p', 'student-daily-help', '还没有带标签的客观题素材。'));
+    updateTags();
     const custom = el('details', 'student-daily-points');
     custom.append(el('summary', '', '逐题设置积分'));
     const grid = el('div', 'student-daily-points-grid');
@@ -312,6 +349,89 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
     updatePool();
   });
   updateSummary();
+
+  function applyCatalog(nextDomains: QuizDomain[]) {
+    for (const domain of domains) {
+      const fresh = nextDomains.find((item) => item.id === domain.id);
+      if (!fresh || !Array.isArray(fresh.tags)) continue;
+      domain.tags = fresh.tags.filter((tag) => typeof tag?.name === 'string' && Number.isFinite(tag.count));
+      domain.availableCount = Number.isFinite(fresh.availableCount) ? fresh.availableCount : domain.availableCount;
+      domain.questionTags = Array.isArray(fresh.questionTags) ? fresh.questionTags : domain.questionTags;
+      domainCatalogViews.get(domain.id)?.();
+    }
+  }
+  async function refreshCatalog(automatic = false) {
+    if (!editor.isConnected || (automatic && catalogController)) return;
+    const request = ++catalogRequest;
+    catalogController?.abort();
+    const controller = new win.AbortController();
+    catalogController = controller;
+    const timeout = win.setTimeout(() => controller.abort(), 20000);
+    catalogRefresh.disabled = true;
+    catalogRefresh.textContent = '正在刷新…';
+    catalogStatus.textContent = '正在读取最新的题目标签…';
+    catalogStatus.classList.remove('is-error');
+    const url = new win.URL(win.location.href);
+    const uid = form.querySelector<HTMLInputElement>('input[name="uid"]')?.value;
+    if (uid) url.searchParams.set('uid', uid);
+    try {
+      const response = await win.fetch(url.href, {
+        credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+        headers: { Accept: 'application/json' },
+      });
+      let result;
+      try {
+        result = await response.json();
+      } catch {
+        throw new Error('身份验证可能已过期，请完成验证后重试。');
+      }
+      if (!response.ok || !Array.isArray(result.selectedDailyQuiz?.domains)) throw new Error('暂时无法读取题目标签，请重试。');
+      if (request !== catalogRequest || controller.signal.aborted || !editor.isConnected) return;
+      applyCatalog(result.selectedDailyQuiz.domains);
+      catalogStatus.textContent = '题目标签已更新，未保存的问答设置已保留。';
+    } catch (error) {
+      if (request !== catalogRequest || !editor.isConnected) return;
+      catalogStatus.textContent = error.name === 'AbortError'
+        ? '刷新超时，请重试。当前设置已保留。'
+        : `刷新失败：${error.message || '请稍后重试。'} 当前设置已保留。`;
+      catalogStatus.classList.add('is-error');
+    } finally {
+      win.clearTimeout(timeout);
+      if (request === catalogRequest) {
+        catalogController = null;
+        catalogRefresh.disabled = false;
+        catalogRefresh.textContent = '刷新题目标签';
+      }
+    }
+  }
+  settingsButton.addEventListener('click', () => {
+    selectSubtab('settings');
+    refreshCatalog();
+  });
+  catalogRefresh.addEventListener('click', () => refreshCatalog());
+  const refreshVisibleCatalog = () => {
+    if (doc.visibilityState === 'visible' && subtab === 'settings' && !form.closest('[hidden]')) refreshCatalog(true);
+  };
+  doc.addEventListener('click', (event) => {
+    if ((event.target as HTMLElement).closest('[data-student-tab="daily"]')) refreshVisibleCatalog();
+  }, { signal: lifetime.signal });
+  doc.addEventListener('visibilitychange', refreshVisibleCatalog, { signal: lifetime.signal });
+  win.addEventListener('focus', refreshVisibleCatalog, { signal: lifetime.signal });
+  const observer = new win.MutationObserver(() => {
+    if (editor.isConnected) return;
+    catalogRequest++;
+    reportRequest++;
+    catalogController?.abort();
+    lifetime.abort();
+    observer.disconnect();
+  });
+  if (editor.parentNode) observer.observe(editor.parentNode, { childList: true });
+  win.addEventListener('pagehide', (event) => {
+    catalogController?.abort();
+    if (event.persisted) return;
+    lifetime.abort();
+    observer.disconnect();
+  }, { signal: lifetime.signal });
 
   const recordsFeedback = el('p', 'student-editor-feedback');
   recordsFeedback.hidden = true;
@@ -437,6 +557,7 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
   async function loadReport(day: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
     const request = ++reportRequest;
+    const catalogVersion = catalogRequest;
     recordsFeedback.hidden = false;
     recordsFeedback.textContent = '正在读取答题记录…';
     recordsFeedback.classList.remove('is-error');
@@ -455,6 +576,9 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
       }
       if (!response.ok || !result.selectedDailyQuiz) throw new Error('暂时无法读取记录，请完成身份验证后重试。');
       if (request !== reportRequest || !editor.isConnected) return;
+      if (catalogVersion === catalogRequest && !catalogController && Array.isArray(result.selectedDailyQuiz.domains)) {
+        applyCatalog(result.selectedDailyQuiz.domains);
+      }
       data.report = result.selectedDailyQuiz.report;
       date.value = day;
       updateUrl('quizDay', day);
@@ -520,6 +644,7 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
     const body = new win.FormData(form);
     body.set('policy', JSON.stringify(policy));
     const saving = JSON.stringify(policy);
+    const catalogVersion = catalogRequest;
     message('');
     try {
       const response = await win.fetch(win.location.href, {
@@ -535,6 +660,9 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
         throw new Error('身份验证可能已过期。请在另一个窗口完成验证后重试，当前设置已保留。');
       }
       if (!response.ok || !result.saved) throw new Error(result.error?.message || result.message || '保存未完成，请重试。');
+      if (catalogVersion === catalogRequest && !catalogController && Array.isArray(result.selectedDailyQuiz?.domains) && editor.isConnected) {
+        applyCatalog(result.selectedDailyQuiz.domains);
+      }
       baseline = saving;
       onSaved(JSON.parse(saving).enabled);
       message('问答设置已保存，将用于下一轮问答。');

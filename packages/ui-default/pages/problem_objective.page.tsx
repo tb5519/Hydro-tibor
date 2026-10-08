@@ -40,6 +40,7 @@ interface InitialData {
   itemsUrl: string;
   publishUrl: string;
   createUrl: string;
+  scratchMode?: boolean;
 }
 
 const kindLabels: Record<Kind, string> = { single: '单选', multiple: '多选', judge: '判断' };
@@ -480,7 +481,7 @@ function ObjectiveWorkbench({ initial }: { initial: InitialData }) {
                 <span>正在组建</span>
                 <h2>我的试卷</h2>
               </div>
-              <span className="objective-paper__status">未发布</span>
+              <span className="objective-paper__status">{initial.scratchMode ? '待保存' : '未发布'}</span>
             </div>
             <div className="objective-paper__summary" aria-live="polite">
               <div>
@@ -669,13 +670,13 @@ function ObjectiveWorkbench({ initial }: { initial: InitialData }) {
               </div>
             )}
             <div className="objective-paper__publish">
-              <p>发布后，这份试卷将出现在题库，学员可见并可作答。</p>
+              <p>{initial.scratchMode ? '保存后可在发布 Scratch 作业时选用，布置作业后学员才能作答。' : '发布后，这份试卷将出现在题库，学员可见并可作答。'}</p>
               <button
                 type="submit"
                 className="objective-submit"
                 disabled={publishing}
                 onClick={(event) => event.stopPropagation()}>
-                {publishing ? '正在发布…' : '发布到题库'}
+                {publishing ? '正在保存…' : initial.scratchMode ? '保存并去布置作业' : '发布到题库'}
                 <span aria-hidden="true"> →</span>
               </button>
               <small>素材可反复组卷；后续修改素材不影响已发布试卷</small>

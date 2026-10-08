@@ -1,3 +1,4 @@
+import { readFile } from 'fs/promises';
 import path from 'path';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { isoBase64URL, isoUint8Array } from '@simplewebauthn/server/helpers';
@@ -14,9 +15,10 @@ import {
 } from '../error';
 import { DomainDoc, Setting } from '../interface';
 import { tryRedirectAsset } from '../lib/asset_delivery';
-import { isPublicHomePosterPath } from '../lib/decorative_image_access';
 import avatar, { validate } from '../lib/avatar';
 import { getBadgeHonorWall } from '../lib/badge_honor_wall';
+import { isPublicHomePosterPath } from '../lib/decorative_image_access';
+import { DOMAIN_AVATAR_MAX_SIZE, normalizeDomainAvatar } from '../lib/domain_avatar';
 import { withDomainMembershipRemoval } from '../lib/domain_membership';
 import { getDomainRankingMode } from '../lib/domain_ranking';
 import { DOMAIN_TYPES, DomainType, isScratchDomain } from '../lib/domain_type';
@@ -1128,6 +1130,32 @@ function set(s: Setting, key: string, value: any) {
     return value;
 }
 
+class HomeProfileHandler extends Handler {
+    async get() {
+        this.response.template = 'home_profile.html';
+        this.response.body = { current: this.user };
+    }
+
+    @param('bio', Types.Content, true)
+    @param('gender', Types.Int)
+    async post({ }, bio = '', gender: number) {
+        if (![0, 1, 2].includes(gender)) throw new ValidationError('gender');
+        if (bio.length > 10000) throw new ValidationError('bio');
+        const values: { bio: string, gender: number, avatar?: string } = { bio, gender };
+        const file = this.request.files?.file;
+        if (file) {
+            if (!file.size || file.size > DOMAIN_AVATAR_MAX_SIZE) throw new ValidationError('avatar');
+            const image = normalizeDomainAvatar(await readFile(file.filepath));
+            await storage.put(`user/${this.user._id}/.avatar.png`, image, this.user._id);
+            values.avatar = `url:/file/${this.user._id}/.avatar.png?v=${new ObjectId().toHexString()}`;
+        }
+        // Only these public profile fields may be changed here; the signed-in
+        // account is always the target, regardless of submitted IDs or fields.
+        await user.setById(this.user._id, values);
+        this.response.body = { saved: true, avatarUrl: avatar(values.avatar || this.user.avatar, 160) };
+    }
+}
+
 class HomeSettingsHandler extends Handler {
     @param('category', Types.Range(['preference', 'account', 'domain']))
     async get({ }, category: string) {
@@ -1158,7 +1186,11 @@ class HomeSettingsHandler extends Handler {
             const val = set(settings[key], key, args[key]);
             if (val !== undefined) $set[key] = val;
         }
-        for (const key in booleanKeys) if (!args[key]) $set[key] = false;
+        for (const key in booleanKeys) {
+            if (args[key] || settings[key]?.type !== 'boolean') continue;
+            const val = set(settings[key], key, false);
+            if (val !== undefined) $set[key] = val;
+        }
         if (Object.keys($set).length) await setter($set);
         if (args.viewLang && args.viewLang !== this.session.viewLang) this.session.viewLang = '';
         this.back();
@@ -1338,6 +1370,7 @@ export async function apply(ctx: Context) {
     ctx.Route('home_security', '/home/security', HomeSecurityHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('user_changemail_with_code', '/home/changeMail/:code', UserChangemailWithCodeHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_settings', '/home/settings/:category', HomeSettingsHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('home_profile', '/home/profile', HomeProfileHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_avatar', '/home/avatar', HomeAvatarHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_domain', '/home/domain', HomeDomainHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_domain_create', '/home/domain/create', HomeDomainCreateHandler, PRIV.PRIV_CREATE_DOMAIN);

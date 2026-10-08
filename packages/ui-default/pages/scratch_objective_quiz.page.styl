@@ -1,0 +1,399 @@
+.page--scratch_objective_quiz .scratch-app .sc-quiz
+  .sc-heading h1
+    font-size: 28px
+  .sc-quiz__layout
+    display: grid
+    grid-template-columns: minmax(0, 1fr) 250px
+    align-items: start
+    gap: 24px
+  .sc-quiz__body
+    min-width: 0
+  .sc-panel
+    margin-top: 0
+  .sc-quiz__card
+    padding: 30px
+  .sc-quiz__meta
+    display: flex
+    align-items: center
+    gap: 10px
+    flex-wrap: wrap
+    color: var(--sc-muted)
+    font-size: 12px
+    margin-bottom: 25px
+    strong
+      margin-left: auto
+      font-size: 13px
+      font-weight: 600
+  .sc-quiz__question, .sc-quiz__feedback
+    outline: none
+  .typo
+    font-size: 17px
+    line-height: 1.85
+    overflow-wrap: anywhere
+    > :first-child
+      margin-top: 0
+    > :last-child
+      margin-bottom: 0
+    img
+      max-width: 100%
+      height: auto
+    pre
+      overflow-x: auto
+      font-size: 14px
+  .sc-quiz__options
+    margin: 24px 0 0
+    padding: 0
+    border: 0
+    min-width: 0
+    legend
+      padding: 0
+      margin: 0 0 14px
+      color: var(--sc-muted)
+      font-size: 13px
+  .sc-quiz__option
+    position: relative
+    display: flex
+    align-items: flex-start
+    gap: 12px
+    margin: 0 0 12px
+    padding: 16px
+    border: 2px solid #e5ebf4
+    border-radius: 15px
+    background: #fff
+    color: var(--sc-ink)
+    line-height: 1.7
+    cursor: pointer
+    transition: border-color .15s, background .15s
+    &:focus-within
+      outline: 3px solid #aac9fc
+      outline-offset: 3px
+    &.is-selected
+      border-color: #7ea8ec
+      background: #f0f6ff
+    &.is-correct
+      border-color: #97cbb6
+      background: #eff9f4
+    &.is-wrong
+      border-color: #e5c9a5
+      background: #fff9ee
+    input
+      position: absolute
+      opacity: 0
+      width: 1px
+      height: 1px
+    .typo
+      flex: 1
+      min-width: 0
+      font-size: 16px
+  .sc-quiz__options:disabled .sc-quiz__option
+    cursor: default
+  .sc-quiz__letter
+    flex: 0 0 30px
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    height: 30px
+    background: #f1f5fb
+    color: #6883a6
+    border-radius: 9px
+    font-weight: 700
+    line-height: 1
+  .is-selected .sc-quiz__letter
+    background: #6899e5
+    color: white
+  .is-correct .sc-quiz__letter
+    background: #67a991
+    color: white
+  .is-wrong .sc-quiz__letter
+    background: #c79b67
+    color: white
+  .sc-quiz__option-note
+    align-self: center
+    color: #647c71
+    font-size: 11px
+    white-space: nowrap
+  .sc-quiz__feedback
+    margin: 24px 0 0
+    padding: 22px
+    border: 1px solid #cfe6da
+    border-radius: 16px
+    background: #f1f9f4
+    &.is-wrong
+      border-color: #eee0c5
+      background: #fffbf3
+    h2
+      font-size: 18px
+      color: #36775d
+    &.is-wrong h2
+      color: #9a753d
+  .sc-quiz__feedback-title
+    display: flex
+    align-items: center
+    gap: 13px
+    > span
+      display: inline-flex
+      align-items: center
+      justify-content: center
+      flex: 0 0 42px
+      height: 42px
+      border-radius: 14px
+      background: #deefe5
+      color: #4b9676
+      font-size: 22px
+    p
+      display: flex
+      flex-wrap: wrap
+      gap: 5px 16px
+      font-size: 12px
+      color: #738276
+      margin-top: 6px
+  .sc-quiz__feedback.is-correct .sc-quiz__feedback-title > span
+    animation: sc-quiz-pop .35s ease-out
+  .sc-quiz__feedback.is-wrong .sc-quiz__feedback-title > span
+    color: #ad8b54
+    background: #f5ebd7
+  .sc-quiz__analysis
+    margin-top: 18px
+    padding-top: 16px
+    border-top: 1px solid #eadfc8
+    h3
+      font-size: 13px
+      color: #8a785c
+      margin-bottom: 6px
+    .typo
+      font-size: 15px
+  .sc-quiz__actions
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 18px
+    margin-top: 28px
+    p
+      font-size: 12px
+    button
+      flex-shrink: 0
+  .sc-quiz__error, .sc-quiz__notice
+    padding: 12px 16px
+    margin-top: 18px
+    background: #fff5e8
+    border-radius: 10px
+    color: #9a6635
+    font-size: 14px
+  .sc-quiz__overview
+    position: sticky
+    top: 85px
+    padding: 24px
+    h2
+      font-size: 18px
+    > p
+      font-size: 12px
+      margin-top: 25px
+  .sc-quiz__progress-heading
+    display: flex
+    justify-content: space-between
+    gap: 12px
+    margin: 20px 0 10px
+    font-size: 12px
+    color: var(--sc-muted)
+    strong
+      color: #3866a8
+  .sc-quiz__progress
+    height: 7px
+    border-radius: 8px
+    overflow: hidden
+    background: #ebf0f8
+    > span
+      display: block
+      height: 100%
+      background: #7caae9
+      border-radius: inherit
+      transition: width .25s
+  .sc-quiz__numbers
+    display: grid
+    grid-template-columns: repeat(4, minmax(0, 1fr))
+    gap: 9px
+    margin-top: 25px
+    button
+      aspect-ratio: 1
+      padding: 0
+      border: 1px solid #e3eaf4
+      border-radius: 10px
+      background: #f8faff
+      color: #8290a6
+      font-size: 14px
+      font-weight: 600
+      cursor: pointer
+      &.is-current
+        outline: 2px solid #709ddf
+        outline-offset: 2px
+      &.is-correct
+        color: #3c8167
+        background: #eaf6f0
+        border-color: #c2dfd0
+      &.is-wrong
+        color: #9f7a3c
+        background: #fff5e3
+        border-color: #ecddbe
+      &:disabled
+        cursor: default
+  .sc-quiz__legend
+    display: flex
+    flex-wrap: wrap
+    gap: 9px
+    margin-top: 18px
+    font-size: 10px
+    color: #8493a6
+    span
+      display: flex
+      align-items: center
+      gap: 4px
+    i
+      display: block
+      width: 8px
+      height: 8px
+      border-radius: 3px
+      background: #e8edf5
+      &.is-correct
+        background: #98cdb6
+      &.is-wrong
+        background: #dfbe87
+  .sc-quiz__complete
+    text-align: center
+    padding: 48px 26px
+    h2
+      font-size: 28px
+      margin-bottom: 12px
+    > p
+      font-size: 14px
+    .sc-actions
+      justify-content: center
+      margin-top: 32px
+  .sc-quiz__celebrate
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    width: 74px
+    height: 74px
+    margin-bottom: 22px
+    border-radius: 26px
+    color: #4d9374
+    background: #e8f5ed
+    font-size: 32px
+  .sc-quiz__stats
+    display: flex
+    justify-content: center
+    gap: 32px
+    margin-top: 30px
+    strong, span
+      display: block
+    strong
+      color: #4e73a6
+      font-size: 30px
+      font-weight: 600
+      small
+        font-size: 13px
+        color: #98a8bb
+    span
+      font-size: 12px
+      color: var(--sc-muted)
+  @media (max-width: 800px)
+    .sc-quiz__layout
+      grid-template-columns: minmax(0, 1fr)
+      gap: 0
+    .sc-quiz__overview
+      position: static
+    .sc-quiz__numbers
+      grid-template-columns: repeat(auto-fill, minmax(38px, 1fr))
+    .sc-quiz__card
+      padding: 24px
+  @media (max-width: 480px)
+    .sc-heading h1
+      font-size: 24px
+    .sc-quiz__card
+      padding: 22px 17px
+    .sc-quiz__meta strong
+      margin-left: 0
+    .sc-quiz__option
+      padding: 13px 12px
+      flex-wrap: wrap
+    .sc-quiz__option-note
+      width: 100%
+      padding-left: 42px
+    .sc-quiz__feedback
+      padding: 16px
+    .sc-quiz__feedback-title
+      align-items: flex-start
+      h2
+        font-size: 16px
+    .sc-quiz__actions
+      flex-direction: column-reverse
+      align-items: stretch
+      text-align: center
+    .sc-quiz__stats
+      gap: 22px
+  @media (prefers-reduced-motion: reduce)
+    .sc-quiz__option, .sc-quiz__progress > span
+      transition: none
+    .sc-quiz__feedback.is-correct .sc-quiz__feedback-title > span
+      animation: none
+
+@keyframes sc-quiz-pop
+  from
+    transform: scale(.75)
+    opacity: .4
+  to
+    transform: scale(1)
+    opacity: 1
+
+.page--scratch_objective_quiz.theme--dark .scratch-app .sc-quiz,
+.page--scratch_objective_quiz .theme--dark .scratch-app .sc-quiz
+  .sc-quiz__option
+    background: var(--sc-paper)
+    border-color: #455771
+    &.is-selected
+      background: #2d4568
+      border-color: #6d95ca
+    &.is-correct
+      background: #294d43
+      border-color: #659a87
+    &.is-wrong
+      background: #514433
+      border-color: #a1885f
+  .sc-quiz__letter
+    background: #3a4d67
+    color: #d1e2fc
+  .sc-quiz__feedback
+    background: #29473e
+    border-color: #486e5f
+    h2
+      color: #aedec9
+    &.is-wrong
+      background: #443d30
+      border-color: #79664a
+      h2
+        color: #e7c894
+  .sc-quiz__feedback-title p, .sc-quiz__option-note
+    color: #bed1c9
+  .sc-quiz__analysis
+    border-color: #79664a
+    h3
+      color: #dcc9a4
+  .sc-quiz__notice, .sc-quiz__error
+    background: #443d30
+    color: #e7c894
+  .sc-quiz__progress
+    background: #384c69
+  .sc-quiz__progress-heading strong, .sc-quiz__stats strong
+    color: #b3d0fa
+  .sc-quiz__numbers button
+    background: #2f3e54
+    border-color: #485d79
+    color: #bfd0e6
+    &.is-correct
+      background: #294d43
+      border-color: #659a87
+      color: #b6e7d2
+    &.is-wrong
+      background: #514433
+      border-color: #a1885f
+      color: #e7c894

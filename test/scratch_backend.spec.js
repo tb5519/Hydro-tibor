@@ -139,6 +139,7 @@ before(async () => {
         '../lib/asset_delivery': assetDelivery,
         '../lib/scratch_state': scratchState,
         '../service/db': db, './storage': storage,
+        './scratch_objective': { parsePaperIds: (ids) => ids, snapshotQuiz: async () => null },
     });
     await model.apply({ on: (event, callback) => { if (event === 'domain/delete') deleteDomainData = callback; } });
     handlers = load('packages/hydrooj/src/handler/scratch.ts', {
@@ -148,6 +149,7 @@ before(async () => {
         '../lib/domain_type': { isScratchDomain: (domain) => domain?.domainType === 'scratch' },
         '../lib/scratch_files': scratchFiles, '../model/builtin': { PERM: { PERM_EDIT_DOMAIN: 1n, PERM_VIEW_USER_PRIVATE_INFO: 2n }, PRIV: { PRIV_USER_PROFILE: 1 } },
         '../model/domain': { collUser: database.collection('domain.user') }, '../model/scratch': model,
+        '../model/scratch_objective': {},
         '../model/storage': storage,
         '../model/user': {
             coll: database.collection('user'),
@@ -1867,6 +1869,7 @@ describe('Scratch community engagement and private teacher analytics', () => {
             '../logger': { Logger: class { warn() {} } }, '../lib/asset_delivery': assetDelivery,
             '../lib/scratch_state': scratchState,
             '../service/db': mappedDb, './storage': {},
+            './scratch_objective': {},
         });
         await prefixed.apply({ on() {} });
         const id = new ObjectId();

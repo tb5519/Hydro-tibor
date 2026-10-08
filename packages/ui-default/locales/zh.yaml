@@ -623,6 +623,7 @@ Hint::page::problem_files: 您可以将文件或压缩包拖拽至对应区域�
 Hint::page::problem_main: 这是题目列表页面。您可在页面右侧进行筛选或搜索。
 Hitokoto: 一言
 home_account: 账户设置
+home_profile: 编辑个人资料
 home_domain_account: 当前域的设置
 home_domain_create: 创建域
 home_domain: 我的域
@@ -1326,6 +1327,7 @@ scratch_assignments: Scratch 作业
 scratch_assignment_create: 发布 Scratch 作业
 scratch_assignment_edit: 编辑 Scratch 作业
 scratch_assignment: Scratch 作业详情
+scratch_objective_quiz: 课堂练习
 scratch_materials: Scratch 上课素材
 scratch_material: Scratch 素材管理
 scratch_submission: Scratch 提交与反馈

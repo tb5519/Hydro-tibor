@@ -4,6 +4,7 @@ import { ForbiddenError, NotFoundError, ValidationError } from '../error';
 import {
     beijingDay, canRepeat, DailyQuizPolicy, defaultPolicy, gradeAnswer, parseAnswers, parsePolicy, selectionRank,
 } from '../lib/daily_quiz';
+import { isScratchDomain } from '../lib/domain_type';
 import { ObjectiveQuestion, parseObjective } from '../lib/objective';
 import {
     ensureGlobalPointLotteryState, POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD, pointLotteryUserColl,
@@ -95,7 +96,8 @@ export async function effectivePolicy(uid: number) {
     const candidates = policy.domains.filter((item) => item.enabled && domains.some((doc) => doc._id === item.domainId));
     const permitted = await Promise.all(candidates.map(async (item) => {
         const member = await user.getById(item.domainId, uid);
-        return member.hasPerm(PERM.PERM_VIEW | PERM.PERM_VIEW_PROBLEM) ? item : null;
+        const ddoc = domains.find((doc) => doc._id === item.domainId);
+        return member.hasPerm(PERM.PERM_VIEW | (isScratchDomain(ddoc) ? 0n : PERM.PERM_VIEW_PROBLEM)) ? item : null;
     }));
     return { ...policy, domains: permitted.filter(Boolean) };
 }

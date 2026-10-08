@@ -1,0 +1,45 @@
+{% extends "layout/home_base.html" %}
+{% block home_content %}
+<div class="profile-editor">
+  <a class="profile-editor__back" href="{{ url('user_detail', uid=current._id) }}"><span aria-hidden="true">←</span> 返回我的主页</a>
+  <header class="profile-editor__heading">
+    <span class="profile-editor__eyebrow">我的资料</span>
+    <h1>让大家认识你</h1>
+    <p>换一张喜欢的头像，写下属于你的介绍。</p>
+  </header>
+  <form class="profile-editor__form" method="post" enctype="multipart/form-data" action="{{ url('home_profile') }}" data-profile-editor>
+    <section class="profile-editor__card profile-editor__avatar-section" aria-labelledby="profile-avatar-title">
+      <div class="profile-editor__avatar-wrap"><img data-profile-avatar src="{{ avatarUrl(current.avatar, 160) }}" width="112" height="112" alt="我的头像"></div>
+      <div class="profile-editor__avatar-content">
+        <h2 id="profile-avatar-title">我的头像</h2>
+        <p>选择一张能代表你的图片。</p>
+        <div class="profile-editor__avatar-actions">
+          <button type="button" class="profile-editor__upload" data-profile-upload><span class="icon icon-image" aria-hidden="true"></span> 更换头像</button>
+          <button type="button" class="profile-editor__undo" data-profile-avatar-undo hidden>撤销更换</button>
+        </div>
+        <input type="file" accept="image/png,image/jpeg,image/webp" data-profile-file hidden aria-label="选择头像图片">
+        <p class="profile-editor__hint">支持 JPG、PNG、WebP，最大 8 MB；图片将居中裁成正方形。</p>
+        <p class="profile-editor__avatar-status" data-profile-avatar-status role="status" aria-live="polite"></p>
+      </div>
+    </section>
+    <section class="profile-editor__card profile-editor__details" aria-labelledby="profile-details-title">
+      <div class="profile-editor__section-heading"><h2 id="profile-details-title">关于我</h2><span>展示在你的个人主页</span></div>
+      <fieldset class="profile-editor__gender"><legend>性别</legend>
+        <label><input type="radio" name="gender" value="0"{% if current.gender == 0 %} checked{% endif %}><span>男生</span></label>
+        <label><input type="radio" name="gender" value="1"{% if current.gender == 1 %} checked{% endif %}><span>女生</span></label>
+        <label><input type="radio" name="gender" value="2"{% if current.gender != 0 and current.gender != 1 %} checked{% endif %}><span>暂不透露</span></label>
+      </fieldset>
+      <div class="profile-editor__bio-label"><label for="profile-bio">个人简介</label><span data-profile-count></span></div>
+      <textarea id="profile-bio" class="profile-editor__bio" name="bio" maxlength="10000" rows="6" placeholder="我喜欢……，最近正在学习……" aria-describedby="profile-bio-hint">{{ current.bio|default('') }}</textarea>
+      <p id="profile-bio-hint" class="profile-editor__hint">聊聊你的兴趣、正在学习的内容，或想完成的小目标。支持 Markdown。</p>
+    </section>
+    <div class="profile-editor__footer">
+      <p class="profile-editor__status" data-profile-status role="status" aria-live="polite">修改后记得保存。</p>
+      <div class="profile-editor__actions">
+        <a class="profile-editor__cancel" href="{{ url('user_detail', uid=current._id) }}" data-profile-cancel>取消</a>
+        <button type="submit" class="profile-editor__save" data-profile-save>保存资料</button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}

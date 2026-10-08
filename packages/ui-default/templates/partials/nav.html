@@ -126,6 +126,7 @@
         <li class="nav__list-item"><a href="{{ url('scratch_materials') }}" class="nav__item{% if page_name.startsWith('scratch_material') %} nav--active{% endif %}">素材</a></li>
         <li class="nav__list-item"><a href="{{ url('scratch_community') }}" class="nav__item{% if page_name.startsWith('scratch_community') %} nav--active{% endif %}">创作社区</a></li>
         {% if handler.user.hasPerm(perm.PERM_EDIT_DOMAIN) %}
+          <li class="nav__list-item"><a href="{{ url('problem_objective') }}" class="nav__item{% if page_name.startsWith('problem_') %} nav--active{% endif %}">客观题</a></li>
           <li class="nav__list-item"><a href="{{ url('scratch_assignment_create') }}" class="nav__item{% if page_name == 'scratch_assignment_create' %} nav--active{% endif %}">发布作业</a></li>
           <li class="nav__list-item"><a href="{{ url('domain_user') }}" class="nav__item{% if page_name == 'domain_user' %} nav--active{% endif %}">学员管理</a></li>
           <li class="nav__list-item"><a href="{{ url('domain_dashboard') }}" class="nav__item{% if page_name.startsWith('domain') and page_name != 'domain_user' %} nav--active{% endif %}">域管理</a></li>

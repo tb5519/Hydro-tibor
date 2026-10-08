@@ -1,0 +1,317 @@
+.page--home_profile
+  .profile-editor
+    color: #243653
+    padding: 0 0 24px
+
+    [hidden]
+      display: none !important
+
+  .profile-editor__back
+    display: inline-flex
+    gap: 8px
+    align-items: center
+    margin-bottom: 25px
+    color: #73829a
+    font-size: 13px
+
+  .profile-editor__heading
+    margin-bottom: 25px
+
+    h1
+      margin: 8px 0 10px
+      font-size: 28px
+      line-height: 1.4
+      font-weight: 700
+      letter-spacing: .3px
+
+    p
+      color: #7a8aa3
+      font-size: 14px
+      line-height: 1.7
+
+  .profile-editor__eyebrow
+    color: #4b80ce
+    font-size: 12px
+    font-weight: 600
+    letter-spacing: 1px
+
+  .profile-editor__card
+    padding: 28px
+    margin-bottom: 18px
+    background: #fff
+    border: 1px solid #e0e7f0
+    border-radius: 16px
+    box-shadow: 0 4px 18px rgba(35, 58, 94, .025)
+
+    h2
+      font-size: 16px
+      font-weight: 600
+      line-height: 1.5
+
+  .profile-editor__avatar-section
+    display: flex
+    align-items: center
+    gap: 26px
+
+  .profile-editor__avatar-wrap
+    flex: 0 0 112px
+    width: 112px
+    height: 112px
+    padding: 4px
+    background: #f0f5ff
+    border-radius: 50%
+
+    img
+      display: block
+      width: 100%
+      height: 100%
+      border-radius: 50%
+      object-fit: cover
+      background: #fff
+
+  .profile-editor__avatar-content
+    min-width: 0
+
+    > p:not(.profile-editor__hint):not(.profile-editor__avatar-status)
+      color: #7a8aa3
+      font-size: 13px
+      margin: 4px 0 13px
+
+  .profile-editor__avatar-actions, .profile-editor__actions
+    display: flex
+    align-items: center
+    gap: 12px
+
+  .profile-editor__upload, .profile-editor__undo, .profile-editor__save, .profile-editor__cancel
+    border: 0
+    border-radius: 9px
+    padding: 10px 16px
+    line-height: 20px
+    font: inherit
+    font-size: 13px
+    cursor: pointer
+    text-decoration: none
+
+    &:disabled
+      opacity: .6
+      cursor: wait
+
+    &:focus-visible
+      outline: 3px solid #b2cafa
+      outline-offset: 3px
+
+  .profile-editor__upload
+    background: #edf4ff
+    color: #3e74c7
+    font-weight: 600
+
+    &:hover
+      background: #e0edff
+
+  .profile-editor__undo, .profile-editor__cancel
+    background: transparent
+    color: #77869b
+
+    &:hover
+      background: #edf1f7
+      color: #354b6a
+
+  .profile-editor__hint
+    color: #929eb1
+    font-size: 12px
+    line-height: 1.8
+    margin-top: 10px
+
+  .profile-editor__avatar-status
+    color: #49836a
+    font-size: 12px
+    line-height: 1.7
+
+    &:not(:empty)
+      margin-top: 6px
+
+    &.is-error
+      color: #ba5662
+
+  .profile-editor__section-heading
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 12px
+    margin-bottom: 25px
+
+    > span
+      font-size: 12px
+      color: #929eb1
+
+  .profile-editor__gender
+    border: 0
+    margin: 0 0 25px
+    padding: 0
+    display: flex
+    gap: 10px
+
+    legend
+      font-size: 13px
+      font-weight: 600
+      margin-bottom: 10px
+
+    label
+      display: flex
+      align-items: center
+      gap: 7px
+      padding: 10px 15px
+      border: 1px solid #dce4ef
+      border-radius: 9px
+      color: #718099
+      font-size: 13px
+      cursor: pointer
+
+      &:has(input:checked)
+        background: #eff5ff
+        border-color: #8db4ef
+        color: #3268ba
+
+    input
+      margin: 0
+      accent-color: #4b86df
+
+  .profile-editor__bio-label
+    display: flex
+    justify-content: space-between
+    align-items: center
+    margin-bottom: 10px
+
+    label
+      font-size: 13px
+      font-weight: 600
+
+    span
+      font-size: 11px
+      color: #9aa6b8
+
+  .profile-editor__bio
+    display: block
+    width: 100%
+    box-sizing: border-box
+    min-height: 155px
+    resize: vertical
+    border: 1px solid #dce4ef
+    border-radius: 10px
+    padding: 13px 15px
+    background: #fbfcfe
+    color: #35445e
+    font: inherit
+    font-size: 14px
+    line-height: 1.8
+    transition: border-color .15s, box-shadow .15s
+
+    &::placeholder
+      color: #a5afbf
+
+    &:focus
+      outline: 0
+      border-color: #8db4ef
+      box-shadow: 0 0 0 3px #edf4ff
+      background: #fff
+
+  .profile-editor__footer
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 16px
+    padding: 4px 2px
+
+  .profile-editor__status
+    color: #929eb1
+    font-size: 12px
+    line-height: 1.7
+
+    &.is-success
+      color: #398467
+
+    &.is-error
+      color: #ba5662
+
+  .profile-editor__actions
+    flex-shrink: 0
+
+  .profile-editor__save
+    color: #fff
+    background: #4b83da
+    min-width: 114px
+    font-weight: 600
+    box-shadow: 0 4px 12px rgba(63, 116, 195, .15)
+
+    &:hover
+      background: #3971c7
+
+  +mobile()
+    .profile-editor__card
+      padding: 20px
+
+    .profile-editor__avatar-section
+      align-items: flex-start
+      gap: 16px
+
+    .profile-editor__avatar-wrap
+      flex-basis: 72px
+      width: 72px
+      height: 72px
+
+    .profile-editor__avatar-actions
+      flex-wrap: wrap
+      gap: 4px
+
+    .profile-editor__section-heading
+      align-items: flex-start
+      flex-direction: column
+      gap: 5px
+
+    .profile-editor__gender
+      gap: 7px
+
+      label
+        padding: 10px
+
+    .profile-editor__footer
+      flex-direction: column
+      align-items: stretch
+
+    .profile-editor__actions
+      justify-content: flex-end
+
+  @media (prefers-reduced-motion: reduce)
+    .profile-editor__bio
+      transition: none
+
+.page--home_profile.theme--dark, .page--home_profile .theme--dark
+  .profile-editor
+    color: #e1ebfa
+  .profile-editor__card
+    background: #253246
+    border-color: #40536e
+  .profile-editor__gender label
+    color: #bccce2
+    border-color: #536984
+    &:has(input:checked)
+      color: #bcd7ff
+      background: #304967
+      border-color: #7d9dc9
+  .profile-editor__bio
+    color: #e1ebfa
+    background: #202d41
+    border-color: #536984
+    &:focus
+      background: #25374f
+      box-shadow: 0 0 0 3px #354967
+  .profile-editor__eyebrow, .profile-editor__back
+    color: #a1c4f5
+  .profile-editor__heading p, .profile-editor__hint, .profile-editor__section-heading > span,
+  .profile-editor__avatar-content > p:not(.profile-editor__hint):not(.profile-editor__avatar-status),
+  .profile-editor__status
+    color: #a6b6cd
+  .profile-editor__status.is-success, .profile-editor__avatar-status
+    color: #a6d7bc
+  .profile-editor__status.is-error, .profile-editor__avatar-status.is-error
+    color: #efacb3

@@ -450,6 +450,8 @@ Hint::page::problem_files: 您可以將檔案或壓縮包拖拽至對應區域�
 Hint::page::problem_main: 這是題目列表頁面。您可在頁面右側進行篩選或搜尋。
 Hitokoto: 一言
 home_account: 賬戶設定
+home_profile: 編輯個人資料
+scratch_objective_quiz: 課堂練習
 home_domain_account: 當前域的設定
 home_domain_create: 建立域
 home_domain: 我的域

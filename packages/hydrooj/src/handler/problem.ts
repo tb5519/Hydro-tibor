@@ -28,6 +28,7 @@ import { tryRedirectAsset } from '../lib/asset_delivery';
 import avatar from '../lib/avatar';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
 import { canViewContestLevel } from '../lib/contest_access';
+import { isScratchDomain } from '../lib/domain_type';
 import {
     authorizeHomeworkReview, loadHomeworkReviewRecord, loadHomeworkReviewRecords, publicHomeworkReviewRecord, rejectHomeworkReviewMutation,
 } from '../lib/homework_review';
@@ -723,6 +724,18 @@ export class OnlineIdeHandler extends Handler {
     }
 }
 
+function isScratchObjectiveTeacher(handler: Handler) {
+    return isScratchDomain(handler.domain) && handler.user.hasPerm(PERM.PERM_EDIT_DOMAIN);
+}
+
+function checkObjectiveAuthoring(handler: Handler) {
+    if (isScratchDomain(handler.domain)) handler.checkPerm(PERM.PERM_EDIT_DOMAIN);
+    else {
+        handler.checkPerm(PERM.PERM_VIEW_PROBLEM);
+        handler.checkPerm(PERM.PERM_CREATE_PROBLEM);
+    }
+}
+
 export class ProblemDetailHandler extends ContestDetailBaseHandler {
     pdoc: ProblemDoc;
     udoc: User;
@@ -756,8 +769,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
         tid ||= this.tdoc?.docId;
         // Check before the contest branch: possession of a contest link never exposes a source question.
         if (problem.isObjectiveSource(this.pdoc)) {
-            this.checkPerm(PERM.PERM_VIEW_PROBLEM);
-            this.checkPerm(PERM.PERM_CREATE_PROBLEM);
+            checkObjectiveAuthoring(this);
         }
         const reviewStudent = reviewUid === undefined ? null
             : await authorizeHomeworkReview(this.user, this.domain, this.tdoc, this.pdoc.docId, reviewUid);
@@ -779,7 +791,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             delete this.pdoc.nSubmit;
             delete this.pdoc.difficulty;
             delete this.pdoc.stats;
-        } else if (!problem.canViewBy(this.pdoc, this.user)) {
+        } else if (!isScratchObjectiveTeacher(this) && !problem.canViewBy(this.pdoc, this.user)) {
             throw new PermissionError(PERM.PERM_VIEW_PROBLEM_HIDDEN);
         }
         let ddoc = this.domain;
@@ -1265,7 +1277,7 @@ export class ProblemHackHandler extends ProblemDetailHandler {
 
 export class ProblemManageHandler extends ProblemDetailHandler {
     async prepare() {
-        if (!this.user.own(this.pdoc, PERM.PERM_EDIT_PROBLEM_SELF)) this.checkPerm(PERM.PERM_EDIT_PROBLEM);
+        if (!isScratchObjectiveTeacher(this) && !this.user.own(this.pdoc, PERM.PERM_EDIT_PROBLEM_SELF)) this.checkPerm(PERM.PERM_EDIT_PROBLEM);
     }
 }
 
@@ -1274,7 +1286,7 @@ export class ProblemEditHandler extends ProblemManageHandler {
         this.response.body.additional_file = sortFiles(this.pdoc.additional_file || []);
         this.response.body.statementLangs = this.ctx.i18n.langs(false);
         if (this.pdoc.objectiveKind) {
-            this.checkPerm(PERM.PERM_CREATE_PROBLEM);
+            checkObjectiveAuthoring(this);
             if (this.pdoc.reference) throw new ProblemIsReferencedError('edit objective question');
             const privateDoc = await problem.get(this.pdoc.domainId, this.pdoc.docId, ['objective']);
             if (!privateDoc?.objective) throw new ProblemConfigError();
@@ -1301,7 +1313,7 @@ export class ProblemEditHandler extends ProblemManageHandler {
         if (typeof newPid !== 'string') newPid = `P${newPid}`;
         if (newPid !== this.pdoc.pid && await problem.get(domainId, newPid)) throw new ProblemAlreadyExistError(newPid);
         if (this.pdoc.objectiveKind) {
-            this.checkPerm(PERM.PERM_CREATE_PROBLEM);
+            checkObjectiveAuthoring(this);
             if (this.pdoc.reference) throw new ProblemIsReferencedError('edit objective question');
             const question = parseObjective(objective);
             const tags = parseObjectiveTags(tag);
@@ -1360,6 +1372,10 @@ export class ProblemConfigHandler extends ProblemManageHandler {
 export class ProblemFilesHandler extends ProblemDetailHandler {
     notUsage = true;
 
+    async prepare() {
+        if (!isScratchObjectiveTeacher(this)) this.checkPerm(PERM.PERM_VIEW_PROBLEM);
+    }
+
     @param('d', Types.CommaSeperatedArray, true)
     @param('sidebar', Types.Boolean)
     async get({ }, d = ['testdata', 'additional_file'], sidebar = false) {
@@ -1375,7 +1391,7 @@ export class ProblemFilesHandler extends ProblemDetailHandler {
     async post() {
         if (this.args.operation === 'get_links') return;
         if (this.pdoc.reference) throw new ProblemIsReferencedError('edit files');
-        if (!this.user.own(this.pdoc, PERM.PERM_EDIT_PROBLEM_SELF)) this.checkPerm(PERM.PERM_EDIT_PROBLEM);
+        if (!isScratchObjectiveTeacher(this) && !this.user.own(this.pdoc, PERM.PERM_EDIT_PROBLEM_SELF)) this.checkPerm(PERM.PERM_EDIT_PROBLEM);
     }
 
     @post('files', Types.Set)
@@ -1506,7 +1522,7 @@ export class ProblemFileDownloadHandler extends ProblemDetailHandler {
     @param('noDisposition', Types.Boolean)
     @query('tid', Types.ObjectId, true)
     async get({ }, type = 'additional_file', filename: string, noDisposition = false, tid: ObjectId) {
-        if (!tid) this.checkPerm(PERM.PERM_VIEW_PROBLEM);
+        if (!tid && !isScratchObjectiveTeacher(this)) this.checkPerm(PERM.PERM_VIEW_PROBLEM);
         if (this.pdoc.reference) {
             if (type === 'testdata') throw new ProblemIsReferencedError('download testdata');
             this.pdoc = await problem.get(this.pdoc.reference.domainId, this.pdoc.reference.pid);
@@ -1733,7 +1749,13 @@ export class ProblemCreateHandler extends Handler {
     }
 }
 
-export class ProblemCreateObjectiveHandler extends Handler {
+class ObjectiveAuthoringHandler extends Handler {
+    async prepare() {
+        checkObjectiveAuthoring(this);
+    }
+}
+
+export class ProblemCreateObjectiveHandler extends ObjectiveAuthoringHandler {
     async get() {
         this.response.template = 'problem_objective_edit.html';
         this.response.body = { page_name: 'problem_create_objective', additional_file: [] };
@@ -1773,7 +1795,7 @@ export class ProblemCreateObjectiveHandler extends Handler {
     }
 }
 
-export class ProblemObjectiveItemsHandler extends Handler {
+export class ProblemObjectiveItemsHandler extends ObjectiveAuthoringHandler {
     @query('q', Types.String, true)
     @query('kind', Types.Range(['single', 'multiple', 'judge']), true)
     @query('tag', Types.String, true)
@@ -1812,7 +1834,7 @@ export class ProblemObjectiveItemsHandler extends Handler {
     }
 }
 
-export class ProblemObjectiveHandler extends Handler {
+export class ProblemObjectiveHandler extends ObjectiveAuthoringHandler {
     async get() {
         this.response.template = 'problem_objective.html';
         this.response.body = { page_name: 'problem_objective' };
@@ -1877,7 +1899,9 @@ export class ProblemObjectiveHandler extends Handler {
             throw error;
         }
         this.response.body = { pid: pid || docId };
-        this.response.redirect = this.url('problem_detail', { pid: pid || docId });
+        this.response.redirect = isScratchDomain(this.domain)
+            ? this.url('scratch_assignment_create', { query: { objectivePaperId: docId } })
+            : this.url('problem_detail', { pid: pid || docId });
     }
 }
 
@@ -1888,6 +1912,10 @@ export const ProblemApi = {
             domainId: Schema.string().required(),
         }),
         async (ctx, args) => {
+            if (isScratchDomain(await domain.get(args.domainId))) {
+                const actor = await user.getById(args.domainId, ctx.user._id);
+                if (!actor.hasPerm(PERM.PERM_EDIT_DOMAIN)) throw new PermissionError(PERM.PERM_EDIT_DOMAIN);
+            }
             const pdoc = await problem.get(args.domainId, args.id);
             if (!pdoc) return null;
             if (problem.isObjectiveSource(pdoc)) {
@@ -1903,6 +1931,10 @@ export const ProblemApi = {
             domainId: Schema.string().required(),
         }),
         async (ctx, args) => {
+            if (isScratchDomain(await domain.get(args.domainId))) {
+                const actor = await user.getById(args.domainId, ctx.user._id);
+                if (!actor.hasPerm(PERM.PERM_EDIT_DOMAIN)) throw new PermissionError(PERM.PERM_EDIT_DOMAIN);
+            }
             const pdocs = await problem.getList(args.domainId, args.ids, ctx.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN) || ctx.user._id,
                 false, undefined, true);
             return args.ids.map((id) => pdocs[+id]).filter((i) => i);
@@ -2032,7 +2064,7 @@ export async function apply(ctx: Context) {
     ctx.Route('problem_hack', '/p/:pid/hack/:rid', ProblemHackHandler, PERM.PERM_SUBMIT_PROBLEM);
     ctx.Route('problem_edit', '/p/:pid/edit', ProblemEditHandler);
     ctx.Route('problem_config', '/p/:pid/config', ProblemConfigHandler);
-    ctx.Route('problem_files', '/p/:pid/files', ProblemFilesHandler, PERM.PERM_VIEW_PROBLEM);
+    ctx.Route('problem_files', '/p/:pid/files', ProblemFilesHandler);
     ctx.Route('problem_file_download', '/p/:pid/file/:filename', ProblemFileDownloadHandler);
     ctx.Route('problem_solution', '/p/:pid/solution', ProblemSolutionHandler, PERM.PERM_VIEW_PROBLEM);
     ctx.Route('problem_solution_detail', '/p/:pid/solution/:sid', ProblemSolutionHandler, PERM.PERM_VIEW_PROBLEM);
@@ -2040,11 +2072,9 @@ export async function apply(ctx: Context) {
     ctx.Route('problem_solution_reply_raw', '/p/:pid/solution/:psid/:psrid/raw', ProblemSolutionRawHandler, PERM.PERM_VIEW_PROBLEM);
     ctx.Route('problem_statistics', '/p/:pid/stat', ProblemStatisticsHandler, PERM.PERM_VIEW_PROBLEM);
     ctx.Route('problem_create', '/problem/create', ProblemCreateHandler, PERM.PERM_CREATE_PROBLEM);
-    ctx.Route('problem_create_objective', '/problem/create/objective', ProblemCreateObjectiveHandler,
-        PERM.PERM_VIEW_PROBLEM, PERM.PERM_CREATE_PROBLEM);
-    ctx.Route('problem_objective', '/problem/objective', ProblemObjectiveHandler, PERM.PERM_VIEW_PROBLEM, PERM.PERM_CREATE_PROBLEM);
-    ctx.Route('problem_objective_items', '/problem/objective/items', ProblemObjectiveItemsHandler,
-        PERM.PERM_VIEW_PROBLEM, PERM.PERM_CREATE_PROBLEM);
+    ctx.Route('problem_create_objective', '/problem/create/objective', ProblemCreateObjectiveHandler);
+    ctx.Route('problem_objective', '/problem/objective', ProblemObjectiveHandler);
+    ctx.Route('problem_objective_items', '/problem/objective/items', ProblemObjectiveItemsHandler);
     await ctx.inject(['api'], ({ api }) => {
         api.provide(ProblemApi);
     });

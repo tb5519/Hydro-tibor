@@ -264,6 +264,37 @@ async function run() {
         assert(response.text.includes('小禾'));
         assert(response.text.includes('data-student-search'));
     });
+    await check('Reopening settings immediately includes new hidden choice tags in OJ and Scratch, but excludes whole-paper and judgment tags', async () => {
+        const scratchDomain = `daily-scratch-${Date.now()}`;
+        await domains.add(scratchDomain, adminId, 'Scratch 知识课堂', 'Daily catalog regression', undefined, 'scratch');
+        await domains.setUserInDomain(scratchDomain, studentId, { join: true, role: 'default' });
+        const before = await get(admin, url);
+        assert.equal(before.body.selectedDailyQuiz.domains.find((item) => item.id === scratchDomain).availableCount, 0);
+        const saved = await daily.getPolicy(studentId);
+        async function newSource(domainId, pid, tags, kind = 'single') {
+            const question = { version: 1, kind, stem: 'Which choices are correct?', options: ['First', 'Second', 'Third'],
+                answers: kind === 'multiple' ? ['A', 'C'] : ['A'], analysis: 'PRIVATE_CATALOG_ANALYSIS' };
+            return problems.add(domainId, pid, 'New tagged material', objectiveContent(question), adminId, tags,
+                { hidden: true, objectiveKind: kind, objective: question });
+        }
+        await newSource(firstDomain, 'NEWTAG1', ['新增单选标签']);
+        await newSource(firstDomain, 'NEWTAG2', ['新增多选标签'], 'multiple');
+        await newSource(scratchDomain, 'SCRATCHTAG', ['角色与舞台']);
+        await newSource(scratchDomain, 'SCRATCHJUDGE', ['只有判断题'], 'judge');
+        await problems.add(scratchDomain, 'WHOLEPAPER', 'Existing whole paper', 'Legacy question paper', adminId, ['整卷标签'], { hidden: false });
+        const after = await get(admin, url);
+        status(after, 200);
+        const catalog = after.body.selectedDailyQuiz.domains;
+        const oj = catalog.find((item) => item.id === firstDomain);
+        assert(oj.tags.some((item) => item.name === '新增单选标签' && item.count === 1));
+        assert(oj.tags.some((item) => item.name === '新增多选标签' && item.count === 1));
+        const scratch = catalog.find((item) => item.id === scratchDomain);
+        assert.equal(scratch.availableCount, 1);
+        assert.deepEqual(scratch.tags, [{ name: '角色与舞台', count: 1 }]);
+        assert.deepEqual(scratch.questionTags, [['角色与舞台']]);
+        assert(!JSON.stringify(catalog).includes('PRIVATE_CATALOG_ANALYSIS'));
+        assert.deepEqual(await daily.getPolicy(studentId), saved, 'Refreshing the source catalog cannot mutate teacher settings');
+    });
     console.log(`RESULT ${results.filter(Boolean).length}/${results.length} daily management checks passed`);
     clearTimeout(timeout);
     if (process.env.DAILY_MANAGEMENT_SERVE === '1' && results.every(Boolean)) {

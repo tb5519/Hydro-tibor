@@ -162,10 +162,11 @@
               {% endif %}
               <div class="profile-header__contact-bar">
               {% if isSelfProfile %}
-                <a class="profile-header__contact-item" href="{{ url('home_settings', category='account') }}" data-tooltip="{{ _('Edit Profile') }}">
-                  <span class="icon icon-edit"></span>
+                <a class="profile-header__contact-item profile-header__edit" href="{{ url('home_profile') }}" aria-label="编辑个人资料">
+                  <span class="icon icon-edit" aria-hidden="true"></span><span>编辑资料</span>
                 </a>
               {% endif %}
+              {% if not isSelfProfile %}
                 <a class="profile-header__contact-item" href="{{ url('home_messages', query={target:udoc._id}) }}" target="_blank" data-tooltip="{{ _('Send Message') }}">
                   <span class="icon icon-comment--multiple"></span>
                 </a>
@@ -191,6 +192,7 @@
                 >
                   {{ model.builtin.USER_GENDER_ICONS[udoc.gender] }}
                 </span>
+              {% endif %}
               {% endif %}
               {% if udoc.hasPriv(PRIV.PRIV_MOD_BADGE) %}
                 <span

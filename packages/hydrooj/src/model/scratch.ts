@@ -9,6 +9,7 @@ import { SCRATCH_PRESET_KINDS, ScratchPresetKind, validateScratchArchive, valida
 import { mergeScratchState, ScratchStateValue, validateScratchStateChanges } from '../lib/scratch_state';
 import { Logger } from '../logger';
 import db from '../service/db';
+import * as scratchObjective from './scratch_objective';
 import storage from './storage';
 
 const logger = new Logger('scratch');
@@ -17,6 +18,9 @@ export interface ScratchActor { domainId: string, uid: number, isTeacher: boolea
 interface ScratchDoc { _id: ObjectId, domainId: string, owner: number, createdAt: Date, updatedAt: Date }
 export interface ScratchAssignment extends ScratchDoc {
     title: string; description: string; deadline: Date | null; templateFileId: ObjectId | null;
+    projectRequired?: boolean;
+    objectiveQuiz?: scratchObjective.ScratchAssignmentQuiz | null;
+    objectiveStarted?: boolean;
 }
 export interface ScratchWork extends ScratchDoc {
     title: string; assignmentId: ObjectId | null; currentFileId: ObjectId | null; revision: number; thumbnailFileId?: ObjectId;
@@ -280,6 +284,7 @@ async function removeFile(actor: ScratchActor, _id: ObjectId) {
 
 export async function createWork(actor: ScratchActor, title: string, assignmentId: ObjectId = null, reuseTitle = true) {
     const assignment = assignmentId ? await getAssignment(actor, assignmentId) : null;
+    if (assignment?.projectRequired === false) throw new ValidationError('assignmentId', null, '这份作业只需要完成客观题');
     const cleanTitle = cleanText(title, 'title', 120, assignment?.title || '我的 Scratch 作品');
     if (assignment) {
         const existing = await works.findOne({ domainId: actor.domainId, owner: actor.uid, assignmentId });
@@ -403,7 +408,13 @@ export async function copyWork(actor: ScratchActor, sourceId: ObjectId) {
     }
 }
 
-export interface AssignmentInput { title: string, description: string, deadline: Date | null }
+export interface AssignmentInput {
+    title: string;
+    description: string;
+    deadline: Date | null;
+    projectRequired?: boolean;
+    objectivePaperIds?: number[];
+}
 export async function writeAssignment(
     actor: ScratchActor, input: AssignmentInput, _id?: ObjectId, template?: { filepath: string, originalFilename?: string },
 ) {
@@ -411,23 +422,37 @@ export async function writeAssignment(
     const current = _id ? await getAssignment(actor, _id) : null;
     const fields = {
         title: cleanText(input.title, 'title', 120), description: `${input.description || ''}`.trim(), deadline: input.deadline,
+        projectRequired: input.projectRequired ?? current?.projectRequired ?? true,
     };
     if (fields.description.length > 20000 || (fields.deadline && !Number.isFinite(fields.deadline.getTime()))) {
         throw new ValidationError('description', 'deadline');
     }
+    const paperIds = scratchObjective.parsePaperIds(input.objectivePaperIds ?? current?.objectiveQuiz?.paperIds ?? []);
+    if (!fields.projectRequired && !paperIds.length) throw new ValidationError('objectivePaperIds', null, '请添加客观题，或开启 Scratch 作品任务');
+    const objectiveQuiz = await scratchObjective.snapshotQuiz(actor, paperIds, current);
     const doc: ScratchAssignment = current || { ...base(actor), ...fields, templateFileId: null };
-    const file = template ? await putFile(actor, template, { assignmentId: doc._id }, true) : null;
+    let file: ScratchFile = null;
     try {
+        file = template ? await putFile(actor, template, { assignmentId: doc._id }, true) : null;
         if (current) {
-            await assignments.updateOne({ domainId: actor.domainId, _id }, {
-                $set: { ...fields, updatedAt: new Date(), ...(file ? { templateFileId: file._id } : {}) },
+            const changedQuiz = objectiveQuiz?.revision !== current.objectiveQuiz?.revision;
+            const updated = await assignments.updateOne({
+                domainId: actor.domainId, _id, 'objectiveQuiz.revision': current.objectiveQuiz?.revision ?? { $exists: false },
+                ...(changedQuiz ? { objectiveStarted: { $ne: true } } : {}),
+            }, {
+                $set: { ...fields, objectiveQuiz, updatedAt: new Date(), ...(file ? { templateFileId: file._id } : {}) },
             });
-        } else await assignments.insertOne({ ...doc, templateFileId: file?._id || null });
+            if (!updated.matchedCount) throw new ValidationError('objectivePaperIds', null, '作业已被更新或有学员开始答题，请刷新后重新保存');
+        } else await assignments.insertOne({ ...doc, objectiveQuiz, templateFileId: file?._id || null });
     } catch (error) {
         if (file) await removeFile(actor, file._id);
+        if (objectiveQuiz && objectiveQuiz.revision !== current?.objectiveQuiz?.revision) await storage.del(Object.values(objectiveQuiz.files));
         throw error;
     }
     if (file && current?.templateFileId) await removeFile(actor, current.templateFileId);
+    if (current?.objectiveQuiz && objectiveQuiz?.revision !== current.objectiveQuiz.revision) {
+        await storage.del(Object.values(current.objectiveQuiz.files));
+    }
     return getAssignment(actor, doc._id);
 }
 export async function writeMaterial(
@@ -1121,6 +1146,8 @@ export async function apply(ctx: Context) {
     ctx.on('domain/delete', async (domainId) => {
         const docs = await files.find({ domainId }).toArray();
         await storage.del(docs.map((doc) => doc.path));
+        const quizDocs = await assignments.find({ domainId, objectiveQuiz: { $exists: true } }).toArray();
+        await storage.del(quizDocs.flatMap((doc) => Object.values(doc.objectiveQuiz?.files || {})));
         await Promise.all([assignments, works, versions, submissions, materials, presets, files, shares, community, communityEvents, communityFavorites, communityRuntimes, communityStates].map((collection) => collection.deleteMany({ domainId })));
         await quotas.deleteOne({ _id: domainId });
     });

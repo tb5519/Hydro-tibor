@@ -23,3 +23,13 @@ export function isOjDomainPath(path: string) {
         || /^\/domain\/(?:ranking-setting|navigation|home-poster)(?:\/|$)/i.test(path)
         || /^\/api\/(?:problem[^/]*|contest[^/]*|homework[^/]*|training[^/]*|record[^/]*|ranking[^/]*|rpc)(?:\/|$)/i.test(path);
 }
+
+/** Only teachers may use this narrow objective authoring surface in a Scratch classroom. */
+export function scratchObjectiveRoute(path: string): { authoring: true } | { pid: string, action: string } | null {
+    if (/^\/problem\/(?:create\/objective|objective(?:\/items)?)\/?$/.test(path)) return { authoring: true };
+    const match = /^\/p\/([^/]+)(?:\/(edit|files|file\/[^/]+))?\/?$/.exec(path);
+    if (!match) return null;
+    try {
+        return { pid: decodeURIComponent(match[1]), action: match[2]?.split('/')[0] || 'detail' };
+    } catch { return null; }
+}
