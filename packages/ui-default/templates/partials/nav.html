@@ -183,7 +183,7 @@
             {%- endfor -%}
           </ul>
           <div class="domain-switcher__footer">
-            <a href="{{ url('home_domain') }}" class="menu__link domain-switcher__manage"><span class="icon icon-web" aria-hidden="true"></span><span>管理课堂</span><span class="icon icon-chevron_right" aria-hidden="true"></span></a>
+            <a href="{{ url('home_domain') }}" class="menu__link domain-switcher__manage"><span class="icon icon-web" aria-hidden="true"></span><span>{{ '管理课堂' if handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM) or handler.user.hasPerm(perm.PERM_EDIT_DOMAIN) else '加入新域' }}</span><span class="icon icon-chevron_right" aria-hidden="true"></span></a>
           </div>
         </div>
       </li>

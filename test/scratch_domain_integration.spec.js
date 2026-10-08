@@ -501,7 +501,7 @@ describe('Scratch domain navigation, footer and creation templates', () => {
             const sidebar = new JSDOM(view.env.renderString(
                 '{% import "components/home.html" as home with context %}{{ home.render_sidebar() }}', view.state,
             ));
-            assert(sidebar.window.document.querySelector('a[href="/home_security"]'), 'account management remains in the personal sidebar');
+            assert.equal(sidebar.window.document.querySelector('a[href="/home_security"], a[href^="/home_settings"], a[href="/home_messages"], a[href="/home_domain"], a[href="/home_files"]'), null);
             assert(sidebar.window.document.querySelector('a[name="nav_logout"][href="/user_logout"]'), 'logout remains available from the profile');
             sidebar.window.close();
         }

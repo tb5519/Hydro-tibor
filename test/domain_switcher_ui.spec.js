@@ -23,13 +23,13 @@ const templateRoot = path.join(uiRoot, 'templates');
 const navTemplate = fs.readFileSync(path.join(templateRoot, 'partials/nav.html'), 'utf8');
 const mobileWidth = require(path.join(uiRoot, 'breakpoints.json')).mobile;
 
-function renderMenu(domains) {
+function renderMenu(domains, admin = false) {
     const selected = domains[2] || { _id: 'system', name: 'OneByOne' };
     const env = new nunjucks.Environment(null, { autoescape: true });
     return env.renderString(navTemplate, {
         page_name: 'homepage', UiContext: { domain: selected },
-        handler: { user: { _id: 20, uname: 'student', domains, hasPriv: () => true, hasPerm: () => false } },
-        PRIV: { PRIV_USER_PROFILE: 1 }, perm: { PERM_EDIT_DOMAIN: 1 },
+        handler: { user: { _id: 20, uname: 'student', domains, hasPriv: (priv) => priv === 1 || admin, hasPerm: () => false } },
+        PRIV: { PRIV_USER_PROFILE: 1, PRIV_EDIT_SYSTEM: 2 }, perm: { PERM_EDIT_DOMAIN: 1 },
         model: { system: { get: (key) => (key === 'server.name' ? 'OneByOne' : key === 'ui-default.domainNavigation') } },
         ui: { getNodes: () => [] },
         avatarUrl: (avatar, size) => `/avatar-${size}.png`,
@@ -437,7 +437,9 @@ describe('joined-domain menu templates', () => {
         assert.equal(current.length, 1);
         assert.equal(current[0], links[2]);
         assert.equal(current[0].querySelector('.domain-switcher__current').textContent, '当前');
-        assert.ok(document.querySelector('.domain-switcher__manage'));
+        assert.equal(document.querySelector('.domain-switcher__manage').textContent.trim(), '加入新域');
+        const adminMenu = new JSDOM(renderMenu(domains, true)).window.document;
+        assert.equal(adminMenu.querySelector('.domain-switcher__manage').textContent.trim(), '管理课堂');
     });
 
     it('renders a useful empty state and preserves long names as safely escaped text', () => {

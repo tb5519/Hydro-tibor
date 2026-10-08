@@ -71,7 +71,10 @@ async function run() {
             assert.equal(doc.querySelector('[name="gender"]:checked').value, '0');
             assert.equal(doc.querySelector('[name="backgroundImage"]'), null);
             assert.equal(doc.querySelector('[name="qq"]'), null);
-            assert(doc.querySelector('a[href*="/home/security"]'), 'Keep the account sidebar');
+            const sidebar = doc.querySelector('.section.side');
+            assert(sidebar.querySelector('a[name="nav_logout"]'), 'Keep logout in the personal sidebar');
+            assert.equal(sidebar.querySelector('a[href*="/home/security"], a[href*="/home/settings"], a[href*="/home/messages"], a[href*="/home/domain"], a[href$="/file"]'), null);
+            assert(doc.querySelector('[data-profile-password-verify][href$="/home/security"]'), 'Password verification remains available inside the editor');
             dom.window.close();
         }
     });
