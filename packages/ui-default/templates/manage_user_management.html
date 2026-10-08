@@ -1,945 +1,66 @@
-{% extends "manage_base.html" %}
-{% block manage_content %}
-<style>
-  .student-management {
-    display: grid;
-    gap: 1rem;
-  }
-  .student-management__hero,
-  .student-management__editor,
-  .student-management__roster {
-    border: 1px solid #e2e8f0;
-    border-radius: 16px;
-    background: #fff;
-    box-shadow: 0 10px 28px rgba(15, 23, 42, .06);
-  }
-  .student-management__hero {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 1.2rem 1.3rem;
-    background: linear-gradient(135deg, #eff6ff 0%, #fff 55%, #fdf4ff 100%);
-  }
-  .student-management__hero h1,
-  .student-management__editor h2,
-  .student-management__roster h2 {
-    margin: 0;
-    color: #0f172a;
-  }
-  .student-management__hero h1 { font-size: 1.45rem; }
-  .student-management__hero p {
-    margin: .45rem 0 0;
-    color: #64748b;
-    font-size: .9rem;
-    line-height: 1.55;
-  }
-  .student-management__count {
-    flex: 0 0 auto;
-    border-radius: 999px;
-    padding: .38rem .7rem;
-    background: #dbeafe;
-    color: #1d4ed8;
-    font-size: .82rem;
-    font-weight: 700;
-    white-space: nowrap;
-  }
-  .student-management__success {
-    border: 1px solid #bbf7d0;
-    border-radius: 10px;
-    padding: .7rem .85rem;
-    background: #f0fdf4;
-    color: #166534;
-  }
-  .student-management__editor { padding: 1.15rem 1.25rem; }
-  .student-management__editor--inline { animation: student-management-editor-expand .2s ease-out; }
-  .student-management__editor-heading,
-  .student-management__roster-heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: .75rem;
-    margin-bottom: 1rem;
-  }
-  .student-management__editor-heading p,
-  .student-management__roster-heading p {
-    margin: .3rem 0 0;
-    color: #64748b;
-    font-size: .83rem;
-  }
-  .student-management__editor-avatar {
-    width: 3.15rem;
-    height: 3.15rem;
-    border: 3px solid #e0ecff;
-    border-radius: 50%;
-    object-fit: cover;
-  }
-  .student-management__form {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: .85rem 1rem;
-  }
-  .student-management__form label { min-width: 0; }
-  .student-management__form label > span {
-    display: block;
-    margin-bottom: .35rem;
-    color: #475569;
-    font-size: .84rem;
-    font-weight: 700;
-  }
-  .student-management__form .textbox { width: 100%; }
-  .student-management__level-hint { margin: .4rem 0 0; color: #64748b; font-size: .76rem; line-height: 1.5; }
-  .student-note__level { display: inline-flex; align-items: center; margin-left: .45rem; padding: .12rem .42rem; border: 1px solid #dbeafe; border-radius: 6px; background: #eff6ff; color: #2563eb; font-size: .68rem; font-weight: 750; vertical-align: middle; white-space: nowrap; }
-  .student-note__level--max { border-color: #ddd6fe; background: #f5f3ff; color: #7c3aed; }
-  .student-management__form .student-management__wide { grid-column: 1 / -1; }
-  .student-management__cpp-mode {
-    grid-column: 1 / -1;
-    min-width: 0;
-    margin-top: .1rem;
-  }
-  .student-management__cpp-mode-heading {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: .75rem;
-    flex-wrap: wrap;
-  }
-  .student-management__cpp-mode-title {
-    color: #475569;
-    font-size: .84rem;
-    font-weight: 700;
-  }
-  .student-management__cpp-mode-hint {
-    color: #64748b;
-    font-size: .76rem;
-    line-height: 1.45;
-  }
-  .student-management__cpp-mode-options {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: .55rem;
-    margin-top: .45rem;
-  }
-  .student-management__cpp-mode-choice {
-    position: relative;
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: start;
-    gap: .45rem;
-    min-width: 0;
-    min-height: 4.85rem;
-    border: 1px solid #d8e6fa;
-    border-radius: 9px;
-    padding: .55rem .6rem;
-    background: linear-gradient(135deg, #f8fbff, #fdfefe);
-    cursor: pointer;
-    transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
-  }
-  .student-management__cpp-mode-choice:hover {
-    border-color: #93c5fd;
-    background: #f4f9ff;
-    box-shadow: 0 5px 13px rgba(37, 99, 235, .08);
-  }
-  .student-management__cpp-mode-choice > input {
-    position: absolute;
-    opacity: 0;
-    pointer-events: none;
-  }
-  .student-management__cpp-mode-indicator {
-    display: inline-flex !important;
-    align-items: center;
-    justify-content: center;
-    width: 1.05rem;
-    height: 1.05rem;
-    flex: 0 0 auto;
-    margin: .08rem 0 0 !important;
-    border: 1px solid #b8cbe3;
-    border-radius: 4px;
-    color: transparent;
-    background: #fff;
-    font-size: .62rem;
-    transition: color .16s ease, border-color .16s ease, background .16s ease;
-  }
-  .student-management__cpp-mode-choice > input:checked + .student-management__cpp-mode-indicator {
-    border-color: #2563eb;
-    color: #fff;
-    background: #2563eb;
-  }
-  .student-management__cpp-mode-choice > input:focus-visible + .student-management__cpp-mode-indicator {
-    outline: 3px solid rgba(37, 99, 235, .24);
-    outline-offset: 2px;
-  }
-  .student-management__cpp-mode-choice > input:checked ~ .student-management__cpp-mode-copy strong { color: #1d4ed8; }
-  .student-management__cpp-mode-copy {
-    display: grid !important;
-    gap: .12rem;
-    min-width: 0;
-    margin: 0 !important;
-  }
-  .student-management__cpp-mode-copy strong {
-    color: #334155;
-    font-size: .84rem;
-  }
-  .student-management__cpp-mode-copy small {
-    color: #64748b;
-    font-size: .72rem;
-    font-weight: 400;
-    line-height: 1.4;
-  }
-  .student-management__form-actions {
-    display: flex;
-    align-items: center;
-    gap: .65rem;
-    flex-wrap: wrap;
-    margin-top: .25rem;
-  }
-  .student-management__hint {
-    color: #64748b;
-    font-size: .8rem;
-    line-height: 1.5;
-  }
-  .student-management__password {
-    margin-top: 1rem;
-    border-top: 1px solid #edf2f7;
-    padding-top: .85rem;
-  }
-  .student-management__password summary {
-    color: #475569;
-    cursor: pointer;
-    font-size: .86rem;
-    font-weight: 700;
-  }
-  .student-management__password-form {
-    display: flex;
-    align-items: flex-end;
-    gap: .7rem;
-    flex-wrap: wrap;
-    margin-top: .85rem;
-  }
-  .student-management__password-form label { flex: 1 1 12rem; }
-  .student-management__password-form label > span {
-    display: block;
-    margin-bottom: .35rem;
-    color: #64748b;
-    font-size: .8rem;
-  }
-  .student-management__password-form .textbox { width: 100%; }
-  .student-management__roster { padding: 1.15rem 1.25rem 1.3rem; }
-  .student-management__roster-heading { align-items: flex-start; }
-  .student-management__roster-title {
-    display: flex;
-    align-items: center;
-    gap: .7rem;
-    flex-wrap: wrap;
-  }
-  .student-management__add-student {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: .25rem;
-    min-height: 1.72rem;
-    border: 1px solid #2563eb;
-    border-radius: 999px;
-    padding: .27rem .55rem;
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
-    box-shadow: 0 5px 12px rgba(37, 99, 235, .18);
-    color: #fff;
-    cursor: pointer;
-    font-size: .74rem;
-    font-weight: 800;
-    line-height: 1;
-    transition: box-shadow .16s ease, transform .16s ease;
-  }
-  .student-management__add-student:hover,
-  .student-management__add-student:focus-visible {
-    box-shadow: 0 8px 17px rgba(37, 99, 235, .27);
-    outline: none;
-    transform: translateY(-1px);
-  }
-  .student-management__domains-field {
-    grid-column: 1 / -1;
-    min-width: 0;
-    margin: 0;
-    border: 0;
-    padding: 0;
-  }
-  .student-management__domains-row {
-    display: flex;
-    align-items: center;
-    gap: .55rem;
-    min-height: 2rem;
-    flex-wrap: wrap;
-  }
-  .student-management__domains-label {
-    flex: 0 0 auto;
-    color: #475569;
-    font-size: .84rem;
-    font-weight: 700;
-  }
-  .student-management__domains {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    gap: .65rem .7rem;
-    padding: .3rem .25rem .2rem 0;
-  }
-  .student-management__domain-chip {
-    position: relative;
-    display: inline-flex;
-    min-width: 0;
-  }
-  .student-management__domain-choice {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: .35rem;
-    min-width: 0;
-    min-height: 1.9rem;
-    border: 1px solid #d9e5f4;
-    border-radius: 7px;
-    padding: .24rem 1.05rem .24rem .42rem;
-    background: #fbfdff;
-    cursor: pointer;
-    transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
-  }
-  .student-management__domain-choice:hover { border-color: #93c5fd; background: #f4f9ff; }
-  .student-management__domain-choice > input {
-    position: absolute;
-    opacity: 0;
-    pointer-events: none;
-  }
-  .student-management__domain-check {
-    display: inline-flex !important;
-    align-items: center;
-    justify-content: center;
-    width: .95rem;
-    height: .95rem;
-    flex: 0 0 auto;
-    margin: 0 !important;
-    border: 1px solid #b9cce3;
-    border-radius: 4px;
-    color: transparent;
-    background: #fff;
-    font-size: .59rem;
-    transition: background .16s ease, border-color .16s ease, color .16s ease;
-  }
-  .student-management__domain-choice > input:checked + .student-management__domain-check {
-    border-color: #2563eb;
-    color: #fff;
-    background: #2563eb;
-  }
-  .student-management__domain-choice > input:focus-visible + .student-management__domain-check { outline: 3px solid rgba(37, 99, 235, .24); outline-offset: 2px; }
-  .student-management__domain-choice > input:checked ~ .student-management__domain-info { color: #1e40af; }
-  .student-management__domain-info {
-    display: inline !important;
-    min-width: 0;
-    margin: 0 !important;
-    color: #475569;
-  }
-  .student-management__domain-info strong,
-  .student-management__domain-info small {
-    white-space: nowrap;
-  }
-  .student-management__domain-info strong { font-size: .76rem; }
-  .student-management__domain-info small { margin-left: .2rem; color: #64748b; font-size: .67rem; font-weight: 400; }
-  .student-management__domain-default {
-    display: none !important;
-    flex: 0 0 auto;
-    align-items: center;
-    margin: 0 0 0 auto !important;
-    border-radius: 999px;
-    margin-left: .05rem !important;
-    padding: .1rem .24rem;
-    color: #2563eb;
-    background: #dbeafe;
-    font-size: .58rem;
-    font-weight: 800;
-    white-space: nowrap;
-  }
-  .student-management__domain-choice > input:checked ~ .student-management__domain-default { display: inline-flex !important; }
-  .student-management__domain-remove {
-    position: absolute;
-    z-index: 1;
-    top: -.48rem;
-    right: -.4rem;
-    display: inline-grid;
-    place-items: center;
-    width: 1.15rem;
-    height: 1.15rem;
-    border: 1px solid #fecaca;
-    border-radius: 50%;
-    padding: 0;
-    color: #b91c1c;
-    background: #fff;
-    box-shadow: 0 2px 6px rgba(127, 29, 29, .12);
-    cursor: pointer;
-    font-size: .9rem;
-    font-weight: 700;
-    line-height: 1;
-    transition: background .16s ease, color .16s ease, transform .16s ease;
-  }
-  .student-management__domain-remove:hover,
-  .student-management__domain-remove:focus-visible {
-    color: #fff;
-    background: #dc2626;
-    outline: 2px solid rgba(220, 38, 38, .25);
-    outline-offset: 2px;
-    transform: scale(1.08);
-  }
-  .student-management__domain-add {
-    display: inline-flex;
-    align-items: center;
-    gap: .2rem;
-    min-height: 1.9rem;
-    border: 1px dashed #93c5fd;
-    border-radius: 8px;
-    padding: .25rem .55rem;
-    color: #1d4ed8;
-    background: #f3f8ff;
-    cursor: pointer;
-    font-size: .75rem;
-    font-weight: 750;
-    transition: border-color .16s ease, background .16s ease;
-  }
-  .student-management__domain-add:hover,
-  .student-management__domain-add:focus-visible {
-    border-color: #2563eb;
-    background: #dbeafe;
-    outline: none;
-  }
-  .student-domain-dialog[hidden] { display: none; }
-  .student-domain-dialog [hidden] { display: none !important; }
-  .student-domain-dialog {
-    position: fixed;
-    z-index: 1010;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    padding: 1rem;
-  }
-  .student-domain-dialog__backdrop {
-    position: absolute;
-    inset: 0;
-    border: 0;
-    background: rgba(15, 23, 42, .54);
-  }
-  .student-domain-dialog__panel {
-    position: relative;
-    width: min(27rem, 100%);
-    max-height: calc(100vh - 2rem);
-    overflow: auto;
-    border: 1px solid #bfdbfe;
-    border-radius: 18px;
-    padding: 1.3rem;
-    background: linear-gradient(145deg, #fff, #f8fbff);
-    box-shadow: 0 26px 65px rgba(15, 23, 42, .28);
-    animation: student-create-dialog-enter .22s cubic-bezier(.22, 1, .36, 1);
-  }
-  .student-domain-dialog__icon {
-    display: inline-grid;
-    place-items: center;
-    width: 2.65rem;
-    height: 2.65rem;
-    border-radius: 13px;
-    color: #1d4ed8;
-    background: #dbeafe;
-    font-size: 1.2rem;
-  }
-  .student-domain-dialog.is-remove .student-domain-dialog__icon {
-    color: #b91c1c;
-    background: #fee2e2;
-  }
-  .student-domain-dialog__close {
-    position: absolute;
-    top: 1rem;
-    right: 1rem;
-    display: inline-grid;
-    place-items: center;
-    width: 2rem;
-    height: 2rem;
-    border: 1px solid #e2e8f0;
-    border-radius: 50%;
-    color: #64748b;
-    background: #fff;
-    cursor: pointer;
-  }
-  .student-domain-dialog__close:hover,
-  .student-domain-dialog__close:focus-visible { color: #1d4ed8; background: #eff6ff; outline: none; }
-  .student-domain-dialog__title { margin: .8rem 0 .35rem; color: #0f172a; font-size: 1.2rem; }
-  .student-domain-dialog__description { margin: 0; color: #475569; font-size: .88rem; line-height: 1.6; }
-  .student-domain-dialog__selected {
-    margin-top: 1rem;
-    border: 1px solid #e2e8f0;
-    border-radius: 10px;
-    padding: .7rem .8rem;
-    color: #1e293b;
-    background: #fff;
-    font-size: .88rem;
-    font-weight: 700;
-  }
-  .student-domain-dialog__selected small { margin-left: .4rem; color: #64748b; font-weight: 400; }
-  .student-domain-dialog__field { display: grid; gap: .4rem; margin-top: 1rem; color: #334155; font-size: .85rem; font-weight: 700; }
-  .student-domain-dialog__field select { width: 100%; }
-  .student-domain-dialog__note {
-    display: flex;
-    align-items: flex-start;
-    gap: .45rem;
-    margin-top: 1rem;
-    border: 1px solid #dbeafe;
-    border-radius: 10px;
-    padding: .7rem .8rem;
-    color: #475569;
-    background: #f1f7ff;
-    font-size: .78rem;
-    line-height: 1.5;
-  }
-  .student-domain-dialog__error { margin: .8rem 0 0; color: #b91c1c; font-size: .82rem; line-height: 1.5; }
-  .student-domain-dialog__actions { display: flex; justify-content: flex-end; gap: .55rem; margin-top: 1.2rem; }
-  .student-domain-dialog__actions .button { margin: 0; }
-  .student-domain-dialog__actions .button.student-domain-dialog__confirm.is-danger {
-    border-color: #dc2626;
-    background: #dc2626;
-  }
-  .student-domain-dialog__actions .button.student-domain-dialog__confirm.is-danger:hover,
-  .student-domain-dialog__actions .button.student-domain-dialog__confirm.is-danger:focus-visible {
-    border-color: #b91c1c;
-    background: #b91c1c;
-  }
-  .student-domain-dialog__confirm:disabled { cursor: wait; opacity: .7; }
-  .student-management__sort {
-    display: flex;
-    align-items: center;
-    gap: .5rem;
-    flex: 0 0 auto;
-  }
-  .student-management__sort-direction {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 2.25rem;
-    min-height: 2.25rem;
-    border: 1px solid #cbd5e1;
-    border-radius: 8px;
-    padding: 0;
-    background: #fff;
-    color: #2563eb;
-    cursor: pointer;
-    font-size: 1.05rem;
-    font-weight: 800;
-  }
-  .student-management__sort-direction:hover,
-  .student-management__sort-direction:focus-visible {
-    border-color: #60a5fa;
-    background: #eff6ff;
-    outline: none;
-  }
-  .student-management__sort label {
-    display: flex;
-    align-items: center;
-    gap: .45rem;
-    color: #475569;
-    font-size: .83rem;
-    font-weight: 700;
-    white-space: nowrap;
-  }
-  .student-management__sort select {
-    min-height: 2.25rem;
-    border: 1px solid #cbd5e1;
-    border-radius: 8px;
-    padding: .32rem .45rem;
-    background: #fff;
-    color: #334155;
-  }
-  .student-management__search {
-    width: min(21rem, 100%);
-    margin-bottom: 1rem;
-  }
-  .student-management__search .textbox { width: 100%; }
-  .student-management__list {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: .65rem;
-  }
-  .student-note-row {
-    display: grid;
-    gap: .65rem;
-  }
-  .student-note {
-    position: relative;
-    display: grid;
-    grid-template-columns: minmax(11.5rem, 1.1fr) minmax(9rem, .75fr) minmax(17rem, 1.3fr) auto;
-    align-items: center;
-    gap: 1rem;
-    min-height: 5.7rem;
-    overflow: hidden;
-    border: 1px solid rgba(148, 163, 184, .35);
-    border-radius: 10px;
-    padding: .85rem 1rem;
-    background: linear-gradient(90deg, #fff 0%, #f8fbff 100%);
-    color: #334155;
-    text-decoration: none;
-    box-shadow: 0 6px 16px rgba(15, 23, 42, .08);
-    transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
-  }
-  a.student-note,
-  a.student-note:visited,
-  a.student-note:hover,
-  a.student-note:focus,
-  a.student-note:focus-visible,
-  a.student-note:active {
-    text-decoration: none;
-  }
-  .student-note::before {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: 4px;
-    background: #60a5fa;
-    content: '';
-  }
-  .student-note:hover,
-  .student-note:focus-visible {
-    z-index: 1;
-    border-color: #60a5fa;
-    box-shadow: 0 12px 24px rgba(37, 99, 235, .17);
-    color: #0f172a;
-    outline: none;
-    transform: translateY(-2px);
-  }
-  .student-note.is-selected {
-    border: 2px solid #2563eb;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, .14), 0 12px 24px rgba(37, 99, 235, .18);
-  }
-  .student-note__head {
-    display: flex;
-    align-items: center;
-    gap: .65rem;
-    min-width: 0;
-  }
-  .student-note__avatar {
-    width: 2.65rem;
-    height: 2.65rem;
-    flex: 0 0 auto;
-    border: 2px solid #e0ecff;
-    border-radius: 50%;
-    object-fit: cover;
-  }
-  .student-note__name {
-    overflow: hidden;
-    color: #0f172a;
-    font-size: 1rem;
-    font-weight: 800;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .student-note__uname {
-    overflow: hidden;
-    margin-top: .1rem;
-    color: #64748b;
-    font-size: .78rem;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .student-note__profile {
-    display: grid;
-    gap: .24rem;
-    min-width: 0;
-    color: #64748b;
-    font-size: .78rem;
-    line-height: 1.35;
-  }
-  .student-note__profile span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .student-note__activity {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: .55rem;
-    min-width: 0;
-  }
-  .student-note__metric {
-    display: grid;
-    gap: .12rem;
-    min-width: 0;
-  }
-  .student-note__metric-label {
-    color: #64748b;
-    font-size: .72rem;
-  }
-  .student-note__metric-value {
-    overflow: hidden;
-    color: #1e293b;
-    font-size: .8rem;
-    font-weight: 700;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .student-note__metric-value strong {
-    color: #2563eb;
-    font-size: 1rem;
-  }
-  .student-note__metric-value small {
-    color: #64748b;
-    font-size: .71rem;
-    font-weight: 400;
-  }
-  .student-note__edit {
-    color: #2563eb;
-    font-size: .77rem;
-    font-weight: 800;
-    white-space: nowrap;
-  }
-  .student-management__empty {
-    border: 1px dashed #cbd5e1;
-    border-radius: 12px;
-    padding: 2rem 1rem;
-    color: #64748b;
-    text-align: center;
-  }
-  .student-create-dialog[hidden] { display: none; }
-  .student-create-dialog {
-    position: fixed;
-    z-index: 1000;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    padding: 1.2rem;
-  }
-  .student-create-dialog__backdrop {
-    position: absolute;
-    inset: 0;
-    border: 0;
-    background: rgba(15, 23, 42, .48);
-    cursor: default;
-  }
-  .student-create-dialog__panel {
-    position: relative;
-    width: min(42rem, 100%);
-    max-height: min(44rem, calc(100vh - 2.4rem));
-    overflow: auto;
-    border: 1px solid rgba(191, 219, 254, .9);
-    border-radius: 18px;
-    background: linear-gradient(145deg, #fff 0%, #f8fbff 100%);
-    box-shadow: 0 28px 70px rgba(15, 23, 42, .28);
-    animation: student-create-dialog-enter .22s cubic-bezier(.22, 1, .36, 1);
-  }
-  .student-create-dialog__header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 1.2rem 1.25rem 1rem;
-    border-bottom: 1px solid #e3edf9;
-    background: linear-gradient(135deg, #eaf4ff, #fff 67%, #f9f1ff);
-  }
-  .student-create-dialog__eyebrow {
-    margin: 0 0 .2rem;
-    color: #2563eb;
-    font-size: .7rem;
-    font-weight: 850;
-    letter-spacing: .08em;
-    text-transform: uppercase;
-  }
-  .student-create-dialog__header h2 { margin: 0; color: #0f172a; font-size: 1.28rem; }
-  .student-create-dialog__header p:not(.student-create-dialog__eyebrow) { margin: .3rem 0 0; color: #64748b; font-size: .82rem; line-height: 1.45; }
-  .student-create-dialog__close {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 2rem;
-    height: 2rem;
-    flex: 0 0 auto;
-    border: 1px solid #d7e2f0;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, .8);
-    color: #64748b;
-    cursor: pointer;
-    transition: color .16s ease, background .16s ease;
-  }
-  .student-create-dialog__close:hover,
-  .student-create-dialog__close:focus-visible { color: #1d4ed8; background: #eff6ff; outline: none; }
-  .student-create-dialog__form {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: .85rem 1rem;
-    padding: 1.1rem 1.25rem 1.25rem;
-  }
-  .student-create-dialog__field { min-width: 0; }
-  .student-create-dialog__field > span {
-    display: block;
-    margin-bottom: .35rem;
-    color: #475569;
-    font-size: .82rem;
-    font-weight: 750;
-  }
-  .student-create-dialog__required { color: #dc2626; }
-  .student-create-dialog__field .textbox { width: 100%; }
-  .student-create-dialog__wide { grid-column: 1 / -1; }
-  .student-create-dialog__tip {
-    display: flex;
-    align-items: flex-start;
-    gap: .45rem;
-    border: 1px solid #dbeafe;
-    border-radius: 10px;
-    padding: .65rem .72rem;
-    color: #466684;
-    background: #f4f9ff;
-    font-size: .78rem;
-    line-height: 1.45;
-  }
-  .student-create-dialog__tip .icon { flex: 0 0 auto; color: #3b82f6; }
-  .student-create-dialog__actions {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: .6rem;
-    flex-wrap: wrap;
-    margin-top: .1rem;
-  }
-  body.student-create-dialog-open,
-  body.student-domain-dialog-open { overflow: hidden; }
-  @keyframes student-create-dialog-enter {
-    from { opacity: 0; transform: translateY(.7rem) scale(.985); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-  }
-  @keyframes student-management-editor-expand {
-    from { opacity: 0; transform: translateY(-.35rem); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-  @media (max-width: 70em) {
-    .student-note {
-      grid-template-columns: minmax(11.5rem, 1fr) minmax(9rem, 1fr) auto;
-    }
-    .student-note__activity {
-      grid-column: 1 / -2;
-      border-top: 1px solid #e2e8f0;
-      padding-top: .65rem;
-    }
-  }
-  @media (max-width: 42em) {
-    .student-management__hero { display: block; }
-    .student-management__count { display: inline-block; margin-top: .75rem; }
-    .student-management__form { grid-template-columns: 1fr; }
-    .student-management__roster-heading { display: block; }
-    .student-management__sort { width: 100%; margin-top: .8rem; }
-    .student-management__sort label { flex: 1; }
-    .student-management__sort select { flex: 1; min-width: 0; }
-    .student-management__domains-row { align-items: flex-start; }
-    .student-domain-dialog { padding: .65rem; }
-    .student-domain-dialog__panel { padding: 1rem; }
-    .student-domain-dialog__actions .button { flex: 1; }
-    .student-management__cpp-mode-options { grid-template-columns: 1fr; }
-    .student-create-dialog { padding: .65rem; }
-    .student-create-dialog__form { grid-template-columns: 1fr; }
-    .student-create-dialog__wide { grid-column: auto; }
-    .student-note {
-      grid-template-columns: auto minmax(0, 1fr) auto;
-      gap: .7rem;
-    }
-    .student-note__profile { grid-column: 2 / 3; }
-    .student-note__activity {
-      grid-column: 1 / -1;
-      border-top: 1px solid #e2e8f0;
-      padding-top: .65rem;
-    }
-  }
-</style>
-
-<div class="student-management">
-  <section class="student-management__hero">
-    <div>
-      <h1>{{ _('学员管理') }}</h1>
-      <p>{{ _('所有域内的普通学员会直接显示在下方。默认按全域刷题量排序，可按近期活动调整。') }}</p>
-    </div>
-    <span class="student-management__count">{{ students.length }} {{ _('位学员') }}</span>
-  </section>
-
-  {% if saved %}
-    <div class="student-management__success">{{ _('学员操作已完成。') }}</div>
-  {% endif %}
-
-  <section class="student-management__roster">
-    <div class="student-management__roster-heading">
-      <div>
-        <div class="student-management__roster-title">
-          <h2>{{ _('学员列表') }}</h2>
-          <button class="student-management__add-student" type="button" data-student-add-open>
-            <span class="icon icon-add" aria-hidden="true"></span>{{ _('增加学员') }}
-          </button>
-        </div>
-        <p>{{ _('输入姓名、用户名、UID、邮箱、学校或学号即可筛选。') }}</p>
+{% extends "layout/basic.html" %}
+{% block content %}
+<div class="row student-management-page"><div class="columns">
+<div class="student-management" data-student-management>
+  <nav class="student-management__breadcrumb" aria-label="管理导航"><a href="{{ url('manage_dashboard') }}">← 控制面板</a><span>·</span><a href="{{ url('manage_training_dashboard') }}">训练看板</a></nav>
+  <header class="student-management__hero">
+    <div><p class="student-management__eyebrow">教学管理 · 学员</p><h1>了解每个孩子，安排下一步</h1><p>管理学员资料与学习设置，让每日问答成为刚刚好的巩固。</p></div>
+    <button class="student-management__add-student" type="button" data-student-add-open><span class="icon icon-add" aria-hidden="true"></span>增加学员</button>
+  </header>
+  {% if saved %}<div class="student-management__success" role="status">学员设置已保存。</div>{% endif %}
+  <div class="student-management__workspace">
+    <section class="student-management__roster" aria-label="学员名册">
+      <div class="student-management__roster-heading"><h2>学员名册</h2><span class="student-management__count" data-student-visible-count>{{ students.length }} 位</span></div>
+      <label class="student-management__search"><span class="student-sr-only">搜索学员</span><input class="textbox" type="search" data-student-search placeholder="搜索姓名、账号、UID…" autocomplete="off"></label>
+      <div class="student-roster-filters">
+        <label><span class="student-sr-only">按课堂筛选</span><select class="textbox" data-student-domain-filter><option value="">全部课堂</option>{% for item in allDomains %}<option value="{{ item.id }}" data-domain-name="{{ item.name }}">{{ item.name }}</option>{% endfor %}</select></label>
+        <label><span class="student-sr-only">按每日问答状态筛选</span><select class="textbox" data-student-quiz-filter><option value="">全部问答状态</option><option value="enabled">问答已开启</option><option value="disabled">问答未开启</option></select></label>
       </div>
       <form method="get" class="student-management__sort" data-student-sort-form>
         {% if selectedStudent %}<input type="hidden" name="uid" value="{{ selectedStudent.uid }}">{% endif %}
         <input type="hidden" name="order" value="{{ order }}" data-student-sort-order>
-        <button class="student-management__sort-direction" type="button" data-student-sort-direction aria-label="{{ _('切换排序方向') }}" title="{{ _('切换排序方向') }}">
-          <span data-student-sort-arrow aria-hidden="true">{% if order == 'asc' %}↑{% else %}↓{% endif %}</span>
-        </button>
-        <label>
-          <span>{{ _('排序') }}</span>
-          <select name="sort" data-student-sort-select>
-            <option value="submit"{% if sort == 'submit' %} selected{% endif %}>{{ _('刷题量') }}</option>
-            <option value="login"{% if sort == 'login' %} selected{% endif %}>{{ _('最近登录') }}</option>
-            <option value="practice"{% if sort == 'practice' %} selected{% endif %}>{{ _('最近刷题') }}</option>
-          </select>
-        </label>
+        <label><span>排序</span><select name="sort" data-student-sort-select><option value="submit"{% if sort == 'submit' %} selected{% endif %}>提交次数</option><option value="login"{% if sort == 'login' %} selected{% endif %}>最近登录</option><option value="practice"{% if sort == 'practice' %} selected{% endif %}>最近练习</option></select></label>
+        <button class="student-management__sort-direction" type="button" data-student-sort-direction aria-label="切换排序方向"><span data-student-sort-arrow aria-hidden="true">{% if order == 'asc' %}↑{% else %}↓{% endif %}</span></button>
       </form>
-    </div>
-    {% if students.length %}
-      <div class="student-management__search">
-        <input class="textbox" type="search" data-student-search placeholder="{{ _('筛选学员') }}" autocomplete="off">
-      </div>
+      <div class="student-editor-feedback" data-student-list-feedback role="status" hidden></div>
       <div class="student-management__list" data-student-notes>
         {% for student in students %}
-          <div class="student-note-row" data-student-note-row>
-            <a class="student-note{% if selectedStudent and selectedStudent.uid == student.uid %} is-selected{% endif %}" href="{{ url('manage_user_management', query={uid: student.uid, sort: sort, order: order}) }}#student-editor" data-student-note data-student-search-text="{{ student.searchText }}" aria-expanded="{% if selectedStudent and selectedStudent.uid == student.uid %}true{% else %}false{% endif %}">
-              <div class="student-note__head">
-                <img class="student-note__avatar" loading="lazy" src="{{ avatarUrl(student.avatar|default('')) }}" alt="">
-                <div>
-                  <div class="student-note__name">{{ student.displayName }}<span class="student-note__level{% if student.studentLevel == 9 %} student-note__level--max{% endif %}">{% if student.studentLevel == 9 %}MAX{% else %}{{ student.studentLevel }} 级{% endif %}</span></div>
-                  <div class="student-note__uname">@{{ student.uname }}</div>
-                </div>
-              </div>
-              <div class="student-note__profile">
-                <span>UID {{ student.uid }}</span>
-                {% if student.studentId %}<span>{{ _('学号') }}：{{ student.studentId }}</span>{% endif %}
-                {% if student.school %}<span>{{ student.school }}</span>{% endif %}
-                {% if not student.studentId and not student.school %}<span>{{ student.mail }}</span>{% endif %}
-                {% if student.domainNames.length %}<span>{{ _('所在域') }}：{{ student.domainNames|join('、') }}</span>{% endif %}
-              </div>
-              <div class="student-note__activity">
-                <span class="student-note__metric">
-                  <span class="student-note__metric-label">{{ _('刷题量') }}</span>
-                  <span class="student-note__metric-value"><strong>{{ student.submitCount }}</strong> <small>{{ _('次提交') }} · AC {{ student.acceptedCount }}</small></span>
-                </span>
-                <span class="student-note__metric">
-                  <span class="student-note__metric-label">{{ _('最近登录') }}</span>
-                  <span class="student-note__metric-value">{% if student.loginAt %}{{ datetimeSpan(student.loginAt, false)|safe }}{% else %}-{% endif %}</span>
-                </span>
-                <span class="student-note__metric">
-                  <span class="student-note__metric-label">{{ _('最近刷题') }}</span>
-                  <span class="student-note__metric-value">{% if student.lastSubmitAt %}{{ datetimeSpan(student.lastSubmitAt, false)|safe }}{% else %}-{% endif %}</span>
-                </span>
-              </div>
-              <span class="student-note__edit"><span class="icon icon-edit"></span> {{ _('编辑') }}</span>
-            </a>
-            {% if selectedStudent and selectedStudent.uid == student.uid %}
-              <section class="student-management__editor student-management__editor--inline" id="student-editor" data-student-editor>
+        <div class="student-note-row" data-student-note-row>
+          <a class="student-note{% if selectedStudent and selectedStudent.uid == student.uid %} is-selected{% endif %}" href="{{ url('manage_user_management', query={uid: student.uid, sort: sort, order: order}) }}" data-student-note data-student-uid="{{ student.uid }}" data-student-search-text="{{ student.searchText }}" data-student-domains="{{ student.domainIds|default([])|json }}" data-student-domain-names="{{ student.domainNames|json }}" data-student-quiz-enabled="{{ 'true' if student.dailyQuizEnabled else 'false' }}" aria-controls="student-detail-host" aria-expanded="{{ 'true' if selectedStudent and selectedStudent.uid == student.uid else 'false' }}">
+            <img class="student-note__avatar" loading="lazy" src="{{ avatarUrl(student.avatar|default('')) }}" alt="">
+            <div class="student-note__identity"><strong data-student-display-name>{{ student.displayName }}</strong><span>@{{ student.uname }} · UID {{ student.uid }}</span></div>
+            <span class="student-note__level{% if student.studentLevel == 9 %} student-note__level--max{% endif %}">{% if student.studentLevel == 9 %}MAX{% else %}{{ student.studentLevel }} 级{% endif %}</span>
+            <div class="student-note__domains">{{ student.domainNames|join(' · ') }}</div>
+            {% if student.dailyQuizEnabled %}<span class="student-note__today">{% if student.todayDailyQuiz %}{% if student.todayDailyQuiz.completed %}今日已完成 · {{ student.todayDailyQuiz.correctCount }}/{{ student.todayDailyQuiz.total }} 题答对{% else %}今日待完成 · 已答 {{ student.todayDailyQuiz.answered }}/{{ student.todayDailyQuiz.total }} 题{% endif %}{% else %}今日尚未开始{% endif %}</span>{% endif %}
+            <div class="student-note__summary"><span>{{ student.submitCount }} 次提交 <i>·</i> AC {{ student.acceptedCount }}</span><span class="student-note__quiz{% if student.dailyQuizEnabled %} is-enabled{% endif %}" data-student-quiz-badge>{{ '每日问答已开启' if student.dailyQuizEnabled else '每日问答未开启' }}</span></div>
+          </a>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="student-management__empty" data-student-empty{% if students.length %} hidden{% endif %}><strong>没有匹配的学员</strong><p>试试其他关键词，或调整筛选条件。</p><button type="button" class="student-text-button" data-student-clear-filters>清除筛选</button></div>
+    </section>
+    <div id="student-detail-host" class="student-detail-host" data-student-detail-host>
+      {% if selectedStudent %}
+<section class="student-management__editor" id="student-editor" data-student-editor data-student-uid="{{ selectedStudent.uid }}">
                 <div class="student-management__editor-heading">
                   <div>
-                    <h2>{{ _('编辑学员信息') }}</h2>
+                    <h2>{{ selectedStudent.displayName }}</h2>
                     <p>UID {{ selectedStudent.uid }} · @{{ selectedStudent.uname }}</p>
                   </div>
                   <img class="student-management__editor-avatar" src="{{ avatarUrl(selectedStudent.avatar|default('')) }}" alt="{{ selectedStudent.displayName }}">
                 </div>
-                <form method="post" class="student-management__form">
+                <nav class="student-editor-tabs" role="tablist" aria-label="学员设置">
+  <button type="button" role="tab" data-student-tab="profile" id="student-tab-profile" aria-controls="student-panel-profile" aria-selected="true">基本资料</button>
+  <button type="button" role="tab" data-student-tab="learning" id="student-tab-learning" aria-controls="student-panel-learning" aria-selected="false" tabindex="-1">学习设置</button>
+  <button type="button" role="tab" data-student-tab="daily" id="student-tab-daily" aria-controls="student-panel-daily" aria-selected="false" tabindex="-1">每日问答</button>
+</nav>
+<div class="student-editor-feedback" data-student-feedback role="status" hidden></div>
+<form method="post" class="student-management__form" data-student-profile-form>
                   <input type="hidden" name="operation" value="edit_student">
                   <input type="hidden" name="uid" value="{{ selectedStudent.uid }}">
                   <input type="hidden" name="sort" value="{{ sort }}">
                   <input type="hidden" name="order" value="{{ order }}">
+<div class="student-editor-panel" id="student-panel-profile" role="tabpanel" aria-labelledby="student-tab-profile" data-student-panel="profile">
                   <div class="student-management__domains-field">
                     <div class="student-management__domains-row">
                       <span class="student-management__domains-label" id="student-default-domain-label">{{ _('已加入的域') }}</span>
@@ -989,6 +110,9 @@
                     <span>{{ _('学校') }}</span>
                     <input class="textbox" name="school" value="{{ selectedStudent.school|default('') }}" autocomplete="organization">
                   </label>
+</div>
+<div class="student-editor-panel" id="student-panel-learning" role="tabpanel" aria-labelledby="student-tab-learning" data-student-panel="learning" hidden>
+<p class="student-editor-panel__intro">按学员当前阶段调整学习方式，这些设置适用于该学员的所有课堂。</p>
                   <label>
                     <span>{{ _('学员等级') }}</span>
                     <select class="textbox" name="studentLevel" required>
@@ -1028,9 +152,10 @@
                       </label>
                     </div>
                   </div>
+</div>
                   <div class="student-management__wide student-management__form-actions">
                     <button class="rounded primary button" type="submit"><span class="icon icon-save"></span>{{ _('保存学员信息') }}</button>
-                    <a class="rounded button" href="{{ url('manage_user_management', query={sort: sort, order: order}) }}">{{ _('取消') }}</a>
+                    <a class="rounded button" href="{{ url('manage_user_management', query={sort: sort, order: order}) }}" data-student-editor-cancel>{{ _('取消') }}</a>
                     <span class="student-management__hint">{{ _('用户名必须保持唯一；邮箱如填写也必须唯一。显示姓名保存在选定的默认域中。') }}</span>
                   </div>
                 </form>
@@ -1064,9 +189,9 @@
                     </form>
                   </section>
                 </div>
-                <details class="student-management__password">
-                  <summary>{{ _('需要重置登录密码？') }}</summary>
-                  <form method="post" class="student-management__password-form">
+                <details class="student-management__password" data-student-extra="profile">
+                  <summary>{{ _('重置登录密码') }}</summary>
+                  <form method="post" class="student-management__password-form" data-student-password-form>
                     <input type="hidden" name="operation" value="reset_password">
                     <input type="hidden" name="uid" value="{{ selectedStudent.uid }}">
                     <input type="hidden" name="sort" value="{{ sort }}">
@@ -1082,19 +207,27 @@
                     <button class="rounded button" type="submit">{{ _('重置密码') }}</button>
                   </form>
                 </details>
-              </section>
-            {% endif %}
-          </div>
-        {% endfor %}
-      </div>
-      <div class="student-management__empty" data-student-empty hidden>{{ _('没有匹配的学员。') }}</div>
-    {% else %}
-      <div class="student-management__empty">{{ _('所有域中还没有已加入的普通学员。') }}</div>
-    {% endif %}
-  </section>
 
+
+<div id="student-panel-daily" class="student-daily-panel" role="tabpanel" aria-labelledby="student-tab-daily" data-student-panel="daily" hidden>
+  <form data-student-daily-form data-initial="{{ selectedDailyQuiz|default({})|json }}" novalidate>
+    <input type="hidden" name="operation" value="save_daily_quiz">
+    <input type="hidden" name="uid" value="{{ selectedStudent.uid }}">
+    <div class="student-daily-loading" data-daily-content>正在准备每日问答设置…</div>
+    <div class="student-daily-feedback" data-daily-feedback role="status" hidden></div>
+    <div class="student-management__form-actions student-daily-save">
+      <span data-daily-save-note>修改后点击保存，对下一轮问答生效</span>
+      <button class="rounded primary button" type="submit" data-daily-save>保存问答设置</button>
+    </div>
+  </form>
+  <section class="student-daily-history" data-daily-history aria-label="问答学习记录"></section>
+</div>
+</section>
+      {% else %}<section class="student-management__editor student-editor-welcome"><span class="icon icon-user" aria-hidden="true"></span><h2>先选择一位学员</h2><p>在左侧找到孩子，为 TA 调整学习方式，<br>或安排每天的一小份问答。</p><span>基本资料 · 学习设置 · 每日问答</span></section>{% endif %}
+    </div>
+  </div>
   <div class="student-create-dialog" data-student-add-dialog role="dialog" aria-modal="true" aria-labelledby="student-create-title" hidden>
-    <button class="student-create-dialog__backdrop" type="button" data-student-add-close aria-label="{{ _('关闭增加学员窗口') }}"></button>
+    <button class="student-create-dialog__backdrop" type="button" data-student-add-close aria-label="{{ _('关闭增加学员窗口') }}" tabindex="-1"></button>
     <section class="student-create-dialog__panel">
       <header class="student-create-dialog__header">
         <div>
@@ -1152,6 +285,7 @@
           <span class="icon icon-info" aria-hidden="true"></span>
           <span>{{ _('创建后，学员会自动加入所选域，并将其设为默认登录域。') }}</span>
         </div>
+        <p class="student-create-dialog__wide student-editor-feedback" data-student-add-feedback role="status" hidden></p>
         <div class="student-create-dialog__actions student-create-dialog__wide">
           <button class="rounded button" type="button" data-student-add-close>{{ _('取消') }}</button>
           <button class="rounded primary button" type="submit"><span class="icon icon-add"></span>{{ _('创建学员') }}</button>
@@ -1160,287 +294,5 @@
     </section>
   </div>
 </div>
-
-<script>
-  (() => {
-    const sortForm = document.querySelector('[data-student-sort-form]');
-    const sortSelect = document.querySelector('[data-student-sort-select]');
-    const sortOrder = document.querySelector('[data-student-sort-order]');
-    const sortDirection = document.querySelector('[data-student-sort-direction]');
-    const sortArrow = document.querySelector('[data-student-sort-arrow]');
-    const syncSortDirection = () => {
-      if (!sortOrder || !sortDirection || !sortArrow) return;
-      const ascending = sortOrder.value === 'asc';
-      sortArrow.textContent = ascending ? '↑' : '↓';
-      const label = ascending ? '切换为从高到低排序' : '切换为从低到高排序';
-      sortDirection.setAttribute('aria-label', label);
-      sortDirection.setAttribute('title', label);
-    };
-    if (sortForm && sortSelect && sortOrder && sortDirection) {
-      syncSortDirection();
-      sortSelect.addEventListener('change', () => sortForm.requestSubmit());
-      sortDirection.addEventListener('click', () => {
-        sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc';
-        syncSortDirection();
-        sortForm.requestSubmit();
-      });
-    }
-
-    const addDialog = document.querySelector('[data-student-add-dialog]');
-    const addOpen = document.querySelector('[data-student-add-open]');
-    const addClose = Array.from(document.querySelectorAll('[data-student-add-close]'));
-    const addForm = document.querySelector('[data-student-add-form]');
-    const addFirstField = document.querySelector('[data-student-add-first-field]');
-    const addPassword = document.querySelector('[data-student-add-password]');
-    const addVerifyPassword = document.querySelector('[data-student-add-verify-password]');
-    let addDialogPreviousFocus = null;
-    const syncAddPassword = () => {
-      if (!addPassword || !addVerifyPassword) return;
-      addVerifyPassword.setCustomValidity(
-        addPassword.value === addVerifyPassword.value ? '' : '两次输入的密码不一致。',
-      );
-    };
-    const closeAddDialog = () => {
-      if (!addDialog || addDialog.hidden) return;
-      addDialog.hidden = true;
-      document.body.classList.remove('student-create-dialog-open');
-      addDialogPreviousFocus?.focus({ preventScroll: true });
-    };
-    const openAddDialog = () => {
-      if (!addDialog) return;
-      addDialogPreviousFocus = document.activeElement;
-      addDialog.hidden = false;
-      document.body.classList.add('student-create-dialog-open');
-      window.requestAnimationFrame(() => addFirstField?.focus());
-    };
-    if (addOpen) addOpen.addEventListener('click', openAddDialog);
-    addClose.forEach((button) => button.addEventListener('click', closeAddDialog));
-    if (addPassword && addVerifyPassword) {
-      addPassword.addEventListener('input', syncAddPassword);
-      addVerifyPassword.addEventListener('input', syncAddPassword);
-    }
-    if (addForm) addForm.addEventListener('submit', (event) => {
-      syncAddPassword();
-      if (!addForm.reportValidity()) event.preventDefault();
-    });
-
-    let domainDialogPreviousFocus = null;
-    const domainDialogError = (dialog, message) => {
-      const error = dialog.querySelector('[data-student-domain-error]');
-      error.textContent = message;
-      error.hidden = !message;
-    };
-    const closeDomainDialog = () => {
-      const dialog = document.querySelector('[data-student-domain-dialog]:not([hidden])');
-      if (!dialog || dialog.dataset.busy === 'true') return;
-      dialog.hidden = true;
-      document.body.classList.remove('student-domain-dialog-open');
-      domainDialogPreviousFocus?.focus({ preventScroll: true });
-      domainDialogPreviousFocus = null;
-    };
-    const openDomainDialog = (trigger, operation) => {
-      const editor = trigger.closest('[data-student-editor]');
-      const dialog = editor?.querySelector('[data-student-domain-dialog]');
-      if (!dialog) return;
-      const joinedIds = new Set(Array.from(editor.querySelectorAll('.student-management__domain-chip input[name="defaultDomain"]'))
-        .map((input) => input.value.toLowerCase()));
-      const title = dialog.querySelector('[data-student-domain-title]');
-      const description = dialog.querySelector('[data-student-domain-description]');
-      const note = dialog.querySelector('[data-student-domain-note]');
-      const selected = dialog.querySelector('[data-student-domain-selected]');
-      const field = dialog.querySelector('[data-student-domain-field]');
-      const select = dialog.querySelector('[data-student-domain-select]');
-      const confirmButton = dialog.querySelector('[data-student-domain-confirm]');
-      const code = dialog.querySelector('[data-student-domain-code]');
-      const icon = dialog.querySelector('[data-student-domain-icon]');
-      dialog.querySelector('[data-student-domain-operation]').value = operation;
-      dialog.classList.toggle('is-remove', operation === 'remove_student_domain');
-      domainDialogError(dialog, '');
-      confirmButton.disabled = false;
-      const studentName = dialog.dataset.studentName;
-      if (operation === 'remove_student_domain') {
-        const domainName = trigger.dataset.domainName;
-        const domainId = trigger.dataset.domainId;
-        code.value = domainId;
-        title.textContent = '移出这个域？';
-        description.textContent = `确定将 ${studentName} 从「${domainName}」移出吗？`;
-        note.textContent = '移出后将无法访问该域。原有提交、成绩等数据会保留，再次加入后仍可查看。';
-        selected.textContent = `${domainName} · ${domainId}`;
-        selected.hidden = false;
-        field.hidden = true;
-        icon.className = 'icon icon-close';
-        confirmButton.textContent = '确认移出';
-        confirmButton.classList.add('is-danger');
-        if (Number(dialog.dataset.studentJoinedCount) <= 1) {
-          domainDialogError(dialog, '学员至少需要保留一个域。请先加入新域，再移出当前域。');
-          confirmButton.disabled = true;
-        }
-      } else {
-        code.value = '';
-        title.textContent = '加入新域';
-        description.textContent = `为 ${studentName} 选择要加入的域。`;
-        note.textContent = '加入后即可访问该域，并可继续使用曾在此域保存的提交和成绩。';
-        selected.hidden = true;
-        field.hidden = false;
-        icon.className = 'icon icon-add';
-        confirmButton.textContent = '确认加入';
-        confirmButton.classList.remove('is-danger');
-        const available = Array.from(select.options).filter((option) => {
-          if (!option.value) return false;
-          const isJoined = joinedIds.has(option.value.toLowerCase());
-          option.disabled = isJoined;
-          option.hidden = isJoined;
-          return !isJoined;
-        });
-        select.value = '';
-        if (!available.length) {
-          domainDialogError(dialog, '这位学员已加入全部可选域。');
-          confirmButton.disabled = true;
-        }
-      }
-      domainDialogPreviousFocus = trigger;
-      dialog.hidden = false;
-      document.body.classList.add('student-domain-dialog-open');
-      window.requestAnimationFrame(() => {
-        if (operation === 'add_student_domain' && !confirmButton.disabled) select.focus();
-        else dialog.querySelector('.student-domain-dialog__close').focus();
-      });
-    };
-    document.addEventListener('click', (event) => {
-      const remove = event.target.closest('[data-student-domain-remove]');
-      if (remove) return openDomainDialog(remove, 'remove_student_domain');
-      const add = event.target.closest('[data-student-domain-add-open]');
-      if (add) return openDomainDialog(add, 'add_student_domain');
-      if (event.target.closest('[data-student-domain-close]')) closeDomainDialog();
-    });
-    document.addEventListener('submit', async (event) => {
-      const form = event.target.closest('[data-student-domain-form]');
-      if (!form) return;
-      event.preventDefault();
-      const dialog = form.closest('[data-student-domain-dialog]');
-      if (dialog.dataset.busy === 'true') return;
-      const operation = form.querySelector('[data-student-domain-operation]').value;
-      const code = form.querySelector('[data-student-domain-code]');
-      if (operation === 'add_student_domain') code.value = form.querySelector('[data-student-domain-select]').value;
-      if (!code.value) {
-        domainDialogError(dialog, '请先选择一个域。');
-        form.querySelector('[data-student-domain-select]').focus();
-        return;
-      }
-      const confirmButton = form.querySelector('[data-student-domain-confirm]');
-      const buttonText = confirmButton.textContent;
-      domainDialogError(dialog, '');
-      dialog.dataset.busy = 'true';
-      confirmButton.disabled = true;
-      confirmButton.textContent = operation === 'remove_student_domain' ? '正在移出…' : '正在加入…';
-      try {
-        const response = await fetch(form.action || window.location.href, {
-          method: 'POST',
-          credentials: 'same-origin',
-          body: new FormData(form),
-        });
-        if (!response.ok || !response.redirected || new URL(response.url).pathname !== window.location.pathname) {
-          const page = new DOMParser().parseFromString(await response.text(), 'text/html');
-          const serverMessage = page.querySelector('.error__text-container > p')?.textContent.trim();
-          throw new Error(response.status === 401 || response.status === 403
-            ? '登录状态已变化，请刷新页面后重试。'
-            : serverMessage || '操作没有完成，请稍后重试。');
-        }
-        window.location.assign(response.url);
-      } catch (error) {
-        domainDialogError(dialog, error.message || '操作没有完成，请稍后重试。');
-        confirmButton.disabled = false;
-        confirmButton.textContent = buttonText;
-      } finally {
-        delete dialog.dataset.busy;
-      }
-    });
-
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') {
-        closeAddDialog();
-        closeDomainDialog();
-      }
-      const dialog = document.querySelector('[data-student-domain-dialog]:not([hidden])');
-      if (!dialog || event.key !== 'Tab') return;
-      const focusable = Array.from(dialog.querySelectorAll('button:not([disabled]), select:not([disabled])'))
-        .filter((element) => !element.closest('[hidden]') && element.tabIndex !== -1);
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    });
-
-    const input = document.querySelector('[data-student-search]');
-    const cards = Array.from(document.querySelectorAll('[data-student-note]'));
-    const empty = document.querySelector('[data-student-empty]');
-    const filter = () => {
-      if (!input || !empty) return;
-      const query = input.value.trim().toLocaleLowerCase();
-      let visible = 0;
-      cards.forEach((card) => {
-        const matched = !query || card.dataset.studentSearchText.includes(query);
-        const row = card.closest('[data-student-note-row]');
-        if (row) row.hidden = !matched;
-        if (matched) visible += 1;
-      });
-      empty.hidden = visible !== 0;
-    };
-    if (input && cards.length && empty) input.addEventListener('input', filter);
-
-    let editorLoading = false;
-    cards.forEach((card) => {
-      card.addEventListener('click', async (event) => {
-        if (editorLoading || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-        event.preventDefault();
-        const row = card.closest('[data-student-note-row]');
-        if (!row) return;
-        const openEditor = document.querySelector('[data-student-editor]');
-        if (card.classList.contains('is-selected') && openEditor && openEditor.parentElement === row) {
-          openEditor.remove();
-          card.classList.remove('is-selected');
-          card.setAttribute('aria-expanded', 'false');
-          const url = new URL(window.location.href);
-          url.searchParams.delete('uid');
-          url.searchParams.delete('saved');
-          url.hash = '';
-          window.history.pushState({}, '', url);
-          return;
-        }
-        const href = card.href;
-        editorLoading = true;
-        card.dataset.studentLoading = 'true';
-        card.setAttribute('aria-busy', 'true');
-        try {
-          const response = await fetch(href, { credentials: 'same-origin' });
-          if (!response.ok) throw new Error('Unable to load student editor');
-          const page = new DOMParser().parseFromString(await response.text(), 'text/html');
-          const editor = page.querySelector('[data-student-editor]');
-          if (!editor) throw new Error('Student editor is unavailable');
-          document.querySelector('[data-student-editor]')?.remove();
-          cards.forEach((item) => {
-            item.classList.remove('is-selected');
-            item.setAttribute('aria-expanded', 'false');
-          });
-          row.append(editor);
-          card.classList.add('is-selected');
-          card.setAttribute('aria-expanded', 'true');
-          window.history.pushState({}, '', href);
-        } catch {
-          window.location.assign(href);
-        } finally {
-          editorLoading = false;
-          delete card.dataset.studentLoading;
-          card.removeAttribute('aria-busy');
-        }
-      });
-    });
-  })();
-</script>
+</div></div>
 {% endblock %}

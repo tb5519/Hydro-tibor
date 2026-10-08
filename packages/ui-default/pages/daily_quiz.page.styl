@@ -1,0 +1,561 @@
+.page--daily_quiz
+  body
+    background: #f6f8fc
+  .daily-quiz
+    --quiz-blue: #3976d5
+    --quiz-ink: #25364c
+    --quiz-muted: #7d8ba0
+    min-height: 100vh
+    min-height: 100dvh
+    color: var(--quiz-ink)
+    background: radial-gradient(ellipse at 50% 0, #edf3ff 0, transparent 58%)
+    font-size: 14px
+    line-height: 1.7
+    box-sizing: border-box
+    *, *:before, *:after
+      box-sizing: border-box
+    button, input
+      font: inherit
+    button
+      cursor: pointer
+    button:disabled
+      cursor: default
+    button:focus-visible, a:focus-visible
+      outline: 3px solid #99bdf5
+      outline-offset: 4px
+    h1, h2, h3, p
+      margin: 0
+    .typo
+      font-size: 16px
+      line-height: 1.85
+      overflow-wrap: anywhere
+      > :first-child
+        margin-top: 0
+      > :last-child
+        margin-bottom: 0
+      img
+        max-width: 100%
+        height: auto
+      pre
+        max-width: 100%
+        overflow: auto
+        border-radius: 10px
+        font-size: 14px
+
+
+// Keep native form controls isolated from the shared label and button styles.
+.page--daily_quiz .daily-quiz
+  .daily-quiz__topbar
+    max-width: 1120px
+    margin: 0 auto
+    padding: 28px 32px
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 16px
+
+  .daily-quiz__brand
+    display: flex
+    align-items: center
+    gap: 12px
+    color: #486283
+    font-size: 13px
+    strong
+      color: #2a405b
+      font-size: 19px
+      letter-spacing: -.6px
+    span
+      padding-left: 12px
+      border-left: 1px solid #d9e2ed
+
+  .daily-quiz__date
+    color: var(--quiz-muted)
+    font-size: 12px
+    white-space: nowrap
+
+  .daily-quiz__main
+    max-width: 796px
+    margin: 22px auto 0
+    padding: 0 28px 40px
+
+  .daily-quiz__intro
+    margin: 0 0 25px
+    text-align: center
+    h1
+      color: #23354c
+      font-size: 30px
+      line-height: 1.4
+      font-weight: 650
+      letter-spacing: -.5px
+    p
+      margin-top: 9px
+      color: var(--quiz-muted)
+      font-size: 13px
+
+  .daily-quiz__progress-heading
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 12px
+    margin: 0 2px 10px
+    color: #7a8ca3
+    font-size: 12px
+    strong
+      color: #3d5d88
+      font-size: 13px
+      font-variant-numeric: tabular-nums
+
+  .daily-quiz__progress
+    height: 4px
+    margin-bottom: 20px
+    border-radius: 6px
+    overflow: hidden
+    background: #e2e9f3
+    > span
+      display: block
+      height: 100%
+      border-radius: inherit
+      background: #719de1
+      transition: width .25s ease
+
+  .daily-quiz__card
+    padding: 32px 36px
+    border: 1px solid #e2e8f1
+    border-radius: 22px
+    background: #fff
+    box-shadow: 0 10px 36px rgba(48, 76, 117, .045)
+
+  .daily-quiz__meta
+    display: flex
+    align-items: center
+    flex-wrap: wrap
+    gap: 8px
+    margin-bottom: 20px
+    color: #7d8ba0
+    font-size: 11px
+
+  .daily-quiz__kind
+    display: inline-flex
+    padding: 3px 9px
+    color: #4c75ae
+    background: #eef4fd
+    border-radius: 6px
+    font-weight: 600
+
+  .daily-quiz__tag
+    padding: 2px 7px
+    color: #8994a4
+    background: #f5f7fa
+    border-radius: 5px
+
+  .daily-quiz__question-number
+    margin-left: auto
+    color: #a0acbc
+    font-variant-numeric: tabular-nums
+
+  .daily-quiz__question
+    outline: none
+
+  .daily-quiz__choices
+    border: 0
+    padding: 0
+    margin: 24px 0 0
+    min-width: 0
+    legend
+      margin: 0 0 12px
+      padding: 0
+      color: var(--quiz-muted)
+      font-size: 12px
+
+  .daily-quiz__option
+    display: flex
+    font-size: inherit
+    line-height: inherit
+    color: inherit
+    align-items: flex-start
+    gap: 13px
+    position: relative
+    margin: 0 0 10px
+    padding: 15px 17px
+    border: 1px solid #e3e8f0
+    border-radius: 12px
+    background: #fff
+    cursor: pointer
+    transition: border-color .15s ease, background .15s ease
+    &:last-child
+      margin-bottom: 0
+    &:hover:not(.is-locked)
+      border-color: #b2c8e8
+      background: #f8faff
+    &:focus-within
+      outline: 3px solid #bed3f2
+      outline-offset: 2px
+    &.is-selected
+      border-color: #8fb2e6
+      background: #f0f6ff
+    &.is-locked
+      cursor: default
+    &.is-correct
+      border-color: #afd9c8
+      background: #f0faf5
+    &.is-incorrect
+      border-color: #e8ccb2
+      background: #fff8f1
+    input
+      position: absolute
+      opacity: 0
+      width: 1px
+      height: 1px
+    .typo
+      flex: 1
+      min-width: 0
+      font-size: 14px
+      line-height: 1.75
+
+  .daily-quiz__letter
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    flex: 0 0 26px
+    height: 26px
+    border: 1px solid #d9e2ee
+    border-radius: 50%
+    background: #fff
+    color: #7c8da4
+    font-size: 12px
+    font-weight: 600
+  .daily-quiz__option-note
+    align-self: center
+    flex-shrink: 0
+    color: #658776
+    font-size: 11px
+  .daily-quiz__feedback
+    margin-top: 26px
+    padding: 20px 22px
+    border-radius: 13px
+    background: #f5f8fc
+    border: 1px solid #e7edf5
+    outline: none
+    h2
+      color: #476381
+      font-size: 16px
+      font-weight: 600
+      line-height: 1.6
+    &.is-correct
+      background: #f3faf7
+      border-color: #d4e9dd
+      h2
+        color: #36886b
+    &.is-incorrect
+      background: #fffbf6
+      border-color: #eee0cc
+      h2
+        color: #a57547
+
+  .daily-quiz__feedback-heading
+    display: grid
+    grid-template-columns: 42px minmax(0, 1fr) auto
+    gap: 13px
+    align-items: center
+
+  .daily-quiz__feedback-eyebrow
+    display: block
+    margin-bottom: 3px
+    color: #91a193
+    font-size: 10px
+  .daily-quiz__feedback-icon
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    width: 42px
+    height: 42px
+    border-radius: 14px
+    background: #e0f1e8
+    color: #429674
+  .daily-quiz__checkmark
+    stroke-dasharray: 24
+    animation: daily-quiz-check .3s ease-out .12s both
+
+  .daily-quiz__award
+    padding: 7px 11px
+    border-radius: 10px
+    color: #41896e
+    background: #e3f2e9
+    white-space: nowrap
+    line-height: 1.35
+    strong
+      font-size: 23px
+      font-weight: 600
+      font-variant-numeric: tabular-nums
+    span
+      font-size: 10px
+
+  .daily-quiz__answer-summary
+    display: flex
+    flex-wrap: wrap
+    gap: 12px 28px
+    margin: 18px 0 0
+    font-size: 12px
+    > div
+      display: flex
+      align-items: center
+      gap: 9px
+    dt
+      color: #8b948d
+    dd
+      margin: 0
+      font-weight: 600
+      letter-spacing: .5px
+      &.is-correct
+        color: #3e8e70
+      &.is-incorrect
+        color: #b4885c
+
+  .daily-quiz__analysis
+    padding-top: 15px
+    margin-top: 15px
+    border-top: 1px solid #e2e8ef
+    h3
+      margin: 0 0 8px
+      color: #677c94
+      font-size: 12px
+      font-weight: 600
+    .typo
+      font-size: 14px
+      color: #546980
+
+  .daily-quiz__error
+    margin-top: 20px
+    padding: 12px 15px
+    border: 1px solid #efd2c4
+    border-radius: 10px
+    color: #a15f3e
+    background: #fff8f4
+    font-size: 12px
+    small
+      display: block
+      margin-top: 3px
+      font-size: 11px
+
+  .daily-quiz__actions
+    margin-top: 26px
+    display: flex
+    justify-content: space-between
+    align-items: center
+    gap: 16px
+    > p
+      color: #99a4b4
+      font-size: 11px
+
+  .daily-quiz__primary
+    display: inline-flex
+    justify-content: center
+    align-items: center
+    gap: 18px
+    min-height: 44px
+    padding: 11px 25px
+    border: 1px solid transparent
+    border-radius: 10px
+    background: var(--quiz-blue)
+    color: #fff !important
+    font-size: 13px
+    font-weight: 600
+    line-height: 1.5
+    transition: background .15s ease
+    &:hover:not(:disabled)
+      background: #2f67bf
+    &:disabled
+      background: #a8bfdc
+    > span[aria-hidden]
+      font-size: 18px
+
+  .daily-quiz__footnote
+    margin-top: 22px
+    text-align: center
+    color: #a0aabb
+    font-size: 11px
+
+  .daily-quiz__complete
+    padding: 48px 36px
+    text-align: center
+    h1
+      font-size: 28px
+      font-weight: 600
+      line-height: 1.5
+    > p
+      margin-top: 12px
+      color: #8190a4
+      font-size: 13px
+    .daily-quiz__primary
+      margin-top: 30px
+      min-width: 200px
+
+  .daily-quiz__complete-icon
+    display: flex
+    align-items: center
+    justify-content: center
+    width: 66px
+    height: 66px
+    margin: 0 auto 23px
+    border-radius: 22px
+    color: #4e84cf
+    background: #edf4fe
+    font-size: 28px
+
+  .daily-quiz__stats
+    display: flex
+    align-items: center
+    justify-content: center
+    gap: 40px
+    margin-top: 30px
+    > div + div
+      padding-left: 40px
+      border-left: 1px solid #e5ebf3
+    strong, span
+      display: block
+    strong
+      color: #40669b
+      font-size: 28px
+      font-weight: 500
+      font-variant-numeric: tabular-nums
+    span
+      color: #95a1b1
+      font-size: 11px
+
+  .daily-quiz__choices.is-multiple .daily-quiz__letter
+    border-radius: 7px
+
+  .daily-quiz__option.is-selected .daily-quiz__letter
+    border-color: #6495dc
+    background: #6495dc
+    color: #fff
+
+  .daily-quiz__option.is-correct .daily-quiz__letter
+    border-color: #60a88c
+    background: #60a88c
+    color: #fff
+
+  .daily-quiz__option.is-incorrect .daily-quiz__letter
+    border-color: #c78e5c
+    background: #c78e5c
+    color: #fff
+
+
+  .daily-quiz__option.is-incorrect .daily-quiz__option-note
+    color: #aa805b
+
+
+  .daily-quiz__feedback.is-incorrect .daily-quiz__feedback-eyebrow
+    color: #b49c81
+
+
+  .daily-quiz__feedback.is-correct .daily-quiz__feedback-icon
+    animation: daily-quiz-correct-pop .42s ease-out both
+
+  .daily-quiz__feedback.is-incorrect .daily-quiz__feedback-icon
+    color: #b38d60
+    background: #f6eddc
+
+
+  .daily-quiz__feedback.is-correct .daily-quiz__award
+    animation: daily-quiz-points .4s ease-out .12s both
+
+  .daily-quiz__feedback.is-incorrect .daily-quiz__award
+    color: #9a8e7b
+    background: #f3eee5
+
+  .daily-quiz__feedback.is-correct .daily-quiz__analysis
+    border-color: #dcece1
+
+  .daily-quiz__feedback.is-incorrect .daily-quiz__analysis
+    border-color: #eee3d3
+
+  @media (max-width: 600px)
+    .daily-quiz__topbar
+      padding: 20px
+    .daily-quiz__brand
+      gap: 9px
+      strong
+        font-size: 17px
+      span
+        padding-left: 9px
+        font-size: 12px
+    .daily-quiz__date
+      font-size: 11px
+    .daily-quiz__main
+      padding: 0 16px 25px
+      margin-top: 12px
+    .daily-quiz__intro
+      margin-bottom: 22px
+      h1
+        font-size: 25px
+      p
+        font-size: 12px
+    .daily-quiz__card
+      border-radius: 17px
+      padding: 25px 21px
+    .daily-quiz__option
+      padding: 13px 12px
+      gap: 10px
+      flex-wrap: wrap
+    .daily-quiz__option-note
+      width: 100%
+      padding-left: 36px
+    .daily-quiz__feedback
+      padding: 17px
+    .daily-quiz__feedback-heading
+      grid-template-columns: 34px minmax(0, 1fr)
+      gap: 10px
+      h2
+        font-size: 15px
+    .daily-quiz__feedback-icon
+      width: 34px
+      height: 34px
+      border-radius: 11px
+    .daily-quiz__award
+      grid-column: 2
+      justify-self: start
+      padding: 4px 10px
+      strong
+        font-size: 20px
+    .daily-quiz__actions
+      align-items: stretch
+      flex-direction: column-reverse
+      gap: 11px
+      > p
+        text-align: center
+    .daily-quiz__complete
+      padding: 38px 20px
+      h1
+        font-size: 24px
+
+  @media (prefers-reduced-motion: reduce)
+    .daily-quiz__progress > span, .daily-quiz__option, .daily-quiz__primary
+      transition: none
+    .daily-quiz__feedback.is-correct .daily-quiz__feedback-icon, .daily-quiz__checkmark, .daily-quiz__feedback.is-correct .daily-quiz__award
+      animation: none
+
+@keyframes daily-quiz-correct-pop
+  0%
+    opacity: 0
+    transform: scale(.82)
+  65%
+    opacity: 1
+    transform: scale(1.07)
+  100%
+    opacity: 1
+    transform: scale(1)
+
+@keyframes daily-quiz-check
+  from
+    stroke-dashoffset: 24
+  to
+    stroke-dashoffset: 0
+
+@keyframes daily-quiz-points
+  from
+    opacity: 0
+    transform: translateY(5px)
+  to
+    opacity: 1
+    transform: translateY(0)

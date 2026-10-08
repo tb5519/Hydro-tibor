@@ -1,0 +1,550 @@
+import MarkdownIt from 'markdown-it';
+
+interface QuizDomainPolicy {
+  domainId: string;
+  enabled: boolean;
+  count: number;
+  tags: string[];
+  points: number[];
+}
+interface QuizPolicy {
+  version: number;
+  enabled: boolean;
+  cooldownRounds: number;
+  domains: QuizDomainPolicy[];
+}
+interface QuizDomain {
+  id: string;
+  name: string;
+  tags: { name: string, count: number }[];
+  availableCount: number;
+  questionTags: string[][];
+  createUrl: string;
+}
+interface QuizReportItem {
+  id: string;
+  index: number;
+  domainId: string;
+  domainName: string;
+  title: string;
+  stem: string;
+  kind: string;
+  tags: string[];
+  options: string[];
+  answers: string[];
+  selected: string[] | null;
+  correct: boolean | null;
+  points: number;
+  earnedPoints: number;
+  analysis: string;
+}
+interface QuizReport {
+  day: string;
+  total: number;
+  answered: number;
+  correctCount: number;
+  wrongCount: number;
+  earnedPoints: number;
+  completed: boolean;
+  items: QuizReportItem[];
+}
+interface QuizData {
+  policy?: QuizPolicy;
+  domains?: QuizDomain[];
+  summary?: { recentSessions?: { day: string, total: number, answered: number, earnedPoints: number }[] };
+  report?: QuizReport;
+}
+
+/** Teacher-authored Markdown is rendered with raw HTML and unsafe links disabled. */
+export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boolean) => void, onUrlChange: () => void = () => {}) {
+  const doc = editor.ownerDocument;
+  const win = doc.defaultView;
+  const form = editor.querySelector<HTMLFormElement>('[data-student-daily-form]');
+  if (!form) return { isDirty: () => false, isPending: () => false };
+  const content = form.querySelector<HTMLElement>('[data-daily-content]');
+  const feedback = form.querySelector<HTMLElement>('[data-daily-feedback]');
+  const history = editor.querySelector<HTMLElement>('[data-daily-history]');
+  let data: QuizData = {};
+  try {
+    data = JSON.parse(form.dataset.initial || '{}');
+  } catch {
+    /* The empty state stays usable. */
+  }
+  const domains = data.domains || [];
+  const policy: QuizPolicy = {
+    version: 1,
+    enabled: !!data.policy?.enabled,
+    cooldownRounds: data.policy?.cooldownRounds ?? 3,
+    domains: domains.map((domain) => {
+      const saved = data.policy?.domains?.find((item) => item.domainId === domain.id);
+      return saved
+        ? { ...saved, tags: [...saved.tags], points: [...saved.points] }
+        : { domainId: domain.id, enabled: false, count: 5, tags: [], points: Array.from({ length: 5 }, () => 1) };
+    }),
+  };
+  let baseline = JSON.stringify(policy);
+  let pending = false;
+  let reportRequest = 0;
+  let reportFilter = 'all';
+  let subtab = new win.URL(win.location.href).searchParams.get('quizView') === 'settings' ? 'settings' : 'records';
+  function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = '') {
+    const node = doc.createElement(tag);
+    node.className = className;
+    if (text) node.textContent = text;
+    return node;
+  }
+  function message(text: string, error = false) {
+    feedback.textContent = text;
+    feedback.hidden = !text;
+    feedback.classList.toggle('is-error', error);
+  }
+  const markdown = new MarkdownIt({ html: false, linkify: true });
+  function questionContent(value: string) {
+    const node = el('div', 'typo student-quiz-content');
+    node.innerHTML = markdown.render(value || '');
+    return node;
+  }
+  function numberInput(value: number, min: number, max: number, label: string) {
+    const input = el('input', 'textbox');
+    input.type = 'number';
+    input.min = `${min}`;
+    input.max = `${max}`;
+    input.step = '1';
+    input.value = `${value}`;
+    input.setAttribute('aria-label', label);
+    return input;
+  }
+  function field(label: string, input: HTMLElement) {
+    const wrapper = el('label', 'student-daily-field');
+    wrapper.append(el('span', '', label), input);
+    return wrapper;
+  }
+  function updateUrl(key: string, value: string) {
+    const url = new win.URL(win.location.href);
+    url.searchParams.set(key, value);
+    win.history.replaceState(null, '', url);
+    onUrlChange();
+  }
+  const subtabs = el('nav', 'student-daily-subtabs');
+  subtabs.setAttribute('aria-label', '每日问答');
+  const recordsButton = el('button', '', '答题记录');
+  const settingsButton = el('button', '', '问答设置');
+  [recordsButton, settingsButton].forEach((button) => {
+    button.type = 'button';
+    subtabs.append(button);
+  });
+  form.parentElement.append(subtabs, history, form);
+  function selectSubtab(value: string) {
+    subtab = value;
+    form.hidden = value !== 'settings';
+    history.hidden = value !== 'records';
+    recordsButton.setAttribute('aria-pressed', `${value === 'records'}`);
+    settingsButton.setAttribute('aria-pressed', `${value === 'settings'}`);
+    updateUrl('quizView', value);
+  }
+  settingsButton.addEventListener('click', () => selectSubtab('settings'));
+  selectSubtab(subtab);
+
+  const overview = el('div', 'student-daily-overview');
+  const toggle = el('label', 'student-daily-toggle');
+  const toggleCopy = el('span');
+  toggleCopy.append(el('strong', '', '为这位学员开启每日问答'), el('small', '', '每天合并已开启课堂的题目，答完一轮即可进入学习。'));
+  const enabled = el('input');
+  enabled.type = 'checkbox';
+  enabled.checked = policy.enabled;
+  enabled.dataset.dailyEnabled = '';
+  toggle.append(toggleCopy, enabled);
+  const summary = el('div', 'student-daily-summary');
+  summary.setAttribute('aria-live', 'polite');
+  overview.append(toggle, summary);
+  const global = el('div', 'student-daily-global');
+  const cooldown = numberInput(policy.cooldownRounds, 1, 30, '题目间隔轮数');
+  cooldown.dataset.dailyCooldown = '';
+  global.append(field('错题复习间隔', cooldown), el('p', 'student-daily-help', '答对的题不再出现；答错的题隔几轮再复习，默认间隔 3 轮。'));
+  content.replaceChildren(overview, global);
+  const domainViews: { fieldset: HTMLFieldSetElement, checkbox: HTMLInputElement }[] = [];
+  function updateSummary() {
+    const active = policy.domains.filter((item) => item.enabled);
+    const count = active.reduce((sum, item) => sum + (Number.isFinite(item.count) ? item.count : 0), 0);
+    const points = active.reduce(
+      (sum, item) => sum + item.points.reduce((total, point) => total + (Number.isFinite(point) ? point : 0), 0),
+      0,
+    );
+    summary.replaceChildren(
+      el('strong', '', `${count} 道 / 天`),
+      el('span', '', `来自 ${active.length} 个课堂`),
+      el('strong', '', `最多 ${points} 积分`),
+    );
+    summary.classList.toggle('is-warning', count > 50 || active.length > 10);
+    if (!policy.enabled) summary.append(el('span', '', '当前已关闭，设置会保留'));
+    if (count > 50) summary.append(el('span', '', '每天最多 50 道，请减少题数'));
+    cooldown.disabled = !policy.enabled;
+    domainViews.forEach((view, index) => {
+      view.checkbox.disabled = !policy.enabled;
+      view.fieldset.disabled = !policy.enabled || !policy.domains[index].enabled;
+    });
+  }
+  enabled.addEventListener('change', () => {
+    policy.enabled = enabled.checked;
+    updateSummary();
+  });
+  cooldown.addEventListener('input', () => {
+    policy.cooldownRounds = cooldown.valueAsNumber;
+  });
+  if (!domains.length) content.append(el('p', 'student-daily-help', '先在基本资料中为学员加入课堂，再配置每日问答。'));
+  domains.forEach((domain, index) => {
+    const entry = policy.domains[index];
+    const card = el('details', 'student-daily-domain');
+    card.open = entry.enabled;
+    const heading = el('summary');
+    heading.append(el('strong', '', domain.name), el('span', 'student-daily-help', `${domain.availableCount} 道可用素材`));
+    const switchLabel = el('label', 'student-daily-domain-switch');
+    const checkbox = el('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = entry.enabled;
+    checkbox.setAttribute('aria-label', `开启${domain.name}问答`);
+    checkbox.dataset.dailyDomain = domain.id;
+    switchLabel.append(checkbox, el('span', '', '加入每日问答'));
+    const controls = el('fieldset', 'student-daily-domain-fields');
+    const fields = el('div', 'student-daily-fields');
+    const count = numberInput(entry.count, 1, 20, `${domain.name}每日题数`);
+    count.dataset.dailyCount = domain.id;
+    const defaultPoints = numberInput(entry.points[0] ?? 1, 0, 100, `${domain.name}默认积分`);
+    const pointsField = field('每题默认积分', defaultPoints);
+    const applyPoints = el('button', 'student-text-button', '应用到本课堂所有题');
+    applyPoints.type = 'button';
+    pointsField.append(applyPoints);
+    fields.append(field('每天几道题', count), pointsField);
+    const poolMessage = el('p', 'student-daily-help');
+    poolMessage.dataset.dailyPool = domain.id;
+    function updatePool() {
+      const available = domain.questionTags
+        ? domain.questionTags.filter((tags) => !entry.tags.length || tags.some((tag) => entry.tags.includes(tag))).length
+        : domain.availableCount;
+      poolMessage.textContent = `当前范围有 ${available} 道素材${available < entry.count ? '，少于计划题数，建议补充素材或减少题数。' : '。'}`;
+      poolMessage.classList.toggle('is-warning', available < entry.count);
+    }
+    const tags = el('div', 'student-daily-tags');
+    const tagSearch = el('input', 'textbox');
+    tagSearch.type = 'search';
+    tagSearch.placeholder = '搜索知识点';
+    tags.append(el('strong', '', '知识点范围'), el('p', 'student-daily-help', '不选表示全部；选多个时，包含任一知识点即可。'));
+    const tagList = el('div', 'student-daily-tag-list');
+    const tagChoices = [...domain.tags];
+    entry.tags.filter((tag) => !tagChoices.some((item) => item.name === tag)).forEach((tag) => tagChoices.push({ name: tag, count: 0 }));
+    tagChoices.forEach((tag) => {
+      const label = el('label');
+      label.dataset.tag = tag.name;
+      const input = el('input');
+      input.type = 'checkbox';
+      input.checked = entry.tags.includes(tag.name);
+      input.setAttribute('aria-label', `${domain.name}知识点：${tag.name}`);
+      input.addEventListener('change', () => {
+        entry.tags = input.checked ? [...entry.tags, tag.name] : entry.tags.filter((value) => value !== tag.name);
+        updatePool();
+      });
+      label.append(input, doc.createTextNode(tag.name), el('small', '', `${tag.count}`));
+      tagList.append(label);
+    });
+    tagSearch.setAttribute('aria-label', `${domain.name}搜索知识点`);
+    tagSearch.addEventListener('input', () => {
+      [...tagList.children].forEach((label: HTMLElement) => {
+        label.hidden = !label.dataset.tag.toLowerCase().includes(tagSearch.value.trim().toLowerCase());
+      });
+    });
+    if (tagChoices.length > 6) tags.append(tagSearch);
+    tags.append(tagList);
+    if (!tagChoices.length) tags.append(el('p', 'student-daily-help', '还没有带标签的客观题素材。'));
+    const custom = el('details', 'student-daily-points');
+    custom.append(el('summary', '', '逐题设置积分'));
+    const grid = el('div', 'student-daily-points-grid');
+    custom.append(grid);
+    function renderPoints() {
+      grid.replaceChildren();
+      entry.points.forEach((point, pointIndex) => {
+        const input = numberInput(point, 0, 100, `${domain.name}第 ${pointIndex + 1} 题积分`);
+        input.dataset.dailyPoint = `${domain.id}:${pointIndex}`;
+        input.addEventListener('input', () => {
+          entry.points[pointIndex] = input.valueAsNumber;
+          updateSummary();
+        });
+        grid.append(field(`第 ${pointIndex + 1} 题`, input));
+      });
+    }
+    count.addEventListener('input', () => {
+      entry.count = count.valueAsNumber;
+      if (Number.isInteger(entry.count) && entry.count >= 1 && entry.count <= 20) {
+        entry.points = Array.from({ length: entry.count }, (_, pointIndex) => entry.points[pointIndex] ?? defaultPoints.valueAsNumber);
+        renderPoints();
+      }
+      updatePool();
+      updateSummary();
+    });
+    applyPoints.addEventListener('click', () => {
+      if (!defaultPoints.reportValidity()) return;
+      entry.points = entry.points.map(() => defaultPoints.valueAsNumber);
+      renderPoints();
+      updateSummary();
+    });
+    checkbox.addEventListener('change', () => {
+      entry.enabled = checkbox.checked;
+      if (entry.enabled) card.open = true;
+      updateSummary();
+    });
+    controls.append(
+      fields,
+      tags,
+      poolMessage,
+      custom,
+      el('p', 'student-daily-help', '答对才获得该题积分；设为 0 表示不加分。积分顺序按本课堂题目顺序计算。'),
+    );
+    if (domain.createUrl) {
+      const create = el('a', 'student-text-button', '管理客观题素材 ↗');
+      create.href = domain.createUrl;
+      create.target = '_blank';
+      create.rel = 'noopener';
+      controls.append(create);
+    }
+    card.append(heading, switchLabel, controls);
+    content.append(card);
+    domainViews.push({ fieldset: controls, checkbox });
+    renderPoints();
+    updatePool();
+  });
+  updateSummary();
+
+  const recordsFeedback = el('p', 'student-editor-feedback');
+  recordsFeedback.hidden = true;
+  recordsFeedback.setAttribute('role', 'status');
+  const dateTools = el('div', 'student-daily-date-tools');
+  const date = el('input', 'textbox');
+  date.type = 'date';
+  date.setAttribute('aria-label', '查看哪天的答题记录');
+  date.dataset.quizDay = '';
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(
+    new Date(),
+  );
+  date.value = data.report?.day || new win.URL(win.location.href).searchParams.get('quizDay') || today;
+  date.max = today;
+  dateTools.append(field('答题日期', date));
+  const recent = el('select', 'textbox');
+  recent.setAttribute('aria-label', '最近答题日期');
+  const placeholder = el('option', '', '最近答题日期');
+  placeholder.value = '';
+  recent.append(placeholder);
+  (data.summary?.recentSessions || []).forEach((session) => {
+    const option = el('option', '', `${session.day} · ${session.answered}/${session.total} 题`);
+    option.value = session.day;
+    recent.append(option);
+  });
+  dateTools.append(recent);
+  const refresh = el('button', 'student-daily-refresh', '刷新记录');
+  refresh.type = 'button';
+  refresh.dataset.quizRefresh = '';
+  dateTools.append(refresh);
+  const reportHost = el('div');
+  reportHost.dataset.dailyReport = '';
+  history.replaceChildren(dateTools, recordsFeedback, reportHost);
+  const kindNames = { single: '单选', multiple: '多选', judge: '判断' };
+  function renderReport(report?: QuizReport) {
+    reportHost.replaceChildren();
+    if (!report?.items?.length) {
+      const empty = el('div', 'student-daily-report-empty');
+      empty.append(el('strong', '', '这一天还没有答题记录'), el('p', '', '问答开启后，学员进入课堂时会收到当天的一轮题目。'));
+      reportHost.append(empty);
+      return;
+    }
+    const stats = el('div', 'student-daily-history-stats');
+    const accuracy = report.answered ? `${Math.round((report.correctCount / report.answered) * 100)}%` : '—';
+    [
+      ['答题进度', `${report.answered} / ${report.total}`],
+      ['正确率', accuracy],
+      ['获得积分', `${report.earnedPoints}`],
+    ].forEach(([label, value]) => {
+      const item = el('div');
+      item.append(el('small', '', label), el('strong', '', value));
+      stats.append(item);
+    });
+    const filters = el('div', 'student-daily-report-filters');
+    filters.setAttribute('aria-label', '按答题结果筛选');
+    const list = el('div');
+    const filterEntries = [
+      ['all', '全部', report.total],
+      ['correct', '答对', report.correctCount],
+      ['wrong', '答错', report.wrongCount],
+      ['unanswered', '未答', report.total - report.answered],
+    ];
+    filterEntries.forEach(([key, label, count]) => {
+      const button = el('button', '', `${label} ${count}`);
+      button.type = 'button';
+      button.dataset.quizResultFilter = `${key}`;
+      button.setAttribute('aria-pressed', `${reportFilter === key}`);
+      button.addEventListener('click', () => {
+        reportFilter = `${key}`;
+        renderReport(report);
+      });
+      filters.append(button);
+    });
+    const items = report.items.filter(
+      (item) =>
+        reportFilter === 'all'
+        || (reportFilter === 'correct' && item.correct === true)
+        || (reportFilter === 'wrong' && item.correct === false)
+        || (reportFilter === 'unanswered' && item.correct == null),
+    );
+    items.forEach((item) => {
+      const question = el('details', 'student-daily-question');
+      question.dataset.quizQuestion = item.id;
+      const heading = el('summary');
+      const status = item.correct == null ? '未作答' : item.correct ? '答对' : '答错';
+      heading.append(
+        el('span', `student-quiz-status ${item.correct == null ? 'is-unanswered' : item.correct ? 'is-correct' : 'is-wrong'}`, status),
+        el('strong', '', `${item.index}. ${item.title}`),
+        el('small', '', `${item.earnedPoints || 0} / ${item.points} 积分`),
+      );
+      const body = el('div', 'student-daily-question-body');
+      body.append(
+        el('p', 'student-daily-help', `${item.domainName} · ${kindNames[item.kind] || item.kind} · ${(item.tags || []).join(' / ')}`),
+      );
+      body.append(questionContent(item.stem));
+      const options = item.options || [];
+      options.forEach((option, optionIndex) => {
+        const key = String.fromCharCode(65 + optionIndex);
+        const isAnswer = item.answers.includes(key);
+        const isSelected = item.selected?.includes(key);
+        const row = el('div', `student-quiz-option${isAnswer ? ' is-answer' : ''}${isSelected ? ' is-selected' : ''}`);
+        row.append(el('strong', '', key), questionContent(option));
+        if (isAnswer) row.append(el('small', '', '正确选项'));
+        if (isSelected) row.append(el('small', '', '学员选择'));
+        body.append(row);
+      });
+      body.append(
+        el(
+          'p',
+          'student-quiz-answer',
+          `学员答案：${item.selected?.length ? item.selected.join('、') : '未作答'} / 正确答案：${item.answers.join('、')}`,
+        ),
+      );
+      if (item.analysis) {
+        body.append(el('h4', '', '题目解析'), questionContent(item.analysis));
+      }
+      question.append(heading, body);
+      list.append(question);
+    });
+    if (!items.length) list.append(el('p', 'student-daily-report-empty', '没有符合该筛选条件的题目。'));
+    reportHost.append(stats, filters, list);
+  }
+  async function loadReport(day: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+    const request = ++reportRequest;
+    recordsFeedback.hidden = false;
+    recordsFeedback.textContent = '正在读取答题记录…';
+    recordsFeedback.classList.remove('is-error');
+    reportHost.setAttribute('aria-busy', 'true');
+    refresh.disabled = true;
+    refresh.textContent = '正在刷新…';
+    const url = new win.URL(win.location.href);
+    url.searchParams.set('quizDay', day);
+    try {
+      const response = await win.fetch(url.href, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+      let result;
+      try {
+        result = await response.json();
+      } catch {
+        throw new Error('身份验证可能已过期，请在另一个窗口完成验证后重试。');
+      }
+      if (!response.ok || !result.selectedDailyQuiz) throw new Error('暂时无法读取记录，请完成身份验证后重试。');
+      if (request !== reportRequest || !editor.isConnected) return;
+      data.report = result.selectedDailyQuiz.report;
+      date.value = day;
+      updateUrl('quizDay', day);
+      renderReport(data.report);
+      recordsFeedback.hidden = true;
+    } catch (error) {
+      if (request !== reportRequest) return;
+      date.value = data.report?.day || today;
+      recent.value = '';
+      recordsFeedback.textContent =
+        typeof (error as Error)?.message === 'string' ? `读取失败：${(error as Error).message}` : '读取失败，请完成身份验证后重试。';
+      recordsFeedback.classList.add('is-error');
+    } finally {
+      if (request === reportRequest) {
+        reportHost.removeAttribute('aria-busy');
+        refresh.disabled = false;
+        refresh.textContent = '刷新记录';
+      }
+    }
+  }
+  recordsButton.addEventListener('click', () => {
+    selectSubtab('records');
+    loadReport(date.value);
+  });
+  refresh.addEventListener('click', () => { loadReport(date.value); });
+  date.addEventListener('change', () => {
+    loadReport(date.value);
+  });
+  recent.addEventListener('change', () => {
+    if (recent.value) loadReport(recent.value);
+  });
+  renderReport(data.report);
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (pending) return;
+    const active = policy.domains.filter((item) => item.enabled);
+    const invalid = policy.domains.find(
+      (item) =>
+        !Number.isInteger(item.count)
+        || item.count < 1
+        || item.count > 20
+        || item.points.length !== item.count
+        || item.points.some((point) => !Number.isInteger(point) || point < 0 || point > 100)
+        || item.tags.length > 20,
+    );
+    if (invalid || !Number.isInteger(policy.cooldownRounds) || policy.cooldownRounds < 1 || policy.cooldownRounds > 30) {
+      message('请检查题数（1–20）、积分（0–100）与间隔轮数（1–30），最多选择 20 个知识点。', true);
+      return;
+    }
+    if (active.length > 10 || active.reduce((sum, item) => sum + item.count, 0) > 50) {
+      message('每日问答最多开启 10 个课堂、合计 50 道题。', true);
+      return;
+    }
+    if (policy.enabled && !active.length) {
+      message('请至少开启一个课堂，或关闭每日问答。', true);
+      return;
+    }
+    pending = true;
+    const save = form.querySelector<HTMLButtonElement>('[data-daily-save]');
+    save.disabled = true;
+    save.textContent = '正在保存…';
+    const body = new win.FormData(form);
+    body.set('policy', JSON.stringify(policy));
+    const saving = JSON.stringify(policy);
+    message('');
+    try {
+      const response = await win.fetch(win.location.href, {
+        method: 'POST',
+        body,
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' },
+      });
+      let result;
+      try {
+        result = await response.json();
+      } catch {
+        throw new Error('身份验证可能已过期。请在另一个窗口完成验证后重试，当前设置已保留。');
+      }
+      if (!response.ok || !result.saved) throw new Error(result.error?.message || result.message || '保存未完成，请重试。');
+      baseline = saving;
+      onSaved(JSON.parse(saving).enabled);
+      message('问答设置已保存，将用于下一轮问答。');
+    } catch (error) {
+      message(typeof (error as Error)?.message === 'string' ? (error as Error).message : '保存失败，请重试。当前设置已保留。', true);
+    } finally {
+      pending = false;
+      save.disabled = false;
+      save.textContent = '保存问答设置';
+    }
+  });
+  return { isDirty: () => JSON.stringify(policy) !== baseline, isPending: () => pending };
+}

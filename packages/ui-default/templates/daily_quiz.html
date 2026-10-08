@@ -1,0 +1,15 @@
+{% extends "layout/simple.html" %}
+{% block body %}
+<div data-daily-quiz data-initial="{{ dailyQuiz|json }}">
+  <main class="daily-quiz">
+    <div class="daily-quiz__topbar"><div class="daily-quiz__brand"><strong>OneByOne</strong><span>每日问答</span></div></div>
+    <div class="daily-quiz__main">
+      <div class="daily-quiz__card daily-quiz__complete" role="status">
+        <h1>每天一点，慢慢进步</h1>
+        <p>正在准备今天的问答…</p>
+        <noscript><p>请启用 JavaScript 后刷新页面，以保存作答进度。</p></noscript>
+      </div>
+    </div>
+  </main>
+</div>
+{% endblock %}

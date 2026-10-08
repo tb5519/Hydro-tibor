@@ -3,6 +3,7 @@ import path from 'path';
 import { inspect } from 'util';
 import * as yaml from 'js-yaml';
 import { omit } from 'lodash';
+import { lookup } from 'mime-types';
 import moment from 'moment-timezone';
 import { ObjectId } from 'mongodb';
 import Schema from 'schemastery';
@@ -12,7 +13,9 @@ import {
     VerifyPasswordError,
 } from '../error';
 import type { CppEditorMode } from '../interface';
+import { parsePolicy } from '../lib/daily_quiz';
 import { withDomainMembershipRemoval } from '../lib/domain_membership';
+import { parseObjective } from '../lib/objective';
 import {
     bindPointLotteryBadgePrizes, buildPointLotteryConfigFromForm, ensureGlobalPointLotteryState,
     getPointLotteryBadges, getPointLotteryBadgeUpgradeBadgeIdsFromForm,
@@ -22,6 +25,8 @@ import {
 import { normalizeStudentLevel, STUDENT_LEVELS } from '../lib/student_level';
 import { Logger } from '../logger';
 import { PERM, PRIV, STATUS } from '../model/builtin';
+import * as dailyQuiz from '../model/daily_quiz';
+import * as document from '../model/document';
 import domain from '../model/domain';
 import * as oplog from '../model/oplog';
 import record from '../model/record';
@@ -847,6 +852,7 @@ async function getManagedStudents(
             loginAt,
             lastSubmitAt: lastSubmitAtByUid.get(uid) || null,
             domainNames: memberships.map((membership) => domainNameById.get(membership.domainId.toLowerCase()) || membership.domainId),
+            domainIds: memberships.map((membership) => membership.domainId),
             searchText: [
                 uid, displayName, udoc.uname, udoc.mail, udoc.school, udoc.studentId,
                 ...memberships.map((membership) => domainNameById.get(membership.domainId.toLowerCase()) || membership.domainId),
@@ -920,6 +926,58 @@ async function getManagedStudentDomains(uid: number, allDomains: ManagedStudentD
     };
 }
 
+async function getManagedDailyQuiz(uid: number, joinedDomains: ManagedStudentDomain[], handler: Handler, quizDay?: string) {
+    const domainIds = joinedDomains.map((item) => item.id);
+    const [storedPolicy, summary, report, sources] = await Promise.all([
+        dailyQuiz.getPolicy(uid),
+        dailyQuiz.getAdminSummary(uid),
+        dailyQuiz.getAdminDay(uid, quizDay || undefined),
+        document.coll.find({
+            domainId: { $in: domainIds }, docType: document.TYPE_PROBLEM,
+            objectiveKind: { $in: ['single', 'multiple'] }, reference: { $exists: false },
+        }).project({ domainId: 1, tag: 1, objective: 1 }).toArray(),
+    ]);
+    const questionTagsByDomain = new Map<string, string[][]>();
+    for (const source of sources) {
+        try {
+            const objective = parseObjective(JSON.stringify(source.objective));
+            if (objective.kind === 'judge') continue;
+            const tags = Array.isArray(source.tag) ? source.tag.filter((tag) => typeof tag === 'string') : [];
+            const questionTags = questionTagsByDomain.get(source.domainId) || [];
+            questionTags.push(tags);
+            questionTagsByDomain.set(source.domainId, questionTags);
+        } catch { /* Invalid legacy material must not be advertised as an available question. */ }
+    }
+    return {
+        policy: { ...storedPolicy, domains: storedPolicy.domains.filter((item) => domainIds.includes(item.domainId)) },
+        summary,
+        report: {
+            ...report,
+            items: report.items.map((item) => {
+                const rewrite = (value: string) => value.replace(/file:\/\/([^\s<>"')\]]+)/g, (_, reference: string) => {
+                    const filename = decodeURIComponent(reference.split(/[?#]/)[0]);
+                    return handler.url('manage_daily_quiz_file', { uid, day: report.day, questionId: item.id, filename });
+                });
+                return { ...item, stem: rewrite(item.stem), options: item.options.map(rewrite), analysis: rewrite(item.analysis) };
+            }),
+        },
+        domains: joinedDomains.map((item) => {
+            const questionTags = questionTagsByDomain.get(item.id) || [];
+            const counts = new Map<string, number>();
+            for (const tags of questionTags) {
+                for (const tag of new Set(tags)) counts.set(tag, (counts.get(tag) || 0) + 1);
+            }
+            return {
+                ...item,
+                availableCount: questionTags.length,
+                questionTags,
+                tags: [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')),
+                createUrl: handler.url('problem_create_objective', { domainId: item.id }),
+            };
+        }),
+    };
+}
+
 class SystemUserManagementHandler extends SystemHandler {
     async prepare() {
         this.checkPriv(PRIV.PRIV_ALL);
@@ -930,30 +988,66 @@ class SystemUserManagementHandler extends SystemHandler {
     @param('saved', Types.Int, true)
     @param('sort', Types.Range(MANAGED_STUDENT_SORTS), true)
     @param('order', Types.Range(MANAGED_STUDENT_SORT_DIRECTIONS), true)
+    @param('quizDay', Types.String, true)
     async get(
         domainId: string, uid = 0, saved = 0, sort: ManagedStudentSort = 'submit',
-        order: ManagedStudentSortDirection = 'desc',
+        order: ManagedStudentSortDirection = 'desc', quizDay = '',
     ) {
+        if (quizDay && (!/^\d{4}-\d{2}-\d{2}$/.test(quizDay) || !moment(quizDay, 'YYYY-MM-DD', true).isValid())) {
+            throw new ValidationError('quizDay', null, '请选择有效的答题日期');
+        }
         const allDomains = await getManagedDomains();
         const students = await getManagedStudents(allDomains, sort, order);
-        const selectedStudent = uid ? students.find((student) => student.uid === uid) : null;
+        const [configs, todayStates] = await Promise.all([
+            dailyQuiz.listConfigs(students.map((student) => student.uid)),
+            dailyQuiz.getTodayStates(students.map((student) => student.uid)),
+        ]);
+        const roster = students.map((student) => {
+            const policy = configs[student.uid];
+            const enabledDomains = policy?.domains.filter((item) => item.enabled && student.domainIds.includes(item.domainId)) || [];
+            return {
+                ...student,
+                dailyQuizEnabled: !!policy?.enabled && enabledDomains.length > 0,
+                dailyQuizDomains: policy?.enabled ? enabledDomains.length : 0,
+                todayDailyQuiz: todayStates[student.uid] || null,
+            };
+        });
+        const selectedStudent = uid ? roster.find((student) => student.uid === uid) : null;
         if (uid && !selectedStudent) throw new UserNotFoundError(uid);
         const selectedStudentDomainState = selectedStudent
             ? await getManagedStudentDomains(selectedStudent.uid, allDomains)
             : { domains: [], selectedDefaultDomain: '', joinedDomainCount: 0 };
         this.response.template = 'manage_user_management.html';
         this.response.body = {
-            students,
+            students: roster,
             studentLevels: STUDENT_LEVELS,
             selectedStudent,
             selectedStudentDomains: selectedStudentDomainState.domains,
             selectedStudentDefaultDomain: selectedStudentDomainState.selectedDefaultDomain,
             selectedStudentJoinedDomainCount: selectedStudentDomainState.joinedDomainCount,
+            selectedDailyQuiz: selectedStudent
+                ? await getManagedDailyQuiz(uid, selectedStudentDomainState.domains, this, quizDay) : null,
             allDomains,
             saved,
             sort,
             order,
         };
+    }
+
+    @requireSudo
+    @param('uid', Types.Int)
+    @param('policy', Types.Content)
+    async postSaveDailyQuiz(domainId: string, uid: number, policy: string) {
+        await withDomainMembershipRemoval([uid], [], async () => {
+            const allDomains = await getManagedDomains();
+            const target = await getManagedStudent(uid, allDomains);
+            if (!target) throw new UserNotFoundError(uid);
+            const joined = await getManagedStudentDomains(uid, allDomains);
+            const normalized = parsePolicy(policy, joined.domains.map((item) => item.id));
+            await dailyQuiz.savePolicy(uid, normalized, this.user._id);
+            await oplog.log(this, 'manage.saveDailyQuiz', { uid, policy: normalized });
+            this.response.body = { saved: true, selectedDailyQuiz: await getManagedDailyQuiz(uid, joined.domains, this) };
+        }, 'policy');
     }
 
     @requireSudo
@@ -998,6 +1092,7 @@ class SystemUserManagementHandler extends SystemHandler {
                 studentLevel,
             }),
         ]);
+        this.response.body = { saved: true, uid };
         this.response.redirect = this.url('manage_user_management', { query: { uid, saved: 1, sort, order } });
     }
 
@@ -1034,6 +1129,7 @@ class SystemUserManagementHandler extends SystemHandler {
             if (!hasValidDefault) await user.setById(uid, { defaultDomain: targetDomain.id });
         }, 'domainCode');
         await oplog.log(this, 'manage.addStudentDomain', { uid, domainId: targetDomain.id });
+        this.response.body = { saved: true, uid };
         this.response.redirect = this.url('manage_user_management', { query: { uid, saved: 1, sort, order } });
     }
 
@@ -1066,6 +1162,7 @@ class SystemUserManagementHandler extends SystemHandler {
         }, 'domainCode');
         await oplog.log(this, 'manage.removeStudentDomain', { uid, domainId: targetDomain.id });
         const stillManaged = await getManagedStudent(uid, managedDomains);
+        this.response.body = { saved: true, uid };
         this.response.redirect = this.url('manage_user_management', {
             query: { ...(stillManaged ? { uid } : {}), saved: 1, sort, order },
         });
@@ -1087,6 +1184,7 @@ class SystemUserManagementHandler extends SystemHandler {
         checkPasswordResetTarget(target);
         await user.setPassword(uid, password);
         await token.delByUid(uid);
+        this.response.body = { saved: true, uid };
         this.response.redirect = this.url('manage_user_management', { query: { uid, saved: 1, sort, order } });
     }
 
@@ -1142,7 +1240,32 @@ class SystemUserManagementHandler extends SystemHandler {
                 $set: { displayName: normalizedDisplayName },
             });
         }, 'defaultDomain');
+        this.response.body = { saved: true, uid };
         this.response.redirect = this.url('manage_user_management', { query: { uid, saved: 1, sort, order } });
+    }
+}
+
+class SystemDailyQuizFileHandler extends SystemHandler {
+    async prepare() {
+        this.checkPriv(PRIV.PRIV_ALL);
+    }
+
+    @requireSudo
+    @param('uid', Types.Int)
+    @param('day', Types.String)
+    @param('questionId', Types.PositiveInt)
+    @param('filename', Types.Filename)
+    async get(domainId: string, uid: number, day: string, questionId: number, filename: string) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !moment(day, 'YYYY-MM-DD', true).isValid()) throw new ValidationError('day');
+        if (!await getManagedStudent(uid, await getManagedDomains())) throw new UserNotFoundError(uid);
+        const target = await dailyQuiz.getAdminFile(uid, day, questionId, filename);
+        this.response.body = await storage.get(target);
+        this.response.type = lookup(filename) || 'application/octet-stream';
+        this.response.addHeader('Cache-Control', 'private, no-store');
+        this.response.addHeader('X-Content-Type-Options', 'nosniff');
+        if (!/\.(?:png|jpe?g|gif|webp|avif)$/i.test(filename)) {
+            this.response.disposition = `attachment; filename="${encodeURIComponent(filename)}"`;
+        }
     }
 }
 
@@ -1326,9 +1449,9 @@ class SystemLotteryHandler extends Handler {
             }
             if (args[`prize${index}BadgeRepeatEffect`] === 'upgrade') {
                 const upgradeBadgeIds = getPointLotteryBadgeUpgradeBadgeIdsFromForm(args, +index)
-                    .map((badgeId) => `${badgeId ?? ''}`.trim())
+                    .map((upgradeId) => `${upgradeId ?? ''}`.trim())
                     .filter(Boolean)
-                    .map((badgeId) => Math.floor(+badgeId));
+                    .map((upgradeId) => Math.floor(+upgradeId));
                 if (!upgradeBadgeIds.length || upgradeBadgeIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
                     throw new ValidationError(`prize${index}BadgeUpgradeBadgeId`);
                 }
@@ -1544,6 +1667,7 @@ export async function apply(ctx) {
     ctx.Route('manage_setting', '/manage/setting', SystemSettingHandler);
     ctx.Route('manage_config', '/manage/config', SystemConfigHandler);
     ctx.Route('manage_user_management', '/manage/users', SystemUserManagementHandler);
+    ctx.Route('manage_daily_quiz_file', '/manage/users/daily-quiz/:uid/:day/file/:questionId/:filename', SystemDailyQuizFileHandler);
     ctx.injectUI('ControlPanel', 'manage_user_management', { before: 'manage_user_priv', icon: 'user' }, PRIV.PRIV_ALL);
     ctx.Route('manage_user_import', '/manage/userimport', SystemUserImportHandler);
     ctx.Route('manage_user_priv', '/manage/userpriv', SystemUserPrivHandler);
