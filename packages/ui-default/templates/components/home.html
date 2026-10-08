@@ -15,6 +15,23 @@
     {{ sidemenu.render_item('wrench', 'home_settings', {category:'account'}, label='Account Settings', menu_item='home_account') }}
     {{ sidemenu.render_item('sliders', 'home_settings', {category:'preference'}, label='Preference Settings', menu_item='home_preference')}}
     {{ sidemenu.render_item('security', 'home_security') }}
+    {% for item in ui.getNodes('UserDropdown') %}{% if item.checker(handler) %}
+      {% set args = (item.args(handler) if typeof(item.args)=='function' else item.args) or {} %}
+      {{ sidemenu.render_item(args.icon, item.name, args, label=args.displayName or item.name) }}
+    {% endif %}{% endfor %}
+    <li class="menu__seperator"></li>
+    {% if handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM) %}
+      <li class="menu__item nojs--hide">
+        <a href="#" class="menu__link" name="nav_switch_account">
+          <span class="icon icon-user" aria-hidden="true"></span> {{ _('Switch account') }}
+        </a>
+      </li>
+    {% endif %}
+    <li class="menu__item">
+      <a href="{{ url('user_logout') }}" class="menu__link" name="nav_logout">
+        <span class="icon icon-logout" aria-hidden="true"></span> {{ _('Logout') }}
+      </a>
+    </li>
   </ol>
 </div>
 {% endmacro %}

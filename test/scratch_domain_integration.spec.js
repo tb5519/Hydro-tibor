@@ -493,8 +493,17 @@ describe('Scratch domain navigation, footer and creation templates', () => {
             assert.equal(!!doc.querySelector('a[href="/domain_dashboard"]'), teacher);
             assert.equal(doc.querySelector('a[href="/problem_main"]'), null);
             assert.equal(doc.querySelector('a[href="/ranking"]'), null);
-            assert(doc.querySelector('a[href="/home_security"]'), 'account management remains accessible');
+            const profileLink = doc.querySelector('.nav__profile-link');
+            assert.equal(profileLink?.getAttribute('href'), '/user_detail');
+            assert.equal(profileLink.closest('[data-dropdown-target]'), null, 'the account name opens the profile directly');
+            assert.equal(doc.querySelector('#menu-nav-user'), null);
             dom.window.close();
+            const sidebar = new JSDOM(view.env.renderString(
+                '{% import "components/home.html" as home with context %}{{ home.render_sidebar() }}', view.state,
+            ));
+            assert(sidebar.window.document.querySelector('a[href="/home_security"]'), 'account management remains in the personal sidebar');
+            assert(sidebar.window.document.querySelector('a[name="nav_logout"][href="/user_logout"]'), 'logout remains available from the profile');
+            sidebar.window.close();
         }
         const guest = templateHarness('scratch', false, false).render('partials/nav.html');
         assert(guest.window.document.querySelector('a[name="nav_login"]'), 'numeric PRIV masks remain valid');

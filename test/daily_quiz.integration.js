@@ -12,7 +12,7 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hydro-daily-quiz-'));
 os.homedir = () => home;
 fs.mkdirSync(path.join(home, '.hydro'));
 fs.writeFileSync(path.join(home, '.hydro/addon.json'), JSON.stringify([path.resolve(__dirname, '../packages/ui-default')]));
-process.argv.push('--port', '18895', '--host', '127.0.0.1');
+process.argv.push('--port', process.env.DAILY_QUIZ_PORT || '18895', '--host', '127.0.0.1');
 const timer = setTimeout(() => process.exit(2), 120000);
 const results = [];
 async function check(name, fn) {
@@ -47,7 +47,8 @@ async function run() {
         ids.push(await problems.add(did, 'DQ1', 'Daily source', '', admin, ['循环'], { hidden: true, objectiveKind: objective.kind, objective }));
         await storage.put(`problem/${did}/${ids.at(-1)}/additional_file/image.png`, Buffer.from('fakepng'), admin);
         await storage.put(`problem/${did}/${ids.at(-1)}/additional_file/analysis.png`, Buffer.from('secretimage'), admin);
-        await problems.add(did, 'DQJUDGE', 'Excluded judge', '', admin, ['循环'], { hidden: true, objectiveKind: 'judge', objective: { ...source('judge', 'Judge', ['A']), options: ['正确', '错误'] } });
+        await problems.add(did, 'DQJUDGE', 'Judgment outside selected tags', '', admin, ['判断题'],
+            { hidden: true, objectiveKind: 'judge', objective: { ...source('judge', 'Judge', ['A']), options: ['正确', '错误'] } });
     }
     assert.equal(ids[0], ids[1]);
     const policy = lib.parsePolicy({ version: 1, enabled: true, cooldownRounds: 3, domains: dids.map((did, index) => ({ domainId: did, enabled: true, count: 1, tags: ['循环'], points: [index ? 7 : 5] })) }, dids);
@@ -209,6 +210,98 @@ async function run() {
         const balance = await point.pointLotteryUserColl.findOne({ _id: uid });
         assert.equal(balance.lotteryPoints, 12);
         assert.equal(balance.lotteryTotalPoints, 12);
+    });
+    let judgeUid;
+    let judgeState;
+    let judgeAgent;
+    const judgeDomains = ['daily-judge-scratch', 'daily-judge-oj'];
+    await check('Judge-only tags select real questions in Scratch and OJ without exposing answers or teaching notes', async () => {
+        judgeUid = await users.create('dq-judge@test.example', 'dq_judge', 'DailyTest123!');
+        for (const [index, did] of judgeDomains.entries()) {
+            await domains.add(did, admin, index ? '判断题训练' : 'Scratch 判断课堂', '', undefined, index ? 'oj' : 'scratch');
+            await domains.addRole(did, 'learner', index ? PERM.PERM_DEFAULT : PERM.PERM_VIEW);
+            await domains.setUserRole(did, judgeUid, 'learner', true);
+            await problems.add(did, 'JUDGEONLY', index ? '循环可以重复执行' : '等待积木会让角色移动', '', admin, ['判断题独有标签'], {
+                hidden: true, objectiveKind: 'judge', objective: {
+                    ...source('judge', index ? '循环可以重复执行一段程序。' : '等待积木会让角色向前移动。', [index ? 'A' : 'B']),
+                    options: ['正确', '错误'], analysis: 'PRIVATE JUDGMENT ANALYSIS',
+                },
+            });
+        }
+        await quiz.savePolicy(judgeUid, {
+            version: 1, enabled: true, cooldownRounds: 3,
+            domains: judgeDomains.map((did, index) => ({ domainId: did, enabled: true, count: 1, tags: ['判断题独有标签'], points: [index ? 4 : 6] })),
+        }, admin);
+        judgeAgent = supertest.agent(httpServer);
+        status(await judgeAgent.post('/login').send({ uname: 'dq_judge', password: 'DailyTest123!' }), 302);
+        const response = await get(judgeAgent);
+        status(response, 200);
+        judgeState = response.body.state;
+        assert.equal(judgeState.total, 2);
+        assert.equal(judgeState.current.kind, 'judge');
+        assert.equal(judgeState.current.domainId, judgeDomains[0]);
+        assert.deepEqual(judgeState.current.options, ['正确', '错误']);
+        assert.equal(judgeState.current.answers, undefined);
+        assert.equal(judgeState.current.feedback, undefined);
+        assert(!response.text.includes('PRIVATE JUDGMENT ANALYSIS'));
+        const snapshot = await quiz.sessionColl.findOne({ _id: judgeState.sessionId });
+        assert(snapshot.items.every((item) => item.objective.kind === 'judge'));
+    });
+    await check('Judgments accept exactly one boolean option and award configured points once for a correct answer', async () => {
+        const args = { sessionId: judgeState.sessionId, questionId: judgeState.current.id };
+        for (const answers of [[], ['A', 'B'], ['A', 'A'], ['C']]) {
+            status(await post('answer', { ...args, answers }, judgeAgent), 403);
+        }
+        assert.equal((await get(judgeAgent)).body.state.answered, 0);
+        const wrong = await post('answer', { ...args, answers: ['A'] }, judgeAgent);
+        status(wrong, 200);
+        assert.equal(wrong.body.state.current.feedback.correct, false);
+        assert.deepEqual(wrong.body.state.current.feedback.answers, ['B']);
+        assert.equal(wrong.body.state.earnedPoints, 0);
+        assert.equal(wrong.body.state.current.feedback.analysis, 'PRIVATE JUDGMENT ANALYSIS');
+        status(await post('next', args, judgeAgent), 200);
+        judgeState = (await get(judgeAgent)).body.state;
+        assert.equal(judgeState.current.domainId, judgeDomains[1]);
+        assert.equal(judgeState.current.kind, 'judge');
+        assert.equal(judgeState.current.feedback, undefined);
+        const correctArgs = { sessionId: judgeState.sessionId, questionId: judgeState.current.id, answers: ['A'] };
+        const attempts = await Promise.all([post('answer', correctArgs, judgeAgent), post('answer', correctArgs, judgeAgent)]);
+        attempts.forEach((response) => status(response, 200));
+        assert.equal(attempts[0].body.state.current.feedback.correct, true);
+        assert.equal(attempts[0].body.state.earnedPoints, 4);
+        const balance = await point.pointLotteryUserColl.findOne({ _id: judgeUid });
+        assert.equal(balance.lotteryPoints, 4);
+        assert.equal(balance.lotteryTotalPoints, 4);
+        const report = await quiz.getAdminDay(judgeUid);
+        assert.deepEqual(report.items.map((item) => item.kind), ['judge', 'judge']);
+        assert.deepEqual(report.items.map((item) => item.correct), [false, true]);
+    });
+    await check('Wrong judgments return only after the configured review rounds; mastering them retires them permanently', async () => {
+        const now = new Date();
+        for (let day = 1; day <= 4; day++) {
+            const future = new Date(now.getTime() + day * 86400000);
+            const result = await quiz.getSession(judgeUid, future);
+            const view = quiz.presentSession(result.policy, result.session, future);
+            assert.equal(view.total, day < 4 ? 0 : 1);
+            if (day === 4) {
+                assert.equal(view.current.kind, 'judge');
+                assert.equal(view.current.domainId, judgeDomains[0]);
+                assert.equal(view.current.feedback, undefined);
+                const correct = await quiz.answerQuestion(judgeUid, view.sessionId, view.current.id, ['B'], future);
+                assert.equal(quiz.presentSession(correct.policy, correct.session, future).earnedPoints, 6);
+                const retry = await quiz.answerQuestion(judgeUid, view.sessionId, view.current.id, ['A'], future);
+                assert.equal(quiz.presentSession(retry.policy, retry.session, future).current.feedback.correct, true);
+            }
+        }
+        for (const days of [5, 8, 40]) {
+            const future = new Date(now.getTime() + days * 86400000);
+            const result = await quiz.getSession(judgeUid, future);
+            assert.equal(quiz.presentSession(result.policy, result.session, future).total, 0);
+        }
+        const balance = await point.pointLotteryUserColl.findOne({ _id: judgeUid });
+        assert.equal(balance.lotteryPoints, 10);
+        assert.equal(balance.lotteryTotalPoints, 10);
+        assert.equal((await quiz.getAdminSummary(judgeUid)).masteredCount, 2);
     });
     clearTimeout(timer);
     console.log(`Daily quiz integration: ${results.filter(Boolean).length}/${results.length} passed`);

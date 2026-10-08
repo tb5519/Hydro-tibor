@@ -1,6 +1,9 @@
 import { createHash } from 'crypto';
 import { ValidationError } from '../error';
-import type { ObjectiveQuestion } from './objective';
+import type { ObjectiveKind, ObjectiveQuestion } from './objective';
+
+/** Keep the teacher catalog, daily selection and immutable snapshots on the same question types. */
+export const DAILY_QUIZ_KINDS: ObjectiveKind[] = ['single', 'multiple', 'judge'];
 
 export interface DailyQuizDomainPolicy {
     domainId: string;
@@ -88,7 +91,7 @@ export function parseAnswers(input: unknown, objective: ObjectiveQuestion): stri
     if (!Array.isArray(value) || !value.length || value.length > objective.options.length
         || value.some((item) => typeof item !== 'string' || !/^[A-H]$/.test(item)
             || item.charCodeAt(0) - 65 >= objective.options.length)
-        || new Set(value).size !== value.length || (objective.kind === 'single' && value.length !== 1)) {
+        || new Set(value).size !== value.length || (objective.kind !== 'multiple' && value.length !== 1)) {
         throw new ValidationError('answers', null, '请选择有效的答案');
     }
     return [...value].sort();

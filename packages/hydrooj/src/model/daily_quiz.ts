@@ -2,7 +2,7 @@
 import { Collection, ObjectId } from 'mongodb';
 import { ForbiddenError, NotFoundError, ValidationError } from '../error';
 import {
-    beijingDay, canRepeat, DailyQuizPolicy, defaultPolicy, gradeAnswer, parseAnswers, parsePolicy, selectionRank,
+    beijingDay, canRepeat, DAILY_QUIZ_KINDS, DailyQuizPolicy, defaultPolicy, gradeAnswer, parseAnswers, parsePolicy, selectionRank,
 } from '../lib/daily_quiz';
 import { isScratchDomain } from '../lib/domain_type';
 import { ObjectiveQuestion, parseObjective } from '../lib/objective';
@@ -115,7 +115,7 @@ function fileNames(text: string) {
 
 async function snapshotItem(pdoc: any, id: number, domainName: string, points: number, assetPrefix: string): Promise<QuizItem> {
     const objective = parseObjective(JSON.stringify(pdoc.objective));
-    if (!['single', 'multiple'].includes(objective.kind)) throw new ValidationError('objective');
+    if (!DAILY_QUIZ_KINDS.includes(objective.kind)) throw new ValidationError('objective');
     const statementFiles = [...new Set(fileNames([objective.stem, ...objective.options].join('\n')))];
     const names = [...new Set([...statementFiles, ...fileNames(objective.analysis)])];
     const files: Record<string, string> = Object.create(null);
@@ -147,7 +147,7 @@ async function createSession(uid: number, policy: DailyQuizPolicy, now: Date) {
         const [ddoc, sources, progress] = await Promise.all([
             domain.get(rule.domainId),
             document.getMulti(rule.domainId, document.TYPE_PROBLEM, {
-                objectiveKind: { $in: ['single', 'multiple'] }, reference: { $exists: false },
+                objectiveKind: { $in: DAILY_QUIZ_KINDS }, reference: { $exists: false },
                 ...(rule.tags.length ? { tag: { $in: rule.tags } } : {}),
             }).toArray(),
             progressColl.find({ uid, domainId: rule.domainId }).toArray(),

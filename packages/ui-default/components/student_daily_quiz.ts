@@ -168,7 +168,7 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
   const catalogRefresh = el('button', 'student-daily-refresh', '刷新题目标签');
   catalogRefresh.type = 'button';
   catalogRefresh.dataset.dailyCatalogRefresh = '';
-  const catalogStatus = el('p', 'student-daily-catalog-status', '题目标签会根据当前课堂的选择题素材更新。');
+  const catalogStatus = el('p', 'student-daily-catalog-status', '题目标签会根据当前课堂的选择题、判断题素材更新。');
   catalogStatus.dataset.dailyCatalogStatus = '';
   catalogStatus.setAttribute('role', 'status');
   catalogTools.append(catalogRefresh, catalogStatus);
@@ -240,10 +240,10 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
     tagSearch.placeholder = '搜索知识点';
     tags.append(
       el('strong', '', '知识点范围'),
-      el('p', 'student-daily-help', '不选表示全部；选多个时，包含任一知识点即可。新增的同标签选择题也会自动加入选题范围。'),
+      el('p', 'student-daily-help', '不选表示全部；选多个时，包含任一知识点即可。新增的同标签选择题、判断题也会自动加入选题范围。'),
     );
     const tagList = el('div', 'student-daily-tag-list');
-    const emptyTags = el('p', 'student-daily-help', '还没有带标签的选择题素材。');
+    const emptyTags = el('p', 'student-daily-help', '还没有带标签的选择题或判断题素材。');
     tagSearch.setAttribute('aria-label', `${domain.name}搜索知识点`);
     function filterTags() {
       [...tagList.children].forEach((label: HTMLElement) => {
@@ -528,12 +528,15 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
       );
       body.append(questionContent(item.stem));
       const options = item.options || [];
+      const answerText = (answers: string[]) => answers.map((answer) => (
+        item.kind === 'judge' ? { A: '正确', B: '错误' }[answer] || answer : answer
+      )).join('、');
       options.forEach((option, optionIndex) => {
         const key = String.fromCharCode(65 + optionIndex);
         const isAnswer = item.answers.includes(key);
         const isSelected = item.selected?.includes(key);
         const row = el('div', `student-quiz-option${isAnswer ? ' is-answer' : ''}${isSelected ? ' is-selected' : ''}`);
-        row.append(el('strong', '', key), questionContent(option));
+        row.append(el('strong', '', item.kind === 'judge' ? optionIndex === 0 ? '✓' : '×' : key), questionContent(option));
         if (isAnswer) row.append(el('small', '', '正确选项'));
         if (isSelected) row.append(el('small', '', '学员选择'));
         body.append(row);
@@ -542,7 +545,7 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
         el(
           'p',
           'student-quiz-answer',
-          `学员答案：${item.selected?.length ? item.selected.join('、') : '未作答'} / 正确答案：${item.answers.join('、')}`,
+          `学员答案：${item.selected?.length ? answerText(item.selected) : '未作答'} / 正确答案：${answerText(item.answers)}`,
         ),
       );
       if (item.analysis) {

@@ -205,6 +205,30 @@ describe('daily quiz learner page', () => {
         } finally { await h.cleanup(); }
     });
 
+    it('presents judgment choices and feedback in words, preserving the explanation acknowledgement flow', async () => {
+        const judgment = question({ kind: 'judge', stem: 'Python 的列表可以修改。', options: ['正确', '错误'], tags: ['判断题标签'] });
+        const h = await harness(initial({ state: state({ current: judgment }) }), async () => answerResult({
+            current: { ...judgment, feedback: feedback({ correct: false, selectedAnswers: ['B'], earnedPoints: 0,
+                analysis: '列表中的元素可以重新赋值。' }) },
+        }));
+        try {
+            assert.equal(h.query('.daily-quiz__kind').textContent, '判断题');
+            assert.equal(h.dom.window.document.querySelectorAll('input[type=radio]').length, 2);
+            assert.equal(h.query('input[value=A]').getAttribute('aria-label'), '正确');
+            assert.equal(h.query('input[value=B]').getAttribute('aria-label'), '错误');
+            assert.doesNotMatch(h.dom.window.document.body.textContent, /判断题标签|列表中的元素可以重新赋值/);
+            await h.click('input[value=A]');
+            await h.click('input[value=B]');
+            assert.equal(h.query('input[value=A]').checked, false);
+            await h.submit();
+            assert.deepEqual(h.calls[0].body.answers, ['B']);
+            assert.match(h.query('.daily-quiz__answer-summary').textContent, /你的选择错误正确答案正确/);
+            assert.equal(h.query('.daily-quiz__analysis .typo').textContent.trim(), '列表中的元素可以重新赋值。');
+            assert.match(h.query('button[type=submit]').textContent, /知道了/);
+            assert.equal(h.query('fieldset').disabled, true);
+        } finally { await h.cleanup(); }
+    });
+
     it('restores saved feedback after refresh and marks the learner selection separately from the correct answer', async () => {
         const saved = feedback({ correct: false, selectedAnswers: ['B'], earnedPoints: 0,
             analysis: '应选择 **A**。<script>alert(1)</script>' });

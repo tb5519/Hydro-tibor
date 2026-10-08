@@ -41,5 +41,36 @@
       </div>
     </div>
   </form>
+  <details class="profile-editor__card profile-editor__password" data-profile-password-panel>
+    <summary class="profile-editor__password-summary">
+      <span class="profile-editor__password-icon icon icon-security" aria-hidden="true"></span>
+      <span><strong>修改密码</strong><small>单独保存，保护你的账号安全</small></span>
+      <span class="profile-editor__password-chevron" aria-hidden="true">⌄</span>
+    </summary>
+    <form class="profile-editor__password-form" action="{{ url('home_profile_password') }}" method="post" data-profile-password-form data-security-url="{{ url('home_security') }}" data-login-url="{{ url('user_login') }}">
+      <p class="profile-editor__password-note">修改成功后，所有设备将退出登录，请使用新密码重新登录。</p>
+      <div class="profile-editor__password-fields">
+        <label for="profile-current-password">{{ '老师当前密码' if sudoUid else '当前密码' }}
+          <input id="profile-current-password" class="profile-editor__password-input" type="password" name="current" autocomplete="current-password" required maxlength="255" placeholder="{{ '输入代登录老师的密码' if sudoUid else '输入现在使用的密码' }}">
+        </label>
+        <label for="profile-new-password">新密码
+          <input id="profile-new-password" class="profile-editor__password-input" type="password" name="password" autocomplete="new-password" required minlength="6" maxlength="255" placeholder="至少 6 个字符" aria-describedby="profile-password-hint">
+        </label>
+        <label for="profile-confirm-password">确认新密码
+          <input id="profile-confirm-password" class="profile-editor__password-input" type="password" name="verifyPassword" autocomplete="new-password" required minlength="6" maxlength="255" placeholder="再输入一次新密码">
+        </label>
+      </div>
+      <p id="profile-password-hint" class="profile-editor__hint">建议使用字母与数字组合，避免使用姓名或生日。</p>
+      <div class="profile-editor__password-feedback" data-profile-password-feedback hidden>
+        <p class="profile-editor__status" data-profile-password-status role="status" aria-live="polite"></p>
+        <a class="profile-editor__verify" data-profile-password-verify href="{{ url('home_security') }}" target="_blank" rel="noopener" hidden>验证身份 <span aria-hidden="true">↗</span></a>
+      </div>
+      <div class="profile-editor__password-actions">
+        <button type="button" class="profile-editor__cancel" data-profile-password-cancel>取消修改</button>
+        <button type="submit" class="profile-editor__save" data-profile-password-save>更新密码</button>
+        <a class="profile-editor__save" data-profile-password-login href="{{ url('user_login') }}" hidden>重新登录</a>
+      </div>
+    </form>
+  </details>
 </div>
 {% endblock %}

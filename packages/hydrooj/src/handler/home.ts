@@ -7,6 +7,7 @@ import { pick } from 'lodash';
 import { lookup } from 'mime-types';
 import { Binary, ObjectId } from 'mongodb';
 import { UAParser } from 'ua-parser-js';
+import { Time } from '@hydrooj/utils';
 import { Context } from '../context';
 import {
     AuthOperationError, BadRequestError, BlacklistedError, DomainAlreadyExistsError, InvalidTokenError,
@@ -897,6 +898,17 @@ class PointLotteryDrawHandler extends Handler {
     }
 }
 
+async function changeHomePassword(handler: Handler, domainId: string, current: string, password: string, verify: string) {
+    if (password !== verify) throw new VerifyPasswordError();
+    if (handler.session.sudoUid) {
+        const udoc = await user.getById(domainId, handler.session.sudoUid);
+        if (!udoc) throw new UserNotFoundError(handler.session.sudoUid);
+        await udoc.checkPassword(current);
+    } else await handler.user.checkPassword(current);
+    await user.setPassword(handler.user._id, password);
+    await token.delByUid(handler.user._id);
+}
+
 class HomeSecurityHandler extends Handler {
     @requireSudo
     async get() {
@@ -931,14 +943,7 @@ class HomeSecurityHandler extends Handler {
     @param('password', Types.Password)
     @param('verifyPassword', Types.Password)
     async postChangePassword(domainId: string, current: string, password: string, verify: string) {
-        if (password !== verify) throw new VerifyPasswordError();
-        if (this.session.sudoUid) {
-            const udoc = await user.getById(domainId, this.session.sudoUid);
-            if (!udoc) throw new UserNotFoundError(this.session.sudoUid);
-            await udoc.checkPassword(current);
-        } else await this.user.checkPassword(current);
-        await user.setPassword(this.user._id, password);
-        await token.delByUid(this.user._id);
+        await changeHomePassword(this, domainId, current, password, verify);
         this.response.redirect = this.url('user_login');
     }
 
@@ -1133,7 +1138,7 @@ function set(s: Setting, key: string, value: any) {
 class HomeProfileHandler extends Handler {
     async get() {
         this.response.template = 'home_profile.html';
-        this.response.body = { current: this.user };
+        this.response.body = { current: this.user, sudoUid: this.session.sudoUid || null };
     }
 
     @param('bio', Types.Content, true)
@@ -1153,6 +1158,24 @@ class HomeProfileHandler extends Handler {
         // account is always the target, regardless of submitted IDs or fields.
         await user.setById(this.user._id, values);
         this.response.body = { saved: true, avatarUrl: avatar(values.avatar || this.user.avatar, 160) };
+    }
+}
+
+class HomeProfilePasswordHandler extends Handler {
+    @param('current', Types.String)
+    @param('password', Types.Password)
+    @param('verifyPassword', Types.Password)
+    async post(domainId: string, current: string, password: string, verify: string) {
+        // Match requireSudo's window, but never retain sensitive form fields for
+        // automatic replay. The user verifies with a separate GET, then retries.
+        if (!this.session.sudo || Date.now() - this.session.sudo >= Time.hour) {
+            this.response.body = { verificationRequired: true, verificationUrl: this.url('home_security') };
+            return;
+        }
+        await this.limitRate('profile_change_password', 60, 5, '{{user}}');
+        this.session.sudoArgs = null;
+        await changeHomePassword(this, domainId, current, password, verify);
+        this.response.body = { passwordChanged: true, loginUrl: this.url('user_login') };
     }
 }
 
@@ -1371,6 +1394,7 @@ export async function apply(ctx: Context) {
     ctx.Route('user_changemail_with_code', '/home/changeMail/:code', UserChangemailWithCodeHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_settings', '/home/settings/:category', HomeSettingsHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_profile', '/home/profile', HomeProfileHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('home_profile_password', '/home/profile/password', HomeProfilePasswordHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_avatar', '/home/avatar', HomeAvatarHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_domain', '/home/domain', HomeDomainHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_domain_create', '/home/domain/create', HomeDomainCreateHandler, PRIV.PRIV_CREATE_DOMAIN);

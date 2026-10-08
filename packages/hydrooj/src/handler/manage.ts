@@ -13,7 +13,7 @@ import {
     VerifyPasswordError,
 } from '../error';
 import type { CppEditorMode } from '../interface';
-import { parsePolicy } from '../lib/daily_quiz';
+import { DAILY_QUIZ_KINDS, parsePolicy } from '../lib/daily_quiz';
 import { withDomainMembershipRemoval } from '../lib/domain_membership';
 import { parseObjective } from '../lib/objective';
 import {
@@ -934,14 +934,13 @@ async function getManagedDailyQuiz(uid: number, joinedDomains: ManagedStudentDom
         dailyQuiz.getAdminDay(uid, quizDay || undefined),
         document.coll.find({
             domainId: { $in: domainIds }, docType: document.TYPE_PROBLEM,
-            objectiveKind: { $in: ['single', 'multiple'] }, reference: { $exists: false },
+            objectiveKind: { $in: DAILY_QUIZ_KINDS }, reference: { $exists: false },
         }).project({ domainId: 1, tag: 1, objective: 1 }).toArray(),
     ]);
     const questionTagsByDomain = new Map<string, string[][]>();
     for (const source of sources) {
         try {
-            const objective = parseObjective(JSON.stringify(source.objective));
-            if (objective.kind === 'judge') continue;
+            parseObjective(JSON.stringify(source.objective));
             const tags = Array.isArray(source.tag) ? source.tag.filter((tag) => typeof tag === 'string') : [];
             const questionTags = questionTagsByDomain.get(source.domainId) || [];
             questionTags.push(tags);

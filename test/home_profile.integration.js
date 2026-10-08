@@ -39,6 +39,7 @@ function denied(res) { assert(res.status >= 400 && res.status < 500, `${res.stat
 async function run() {
     const { UserModel: users, DomainModel: domains, httpServer } = require('hydrooj');
     const storage = require('../packages/hydrooj/src/model/storage').default;
+    const tokens = require('../packages/hydrooj/src/model/token').default;
     const { streamToBuffer } = require('@hydrooj/utils');
     const adminId = await users.create('profile-teacher@example.test', 'profile_teacher', 'LocalTest123!');
     await users.setSuperAdmin(adminId);
@@ -83,6 +84,27 @@ async function run() {
             assert.equal(actions.querySelectorAll('a').length, 1);
             assert(actions.querySelector('a[href$="/home/profile"]'));
             assert.equal(!!actions.querySelector('.badge--su'), teacher);
+            assert(dom.window.document.querySelector('[name=nav_logout]'));
+            assert.equal(!!dom.window.document.querySelector('[name=nav_switch_account]'), teacher);
+            dom.window.close();
+        }
+    });
+    await check('Other profiles have no message or email actions and both classroom headers link directly to my profile', async () => {
+        const visitor = await student.get(`/d/${domainId}/user/${adminId}`).set('Accept', 'text/html');
+        status(visitor, 200);
+        const otherPage = new JSDOM(visitor.text);
+        const contact = otherPage.window.document.querySelector('.profile-header__contact-bar');
+        assert.equal(contact.querySelector('a'), null);
+        assert(contact.querySelector('.badge--su'));
+        otherPage.window.close();
+        for (const id of [domainId, scratchId]) {
+            const response = await student.get(`/d/${id}/home/profile`).set('Accept', 'text/html');
+            const dom = new JSDOM(response.text);
+            const link = dom.window.document.querySelector('.nav__profile-link');
+            assert.equal(link.getAttribute('href'), `/d/${id}/user/${studentId}`);
+            assert.equal(link.hasAttribute('data-dropdown-target'), false);
+            assert.equal(link.querySelector('.icon-expand_more'), null);
+            assert.equal(dom.window.document.querySelector('#menu-nav-user'), null);
             dom.window.close();
         }
     });
@@ -151,6 +173,116 @@ async function run() {
             assert(response.status === 200 || response.status === 302);
             assert.equal((await account()).backgroundImage, before);
         }
+    });
+    // Actual password changes use separate fixture accounts. The browser demo
+    // learner above always keeps its original LocalTest123! password.
+    const passwordId = await users.createInDomain(domainId, 'profile-password@example.test', 'profile_password', 'OldPass123!');
+    const passwordAgent = supertest.agent(httpServer);
+    const secondSession = supertest.agent(httpServer);
+    for (const agent of [passwordAgent, secondSession]) {
+        status(await agent.post('/login').send({ uname: 'profile_password', password: 'OldPass123!' }), 302);
+    }
+    const securityUrl = `/d/${domainId}/home/security`;
+    const passwordUrl = `/d/${domainId}/home/profile/password`;
+    const passwordBody = { current: 'OldPass123!', password: 'NewPass456!', verifyPassword: 'NewPass456!' };
+    const changePassword = (body = passwordBody) => passwordAgent.post(passwordUrl).set('Accept', 'application/json').send(body);
+    const hasSensitiveReplay = (session) => ['current', 'password', 'verifyPassword'].some((key) => session.sudoArgs?.args?.[key]);
+    const secret = 'JBSWY3DPEHPK3PXP';
+    const tfaCode = () => require('notp').totp.gen(require('thirty-two').decode(secret));
+    await users.setById(passwordId, { tfa: secret });
+
+    await check('Password changes without fresh sudo return a safe verification response without staging secrets', async () => {
+        const response = await changePassword();
+        status(response, 200);
+        assert.equal(response.body.verificationRequired, true);
+        assert.equal(response.body.verificationUrl, securityUrl);
+        assert.equal(response.body.passwordChanged, undefined);
+        assert((await tokens.getSessionListByUid(passwordId)).every((session) => !hasSensitiveReplay(session)));
+        await (await users.getById(domainId, passwordId)).checkPassword('OldPass123!');
+        const access = await passwordAgent.get(securityUrl).set('Accept', 'application/json');
+        status(access, 200);
+        assert(access.body.url.includes('/user/sudo'));
+        const pending = (await tokens.getSessionListByUid(passwordId)).find((session) => session.sudoArgs?.method);
+        assert.equal(pending.sudoArgs.method.toUpperCase(), 'GET');
+        assert.equal(hasSensitiveReplay(pending), false);
+    });
+    await check('Existing two-factor verification remains required and verification never automatically changes the password', async () => {
+        const invalid = await passwordAgent.post(`/d/${domainId}/user/sudo`).set('Accept', 'application/json').send({ tfa: 'bad-code' });
+        denied(invalid);
+        assert.equal((await changePassword()).body.verificationRequired, true);
+        status(await passwordAgent.post(`/d/${domainId}/user/sudo`).send({ tfa: tfaCode() }), 302);
+        await (await users.getById(domainId, passwordId)).checkPassword('OldPass123!');
+        const sessions = await tokens.getSessionListByUid(passwordId);
+        assert(sessions.some((session) => session.sudo));
+        assert(sessions.every((session) => !hasSensitiveReplay(session)));
+    });
+    await check('Wrong current password and mismatched confirmation leave the password and active sessions intact', async () => {
+        denied(await changePassword({ ...passwordBody, current: 'WrongPass123!' }));
+        denied(await changePassword({ ...passwordBody, verifyPassword: 'Different789!' }));
+        denied(await changePassword({ ...passwordBody, password: 'short', verifyPassword: 'short' }));
+        await (await users.getById(domainId, passwordId)).checkPassword('OldPass123!');
+        assert.equal((await tokens.getSessionListByUid(passwordId)).length, 2);
+    });
+    await check('Authorization expiring after preflight does not change a password or stage a POST for later replay', async () => {
+        status(await passwordAgent.get(securityUrl).set('Accept', 'application/json'), 200);
+        const session = (await tokens.getSessionListByUid(passwordId)).find((item) => item.sudo);
+        await tokens.coll.updateOne({ _id: session._id }, { $set: { sudo: Date.now() - 3600001 } });
+        const response = await changePassword();
+        status(response, 200);
+        assert.equal(response.body.verificationRequired, true);
+        assert((await tokens.getSessionListByUid(passwordId)).every((item) => !hasSensitiveReplay(item)));
+        await (await users.getById(domainId, passwordId)).checkPassword('OldPass123!');
+        await passwordAgent.get(securityUrl).set('Accept', 'application/json');
+        status(await passwordAgent.post(`/d/${domainId}/user/sudo`).send({ tfa: tfaCode() }), 302);
+    });
+    await check('Successful password change invalidates every existing session and permits login only with the new password', async () => {
+        const response = await changePassword({ ...passwordBody, uid: otherId, bio: '不得误保存资料', gender: 1 });
+        status(response, 200);
+        assert.equal(response.body.passwordChanged, true);
+        assert(response.body.loginUrl.endsWith('/login'));
+        assert.equal((await tokens.getSessionListByUid(passwordId)).length, 0);
+        assert.notEqual((await users.getById(domainId, passwordId)).bio, '不得误保存资料');
+        await (await users.getById(domainId, otherId)).checkPassword('LocalTest123!');
+        for (const agent of [passwordAgent, secondSession]) {
+            const page = await agent.get(url).set('Accept', 'application/json');
+            assert(page.status === 302 || page.body.url?.includes('/login'));
+        }
+        const fresh = supertest.agent(httpServer);
+        denied(await fresh.post('/login').set('Accept', 'application/json')
+            .send({ uname: 'profile_password', password: 'OldPass123!', tfa: tfaCode() }));
+        status(await fresh.post('/login').send({ uname: 'profile_password', password: 'NewPass456!', tfa: tfaCode() }), 302);
+    });
+    await check('The legacy security password endpoint still validates, revokes sessions and redirects to login', async () => {
+        const uid = await users.createInDomain(domainId, 'profile-legacy@example.test', 'profile_legacy', 'LegacyOld123!');
+        const agent = supertest.agent(httpServer);
+        status(await agent.post('/login').send({ uname: 'profile_legacy', password: 'LegacyOld123!' }), 302);
+        await agent.get(securityUrl).set('Accept', 'application/json');
+        status(await agent.post(`/d/${domainId}/user/sudo`).send({ password: 'LegacyOld123!' }), 302);
+        const response = await agent.post(securityUrl).set('Accept', 'application/json').send({
+            operation: 'change_password', current: 'LegacyOld123!', password: 'LegacyNew456!', verifyPassword: 'LegacyNew456!',
+        });
+        status(response, 200);
+        assert(response.body.url.endsWith('/login'));
+        assert.equal(response.body.passwordChanged, undefined, 'Keep the existing legacy response contract');
+        await (await users.getById(domainId, uid)).checkPassword('LegacyNew456!');
+        assert.equal((await tokens.getSessionListByUid(uid)).length, 0);
+    });
+    await check('Impersonation requires the teachers current password and only changes the selected learner account', async () => {
+        const uid = await users.createInDomain(domainId, 'profile-impersonated@example.test', 'profile_impersonated', 'ImpersonatedOld123!');
+        await admin.get(securityUrl).set('Accept', 'application/json');
+        status(await admin.post(`/d/${domainId}/user/sudo`).send({ password: 'LocalTest123!' }), 302);
+        status(await admin.get(`/d/${domainId}/account/${uid}`).set('Accept', 'application/json'), 200);
+        const page = await admin.get(url).set('Accept', 'text/html');
+        status(page, 200);
+        assert(page.text.includes('老师当前密码'));
+        const body = { current: 'ImpersonatedOld123!', password: 'ImpersonatedNew456!', verifyPassword: 'ImpersonatedNew456!' };
+        denied(await admin.post(passwordUrl).set('Accept', 'application/json').send(body));
+        const response = await admin.post(passwordUrl).set('Accept', 'application/json').send({ ...body, current: 'LocalTest123!' });
+        status(response, 200);
+        assert.equal(response.body.passwordChanged, true);
+        await (await users.getById(domainId, uid)).checkPassword('ImpersonatedNew456!');
+        await (await users.getById(domainId, adminId)).checkPassword('LocalTest123!');
+        assert.equal((await tokens.getSessionListByUid(uid)).length, 0);
     });
     console.log(`RESULT ${results.filter(Boolean).length}/${results.length} profile editor checks passed`);
     clearTimeout(timeout);

@@ -338,6 +338,16 @@ describe('daily quiz teacher configuration and reports', () => {
         assert.equal($('[data-daily-enabled]').checked, true);
     });
 
+    it('shows judgment results as correct or incorrect statements instead of answer letters', (t) => {
+        const report = { ...daily.report, items: daily.report.items.map((item) => ({
+            ...item, kind: 'judge', options: ['正确', '错误'],
+        })) };
+        const { $ } = harness(t, { selectedDailyQuiz: { ...daily, report } }, 'uid=44&tab=daily');
+        assert.match($('[data-quiz-question="q0"] .student-quiz-answer').textContent, /学员答案：正确 \/ 正确答案：正确/);
+        assert.match($('[data-quiz-question="q1"] .student-quiz-answer').textContent, /学员答案：错误 \/ 正确答案：正确/);
+        assert.match($('[data-quiz-question="q2"] .student-quiz-answer').textContent, /学员答案：未作答 \/ 正确答案：正确/);
+    });
+
     it('renders complete Markdown and attachment images while escaping injected HTML', (t) => {
         const { $, doc } = harness(t);
         assert.match($('[data-quiz-question="q1"]').textContent, /学员选择/);

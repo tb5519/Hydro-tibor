@@ -19,7 +19,7 @@ interface Question {
   total: number;
   domainId: string;
   domainName: string;
-  kind: 'single' | 'multiple';
+  kind: 'single' | 'multiple' | 'judge';
   title: string;
   stem: string;
   options: string[];
@@ -93,6 +93,8 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
       : feedback.correct ? '答对了，继续吧。' : '记住正确答案，下次再试试。';
   const complete = !current && (state.completed || !state.required);
   const multiple = current?.kind === 'multiple';
+  const judge = current?.kind === 'judge';
+  const answerText = (answers: string[]) => answers.map((answer) => (judge ? { A: '正确', B: '错误' }[answer] || answer : answer)).join('、');
   const activeAnswers = feedback?.selectedAnswers || selection;
   const returnUrl = safeQuizReturnUrl(initial.returnUrl, window.location.origin);
 
@@ -179,14 +181,14 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
         {current ? (
           <form className="daily-quiz__card" onSubmit={submit} aria-busy={pending} data-daily-quiz-form>
             <div className="daily-quiz__meta">
-              <span className="daily-quiz__kind">{multiple ? '多选题' : '单选题'}</span>
+              <span className="daily-quiz__kind">{judge ? '判断题' : multiple ? '多选题' : '单选题'}</span>
               <span>{current.domainName}</span>
               <span className="daily-quiz__question-number">第 {current.position} 题</span>
             </div>
             <div className="daily-quiz__question" ref={questionRef} tabIndex={-1} role="group" aria-label={`第 ${current.position} 题`}>
               <Markdown value={current.stem || current.title} />
               <fieldset className={`daily-quiz__choices${multiple ? ' is-multiple' : ''}`} disabled={pending || !!feedback}>
-                <legend>{multiple ? '选择所有正确答案' : '选择一个正确答案'} · 本题 {current.points} 积分</legend>
+                <legend>{judge ? '判断这句话是否正确' : multiple ? '选择所有正确答案' : '选择一个正确答案'} · 本题 {current.points} 积分</legend>
                 {current.options.map((option, index) => {
                   const value = letter(index);
                   const selected = activeAnswers.includes(value);
@@ -202,9 +204,9 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
                         value={value}
                         checked={selected}
                         onChange={() => choose(value)}
-                        aria-label={`选项 ${value}`}
+                        aria-label={judge ? answerText([value]) : `选项 ${value}`}
                         aria-describedby={`daily-quiz-option-${current.id}-${value}`} />
-                      <span className="daily-quiz__letter" aria-hidden="true">{value}</span>
+                      <span className="daily-quiz__letter" aria-hidden="true">{judge ? index === 0 ? '✓' : '×' : value}</span>
                       <Markdown id={`daily-quiz-option-${current.id}-${value}`} value={option} />
                       {(correct || incorrect) && (
                         <span className="daily-quiz__option-note">{correct ? selected ? '你的选择 · 正确' : '正确答案' : '你的选择'}</span>
@@ -253,8 +255,8 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
                   </div>
                 </div>
                 <dl className="daily-quiz__answer-summary">
-                  <div><dt>你的选择</dt><dd className={feedback.correct ? 'is-correct' : 'is-incorrect'}>{feedback.selectedAnswers.join('、')}</dd></div>
-                  <div><dt>正确答案</dt><dd className="is-correct">{feedback.answers.join('、')}</dd></div>
+                  <div><dt>你的选择</dt><dd className={feedback.correct ? 'is-correct' : 'is-incorrect'}>{answerText(feedback.selectedAnswers)}</dd></div>
+                  <div><dt>正确答案</dt><dd className="is-correct">{answerText(feedback.answers)}</dd></div>
                 </dl>
                 {needsAcknowledgement && (
                   <div className="daily-quiz__analysis"><h3>题解</h3><Markdown value={feedback.analysis} /></div>

@@ -63,7 +63,8 @@ async function run() {
             answers: ['A'], analysis: index % 2 ? '两个整数相加得到 5，`print` 会把结果显示出来。' : '循环能够按条件重复执行一段代码。',
         };
         return problems.add(domainId, `DQ${index}`, `每日热身素材 ${index}`, objectiveContent(question), adminId,
-            index % 2 ? ['基础运算'] : ['循环'], { hidden: true, objectiveKind: kind, objective: question, config: objectiveConfig(question) });
+            kind === 'judge' ? ['判断题知识点'] : index % 2 ? ['基础运算'] : ['循环'],
+            { hidden: true, objectiveKind: kind, objective: question, config: objectiveConfig(question) });
     }
     const firstSource = await source(firstDomain, 1);
     const privatePng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2XkAAAAASUVORK5CYII=', 'base64');
@@ -84,7 +85,7 @@ async function run() {
     const policy = {
         version: 1, enabled: true, cooldownRounds: 3,
         domains: [
-            { domainId: firstDomain, enabled: true, count: 2, tags: [], points: [0, 3] },
+            { domainId: firstDomain, enabled: true, count: 2, tags: ['基础运算', '循环'], points: [0, 3] },
             { domainId: secondDomain, enabled: true, count: 1, tags: ['循环'], points: [2] },
         ],
     };
@@ -105,9 +106,10 @@ async function run() {
         assert.equal(data.policy.enabled, false);
         assert.equal(data.domains.length, 2);
         const python = data.domains.find((item) => item.id === firstDomain);
-        assert.equal(python.availableCount, 2, 'Judgment material is not a selection question');
-        assert.equal(python.questionTags.length, 2);
+        assert.equal(python.availableCount, 3, 'Single-choice, multiple-choice and judgment material share the daily catalog');
+        assert.equal(python.questionTags.length, 3);
         assert(python.tags.some((item) => item.name === '循环' && item.count === 1));
+        assert(python.tags.some((item) => item.name === '判断题知识点' && item.count === 1));
         assert(!JSON.stringify(data.domains).includes('answers'));
         const entry = response.body.students.find((item) => item.uid === studentId);
         assert.equal(entry.dailyQuizEnabled, false);
@@ -264,7 +266,7 @@ async function run() {
         assert(response.text.includes('小禾'));
         assert(response.text.includes('data-student-search'));
     });
-    await check('Reopening settings immediately includes new hidden choice tags in OJ and Scratch, but excludes whole-paper and judgment tags', async () => {
+    await check('Reopening settings includes new hidden choice and judgment tags in OJ and Scratch, but excludes whole-paper tags', async () => {
         const scratchDomain = `daily-scratch-${Date.now()}`;
         await domains.add(scratchDomain, adminId, 'Scratch 知识课堂', 'Daily catalog regression', undefined, 'scratch');
         await domains.setUserInDomain(scratchDomain, studentId, { join: true, role: 'default' });
@@ -289,9 +291,17 @@ async function run() {
         assert(oj.tags.some((item) => item.name === '新增单选标签' && item.count === 1));
         assert(oj.tags.some((item) => item.name === '新增多选标签' && item.count === 1));
         const scratch = catalog.find((item) => item.id === scratchDomain);
-        assert.equal(scratch.availableCount, 1);
-        assert.deepEqual(scratch.tags, [{ name: '角色与舞台', count: 1 }]);
-        assert.deepEqual(scratch.questionTags, [['角色与舞台']]);
+        assert.equal(scratch.availableCount, 2);
+        assert.equal(scratch.tags.length, 2);
+        assert(scratch.tags.some((item) => item.name === '角色与舞台' && item.count === 1));
+        assert(scratch.tags.some((item) => item.name === '只有判断题' && item.count === 1));
+        assert.deepEqual(scratch.questionTags.flat().sort(), ['角色与舞台', '只有判断题'].sort());
+        const judgementPolicy = { ...saved, enabled: true,
+            domains: [{ domainId: scratchDomain, enabled: true, count: 1, tags: ['只有判断题'], points: [2] }] };
+        const configured = await save(admin, studentId, judgementPolicy);
+        status(configured, 200);
+        assert.deepEqual(configured.body.selectedDailyQuiz.policy.domains[0].tags, ['只有判断题']);
+        await daily.savePolicy(studentId, saved, adminId);
         assert(!JSON.stringify(catalog).includes('PRIVATE_CATALOG_ANALYSIS'));
         assert.deepEqual(await daily.getPolicy(studentId), saved, 'Refreshing the source catalog cannot mutate teacher settings');
     });
@@ -304,9 +314,17 @@ async function run() {
         }
         await users.setById(demoId, { defaultDomain: firstDomain });
         await daily.savePolicy(demoId, policy, adminId);
+        const judgeDemoId = await users.createInDomain(firstDomain, 'daily-judge-demo@example.test', 'daily_judge_demo', 'LocalTest123!');
+        await domains.setUserInDomain(firstDomain, judgeDemoId, { join: true, role: 'default', displayName: '小禾' });
+        await users.setById(judgeDemoId, { defaultDomain: firstDomain });
+        await daily.savePolicy(judgeDemoId, {
+            version: 1, enabled: true, cooldownRounds: 3,
+            domains: [{ domainId: firstDomain, enabled: true, count: 1, tags: ['判断题知识点'], points: [2] }],
+        }, adminId);
         console.log(`SMOKE ${JSON.stringify({
             origin: `http://127.0.0.1:${port}`, admin: 'daily_admin', student: 'daily_demo', password: 'LocalTest123!',
             studentId, demoId, firstDomain, secondDomain, manageUrl: `http://127.0.0.1:${port}${url}`,
+            judgeStudent: 'daily_judge_demo', judgeDemoId, judgeDomain: firstDomain,
         })}`);
         return;
     }
