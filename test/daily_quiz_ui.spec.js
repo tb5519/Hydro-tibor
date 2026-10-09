@@ -150,6 +150,38 @@ describe('daily quiz learner page', () => {
         } finally { await h.cleanup(); }
     });
 
+    it('renders the reported math in learner stems, options and wrong-answer explanations while preserving code literals', async () => {
+        const mathQuestion = question({
+            stem: '常量 $7.0$ 的数据类型是（）。\n\n```cpp\ncout << "$N$";\n```',
+            options: ['如果输入的 $N$ 大于等于 $2$，将输出 $N-1$。', '如果输入的 $N$ 小于 $2$，将输出 `$N$`。'],
+        });
+        const h = await harness(initial({ state: state({ current: mathQuestion }) }), async () => answerResult({
+            current: { ...mathQuestion, feedback: feedback({ correct: false, selectedAnswers: ['B'], earnedPoints: 0,
+                analysis: '当 $N$ 大于等于 $2$ 时，循环执行 $N-1$ 次。代码中的 `$7.0$` 应保持原样。' }) },
+        }));
+        const assertMath = (element, expressions) => {
+            assert.deepEqual([...element.querySelectorAll('.katex annotation[encoding="application/x-tex"]')]
+                .map((node) => node.textContent), expressions);
+            const visible = element.cloneNode(true);
+            visible.querySelectorAll('.katex, code').forEach((node) => node.remove());
+            assert(!visible.textContent.includes('$'), 'formula delimiters must not leak into visible prose');
+            assert.equal(element.querySelector('code .katex'), null, 'dollar signs in code are literal');
+        };
+        try {
+            assertMath(h.query('.daily-quiz__question > .typo'), ['7.0']);
+            assertMath(h.query('[data-daily-quiz-option=A] .typo'), ['N', '2', 'N-1']);
+            assertMath(h.query('[data-daily-quiz-option=B] .typo'), ['N', '2']);
+            assert.equal(h.query('.daily-quiz__question pre code').textContent.trim(), 'cout << "$N$";');
+            assert.equal(h.query('[data-daily-quiz-option=B] code').textContent, '$N$');
+            await h.click('input[value=B]');
+            await h.submit();
+            assertMath(h.query('.daily-quiz__analysis .typo'), ['N', '2', 'N-1']);
+            assert.equal(h.query('.daily-quiz__analysis code').textContent, '$7.0$');
+            assert.match(h.query('button[type=submit]').textContent, /知道了/);
+            assert.equal(h.query('[data-daily-quiz-option=B] input').checked, true);
+        } finally { await h.cleanup(); }
+    });
+
     it('keeps native radio semantics and requires an answer before sending a request', async () => {
         const h = await harness();
         try {

@@ -135,14 +135,12 @@ async function snapshotItem(pdoc: any, id: number, domainName: string, points: n
     };
 }
 
-async function createSession(uid: number, policy: DailyQuizPolicy, now: Date) {
-    const day = beijingDay(now);
-    const previous = await sessionColl.find({ uid }).sort({ day: -1 }).limit(1).next();
-    // Reconcile an interrupted prior-day answer before selecting from mastery.
-    if (previous) await settleSession(previous); // eslint-disable-line ts/no-use-before-define
-    const round = (previous?.round || 0) + 1;
+/** One selector powers real sessions and read-only teacher previews. */
+async function selectSessionItems(
+    uid: number, policy: DailyQuizPolicy, day: string, round: number, previous: DailyQuizSession | null,
+    materialize: (source: any, id: number, domainName: string, points: number) => Promise<QuizItem>,
+) {
     const items: QuizItem[] = [];
-    const assetPrefix = new ObjectId().toHexString();
     for (const rule of policy.domains) {
         const [ddoc, sources, progress] = await Promise.all([
             domain.get(rule.domainId),
@@ -153,6 +151,19 @@ async function createSession(uid: number, policy: DailyQuizPolicy, now: Date) {
             progressColl.find({ uid, domainId: rule.domainId }).toArray(),
         ]);
         const history = new Map(progress.map((item) => [item.sourceId, item]));
+        // createSession settles the previous round. A preview overlays exactly that
+        // effect in memory, without awarding points or writing progress/storage.
+        const unsettled = previous && (previous.settledAnswers || 0) < previous.items.filter((item) => item.answer).length;
+        for (const item of unsettled ? previous.items : []) {
+            if (item.domainId !== rule.domainId || !item.answer) continue;
+            const old = history.get(item.sourceId);
+            history.set(item.sourceId, {
+                _id: `${uid}:${rule.domainId}:${item.sourceId}`, uid, domainId: rule.domainId, sourceId: item.sourceId,
+                mastered: !!old?.mastered || item.answer.correct,
+                lastRound: Math.max(old?.lastRound || 0, previous.round),
+                lastDay: old?.lastDay && old.lastDay > previous.day ? old.lastDay : previous.day,
+            });
+        }
         const candidates = sources.filter((item) => canRepeat(history.get(item.docId), round, policy.cooldownRounds))
             .sort((a, b) => Number(!!history.get(b.docId)) - Number(!!history.get(a.docId))
                 || (history.get(a.docId)?.lastRound || 0) - (history.get(b.docId)?.lastRound || 0)
@@ -161,12 +172,24 @@ async function createSession(uid: number, policy: DailyQuizPolicy, now: Date) {
         for (const source of candidates) {
             if (selected >= rule.count) break;
             try {
-                const item = await snapshotItem(source, items.length + 1, ddoc?.name || rule.domainId, rule.points[selected], assetPrefix);
+                const item = await materialize(source, items.length + 1, ddoc?.name || rule.domainId, rule.points[selected]);
                 items.push(item);
                 selected++;
             } catch { /* Invalid or missing source assets must not block entry for the learner. */ }
         }
     }
+    return items;
+}
+
+async function createSession(uid: number, policy: DailyQuizPolicy, now: Date) {
+    const day = beijingDay(now);
+    const previous = await sessionColl.find({ uid }).sort({ day: -1 }).limit(1).next();
+    // Reconcile an interrupted prior-day answer before selecting from mastery.
+    if (previous) await settleSession(previous); // eslint-disable-line ts/no-use-before-define
+    const round = (previous?.round || 0) + 1;
+    const assetPrefix = new ObjectId().toHexString();
+    const items = await selectSessionItems(uid, policy, day, round, previous,
+        (source, id, domainName, points) => snapshotItem(source, id, domainName, points, assetPrefix));
     const session: DailyQuizSession = {
         _id: `${uid}-${day}`, uid, day, round, cooldownRounds: policy.cooldownRounds, items, cursor: 0,
         requested: policy.domains.reduce((sum, rule) => sum + rule.count, 0), createdAt: now,
@@ -527,6 +550,112 @@ function presentAdminQuizItem(item: QuizItem, index: number, session: Pick<Daily
         points: item.points, earnedPoints: item.answer?.earnedPoints || 0, analysis: item.objective.analysis,
         answeredAt: item.answer?.answeredAt, sessionId: session._id, day: session.day, round: session.round,
     };
+}
+
+type UpcomingStatus = 'ready' | 'continue' | 'completed' | 'empty' | 'disabled';
+interface UpcomingSelection {
+    status: UpcomingStatus;
+    day: string;
+    projected: boolean;
+    session: DailyQuizSession | null;
+    next?: UpcomingSelection;
+}
+
+/** Validate original assets without copy/getMeta, which would update storage bookkeeping. */
+async function previewItem(pdoc: any, id: number, domainName: string, points: number): Promise<QuizItem> {
+    const objective = parseObjective(JSON.stringify(pdoc.objective));
+    if (!DAILY_QUIZ_KINDS.includes(objective.kind)) throw new ValidationError('objective');
+    const statementFiles = [...new Set(fileNames([objective.stem, ...objective.options].join('\n')))];
+    const names = [...new Set([...statementFiles, ...fileNames(objective.analysis)])];
+    const files: Record<string, string> = Object.create(null);
+    for (const filename of names) {
+        const path = `problem/${pdoc.domainId}/${pdoc.docId}/additional_file/${filename}`;
+        if (!await storage.exists(path)) throw new NotFoundError();
+        files[filename] = path;
+    }
+    return {
+        id, domainId: pdoc.domainId, domainName, sourceId: pdoc.docId, title: pdoc.title,
+        tags: pdoc.tag || [], points, objective, files, statementFiles,
+    };
+}
+
+async function projectUpcomingSession(uid: number, policy: DailyQuizPolicy, day: string, previous: DailyQuizSession | null) {
+    const round = (previous?.round || 0) + 1;
+    const items = await selectSessionItems(uid, policy, day, round, previous, previewItem);
+    return {
+        _id: `${uid}-${day}`, uid, day, round, cooldownRounds: policy.cooldownRounds, items, cursor: 0,
+        requested: policy.domains.reduce((sum, rule) => sum + rule.count, 0), createdAt: new Date(),
+    } satisfies DailyQuizSession;
+}
+
+async function selectAdminUpcoming(uid: number, now: Date): Promise<UpcomingSelection> {
+    const day = beijingDay(now);
+    const policy = await effectivePolicy(uid);
+    if (!policy.enabled || !policy.domains.length) return { status: 'disabled', day, projected: false, session: null };
+    const today = await sessionColl.findOne({ _id: `${uid}-${day}`, uid });
+    if (!today) {
+        const previous = await sessionColl.find({ uid }).sort({ day: -1 }).limit(1).next();
+        const session = await projectUpcomingSession(uid, policy, day, previous);
+        return { status: session.items.length ? 'ready' : 'empty', day, projected: true, session };
+    }
+    const allowed = new Set(policy.domains.map((rule) => rule.domainId));
+    // Reproduce getSession's domain cancellation and cursor advancement in memory.
+    for (const item of today.items) if (!allowed.has(item.domainId)) item.cancelled = true;
+    while (today.cursor < today.items.length && today.items[today.cursor].cancelled) today.cursor++;
+    const active = today.items.filter((item) => !item.cancelled);
+    if (active.some((item) => !item.answer)) return { status: 'continue', day, projected: false, session: today };
+    const tomorrow = beijingDay(new Date(now.getTime() + 86400000));
+    const next = await projectUpcomingSession(uid, policy, tomorrow, today);
+    return {
+        status: active.length ? 'completed' : 'empty', day, projected: false, session: today,
+        next: { status: next.items.length ? 'ready' : 'empty', day: tomorrow, projected: true, session: next },
+    };
+}
+
+export interface AdminQuizUpcoming {
+    status: UpcomingStatus;
+    day: string;
+    projected: boolean;
+    checkedAt: string;
+    requested: number;
+    total: number;
+    remaining: number;
+    currentQuestionId: number | null;
+    items: (ReturnType<typeof presentAdminQuizItem> & { current: boolean, awaitingAcknowledgement: boolean })[];
+    next?: AdminQuizUpcoming;
+}
+
+/** A teacher read must never create a round, copy attachments, or settle answers. */
+export async function getAdminUpcoming(uid: number, classroom = '', now = new Date()): Promise<AdminQuizUpcoming> {
+    const present = (selection: UpcomingSelection): AdminQuizUpcoming => {
+        const { session } = selection;
+        const remaining = ['ready', 'continue'].includes(selection.status)
+            ? session?.items.slice(session.cursor).filter((item) => !item.cancelled) || [] : [];
+        return {
+            status: selection.status, day: selection.day, projected: selection.projected, checkedAt: now.toISOString(),
+            requested: session?.requested || 0, total: session?.items.filter((item) => !item.cancelled).length || 0,
+            remaining: remaining.length, currentQuestionId: remaining[0]?.id || null,
+            items: remaining.filter((item) => !classroom || item.domainId === classroom).map((item) => ({
+                ...presentAdminQuizItem(item, session.items.indexOf(item) + 1, session),
+                current: item.id === remaining[0]?.id, awaitingAcknowledgement: !!item.answer,
+            })),
+            ...(selection.next ? { next: present(selection.next) } : {}),
+        };
+    };
+    return present(await selectAdminUpcoming(uid, now));
+}
+
+/** Recompute the authorized selection so guessed source IDs cannot reveal other material. */
+export async function getAdminUpcomingFile(
+    uid: number, day: string, sourceDomain: string, sourceId: number, questionId: number, filename: string, now = new Date(),
+) {
+    const preview = await selectAdminUpcoming(uid, now);
+    const selected = [preview, preview.next].find((item) => item?.day === day);
+    if (!selected || !['ready', 'continue'].includes(selected.status)) throw new NotFoundError();
+    const item = selected.session?.items.slice(selected.session.cursor).find((value) => value.id === questionId && !value.cancelled);
+    if (!item || item.domainId !== sourceDomain || item.sourceId !== sourceId
+        || !Object.hasOwn(item.files, filename)) throw new NotFoundError();
+    return item.files[filename];
 }
 
 export async function getAdminLearningDetail(state: AdminQuizLearningState) {

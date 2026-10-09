@@ -168,6 +168,95 @@
     &.is-wrong
       background: #fff5e8
       color: #ad7e3d
+    &.is-upcoming
+      background: #edf6fc
+      color: #4d8bab
+
+  .dql-upcoming-header
+    display: flex
+    align-items: flex-start
+    justify-content: space-between
+    gap: 12px
+    padding: 16px
+    border: 1px solid #d8e8f2
+    border-radius: 9px
+    background: #f8fcff
+    > div
+      min-width: 0
+    strong
+      display: block
+      color: #3e6983
+      font-size: 14px
+      font-weight: 600
+    p
+      margin-top: 4px
+      color: #869dab
+      font-size: 11px
+    button
+      flex: 0 0 auto
+
+  .dql-upcoming-next
+    margin: 18px 0 6px
+    color: #567b92
+    font-size: 13px
+    font-weight: 600
+
+  .dql-upcoming-metrics
+    display: flex
+    flex-wrap: wrap
+    align-items: baseline
+    gap: 5px 15px
+    margin: 13px 0 10px
+    color: #6d8b9f
+    font-size: 11px
+    font-variant-numeric: tabular-nums
+    > span:first-child
+      color: #497b99
+      font-weight: 600
+
+  .dql-upcoming-domains
+    color: #95a7b3
+
+  .dql-upcoming-shortage, .dql-upcoming-feedback
+    margin: 10px 0 13px
+    border-radius: 6px
+    padding: 9px 12px
+    background: #fff9ee
+    color: #a38655
+    font-size: 11px
+    line-height: 1.8
+
+  .dql-upcoming .dql-empty
+    margin-top: 12px
+
+  .dql-upcoming-solution
+    margin-top: 15px
+    border-top: 1px solid #e7eef3
+    padding-top: 12px
+    > summary
+      display: flex
+      align-items: center
+      gap: 7px
+      width: fit-content
+      color: #648aa2
+      font-size: 11px
+      cursor: pointer
+      list-style: none
+      &::-webkit-details-marker
+        display: none
+      &::before
+        content: '›'
+        display: inline-block
+        font-size: 17px
+        line-height: 1
+        transition: transform .15s ease
+    &[open] > summary::before
+      transform: rotate(90deg)
+    .dql-answers
+      margin-top: 9px
+
+  .dql-upcoming-freshness
+    margin-top: 14px
 
   .dql-question-body
     padding: 2px 15px 16px
@@ -422,6 +511,14 @@
       font-size: 12px
     .dql-question-body
       padding: 2px 10px 13px
+    .dql-upcoming-header
+      flex-wrap: wrap
+      padding: 12px
+      gap: 9px
+      strong
+        font-size: 13px
+    .dql-upcoming-metrics
+      gap: 5px 10px
     .dql-option
       flex-wrap: wrap
       padding: 9px

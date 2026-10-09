@@ -1017,6 +1017,9 @@ async function presentManagedDailyQuizLearning(state: dailyQuiz.AdminQuizLearnin
     const learning = await dailyQuiz.getAdminLearningDetail(state);
     return {
         ...learning,
+        upcomingUrl: handler.url('manage_daily_quiz_student', {
+            uid: state.uid, query: { upcoming: '1', ...(classroom ? { classroom } : {}) },
+        }),
         questions: rewriteManagedDailyQuizItems(learning.questions, state.uid, handler),
         sessions: learning.sessions.map((session) => ({
             ...session,
@@ -1081,11 +1084,30 @@ class SystemDailyQuizStudentHandler extends SystemHandler {
     @param('uid', Types.PositiveInt)
     @param('classroom', Types.String, true)
     @param('session', Types.String, true)
-    async get(domainId: string, uid: number, classroom = '', session = '') {
+    @param('upcoming', Types.String, true)
+    async get(domainId: string, uid: number, classroom = '', session = '', upcoming = '') {
         const domains = await getManagedDomains();
         classroom = selectDailyQuizClassroom(classroom, domains);
         const target = (await getManagedDailyQuizRoster(domains, uid))[0];
         if (!target || (classroom && !target.domainIds.includes(classroom))) throw new UserNotFoundError(uid);
+        if (upcoming) {
+            if (upcoming !== '1' || session) throw new ValidationError('upcoming');
+            const rewrite = (preview: dailyQuiz.AdminQuizUpcoming): dailyQuiz.AdminQuizUpcoming => ({
+                ...preview,
+                items: preview.items.map((item) => {
+                    const rewriteFile = (value: string) => value.replace(/file:\/\/([^\s<>"')\]]+)/g, (_, reference: string) => {
+                        const filename = decodeURIComponent(reference.split(/[?#]/)[0]);
+                        return this.url('manage_daily_quiz_preview_file', {
+                            uid, day: preview.day, sourceDomain: item.domainId, sourceId: item.sourceId, questionId: item.id, filename,
+                        });
+                    });
+                    return { ...item, stem: rewriteFile(item.stem), options: item.options.map(rewriteFile), analysis: rewriteFile(item.analysis) };
+                }),
+                ...(preview.next ? { next: rewrite(preview.next) } : {}),
+            });
+            this.response.body = { upcoming: rewrite(await dailyQuiz.getAdminUpcoming(uid, classroom)) };
+            return;
+        }
         const batch = await getManagedDailyQuizBatch([target], domains, classroom);
         const state = batch.byUid.get(uid);
         if (session) {
@@ -1415,6 +1437,32 @@ class SystemUserManagementHandler extends SystemHandler {
         }, 'defaultDomain');
         this.response.body = { saved: true, uid };
         this.response.redirect = this.url('manage_user_management', { query: { uid, saved: 1, sort, order } });
+    }
+}
+
+class SystemDailyQuizPreviewFileHandler extends SystemHandler {
+    async prepare() {
+        this.checkPriv(PRIV.PRIV_ALL);
+        this.response.addHeader('Cache-Control', 'private, no-store');
+    }
+
+    @requireSudo
+    @param('uid', Types.PositiveInt)
+    @param('day', Types.String)
+    @param('sourceDomain', Types.String)
+    @param('sourceId', Types.PositiveInt)
+    @param('questionId', Types.PositiveInt)
+    @param('filename', Types.Filename)
+    async get(domainId: string, uid: number, day: string, sourceDomain: string, sourceId: number, questionId: number, filename: string) {
+        const student = (await getManagedDailyQuizRoster(await getManagedDomains(), uid))[0];
+        if (!student) throw new UserNotFoundError(uid);
+        const target = await dailyQuiz.getAdminUpcomingFile(uid, day, sourceDomain, sourceId, questionId, filename);
+        this.response.body = await storage.get(target);
+        this.response.type = lookup(filename) || 'application/octet-stream';
+        this.response.addHeader('X-Content-Type-Options', 'nosniff');
+        if (!/\.(?:png|jpe?g|gif|webp|avif)$/i.test(filename)) {
+            this.response.disposition = `attachment; filename="${encodeURIComponent(filename)}"`;
+        }
     }
 }
 
@@ -1839,6 +1887,7 @@ export async function apply(ctx) {
     ctx.injectUI('ControlPanel', 'manage_training_dashboard', { before: 'manage_script' });
     ctx.Route('manage_daily_quiz', '/manage/daily-quiz', SystemDailyQuizDashboardHandler);
     ctx.Route('manage_daily_quiz_student', '/manage/daily-quiz/student/:uid', SystemDailyQuizStudentHandler);
+    ctx.Route('manage_daily_quiz_preview_file', '/manage/daily-quiz/student/:uid/upcoming/:day/:sourceDomain/:sourceId/file/:questionId/:filename', SystemDailyQuizPreviewFileHandler);
     ctx.injectUI('ControlPanel', 'manage_daily_quiz', { before: 'manage_script', icon: 'check' }, PRIV.PRIV_ALL);
     ctx.Route('manage_script', '/manage/script', SystemScriptHandler);
     ctx.Route('manage_setting', '/manage/setting', SystemSettingHandler);

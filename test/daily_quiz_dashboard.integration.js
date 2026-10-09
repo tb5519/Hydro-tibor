@@ -88,8 +88,8 @@ async function run() {
     await domains.setUserInDomain(python, foreignUid, { join: true, role: 'default', displayName: '不可见的其他工作区学员' });
     await workspace.addStudent(foreignWorkspace._id, foreignUid, teacherId);
     const sourceQuestion = {
-        version: 1, kind: 'single', stem: '下面代码会输出什么？\n\n```python\nprint(2 + 3)\n```',
-        options: ['5', '23', '2 + 3', '没有输出'], answers: ['A'], analysis: '两个整数相加得到 5，`print` 会将结果输出。',
+        version: 1, kind: 'single', stem: '当 $N=2$ 时，下面代码会输出什么？\n\n```python\nprint(N + 3)\n```',
+        options: ['$5$', '$23$', '$N+3$', '没有输出'], answers: ['A'], analysis: '因为 $N+3=5$，`print` 会将结果输出。',
     };
     const material = [
         { title: '变量与输出', tags: ['变量', '基础运算'], objective: sourceQuestion },
@@ -502,6 +502,150 @@ async function run() {
             const initial = JSON.parse(managementDom.window.document.querySelector('[data-student-daily-form]').getAttribute('data-initial'));
             assert.deepEqual(initial.learning, await readLearning(roster.completed.uid));
         } finally { managementDom.window.close(); }
+    });
+
+    const upcomingUrl = (uid, classroom = '') => detail(uid, `?upcoming=1${classroom ? `&classroom=${classroom}` : ''}`);
+    const readUpcoming = async (uid, classroom = '') => {
+        const response = await get(upcomingUrl(uid, classroom));
+        status(response, 200);
+        assert.equal(response.headers['cache-control'], 'private, no-store');
+        return response.body.upcoming;
+    };
+    const readOnlyState = async () => ({
+        sessions: await daily.sessionColl.find().sort({ _id: 1 }).toArray(),
+        progress: await daily.progressColl.find().sort({ _id: 1 }).toArray(),
+        policies: await daily.configColl.find().sort({ _id: 1 }).toArray(),
+        storage: await storage.coll.find().sort({ _id: 1 }).toArray(),
+        accounts: await users.coll.find().project({ lotteryPoints: 1, lotteryTotalPoints: 1, dailyQuizPointAwards: 1 }).sort({ _id: 1 }).toArray(),
+    });
+    await check('Upcoming previews are lazy, sudo-protected, student-scoped and strictly read-only even with unsettled answers', async () => {
+        const learning = await readLearning(roster.completed.uid);
+        assert.equal(learning.upcoming, undefined);
+        assert.equal(learning.upcomingUrl, upcomingUrl(roster.completed.uid));
+        redirectedTo(await get(learning.upcomingUrl, supertest.agent(httpServer)), '/login');
+        redirectedTo(await get(learning.upcomingUrl, withoutSudo), '/user/sudo');
+        denied(await get(learning.upcomingUrl, learner));
+        for (const uid of [foreignUid, teacherId, 999999]) denied(await get(upcomingUrl(uid)));
+        denied(await get(upcomingUrl(roster.completed.uid, foreignDomain)));
+        denied(await get(detail(roster.completed.uid, '?upcoming=2')));
+        const before = await readOnlyState();
+        for (const { uid } of Object.values(roster)) await readUpcoming(uid);
+        assert.deepEqual(await readOnlyState(), before, 'Preview cannot create rounds, settle points/progress, or even touch storage lastUsage');
+        assert.equal(await daily.sessionColl.countDocuments({ uid: roster.notStarted.uid }), 0);
+    });
+    await check('Pending previews preserve the real current item, feedback awaiting acknowledgement and original global order', async () => {
+        const uid = roster.partial.uid;
+        let preview = await readUpcoming(uid);
+        assert.equal(preview.status, 'continue');
+        assert.equal(preview.projected, false);
+        assert.equal(preview.total, 3);
+        assert.equal(preview.remaining, 1);
+        assert.deepEqual(preview.items.map((item) => item.id), [3]);
+        assert.equal(preview.items[0].current, true);
+        await daily.sessionColl.updateOne({ _id: `${uid}-${today}` }, { $set: { cursor: 1 } });
+        try {
+            preview = await readUpcoming(uid);
+            assert.deepEqual(preview.items.map((item) => item.id), [2, 3]);
+            assert.equal(preview.items[0].awaitingAcknowledgement, true);
+            assert.equal(preview.items[0].correct, false);
+            assert.equal(preview.remaining, 2);
+            const filtered = await readUpcoming(uid, python);
+            assert.equal(filtered.remaining, 2);
+            assert.deepEqual(filtered.items.map((item) => item.id), [3]);
+            assert.equal(filtered.items[0].current, false);
+            assert.equal(filtered.items[0].index, 3, 'Classroom filtering must never redraw or renumber the student sequence');
+        } finally { await daily.sessionColl.updateOne({ _id: `${uid}-${today}` }, { $set: { cursor: 2 } }); }
+    });
+    await check('Completed, empty and disabled days explain today accurately; tomorrow excludes unsettled correct answers and cooled-down errors', async () => {
+        const uid = roster.completed.uid;
+        await daily.sessionColl.updateOne({ _id: `${uid}-${today}` }, { $set: { cursor: 2 } });
+        try {
+            const preview = await readUpcoming(uid);
+            assert.equal(preview.status, 'completed', 'Last answer saved means login no longer gates, even without pressing Next');
+            assert.deepEqual(preview.items, []);
+            assert.equal(preview.remaining, 0);
+            assert.equal(preview.next.day, offsetDay(1));
+            assert.equal(preview.next.projected, true);
+            assert.equal(preview.next.status, 'ready');
+            assert(!preview.next.items.some((item) => item.domainId === python && sourceIds[python].slice(0, 2).includes(item.sourceId)));
+            assert(!preview.next.items.some((item) => item.domainId === cpp && item.sourceId === sourceIds[cpp][2]));
+            assert.equal((await daily.sessionColl.findOne({ _id: `${uid}-${today}` })).settledAnswers, 0);
+        } finally { await daily.sessionColl.updateOne({ _id: `${uid}-${today}` }, { $set: { cursor: 3 } }); }
+        const empty = await readUpcoming(roster.empty.uid);
+        assert.equal(empty.status, 'empty');
+        assert.equal(empty.projected, false);
+        assert.equal(empty.next.day, offsetDay(1));
+        const disabled = await readUpcoming(roster.disabled.uid);
+        assert.equal(disabled.status, 'disabled');
+        assert.deepEqual(disabled.items, []);
+        assert.equal(disabled.next, undefined);
+    });
+    await check('Upcoming attachment URLs verify teacher scope and source identity, including source changes after preview', async () => {
+        const uid = roster.notStarted.uid;
+        const source = await document.coll.findOne({ domainId: python, docType: document.TYPE_PROBLEM, docId: sourceId });
+        await problems.edit(python, sourceId, { objective: protectedQuestion.objective });
+        try {
+            const preview = await readUpcoming(uid);
+            assert.equal(preview.status, 'ready');
+            const question = preview.items.find((item) => item.sourceId === sourceId);
+            const url = question.stem.match(/!\[[^\]]*\]\(([^)]+)\)/)[1];
+            assert(url.includes(`/upcoming/${today}/${python}/${sourceId}/file/`));
+            for (const text of [question.stem, question.options[0], question.analysis]) assert(!text.includes('file://'));
+            assert.deepEqual((await teacher.get(url)).body, privatePng);
+            denied(await get(url, learner));
+            redirectedTo(await get(url, withoutSudo), '/user/sudo');
+            redirectedTo(await get(url, supertest.agent(httpServer)), '/login');
+            denied(await get(url.replace(`/${python}/${sourceId}/file/`, `/${python}/999999/file/`)));
+            denied(await get(url.replace('trace.png', 'not-referenced.png')));
+            const policy = roster.notStarted.policy;
+            await daily.savePolicy(uid, { ...policy, domains: policy.domains.map((rule) => ({ ...rule, tags: ['循环'] })) }, teacherId);
+            try { denied(await get(url)); } finally { await daily.savePolicy(uid, policy, teacherId); }
+            await domains.setUserInDomain(python, uid, { join: false, role: 'guest' });
+            try { denied(await get(url)); } finally { await domains.setUserInDomain(python, uid, { join: true, role: 'default' }); }
+        } finally { await problems.edit(python, sourceId, { objective: source.objective }); }
+    });
+    await check('Projected selection exactly matches later login across domains, invalid assets, mastered questions, cooldown and point slots', async () => {
+        const uid = await users.createInDomain(python, 'preview-exact@example.test', 'preview_exact', 'LocalTest123!');
+        await domains.setUserInDomain(python, uid, { join: true, role: 'default' });
+        await domains.setUserInDomain(cpp, uid, { join: true, role: 'default' });
+        const policy = { version: 1, enabled: true, cooldownRounds: 3, domains: [
+            { domainId: python, enabled: true, count: 3, tags: [], points: [2, 4, 6] },
+            { domainId: cpp, enabled: true, count: 2, tags: [], points: [8, 10] },
+        ] };
+        await daily.savePolicy(uid, policy, teacherId);
+        const fixedNow = timestamp(offsetDay(2));
+        const priorDay = offsetDay(1);
+        const prior = {
+            _id: `${uid}-${priorDay}`, uid, day: priorDay, round: 5, cooldownRounds: 3, cursor: 2, requested: 2,
+            items: [question(1, python, true, priorDay), question(2, python, false, priorDay)],
+            createdAt: timestamp(priorDay), settledAnswers: 0,
+        };
+        await daily.sessionColl.insertOne(prior);
+        await daily.progressColl.insertOne({ _id: `${uid}:${cpp}:${sourceIds[cpp][0]}`, uid, domainId: cpp,
+            sourceId: sourceIds[cpp][0], mastered: false, lastRound: 1, lastDay: offsetDay(-3) });
+        const brokenSource = await problems.add(python, 'PREVIEW-BROKEN', '缺少图片的素材', '', teacherId, [], {
+            hidden: true, objectiveKind: 'single', objective: { ...sourceQuestion, stem: '![图](file://missing.png)' },
+        });
+        try {
+            const before = await readOnlyState();
+            const preview = await daily.getAdminUpcoming(uid, '', fixedNow);
+            const filtered = await daily.getAdminUpcoming(uid, cpp, fixedNow);
+            assert.deepEqual(filtered.items.map((item) => item.sourceId), preview.items.filter((item) => item.domainId === cpp).map((item) => item.sourceId));
+            assert.deepEqual(await readOnlyState(), before);
+            assert.equal(preview.requested, 5);
+            assert.equal(preview.total, 3, 'Only one eligible Python material plus two C++ choices; missing attachment is skipped');
+            assert.equal(preview.items.filter((item) => item.domainId === python)[0].sourceId, sourceIds[python][2]);
+            assert.equal(preview.items.filter((item) => item.domainId === cpp)[0].sourceId, sourceIds[cpp][0], 'Due error review ranks before unseen choices');
+            assert.deepEqual(preview.items.map((item) => item.points), [2, 8, 10]);
+            const actual = await daily.getSession(uid, fixedNow);
+            const fields = (item) => [item.id, item.domainId, item.sourceId, item.points];
+            assert.deepEqual(preview.items.map(fields), actual.session.items.map(fields));
+            assert.equal(daily.presentSession(actual.policy, actual.session, fixedNow).current.id, preview.currentQuestionId);
+            assert.equal(actual.session.round, 6);
+        } finally {
+            await problems.del(python, brokenSource);
+            for (const did of [python, cpp]) await domains.setUserInDomain(did, uid, { join: false, role: 'guest' });
+        }
     });
 
     console.log(`RESULT ${results.filter(Boolean).length}/${results.length} daily dashboard checks passed`);
