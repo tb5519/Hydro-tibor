@@ -212,6 +212,32 @@ test('practice history is counted by participation and lazily shows each round i
     } finally { h.close(); }
 });
 
+test('practice ordinals count actual participation chronologically without gaps from unstarted rounds', async () => {
+    const data = learning();
+    data.sessions[0].round = 5;
+    data.sessions[1].round = 2;
+    data.sessions[2].round = 6;
+    const h = harness(initial(), async (url) => url.includes('session=') ? ok({ report: report() }) : ok({ learning: data }));
+    try {
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+        await h.click('[data-learning-view="sessions"]');
+        const newer = '[data-learning-action="session"][data-learning-session="11-2026-10-09"]';
+        const older = '[data-learning-action="session"][data-learning-session="11-2026-10-08"]';
+        assert.equal(h.get(newer).closest('.dql-session').querySelector('strong').textContent, '第 2 次练习');
+        assert.equal(h.get(older).closest('.dql-session').querySelector('strong').textContent, '第 1 次练习');
+        assert.equal(h.get(newer).getAttribute('aria-label'), '查看第 2 次练习');
+        assert.equal(h.get(older).getAttribute('aria-label'), '查看第 1 次练习');
+        assert.equal(h.root.querySelectorAll('.dql-session').length, 2);
+        assert(!h.get('[data-learning-panel]').textContent.includes('第 5 次练习'));
+        assert(!h.get('[data-learning-panel]').textContent.includes('第 6 次练习'));
+        await h.click(newer);
+        assert.equal(h.get(newer).getAttribute('aria-label'), '收起第 2 次练习');
+        assert.equal(h.get('[data-learning-session-panel]').getAttribute('aria-label'), '第 2 次练习的作答记录');
+        await h.click(older);
+        assert.equal(h.get('[data-learning-session-panel]').getAttribute('aria-label'), '第 1 次练习的作答记录');
+    } finally { h.close(); }
+});
+
 test('switching learners disposes pending practice fetch and cannot mix answers', async () => {
     const pending = deferred();
     const h = harness(initial(), async (url) => url.includes('session=') ? pending.promise : ok({ learning: learning() }));

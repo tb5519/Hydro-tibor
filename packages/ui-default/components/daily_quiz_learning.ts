@@ -65,6 +65,9 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
   const markdown = new MarkdownIt({ html: false, linkify: true });
   const sessions = new Map<string, SessionState>();
   const participatedSessions = learning.sessions.filter((session) => session.answered > 0);
+  const sessionOrdinals = new Map([...participatedSessions]
+    .sort((a, b) => a.day.localeCompare(b.day) || a.round - b.round || a.id.localeCompare(b.id))
+    .map((session, index) => [session.id, index + 1] as const));
   let view: View = 'review';
   let selectedTag: QuizLearning['tags'][number] | null = null;
   let limit = 20;
@@ -253,23 +256,24 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
         panel.append(message('还没有参与练习', '产生作答后，这里会保留每次练习及当时的答案。'));
         return;
       }
-      participatedSessions.forEach((session, index) => {
+      participatedSessions.forEach((session) => {
+        const ordinal = sessionOrdinals.get(session.id);
         const card = el('section', 'dql-session');
         const header = el('div', 'dql-session-header');
         const description = el('div');
-        description.append(el('strong', '', `第 ${session.round || participatedSessions.length - index} 次练习`), el('small', '', `${session.day} · 已答 ${session.answered} / ${session.total} 题`));
+        description.append(el('strong', '', `第 ${ordinal} 次练习`), el('small', '', `${session.day} · 已答 ${session.answered} / ${session.total} 题`));
         const result = el('span', 'dql-session-result', `答对 ${session.correctCount} · 答错 ${session.wrongCount}`);
         const toggle = button(expandedSession === session.id ? '收起 ↑' : '查看作答 ↓', 'session', 'dql-session-toggle');
         toggle.dataset.learningSession = session.id;
         toggle.setAttribute('aria-expanded', `${expandedSession === session.id}`);
-        toggle.setAttribute('aria-label', `${expandedSession === session.id ? '收起' : '查看'}第 ${session.round} 次练习`);
+        toggle.setAttribute('aria-label', `${expandedSession === session.id ? '收起' : '查看'}第 ${ordinal} 次练习`);
         header.append(description, result, toggle);
         card.append(header);
         if (expandedSession === session.id) {
           const body = el('div', 'dql-session-body');
           body.dataset.learningSessionPanel = session.id;
           body.setAttribute('role', 'region');
-          body.setAttribute('aria-label', `第 ${session.round} 次练习的作答记录`);
+          body.setAttribute('aria-label', `第 ${ordinal} 次练习的作答记录`);
           renderSession(session, body);
           card.append(body);
         }
