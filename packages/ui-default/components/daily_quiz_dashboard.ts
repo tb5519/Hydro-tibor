@@ -119,7 +119,7 @@ export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocume
   const rosterHeading = el('div');
   const rosterTitle = el('h2', '', '学员知识掌握');
   rosterTitle.id = 'daily-quiz-roster-heading';
-  rosterHeading.append(rosterTitle, el('p', '', '优先展示待复习学员；展开即可查看错题、知识点与每次练习。'));
+  rosterHeading.append(rosterTitle, el('p', '', '已开启问答的学员优先展示；展开即可查看错题、知识点与每次练习。'));
   const search = el('input', 'dqd-search');
   search.type = 'search';
   search.placeholder = '搜索姓名、用户名或 UID';
@@ -134,7 +134,7 @@ export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocume
   table.setAttribute('aria-labelledby', rosterTitle.id);
   const tableHead = el('thead');
   const headRow = el('tr');
-  ['学员', '出题范围 / 已答', '答对 / 待复习', '正确率', '参与', '详情'].forEach((text) => {
+  ['学员', '答题进度', '答对 / 待复习', '正确率', '参与', '详情'].forEach((text) => {
     const cell = el('th', '', text);
     cell.scope = 'col';
     headRow.append(cell);
@@ -215,7 +215,8 @@ export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocume
     const lowered = query.trim().toLocaleLowerCase();
     const matchingRows = data.rows.filter((row) => matches(row, filter)
       && (!lowered || `${row.name} ${row.uname} ${row.uid}`.toLocaleLowerCase().includes(lowered)))
-      .sort((a, b) => b.wrongCount - a.wrongCount || b.answered - a.answered || a.name.localeCompare(b.name, 'zh-CN'));
+      .sort((a, b) => Number(b.enabled) - Number(a.enabled) || b.wrongCount - a.wrongCount
+        || b.answered - a.answered || a.name.localeCompare(b.name, 'zh-CN'));
     const rows = matchingRows.slice(0, visibleLimit);
     disposeViews();
     tableBody.replaceChildren();
@@ -239,8 +240,7 @@ export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocume
       if (row.domainNames?.length) name.append(el('small', 'dqd-domain-names', row.domainNames.join(' / ')));
       identity.append(avatar, name);
       student.append(identity);
-      const progress = cell('出题范围 / 已答', 'dqd-progress-cell');
-      progress.append(el('div', 'dqd-assigned-tags', row.tags?.length ? row.tags.join(' · ') : row.total ? '当前范围全部知识点' : '当前无匹配题目'));
+      const progress = cell('答题进度', 'dqd-progress-cell');
       const progressLabel = el('div', 'dqd-progress-label');
       progressLabel.append(el('span', 'dqd-progress-numbers', `已答 ${row.answered} / ${row.total} 题`));
       if (!row.enabled) progressLabel.append(el('span', 'dqd-paused', '练习已暂停'));
