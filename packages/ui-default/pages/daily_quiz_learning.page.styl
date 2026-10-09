@@ -1,0 +1,447 @@
+.daily-quiz-learning
+  color: #365169
+  font-size: 13px
+  line-height: 1.7
+
+  *, *::before, *::after
+    box-sizing: border-box
+
+  [hidden]
+    display: none !important
+
+  h3, h4, p
+    margin: 0
+
+  button, summary, a
+    &:focus-visible
+      outline: 3px solid #8abcdc
+      outline-offset: 3px
+
+  button
+    font-family: inherit
+    cursor: pointer
+
+  .dql-overview
+    display: grid
+    grid-template-columns: repeat(5, minmax(0, 1fr))
+    gap: 10px
+    margin: 16px 0 11px
+    > div
+      min-width: 0
+      padding: 11px 13px
+      border: 1px solid #e1eaf1
+      border-radius: 8px
+      background: #fff
+    span
+      display: block
+      color: #8a9dab
+      font-size: 11px
+    strong
+      display: block
+      margin-top: 3px
+      color: #355e78
+      font-size: 19px
+      font-weight: 600
+      font-variant-numeric: tabular-nums
+
+  .dql-scope-note, .dql-history-note
+    margin: 9px 0 14px
+    color: #8397a6
+    font-size: 11px
+    line-height: 1.8
+
+  .dql-tabs
+    display: flex
+    flex-wrap: wrap
+    gap: 7px
+    margin-bottom: 14px
+
+  .dql-tab
+    display: inline-flex
+    align-items: center
+    gap: 7px
+    border: 1px solid #dce7ef
+    border-radius: 7px
+    padding: 6px 10px
+    background: #fff
+    color: #7890a2
+    font-size: 12px
+    line-height: 1.6
+    span
+      color: #94a5b1
+      font-size: 10px
+      font-variant-numeric: tabular-nums
+    &[aria-pressed='true']
+      border-color: #a9cce3
+      color: #327ba8
+      background: #edf7fd
+      span
+        color: #568fac
+
+  .dql-button
+    min-height: 32px
+    border: 1px solid #cfdfeb
+    border-radius: 7px
+    padding: 5px 11px
+    background: #fff
+    color: #4c7d9d
+    font-size: 12px
+    line-height: 1.5
+    &:hover
+      border-color: #8fb7d3
+      background: #f7fbff
+
+  .dql-more
+    display: block
+    margin: 14px auto 3px
+
+  .dql-link
+    color: #327ca9
+    font-size: 12px
+
+  .dql-empty
+    padding: 29px 17px
+    border: 1px dashed #dce7ee
+    border-radius: 9px
+    color: #5d7a8d
+    background: rgba(255, 255, 255, .65)
+    text-align: center
+    strong
+      font-size: 14px
+      font-weight: 600
+    p
+      margin-top: 7px
+      color: #94a4b0
+      font-size: 12px
+
+  .dql-question
+    overflow: hidden
+    margin-top: 8px
+    border: 1px solid #e0e9f0
+    border-radius: 8px
+    background: #fff
+    > summary
+      display: flex
+      align-items: center
+      gap: 11px
+      padding: 13px 14px
+      cursor: pointer
+      list-style: none
+      &::-webkit-details-marker
+        display: none
+      &::after
+        content: '+'
+        flex: 0 0 auto
+        color: #8fa7b7
+        font-size: 17px
+    &[open] > summary::after
+      content: '−'
+
+  .dql-question-name
+    flex: 1
+    min-width: 0
+    strong
+      display: block
+      color: #36586f
+      font-size: 13px
+      font-weight: 600
+      overflow-wrap: anywhere
+    small
+      display: block
+      margin-top: 3px
+      color: #94a7b5
+      font-size: 10px
+
+  .dql-result
+    display: inline-block
+    flex: 0 0 auto
+    border-radius: 5px
+    padding: 2px 7px
+    background: #f0f4f7
+    color: #8c9da9
+    font-size: 10px
+    font-weight: 600
+    white-space: nowrap
+    &.is-correct
+      background: #edf8f3
+      color: #388b78
+    &.is-wrong
+      background: #fff5e8
+      color: #ad7e3d
+
+  .dql-question-body
+    padding: 2px 15px 16px
+
+  .dql-question-time
+    margin-bottom: 12px
+    color: #9aabb7
+    font-size: 10px
+
+  .dql-markdown
+    min-width: 0
+    color: #456176
+    font-size: 13px
+    line-height: 1.9
+    overflow-wrap: anywhere
+    p
+      margin: 0 0 10px
+      &:last-child
+        margin-bottom: 0
+    pre
+      max-width: 100%
+      overflow-x: auto
+      margin: 10px 0
+      padding: 12px
+      border: 1px solid #e1eaf0
+      border-radius: 6px
+      background: #f6f9fb
+      font-size: 12px
+      white-space: pre
+    img
+      max-width: 100%
+      height: auto
+    table
+      display: block
+      max-width: 100%
+      overflow-x: auto
+      table-layout: auto
+      width: auto
+      th, td
+        width: auto
+        min-width: 70px
+        padding: 7px 10px
+        font-size: 12px
+
+  .dql-option
+    display: flex
+    align-items: flex-start
+    gap: 10px
+    padding: 10px 12px
+    margin-top: 8px
+    border: 1px solid #e7edf2
+    border-radius: 7px
+    background: #fbfcfd
+    .dql-markdown
+      flex: 1
+    &.is-answer
+      border-color: #c4e0d6
+      background: #f4fbf7
+    &.is-selected:not(.is-answer)
+      border-color: #ecd8c5
+      background: #fffaf3
+
+  .dql-option-letter
+    flex: 0 0 16px
+    padding-top: 2px
+    color: #7c98aa
+    font-size: 12px
+
+  .dql-option-labels
+    display: flex
+    flex-direction: column
+    gap: 3px
+    flex: 0 0 auto
+    padding-top: 3px
+    color: #8c9eab
+    small
+      font-size: 10px
+
+  .dql-correct
+    color: #328d78
+
+  .dql-wrong
+    color: #ad7e3d
+
+  .dql-answers
+    display: flex
+    flex-wrap: wrap
+    gap: 7px 22px
+    margin-top: 14px
+    color: #748c9d
+    font-size: 12px
+    font-weight: 600
+
+  .dql-analysis
+    margin-top: 15px
+    padding: 13px 15px
+    border-radius: 7px
+    background: #f3f7fa
+    h4
+      margin-bottom: 7px
+      color: #648397
+      font-size: 12px
+      font-weight: 600
+
+  .dql-tag-grid
+    display: grid
+    grid-template-columns: repeat(2, minmax(0, 1fr))
+    gap: 10px
+
+  .dql-tag-filter
+    display: flex
+    align-items: center
+    justify-content: space-between
+    flex-wrap: wrap
+    gap: 9px
+    margin-bottom: 12px
+    color: #6891a8
+    font-size: 12px
+
+  .dql-tag-review
+    margin-top: 11px
+    border: 0
+    padding: 0
+    color: #5188a8
+    background: transparent
+    font-size: 11px
+
+  .dql-tag
+    padding: 14px
+    border: 1px solid #e0eaf0
+    border-radius: 9px
+    background: #fff
+    > p
+      margin-top: 7px
+      color: #94a6b2
+      font-size: 10px
+
+  .dql-tag-title
+    display: flex
+    align-items: baseline
+    justify-content: space-between
+    flex-wrap: wrap
+    gap: 5px 10px
+    strong
+      color: #466c83
+      font-size: 13px
+      font-weight: 600
+    small
+      color: #9cabb6
+      font-size: 10px
+
+  .dql-tag-numbers
+    display: flex
+    align-items: center
+    gap: 12px
+    margin: 10px 0 8px
+    color: #94a6b2
+    font-size: 11px
+    font-variant-numeric: tabular-nums
+    strong
+      margin-left: auto
+      color: #5a7e93
+      font-size: 13px
+      font-weight: 600
+
+  .dql-tag-progress
+    display: flex
+    height: 5px
+    overflow: hidden
+    border-radius: 4px
+    background: #edf2f5
+    .is-correct
+      background: #80c0b0
+    .is-wrong
+      background: #dec297
+
+  .dql-session
+    margin-top: 9px
+    border: 1px solid #dfe9f0
+    border-radius: 9px
+    background: #fff
+    overflow: hidden
+
+  .dql-session-header
+    display: flex
+    align-items: center
+    gap: 16px
+    padding: 14px
+    > div
+      flex: 1
+    strong
+      display: block
+      color: #4b6c82
+      font-size: 13px
+      font-weight: 600
+    small
+      display: block
+      margin-top: 3px
+      color: #95a7b4
+      font-size: 10px
+
+  .dql-session-result
+    color: #8b9eac
+    font-size: 11px
+
+  .dql-session-toggle
+    flex: 0 0 auto
+    border: 0
+    padding: 5px 0
+    background: transparent
+    color: #3e83ad
+    font-size: 11px
+
+  .dql-session-body
+    padding: 0 13px 13px
+    border-top: 1px solid #edf2f6
+    background: #fafcfd
+
+  .dql-loading, .dql-error
+    display: flex
+    align-items: center
+    flex-wrap: wrap
+    gap: 10px
+    padding: 20px 0 9px
+    color: #859ba9
+    font-size: 12px
+
+  .dql-error
+    color: #a97346
+
+@media screen and (max-width: 640px)
+  .daily-quiz-learning
+    .dql-overview
+      grid-template-columns: repeat(2, minmax(0, 1fr))
+      gap: 7px
+      > div
+        padding: 9px 11px
+      strong
+        font-size: 18px
+    .dql-tabs
+      gap: 5px
+    .dql-tab
+      padding: 5px 8px
+      font-size: 11px
+      gap: 5px
+    .dql-tag-grid
+      grid-template-columns: 1fr
+    .dql-question > summary
+      padding: 11px 10px
+      gap: 8px
+    .dql-question-name strong
+      font-size: 12px
+    .dql-question-body
+      padding: 2px 10px 13px
+    .dql-option
+      flex-wrap: wrap
+      padding: 9px
+      gap: 7px
+    .dql-option-labels
+      width: 100%
+      flex-direction: row
+      padding-left: 23px
+    .dql-markdown
+      font-size: 12px
+    .dql-session-header
+      flex-wrap: wrap
+      gap: 7px 12px
+      padding: 12px
+      > div
+        flex-basis: 65%
+    .dql-session-result
+      order: 3
+      flex-basis: 100%
+      font-size: 10px
+    .dql-session-body
+      padding-left: 9px
+      padding-right: 9px

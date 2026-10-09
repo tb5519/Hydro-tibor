@@ -315,71 +315,77 @@ describe('daily quiz teacher configuration and reports', () => {
         assert.match($('[data-daily-feedback]').textContent, /已保存/);
     });
 
-    it('keeps a settings draft while browsing dates and distinguishes unanswered from wrong', async (t) => {
-        const { dom, $, change } = harness(t, {}, 'uid=44&tab=daily');
-        assert.equal($('[data-student-daily-form]').hidden, true, 'records come first');
+    it('shows assigned question mastery first and keeps settings drafts while reviewing wrong questions and rounds', async (t) => {
+        const { dom, $, change, doc } = harness(t, {}, 'uid=44&tab=daily&quizDay=2026-10-08');
+        assert.equal($('[data-student-daily-form]').hidden, true, 'mastery comes first');
         assert.equal($('[data-daily-history]').hidden, false);
+        assert.equal($('[data-quiz-day]'), null, 'the teacher view is not a daily attendance report');
+        assert.equal(new URL(dom.window.location.href).searchParams.has('quizDay'), false);
+        assert.match($('.dql-overview').textContent, /2 \/ 3.*1.*1.*50%.*2 次/);
+        assert.equal(doc.querySelectorAll('[data-learning-question]').length, 1, 'wrong questions are immediately visible');
+        assert.equal($('[data-learning-question]').dataset.learningQuestion, 'q1');
         change('[data-daily-enabled]', true, 'change');
         change('[data-daily-point="system:1"]', '9');
-        $('[data-quiz-result-filter="wrong"]').click();
-        assert.equal(dom.window.document.querySelectorAll('[data-quiz-question]').length, 1);
-        assert.equal($('[data-quiz-question]').dataset.quizQuestion, 'q1');
-        $('[data-quiz-result-filter="unanswered"]').click();
-        assert.equal($('[data-quiz-question]').dataset.quizQuestion, 'q2');
+        $('[data-learning-view="answered"]').click();
+        assert.equal(doc.querySelectorAll('[data-learning-question]').length, 2, 'unseen questions are not treated as incorrect');
+        $('[data-learning-view="tags"]').click();
+        assert.match($('.dql-tag').textContent, /循环.*答对 1.*待复习 1.*50%.*未答 1/);
         let requested;
         dom.window.fetch = async (url) => {
             requested = new URL(url);
-            return { ok: true, json: async () => ({ selectedDailyQuiz: { report: { ...daily.report, day: '2026-10-07' } } }) };
+            return { ok: true, json: async () => ({ report: daily.report }) };
         };
-        change('[data-quiz-day]', '2026-10-07', 'change');
+        $('[data-learning-view="sessions"]').click();
+        assert.match($('.dql-session').textContent, /第 2 次练习/);
+        $('[data-learning-action="session"][data-learning-session="round-2"]').click();
         await settle();
-        assert.equal(requested.searchParams.get('quizDay'), '2026-10-07');
+        assert.equal(requested.pathname, '/manage/daily-quiz/student/44/session/round-2');
+        assert.equal(doc.querySelectorAll('[data-learning-session-panel="round-2"] [data-learning-question]').length, 3);
+        assert.match($('[data-learning-question="q2"]').textContent, /未作答/);
         assert.equal($('[data-daily-point="system:1"]').value, '9');
         assert.equal($('[data-daily-enabled]').checked, true);
     });
 
     it('shows judgment results as correct or incorrect statements instead of answer letters', (t) => {
-        const report = { ...daily.report, items: daily.report.items.map((item) => ({
+        const learning = { ...daily.learning, questions: daily.learning.questions.map((item) => ({
             ...item, kind: 'judge', options: ['正确', '错误'],
         })) };
-        const { $ } = harness(t, { selectedDailyQuiz: { ...daily, report } }, 'uid=44&tab=daily');
-        assert.match($('[data-quiz-question="q0"] .student-quiz-answer').textContent, /学员答案：正确 \/ 正确答案：正确/);
-        assert.match($('[data-quiz-question="q1"] .student-quiz-answer').textContent, /学员答案：错误 \/ 正确答案：正确/);
-        assert.match($('[data-quiz-question="q2"] .student-quiz-answer').textContent, /学员答案：未作答 \/ 正确答案：正确/);
+        const { $ } = harness(t, { selectedDailyQuiz: { ...daily, learning } }, 'uid=44&tab=daily');
+        $('[data-learning-view="answered"]').click();
+        assert.match($('[data-learning-question="q0"] .dql-answers').textContent, /学员答案：正确.*正确答案：正确/);
+        assert.match($('[data-learning-question="q1"] .dql-answers').textContent, /学员答案：错误.*正确答案：正确/);
     });
 
     it('renders complete Markdown and attachment images while escaping injected HTML', (t) => {
         const { $, doc } = harness(t);
-        assert.match($('[data-quiz-question="q1"]').textContent, /学员选择/);
-        assert.match($('[data-quiz-question="q1"]').textContent, /正确选项/);
-        assert.match($('[data-quiz-question="q1"]').textContent, /使用循环完成/);
+        assert.match($('[data-learning-question="q1"]').textContent, /学员选择/);
+        assert.match($('[data-learning-question="q1"]').textContent, /正确选项/);
+        assert.match($('[data-learning-question="q1"]').textContent, /使用循环完成/);
         assert.equal(doc.querySelectorAll('[onerror]').length, 0);
-        assert.equal($('.student-quiz-content strong').textContent, '题干');
-        assert.match($('.student-quiz-content img').getAttribute('src'), /manage\/quiz\/file/);
+        assert.equal($('.dql-markdown strong').textContent, '题干');
+        assert.match($('.dql-markdown img').getAttribute('src'), /manage\/quiz\/file/);
     });
 
-    it('refreshes completed answers when returning to records and supports manual refresh without losing the settings draft', async (t) => {
+    it('refreshes mastery on return and preserves the last good snapshot and settings draft after authentication fails', async (t) => {
         const { dom, $, change } = harness(t, {}, 'uid=44&tab=daily');
         const subtabs = [...$('.student-daily-subtabs').querySelectorAll('button')];
         subtabs[1].click();
         change('[data-daily-enabled]', true, 'change');
         change('[data-daily-point="system:1"]', '9');
         const requests = [];
-        dom.window.fetch = (url) => new Promise((resolve) => requests.push({ url, resolve }));
+        dom.window.fetch = (url, options) => new Promise((resolve) => requests.push({ url, options, resolve }));
         subtabs[0].click();
         assert.equal(requests.length, 1);
-        assert.equal(new URL(requests[0].url).searchParams.get('quizDay'), '2026-10-08');
+        assert.equal(new URL(requests[0].url).searchParams.has('quizDay'), false);
+        assert.equal(requests[0].options.cache, 'no-store');
         assert.equal($('[data-quiz-refresh]').disabled, true);
         $('[data-quiz-refresh]').click();
         assert.equal(requests.length, 1, 'disabled refresh must not issue another request');
-        const completed = {
-            ...daily.report, answered: 3, correctCount: 2, earnedPoints: 6, completed: true,
-            items: daily.report.items.map((item) => item.correct === null ? { ...item, selected: ['A'], correct: true, earnedPoints: 3 } : item),
-        };
-        requests[0].resolve({ ok: true, json: async () => ({ selectedDailyQuiz: { report: completed } }) });
+        const learning = { ...daily.learning, summary: { ...daily.learning.summary, answered: 3, correctCount: 2, unseenCount: 0, accuracy: 67 },
+            questions: daily.report.items.map((item) => item.correct === null ? { ...item, selected: ['A'], correct: true, earnedPoints: 3 } : item) };
+        requests[0].resolve({ ok: true, json: async () => ({ selectedDailyQuiz: { learning } }) });
         await settle();
-        assert.match($('.student-daily-history-stats').textContent, /3 \/ 3/);
-        assert.match($('[data-quiz-question="q2"]').textContent, /答对/);
+        assert.match($('.dql-overview').textContent, /3 \/ 3.*67%/);
         assert.equal($('[data-quiz-refresh]').disabled, false);
         assert.equal($('[data-daily-point="system:1"]').value, '9');
         $('[data-quiz-refresh]').click();
@@ -387,27 +393,41 @@ describe('daily quiz teacher configuration and reports', () => {
         requests[1].resolve({ ok: true, json: async () => { throw new Error('Expired authentication'); } });
         await settle();
         assert.equal($('[data-quiz-refresh]').disabled, false, 'a failed refresh can be retried');
-        assert.match($('.student-daily-history-stats').textContent, /3 \/ 3/, 'failure preserves the last successful report');
+        assert.match($('.dql-overview').textContent, /3 \/ 3/, 'failure preserves the last successful snapshot');
+        assert.match($('[data-daily-history] [role="status"]').textContent, /身份验证/);
+        assert.equal($('[data-daily-learning]').hasAttribute('aria-busy'), false);
     });
 
-    it('keeps the latest date report when requests arrive out of order and restores the date on failed authentication', async (t) => {
-        const { dom, $, change } = harness(t);
+    it('ignores older mastery refreshes and cancels both overview and round requests when changing students', async (t) => {
+        const { dom, $ } = harness(t);
         const requests = [];
-        dom.window.fetch = () => new Promise((resolve) => requests.push(resolve));
-        change('[data-quiz-day]', '2026-10-06', 'change');
-        change('[data-quiz-day]', '2026-10-07', 'change');
-        requests[1]({ ok: true, json: async () => ({ selectedDailyQuiz: { report: { ...daily.report, day: '2026-10-07' } } }) });
+        dom.window.fetch = (url, options) => new Promise((resolve) => requests.push({ url, options, resolve }));
+        const records = $('.student-daily-subtabs button');
+        records.click();
+        records.click();
+        assert.equal(requests[0].options.signal.aborted, true);
+        const latest = { ...daily.learning, summary: { ...daily.learning.summary, participationCount: 9 } };
+        requests[1].resolve({ ok: true, json: async () => ({ selectedDailyQuiz: { learning: latest } }) });
         await settle();
-        requests[0]({ ok: true, json: async () => ({ selectedDailyQuiz: { report: { ...daily.report, day: '2026-10-06' } } }) });
+        requests[0].resolve({ ok: true, json: async () => ({ selectedDailyQuiz: { learning: daily.learning } }) });
         await settle();
-        assert.equal($('[data-quiz-day]').value, '2026-10-07');
-        assert.equal(new URL(dom.window.location.href).searchParams.get('quizDay'), '2026-10-07');
-        change('[data-quiz-day]', '2026-10-05', 'change');
-        requests[2]({ ok: true, json: async () => { throw new Error('Unexpected HTML'); } });
+        assert.match($('.dql-overview').textContent, /9 次/);
+        $('[data-learning-view="sessions"]').click();
+        $('[data-learning-action="session"][data-learning-session="round-2"]').click();
+        const round = requests[2];
+        records.click();
+        const refresh = requests[3];
+        dom.window.fetch = async () => ({ ok: true, text: async () => render({ selectedStudent: students[1] }) });
+        $('[data-student-note][data-student-uid="45"]').click();
         await settle();
-        assert.equal($('[data-quiz-day]').value, '2026-10-07');
-        assert.match($('[data-daily-history] [role="status"]').textContent, /身份验证/);
-        assert.equal($('[data-daily-report]').hasAttribute('aria-busy'), false);
+        assert.equal($('[data-student-editor]').dataset.studentUid, '45');
+        assert.equal(round.options.signal.aborted, true, 'departed student round fetch is disposed');
+        assert.equal(refresh.options.signal.aborted, true, 'departed student mastery fetch is cancelled');
+        refresh.resolve({ ok: true, json: async () => ({ selectedDailyQuiz: { learning: latest } }) });
+        round.resolve({ ok: true, json: async () => ({ report: daily.report }) });
+        await settle();
+        assert.match($('.dql-overview').textContent, /2 次/);
+        assert.equal($('[data-learning-session-panel]'), null, 'the new student never receives the old round');
     });
 
     it('validates integer rewards before sending and preserves independent panels with keyboard tabs', (t) => {

@@ -366,6 +366,200 @@ export function summarizeAdminItems(source: AdminQuizSession['items']) {
     };
 }
 
+export interface AdminQuizMaterial {
+    domainId: string;
+    sourceId: number;
+    tags: string[];
+}
+
+interface AdminQuizHistory extends Omit<AdminQuizSession, 'items'> {
+    _id: string;
+    round: number;
+    items: (AdminQuizSession['items'][number] & Pick<QuizItem, 'id' | 'sourceId'>)[];
+}
+
+interface AdminQuizLatestAnswer {
+    sessionId: string;
+    day: string;
+    round: number;
+    itemId: number;
+    answer: NonNullable<AdminQuizSession['items'][number]['answer']>;
+}
+
+export interface AdminQuizLearningState {
+    uid: number;
+    enabled: boolean;
+    configuredTags: string[];
+    pool: AdminQuizMaterial[];
+    latest: Map<string, AdminQuizLatestAnswer>;
+    summary: {
+        total: number; answered: number; correctCount: number; wrongCount: number; unseenCount: number;
+        accuracy: number | null; participationCount: number; earnedPoints: number; lastAnsweredAt: string | null;
+    };
+    tags: {
+        domainId: string; domainName: string; name: string; total: number;
+        answered: number; correctCount: number; wrongCount: number; accuracy: number | null;
+    }[];
+    sessions: ({ id: string, round: number, day: string } & ReturnType<typeof summarizeAdminItems>)[];
+}
+
+export function adminQuizSourceKey(item: Pick<AdminQuizMaterial, 'domainId' | 'sourceId'>) {
+    return `${item.domainId}:${item.sourceId}`;
+}
+
+function latestAnswerOrder(answer: AdminQuizLatestAnswer, previous: AdminQuizLatestAnswer) {
+    const timestamp = (item: AdminQuizLatestAnswer) => +new Date(item.answer.answeredAt) || +new Date(item.day);
+    return timestamp(answer) - timestamp(previous) || answer.round - previous.round
+        || answer.day.localeCompare(previous.day) || answer.itemId - previous.itemId;
+}
+
+/** Current configured pools and compact history are shared by both teacher views. No session is created or settled. */
+export async function getAdminLearningBatch(
+    students: { uid: number, domainIds: string[] }[], domains: { id: string, name: string }[],
+) {
+    const uids = students.map((student) => student.uid);
+    const domainIds = [...new Set(students.flatMap((student) => student.domainIds))];
+    const [configs, sources, history] = await Promise.all([
+        listConfigs(uids),
+        domainIds.length ? document.coll.find({
+            domainId: { $in: domainIds }, docType: document.TYPE_PROBLEM,
+            objectiveKind: { $in: DAILY_QUIZ_KINDS }, reference: { $exists: false },
+        }).project({ domainId: 1, docId: 1, tag: 1, objective: 1 }).toArray() : [],
+        uids.length ? sessionColl.find({ uid: { $in: uids } }).project<AdminQuizHistory>({
+            _id: 1, uid: 1, day: 1, round: 1, 'items.id': 1, 'items.domainId': 1, 'items.sourceId': 1, 'items.cancelled': 1,
+            'items.answer.correct': 1, 'items.answer.earnedPoints': 1, 'items.answer.answeredAt': 1,
+        }).toArray() : [],
+    ]);
+    const catalogue: AdminQuizMaterial[] = [];
+    for (const source of sources) {
+        try {
+            parseObjective(JSON.stringify(source.objective));
+            catalogue.push({
+                domainId: source.domainId, sourceId: source.docId,
+                tags: Array.isArray(source.tag) ? [...new Set<string>(source.tag.filter((tag) => typeof tag === 'string'))] : [],
+            });
+        } catch { /* Invalid source material is not part of an assigned question pool. */ }
+    }
+    const domainNames = new Map(domains.map((item) => [item.id, item.name]));
+    const historyByUid = new Map<number, AdminQuizHistory[]>();
+    for (const session of history) {
+        const entries = historyByUid.get(session.uid) || [];
+        entries.push(session);
+        historyByUid.set(session.uid, entries);
+    }
+    const byUid = new Map<number, AdminQuizLearningState>();
+    for (const student of students) {
+        const policy = configs[student.uid] || defaultPolicy();
+        // Pausing the global switch stops future assignments without erasing the configured learning scope.
+        const rules = policy.domains.filter((rule) => rule.enabled && student.domainIds.includes(rule.domainId));
+        const rulesByDomain = new Map(rules.map((rule) => [rule.domainId, rule]));
+        const pool = catalogue.filter((item) => {
+            const rule = rulesByDomain.get(item.domainId);
+            return rule && (!rule.tags.length || item.tags.some((tag) => rule.tags.includes(tag)));
+        });
+        const keys = new Set(pool.map(adminQuizSourceKey));
+        const latest = new Map<string, AdminQuizLatestAnswer>();
+        const sessions: AdminQuizLearningState['sessions'] = [];
+        let participationCount = 0;
+        let earnedPoints = 0;
+        for (const session of historyByUid.get(student.uid) || []) {
+            const items = session.items.filter((item) => keys.has(adminQuizSourceKey(item)) && (!item.cancelled || item.answer));
+            if (!items.length) continue;
+            const summary = summarizeAdminItems(items);
+            sessions.push({ id: session._id, round: session.round, day: session.day, ...summary });
+            participationCount += Number(summary.answered > 0);
+            earnedPoints += summary.earnedPoints;
+            for (const item of items) {
+                if (!item.answer) continue;
+                const key = adminQuizSourceKey(item);
+                const candidate = {
+                    sessionId: session._id, day: session.day, round: session.round, itemId: item.id, answer: item.answer,
+                };
+                const previous = latest.get(key);
+                if (!previous || latestAnswerOrder(candidate, previous) > 0) latest.set(key, candidate);
+            }
+        }
+        sessions.sort((a, b) => b.round - a.round || b.day.localeCompare(a.day));
+        const answered = latest.size;
+        const correctCount = [...latest.values()].filter((item) => item.answer.correct).length;
+        const lastAnsweredAt = [...latest.values()].reduce((value, item) => Math.max(value, +new Date(item.answer.answeredAt) || 0), 0);
+        const tagGroups = new Map<string, { domainId: string, name: string, questions: AdminQuizMaterial[] }>();
+        for (const rule of rules) {
+            for (const name of rule.tags) tagGroups.set(`${rule.domainId}:${name}`, { domainId: rule.domainId, name, questions: [] });
+        }
+        for (const item of pool) {
+            const selected = rulesByDomain.get(item.domainId).tags;
+            const tags = selected.length ? item.tags.filter((tag) => selected.includes(tag)) : item.tags;
+            for (const name of tags.length ? tags : ['未标注知识点']) {
+                const key = `${item.domainId}:${name}`;
+                const group = tagGroups.get(key) || { domainId: item.domainId, name, questions: [] };
+                group.questions.push(item);
+                tagGroups.set(key, group);
+            }
+        }
+        const tags = [...tagGroups.values()].map((group) => {
+            const answers = group.questions.map((item) => latest.get(adminQuizSourceKey(item))).filter(Boolean);
+            const correct = answers.filter((item) => item.answer.correct).length;
+            return {
+                domainId: group.domainId, domainName: domainNames.get(group.domainId) || group.domainId, name: group.name,
+                total: group.questions.length, answered: answers.length, correctCount: correct, wrongCount: answers.length - correct,
+                accuracy: answers.length ? correct / answers.length * 100 : null,
+            };
+        }).sort((a, b) => a.domainName.localeCompare(b.domainName, 'zh-CN') || a.name.localeCompare(b.name, 'zh-CN'));
+        byUid.set(student.uid, {
+            uid: student.uid, enabled: policy.enabled && rules.length > 0,
+            configuredTags: [...new Set(rules.flatMap((rule) => rule.tags))], pool, latest, tags, sessions,
+            summary: {
+                total: pool.length, answered, correctCount, wrongCount: answered - correctCount, unseenCount: pool.length - answered,
+                accuracy: answered ? correctCount / answered * 100 : null, participationCount, earnedPoints,
+                lastAnsweredAt: lastAnsweredAt ? new Date(lastAnsweredAt).toISOString() : null,
+            },
+        });
+    }
+    return { configs, catalogue, byUid };
+}
+
+function presentAdminQuizItem(item: QuizItem, index: number, session: Pick<DailyQuizSession, '_id' | 'day' | 'round'>) {
+    return {
+        id: item.id, index, sourceId: item.sourceId, domainId: item.domainId, domainName: item.domainName,
+        title: item.title, stem: item.objective.stem, kind: item.objective.kind, tags: item.tags, options: item.objective.options,
+        answers: item.objective.answers, selected: item.answer?.selected || null, correct: item.answer?.correct ?? null,
+        points: item.points, earnedPoints: item.answer?.earnedPoints || 0, analysis: item.objective.analysis,
+        answeredAt: item.answer?.answeredAt, sessionId: session._id, day: session.day, round: session.round,
+    };
+}
+
+export async function getAdminLearningDetail(state: AdminQuizLearningState) {
+    const ids = [...new Set([...state.latest.values()].map((item) => item.sessionId))];
+    const snapshots = ids.length ? await sessionColl.find({ uid: state.uid, _id: { $in: ids } }).toArray() : [];
+    const byId = new Map(snapshots.map((session) => [session._id, session]));
+    const questions: ReturnType<typeof presentAdminQuizItem>[] = [];
+    const materialsByKey = new Map(state.pool.map((material) => [adminQuizSourceKey(material), material]));
+    for (const [key, latest] of state.latest) {
+        const session = byId.get(latest.sessionId);
+        const item = session?.items.find((candidate) => candidate.id === latest.itemId && adminQuizSourceKey(candidate) === key);
+        if (item?.answer) questions.push({
+            ...presentAdminQuizItem(item, questions.length + 1, session),
+            tags: materialsByKey.get(key)?.tags || item.tags,
+        });
+    }
+    questions.sort((a, b) => +new Date(b.answeredAt) - +new Date(a.answeredAt) || b.round - a.round || a.sourceId - b.sourceId);
+    questions.forEach((item, index) => { item.index = index + 1; });
+    return { summary: state.summary, tags: state.tags, questions, sessions: state.sessions };
+}
+
+export async function getAdminLearningSession(state: AdminQuizLearningState, sessionId: string) {
+    if (!state.sessions.some((session) => session.id === sessionId)) throw new NotFoundError();
+    const session = await sessionColl.findOne({ _id: sessionId, uid: state.uid });
+    if (!session) throw new NotFoundError();
+    const keys = new Set(state.pool.map(adminQuizSourceKey));
+    const items = session.items.filter((item) => keys.has(adminQuizSourceKey(item)) && (!item.cancelled || item.answer));
+    return {
+        id: session._id, round: session.round, day: session.day, ...summarizeAdminItems(items),
+        items: items.map((item, index) => presentAdminQuizItem(item, index + 1, session)),
+    };
+}
+
 export async function getAdminDay(uid: number, day = beijingDay(), allowedDomainIds?: string[]) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(Date.parse(day))) throw new ValidationError('quizDay');
     const session = await sessionColl.findOne({ _id: `${uid}-${day}` });
@@ -408,6 +602,26 @@ export async function getAdminFile(uid: number, day: string, questionId: number,
     const item = session?.items.find((value) => value.id === questionId);
     if (!item || (allowedDomainIds && !allowedDomainIds.includes(item.domainId))
         || !Object.hasOwn(item.files, filename)) throw new NotFoundError();
+    return item.files[filename];
+}
+
+/** Revalidate one protected snapshot against the current pool without reading the student's entire history. */
+export async function getAdminLearningFile(uid: number, day: string, questionId: number, filename: string, allowedDomainIds: string[]) {
+    const session = await sessionColl.findOne({ _id: `${uid}-${day}`, uid }, { projection: { items: { $elemMatch: { id: questionId } } } });
+    const item = session?.items?.[0];
+    if (!item || !allowedDomainIds.includes(item.domainId) || (item.cancelled && !item.answer)
+        || !Object.hasOwn(item.files, filename)) throw new NotFoundError();
+    const [policy, source] = await Promise.all([
+        getPolicy(uid),
+        document.coll.findOne({
+            domainId: item.domainId, docType: document.TYPE_PROBLEM, docId: item.sourceId,
+            objectiveKind: { $in: DAILY_QUIZ_KINDS }, reference: { $exists: false },
+        }, { projection: { tag: 1, objective: 1 } }),
+    ]);
+    const rule = policy.domains.find((candidate) => candidate.domainId === item.domainId && candidate.enabled);
+    const tags = Array.isArray(source?.tag) ? source.tag : [];
+    if (!source || !rule || (rule.tags.length && !tags.some((tag) => rule.tags.includes(tag)))) throw new NotFoundError();
+    try { parseObjective(JSON.stringify(source.objective)); } catch { throw new NotFoundError(); }
     return item.files[filename];
 }
 

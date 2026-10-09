@@ -48,6 +48,15 @@ const daily = {
         })),
     },
 };
+daily.learning = {
+    summary: { total: 3, answered: 2, correctCount: 1, wrongCount: 1, unseenCount: 1, accuracy: 50, participationCount: 2, earnedPoints: 8 },
+    tags: [{ domainId: 'system', domainName: 'Python 训练', name: '循环', total: 3, answered: 2, correctCount: 1, wrongCount: 1, accuracy: 50 }],
+    questions: daily.report.items.filter((item) => item.correct !== null),
+    sessions: [
+        { id: 'round-2', round: 2, day: '2026-10-08', total: 3, answered: 2, correctCount: 1, wrongCount: 1, earnedPoints: 3, completed: false, detailUrl: '/manage/daily-quiz/student/44/session/round-2' },
+        { id: 'round-1', round: 1, day: '2026-10-07', total: 3, answered: 3, correctCount: 2, wrongCount: 1, earnedPoints: 5, completed: true, detailUrl: '/manage/daily-quiz/student/44/session/round-1' },
+    ],
+};
 function render(overrides = {}, joinedCount = 2) {
     const selected = overrides.selectedStudent || students[0];
     return env.render('manage_user_management.html', {

@@ -1,4 +1,4 @@
-import MarkdownIt from 'markdown-it';
+import { bindDailyQuizLearning, type QuizLearning } from './daily_quiz_learning';
 
 interface QuizDomainPolicy {
   domainId: string;
@@ -21,41 +21,13 @@ interface QuizDomain {
   questionTags: string[][];
   createUrl: string;
 }
-interface QuizReportItem {
-  id: string;
-  index: number;
-  domainId: string;
-  domainName: string;
-  title: string;
-  stem: string;
-  kind: string;
-  tags: string[];
-  options: string[];
-  answers: string[];
-  selected: string[] | null;
-  correct: boolean | null;
-  points: number;
-  earnedPoints: number;
-  analysis: string;
-}
-interface QuizReport {
-  day: string;
-  total: number;
-  answered: number;
-  correctCount: number;
-  wrongCount: number;
-  earnedPoints: number;
-  completed: boolean;
-  items: QuizReportItem[];
-}
 interface QuizData {
   policy?: QuizPolicy;
   domains?: QuizDomain[];
-  summary?: { recentSessions?: { day: string, total: number, answered: number, earnedPoints: number }[] };
-  report?: QuizReport;
+  learning?: QuizLearning;
 }
 
-/** Teacher-authored Markdown is rendered with raw HTML and unsafe links disabled. */
+/** Keep settings drafts independent from the current knowledge mastery view. */
 export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boolean) => void, onUrlChange: () => void = () => {}) {
   const doc = editor.ownerDocument;
   const win = doc.defaultView;
@@ -84,8 +56,9 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
   };
   let baseline = JSON.stringify(policy);
   let pending = false;
-  let reportRequest = 0;
-  let reportFilter = 'all';
+  let learningRequest = 0;
+  let learningController: AbortController | null = null;
+  let learningView: ReturnType<typeof bindDailyQuizLearning> | null = null;
   let catalogRequest = 0;
   let catalogController: AbortController | null = null;
   const lifetime = new win.AbortController();
@@ -101,12 +74,6 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
     feedback.textContent = text;
     feedback.hidden = !text;
     feedback.classList.toggle('is-error', error);
-  }
-  const markdown = new MarkdownIt({ html: false, linkify: true });
-  function questionContent(value: string) {
-    const node = el('div', 'typo student-quiz-content');
-    node.innerHTML = markdown.render(value || '');
-    return node;
   }
   function numberInput(value: number, min: number, max: number, label: string) {
     const input = el('input', 'textbox');
@@ -126,12 +93,13 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
   function updateUrl(key: string, value: string) {
     const url = new win.URL(win.location.href);
     url.searchParams.set(key, value);
+    url.searchParams.delete('quizDay');
     win.history.replaceState(null, '', url);
     onUrlChange();
   }
   const subtabs = el('nav', 'student-daily-subtabs');
   subtabs.setAttribute('aria-label', '每日问答');
-  const recordsButton = el('button', '', '答题记录');
+  const recordsButton = el('button', '', '知识掌握');
   const settingsButton = el('button', '', '问答设置');
   [recordsButton, settingsButton].forEach((button) => {
     button.type = 'button';
@@ -420,7 +388,9 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
   const observer = new win.MutationObserver(() => {
     if (editor.isConnected) return;
     catalogRequest++;
-    reportRequest++;
+    learningRequest++;
+    learningController?.abort();
+    learningView?.dispose();
     catalogController?.abort();
     lifetime.abort();
     observer.disconnect();
@@ -428,7 +398,9 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
   if (editor.parentNode) observer.observe(editor.parentNode, { childList: true });
   win.addEventListener('pagehide', (event) => {
     catalogController?.abort();
+    learningController?.abort();
     if (event.persisted) return;
+    learningView?.dispose();
     lifetime.abort();
     observer.disconnect();
   }, { signal: lifetime.signal });
@@ -436,184 +408,85 @@ export function bindStudentDailyQuiz(editor: HTMLElement, onSaved: (enabled: boo
   const recordsFeedback = el('p', 'student-editor-feedback');
   recordsFeedback.hidden = true;
   recordsFeedback.setAttribute('role', 'status');
-  const dateTools = el('div', 'student-daily-date-tools');
-  const date = el('input', 'textbox');
-  date.type = 'date';
-  date.setAttribute('aria-label', '查看哪天的答题记录');
-  date.dataset.quizDay = '';
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(
-    new Date(),
-  );
-  date.value = data.report?.day || new win.URL(win.location.href).searchParams.get('quizDay') || today;
-  date.max = today;
-  dateTools.append(field('答题日期', date));
-  const recent = el('select', 'textbox');
-  recent.setAttribute('aria-label', '最近答题日期');
-  const placeholder = el('option', '', '最近答题日期');
-  placeholder.value = '';
-  recent.append(placeholder);
-  (data.summary?.recentSessions || []).forEach((session) => {
-    const option = el('option', '', `${session.day} · ${session.answered}/${session.total} 题`);
-    option.value = session.day;
-    recent.append(option);
-  });
-  dateTools.append(recent);
-  const refresh = el('button', 'student-daily-refresh', '刷新记录');
+  const learningTools = el('div', 'student-daily-learning-tools');
+  const learningCopy = el('div');
+  learningCopy.append(el('h3', '', '看看哪些知识点还需要巩固'), el('p', '', '查看已分配题目的掌握情况，也可以回看每次练习。'));
+  const refresh = el('button', 'student-daily-refresh', '刷新掌握情况');
   refresh.type = 'button';
   refresh.dataset.quizRefresh = '';
-  dateTools.append(refresh);
-  const reportHost = el('div');
-  reportHost.dataset.dailyReport = '';
-  history.replaceChildren(dateTools, recordsFeedback, reportHost);
-  const kindNames = { single: '单选', multiple: '多选', judge: '判断' };
-  function renderReport(report?: QuizReport) {
-    reportHost.replaceChildren();
-    if (!report?.items?.length) {
+  learningTools.append(learningCopy, refresh);
+  const learningHost = el('div');
+  learningHost.dataset.dailyLearning = '';
+  history.replaceChildren(learningTools, recordsFeedback, learningHost);
+  function renderLearning(learning?: QuizLearning) {
+    learningView?.dispose();
+    learningView = null;
+    if (!learning) {
       const empty = el('div', 'student-daily-report-empty');
-      empty.append(el('strong', '', '这一天还没有答题记录'), el('p', '', '问答开启后，学员进入课堂时会收到当天的一轮题目。'));
-      reportHost.append(empty);
+      empty.append(el('strong', '', '暂时无法读取知识掌握情况'), el('p', '', '点击刷新重新读取，当前问答设置会保留。'));
+      learningHost.replaceChildren(empty);
       return;
     }
-    const stats = el('div', 'student-daily-history-stats');
-    const accuracy = report.answered ? `${Math.round((report.correctCount / report.answered) * 100)}%` : '—';
-    [
-      ['答题进度', `${report.answered} / ${report.total}`],
-      ['正确率', accuracy],
-      ['获得积分', `${report.earnedPoints}`],
-    ].forEach(([label, value]) => {
-      const item = el('div');
-      item.append(el('small', '', label), el('strong', '', value));
-      stats.append(item);
-    });
-    const filters = el('div', 'student-daily-report-filters');
-    filters.setAttribute('aria-label', '按答题结果筛选');
-    const list = el('div');
-    const filterEntries = [
-      ['all', '全部', report.total],
-      ['correct', '答对', report.correctCount],
-      ['wrong', '答错', report.wrongCount],
-      ['unanswered', '未答', report.total - report.answered],
-    ];
-    filterEntries.forEach(([key, label, count]) => {
-      const button = el('button', '', `${label} ${count}`);
-      button.type = 'button';
-      button.dataset.quizResultFilter = `${key}`;
-      button.setAttribute('aria-pressed', `${reportFilter === key}`);
-      button.addEventListener('click', () => {
-        reportFilter = `${key}`;
-        renderReport(report);
-      });
-      filters.append(button);
-    });
-    const items = report.items.filter(
-      (item) =>
-        reportFilter === 'all'
-        || (reportFilter === 'correct' && item.correct === true)
-        || (reportFilter === 'wrong' && item.correct === false)
-        || (reportFilter === 'unanswered' && item.correct == null),
-    );
-    items.forEach((item) => {
-      const question = el('details', 'student-daily-question');
-      question.dataset.quizQuestion = item.id;
-      const heading = el('summary');
-      const status = item.correct == null ? '未作答' : item.correct ? '答对' : '答错';
-      heading.append(
-        el('span', `student-quiz-status ${item.correct == null ? 'is-unanswered' : item.correct ? 'is-correct' : 'is-wrong'}`, status),
-        el('strong', '', `${item.index}. ${item.title}`),
-        el('small', '', `${item.earnedPoints || 0} / ${item.points} 积分`),
-      );
-      const body = el('div', 'student-daily-question-body');
-      body.append(
-        el('p', 'student-daily-help', `${item.domainName} · ${kindNames[item.kind] || item.kind} · ${(item.tags || []).join(' / ')}`),
-      );
-      body.append(questionContent(item.stem));
-      const options = item.options || [];
-      const answerText = (answers: string[]) => answers.map((answer) => (
-        item.kind === 'judge' ? { A: '正确', B: '错误' }[answer] || answer : answer
-      )).join('、');
-      options.forEach((option, optionIndex) => {
-        const key = String.fromCharCode(65 + optionIndex);
-        const isAnswer = item.answers.includes(key);
-        const isSelected = item.selected?.includes(key);
-        const row = el('div', `student-quiz-option${isAnswer ? ' is-answer' : ''}${isSelected ? ' is-selected' : ''}`);
-        row.append(el('strong', '', item.kind === 'judge' ? optionIndex === 0 ? '✓' : '×' : key), questionContent(option));
-        if (isAnswer) row.append(el('small', '', '正确选项'));
-        if (isSelected) row.append(el('small', '', '学员选择'));
-        body.append(row);
-      });
-      body.append(
-        el(
-          'p',
-          'student-quiz-answer',
-          `学员答案：${item.selected?.length ? answerText(item.selected) : '未作答'} / 正确答案：${answerText(item.answers)}`,
-        ),
-      );
-      if (item.analysis) {
-        body.append(el('h4', '', '题目解析'), questionContent(item.analysis));
-      }
-      question.append(heading, body);
-      list.append(question);
-    });
-    if (!items.length) list.append(el('p', 'student-daily-report-empty', '没有符合该筛选条件的题目。'));
-    reportHost.append(stats, filters, list);
+    learningView = bindDailyQuizLearning(learningHost, learning);
   }
-  async function loadReport(day: string) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
-    const request = ++reportRequest;
+  async function loadLearning() {
+    const request = ++learningRequest;
     const catalogVersion = catalogRequest;
+    learningController?.abort();
+    const controller = new win.AbortController();
+    learningController = controller;
+    const timeout = win.setTimeout(() => controller.abort(), 20000);
     recordsFeedback.hidden = false;
-    recordsFeedback.textContent = '正在读取答题记录…';
+    recordsFeedback.textContent = '正在读取知识掌握情况…';
     recordsFeedback.classList.remove('is-error');
-    reportHost.setAttribute('aria-busy', 'true');
+    learningHost.setAttribute('aria-busy', 'true');
     refresh.disabled = true;
     refresh.textContent = '正在刷新…';
     const url = new win.URL(win.location.href);
-    url.searchParams.set('quizDay', day);
+    const uid = form.querySelector<HTMLInputElement>('input[name="uid"]')?.value;
+    if (uid) url.searchParams.set('uid', uid);
+    url.searchParams.delete('quizDay');
     try {
-      const response = await win.fetch(url.href, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+      const response = await win.fetch(url.href, {
+        credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+        headers: { Accept: 'application/json' },
+      });
       let result;
       try {
         result = await response.json();
       } catch {
         throw new Error('身份验证可能已过期，请在另一个窗口完成验证后重试。');
       }
-      if (!response.ok || !result.selectedDailyQuiz) throw new Error('暂时无法读取记录，请完成身份验证后重试。');
-      if (request !== reportRequest || !editor.isConnected) return;
+      if (!response.ok || !result.selectedDailyQuiz?.learning) throw new Error('暂时无法读取掌握情况，请完成身份验证后重试。');
+      if (request !== learningRequest || controller.signal.aborted || !editor.isConnected) return;
       if (catalogVersion === catalogRequest && !catalogController && Array.isArray(result.selectedDailyQuiz.domains)) {
         applyCatalog(result.selectedDailyQuiz.domains);
       }
-      data.report = result.selectedDailyQuiz.report;
-      date.value = day;
-      updateUrl('quizDay', day);
-      renderReport(data.report);
+      data.learning = result.selectedDailyQuiz.learning;
+      renderLearning(data.learning);
       recordsFeedback.hidden = true;
     } catch (error) {
-      if (request !== reportRequest) return;
-      date.value = data.report?.day || today;
-      recent.value = '';
-      recordsFeedback.textContent =
-        typeof (error as Error)?.message === 'string' ? `读取失败：${(error as Error).message}` : '读取失败，请完成身份验证后重试。';
+      if (request !== learningRequest || !editor.isConnected) return;
+      recordsFeedback.textContent = error.name === 'AbortError'
+        ? '刷新超时，请重试。已加载的掌握情况和问答设置已保留。'
+        : typeof (error as Error)?.message === 'string' ? `读取失败：${(error as Error).message}` : '读取失败，请完成身份验证后重试。';
       recordsFeedback.classList.add('is-error');
     } finally {
-      if (request === reportRequest) {
-        reportHost.removeAttribute('aria-busy');
+      win.clearTimeout(timeout);
+      if (request === learningRequest) {
+        learningController = null;
+        learningHost.removeAttribute('aria-busy');
         refresh.disabled = false;
-        refresh.textContent = '刷新记录';
+        refresh.textContent = '刷新掌握情况';
       }
     }
   }
   recordsButton.addEventListener('click', () => {
     selectSubtab('records');
-    loadReport(date.value);
+    loadLearning();
   });
-  refresh.addEventListener('click', () => { loadReport(date.value); });
-  date.addEventListener('change', () => {
-    loadReport(date.value);
-  });
-  recent.addEventListener('change', () => {
-    if (recent.value) loadReport(recent.value);
-  });
-  renderReport(data.report);
+  refresh.addEventListener('click', loadLearning);
+  renderLearning(data.learning);
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();

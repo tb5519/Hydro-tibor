@@ -981,7 +981,6 @@
 .student-daily-stats div { padding: 12px 8px; border-radius: 7px; background: #f6f9fc; text-align: center; }
 .student-daily-stats strong { display: block; font-size: 18px; color: #657f97; font-weight: 500; }
 .student-daily-stats span { display: block; margin-top: 6px; color: #9aabba; font-size: 11px; }
-.student-daily-history details { padding: 10px 0; border-bottom: 1px solid #edf1f5; color: #8295a7; font-size: 12px; }
 .student-daily-history summary { cursor: pointer; }
 .student-daily-history ul { padding-left: 18px; font-size: 12px; line-height: 1.9; color: #94a4b4; }
 .student-daily-history li { margin: 8px 0; overflow-wrap: anywhere; }
@@ -1064,7 +1063,7 @@
 .student-daily-domain > summary::after { content: '⌄'; color: #96aaba; }
 .student-daily-domain[open] > summary::after { transform: rotate(180deg); }
 .student-daily-summary.is-warning { color: #a87c4f; }
-.student-note__today { display: block; grid-column: 2 / -1; font-size: 11px; color: #7d98a9; }
+.student-note__mastery { display: block; grid-column: 2 / -1; font-size: 11px; color: #7d98a9; }
 @media (max-width: 560px) {
   .student-daily-date-tools { flex-wrap: wrap; }
   .student-daily-date-tools > select { width: 100%; }
@@ -1123,3 +1122,14 @@
 .student-daily-catalog-tools .student-daily-refresh { flex: none; }
 .student-daily-catalog-status { flex: 1; min-width: 160px; margin: 0; color: #8395a6; font-size: 12px; line-height: 1.7; }
 .student-daily-catalog-status.is-error { color: #af7568; }
+
+.student-daily-learning-tools { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
+.student-daily-learning-tools h3 { margin: 0 0 7px; color: #405b71; font-size: 14px; font-weight: 600; line-height: 1.6; }
+.student-daily-learning-tools p { margin: 0; color: #8497a7; font-size: 12px; line-height: 1.7; }
+.student-daily-learning-tools .student-daily-refresh { flex: none; }
+[data-daily-learning][aria-busy='true'] { opacity: .55; }
+.student-daily-history .dql-overview { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 560px) {
+  .student-daily-learning-tools { flex-wrap: wrap; }
+  .student-daily-history .dql-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

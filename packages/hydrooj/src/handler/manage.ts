@@ -14,10 +14,9 @@ import {
 } from '../error';
 import type { CppEditorMode } from '../interface';
 import avatar from '../lib/avatar';
-import { beijingDay, DAILY_QUIZ_KINDS, parsePolicy } from '../lib/daily_quiz';
+import { beijingDay, defaultPolicy, parsePolicy } from '../lib/daily_quiz';
 import { withDomainMembershipRemoval } from '../lib/domain_membership';
 import { isScratchDomain } from '../lib/domain_type';
-import { parseObjective } from '../lib/objective';
 import {
     bindPointLotteryBadgePrizes, buildPointLotteryConfigFromForm, ensureGlobalPointLotteryState,
     getPointLotteryBadges, getPointLotteryBadgeUpgradeBadgeIdsFromForm,
@@ -791,7 +790,9 @@ async function getManagedStudents(
     allDomains: ManagedStudentDomain[], sort: ManagedStudentSort, direction: ManagedStudentSortDirection,
 ) {
     const domainIds = allDomains.map((item) => item.id);
-    const joined = await domain.collUser.find({ domainId: { $in: domainIds }, uid: { $gt: 1 }, join: true })
+    const joined = await domain.collUser.find({
+        domainId: { $in: domainIds }, uid: { $gt: 1 }, join: true, blockedByStudentManagement: { $ne: true },
+    })
         .project<{
             uid: number; domainId: string; displayName?: string; nSubmit?: number; nAccept?: number;
         }>({
@@ -886,7 +887,9 @@ async function getManagedStudents(
 
 async function getManagedStudent(uid: number, allDomains: ManagedStudentDomain[]) {
     const [membership, target, excludedLegacyUids] = await Promise.all([
-        domain.collUser.findOne({ domainId: { $in: allDomains.map((item) => item.id) }, uid, join: true }),
+        domain.collUser.findOne({
+            domainId: { $in: allDomains.map((item) => item.id) }, uid, join: true, blockedByStudentManagement: { $ne: true },
+        }),
         user.getById('system', uid),
         workspace.getExcludedLegacyUids(),
     ]);
@@ -906,7 +909,7 @@ async function getManagedDomains(): Promise<ManagedStudentDomain[]> {
 
 async function getManagedStudentDomains(uid: number, allDomains: ManagedStudentDomain[]) {
     const [memberships, userDoc] = await Promise.all([
-        domain.collUser.find({ uid, join: true }).project<{ domainId: string }>({ domainId: 1 }).toArray(),
+        domain.collUser.find({ uid, join: true, blockedByStudentManagement: { $ne: true } }).project<{ domainId: string }>({ domainId: 1 }).toArray(),
         user.coll.findOne({ _id: uid }, { projection: { defaultDomain: 1 } }),
     ]);
     const joinedDomainIds = new Set(memberships.map((membership) => membership.domainId));
@@ -985,16 +988,42 @@ function selectDailyQuizClassroom(classroom: string, domains: ManagedStudentDoma
     return selected.id;
 }
 
-function rewriteManagedDailyQuizReport(report: Awaited<ReturnType<typeof dailyQuiz.getAdminDay>>, uid: number, handler: Handler) {
+function rewriteManagedDailyQuizItems<T extends { id: number, day?: string, stem: string, options: string[], analysis: string }>(
+    items: T[], uid: number, handler: Handler, day = '',
+): T[] {
+    return items.map((item) => {
+        const rewrite = (value: string) => value.replace(/file:\/\/([^\s<>"')\]]+)/g, (_, reference: string) => {
+            const filename = decodeURIComponent(reference.split(/[?#]/)[0]);
+            return handler.url('manage_daily_quiz_file', { uid, day: item.day || day, questionId: item.id, filename });
+        });
+        return { ...item, stem: rewrite(item.stem), options: item.options.map(rewrite), analysis: rewrite(item.analysis) };
+    });
+}
+
+function rewriteManagedDailyQuizReport<T extends Awaited<ReturnType<typeof dailyQuiz.getAdminDay>>>(report: T, uid: number, handler: Handler) {
+    return { ...report, items: rewriteManagedDailyQuizItems(report.items, uid, handler, report.day) };
+}
+
+type ManagedDailyQuizRoster = Awaited<ReturnType<typeof getManagedDailyQuizRoster>>;
+type ManagedDailyQuizBatch = Awaited<ReturnType<typeof dailyQuiz.getAdminLearningBatch>>;
+
+async function getManagedDailyQuizBatch(students: ManagedDailyQuizRoster, domains: ManagedStudentDomain[], classroom = '') {
+    return dailyQuiz.getAdminLearningBatch(students.map((student) => ({
+        uid: student.uid, domainIds: student.eligibleDomainIds.filter((id) => !classroom || id === classroom),
+    })), domains);
+}
+
+async function presentManagedDailyQuizLearning(state: dailyQuiz.AdminQuizLearningState, handler: Handler, classroom = '') {
+    const learning = await dailyQuiz.getAdminLearningDetail(state);
     return {
-        ...report,
-        items: report.items.map((item) => {
-            const rewrite = (value: string) => value.replace(/file:\/\/([^\s<>"')\]]+)/g, (_, reference: string) => {
-                const filename = decodeURIComponent(reference.split(/[?#]/)[0]);
-                return handler.url('manage_daily_quiz_file', { uid, day: report.day, questionId: item.id, filename });
-            });
-            return { ...item, stem: rewrite(item.stem), options: item.options.map(rewrite), analysis: rewrite(item.analysis) };
-        }),
+        ...learning,
+        questions: rewriteManagedDailyQuizItems(learning.questions, state.uid, handler),
+        sessions: learning.sessions.map((session) => ({
+            ...session,
+            detailUrl: handler.url('manage_daily_quiz_student', {
+                uid: state.uid, query: { session: session.id, ...(classroom ? { classroom } : {}) },
+            }),
+        })),
     };
 }
 
@@ -1005,78 +1034,37 @@ class SystemDailyQuizDashboardHandler extends SystemHandler {
     }
 
     @requireSudo
-    @param('day', Types.String, true)
     @param('classroom', Types.String, true)
-    async get(domainId: string, day = '', classroom = '') {
-        const today = beijingDay();
-        day = validateDailyQuizDay(day, today);
+    async get(domainId: string, classroom = '') {
         const domains = await getManagedDomains();
         classroom = selectDailyQuizClassroom(classroom, domains);
         const students = (await getManagedDailyQuizRoster(domains)).filter((student) => !classroom || student.domainIds.includes(classroom));
-        const days = Array.from({ length: 7 }, (_, index) => moment.utc(day).subtract(6 - index, 'days').format('YYYY-MM-DD'));
-        const [configs, sessions] = await Promise.all([
-            dailyQuiz.listConfigs(students.map((student) => student.uid)),
-            dailyQuiz.getAdminSessions(students.map((student) => student.uid), days[0], day),
-        ]);
-        const studentsByUid = new Map(students.map((student) => [student.uid, student]));
-        const summaries = new Map<string, ReturnType<typeof dailyQuiz.summarizeAdminItems>>();
-        const trend = days.map((date) => ({ day: date, answered: 0, correctCount: 0, accuracy: null as number | null, participants: 0, completed: 0 }));
-        const trendByDay = new Map(trend.map((item) => [item.day, item]));
-        for (const session of sessions) {
-            const student = studentsByUid.get(session.uid);
-            const allowed = classroom ? [classroom] : student.domainIds;
-            const items = session.items.filter((item) => allowed.includes(item.domainId));
-            // A session from another classroom is not evidence of an assignment in this classroom.
-            if (session.items.length && !items.length) continue;
-            const summary = dailyQuiz.summarizeAdminItems(items);
-            summaries.set(`${session.uid}-${session.day}`, summary);
-            const bucket = trendByDay.get(session.day);
-            bucket.answered += summary.answered;
-            bucket.correctCount += summary.correctCount;
-            bucket.participants += Number(summary.answered > 0);
-            bucket.completed += Number(summary.completed);
-        }
-        for (const bucket of trend) bucket.accuracy = bucket.answered ? bucket.correctCount / bucket.answered * 100 : null;
+        const learning = await getManagedDailyQuizBatch(students, domains, classroom);
         const rows = students.map((student) => {
-            const policy = configs[student.uid];
-            const rules = policy?.enabled ? policy.domains.filter((item) => item.enabled && student.eligibleDomainIds.includes(item.domainId)
-                && (!classroom || item.domainId === classroom)) : [];
-            const enabled = rules.length > 0;
-            const summary = summaries.get(`${student.uid}-${day}`);
-            let status: 'completed' | 'inProgress' | 'notStarted' | 'noQuestions' | 'disabled' | 'unrecorded';
-            if (summary) {
-                if (!summary.total) status = 'noQuestions';
-                else if (summary.completed) status = 'completed';
-                else status = summary.answered ? 'inProgress' : 'notStarted';
-            } else if (day !== today) status = 'unrecorded';
-            else status = enabled ? 'notStarted' : 'disabled';
-            const counts = summary || {
-                ...dailyQuiz.summarizeAdminItems([]),
-                total: day === today ? rules.reduce((sum, rule) => sum + rule.count, 0) : 0,
-            };
+            const state = learning.byUid.get(student.uid);
             return {
                 uid: student.uid, name: student.name, uname: student.uname, avatar: student.avatar, domainNames: student.domainNames,
-                enabled, status, total: counts.total, answered: counts.answered, correctCount: counts.correctCount,
-                wrongCount: counts.wrongCount, earnedPoints: counts.earnedPoints, accuracy: counts.accuracy,
-                lastAnsweredAt: counts.lastAnsweredAt,
-                detailUrl: this.url('manage_daily_quiz_student', { uid: student.uid, query: { day, ...(classroom ? { classroom } : {}) } }),
+                enabled: state.enabled, tags: state.configuredTags, ...state.summary,
+                detailUrl: this.url('manage_daily_quiz_student', { uid: student.uid, query: classroom ? { classroom } : {} }),
                 settingsUrl: this.url('manage_user_management', { query: { uid: student.uid, tab: 'daily', quizView: 'settings' } }),
             };
         });
         const stats = {
-            assigned: 0, completed: 0, inProgress: 0, notStarted: 0, noQuestions: 0, disabled: 0, unrecorded: 0,
-            answered: 0, correctCount: 0, wrongCount: 0, earnedPoints: 0, accuracy: null as number | null,
+            students: rows.length, participants: 0, total: 0, answered: 0, correctCount: 0, wrongCount: 0, unseenCount: 0,
+            participationCount: 0, earnedPoints: 0, accuracy: null as number | null,
         };
         for (const row of rows) {
-            stats[row.status]++;
-            if (row.status !== 'disabled' && row.status !== 'unrecorded' && row.status !== 'noQuestions') stats.assigned++;
+            stats.participants += Number(row.participationCount > 0);
+            stats.total += row.total;
             stats.answered += row.answered;
             stats.correctCount += row.correctCount;
             stats.wrongCount += row.wrongCount;
+            stats.unseenCount += row.unseenCount;
+            stats.participationCount += row.participationCount;
             stats.earnedPoints += row.earnedPoints;
         }
         stats.accuracy = stats.answered ? stats.correctCount / stats.answered * 100 : null;
-        const dashboard = { day, today, classroom, domains, stats, rows, trend };
+        const dashboard = { classroom, domains, stats, rows };
         this.response.template = 'manage_daily_quiz.html';
         this.response.body = { dashboard };
         this.UiContext.dailyQuizDashboard = dashboard;
@@ -1091,46 +1079,56 @@ class SystemDailyQuizStudentHandler extends SystemHandler {
 
     @requireSudo
     @param('uid', Types.PositiveInt)
-    @param('day', Types.String, true)
     @param('classroom', Types.String, true)
-    async get(domainId: string, uid: number, day = '', classroom = '') {
-        day = validateDailyQuizDay(day);
+    @param('session', Types.String, true)
+    async get(domainId: string, uid: number, classroom = '', session = '') {
         const domains = await getManagedDomains();
         classroom = selectDailyQuizClassroom(classroom, domains);
         const target = (await getManagedDailyQuizRoster(domains, uid))[0];
         if (!target || (classroom && !target.domainIds.includes(classroom))) throw new UserNotFoundError(uid);
-        const report = await dailyQuiz.getAdminDay(uid, day, classroom ? [classroom] : target.domainIds);
-        this.response.body = {
-            student: { uid, name: target.name, uname: target.uname },
-            report: rewriteManagedDailyQuizReport(report, uid, this),
-        };
+        const batch = await getManagedDailyQuizBatch([target], domains, classroom);
+        const state = batch.byUid.get(uid);
+        if (session) {
+            const report = await dailyQuiz.getAdminLearningSession(state, session);
+            this.response.body = { report: rewriteManagedDailyQuizReport(report, uid, this) };
+        } else {
+            this.response.body = {
+                student: { uid, name: target.name, uname: target.uname },
+                learning: await presentManagedDailyQuizLearning(state, this, classroom),
+            };
+        }
     }
 }
 
-async function getManagedDailyQuiz(uid: number, joinedDomains: ManagedStudentDomain[], handler: Handler, quizDay?: string) {
+async function getManagedDailyQuiz(
+    uid: number, joinedDomains: ManagedStudentDomain[], handler: Handler, quizDay?: string, existingBatch?: ManagedDailyQuizBatch,
+) {
     const domainIds = joinedDomains.map((item) => item.id);
-    const [storedPolicy, summary, report, sources] = await Promise.all([
-        dailyQuiz.getPolicy(uid),
-        dailyQuiz.getAdminSummary(uid),
-        dailyQuiz.getAdminDay(uid, quizDay || undefined, domainIds),
-        document.coll.find({
-            domainId: { $in: domainIds }, docType: document.TYPE_PROBLEM,
-            objectiveKind: { $in: DAILY_QUIZ_KINDS }, reference: { $exists: false },
-        }).project({ domainId: 1, tag: 1, objective: 1 }).toArray(),
-    ]);
+    const batch = existingBatch || await getManagedDailyQuizBatch(await getManagedDailyQuizRoster(joinedDomains, uid), joinedDomains);
+    const state = batch.byUid.get(uid);
+    if (!state) throw new UserNotFoundError(uid);
+    const learning = await presentManagedDailyQuizLearning(state, handler);
+    const storedPolicy = batch.configs[uid] || defaultPolicy();
     const questionTagsByDomain = new Map<string, string[][]>();
-    for (const source of sources) {
-        try {
-            parseObjective(JSON.stringify(source.objective));
-            const tags = Array.isArray(source.tag) ? source.tag.filter((tag) => typeof tag === 'string') : [];
-            const questionTags = questionTagsByDomain.get(source.domainId) || [];
-            questionTags.push(tags);
-            questionTagsByDomain.set(source.domainId, questionTags);
-        } catch { /* Invalid legacy material must not be advertised as an available question. */ }
+    for (const source of batch.catalogue) {
+        const questionTags = questionTagsByDomain.get(source.domainId) || [];
+        questionTags.push(source.tags);
+        questionTagsByDomain.set(source.domainId, questionTags);
     }
+    // Compatibility for consumers of the old shape; both values now use exactly the current authorized pool.
+    const session = quizDay ? state.sessions.find((item) => item.day === quizDay) : state.sessions[0];
+    const report = session ? await dailyQuiz.getAdminLearningSession(state, session.id) : {
+        day: quizDay || beijingDay(), total: 0, answered: 0, correctCount: 0, wrongCount: 0,
+        earnedPoints: 0, completed: false, items: [],
+    };
     return {
         policy: { ...storedPolicy, domains: storedPolicy.domains.filter((item) => domainIds.includes(item.domainId)) },
-        summary,
+        learning,
+        summary: {
+            ...learning.summary, answeredCount: learning.summary.answered, masteredCount: learning.summary.correctCount,
+            completedDays: state.sessions.filter((item) => item.completed).length,
+            recentSessions: learning.sessions.slice(0, 30), recentMistakes: learning.questions.filter((item) => item.correct === false).slice(0, 20),
+        },
         report: rewriteManagedDailyQuizReport(report, uid, handler),
         domains: joinedDomains.map((item) => {
             const questionTags = questionTagsByDomain.get(item.id) || [];
@@ -1152,6 +1150,7 @@ async function getManagedDailyQuiz(uid: number, joinedDomains: ManagedStudentDom
 class SystemUserManagementHandler extends SystemHandler {
     async prepare() {
         this.checkPriv(PRIV.PRIV_ALL);
+        this.response.addHeader('Cache-Control', 'private, no-store');
     }
 
     @requireSudo
@@ -1168,19 +1167,22 @@ class SystemUserManagementHandler extends SystemHandler {
             throw new ValidationError('quizDay', null, '请选择有效的答题日期');
         }
         const allDomains = await getManagedDomains();
-        const students = await getManagedStudents(allDomains, sort, order);
-        const [configs, todayStates] = await Promise.all([
-            dailyQuiz.listConfigs(students.map((student) => student.uid)),
-            dailyQuiz.getTodayStates(students.map((student) => student.uid)),
+        const [students, quizStudents] = await Promise.all([
+            getManagedStudents(allDomains, sort, order),
+            getManagedDailyQuizRoster(allDomains),
         ]);
+        const quizBatch = await getManagedDailyQuizBatch(quizStudents, allDomains);
+        const quizStudentsByUid = new Map(quizStudents.map((student) => [student.uid, student]));
         const roster = students.map((student) => {
-            const policy = configs[student.uid];
-            const enabledDomains = policy?.domains.filter((item) => item.enabled && student.domainIds.includes(item.domainId)) || [];
+            const policy = quizBatch.configs[student.uid];
+            const quizStudent = quizStudentsByUid.get(student.uid);
+            const state = quizBatch.byUid.get(student.uid);
+            const enabledDomains = policy?.domains.filter((item) => item.enabled && quizStudent?.eligibleDomainIds.includes(item.domainId)) || [];
             return {
                 ...student,
-                dailyQuizEnabled: !!policy?.enabled && enabledDomains.length > 0,
-                dailyQuizDomains: policy?.enabled ? enabledDomains.length : 0,
-                todayDailyQuiz: todayStates[student.uid] || null,
+                dailyQuizEnabled: !!state?.enabled,
+                dailyQuizDomains: enabledDomains.length,
+                dailyQuizLearning: state?.summary || null,
             };
         });
         const selectedStudent = uid ? roster.find((student) => student.uid === uid) : null;
@@ -1197,7 +1199,7 @@ class SystemUserManagementHandler extends SystemHandler {
             selectedStudentDefaultDomain: selectedStudentDomainState.selectedDefaultDomain,
             selectedStudentJoinedDomainCount: selectedStudentDomainState.joinedDomainCount,
             selectedDailyQuiz: selectedStudent
-                ? await getManagedDailyQuiz(uid, selectedStudentDomainState.domains, this, quizDay) : null,
+                ? await getManagedDailyQuiz(uid, selectedStudentDomainState.domains, this, quizDay, quizBatch) : null,
             allDomains,
             saved,
             sort,
@@ -1430,7 +1432,7 @@ class SystemDailyQuizFileHandler extends SystemHandler {
         day = validateDailyQuizDay(day);
         const student = (await getManagedDailyQuizRoster(await getManagedDomains(), uid))[0];
         if (!student) throw new UserNotFoundError(uid);
-        const target = await dailyQuiz.getAdminFile(uid, day, questionId, filename, student.domainIds);
+        const target = await dailyQuiz.getAdminLearningFile(uid, day, questionId, filename, student.eligibleDomainIds);
         this.response.body = await storage.get(target);
         this.response.type = lookup(filename) || 'application/octet-stream';
         this.response.addHeader('Cache-Control', 'private, no-store');

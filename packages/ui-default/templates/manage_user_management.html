@@ -30,7 +30,7 @@
             <div class="student-note__identity"><strong data-student-display-name>{{ student.displayName }}</strong><span>@{{ student.uname }} · UID {{ student.uid }}</span></div>
             <span class="student-note__level{% if student.studentLevel == 9 %} student-note__level--max{% endif %}">{% if student.studentLevel == 9 %}MAX{% else %}{{ student.studentLevel }} 级{% endif %}</span>
             <div class="student-note__domains">{{ student.domainNames|join(' · ') }}</div>
-            {% if student.dailyQuizEnabled %}<span class="student-note__today">{% if student.todayDailyQuiz %}{% if student.todayDailyQuiz.completed %}今日已完成 · {{ student.todayDailyQuiz.correctCount }}/{{ student.todayDailyQuiz.total }} 题答对{% else %}今日待完成 · 已答 {{ student.todayDailyQuiz.answered }}/{{ student.todayDailyQuiz.total }} 题{% endif %}{% else %}今日尚未开始{% endif %}</span>{% endif %}
+            {% if student.dailyQuizLearning %}<span class="student-note__mastery">问答已答 {{ student.dailyQuizLearning.answered }} / {{ student.dailyQuizLearning.total }} 题 · 答对 {{ student.dailyQuizLearning.correctCount }} · 待复习 {{ student.dailyQuizLearning.wrongCount }}</span>{% endif %}
             <div class="student-note__summary"><span>{{ student.submitCount }} 次提交 <i>·</i> AC {{ student.acceptedCount }}</span><span class="student-note__quiz{% if student.dailyQuizEnabled %} is-enabled{% endif %}" data-student-quiz-badge>{{ '每日问答已开启' if student.dailyQuizEnabled else '每日问答未开启' }}</span></div>
           </a>
         </div>
@@ -219,7 +219,7 @@
       <button class="rounded primary button" type="submit" data-daily-save>保存问答设置</button>
     </div>
   </form>
-  <section class="student-daily-history" data-daily-history aria-label="问答学习记录"></section>
+  <section class="student-daily-history" data-daily-history aria-label="问答知识掌握与练习记录"></section>
 </div>
 </section>
       {% else %}<section class="student-management__editor student-editor-welcome"><span class="icon icon-user" aria-hidden="true"></span><h2>先选择一位学员</h2><p>在左侧找到孩子，为 TA 调整学习方式，<br>或安排每天的一小份问答。</p><span>基本资料 · 学习设置 · 每日问答</span></section>{% endif %}

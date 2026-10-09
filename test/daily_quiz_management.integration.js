@@ -186,10 +186,12 @@ async function run() {
         assert.equal(summary.answeredCount, 3);
         assert.equal(summary.wrongCount, 1);
         const row = response.body.students.find((item) => item.uid === studentId);
-        assert.equal(row.todayDailyQuiz.completed, true);
-        assert.equal(row.todayDailyQuiz.correctCount, 2);
+        assert.equal(row.dailyQuizLearning.participationCount, 1);
+        assert.equal(row.dailyQuizLearning.correctCount, 2);
+        assert.equal(row.dailyQuizLearning.wrongCount, 1);
         const sourceBefore = report.items.find((item) => item.title === '每日热身素材 1');
-        const original = await problems.get(firstDomain, firstSource);
+        const documents = require('../packages/hydrooj/src/model/document');
+        const original = await documents.coll.findOne({ domainId: firstDomain, docType: documents.TYPE_PROBLEM, docId: firstSource });
         await problems.edit(firstDomain, firstSource, { objective: { ...original.objective, stem: '老师修改后的新题面' } });
         const unchanged = (await get(admin, `${url}&quizDay=${day}`)).body.selectedDailyQuiz.report;
         assert.equal(unchanged.items.find((item) => item.title === sourceBefore.title).stem, sourceBefore.stem);
@@ -200,7 +202,7 @@ async function run() {
         assert.equal(empty.body.selectedDailyQuiz.report.completed, false);
         denied(await get(admin, `${url}&quizDay=2026-02-30`));
     });
-    await check('Historical private PNG snapshots require teacher scope and survive deleting the original source', async () => {
+    await check('Private PNG snapshots require teacher scope and leave current mastery when their source is deleted', async () => {
         const report = (await get(admin, url)).body.selectedDailyQuiz.report;
         const item = report.items.find((question) => question.title === '每日热身素材 1');
         const imageUrl = item.stem.match(/!\[[^\]]*\]\(([^)]+)\)/)?.[1];
@@ -228,11 +230,11 @@ async function run() {
         await problems.del(firstDomain, firstSource);
         assert.equal(await problems.get(firstDomain, firstSource), null);
         assert.equal(await storage.getMeta(`problem/${firstDomain}/${firstSource}/additional_file/private-statement.png`), null);
-        const after = await admin.get(imageUrl);
-        status(after, 200);
-        assert.deepEqual(after.body, privatePng, 'The historical image must use its independent session snapshot');
-        const preserved = (await get(admin, `${url}&quizDay=${report.day}`)).body.selectedDailyQuiz.report;
-        assert.equal(preserved.items.find((question) => question.id === item.id).stem, item.stem);
+        denied(await admin.get(imageUrl));
+        const removed = (await get(admin, url)).body.selectedDailyQuiz.learning;
+        assert(!removed.questions.some((question) => question.sourceId === firstSource && question.domainId === firstDomain));
+        assert(await storage.getMeta((await daily.sessionColl.findOne({ uid: studentId, day: report.day })).items
+            .find((question) => question.id === item.id).files['private-statement.png']), 'The independent snapshot remains stored');
 
         // Keep the optional browser fixture's original question pool available.
         const restored = await source(firstDomain, 1);
