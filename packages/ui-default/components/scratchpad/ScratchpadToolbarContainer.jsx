@@ -260,19 +260,6 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
               </span>
             </ToolbarButton>
           )}
-          {!UiContext.ideMode && !review && UiContext.canUseMistake && (
-            <ToolbarButton
-              className="scratchpad__toolbar__mistake"
-              data-mistake-prompt-open
-              aria-controls="problem-mistake-prompt"
-              aria-haspopup="dialog"
-              aria-expanded={!!UiContext.showMistakePrompt}
-              title="加入错题集或标记已掌握"
-            >
-              <Icon name="book" />
-              <span>错题集</span>
-            </ToolbarButton>
-          )}
           <ScratchpadThemePicker />
           {canUsePretest && (
             <ToolbarButton

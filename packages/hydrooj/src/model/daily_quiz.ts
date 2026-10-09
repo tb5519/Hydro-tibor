@@ -336,10 +336,41 @@ export async function getAdminSummary(uid: number) {
     };
 }
 
-export async function getAdminDay(uid: number, day = beijingDay()) {
+export interface AdminQuizSession {
+    uid: number;
+    day: string;
+    items: (Pick<QuizItem, 'domainId' | 'cancelled'> & { answer?: Pick<QuizAnswer, 'correct' | 'earnedPoints' | 'answeredAt'> })[];
+}
+
+/** Read only the fields needed for a roster; never load question snapshots here. */
+export async function getAdminSessions(uids: number[], startDay: string, endDay: string): Promise<AdminQuizSession[]> {
+    if (!uids.length) return [];
+    return sessionColl.find({ uid: { $in: uids }, day: { $gte: startDay, $lte: endDay } })
+        .project<AdminQuizSession>({
+            _id: 0, uid: 1, day: 1, 'items.domainId': 1, 'items.cancelled': 1,
+            'items.answer.correct': 1, 'items.answer.earnedPoints': 1, 'items.answer.answeredAt': 1,
+        }).toArray();
+}
+
+export function summarizeAdminItems(source: AdminQuizSession['items']) {
+    const items = source.filter((item) => !item.cancelled || item.answer);
+    const answered = items.filter((item) => item.answer);
+    const correctCount = answered.filter((item) => item.answer.correct).length;
+    const lastAnsweredAt = answered.reduce((latest, item) => Math.max(latest, +new Date(item.answer.answeredAt) || 0), 0);
+    return {
+        total: items.length, answered: answered.length, correctCount, wrongCount: answered.length - correctCount,
+        earnedPoints: answered.reduce((sum, item) => sum + item.answer.earnedPoints, 0),
+        accuracy: answered.length ? correctCount / answered.length * 100 : null,
+        completed: items.length > 0 && answered.length === items.length,
+        lastAnsweredAt: lastAnsweredAt ? new Date(lastAnsweredAt).toISOString() : null,
+    };
+}
+
+export async function getAdminDay(uid: number, day = beijingDay(), allowedDomainIds?: string[]) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(Date.parse(day))) throw new ValidationError('quizDay');
     const session = await sessionColl.findOne({ _id: `${uid}-${day}` });
-    const items = (session?.items || []).filter((item) => !item.cancelled || item.answer).map((item, index) => ({
+    const items = (session?.items || []).filter((item) => (!item.cancelled || item.answer)
+        && (!allowedDomainIds || allowedDomainIds.includes(item.domainId))).map((item, index) => ({
         id: item.id, index: index + 1, domainId: item.domainId, domainName: item.domainName, title: item.title,
         stem: item.objective.stem, kind: item.objective.kind, tags: item.tags, options: item.objective.options,
         answers: item.objective.answers, selected: item.answer?.selected || null, correct: item.answer?.correct ?? null,
@@ -350,7 +381,8 @@ export async function getAdminDay(uid: number, day = beijingDay()) {
     return {
         day, total: items.length, answered: answered.length, correctCount: answered.filter((item) => item.correct).length,
         wrongCount: answered.filter((item) => !item.correct).length,
-        earnedPoints: answered.reduce((sum, item) => sum + item.earnedPoints, 0), completed: !!session && answered.length === items.length, items,
+        earnedPoints: answered.reduce((sum, item) => sum + item.earnedPoints, 0),
+        completed: items.length > 0 && answered.length === items.length, items,
     };
 }
 
@@ -371,10 +403,11 @@ export async function todayState(uids: number[]) {
 export const getTodayStates = todayState;
 
 /** Call only behind the management handler's student scope and sudo checks. */
-export async function getAdminFile(uid: number, day: string, questionId: number, filename: string) {
+export async function getAdminFile(uid: number, day: string, questionId: number, filename: string, allowedDomainIds?: string[]) {
     const session = await sessionColl.findOne({ _id: `${uid}-${day}` });
     const item = session?.items.find((value) => value.id === questionId);
-    if (!item || !Object.hasOwn(item.files, filename)) throw new NotFoundError();
+    if (!item || (allowedDomainIds && !allowedDomainIds.includes(item.domainId))
+        || !Object.hasOwn(item.files, filename)) throw new NotFoundError();
     return item.files[filename];
 }
 

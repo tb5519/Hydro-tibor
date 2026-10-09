@@ -1,0 +1,8 @@
+{% extends "manage_base.html" %}
+{% block manage_content %}
+<div class="daily-quiz-dashboard" data-daily-quiz-dashboard data-initial="{{ dashboard|json }}">
+  <h1 data-heading>{{ _('每日问答') }}</h1>
+  <p>{{ _('正在载入学员问答概览…') }}</p>
+  <noscript>{{ _('请启用 JavaScript，以查看学员问答记录和筛选结果。') }}</noscript>
+</div>
+{% endblock %}

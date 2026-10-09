@@ -220,16 +220,12 @@ function renderToolbar(context = {}) {
 }
 
 describe('mistake toolbar entry', () => {
-    it('renders a native accessible manual entry for an eligible learner even before any automatic prompt', () => {
+    it('keeps the learner toolbar focused on coding without the extra mistake button', () => {
         const dom = renderToolbar({ showMistakePrompt: false });
         try {
-            const button = dom.window.document.querySelector('[data-mistake-prompt-open]');
-            assert.ok(button);
-            assert.equal(button.type, 'button');
-            assert.match(button.textContent, /错题集/);
-            assert.equal(button.getAttribute('aria-expanded'), 'false');
-            assert.equal(button.getAttribute('aria-controls'), 'problem-mistake-prompt');
-            assert.equal(button.getAttribute('aria-haspopup'), 'dialog');
+            assert.equal(dom.window.document.querySelector('[data-mistake-prompt-open]'), null);
+            assert.ok(dom.window.document.querySelector('[data-global-hotkey="f10"]'));
+            assert.ok(dom.window.document.querySelector('[data-global-hotkey="alt+p"]'));
         } finally { dom.window.close(); }
     });
 

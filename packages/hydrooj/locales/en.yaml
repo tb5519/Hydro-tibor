@@ -66,6 +66,7 @@ manage_lottery: Points Lottery
 manage_shared_ranking: Ranking Settings
 manage_setting: System Settings
 manage_training_dashboard: Student Training Dashboard
+manage_daily_quiz: Daily Quiz Dashboard
 manage_user_import: Import Users
 manage_user_priv: User Privilege
 manage: System Manage
