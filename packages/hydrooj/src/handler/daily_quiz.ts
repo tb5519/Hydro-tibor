@@ -85,7 +85,7 @@ export class DailyQuizFileHandler extends Handler {
 
 // Authentication and JavaScript bootstrap must remain reachable while entry is gated.
 // eslint-disable-next-line max-len
-const exemptPath = /^\/(?:daily-quiz|login|logout|oauth|lostpass|user\/(?:sudo|tfa)|home\/security|language|fs|asset|lazy|resource|service-worker-config)(?:\/|$)/;
+const exemptPath = /^\/(?:daily-quiz|student-message\/ack|login|logout|oauth|lostpass|user\/(?:sudo|tfa)|home\/security|language|fs|asset|lazy|resource|service-worker-config)(?:\/|$)/;
 
 export async function apply(ctx: Context) {
     ctx.Route('daily_quiz', '/daily-quiz', DailyQuizHandler, PRIV.PRIV_USER_PROFILE);

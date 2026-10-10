@@ -1133,3 +1133,50 @@
   .student-daily-learning-tools { flex-wrap: wrap; }
   .student-daily-history .dql-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+@css {
+.student-message-panel { min-width: 0; }
+.student-message-form { display: grid; gap: 18px; }
+.student-message-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 30px; }
+.student-message-status__badge { padding: 5px 10px; border-radius: 7px; background: #f2f5f8; color: #7b8fa2; font-size: 12px; font-weight: 600; }
+.student-message-status.is-unread .student-message-status__badge { background: #eaf3ff; color: #387dbb; }
+.student-message-status.is-read .student-message-status__badge { background: #eaf6f1; color: #41826e; }
+.student-message-status__date { color: #8b9bab; font-size: 12px; }
+.student-message-enable { display: flex; align-items: center; gap: 9px; margin: 0; color: #435d74; font-size: 14px; font-weight: 600; cursor: pointer; }
+.student-message-enable input { width: 16px; height: 16px; margin: 0; accent-color: #3b82f6; }
+.student-message-intro { margin: -6px 0 4px; color: #8295a6; font-size: 13px; line-height: 1.85; }
+.student-message-field { display: grid; gap: 9px; margin: 0; }
+.student-message-field > span { color: #526d84; font-size: 13px; font-weight: 600; }
+.student-message-field .textbox { box-sizing: border-box; width: 100%; min-width: 0; margin: 0; border: 1px solid #dce6ef; border-radius: 9px; padding: 12px 14px; background: #fff; color: #334e65; font-size: 15px; line-height: 1.7; box-shadow: none; transition: border-color .16s ease, box-shadow .16s ease; }
+.student-message-field .textbox:focus { border-color: #86b5ed; box-shadow: 0 0 0 3px #3b82f614; outline: none; }
+.student-message-field .textbox::placeholder { color: #a0aebc; font-size: 13px; }
+.student-message-field textarea { resize: vertical; min-height: 180px; }
+.student-message-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 6px; }
+.student-message-actions .button { margin: 0; }
+.student-message-preview-button { border: 1px solid #d4e2ef; border-radius: 9px; min-height: 38px; padding: 9px 15px; background: #fff; color: #5482a8; font-size: 13px; cursor: pointer; }
+.student-message-preview-button:hover:not(:disabled) { background: #f5f9fe; border-color: #b3cce3; }
+.student-message-preview-button:disabled { color: #a0b0be; cursor: default; background: #f9fbfd; }
+.student-message-feedback { padding: 12px 14px; border-radius: 9px; color: #448775; background: #f0f8f4; font-size: 13px; line-height: 1.7; }
+.student-message-feedback.is-error { color: #ad7667; background: #fff6f1; }
+.student-message-preview { position: fixed; inset: 0; z-index: 10002; box-sizing: border-box; width: calc(100% - 40px); max-width: 560px; height: fit-content; max-height: calc(100dvh - 40px); margin: auto; padding: 0; overflow: auto; border: 0; border-radius: 24px; background: #fff; box-shadow: 0 24px 90px #10274238; }
+.student-message-preview:not([open]) { display: none; }
+.student-message-preview::before { content: ''; display: block; height: 4px; background: linear-gradient(90deg, #3b82f6, #93c5fd); }
+.student-message-preview::backdrop { background: #12233880; backdrop-filter: blur(4px); }
+.student-message-preview__body { padding: 30px 32px 28px; }
+.student-message-preview__body h3 { margin: 0 0 20px; color: #172b43; font-size: 25px; font-weight: 700; line-height: 1.5; overflow-wrap: anywhere; }
+.student-message-preview__content { color: #475569; font-size: 16px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }
+.student-message-preview__footer { display: flex; justify-content: flex-end; padding: 20px 32px; border-top: 1px solid #edf1f5; background: #fff; }
+.student-message-preview__footer button { min-height: 46px; min-width: 106px; padding: 10px 24px; border: 0; border-radius: 12px; color: #fff; background: #3b82f6; font-size: 15px; font-weight: 600; cursor: pointer; }
+.student-message-preview__footer button:hover { background: #2563eb; }
+.student-message-preview__footer button:focus-visible { outline: 3px solid #3b82f64d; outline-offset: 3px; }
+body.student-message-preview-open { overflow: hidden; }
+body.student-message-preview-open:has(.student-message-preview.is-fallback-open)::after { content: ''; position: fixed; inset: 0; z-index: 10001; background: #12233880; }
+@media (max-width: 560px) {
+  .student-editor-tabs { overflow-x: auto; }
+  .student-editor-tabs button { min-width: max-content; }
+  .student-message-preview { width: calc(100% - 32px); max-height: calc(100dvh - 32px); border-radius: 20px; }
+  .student-message-preview__body { padding: 24px; }
+  .student-message-preview__body h3 { font-size: 22px; margin-bottom: 16px; }
+  .student-message-preview__footer { padding: 18px 24px; }
+}
+}

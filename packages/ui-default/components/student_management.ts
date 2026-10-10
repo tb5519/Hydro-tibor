@@ -1,4 +1,5 @@
 import { bindStudentDailyQuiz } from './student_daily_quiz';
+import { bindStudentOpeningMessage } from './student_opening_message';
 
 export function bindStudentManagement(doc: Document) {
   const root = doc.querySelector<HTMLElement>('[data-student-management]');
@@ -10,6 +11,7 @@ export function bindStudentManagement(doc: Document) {
   const baselines = new WeakMap<HTMLFormElement, string>();
   const pending = new Set<HTMLFormElement>();
   let daily = { isDirty: () => false, isPending: () => false };
+  let openingMessage: ReturnType<typeof bindStudentOpeningMessage>;
   let switching = false;
   let confirmedNavigation = false;
   let currentUrl = win.location.href;
@@ -30,6 +32,7 @@ export function bindStudentManagement(doc: Document) {
   function isDirty() {
     return (
       daily.isDirty()
+      || openingMessage?.isDirty()
       || all<HTMLFormElement>('[data-student-profile-form], [data-student-password-form], [data-student-add-form]').some(
         (form) => baselines.has(form) && baselines.get(form) !== snapshot(form),
       )
@@ -44,7 +47,7 @@ export function bindStudentManagement(doc: Document) {
   }
   function guard() {
     if (switching) return false;
-    if (pending.size || daily.isPending()) {
+    if (pending.size || daily.isPending() || openingMessage?.isPending()) {
       feedback('[data-student-list-feedback]', '正在保存，请稍候。', true);
       return false;
     }
@@ -117,12 +120,12 @@ export function bindStudentManagement(doc: Document) {
     }
   }
   function activateTab(value: string, focus = false, persist = true) {
-    const tab = ['profile', 'learning', 'daily'].includes(value) ? value : 'profile';
+    const tab = ['profile', 'learning', 'daily', 'message'].includes(value) ? value : 'profile';
     all<HTMLElement>('[data-student-panel]').forEach((panel) => {
       panel.hidden = panel.dataset.studentPanel !== tab;
     });
     const form = query<HTMLFormElement>('[data-student-profile-form]');
-    if (form) form.hidden = tab === 'daily';
+    if (form) form.hidden = tab === 'daily' || tab === 'message';
     all<HTMLElement>('[data-student-extra]').forEach((extra) => {
       extra.hidden = extra.dataset.studentExtra !== tab;
     });
@@ -135,6 +138,8 @@ export function bindStudentManagement(doc: Document) {
     if (persist) updateQuery('tab', tab);
   }
   function initializeEditor() {
+    openingMessage?.dispose();
+    openingMessage = null;
     const editor = query<HTMLElement>('[data-student-editor]');
     if (!editor) {
       daily = { isDirty: () => false, isPending: () => false };
@@ -151,6 +156,7 @@ export function bindStudentManagement(doc: Document) {
       }
       filterRoster(true);
     }, () => { currentUrl = win.location.href; });
+    openingMessage = bindStudentOpeningMessage(editor);
     activateTab(new win.URL(win.location.href).searchParams.get('tab') || 'profile', false, false);
   }
   async function switchStudent(url: URL, push = true, alreadyConfirmed = false) {
@@ -439,9 +445,10 @@ export function bindStudentManagement(doc: Document) {
     const tab = (event.target as HTMLElement).closest<HTMLElement>('[data-student-tab]');
     if (tab && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
       event.preventDefault();
-      const values = ['profile', 'learning', 'daily'];
+      const values = ['profile', 'learning', 'daily', 'message'];
       const index = values.indexOf(tab.dataset.studentTab);
-      const next = event.key === 'Home' ? 0 : event.key === 'End' ? 2 : (index + (event.key === 'ArrowRight' ? 1 : 2)) % 3;
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? values.length - 1
+        : (index + (event.key === 'ArrowRight' ? 1 : values.length - 1)) % values.length;
       activateTab(values[next], true);
     }
   });
@@ -450,7 +457,7 @@ export function bindStudentManagement(doc: Document) {
       confirmedNavigation = false;
       return;
     }
-    if (isDirty() || pending.size || daily.isPending()) {
+    if (isDirty() || pending.size || daily.isPending() || openingMessage?.isPending()) {
       event.preventDefault();
       event.returnValue = '';
     }

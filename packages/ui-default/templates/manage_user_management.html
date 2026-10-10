@@ -52,6 +52,7 @@
   <button type="button" role="tab" data-student-tab="profile" id="student-tab-profile" aria-controls="student-panel-profile" aria-selected="true">基本资料</button>
   <button type="button" role="tab" data-student-tab="learning" id="student-tab-learning" aria-controls="student-panel-learning" aria-selected="false" tabindex="-1">学习设置</button>
   <button type="button" role="tab" data-student-tab="daily" id="student-tab-daily" aria-controls="student-panel-daily" aria-selected="false" tabindex="-1">每日问答</button>
+  <button type="button" role="tab" data-student-tab="message" id="student-tab-message" aria-controls="student-panel-message" aria-selected="false" tabindex="-1">开屏消息</button>
 </nav>
 <div class="student-editor-feedback" data-student-feedback role="status" hidden></div>
 <form method="post" class="student-management__form" data-student-profile-form>
@@ -221,8 +222,25 @@
   </form>
   <section class="student-daily-history" data-daily-history aria-label="问答知识掌握与练习记录"></section>
 </div>
+<div id="student-panel-message" class="student-message-panel" role="tabpanel" aria-labelledby="student-tab-message" data-student-panel="message" hidden>
+  <form class="student-message-form" data-student-message-form data-initial="{{ selectedOpeningMessage|default({})|json }}">
+    <input type="hidden" name="operation" value="save_opening_message">
+    <input type="hidden" name="uid" value="{{ selectedStudent.uid }}">
+    <div class="student-message-status" data-message-status role="status"></div>
+    <label class="student-message-enable"><input type="checkbox" name="enabled" data-message-enabled><span>向学员显示</span></label>
+    <p class="student-message-intro">开启并保存后，这位学员访问平台时会看到消息。点击“知道了”后，同一条消息不再显示；修改标题或内容并保存后会再次显示。</p>
+    <label class="student-message-field"><span>弹窗标题</span><input class="textbox" name="title" data-message-title maxlength="100" autocomplete="off" placeholder="输入你想向学员显示的标题"></label>
+    <label class="student-message-field"><span>弹窗内容</span><textarea class="textbox" name="content" data-message-content rows="8" maxlength="10000" placeholder="输入消息内容，可以换行"></textarea></label>
+    <div class="student-message-feedback" data-message-feedback role="status" hidden></div>
+    <div class="student-message-actions"><button class="student-message-preview-button" type="button" data-message-preview>预览弹窗</button><button class="rounded primary button" type="submit" data-message-save>保存开屏消息</button></div>
+  </form>
+  <dialog class="student-message-preview" data-message-dialog aria-labelledby="student-message-preview-title" aria-describedby="student-message-preview-content" aria-modal="true">
+    <div class="student-message-preview__body"><h3 id="student-message-preview-title" data-message-preview-title></h3><div id="student-message-preview-content" class="student-message-preview__content" data-message-preview-content></div></div>
+    <footer class="student-message-preview__footer"><button type="button" data-message-preview-close>知道了</button></footer>
+  </dialog>
+</div>
 </section>
-      {% else %}<section class="student-management__editor student-editor-welcome"><span class="icon icon-user" aria-hidden="true"></span><h2>先选择一位学员</h2><p>在左侧找到孩子，为 TA 调整学习方式，<br>或安排每天的一小份问答。</p><span>基本资料 · 学习设置 · 每日问答</span></section>{% endif %}
+      {% else %}<section class="student-management__editor student-editor-welcome"><span class="icon icon-user" aria-hidden="true"></span><h2>先选择一位学员</h2><p>在左侧找到孩子，为 TA 调整学习方式，<br>或安排每天的一小份问答。</p><span>基本资料 · 学习设置 · 每日问答 · 开屏消息</span></section>{% endif %}
     </div>
   </div>
   <div class="student-create-dialog" data-student-add-dialog role="dialog" aria-modal="true" aria-labelledby="student-create-title" hidden>

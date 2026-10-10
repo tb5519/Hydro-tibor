@@ -3,6 +3,7 @@ import {
     acknowledgeBroadcast, assertCanManageBroadcast, BroadcastScope, disableBroadcast, ensureBroadcastIndexes,
     getBroadcast, getBroadcastAcknowledgements, getUnreadBroadcasts, normalizeBroadcast, presentBroadcast, publishBroadcast,
 } from '../lib/broadcast';
+import { getUnreadOpeningMessage } from '../lib/opening_message';
 import { PERM, PRIV } from '../model/builtin';
 import user from '../model/user';
 import workspace from '../model/workspace';
@@ -109,6 +110,16 @@ export async function injectUnreadBroadcasts(handler: Handler) {
     handler.UiContext.broadcasts = await getUnreadBroadcasts(currentUser, currentDomain);
     if (handler.UiContext.broadcasts.length) {
         handler.UiContext.broadcastAckUrl = handler.url('broadcast_ack', { domainId: currentDomain._id });
+    }
+    if (!handler.session?.sudoUid) {
+        const openingMessage = await getUnreadOpeningMessage(currentUser);
+        if (openingMessage) {
+            handler.response.addHeader('Cache-Control', 'private, no-store');
+            handler.UiContext.broadcasts.unshift({
+                ...openingMessage,
+                ackUrl: handler.url('student_message_ack', { domainId: currentDomain._id }),
+            });
+        }
     }
 }
 

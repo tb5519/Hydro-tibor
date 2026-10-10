@@ -17,6 +17,7 @@ import avatar from '../lib/avatar';
 import { beijingDay, defaultPolicy, parsePolicy } from '../lib/daily_quiz';
 import { withDomainMembershipRemoval } from '../lib/domain_membership';
 import { isScratchDomain } from '../lib/domain_type';
+import { presentOpeningMessage, updateOpeningMessage } from '../lib/opening_message';
 import {
     bindPointLotteryBadgePrizes, buildPointLotteryConfigFromForm, ensureGlobalPointLotteryState,
     getPointLotteryBadges, getPointLotteryBadgeUpgradeBadgeIdsFromForm,
@@ -1243,11 +1244,31 @@ class SystemUserManagementHandler extends SystemHandler {
             selectedStudentJoinedDomainCount: selectedStudentDomainState.joinedDomainCount,
             selectedDailyQuiz: selectedStudent
                 ? await getManagedDailyQuiz(uid, selectedStudentDomainState.domains, this, quizDay, quizBatch) : null,
+            selectedOpeningMessage: selectedStudent ? await presentOpeningMessage(uid) : null,
             allDomains,
             saved,
             sort,
             order,
         };
+    }
+
+    @requireSudo
+    @param('uid', Types.PositiveInt)
+    @param('title', Schema.string(), true)
+    @param('content', Schema.string(), true)
+    @param('revision', Types.String, true)
+    async postSaveOpeningMessage(domainId: string, uid: number, title = '', content = '', revision = '') {
+        await withDomainMembershipRemoval([uid], [], async () => {
+            const target = await getManagedStudent(uid, await getManagedDomains());
+            if (!target) throw new UserNotFoundError(uid);
+            const selectedOpeningMessage = await updateOpeningMessage(
+                uid, this.user._id, title, content, revision, this.args.enabled,
+            );
+            await oplog.log(this, 'manage.saveOpeningMessage', {
+                uid, revision: selectedOpeningMessage.revision, enabled: selectedOpeningMessage.enabled,
+            });
+            this.response.body = { saved: true, selectedOpeningMessage };
+        }, 'openingMessage');
     }
 
     @requireSudo

@@ -444,8 +444,10 @@ describe('daily quiz teacher configuration and reports', () => {
         assert.match($('[data-daily-feedback]').textContent, /积分/);
         const tab = $('[data-student-tab="profile"]');
         tab.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+        assert.equal($('[data-student-tab="message"]').getAttribute('aria-selected'), 'true');
+        assert.equal(dom.window.document.activeElement, $('[data-student-tab="message"]'));
+        $('[data-student-tab="message"]').dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
         assert.equal($('[data-student-tab="daily"]').getAttribute('aria-selected'), 'true');
-        assert.equal(dom.window.document.activeElement, $('[data-student-tab="daily"]'));
         assert.equal($('[data-daily-point="system:0"]').value, '-1');
     });
 });

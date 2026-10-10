@@ -1,7 +1,7 @@
 {% if UiContext.broadcasts and UiContext.broadcasts.length %}
 <dialog class="student-broadcast" data-student-broadcast aria-modal="true" aria-labelledby="student-broadcast-title">
   <div class="student-broadcast__card">
-    <header class="student-broadcast__header">
+    <header class="student-broadcast__header" data-broadcast-header>
       <span class="student-broadcast__icon" aria-hidden="true">
         <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 13-5v14L3 14zM16 9l3-2v10l-3-2M5 15l2 6h3l-2-5M21 10v4"/></svg>
       </span>
@@ -9,14 +9,14 @@
       <span class="student-broadcast__progress" data-broadcast-progress aria-live="polite"></span>
     </header>
     <main class="student-broadcast__scroll" data-broadcast-scroll tabindex="0" aria-label="广播内容">
-      <div class="student-broadcast__meta"><span data-broadcast-scope></span><time data-broadcast-time></time></div>
+      <div class="student-broadcast__meta" data-broadcast-meta><span data-broadcast-scope></span><time data-broadcast-time></time></div>
       <h2 id="student-broadcast-title" tabindex="-1" data-broadcast-title></h2>
       {% for item in UiContext.broadcasts %}
       <article class="student-broadcast__content" data-broadcast-content="{{ loop.index0 }}" hidden>{{ item.content|safe }}</article>
       {% endfor %}
     </main>
     <footer class="student-broadcast__footer">
-      <div class="student-broadcast__footer-copy"><span data-broadcast-hint>确认后，这条广播将不再提醒</span><p class="student-broadcast__error" role="alert" data-broadcast-error hidden></p></div>
+      <div class="student-broadcast__footer-copy" data-broadcast-footer-copy><span data-broadcast-hint>确认后，这条广播将不再提醒</span><p class="student-broadcast__error" role="alert" data-broadcast-error hidden></p></div>
       <button type="button" class="student-broadcast__confirm" data-broadcast-ack>知道了 <span aria-hidden="true">✓</span></button>
     </footer>
   </div>
@@ -61,6 +61,16 @@
   .student-broadcast__confirm:disabled { cursor:wait; opacity:.7; }
   .student-broadcast :focus-visible { outline:3px solid #5cbdaa; outline-offset:3px; }
   .student-broadcast__scroll:focus-visible { outline-offset:-4px; }
+  .student-broadcast--personal { width:560px; }
+  .student-broadcast--personal::before { content:""; display:block; height:4px; background:linear-gradient(90deg,#60a5fa,#bfdbfe); }
+  .student-broadcast--personal .student-broadcast__card { max-height:calc(100vh - 52px); max-height:calc(100dvh - 52px); }
+  .student-broadcast--personal .student-broadcast__header, .student-broadcast--personal .student-broadcast__meta, .student-broadcast__footer-copy[hidden] { display:none; }
+  .student-broadcast--personal .student-broadcast__scroll { padding:32px; }
+  .student-broadcast--personal .student-broadcast__footer { justify-content:flex-end; background:#fff; }
+  .student-broadcast--personal .student-broadcast__footer-copy { margin-right:auto; }
+  .student-broadcast--personal .student-broadcast__confirm { min-width:120px; background:#3b82f6; }
+  .student-broadcast--personal .student-broadcast__confirm:hover { background:#2563eb; }
+  .student-broadcast--personal :focus-visible { outline-color:#93c5fd; }
   .student-broadcast--fallback[open] { display:block; position:fixed; inset:0; z-index:2147483647; }
   .student-broadcast-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.52); z-index:2147483646; }
   @media (max-width:600px) {
@@ -75,6 +85,11 @@
     .student-broadcast__footer { padding:17px 20px; gap:12px; flex-wrap:wrap; }
     .student-broadcast__confirm { flex-grow:1; }
     .student-broadcast__footer-copy { flex-basis:100%; }
+    .student-broadcast--personal .student-broadcast__scroll { padding:26px 24px; }
+    .student-broadcast--personal .student-broadcast__card { max-height:calc(100vh - 28px); max-height:calc(100dvh - 28px); }
+    .student-broadcast--personal .student-broadcast__content { font-size:16px; }
+    .student-broadcast--personal .student-broadcast__footer { padding:18px 24px; }
+    .student-broadcast--personal .student-broadcast__confirm { flex-grow:0; }
   }
   @media (prefers-reduced-motion:reduce) { .student-broadcast__confirm { transition:none; } }
 </style>
@@ -94,6 +109,7 @@
   var channel;
   var button = dialog.querySelector('[data-broadcast-ack]');
   var error = dialog.querySelector('[data-broadcast-error]');
+  var footerCopy = dialog.querySelector('[data-broadcast-footer-copy]');
   var title = dialog.querySelector('[data-broadcast-title]');
   var scroll = dialog.querySelector('[data-broadcast-scroll]');
   var contentNodes = dialog.querySelectorAll('[data-broadcast-content]');
@@ -111,6 +127,13 @@
     while (index < items.length && acknowledged[itemKey(items[index])]) index++;
     if (index >= items.length) { finish(); return; }
     var item = items[index];
+    var personal = item.scope === 'student';
+    dialog.classList.toggle('student-broadcast--personal', personal);
+    dialog.querySelector('[data-broadcast-header]').hidden = personal;
+    dialog.querySelector('[data-broadcast-meta]').hidden = personal;
+    dialog.querySelector('[data-broadcast-hint]').hidden = personal;
+    footerCopy.hidden = personal;
+    scroll.setAttribute('aria-label', personal ? '正文' : '广播内容');
     title.textContent = item.title;
     dialog.querySelector('[data-broadcast-scope]').textContent = item.scopeLabel || (item.scope === 'global' ? '全域广播' : '域广播');
     var time = dialog.querySelector('[data-broadcast-time]');
@@ -122,8 +145,10 @@
     for (var i = 0; i < contentNodes.length; i++) contentNodes[i].hidden = i !== index;
     error.hidden = true;
     error.textContent = '';
+    dialog.removeAttribute('aria-busy');
     button.disabled = false;
-    button.innerHTML = '知道了 <span aria-hidden="true">✓</span>';
+    if (personal) button.textContent = '知道了';
+    else button.innerHTML = '知道了 <span aria-hidden="true">✓</span>';
     busy = false;
     scroll.scrollTop = 0;
     title.focus({ preventScroll:true });
@@ -144,6 +169,7 @@
   button.addEventListener('click', async function () {
     if (busy || index >= items.length) return;
     busy = true;
+    dialog.setAttribute('aria-busy', 'true');
     button.disabled = true;
     button.textContent = '正在确认…';
     error.hidden = true;
@@ -151,10 +177,13 @@
     var controller = new AbortController();
     var timeout = setTimeout(function () { controller.abort(); }, 15000);
     try {
-      var response = await fetch(ackUrl, {
+      var personal = item.scope === 'student';
+      var itemAckUrl = personal ? item.ackUrl : ackUrl;
+      if (typeof itemAckUrl !== 'string' || !itemAckUrl) throw new Error('missing acknowledgement URL');
+      var response = await fetch(itemAckUrl, {
         method:'POST', credentials:'same-origin', signal:controller.signal,
         headers:{ 'Content-Type':'application/json', 'Accept':'application/json', 'X-Requested-With':'XMLHttpRequest' },
-        body:JSON.stringify({ scope:item.scope, revision:item.revision }),
+        body:JSON.stringify(personal ? { revision:item.revision } : { scope:item.scope, revision:item.revision }),
       });
       if (response.redirected || response.status === 401 || response.status === 403) throw new Error('登录状态已变化，请刷新页面后重试。');
       var data = await response.json();
@@ -163,11 +192,14 @@
       if (channel) channel.postMessage({ uid:uid, key:itemKey(item) });
       render();
     } catch (err) {
+      if (acknowledged[itemKey(item)]) { render(); return; }
       busy = false;
+      dialog.removeAttribute('aria-busy');
       button.disabled = false;
       button.textContent = '重试确认';
       error.textContent = err.message === '登录状态已变化，请刷新页面后重试。' ? err.message : '网络连接暂时不稳定，请重试。确认成功后不会重复提醒。';
       error.hidden = false;
+      footerCopy.hidden = false;
     } finally { clearTimeout(timeout); }
   });
   if (typeof BroadcastChannel === 'function') {

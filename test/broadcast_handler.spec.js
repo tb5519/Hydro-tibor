@@ -15,6 +15,7 @@ const notice = {
 };
 let stored;
 let unread;
+let personal;
 const makeUser = (uid, canEdit = false) => ({
     _id: uid,
     hasPriv: (priv) => priv === PRIV.PRIV_USER_PROFILE && uid > 0,
@@ -26,7 +27,8 @@ class Handler {
         this.domain = domain;
         this.user = makeUser(uid, canEdit);
         this.request = { method: 'get', json, headers: {}, body: {}, query: {} };
-        this.response = { body: {}, status: null, template: null, redirect: null };
+        this.response = { body: {}, status: null, template: null, redirect: null,
+            addHeader: (name, value) => calls.push({ action: 'header', name, value }) };
         this.session = { scope: 'request-scope' };
         this.UiContext = {};
     }
@@ -100,6 +102,12 @@ try {
     Module._load = function load(request, parent, isMain) {
         if (parent?.filename?.endsWith('/packages/hydrooj/src/handler/broadcast.ts')) {
             if (request === '../lib/broadcast') return service;
+            if (request === '../lib/opening_message') return {
+                getUnreadOpeningMessage: async (viewer) => {
+                    calls.push({ action: 'personal-unread', viewer });
+                    return personal;
+                },
+            };
             if (request === '../model/builtin') return { PRIV, PERM };
             if (request === '../model/user') return userModel;
             if (request === '../model/workspace') return { getLegacyWorkspace: async () => ({ ownerUid: 2 }) };
@@ -127,6 +135,7 @@ beforeEach(() => {
     entries.clear();
     stored = notice;
     unread = [{ ...notice, scope: 'global' }];
+    personal = null;
 });
 
 describe('broadcast administration boundaries', () => {
@@ -269,6 +278,25 @@ describe('unread broadcasts on rendered pages', () => {
         await injectUnreadBroadcasts(handler);
         assert.deepEqual(handler.UiContext.broadcasts, []);
         assert.equal(handler.UiContext.broadcastAckUrl, undefined);
+    });
+
+    it('places the private message first in the same queue with its own acknowledgement and private cache headers', async () => {
+        personal = { title: '老师填写的标题', content: '老师填写的内容', revision: 'b'.repeat(32), scope: 'student' };
+        const handler = page();
+        await injectUnreadBroadcasts(handler);
+        assert.equal(handler.UiContext.broadcasts.length, 2);
+        assert.deepEqual(handler.UiContext.broadcasts[0], { ...personal, ackUrl: '/d/class-a/student_message_ack' });
+        assert.equal(handler.UiContext.broadcasts[1].scope, 'global');
+        assert(calls.some((call) => call.action === 'header' && call.name === 'Cache-Control' && call.value === 'private, no-store'));
+    });
+
+    it('teacher account inspection does not read or attach the learner private message', async () => {
+        personal = { title: '必须留给学员', content: '个人内容', revision: 'b'.repeat(32), scope: 'student' };
+        const handler = page();
+        handler.session.sudoUid = 2;
+        await injectUnreadBroadcasts(handler);
+        assert(!handler.UiContext.broadcasts.some((item) => item.scope === 'student'));
+        assert(!calls.some((call) => call.action === 'personal-unread'));
     });
 
     it('skips JSON, redirects, posts, errors, websockets, fragment requests, and downloads', async () => {
