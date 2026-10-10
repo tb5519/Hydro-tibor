@@ -9,6 +9,12 @@ import {
     Handler, param, Types,
 } from '../service/server';
 
+// Only the authenticated account-switch route sets this session marker.
+// Inspecting a learner must not create, advance or settle their daily practice.
+function isTeacherView(handler: { session?: { sudoUid?: number } }) {
+    return !!handler.session?.sudoUid;
+}
+
 export class DailyQuizHandler extends Handler {
     noCheckPermView = true;
 
@@ -17,6 +23,10 @@ export class DailyQuizHandler extends Handler {
     }
 
     async get() {
+        if (isTeacherView(this)) {
+            this.response.redirect = safeReturnUrl(this.request.query.return);
+            return;
+        }
         const { policy, session } = await quiz.getSession(this.user._id);
         const dailyQuiz = {
             state: quiz.presentSession(policy, session), actionUrl: '/daily-quiz', statusUrl: '/daily-quiz/status',
@@ -28,12 +38,14 @@ export class DailyQuizHandler extends Handler {
     }
 
     async postAnswer() {
+        if (isTeacherView(this)) throw new ForbiddenError('老师查看学员账号时不进行每日问答');
         const { sessionId, questionId, answers } = this.request.body;
         const result = await quiz.answerQuestion(this.user._id, sessionId, questionId, answers);
         this.response.body = { state: quiz.presentSession(result.policy, result.session) };
     }
 
     async postNext() {
+        if (isTeacherView(this)) throw new ForbiddenError('老师查看学员账号时不进行每日问答');
         const { sessionId, questionId } = this.request.body;
         const result = await quiz.nextQuestion(this.user._id, sessionId, questionId);
         this.response.body = { state: quiz.presentSession(result.policy, result.session) };
@@ -44,8 +56,12 @@ export class DailyQuizStatusHandler extends Handler {
     noCheckPermView = true;
 
     async get() {
-        const { policy, session } = await quiz.getSession(this.user._id);
         this.response.addHeader('Cache-Control', 'private, no-store');
+        if (isTeacherView(this)) {
+            this.response.body = { state: { required: false, teacherPreview: true } };
+            return;
+        }
+        const { policy, session } = await quiz.getSession(this.user._id);
         this.response.body = { state: quiz.presentSession(policy, session) };
     }
 }
@@ -57,6 +73,7 @@ export class DailyQuizFileHandler extends Handler {
     @param('questionId', Types.PositiveInt)
     @param('filename', Types.Filename)
     async get(domainId: string, sessionId: string, questionId: number, filename: string) {
+        if (isTeacherView(this)) throw new ForbiddenError('老师查看学员账号时不进行每日问答');
         const target = await quiz.getSessionFile(this.user._id, sessionId, questionId, filename);
         this.response.body = await storage.get(target);
         this.response.type = lookup(filename) || 'application/octet-stream';
@@ -76,7 +93,7 @@ export async function apply(ctx: Context) {
     ctx.Route('daily_quiz_file', '/daily-quiz/:sessionId/file/:questionId/:filename', DailyQuizFileHandler, PRIV.PRIV_USER_PROFILE);
     // The serial preparation phase follows authentication and workspace checks.
     ctx.on('handler/before-prepare', async (handler: Handler) => {
-        if (!handler.user?.hasPriv(PRIV.PRIV_USER_PROFILE) || handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM)
+        if (isTeacherView(handler) || !handler.user?.hasPriv(PRIV.PRIV_USER_PROFILE) || handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM)
             || handler.user.hasPriv(PRIV.PRIV_JUDGE) || exemptPath.test(handler.request.path)) return undefined;
         const { policy, session } = await quiz.getSession(handler.user._id);
         if (!quiz.presentSession(policy, session).required) return undefined;
@@ -90,7 +107,7 @@ export async function apply(ctx: Context) {
         return 'cleanup';
     });
     ctx.on('handler/create/ws', async (handler) => {
-        if (!handler.user?.hasPriv(PRIV.PRIV_USER_PROFILE) || handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM)
+        if (isTeacherView(handler) || !handler.user?.hasPriv(PRIV.PRIV_USER_PROFILE) || handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM)
             || handler.user.hasPriv(PRIV.PRIV_JUDGE)) return;
         const { policy, session } = await quiz.getSession(handler.user._id);
         if (quiz.presentSession(policy, session).required) throw new ForbiddenError('请先完成今天的每日问答');

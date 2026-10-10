@@ -58,6 +58,26 @@ async function run() {
     status(await other.post('/login').send({ uname: 'dq_other', password: 'DailyTest123!' }), 302);
     const get = (agent = student) => agent.get('/daily-quiz/status').set('Accept', 'application/json');
     const post = (operation, body, agent = student) => agent.post('/daily-quiz').set('Accept', 'application/json').send({ operation, ...body });
+    const teacherPreview = supertest.agent(httpServer);
+    const quizSnapshot = async (targetUid) => ({
+        config: await quiz.configColl.findOne({ _id: targetUid }),
+        sessions: await quiz.sessionColl.find({ uid: targetUid }).sort({ _id: 1 }).toArray(),
+        progress: await quiz.progressColl.find({ uid: targetUid }).sort({ _id: 1 }).toArray(),
+        points: await point.pointLotteryUserColl.findOne({ _id: targetUid }, {
+            projection: { lotteryPoints: 1, lotteryTotalPoints: 1, dailyQuizPointAwards: 1 },
+        }),
+        assets: await storage.coll.find({ path: /^(?:daily-quiz\/|problem\/daily-[ab]\/)/ }).sort({ _id: 1 }).toArray(),
+    });
+    const enterTeacherPreview = async (agent, targetUid) => {
+        status(await agent.post('/login').send({ uname: 'dq_admin', password: 'DailyTest123!' }), 302);
+        const prompt = await agent.get(`/account/${targetUid}`).set('Referer', '/').set('Accept', 'text/html');
+        status(prompt, 302);
+        assert.equal(prompt.headers.location, '/user/sudo');
+        const sudo = await agent.post('/user/sudo').send({ password: 'DailyTest123!' });
+        status(sudo, 302);
+        assert.equal(sudo.headers.location, `/account/${targetUid}`);
+        status(await agent.get(sudo.headers.location).set('Accept', 'text/html'), 302);
+    };
     let state;
     await check('Disabled by default; configuration strictly validates domains, limits and rewards', async () => {
         assert.equal((await quiz.getPolicy(uid)).enabled, false);
@@ -71,6 +91,33 @@ async function run() {
         assert.equal(lib.safeReturnUrl('/daily-quiz?return=/'), '/');
         await quiz.savePolicy(uid, policy, admin);
     });
+    await check('Real administrator account switch bypasses HTML and JSON quiz gates without generating a student session', async () => {
+        const before = await quizSnapshot(uid);
+        await enterTeacherPreview(teacherPreview, uid);
+        for (const did of dids) {
+            for (const accept of ['text/html', 'application/json']) {
+                const response = await teacherPreview.get(`/d/${did}/p`).set('Accept', accept);
+                status(response, 200);
+                assert(!response.headers.location);
+                assert.notEqual(response.body.error, 'daily_quiz_required');
+            }
+        }
+        const response = await get(teacherPreview);
+        status(response, 200);
+        assert.equal(response.body.state.required, false);
+        assert.equal(response.body.state.teacherPreview, true);
+        assert.notEqual(response.body.state.completed, true, 'Teacher browsing must not claim that the learner completed the quiz');
+        assert.equal(response.headers['cache-control'], 'private, no-store');
+        for (const accept of ['text/html', 'application/json']) {
+            const page = await teacherPreview.get('/daily-quiz?return=/d/daily-a/p').set('Accept', accept);
+            status(page, accept === 'text/html' ? 302 : 200);
+            assert.equal(accept === 'text/html' ? page.headers.location : page.body.url, '/d/daily-a/p');
+        }
+        const unsafe = await teacherPreview.get('/daily-quiz?return=//evil.example').set('Accept', 'text/html');
+        status(unsafe, 302);
+        assert.equal(unsafe.headers.location, '/');
+        assert.deepEqual(await quizSnapshot(uid), before, 'Teacher preview must leave policies, sessions, progress, points and attachments untouched');
+    });
     await check('Concurrent daily entry creates one combined immutable session with no answer leakage', async () => {
         const responses = await Promise.all([get(), get(), get()]);
         for (const res of responses) status(res, 200);
@@ -83,6 +130,43 @@ async function run() {
         assert.equal(state.current.feedback, undefined);
         assert.equal(await quiz.sessionColl.countDocuments({ uid }), 1);
         assert(responses.every((res) => res.body.state.sessionId === state.sessionId));
+    });
+    await check('Teacher preview cannot answer, advance or read an existing learner quiz while the real learner still sees it', async () => {
+        const before = await quizSnapshot(uid);
+        const args = { sessionId: state.sessionId, questionId: 1 };
+        status(await post('answer', { ...args, answers: ['A'] }, teacherPreview), 403);
+        status(await post('next', args, teacherPreview), 403);
+        const image = state.current.stem.match(/\]\(([^)]+)\)/)[1];
+        status(await teacherPreview.get(image), 403);
+        assert.equal((await get(teacherPreview)).body.state.teacherPreview, true);
+        assert.deepEqual(await quizSnapshot(uid), before);
+        const learner = await get();
+        status(learner, 200);
+        assert.equal(learner.body.state.required, true);
+        assert.equal(learner.body.state.sessionId, state.sessionId);
+        assert.equal(learner.body.state.answered, 0);
+        assert.equal(learner.body.state.current.id, 1);
+        assert.equal(learner.body.state.teacherPreview, undefined);
+    });
+    await check('A genuine student login clears teacher preview and forged request flags cannot bypass the quiz', async () => {
+        status(await teacherPreview.post('/login').send({ uname: 'dq_student', password: 'DailyTest123!' }), 302);
+        const response = await get(teacherPreview);
+        status(response, 200);
+        assert.equal(response.body.state.required, true);
+        assert.equal(response.body.state.sessionId, state.sessionId);
+        assert.equal(response.body.state.teacherPreview, undefined);
+        const html = await teacherPreview.get(`/d/${dids[0]}/p`).set('Accept', 'text/html');
+        status(html, 302);
+        assert(html.headers.location.startsWith('/daily-quiz?return='));
+        const query = await teacherPreview.get(`/d/${dids[0]}/p?sudoUid=${admin}&teacherPreview=true&skipDailyQuiz=true`)
+            .set('Accept', 'application/json');
+        status(query, 403);
+        assert.equal(query.body.error, 'daily_quiz_required');
+        const body = await teacherPreview.post('/home/profile').set('Accept', 'application/json')
+            .send({ bio: 'Must not be saved through forged preview flags', gender: 0, sudoUid: admin, teacherPreview: true, skipDailyQuiz: true });
+        status(body, 403);
+        assert.equal(body.body.error, 'daily_quiz_required');
+        assert.equal((await get(teacherPreview)).body.state.answered, 0);
     });
     await check('Persistent login HTML and JSON entry gates cannot be bypassed by changing domains', async () => {
         for (const did of dids) {
@@ -303,8 +387,67 @@ async function run() {
         assert.equal(balance.lotteryTotalPoints, 10);
         assert.equal((await quiz.getAdminSummary(judgeUid)).masteredCount, 2);
     });
+    await check('Teacher browsing cannot reconcile a pending answer or award points; the genuine learner still reconciles normally', async () => {
+        const pendingUid = await users.create('dq-pending@test.example', 'dq_pending', 'DailyTest123!');
+        for (const did of dids) await domains.setUserRole(did, pendingUid, 'student', true);
+        const objective = source('single', 'Unsettled preview question ![stem](file://image.png)', ['A']);
+        const sourceId = await problems.add(dids[1], 'PENDING', 'Pending settlement fixture', '', admin, ['preview-regression'], {
+            hidden: true, objectiveKind: 'single', objective,
+        });
+        await storage.put(`problem/${dids[1]}/${sourceId}/additional_file/image.png`, Buffer.from('fakepng'), admin);
+        await quiz.savePolicy(pendingUid, {
+            ...policy, domains: [{ domainId: dids[1], enabled: true, count: 1, tags: ['preview-regression'], points: [7] }],
+        }, admin);
+        const pendingLearner = supertest.agent(httpServer);
+        status(await pendingLearner.post('/login').send({ uname: 'dq_pending', password: 'DailyTest123!' }), 302);
+        const initial = await get(pendingLearner);
+        status(initial, 200);
+        const snapshot = await quiz.sessionColl.findOne({ _id: initial.body.state.sessionId });
+        assert(snapshot.items.length > 0);
+        const current = snapshot.items[snapshot.cursor];
+        current.answer = {
+            selected: current.objective.answers, correct: true, earnedPoints: current.points, answeredAt: new Date(),
+        };
+        snapshot.settledAnswers = 0;
+        await quiz.sessionColl.replaceOne({ _id: snapshot._id }, snapshot);
+        const preview = supertest.agent(httpServer);
+        await enterTeacherPreview(preview, pendingUid);
+        const before = await quizSnapshot(pendingUid);
+        status(await preview.get(`/d/${dids[1]}/p`).set('Accept', 'text/html'), 200);
+        status(await preview.get(`/d/${dids[1]}/p`).set('Accept', 'application/json'), 200);
+        assert.equal((await get(preview)).body.state.teacherPreview, true);
+        const page = await preview.get('/daily-quiz?return=/d/daily-b/p').set('Accept', 'text/html');
+        status(page, 302);
+        assert.equal(page.headers.location, '/d/daily-b/p');
+        const args = { sessionId: snapshot._id, questionId: current.id };
+        status(await post('answer', { ...args, answers: current.objective.answers }, preview), 403);
+        status(await post('next', args, preview), 403);
+        const image = initial.body.state.current.stem.match(/\]\(([^)]+)\)/)[1];
+        status(await preview.get(image), 403);
+        assert.deepEqual(await quizSnapshot(pendingUid), before);
+        const genuine = await get(pendingLearner);
+        status(genuine, 200);
+        assert.equal(genuine.body.state.teacherPreview, undefined);
+        assert.equal(genuine.body.state.current.feedback.correct, true);
+        assert.equal(genuine.body.state.earnedPoints, current.points);
+        const balance = await point.pointLotteryUserColl.findOne({ _id: pendingUid });
+        assert.equal(balance.lotteryPoints, current.points);
+        assert.equal(balance.lotteryTotalPoints, current.points);
+        assert.equal(await quiz.progressColl.countDocuments({ uid: pendingUid, mastered: true }), 1);
+    });
     clearTimeout(timer);
     console.log(`Daily quiz integration: ${results.filter(Boolean).length}/${results.length} passed`);
+    if (process.env.DAILY_QUIZ_SERVE === '1' && results.every(Boolean)) {
+        const previewUid = await users.create('dq-ui-preview@test.example', 'dq_ui_preview', 'DailyTest123!');
+        for (const did of dids) await domains.setUserRole(did, previewUid, 'student', true);
+        await quiz.savePolicy(previewUid, policy, admin);
+        console.log(`SMOKE ${JSON.stringify({
+            origin: `http://localhost:${process.env.DAILY_QUIZ_PORT || '18895'}`, username: 'dq_admin', password: 'DailyTest123!',
+            studentUsername: 'dq_ui_preview', studentUid: previewUid, switchUrl: `/account/${previewUid}`,
+            studentPage: '/d/daily-b/p',
+        })}`);
+        return;
+    }
     process.exit(results.every(Boolean) ? 0 : 1);
 }
 let started = false;
