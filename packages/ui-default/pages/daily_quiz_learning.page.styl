@@ -90,6 +90,11 @@
     &:hover
       border-color: #8fb7d3
       background: #f7fbff
+    &:disabled
+      opacity: .55
+      cursor: default
+      background: #f7fafc
+      border-color: #dce7ef
 
   .dql-more
     display: block
@@ -216,6 +221,71 @@
 
   .dql-upcoming-domains
     color: #95a7b3
+
+  .dql-upcoming-replace-note
+    margin-bottom: 10px
+    color: #93a6b3
+    font-size: 11px
+
+  .dql-upcoming-card
+    position: relative
+    overflow: hidden
+    margin-top: 8px
+    border: 1px solid #e0e9f0
+    border-radius: 8px
+    background: #fff
+    > .dql-question
+      margin: 0
+      border: 0
+      border-radius: 0
+    &:has(.dql-upcoming-actions) > .dql-question > summary
+      padding-right: 145px
+    &:has(.dql-upcoming-actions) > .dql-question > summary::after
+      position: absolute
+      right: 15px
+      top: 14px
+
+  .dql-upcoming-actions
+    position: absolute
+    top: 12px
+    right: 42px
+    .dql-upcoming-replace
+      display: inline-flex
+      align-items: center
+      gap: 5px
+      min-height: 30px
+      padding: 4px 9px
+      font-size: 11px
+      color: #5a849e
+      background: #f9fcff
+
+  .dql-replace-icon
+    font-size: 16px
+    line-height: 1
+
+  .dql-replace-spinner
+    display: inline-block
+    width: 11px
+    height: 11px
+    border: 1px solid #bdd0df
+    border-top-color: #4e89ad
+    border-radius: 50%
+    animation: dql-replace-spin .7s linear infinite
+
+  .dql-replace-feedback
+    display: flex
+    flex-wrap: wrap
+    align-items: center
+    gap: 6px 12px
+    border-top: 1px solid #e5f0ec
+    padding: 9px 14px
+    background: #f6fbf8
+    color: #4f8b75
+    font-size: 11px
+    &.is-error
+      border-top-color: #f0e5d8
+      background: #fffbf5
+      color: #a37d4d
 
   .dql-upcoming-shortage, .dql-upcoming-feedback
     margin: 10px 0 13px
@@ -519,6 +589,20 @@
         font-size: 13px
     .dql-upcoming-metrics
       gap: 5px 10px
+    .dql-upcoming-card:has(.dql-upcoming-actions) > .dql-question > summary
+      padding-right: 10px
+      &::after
+        position: static
+    .dql-upcoming-actions
+      position: static
+      display: flex
+      justify-content: flex-end
+      padding: 0 10px 10px
+      .dql-upcoming-replace
+        min-height: 34px
+        padding: 5px 11px
+    .dql-replace-feedback
+      padding: 9px 10px
     .dql-option
       flex-wrap: wrap
       padding: 9px
@@ -542,3 +626,11 @@
     .dql-session-body
       padding-left: 9px
       padding-right: 9px
+
+@keyframes dql-replace-spin
+  to
+    transform: rotate(360deg)
+
+@media (prefers-reduced-motion: reduce)
+  .daily-quiz-learning .dql-replace-spinner
+    animation: none

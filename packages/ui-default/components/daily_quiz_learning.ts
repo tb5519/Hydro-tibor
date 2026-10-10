@@ -79,6 +79,10 @@ interface UpcomingState {
   error?: string;
   controller?: AbortController;
 }
+interface ReplacementState {
+  index: number;
+  controller: AbortController;
+}
 
 export const learningAccuracy = (correct: number, answered: number) => answered > 0 ? `${Math.round(correct / answered * 100)}%` : '--';
 
@@ -98,6 +102,10 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
   let limit = 20;
   let expandedSession: string | null = null;
   let upcoming: UpcomingState | null = null;
+  let replacement: ReplacementState | null = null;
+  let replacementNeedsRefresh = false;
+  const replacementMessages = new Map<number, { text: string, error: boolean }>();
+  const upcomingExpansion = new Map<number, { question: boolean, solution: boolean }>();
   let disposed = false;
 
   function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = '') {
@@ -166,8 +174,12 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
     return node;
   }
   function upcomingQuestion(item: UpcomingQuestion, index: number) {
+    const position = item.index || index + 1;
+    const card = el('section', 'dql-upcoming-card');
     const node = el('details', 'dql-question dql-upcoming-question');
     node.dataset.learningUpcomingQuestion = item.sourceId || item.id;
+    node.dataset.learningUpcomingIndex = `${position}`;
+    node.open = upcomingExpansion.get(position)?.question || false;
     const summary = el('summary');
     const name = el('div', 'dql-question-name');
     const kind = { single: '单选', multiple: '多选', judge: '判断' }[item.kind] || item.kind;
@@ -188,6 +200,7 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
       body.append(row);
     });
     const solution = el('details', 'dql-upcoming-solution');
+    solution.open = upcomingExpansion.get(position)?.solution || false;
     solution.append(el('summary', '', '展开答案与解析'));
     const answerText = (answers: string[]) => answers.map((answer) => (item.kind === 'judge' ? { A: '正确', B: '错误' }[answer] || answer : answer)).join('、');
     const answers = el('div', 'dql-answers');
@@ -201,7 +214,29 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
     }
     body.append(solution);
     node.append(summary, body);
-    return node;
+    card.append(node);
+    if (!item.awaitingAcknowledgement && item.correct == null && item.domainId && item.sourceId != null) {
+      const actions = el('div', 'dql-upcoming-actions');
+      const pending = replacement?.index === position;
+      const change = button(pending ? '正在换题…' : '随机换题', 'replace-upcoming', 'dql-button dql-upcoming-replace');
+      change.dataset.learningUpcomingIndex = `${position}`;
+      change.disabled = !!replacement || replacementNeedsRefresh;
+      change.setAttribute('aria-label', `随机替换第 ${position} 题：${item.title || '未命名题目'}`);
+      change.setAttribute('aria-busy', `${pending}`);
+      if (pending) change.append(el('span', 'dql-replace-spinner'));
+      else change.prepend(el('span', 'dql-replace-icon', '↻'));
+      actions.append(change);
+      card.append(actions);
+    }
+    const feedback = replacementMessages.get(position);
+    if (feedback) {
+      const note = el('div', `dql-replace-feedback${feedback.error ? ' is-error' : ''}`);
+      note.setAttribute('role', feedback.error ? 'alert' : 'status');
+      note.append(el('span', '', feedback.text));
+      if (feedback.error && feedback.text.includes('身份验证')) note.append(verificationLink());
+      card.append(note);
+    }
+    return card;
   }
   function verificationLink() {
     const link = el('a', 'dql-link', '在新窗口验证身份');
@@ -287,7 +322,9 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
       description = next ? '下方预览下一次练习的可用题目。' : '当前范围的题目可能已答对，或仍在错题复习间隔内。';
     }
     heading.append(el('strong', '', title), el('p', '', description));
-    header.append(heading, button('刷新预览', 'refresh-upcoming'));
+    const refresh = button('刷新预览', 'refresh-upcoming');
+    refresh.disabled = !!replacement;
+    header.append(heading, refresh);
     node.append(header);
     if (preview.status !== 'disabled') {
       if (next) node.append(el('h4', 'dql-upcoming-next', `下一次练习预览 · ${next.day}`));
@@ -303,6 +340,7 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
         if (quiz.projected && quiz.total < quiz.requested) {
           node.append(el('p', 'dql-upcoming-shortage', `设置 ${quiz.requested} 题，本次可出 ${quiz.total} 题；已答对或尚未到复习间隔的题目不会重复安排。`));
         }
+        node.append(el('p', 'dql-upcoming-replace-note', '可随机替换尚未作答的题目，出题范围与积分保持一致。'));
         quiz.items.forEach((item, index) => node.append(upcomingQuestion(item, index)));
       } else if (quiz.remaining > 0) {
         node.append(message('当前课堂没有即将出现的题目', '学员仍有其他课堂的题目待完成，可切换为全部课堂查看。'));
@@ -340,6 +378,12 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
     }
   }
   function renderPanel() {
+    panel.querySelectorAll<HTMLDetailsElement>('[data-learning-upcoming-index]').forEach((node) => {
+      if (node.tagName !== 'DETAILS') return;
+      upcomingExpansion.set(Number(node.dataset.learningUpcomingIndex), {
+        question: node.open, solution: node.querySelector<HTMLDetailsElement>('.dql-upcoming-solution')?.open || false,
+      });
+    });
     panel.replaceChildren();
     if (view === 'upcoming') {
       renderUpcoming();
@@ -451,7 +495,7 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
     }
   }
   async function loadUpcoming() {
-    if (!learning.upcomingUrl) return;
+    if (!learning.upcomingUrl || replacement) return;
     upcoming?.controller?.abort();
     const controller = new win.AbortController();
     const state: UpcomingState = { status: 'loading', controller };
@@ -473,6 +517,8 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
       state.preview = result.upcoming;
       state.checkedAt = new Date().toISOString();
       state.controller = null;
+      replacementNeedsRefresh = false;
+      replacementMessages.clear();
       if (view === 'upcoming') renderPanel();
     } catch (error) {
       if (disposed || controller.signal.aborted || upcoming !== state) return;
@@ -480,6 +526,65 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
       state.error = error instanceof Error ? error.message : '读取失败，请重试。';
       state.controller = null;
       if (view === 'upcoming') renderPanel();
+    }
+  }
+  async function replaceUpcoming(position: number) {
+    if (replacement || replacementNeedsRefresh || upcoming?.status !== 'loaded') return;
+    const state = upcoming;
+    const quiz = state.preview.next || state.preview;
+    const item = quiz.items.find((value) => value.index === position);
+    if (!item || item.awaitingAcknowledgement || item.correct != null) return;
+    const controller = new win.AbortController();
+    const pending: ReplacementState = { index: position, controller };
+    replacement = pending;
+    replacementMessages.delete(position);
+    if (view === 'upcoming') renderPanel();
+    let uncertain = false;
+    try {
+      const url = new win.URL(learning.upcomingUrl, win.location.href);
+      if (url.origin !== win.location.origin || !['http:', 'https:'].includes(url.protocol)) throw new Error('换题地址无效，请刷新后重试。');
+      uncertain = true;
+      const response = await win.fetch(url.href, {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operation: 'replace_upcoming', day: quiz.day, questionId: Number(item.id), sourceDomain: item.domainId, sourceId: Number(item.sourceId) }),
+      });
+      let result;
+      try { result = await response.json(); } catch { throw new Error('身份验证可能已过期，请验证后刷新预览。'); }
+      if (result.url && !result.upcoming) throw new Error('身份验证可能已过期，请验证后刷新预览。');
+      if (!response.ok) {
+        const params = result.error?.params;
+        const validation = params?.[0] === 'questionId' && typeof params[2] === 'string'
+          && (result.error?.name === 'ValidationError' || /validation failed/i.test(result.error?.message || ''));
+        const auth = response.status === 401 || (response.status === 403 && !validation);
+        uncertain = response.status >= 500 || auth;
+        const errorText = validation ? params[2] : result.error?.message || result.message || '';
+        if (/已被调整|已经作答|已过期|刷新/.test(errorText)) uncertain = true;
+        throw new Error(auth ? '身份验证可能已过期，请验证后刷新预览。' : response.status >= 500
+          ? '暂时无法确认换题结果，请先刷新预览再操作。' : errorText || '换题未完成，请刷新预览后再操作。');
+      }
+      const valid = (value: UpcomingQuiz) => value && ['ready', 'continue', 'completed', 'empty', 'disabled'].includes(value.status) && Array.isArray(value.items);
+      if (!valid(result.upcoming) || (result.upcoming.next && !valid(result.upcoming.next))) throw new Error('无法确认换题结果，请先刷新预览再操作。');
+      if (disposed || controller.signal.aborted || upcoming !== state || replacement !== pending) return;
+      uncertain = false;
+      state.preview = result.upcoming;
+      state.checkedAt = new Date().toISOString();
+      replacementMessages.set(position, { text: '已换题，学员将看到更新后的题目。', error: false });
+    } catch (error) {
+      if (disposed || controller.signal.aborted || upcoming !== state || replacement !== pending) return;
+      replacementNeedsRefresh = uncertain;
+      replacementMessages.set(position, { text: error instanceof Error && error.name !== 'TypeError'
+        ? error.message : '无法确认是否已换题，请先刷新预览再操作。', error: true });
+    } finally {
+      if (!disposed && replacement === pending) {
+        replacement = null;
+        if (view === 'upcoming') {
+          renderPanel();
+          const action = replacementNeedsRefresh ? '[data-learning-action="refresh-upcoming"]'
+            : `[data-learning-action="replace-upcoming"][data-learning-upcoming-index="${position}"]`;
+          panel.querySelector<HTMLButtonElement>(action)?.focus();
+        }
+      }
     }
   }
   host.addEventListener('click', (event) => {
@@ -497,6 +602,8 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
       if (view === 'upcoming' && (!upcoming || (previousView !== 'upcoming' && upcoming.status !== 'loading'))) loadUpcoming();
     } else if (action === 'refresh-upcoming' || action === 'retry-upcoming') {
       loadUpcoming();
+    } else if (action === 'replace-upcoming') {
+      replaceUpcoming(Number(control.dataset.learningUpcomingIndex));
     } else if (action === 'tag-review' || action === 'clear-tag') {
       selectedTag = action === 'tag-review' ? learning.tags[Number(control.dataset.learningTag)] || null : null;
       view = 'review';
@@ -526,6 +633,7 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
       disposed = true;
       lifetime.abort();
       upcoming?.controller?.abort();
+      replacement?.controller.abort();
       sessions.forEach((state) => state.controller?.abort());
       sessions.clear();
     },

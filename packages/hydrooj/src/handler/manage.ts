@@ -1074,6 +1074,22 @@ class SystemDailyQuizDashboardHandler extends SystemHandler {
     }
 }
 
+function rewriteManagedDailyQuizUpcoming(preview: dailyQuiz.AdminQuizUpcoming, uid: number, handler: Handler): dailyQuiz.AdminQuizUpcoming {
+    return {
+        ...preview,
+        items: preview.items.map((item) => {
+            const rewriteFile = (value: string) => value.replace(/file:\/\/([^\s<>"')\]]+)/g, (_, reference: string) => {
+                const filename = decodeURIComponent(reference.split(/[?#]/)[0]);
+                return handler.url('manage_daily_quiz_preview_file', {
+                    uid, day: preview.day, sourceDomain: item.domainId, sourceId: item.sourceId, questionId: item.id, filename,
+                });
+            });
+            return { ...item, stem: rewriteFile(item.stem), options: item.options.map(rewriteFile), analysis: rewriteFile(item.analysis) };
+        }),
+        ...(preview.next ? { next: rewriteManagedDailyQuizUpcoming(preview.next, uid, handler) } : {}),
+    };
+}
+
 class SystemDailyQuizStudentHandler extends SystemHandler {
     async prepare() {
         this.checkPriv(PRIV.PRIV_ALL);
@@ -1092,20 +1108,7 @@ class SystemDailyQuizStudentHandler extends SystemHandler {
         if (!target || (classroom && !target.domainIds.includes(classroom))) throw new UserNotFoundError(uid);
         if (upcoming) {
             if (upcoming !== '1' || session) throw new ValidationError('upcoming');
-            const rewrite = (preview: dailyQuiz.AdminQuizUpcoming): dailyQuiz.AdminQuizUpcoming => ({
-                ...preview,
-                items: preview.items.map((item) => {
-                    const rewriteFile = (value: string) => value.replace(/file:\/\/([^\s<>"')\]]+)/g, (_, reference: string) => {
-                        const filename = decodeURIComponent(reference.split(/[?#]/)[0]);
-                        return this.url('manage_daily_quiz_preview_file', {
-                            uid, day: preview.day, sourceDomain: item.domainId, sourceId: item.sourceId, questionId: item.id, filename,
-                        });
-                    });
-                    return { ...item, stem: rewriteFile(item.stem), options: item.options.map(rewriteFile), analysis: rewriteFile(item.analysis) };
-                }),
-                ...(preview.next ? { next: rewrite(preview.next) } : {}),
-            });
-            this.response.body = { upcoming: rewrite(await dailyQuiz.getAdminUpcoming(uid, classroom)) };
+            this.response.body = { upcoming: rewriteManagedDailyQuizUpcoming(await dailyQuiz.getAdminUpcoming(uid, classroom), uid, this) };
             return;
         }
         const batch = await getManagedDailyQuizBatch([target], domains, classroom);
@@ -1119,6 +1122,24 @@ class SystemDailyQuizStudentHandler extends SystemHandler {
                 learning: await presentManagedDailyQuizLearning(state, this, classroom),
             };
         }
+    }
+
+    @requireSudo
+    @param('uid', Types.PositiveInt)
+    @param('classroom', Types.String, true)
+    @param('day', Types.String)
+    @param('questionId', Types.PositiveInt)
+    @param('sourceDomain', Types.String)
+    @param('sourceId', Types.PositiveInt)
+    async postReplaceUpcoming(domainId: string, uid: number, classroom = '', day: string, questionId: number, sourceDomain: string, sourceId: number) {
+        const domains = await getManagedDomains();
+        classroom = selectDailyQuizClassroom(classroom, domains);
+        const target = (await getManagedDailyQuizRoster(domains, uid))[0];
+        if (!target || !target.eligibleDomainIds.includes(sourceDomain)
+            || (classroom && (!target.domainIds.includes(classroom) || sourceDomain !== classroom))) throw new UserNotFoundError(uid);
+        const upcoming = await dailyQuiz.replaceAdminUpcoming(uid, day, questionId, sourceDomain, sourceId, classroom);
+        await oplog.log(this, 'manage.replaceDailyQuizQuestion', { uid, day, questionId, sourceDomain, sourceId });
+        this.response.body = { upcoming: rewriteManagedDailyQuizUpcoming(upcoming, uid, this) };
     }
 }
 

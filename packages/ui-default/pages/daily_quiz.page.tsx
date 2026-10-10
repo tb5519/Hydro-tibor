@@ -79,6 +79,7 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
   const [selection, setSelection] = useState<string[]>(initial.state.current?.feedback?.selectedAnswers || []);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
+  const [needsRefresh, setNeedsRefresh] = useState(false);
   const inFlight = useRef(false);
   const hasFocused = useRef(false);
   const questionRef = useRef<HTMLDivElement>(null);
@@ -107,7 +108,7 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
   }, [current?.id, !!feedback, complete]);
 
   function choose(answer: string) {
-    if (inFlight.current || feedback) return;
+    if (inFlight.current || feedback || needsRefresh) return;
     setError('');
     setSelection((previous) => (multiple
       ? previous.includes(answer) ? previous.filter((item) => item !== answer) : [...previous, answer].sort()
@@ -117,6 +118,10 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (inFlight.current || !current) return;
+    if (needsRefresh) {
+      window.location.reload();
+      return;
+    }
     if (!feedback && !selection.length) {
       setError(multiple ? '先选出你认为正确的选项，再提交答案。' : '先选择一个答案，再提交。');
       questionRef.current?.querySelector<HTMLInputElement>('input')?.focus();
@@ -141,7 +146,10 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
       setState(next);
       setSelection(next.current?.feedback?.selectedAnswers || []);
     } catch (cause) {
-      setError(cause?.message || '暂时未能连接，请再试一次。');
+      const changed = cause?.params?.[0] === 'questionId'
+        && cause?.params?.[2] === '这道题已由老师更换，请刷新后继续作答';
+      setError(changed ? cause.params[2] : cause?.message || '暂时未能连接，请再试一次。');
+      setNeedsRefresh(changed);
     } finally {
       inFlight.current = false;
       setPending(false);
@@ -187,7 +195,7 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
             </div>
             <div className="daily-quiz__question" ref={questionRef} tabIndex={-1} role="group" aria-label={`第 ${current.position} 题`}>
               <Markdown value={current.stem || current.title} />
-              <fieldset className={`daily-quiz__choices${multiple ? ' is-multiple' : ''}`} disabled={pending || !!feedback}>
+              <fieldset className={`daily-quiz__choices${multiple ? ' is-multiple' : ''}`} disabled={pending || !!feedback || needsRefresh}>
                 <legend>{judge ? '判断这句话是否正确' : multiple ? '选择所有正确答案' : '选择一个正确答案'} · 本题 {current.points} 积分</legend>
                 {current.options.map((option, index) => {
                   const value = letter(index);
@@ -263,7 +271,8 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
                 )}
               </div>
             )}
-            {error && <div className="daily-quiz__error" role="alert">{error}<small>当前选择已保留，可以直接重试。</small></div>}
+            {error && <div className="daily-quiz__error" role="alert">{error}<small>{needsRefresh
+              ? '点击“刷新题目”查看调整后的题目。' : '当前选择已保留，可以直接重试。'}</small></div>}
             <div className="daily-quiz__actions">
               <p>{actionHint}</p>
               <button
@@ -272,7 +281,7 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
                 disabled={pending}
                 aria-busy={pending}
                 onClick={(event) => event.stopPropagation()}>
-                {pending ? feedback ? '正在继续…' : '正在保存…' : feedback ? continueLabel : '提交答案'}
+                {pending ? feedback ? '正在继续…' : '正在保存…' : needsRefresh ? '刷新题目' : feedback ? continueLabel : '提交答案'}
                 <span aria-hidden="true">→</span>
               </button>
             </div>

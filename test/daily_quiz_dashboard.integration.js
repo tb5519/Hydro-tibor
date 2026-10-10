@@ -513,6 +513,7 @@ async function run() {
     };
     const readOnlyState = async () => ({
         sessions: await daily.sessionColl.find().sort({ _id: 1 }).toArray(),
+        plans: await daily.planColl.find().sort({ _id: 1 }).toArray(),
         progress: await daily.progressColl.find().sort({ _id: 1 }).toArray(),
         policies: await daily.configColl.find().sort({ _id: 1 }).toArray(),
         storage: await storage.coll.find().sort({ _id: 1 }).toArray(),

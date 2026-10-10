@@ -383,6 +383,29 @@ describe('daily quiz learner page', () => {
         } finally { await h.cleanup(); }
     });
 
+    it('asks the learner to refresh a teacher-replaced question without grading or replaying the old choice', async () => {
+        const message = '这道题已由老师更换，请刷新后继续作答';
+        const h = await harness(initial(), async () => {
+            const error = new Error(message);
+            error.params = ['questionId', null, message];
+            throw error;
+        });
+        try {
+            await h.click('input[value=B]');
+            await h.submit();
+            assert.equal(h.calls.length, 1, 'replacement rejection never automatically resubmits the old answer');
+            assert.equal(h.query('[data-daily-quiz-feedback]'), null);
+            assert.equal(h.query('[role=progressbar]').getAttribute('aria-valuenow'), '0');
+            assert.equal(h.query('fieldset').disabled, true);
+            assert.match(h.query('button[type=submit]').textContent, /刷新题目/);
+            assert.match(h.query('[role=alert]').textContent, /老师更换.*点击“刷新题目”/s);
+            assert.doesNotMatch(h.query('[role=alert]').textContent, /可以直接重试/);
+            await h.click('input[value=C]');
+            assert.equal(h.query('input[value=B]').checked, true);
+            assert.equal(h.calls.length, 1);
+        } finally { await h.cleanup(); }
+    });
+
     it('handles a zero-question day without trapping the learner and rejects unsafe return destinations', async () => {
         const h = await harness(initial({ state: state({ total: 0, current: null, required: false, completed: true }),
             returnUrl: '//evil.test/phishing' }));

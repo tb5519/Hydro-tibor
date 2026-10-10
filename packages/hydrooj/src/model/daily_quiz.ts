@@ -43,6 +43,8 @@ export interface DailyQuizSession {
     requested: number;
     createdAt: Date;
     settledAnswers?: number;
+    selectionLockToken?: string;
+    selectionLockUntil?: Date;
 }
 interface QuizConfig { _id: number, policy: DailyQuizPolicy, updatedAt: Date, updatedBy: number }
 interface QuizProgress {
@@ -54,16 +56,73 @@ interface QuizProgress {
     lastRound: number;
     lastDay: string;
 }
+interface QuizPlan {
+    _id: string;
+    uid: number;
+    day: string;
+    revision: number;
+    expiresAt: Date;
+    fingerprint?: string;
+    items?: { id: number, domainId: string, sourceId: number, points: number }[];
+    lockToken?: string;
+    lockUntil?: Date;
+    // Once allocated, the snapshot is immutable. This fences an expired creator
+    // and lets another request finish inserting exactly the same allocation.
+    allocatedSession?: DailyQuizSession;
+}
 declare module '../service/db' {
     interface Collections {
         'daily.quiz.config': QuizConfig;
         'daily.quiz.session': DailyQuizSession;
         'daily.quiz.progress': QuizProgress;
+        'daily.quiz.plan': QuizPlan;
     }
 }
 export const configColl = db.collection('daily.quiz.config');
 export const sessionColl = db.collection('daily.quiz.session');
 export const progressColl = db.collection('daily.quiz.progress');
+export const planColl = db.collection('daily.quiz.plan');
+
+function replacementError(message: string): never {
+    throw new ValidationError('questionId', null, message);
+}
+
+async function withSelectionLock<T>(uid: number, day: string, callback: (token: string) => Promise<T>): Promise<T> {
+    const id = `${uid}-${day}`;
+    try {
+        await planColl.updateOne({ _id: id }, {
+            $setOnInsert: { uid, day, revision: 0, expiresAt: new Date(Date.now() + 7 * 86400000) },
+        }, { upsert: true });
+    } catch (error) {
+        if (error.code !== 11000) throw error;
+    }
+    const token = new ObjectId().toHexString();
+    let acquired = false;
+    let leaseUntil: Date;
+    for (let attempt = 0; attempt < 20 && !acquired; attempt++) {
+        const now = new Date();
+        leaseUntil = new Date(now.getTime() + 120000);
+        const result = await planColl.updateOne({
+            _id: id, $or: [{ lockUntil: { $exists: false } }, { lockUntil: { $lte: now } }],
+        }, { $set: { lockToken: token, lockUntil: leaseUntil } });
+        acquired = !!result.matchedCount;
+        if (!acquired) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!acquired) replacementError('题目正在更新，请稍后重试');
+    try {
+        // Fence mutations of an existing session in the same document as the
+        // item write. An expired copier cannot commit after a newer lease wins.
+        await sessionColl.updateOne({
+            _id: id, $or: [{ selectionLockUntil: { $exists: false } }, { selectionLockUntil: { $lte: new Date() } }],
+        }, { $set: { selectionLockToken: token, selectionLockUntil: leaseUntil } });
+        return await callback(token);
+    } finally {
+        await sessionColl.updateOne({ _id: id, selectionLockToken: token }, {
+            $unset: { selectionLockToken: '', selectionLockUntil: '' },
+        });
+        await planColl.updateOne({ _id: id, lockToken: token }, { $unset: { lockToken: '', lockUntil: '' } });
+    }
+}
 
 export async function getPolicy(uid: number): Promise<DailyQuizPolicy> {
     return (await configColl.findOne({ _id: uid }))?.policy || defaultPolicy();
@@ -135,12 +194,8 @@ async function snapshotItem(pdoc: any, id: number, domainName: string, points: n
     };
 }
 
-/** One selector powers real sessions and read-only teacher previews. */
-async function selectSessionItems(
-    uid: number, policy: DailyQuizPolicy, day: string, round: number, previous: DailyQuizSession | null,
-    materialize: (source: any, id: number, domainName: string, points: number) => Promise<QuizItem>,
-) {
-    const items: QuizItem[] = [];
+async function eligibleSources(uid: number, policy: DailyQuizPolicy, day: string, round: number, previous: DailyQuizSession | null) {
+    const groups: { rule: DailyQuizPolicy['domains'][number], domainName: string, candidates: any[] }[] = [];
     for (const rule of policy.domains) {
         const [ddoc, sources, progress] = await Promise.all([
             domain.get(rule.domainId),
@@ -168,38 +223,98 @@ async function selectSessionItems(
             .sort((a, b) => Number(!!history.get(b.docId)) - Number(!!history.get(a.docId))
                 || (history.get(a.docId)?.lastRound || 0) - (history.get(b.docId)?.lastRound || 0)
                 || selectionRank(`${uid}:${day}:${rule.domainId}`, a.docId).localeCompare(selectionRank(`${uid}:${day}:${rule.domainId}`, b.docId)));
-        let selected = 0;
+        groups.push({ rule, domainName: ddoc?.name || rule.domainId, candidates });
+    }
+    return groups;
+}
+
+/** One selector powers real sessions and read-only teacher previews. */
+async function selectSessionItems(
+    uid: number, policy: DailyQuizPolicy, day: string, round: number, previous: DailyQuizSession | null,
+    materialize: (source: any, id: number, domainName: string, points: number) => Promise<QuizItem>,
+) {
+    const groups = await eligibleSources(uid, policy, day, round, previous);
+    const selected: { source: any, item: QuizItem }[] = [];
+    for (const { rule, domainName, candidates } of groups) {
+        let count = 0;
         for (const source of candidates) {
-            if (selected >= rule.count) break;
+            if (count >= rule.count) break;
             try {
-                const item = await materialize(source, items.length + 1, ddoc?.name || rule.domainId, rule.points[selected]);
-                items.push(item);
-                selected++;
+                const item = await previewItem(source, selected.length + 1, domainName, rule.points[count]); // eslint-disable-line ts/no-use-before-define
+                selected.push({ source, item });
+                count++;
             } catch { /* Invalid or missing source assets must not block entry for the learner. */ }
         }
     }
-    return items;
+    const fingerprint = selectionRank(JSON.stringify({
+        policy, round, previous: previous?._id,
+        items: selected.map(({ item }) => [item.domainId, item.sourceId, item.points]),
+    }), uid);
+    const plan = await planColl.findOne({ _id: `${uid}-${day}` });
+    if (plan?.fingerprint === fingerprint && plan.items?.length === selected.length) {
+        const planned: typeof selected = [];
+        const seen = new Set<string>();
+        for (const [index, reference] of plan.items.entries()) {
+            const original = selected[index].item;
+            const group = groups.find((value) => value.rule.domainId === reference.domainId);
+            const source = group?.candidates.find((value) => value.docId === reference.sourceId);
+            const key = `${reference.domainId}:${reference.sourceId}`;
+            if (!source || original.domainId !== reference.domainId || original.points !== reference.points || seen.has(key)) break;
+            try {
+                const item = await previewItem(source, reference.id, group.domainName, reference.points); // eslint-disable-line ts/no-use-before-define
+                planned.push({ source, item });
+                seen.add(key);
+            } catch { break; }
+        }
+        if (planned.length === selected.length) selected.splice(0, selected.length, ...planned);
+    }
+    const items: QuizItem[] = [];
+    for (const { source, item } of selected) {
+        try { items.push(await materialize(source, item.id, item.domainName, item.points)); } catch { /* Keep entry available if an asset disappears. */ }
+    }
+    return { items, fingerprint };
 }
 
 async function createSession(uid: number, policy: DailyQuizPolicy, now: Date) {
     const day = beijingDay(now);
-    const previous = await sessionColl.find({ uid }).sort({ day: -1 }).limit(1).next();
-    // Reconcile an interrupted prior-day answer before selecting from mastery.
-    if (previous) await settleSession(previous); // eslint-disable-line ts/no-use-before-define
-    const round = (previous?.round || 0) + 1;
-    const assetPrefix = new ObjectId().toHexString();
-    const items = await selectSessionItems(uid, policy, day, round, previous,
-        (source, id, domainName, points) => snapshotItem(source, id, domainName, points, assetPrefix));
-    const session: DailyQuizSession = {
-        _id: `${uid}-${day}`, uid, day, round, cooldownRounds: policy.cooldownRounds, items, cursor: 0,
-        requested: policy.domains.reduce((sum, rule) => sum + rule.count, 0), createdAt: now,
-    };
-    try { await sessionColl.insertOne(session); } catch (error) {
-        await storage.del(items.flatMap((item) => Object.values(item.files)));
-        if (error.code !== 11000) throw error;
-        return sessionColl.findOne({ _id: session._id });
-    }
-    return session;
+    return withSelectionLock(uid, day, async (token) => {
+        const existing = await sessionColl.findOne({ _id: `${uid}-${day}` });
+        if (existing) return existing;
+        const allocation = (await planColl.findOne({ _id: `${uid}-${day}` }))?.allocatedSession;
+        if (allocation) {
+            try { await sessionColl.insertOne(allocation); } catch (error) { if (error.code !== 11000) throw error; }
+            await planColl.updateOne({ _id: allocation._id, lockToken: token }, {
+                $unset: { allocatedSession: '', items: '', fingerprint: '' },
+            });
+            return sessionColl.findOne({ _id: allocation._id });
+        }
+        const previous = await sessionColl.find({ uid }).sort({ day: -1 }).limit(1).next();
+        // Reconcile an interrupted prior-day answer before selecting from mastery.
+        if (previous) await settleSession(previous); // eslint-disable-line ts/no-use-before-define
+        const round = (previous?.round || 0) + 1;
+        const assetPrefix = new ObjectId().toHexString();
+        const { items } = await selectSessionItems(uid, policy, day, round, previous,
+            (source, id, domainName, points) => snapshotItem(source, id, domainName, points, assetPrefix));
+        const session: DailyQuizSession = {
+            _id: `${uid}-${day}`, uid, day, round, cooldownRounds: policy.cooldownRounds, items, cursor: 0,
+            requested: policy.domains.reduce((sum, rule) => sum + rule.count, 0), createdAt: now,
+        };
+        const claimed = await planColl.updateOne({
+            _id: session._id, lockToken: token, lockUntil: { $gt: new Date() }, allocatedSession: { $exists: false },
+        }, { $set: { allocatedSession: session } });
+        if (!claimed.matchedCount) {
+            await storage.del(items.flatMap((item) => Object.values(item.files)));
+            replacementError('题目正在更新，请刷新后继续');
+        }
+        try { await sessionColl.insertOne(session); } catch (error) {
+            if (error.code !== 11000) throw error;
+            return sessionColl.findOne({ _id: session._id });
+        }
+        await planColl.updateOne({ _id: session._id, lockToken: token }, {
+            $unset: { allocatedSession: '', items: '', fingerprint: '' },
+        });
+        return session;
+    });
 }
 
 /** Balances and the day's high-water mark change in the same account update. */
@@ -257,16 +372,22 @@ export async function answerQuestion(uid: number, sessionId: unknown, questionId
     if (!Number.isSafeInteger(id)) throw new ValidationError('questionId');
     const index = session.items.findIndex((item) => item.id === id);
     const item = session.items[index];
-    if (!item || item.cancelled) throw new NotFoundError();
+    if (!item) replacementError('这道题已由老师更换，请刷新后继续作答');
+    if (item.cancelled) throw new NotFoundError();
     if (item.answer) return { policy, session };
     if (index !== session.cursor) throw new ForbiddenError('请按顺序完成每日问答');
     const selected = parseAnswers(input, item.objective);
     const correct = gradeAnswer(item.objective, selected);
     const answer = { selected, correct, earnedPoints: correct ? item.points : 0, answeredAt: now };
-    await sessionColl.updateOne({
-        _id: session._id, cursor: index, [`items.${index}.answer`]: { $exists: false }, [`items.${index}.cancelled`]: { $ne: true },
+    const saved = await sessionColl.updateOne({
+        _id: session._id, cursor: index, [`items.${index}.id`]: item.id,
+        [`items.${index}.sourceId`]: item.sourceId, [`items.${index}.domainId`]: item.domainId,
+        [`items.${index}.answer`]: { $exists: false }, [`items.${index}.cancelled`]: { $ne: true },
     }, { $set: { [`items.${index}.answer`]: answer } });
     const updated = await sessionColl.findOne({ _id: session._id });
+    if (!saved.matchedCount && !updated.items.some((value) => value.id === item.id && value.sourceId === item.sourceId)) {
+        replacementError('这道题已由老师更换，请刷新后继续作答');
+    }
     await settleSession(updated);
     return { policy, session: updated };
 }
@@ -277,7 +398,7 @@ export async function nextQuestion(uid: number, sessionId: unknown, questionId: 
     const item = session.items[session.cursor];
     if (item?.id === Number(questionId)) {
         if (!item.answer) throw new ValidationError('answers', null, '请先提交这道题的答案');
-        await sessionColl.updateOne({ _id: session._id, cursor: session.cursor }, { $inc: { cursor: 1 } });
+        await sessionColl.updateOne({ _id: session._id, cursor: session.cursor, [`items.${session.cursor}.id`]: item.id }, { $inc: { cursor: 1 } });
     }
     return getSession(uid, now);
 }
@@ -558,6 +679,7 @@ interface UpcomingSelection {
     day: string;
     projected: boolean;
     session: DailyQuizSession | null;
+    fingerprint?: string;
     next?: UpcomingSelection;
 }
 
@@ -581,11 +703,14 @@ async function previewItem(pdoc: any, id: number, domainName: string, points: nu
 
 async function projectUpcomingSession(uid: number, policy: DailyQuizPolicy, day: string, previous: DailyQuizSession | null) {
     const round = (previous?.round || 0) + 1;
-    const items = await selectSessionItems(uid, policy, day, round, previous, previewItem);
+    const { items, fingerprint } = await selectSessionItems(uid, policy, day, round, previous, previewItem);
     return {
-        _id: `${uid}-${day}`, uid, day, round, cooldownRounds: policy.cooldownRounds, items, cursor: 0,
-        requested: policy.domains.reduce((sum, rule) => sum + rule.count, 0), createdAt: new Date(),
-    } satisfies DailyQuizSession;
+        fingerprint,
+        session: {
+            _id: `${uid}-${day}`, uid, day, round, cooldownRounds: policy.cooldownRounds, items, cursor: 0,
+            requested: policy.domains.reduce((sum, rule) => sum + rule.count, 0), createdAt: new Date(),
+        } satisfies DailyQuizSession,
+    };
 }
 
 async function selectAdminUpcoming(uid: number, now: Date): Promise<UpcomingSelection> {
@@ -595,8 +720,8 @@ async function selectAdminUpcoming(uid: number, now: Date): Promise<UpcomingSele
     const today = await sessionColl.findOne({ _id: `${uid}-${day}`, uid });
     if (!today) {
         const previous = await sessionColl.find({ uid }).sort({ day: -1 }).limit(1).next();
-        const session = await projectUpcomingSession(uid, policy, day, previous);
-        return { status: session.items.length ? 'ready' : 'empty', day, projected: true, session };
+        const projected = await projectUpcomingSession(uid, policy, day, previous);
+        return { status: projected.session.items.length ? 'ready' : 'empty', day, projected: true, ...projected };
     }
     const allowed = new Set(policy.domains.map((rule) => rule.domainId));
     // Reproduce getSession's domain cancellation and cursor advancement in memory.
@@ -608,7 +733,7 @@ async function selectAdminUpcoming(uid: number, now: Date): Promise<UpcomingSele
     const next = await projectUpcomingSession(uid, policy, tomorrow, today);
     return {
         status: active.length ? 'completed' : 'empty', day, projected: false, session: today,
-        next: { status: next.items.length ? 'ready' : 'empty', day: tomorrow, projected: true, session: next },
+        next: { status: next.session.items.length ? 'ready' : 'empty', day: tomorrow, projected: true, ...next },
     };
 }
 
@@ -643,6 +768,69 @@ export async function getAdminUpcoming(uid: number, classroom = '', now = new Da
         };
     };
     return present(await selectAdminUpcoming(uid, now));
+}
+
+/** Intentional teacher mutation; no round, answer, progress or points are created. */
+export async function replaceAdminUpcoming(
+    uid: number, day: string, questionId: number, sourceDomain: string, sourceId: number, classroom = '', now = new Date(),
+) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isSafeInteger(questionId) || questionId < 1
+        || !Number.isSafeInteger(sourceId) || sourceId < 1) replacementError('题目参数无效，请刷新后重试');
+    await withSelectionLock(uid, day, async (token) => {
+        const upcoming = await selectAdminUpcoming(uid, now);
+        const selected = [upcoming, upcoming.next].find((value) => value?.day === day);
+        if (!selected || !['ready', 'continue'].includes(selected.status) || !selected.session) {
+            replacementError('本轮题目已经更新，请刷新后重试');
+        }
+        const { session } = selected;
+        const index = session.items.findIndex((value) => value.id === questionId);
+        const original = session.items[index];
+        if (!original || original.cancelled || original.domainId !== sourceDomain || original.sourceId !== sourceId
+            || index < session.cursor || (classroom && sourceDomain !== classroom)) replacementError('这道题已被调整，请刷新后重试');
+        if (original.answer) replacementError('学员已经作答，不能再替换这道题');
+        const plan = await planColl.findOne({ _id: session._id });
+        if (selected.projected && plan?.allocatedSession) replacementError('学员正在进入本轮练习，请稍后刷新');
+        const policy = await effectivePolicy(uid);
+        const previous = await sessionColl.find({ uid, day: { $lt: day } }).sort({ day: -1 }).limit(1).next();
+        const groups = await eligibleSources(uid, policy, day, session.round, previous);
+        const group = groups.find((value) => value.rule.domainId === sourceDomain);
+        const used = new Set(session.items.map((value) => `${value.domainId}:${value.sourceId}`));
+        const salt = new ObjectId().toHexString();
+        const candidates = (group?.candidates || []).filter((value) => !used.has(`${sourceDomain}:${value.docId}`))
+            .sort((a, b) => selectionRank(salt, a.docId).localeCompare(selectionRank(salt, b.docId)));
+        const nextId = Math.max(...session.items.map((value) => value.id), plan?.revision || 0) + 1;
+        let replacement: QuizItem | null = null;
+        for (const source of candidates) {
+            try {
+                replacement = selected.projected
+                    ? await previewItem(source, nextId, original.domainName, original.points)
+                    : await snapshotItem(source, nextId, original.domainName, original.points, new ObjectId().toHexString());
+                break;
+            } catch { /* Try another eligible source if its attachment is missing. */ }
+        }
+        if (!replacement) replacementError('当前范围没有其他可替换的题目');
+        if (selected.projected) {
+            const items = session.items.map((value, position) => position === index ? replacement : value)
+                .map((value) => ({ id: value.id, domainId: value.domainId, sourceId: value.sourceId, points: value.points }));
+            const result = await planColl.updateOne({
+                _id: session._id, lockToken: token, lockUntil: { $gt: new Date() }, allocatedSession: { $exists: false },
+            }, { $set: { fingerprint: selected.fingerprint, items, revision: nextId, expiresAt: new Date(Date.now() + 7 * 86400000) } });
+            if (!result.matchedCount) replacementError('题目正在更新，请刷新后重试');
+        } else {
+            const result = await sessionColl.updateOne({
+                _id: session._id, uid, selectionLockToken: token, selectionLockUntil: { $gt: new Date() },
+                cursor: { $lte: index }, [`items.${index}.id`]: original.id,
+                [`items.${index}.domainId`]: original.domainId, [`items.${index}.sourceId`]: original.sourceId,
+                [`items.${index}.answer`]: { $exists: false }, [`items.${index}.cancelled`]: { $ne: true },
+            }, { $set: { [`items.${index}`]: replacement } });
+            if (!result.matchedCount) {
+                await storage.del(Object.values(replacement.files));
+                replacementError('学员已作答或题目已被调整，请刷新后重试');
+            }
+            await storage.del(Object.values(original.files));
+        }
+    });
+    return getAdminUpcoming(uid, classroom, now);
 }
 
 /** Recompute the authorized selection so guessed source IDs cannot reveal other material. */
@@ -757,4 +945,5 @@ export async function getAdminLearningFile(uid: number, day: string, questionId:
 export async function apply() {
     await db.ensureIndexes(sessionColl, { key: { uid: 1, day: -1 }, name: 'uid_day', unique: true });
     await db.ensureIndexes(progressColl, { key: { uid: 1, domainId: 1, sourceId: 1 }, name: 'uid_source', unique: true });
+    await db.ensureIndexes(planColl, { key: { expiresAt: 1 }, name: 'plan_expiry', expireAfterSeconds: 0 });
 }

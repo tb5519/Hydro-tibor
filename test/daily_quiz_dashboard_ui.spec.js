@@ -53,6 +53,7 @@ const upcoming = (overrides = {}) => ({
     currentQuestionId: 1, projected: true,
     items: report('即将练习的题目').items.map((item, index) => ({
         ...item, selected: null, correct: null, earnedPoints: 0, current: index === 0, awaitingAcknowledgement: false,
+        domainId: 'python', sourceId: 101 + index,
         stem: '常量 $7.0$ 的数据类型是（）。', options: ['$N-1$', '$2$'], analysis: '分析 $N \\ge 2$。',
     })), ...overrides,
 });
@@ -423,5 +424,136 @@ test('switching learners aborts upcoming requests and prevents stale preview que
         assert.equal(call.options.signal.aborted, true);
         pending.resolve(ok({ upcoming: upcoming() })); await flush();
         assert(!h.root.textContent.includes('即将练习的题目'));
+    } finally { h.close(); }
+});
+
+test('random replacement sends the exact question identity and keeps the next-day scope and disclosure state', async () => {
+    const pending = deferred();
+    const next = upcoming({ day: '2026-10-10' });
+    next.items[0].id = 17;
+    const data = upcoming({ status: 'completed', total: 2, remaining: 0, projected: false, items: [], next });
+    const dataLearning = learning();
+    dataLearning.upcomingUrl += '&classroom=python';
+    const h = harness(initial(), async (url, options) => options?.method === 'POST' ? pending.promise
+        : ok(url.includes('upcoming=') ? { upcoming: data } : { learning: dataLearning }));
+    try {
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+        await h.click('[data-learning-view="upcoming"]');
+        const original = h.get('[data-learning-upcoming-index="1"]');
+        original.open = true;
+        original.querySelector('.dql-upcoming-solution').open = true;
+        h.get('[data-learning-upcoming-index="2"]').open = true;
+        const change = h.get('[data-learning-action="replace-upcoming"]');
+        assert.equal(change.closest('summary'), null, 'replacement is a separate action, not a disclosure toggle');
+        await h.click('[data-learning-action="replace-upcoming"]');
+        await h.click('[data-learning-action="replace-upcoming"]');
+        const call = h.calls.at(-1);
+        assert.equal(h.calls.filter((value) => value.options?.method === 'POST').length, 1);
+        assert.match(call.url, /classroom=python/);
+        assert.equal(call.options.credentials, 'same-origin');
+        assert.equal(call.options.cache, 'no-store');
+        assert.deepEqual(JSON.parse(call.options.body), { operation: 'replace_upcoming', day: '2026-10-10', questionId: 17, sourceDomain: 'python', sourceId: 101 });
+        assert.match(h.get('.dql-upcoming-card').textContent, /正在换题/);
+        assert([...h.root.querySelectorAll('[data-learning-action="replace-upcoming"]')].every((node) => node.disabled));
+        assert.equal(h.get('[data-learning-action="refresh-upcoming"]').disabled, true);
+        const changed = structuredClone(data);
+        changed.next.items[0] = { ...changed.next.items[0], id: 39, sourceId: 180, title: '替换后的数值题', stem: '$3.14$ 是什么类型？' };
+        pending.resolve(ok({ upcoming: changed })); await flush();
+        assert.match(h.get('[data-learning-upcoming-panel]').textContent, /替换后的数值题/);
+        assert.match(h.get('.dql-replace-feedback').textContent, /已换题/);
+        assert(h.get('[data-learning-upcoming-index="1"]').open);
+        assert(h.get('[data-learning-upcoming-index="1"]').querySelector('.dql-upcoming-solution').open);
+        assert(h.get('[data-learning-upcoming-index="2"]').open);
+        assert.equal(h.get('[data-learning-upcoming-index="1"] .katex-html').textContent, '3.14');
+        assert.equal(h.dom.window.document.activeElement, h.get('[data-learning-action="replace-upcoming"]'));
+        assert.equal(h.get('[data-learning-action="replace-upcoming"]').disabled, false);
+    } finally { h.close(); }
+});
+
+test('already answered preview questions have no replacement control', async () => {
+    const item = { ...upcoming().items[0], selected: ['B'], correct: false, awaitingAcknowledgement: true };
+    const h = harness(initial(), async (url) => ok(url.includes('upcoming=')
+        ? { upcoming: upcoming({ status: 'continue', items: [item] }) } : { learning: learning() }));
+    try {
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+        await h.click('[data-learning-view="upcoming"]');
+        assert.equal(h.get('[data-learning-action="replace-upcoming"]'), null);
+        assert.match(h.get('[data-learning-upcoming-panel]').textContent, /已作答/);
+    } finally { h.close(); }
+});
+
+test('no eligible replacement retains the question with a clear inline explanation', async () => {
+    const h = harness(initial(), async (url, options) => options?.method === 'POST'
+        ? { ok: false, status: 403, json: async () => ({ error: { message: 'Field {0} validation failed. ({2})', params: ['questionId', null, '当前范围没有其他可替换的题目'] } }) }
+        : ok(url.includes('upcoming=') ? { upcoming: upcoming() } : { learning: learning() }));
+    try {
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+        await h.click('[data-learning-view="upcoming"]');
+        await h.click('[data-learning-action="replace-upcoming"]');
+        assert.match(h.get('.dql-replace-feedback').textContent, /没有其他/);
+        assert.equal(h.get('.dql-replace-feedback').getAttribute('role'), 'alert');
+        assert.equal(h.root.querySelectorAll('[data-learning-upcoming-question]').length, 2);
+        assert.match(h.get('[data-learning-upcoming-panel]').textContent, /即将练习的题目/);
+        assert.equal(h.get('[data-learning-action="replace-upcoming"]').disabled, false);
+        assert.equal(h.calls.length, 3, 'a failed mutation must not trigger an automatic retry or refresh');
+    } finally { h.close(); }
+});
+
+test('an uncertain mutation result must be refreshed before another replacement and is never replayed automatically', async () => {
+    const h = harness(initial(), async (url, options) => {
+        if (options?.method === 'POST') throw new TypeError('Network request failed');
+        return ok(url.includes('upcoming=') ? { upcoming: upcoming() } : { learning: learning() });
+    });
+    try {
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+        await h.click('[data-learning-view="upcoming"]');
+        await h.click('[data-learning-action="replace-upcoming"]');
+        assert.match(h.get('.dql-replace-feedback').textContent, /无法确认.*刷新预览/);
+        assert.equal(h.get('[data-learning-action="replace-upcoming"]').disabled, true);
+        await h.click('[data-learning-action="replace-upcoming"]');
+        assert.equal(h.calls.filter((value) => value.options?.method === 'POST').length, 1);
+        await h.click('[data-learning-action="refresh-upcoming"]');
+        assert.equal(h.get('.dql-replace-feedback'), null);
+        assert.equal(h.get('[data-learning-action="replace-upcoming"]').disabled, false);
+        assert.equal(h.calls.filter((value) => value.options?.method === 'POST').length, 1);
+    } finally { h.close(); }
+});
+
+test('a stale question or an expired authentication stops replacement until an explicit preview refresh', async () => {
+    for (const response of [
+        { ok: false, status: 409, json: async () => ({ error: { message: '这道题已被调整，请刷新后重试' } }) },
+        { ok: false, status: 403, json: async () => ({ error: { message: 'Field {0} validation failed. ({2})', params: ['questionId', null, '学员已经作答，不能再替换这道题，请刷新预览'] } }) },
+        { ok: false, status: 403, json: async () => ({ error: { message: "You don't have the required privilege." } }) },
+        ok({ url: '/account/sudo' }),
+    ]) {
+        const h = harness(initial(), async (url, options) => options?.method === 'POST' ? response
+            : ok(url.includes('upcoming=') ? { upcoming: upcoming() } : { learning: learning() }));
+        try {
+            await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+            await h.click('[data-learning-view="upcoming"]');
+            await h.click('[data-learning-action="replace-upcoming"]');
+            assert.match(h.get('.dql-replace-feedback').textContent, /刷新/);
+            assert.equal(h.get('[data-learning-action="replace-upcoming"]').disabled, true);
+            assert.equal(h.calls.length, 3);
+            if (response.ok) assert(h.get('.dql-replace-feedback a[target="_blank"]'));
+        } finally { h.close(); }
+    }
+});
+
+test('switching learner aborts an outstanding replacement and never paints its response into another learner', async () => {
+    const pending = deferred();
+    const h = harness(initial(), async (url, options) => options?.method === 'POST' ? pending.promise
+        : ok(url.includes('upcoming=') ? { upcoming: upcoming() } : { learning: learning() }));
+    try {
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+        await h.click('[data-learning-view="upcoming"]');
+        await h.click('[data-learning-action="replace-upcoming"]');
+        const call = h.calls.at(-1);
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="12"]');
+        assert.equal(call.options.signal.aborted, true);
+        const changed = upcoming(); changed.items[0].title = '其他学员的换题结果';
+        pending.resolve(ok({ upcoming: changed })); await flush();
+        assert(!h.root.textContent.includes('其他学员的换题结果'));
+        assert(!h.root.textContent.includes('已换题'));
     } finally { h.close(); }
 });
