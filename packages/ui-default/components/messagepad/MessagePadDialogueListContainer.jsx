@@ -39,6 +39,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class MessagePadDial
                 : _.maxBy(dialogue.messages, '_id').content
               : ''}
             faceUrl={dialogue.udoc.avatarUrl}
+            avatarUid={dialogue.udoc._id}
             active={dialogue._id === this.props.activeId}
             onClick={() => this.props.handleClick(dialogue._id)}
           />

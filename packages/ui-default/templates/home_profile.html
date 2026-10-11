@@ -9,7 +9,7 @@
   </header>
   <form class="profile-editor__form" method="post" enctype="multipart/form-data" action="{{ url('home_profile') }}" data-profile-editor>
     <section class="profile-editor__card profile-editor__avatar-section" aria-labelledby="profile-avatar-title">
-      <div class="profile-editor__avatar-wrap"><img data-profile-avatar src="{{ avatarUrl(current.avatar, 160) }}" width="112" height="112" alt="我的头像"></div>
+      <div class="profile-editor__avatar-wrap"><img data-badge-avatar-uid="{{ current._id }}" data-profile-avatar src="{{ avatarUrl(current.avatar, 160) }}" width="112" height="112" alt="我的头像"></div>
       <div class="profile-editor__avatar-content">
         <h2 id="profile-avatar-title">我的头像</h2>
         <p>选择一张能代表你的图片。</p>

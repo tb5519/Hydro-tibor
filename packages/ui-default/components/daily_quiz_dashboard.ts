@@ -230,6 +230,7 @@ export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocume
       if (avatarUrl) {
         const img = el('img');
         img.src = avatarUrl;
+        img.dataset.badgeAvatarUid = String(row.uid);
         img.alt = '';
         img.loading = 'lazy';
         img.addEventListener('error', () => img.remove(), { once: true });

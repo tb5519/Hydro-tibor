@@ -57,6 +57,7 @@ const onmessage = (msg) => {
       } : {
         title: msg.udoc.uname,
         avatar: msg.udoc.avatarUrl,
+        avatarUid: msg.udoc._id,
         message: msg.mdoc.content,
       },
     duration: 15000,

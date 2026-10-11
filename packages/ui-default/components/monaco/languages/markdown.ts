@@ -77,17 +77,23 @@ monaco.languages.registerCompletionItemProvider('markdown', {
       endColumn: word.endColumn,
     };
     if (prefix === '@') {
-      const users = await api('users', { search: word.word }, ['_id', 'uname']);
+      const users = await api('users', { search: word.word }, ['_id', 'uname', 'avatarUrl']);
       return {
-        suggestions: users.map((i) => ({
-          label: { label: `@${i.uname}`, description: `UID=${i._id}` },
-          kind: monaco.languages.CompletionItemKind.Property,
-          documentation: { value: `[](#loader) ![avatar](${new URL(i.avatarUrl, window.location.href)})`, isTrusted: true },
-          insertText: `@[](/user/${i._id}) `,
-          range,
-          sortText: i.priv === 0 ? '0' : '1',
-          tags: i.priv === 0 ? [1] : [],
-        })),
+        suggestions: users.map((i) => {
+          const avatarUrl = new URL(i.avatarUrl, window.location.href);
+          // Monaco renders this Markdown image, so carry the same UID marker
+          // in a fragment that stays client-side instead of an HTML attribute.
+          avatarUrl.hash = `badge-avatar-uid=${i._id}`;
+          return {
+            label: { label: `@${i.uname}`, description: `UID=${i._id}` },
+            kind: monaco.languages.CompletionItemKind.Property,
+            documentation: { value: `[](#loader) ![avatar](${avatarUrl})`, isTrusted: true },
+            insertText: `@[](/user/${i._id}) `,
+            range,
+            sortText: i.priv === 0 ? '0' : '1',
+            tags: i.priv === 0 ? [1] : [],
+          };
+        }),
       };
     }
     return {

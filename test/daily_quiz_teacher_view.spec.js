@@ -78,6 +78,14 @@ describe('daily quiz entry is isolated from teacher account inspection', () => {
         assert.equal(reads.length, 0);
     });
 
+    it('allows read-only avatar appearance on the quiz screen without creating or settling a quiz', async () => {
+        const { events, handler, reads } = await fixture({ json: true });
+        handler.request.path = '/user/avatar-effects';
+        assert.equal(await events.get('handler/before-prepare')(handler), undefined);
+        assert.equal(reads.length, 0);
+        assert.equal(handler.response.status, undefined);
+    });
+
     it('still redirects the same learner using their own login before a normal HTML page', async () => {
         const { events, handler, reads } = await fixture();
         assert.equal(await events.get('handler/before-prepare')(handler), 'cleanup');

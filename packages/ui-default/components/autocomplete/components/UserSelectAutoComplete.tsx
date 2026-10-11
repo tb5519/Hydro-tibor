@@ -26,7 +26,7 @@ const UserSelectAutoComplete = forwardRef<AutoCompleteHandle<Udoc>, UserSelectAu
     renderItem={(user) => (
       <div className="media">
         <div className="media__left medium">
-          <img className="small user-profile-avatar" alt="" src={user.avatarUrl} width="30" height="30" />
+          <img data-badge-avatar-uid={user._id} className="small user-profile-avatar" alt="" src={user.avatarUrl} width="30" height="30" />
         </div>
         <div className="media__body medium">
           <div className="user-select__uname">{user.uname}{user.displayName && ` (${user.displayName})`}</div>

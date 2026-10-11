@@ -4,6 +4,7 @@ import PropTypes from 'prop-types';
 export default function MessageComponent(props) {
   const {
     faceUrl,
+    avatarUid,
     isSelf,
     className,
     children,
@@ -16,7 +17,7 @@ export default function MessageComponent(props) {
   return (
     <li {...rest} className={cn}>
       <div className="messagepad__message__avatar">
-        <img src={faceUrl} alt="avatar" width="50" height="50" className="medium user-profile-avatar" />
+        <img data-badge-avatar-uid={avatarUid} src={faceUrl} alt="avatar" width="50" height="50" className="medium user-profile-avatar" />
       </div>
       <div className="messagepad__message__body">
         {children}
@@ -28,6 +29,7 @@ export default function MessageComponent(props) {
 MessageComponent.propTypes = {
   isSelf: PropTypes.bool,
   faceUrl: PropTypes.string.isRequired,
+  avatarUid: PropTypes.number,
   className: PropTypes.string,
   children: PropTypes.node,
 };

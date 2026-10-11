@@ -74,7 +74,7 @@ const AssignSelectAutoComplete = forwardRef<AutoCompleteHandle<AssignItem>, Auto
       <div className="media">
         {item.type === 'user' && (
           <div className="media__left medium">
-            <img className="small user-profile-avatar" alt="" src={item.avatarUrl} width="30" height="30" />
+            <img data-badge-avatar-uid={item.key} className="small user-profile-avatar" alt="" src={item.avatarUrl} width="30" height="30" />
           </div>
         )}
         <div className="media__body medium">

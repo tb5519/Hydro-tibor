@@ -17,6 +17,7 @@ import avatar from '../lib/avatar';
 import { contestLevelQuery } from '../lib/contest_access';
 import { sendMail } from '../lib/mail';
 import { selectProfileBadgeSound } from '../lib/profile_badge_sound';
+import { getUserAvatarEffects, parseAvatarEffectUids } from '../lib/user_avatar_effects';
 import { getUserBadgeGallery } from '../lib/user_badge_gallery';
 import { verifyTFA } from '../lib/verifyTFA';
 import BlackListModel from '../model/blacklist';
@@ -517,6 +518,16 @@ class UserLostPassWithCodeHandler extends Handler {
     }
 }
 
+class UserAvatarEffectsHandler extends Handler {
+    @param('uids', Types.String)
+    async get(domainId: string, uids: string) {
+        const ids = parseAvatarEffectUids(uids);
+        if (!ids) throw new ValidationError('uids');
+        this.response.addHeader('Cache-Control', 'private, no-store');
+        this.response.body = await getUserAvatarEffects(this.ctx, this.domain, ids);
+    }
+}
+
 class UserDetailHandler extends Handler {
     @param('uid', Types.Int)
     async get(domainId: string, uid: number) {
@@ -841,6 +852,7 @@ export async function apply(ctx: Context) {
     ctx.Route('user_lostpass_with_code', '/lostpass/:code', UserLostPassWithCodeHandler);
     ctx.Route('user_delete', '/user/delete', UserDeleteHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('user_badge_background', '/user/:uid/badge-background', UserBadgeBackgroundHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('user_avatar_effects', '/user/avatar-effects', UserAvatarEffectsHandler);
     ctx.Route('user_detail', '/user/:uid', UserDetailHandler);
     if (system.get('server.contestmode')) {
         ctx.Route('contest_mode', '/contestmode', ContestModeHandler, PRIV.PRIV_EDIT_SYSTEM);

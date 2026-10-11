@@ -7,7 +7,7 @@
   </div>
   <div class="section__body homepage-personal__body">
     <div class="homepage-personal__identity">
-      <img class="homepage-personal__avatar" src="{{ avatarUrl(udoc.avatar|default('')) }}" alt="" loading="lazy" width="42" height="42">
+      <img data-badge-avatar-uid="{{ udoc._id }}" class="homepage-personal__avatar" src="{{ avatarUrl(udoc.avatar|default('')) }}" alt="" loading="lazy" width="42" height="42">
       <div class="homepage-personal__name-wrap">
         <div class="homepage-personal__name">{{ user.render_inline(udoc, avatar=false, badge=false) }}</div>
         <div class="homepage-personal__rank">

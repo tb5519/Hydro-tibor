@@ -49,6 +49,7 @@ function studentChip(student: HonorStudent) {
   const avatarUrl = safeUrl(student.avatar);
   if (avatarUrl) {
     const img = element('img', 'honor-wall__avatar-image');
+    img.dataset.badgeAvatarUid = String(student.uid);
     img.dataset.honorSrc = avatarUrl;
     img.alt = '';
     img.loading = 'lazy';

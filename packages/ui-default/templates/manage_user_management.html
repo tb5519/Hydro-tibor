@@ -26,7 +26,7 @@
         {% for student in students %}
         <div class="student-note-row" data-student-note-row>
           <a class="student-note{% if selectedStudent and selectedStudent.uid == student.uid %} is-selected{% endif %}" href="{{ url('manage_user_management', query={uid: student.uid, sort: sort, order: order}) }}" data-student-note data-student-uid="{{ student.uid }}" data-student-search-text="{{ student.searchText }}" data-student-domains="{{ student.domainIds|default([])|json }}" data-student-domain-names="{{ student.domainNames|json }}" data-student-quiz-enabled="{{ 'true' if student.dailyQuizEnabled else 'false' }}" aria-controls="student-detail-host" aria-expanded="{{ 'true' if selectedStudent and selectedStudent.uid == student.uid else 'false' }}">
-            <img class="student-note__avatar" loading="lazy" src="{{ avatarUrl(student.avatar|default('')) }}" alt="">
+            <img data-badge-avatar-uid="{{ student.uid }}" class="student-note__avatar" loading="lazy" src="{{ avatarUrl(student.avatar|default('')) }}" alt="">
             <div class="student-note__identity"><strong data-student-display-name>{{ student.displayName }}</strong><span>@{{ student.uname }} · UID {{ student.uid }}</span></div>
             <span class="student-note__level{% if student.studentLevel == 9 %} student-note__level--max{% endif %}">{% if student.studentLevel == 9 %}MAX{% else %}{{ student.studentLevel }} 级{% endif %}</span>
             <div class="student-note__domains">{{ student.domainNames|join(' · ') }}</div>
@@ -46,7 +46,7 @@
                     <h2>{{ selectedStudent.displayName }}</h2>
                     <p>UID {{ selectedStudent.uid }} · @{{ selectedStudent.uname }}</p>
                   </div>
-                  <img class="student-management__editor-avatar" src="{{ avatarUrl(selectedStudent.avatar|default('')) }}" alt="{{ selectedStudent.displayName }}">
+                  <img data-badge-avatar-uid="{{ selectedStudent.uid }}" class="student-management__editor-avatar" src="{{ avatarUrl(selectedStudent.avatar|default('')) }}" alt="{{ selectedStudent.displayName }}">
                 </div>
                 <nav class="student-editor-tabs" role="tablist" aria-label="学员设置">
   <button type="button" role="tab" data-student-tab="profile" id="student-tab-profile" aria-controls="student-panel-profile" aria-selected="true">基本资料</button>

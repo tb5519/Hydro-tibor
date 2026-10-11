@@ -50,6 +50,47 @@ function newerGrant(left: any, right: any) {
     return time(left) > time(right) || (time(left) === time(right) && `${left._id}` > `${right._id}`);
 }
 
+/** Current ownership after expiry, revocation and upgrade chains are resolved. */
+function resolveBadgeLifetimes(uid: number, badges: any[], grants: any[], now: Date) {
+    const referenced = new Set<number>();
+    const latestChains = new Map<number, any>();
+    const activeByBadge = new Map<number, any[]>();
+    const addActiveGrant = (grant: any) => {
+        if (!validBadgeId(grant.badgeId) || !grantIsActive(grant, now)) return;
+        if (!activeByBadge.has(grant.badgeId)) activeByBadge.set(grant.badgeId, []);
+        activeByBadge.get(grant.badgeId)!.push(grant);
+    };
+    for (const grant of grants) {
+        // Historical references identify stale rows; only badgeId grants current ownership.
+        const references = [grant.badgeId, grant.sourceBadgeId,
+            ...(Array.isArray(grant.lotteryBadgeIds) ? grant.lotteryBadgeIds : []),
+            ...(Array.isArray(grant.awardedBadgeIds) ? grant.awardedBadgeIds : []),
+            ...(Array.isArray(grant.stateHistory) ? grant.stateHistory.map((state: any) => state?.badgeId) : []),
+        ];
+        for (const id of references) if (validBadgeId(id)) referenced.add(id);
+        if (grant.repeatEffect !== 'upgrade') {
+            addActiveGrant(grant);
+            continue;
+        }
+        if (Object.hasOwn(grant, 'supersededAt')) continue;
+        const chainId = validBadgeId(grant.sourceBadgeId) ? grant.sourceBadgeId : grant.badgeId;
+        if (!validBadgeId(chainId)) continue;
+        const previous = latestChains.get(chainId);
+        // Select before checking validity, so a revoked/latest state cannot resurrect an old state.
+        if (!previous || newerGrant(grant, previous)) latestChains.set(chainId, grant);
+    }
+    for (const grant of latestChains.values()) addActiveGrant(grant);
+    const lifetimes = new Map<number, Date | null>();
+    for (const badge of badges) {
+        const active = activeByBadge.get(badge._id) || [];
+        const manual = Array.isArray(badge.users) && badge.users.includes(uid);
+        const permanent = manual || active.some((grant) => !Object.hasOwn(grant, 'expiresAt')) || !referenced.has(badge._id);
+        if (!permanent && !active.length) continue;
+        lifetimes.set(badge._id, permanent ? null : new Date(Math.max(...active.map((grant) => grant.expiresAt.getTime()))));
+    }
+    return lifetimes;
+}
+
 /** Read only: ownership and current expiry are resolved from this user's exact badge scope. */
 export async function getUserBadgeGallery(
     ctx: Context,
@@ -86,43 +127,13 @@ export async function getUserBadgeGallery(
         }).toArray(),
         db.collection('user').findOne({ _id: uid }, { projection: { badgeId: 1, badgeDomainId: 1 } }),
     ]);
-    const referenced = new Set<number>();
-    const latestChains = new Map<number, any>();
-    const activeByBadge = new Map<number, any[]>();
-    const addActiveGrant = (grant: any) => {
-        if (!validBadgeId(grant.badgeId) || !grantIsActive(grant, now)) return;
-        if (!activeByBadge.has(grant.badgeId)) activeByBadge.set(grant.badgeId, []);
-        activeByBadge.get(grant.badgeId)!.push(grant);
-    };
-    for (const grant of grants) {
-        // Historical references identify stale rows; only badgeId grants current ownership.
-        const references = [grant.badgeId, grant.sourceBadgeId,
-            ...(Array.isArray(grant.lotteryBadgeIds) ? grant.lotteryBadgeIds : []),
-            ...(Array.isArray(grant.awardedBadgeIds) ? grant.awardedBadgeIds : []),
-            ...(Array.isArray(grant.stateHistory) ? grant.stateHistory.map((state: any) => state?.badgeId) : []),
-        ];
-        for (const id of references) if (validBadgeId(id)) referenced.add(id);
-        if (grant.repeatEffect !== 'upgrade') {
-            addActiveGrant(grant);
-            continue;
-        }
-        if (Object.hasOwn(grant, 'supersededAt')) continue;
-        const chainId = validBadgeId(grant.sourceBadgeId) ? grant.sourceBadgeId : grant.badgeId;
-        if (!validBadgeId(chainId)) continue;
-        const previous = latestChains.get(chainId);
-        // Select before checking validity, so a revoked/latest state cannot resurrect an old state.
-        if (!previous || newerGrant(grant, previous)) latestChains.set(chainId, grant);
-    }
-    for (const grant of latestChains.values()) addActiveGrant(grant);
+    const lifetimes = resolveBadgeLifetimes(uid, badges, grants, now);
     const selectedId = (legacy ? !account?.badgeDomainId : account?.badgeDomainId === currentDomain._id)
         ? account?.badgeId : undefined;
     const badgeCards: UserBadgeCard[] = [];
     for (const badge of badges) {
-        const active = activeByBadge.get(badge._id) || [];
-        const manual = Array.isArray(badge.users) && badge.users.includes(uid);
-        const permanent = manual || active.some((grant) => !Object.hasOwn(grant, 'expiresAt')) || !referenced.has(badge._id);
-        if (!permanent && !active.length) continue;
-        const expiresAt = permanent ? null : new Date(Math.max(...active.map((grant) => grant.expiresAt.getTime())));
+        if (!lifetimes.has(badge._id)) continue;
+        const expiresAt = lifetimes.get(badge._id);
         const title = `${badge.title || badge.short || `徽章 ${badge._id}`}`;
         badgeCards.push({
             id: badge._id,
@@ -150,4 +161,53 @@ export async function getUserBadgeGallery(
             currentName: badgeCards.find((card) => card.isCurrent)?.title || '',
         },
     };
+}
+
+/** Batch the same valid ownership used by the gallery, without loading images or account settings. */
+export async function getUserBadgeCounts(
+    ctx: Context,
+    currentDomain: Pick<DomainDoc, '_id' | 'workspaceId'>,
+    uids: number[],
+    now = new Date(),
+): Promise<Map<number, number>> {
+    const ids = [...new Set(uids.filter(validBadgeId))];
+    if (!ids.length) return new Map();
+    const legacy = workspace.resolveDomainWorkspaceId(currentDomain) === workspace.LEGACY_WORKSPACE_ID;
+    const scope = legacy ? { domainId: { $exists: false } } : { domainId: currentDomain._id };
+    const db = ctx.db as any;
+    // Visible user profiles are available for existing accounts, including users without
+    // a domain membership. Use that same boundary, and never expose stale deleted accounts.
+    const accounts: any[] = await db.collection('user').find({ _id: { $in: ids } }).project({ _id: 1 }).toArray();
+    const counts = new Map<number, number>(accounts.map((account) => [account._id, 0]));
+    if (!counts.size) return counts;
+    const owned: any[] = await db.collection('userBadge').find({ owner: { $in: [...counts.keys()] }, ...scope })
+        .project({ owner: 1, badgeId: 1 }).toArray();
+    const ownedByUser = new Map<number, Set<number>>();
+    const badgeIds = new Set<number>();
+    for (const row of owned) {
+        if (!validBadgeId(row.badgeId)) continue;
+        if (!ownedByUser.has(row.owner)) ownedByUser.set(row.owner, new Set());
+        ownedByUser.get(row.owner)!.add(row.badgeId);
+        badgeIds.add(row.badgeId);
+    }
+    if (!badgeIds.size) return counts;
+    const [badges, grants] = await Promise.all([
+        db.collection('badge').find({ _id: { $in: [...badgeIds] }, ...scope }).project({ _id: 1, users: 1 }).toArray(),
+        db.collection('lottery.badgeGrant').find({ uid: { $in: [...ownedByUser.keys()] }, ...scope }).project({
+            _id: 1, uid: 1, badgeId: 1, sourceBadgeId: 1, repeatEffect: 1, grantedAt: 1,
+            expiresAt: 1, expiredAt: 1, revokedAt: 1, supersededAt: 1,
+            lotteryBadgeIds: 1, awardedBadgeIds: 1, stateHistory: 1,
+        }).toArray(),
+    ]);
+    const badgeById = new Map<number, any>(badges.map((badge: any) => [badge._id, badge]));
+    const grantsByUser = new Map<number, any[]>();
+    for (const grant of grants) {
+        if (!grantsByUser.has(grant.uid)) grantsByUser.set(grant.uid, []);
+        grantsByUser.get(grant.uid)!.push(grant);
+    }
+    for (const [uid, ownedIds] of ownedByUser) {
+        const userBadges = [...ownedIds].map((id) => badgeById.get(id)).filter(Boolean);
+        counts.set(uid, resolveBadgeLifetimes(uid, userBadges, grantsByUser.get(uid) || [], now).size);
+    }
+    return counts;
 }

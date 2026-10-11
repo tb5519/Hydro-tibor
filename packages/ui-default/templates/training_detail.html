@@ -194,7 +194,7 @@
               <li class="enroll_user_menu_item" data-uid="{{ uid }}" data-uname="{{ enrolledUser.uname }}"{% if handler.user.hasPerm(perm.PERM_VIEW_USER_PRIVATE_INFO) and enrolledUser.displayName %} data-displayname="{{ enrolledUser.displayName }}"{% endif %}>
                 <a href="./{{ tdoc._id }}?uid={{ uid }}" data-no-instant{% if viewingUid == uid %} class="active" aria-current="page"{% endif %}>
                   <span class="user-profile-link">
-                    <img class="small user-profile-avatar v-center" loading="lazy" src="{{ avatarUrl(enrolledUser.avatar|default('')) }}" width="32" height="32" alt="">
+                    <img data-badge-avatar-uid="{{ enrolledUser._id }}" class="small user-profile-avatar v-center" loading="lazy" src="{{ avatarUrl(enrolledUser.avatar|default('')) }}" width="32" height="32" alt="">
                     <span class="user-profile-name">
                       {% if handler.user.hasPerm(perm.PERM_VIEW_USER_PRIVATE_INFO) and enrolledUser.displayName and enrolledUser.displayName != enrolledUser.uname %}
                         {{ enrolledUser.displayName }} ({{ enrolledUser.uname }})

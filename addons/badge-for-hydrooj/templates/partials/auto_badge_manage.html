@@ -142,7 +142,7 @@
     {% for row in autoBadgeRows %}
     <article class="auto-badges__row" role="listitem" data-auto-badge-row data-key="{{ row.key }}" data-user-name="{{ row.userName }}" data-badge-name="{{ row.badgeName }}" data-expires-at="{{ row.expiresAtInput }}" data-permanent="{{ 'true' if row.permanent else 'false' }}" data-manual-overlap="{{ 'true' if row.manualOverlap else 'false' }}">
       <div class="auto-badges__cell">
-        <a class="auto-badges__student" href="{{ row.userUrl }}" title="{{ row.userName }}"><img class="auto-badges__avatar" src="{{ row.userAvatar }}" alt="" loading="lazy"><span class="auto-badges__name">{{ row.userName }}</span></a>
+        <a class="auto-badges__student" href="{{ row.userUrl }}" title="{{ row.userName }}"><img data-badge-avatar-uid="{{ row.uid }}" class="auto-badges__avatar" src="{{ row.userAvatar }}" alt="" loading="lazy"><span class="auto-badges__name">{{ row.userName }}</span></a>
       </div>
       <div class="auto-badges__cell auto-badges__cell--badge">
         <span class="auto-badges__pill" style="background-color: {{ row.backgroundColor }}; color: {{ row.fontColor }}" title="{{ row.badgeName }}">{{ row.badgeShort or row.badgeName }}</span>

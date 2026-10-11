@@ -153,6 +153,32 @@ async function run() {
     const selectedBadge = () => db.collection('user').findOne({ _id: uid }, { projection: { badgeId: 1, badgeDomainId: 1 } });
     let gallery;
 
+    await check('Avatar effects batch valid ownership without exposing accounts or changing gallery state', async () => {
+        const effectUrl = `/d/${legacyId}/user/avatar-effects?uids=${uid},${otherUid},${emptyUid},${uid},999999`;
+        const response = await get(effectUrl);
+        status(response, 200);
+        assert.equal(response.headers['cache-control'], 'private, no-store');
+        assert.deepEqual(response.body, { users: [
+            { uid, badgeCount: 5, effect: 'electric-arc' },
+            { uid: otherUid, badgeCount: 1, effect: null },
+            { uid: emptyUid, badgeCount: 0, effect: null },
+        ] });
+        const guest = await supertest.agent(httpServer).get(effectUrl).set('Accept', 'application/json');
+        status(guest, 200);
+        const guestProfile = await supertest.agent(httpServer).get(`/d/${legacyId}/user/${uid}`).set('Accept', 'application/json');
+        assert(guest.body.url?.includes('/login') && guestProfile.body.url?.includes('/login'),
+            'Effects retain the same domain access boundary as public profiles');
+        const scoped = await get(`/d/${modernId}/user/avatar-effects?uids=${uid}`);
+        status(scoped, 200);
+        assert.deepEqual(scoped.body, { users: [{ uid, badgeCount: 1, effect: null }] });
+        for (const query of ['', '?uids=0', '?uids=1,abc', `?uids=${Array.from({ length: 101 }, (_, i) => i + 1).join(',')}`]) {
+            denied(await get(`/d/${legacyId}/user/avatar-effects${query}`));
+        }
+        const before = await selectedBadge();
+        await get(effectUrl);
+        assert.deepEqual(await selectedBadge(), before, 'Read-only effects never select or change a badge');
+    });
+
     await check('Gallery requires login and always reads the signed-in learners own collection', async () => {
         const guest = await supertest.agent(httpServer).get(url).set('Accept', 'application/json');
         assert(guest.status === 302 || guest.status === 403 || guest.body.url?.includes('/login'));

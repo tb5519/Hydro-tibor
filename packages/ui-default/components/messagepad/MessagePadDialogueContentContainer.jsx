@@ -71,6 +71,7 @@ export default connect(mapStateToProps)(class MessagePadDialogueContentContainer
       <Message
         key={msg._id}
         isSelf={msg.from === UserContext._id}
+        avatarUid={msg.from === UserContext._id ? UserContext._id : this.props.item.udoc._id}
         faceUrl={
           msg.from === UserContext._id
             ? UserContext.avatarUrl

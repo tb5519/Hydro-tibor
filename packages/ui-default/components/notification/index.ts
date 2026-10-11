@@ -13,6 +13,7 @@ document.body.append(tpl(
 
 interface NotificationOptions {
   avatar?: string;
+  avatarUid?: number;
   title?: string;
   message: string;
   type?: string;
@@ -29,14 +30,18 @@ export default class Notification {
   autoHideTimer?: NodeJS.Timeout;
 
   constructor({
-    avatar, title, message, type = '', duration = 3000, action,
+    avatar, avatarUid, title, message, type = '', duration = 3000, action,
   }: NotificationOptions) {
     this.type = type;
     if (avatar) this.type += ' avatar';
     if (title) this.type += ' title';
     this.action = action || (() => { });
     this.$dom = $(tpl`<div class="notification ${this.type} hide"></div>`);
-    if (avatar) $(tpl`<img width="32" height="32" class="avatar" src="${avatar}"></img>`).appendTo(this.$dom);
+    if (avatar) {
+      const $avatar = $(tpl`<img width="32" height="32" class="avatar" src="${avatar}"></img>`);
+      if (Number.isSafeInteger(avatarUid) && avatarUid > 0) $avatar.attr('data-badge-avatar-uid', avatarUid);
+      $avatar.appendTo(this.$dom);
+    }
     const content = message.split('\n').map((line) => tpl`<p>${line}</p>`).join('');
     if (title) {
       $(tpl`<div class="notification-content"><h2>${title}</h2>${{ templateRaw: true, html: content }}</div>`).appendTo(this.$dom);

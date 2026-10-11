@@ -2,7 +2,7 @@
 {% if udoc %}
 <span class="user-profile-link">
   {% if avatar %}
-    <img class="small user-profile-avatar v-center" loading="lazy" src="{{ avatarUrl(udoc.avatar|default('')) }}" width="20" height="20">
+    <img data-badge-avatar-uid="{{ udoc._id }}" class="small user-profile-avatar v-center" loading="lazy" src="{{ avatarUrl(udoc.avatar|default('')) }}" width="20" height="20">
   {% endif %}
   <a class="user-profile-name uname--lv{{ udoc.level|default(0) }}" href="{{ url('user_detail', uid=udoc._id) }}">
     {% if handler.user.hasPerm(perm.PERM_VIEW_DISPLAYNAME) and udoc.displayName and udoc.displayName != udoc.uname %}
@@ -111,7 +111,7 @@
 {% if udoc %}
 <div class="ranking-user">
   <div class="ranking-user__main">
-    <img class="small user-profile-avatar v-center ranking-user__avatar" loading="lazy" src="{{ avatarUrl(udoc.avatar|default('')) }}" width="24" height="24">
+    <img data-badge-avatar-uid="{{ udoc._id }}" class="small user-profile-avatar v-center ranking-user__avatar" loading="lazy" src="{{ avatarUrl(udoc.avatar|default('')) }}" width="24" height="24">
     <a class="user-profile-name ranking-user__name uname--lv{{ udoc.level|default(0) }}" href="{{ url('user_detail', uid=udoc._id) }}">
       {% if handler.user.hasPerm(perm.PERM_VIEW_DISPLAYNAME) and udoc.displayName and udoc.displayName != udoc.uname %}
         {{ udoc.displayName }} ({{ udoc.uname }})

@@ -70,6 +70,7 @@ const page = new NamedPage('home_messages', () => {
       const notification = new VjNotification({
         title: udoc.uname,
         avatar: udoc.avatarUrl,
+        avatarUid: udoc._id,
         message: msg.payload.mdoc.content,
         duration: 15000,
         action: () => {

@@ -190,7 +190,7 @@
                     {% set udoc = homeworkStudentProgress.udict[student.uid] %}
                     <li class="homework-roster__card{% if student.done %} is-done{% endif %}">
                       <button type="button" class="homework-roster__student" data-homework-student-toggle aria-expanded="true" aria-controls="homework-student-{{ student.uid }}">
-                        <img class="homework-roster__avatar" loading="lazy" src="{{ avatarUrl(udoc.avatar|default('')) }}" alt="{{ udoc.uname }}" width="38" height="38">
+                        <img data-badge-avatar-uid="{{ udoc._id }}" class="homework-roster__avatar" loading="lazy" src="{{ avatarUrl(udoc.avatar|default('')) }}" alt="{{ udoc.uname }}" width="38" height="38">
                         <span>
                           <span class="homework-roster__name">{{ udoc.displayName|default(udoc.uname) }}</span>
                           <span class="homework-roster__meta">已完成 {{ student.completedHomeworks }} / {{ student.totalHomeworks }} 份作业 · {{ student.acceptedProblems }} / {{ student.totalProblems }} 题</span>

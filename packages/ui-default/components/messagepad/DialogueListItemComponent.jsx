@@ -6,6 +6,7 @@ export default function DialogueListItemComponent(props) {
     userName,
     summary,
     faceUrl,
+    avatarUid,
     active,
     onClick,
     className,
@@ -18,7 +19,7 @@ export default function DialogueListItemComponent(props) {
     <li {...rest}>
       <a className={cn} onClick={onClick}>
         <div className="media__left middle">
-          <img src={faceUrl} alt="avatar" width="50" height="50" className="medium user-profile-avatar" />
+          <img data-badge-avatar-uid={avatarUid} src={faceUrl} alt="avatar" width="50" height="50" className="medium user-profile-avatar" />
         </div>
         <div className="media__body middle">
           <h3 className="messagepad__username">{userName}</h3>
@@ -33,6 +34,7 @@ DialogueListItemComponent.propTypes = {
   userName: PropTypes.string.isRequired,
   summary: PropTypes.string.isRequired,
   faceUrl: PropTypes.string.isRequired,
+  avatarUid: PropTypes.number,
   active: PropTypes.bool,
   onClick: PropTypes.func,
   className: PropTypes.string,
