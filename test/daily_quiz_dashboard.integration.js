@@ -513,13 +513,12 @@ async function run() {
     };
     const readOnlyState = async () => ({
         sessions: await daily.sessionColl.find().sort({ _id: 1 }).toArray(),
-        plans: await daily.planColl.find().sort({ _id: 1 }).toArray(),
         progress: await daily.progressColl.find().sort({ _id: 1 }).toArray(),
         policies: await daily.configColl.find().sort({ _id: 1 }).toArray(),
         storage: await storage.coll.find().sort({ _id: 1 }).toArray(),
         accounts: await users.coll.find().project({ lotteryPoints: 1, lotteryTotalPoints: 1, dailyQuizPointAwards: 1 }).sort({ _id: 1 }).toArray(),
     });
-    await check('Upcoming previews are lazy, sudo-protected, student-scoped and strictly read-only even with unsettled answers', async () => {
+    await check('Upcoming previews reserve durable selections without creating rounds or settling answers, points or storage', async () => {
         const learning = await readLearning(roster.completed.uid);
         assert.equal(learning.upcoming, undefined);
         assert.equal(learning.upcomingUrl, upcomingUrl(roster.completed.uid));
@@ -533,6 +532,16 @@ async function run() {
         for (const { uid } of Object.values(roster)) await readUpcoming(uid);
         assert.deepEqual(await readOnlyState(), before, 'Preview cannot create rounds, settle points/progress, or even touch storage lastUsage');
         assert.equal(await daily.sessionColl.countDocuments({ uid: roster.notStarted.uid }), 0);
+        const uid = roster.notStarted.uid;
+        const preview = await readUpcoming(uid);
+        const reserved = await daily.planColl.findOne({ _id: `pending:${uid}`, uid });
+        assert(reserved, 'A first preview must persist its pending question selection before the learner logs in');
+        assert.equal(reserved.expiresAt, undefined, 'An unanswered selection must not disappear after seven days');
+        const fields = (item) => [item.id, item.domainId, item.sourceId, item.points];
+        assert.deepEqual(reserved.items.map(fields), preview.items.map(fields));
+        assert.deepEqual((await readUpcoming(uid)).items.map(fields), preview.items.map(fields), 'Refresh keeps the reserved selection');
+        assert.deepEqual(await readOnlyState(), before, 'Repeated previews still cannot mutate financial or learning state');
+        assert.equal(await daily.planColl.countDocuments({ _id: `pending:${foreignUid}`, items: { $exists: true } }), 0);
     });
     await check('Pending previews preserve the real current item, feedback awaiting acknowledgement and original global order', async () => {
         const uid = roster.partial.uid;

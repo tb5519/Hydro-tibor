@@ -177,6 +177,7 @@ async function run() {
         const item = preview.items[0];
         const body = replaceBody(preview, item);
         const before = await coreState();
+        const selectedPlans = await daily.planColl.find({ items: { $exists: true } }).sort({ _id: 1 }).toArray();
         for (const uid of ['abc', -1, teacherId, foreign.uid, 999999]) denied(await post(uid, body));
         for (const patch of [
             { day: '2026-99-99' }, { day: offsetDay(-1) }, { day: offsetDay(2) },
@@ -185,7 +186,8 @@ async function run() {
         ]) denied(await post(projected.uid, { ...body, ...patch }));
         denied(await post(disabled.uid, body));
         assert.deepEqual(await coreState(), before);
-        assert.equal(await daily.planColl.countDocuments({ items: { $exists: true } }), 0);
+        assert.deepEqual(await daily.planColl.find({ items: { $exists: true } }).sort({ _id: 1 }).toArray(), selectedPlans,
+            'Invalid requests cannot change any previously reserved question selection');
     });
 
     await check('Projected replacement persists one slot only; read/replace never creates rounds, awards points, or copies assets', async () => {
@@ -195,7 +197,10 @@ async function run() {
         const before = await coreState();
         const next = await replace(projected.uid, preview, old);
         assert.deepEqual(await coreState(), before);
-        assert.equal(await daily.planColl.countDocuments({ uid: projected.uid, items: { $exists: true } }), 1);
+        const reserved = await daily.planColl.findOne({ _id: `pending:${projected.uid}`, uid: projected.uid });
+        assert(reserved, 'A teacher replacement must persist in the cross-day pending selection');
+        assert.equal(reserved.expiresAt, undefined, 'A teacher-selected unanswered question cannot expire');
+        assert.deepEqual(selection(reserved), selection(next));
         assert.equal(await daily.sessionColl.countDocuments({ uid: projected.uid }), 0);
         assert.equal(next.projected, true);
         assert.equal(next.total, preview.total);
@@ -459,6 +464,7 @@ async function run() {
         try {
             await Promise.race([paused, new Promise((_, reject) => setTimeout(() => reject(new Error('Copy race hook did not pause')), 5000))]);
             await daily.planColl.updateOne({ _id: actual.session._id }, { $set: { lockUntil: new Date(0) } });
+            await daily.planColl.updateOne({ _id: `pending:${target.uid}` }, { $set: { lockUntil: new Date(0) } });
             await daily.sessionColl.updateOne({ _id: actual.session._id }, { $set: { selectionLockUntil: new Date(0) } });
             const second = await replace(target.uid, preview, preview.items[1]);
             assert.equal(second.items[0].sourceId, preview.items[0].sourceId);
@@ -491,6 +497,7 @@ async function run() {
             if (!copiedTarget && sourcePath.startsWith(`problem/${python}/`)) {
                 copiedTarget = targetPath;
                 await daily.planColl.updateOne({ _id: actual.session._id }, { $set: { lockUntil: new Date(0) } });
+                await daily.planColl.updateOne({ _id: `pending:${target.uid}` }, { $set: { lockUntil: new Date(0) } });
                 await daily.sessionColl.updateOne({ _id: actual.session._id }, { $set: { selectionLockUntil: new Date(0) } });
             }
             return originalCopy.call(this, sourcePath, targetPath, ...args);
