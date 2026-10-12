@@ -33,6 +33,7 @@
     {% if config.image or config.videoPoster %}
       <div class="domain-poster__preview" {% if config.video %}data-loop-background data-background-video-src="{{ config.video }}"{% endif %}>
         <img src="{{ config.image or config.videoPoster }}" alt="{{ _('当前首页海报') }}">
+        {% if config.video %}{% set backgroundVideoSource = config.video %}{% set backgroundVideoPoster = config.videoPoster %}{% include "partials/background_video.html" %}{% endif %}
       </div>
     {% else %}
       <div class="domain-poster__empty">{{ _('还未设置海报，首页将使用默认背景。') }}</div>

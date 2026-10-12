@@ -8,6 +8,7 @@ import { configureBroadcastSanitizer } from 'hydrooj/src/lib/broadcast';
 import { getHomePosterConfig } from 'hydrooj/src/lib/home_poster';
 import { isPublicHomePosterPath } from 'hydrooj/src/lib/decorative_image_access';
 import { staticAssetUrl } from 'hydrooj/src/lib/asset_delivery';
+import { getHomeBackgroundVideoWarmup } from 'hydrooj/src/lib/background_video_prewarm';
 import convert from 'schemastery-jsonschema';
 import { sanitizeBroadcastHtml } from './backendlib/broadcast';
 import * as contestTimer from './backendlib/contest-timer';
@@ -236,6 +237,11 @@ export function apply(ctx: Context, config: ReturnType<typeof Config>) {
         catalog: that.user._id > 1 ? that.url('image_warmup') : '',
         scope: `${that.user._id}:${that.domain._id}`,
         backgrounds: Array.from({ length: 21 }, (_, index) => staticAssetUrl(`/components/profile/backgrounds/${index + 1}.jpg`)),
+      };
+      that.UiContext.backgroundVideoWarmup = {
+        ...getHomeBackgroundVideoWarmup(that.domain, that.user, that.url.bind(that)),
+        catalog: that.user._id > 1 && that.user.hasPriv(PRIV.PRIV_USER_PROFILE) && that.user.hasPerm(PERM.PERM_VIEW)
+          ? that.url('background_video_warmup') : '',
       };
     }
     that.UiContext.SWConfig = {

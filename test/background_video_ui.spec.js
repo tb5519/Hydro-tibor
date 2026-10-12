@@ -30,15 +30,21 @@ function harness(html = '<div data-loop-background data-background-video-src="ht
     media.pause = function () { counters.pause++; this._paused = true; };
     Object.defineProperty(media, 'paused', { get() { return this._paused !== false; } });
     Object.defineProperty(media, 'readyState', { get() { return this._ready || 0; } });
-    win.HTMLVideoElement.prototype.requestVideoFrameCallback = function (callback) { this._frame = callback; return 1; };
-    win.HTMLVideoElement.prototype.cancelVideoFrameCallback = function () { this._frame = null; };
+    let frameId = 0;
+    win.HTMLVideoElement.prototype.requestVideoFrameCallback = function (callback) {
+        this._frames ||= new Map(); const id = ++frameId; this._frames.set(id, callback);
+        this._frame = () => { const pending = [...this._frames.values()]; this._frames.clear();
+            for (const next of pending) next(0, { mediaTime: this.currentTime, expectedDisplayTime: 0 }); };
+        return id;
+    };
+    win.HTMLVideoElement.prototype.cancelVideoFrameCallback = function (id) { this._frames?.delete(id); };
     win.URL.createObjectURL = () => 'blob:local-video';
     win.URL.revokeObjectURL = (url) => counters.revoked.push(url);
     const mod = { exports: {} };
     vm.runInNewContext(code, { module: mod, exports: mod.exports, URL, console });
     return { dom, win, doc, motion, counters, api: mod.exports,
         get observer() { return observer; },
-        ready(video) { video._ready = 4; video.dispatchEvent(new win.Event('canplaythrough')); },
+        ready(video) { video._ready = 4; video.dispatchEvent(new win.Event('canplay')); },
         playing(video) { video.dispatchEvent(new win.Event('playing')); video._frame?.(); },
         close() { dom.window.close(); },
     };
@@ -54,7 +60,7 @@ test('image-only backgrounds remain unchanged; invalid media addresses never loa
     } finally { h.close(); }
 });
 
-test('visible video waits for playback readiness and a decoded frame; looping never replaces or rewinds it', async () => {
+test('visible video starts from a playable frame without waiting for canplaythrough; native fallback preserves the current frame', async () => {
     const h = harness();
     try {
         const root = h.doc.querySelector('[data-loop-background]');
@@ -82,6 +88,44 @@ test('visible video waits for playback readiness and a decoded frame; looping ne
         assert.equal(root.querySelector('video'), null);
         assert(root.querySelector('img'));
     } finally { h.close(); }
+});
+
+test('parser-loaded cached video is adopted without resetting its source, buffer or displayed frame', () => {
+    const h = harness('<div data-loop-background data-background-video-src="https://cdn.example.test/loop.mp4"><img src="/poster.jpg"><video class="loop-background__video" src="https://cdn.example.test/loop.mp4" data-background-frame-ready="true"></video></div>');
+    try {
+        const root = h.doc.querySelector('[data-loop-background]');
+        root.getBoundingClientRect = () => ({ top: 0, bottom: 300 });
+        const cached = root.querySelector('video'); cached._ready = 3; cached._paused = false;
+        const binding = h.api.bindLoopBackground(root, h.win);
+        assert.equal(root.querySelector('video'), cached);
+        assert.equal(h.counters.load, 0); assert.equal(h.counters.play, 0);
+        assert(root.classList.contains('is-video-playing'));
+        assert.equal(cached.src, 'https://cdn.example.test/loop.mp4');
+        binding.dispose(); assert.equal(root.querySelector('video'), null);
+    } finally { h.close(); }
+});
+
+test('a cached paused video and first loadeddata frame start immediately; pageshow resumes without a new download', async () => {
+    const h = harness('<div data-loop-background data-background-video-src="https://cdn.example.test/loop.mp4"><img src="/poster.jpg"><video class="loop-background__video" src="https://cdn.example.test/loop.mp4"></video></div>');
+    try {
+        const root = h.doc.querySelector('[data-loop-background]'); root.getBoundingClientRect = () => ({ top: 0, bottom: 300 });
+        const cached = root.querySelector('video'); cached._ready = 2;
+        const binding = h.api.bindLoopBackground(root, h.win); await flush();
+        assert.equal(h.counters.play, 1); assert.equal(h.counters.load, 0);
+        assert.equal(root.classList.contains('is-video-playing'), false);
+        h.playing(cached); assert(root.classList.contains('is-video-playing'));
+        cached.pause(); h.win.dispatchEvent(new h.win.Event('pageshow')); await flush();
+        assert.equal(cached.paused, false); assert.equal(h.counters.load, 0);
+        binding.dispose();
+    } finally { h.close(); }
+    const cold = harness();
+    try {
+        const root = cold.doc.querySelector('[data-loop-background]'); const binding = cold.api.bindLoopBackground(root, cold.win);
+        cold.observer.show(true); const video = root.querySelector('video'); video._ready = 2;
+        video.dispatchEvent(new cold.win.Event('loadeddata')); await flush();
+        assert.equal(cold.counters.play, 1); assert(!root.classList.contains('is-video-playing'));
+        cold.playing(video); assert(root.classList.contains('is-video-playing')); binding.dispose();
+    } finally { cold.close(); }
 });
 
 test('reduced motion loads no video, offscreen/hidden playback pauses, and errors restore the poster', async () => {

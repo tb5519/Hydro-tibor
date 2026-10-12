@@ -270,7 +270,7 @@ describe('homepage background video delivery', () => {
 });
 
 it('admin preview renders image-only, video-only and mixed media without losing separate upload controls', () => {
-    const env = new nunjucks.Environment(null, { autoescape: true });
+    const env = new nunjucks.Environment(new nunjucks.FileSystemLoader(path.join(root, 'packages/ui-default/templates')), { autoescape: true });
     const template = read('packages/ui-default/templates/domain_home_poster.html').replace('{% extends "domain_base.html" %}', '');
     for (const value of [{ image: '/static.jpg' }, { image: '', video: '/video', videoPoster: '/frame.jpg', videoPath: paths.videoPath },
         { image: '/static.jpg', video: '/video', videoPoster: '/frame.jpg', videoPath: paths.videoPath }]) {

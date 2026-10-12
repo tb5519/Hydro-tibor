@@ -59,7 +59,7 @@ export async function deleteBackgroundVideo(paths: string[], owner: number) {
 }
 
 /** Resolve stored server-owned metadata to CDN/OSS. Never load/stream the media through Hydro. */
-export async function redirectBackgroundVideo(handler: any, path: string) {
+export async function redirectBackgroundVideo(handler: any, path: string, version = '') {
     const type = backgroundVideoMediaType(path);
     if (!type) throw new NotFoundError(path);
     const meta = await storage.getMeta(path);
@@ -69,8 +69,17 @@ export async function redirectBackgroundVideo(handler: any, path: string) {
     handler.response.type = 'application/json';
     handler.response.addHeader('X-Content-Type-Options', 'nosniff');
     handler.response.addHeader('Referrer-Policy', 'no-referrer');
-    handler.response.addHeader('Cache-Control', 'private, no-store');
-    if (tryRedirectAsset(handler, { path, meta })) return;
-    handler.response.redirect = await assetStorage.signDownloadLink(meta.remoteAsset);
-    handler.response.status = 302;
+    if (!tryRedirectAsset(handler, { path, meta })) {
+        handler.response.redirect = await assetStorage.signDownloadLink(meta.remoteAsset);
+        handler.response.status = 302;
+    }
+    // Cache only the exact version selected by the authorized handler. A short
+    // private redirect cache reuses the same signed media URL across pages;
+    // the lifetime remains below both CDN and OSS signature validity. Cookies
+    // and bearer credentials must never share a cached redirect across users.
+    const method = `${handler.request?.method || ''}`.toLowerCase();
+    const cacheable = ['get', 'head'].includes(method) && typeof version === 'string' && version.length > 0
+        && version.length <= 200 && !/[\u0000-\u001f]/.test(version) && handler.request?.query?.v === version;
+    handler.response.addHeader('Cache-Control', cacheable ? 'private, max-age=300' : 'private, no-store');
+    handler.response.addHeader('Vary', 'Cookie, Authorization');
 }

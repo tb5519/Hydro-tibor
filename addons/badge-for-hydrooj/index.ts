@@ -583,7 +583,7 @@ export class BadgeBackgroundVideoHandler extends Handler {
             throw new NotFoundError(`Badge background video ${id} is not exist!`);
         }
         // Media bytes are served by object storage; never stream a large video through Hydro.
-        await redirectBackgroundVideo(this, mediaPath);
+        await redirectBackgroundVideo(this, mediaPath, badge.backgroundVideoUpdatedAt || '');
     }
 }
 

@@ -121,6 +121,7 @@
         {% if badgeProfileBackground.video %}
           <div class="profile-background-media" data-loop-background data-background-video-src="{{ badgeProfileBackground.video }}" aria-hidden="true">
             {% if profileBackgroundStill %}<img src="{{ profileBackgroundStill }}" alt="" decoding="async" fetchpriority="high">{% endif %}
+            {% set backgroundVideoSource = badgeProfileBackground.video %}{% set backgroundVideoPoster = badgeProfileBackground.videoPoster %}{% include "partials/background_video.html" %}
           </div>
         {% endif %}
         <div class="profile-header__content">

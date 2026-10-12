@@ -51,7 +51,7 @@ function newerGrant(left: any, right: any) {
 }
 
 /** Current ownership after expiry, revocation and upgrade chains are resolved. */
-function resolveBadgeLifetimes(uid: number, badges: any[], grants: any[], now: Date) {
+export function resolveBadgeLifetimes(uid: number, badges: any[], grants: any[], now: Date) {
     const referenced = new Set<number>();
     const latestChains = new Map<number, any>();
     const activeByBadge = new Map<number, any[]>();

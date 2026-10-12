@@ -10,6 +10,7 @@
     {% if homePoster.video %}
       <div class="ui-v2-home__hero-media" data-loop-background data-background-video-src="{{ homePoster.video }}" aria-hidden="true">
         {% if homeBackgroundStill %}<img class="ui-v2-home__hero-poster" src="{{ homeBackgroundStill }}" alt="" loading="eager" decoding="async" fetchpriority="high">{% endif %}
+        {% set backgroundVideoSource = homePoster.video %}{% set backgroundVideoPoster = homePoster.videoPoster %}{% include "partials/background_video.html" %}
       </div>
     {% elif homeBackgroundStill %}
       <img class="ui-v2-home__hero-poster" src="{{ homeBackgroundStill }}" alt="" aria-hidden="true" loading="eager" decoding="async" fetchpriority="high">
@@ -949,7 +950,7 @@
   else {
     poster.addEventListener('load', revealAfterDecode, { once: true });
     poster.addEventListener('error', function () {
-      hero.classList.remove('ui-v2-home__hero--poster');
+      if (!hero.querySelector('video.loop-background__video')) hero.classList.remove('ui-v2-home__hero--poster');
     }, { once: true });
   }
 })();

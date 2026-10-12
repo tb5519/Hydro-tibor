@@ -2,6 +2,7 @@ import './polyfill';
 
 import $ from 'jquery';
 import { startImageWarmup } from './utils/image-warmup';
+import { startBackgroundVideoWarmup } from './utils/background-video-warmup';
 
 window.Hydro = {
   extraPages: [],
@@ -29,6 +30,7 @@ console.log(
 window.UiContext = JSON.parse(window.UiContext);
 window.UserContext = JSON.parse(window.UserContext);
 startImageWarmup(window.UiContext.imageWarmup);
+startBackgroundVideoWarmup(window.UiContext.backgroundVideoWarmup);
 try {
   __webpack_public_path__ = UiContext.cdn_prefix;
 } catch (e) { }

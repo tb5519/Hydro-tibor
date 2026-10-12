@@ -11,9 +11,8 @@
     object-fit: cover
     pointer-events: none
     opacity: 0
-    transition: opacity .35s ease
 
-  &.is-video-playing > .loop-background__video
+  &.is-video-playing > .loop-background__video[data-loop-current], &.is-video-restoring > .loop-background__video[data-loop-current]
     opacity: 1
 
 [data-video-upload-status]

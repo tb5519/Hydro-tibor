@@ -1,3 +1,6 @@
+import { rememberBackgroundVideoReady } from '../utils/background-video-warmup';
+import { createSeamlessVideoLoop } from '../utils/seamless-video-loop';
+
 const MAX_VIDEO_BYTES = 40 * 1024 * 1024;
 const POSTER_MAX_EDGE = 1920;
 const bindings = new WeakMap<Element, { dispose: () => void }>();
@@ -18,53 +21,83 @@ function httpUrl(value: string, win: Window, sameOrigin = false) {
   } catch { return null; }
 }
 
-/** Keep the still image in place until the browser has actually displayed a video frame. */
+/** Adopt the parser-loaded video without restarting its download or decoded frames. */
 export function bindLoopBackground(root: HTMLElement, win = root.ownerDocument.defaultView as MediaWindow): BackgroundBinding {
   const source = httpUrl(root.dataset.backgroundVideoSrc || '', win);
   if (!root.dataset.backgroundVideoSrc || !source) return { dispose() {} };
   const doc = root.ownerDocument;
-  const video = doc.createElement('video');
-  video.className = 'loop-background__video';
+  let video = root.querySelector<HTMLVideoElement>('video.loop-background__video') || doc.createElement('video');
+  const initialVideo = video;
+  video.classList.add('loop-background__video');
+  video.setAttribute('data-loop-current', 'true');
   video.muted = true;
   video.defaultMuted = true;
   video.loop = true;
   video.playsInline = true;
   video.controls = false;
-  video.preload = 'none';
+  video.preload = 'auto';
   video.tabIndex = -1;
   video.setAttribute('aria-hidden', 'true');
   video.setAttribute('muted', '');
   video.setAttribute('playsinline', '');
   video.setAttribute('disablepictureinpicture', '');
   video.setAttribute('disableremoteplayback', '');
-  root.append(video);
+  if (video.parentElement !== root) root.append(video);
   const motion = win.matchMedia?.('(prefers-reduced-motion: reduce)');
-  let visible = !win.IntersectionObserver;
+  const bounds = root.getBoundingClientRect();
+  let visible = !win.IntersectionObserver || (bounds.bottom > 0 && bounds.top < win.innerHeight + 100);
   let disposed = false;
   let failed = false;
-  let loaded = false;
-  let ready = false;
+  let loaded = !!video.getAttribute('src') && httpUrl(video.getAttribute('src'), win) === source;
   let starting = false;
   let frameCallback = 0;
   let animationFrame = 0;
+  let frameVideo: HTMLVideoElement | null = null;
   const active = () => !disposed && !failed && visible && doc.visibilityState !== 'hidden' && !motion?.matches;
   const cancelReveal = () => {
-    if (frameCallback && video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(frameCallback);
+    if (frameCallback && frameVideo?.cancelVideoFrameCallback) frameVideo.cancelVideoFrameCallback(frameCallback);
     if (animationFrame) win.cancelAnimationFrame(animationFrame);
     frameCallback = 0;
     animationFrame = 0;
+    frameVideo = null;
   };
-  const hide = () => { cancelReveal(); root.classList.remove('is-video-playing'); };
+  const hide = () => { cancelReveal(); root.classList.remove('is-video-playing', 'is-video-restoring'); };
+  const show = (target: HTMLVideoElement) => {
+    if (target === video && active() && !target.paused && target.readyState >= 2) {
+      root.classList.remove('is-video-restoring');
+      root.classList.add('is-video-playing');
+      root.closest('.ui-v2-home__hero')?.classList.add('ui-v2-home__hero--poster-ready');
+      rememberBackgroundVideoReady(source, win);
+    }
+  };
   const reveal = () => {
     cancelReveal();
-    const show = () => {
-      if (active() && !video.paused && video.readyState >= 2) root.classList.add('is-video-playing');
-    };
-    if (video.requestVideoFrameCallback) frameCallback = video.requestVideoFrameCallback(show);
-    else animationFrame = win.requestAnimationFrame(() => { animationFrame = win.requestAnimationFrame(show); });
+    const target = video;
+    // SSR may have already rendered a frame before the application loaded.
+    if (root.classList.contains('is-video-playing') || target.dataset.backgroundFrameReady === 'true'
+      || (target.readyState >= 2 && target.getVideoPlaybackQuality?.().totalVideoFrames > 0)) {
+      show(target);
+      return;
+    }
+    frameVideo = target;
+    if (target.requestVideoFrameCallback) frameCallback = target.requestVideoFrameCallback(() => show(target));
+    else animationFrame = win.requestAnimationFrame(() => { animationFrame = win.requestAnimationFrame(() => show(target)); });
   };
+  const loop = createSeamlessVideoLoop(video, win, {
+    isActive: active,
+    onSwitch(next) {
+      cancelReveal();
+      detach(video);
+      video = next;
+      attach(video);
+      // The loop controller only switches after a real decoded frame.
+      video.dataset.backgroundFrameReady = 'true';
+      show(video);
+    },
+  });
   const update = () => {
     if (!active()) {
+      loop.pause();
       video.pause();
       cancelReveal();
       if (motion?.matches) hide();
@@ -72,28 +105,44 @@ export function bindLoopBackground(root: HTMLElement, win = root.ownerDocument.d
     }
     if (!loaded) {
       loaded = true;
-      video.preload = 'auto';
       video.src = source;
       video.load();
     }
-    if (!ready || starting || !video.paused) return;
+    loop.resume();
+    if (video.readyState < 2 || starting) return;
+    if (!video.paused) { reveal(); return; }
     starting = true;
+    const target = video;
     try {
-      Promise.resolve(video.play()).catch(() => { hide(); }).finally(() => { starting = false; });
+      Promise.resolve(target.play()).then(() => {
+        if (!disposed && target === video && !target.paused) reveal();
+      }).catch(() => { if (target === video) hide(); }).finally(() => { starting = false; });
     } catch {
       starting = false;
       hide();
     }
   };
-  const onReady = () => { ready = true; update(); };
-  const onError = () => { failed = true; video.pause(); hide(); };
-  video.addEventListener('canplaythrough', onReady);
-  video.addEventListener('playing', reveal);
-  video.addEventListener('error', onError);
+  const onReady = () => update();
+  const onError = () => { failed = true; loop.pause(); video.pause(); hide(); };
+  function attach(target: HTMLVideoElement) {
+    target.addEventListener('loadeddata', onReady);
+    target.addEventListener('canplay', onReady);
+    target.addEventListener('playing', reveal);
+    target.addEventListener('error', onError);
+  }
+  function detach(target: HTMLVideoElement) {
+    target.removeEventListener('loadeddata', onReady);
+    target.removeEventListener('canplay', onReady);
+    target.removeEventListener('playing', reveal);
+    target.removeEventListener('error', onError);
+  }
+  attach(video);
+  // Retire the tiny first-paint bootstrap after the complete player has adopted it.
+  video.dispatchEvent(new win.Event('hydro-background-managed'));
   doc.addEventListener('visibilitychange', update);
-  // A blocked autoplay is retried on an ordinary interaction without adding player controls.
   doc.addEventListener('pointerdown', update, { passive: true });
   doc.addEventListener('keydown', update);
+  win.addEventListener('pageshow', update);
   motion?.addEventListener?.('change', update);
   const observer = win.IntersectionObserver && new win.IntersectionObserver((entries) => {
     const entry = entries.find((item) => item.target === root);
@@ -109,15 +158,17 @@ export function bindLoopBackground(root: HTMLElement, win = root.ownerDocument.d
       doc.removeEventListener('visibilitychange', update);
       doc.removeEventListener('pointerdown', update);
       doc.removeEventListener('keydown', update);
+      win.removeEventListener('pageshow', update);
       motion?.removeEventListener?.('change', update);
-      video.removeEventListener('canplaythrough', onReady);
-      video.removeEventListener('playing', reveal);
-      video.removeEventListener('error', onError);
+      detach(video);
       hide();
-      video.pause();
-      video.removeAttribute('src');
-      video.load();
-      video.remove();
+      loop.dispose();
+      for (const target of new Set([initialVideo, video])) {
+        target.pause();
+        target.removeAttribute('src');
+        target.load();
+        target.remove();
+      }
     },
   };
 }

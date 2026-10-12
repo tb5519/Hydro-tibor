@@ -26,6 +26,7 @@ import { getDomainRankingMode } from '../lib/domain_ranking';
 import { DOMAIN_TYPES, DomainType, isScratchDomain } from '../lib/domain_type';
 import { getHomePosterConfig } from '../lib/home_poster';
 import { getImageWarmupPage } from '../lib/image_prewarm';
+import { getBackgroundVideoWarmup } from '../lib/background_video_prewarm';
 import * as mail from '../lib/mail';
 import { getPersonalAcGrowth, invalidatePersonalAcGrowth } from '../lib/personal_ac_growth';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
@@ -665,6 +666,19 @@ export class HomeHandler extends Handler {
     }
 }
 
+class BackgroundVideoWarmupHandler extends Handler {
+    async get() {
+        this.checkPriv(PRIV.PRIV_USER_PROFILE);
+        this.checkPerm(PERM.PERM_VIEW);
+        this.response.type = 'application/json';
+        // User and domain are selected by the authenticated request context,
+        // never by client-supplied UID/domain query parameters.
+        this.response.body = await getBackgroundVideoWarmup(this.ctx, this.domain, this.user, this.url.bind(this));
+        this.response.addHeader('Cache-Control', 'private, no-store');
+        this.response.addHeader('Vary', 'Cookie, Authorization');
+    }
+}
+
 class ImageWarmupHandler extends Handler {
     noCheckPermView = true;
 
@@ -721,7 +735,7 @@ class HomeBackgroundVideoHandler extends Handler {
     async get() {
         const config = getHomePosterConfig(this.domain);
         if (!isBackgroundVideoPath(`domain/${this.domain._id}/home-video`, config.videoPath)) throw new NotFoundError('home-video');
-        await redirectBackgroundVideo(this, config.videoPath);
+        await redirectBackgroundVideo(this, config.videoPath, config.videoUpdatedAt || '');
     }
 
     async head() { await this.get(); }
@@ -741,7 +755,7 @@ class HomeBackgroundVideoPosterHandler extends HomeBackgroundVideoHandler {
         if (!isBackgroundVideoPath(`domain/${this.domain._id}/home-video`, config.videoPosterPath, true)) {
             throw new NotFoundError('home-video-poster');
         }
-        await redirectBackgroundVideo(this, config.videoPosterPath);
+        await redirectBackgroundVideo(this, config.videoPosterPath, config.videoUpdatedAt || '');
     }
 }
 
@@ -1421,6 +1435,7 @@ export async function apply(ctx: Context) {
     ctx.Route('homepage', '/', HomeHandler);
     ctx.Route('badge_honor_wall', '/badge-honor-wall', BadgeHonorWallHandler, PERM.PERM_VIEW_RANKING);
     ctx.Route('image_warmup', '/image-warmup', ImageWarmupHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('background_video_warmup', '/background-video-warmup', BackgroundVideoWarmupHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_poster_image', '/home/poster', HomePosterImageHandler);
     ctx.Route('home_background_video', '/home/video', HomeBackgroundVideoHandler);
     ctx.Route('home_background_video_poster', '/home/video-poster', HomeBackgroundVideoPosterHandler);

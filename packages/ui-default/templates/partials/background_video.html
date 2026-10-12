@@ -1,0 +1,70 @@
+{# Parser discovery and first-frame reveal precede the main application bundle. #}
+<style>
+  [data-loop-background] > .loop-background__video { position:absolute; inset:0; width:100%; height:100%; display:block; object-fit:cover; pointer-events:none; opacity:0; }
+  [data-loop-background].is-video-playing > .loop-background__video[data-loop-current], [data-loop-background].is-video-restoring > .loop-background__video[data-loop-current] { opacity:1; }
+</style>
+<video class="loop-background__video" data-loop-current="true" src="{{ backgroundVideoSource }}"{% if backgroundVideoPoster %} poster="{{ backgroundVideoPoster }}"{% endif %} muted autoplay loop playsinline preload="auto" aria-hidden="true" tabindex="-1" disablepictureinpicture disableremoteplayback></video>
+<script>
+(function () {
+  var script = document.currentScript;
+  var video = script && script.previousElementSibling;
+  if (!video || video.tagName !== 'VIDEO' || !video.parentElement) return;
+  var root = video.parentElement;
+  var motion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+  var frame = 0;
+  var managed = false;
+  var restoreTimer = 0;
+  var readyKey = '';
+  var source = new URL(video.getAttribute('src'), window.location.href).href;
+  try {
+    var context = typeof window.UiContext === 'string' ? JSON.parse(window.UiContext) : window.UiContext;
+    var scope = context && context.backgroundVideoWarmup && context.backgroundVideoWarmup.scope;
+    readyKey = 'onebyone-background-video-ready:v1:' + (scope || 'guest');
+    var hints = JSON.parse(sessionStorage.getItem(readyKey) || '{}');
+    // The hint selects a matching video cover; it never declares an undecoded video playable.
+    if (video.getAttribute('poster') && hints[source] > Date.now() - 300000 && !(motion && motion.matches)) {
+      root.classList.add('is-video-restoring');
+      restoreTimer = setTimeout(function () { root.classList.remove('is-video-restoring'); }, 600);
+    }
+  } catch (ignore) {}
+  function stopRestoring() {
+    if (restoreTimer) clearTimeout(restoreTimer);
+    root.classList.remove('is-video-restoring');
+  }
+  function show() {
+    if (!managed && !document.hidden && !(motion && motion.matches) && !video.paused && video.readyState >= 2) {
+      video.dataset.backgroundFrameReady = 'true';
+      stopRestoring();
+      root.classList.add('is-video-playing');
+      var hero = root.closest('.ui-v2-home__hero');
+      if (hero) hero.classList.add('ui-v2-home__hero--poster-ready');
+    }
+  }
+  function reveal() {
+    if (managed || video.paused || video.readyState < 2) return;
+    if (video.requestVideoFrameCallback) {
+      if (frame) video.cancelVideoFrameCallback(frame);
+      frame = video.requestVideoFrameCallback(show);
+    } else requestAnimationFrame(show);
+  }
+  function failed() { if (!managed) { stopRestoring(); root.classList.remove('is-video-playing'); } }
+  function dispose() {
+    managed = true;
+    if (restoreTimer) clearTimeout(restoreTimer);
+    if (frame && video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(frame);
+    video.removeEventListener('playing', reveal);
+    video.removeEventListener('loadeddata', reveal);
+    video.removeEventListener('error', failed);
+    video.removeEventListener('hydro-background-managed', dispose);
+  }
+  if (motion && motion.matches) {
+    video.pause(); video.removeAttribute('autoplay'); video.removeAttribute('src'); video.load();
+  } else {
+    video.addEventListener('playing', reveal);
+    video.addEventListener('loadeddata', reveal);
+    video.addEventListener('error', failed);
+    video.addEventListener('hydro-background-managed', dispose);
+    reveal();
+  }
+}());
+</script>

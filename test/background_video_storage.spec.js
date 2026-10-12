@@ -74,7 +74,8 @@ function fixture(t, options = {}) {
             return true;
         } },
     });
-    const handler = { response: { headers: {}, addHeader(name, value) { this.headers[name] = value; } } };
+    const handler = { request: { method: options.method || 'GET', query: { v: options.queryVersion } },
+        response: { headers: {}, addHeader(name, value) { this.headers[name] = value; } } };
     return { helper, calls, handler, file, mp4, webm, jpeg, temporary, defaultMeta };
 }
 
@@ -173,6 +174,25 @@ describe('object-storage-only background upload', () => {
 });
 
 describe('background remote delivery', () => {
+    it('privately caches only the exact authorized version below signed URL validity and isolates credentials', async (t) => {
+        for (const cdn of [true, false]) {
+            for (const method of ['GET', 'HEAD']) {
+                const f = fixture(t, { cdn, method, queryVersion: '2026-10-12T01:02:03Z' });
+                await f.helper.redirectBackgroundVideo(f.handler, videoPath, '2026-10-12T01:02:03Z');
+                assert.equal(f.handler.response.headers['Cache-Control'], 'private, max-age=300');
+                assert.equal(f.handler.response.headers.Vary, 'Cookie, Authorization');
+                assert.equal(f.handler.response.status, 302);
+                assert.equal(f.calls.get.length, 0);
+            }
+        }
+        for (const options of [{}, { queryVersion: 'old' }, { queryVersion: ['current'] },
+            { queryVersion: 'current', method: 'POST' }]) {
+            const f = fixture(t, options);
+            await f.helper.redirectBackgroundVideo(f.handler, videoPath, 'current');
+            assert.equal(f.handler.response.headers['Cache-Control'], 'private, no-store');
+            assert.equal(f.handler.response.headers.Vary, 'Cookie, Authorization');
+        }
+    });
     it('uses a ready CDN redirect without fetching or copying bytes', async (t) => {
         const f = fixture(t, { cdn: true });
         await f.helper.redirectBackgroundVideo(f.handler, videoPath);
