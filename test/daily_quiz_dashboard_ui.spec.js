@@ -60,19 +60,34 @@ const upcoming = (overrides = {}) => ({
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 const ok = (value) => ({ ok: true, status: 200, json: async () => value });
-function harness(data = initial(), fetcher = async () => ok({ learning: learning() })) {
+function exportSpy() {
+    const documents = []; const downloads = [];
+    return { documents, downloads, services: {
+        createDocument: async (input, options) => {
+            documents.push({ input, options });
+            return { blob: new Blob(['word']), filename: `${input.studentName}.docx`, questionCount: input.questions.length };
+        },
+        download: (file) => downloads.push(file),
+    } };
+}
+function harness(data = initial(), fetcher = async () => ok({ learning: learning() }), exports = {}) {
     const dom = new JSDOM('<main data-daily-quiz-dashboard></main>', { url: 'https://example.test/manage/daily-quiz', pretendToBeVisual: true });
     const root = dom.window.document.querySelector('main');
     root.dataset.initial = JSON.stringify(data);
     const calls = [];
     dom.window.fetch = (url, options) => { calls.push({ url, options }); return fetcher(url, options); };
     const mod = { exports: {} };
-    vm.runInNewContext(code, { module: mod, exports: mod.exports, require, URL, console, Intl, Date });
-    const binding = mod.exports.bindDailyQuizDashboard(root, dom.window);
+    vm.runInNewContext(code, { module: mod, exports: mod.exports, require, URL, console, Intl, Date, Error });
+    const binding = mod.exports.bindDailyQuizDashboard(root, dom.window, exports);
     const get = (selector) => root.querySelector(selector);
     return {
         dom, root, get, calls, binding,
         click: async (selector) => { assert(get(selector), selector); get(selector).click(); await flush(); },
+        dblclick: async (uid) => {
+            get(`[data-quiz-action="export-review"][data-quiz-uid="${uid}"]`)
+                .dispatchEvent(new dom.window.MouseEvent('dblclick', { bubbles: true, detail: 2 }));
+            await flush();
+        },
         input(selector, value, type = 'input') { get(selector).value = value; get(selector).dispatchEvent(new dom.window.Event(type, { bubbles: true })); },
         uids: () => [...root.querySelectorAll('[data-quiz-student]')].map((node) => Number(node.dataset.quizStudent)),
         close: () => { binding.dispose(); dom.window.close(); },
@@ -98,6 +113,108 @@ test('mastery filters and search keep cumulative totals stable with no calendar 
         assert.equal(h.uids().length, 6);
         assert.equal(h.calls.length, 0);
     } finally { h.close(); }
+});
+
+test('avatar double-click exports all fresh wrong questions with the classroom scope; one pointer click does nothing', async () => {
+    const data = initial(); data.classroom = 'python';
+    data.rows.find((item) => item.uid === 11).detailUrl += '?classroom=python';
+    const detail = learning();
+    detail.questions = Array.from({ length: 27 }, (_, index) => ({ ...report().items[0], id: index + 1 }));
+    detail.questions.push(report().items[1], { ...report().items[0], correct: null });
+    const spy = exportSpy();
+    const h = harness(data, async () => ok({ student: { uid: 11 }, learning: detail }), spy.services);
+    try {
+        const avatar = h.get('[data-quiz-action="export-review"][data-quiz-uid="11"]');
+        assert.match(avatar.title, /双击/);
+        avatar.dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, detail: 1 }));
+        await flush(); assert.equal(h.calls.length, 0);
+        await h.dblclick(11);
+        assert.equal(h.calls.length, 1);
+        assert.match(h.calls[0].url, /student\/11\?classroom=python$/);
+        assert.equal(h.calls[0].options.credentials, 'same-origin');
+        assert.equal(spy.documents[0].input.questions.length, 27);
+        assert.equal(spy.documents[0].input.classroomName, 'Python训练');
+        assert.equal(spy.documents[0].input.studentName, '小禾');
+        assert.equal(spy.downloads.length, 1);
+        assert.match(h.get('[data-quiz-export-status="11"]').textContent, /27 题/);
+        await h.dblclick(11);
+        assert.equal(h.calls.length, 2, 'every download re-reads the current review list');
+    } finally { h.close(); }
+});
+
+test('avatar keyboard activation fetches fresh review data even if the old roster has no wrong answers', async () => {
+    const spy = exportSpy();
+    const h = harness(initial(), async () => ok({ student: { uid: 10 }, learning: learning() }), spy.services);
+    try {
+        await h.click('[data-quiz-action="export-review"][data-quiz-uid="10"]');
+        assert.equal(spy.documents[0].input.questions.length, 1);
+        assert.equal(spy.downloads.length, 1);
+    } finally { h.close(); }
+});
+
+test('repeated double-clicks share one pending export and an empty fresh list produces no file', async () => {
+    const pending = deferred(); const spy = exportSpy();
+    const h = harness(initial(), () => pending.promise, spy.services);
+    try {
+        await h.dblclick(11); await h.dblclick(11);
+        assert.equal(h.calls.length, 1);
+        assert.match(h.get('[data-quiz-export-status="11"]').textContent, /正在整理/);
+        const detail = learning(); detail.questions = [report().items[1]];
+        pending.resolve(ok({ student: { uid: 11 }, learning: detail })); await flush();
+        assert.equal(spy.downloads.length, 0);
+        assert.match(h.get('[data-quiz-export-status="11"]').textContent, /暂无待复习/);
+        assert.equal(h.get('[data-quiz-action="export-review"][data-quiz-uid="11"]').disabled, false);
+    } finally { h.close(); }
+});
+
+test('expired identity, malformed records and document errors never download a partial or wrong-student file', async () => {
+    for (const [response, needsVerification] of [
+        [{ ok: false, status: 403 }, true],
+        [{ ok: true, status: 200, json: async () => { throw new Error('HTML'); } }, true],
+        [ok({ url: '/account/sudo' }), true],
+        [ok({ student: { uid: 12 }, learning: learning() }), false],
+    ]) {
+        const spy = exportSpy();
+        const h = harness(initial(), async () => response, spy.services);
+        try {
+            await h.dblclick(11);
+            assert.equal(spy.downloads.length, 0);
+            assert(h.get('[data-quiz-export-status="11"].is-error'));
+            if (needsVerification) {
+                assert(h.get('[data-quiz-export-status="11"] a[target="_blank"]'));
+            }
+        } finally { h.close(); }
+    }
+    const spy = exportSpy();
+    spy.services.createDocument = async () => { throw new Error('图片读取失败，请重试。'); };
+    const h = harness(initial(), async () => ok({ student: { uid: 11 }, learning: learning() }), spy.services);
+    try {
+        await h.dblclick(11);
+        assert.equal(spy.downloads.length, 0);
+        assert.match(h.get('[data-quiz-export-status="11"]').textContent, /图片读取失败/);
+    } finally { h.close(); }
+});
+
+test('classroom changes and page disposal cancel pending exports and ignore late document results', async () => {
+    const pending = deferred(); const spy = exportSpy();
+    spy.services.createDocument = (input, options) => { spy.documents.push({ input, options }); return pending.promise; };
+    const h = harness(initial(), async (url) => ok(url.includes('/student/')
+        ? { student: { uid: 11 }, learning: learning() } : { dashboard: { ...initial(), classroom: 'python' } }), spy.services);
+    try {
+        await h.dblclick(11);
+        h.input('[data-quiz-classroom]', 'python', 'change'); await flush();
+        assert.equal(spy.documents[0].options.signal.aborted, true);
+        pending.resolve({ blob: new Blob(['word']), filename: 'old.docx', questionCount: 1 }); await flush();
+        assert.equal(spy.downloads.length, 0);
+        assert.equal(h.get('[data-quiz-export-status="11"]').hidden, true);
+    } finally { h.close(); }
+    const fetchPending = deferred(); const other = harness(initial(), () => fetchPending.promise, spy.services);
+    try {
+        await other.dblclick(11); other.binding.dispose();
+        assert.equal(other.calls[0].options.signal.aborted, true);
+        fetchPending.resolve(ok({ student: { uid: 11 }, learning: learning() })); await flush();
+        assert.equal(spy.downloads.length, 0);
+    } finally { other.close(); }
 });
 
 test('inline details prioritize wrong answers and render judgment, choices and safe analysis', async () => {

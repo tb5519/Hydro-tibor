@@ -354,6 +354,24 @@
     color: #6c92a6
     font-size: 13px
     font-weight: 600
+    padding: 0
+    cursor: pointer
+    user-select: none
+    transition: border-color .15s, box-shadow .15s
+    &:hover, &:focus-visible
+      border-color: #73abd5
+      box-shadow: 0 0 0 3px #e9f4fd
+      outline: none
+    &:disabled
+      cursor: wait
+    &.is-exporting:after
+      content: ''
+      position: absolute
+      inset: 0
+      border: 2px solid #c6e2f6
+      border-top-color: #3582bd
+      border-radius: inherit
+      background: rgba(255,255,255,.25)
     img
       position: absolute
       width: 100%
@@ -378,6 +396,13 @@
     .dqd-domain-names
       color: #728998
       line-height: 1.45
+    .dqd-export-status
+      color: #398a7d
+      line-height: 1.5
+      &.is-error
+        color: #b76846
+      a
+        display: block
 
   .dqd-progress-label
     display: flex

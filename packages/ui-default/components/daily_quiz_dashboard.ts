@@ -19,6 +19,10 @@ interface QuizDashboard {
   rows: DashboardRow[];
 }
 type RosterFilter = 'all' | 'wrong' | 'participated' | 'unanswered';
+interface ExportServices {
+  createDocument?: typeof import('./daily_quiz_review_docx').createDailyQuizReviewDocx;
+  download?: (file: { blob: Blob, filename: string }) => void;
+}
 interface DetailState {
   status: 'loading' | 'loaded' | 'error';
   learning?: QuizLearning;
@@ -30,7 +34,7 @@ const filterLabels: [RosterFilter, string][] = [
 ];
 
 /** Current assigned-tag mastery, counting each source question once by its latest answer. */
-export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocument.defaultView) {
+export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocument.defaultView, exports: ExportServices = {}) {
   const doc = root.ownerDocument;
   const lifetime = new win.AbortController();
   const details = new Map<number, DetailState>();
@@ -44,6 +48,9 @@ export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocume
   let scopeRequest: AbortController | null = null;
   let generation = 0;
   let failedScope: string | null = null;
+  let exportRequest: { uid: number, controller: AbortController } | null = null;
+  const exportMessages = new Map<number, { message: string, error: boolean }>();
+  const downloadUrls = new Map<string, number>();
 
   function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = '') {
     const node = doc.createElement(tag);
@@ -81,6 +88,9 @@ export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocume
     generation += 1;
     lifetime.abort();
     scopeRequest?.abort();
+    exportRequest?.controller.abort();
+    downloadUrls.forEach((timer, url) => { win.clearTimeout(timer); win.URL.revokeObjectURL(url); });
+    downloadUrls.clear();
     details.forEach((state) => state.controller?.abort());
     details.clear();
     disposeViews();
@@ -119,7 +129,7 @@ export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocume
   const rosterHeading = el('div');
   const rosterTitle = el('h2', '', '学员知识掌握');
   rosterTitle.id = 'daily-quiz-roster-heading';
-  rosterHeading.append(rosterTitle, el('p', '', '已开启问答的学员优先展示；展开即可查看错题、知识点与每次练习。'));
+  rosterHeading.append(rosterTitle, el('p', '', '已开启问答的学员优先展示。双击头像，下载待复习题目（Word）。'));
   const search = el('input', 'dqd-search');
   search.type = 'search';
   search.placeholder = '搜索姓名、用户名或 UID';
@@ -225,7 +235,10 @@ export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocume
       tr.dataset.quizStudent = `${row.uid}`;
       const student = cell('学员', 'dqd-student-cell');
       const identity = el('div', 'dqd-identity');
-      const avatar = el('span', 'dqd-avatar', (row.name || row.uname || '?').slice(0, 1));
+      const avatar = button((row.name || row.uname || '?').slice(0, 1), 'export-review', 'dqd-avatar');
+      avatar.dataset.quizUid = String(row.uid);
+      avatar.title = `双击下载${row.name || row.uname}的待复习题目（Word）`;
+      avatar.setAttribute('aria-label', `下载${row.name || row.uname}的待复习题目，双击或按回车`);
       const avatarUrl = row.avatar && safeUrl(row.avatar, false);
       if (avatarUrl) {
         const img = el('img');
@@ -239,6 +252,11 @@ export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocume
       const name = el('div', 'dqd-name');
       name.append(el('strong', '', row.name || row.uname), el('small', '', `@${row.uname} · ${row.uid}`));
       if (row.domainNames?.length) name.append(el('small', 'dqd-domain-names', row.domainNames.join(' / ')));
+      const exportStatus = el('small', 'dqd-export-status');
+      exportStatus.dataset.quizExportStatus = String(row.uid);
+      exportStatus.setAttribute('role', 'status');
+      exportStatus.setAttribute('aria-live', 'polite');
+      name.append(exportStatus);
       identity.append(avatar, name);
       student.append(identity);
       const progress = cell('答题进度', 'dqd-progress-cell');
@@ -293,6 +311,86 @@ export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocume
     if (!rows.length) {
       empty.replaceChildren(el('strong', '', data.rows.length ? '没有符合条件的学员' : '这个范围暂无学员'), el('p', '', data.rows.length ? '试试其他筛选，或调整搜索内容。' : '选择其他课堂，或先在学员管理中添加学员。'));
       if (data.rows.length) empty.append(button('清除筛选', 'clear', 'dqd-button dqd-button--small'));
+    }
+    updateExportStatus();
+  }
+  function updateExportStatus() {
+    root.querySelectorAll<HTMLButtonElement>('[data-quiz-action="export-review"]').forEach((avatar) => {
+      const uid = Number(avatar.dataset.quizUid);
+      const busy = exportRequest?.uid === uid;
+      avatar.disabled = !!scopeRequest || !!exportRequest;
+      avatar.classList.toggle('is-exporting', busy);
+      avatar.setAttribute('aria-busy', `${busy}`);
+      const status = root.querySelector<HTMLElement>(`[data-quiz-export-status="${uid}"]`);
+      const notice = exportMessages.get(uid);
+      status.replaceChildren();
+      status.hidden = !notice;
+      status.classList.toggle('is-error', !!notice?.error);
+      if (notice) {
+        status.append(el('span', '', notice.message));
+        if (notice.error && notice.message.includes('身份验证')) status.append(verificationLink());
+      }
+    });
+  }
+  function downloadDocument(file: { blob: Blob, filename: string }) {
+    if (exports.download) return exports.download(file);
+    const url = win.URL.createObjectURL(file.blob);
+    const link = el('a');
+    link.href = url;
+    link.download = file.filename;
+    link.hidden = true;
+    doc.body.append(link);
+    try { link.click(); } finally {
+      link.remove();
+      downloadUrls.set(url, win.setTimeout(() => {
+        win.URL.revokeObjectURL(url);
+        downloadUrls.delete(url);
+      }, 60_000));
+    }
+  }
+  async function exportReview(row: DashboardRow) {
+    if (disposed || scopeRequest || exportRequest) return;
+    const controller = new win.AbortController();
+    const request = { uid: row.uid, controller };
+    exportRequest = request;
+    const version = generation;
+    const isCurrent = () => !disposed && version === generation && exportRequest === request;
+    const timeout = win.setTimeout(() => controller.abort(), 120_000);
+    exportMessages.set(row.uid, { message: '正在整理 Word…', error: false });
+    updateExportStatus();
+    try {
+      const url = safeUrl(row.detailUrl);
+      if (!url) throw new Error('下载地址不可用，请刷新数据后重试。');
+      // Always read fresh data: expanded details and roster counts may be stale.
+      const result = await readJson(url, controller.signal);
+      if (typeof result.url === 'string') throw new Error('身份验证可能已过期，请验证后重试。');
+      if (result.student?.uid !== row.uid || !Array.isArray(result.learning?.questions)) {
+        throw new Error('待复习数据未能完整读取，请刷新数据后重试。');
+      }
+      if (!isCurrent()) return;
+      if (controller.signal.aborted) throw new Error('整理超时，请双击头像重试。');
+      const questions = result.learning.questions.filter((question) => question.correct === false);
+      if (!questions.length) {
+        exportMessages.set(row.uid, { message: '暂无待复习题目', error: false });
+        return;
+      }
+      const createDocument = exports.createDocument || (await import('./daily_quiz_review_docx')).createDailyQuizReviewDocx;
+      const file = await createDocument({
+        studentName: row.name || row.uname, uid: row.uid,
+        classroomName: data.domains.find((domain) => domain.id === data.classroom)?.name || '全部课堂', questions,
+      }, { fetch: win.fetch.bind(win), signal: controller.signal, origin: win.location.origin });
+      if (!isCurrent()) return;
+      if (controller.signal.aborted) throw new Error('整理超时，请双击头像重试。');
+      downloadDocument(file);
+      exportMessages.set(row.uid, { message: `已开始下载，共 ${file.questionCount} 题`, error: false });
+    } catch (error) {
+      if (!isCurrent()) return;
+      exportMessages.set(row.uid, {
+        message: controller.signal.aborted ? '整理超时，请双击头像重试。' : error instanceof Error ? error.message : '下载失败，请双击头像重试。', error: true,
+      });
+    } finally {
+      win.clearTimeout(timeout);
+      if (isCurrent()) { exportRequest = null; updateExportStatus(); }
     }
   }
   function renderDetail(row: DashboardRow, panel: HTMLElement) {
@@ -365,6 +463,10 @@ export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocume
     const controller = new win.AbortController();
     scopeRequest = controller;
     generation += 1;
+    exportRequest?.controller.abort();
+    exportRequest = null;
+    exportMessages.clear();
+    updateExportStatus();
     details.forEach((state) => state.controller?.abort());
     showFeedback('正在整理所选课堂的知识掌握情况…');
     roster.setAttribute('aria-busy', 'true');
@@ -408,7 +510,13 @@ export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocume
     const control = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-quiz-action]');
     if (!control || !root.contains(control) || control.disabled) return;
     const action = control.dataset.quizAction;
-    if (action === 'refresh') loadScope(data.classroom);
+    if (action === 'export-review') {
+      // Physical pointer clicks wait for dblclick; native keyboard activation has detail 0.
+      if (event.detail === 0) {
+        const row = data.rows.find((item) => item.uid === Number(control.dataset.quizUid));
+        if (row) exportReview(row);
+      }
+    } else if (action === 'refresh') loadScope(data.classroom);
     else if (action === 'retry-scope' && failedScope !== null) loadScope(failedScope);
     else if (action === 'show-more') { visibleLimit += 30; renderRows(); }
     else if (action === 'filter' || action === 'clear') {
@@ -429,6 +537,13 @@ export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocume
         if (expanded === uid && !details.has(uid)) loadDetail(row);
       } else loadDetail(row);
     }
+  }, { signal: lifetime.signal });
+  root.addEventListener('dblclick', (event) => {
+    const avatar = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-quiz-action="export-review"]');
+    if (!avatar || !root.contains(avatar) || avatar.disabled) return;
+    event.preventDefault();
+    const row = data.rows.find((item) => item.uid === Number(avatar.dataset.quizUid));
+    if (row) exportReview(row);
   }, { signal: lifetime.signal });
   search.addEventListener('input', () => { query = search.value; visibleLimit = 30; renderRows(); }, { signal: lifetime.signal });
   classroom.addEventListener('change', () => { loadScope(classroom.value); }, { signal: lifetime.signal });
