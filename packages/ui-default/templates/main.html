@@ -4,10 +4,15 @@
 {% import "components/problem.html" as problem with context %}
 {% import "components/user.html" as user with context %}
 {% block content %}
+{% set homeBackgroundStill = homePoster.image or homePoster.videoPoster %}
 <div class="ui-v2-home">
-  <header class="ui-v2-home__hero{% if homePoster.image %} ui-v2-home__hero--poster{% endif %}">
-    {% if homePoster.image %}
-      <img class="ui-v2-home__hero-poster" src="{{ homePoster.image }}" alt="" aria-hidden="true" loading="eager" decoding="async" fetchpriority="high">
+  <header class="ui-v2-home__hero{% if homeBackgroundStill or homePoster.video %} ui-v2-home__hero--poster{% endif %}">
+    {% if homePoster.video %}
+      <div class="ui-v2-home__hero-media" data-loop-background data-background-video-src="{{ homePoster.video }}" aria-hidden="true">
+        {% if homeBackgroundStill %}<img class="ui-v2-home__hero-poster" src="{{ homeBackgroundStill }}" alt="" loading="eager" decoding="async" fetchpriority="high">{% endif %}
+      </div>
+    {% elif homeBackgroundStill %}
+      <img class="ui-v2-home__hero-poster" src="{{ homeBackgroundStill }}" alt="" aria-hidden="true" loading="eager" decoding="async" fetchpriority="high">
     {% endif %}
     <div class="ui-v2-home__hero-inner">
       <div class="ui-v2-home__hero-text">
@@ -141,6 +146,13 @@
     aspect-ratio: 18 / 5;
     min-height: 320px;
   }
+  .ui-v2-home__hero .ui-v2-home__hero-media {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+  }
+  .ui-v2-home__hero-media > .loop-background__video { object-fit: fill; }
   .ui-v2-home__hero-poster {
     position: absolute;
     inset: 0;

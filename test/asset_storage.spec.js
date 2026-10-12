@@ -21,7 +21,8 @@ function load(filename, dependencies = {}) {
     });
     return module.exports;
 }
-const assetModule = load('packages/hydrooj/src/lib/asset_storage.ts');
+const backgroundVideoPaths = load('packages/hydrooj/src/lib/background_video_path.ts');
+const assetModule = load('packages/hydrooj/src/lib/asset_storage.ts', { './background_video_path': backgroundVideoPaths });
 const { AssetStorage, eligibleAsset } = assetModule;
 const { createAssetStorageModel } = load('packages/hydrooj/src/lib/asset_storage_model.ts', {
     './asset_storage': assetModule,
@@ -578,4 +579,63 @@ it('stores preset sprite3 archives only in immutable Scratch paths with private 
     assert.equal(put.input.ContentDisposition, 'attachment');
     assert.equal(put.input.CacheControl, 'private, max-age=0');
     await assert.rejects(remote.put(spritePath, Buffer.alloc(20 * 1024 * 1024 + 1), 'application/octet-stream'), /limit|large|size/i);
+});
+
+const backgroundStamp = '1791763200000-12345678-1234-4234-8234-123456789abc';
+const backgroundVideoPath = `domain/class-a/home-video-${backgroundStamp}.mp4`;
+const backgroundPosterPath = `domain/class-a/home-video-poster-${backgroundStamp}.jpg`;
+it('accepts background video only in exact generated homepage and badge paths with matching MIME types', () => {
+    for (const prefix of ['domain/class-a/home-video', 'badge/12/profile-video', 'domain/class-a/badge/12/profile-video']) {
+        assert.equal(eligibleAsset(`${prefix}-${backgroundStamp}.mp4`, 'video/mp4'), true);
+        assert.equal(eligibleAsset(`${prefix}-${backgroundStamp}.webm`, 'video/webm'), true);
+        assert.equal(eligibleAsset(`${prefix}-poster-${backgroundStamp}.jpg`, 'image/jpeg'), true);
+        assert.equal(eligibleAsset(`${prefix}-${backgroundStamp}.mp4`, 'image/jpeg'), false);
+        assert.equal(eligibleAsset(`${prefix}-${backgroundStamp}.webm`, 'video/mp4'), false);
+        assert.equal(eligibleAsset(`${prefix}-${backgroundStamp}.svg`, 'image/svg+xml'), false);
+    }
+    for (const filename of [
+        'user/1/video.mp4', 'training/course/1/video.webm', 'problem/main/1/additional_file/video.mp4',
+        'contest/main/1/public/video.mp4', 'domain/class-a/home-video-old.mp4',
+        `domain/class-a/home-poster-${backgroundStamp}.mp4`, `badge/name/profile-video-${backgroundStamp}.mp4`,
+        `badge/12/ac-effect-${backgroundStamp}.mp4`, `domain/class-a/home-video-poster-${backgroundStamp}.mp4`,
+        `domain/class-a/home-video-${backgroundStamp}.mp4/extra`, `domain/class-a/home-video-${backgroundStamp}.mp4?key=x`,
+        `domain/class-a/../home-video-${backgroundStamp}.mp4`,
+    ]) assert.equal(eligibleAsset(filename, filename.endsWith('.webm') ? 'video/webm' : 'video/mp4'), false, filename);
+});
+
+it('remote-only video and first-frame writes persist verified remote descriptors without local duplicates', async () => {
+    await model.put(backgroundVideoPath, Buffer.from('video bytes'), 20, { remoteOnly: true });
+    await model.put(backgroundPosterPath, Buffer.from('frame bytes'), 20, { remoteOnly: true });
+    assert.equal(local.size, 0);
+    assert.equal(objects.size, 2);
+    const video = await model.coll.findOne({ path: backgroundVideoPath });
+    const frame = await model.coll.findOne({ path: backgroundPosterPath });
+    assert.match(video.remoteAsset.key, /\.mp4$/);
+    assert.equal(video.remoteAsset.contentType, 'video/mp4');
+    assert.equal(frame.remoteAsset.contentType, 'image/jpeg');
+    assert.match(await model.signDownloadLink(backgroundVideoPath, '', false), /^https:\/\//);
+    assert.equal((await bytes(await model.get(backgroundVideoPath))).toString(), 'video bytes');
+});
+
+it('remote-only requests reject disabled or absent object storage instead of writing local bytes', async () => {
+    writeConfig({ storageEnabled: false });
+    for (const filename of [backgroundVideoPath, backgroundPosterPath]) {
+        await assert.rejects(model.put(filename, Buffer.from('media'), 20, { remoteOnly: true }));
+    }
+    assert.equal(local.size, 0);
+    assert.equal(objects.size, 0);
+    assert.equal(await model.coll.countDocuments(), 0);
+    fs.unlinkSync(configPath);
+    await assert.rejects(model.put(backgroundVideoPath, Buffer.from('media'), 20, { remoteOnly: true }));
+    assert.equal(local.size, 0);
+    assert.equal(await model.coll.countDocuments(), 0);
+});
+
+it('remote-only rejects ineligible paths and upload failures without entering local storage', async () => {
+    await assert.rejects(model.put('user/20/video.mp4', Buffer.from('media'), 20, { remoteOnly: true }));
+    assert.equal(calls.length, 0);
+    fault = async (kind) => { if (kind === 'PutObjectCommand') throw new Error('Video upload offline'); };
+    await assert.rejects(model.put(backgroundVideoPath, Buffer.from('media'), 20, { remoteOnly: true }), /Video upload offline/);
+    assert.equal(local.size, 0);
+    assert.equal(await model.coll.countDocuments(), 0);
 });

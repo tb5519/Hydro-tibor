@@ -58,6 +58,18 @@
     color: #6b7b93;
     font-size: 13px;
   }
+  .badge-background-video {
+    margin-top: 26px;
+    padding: 22px;
+    border: 1px solid #dce6f5;
+    border-radius: 12px;
+    background: linear-gradient(145deg, #f8fbff, #f5f7fc);
+  }
+  .badge-background-video__actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+  .badge-background-video__actions .button { margin: 0; }
+  .badge-background-video__status { margin: 12px 0 0; color: #426c95; font-size: 13px; }
+  .badge-background-video__status:empty { display: none; }
+  .badge-background-video__remove { margin: 14px 0 0; }
 </style>
 <div class="row">
   <div class="medium-9 columns">
@@ -67,7 +79,7 @@
       </div>
       <div class="section__body">
         <div class="badge-editor__scope"><strong>{{ badgeScopeTitle }}</strong> · {{ _('Only students in this scope can receive these badges.') }}</div>
-        <form method="post" enctype="multipart/form-data">
+        <form method="post" enctype="multipart/form-data" id="badge-details-form">
           {{ form.form_text({
             columns:12,
             label:('{0} ({1})').format(_('badge title'), _('Also used as badge hover text')),
@@ -187,6 +199,34 @@
             {{ _('Cancel') }}
           </button>
         </form>
+        <section class="badge-background-video" aria-labelledby="badge-background-video-title">
+          <h2 class="badge-profile-background-upload__title" id="badge-background-video-title">个人主页动态背景</h2>
+          <p class="badge-profile-background-upload__hint">图片与视频可以同时保留。进入主页时先显示背景图，视频准备好后静音循环播放；没有背景图时，先显示自动提取的视频首帧。</p>
+          {% if badge.backgroundVideo %}
+            <video class="badge-profile-background-upload__preview" controls muted playsinline preload="none"
+              src="{{ badge.backgroundVideo }}" poster="{{ badge.backgroundImage or badge.backgroundVideoPoster }}"
+              aria-label="当前背景视频预览"></video>
+          {% endif %}
+          <form method="post" enctype="multipart/form-data" data-background-video-upload data-background-video-watch-form="#badge-details-form">
+            <input type="hidden" name="operation" value="upload_background_video">
+            <label>
+              <span class="badge-profile-background-upload__hint">选择背景视频</span>
+              <input type="file" name="file" accept="video/mp4,video/webm" required aria-label="选择背景视频">
+            </label>
+            <p class="badge-profile-background-upload__hint">支持 MP4、WebM，最大 40 MB。建议使用首尾衔接的短视频，画面比例与背景图一致。</p>
+            <p class="badge-profile-background-upload__hint">视频单独保存，请先保存上方已修改的徽章信息。</p>
+            <div class="badge-background-video__actions">
+              <button type="submit" class="rounded primary button">{{ '替换背景视频' if badge.backgroundVideo else '上传背景视频' }}</button>
+            </div>
+            <p class="badge-background-video__status" data-video-upload-status role="status" aria-live="polite"></p>
+          </form>
+          {% if badge.backgroundVideo %}
+            <form method="post" class="badge-background-video__remove">
+              <input type="hidden" name="operation" value="clear_background_video">
+              <button type="submit" class="rounded button">移除视频，保留图片</button>
+            </form>
+          {% endif %}
+        </section>
       </div>
     </div>
   </div>

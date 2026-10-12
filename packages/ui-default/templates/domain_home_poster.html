@@ -1,41 +1,72 @@
 {% extends "domain_base.html" %}
 {% block domain_content %}
 <style>
-  .domain-poster { display: grid; gap: 16px; }
-  .domain-poster__hero, .domain-poster__card { border: 1px solid #e2e8f0; border-radius: 16px; background: #fff; box-shadow: 0 10px 28px rgba(15, 23, 42, .06); }
-  .domain-poster__hero { padding: 20px; background: linear-gradient(135deg, #eff6ff, #fff 60%, #f5f3ff); }
+  .domain-poster { display: grid; gap: 18px; }
+  .domain-poster__hero, .domain-poster__card { border: 1px solid #e2e8f0; border-radius: 16px; background: #fff; box-shadow: 0 10px 28px rgba(15, 23, 42, .04); }
+  .domain-poster__hero { padding: 22px; background: linear-gradient(135deg, #eff6ff, #fff 60%, #f5f3ff); }
   .domain-poster h1 { margin: 0; color: #0f172a; font-size: 1.5rem; }
   .domain-poster h2 { margin: 0; color: #0f172a; font-size: 1.08rem; }
   .domain-poster p { margin: 8px 0 0; color: #64748b; line-height: 1.65; }
-  .domain-poster__card { padding: 18px; }
-  .domain-poster__notice { margin-top: 12px; border: 1px solid #dbeafe; border-radius: 11px; padding: 10px 12px; background: #f0f7ff; color: #475569; font-size: .84rem; line-height: 1.55; }
+  .domain-poster__card { padding: 20px; min-width: 0; }
+  .domain-poster__notice { color: #64748b; font-size: .84rem; line-height: 1.65; }
   .domain-poster__success { border: 1px solid #bbf7d0; border-radius: 10px; padding: 10px 12px; color: #166534; background: #f0fdf4; }
-  .domain-poster__preview { overflow: hidden; margin: 16px 0; border: 1px solid #dbe7f3; border-radius: 13px; background: #f8fafc; }
-  .domain-poster__preview img { display: block; width: 100%; aspect-ratio: 18 / 5; object-fit: cover; }
-  .domain-poster__empty { margin: 16px 0; border: 1px dashed #cbd5e1; border-radius: 13px; padding: 36px 16px; color: #64748b; text-align: center; }
-  .domain-poster__form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .domain-poster__file { max-width: 100%; }
-  .domain-poster__secondary { margin-top: 12px; }
-  @media (max-width: 42em) { .domain-poster__form { align-items: stretch; } .domain-poster__form .button, .domain-poster__file { width: 100%; } }
+  .domain-poster__preview { position: relative; overflow: hidden; margin-top: 18px; border: 1px solid #dbe7f3; border-radius: 13px; background: #f8fafc; aspect-ratio: 18 / 5; }
+  .domain-poster__preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .domain-poster__empty { margin-top: 18px; border: 1px dashed #cbd5e1; border-radius: 13px; padding: 36px 16px; color: #64748b; text-align: center; }
+  .domain-poster__form { display: grid; gap: 14px; margin-top: 16px; }
+  .domain-poster__form label { display: grid; gap: 9px; color: #334155; }
+  .domain-poster__file { max-width: 100%; width: 100%; }
+  .domain-poster__actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .domain-poster__secondary { margin-top: 14px; }
+  .domain-poster__secondary .button { color: #64748b; }
+  .domain-poster__status:empty { display: none; }
+  .domain-poster__status { color: #64748b; font-size: .88rem; line-height: 1.6; }
+  .domain-poster__status[data-state="error"] { color: #b45309; }
+  @media (max-width: 42em) { .domain-poster__actions { align-items: stretch; } .domain-poster__actions .button { width: 100%; } }
 </style>
 
 <div class="domain-poster">
   <section class="domain-poster__hero">
     <h1>{{ _('首页海报') }}</h1>
-    <p>{{ _('海报只会显示在当前域的首页训练区域，为不同课程保留各自的视觉内容。') }}</p>
+    <p>{{ _('为当前课堂设置静态图片或循环视频。先呈现图片，视频准备好后自然切换。') }}</p>
+    <p class="domain-poster__notice">{{ _('建议比例') }} <strong>{{ recommendedRatio }}</strong> · {{ _('推荐尺寸') }} <strong>{{ recommendedSize }}</strong><br>{{ _('主体内容建议放在中间偏右，左侧留给首页文字。') }}</p>
+    {% if config.image or config.videoPoster %}
+      <div class="domain-poster__preview" {% if config.video %}data-loop-background data-background-video-src="{{ config.video }}"{% endif %}>
+        <img src="{{ config.image or config.videoPoster }}" alt="{{ _('当前首页海报') }}">
+      </div>
+    {% else %}
+      <div class="domain-poster__empty">{{ _('还未设置海报，首页将使用默认背景。') }}</div>
+    {% endif %}
   </section>
+  {% if saved %}<div class="domain-poster__success" role="status">{{ _('首页海报已保存。') }}</div>{% endif %}
+  {% if cleared %}<div class="domain-poster__success" role="status">{{ _('已移除所选素材，其他素材保留。') }}</div>{% endif %}
   <section class="domain-poster__card">
-    {% if saved %}<div class="domain-poster__success">{{ _('首页海报已保存。') }}</div>{% endif %}
-    {% if cleared %}<div class="domain-poster__success">{{ _('首页海报已清除，首页将恢复默认样式。') }}</div>{% endif %}
-    <div class="domain-poster__notice">{{ _('建议比例') }}：<strong>{{ recommendedRatio }}</strong>，{{ _('推荐尺寸') }}：<strong>{{ recommendedSize }}</strong>。{{ _('主体内容建议放在画面中间偏右，左侧留给首页文字。') }}</div>
-    {% if config.image %}<div class="domain-poster__preview"><img src="{{ config.image }}" alt="{{ _('当前首页海报') }}"></div>{% else %}<div class="domain-poster__empty">{{ _('当前未设置海报。') }}</div>{% endif %}
+    <h2>{{ _('海报图片') }}</h2>
+    <p>{{ _('图片可以单独使用，也会作为视频加载时的封面。') }}</p>
     <form method="post" enctype="multipart/form-data" class="domain-poster__form">
       <input type="hidden" name="operation" value="upload">
-      <input class="textbox domain-poster__file" type="file" name="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required>
-      <button class="rounded primary button" type="submit">{{ _('保存首页海报') }}</button>
-      <span class="domain-poster__notice">{{ _('支持 JPG、PNG、WEBP，单张最大 8MB。') }}</span>
+      <label>{{ _('选择图片') }}<input class="textbox domain-poster__file" type="file" name="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required></label>
+      <div class="domain-poster__actions">
+        <button class="rounded primary button" type="submit">{{ _('保存图片') }}</button>
+        <span class="domain-poster__notice">{{ _('JPG、PNG、WEBP · 最大 8MB') }}</span>
+      </div>
     </form>
-    {% if config.image %}<form method="post" class="domain-poster__secondary"><input type="hidden" name="operation" value="clear"><button class="rounded button" type="submit">{{ _('清除海报并恢复默认') }}</button></form>{% endif %}
+    {% if config.image %}<form method="post" class="domain-poster__secondary"><input type="hidden" name="operation" value="clear"><button class="rounded button" type="submit">{{ _('移除图片') }}</button></form>{% endif %}
+  </section>
+  <section class="domain-poster__card">
+    <h2>{{ _('循环视频') }}</h2>
+    <p>{{ _('静音自动播放。未设置图片时，会自动截取视频首帧作为封面。') }}</p>
+    <form method="post" enctype="multipart/form-data" class="domain-poster__form" data-background-video-upload>
+      <input type="hidden" name="operation" value="upload_video">
+      <label>{{ _('选择视频') }}<input class="textbox domain-poster__file" type="file" name="file" accept=".mp4,.webm,video/mp4,video/webm" data-video-max-size="{{ videoMaxSizeMb * 1024 * 1024 }}" required></label>
+      <div class="domain-poster__actions">
+        <button class="rounded primary button" type="submit">{{ _('保存视频') }}</button>
+        <span class="domain-poster__notice">MP4、WEBM · {{ _('最大') }} {{ videoMaxSizeMb }}MB</span>
+      </div>
+      <div class="domain-poster__status" data-video-upload-status role="status" aria-live="polite"></div>
+      <noscript><p>{{ _('上传视频需要启用浏览器 JavaScript，以生成首帧封面。') }}</p></noscript>
+    </form>
+    {% if config.videoPath %}<form method="post" class="domain-poster__secondary"><input type="hidden" name="operation" value="clear_video"><button class="rounded button" type="submit">{{ _('移除视频') }}</button></form>{% endif %}
   </section>
 </div>
 {% endblock %}

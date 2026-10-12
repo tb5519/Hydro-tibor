@@ -9,6 +9,9 @@ import {
     awardWeeklyAutomaticBadge, getAutomaticBadgeManagement, importLegacyLotteryAutomaticBadges,
     migrateWeeklyAutomaticBadge, nextWeeklyAutomaticBadgeExpiry, updateAutomaticBadge,
 } from 'hydrooj/src/lib/automatic_badge';
+import {
+    deleteBackgroundVideo, isBackgroundVideoPath, redirectBackgroundVideo, storeBackgroundVideo,
+} from 'hydrooj/src/lib/background_video';
 import { getSharedRankingSnapshot } from 'hydrooj/src/lib/shared_ranking';
 import { getUserBadgeGallery } from 'hydrooj/src/lib/user_badge_gallery';
 import DomainModel from 'hydrooj/src/model/domain';
@@ -59,6 +62,14 @@ function getBadgeBackgroundImageUrl(handler: Handler, badge: Badge) {
     return handler.url('badge_background_image', {
         id: badge._id,
         query: { v: badge.backgroundImageUpdatedAt || '' },
+    });
+}
+
+function getBadgeBackgroundVideoUrl(handler: Handler, badge: Badge, poster = false) {
+    if (!(poster ? badge?.backgroundVideoPosterPath : badge?.backgroundVideoPath)) return '';
+    return handler.url(poster ? 'badge_background_video_poster' : 'badge_background_video', {
+        id: badge._id,
+        query: { v: badge.backgroundVideoUpdatedAt || '' },
     });
 }
 
@@ -343,7 +354,7 @@ class BadgeAddHandler extends Handler {
     }
 }
 
-class BadgeEditHandler extends Handler {
+export class BadgeEditHandler extends Handler {
     async prepare() {
         await checkBadgeManageAccess(this);
     }
@@ -357,6 +368,8 @@ class BadgeEditHandler extends Handler {
             badge: {
                 ...badge,
                 backgroundImage: getBadgeBackgroundImageUrl(this, badge),
+                backgroundVideo: getBadgeBackgroundVideoUrl(this, badge),
+                backgroundVideoPoster: getBadgeBackgroundVideoUrl(this, badge, true),
                 acImage: getBadgeAcImageUrl(this, badge),
                 themeSound: getBadgeThemeSoundUrl(this, badge),
             },
@@ -467,6 +480,53 @@ class BadgeEditHandler extends Handler {
     }
 
     @param('id', Types.PositiveInt, true)
+    async postUploadBackgroundVideo(_: string, id: number) {
+        const domainId = getBadgeDomainScope(this);
+        const badge = await BadgeModel.badgeGet(this.ctx, id, domainId);
+        if (!badge) throw new NotFoundError(`Badge ${id} is not exist!`);
+        const file = getRequestFile(this.request.files, 'file');
+        const poster = getRequestFile(this.request.files, 'poster');
+        const prefix = domainId ? `domain/${domainId}/badge/${id}/profile-video` : `badge/${id}/profile-video`;
+        const media = await storeBackgroundVideo(file, poster, this.user._id, prefix);
+        try {
+            const result = await this.ctx.db.collection('badge').updateOne({
+                _id: id,
+                ...(domainId ? { domainId } : { domainId: { $exists: false } }),
+                backgroundVideoPath: badge.backgroundVideoPath || { $exists: false },
+            }, { $set: {
+                backgroundVideoPath: media.videoPath,
+                backgroundVideoPosterPath: media.videoPosterPath,
+                backgroundVideoUpdatedAt: media.videoUpdatedAt,
+            } });
+            if (!result.matchedCount) throw new ValidationError('backgroundVideo');
+        } catch (error) {
+            await deleteBackgroundVideo([media.videoPath, media.videoPosterPath], this.user._id).catch(() => {});
+            throw error;
+        }
+        await deleteBackgroundVideo(
+            [badge.backgroundVideoPath, badge.backgroundVideoPosterPath].filter(Boolean) as string[], this.user._id,
+        ).catch(() => {});
+        this.response.body = { success: true, url: this.url(getBadgeManageRoutes(this).editRoute, { id }) };
+    }
+
+    @param('id', Types.PositiveInt, true)
+    async postClearBackgroundVideo(_: string, id: number) {
+        const domainId = getBadgeDomainScope(this);
+        const badge = await BadgeModel.badgeGet(this.ctx, id, domainId);
+        if (!badge) throw new NotFoundError(`Badge ${id} is not exist!`);
+        const result = await this.ctx.db.collection('badge').updateOne({
+            _id: id,
+            ...(domainId ? { domainId } : { domainId: { $exists: false } }),
+            backgroundVideoPath: badge.backgroundVideoPath || { $exists: false },
+        }, { $unset: { backgroundVideoPath: '', backgroundVideoPosterPath: '', backgroundVideoUpdatedAt: '' } });
+        if (!result.matchedCount) throw new ValidationError('backgroundVideo');
+        await deleteBackgroundVideo(
+            [badge.backgroundVideoPath, badge.backgroundVideoPosterPath].filter(Boolean) as string[], this.user._id,
+        ).catch(() => {});
+        this.response.redirect = this.url(getBadgeManageRoutes(this).editRoute, { id });
+    }
+
+    @param('id', Types.PositiveInt, true)
     async postDelete(_: string, id: number) {
         const domainId = getBadgeDomainScope(this);
         const badge = await BadgeModel.badgeGet(this.ctx, id, domainId);
@@ -474,6 +534,9 @@ class BadgeEditHandler extends Handler {
         await BadgeModel.badgeDel(this.ctx, id, domainId);
         const assetPaths = [badge?.backgroundImagePath, badge?.acImagePath, badge?.themeSoundPath].filter(Boolean) as string[];
         if (assetPaths.length) storage.del(assetPaths, this.user._id).catch(() => {});
+        await deleteBackgroundVideo(
+            [badge.backgroundVideoPath, badge.backgroundVideoPosterPath].filter(Boolean) as string[], this.user._id,
+        ).catch(() => {});
         this.response.redirect = this.url(getBadgeManageRoutes(this).manageRoute);
     }
 }
@@ -504,6 +567,28 @@ abstract class BadgeAssetHandler extends Handler {
 class BadgeBackgroundImageHandler extends BadgeAssetHandler {
     protected readonly assetField = 'backgroundImagePath' as const;
     protected readonly assetName = 'background';
+}
+
+export class BadgeBackgroundVideoHandler extends Handler {
+    noCheckPermView = true;
+    protected readonly poster: boolean = false;
+
+    @param('id', Types.PositiveInt, true)
+    async get(_: string, id: number) {
+        const domainId = getBadgeDomainScope(this);
+        const badge = await BadgeModel.badgeGet(this.ctx, id, domainId);
+        const mediaPath = this.poster ? badge?.backgroundVideoPosterPath : badge?.backgroundVideoPath;
+        const prefix = domainId ? `domain/${domainId}/badge/${id}/profile-video` : `badge/${id}/profile-video`;
+        if (!mediaPath || !isBackgroundVideoPath(prefix, mediaPath, this.poster)) {
+            throw new NotFoundError(`Badge background video ${id} is not exist!`);
+        }
+        // Media bytes are served by object storage; never stream a large video through Hydro.
+        await redirectBackgroundVideo(this, mediaPath);
+    }
+}
+
+export class BadgeBackgroundVideoPosterHandler extends BadgeBackgroundVideoHandler {
+    protected readonly poster = true;
 }
 
 export class BadgeAcImageHandler extends BadgeAssetHandler {
@@ -603,6 +688,8 @@ export async function apply(ctx: Context) {
     ctx.Route('domain_badge_add', '/domain/badge/add', BadgeAddHandler);
     ctx.Route('domain_badge_edit', '/domain/badge/:id/edit', BadgeEditHandler);
     ctx.Route('badge_background_image', '/badge/:id/background', BadgeBackgroundImageHandler);
+    ctx.Route('badge_background_video', '/badge/:id/background-video', BadgeBackgroundVideoHandler);
+    ctx.Route('badge_background_video_poster', '/badge/:id/background-video-poster', BadgeBackgroundVideoPosterHandler);
     ctx.Route('badge_ac_image', '/badge/:id/ac-image', BadgeAcImageHandler);
     ctx.Route('badge_theme_sound', '/badge/:id/theme-sound', BadgeThemeSoundHandler);
     ctx.Route('badge_detail', '/badge/:id', BadgeDetailHandler);

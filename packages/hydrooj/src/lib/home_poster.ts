@@ -4,6 +4,11 @@ export interface HomePosterConfig {
     image: string;
     storagePath?: string;
     updatedAt?: string;
+    video?: string;
+    videoPath?: string;
+    videoPoster?: string;
+    videoPosterPath?: string;
+    videoUpdatedAt?: string;
 }
 
 export function getHomePosterConfig(domain: { _id?: string, homePoster?: unknown } | null | undefined): HomePosterConfig {
@@ -19,5 +24,10 @@ export function getHomePosterConfig(domain: { _id?: string, homePoster?: unknown
         image: `${raw.image || ''}`,
         storagePath: raw.storagePath ? `${raw.storagePath}` : undefined,
         updatedAt: raw.updatedAt ? `${raw.updatedAt}` : undefined,
+        video: raw.video ? `${raw.video}` : undefined,
+        videoPath: raw.videoPath ? `${raw.videoPath}` : undefined,
+        videoPoster: raw.videoPoster ? `${raw.videoPoster}` : undefined,
+        videoPosterPath: raw.videoPosterPath ? `${raw.videoPosterPath}` : undefined,
+        videoUpdatedAt: raw.videoUpdatedAt ? `${raw.videoUpdatedAt}` : undefined,
     };
 }

@@ -71,3 +71,10 @@ it('callers without a domain still request the display variant through their aut
     const theme = await getActiveBadgeAcTheme(f.ctx, { _id: 42 }, f.route);
     assert.equal(theme.acImage, '/badge_ac_image/7?size=384&v=v1');
 });
+it('a selected video-only profile theme does not fall back to another badge celebration', async () => {
+    const f = fixture([
+        { _id: 7, short: '动态天空', backgroundVideoPath: 'badge/7/profile-video.mp4' },
+        { _id: 9, short: '旧主题', themeSoundPath: 'badge/9/sound.mp3', themeSoundUpdatedAt: 's2' },
+    ]);
+    assert.equal(await getActiveBadgeAcTheme(f.ctx, { _id: 42 }, f.route, { _id: 'system' }), null);
+});

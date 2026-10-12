@@ -10,6 +10,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type { RemoteAsset } from '../interface';
+import { backgroundVideoMediaType } from './background_video_path';
 
 interface AssetStorageConfig {
     storageEnabled?: boolean;
@@ -65,6 +66,8 @@ const TYPES: Record<string, string[]> = {
 export function eligibleAsset(path: string, contentType: string) {
     if (typeof path !== 'string' || /[\\\u0000-\u001f?#%]/.test(path)
         || path.split('/').some((part) => !part || part === '.' || part === '..')) return false;
+    const backgroundType = backgroundVideoMediaType(path);
+    if (backgroundType) return contentType === backgroundType;
     const ext = extname(path).toLowerCase();
     if (['.sb3', '.sprite3'].includes(ext)) return /^scratch\/[^/]+\/[a-f0-9]{24}\.(?:sb3|sprite3)$/.test(path)
         && ['application/octet-stream', `application/x.scratch${ext}`].includes(contentType);
@@ -81,7 +84,7 @@ export function eligibleAsset(path: string, contentType: string) {
 }
 
 export function validRemoteAsset(asset: RemoteAsset) {
-    return asset && /^media\/v1\/[a-f0-9]{64}\.(png|jpe?g|gif|webp|avif|svg|ico|mp3|ogg|wav|m4a|sb3|sprite3)$/.test(asset.key)
+    return asset && /^media\/v1\/[a-f0-9]{64}\.(png|jpe?g|gif|webp|avif|svg|ico|mp3|ogg|wav|m4a|mp4|webm|sb3|sprite3)$/.test(asset.key)
         && /^[a-f0-9]{64}$/.test(asset.sha256) && Number.isSafeInteger(asset.size) && asset.size > 0
         && typeof asset.contentType === 'string' && typeof asset.bucket === 'string' && typeof asset.region === 'string';
 }

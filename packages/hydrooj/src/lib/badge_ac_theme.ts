@@ -44,6 +44,7 @@ export async function getActiveBadgeAcTheme(
             short: 1,
             title: 1,
             backgroundImagePath: 1,
+            backgroundVideoPath: 1,
             acImagePath: 1,
             acImageUpdatedAt: 1,
             themeSoundPath: 1,
@@ -51,7 +52,7 @@ export async function getActiveBadgeAcTheme(
         })
         .toArray();
     const themedBadges = badges.filter((badge: any) => (
-        badge.backgroundImagePath || badge.acImagePath || badge.themeSoundPath
+        badge.backgroundImagePath || badge.backgroundVideoPath || badge.acImagePath || badge.themeSoundPath
     ));
     // This is an extension field rather than a registered User setting, so it
     // is intentionally absent from the curated User instance. Read it from
@@ -65,7 +66,7 @@ export async function getActiveBadgeAcTheme(
     const activeBadge = themedBadges.find((badge: any) => Number(badge._id) === selectedBadgeId)
         || userBadges.map((userBadge: any) => badgeMap.get(Number(userBadge.badgeId)))
             .find((badge: any) => badge && (
-                badge.backgroundImagePath || badge.acImagePath || badge.themeSoundPath
+                badge.backgroundImagePath || badge.backgroundVideoPath || badge.acImagePath || badge.themeSoundPath
             ));
     if (!activeBadge || (!activeBadge.acImagePath && !activeBadge.themeSoundPath)) return null;
 

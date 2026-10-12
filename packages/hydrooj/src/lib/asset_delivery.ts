@@ -64,6 +64,7 @@ const MEDIA_TYPES: Record<string, string> = {
     'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp',
     'image/avif': '.avif', 'image/svg+xml': '.svg', 'image/x-icon': '.ico',
     'image/vnd.microsoft.icon': '.ico', 'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav',
+    'video/mp4': '.mp4', 'video/webm': '.webm',
     'audio/wave': '.wav', 'audio/x-wav': '.wav', 'audio/mp4': '.m4a', 'audio/x-m4a': '.m4a',
 };
 
@@ -191,6 +192,7 @@ export class AssetDelivery {
         const scratchProject = /^scratch\/[^/]+\/[a-f0-9]{24}\.(sb3|sprite3)$/.exec(source?.path || '');
         const scratchArchive = scratchProject && ['application/octet-stream', `application/x.scratch.${scratchProject[1]}`].includes(type)
             && source.meta.size <= 20 * 1024 * 1024;
+        if (type.startsWith('video/') && (!source?.meta?.remoteAsset || requireUpload || source.variant)) return null;
         const extension = scratchArchive ? `.${scratchProject[1]}` : MEDIA_TYPES[type];
         if (source?.decoration && (!['home-poster', 'badge'].includes(source.decoration)
             || !/^image\/(png|jpeg|gif|webp|avif)$/.test(type) || source.meta.size > 8 * 1024 * 1024
@@ -278,7 +280,7 @@ export class AssetDelivery {
             if (remote.bucket !== job.config.bucket || remote.region !== job.config.region
                 || remote.size !== source.meta.size || remote.contentType !== source.meta['Content-Type']
                 || !/^[a-f0-9]{64}$/.test(remote.sha256)
-                || !/^media\/v1\/[a-f0-9]{64}\.(png|jpg|jpeg|gif|webp|avif|svg|ico|mp3|ogg|wav|m4a|sb3|sprite3)$/.test(remote.key)) return false;
+                || !/^media\/v1\/[a-f0-9]{64}\.(png|jpg|jpeg|gif|webp|avif|svg|ico|mp3|ogg|wav|m4a|mp4|webm|sb3|sprite3)$/.test(remote.key)) return false;
             this.redirect(handler, job.config, remote.key);
             return true;
         }

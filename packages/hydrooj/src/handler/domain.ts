@@ -14,6 +14,9 @@ import type { DomainDoc } from '../interface';
 import { tryRedirectAsset } from '../lib/asset_delivery';
 import avatar from '../lib/avatar';
 import {
+    BACKGROUND_VIDEO_MAX_SIZE, deleteBackgroundVideo, isBackgroundVideoPath, storeBackgroundVideo,
+} from '../lib/background_video';
+import {
     createDomainAvatarTarget, DOMAIN_AVATAR_MAX_SIZE, domainAvatarPath, isOwnedDomainAvatarPath, normalizeDomainAvatar,
 } from '../lib/domain_avatar';
 import { withDomainMembershipRemoval } from '../lib/domain_membership';
@@ -211,6 +214,22 @@ class DomainRankingSettingHandler extends ManageHandler {
 }
 
 class DomainHomePosterHandler extends ManageHandler {
+    private async savePosterFields(fields: Record<string, string>) {
+        const domainId = this.domain._id;
+        const legacy = getHomePosterConfig({ _id: domainId });
+        // Migrate only legacy representations. Another request may already have
+        // saved an image or video while this upload was reaching object storage.
+        await domain.coll.updateOne({ _id: domainId, $expr: { $ne: [{ $type: '$homePoster' }, 'object'] } }, [{
+            $set: { homePoster: { $cond: [
+                { $eq: [{ $type: '$homePoster' }, 'string'] },
+                { image: '$homePoster' },
+                { $literal: Object.fromEntries(Object.entries(legacy).filter(([, value]) => value !== undefined)) },
+            ] } },
+        }]);
+        // Keep domain hooks/cache invalidation and change only the edited medium.
+        return domain.edit(domainId, Object.fromEntries(Object.entries(fields).map(([key, value]) => [`homePoster.${key}`, value])));
+    }
+
     @param('saved', Types.Int, true)
     @param('cleared', Types.Int, true)
     async get(domainId: string, saved = 0, cleared = 0) {
@@ -220,6 +239,8 @@ class DomainHomePosterHandler extends ManageHandler {
                 query: { v: config.updatedAt || '' },
             });
         }
+        if (config.videoPath) config.video = this.url('home_background_video', { query: { v: config.videoUpdatedAt || '' } });
+        if (config.videoPosterPath) config.videoPoster = this.url('home_background_video_poster', { query: { v: config.videoUpdatedAt || '' } });
         this.response.template = 'domain_home_poster.html';
         this.response.body = {
             domain: this.domain,
@@ -228,6 +249,7 @@ class DomainHomePosterHandler extends ManageHandler {
             cleared,
             recommendedRatio: '18:5',
             recommendedSize: '2160 x 600',
+            videoMaxSizeMb: BACKGROUND_VIDEO_MAX_SIZE / 1024 / 1024,
         };
     }
 
@@ -242,25 +264,69 @@ class DomainHomePosterHandler extends ManageHandler {
         const filename = `home-poster-${Date.now()}${ext}`;
         const storagePath = `domain/${domainId}/${filename}`;
         await storage.put(storagePath, file.filepath, this.user._id);
-        if (oldConfig.storagePath && oldConfig.storagePath !== storagePath) {
-            storage.del([oldConfig.storagePath], this.user._id).catch(() => undefined);
-        }
         const updatedAt = new Date().toISOString();
-        await domain.edit(domainId, {
-            homePoster: {
+        try {
+            await this.savePosterFields({
                 image: this.url('home_poster_image', { query: { v: updatedAt } }),
                 storagePath,
                 updatedAt,
-            },
-        });
+            });
+        } catch (error) {
+            await storage.del([storagePath], this.user._id).catch(() => undefined);
+            throw error;
+        }
+        if (oldConfig.storagePath && oldConfig.storagePath !== storagePath) {
+            storage.del([oldConfig.storagePath], this.user._id).catch(() => undefined);
+        }
         this.response.redirect = this.url('domain_home_poster', { query: { saved: 1 } });
     }
 
     @param('operation', Types.String)
     async postClear(domainId: string) {
         const oldConfig = getHomePosterConfig(this.domain);
+        await this.savePosterFields({ image: '', storagePath: '', updatedAt: '' });
         if (oldConfig.storagePath) storage.del([oldConfig.storagePath], this.user._id).catch(() => undefined);
-        await domain.edit(domainId, { homePoster: { image: '' } });
+        this.response.redirect = this.url('domain_home_poster', { query: { cleared: 1 } });
+    }
+
+    @param('operation', Types.String)
+    async postUploadVideo() {
+        const domainId = this.domain._id;
+        const oldConfig = getHomePosterConfig(this.domain);
+        const prefix = `domain/${domainId}/home-video`;
+        const uploaded = await storeBackgroundVideo(this.request.files?.file, this.request.files?.poster, this.user._id, prefix);
+        try {
+            await this.savePosterFields({
+                ...uploaded,
+                video: this.url('home_background_video', { query: { v: uploaded.videoUpdatedAt } }),
+                videoPoster: this.url('home_background_video_poster', { query: { v: uploaded.videoUpdatedAt } }),
+            });
+        } catch (error) {
+            await deleteBackgroundVideo([uploaded.videoPath, uploaded.videoPosterPath], this.user._id).catch(() => undefined);
+            throw error;
+        }
+        const oldPaths = [
+            isBackgroundVideoPath(prefix, oldConfig.videoPath) ? oldConfig.videoPath : null,
+            isBackgroundVideoPath(prefix, oldConfig.videoPosterPath, true) ? oldConfig.videoPosterPath : null,
+        ].filter((value): value is string => !!value);
+        await deleteBackgroundVideo(oldPaths, this.user._id).catch(() => undefined);
+        const url = this.url('domain_home_poster', { query: { saved: 1 } });
+        if (this.request.json || `${this.request.headers.accept || ''}`.includes('application/json')) {
+            this.response.type = 'application/json';
+            this.response.body = { success: true, url };
+        } else this.response.redirect = url;
+    }
+
+    @param('operation', Types.String)
+    async postClearVideo() {
+        const domainId = this.domain._id;
+        const oldConfig = getHomePosterConfig(this.domain);
+        await this.savePosterFields({ video: '', videoPath: '', videoPoster: '', videoPosterPath: '', videoUpdatedAt: '' });
+        const prefix = `domain/${domainId}/home-video`;
+        await deleteBackgroundVideo([
+            isBackgroundVideoPath(prefix, oldConfig.videoPath) ? oldConfig.videoPath : null,
+            isBackgroundVideoPath(prefix, oldConfig.videoPosterPath, true) ? oldConfig.videoPosterPath : null,
+        ].filter((value): value is string => !!value), this.user._id).catch(() => undefined);
         this.response.redirect = this.url('domain_home_poster', { query: { cleared: 1 } });
     }
 }

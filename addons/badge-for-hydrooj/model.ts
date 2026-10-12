@@ -22,6 +22,9 @@ export interface Badge {
     domainId?: string;
     backgroundImagePath?: string;
     backgroundImageUpdatedAt?: string;
+    backgroundVideoPath?: string;
+    backgroundVideoPosterPath?: string;
+    backgroundVideoUpdatedAt?: string;
     acImagePath?: string;
     acImageUpdatedAt?: string;
     themeSoundPath?: string;

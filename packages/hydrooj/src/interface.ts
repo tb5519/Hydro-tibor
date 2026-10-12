@@ -379,6 +379,11 @@ export interface DomainDoc extends Record<string, any> {
         image: string;
         storagePath?: string;
         updatedAt?: string;
+        video?: string;
+        videoPath?: string;
+        videoPoster?: string;
+        videoPosterPath?: string;
+        videoUpdatedAt?: string;
     };
     /** Point-lottery rules owned by this domain. Legacy Tang domains use the system-wide configuration. */
     pointLottery?: {

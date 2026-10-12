@@ -81,13 +81,21 @@ async function attachOwnedBadges(ctx: Context, udocs: any[], currentDomainId: st
                 ? `/d/${encodeURIComponent(currentDomainId)}/badge/${badge._id}/background`
                 + `?v=${encodeURIComponent(badge.backgroundImageUpdatedAt || '')}`
                 : '',
+            backgroundVideo: badge.backgroundVideoPath
+                ? `/d/${encodeURIComponent(currentDomainId)}/badge/${badge._id}/background-video`
+                + `?v=${encodeURIComponent(badge.backgroundVideoUpdatedAt || '')}`
+                : '',
+            backgroundVideoPoster: badge.backgroundVideoPosterPath
+                ? `/d/${encodeURIComponent(currentDomainId)}/badge/${badge._id}/background-video-poster`
+                + `?v=${encodeURIComponent(badge.backgroundVideoUpdatedAt || '')}`
+                : '',
             acImage: badge.acImagePath
                 ? `/d/${encodeURIComponent(currentDomainId)}/badge/${badge._id}/ac-image?v=${encodeURIComponent(badge.acImageUpdatedAt || '')}`
                 : '',
             themeSound: badge.themeSoundPath
                 ? `/d/${encodeURIComponent(currentDomainId)}/badge/${badge._id}/theme-sound?v=${encodeURIComponent(badge.themeSoundUpdatedAt || '')}`
                 : '',
-            isTheme: !!(badge.backgroundImagePath || badge.acImagePath || badge.themeSoundPath),
+            isTheme: !!(badge.backgroundImagePath || badge.backgroundVideoPath || badge.acImagePath || badge.themeSoundPath),
         });
     }
     for (const udoc of udocs) {
@@ -102,6 +110,8 @@ function getBadgeProfileBackground(udoc: any) {
             id: badge.id,
             name: badge.displayName,
             image: badge.backgroundImage,
+            video: badge.backgroundVideo,
+            videoPoster: badge.backgroundVideoPoster,
             backgroundColor: badge.backgroundColor,
             acImage: badge.acImage,
             themeSound: badge.themeSound,
@@ -118,6 +128,8 @@ function getBadgeProfileBackground(udoc: any) {
     return {
         selectedId: selectedTheme?.id || 0,
         image: selectedTheme?.image || '',
+        video: selectedTheme?.video || '',
+        videoPoster: selectedTheme?.videoPoster || '',
         placeholderColor: selectedTheme?.backgroundColor || '#17233a',
         currentTheme: selectedTheme,
         themes,

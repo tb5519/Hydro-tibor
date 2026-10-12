@@ -144,7 +144,7 @@ export function createAssetStorageModel(dependencies: {
             return `${nanoid(3).replace(/[_-]/g, '0')}/${nanoid().replace(/[_-]/g, '0')}${ext}`.toLowerCase();
         }
 
-        static async put(path: string, file: string | Buffer | Readable, owner?: number) {
+        static async put(path: string, file: string | Buffer | Readable, owner?: number, options: { remoteOnly?: boolean } = {}) {
             const meta = {};
             const previous = await this.coll.find({ path, autoDelete: null }, { projection: { _id: 1 } }).toArray();
             meta['Content-Type'] = mime(path);
@@ -164,6 +164,7 @@ export function createAssetStorageModel(dependencies: {
                     await this.collectRemote(remoteAsset).catch(() => undefined);
                 }
             } else {
+                if (options.remoteOnly) throw new Error('视频背景需要已启用的对象存储，请检查对象存储配置。');
                 await storage.put(_id, file, meta);
                 try {
                     const { metaData, size, etag } = await storage.getMeta(_id);

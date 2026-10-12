@@ -17,6 +17,7 @@ import {
 import { DomainDoc, Setting } from '../interface';
 import { tryRedirectAsset } from '../lib/asset_delivery';
 import avatar, { validate } from '../lib/avatar';
+import { isBackgroundVideoPath, redirectBackgroundVideo } from '../lib/background_video';
 import { getBadgeHonorWall } from '../lib/badge_honor_wall';
 import { isPublicHomePosterPath } from '../lib/decorative_image_access';
 import { DOMAIN_AVATAR_MAX_SIZE, normalizeDomainAvatar } from '../lib/domain_avatar';
@@ -601,6 +602,10 @@ export class HomeHandler extends Handler {
                 query: { v: homePoster.updatedAt || '' },
             });
         }
+        if (homePoster.videoPath) homePoster.video = this.url('home_background_video', { query: { v: homePoster.videoUpdatedAt || '' } });
+        if (homePoster.videoPosterPath) {
+            homePoster.videoPoster = this.url('home_background_video_poster', { query: { v: homePoster.videoUpdatedAt || '' } });
+        }
         const pointLotteryBadgeStyles = await pointLotteryBadgeStylesPromise;
         this.response.template = 'main.html';
         this.response.body = {
@@ -707,6 +712,36 @@ class HomePosterImageHandler extends Handler {
         this.response.body = 'Image not available';
         this.response.addHeader('Cache-Control', 'no-store');
         this.response.addHeader('X-Content-Type-Options', 'nosniff');
+    }
+}
+
+class HomeBackgroundVideoHandler extends Handler {
+    noCheckPermView = true;
+
+    async get() {
+        const config = getHomePosterConfig(this.domain);
+        if (!isBackgroundVideoPath(`domain/${this.domain._id}/home-video`, config.videoPath)) throw new NotFoundError('home-video');
+        await redirectBackgroundVideo(this, config.videoPath);
+    }
+
+    async head() { await this.get(); }
+
+    async onerror() {
+        this.response.type = 'text/plain';
+        this.response.status = 404;
+        this.response.body = 'Video not available';
+        this.response.addHeader('Cache-Control', 'no-store');
+        this.response.addHeader('X-Content-Type-Options', 'nosniff');
+    }
+}
+
+class HomeBackgroundVideoPosterHandler extends HomeBackgroundVideoHandler {
+    async get() {
+        const config = getHomePosterConfig(this.domain);
+        if (!isBackgroundVideoPath(`domain/${this.domain._id}/home-video`, config.videoPosterPath, true)) {
+            throw new NotFoundError('home-video-poster');
+        }
+        await redirectBackgroundVideo(this, config.videoPosterPath);
     }
 }
 
@@ -1387,6 +1422,8 @@ export async function apply(ctx: Context) {
     ctx.Route('badge_honor_wall', '/badge-honor-wall', BadgeHonorWallHandler, PERM.PERM_VIEW_RANKING);
     ctx.Route('image_warmup', '/image-warmup', ImageWarmupHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_poster_image', '/home/poster', HomePosterImageHandler);
+    ctx.Route('home_background_video', '/home/video', HomeBackgroundVideoHandler);
+    ctx.Route('home_background_video_poster', '/home/video-poster', HomeBackgroundVideoPosterHandler);
     ctx.Route('service_worker_config', '/service-worker-config', ServiceWorkerConfigHandler);
     ctx.Route('point_lottery_prize_image', '/lottery/prize/:filename', PointLotteryPrizeImageHandler);
     ctx.Route('point_lottery_draw', '/lottery/draw', PointLotteryDrawHandler, PRIV.PRIV_USER_PROFILE);
