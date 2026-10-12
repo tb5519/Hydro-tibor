@@ -1,5 +1,4 @@
-import MarkdownIt from 'markdown-it';
-import Katex from '../backendlib/markdown-it-katex';
+import { createObjectiveMarkdown } from '../common/objective-markdown';
 
 export interface LearningSummary {
   total: number;
@@ -91,7 +90,7 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
   const doc = host.ownerDocument;
   const win = doc.defaultView;
   const lifetime = new win.AbortController();
-  const markdown = new MarkdownIt({ html: false, linkify: true }).use(Katex);
+  const markdown = createObjectiveMarkdown();
   const sessions = new Map<string, SessionState>();
   const participatedSessions = learning.sessions.filter((session) => session.answered > 0);
   const sessionOrdinals = new Map([...participatedSessions]

@@ -113,6 +113,23 @@ async function harness(data = initial(), handler = async () => answerResult()) {
 }
 
 describe('daily quiz learner page', () => {
+    it('preserves Python power operators in the reported wrong-answer explanation', async () => {
+        const analysis = '**答案：B（错误）。**\n\n左侧 4**2=16，右侧先算 2**2=4，再乘2得8。16 与8不相等，所以实际输出 False。';
+        const item = question({ kind: 'judge', stem: 'Python 代码`print(4 ** 2 == 2 * 2 ** 2)`执行后的输出是True。(  )', options: ['正确', '错误'] });
+        const h = await harness(initial({ state: state({ current: item }) }), async () => answerResult({
+            current: { ...item, feedback: feedback({ correct: false, answers: ['B'], selectedAnswers: ['A'], earnedPoints: 0, analysis }) },
+        }));
+        try {
+            assert.equal(h.query('.daily-quiz__question code').textContent, 'print(4 ** 2 == 2 * 2 ** 2)');
+            await h.click('input[value=A]');
+            await h.submit();
+            const detail = h.query('.daily-quiz__analysis .typo');
+            assert.match(detail.textContent, /左侧 4\*\*2=16，右侧先算 2\*\*2=4/);
+            assert.deepEqual([...detail.querySelectorAll('strong')].map((node) => node.textContent), ['答案：B（错误）。']);
+            assert.match(h.query('button[type=submit]').textContent, /知道了/);
+        } finally { await h.cleanup(); }
+    });
+
     it('safely serializes the initial snapshot without navigation or hidden answer markup', () => {
         const data = initial({ state: state({ current: question({ title: '"><script>window.bad=true</script>' }) }) });
         const dom = new JSDOM(env.render('daily_quiz.html', { dailyQuiz: data }));

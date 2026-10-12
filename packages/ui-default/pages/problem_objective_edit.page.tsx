@@ -1,10 +1,9 @@
 /* eslint-disable react-refresh/only-export-components -- Hydro registers page components through NamedPage. */
-import MarkdownIt from 'markdown-it';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import Katex from 'vj/backendlib/markdown-it-katex';
 import { NamedPage } from 'vj/misc/Page';
 import { request } from 'vj/utils';
+import { createObjectiveMarkdown } from '../common/objective-markdown';
 
 type Kind = 'single' | 'multiple' | 'judge';
 interface Objective {
@@ -38,7 +37,7 @@ const parseTags = (value: string) =>
     .map((tag) => tag.trim())
     .filter(Boolean);
 // Raw HTML is disabled; MarkdownIt also rejects unsafe link protocols.
-const markdown = new MarkdownIt({ html: false, linkify: true }).use(Katex);
+const markdown = createObjectiveMarkdown();
 
 function MarkdownPreview({ value, placeholder }: { value: string, placeholder?: string }) {
   const html = useMemo(() => markdown.render(value), [value]);

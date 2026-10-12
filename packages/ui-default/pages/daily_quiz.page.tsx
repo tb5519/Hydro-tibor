@@ -1,10 +1,9 @@
 /* eslint-disable react-refresh/only-export-components -- Hydro registers page components through NamedPage. */
-import MarkdownIt from 'markdown-it';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import Katex from 'vj/backendlib/markdown-it-katex';
 import { NamedPage } from 'vj/misc/Page';
 import { request } from 'vj/utils';
+import { createObjectiveMarkdown } from '../common/objective-markdown';
 
 interface Feedback {
   correct: boolean;
@@ -50,7 +49,7 @@ interface InitialData {
 type Post = (url: string, data: Record<string, any>) => Promise<{ state: QuizState }>;
 
 // Match the existing objective editor: disable raw HTML and retain safe Markdown and math.
-const markdown = new MarkdownIt({ html: false, linkify: true }).use(Katex);
+const markdown = createObjectiveMarkdown();
 const letter = (index: number) => String.fromCharCode(65 + index);
 
 function Markdown({ value, id }: { value: string, id?: string }) {

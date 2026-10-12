@@ -1,10 +1,9 @@
 /* eslint-disable react-refresh/only-export-components -- Hydro registers page components through NamedPage. */
-import MarkdownIt from 'markdown-it';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import Katex from 'vj/backendlib/markdown-it-katex';
 import { NamedPage } from 'vj/misc/Page';
 import { request } from 'vj/utils';
+import { createObjectiveMarkdown } from '../common/objective-markdown';
 
 type Kind = 'single' | 'multiple' | 'judge';
 interface Material {
@@ -48,7 +47,7 @@ const letter = (index: number) => String.fromCharCode(65 + index);
 
 function MarkdownPreview({ value, fileBaseUrl }: { value: string, fileBaseUrl: string }) {
   const html = useMemo(() => {
-    const markdown = new MarkdownIt({ html: false, linkify: true }).use(Katex);
+    const markdown = createObjectiveMarkdown();
     const normalizeLink = markdown.normalizeLink.bind(markdown);
     markdown.normalizeLink = (url) => {
       if (!url.startsWith('file://')) return normalizeLink(url);

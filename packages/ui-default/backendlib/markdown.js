@@ -25,6 +25,7 @@ const MergeCells = require('markdown-it-merge-cells');
 const { Media } = require('./markdown-it-media');
 const { default: Katex } = require('./markdown-it-katex');
 const { xssProtector } = require('./markdown-it-xss');
+const { preserveNumericPowerOperators } = require('../common/objective-markdown');
 
 class Markdown extends MarkdownIt {
   constructor() {
@@ -40,6 +41,7 @@ class Markdown extends MarkdownIt {
     this.use(Anchor);
     this.use(TOC);
     this.use(Katex);
+    this.use(preserveNumericPowerOperators);
     this.use(MergeCells);
     this.use(xssProtector);
   }

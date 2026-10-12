@@ -1,9 +1,8 @@
-import MarkdownIt from 'markdown-it';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import Katex from 'vj/backendlib/markdown-it-katex';
 import { NamedPage } from 'vj/misc/Page';
 import { request } from 'vj/utils';
+import { createObjectiveMarkdown } from '../common/objective-markdown';
 
 interface Question {
   id: string | number;
@@ -31,7 +30,7 @@ interface QuizState {
   readOnly: boolean;
 }
 type Post = (url: string, body: any) => Promise<{ state: QuizState }>;
-const markdown = new MarkdownIt({ html: false, linkify: true }).use(Katex);
+const markdown = createObjectiveMarkdown();
 const kinds = { single: '单选题', multiple: '多选题', judge: '判断题' };
 const answered = (item: Question) => typeof item.correct === 'boolean';
 const letter = (index: number) => String.fromCharCode(65 + index);

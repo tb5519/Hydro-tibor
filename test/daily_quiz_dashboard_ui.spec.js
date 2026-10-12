@@ -121,6 +121,35 @@ test('inline details prioritize wrong answers and render judgment, choices and s
     } finally { h.close(); }
 });
 
+test('Python powers remain readable in teacher review, practice history and upcoming questions', async () => {
+    const data = learning();
+    const item = data.questions[0];
+    item.stem = 'Python 代码`print(4 ** 2 == 2 * 2 ** 2)`执行后的输出是True。(  )';
+    item.options = ['正确', '错误'];
+    item.answers = ['B'];
+    item.selected = ['A'];
+    item.analysis = '**答案：B（错误）。**\n\n左侧 4**2=16，右侧先算 2**2=4，再乘2得8。16 与8不相等，所以实际输出 False。';
+    const h = harness(initial(), async (url) => ok(url.includes('session=')
+        ? { report: { ...report(), items: [item] } }
+        : url.includes('upcoming=') ? { upcoming: upcoming({ items: [{ ...item, index: 1, domainId: 'python', sourceId: 1245, current: true, correct: null, selected: null }] }) }
+            : { learning: data }));
+    function assertPowers() {
+        const detail = h.get('.dql-analysis .dql-markdown');
+        assert.match(detail.textContent, /左侧 4\*\*2=16，右侧先算 2\*\*2=4/);
+        assert.deepEqual([...detail.querySelectorAll('strong')].map((node) => node.textContent), ['答案：B（错误）。']);
+        assert.equal(h.get('.dql-question-body code').textContent, 'print(4 ** 2 == 2 * 2 ** 2)');
+    }
+    try {
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+        assertPowers();
+        await h.click('[data-learning-view="sessions"]');
+        await h.click('[data-learning-action="session"][data-learning-session="11-2026-10-08"]');
+        assertPowers();
+        await h.click('[data-learning-view="upcoming"]');
+        assertPowers();
+    } finally { h.close(); }
+});
+
 test('teacher question details and practice history render math in stems, options and analysis without changing code', async () => {
     const data = learning();
     const item = data.questions[0];
