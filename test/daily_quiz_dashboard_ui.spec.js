@@ -576,6 +576,40 @@ test('upcoming questions load on demand with math and collapsed teacher solution
     } finally { h.close(); }
 });
 
+test('upcoming review markers follow the actual planned question and update after a teacher replacement', async () => {
+    const data = upcoming();
+    data.items[0] = { ...data.items[0], isReview: true, wrongCount: 3 };
+    data.items[1] = { ...data.items[1], isReview: false, wrongCount: 0 };
+    const changed = upcoming(); changed.items[0].sourceId = 999;
+    changed.items[0] = { ...changed.items[0], isReview: false, wrongCount: 0 };
+    const h = harness(initial(), async (url, options) => ok(options?.method === 'POST' ? { upcoming: changed }
+        : url.includes('upcoming=') ? { upcoming: data } : { learning: learning() }));
+    try {
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+        await h.click('[data-learning-view="upcoming"]');
+        const review = h.get('[data-learning-upcoming-question="101"]');
+        assert.equal(review.querySelector('[data-learning-upcoming-review]').textContent, '错题复习');
+        assert.match(review.querySelector('summary').textContent, /首先看到.*历史答错 3 次/);
+        assert.equal(h.get('[data-learning-upcoming-question="102"] [data-learning-upcoming-review]'), null);
+        await h.click('[data-learning-action="replace-upcoming"]');
+        assert.equal(h.get('[data-learning-upcoming-review]'), null, 'the previous question marker must not persist after replacement');
+        assert(!h.get('[data-learning-upcoming-panel]').textContent.includes('历史答错'));
+        assert(h.get('[data-learning-upcoming-question="999"]'));
+    } finally { h.close(); }
+});
+
+test('the next practice forecast also distinguishes previously wrong review questions', async () => {
+    const next = upcoming({ day: '2026-10-10' }); next.items[1] = { ...next.items[1], isReview: true, wrongCount: 2 };
+    const data = upcoming({ status: 'completed', remaining: 0, items: [], next });
+    const h = harness(initial(), async (url) => ok(url.includes('upcoming=') ? { upcoming: data } : { learning: learning() }));
+    try {
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+        await h.click('[data-learning-view="upcoming"]');
+        assert.equal(h.root.querySelectorAll('[data-learning-upcoming-review]').length, 1);
+        assert.match(h.get('[data-learning-upcoming-question="102"] summary').textContent, /错题复习.*历史答错 2 次/);
+    } finally { h.close(); }
+});
+
 test('completed learners see no repeat today and a separately labelled next-day forecast', async () => {
     const data = upcoming({ status: 'completed', total: 2, remaining: 0, projected: false, items: [],
         next: upcoming({ day: '2026-10-10' }) });

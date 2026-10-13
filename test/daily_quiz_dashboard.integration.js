@@ -616,6 +616,8 @@ async function run() {
             assert.deepEqual(preview.items.map((item) => item.id), [2, 3]);
             assert.equal(preview.items[0].awaitingAcknowledgement, true);
             assert.equal(preview.items[0].correct, false);
+            assert.equal(preview.items[0].isReview, false, 'A first mistake awaiting acknowledgement is not an earlier review');
+            assert.equal(preview.items[0].wrongCount, 0);
             assert.equal(preview.remaining, 2);
             const filtered = await readUpcoming(uid, python);
             assert.equal(filtered.remaining, 2);
@@ -647,6 +649,68 @@ async function run() {
         assert.equal(disabled.status, 'disabled');
         assert.deepEqual(disabled.items, []);
         assert.equal(disabled.next, undefined);
+    });
+    await check('Upcoming reviews show prior real mistakes across current and next rounds without counting the current answer or other sources', async () => {
+        const uid = await users.createInDomain(python, 'upcoming-review@example.test', 'upcoming_review', 'LocalTest123!');
+        await domains.setUserInDomain(python, uid, { join: true, role: 'default' });
+        await domains.setUserInDomain(cpp, uid, { join: true, role: 'default' });
+        const policy = { version: 1, enabled: true, cooldownRounds: 3, domains: [
+            { domainId: python, enabled: true, count: 2, tags: [], points: [3, 3] },
+            { domainId: cpp, enabled: true, count: 1, tags: [], points: [3] },
+        ] };
+        await daily.savePolicy(uid, policy, teacherId);
+        const oldDay = offsetDay(-7);
+        const laterDay = offsetDay(-6);
+        const mistake = question(1, python, false, laterDay, { cancelled: true });
+        try {
+            await session(uid, [question(1, python, false, oldDay), question(2, python, null, oldDay),
+                question(2, cpp, false, oldDay)], oldDay);
+            await session(uid, [mistake, { ...mistake }, question(2, python, false, laterDay),
+                question(2, cpp, false, laterDay)], laterDay);
+            await session(uid, [question(1, python, null), question(1, cpp, null), question(2, python, null)]);
+            await daily.sessionColl.updateOne({ _id: `${uid}-${today}` }, { $set: { round: 10 } });
+            await daily.progressColl.insertOne({ _id: `${uid}:${cpp}:${sourceIds[cpp][1]}`, uid, domainId: cpp,
+                sourceId: sourceIds[cpp][1], mastered: false, lastRound: 1, lastDay: laterDay });
+            await session(uid, [question(3, python, false, offsetDay(2)), question(3, cpp, false, offsetDay(2))], offsetDay(2));
+            let preview = await readUpcoming(uid);
+            const lookup = (value, did, index) => value.items.find((item) => item.domainId === did && item.sourceId === sourceIds[did][index - 1]);
+            const review = (item) => ({ isReview: item.isReview, wrongCount: item.wrongCount });
+            assert.deepEqual(review(lookup(preview, python, 1)), { isReview: true, wrongCount: 2 },
+                'Cancelled saved mistakes count, duplicate snapshots count once');
+            assert.deepEqual(review(lookup(preview, python, 2)), { isReview: true, wrongCount: 1 },
+                'Unanswered carryovers do not add a historical mistake');
+            assert.deepEqual(review(lookup(preview, cpp, 1)), { isReview: false, wrongCount: 0 },
+                'The same local source id in another domain is not a review');
+            const current = await daily.sessionColl.findOne({ _id: `${uid}-${today}` });
+            await daily.sessionColl.updateOne({ _id: current._id }, {
+                $set: { 'items.0.answer': question(1, python, false).answer },
+            });
+            preview = await readUpcoming(uid);
+            assert(lookup(preview, python, 1).awaitingAcknowledgement);
+            assert.equal(lookup(preview, python, 1).wrongCount, 2, 'This attempt is excluded until it becomes a previous round');
+            const filtered = await readUpcoming(uid, cpp);
+            assert.deepEqual(filtered.items.map(review), [{ isReview: false, wrongCount: 0 }]);
+            assert.equal(filtered.items[0].index, 2);
+            await daily.sessionColl.updateOne({ _id: current._id }, { $set: {
+                items: [question(1, python, true), question(1, cpp, true), question(2, python, false)], cursor: 3, settledAnswers: 0,
+            } });
+            const before = await readOnlyState();
+            preview = await readUpcoming(uid);
+            assert.equal(preview.status, 'completed');
+            assert.deepEqual(preview.items, []);
+            assert.equal(preview.next.status, 'ready');
+            assert.deepEqual(review(lookup(preview.next, cpp, 2)), { isReview: true, wrongCount: 2 },
+                'The projected next round receives the same historical review annotation');
+            assert.deepEqual(review(lookup(preview.next, python, 3)), { isReview: false, wrongCount: 0 },
+                'A future saved answer cannot affect an earlier preview');
+            assert.deepEqual(await readOnlyState(), before, 'Review annotations do not settle or create learner state');
+        } finally {
+            await daily.sessionColl.deleteMany({ uid });
+            await daily.progressColl.deleteMany({ uid });
+            await daily.planColl.deleteMany({ uid });
+            await daily.configColl.deleteOne({ _id: uid });
+            for (const did of [python, cpp]) await domains.setUserInDomain(did, uid, { join: false, role: 'guest' });
+        }
     });
     await check('Upcoming attachment URLs verify teacher scope and source identity, including source changes after preview', async () => {
         const uid = roster.notStarted.uid;
@@ -704,6 +768,9 @@ async function run() {
             assert.equal(preview.total, 3, 'Only one eligible Python material plus two C++ choices; missing attachment is skipped');
             assert.equal(preview.items.filter((item) => item.domainId === python)[0].sourceId, sourceIds[python][2]);
             assert.equal(preview.items.filter((item) => item.domainId === cpp)[0].sourceId, sourceIds[cpp][0], 'Due error review ranks before unseen choices');
+            assert.equal(preview.items.filter((item) => item.domainId === cpp)[0].isReview, false,
+                'A progress marker without an actual earlier answer is not treated as review history');
+            assert.equal(preview.items.filter((item) => item.domainId === cpp)[0].wrongCount, 0);
             assert.deepEqual(preview.items.map((item) => item.points), [2, 8, 10]);
             const actual = await daily.getSession(uid, fixedNow);
             const fields = (item) => [item.id, item.domainId, item.sourceId, item.points];

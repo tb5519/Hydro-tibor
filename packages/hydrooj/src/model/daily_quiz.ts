@@ -866,28 +866,74 @@ export interface AdminQuizUpcoming {
     total: number;
     remaining: number;
     currentQuestionId: number | null;
-    items: (ReturnType<typeof presentAdminQuizItem> & { current: boolean, awaitingAcknowledgement: boolean })[];
+    items: (ReturnType<typeof presentAdminQuizItem> & {
+        current: boolean, awaitingAcknowledgement: boolean, isReview: boolean, wrongCount: number;
+    })[];
     next?: AdminQuizUpcoming;
+}
+
+interface AdminQuizPriorMistake {
+    _id: string;
+    day: string;
+    round: number;
+    itemId: number;
+    domainId: string;
+    sourceId: number;
 }
 
 /** A preview reserves choices, but never creates a round, copies assets or settles answers. */
 export async function getAdminUpcoming(uid: number, classroom = '', now = new Date()): Promise<AdminQuizUpcoming> {
-    const present = (selection: UpcomingSelection): AdminQuizUpcoming => {
+    const remainingItems = (selection: UpcomingSelection) => ['ready', 'continue'].includes(selection.status)
+        ? selection.session?.items.slice(selection.session.cursor).filter((item) => !item.cancelled) || [] : [];
+    const present = (selection: UpcomingSelection, mistakes: Map<string, AdminQuizPriorMistake[]>): AdminQuizUpcoming => {
         const { session } = selection;
-        const remaining = ['ready', 'continue'].includes(selection.status)
-            ? session?.items.slice(session.cursor).filter((item) => !item.cancelled) || [] : [];
+        const remaining = remainingItems(selection);
         return {
             status: selection.status, day: selection.day, projected: selection.projected, checkedAt: now.toISOString(),
             requested: session?.requested || 0, total: session?.items.filter((item) => !item.cancelled).length || 0,
             remaining: remaining.length, currentQuestionId: remaining[0]?.id || null,
-            items: remaining.filter((item) => !classroom || item.domainId === classroom).map((item) => ({
-                ...presentAdminQuizItem(item, session.items.indexOf(item) + 1, session),
-                current: item.id === remaining[0]?.id, awaitingAcknowledgement: !!item.answer,
-            })),
-            ...(selection.next ? { next: present(selection.next) } : {}),
+            items: remaining.filter((item) => !classroom || item.domainId === classroom).map((item) => {
+                // Count mistakes before this round only. A first-time error still
+                // awaiting acknowledgement must not label its own slot a review.
+                const wrongCount = (mistakes.get(sourceKey(item)) || []).filter((attempt) => attempt._id !== session._id
+                    && (attempt.day < session.day || (attempt.day === session.day && attempt.round < session.round))).length;
+                return {
+                    ...presentAdminQuizItem(item, session.items.indexOf(item) + 1, session),
+                    current: item.id === remaining[0]?.id, awaitingAcknowledgement: !!item.answer,
+                    isReview: wrongCount > 0, wrongCount,
+                };
+            }),
+            ...(selection.next ? { next: present(selection.next, mistakes) } : {}),
         };
     };
-    return withSelectionLock(uid, beijingDay(now), async (token) => present(await selectAdminUpcoming(uid, now, token)));
+    return withSelectionLock(uid, beijingDay(now), async (token) => {
+        const selection = await selectAdminUpcoming(uid, now, token);
+        const selections = [selection, selection.next].filter(Boolean);
+        const sources = new Map(selections.flatMap(remainingItems)
+            .filter((item) => !classroom || item.domainId === classroom).map((item) => [sourceKey(item), item]));
+        // One compact query covers both the current preview and the projected
+        // next round. Neither question snapshots nor unrelated sources are read.
+        const history = sources.size ? await sessionColl.aggregate<AdminQuizPriorMistake>([
+            { $match: { uid, day: { $lte: selection.next?.day || selection.day }, 'items.answer.correct': false } },
+            { $unwind: '$items' },
+            { $match: { 'items.answer.correct': false, $or: [...sources.values()].map((item) => ({
+                'items.domainId': item.domainId, 'items.sourceId': item.sourceId,
+            })) } },
+            { $project: { _id: 1, day: 1, round: 1, itemId: '$items.id', domainId: '$items.domainId', sourceId: '$items.sourceId' } },
+        ]).toArray() : [];
+        const mistakes = new Map<string, AdminQuizPriorMistake[]>();
+        const seen = new Set<string>();
+        for (const attempt of history) {
+            const key = sourceKey(attempt);
+            const identity = `${attempt._id}:${attempt.itemId}:${key}`;
+            if (seen.has(identity)) continue;
+            seen.add(identity);
+            const entries = mistakes.get(key) || [];
+            entries.push(attempt);
+            mistakes.set(key, entries);
+        }
+        return present(selection, mistakes);
+    });
 }
 
 /** Intentional teacher mutation; no round, answer, progress or points are created. */

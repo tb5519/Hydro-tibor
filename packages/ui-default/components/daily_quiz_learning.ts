@@ -54,6 +54,7 @@ export interface QuizLearning {
 interface UpcomingQuestion extends LearningQuestion {
   current: boolean;
   awaitingAcknowledgement: boolean;
+  isReview?: boolean;
 }
 interface UpcomingQuiz {
   status: 'ready' | 'continue' | 'completed' | 'empty' | 'disabled';
@@ -202,8 +203,19 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
     const kind = { single: '单选', multiple: '多选', judge: '判断' }[item.kind] || item.kind;
     const status = item.awaitingAcknowledgement ? item.correct === false && item.analysis ? '待确认解析' : '待继续'
       : item.current ? '首先看到' : `第 ${item.index || index + 1} 题`;
-    name.append(el('strong', '', item.title || `第 ${index + 1} 题`));
-    name.append(el('small', '', [item.domainName, kind, item.points > 0 ? `答对 +${item.points} 积分` : '不计积分'].filter(Boolean).join(' · ')));
+    const title = el('div', 'dql-upcoming-title');
+    title.append(el('strong', '', item.title || `第 ${index + 1} 题`));
+    if (item.isReview === true) {
+      const badge = el('span', 'dql-upcoming-review', '错题复习');
+      badge.dataset.learningUpcomingReview = '';
+      title.append(badge);
+    }
+    name.append(title);
+    const metadata = el('small', '', [item.domainName, kind, item.points > 0 ? `答对 +${item.points} 积分` : '不计积分'].filter(Boolean).join(' · '));
+    if (item.isReview === true && Number.isFinite(item.wrongCount) && item.wrongCount > 0) {
+      metadata.append(el('span', 'dql-upcoming-errors', ` · 历史答错 ${Math.floor(item.wrongCount)} 次`));
+    }
+    name.append(metadata);
     summary.append(el('span', `dql-result ${item.awaitingAcknowledgement ? 'is-wrong' : 'is-upcoming'}`, status), name);
     const body = el('div', 'dql-question-body');
     if (item.awaitingAcknowledgement) {
