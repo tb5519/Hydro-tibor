@@ -283,6 +283,13 @@ async function run() {
         assert.deepEqual(retried.selected, ['A', 'C']);
         assert.equal(retried.round, 2);
         assert.equal(retried.sessionId, `${roster.completed.uid}-${today}`);
+        assert.equal(retried.wrongCount, 1);
+        assert.equal(retried.correctCount, 1);
+        assert.equal(retried.reviewRecovered, true);
+        const alwaysCorrect = learning.questions.find((item) => item.domainId === python && item.sourceId === sourceIds[python][0]);
+        assert.equal(alwaysCorrect.wrongCount, 0);
+        assert.equal(alwaysCorrect.correctCount, 2);
+        assert.equal(alwaysCorrect.reviewRecovered, false, 'An initially correct answer is not a recovered mistake');
         const priorRound = await get(roundUrl(roster.completed.uid, yesterday));
         status(priorRound, 200);
         assert.equal(priorRound.body.report.items.find((item) => item.domainId === cpp).correct, false);
@@ -502,6 +509,57 @@ async function run() {
             const initial = JSON.parse(managementDom.window.document.querySelector('[data-student-daily-form]').getAttribute('data-initial'));
             assert.deepEqual(initial.learning, await readLearning(roster.completed.uid));
         } finally { managementDom.window.close(); }
+    });
+
+    await check('Per-question attempts are cumulative, chronological, scoped and exclude unanswered carryovers', async () => {
+        const { uid, policy } = roster.completed;
+        const originalSessions = await daily.sessionColl.find({ uid }).toArray();
+        const days = [-7, -6, -5].map(offsetDay);
+        const counts = (item) => ({ wrongCount: item.wrongCount, correctCount: item.correctCount, reviewRecovered: item.reviewRecovered });
+        const find = (learning, did, index) => learning.questions.find((item) => item.domainId === did && item.sourceId === sourceIds[did][index - 1]);
+        try {
+            await daily.sessionColl.deleteMany({ uid });
+            // Insert newest first: storage iteration order must not decide mastery.
+            await session(uid, [question(1, python, true, days[2]), question(1, cpp, true, days[2]), question(3, cpp, true, days[2])], days[2]);
+            const repeatedSnapshot = question(1, python, false, days[1]);
+            await session(uid, [repeatedSnapshot, { ...repeatedSnapshot }, question(3, python, false, days[1]),
+                question(1, cpp, true, days[1]), question(3, cpp, false, days[1], { cancelled: true }),
+                question(2, cpp, null, days[1], { cancelled: true })], days[1]);
+            await session(uid, [question(1, python, false, days[0]), question(2, python, true, days[0]),
+                question(3, python, true, days[0]), question(1, cpp, null, days[0]),
+                question(2, cpp, null, days[0], { cancelled: true })], days[0]);
+            let learning = await readLearning(uid);
+            assert.equal(learning.questions.length, 5);
+            assert.deepEqual(counts(find(learning, python, 1)), { wrongCount: 2, correctCount: 1, reviewRecovered: true },
+                'Wrong-wrong-right records each genuine session item once, despite repeated snapshot data');
+            assert.deepEqual(counts(find(learning, python, 2)), { wrongCount: 0, correctCount: 1, reviewRecovered: false });
+            assert.deepEqual(counts(find(learning, python, 3)), { wrongCount: 1, correctCount: 1, reviewRecovered: false },
+                'A later mistake returns the question to pending review');
+            assert.deepEqual(counts(find(learning, cpp, 1)), { wrongCount: 0, correctCount: 2, reviewRecovered: false },
+                'Another classroom source with the same local id and unanswered carryovers never contributes to Python counts');
+            assert.deepEqual(counts(find(learning, cpp, 3)), { wrongCount: 1, correctCount: 1, reviewRecovered: true },
+                'Historical saved answers remain valid when their slot was subsequently cancelled');
+            assert.equal(find(learning, cpp, 2), undefined, 'Cancelled unanswered slots create no question or attempt');
+            assert.equal(find(learning, python, 1).day, days[2]);
+            assert.equal(find(learning, python, 3).day, days[1]);
+            assert.equal(learning.summary.correctCount, 4, 'Headline statistics retain unique latest-result semantics');
+            assert.equal(learning.summary.wrongCount, 1);
+            assert.deepEqual((await get(`/manage/users?uid=${uid}`)).body.selectedDailyQuiz.learning, learning,
+                'Both teacher interfaces receive the same counts and recovered classification');
+            const scoped = await readLearning(uid, cpp);
+            assert.equal(scoped.questions.length, 2);
+            assert(scoped.questions.every((item) => item.domainId === cpp));
+            assert.deepEqual(counts(find(scoped, cpp, 1)), counts(find(learning, cpp, 1)));
+            await daily.savePolicy(uid, { ...policy, domains: policy.domains.map((rule) => rule.domainId === python
+                ? { ...rule, tags: ['基础运算'] } : { ...rule, enabled: false }) }, teacherId);
+            learning = await readLearning(uid);
+            assert.equal(learning.questions.length, 1, 'Historical attempts outside the current teacher-assigned tag scope are omitted');
+            assert.deepEqual(counts(find(learning, python, 1)), { wrongCount: 2, correctCount: 1, reviewRecovered: true });
+        } finally {
+            await daily.sessionColl.deleteMany({ uid });
+            await daily.sessionColl.insertMany(originalSessions);
+            await daily.savePolicy(uid, policy, teacherId);
+        }
     });
 
     const upcomingUrl = (uid, classroom = '') => detail(uid, `?upcoming=1${classroom ? `&classroom=${classroom}` : ''}`);

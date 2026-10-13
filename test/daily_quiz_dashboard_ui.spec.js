@@ -238,6 +238,83 @@ test('inline details prioritize wrong answers and render judgment, choices and s
     } finally { h.close(); }
 });
 
+test('teacher review shows cumulative attempts and the recovery tab includes only previously wrong latest-correct questions', async () => {
+    const data = learning();
+    const base = report().items[0];
+    data.questions = [
+        { ...base, id: 'wrong-now', title: '仍需复习的循环', wrongCount: 4, correctCount: 1, reviewRecovered: false },
+        { ...base, id: 'recovered', title: '复习后已答对的循环', selected: ['A'], correct: true, wrongCount: 2, correctCount: 3, reviewRecovered: true },
+        { ...base, id: 'never-wrong', title: '首次就答对的循环', selected: ['A'], correct: true, wrongCount: 0, correctCount: 1, reviewRecovered: false },
+        { ...base, id: 'wrong-again', title: '复习后再次答错', wrongCount: 3, correctCount: 2, reviewRecovered: true },
+        { ...base, id: 'unanswered', title: '尚未作答', selected: null, correct: null, wrongCount: 0, correctCount: 0, reviewRecovered: true },
+    ];
+    data.summary = { ...data.summary, answered: 4, wrongCount: 2, correctCount: 2, accuracy: 50 };
+    const h = harness(initial(), async (url) => ok(url.includes('session=')
+        ? { report: { ...report(), items: [data.questions[1]] } } : { learning: data }));
+    try {
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+        const review = h.get('[data-learning-question="wrong-now"]');
+        assert.match(review.querySelector('[data-learning-attempts]').textContent, /答错 4 次/);
+        assert.match(review.querySelector('[data-learning-attempts]').textContent, /答对 1 次/);
+        assert.match(h.get('.dql-scope-note').textContent, /最近结果.*累计/);
+        const tabs = [...h.root.querySelectorAll('[data-learning-view]')];
+        assert.equal(tabs.at(-1).dataset.learningView, 'recovered');
+        assert.match(tabs.at(-1).textContent, /复习后正确.*1/);
+        await h.click('[data-learning-view="recovered"]');
+        assert.equal(h.root.querySelectorAll('[data-learning-question]').length, 1);
+        const recovered = h.get('[data-learning-question="recovered"]');
+        assert(recovered);
+        assert.match(recovered.querySelector('[data-learning-attempts]').textContent, /答错 2 次.*答对 3 次/);
+        recovered.open = true;
+        assert.match(recovered.querySelector('.dql-question-body').textContent, /学员答案：正确/);
+        assert(!h.get('[data-learning-panel]').textContent.includes('首次就答对'));
+        assert(!h.get('[data-learning-panel]').textContent.includes('复习后再次答错'));
+        await h.click('[data-learning-view="sessions"]');
+        await h.click('[data-learning-action="session"][data-learning-session="11-2026-10-08"]');
+        assert.equal(h.get('[data-learning-session-panel] [data-learning-attempts]'), null,
+            'a historical answer must not show cumulative attempts from other rounds');
+        assert.match(h.get('[data-learning-session-panel]').textContent, /本次作答结果/);
+    } finally { h.close(); }
+});
+
+test('recovered questions respect the selected classroom and knowledge point and clearing it retains the recovery view', async () => {
+    const data = learning();
+    const base = { ...report().items[0], wrongCount: 1, correctCount: 2, reviewRecovered: true, selected: ['A'], correct: true };
+    data.questions = [
+        { ...report().items[0], id: 'wrong-tag', domainId: 'python', wrongCount: 1, correctCount: 0 },
+        { ...base, id: 'python-recovered', domainId: 'python', title: '本课堂复习后正确' },
+        { ...base, id: 'cpp-recovered', domainId: 'cpp', title: '其他课堂同名标签' },
+        { ...base, id: 'other-tag', domainId: 'python', tags: ['条件'], title: '本课堂其他知识点' },
+    ];
+    const h = harness(initial(), async () => ok({ learning: data }));
+    try {
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+        await h.click('[data-learning-view="tags"]');
+        await h.click('[data-learning-action="tag-review"]');
+        await h.click('[data-learning-view="recovered"]');
+        assert.equal(h.root.querySelectorAll('[data-learning-question]').length, 1);
+        assert(h.get('[data-learning-question="python-recovered"]'));
+        assert.match(h.get('.dql-tag-filter').textContent, /Python训练.*循环.*复习后正确 1 题/);
+        await h.click('[data-learning-action="clear-tag"]');
+        assert.equal(h.get('[data-learning-view="recovered"]').getAttribute('aria-pressed'), 'true');
+        assert.equal(h.root.querySelectorAll('[data-learning-question]').length, 3);
+        assert.equal(h.get('.dql-tag-filter'), null);
+    } finally { h.close(); }
+});
+
+test('older learning responses keep latest-answer counts readable without falsely marking recovery', async () => {
+    const h = harness();
+    try {
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+        assert.match(h.get('[data-learning-attempts]').textContent, /答错 1 次/);
+        await h.click('[data-learning-view="recovered"]');
+        assert.equal(h.root.querySelectorAll('[data-learning-question]').length, 0);
+        assert.match(h.get('[data-learning-panel]').textContent, /还没有复习后答对.*再次答错会回到/);
+        await h.click('[data-learning-view="answered"]');
+        assert.match(h.get('[data-learning-question="2"] [data-learning-attempts]').textContent, /答对 1 次/);
+    } finally { h.close(); }
+});
+
 test('Python powers remain readable in teacher review, practice history and upcoming questions', async () => {
     const data = learning();
     const item = data.questions[0];

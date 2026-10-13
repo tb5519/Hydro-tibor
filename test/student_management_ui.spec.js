@@ -346,6 +346,30 @@ describe('daily quiz teacher configuration and reports', () => {
         assert.equal($('[data-daily-enabled]').checked, true);
     });
 
+    it('shows cumulative error and recovery counts in student management without changing settings or round results', async (t) => {
+        const firstCorrect = { ...daily.learning.questions[0], wrongCount: 0, correctCount: 3, reviewRecovered: false };
+        const pending = { ...daily.learning.questions[1], wrongCount: 4, correctCount: 1, reviewRecovered: false };
+        const recovered = { ...firstCorrect, id: 'recovered', title: '复习后掌握的题目', wrongCount: 2, correctCount: 2, reviewRecovered: true };
+        const learning = { ...daily.learning, questions: [firstCorrect, pending, recovered] };
+        const { dom, $, doc, change } = harness(t, { selectedDailyQuiz: { ...daily, learning } }, 'uid=44&tab=daily');
+        const overview = $('.dql-overview').textContent;
+        assert.match($('[data-learning-question="q1"] [data-learning-attempts]').textContent, /答错 4 次/);
+        change('[data-daily-enabled]', true, 'change');
+        change('[data-daily-point="system:1"]', '9');
+        $('[data-learning-view="recovered"]').click();
+        assert.equal(doc.querySelectorAll('[data-learning-question]').length, 1);
+        assert.equal($('[data-learning-question]').dataset.learningQuestion, 'recovered');
+        assert.match($('[data-learning-attempts]').textContent, /答对 2 次/);
+        assert.equal($('.dql-overview').textContent, overview, 'attempt counters do not replace current mastery totals');
+        assert.equal($('[data-daily-point="system:1"]').value, '9');
+        dom.window.fetch = async () => ({ ok: true, json: async () => ({ report: daily.report }) });
+        $('[data-learning-view="sessions"]').click();
+        $('[data-learning-action="session"][data-learning-session="round-2"]').click();
+        await settle();
+        assert.equal(doc.querySelectorAll('[data-learning-session-panel="round-2"] [data-learning-attempts]').length, 0,
+            'one round shows its recorded result without cumulative counters');
+    });
+
     it('shows judgment results as correct or incorrect statements instead of answer letters', (t) => {
         const learning = { ...daily.learning, questions: daily.learning.questions.map((item) => ({
             ...item, kind: 'judge', options: ['正确', '错误'],

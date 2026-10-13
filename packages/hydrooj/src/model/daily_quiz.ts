@@ -619,12 +619,18 @@ interface AdminQuizHistory extends Omit<AdminQuizSession, 'items'> {
     items: (AdminQuizSession['items'][number] & Pick<QuizItem, 'id' | 'sourceId'>)[];
 }
 
-interface AdminQuizLatestAnswer {
+interface AdminQuizAnswerAttempt {
     sessionId: string;
     day: string;
     round: number;
     itemId: number;
     answer: NonNullable<AdminQuizSession['items'][number]['answer']>;
+}
+
+interface AdminQuizLatestAnswer extends AdminQuizAnswerAttempt {
+    wrongCount: number;
+    correctCount: number;
+    reviewRecovered: boolean;
 }
 
 export interface AdminQuizLearningState {
@@ -648,8 +654,8 @@ export function adminQuizSourceKey(item: Pick<AdminQuizMaterial, 'domainId' | 's
     return `${item.domainId}:${item.sourceId}`;
 }
 
-function latestAnswerOrder(answer: AdminQuizLatestAnswer, previous: AdminQuizLatestAnswer) {
-    const timestamp = (item: AdminQuizLatestAnswer) => +new Date(item.answer.answeredAt) || +new Date(item.day);
+function latestAnswerOrder(answer: AdminQuizAnswerAttempt, previous: AdminQuizAnswerAttempt) {
+    const timestamp = (item: AdminQuizAnswerAttempt) => +new Date(item.answer.answeredAt) || +new Date(item.day);
     return timestamp(answer) - timestamp(previous) || answer.round - previous.round
         || answer.day.localeCompare(previous.day) || answer.itemId - previous.itemId;
 }
@@ -700,6 +706,8 @@ export async function getAdminLearningBatch(
         });
         const keys = new Set(pool.map(adminQuizSourceKey));
         const latest = new Map<string, AdminQuizLatestAnswer>();
+        const answerCounts = new Map<string, { wrongCount: number, correctCount: number }>();
+        const countedAttempts = new Set<string>();
         const sessions: AdminQuizLearningState['sessions'] = [];
         let participationCount = 0;
         let earnedPoints = 0;
@@ -713,12 +721,27 @@ export async function getAdminLearningBatch(
             for (const item of items) {
                 if (!item.answer) continue;
                 const key = adminQuizSourceKey(item);
+                // An immutable session item represents one actual answer. Unanswered
+                // carryovers and cancelled slots add no attempt to the counters.
+                const attemptKey = `${session._id}:${item.id}:${key}`;
+                if (!countedAttempts.has(attemptKey)) {
+                    const counts = answerCounts.get(key) || { wrongCount: 0, correctCount: 0 };
+                    if (item.answer.correct) counts.correctCount++;
+                    else counts.wrongCount++;
+                    answerCounts.set(key, counts);
+                    countedAttempts.add(attemptKey);
+                }
                 const candidate = {
                     sessionId: session._id, day: session.day, round: session.round, itemId: item.id, answer: item.answer,
+                    wrongCount: 0, correctCount: 0, reviewRecovered: false,
                 };
                 const previous = latest.get(key);
                 if (!previous || latestAnswerOrder(candidate, previous) > 0) latest.set(key, candidate);
             }
+        }
+        for (const [key, answer] of latest) {
+            const counts = answerCounts.get(key);
+            Object.assign(answer, counts, { reviewRecovered: answer.answer.correct && counts.wrongCount > 0 });
         }
         sessions.sort((a, b) => b.round - a.round || b.day.localeCompare(a.day));
         const answered = latest.size;
@@ -957,7 +980,7 @@ export async function getAdminLearningDetail(state: AdminQuizLearningState) {
     const ids = [...new Set([...state.latest.values()].map((item) => item.sessionId))];
     const snapshots = ids.length ? await sessionColl.find({ uid: state.uid, _id: { $in: ids } }).toArray() : [];
     const byId = new Map(snapshots.map((session) => [session._id, session]));
-    const questions: ReturnType<typeof presentAdminQuizItem>[] = [];
+    const questions: (ReturnType<typeof presentAdminQuizItem> & Pick<AdminQuizLatestAnswer, 'wrongCount' | 'correctCount' | 'reviewRecovered'>)[] = [];
     const materialsByKey = new Map(state.pool.map((material) => [adminQuizSourceKey(material), material]));
     for (const [key, latest] of state.latest) {
         const session = byId.get(latest.sessionId);
@@ -965,6 +988,7 @@ export async function getAdminLearningDetail(state: AdminQuizLearningState) {
         if (item?.answer) questions.push({
             ...presentAdminQuizItem(item, questions.length + 1, session),
             tags: materialsByKey.get(key)?.tags || item.tags,
+            wrongCount: latest.wrongCount, correctCount: latest.correctCount, reviewRecovered: latest.reviewRecovered,
         });
     }
     questions.sort((a, b) => +new Date(b.answeredAt) - +new Date(a.answeredAt) || b.round - a.round || a.sourceId - b.sourceId);

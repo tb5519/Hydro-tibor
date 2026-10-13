@@ -28,6 +28,9 @@ export interface LearningQuestion {
   earnedPoints: number;
   analysis: string;
   answeredAt?: string;
+  wrongCount?: number;
+  correctCount?: number;
+  reviewRecovered?: boolean;
 }
 export interface LearningSession {
   id: string;
@@ -64,7 +67,7 @@ interface UpcomingQuiz {
   items: UpcomingQuestion[];
   next?: UpcomingQuiz;
 }
-type View = 'review' | 'answered' | 'tags' | 'sessions' | 'upcoming';
+type View = 'review' | 'answered' | 'tags' | 'sessions' | 'upcoming' | 'recovered';
 interface SessionState {
   status: 'loading' | 'loaded' | 'error';
   items?: LearningQuestion[];
@@ -93,6 +96,7 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
   const markdown = createObjectiveMarkdown();
   const sessions = new Map<string, SessionState>();
   const participatedSessions = learning.sessions.filter((session) => session.answered > 0);
+  const recoveredQuestions = learning.questions.filter((item) => item.correct === true && item.reviewRecovered === true);
   const sessionOrdinals = new Map([...participatedSessions]
     .sort((a, b) => a.day.localeCompare(b.day) || a.round - b.round || a.id.localeCompare(b.id))
     .map((session, index) => [session.id, index + 1] as const));
@@ -140,6 +144,20 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
     name.append(el('small', '', [item.domainName, kind, ...(item.tags || [])].filter(Boolean).join(' · ')));
     const status = item.correct == null ? '未作答' : item.correct ? '答对' : historical ? '答错' : '待复习';
     summary.append(el('span', `dql-result ${item.correct == null ? 'is-unanswered' : item.correct ? 'is-correct' : 'is-wrong'}`, status), name);
+    if (!historical && item.correct != null) {
+      const counts = el('div', 'dql-question-counts');
+      counts.dataset.learningAttempts = '';
+      counts.setAttribute('aria-label', '这道题的累计作答次数');
+      const attempts = (value: number | undefined, fallback: number) => Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+      const wrong = attempts(item.wrongCount, item.correct === false ? 1 : 0);
+      const correct = attempts(item.correctCount, item.correct === true ? 1 : 0);
+      if (wrong) counts.append(el('span', 'dql-attempt-wrong', `答错 ${wrong} 次`));
+      if (correct) counts.append(el('span', 'dql-attempt-correct', `答对 ${correct} 次`));
+      if (counts.childNodes.length) {
+        node.classList.add('has-attempts');
+        summary.append(counts);
+      }
+    }
     const body = el('div', 'dql-question-body');
     if (item.answeredAt) body.append(el('p', 'dql-question-time', `${historical ? '作答' : '最近作答'} ${time(item.answeredAt)} · 北京时间`));
     body.append(content(item.stem));
@@ -258,7 +276,7 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
     item.append(el('span', '', label), el('strong', '', value));
     summary.append(item);
   });
-  const note = el('p', 'dql-scope-note', '仅统计当前指定知识点范围；同一题多次作答只计一次，以最近结果为准。未答题不计入正确率。');
+  const note = el('p', 'dql-scope-note', '上方题数与正确率按每题最近结果统计，未答题不计入正确率；题目卡片显示累计答对、答错次数。仅统计当前指定知识点范围。');
   const tabs = el('div', 'dql-tabs');
   tabs.setAttribute('role', 'group');
   tabs.setAttribute('aria-label', '知识掌握详情');
@@ -271,6 +289,7 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
     const entries: [View, string, number?][] = [
       ['review', '待复习', stats.wrongCount], ['answered', '全部已答', stats.answered],
       ['tags', '知识点', learning.tags.length], ['sessions', '练习记录', participatedSessions.length],
+      ['recovered', '复习后正确', recoveredQuestions.length],
     ];
     if (learning.upcomingUrl) entries.unshift(['upcoming', '即将练习']);
     entries.forEach(([key, label, count]) => {
@@ -372,7 +391,7 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
       node.append(error);
     } else if (!state.items.length) node.append(message('这次练习没有题目记录', '可查看其他练习或回到当前知识掌握。'));
     else {
-      node.append(el('p', 'dql-history-note', '这里保留本次作答结果；“待复习”和“全部已答”展示每道题的最近结果。'));
+      node.append(el('p', 'dql-history-note', '这里保留本次作答结果；“待复习”“全部已答”和“复习后正确”展示每道题的最近结果。'));
       state.items.forEach((item, index) => node.append(question(item, index, true)));
     }
   }
@@ -386,17 +405,18 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
     panel.replaceChildren();
     if (view === 'upcoming') {
       renderUpcoming();
-    } else if (view === 'review' || view === 'answered') {
-      const all = learning.questions.filter((item) => (view === 'answered' || item.correct === false)
+    } else if (view === 'review' || view === 'answered' || view === 'recovered') {
+      const all = learning.questions.filter((item) => (view === 'answered' || (view === 'recovered' ? item.correct === true && item.reviewRecovered === true : item.correct === false))
         && (!selectedTag || (item.domainId === selectedTag.domainId
           && (selectedTag.name === '未标注知识点' ? !item.tags?.length : item.tags?.includes(selectedTag.name)))));
       if (selectedTag) {
         const scope = el('div', 'dql-tag-filter');
-        scope.append(el('span', '', `${selectedTag.domainName} · ${selectedTag.name} · 待复习 ${all.length} 题`), button('查看全部错题', 'clear-tag'));
+        scope.append(el('span', '', `${selectedTag.domainName} · ${selectedTag.name} · ${view === 'recovered' ? '复习后正确' : '待复习'} ${all.length} 题`), button(view === 'recovered' ? '查看全部复习后正确题目' : '查看全部错题', 'clear-tag'));
         panel.append(scope);
       }
       if (!all.length) {
-        panel.append(message(view === 'review' ? '当前没有待复习错题' : '当前范围还没有作答记录', view === 'review'
+        panel.append(message(view === 'recovered' ? '还没有复习后答对的题目' : view === 'review' ? '当前没有待复习错题' : '当前范围还没有作答记录', view === 'recovered'
+          ? '曾答错、复习后最近一次答对的题目会整理在这里。再次答错会回到“待复习”。' : view === 'review'
           ? stats.answered ? '最近作答的题目均已答对，可以查看知识点掌握情况或继续练习。' : '开始练习后，这里会整理需要巩固的题目。'
           : '学员作答后，将按题目汇总最近结果。'));
         return;
@@ -593,7 +613,7 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
     if (action === 'view') {
       const previousView = view;
       view = control.dataset.learningView as View;
-      selectedTag = null;
+      if (!['review', 'recovered'].includes(previousView) || !['review', 'recovered'].includes(view)) selectedTag = null;
       limit = 20;
       renderTabs();
       renderPanel();
@@ -605,11 +625,11 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
       replaceUpcoming(Number(control.dataset.learningUpcomingIndex));
     } else if (action === 'tag-review' || action === 'clear-tag') {
       selectedTag = action === 'tag-review' ? learning.tags[Number(control.dataset.learningTag)] || null : null;
-      view = 'review';
+      if (action === 'tag-review' || view !== 'recovered') view = 'review';
       limit = 20;
       renderTabs();
       renderPanel();
-      tabs.querySelector<HTMLButtonElement>('[data-learning-view="review"]')?.focus();
+      tabs.querySelector<HTMLButtonElement>(`[data-learning-view="${view}"]`)?.focus();
     } else if (action === 'more') {
       limit += 20;
       renderPanel();
