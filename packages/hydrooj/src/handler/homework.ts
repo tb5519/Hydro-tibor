@@ -62,6 +62,26 @@ function getHomeworkProgress(tdoc: Tdoc, tsdoc: any) {
     };
 }
 
+function getHomeworkCompletionTime(tdoc: Tdoc, tsdoc: any) {
+    const firstAccepted = new Map<number, number>();
+    const pids = new Set(tdoc.pids);
+    for (const entry of tsdoc?.journal || []) {
+        if (!pids.has(entry.pid) || entry.status !== STATUS.STATUS_ACCEPTED || !ObjectId.isValid(entry.rid)) continue;
+        const time = new ObjectId(entry.rid).getTimestamp().getTime();
+        firstAccepted.set(entry.pid, Math.min(firstAccepted.get(entry.pid) ?? Infinity, time));
+    }
+    // Completion is when the last required problem was first accepted. A later
+    // repeat submission must not move an old completed homework to the top.
+    // Older statuses may only have detail, so retain their available timestamps.
+    const times = tdoc.pids.map((pid) => {
+        if (firstAccepted.has(pid)) return firstAccepted.get(pid)!;
+        const detail = tsdoc?.detail?.[pid];
+        return detail?.status === STATUS.STATUS_ACCEPTED && ObjectId.isValid(detail.rid)
+            ? new ObjectId(detail.rid).getTimestamp().getTime() : 0;
+    });
+    return times.length && times.every((time) => time > 0) ? Math.max(...times) : 0;
+}
+
 async function resolveHomeworkRecipients(domainId: string, input: string | number[] = '') {
     const tokens = (Array.isArray(input) ? input.map(String) : input.split(/[，,;；\n]+/))
         .map((item) => item.trim())
@@ -158,6 +178,7 @@ class HomeworkMainHandler extends Handler {
                         id: tdoc.docId,
                         title: tdoc.title,
                         category: normalizeHomeworkCategory(tdoc.homeworkCategory),
+                        completedAt: progress.done ? getHomeworkCompletionTime(tdoc, status) : 0,
                         ...progress,
                     };
                 });
@@ -167,7 +188,8 @@ class HomeworkMainHandler extends Handler {
             const totalProblems = assignments.reduce((sum, homework) => sum + homework.totalProblems, 0);
             const acceptedProblems = assignments.reduce((sum, homework) => sum + homework.acceptedProblems, 0);
             const incompleteAssignments = assignments.filter((homework) => !homework.done);
-            const completedAssignments = assignments.filter((homework) => homework.done);
+            const completedAssignments = assignments.filter((homework) => homework.done)
+                .sort((a, b) => b.completedAt - a.completedAt || b.id.toHexString().localeCompare(a.id.toHexString()));
             const completedHomeworks = completedAssignments.length;
             return {
                 uid,
