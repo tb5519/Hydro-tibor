@@ -48,7 +48,7 @@ The parent receives authenticated route configuration via `UiContext.scratchEdit
 
 The local entry bypasses TurboWarp's homepage, cloud, addons, URL project importer and community shell. Custom JavaScript extensions are blocked at the VM loader, and the extension picker exposes only pen, music and makeymakey. The server must apply the same .sb3 extension policy. Scratch projects still execute inside the isolated VM iframe.
 
-The parent's `init` message selects `mode: 'editor' | 'player' | 'thumbnail'`. Player mode opens a responsive stage and starts the green flag, with native stop/restart/fullscreen controls. Both player and thumbnail mode force read-only access and reject export requests. The iframe must be granted the fullscreen feature for browser fullscreen to be available.
+The parent's `init` message selects `mode: 'editor' | 'inspect' | 'player' | 'thumbnail'`. Inspect mode exposes submitted blocks for teacher review, but rejects exports, preset imports, and every persistence bridge. Temporary block changes are never saved. Player mode opens a responsive stage and starts the green flag, with native stop/restart/fullscreen controls. Inspect, player and thumbnail modes force read-only access and reject export requests. The iframe must be granted the fullscreen feature for browser fullscreen to be available.
 
 After `loaded`, player mode forwards VM `PROJECT_RUN_START` / `PROJECT_RUN_STOP`
 as `{type: 'runState', running: boolean}`. The authenticated community parent

@@ -86,7 +86,7 @@ async function run() {
             paper: JSON.stringify({ version: 1, items: sources.map((id, index) => ({ id, score: index ? 30 : 40 })) }) });
         status(res, 200);
         paperId = (await problems.get(domainId, 'SCRATCHQUIZ')).docId;
-        assert(res.body.url.includes(`/scratch/assignment/create?objectivePaperId=${paperId}`));
+        assert(res.body.url.includes(`/scratch/problem/paper/${paperId}`));
         denied(await get(teacher, `${prefix}/p`));
         denied(await post(teacher, `${prefix}/problem/create`, { title: 'Blocked', content: 'Hello' }));
         denied(await post(teacher, `${prefix}/p/${paperId}/submit`, { lang: '_', code: '1: A' }));
@@ -240,6 +240,247 @@ async function run() {
         assert(await quiz.getFile(actor, withFiles, analysisName));
         await problems.edit(domainId, paperId, { objectivePaper: originalPaper, title: '积木小侦探' });
     });
+    let libraryProject;
+    let libraryWork;
+    let librarySubmission;
+    let libraryPaper;
+    await check('Learner-visible Scratch bank exposes published papers and creative challenges, never private sources or answer keys', async () => {
+        status(await post(coach, `${prefix}/scratch/problem/create/project`, {
+            title: '会跳舞的小猫', description: '点击绿旗，小猫走 10 步。', tag: '动作,事件', hidden: false,
+        }), 200);
+        libraryProject = await scratch.assignments.findOne({ domainId, kind: 'problem', title: '会跳舞的小猫' });
+        assert(libraryProject);
+        assert.equal(libraryProject.projectRequired, true);
+        status(await post(coach, `${prefix}/scratch/problem/create/project`, {
+            title: '还没发布的挑战', description: '暂不展示', tag: '动作', hidden: true,
+        }), 200);
+        const hidden = await scratch.assignments.findOne({ domainId, title: '还没发布的挑战' });
+        const page = await get(student, `${prefix}/scratch/problems`);
+        status(page, 200);
+        assert(page.body.problems.some((item) => item.id === String(libraryProject._id) && item.kind === 'project'));
+        assert(page.body.problems.some((item) => item.id === String(paperId) && item.kind === 'objective'));
+        assert(!page.text.includes('还没发布的挑战'));
+        assert(!page.text.includes('PRIVATE_NOTE'));
+        assert(!page.text.includes('"answers"'));
+        assert(!page.body.problems.some((item) => item.kind === 'objective' && sources.includes(+item.id)));
+        const filtered = await get(student, `${prefix}/scratch/problems?type=project&q=动作`);
+        assert.equal(filtered.body.count, 1);
+        assert.equal(filtered.body.problems[0].title, '会跳舞的小猫');
+        const homework = await get(student, `${prefix}/scratch/assignments`);
+        assert(!homework.body.assignments.some((item) => item.kind === 'problem'));
+        denied(await get(student, `${prefix}/scratch/problem/${hidden._id}`));
+        denied(await post(student, `${prefix}/scratch/problem/${hidden._id}`, {}));
+        denied(await post(student, `${prefix}/scratch/problem/create/project`, { title: 'Not allowed' }));
+        denied(await get(student, `${prefix}/scratch/problem/${libraryProject._id}/edit`));
+        denied(await get(outsider, `${prefix}/scratch/problems`));
+        denied(await get(student, `/d/${ojId}/scratch/problems`));
+        denied(await get(student, `${prefix}/scratch/problem/paper/${sources[0]}`));
+    });
+    await check('Starting the same creative problem concurrently reuses one private work, submissions are immutable and teacher-reviewable', async () => {
+        const starts = await Promise.all([1, 2, 3].map(() => post(student, `${prefix}/scratch/problem/${libraryProject._id}`, {})));
+        starts.forEach((res) => status(res, 200));
+        assert.equal(new Set(starts.map((res) => res.body.url)).size, 1);
+        libraryWork = await scratch.works.findOne({ domainId, assignmentId: libraryProject._id, owner: studentId });
+        assert.equal(await scratch.works.countDocuments({ domainId, assignmentId: libraryProject._id, owner: studentId }), 1);
+        const editor = await get(student, `${prefix}/scratch/editor?workId=${libraryWork._id}`);
+        status(editor, 200);
+        assert.equal(editor.body.problem._id, String(libraryProject._id));
+        const zip = new (require('adm-zip'))();
+        const backdrop = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="480" height="360" viewBox="0 0 480 360"><rect width="480" height="360" fill="#fff"/></svg>');
+        const backdropId = require('node:crypto').createHash('md5').update(backdrop).digest('hex');
+        zip.addFile(`${backdropId}.svg`, backdrop);
+        zip.addFile('project.json', Buffer.from(JSON.stringify({ targets: [{ isStage: true, name: 'Stage', variables: {}, lists: {}, broadcasts: {},
+            blocks: {}, comments: {}, currentCostume: 0,
+            costumes: [{ name: '背景1', assetId: backdropId, dataFormat: 'svg', md5ext: `${backdropId}.svg`,
+                bitmapResolution: 1, rotationCenterX: 240, rotationCenterY: 180 }],
+            sounds: [], volume: 100, layerOrder: 0, tempo: 60, videoTransparency: 50, videoState: 'on', textToSpeechLanguage: null,
+        }], monitors: [], extensions: [], meta: { semver: '3.0.0', vm: '0.2.0' } })));
+        const submitted = await student.post(`${prefix}/scratch/work/${libraryWork._id}/save`)
+            .set('Origin', `http://127.0.0.1:${port}`).set('Accept', 'application/json')
+            .field('revision', '0').field('submit', 'true').attach('file', zip.toBuffer(), 'dance.sb3');
+        status(submitted, 200);
+        librarySubmission = await scratch.submissions.findOne({ domainId, workId: libraryWork._id });
+        assert(librarySubmission && librarySubmission.fileId);
+        const queue = await get(teacher, `${prefix}/scratch/problems/review?q=会跳舞`);
+        status(queue, 200);
+        assert.equal(queue.body.count, 1);
+        assert.equal(queue.body.submissions[0].assignmentTitle, '会跳舞的小猫');
+        assert(queue.body.submissions[0].editorUrl.includes('inspect=true'));
+        for (const [agent, expected] of [[coach, true], [student, false]]) {
+            const inspectPage = await agent.get(`${prefix}/scratch/editor?submissionId=${librarySubmission._id}&inspect=true`);
+            status(inspectPage, 200);
+            const serialized = inspectPage.text.match(/window\.UiContext = ('(?:\\.|[^'\\])*');/);
+            assert(serialized, 'Editor HTML must include its serialized UI configuration');
+            const ui = JSON.parse(require('node:vm').runInNewContext(serialized[1], {}, { timeout: 100 }));
+            assert.equal(ui.scratchEditor.inspectCode, expected);
+            assert.equal(ui.scratchEditor.readOnly, true);
+            assert.equal(ui.scratchEditor.saveUrl, null);
+        }
+        denied(await get(student, `${prefix}/scratch/problems/review`));
+        denied(await get(outsider, `${prefix}/scratch/submission/${librarySubmission._id}`));
+        status(await post(coach, `${prefix}/scratch/submission/${librarySubmission._id}`, { grade: '优秀', feedback: '事件积木用得很好！' }), 200);
+        const feedback = await get(student, `${prefix}/scratch/submission/${librarySubmission._id}`);
+        assert.equal(feedback.body.submission.grade, '优秀');
+        assert.equal(feedback.body.submission.feedback, '事件积木用得很好！');
+        const reviewed = await get(coach, `${prefix}/scratch/problems/review?status=reviewed`);
+        assert.equal(reviewed.body.count, 1);
+        assert.equal((await get(student, `${prefix}/scratch/problems?type=project`)).body.problems[0].status, 'reviewed');
+        denied(await post(student, `${prefix}/scratch/submission/${librarySubmission._id}`, { grade: '满分' }));
+        denied(await post(coach, `${prefix}/scratch/assignment/${libraryProject._id}/edit`, { title: 'wrong editor' }));
+    });
+    await check('Public objective practice starts concurrently without duplicate snapshots, homework pollution or answer leakage', async () => {
+        const detail = await get(student, `${prefix}/scratch/problem/paper/${paperId}`);
+        status(detail, 200);
+        assert.equal(detail.body.problem.kind, 'objective');
+        assert(!detail.text.includes('PRIVATE_NOTE'));
+        assert.equal(await scratch.assignments.countDocuments({ domainId, problemPaperId: paperId }), 0);
+        const starts = await Promise.all([1, 2, 3].map(() => post(student, `${prefix}/scratch/problem/paper/${paperId}`, {})));
+        starts.forEach((res) => status(res, 200));
+        assert.equal(new Set(starts.map((res) => res.body.url)).size, 1);
+        assert.equal(await scratch.assignments.countDocuments({ domainId, problemPaperId: paperId }), 1);
+        libraryPaper = await scratch.assignments.findOne({ domainId, problemPaperId: paperId });
+        const page = await get(student, `${prefix}/scratch/assignment/${libraryPaper._id}/quiz`);
+        status(page, 200);
+        assert.equal(page.body.scratchObjectiveQuiz.readOnly, false);
+        assert(!page.text.includes('PRIVATE_NOTE'));
+        assert(!page.body.scratchObjectiveQuiz.items[0].answers);
+        assert(page.body.scratchObjectiveQuiz.backUrl.endsWith(`/scratch/problem/paper/${paperId}`));
+        const answers = await Promise.all([['A'], ['B']].map((selected) => post(student, `${prefix}/scratch/assignment/${libraryPaper._id}/quiz`, {
+            operation: 'answer', revision: libraryPaper.objectiveQuiz.revision, questionId: 1, answers: selected,
+        })));
+        answers.forEach((res) => status(res, 200));
+        assert.deepEqual(answers[0].body.state.items[0].selected, answers[1].body.state.items[0].selected);
+        assert.equal(await quiz.results.countDocuments({ domainId, assignmentId: libraryPaper._id, owner: studentId }), 1);
+        assert.equal((await get(student, `${prefix}/scratch/problem/paper/${paperId}`)).body.objectiveQuiz.answered, 1);
+        assert(!(await get(student, `${prefix}/scratch/assignments`)).body.assignments.some((entry) => entry.kind === 'problem'));
+        const foreignActor = { domainId: ojId, uid: studentId, isTeacher: false };
+        await assert.rejects(quiz.getState(foreignActor, libraryPaper));
+        await assert.rejects(quiz.answer(foreignActor, libraryPaper, 2, ['A']));
+        await assert.rejects(quiz.getFile(foreignActor, libraryPaper, 'file.png'));
+        denied(await get(student, `${prefix}/scratch/assignment/${libraryPaper._id}/quiz?uid=${demoId}`));
+    });
+    await check('Bank metadata edits preserve attempts; progress listing does not load quiz answer snapshots or submission feedback', async () => {
+        const before = (await get(student, `${prefix}/scratch/problems`)).body.problems.find((item) => item.kind === 'objective' && item.id === String(paperId));
+        assert.equal(before.answered, 1);
+        const beforePaper = await problems.get(domainId, paperId, ['objectivePaperRevision', 'objectivePaper', 'content']);
+        const editUrl = `${prefix}/scratch/problem/paper/${paperId}/edit`;
+        const editPage = await get(coach, editUrl);
+        status(editPage, 200);
+        assert(!editPage.text.includes('PRIVATE_NOTE'));
+        denied(await get(student, editUrl));
+        denied(await post(student, editUrl, { title: 'Unauthorized', tag: '', hidden: false }));
+        denied(await get(coach, `${prefix}/scratch/problem/paper/${sources[0]}/edit`));
+        status(await post(coach, editUrl, { title: '重命名后的积木练习', tag: '新的课堂标签', hidden: false,
+            content: 'MUST_NOT_REPLACE', objectivePaper: { items: [] } }), 200);
+        const editedPaper = await problems.get(domainId, paperId, ['objectivePaperRevision', 'objectivePaper', 'content']);
+        assert.equal(editedPaper.objectivePaperRevision, beforePaper.objectivePaperRevision);
+        assert.deepEqual(editedPaper.objectivePaper, beforePaper.objectivePaper);
+        assert.equal(editedPaper.content, beforePaper.content);
+        const renamed = (await get(student, `${prefix}/scratch/problems?q=新的课堂标签`)).body;
+        assert.equal(renamed.count, 1);
+        assert.equal(renamed.problems[0].title, '重命名后的积木练习');
+        assert.equal(renamed.problems[0].answered, 1);
+        assert.equal((await quiz.getPracticeAssignment({ domainId, uid: studentId, isTeacher: false }, paperId))._id.toString(), libraryPaper._id.toString());
+        const detail = (await get(student, `${prefix}/scratch/problem/paper/${paperId}`)).body;
+        assert.equal(detail.problem.title, '重命名后的积木练习');
+        assert.equal(detail.objectiveQuiz.answered, 1);
+        assert.equal((await get(student, `${prefix}/scratch/assignment/${libraryPaper._id}/quiz`)).body.scratchObjectiveQuiz.title, '重命名后的积木练习');
+        const queue = (await get(coach, `${prefix}/scratch/problems/review?status=all&q=scratch_student`)).body;
+        assert.equal(queue.count, 1);
+        assert.equal(queue.submissions[0].feedback, undefined);
+        assert.equal(queue.submissions[0].fileId, undefined);
+        assert.equal((await get(coach, `${prefix}/scratch/problems/review?status=all&q=${studentId}`)).body.count, 1);
+        assert.equal((await get(coach, `${prefix}/scratch/problems/review?status=all&page=2`)).body.submissions.length, 0);
+        await problems.edit(domainId, paperId, { title: '积木小侦探', tag: ['积木基础', '动作'] });
+    });
+    await check('Review pagination and owner search stay bounded while aggregated bank counts cover all submitted revisions', async () => {
+        const docs = Array.from({ length: 31 }, (_, index) => ({
+            ...librarySubmission, _id: new (require('mongodb').ObjectId)(), revision: index + 2,
+            grade: null, reviewedAt: null, reviewer: null, feedback: 'DO_NOT_LOAD_HISTORY_BODY'.repeat(300),
+            createdAt: new Date(Date.now() + index + 1),
+        }));
+        await scratch.submissions.insertMany(docs);
+        await domains.setUserInDomain(domainId, studentId, { displayName: '编程小猫' });
+        try {
+            const first = (await get(coach, `${prefix}/scratch/problems/review?status=all`)).body;
+            const second = (await get(coach, `${prefix}/scratch/problems/review?status=all&page=2`)).body;
+            assert.equal(first.count, 32);
+            assert.equal(first.submissions.length, 30);
+            assert.equal(second.submissions.length, 2);
+            assert.equal(first.numPages, 2);
+            assert(!JSON.stringify(first).includes('DO_NOT_LOAD_HISTORY_BODY'));
+            assert(!first.submissions.some((entry) => entry.fileId || entry.feedback !== undefined));
+            assert.equal((await get(coach, `${prefix}/scratch/problems/review?status=pending&q=编程`)).body.count, 31);
+            assert.equal((await get(coach, `${prefix}/scratch/problems/review?status=reviewed&q=scratch_student`)).body.count, 1);
+            const bank = (await get(coach, `${prefix}/scratch/problems`)).body;
+            const creative = bank.problems.find((entry) => entry.id === String(libraryProject._id));
+            assert.equal(creative.submissionCount, 32);
+            assert.equal(creative.pendingCount, 31);
+            assert.equal(bank.stats.pendingReview, 31);
+            assert.equal((await get(student, `${prefix}/scratch/problems?type=project`)).body.problems[0].status, 'submitted');
+        } finally {
+            await scratch.submissions.deleteMany({ _id: { $in: docs.map((entry) => entry._id) } });
+            await domains.setUserInDomain(domainId, studentId, { displayName: '' });
+        }
+    });
+    await check('Withdrawn papers cannot be reached through saved quiz URLs; changing papers preserves the old attempt snapshot', async () => {
+        status(await post(coach, `${prefix}/scratch/problem/paper/${paperId}/edit`, { title: '积木小侦探', tag: '积木基础,动作', hidden: true }), 200);
+        const teacherBank = (await get(coach, `${prefix}/scratch/problems`)).body;
+        const hiddenPaper = teacherBank.problems.find((entry) => entry.kind === 'objective' && entry.id === String(paperId));
+        assert.equal(hiddenPaper.hidden, true);
+        assert(hiddenPaper.url.endsWith(`/scratch/problem/paper/${paperId}/edit`));
+        status(await get(coach, hiddenPaper.url), 200);
+        denied(await get(student, `${prefix}/scratch/problem/paper/${paperId}`));
+        denied(await get(student, `${prefix}/scratch/assignment/${libraryPaper._id}/quiz`));
+        assert(!(await get(student, `${prefix}/scratch/problems`)).body.problems.some((entry) => entry.kind === 'objective' && entry.id === String(paperId)));
+        await problems.edit(domainId, paperId, { hidden: false });
+        const paper = await problems.get(domainId, paperId, ['objectivePaper']);
+        const original = JSON.parse(JSON.stringify(paper.objectivePaper));
+        paper.objectivePaper.items[0].objective.stem = '老师更新后的新题干';
+        await problems.edit(domainId, paperId, { objectivePaper: paper.objectivePaper });
+        status(await post(student, `${prefix}/scratch/problem/paper/${paperId}`, {}), 200);
+        assert.equal(await scratch.assignments.countDocuments({ domainId, problemPaperId: paperId }), 2);
+        const originalQuiz = await get(student, `${prefix}/scratch/assignment/${libraryPaper._id}/quiz`);
+        assert(!originalQuiz.body.scratchObjectiveQuiz.items[0].stem.includes('老师更新后的新题干'));
+        assert.equal(originalQuiz.body.scratchObjectiveQuiz.answered, 1);
+        await problems.edit(domainId, paperId, { objectivePaper: original });
+    });
+    await check('A paper withdrawn during snapshot copying leaves no accessible practice or orphan copies', async () => {
+        const paper = await problems.get(domainId, secondPaperId, ['objectivePaper']);
+        const originalPaper = JSON.parse(JSON.stringify(paper.objectivePaper));
+        await problems.addAdditionalFile(domainId, secondPaperId, 'bank-safe.png', Buffer.from('bank-image'), teacherId);
+        paper.objectivePaper.items[0].objective.stem += '\n![图](file://bank-safe.png)';
+        await problems.edit(domainId, secondPaperId, { objectivePaper: paper.objectivePaper });
+        const copies = [];
+        const originalCopy = storage.copy;
+        let release;
+        let reached;
+        const gate = new Promise((resolve) => { release = resolve; });
+        const ready = new Promise((resolve) => { reached = resolve; });
+        storage.copy = async function pausedCopy(source, target, ...args) {
+            const value = await originalCopy.call(this, source, target, ...args);
+            if (target.startsWith(`scratch-objective/${domainId}/`)) { copies.push(target); reached(); await gate; }
+            return value;
+        };
+        let pending;
+        try {
+            pending = quiz.getPracticeAssignment({ domainId, uid: studentId, isTeacher: false }, secondPaperId, true);
+            const rejected = assert.rejects(pending);
+            await ready;
+            await problems.edit(domainId, secondPaperId, { hidden: true });
+            release();
+            await rejected;
+            assert.equal(await scratch.assignments.countDocuments({ domainId, problemPaperId: secondPaperId }), 0);
+            assert(copies.length > 0);
+            for (const target of copies) assert.equal(await storage.getMeta(target), null);
+        } finally {
+            release();
+            await pending?.catch(() => {});
+            storage.copy = originalCopy;
+            await problems.edit(domainId, secondPaperId, { hidden: false, objectivePaper: originalPaper });
+            await problems.delAdditionalFile(domainId, secondPaperId, 'bank-safe.png', teacherId);
+        }
+    });
     await check('Daily quiz merges Scratch-only-permission and OJ classrooms and returns to Scratch after completion', async () => {
         const original = await problems.get(domainId, sources[0], ['objective', 'tag', 'content']);
         await problems.add(ojId, 'PYDAILY', 'Python 热身', original.content, teacherId, ['积木基础'], {
@@ -270,7 +511,10 @@ async function run() {
     clearTimeout(timeout);
     if (process.env.SCRATCH_OBJECTIVE_SERVE === '1' && checks.every(Boolean)) {
         console.log(`SMOKE ${JSON.stringify({ origin: `http://localhost:${port}`, teacher: 'scratch_teacher', student: 'scratch_demo',
-            password: 'LocalTest123!', domainId, studentId, demoId, assignmentUrl: `${prefix}/scratch/assignment/${assignment._id}`, quizUrl: quizUrl() })}`);
+            password: 'LocalTest123!', domainId, studentId, demoId, assignmentUrl: `${prefix}/scratch/assignment/${assignment._id}`, quizUrl: quizUrl(),
+            problemUrl: `${prefix}/scratch/problem/${libraryProject._id}`,
+            paperEditUrl: `${prefix}/scratch/problem/paper/${paperId}/edit`,
+            inspectUrl: `${prefix}/scratch/editor?submissionId=${librarySubmission._id}&inspect=true` })}`);
         return;
     }
     process.exit(checks.every(Boolean) ? 0 : 1);

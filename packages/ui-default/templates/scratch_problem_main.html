@@ -1,0 +1,29 @@
+{% extends "scratch_base.html" %}
+{% block scratch_content %}
+{% include "partials/scratch_problem_style.html" %}
+<div class="scb" data-scratch-problem-bank>
+  <header class="scb-heading">
+    <div><span class="scb-kicker">SCRATCH · 题库</span><h1>{{ '准备下一次小挑战' if isTeacher else '选一个挑战，试试新本领' }}</h1><p>{{ '创作题与知识练习，放在一起轻松管理。' if isTeacher else '搭积木，也动脑筋。每一步都是进步。' }}</p></div>
+    {% if isTeacher %}<div class="scb-actions"><a class="scb-button" href="{{ url('scratch_problem_review') }}">批改作品{% if stats.pendingReview %}<span class="scb-dot-count">{{ stats.pendingReview }}</span>{% endif %}</a><a class="scb-button scb-button-primary" href="{{ url('scratch_problem_create') }}">＋ 创建题目</a></div>{% else %}<div class="scb-heading-blocks" aria-hidden="true"><span></span><span></span><span></span></div>{% endif %}
+  </header>
+  <section class="scb-bank-panel" aria-label="题目列表">
+    <form class="scb-filters" method="get" action="{{ url('scratch_problem_main') }}">
+      <label class="scb-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input type="search" name="q" value="{{ q }}" placeholder="搜索题目或知识点" aria-label="搜索题目或知识点"></label>
+      <label class="scb-filter-select"><span>题型</span><select name="kind" aria-label="题型"><option value="">全部题型</option><option value="project"{% if kind == 'project' %} selected{% endif %}>Scratch 创作</option><option value="objective"{% if kind == 'objective' %} selected{% endif %}>知识练习</option></select></label>
+      <button class="scb-button scb-button-primary" type="submit">查找</button>{% if q or kind %}<a class="scb-reset" href="{{ url('scratch_problem_main') }}">清除筛选</a>{% endif %}
+    </form>
+    <div class="scb-list-heading"><span>{{ count }} 道题目</span><span>{{ '单题素材在客观题工作台管理' if isTeacher else '选择题目即可开始' }}</span></div>
+    {% if problems|length %}<div class="scb-problem-list">
+      {% for item in problems %}
+      <article class="scb-problem-row">
+        <span class="scb-problem-icon {{ 'scb-problem-icon-quiz' if item.kind == 'objective' }}" aria-hidden="true">{% if item.kind == 'objective' %}<svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="3"/><path d="m8 9 1.5 1.5L12 8m2 2h2m-7 5h2m3 0h2"/></svg>{% else %}<svg viewBox="0 0 24 24"><path d="M4 7h5V4h6v3h5v6h-3v4h-4v3H7v-3H4V7Z"/></svg>{% endif %}</span>
+        <div class="scb-problem-info"><div class="scb-problem-meta"><span>{{ '知识练习' if item.kind == 'objective' else 'Scratch 创作' }}</span>{% if item.hidden %}<span class="scb-private">仅老师可见</span>{% endif %}</div><h2><a href="{{ item.url }}">{{ item.title }}</a></h2><div class="scb-problem-tags">{% for tag in item.tags.slice(0, 3) %}<span>{{ tag }}</span>{% endfor %}{% if item.tags|length > 3 %}<span>＋{{ item.tags|length - 3 }}</span>{% endif %}{% if item.kind == 'objective' %}<small>{{ item.questionCount }} 道题</small>{% else %}<small>老师批改</small>{% endif %}</div></div>
+        {% if not isTeacher %}<div class="scb-problem-state"><span class="scb-status scb-status-{{ item.status }}">{% if item.status == 'completed' %}已完成{% elif item.status == 'reviewed' %}已批改{% elif item.status == 'submitted' %}等待老师批改{% elif item.status == 'draft' %}进行中{% else %}未开始{% endif %}</span>{% if item.kind == 'objective' and item.answered %}<small>{{ item.answered }} / {{ item.total or item.questionCount }} 题</small>{% endif %}</div>{% endif %}
+        <div class="scb-row-actions">{% if isTeacher and item.editUrl %}<a class="scb-edit-link" href="{{ item.editUrl }}">编辑</a>{% endif %}<a class="scb-button scb-row-open" href="{{ item.url }}">{% if isTeacher %}查看{% elif item.status == 'new' %}开始挑战{% elif item.status == 'submitted' or item.status == 'reviewed' or item.status == 'completed' %}查看结果{% else %}继续挑战{% endif %}<span aria-hidden="true">→</span></a></div>
+      </article>
+      {% endfor %}
+    </div>{% else %}<div class="scb-empty"><span class="scb-empty-symbol" aria-hidden="true">✦</span><h2>{{ '没有找到匹配的题目' if q or kind else '新的挑战，很快见' }}</h2><p>{{ '换个关键词，或清除筛选再看看。' if q or kind else ('创建一道创作题，或把客观题组成练习。' if isTeacher else '老师发布的创作题和知识练习会出现在这里。') }}</p>{% if isTeacher and not q and not kind %}<a class="scb-button scb-button-primary" href="{{ url('scratch_problem_create') }}">创建第一道题目</a>{% endif %}</div>{% endif %}
+  </section>
+  {% if numPages > 1 %}<div class="sc-pagination">{{ paginator.render(page, numPages, add_qs=utils.buildQueryString(q=q, kind=kind)) }}</div>{% endif %}
+</div>
+{% endblock %}

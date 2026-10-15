@@ -1,0 +1,13 @@
+{% extends "scratch_base.html" %}
+{% block scratch_content %}
+{% include "partials/scratch_problem_style.html" %}
+<div class="scb scb-create">
+  <a class="scb-back" href="{{ url('scratch_problem_main') }}">← 返回题库</a>
+  <header class="scb-heading"><div><span class="scb-kicker">题库 · 创建题目</span><h1>这次，来一点什么挑战？</h1><p>选择创作题，或用知识练习巩固孩子的新本领。</p></div></header>
+  <div class="scb-create-grid">
+    <a class="scb-create-card" href="{{ url('scratch_problem_project_create') }}"><span class="scb-create-icon" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M5 10h7V5h8v5h7v8h-5v4h-5v5H9v-5H5V10Z"/></svg></span><span class="scb-kicker">动手搭积木</span><h2>Scratch 创作题</h2><p>写下任务，准备起始作品。孩子一边看题一边创作，提交后由老师评分和反馈。</p><div class="scb-create-tags"><span>在线创作</span><span>保存进度</span><span>老师批改</span></div><strong>创建创作题 <span aria-hidden="true">→</span></strong></a>
+    <a class="scb-create-card scb-create-card-quiz" href="{{ url('problem_objective') }}"><span class="scb-create-icon" aria-hidden="true"><svg viewBox="0 0 32 32"><rect x="7" y="4" width="18" height="24" rx="4"/><path d="m11 12 2 2 3-4m3 3h2m-9 7h3m4 0h2"/></svg></span><span class="scb-kicker">想一想，选一选</span><h2>客观题</h2><p>创建选择题、判断题，按知识点自由组题。发布的练习进入题库，答题后自动评分。</p><div class="scb-create-tags"><span>单选 / 多选</span><span>判断题</span><span>灵活组题</span></div><strong>进入组题与创建 <span aria-hidden="true">→</span></strong></a>
+  </div>
+  <p class="scb-footnote">客观题单题素材仅老师可见；组题发布后，学员才能在题库里练习。</p>
+</div>
+{% endblock %}

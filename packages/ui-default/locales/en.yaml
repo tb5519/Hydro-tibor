@@ -112,3 +112,11 @@ You can also upload your avatar to Gravatar and it will be automatically updated
 domain_scratch_library: Preset Library
 domain_scratch_library_item: Manage Preset
 scratch_library: Preset Library
+scratch_problem_main: Scratch Problem Bank
+scratch_problem_create: Create Scratch Problem
+scratch_problem_project_create: Create Scratch Project Problem
+scratch_problem_edit: Edit Scratch Project Problem
+scratch_problem_detail: Scratch Problem
+scratch_problem_paper: Scratch Knowledge Practice
+scratch_problem_paper_edit: Edit Scratch Knowledge Practice
+scratch_problem_review: Review Scratch Projects

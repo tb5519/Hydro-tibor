@@ -154,11 +154,13 @@ window.addEventListener('message', async event => {
     try {
         if (message.type === 'init' && !initialized) {
             initialized = true;
-            mode = message.mode === 'thumbnail' ? 'thumbnail' :
+            mode = message.mode === 'thumbnail' ? 'thumbnail' : message.mode === 'inspect' ? 'inspect' :
                 (message.mode === 'player' || message.readOnly ? 'player' : 'editor');
             readOnly = Boolean(message.readOnly) || mode !== 'editor';
             document.documentElement.dataset.onebyoneMode = mode;
-            const stageOnly = mode !== 'editor';
+            // Inspect exposes the submitted blocks without granting any save,
+            // preset-import, title-change or community-state bridge capability.
+            const stageOnly = mode === 'player' || mode === 'thumbnail';
             window.ReduxStore.dispatch({type: 'onebyone/SET_EMBEDDED', isEmbedded: stageOnly});
             window.ReduxStore.dispatch(setPlayer(stageOnly));
             window.ReduxStore.dispatch(setTheme(Theme.light.set('accent', ACCENT_BLUE)));

@@ -1900,7 +1900,7 @@ export class ProblemObjectiveHandler extends ObjectiveAuthoringHandler {
         }
         this.response.body = { pid: pid || docId };
         this.response.redirect = isScratchDomain(this.domain)
-            ? this.url('scratch_assignment_create', { query: { objectivePaperId: docId } })
+            ? this.url('scratch_problem_paper', { paperId: docId })
             : this.url('problem_detail', { pid: pid || docId });
     }
 }

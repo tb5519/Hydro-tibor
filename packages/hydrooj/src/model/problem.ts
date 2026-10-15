@@ -195,6 +195,7 @@ export class ProblemModel {
         if (meta.objective) args.objective = meta.objective;
         if (meta.objectivePaper) args.objectivePaper = meta.objectivePaper;
         await bus.parallel('problem/before-add', domainId, content, owner, docId, args);
+        if (args.objectivePaper) args.objectivePaperRevision = new ObjectId().toHexString();
         const result = await document.add(domainId, content, owner, document.TYPE_PROBLEM, docId, null, null, args);
         args.content = content;
         args.owner = owner;
@@ -264,6 +265,9 @@ export class ProblemModel {
             $set.sort = sortable($set.pid, ddoc.namespaces);
         }
         await bus.parallel('problem/before-edit', $set, $unset);
+        if (Object.hasOwn($set, 'objectivePaper')) {
+            $set.objectivePaperRevision = new ObjectId().toHexString();
+        }
         const result = await document.set(domainId, document.TYPE_PROBLEM, _id, $set, $unset);
         await bus.emit('problem/edit', result);
         return result;

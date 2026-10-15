@@ -1332,6 +1332,14 @@ scratch_materials: Scratch 上课素材
 scratch_material: Scratch 素材管理
 scratch_submission: Scratch 提交与反馈
 scratch_editor: Scratch 在线编辑器
+scratch_problem_main: Scratch 题库
+scratch_problem_create: 创建 Scratch 题目
+scratch_problem_project_create: 创建 Scratch 创作题
+scratch_problem_edit: 编辑 Scratch 创作题
+scratch_problem_detail: Scratch 题目详情
+scratch_problem_paper: Scratch 知识练习
+scratch_problem_paper_edit: 编辑 Scratch 知识练习
+scratch_problem_review: Scratch 作品批改
 domain_scratch_library: 预制素材库
 domain_scratch_library_item: 管理预制素材
 scratch_library: 预制素材库

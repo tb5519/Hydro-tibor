@@ -18,6 +18,9 @@ interface ScratchEditorConfig {
   revision: number;
   maxFileSize: number;
   libraryUrl?: string;
+  problemMode?: boolean;
+  submitLabel?: string;
+  inspectCode?: boolean;
 }
 
 export default new NamedPage('scratch_editor', () => {
@@ -25,6 +28,18 @@ export default new NamedPage('scratch_editor', () => {
   const frame = document.querySelector<HTMLIFrameElement>('[data-scratch-frame]');
   const status = document.querySelector<HTMLElement>('[data-scratch-status]');
   if (!config || !frame || !status) return;
+  document.querySelector<HTMLElement>('[data-scratch-problem-workspace]')?.querySelectorAll<HTMLButtonElement>('[data-scratch-panel]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const workspace = document.querySelector<HTMLElement>('[data-scratch-problem-workspace]');
+      if (!workspace) return;
+      workspace.dataset.panel = button.dataset.scratchPanel;
+      workspace.querySelectorAll<HTMLButtonElement>('[data-scratch-panel]').forEach((tab) => {
+        tab.setAttribute('aria-pressed', String(tab === button));
+      });
+      // The embedded editor recomputes its stage and block workspace after becoming visible.
+      if (button.dataset.scratchPanel === 'editor') window.dispatchEvent(new Event('resize'));
+    });
+  });
   const save = document.querySelector<HTMLButtonElement>('[data-scratch-save]');
   const submit = document.querySelector<HTMLButtonElement>('[data-scratch-submit]');
   let presetBusy = false;
@@ -154,7 +169,7 @@ export default new NamedPage('scratch_editor', () => {
     savedChanges = changes;
     savedTitle = title;
     buttons();
-    show(shouldSubmit ? '正在保存并提交作业…' : config.saveForStudent ? '正在代学员保存…' : '正在保存作品…');
+    show(shouldSubmit ? `正在保存并${config.submitLabel || '提交作业'}…` : config.saveForStudent ? '正在代学员保存…' : '正在保存作品…');
     send('export', { id: pending });
     timeout = setTimeout(() => {
       finish();
@@ -216,7 +231,7 @@ export default new NamedPage('scratch_editor', () => {
         }
         if (loadFailed) return;
         loadStage(3, '马上就好', config.readOnly ? '正在布置舞台，准备运行作品…' : '正在布置舞台，马上开始创作…');
-        send('init', { project, title, readOnly: config.readOnly, mode: config.readOnly ? 'player' : 'editor' }, project ? [project] : []);
+        send('init', { project, title, readOnly: config.readOnly, mode: config.readOnly ? (config.inspectCode ? 'inspect' : 'player') : 'editor' }, project ? [project] : []);
       } else if (message.type === 'loaded' && initializing && !loadFailed) {
         loaded = true;
         clearTimeout(loadTimeout);
@@ -271,7 +286,7 @@ export default new NamedPage('scratch_editor', () => {
         dirty = changes !== requestChanges;
         send('saved');
         if (pending === currentRequest) finish();
-        show(`${shouldSubmit ? '作业已提交' : config.saveForStudent ? `已为 ${config.ownerName || '学员'} 保存作品` : '作品已保存'}${dirty ? '，还有新修改未保存' : ''}`);
+        show(`${shouldSubmit ? (config.problemMode ? '作品已提交，等待老师批改' : '作业已提交') : config.saveForStudent ? `已为 ${config.ownerName || '学员'} 保存作品` : '作品已保存'}${dirty ? '，还有新修改未保存' : ''}`);
       } else if (message.type === 'error') {
         throw new Error(String(message.message || '编辑器操作失败'));
       }

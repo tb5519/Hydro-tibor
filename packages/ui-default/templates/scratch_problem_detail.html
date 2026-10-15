@@ -1,0 +1,20 @@
+{% extends "scratch_base.html" %}
+{% block scratch_content %}
+{% include "partials/scratch_problem_style.html" %}
+{% set objective = problem.kind == 'objective' %}
+<div class="scb">
+  <a class="scb-back" href="{{ url('scratch_problem_main') }}">← 返回题库</a>
+  <header class="scb-heading"><div><span class="scb-kicker">{{ '知识练习' if objective else 'SCRATCH · 创作题' }}</span><h1>{{ problem.title }}</h1><div class="scb-detail-tags">{% for tag in problem.tags %}<span>{{ tag }}</span>{% endfor %}{% if problem.hidden %}<span>仅老师可见</span>{% endif %}</div></div>{% if isTeacher %}<div class="scb-actions">{% if problem.editUrl %}<a class="scb-button" href="{{ problem.editUrl }}">编辑题目</a>{% endif %}{% if objective and problem.assignmentUrl %}<a class="scb-button scb-button-primary" href="{{ problem.assignmentUrl }}">布置为作业</a>{% elif not objective %}<a class="scb-button" href="{{ url('scratch_problem_review') }}">批改作品</a>{% endif %}</div>{% endif %}</header>
+  <div class="scb-detail-grid">
+    <section class="scb-detail-content"><h2>{{ '练习说明' if objective else '这次的小任务' }}</h2><div class="scb-description typo">{{ (problem.description or ('认真读题，选出你的答案。' if objective else '发挥你的想象，把想法变成作品。'))|markdown|safe }}</div>{% if not objective and problem.templateFileId %}<a class="scb-file-link" href="{{ url('scratch_file', fileId=problem.templateFileId) }}">↓ 下载起始作品</a>{% endif %}</section>
+    <aside class="scb-start-card"><span class="scb-start-symbol" aria-hidden="true">{{ '✓' if objective else '✦' }}</span><h2>{{ ('已经完成，真棒！' if objectiveQuiz.completed and not isTeacher else '动脑时间') if objective else '创作时间' }}</h2><p>{% if objective %}{{ problem.questionCount }} 道题 · 共 {{ problem.totalScore }} 分{% else %}左边看任务，右边搭积木。{% endif %}</p>
+      {% if objective and objectiveQuiz and not isTeacher %}<div class="scb-quiz-progress"><progress value="{{ objectiveQuiz.answered }}" max="{{ objectiveQuiz.total }}" aria-label="答题进度"></progress><span>已答 {{ objectiveQuiz.answered }} / {{ objectiveQuiz.total }} 题{% if objectiveQuiz.completed %} · 答对 {{ objectiveQuiz.correct }} 题{% endif %}</span></div>{% endif %}
+      <form method="post"><button class="scb-button scb-button-primary" type="submit">{{ ('预览练习' if isTeacher else ('查看答题结果' if objectiveQuiz.completed else ('继续答题' if objectiveQuiz.answered else '开始答题'))) if objective else ('继续创作' if work else '开始创作') }} <span aria-hidden="true">→</span></button></form><small>{{ '答案会自动保存，做完后查看结果。' if objective else '记得保存作品，完成后提交给老师。' }}</small></aside>
+  </div>
+  {% if not objective and submissions|length %}
+  <section class="scb-bank-panel scb-submissions"><div class="scb-panel-title"><h2>{{ '作品提交' if isTeacher else '我的提交与反馈' }}</h2><span>{{ submissions|length }} 次提交</span></div>
+    {% for item in submissions %}<div class="scb-submission-row"><span class="scb-status {{ 'scb-status-reviewed' if item.reviewedAt else 'scb-status-submitted' }}">{{ '老师有反馈啦' if item.reviewedAt else '等待老师批改' }}</span><div><strong>{% if isTeacher and udict[item.owner] %}{{ udict[item.owner].displayName or udict[item.owner].uname }} · {% endif %}第 {{ item.revision }} 版</strong><small>{{ datetimeSpan(item.createdAt)|safe }}</small></div>{% if item.grade != null %}<strong class="scb-grade">{{ item.grade }}</strong>{% endif %}<a class="scb-button" href="{{ url('scratch_submission', submissionId=item._id) }}">{{ '查看反馈' if item.reviewedAt else ('批改作品' if isTeacher else '查看作品') }}</a></div>{% endfor %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

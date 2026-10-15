@@ -1,0 +1,22 @@
+{% extends "scratch_base.html" %}
+{% block scratch_content %}
+{% include "partials/scratch_problem_style.html" %}
+<div class="scb">
+  <a class="scb-back" href="{{ url('scratch_problem_main') }}">← 返回题库</a>
+  <header class="scb-heading"><div><span class="scb-kicker">SCRATCH · 创作题</span><h1>{{ '编辑创作题' if problem else '创建创作题' }}</h1><p>把任务说清楚，给孩子留出发挥的空间。</p></div></header>
+  <form class="scb-editor-form" method="post" enctype="multipart/form-data">
+    <section class="scb-form-main">
+      <label class="scb-field"><span>题目名称 <b>必填</b></span><input name="title" maxlength="120" required value="{{ problem.title }}" placeholder="例如：小猫的星空冒险"></label>
+      <label class="scb-field"><span>任务说明 <b>必填</b></span><textarea name="description" rows="12" maxlength="20000" required placeholder="孩子需要做什么？&#10;1. 点击绿旗，让小猫说一句问候。&#10;2. 用方向键控制小猫移动。&#10;3. 为你的故事添加合适的背景。">{{ problem.description }}</textarea><small>说明目标、操作方式和完成要求。学员创作时，题目会一直显示在编辑器左边。</small></label>
+      <label class="scb-field"><span>知识点标签</span><input name="tag" value="{{ tagInput }}" maxlength="2000" placeholder="例如：事件、运动、循环"><small>用逗号分隔，方便在题库中查找。</small></label>
+    </section>
+    <aside class="scb-form-aside"><h2>准备与发布</h2>
+      <label class="scb-field"><span>起始作品 <b class="scb-optional">选填</b></span><input type="file" name="template" accept=".sb3"><small>上传 .sb3 文件，给孩子准备好角色或背景。没有起始作品时，从空白项目开始。</small></label>
+      {% if problem.templateFileId %}<a class="scb-file-link" href="{{ url('scratch_file', fileId=problem.templateFileId) }}">↓ 下载当前起始作品</a><p class="scb-form-hint">不上传新文件，会保留当前起始作品。</p>{% endif %}
+      <label class="scb-field"><span>谁可以看到</span><select name="hidden"><option value="false"{% if not problem.hidden %} selected{% endif %}>发布到题库，学员可见</option><option value="true"{% if problem.hidden %} selected{% endif %}>暂存，仅老师可见</option></select></label>
+      <div class="scb-form-note"><span aria-hidden="true">✦</span><p>作品提交后会进入「批改作品」，老师可以查看作品、评分并写下反馈。</p></div>
+      <button class="scb-button scb-button-primary" type="submit">{{ '保存修改' if problem else '保存题目' }}</button><a class="scb-cancel" href="{{ url('scratch_problem_main') }}">取消</a>
+    </aside>
+  </form>
+</div>
+{% endblock %}

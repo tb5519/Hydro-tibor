@@ -1,0 +1,20 @@
+{% extends "scratch_base.html" %}
+{% block scratch_content %}
+{% include "partials/scratch_problem_style.html" %}
+<div class="scb">
+  <a class="scb-back" href="{{ url('scratch_problem_main') }}">← 返回题库</a>
+  <header class="scb-heading"><div><span class="scb-kicker">SCRATCH · 知识练习</span><h1>编辑知识练习</h1><p>调整练习名称、知识点标签与发布状态。</p></div></header>
+  <form class="scb-editor-form" method="post">
+    <section class="scb-form-main">
+      <label class="scb-field"><span>练习名称 <b>必填</b></span><input name="title" maxlength="120" required value="{{ problem.title }}" placeholder="例如：方向与坐标小挑战"></label>
+      <label class="scb-field"><span>知识点标签</span><input name="tag" value="{{ tagInput }}" maxlength="2000" placeholder="例如：运动、坐标、方向"><small>用逗号分隔，方便在题库中查找。</small></label>
+      <div class="scb-form-note"><span aria-hidden="true">✦</span><p>需要修改题目、答案或分值时，请在客观题工作台重新组卷。</p></div>
+      <a class="scb-file-link" href="{{ url('problem_objective') }}">前往组题工作台 →</a>
+    </section>
+    <aside class="scb-form-aside"><h2>发布设置</h2>
+      <label class="scb-field"><span>谁可以看到</span><select name="hidden"><option value="false"{% if not problem.hidden %} selected{% endif %}>发布到题库，学员可见</option><option value="true"{% if problem.hidden %} selected{% endif %}>暂存，仅老师可见</option></select></label>
+      <button class="scb-button scb-button-primary" type="submit">保存修改</button><a class="scb-cancel" href="{{ url('scratch_problem_main') }}">取消</a>
+    </aside>
+  </form>
+</div>
+{% endblock %}

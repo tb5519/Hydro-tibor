@@ -1,3 +1,4 @@
+import { escapeRegExp } from 'lodash';
 import { lookup } from 'mime-types';
 import moment from 'moment-timezone';
 import { ObjectId } from 'mongodb';
@@ -249,11 +250,249 @@ export class ScratchAssignmentsHandler extends ScratchHandler {
         await this.renderScratch('scratch_assignments.html', { assignments, page, numPages, count });
     }
 }
+
+export class ScratchProblemMainHandler extends ScratchHandler {
+    async get() {
+        const q = `${this.request.query.q || ''}`.trim().slice(0, 120);
+        const kind = ['project', 'objective'].includes(`${this.request.query.type || this.request.query.kind}`)
+            ? `${this.request.query.type || this.request.query.kind}` : '';
+        const page = Math.max(1, Math.floor(+this.request.query.page || 1));
+        const [projects, papers] = await Promise.all([
+            scratch.assignments.find({ domainId: this.actor.domainId, kind: 'problem', problemPaperId: { $exists: false },
+                ...(!this.actor.isTeacher ? { hidden: { $ne: true } } : {}) })
+                .project<scratch.ScratchAssignment>({ _id: 1, title: 1, tags: 1, hidden: 1, updatedAt: 1 })
+                .sort({ createdAt: -1 }).toArray(),
+            scratchObjective.listPublicPapers(this.actor),
+        ]);
+        const projectIds = projects.map((problem) => problem._id);
+        const [workDocs, submissionStats, backingDocs] = await Promise.all([
+            scratch.works.find({ domainId: this.actor.domainId, owner: this.actor.uid, assignmentId: { $in: projectIds } })
+                .project<{ assignmentId: ObjectId }>({ _id: 0, assignmentId: 1 }).toArray(),
+            scratch.submissions.aggregate<{ _id: ObjectId, count: number, pending: number, ownState: string }>([
+                { $match: { domainId: this.actor.domainId, assignmentId: { $in: projectIds },
+                    ...(!this.actor.isTeacher ? { owner: this.actor.uid } : {}) } },
+                { $sort: { createdAt: -1, _id: -1 } },
+                { $group: {
+                    _id: { assignmentId: '$assignmentId', owner: '$owner' }, count: { $sum: 1 },
+                    pending: { $sum: { $cond: [{ $ifNull: ['$reviewedAt', false] }, 0, 1] } },
+                    latestReviewed: { $first: { $ifNull: ['$reviewedAt', false] } },
+                } },
+                { $group: {
+                    _id: '$_id.assignmentId', count: { $sum: '$count' }, pending: { $sum: '$pending' },
+                    ownState: { $max: { $cond: [{ $eq: ['$_id.owner', this.actor.uid] },
+                        { $cond: ['$latestReviewed', 'reviewed', 'submitted'] }, ''] } },
+                } },
+            ]).toArray(),
+            scratch.assignments.find({ domainId: this.actor.domainId, kind: 'problem', problemPaperId: { $in: papers.map((paper) => paper.paperId) } })
+                .project<Pick<scratch.ScratchAssignment, '_id' | 'problemPaperId' | 'problemPaperRevision'>>({ _id: 1, problemPaperId: 1, problemPaperRevision: 1 }).toArray(),
+        ]);
+        const quizResults = await scratchObjective.results.aggregate<{ _id: ObjectId, answered: number, correct: number, correctIds: string[] }>([
+            { $match: { domainId: this.actor.domainId, owner: this.actor.uid, assignmentId: { $in: backingDocs.map((entry) => entry._id) } } },
+            { $project: { assignmentId: 1, answers: { $objectToArray: '$answers' } } },
+            { $unwind: '$answers' },
+            { $group: {
+                _id: '$assignmentId', answered: { $sum: 1 }, correct: { $sum: { $cond: ['$answers.v.correct', 1, 0] } },
+                correctIds: { $push: { $cond: ['$answers.v.correct', '$answers.k', null] } },
+            } },
+        ]).toArray();
+        const workByAssignment = new Set(workDocs.map((entry) => `${entry.assignmentId}`));
+        const statsByAssignment = new Map(submissionStats.map((entry) => [`${entry._id}`, entry]));
+        const backingByPaper = new Map(backingDocs.map((entry) => [`${entry.problemPaperId}:${entry.problemPaperRevision}`, entry]));
+        const resultsByAssignment = new Map(quizResults.map((entry) => [`${entry._id}`, entry]));
+        const projectItems = projects.map((problem) => {
+            const work = workByAssignment.has(`${problem._id}`);
+            const history = statsByAssignment.get(`${problem._id}`);
+            return {
+                id: problem._id.toHexString(), kind: 'project', title: problem.title, tags: problem.tags || [], hidden: !!problem.hidden,
+                url: this.url('scratch_problem_detail', { problemId: problem._id }),
+                editUrl: this.actor.isTeacher ? this.url('scratch_problem_edit', { problemId: problem._id }) : null,
+                status: history?.ownState || (work ? 'draft' : 'new'),
+                questionCount: 1, submissionCount: history?.count || 0, pendingCount: history?.pending || 0,
+                updatedAt: problem.updatedAt,
+            };
+        });
+        const paperItems = papers.map((paper) => {
+            const backing = backingByPaper.get(`${paper.paperId}:${paper.revision}`);
+            const result = backing ? resultsByAssignment.get(`${backing._id}`) : null;
+            const progress = {
+                total: paper.questionCount, answered: result?.answered || 0,
+                completed: result?.answered === paper.questionCount, correct: result?.correct || 0,
+                score: (result?.correctIds || []).reduce((sum, id) => sum + (paper.scores[Number(id) - 1] || 0), 0), totalScore: paper.totalScore,
+            };
+            return {
+                id: `${paper.paperId}`, kind: 'objective', title: paper.title, tags: paper.tags, hidden: paper.hidden,
+                url: this.url(paper.hidden ? 'scratch_problem_paper_edit' : 'scratch_problem_paper', { paperId: paper.paperId }),
+                editUrl: this.actor.isTeacher ? this.url('scratch_problem_paper_edit', { paperId: paper.paperId }) : null,
+                questionCount: paper.questionCount, totalScore: paper.totalScore,
+                status: progress.completed ? 'completed' : progress.answered ? 'draft' : 'new', ...progress,
+            };
+        });
+        const all = [...projectItems, ...paperItems];
+        const filtered = all.filter((item) => (!kind || item.kind === kind)
+            && (!q || `${item.title} ${item.tags.join(' ')}`.toLocaleLowerCase().includes(q.toLocaleLowerCase())));
+        const stats = { total: all.length, project: projects.length, objective: papers.length,
+            pendingReview: this.actor.isTeacher ? submissionStats.reduce((sum, entry) => sum + entry.pending, 0) : 0 };
+        await this.renderScratch('scratch_problem_main.html', {
+            problems: filtered.slice((page - 1) * 24, page * 24), q, kind, type: kind, page,
+            numPages: Math.ceil(filtered.length / 24), count: filtered.length, stats,
+        });
+    }
+}
+
+export class ScratchProblemCreateHandler extends ScratchHandler {
+    async get() {
+        scratch.requireTeacher(this.actor);
+        await this.renderScratch('scratch_problem_create.html', {});
+    }
+}
+
+export class ScratchProblemEditHandler extends ScratchHandler {
+    async get() {
+        scratch.requireTeacher(this.actor);
+        const problem = this.request.params.problemId ? await scratch.getAssignment(this.actor, this.routeId('problemId')) : null;
+        if (problem && (problem.kind !== 'problem' || problem.problemPaperId)) throw new NotFoundError('Scratch 创作题');
+        await this.renderScratch('scratch_problem_edit.html', { problem, tagInput: problem?.tags?.join(', ') || '' });
+    }
+
+    async post() {
+        scratch.requireTeacher(this.actor);
+        await this.limitRate('scratch_problem', 60, 20);
+        const problem = await scratch.writeProblem(this.actor, this.request.body,
+            this.request.params.problemId ? this.routeId('problemId') : undefined, this.upload('template', false));
+        this.response.redirect = this.url('scratch_problem_detail', { problemId: problem._id });
+    }
+}
+
+export class ScratchProblemHandler extends ScratchHandler {
+    async get() {
+        const problem = await scratch.getAssignment(this.actor, this.routeId('problemId'));
+        if (problem.kind !== 'problem' || problem.problemPaperId) throw new NotFoundError('Scratch 创作题');
+        const [work, submissions] = await Promise.all([
+            scratch.works.findOne({ domainId: this.actor.domainId, assignmentId: problem._id, owner: this.actor.uid }),
+            scratch.listSubmissions(this.actor, { assignmentId: problem._id }).limit(100).toArray(),
+        ]);
+        await this.renderScratch('scratch_problem_detail.html', {
+            problem: { ...problem, id: problem._id, kind: 'project', tags: problem.tags || [],
+                editUrl: this.actor.isTeacher ? this.url('scratch_problem_edit', { problemId: problem._id }) : null }, work, submissions,
+        });
+    }
+
+    async post() {
+        await this.limitRate('scratch_problem_start', 60, 30);
+        const problem = await scratch.getAssignment(this.actor, this.routeId('problemId'));
+        if (problem.kind !== 'problem' || problem.problemPaperId) throw new NotFoundError('Scratch 创作题');
+        const work = await scratch.createWork(this.actor, problem.title, problem._id);
+        this.response.redirect = this.url('scratch_editor', { query: { workId: work._id } });
+    }
+}
+
+export class ScratchProblemPaperHandler extends ScratchHandler {
+    paperId() {
+        const value = Number(this.request.params.paperId);
+        if (!Number.isSafeInteger(value) || value < 1) throw new ValidationError('paperId');
+        return value;
+    }
+
+    async get() {
+        const paperId = this.paperId();
+        const paper = await scratchObjective.getPublicPaper(this.actor, paperId);
+        const backing = await scratchObjective.getPracticeAssignment(this.actor, paperId);
+        const state = backing ? await scratchObjective.getState(this.actor, backing) : null;
+        await this.renderScratch('scratch_problem_detail.html', {
+            problem: {
+                id: paperId, kind: 'objective', title: paper.title, tags: paper.tag || [],
+                description: '', questionCount: paper.objectivePaper.items.length,
+                totalScore: paper.objectivePaper.items.reduce((sum, item) => sum + item.score, 0),
+                editUrl: this.actor.isTeacher ? this.url('scratch_problem_paper_edit', { paperId }) : null,
+                assignmentUrl: this.actor.isTeacher ? this.url('scratch_assignment_create', { query: { objectivePaperId: paperId } }) : null,
+            },
+            objectiveQuiz: state ? {
+                total: state.total, answered: state.answered, correct: state.correct, score: state.score, completed: state.completed,
+                url: this.url('scratch_objective_quiz', { assignmentId: backing._id }),
+            } : null, work: null, submissions: [],
+        });
+    }
+
+    async post() {
+        await this.limitRate('scratch_problem_start', 60, 30);
+        const backing = await scratchObjective.getPracticeAssignment(this.actor, this.paperId(), true);
+        this.response.redirect = this.url('scratch_objective_quiz', { assignmentId: backing._id });
+    }
+}
+
+export class ScratchProblemPaperEditHandler extends ScratchProblemPaperHandler {
+    async get() {
+        const problem = await scratchObjective.getEditablePaper(this.actor, this.paperId());
+        await this.renderScratch('scratch_problem_paper_edit.html', { problem, tagInput: problem.tags.join(', ') });
+    }
+
+    async post() {
+        scratch.requireTeacher(this.actor);
+        await this.limitRate('scratch_problem', 60, 20);
+        const problem = await scratchObjective.editPaperMetadata(this.actor, this.paperId(), this.request.body);
+        this.response.redirect = problem.hidden ? this.url('scratch_problem_main')
+            : this.url('scratch_problem_paper', { paperId: problem.paperId });
+    }
+}
+
+export class ScratchProblemReviewHandler extends ScratchHandler {
+    async get() {
+        scratch.requireTeacher(this.actor);
+        const status = ['pending', 'reviewed', 'all'].includes(`${this.request.query.status}`) ? `${this.request.query.status}` : 'pending';
+        const q = `${this.request.query.q || ''}`.trim().slice(0, 120);
+        const page = Math.max(1, Math.floor(+this.request.query.page || 1));
+        const projects = await scratch.assignments.find({ domainId: this.actor.domainId, kind: 'problem', problemPaperId: { $exists: false } })
+            .project<scratch.ScratchAssignment>({ _id: 1, title: 1 }).toArray();
+        const base = { domainId: this.actor.domainId, assignmentId: { $in: projects.map((entry) => entry._id) } };
+        const filter: Record<string, any> = { ...base,
+            ...(status === 'all' ? {} : { reviewedAt: status === 'reviewed' ? { $ne: null } : null }) };
+        if (q) {
+            const owners = await scratch.submissions.distinct('owner', base);
+            const regex = new RegExp(escapeRegExp(q), 'i');
+            const [accounts, members] = await Promise.all([
+                user.coll.find({ _id: { $in: owners }, $or: [{ uname: regex }, { displayName: regex }] })
+                    .project<{ _id: number }>({ _id: 1 }).toArray(),
+                domain.collUser.find({ domainId: this.actor.domainId, uid: { $in: owners }, displayName: regex })
+                    .project<{ uid: number }>({ _id: 0, uid: 1 }).toArray(),
+            ]);
+            const matchedIds = [...new Set([...accounts.map((entry) => entry._id), ...members.map((entry) => entry.uid),
+                ...owners.filter((uid) => `${uid}`.includes(q))])];
+            filter.$or = [{ assignmentId: { $in: projects.filter((entry) => entry.title.toLocaleLowerCase().includes(q.toLocaleLowerCase())).map((entry) => entry._id) } },
+                { owner: { $in: matchedIds } }];
+        }
+        const [docs, count, total, pending] = await Promise.all([
+            scratch.submissions.find(filter).sort({ createdAt: -1, _id: -1 }).skip((page - 1) * 30).limit(30)
+                .project<scratch.ScratchSubmission>({ _id: 1, owner: 1, assignmentId: 1, revision: 1, createdAt: 1, reviewedAt: 1, grade: 1 }).toArray(),
+            scratch.submissions.countDocuments(filter), scratch.submissions.countDocuments(base),
+            scratch.submissions.countDocuments({ ...base, reviewedAt: null }),
+        ]);
+        const names = await user.getListForRender(this.actor.domainId, [...new Set(docs.map((entry) => entry.owner))], false);
+        const projectsById = new Map(projects.map((entry) => [`${entry._id}`, entry]));
+        const rows = docs.map((entry) => ({
+            ...entry, assignmentTitle: projectsById.get(`${entry.assignmentId}`)?.title || 'Scratch 创作题',
+            problemUrl: this.url('scratch_problem_detail', { problemId: entry.assignmentId }),
+            studentName: names[entry.owner]?.displayName || names[entry.owner]?.uname || `${entry.owner}`,
+            url: this.url('scratch_submission', { submissionId: entry._id }),
+            editorUrl: this.url('scratch_editor', { query: { submissionId: entry._id, inspect: 'true' } }),
+        }));
+        await this.renderScratch('scratch_problem_review.html', {
+            submissions: rows, status, q, page, numPages: Math.ceil(count / 30), count,
+            stats: { total, pending, reviewed: total - pending },
+        });
+    }
+}
+
 export class ScratchAssignmentEditHandler extends ScratchHandler {
     async get() {
         scratch.requireTeacher(this.actor);
         const id = this.request.params.assignmentId ? this.routeId('assignmentId') : null;
         const assignment = id ? await scratch.getAssignment(this.actor, id) : null;
+        if (assignment?.kind === 'problem') {
+            this.response.redirect = assignment.problemPaperId
+                ? this.url('scratch_problem_paper', { paperId: assignment.problemPaperId })
+                : this.url('scratch_problem_edit', { problemId: assignment._id });
+            return;
+        }
         const deadlineInput = assignment?.deadline
             ? moment(assignment.deadline).tz(this.user.timeZone || 'Asia/Shanghai').format('YYYY-MM-DDTHH:mm') : '';
         const objectivePapers = await scratchObjective.listPapers(this.actor);
@@ -269,6 +508,7 @@ export class ScratchAssignmentEditHandler extends ScratchHandler {
         scratch.requireTeacher(this.actor);
         await this.limitRate('scratch_assignment', 60, 20);
         const id = this.request.params.assignmentId ? this.routeId('assignmentId') : null;
+        if (id && (await scratch.getAssignment(this.actor, id)).kind === 'problem') throw new ValidationError('assignmentId');
         const assignment = await scratch.writeAssignment(this.actor, this.assignmentInput(), id, this.upload('template', false));
         this.response.redirect = this.url('scratch_assignment', { assignmentId: assignment._id });
     }
@@ -315,7 +555,8 @@ export class ScratchObjectiveQuizHandler extends ScratchHandler {
         const student = await user.getById(this.actor.domainId, uid);
         return { ...state, studentName: student?.displayName || student?.uname || `${uid}`,
             actionUrl: this.url('scratch_objective_quiz', { assignmentId: assignment._id }),
-            backUrl: this.url('scratch_assignment', { assignmentId: assignment._id }) };
+            backUrl: assignment.problemPaperId ? this.url('scratch_problem_paper', { paperId: assignment.problemPaperId })
+                : this.url('scratch_assignment', { assignmentId: assignment._id }) };
     }
 
     async get() {
@@ -438,8 +679,13 @@ export class ScratchEditorHandler extends ScratchHandler {
             backUrl: submission ? this.url('scratch_submission', { submissionId: submission._id }) : this.url('scratch_work', { workId: work._id }),
             canSubmit: !readOnly && !saveForStudent && !!assignment && (!assignment.deadline || assignment.deadline.getTime() >= Date.now()),
             readOnly, saveForStudent, ownerName, revision: work.revision, maxFileSize: SCRATCH_MAX_FILE_SIZE,
+            problemMode: assignment?.kind === 'problem', submitLabel: assignment?.kind === 'problem' ? '提交作品' : '提交作业',
+            inspectCode: !!submission && this.actor.isTeacher && query.inspect === 'true',
         };
-        await this.renderScratch('scratch_editor.html', { work, assignment, submission });
+        if (!submission && assignment?.kind === 'problem') {
+            this.UiContext.scratchEditor.backUrl = this.url('scratch_problem_detail', { problemId: assignment._id });
+        }
+        await this.renderScratch('scratch_editor.html', { work, assignment, submission, problem: assignment?.kind === 'problem' ? assignment : null });
     }
 }
 export class ScratchLanguageHandler extends ScratchHandler {
@@ -843,6 +1089,14 @@ export class ScratchFileHandler extends ScratchHandler {
 }
 
 export async function apply(ctx: Context) {
+    ctx.Route('scratch_problem_main', '/scratch/problems', ScratchProblemMainHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_problem_review', '/scratch/problems/review', ScratchProblemReviewHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_problem_create', '/scratch/problem/create', ScratchProblemCreateHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_problem_project_create', '/scratch/problem/create/project', ScratchProblemEditHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_problem_paper_edit', '/scratch/problem/paper/:paperId/edit', ScratchProblemPaperEditHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_problem_paper', '/scratch/problem/paper/:paperId', ScratchProblemPaperHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_problem_edit', '/scratch/problem/:problemId/edit', ScratchProblemEditHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_problem_detail', '/scratch/problem/:problemId', ScratchProblemHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_main', '/scratch', ScratchMainHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_works', '/scratch/works', ScratchWorksHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_work', '/scratch/work/:workId', ScratchWorkHandler, PRIV.PRIV_USER_PROFILE);

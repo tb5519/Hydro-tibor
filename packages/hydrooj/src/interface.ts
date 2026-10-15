@@ -208,6 +208,8 @@ declare module './model/problem' {
         objective?: import('./lib/objective').ObjectiveQuestion;
         /** Private source snapshots and answer keys for a published objective paper. */
         objectivePaper?: import('./lib/objective').ObjectivePaper;
+        /** Content revision for efficient public paper progress lookups. */
+        objectivePaperRevision?: string;
         reference?: {
             domainId: string;
             pid: number;

@@ -17,6 +17,7 @@ const activityCode = transformSync(fs.readFileSync(path.join(__dirname, '../buil
 
 function bridge() {
     const sent = [];
+    const dispatched = [];
     const listeners = new Map();
     const machine = new EventEmitter();
     Object.assign(machine, {
@@ -37,7 +38,7 @@ function bridge() {
         setInterval: () => 1, clearInterval() {}, setTimeout: () => 1,
         performance: { now: () => 1000 },
         document,
-        ReduxStore: { dispatch() {}, subscribe() {}, getState: () => ({ scratchGui: { projectTitle: '作品' } }) },
+        ReduxStore: { dispatch(action) { dispatched.push(action); }, subscribe() {}, getState: () => ({ scratchGui: { projectTitle: '作品' } }) },
     };
     const communityModule = { exports: {} };
     vm.runInNewContext(communityCode, { module: communityModule, exports: communityModule.exports, window, TextEncoder });
@@ -50,7 +51,7 @@ function bridge() {
         '../reducers/vm': { vmInitialState: machine },
         '../reducers/project-title': { setProjectTitle: title => ({ title }) },
         '../reducers/project-changed': { setProjectUnchanged: () => ({}) },
-        '../reducers/mode': { setPlayer: () => ({}) }, '../reducers/theme': { setTheme: () => ({}) },
+        '../reducers/mode': { setPlayer: isPlayer => ({ isPlayer }) }, '../reducers/theme': { setTheme: () => ({}) },
         '../lib/themes': { Theme: { light: { set: () => ({}) } }, ACCENT_BLUE: 'blue' },
         '../lib/tw-embed-fullscreen-hoc.jsx': identity, './app-target': () => {},
         '../lib/onebyone-preset-import': { createPresetBridge: () => ({}) },
@@ -62,7 +63,7 @@ function bridge() {
         window, parent, document, location: { hash: '#channel=runtime-channel' },
         URLSearchParams, ArrayBuffer, Set, process: { env: {} },
     });
-    return { machine, sent, parent,
+    return { machine, sent, parent, dispatched, document,
         input(name = 'keydown', isTrusted = true) {
             listeners.get(`document:${name}`)?.({ isTrusted });
         },
@@ -78,6 +79,22 @@ function bridge() {
 }
 
 describe('isolated Scratch runtime bridge', () => {
+    it('opens submitted blocks for inspection without any persistence or automatic execution', async () => {
+        const h = bridge();
+        let exports = 0;
+        h.machine.saveProjectSb3 = async () => { exports++; throw new Error('Inspect must never export'); };
+        await h.init('inspect', {}, { readOnly: false });
+        assert.equal(h.document.documentElement.dataset.onebyoneMode, 'inspect');
+        assert(h.dispatched.some(action => action.isEmbedded === false));
+        assert(h.dispatched.some(action => action.isPlayer === false));
+        h.machine.emit('PROJECT_CHANGED');
+        h.machine.runtime.emit('PROJECT_LOADED');
+        h.machine.emit('PROJECT_RUN_START');
+        await h.message('export', { id: 'forbidden' });
+        await h.message('flushCommunityState');
+        assert.equal(exports, 0);
+        assert.deepEqual(h.sent.map(item => item.type), ['loaded']);
+    });
     it('forwards trusted user activity only after the player loads, without treating automatic runs as activity', async () => {
         const h = bridge();
         h.input();

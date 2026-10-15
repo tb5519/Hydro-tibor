@@ -1,6 +1,19 @@
 {% extends "layout/basic.html" %}
 {% block content %}
-<div class="scratch-editor-shell {{ 'scratch-editor-player' if UiContext.scratchEditor.readOnly }}" data-scratch-editor>
+{% if problem %}
+<div class="scratch-problem-workspace" data-scratch-problem-workspace data-panel="question">
+  <div class="scratch-problem-mobile-tabs" aria-label="题目与编辑器"><button type="button" data-scratch-panel="question" aria-pressed="true">题目</button><button type="button" data-scratch-panel="editor" aria-pressed="false">{{ '查看作品' if UiContext.scratchEditor.readOnly else '搭积木' }}</button></div>
+  <aside class="scratch-problem-question" aria-label="题目说明">
+    <a class="scratch-problem-back" data-scratch-back href="{{ UiContext.scratchEditor.backUrl }}">← {{ '返回批改' if UiContext.scratchEditor.readOnly else '返回题目' }}</a>
+    <span class="scratch-problem-label">SCRATCH · {{ '提交作品' if UiContext.scratchEditor.readOnly else '创作挑战' }}</span>
+    <h1>{{ problem.title }}</h1>
+    {% if UiContext.scratchEditor.readOnly %}<span class="scratch-problem-readonly">提交版本 · 只读查看</span>{% endif %}
+    <div class="scratch-problem-description typo">{{ problem.description|markdown|safe }}</div>
+    <div class="scratch-problem-hint"><span aria-hidden="true">✦</span><p>{{ '这是学员提交时的作品。查看和运行都不会更改原来的提交。' if UiContext.scratchEditor.readOnly else '先试着运行一下，记得保存。完成后点「提交作品」，老师就能看到你的创意。' }}</p></div>
+  </aside>
+  <section class="scratch-problem-editor" aria-label="Scratch 创作区">
+{% endif %}
+<div class="scratch-editor-shell {{ 'scratch-editor-player' if UiContext.scratchEditor.readOnly and not UiContext.scratchEditor.inspectCode }}" data-scratch-editor>
   {% if not UiContext.scratchEditor.readOnly %}
   <div class="scratch-editor-actions" aria-label="作品保存">
     <button type="button" class="scratch-editor-button scratch-editor-save{% if UiContext.scratchEditor.saveForStudent %} scratch-editor-save-for-student{% endif %}" data-scratch-save{% if UiContext.scratchEditor.saveForStudent %} aria-haspopup="dialog" aria-controls="scratch-teacher-save-dialog"{% endif %} disabled>
@@ -8,7 +21,7 @@
     </button>
     {% if UiContext.scratchEditor.canSubmit %}
     <button type="button" class="scratch-editor-button scratch-editor-submit" data-scratch-submit disabled>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4 20-7ZM22 2 11 13"/></svg><span>提交作业</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4 20-7ZM22 2 11 13"/></svg><span>{{ UiContext.scratchEditor.submitLabel or '提交作业' }}</span>
     </button>
     {% endif %}
   </div>
@@ -32,15 +45,27 @@
     </div>
   </div>
   <span class="scratch-editor-status" role="status" aria-live="polite" data-scratch-status data-phase="loading">{{ '正在打开作品…' if UiContext.scratchEditor.readOnly else '正在准备积木…' }}</span>
-  <iframe title="{{ 'Scratch 作品运行舞台' if UiContext.scratchEditor.readOnly else 'Scratch 在线编辑器' }}" data-scratch-frame sandbox="allow-scripts allow-downloads" allow="autoplay; fullscreen" allowfullscreen referrerpolicy="no-referrer"></iframe>
+  <iframe title="{{ 'Scratch 提交积木查看' if UiContext.scratchEditor.inspectCode else ('Scratch 作品运行舞台' if UiContext.scratchEditor.readOnly else 'Scratch 在线编辑器') }}" data-scratch-frame sandbox="allow-scripts allow-downloads" allow="autoplay; fullscreen" allowfullscreen referrerpolicy="no-referrer"></iframe>
   <noscript>请开启 JavaScript 后使用在线编辑器。</noscript>
 </div>
+{% if problem %}</section></div>{% endif %}
 <style>
 .page--scratch_editor .main{padding:48px 0 0;max-width:none;width:100%}
 .page--scratch_editor .footer{display:none}
 .scratch-editor-shell{position:relative;display:flex;height:calc(100dvh - 48px);min-height:440px;background:#eaf1fb;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
 .scratch-editor-shell *{box-sizing:border-box}
 .scratch-editor-shell iframe{border:0;width:100%;height:100%;flex:1;min-width:0;background:#eaf1fb}
+.scratch-problem-workspace{display:grid;grid-template-columns:clamp(280px,26vw,370px) minmax(0,1fr);height:calc(100dvh - 48px);background:#f8f6fc;color:#39334b;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+.scratch-problem-question{padding:23px 25px;overflow-y:auto;border-right:1px solid #e6deef;background:#fff;min-width:0;overscroll-behavior:contain}
+.scratch-problem-back{display:inline-flex;align-items:center;min-height:35px;margin-bottom:23px;color:#91839f;font-size:13px;text-decoration:none}
+.scratch-problem-back:hover{color:#7956be}.scratch-problem-label{display:block;font-size:11px;letter-spacing:.08em;color:#a18cb9;font-weight:700}
+.scratch-problem-question h1{font-size:23px;line-height:1.5;font-weight:800;margin:9px 0 23px;overflow-wrap:anywhere}
+.scratch-problem-description{font-size:15px;line-height:1.95;color:#71647e;overflow-wrap:anywhere}.scratch-problem-description img{max-width:100%;height:auto}.scratch-problem-description pre{overflow:auto;max-width:100%}
+.scratch-problem-hint{display:flex;gap:10px;margin-top:28px;padding:15px;border-radius:12px;background:#fff8ec;color:#a18757;font-size:12px;line-height:1.8}.scratch-problem-hint p{margin:0}
+.scratch-problem-readonly{display:inline-flex;padding:5px 10px;border-radius:8px;background:#f2edf9;color:#957aac;font-size:11px;margin-bottom:20px}
+.scratch-problem-editor{min-width:0;overflow:hidden}.scratch-problem-editor .scratch-editor-shell{height:100%;min-height:440px}.scratch-problem-mobile-tabs{display:none}
+@media(max-width:1100px){.scratch-problem-workspace{display:flex;flex-direction:column}.scratch-problem-mobile-tabs{display:flex;gap:6px;padding:8px 14px;border-bottom:1px solid #e6deef;background:#fff;flex-shrink:0}.scratch-problem-mobile-tabs button{padding:8px 20px;border:0;border-radius:9px;background:#f4f0fa;color:#9a85b4;font:inherit;font-size:13px;cursor:pointer}.scratch-problem-mobile-tabs button[aria-pressed=true]{background:#8460c6;color:#fff}.scratch-problem-question,.scratch-problem-editor{flex:1;min-height:0}.scratch-problem-workspace[data-panel=question] .scratch-problem-editor,.scratch-problem-workspace[data-panel=editor] .scratch-problem-question{display:none}.scratch-problem-question{padding:23px;max-width:none;border-right:0}.scratch-problem-question h1{font-size:25px}.scratch-problem-description{max-width:780px}.scratch-problem-editor .scratch-editor-shell{min-height:0}}
+@media(max-width:767px){.scratch-problem-workspace{height:calc(100dvh - 62px)}}
 .scratch-editor-actions{position:absolute;right:12px;top:4px;z-index:3;display:flex;gap:8px;align-items:center;height:40px}
 .scratch-editor-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:40px;padding:8px 15px;margin:0;border:1px solid #fff7;border-radius:9px;background:#fff;color:#2563eb;font:inherit;font-size:14px;font-weight:700;line-height:1.4;white-space:nowrap;cursor:pointer}
 .scratch-editor-button:hover{background:#edf4ff}

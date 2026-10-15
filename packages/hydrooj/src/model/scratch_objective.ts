@@ -2,12 +2,14 @@
 import { ObjectId } from 'mongodb';
 import { Context } from '../context';
 import { NotFoundError, PermissionError, ValidationError } from '../error';
+import type { ProblemDoc } from '../interface';
 import { gradeAnswer, parseAnswers } from '../lib/daily_quiz';
 import { ObjectiveQuestion, parseObjective, rewriteObjectiveFiles } from '../lib/objective';
 import db from '../service/db';
 import { PERM, PRIV } from './builtin';
 import * as document from './document';
 import domain from './domain';
+import problem from './problem';
 import type { ScratchActor, ScratchAssignment } from './scratch';
 import storage from './storage';
 import user from './user';
@@ -57,8 +59,99 @@ export async function listPapers(actor: ScratchActor) {
     }));
 }
 
+function paperRevision(paper: Pick<ProblemDoc, '_id' | 'objectivePaperRevision'>) {
+    return paper.objectivePaperRevision || `legacy:${paper._id}`;
+}
+
+export async function getPublicPaper(actor: ScratchActor, paperId: number) {
+    if (!Number.isSafeInteger(paperId) || paperId < 1) throw new ValidationError('paperId');
+    const paper = await document.get(actor.domainId, document.TYPE_PROBLEM, paperId,
+        ['docId', 'pid', 'title', 'tag', 'hidden', 'reference', 'objectiveKind', 'objectivePaper', 'objectivePaperRevision', 'owner']);
+    if (!paper || paper.hidden || paper.reference || paper.objectiveKind || !paper.objectivePaper?.items?.length) {
+        throw new NotFoundError('Scratch 客观题');
+    }
+    return paper;
+}
+
+export async function getEditablePaper(actor: ScratchActor, paperId: number) {
+    if (!actor.isTeacher) throw new PermissionError('Scratch 教学管理');
+    if (!Number.isSafeInteger(paperId) || paperId < 1) throw new ValidationError('paperId');
+    const paper = await document.get(actor.domainId, document.TYPE_PROBLEM, paperId,
+        ['docId', 'title', 'tag', 'hidden', 'reference', 'objectiveKind', 'objectivePaper']);
+    if (!paper || paper.reference || paper.objectiveKind || !paper.objectivePaper?.items?.length) throw new NotFoundError('Scratch 客观题');
+    return { paperId: paper.docId, title: paper.title, tags: paper.tag || [], hidden: !!paper.hidden };
+}
+
+export async function editPaperMetadata(actor: ScratchActor, paperId: number, input: { title?: unknown, tag?: unknown, hidden?: unknown }) {
+    await getEditablePaper(actor, paperId);
+    const title = `${input.title || ''}`.trim();
+    if (!title || title.length > 120) throw new ValidationError('title');
+    const raw = Array.isArray(input.tag) ? input.tag : `${input.tag || ''}`.split(/[,，\n]/);
+    const tags = [...new Set(raw.map((tag) => `${tag}`.trim()).filter(Boolean))];
+    if (tags.length > 50 || tags.some((tag) => tag.length > 60)) throw new ValidationError('tag');
+    if (![true, false, 'true', 'false', '1', '0'].includes(input.hidden as any)) throw new ValidationError('hidden');
+    await problem.edit(actor.domainId, paperId, { title, tag: tags, hidden: [true, 'true', '1'].includes(input.hidden as any) });
+    return getEditablePaper(actor, paperId);
+}
+
+export async function listPublicPapers(actor: ScratchActor) {
+    const papers = await document.coll.aggregate<Pick<ProblemDoc, '_id' | 'docId' | 'title' | 'tag' | 'owner' | 'hidden' | 'objectivePaperRevision'> & { scores: number[] }>([
+        { $match: { domainId: actor.domainId, docType: document.TYPE_PROBLEM,
+            'objectivePaper.items.0': { $exists: true }, objectiveKind: { $exists: false }, reference: { $exists: false },
+            ...(!actor.isTeacher ? { hidden: false } : {}) } },
+        { $sort: { docId: -1 } },
+        { $project: { _id: 1, docId: 1, title: 1, tag: 1, owner: 1, hidden: 1, objectivePaperRevision: 1,
+            scores: { $map: { input: '$objectivePaper.items', as: 'item', in: '$$item.score' } } } },
+    ]).toArray();
+    return papers.map((paper) => ({
+        paperId: paper.docId, title: paper.title, tags: paper.tag || [], owner: paper.owner, hidden: !!paper.hidden,
+        questionCount: paper.scores.length, scores: paper.scores,
+        totalScore: paper.scores.reduce((sum, score) => sum + score, 0),
+        revision: paperRevision(paper),
+    }));
+}
+
+// A public paper gets one immutable backing copy per revision. The unique key
+// serializes concurrent first starts; losing copies and their files are removed.
+// This is deliberately separate from writeAssignment: no caller-supplied teacher
+// fields or arbitrary private sources may enter this student-started path.
+export async function getPracticeAssignment(actor: ScratchActor, paperId: number, create = false): Promise<ScratchAssignment | null> {
+    const paper = await getPublicPaper(actor, paperId);
+    const revision = paperRevision(paper);
+    const key = { domainId: actor.domainId, problemPaperId: paperId, problemPaperRevision: revision };
+    const current = await assignments.findOne(key);
+    if (current || !create) return current ? { ...current, title: paper.title, tags: paper.tag || [] } : null;
+    const quiz = await snapshotQuiz({ ...actor, isTeacher: true }, [paperId]);
+    // Revalidate after file copying so an unpublished or edited paper cannot
+    // acquire a public snapshot through an in-flight student request.
+    try {
+        const latest = await getPublicPaper(actor, paperId);
+        if (paperRevision(latest) !== revision) throw new ValidationError('paperId', null, '老师更新了题卷，请刷新后重新开始');
+        const now = new Date();
+        const assignment: ScratchAssignment = {
+            _id: new ObjectId(), ...key, kind: 'problem', owner: paper.owner,
+            title: paper.title, description: '', deadline: null, templateFileId: null,
+            projectRequired: false, objectiveQuiz: quiz, hidden: false, tags: paper.tag || [], createdAt: now, updatedAt: now,
+        };
+        await assignments.insertOne(assignment);
+        return assignment;
+    } catch (error) {
+        await storage.del(Object.values(quiz.files));
+        if (error.code === 11000) {
+            const existing = await assignments.findOne(key);
+            if (existing) return existing;
+        }
+        throw error;
+    }
+}
+
+function requireScope(actor: ScratchActor, assignment: ScratchAssignment) {
+    if (assignment.domainId !== actor.domainId) throw new PermissionError('Scratch 答题访问');
+}
+
 export async function snapshotQuiz(actor: ScratchActor, paperIds: number[], current?: ScratchAssignment): Promise<ScratchAssignmentQuiz | null> {
     if (!actor.isTeacher) throw new PermissionError('Scratch 教学管理');
+    if (current) requireScope(actor, current);
     if (JSON.stringify(current?.objectiveQuiz?.paperIds || []) === JSON.stringify(paperIds)) return current?.objectiveQuiz || null;
     if (current?.objectiveQuiz && (current.objectiveStarted || await results.findOne({ domainId: actor.domainId, assignmentId: current._id }))) {
         throw new ValidationError('objectivePaperIds', null, '已有学员开始答题，请新建作业调整题目，以保留原有答题记录');
@@ -128,6 +221,7 @@ export function summarize(quiz: ScratchAssignmentQuiz, result?: ScratchQuizResul
 }
 
 export async function getState(actor: ScratchActor, assignment: ScratchAssignment, uid = actor.uid, fileUrl = (name: string) => name) {
+    requireScope(actor, assignment);
     if (!assignment.objectiveQuiz) throw new NotFoundError('客观题作业');
     if (uid !== actor.uid && !actor.isTeacher) throw new PermissionError('答题记录');
     const quiz = assignment.objectiveQuiz;
@@ -151,6 +245,7 @@ export async function getState(actor: ScratchActor, assignment: ScratchAssignmen
 export async function answer(
     actor: ScratchActor, assignment: ScratchAssignment, questionId: unknown, input: unknown, revision = assignment.objectiveQuiz?.revision,
 ) {
+    requireScope(actor, assignment);
     if (actor.isTeacher) throw new PermissionError('教师预览不能提交学员答案');
     const quiz = assignment.objectiveQuiz;
     if (!quiz) throw new NotFoundError('客观题作业');
@@ -168,16 +263,21 @@ export async function answer(
     });
     if (!locked.matchedCount) throw new ValidationError('revision', null, '老师调整了题目，请刷新后重新开始');
     const now = new Date();
-    await results.updateOne({ _id }, { $setOnInsert: {
-        domainId: actor.domainId, assignmentId: assignment._id, revision: quiz.revision,
-        owner: actor.uid, answers: {}, createdAt: now, updatedAt: now,
-    } }, { upsert: true });
+    try {
+        await results.updateOne({ _id }, { $setOnInsert: {
+            domainId: actor.domainId, assignmentId: assignment._id, revision: quiz.revision,
+            owner: actor.uid, answers: {}, createdAt: now, updatedAt: now,
+        } }, { upsert: true });
+    } catch (error) {
+        if (error.code !== 11000) throw error;
+    }
     await results.updateOne({ _id, [`answers.${item.id}`]: { $exists: false } }, { $set: {
         [`answers.${item.id}`]: { selected, correct: gradeAnswer(item.objective, selected), answeredAt: now }, updatedAt: now,
     } });
 }
 
 export async function getResults(actor: ScratchActor, assignment: ScratchAssignment) {
+    requireScope(actor, assignment);
     if (!actor.isTeacher) throw new PermissionError('Scratch 教学管理');
     if (!assignment.objectiveQuiz) return [];
     const docs = await results.find({ domainId: actor.domainId, assignmentId: assignment._id, revision: assignment.objectiveQuiz.revision })
@@ -195,6 +295,7 @@ export async function getResults(actor: ScratchActor, assignment: ScratchAssignm
 }
 
 export async function getFile(actor: ScratchActor, assignment: ScratchAssignment, filename: string) {
+    requireScope(actor, assignment);
     const quiz = assignment.objectiveQuiz;
     if (!quiz || !Object.hasOwn(quiz.files, filename)) throw new NotFoundError('题目附件');
     if (!actor.isTeacher && !quiz.statementFiles.includes(filename)) {

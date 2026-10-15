@@ -2,12 +2,59 @@ import $ from 'jquery';
 import { NamedPage } from 'vj/misc/Page';
 
 const page = new NamedPage('homework_main', () => {
-  const refreshCompletedOverflow = (root = document) => {
-    $(root).find('[data-homework-completed-line]').each((_, line) => {
-      const pills = $(line).find('[data-homework-completed-pills]')[0];
-      if (!pills) return;
-      $(line).toggleClass('is-overflowing', pills.scrollWidth > pills.clientWidth + 1);
+  const rosterState = { search: '', filter: 'all' };
+  const studentState = { search: '', view: 'pending' };
+  const normalizeSearch = (value) => String(value || '').normalize('NFKC').trim().toLocaleLowerCase();
+
+  const refreshRoster = () => {
+    const root = document.querySelector('[data-homework-admin-panel]');
+    if (!root) return;
+    const cards = [...root.querySelectorAll('[data-homework-roster-card]')];
+    const search = root.querySelector('[data-homework-roster-search]');
+    if (search) search.value = rosterState.search;
+    const query = normalizeSearch(rosterState.search);
+    let visible = 0;
+    for (const card of cards) {
+      const done = card.dataset.homeworkDone === 'true';
+      const matchesState = rosterState.filter === 'all' || (rosterState.filter === 'done' ? done : !done);
+      card.hidden = !matchesState || !normalizeSearch(card.dataset.homeworkSearch).includes(query);
+      if (!card.hidden) visible++;
+    }
+    root.querySelectorAll('[data-homework-roster-filter]').forEach((button) => {
+      const active = button.dataset.homeworkRosterFilter === rosterState.filter;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
     });
+    root.querySelectorAll('[data-homework-filter-count]').forEach((element) => {
+      const done = element.dataset.homeworkFilterCount === 'done';
+      element.textContent = String(cards.filter((card) => (card.dataset.homeworkDone === 'true') === done).length);
+    });
+    const count = root.querySelector('[data-homework-visible-count]');
+    if (count) count.textContent = `${visible} 位学员`;
+    const empty = root.querySelector('[data-homework-filter-empty]');
+    if (empty) empty.hidden = visible > 0;
+  };
+
+  const refreshStudent = () => {
+    const root = document.querySelector('[data-homework-student-workspace]');
+    if (!root) return;
+    const query = normalizeSearch(studentState.search);
+    let visible = 0;
+    root.querySelectorAll('[data-homework-student-panel]').forEach((panel) => {
+      panel.hidden = panel.dataset.homeworkStudentPanel !== studentState.view;
+      panel.querySelectorAll('[data-homework-student-card]').forEach((card) => {
+        card.hidden = !normalizeSearch(card.dataset.homeworkSearch).includes(query);
+        if (!panel.hidden && !card.hidden) visible++;
+      });
+      // A search empty state replaces the normal unassigned/completed message.
+      panel.querySelectorAll('.homework-hub__empty').forEach((empty) => { empty.hidden = !!query; });
+    });
+    root.querySelectorAll('[data-homework-student-view]').forEach((button) => {
+      const active = button.dataset.homeworkStudentView === studentState.view;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    root.querySelector('[data-homework-student-filter-empty]').hidden = !query || visible > 0;
   };
 
   const wait = (duration) => new Promise((resolve) => window.setTimeout(resolve, duration));
@@ -51,7 +98,8 @@ const page = new NamedPage('homework_main', () => {
       const nextAdmin = pageDocument.querySelector('[data-homework-admin]');
       const nextSidebar = nextAdmin?.querySelector('[data-homework-admin-sidebar]');
       const nextPanel = nextAdmin?.querySelector('[data-homework-admin-panel]');
-      if (!nextSidebar || !nextPanel || requestId !== viewRequestId) return;
+      if (requestId !== viewRequestId) return;
+      if (!nextSidebar || !nextPanel) throw new Error('Homework view is unavailable');
 
       const currentAdmin = document.querySelector('[data-homework-admin]');
       const currentSidebar = currentAdmin?.querySelector('[data-homework-admin-sidebar]');
@@ -72,7 +120,7 @@ const page = new NamedPage('homework_main', () => {
         nextSidebar.classList.remove('is-homework-view-entering');
         nextPanel.classList.remove('is-homework-view-entering');
       }, enterDuration);
-      window.requestAnimationFrame(() => refreshCompletedOverflow(nextPanel));
+      refreshRoster();
 
       if (pushHistory) window.history.pushState({ homeworkView: url.href }, '', url.href);
       if (restoreFocus) nextSidebar.querySelector(`${adminViewLink}.is-active`)?.focus({ preventScroll: true });
@@ -113,7 +161,7 @@ const page = new NamedPage('homework_main', () => {
       if (!details) return;
       $trigger.attr('aria-expanded', String(!expanded));
       details.hidden = expanded;
-      if (!expanded) requestAnimationFrame(() => refreshCompletedOverflow());
+
     },
   );
 
@@ -130,8 +178,36 @@ const page = new NamedPage('homework_main', () => {
     void loadHomeworkView(window.location.href, { pushHistory: false });
   });
 
-  refreshCompletedOverflow();
-  $(window).off('resize.homework-main').on('resize.homework-main', () => refreshCompletedOverflow());
+  $(document).off('input.homework-roster', '[data-homework-roster-search]').on('input.homework-roster', '[data-homework-roster-search]', function onRosterSearch() {
+    rosterState.search = this.value;
+    refreshRoster();
+  });
+  $(document).off('click.homework-roster', '[data-homework-roster-filter]').on('click.homework-roster', '[data-homework-roster-filter]', function onRosterFilter() {
+    rosterState.filter = this.dataset.homeworkRosterFilter;
+    refreshRoster();
+  });
+  $(document).off('click.homework-roster-clear', '[data-homework-clear-filters]').on('click.homework-roster-clear', '[data-homework-clear-filters]', () => {
+    rosterState.search = '';
+    rosterState.filter = 'all';
+    refreshRoster();
+    document.querySelector('[data-homework-roster-search]')?.focus();
+  });
+  $(document).off('input.homework-student', '[data-homework-student-search]').on('input.homework-student', '[data-homework-student-search]', function onStudentSearch() {
+    studentState.search = this.value;
+    refreshStudent();
+  });
+  $(document).off('click.homework-student-view', '[data-homework-student-view]').on('click.homework-student-view', '[data-homework-student-view]', function onStudentView() {
+    studentState.view = this.dataset.homeworkStudentView;
+    refreshStudent();
+  });
+  $(document).off('click.homework-student-clear', '[data-homework-student-clear]').on('click.homework-student-clear', '[data-homework-student-clear]', () => {
+    studentState.search = '';
+    const input = document.querySelector('[data-homework-student-search]');
+    if (input) { input.value = ''; input.focus(); }
+    refreshStudent();
+  });
+  refreshRoster();
+  refreshStudent();
 });
 
 export default page;

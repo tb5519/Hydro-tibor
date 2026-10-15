@@ -21,6 +21,13 @@ export interface ScratchAssignment extends ScratchDoc {
     projectRequired?: boolean;
     objectiveQuiz?: scratchObjective.ScratchAssignmentQuiz | null;
     objectiveStarted?: boolean;
+    // Library challenges share the immutable work/submission pipeline, but are
+    // never classroom assignments. Objective backing copies stay out of lists.
+    kind?: 'problem';
+    tags?: string[];
+    hidden?: boolean;
+    problemPaperId?: number;
+    problemPaperRevision?: string;
 }
 export interface ScratchWork extends ScratchDoc {
     title: string; assignmentId: ObjectId | null; currentFileId: ObjectId | null; revision: number; thumbnailFileId?: ObjectId;
@@ -159,6 +166,17 @@ export function cleanText(value: unknown, field: string, max: number, fallback =
 export async function getAssignment(actor: ScratchActor, _id: ObjectId) {
     const doc = await assignments.findOne({ domainId: actor.domainId, _id });
     if (!doc) throw new NotFoundError('Scratch 作业');
+    if (doc.kind === 'problem') {
+        if (doc.hidden && !actor.isTeacher) throw new NotFoundError('Scratch 题目');
+        if (doc.problemPaperId) {
+            const paper = actor.isTeacher ? await scratchObjective.getEditablePaper(actor, doc.problemPaperId)
+                : await scratchObjective.getPublicPaper(actor, doc.problemPaperId);
+            // Metadata may evolve without replacing a student's immutable paper
+            // contents or answers. Keep the visible title consistent with the bank.
+            doc.title = paper.title;
+            doc.tags = 'tags' in paper ? paper.tags : paper.tag || [];
+        }
+    }
     return doc;
 }
 export async function getWork(actor: ScratchActor, _id: ObjectId, write = false) {
@@ -198,7 +216,7 @@ export function listWorks(actor: ScratchActor, assignmentId?: ObjectId, owner?: 
         ...(assignmentId ? { assignmentId } : {}) }).sort({ updatedAt: -1 });
 }
 export function listAssignments(actor: ScratchActor) {
-    return assignments.find({ domainId: actor.domainId }).sort({ createdAt: -1 });
+    return assignments.find({ domainId: actor.domainId, kind: { $ne: 'problem' } }).sort({ createdAt: -1 });
 }
 export function listSubmissions(actor: ScratchActor, extra: { workId?: ObjectId, purpose?: 'thumbnail', assignmentId?: ObjectId } = {}) {
     return submissions.find({ ...extra, domainId: actor.domainId, ...(!actor.isTeacher ? { owner: actor.uid } : {}) }).sort({ createdAt: -1 });
@@ -414,15 +432,22 @@ export interface AssignmentInput {
     deadline: Date | null;
     projectRequired?: boolean;
     objectivePaperIds?: number[];
+    kind?: 'problem';
+    tags?: string[];
+    hidden?: boolean;
 }
 export async function writeAssignment(
     actor: ScratchActor, input: AssignmentInput, _id?: ObjectId, template?: { filepath: string, originalFilename?: string },
 ) {
     requireTeacher(actor);
     const current = _id ? await getAssignment(actor, _id) : null;
+    if (current?.problemPaperId) throw new ValidationError('assignmentId', null, '题卷快照不能修改，请在客观题工作台编辑原题卷');
     const fields = {
         title: cleanText(input.title, 'title', 120), description: `${input.description || ''}`.trim(), deadline: input.deadline,
         projectRequired: input.projectRequired ?? current?.projectRequired ?? true,
+        ...(input.kind === 'problem' || current?.kind === 'problem' ? {
+            kind: 'problem' as const, tags: input.tags ?? current?.tags ?? [], hidden: input.hidden ?? current?.hidden ?? false,
+        } : {}),
     };
     if (fields.description.length > 20000 || (fields.deadline && !Number.isFinite(fields.deadline.getTime()))) {
         throw new ValidationError('description', 'deadline');
@@ -454,6 +479,27 @@ export async function writeAssignment(
         await storage.del(Object.values(current.objectiveQuiz.files));
     }
     return getAssignment(actor, doc._id);
+}
+
+export async function writeProblem(
+    actor: ScratchActor, input: { title: string, description: string, tag?: unknown, hidden?: unknown },
+    _id?: ObjectId, template?: { filepath: string, originalFilename?: string },
+) {
+    requireTeacher(actor);
+    if (_id) {
+        const current = await getAssignment(actor, _id);
+        if (current.kind !== 'problem' || current.problemPaperId) throw new NotFoundError('Scratch 创作题');
+    }
+    if (input.hidden !== undefined && ![true, false, 'true', 'false', '1', '0'].includes(input.hidden as any)) {
+        throw new ValidationError('hidden');
+    }
+    const raw = Array.isArray(input.tag) ? input.tag : `${input.tag || ''}`.split(/[,，\n]/);
+    const tags = [...new Set(raw.map((tag) => `${tag}`.trim()).filter(Boolean))];
+    if (tags.length > 50 || tags.some((tag) => tag.length > 60)) throw new ValidationError('tag');
+    return writeAssignment(actor, {
+        title: input.title, description: input.description, deadline: null, projectRequired: true, objectivePaperIds: [],
+        kind: 'problem', tags, hidden: [true, 'true', '1'].includes(input.hidden as any),
+    }, _id, template);
 }
 export async function writeMaterial(
     actor: ScratchActor, input: { title: string, category: string, recipientIds: number[], assignmentId?: ObjectId },
@@ -1152,7 +1198,9 @@ export async function apply(ctx: Context) {
         await quotas.deleteOne({ _id: domainId });
     });
     await Promise.all([
-        db.ensureIndexes(assignments, { key: { domainId: 1, createdAt: -1 }, name: 'scratch_assignments' }),
+        db.ensureIndexes(assignments, { key: { domainId: 1, createdAt: -1 }, name: 'scratch_assignments' },
+            { key: { domainId: 1, problemPaperId: 1, problemPaperRevision: 1 }, name: 'scratch_problem_paper', unique: true,
+                partialFilterExpression: { problemPaperId: { $type: 'number' } } }),
         db.ensureIndexes(works, { key: { domainId: 1, owner: 1, updatedAt: -1 }, name: 'scratch_works' },
             { key: { domainId: 1, owner: 1, assignmentId: 1 }, name: 'scratch_assignment_owner',
                 unique: true, partialFilterExpression: { assignmentId: { $type: 'objectId' } } }),

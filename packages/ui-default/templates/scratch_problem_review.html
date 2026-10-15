@@ -1,0 +1,14 @@
+{% extends "scratch_base.html" %}
+{% block scratch_content %}
+{% include "partials/scratch_problem_style.html" %}
+<div class="scb">
+  <a class="scb-back" href="{{ url('scratch_problem_main') }}">← 返回题库</a>
+  <header class="scb-heading"><div><span class="scb-kicker">SCRATCH · 老师工作台</span><h1>批改作品</h1><p>看看孩子的创意，留下下一步的鼓励和建议。</p></div></header>
+  <section class="scb-bank-panel">
+    <form method="get" class="scb-filters"><label class="scb-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input type="search" name="q" value="{{ q }}" placeholder="搜索学员或题目" aria-label="搜索学员或题目"></label><label class="scb-filter-select"><span>状态</span><select name="status" aria-label="批改状态"><option value="pending"{% if status == 'pending' %} selected{% endif %}>待批改</option><option value="reviewed"{% if status == 'reviewed' %} selected{% endif %}>已批改</option><option value="all"{% if status == 'all' %} selected{% endif %}>全部提交</option></select></label><button class="scb-button scb-button-primary" type="submit">查找</button></form>
+    <div class="scb-list-heading"><span>{{ count }} 份{{ '待批改作品' if status == 'pending' else ('已批改作品' if status == 'reviewed' else '作品提交') }}</span><span>每次提交都保留独立版本</span></div>
+    {% if submissions|length %}<div class="scb-review-list">{% for item in submissions %}<article class="scb-review-row"><div class="scb-review-person"><span class="scb-person-dot" aria-hidden="true">{{ item.studentName.slice(0, 1) }}</span><div><strong>{{ item.studentName }}</strong><small>第 {{ item.revision }} 版 · {{ datetimeSpan(item.createdAt)|safe }}</small></div></div><div class="scb-review-task"><a href="{{ item.problemUrl }}">{{ item.assignmentTitle }}</a><span class="scb-status {{ 'scb-status-reviewed' if item.reviewedAt else 'scb-status-submitted' }}">{{ '已批改' if item.reviewedAt else '待批改' }}{% if item.grade != null %} · {{ item.grade }}{% endif %}</span></div><a class="scb-button {{ 'scb-button-primary' if not item.reviewedAt }}" href="{{ item.url }}">{{ '查看反馈' if item.reviewedAt else '开始批改' }} <span aria-hidden="true">→</span></a></article>{% endfor %}</div>{% else %}<div class="scb-empty"><span class="scb-empty-symbol" aria-hidden="true">✓</span><h2>{{ '暂时没有匹配的提交' if q else ('待批改作品都看过啦' if status == 'pending' else '还没有作品提交') }}</h2><p>{{ '换个关键词，或切换状态看看。' if q else '学员提交创作题后，作品会显示在这里。' }}</p></div>{% endif %}
+  </section>
+  {% if numPages > 1 %}<div class="sc-pagination">{{ paginator.render(page, numPages, add_qs=utils.buildQueryString(q=q, status=status)) }}</div>{% endif %}
+</div>
+{% endblock %}

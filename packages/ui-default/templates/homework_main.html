@@ -1,288 +1,113 @@
 {% extends "layout/basic.html" %}
+{% macro progressMeter(title, percent, extra='') %}
+<span class="homework-meter {{ extra }}" role="progressbar" aria-label="{{ title }}完成进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ percent }}"><span style="width: {{ percent }}%;"></span></span>
+{% endmacro %}
 {% block content %}
-<style>
-  .homework-hub { overflow: hidden; border: 1px solid #dce8f8; border-radius: 18px; background: linear-gradient(135deg, #fff 0%, #f6faff 100%); box-shadow: 0 12px 34px rgba(41, 91, 164, .08); }
-  .homework-hub__hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1.35rem 1.5rem 1rem; border-bottom: 1px solid #e2edf9; }
-  .homework-hub__eyebrow { margin: 0 0 .2rem; color: #4f8ee7; font-size: .75rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-  .homework-hub__hero h1 { margin: 0; color: #15294b; }
-  .homework-hub__hero p:not(.homework-hub__eyebrow) { margin: .38rem 0 0; color: #7086a4; }
-  .homework-hub__hero-badge { flex: 0 0 auto; padding: .38rem .65rem; border-radius: 999px; color: #2879cc; background: #e9f3ff; font-size: .78rem; font-weight: 800; }
-  .homework-hub__body { padding: 1rem 1.5rem 1.35rem; }
-  .homework-hub--student .homework-hub__body { padding-top: 1.35rem; }
-  .homework-hub__empty { padding: 2.4rem 1rem; text-align: center; color: #7890ae; }
-  .homework-hub__empty .icon { display: block; margin-bottom: .55rem; color: #83b1e7; font-size: 2rem; }
-  .homework-hub .pager { margin: 1rem 0 0; }
-
-  .homework-admin { display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 1rem; align-items: start; }
-  .homework-admin__sidebar { position: sticky; top: 1rem; overflow: hidden; border: 1px solid #dbe8f7; border-radius: 13px; background: #fbfdff; box-shadow: 0 5px 15px rgba(45, 103, 173, .04); transition: opacity .16s ease, transform .16s ease; }
-  .homework-admin__nav { display: grid; gap: .2rem; padding: .45rem; border-bottom: 1px solid #e4edf8; }
-  a.homework-admin__nav-link, a.homework-admin__nav-link:visited { display: flex; align-items: center; gap: .5rem; padding: .58rem .65rem; border-radius: 8px; color: #587696; font-size: .82rem; font-weight: 750; text-decoration: none; }
-  a.homework-admin__nav-link:hover { color: #2876c6; background: #edf6ff; }
-  a.homework-admin__nav-link.is-loading { cursor: progress; opacity: .72; }
-  a.homework-admin__nav-link.is-active { color: #216bc0; background: #e5f1ff; box-shadow: inset 3px 0 #4b99ed; }
-  .homework-admin__section { padding: .8rem .9rem; }
-  .homework-admin__section + .homework-admin__section { border-top: 1px solid #e6eef8; }
-  .homework-admin__label { display: block; margin: 0 0 .5rem; color: #7790ad; font-size: .68rem; font-weight: 850; letter-spacing: .07em; text-transform: uppercase; }
-  .homework-admin__categories { display: grid; gap: .18rem; max-height: 14rem; overflow: auto; }
-  a.homework-admin__category, a.homework-admin__category:visited { overflow: hidden; padding: .42rem .5rem; border-radius: 7px; color: #5c7898; font-size: .78rem; font-weight: 650; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
-  a.homework-admin__category:hover { color: #2876c6; background: #edf6ff; }
-  a.homework-admin__category.is-active { color: #216bc0; background: #e4f1ff; font-weight: 800; }
-  .homework-admin__search { display: grid; gap: .45rem; margin: 0; }
-  .homework-admin__search .textbox, .homework-admin__search .button { height: 2.25rem; margin: 0; border-radius: 8px; }
-  .homework-admin__create { width: 100%; margin: .45rem 0 0; border-radius: 8px; text-align: center; }
-  .homework-admin__content { min-width: 0; transition: opacity .16s ease, transform .16s ease; }
-  .homework-admin__sidebar.is-homework-view-leaving, .homework-admin__content.is-homework-view-leaving { opacity: 0; pointer-events: none; transform: translateY(.4rem); }
-  .homework-admin__sidebar.is-homework-view-entering, .homework-admin__content.is-homework-view-entering { animation: homework-admin-view-enter .28s cubic-bezier(.22, 1, .36, 1) both; }
-  @keyframes homework-admin-view-enter { from { opacity: 0; transform: translateY(.55rem); } to { opacity: 1; transform: translateY(0); } }
-
-  .homework-roster__summary { display: flex; align-items: center; justify-content: space-between; gap: .8rem; margin: 0 0 .8rem; padding: .78rem .9rem; border: 1px solid #dce9f7; border-radius: 11px; color: #5b7799; background: linear-gradient(90deg, #f9fcff, #f2f8ff); font-size: .82rem; }
-  .homework-roster__summary strong { display: block; margin-bottom: .12rem; color: #244e7d; font-size: .9rem; }
-  .homework-roster__summary-badge { flex: 0 0 auto; padding: .3rem .55rem; border-radius: 999px; color: #2778ce; background: #e6f2ff; font-weight: 800; }
-  .homework-roster { display: grid; gap: .7rem; margin: 0; padding: 0; list-style: none; }
-  .homework-roster__card { overflow: hidden; border: 1px solid #dfeaf6; border-radius: 13px; background: #fff; box-shadow: 0 3px 10px rgba(41, 91, 164, .04); }
-  .homework-roster__student { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; width: 100%; gap: .75rem; padding: .85rem 1rem; border: 0; color: inherit; background: linear-gradient(90deg, #fbfdff, #f5faff); cursor: pointer; text-align: left; }
-  .homework-roster__student:hover { background: linear-gradient(90deg, #f7fbff, #edf7ff); }
-  .homework-roster__student:focus-visible { outline: 3px solid rgba(77, 152, 236, .35); outline-offset: -3px; }
-  .homework-roster__avatar { width: 2.35rem; height: 2.35rem; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 3px 9px rgba(42, 101, 172, .15); object-fit: cover; }
-  .homework-roster__name { overflow: hidden; color: #1d426d; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
-  .homework-roster__meta { margin-top: .15rem; color: #7890ae; font-size: .76rem; }
-  .homework-roster__percent { color: #347ecb; font-size: 1.03rem; font-weight: 850; }
-  .homework-roster__card.is-done .homework-roster__percent { color: #209b6a; }
-  .homework-roster__chevron { color: #7ca0c5; transition: transform .18s ease; }
-  .homework-roster__student[aria-expanded="true"] .homework-roster__chevron { transform: rotate(180deg); }
-  .homework-roster__details { padding: .7rem 1rem .9rem; border-top: 1px solid #e8f0f8; }
-  .homework-roster__details[hidden] { display: none; }
-  .homework-roster__section-title { display: flex; align-items: center; gap: .35rem; margin: .1rem 0 .45rem; color: #6683a5; font-size: .75rem; font-weight: 800; }
-  .homework-roster__section-title .icon { color: #4a94e5; }
-  .homework-roster__unfinished { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: .48rem; margin: 0; padding: 0; list-style: none; }
-  a.homework-roster__assignment, a.homework-roster__assignment:visited { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .35rem .65rem; min-width: 0; padding: .62rem .68rem; border: 1px solid #e3edf8; border-radius: 9px; color: #46627f; background: #fcfdff; text-decoration: none; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
-  a.homework-roster__assignment:hover { border-color: #a8cef5; box-shadow: 0 4px 10px rgba(51, 123, 203, .1); transform: translateY(-1px); }
-  .homework-roster__assignment-title { overflow: hidden; color: #355b86; font-size: .8rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
-  .homework-roster__assignment-score { color: #5b91c9; font-size: .73rem; font-weight: 750; white-space: nowrap; }
-  .homework-roster__assignment-meter { grid-column: 1 / -1; display: block; height: .34rem; overflow: hidden; border-radius: 999px; background: #e5eef9; }
-  .homework-roster__assignment-meter > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #5b9fed, #7bcaff); }
-  .homework-roster__complete-line { display: flex; align-items: center; gap: .45rem; min-width: 0; margin-top: .65rem; padding-top: .65rem; border-top: 1px dashed #dcebe2; }
-  .homework-roster__complete-label { flex: 0 0 auto; color: #27845d; font-size: .75rem; font-weight: 800; white-space: nowrap; }
-  .homework-roster__complete-label .icon { margin-right: .15rem; }
-  .homework-roster__complete-pills { display: flex; flex: 1 1 auto; gap: .32rem; min-width: 0; overflow: hidden; white-space: nowrap; }
-  a.homework-roster__complete-pill, a.homework-roster__complete-pill:visited { display: inline-flex; align-items: center; gap: .22rem; min-width: 0; max-width: 11rem; padding: .24rem .4rem; border: 1px solid #d4eddf; border-radius: 4px; color: #297f5b; background: #f4fcf7; font-size: .72rem; font-weight: 700; text-decoration: none; }
-  .homework-roster__complete-pill .icon { flex: 0 0 auto; font-size: .66rem; }
-  .homework-roster__complete-pill span:last-child { overflow: hidden; text-overflow: ellipsis; }
-  .homework-roster__complete-ellipsis { display: none; flex: 0 0 auto; color: #4f9775; font-size: 1rem; font-weight: 900; }
-  .homework-roster__complete-line.is-overflowing .homework-roster__complete-ellipsis { display: inline; }
-
-  .homework-assignment-list { display: grid; gap: .6rem; margin: 0; padding: 0; list-style: none; }
-  .homework-assignment { overflow: hidden; border: 1px solid #dfeaf6; border-radius: 12px; background: #fff; box-shadow: 0 3px 10px rgba(41, 91, 164, .04); }
-  .homework-assignment__trigger { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; width: 100%; gap: .75rem; padding: .82rem .9rem; border: 0; color: inherit; background: #fff; cursor: pointer; text-align: left; }
-  .homework-assignment__trigger:hover { background: #f9fcff; }
-  .homework-assignment__trigger:focus-visible { outline: 3px solid rgba(77, 152, 236, .35); outline-offset: -3px; }
-  .homework-assignment__icon { display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem; border-radius: 9px; color: #fff; background: linear-gradient(135deg, #528fea, #2d75cc); box-shadow: 0 5px 12px rgba(42, 117, 210, .2); }
-  .homework-assignment__content { display: grid; min-width: 0; gap: .2rem; }
-  .homework-assignment__title { overflow: hidden; color: #1f466f; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
-  .homework-assignment__description, .homework-assignment__recipients { overflow: hidden; color: #7890ae; font-size: .75rem; text-overflow: ellipsis; white-space: nowrap; }
-  .homework-assignment__recipients { color: #6484a8; }
-  .homework-assignment__completion { min-width: 5rem; color: #347ecb; font-size: .79rem; font-weight: 850; text-align: right; white-space: nowrap; }
-  .homework-assignment__chevron { color: #7ca0c5; transition: transform .18s ease; }
-  .homework-assignment__trigger[aria-expanded="true"] .homework-assignment__chevron { transform: rotate(180deg); }
-  .homework-assignment__details { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .75rem 1rem; padding: .75rem .9rem .9rem; border-top: 1px solid #e8f0f8; background: #fbfdff; }
-  .homework-assignment__details[hidden] { display: none; }
-  .homework-assignment__detail-label { display: block; margin-bottom: .36rem; color: #718eae; font-size: .71rem; font-weight: 850; }
-  .homework-assignment__student-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
-  .homework-assignment__student-chip { padding: .25rem .42rem; border-radius: 999px; color: #33739b; background: #eaf5ff; font-size: .72rem; font-weight: 700; }
-  .homework-assignment__student-chip.is-done { color: #217851; background: #e6f8ee; }
-  .homework-assignment__none { color: #91a2b7; font-size: .76rem; }
-  .homework-assignment__quick-add { display: flex; align-items: flex-end; justify-content: flex-end; gap: .38rem; }
-  .homework-assignment__quick-add .textbox { width: 12rem; height: 2rem; margin: 0; border-radius: 7px; font-size: .76rem; }
-  .homework-assignment__quick-add .button { height: 2rem; margin: 0; border-radius: 7px; font-size: .76rem; white-space: nowrap; }
-  .homework-assignment__edit { grid-column: 2; color: #4f88c5; font-size: .75rem; font-weight: 750; text-align: right; text-decoration: none; }
-  .homework-assignment__edit:hover { color: #216bc0; text-decoration: underline; }
-
-  .homework-hub__student-section + .homework-hub__student-section { margin-top: 1.25rem; padding-top: 1.15rem; border-top: 1px solid #e4edf8; }
-  .homework-hub__student-section-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin: 0 0 .72rem; }
-  .homework-hub__student-section-head h1, .homework-hub__student-section-head h2 { display: flex; align-items: center; gap: .42rem; margin: 0; color: #244e7d; font-size: 1rem; }
-  .homework-hub__student-section-head h2 { color: #54806b; }
-  .homework-hub__student-section-head .icon { color: #4a94e5; font-size: .95rem; }
-  .homework-hub__student-section--completed .homework-hub__student-section-head .icon { color: #3db27a; }
-  .homework-hub__student-count { flex: 0 0 auto; padding: .25rem .5rem; border-radius: 999px; color: #2778ce; background: #e8f3ff; font-size: .72rem; font-weight: 800; }
-  .homework-hub__student-section--completed .homework-hub__student-count { color: #27845d; background: #e9f8ef; }
-  .homework-hub__student-empty { margin: 0; padding: .85rem 1rem; border: 1px dashed #dce8f6; border-radius: 10px; color: #7890ae; background: #fbfdff; font-size: .84rem; text-align: center; }
-  .homework-hub__list { display: grid; gap: .65rem; margin: 0; padding: 0; list-style: none; }
-  a.homework-hub__card, a.homework-hub__card:visited, a.homework-hub__card:hover, a.homework-hub__card:focus { color: inherit; text-decoration: none; }
-  .homework-hub__card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .9rem; padding: .95rem 1rem; border: 1px solid #e3edf8; border-radius: 13px; background: rgba(255, 255, 255, .78); transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
-  .homework-hub__card:hover { border-color: #9fc8f6; box-shadow: 0 7px 17px rgba(52, 126, 203, .11); transform: translateY(-1px); }
-  .homework-hub__icon { display: inline-flex; align-items: center; justify-content: center; width: 2.3rem; height: 2.3rem; border-radius: 10px; color: #fff; background: linear-gradient(135deg, #528fea, #2d75cc); box-shadow: 0 5px 12px rgba(42, 117, 210, .22); }
-  .homework-hub__card.is-done .homework-hub__icon { background: linear-gradient(135deg, #42c18a, #209d6a); }
-  .homework-hub__content { display: grid; min-width: 0; gap: .48rem; }
-  .homework-hub__headline { display: flex; align-items: center; gap: .55rem; min-width: 0; }
-  .homework-hub__title { overflow: hidden; color: #1d3557; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
-  .homework-hub__tag { flex: 0 0 auto; padding: .18rem .45rem; border-radius: 999px; color: #21754f; background: #e8f8ef; font-size: .7rem; font-weight: 700; }
-  .homework-hub__meta { color: #7890ae; font-size: .8rem; }
-  .homework-hub__meter { display: block; width: 100%; height: .48rem; overflow: hidden; border-radius: 999px; background: #e4eef9; }
-  .homework-hub__meter > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #5b9fed, #79c7fb); }
-  .homework-hub__card.is-done .homework-hub__meter > span { background: linear-gradient(90deg, #43bf89, #72dbb0); }
-  .homework-hub__percent { color: #347ecb; font-size: .94rem; font-weight: 800; }
-  .homework-hub__card.is-done .homework-hub__percent { color: #209c6a; }
-  .homework-hub__completed { margin-top: 1rem; padding-top: .9rem; border-top: 1px solid #e4edf8; }
-  .homework-hub__completed-head { display: flex; align-items: center; gap: .38rem; margin: 0 0 .6rem; color: #54806b; font-size: .78rem; font-weight: 750; }
-  .homework-hub__completed-head .icon { display: inline-flex; align-items: center; justify-content: center; width: 1.15rem; height: 1.15rem; border-radius: 50%; color: #fff; background: #3db27a; font-size: .65rem; }
-  .homework-hub__completed-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 16rem)); gap: .48rem; margin: 0; padding: 0; list-style: none; }
-  a.homework-hub__completed-card, a.homework-hub__completed-card:visited { color: #38516e; text-decoration: none; }
-  .homework-hub__completed-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .42rem; min-width: 0; padding: .42rem .46rem .42rem .42rem; border: 1px solid #dcefe5; border-radius: 8px; background: #fbfefc; font-size: .78rem; }
-  .homework-hub__completed-card::before { content: '✓'; display: inline-flex; align-items: center; justify-content: center; width: 1.15rem; height: 1.15rem; border-radius: 50%; color: #fff; background: #42b97f; font-size: .67rem; font-weight: 800; }
-  .homework-hub__completed-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .homework-hub__completed-tag { padding: .15rem .35rem; border: 1px solid #bae5cb; border-radius: 3px; color: #19724b; background: #eefaf2; font-size: .67rem; font-weight: 800; line-height: 1.2; }
-  @media (prefers-reduced-motion: reduce) { .homework-admin__sidebar, .homework-admin__content { transition: none; } .homework-admin__sidebar.is-homework-view-entering, .homework-admin__content.is-homework-view-entering { animation: none; } }
-  @media (max-width: 900px) { .homework-admin { grid-template-columns: 1fr; } .homework-admin__sidebar { position: static; } .homework-admin__nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } .homework-admin__section--categories { display: none; } .homework-admin__search { grid-template-columns: minmax(0, 1fr) auto; } .homework-admin__create { grid-column: 1 / -1; } }
-  @media (max-width: 639px) { .homework-hub__hero, .homework-hub__body { padding-right: 1rem; padding-left: 1rem; } .homework-hub__hero { flex-direction: column; } .homework-roster__student, .homework-assignment__trigger { grid-template-columns: auto minmax(0, 1fr) auto; } .homework-roster__percent, .homework-assignment__completion { grid-column: 2; text-align: left; } .homework-roster__chevron, .homework-assignment__chevron { grid-column: 3; grid-row: 1; } .homework-roster__unfinished { grid-template-columns: 1fr; } .homework-assignment__details { grid-template-columns: 1fr; } .homework-assignment__quick-add { justify-content: stretch; } .homework-assignment__quick-add .textbox { flex: 1 1 auto; width: 0; } .homework-assignment__edit { grid-column: 1; text-align: left; } .homework-hub__card { grid-template-columns: auto minmax(0, 1fr); } .homework-hub__percent { grid-column: 2; } }
-</style>
 <div class="row"><div class="medium-12 columns">
   <section class="homework-hub{% if not canManageHomework %} homework-hub--student{% endif %}">
-    {% if canManageHomework %}
-      <header class="homework-hub__hero">
-        <div>
-          <p class="homework-hub__eyebrow">Homework</p>
-          <h1>作业管理</h1>
-          <p>按学员跟进完成情况，或按作业集中布置与管理。</p>
-        </div>
-        <span class="homework-hub__hero-badge">学员与作业一体管理</span>
-      </header>
-    {% endif %}
+    <header class="homework-hub__hero">
+      <div>
+        <p class="homework-hub__eyebrow">HOMEWORK</p>
+        <h1>{% if canManageHomework %}作业管理{% else %}我的作业{% endif %}</h1>
+        <p>{% if canManageHomework %}看清进度，及时跟进每一位学员。{% else %}从一份作业开始，把学过的知识练熟。{% endif %}</p>
+      </div>
+      {% if canManageHomework and canCreateHomework %}<a class="primary button homework-hub__create" href="{{ url('homework_create') }}"><span class="icon icon-add" aria-hidden="true"></span> 布置作业</a>{% endif %}
+    </header>
     <div class="homework-hub__body">
       {% if canManageHomework %}
-        <div class="homework-admin" data-homework-admin data-homework-view="{{ view }}" aria-busy="false">
-          <aside class="homework-admin__sidebar" data-homework-admin-sidebar aria-label="作业管理操作栏">
-            <nav class="homework-admin__nav" aria-label="作业管理视图">
-              <a class="homework-admin__nav-link{% if view == 'students' %} is-active{% endif %}" data-homework-admin-view-link href="{{ url('homework_main') }}"{% if view == 'students' %} aria-current="page"{% endif %}><span class="icon icon-user"></span> 学员完成情况</a>
-              <a class="homework-admin__nav-link{% if view == 'assignments' %} is-active{% endif %}" data-homework-admin-view-link href="{{ url('homework_main', query={view:'assignments'}) }}"{% if view == 'assignments' %} aria-current="page"{% endif %}><span class="icon icon-homework"></span> 作业与布置</a>
-            </nav>
-            {% if view == 'assignments' %}
-              <div class="homework-admin__section homework-admin__section--categories">
-                <span class="homework-admin__label">作业分类</span>
-                <nav class="homework-admin__categories" aria-label="作业分类">
-                  {% for item in homeworkCategories %}
-                    <a class="homework-admin__category{% if category == item %} is-active{% endif %}" href="{{ url('homework_main', query={view:'assignments', category:item}) }}" title="{{ item }}">{{ item }}</a>
-                  {% endfor %}
-                  <a class="homework-admin__category{% if category == '__uncategorized__' %} is-active{% endif %}" href="{{ url('homework_main', query={view:'assignments'}) }}">未分类</a>
-                  <a class="homework-admin__category{% if category == '__all__' %} is-active{% endif %}" href="{{ url('homework_main', query={view:'assignments', category:'__all__'}) }}">全部作业</a>
-                </nav>
-              </div>
-              <div class="homework-admin__section">
-                <form method="get" class="homework-admin__search" name="filter-form">
-                  <input type="hidden" name="view" value="assignments">
-                  <input type="hidden" name="category" value="{{ category }}">
-                  <input type="text" class="textbox" name="q" value="{{ q }}" placeholder="搜索作业名称">
-                  <button type="submit" class="button">搜索</button>
-                  {% if canCreateHomework %}<a class="primary button homework-admin__create" href="{{ url('homework_create') }}"><span class="icon icon-add"></span> 布置作业</a>{% endif %}
-                </form>
-              </div>
-            {% endif %}
-          </aside>
-
-          <div class="homework-admin__content" data-homework-admin-panel aria-live="polite">
-            {% if view == 'students' %}
-              <div class="homework-roster__summary">
-                <div><strong>学员作业完成情况</strong><span>未完成作业的学员优先显示；点击学员可展开查看全部作业。</span></div>
-                <span class="homework-roster__summary-badge">{{ homeworkStudentProgress.students.length }} 位学员 · {{ homeworkStudentProgress.totalHomeworks }} 份作业</span>
-              </div>
-              {% if homeworkStudentProgress.students.length %}
-                <ol class="homework-roster">
-                  {% for student in homeworkStudentProgress.students %}
-                    {% set udoc = homeworkStudentProgress.udict[student.uid] %}
-                    <li class="homework-roster__card{% if student.done %} is-done{% endif %}">
-                      <button type="button" class="homework-roster__student" data-homework-student-toggle aria-expanded="true" aria-controls="homework-student-{{ student.uid }}">
-                        <img data-badge-avatar-uid="{{ udoc._id }}" class="homework-roster__avatar" loading="lazy" src="{{ avatarUrl(udoc.avatar|default('')) }}" alt="{{ udoc.uname }}" width="38" height="38">
-                        <span>
-                          <span class="homework-roster__name">{{ udoc.displayName|default(udoc.uname) }}</span>
-                          <span class="homework-roster__meta">已完成 {{ student.completedHomeworks }} / {{ student.totalHomeworks }} 份作业 · {{ student.acceptedProblems }} / {{ student.totalProblems }} 题</span>
-                        </span>
-                        <span class="homework-roster__percent">{{ student.percent }}%</span>
-                        <span class="icon icon-chevron-down homework-roster__chevron" aria-hidden="true"></span>
-                      </button>
-                      <div class="homework-roster__details" id="homework-student-{{ student.uid }}">
-                        {% if student.incompleteAssignments.length %}<p class="homework-roster__section-title"><span class="icon icon-homework"></span>未完成作业</p><ol class="homework-roster__unfinished">{% for homework in student.incompleteAssignments %}<li><a class="homework-roster__assignment" href="{{ url('homework_detail', tid=homework.id, query={uid:student.uid}) }}" title="{{ homework.title }} · 已完成 {{ homework.acceptedProblems }} / {{ homework.totalProblems }} 题" data-emoji-enabled><span class="homework-roster__assignment-title">{{ homework.title }}</span><span class="homework-roster__assignment-score">{{ homework.acceptedProblems }} / {{ homework.totalProblems }} 题</span><span class="homework-roster__assignment-meter" role="progressbar" aria-label="{{ homework.title }} 完成进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ homework.percent }}"><span style="width: {{ homework.percent }}%;"></span></span></a></li>{% endfor %}</ol>{% endif %}
-                        {% if student.completedHomeworks %}
-                          <div class="homework-roster__complete-line" data-homework-completed-line>
-                            <span class="homework-roster__complete-label"><span class="icon icon-check"></span>已完成</span>
-                            <span class="homework-roster__complete-pills" data-homework-completed-pills>
-                              {% for homework in student.completedAssignments %}<a class="homework-roster__complete-pill" href="{{ url('homework_detail', tid=homework.id, query={uid:student.uid}) }}" title="{{ homework.title }} · 已完成"><span class="icon icon-check"></span><span>{{ homework.title }}</span></a>{% endfor %}
-                            </span>
-                            <span class="homework-roster__complete-ellipsis" aria-hidden="true">…</span>
-                          </div>
-                        {% endif %}
-                      </div>
-                    </li>
-                  {% endfor %}
-                </ol>
-              {% else %}
-                <div class="homework-hub__empty"><span class="icon icon-user"></span>暂时没有已分配作业的学员。请前往“作业与布置”创建并分配作业。</div>
-              {% endif %}
-            {% else %}
-              {% if tdocs.length %}
-                <datalist id="homework-main-student-options">{% for student in homeworkStudentOptions %}<option value="{{ student.displayName }}" label="@{{ student.uname }} · UID {{ student.uid }}"></option><option value="{{ student.uid }}" label="{{ student.displayName }} · {{ student.uname }}"></option>{% endfor %}</datalist>
-                <ol class="homework-assignment-list">
-                  {% for tdoc in tdocs %}
-                    {% set summary = tdoc.homeworkAssignmentSummary %}
-                    <li class="homework-assignment">
-                      <button type="button" class="homework-assignment__trigger" data-homework-assignment-toggle aria-expanded="false" aria-controls="homework-assignment-{{ tdoc.docId }}">
-                        <span class="homework-assignment__icon icon icon-homework" aria-hidden="true"></span>
-                        <span class="homework-assignment__content">
-                          <span class="homework-assignment__title" data-emoji-enabled>{{ tdoc.title }}</span>
-                          <span class="homework-assignment__description">{{ tdoc.content|default('未填写作业说明') }}</span>
-                          <span class="homework-assignment__recipients">{% if summary.assignedCount %}已分配给 {{ summary.assignedCount }} 位学员：{% for student in summary.assignedStudents %}{{ student.name }}{% if not loop.last %}、{% endif %}{% endfor %}{% else %}尚未分配学员{% endif %}</span>
-                        </span>
-                        <span class="homework-assignment__completion">完成 {{ summary.completedCount }} / {{ summary.assignedCount }}</span>
-                        <span class="icon icon-chevron-down homework-assignment__chevron" aria-hidden="true"></span>
-                      </button>
-                      <div class="homework-assignment__details" id="homework-assignment-{{ tdoc.docId }}" hidden>
-                        <div>
-                          <span class="homework-assignment__detail-label">已完成的学员</span>
-                          {% if summary.completedStudents.length %}<div class="homework-assignment__student-chips">{% for student in summary.completedStudents %}<span class="homework-assignment__student-chip is-done"><span class="icon icon-check"></span> {{ student.name }}</span>{% endfor %}</div>{% else %}<span class="homework-assignment__none">暂时还没有学员完成。</span>{% endif %}
-                        </div>
-                        {% if handler.user.own(tdoc) or handler.user.hasPerm(perm.PERM_EDIT_HOMEWORK) %}
-                          <form method="post" action="{{ url('homework_edit', tid=tdoc.docId) }}" class="homework-assignment__quick-add">
-                            <input type="hidden" name="operation" value="add_students">
-                            <input class="textbox" type="text" name="assignedUsers" list="homework-main-student-options" placeholder="选择姓名或输入 UID，可多个">
-                            <button type="submit" class="primary button"><span class="icon icon-add"></span> 添加学员</button>
-                          </form>
-                          <a class="homework-assignment__edit" href="{{ url('homework_edit', tid=tdoc.docId) }}">完整编辑作业 →</a>
-                        {% endif %}
-                      </div>
-                    </li>
-                  {% endfor %}
-                </ol>
-                {% if tpcount > 1 %}{{ paginator.render(page, tpcount, add_qs=qs) }}{% endif %}
-              {% else %}
-                <div class="homework-hub__empty"><span class="icon icon-homework"></span>{% if q %}没有找到符合条件的作业。{% elif category == '__uncategorized__' %}未分类中还没有作业。{% else %}这个分类中还没有作业。{% endif %}</div>
-              {% endif %}
-            {% endif %}
+      <div class="homework-admin" data-homework-admin data-homework-view="{{ view }}" aria-busy="false">
+        <nav class="homework-admin__nav" data-homework-admin-sidebar aria-label="作业管理视图">
+          <a class="homework-admin__nav-link{% if view == 'students' %} is-active{% endif %}" data-homework-admin-view-link href="{{ url('homework_main') }}"{% if view == 'students' %} aria-current="page"{% endif %}><span class="icon icon-user" aria-hidden="true"></span> 按学员查看</a>
+          <a class="homework-admin__nav-link{% if view == 'assignments' %} is-active{% endif %}" data-homework-admin-view-link href="{{ url('homework_main', query={view:'assignments', category:'__all__'}) }}"{% if view == 'assignments' %} aria-current="page"{% endif %}><span class="icon icon-homework" aria-hidden="true"></span> 按作业查看</a>
+        </nav>
+        <div class="homework-admin__content" data-homework-admin-panel>
+          {% if view == 'students' %}
+          <div class="homework-toolbar">
+            <div class="homework-filters" aria-label="学员完成状态">
+              <button type="button" class="is-active" data-homework-roster-filter="all" aria-pressed="true">全部学员 <span>{{ homeworkStudentProgress.students.length }}</span></button>
+              <button type="button" data-homework-roster-filter="pending" aria-pressed="false">待完成 <span data-homework-filter-count="pending"></span></button>
+              <button type="button" data-homework-roster-filter="done" aria-pressed="false">全部完成 <span data-homework-filter-count="done"></span></button>
+            </div>
+            <label class="homework-search"><span class="icon icon-search" aria-hidden="true"></span><input type="search" data-homework-roster-search placeholder="搜索学员姓名、账号或 UID" aria-label="搜索学员姓名、账号或 UID"></label>
           </div>
-        </div>
-      {% else %}
-        <section class="homework-hub__student-section" aria-labelledby="unfinished-homework-title">
-          <header class="homework-hub__student-section-head">
-            <h1 id="unfinished-homework-title"><span class="icon icon-homework" aria-hidden="true"></span>未完成作业</h1>
-            <span class="homework-hub__student-count">{{ tdocs.length }} 份</span>
-          </header>
-          {% if tdocs.length %}
-          <ol class="homework-hub__list">
-            {% for tdoc in tdocs %}{% set progress = tdoc.homeworkProgress %}<li><a class="homework-hub__card{% if progress.done %} is-done{% endif %}" href="{{ url('homework_detail', tid=tdoc.docId) }}" data-emoji-enabled><span class="homework-hub__icon icon {% if progress.done %}icon-check{% else %}icon-homework{% endif %}" aria-hidden="true"></span><span class="homework-hub__content"><span class="homework-hub__headline"><span class="homework-hub__title">{{ tdoc.title }}</span><span class="homework-hub__tag">无截止时间</span></span><span class="homework-hub__meta">已完成 {{ progress.acceptedProblems }} / {{ progress.totalProblems }} 题</span><span class="homework-hub__meter" role="progressbar" aria-label="{{ tdoc.title }} 完成进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ progress.percent }}"><span style="width: {{ progress.percent }}%;"></span></span></span><span class="homework-hub__percent">{{ progress.percent }}%</span></a></li>{% endfor %}
+          <p class="homework-list-note"><span data-homework-visible-count>{{ homeworkStudentProgress.students.length }} 位学员</span><span>已分配 {{ homeworkStudentProgress.totalHomeworks }} 份作业 · 点击学员展开</span></p>
+          {% if homeworkStudentProgress.students.length %}
+          <ol class="homework-roster">
+            {% for student in homeworkStudentProgress.students %}
+            {% set udoc = homeworkStudentProgress.udict[student.uid] %}
+            <li class="homework-roster__card{% if student.done %} is-done{% endif %}" data-homework-roster-card data-homework-done="{{ 'true' if student.done else 'false' }}" data-homework-search="{{ udoc.displayName|default(udoc.uname) }} {{ udoc.uname }} {{ student.uid }}">
+              <button type="button" class="homework-roster__student" data-homework-student-toggle aria-expanded="false" aria-controls="homework-student-{{ student.uid }}">
+                <img data-badge-avatar-uid="{{ udoc._id }}" class="homework-roster__avatar" loading="lazy" src="{{ avatarUrl(udoc.avatar|default('')) }}" alt="" width="42" height="42">
+                <span class="homework-roster__identity"><span class="homework-roster__name">{{ udoc.displayName|default(udoc.uname) }}</span><span class="homework-roster__meta">已完成 {{ student.completedHomeworks }} / {{ student.totalHomeworks }} 份作业</span></span>
+                <span class="homework-roster__progress"><span class="homework-roster__progress-caption"><span>{{ student.acceptedProblems }} / {{ student.totalProblems }} 题</span><strong>{{ student.percent }}%</strong></span>{{ progressMeter(udoc.displayName|default(udoc.uname), student.percent) }}</span>
+                <span class="homework-status{% if student.done %} is-done{% endif %}">{% if student.done %}<span class="icon icon-check" aria-hidden="true"></span> 全部完成{% else %}待完成 {{ student.incompleteAssignments.length }}{% endif %}</span>
+                <span class="icon icon-chevron-down homework-chevron" aria-hidden="true"></span>
+              </button>
+              <div class="homework-roster__details" id="homework-student-{{ student.uid }}" hidden>
+                {% if student.incompleteAssignments.length %}
+                <p class="homework-detail-label">待完成 · {{ student.incompleteAssignments.length }} 份</p>
+                <ol class="homework-roster__assignments">
+                  {% for homework in student.incompleteAssignments %}
+                  <li><a class="homework-roster__assignment" href="{{ url('homework_detail', tid=homework.id, query={uid:student.uid}) }}" data-emoji-enabled><span class="homework-roster__assignment-title">{{ homework.title }}</span><span class="homework-roster__assignment-score">{{ homework.acceptedProblems }} / {{ homework.totalProblems }} 题 <span aria-hidden="true">→</span></span>{{ progressMeter(homework.title, homework.percent) }}</a></li>
+                  {% endfor %}
+                </ol>
+                {% else %}<p class="homework-roster__done-note"><span class="icon icon-check" aria-hidden="true"></span> 已完成全部作业</p>{% endif %}
+                {% if student.completedHomeworks %}
+                <details class="homework-completed-fold"><summary>已完成 {{ student.completedHomeworks }} 份 <span>展开查看</span></summary><ul>{% for homework in student.completedAssignments %}<li><a href="{{ url('homework_detail', tid=homework.id, query={uid:student.uid}) }}" data-emoji-enabled><span class="icon icon-check" aria-hidden="true"></span><span>{{ homework.title }}</span><span aria-hidden="true">→</span></a></li>{% endfor %}</ul></details>
+                {% endif %}
+              </div>
+            </li>
+            {% endfor %}
           </ol>
+          <div class="homework-hub__empty" data-homework-filter-empty hidden><span class="icon icon-search" aria-hidden="true"></span><strong>没有找到符合条件的学员</strong><button type="button" class="homework-text-button" data-homework-clear-filters>清除筛选</button></div>
+          {% else %}<div class="homework-hub__empty"><span class="icon icon-homework" aria-hidden="true"></span><strong>还没有分配作业</strong><p>布置第一份作业后，就能在这里查看学员的进度。</p>{% if canCreateHomework %}<a class="primary button" href="{{ url('homework_create') }}">布置作业</a>{% endif %}</div>{% endif %}
           {% else %}
-            <p class="homework-hub__student-empty">目前没有未完成的作业。</p>
+          <form method="get" class="homework-toolbar homework-assignment-filters" name="filter-form">
+            <input type="hidden" name="view" value="assignments">
+            <label class="homework-category"><span>分类</span><select name="category" aria-label="作业分类"><option value="__all__"{% if category == '__all__' %} selected{% endif %}>全部作业</option>{% for item in homeworkCategories %}<option value="{{ item }}"{% if category == item %} selected{% endif %}>{{ item }}</option>{% endfor %}<option value="__uncategorized__"{% if category == '__uncategorized__' %} selected{% endif %}>未分类</option></select></label>
+            <div class="homework-assignment-search"><label class="homework-search"><span class="icon icon-search" aria-hidden="true"></span><input type="search" name="q" value="{{ q }}" placeholder="搜索作业名称" aria-label="搜索作业名称"></label><button type="submit" class="button">搜索</button></div>
+          </form>
+          {% if tdocs.length %}
+          <datalist id="homework-main-student-options">{% for student in homeworkStudentOptions %}<option value="{{ student.displayName }}" label="@{{ student.uname }} · UID {{ student.uid }}"></option><option value="{{ student.uid }}" label="{{ student.displayName }} · {{ student.uname }}"></option>{% endfor %}</datalist>
+          <ol class="homework-assignment-list">
+            {% for tdoc in tdocs %}{% set summary = tdoc.homeworkAssignmentSummary %}
+            <li class="homework-assignment">
+              <button type="button" class="homework-assignment__trigger" data-homework-assignment-toggle aria-expanded="false" aria-controls="homework-assignment-{{ tdoc.docId }}">
+                <span class="homework-assignment__icon icon icon-homework" aria-hidden="true"></span>
+                <span class="homework-assignment__content"><span class="homework-assignment__title" data-emoji-enabled>{{ tdoc.title }}</span><span class="homework-assignment__meta">{{ tdoc.pids.length }} 道题{% if tdoc.homeworkCategory %} · {{ tdoc.homeworkCategory }}{% endif %} · {% if summary.assignedCount %}{{ summary.assignedCount }} 位学员{% else %}尚未分配{% endif %}</span></span>
+                <span class="homework-assignment__completion"><span><strong>{{ summary.completedCount }}</strong> / {{ summary.assignedCount }} 人完成</span>{% if summary.assignedCount %}{{ progressMeter(tdoc.title, (100 * summary.completedCount / summary.assignedCount)|round) }}{% endif %}</span>
+                <span class="icon icon-chevron-down homework-chevron" aria-hidden="true"></span>
+              </button>
+              <div class="homework-assignment__details" id="homework-assignment-{{ tdoc.docId }}" hidden>
+                <div class="homework-assignment__learners"><p class="homework-detail-label">已分配的学员 · {{ summary.assignedCount }}</p>{% if summary.assignedStudents.length %}<div class="homework-student-chips">{% for student in summary.assignedStudents %}<a href="{{ url('homework_detail', tid=tdoc.docId, query={uid:student.uid}) }}">{{ student.name }} <span aria-hidden="true">→</span></a>{% endfor %}</div>{% else %}<p class="homework-assignment__none">添加学员后，作业会出现在他们的作业页。</p>{% endif %}{% if summary.completedStudents.length %}<p class="homework-assignment__completed"><span class="icon icon-check" aria-hidden="true"></span> 已完成：{% for student in summary.completedStudents %}{{ student.name }}{% if not loop.last %}、{% endif %}{% endfor %}</p>{% endif %}</div>
+                <div class="homework-assignment__actions">
+                  {% if handler.user.own(tdoc) or handler.user.hasPerm(perm.PERM_EDIT_HOMEWORK) %}<form method="post" action="{{ url('homework_edit', tid=tdoc.docId) }}" class="homework-assignment__quick-add"><input type="hidden" name="operation" value="add_students"><label for="homework-add-{{ tdoc.docId }}" class="homework-detail-label">添加学员</label><div><input id="homework-add-{{ tdoc.docId }}" class="textbox" type="text" name="assignedUsers" list="homework-main-student-options" placeholder="姓名或 UID，多个用逗号分隔" required><button type="submit" class="primary button">添加</button></div></form>{% endif %}
+                  <div class="homework-assignment__links"><a href="{{ url('homework_detail', tid=tdoc.docId) }}">查看题目 →</a>{% if handler.user.own(tdoc) or handler.user.hasPerm(perm.PERM_EDIT_HOMEWORK) %}<a href="{{ url('homework_edit', tid=tdoc.docId) }}">编辑与分配 →</a>{% endif %}</div>
+                </div>
+              </div>
+            </li>{% endfor %}
+          </ol>
+          {% if tpcount > 1 %}{{ paginator.render(page, tpcount, add_qs=qs) }}{% endif %}
+          {% else %}<div class="homework-hub__empty"><span class="icon icon-homework" aria-hidden="true"></span><strong>{% if q %}没有找到符合条件的作业{% else %}这里还没有作业{% endif %}</strong><a class="homework-text-button" href="{{ url('homework_main', query={view:'assignments', category:'__all__'}) }}">查看全部作业</a></div>{% endif %}
           {% endif %}
+        </div>
+      </div>
+      {% else %}
+      <div class="homework-student-workspace" data-homework-student-workspace>
+        <div class="homework-toolbar">
+          <div class="homework-filters homework-student-tabs" aria-label="我的作业状态"><button type="button" class="is-active" data-homework-student-view="pending" aria-pressed="true">待完成 <span>{{ tdocs.length }}</span></button><button type="button" data-homework-student-view="completed" aria-pressed="false">已完成 <span>{{ completedTdocs.length }}</span></button></div>
+          <label class="homework-search"><span class="icon icon-search" aria-hidden="true"></span><input type="search" data-homework-student-search placeholder="搜索我的作业" aria-label="搜索我的作业"></label>
+        </div>
+        {% if tpcount > 1 %}<p class="homework-list-note">显示本页作业，可在页尾翻页查看。</p>{% endif %}
+        <section data-homework-student-panel="pending" aria-label="待完成作业">
+          {% if tdocs.length %}<ol class="homework-hub__list">{% for tdoc in tdocs %}{% set progress = tdoc.homeworkProgress %}<li data-homework-student-card data-homework-search="{{ tdoc.title }}"><a class="homework-hub__card" href="{{ url('homework_detail', tid=tdoc.docId) }}" data-emoji-enabled><span class="homework-hub__icon icon icon-homework" aria-hidden="true"></span><span class="homework-hub__content"><span class="homework-hub__title">{{ tdoc.title }}</span><span class="homework-hub__progress-caption"><span>已完成 {{ progress.acceptedProblems }} / {{ progress.totalProblems }} 题</span><strong>{{ progress.percent }}%</strong></span>{{ progressMeter(tdoc.title, progress.percent) }}</span><span class="homework-hub__continue">{% if progress.acceptedProblems or progress.started %}继续练习{% else %}开始练习{% endif %}<span aria-hidden="true"> →</span></span></a></li>{% endfor %}</ol>{% else %}<div class="homework-hub__empty is-success"><span class="icon icon-check" aria-hidden="true"></span><strong>{% if tpcount > 1 %}这一页的作业都完成了{% else %}目前没有待完成的作业{% endif %}</strong><p>已完成的作业可以随时回来复习。</p></div>{% endif %}
         </section>
-        <section class="homework-hub__student-section homework-hub__student-section--completed" aria-labelledby="completed-homework-title">
-          <header class="homework-hub__student-section-head">
-            <h2 id="completed-homework-title"><span class="icon icon-check" aria-hidden="true"></span>已完成作业</h2>
-            <span class="homework-hub__student-count">{{ completedTdocs.length }} 份</span>
-          </header>
-          {% if completedTdocs.length %}
-            <ol class="homework-hub__completed-list">{% for tdoc in completedTdocs %}{% set progress = tdoc.homeworkProgress %}<li><a class="homework-hub__completed-card" href="{{ url('homework_detail', tid=tdoc.docId) }}" title="{{ tdoc.title }} · 已完成 {{ progress.acceptedProblems }} / {{ progress.totalProblems }} 题" data-emoji-enabled><span class="homework-hub__completed-title">{{ tdoc.title }}</span><span class="homework-hub__completed-tag">已完成</span></a></li>{% endfor %}</ol>
-          {% else %}
-            <p class="homework-hub__student-empty">暂时没有已完成的作业。</p>
-          {% endif %}
+        <section data-homework-student-panel="completed" aria-label="已完成作业" hidden>
+          {% if completedTdocs.length %}<ol class="homework-hub__list">{% for tdoc in completedTdocs %}{% set progress = tdoc.homeworkProgress %}<li data-homework-student-card data-homework-search="{{ tdoc.title }}"><a class="homework-hub__card is-done" href="{{ url('homework_detail', tid=tdoc.docId) }}" data-emoji-enabled><span class="homework-hub__icon icon icon-check" aria-hidden="true"></span><span class="homework-hub__content"><span class="homework-hub__title">{{ tdoc.title }}</span><span class="homework-hub__meta">已完成 {{ progress.acceptedProblems }} / {{ progress.totalProblems }} 题</span></span><span class="homework-hub__continue">回顾练习 <span aria-hidden="true">→</span></span></a></li>{% endfor %}</ol>{% else %}<div class="homework-hub__empty"><span class="icon icon-homework" aria-hidden="true"></span><strong>完成的作业会收在这里</strong><p>先去完成一份作业吧。</p></div>{% endif %}
         </section>
+        <div class="homework-hub__empty" data-homework-student-filter-empty hidden><span class="icon icon-search" aria-hidden="true"></span><strong>没有找到这份作业</strong><button type="button" class="homework-text-button" data-homework-student-clear>清除搜索</button></div>
         {% if tpcount > 1 %}{{ paginator.render(page, tpcount, add_qs=qs) }}{% endif %}
+      </div>
       {% endif %}
     </div>
   </section>

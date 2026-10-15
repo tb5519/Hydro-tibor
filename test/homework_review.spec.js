@@ -275,6 +275,8 @@ function problemHandler(options = {}) {
         ContestDetailBaseHandler: BaseHandler, ContestNotLiveError,
         ContestNotAttendedError: class extends Error {}, ContestNotFoundError: class extends Error {},
         ProblemNotFoundError: class extends Error {}, PermissionError,
+        isScratchObjectiveTeacher: (handler) => handler.domain?.domainType === 'scratch'
+            && handler.user.hasPerm(PERM.PERM_EDIT_DOMAIN),
         contest: contestModel,
         problem: problemModel,
         user: { getById: async () => ({ _id: 10 }) },
