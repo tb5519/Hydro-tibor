@@ -226,3 +226,17 @@ test('paper metadata editing only posts title, tags and explicit publication vis
         dom.window.close();
     }
 });
+test('unpublished papers offer only editing and a static publishing state while hidden projects remain viewable', () => {
+    const dom = render('scratch_problem_main.html', { isTeacher: true,
+        problems: base.problems.map((item) => ({ ...item, hidden: true })) });
+    const rows = dom.window.document.querySelectorAll('.scb-problem-row');
+    assert(rows[0].querySelector('h2 a[href="/question/1"]'));
+    assert(rows[0].querySelector('.scb-row-open[href="/question/1"]'));
+    const paper = rows[1];
+    assert.equal(paper.querySelector('h2 a'), null);
+    assert.equal(paper.querySelector('.scb-row-open'), null);
+    assert.equal(paper.querySelectorAll('a').length, 1);
+    assert.equal(paper.querySelector('a').getAttribute('href'), '/edit/2');
+    assert.equal(paper.querySelector('.scb-row-actions .scb-status').textContent, '待发布');
+    dom.window.close();
+});
