@@ -3,6 +3,7 @@ import {
     RecordModel, SettingModel, StorageModel, SystemModel,
 } from 'hydrooj';
 import { ContestDetailBaseHandler } from 'hydrooj/src/handler/contest';
+import { getStudentSubmissionLanguages } from 'hydrooj/src/lib/student_submission_language';
 
 class AutoSubmitHandler extends ContestDetailBaseHandler {
     pdoc: ProblemDoc;
@@ -33,6 +34,18 @@ class AutoSubmitHandler extends ContestDetailBaseHandler {
             lang = '_';
         } else if ((config.langs && !config.langs.includes(lang)) || !SettingModel.langs[lang] || SettingModel.langs[lang].disabled) {
             return { error: 'Unsupported language' };
+        }
+        if (!['submit_answer', 'objective'].includes(config.type)) {
+            // The upload shortcut must enforce the same teacher policy as the
+            // normal submit page, before a dry run or any file persistence.
+            const domains = new Set([domainId]);
+            if (this.tdoc.allDomains) {
+                if (this.entryDomain?._id) domains.add(this.entryDomain._id);
+                if (this.tsdoc?.entryDomainId) domains.add(this.tsdoc.entryDomainId);
+            }
+            if ([...domains].some((id) => getStudentSubmissionLanguages(this.user, id)?.includes(lang) === false)) {
+                return { error: '老师未允许使用该语言提交，请选择允许的编程语言。' };
+            }
         }
         const shouldReadFile = () => {
             if (config.type === 'objective') return true;

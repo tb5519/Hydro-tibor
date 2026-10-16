@@ -53,7 +53,13 @@ function getInitialState() {
       localStorage.setItem(resetKey, '1');
     }
   }
-  const lang = localStorage.getItem(`${cacheKey}#lang`) || UiContext.codeLang;
+  const preferredLang = localStorage.getItem(`${cacheKey}#lang`) || UiContext.codeLang;
+  const allowedLangs = UiContext.pdoc.config?.langs;
+  // Keep imported historical submissions in their original language for review.
+  // Ordinary drafts retain their code, but must choose from the current policy.
+  const lang = !UiContext.recordReplay && Array.isArray(allowedLangs) && !allowedLangs.includes(preferredLang)
+    ? (allowedLangs.includes(UiContext.codeLang) ? UiContext.codeLang : allowedLangs[0] || '')
+    : preferredLang;
   const cachedCode = localStorage.getItem(cacheKey);
   return {
     lang,

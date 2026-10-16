@@ -112,7 +112,7 @@
                   </label>
 </div>
 <div class="student-editor-panel" id="student-panel-learning" role="tabpanel" aria-labelledby="student-tab-learning" data-student-panel="learning" hidden>
-<p class="student-editor-panel__intro">按学员当前阶段调整学习方式，这些设置适用于该学员的所有课堂。</p>
+<p class="student-editor-panel__intro">按学员当前阶段调整学习方式，也可以为不同课堂设置不同的提交语言。</p>
                   <label>
                     <span>{{ _('学员等级') }}</span>
                     <select class="textbox" name="studentLevel" required>
@@ -120,6 +120,25 @@
                     </select>
                     <p class="student-management__level-hint">{{ _('用于匹配该学员可见的比赛，默认 1 级。') }}</p>
                   </label>
+                  <section class="student-language" data-student-language data-language-options="{{ submissionLanguageOptions|default([])|json }}" aria-labelledby="student-language-heading">
+                    <input type="hidden" name="submissionLanguagePolicy" value="{{ selectedSubmissionLanguagePolicy|default({version:1,mode:'unrestricted',languages:[],domains:[]})|json }}">
+                    <div class="student-language__heading"><span class="student-language__icon" aria-hidden="true">&lt;/&gt;</span><div><h3 id="student-language-heading">提交语言</h3><p>让学员专注于当前学习的语言，可允许一种或多种。</p></div></div>
+                    <div class="student-language__modes" role="radiogroup" aria-label="提交语言限制方式">
+                      <label><input type="radio" name="studentSubmissionLanguageMode" value="unrestricted"><span><strong>不限制</strong><small>沿用题目可用语言</small></span></label>
+                      <label><input type="radio" name="studentSubmissionLanguageMode" value="global"><span><strong>所有域统一</strong><small>同一套语言范围</small></span></label>
+                      <label><input type="radio" name="studentSubmissionLanguageMode" value="per-domain"><span><strong>按域设置</strong><small>各课堂分别安排</small></span></label>
+                    </div>
+                    <div class="student-language__global" data-language-global hidden><h4>允许提交的语言</h4><div data-language-picker="global"></div></div>
+                    <div class="student-language__domains" data-language-domains hidden>
+                      {% for item in selectedStudentDomains %}<section class="student-language__domain" data-language-domain="{{ item.id }}" data-domain-name="{{ item.name }}">
+                        <div class="student-language__domain-heading"><div><strong>{{ item.name }}</strong><small>{{ item.id }}</small></div><label><span class="student-sr-only">{{ item.name }}的语言限制</span><select class="textbox" data-language-domain-mode><option value="unrestricted">不限制</option><option value="restricted">指定语言</option></select></label></div>
+                        <div data-language-picker="domain" hidden></div>
+                      </section>{% endfor %}
+                      {% if not selectedStudentDomains.length %}<p class="student-language__empty">学员加入课堂后，即可为该域设置语言。</p>{% endif %}
+                    </div>
+                    <p class="student-language__summary" data-language-summary role="status"></p>
+                    <p class="student-language__note">仅影响编程题的提交与自测。客观题、每日问答及 Scratch 创作不受影响；题目或比赛自身的语言要求仍然有效。</p>
+                  </section>
                   <div class="student-management__cpp-mode" role="radiogroup" aria-labelledby="student-cpp-mode-label">
                     <div class="student-management__cpp-mode-heading">
                       <span class="student-management__cpp-mode-title" id="student-cpp-mode-label">{{ _('C++ 在线编写代码模式') }}</span>

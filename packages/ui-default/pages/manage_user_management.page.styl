@@ -1180,3 +1180,54 @@ body.student-message-preview-open:has(.student-message-preview.is-fallback-open)
   .student-message-preview__footer { padding: 18px 24px; }
 }
 }
+
+@css {
+.student-language { grid-column: 1 / -1; min-width: 0; padding: 20px; border: 1px solid #dce7f1; border-radius: 16px; background: linear-gradient(135deg, #f8fbff, #fff 65%); }
+.student-language [hidden] { display: none !important; }
+.student-language__heading { display: flex; gap: 12px; align-items: center; margin-bottom: 18px; }
+.student-language__icon { display: grid; place-items: center; flex: 0 0 40px; height: 40px; background: #e9f2ff; border-radius: 12px; color: #4488cf; font-family: monospace; font-size: 18px; font-weight: 700; }
+.student-language__heading h3 { margin: 0; color: #334f68; font-size: 16px; font-weight: 700; }
+.student-language__heading p { margin: 5px 0 0; color: #8094a8; font-size: 12px; line-height: 1.6; }
+.student-language__modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.student-language__modes label { position: relative; cursor: pointer; }
+.student-language__modes input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.student-management__form .student-language__modes label > span { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 13px 8px; border: 1px solid #dce6f0; border-radius: 11px; background: #fff; text-align: center; color: #698298; font-weight: 400; transition: border-color .15s, background .15s; }
+.student-language__modes strong { font-size: 13px; font-weight: 650; }
+.student-language__modes small { font-size: 11px; line-height: 1.5; color: #91a2b1; }
+.student-language__modes input:checked + span { border-color: #8cb9ea; background: #edf5ff; color: #327cbe; box-shadow: inset 0 0 0 1px #c5dff8; }
+.student-language__modes input:focus-visible + span { outline: 3px solid #a9cfff; outline-offset: 2px; }
+.student-language__global, .student-language__domains { margin-top: 18px; }
+.student-language h4 { margin: 0 0 10px; font-size: 13px; color: #516e86; font-weight: 600; }
+.student-language__selected { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; color: #8c9dad; font-size: 12px; line-height: 1.6; }
+.student-language__chip { padding: 3px 9px; border-radius: 6px; background: #eaf4ff; color: #3f7eaf; font-size: 12px; overflow-wrap: anywhere; }
+.student-management__form .student-language__search { margin: 0 0 10px; border-radius: 8px; padding: 9px 12px; height: 38px; border: 1px solid #dce6f0; background: #fff; font-size: 13px; }
+.student-language__options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 7px; max-height: 185px; overflow: auto; padding: 2px 4px 2px 2px; scrollbar-width: thin; }
+.student-management__form label.student-language__choice { display: flex; gap: 9px; align-items: center; margin: 0; padding: 10px; border: 1px solid #e1e9f1; border-radius: 8px; background: #fff; cursor: pointer; }
+.student-language__choice:has(input:checked) { border-color: #a7cce8; background: #f0f7ff; }
+.student-language__choice:focus-within { outline: 2px solid #9cc7f4; outline-offset: 1px; }
+.student-language__choice input { flex: 0 0 15px; width: 15px; height: 15px; margin: 0; accent-color: #478dce; }
+.student-management__form .student-language__choice > span { display: block; margin: 0; color: #57758d; font-size: 12px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
+.student-language__domain { border: 1px solid #e0e8f1; border-radius: 11px; padding: 13px; background: #fff; }
+.student-language__domain + .student-language__domain { margin-top: 9px; }
+.student-language__domain-heading { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.student-language__domain-heading > div { min-width: 0; }
+.student-language__domain-heading strong { display: block; font-size: 13px; color: #42617b; overflow-wrap: anywhere; }
+.student-language__domain-heading small { display: block; font-size: 10px; color: #97a7b6; margin-top: 4px; }
+.student-language__domain-heading label { flex: 0 0 116px; margin: 0; }
+.student-language__domain-heading .textbox { margin: 0; padding: 7px 10px; border-radius: 8px; height: 36px; border: 1px solid #dce6ef; background: #f8fbff; color: #557690; font-size: 12px; }
+.student-language__domain [data-language-picker] { margin-top: 14px; padding-top: 12px; border-top: 1px solid #edf1f6; }
+.student-language__summary { margin: 15px 0 0; padding: 10px 12px; border-radius: 8px; background: #eff6fc; color: #577d9d; font-size: 12px; line-height: 1.7; }
+.student-language__note { margin: 10px 0 0; color: #94a3b1; font-size: 11px; line-height: 1.8; }
+.student-language__empty { margin: 12px 0; color: #8195a7; font-size: 12px; line-height: 1.7; }
+@media (max-width: 560px) {
+  .student-language { padding: 14px; }
+  .student-language__modes { gap: 5px; }
+  .student-management__form .student-language__modes label > span { padding: 11px 4px; }
+  .student-language__modes strong { font-size: 12px; }
+  .student-language__modes small { font-size: 10px; }
+  .student-language__options { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .student-management__form .student-language__modes label > span { transition: none; }
+}
+}

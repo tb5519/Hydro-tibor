@@ -25,6 +25,9 @@ import {
     POINT_LOTTERY_POINTS_FIELD, POINT_LOTTERY_TOTAL_POINTS_FIELD, pointLotteryUserColl, publicPointLotteryPrize,
 } from '../lib/point_lottery';
 import { normalizeStudentLevel, STUDENT_LEVELS } from '../lib/student_level';
+import {
+    defaultStudentSubmissionLanguagePolicy, listSubmissionLanguageOptions, parseStudentSubmissionLanguagePolicy,
+} from '../lib/student_submission_language';
 import { Logger } from '../logger';
 import { BUILTIN_ROLES, PERM, PRIV, STATUS } from '../model/builtin';
 import * as dailyQuiz from '../model/daily_quiz';
@@ -1234,6 +1237,8 @@ class SystemUserManagementHandler extends SystemHandler {
         const selectedStudentDomainState = selectedStudent
             ? await getManagedStudentDomains(selectedStudent.uid, allDomains)
             : { domains: [], selectedDefaultDomain: '', joinedDomainCount: 0 };
+        const selectedLanguageDoc = selectedStudent
+            ? await user.coll.findOne({ _id: uid }, { projection: { submissionLanguagePolicy: 1 } }) : null;
         this.response.template = 'manage_user_management.html';
         this.response.body = {
             students: roster,
@@ -1242,6 +1247,8 @@ class SystemUserManagementHandler extends SystemHandler {
             selectedStudentDomains: selectedStudentDomainState.domains,
             selectedStudentDefaultDomain: selectedStudentDomainState.selectedDefaultDomain,
             selectedStudentJoinedDomainCount: selectedStudentDomainState.joinedDomainCount,
+            selectedSubmissionLanguagePolicy: selectedLanguageDoc?.submissionLanguagePolicy || defaultStudentSubmissionLanguagePolicy(),
+            submissionLanguageOptions: listSubmissionLanguageOptions(setting.langs),
             selectedDailyQuiz: selectedStudent
                 ? await getManagedDailyQuiz(uid, selectedStudentDomainState.domains, this, quizDay, quizBatch) : null,
             selectedOpeningMessage: selectedStudent ? await presentOpeningMessage(uid) : null,
@@ -1437,10 +1444,12 @@ class SystemUserManagementHandler extends SystemHandler {
     @param('sort', Types.Range(MANAGED_STUDENT_SORTS), true)
     @param('order', Types.Range(MANAGED_STUDENT_SORT_DIRECTIONS), true)
     @param('studentLevel', Types.Range(STUDENT_LEVELS.map((level) => level.value)), true)
+    @param('submissionLanguagePolicy', Types.String, true)
     async postEditStudent(
         domainId: string, uid: number, uname: string, mail: string | undefined,
         displayName: string, school = '', studentId = '', defaultDomain = '', cppEditorMode: CppEditorMode = 'proficient',
         sort: ManagedStudentSort = 'submit', order: ManagedStudentSortDirection = 'desc', studentLevel?: number,
+        submissionLanguagePolicy?: string,
     ) {
         const target = await getManagedStudent(uid, await getManagedDomains());
         if (!target) throw new UserNotFoundError(uid);
@@ -1450,8 +1459,25 @@ class SystemUserManagementHandler extends SystemHandler {
         const normalizedStudentId = normalizeManagedStudentText(studentId, 'studentId');
         const effectiveMail = mail?.trim() || target.mail;
         const requestedDefaultDomain = normalizeManagedStudentText(defaultDomain, 'defaultDomain');
+        // Validate before the membership lock or any account mutation. Recheck
+        // membership under that lock in case a classroom was removed meanwhile.
+        const languagePolicy = submissionLanguagePolicy === undefined ? undefined : parseStudentSubmissionLanguagePolicy(
+            submissionLanguagePolicy, (await getManagedStudentDomains(uid, await getManagedDomains())).domains.map((item) => item.id), setting.langs,
+        );
         await withDomainMembershipRemoval([uid], [], async () => {
             const domainState = await getManagedStudentDomains(uid, await getManagedDomains());
+            if (languagePolicy) parseStudentSubmissionLanguagePolicy(languagePolicy, domainState.domains.map((item) => item.id), setting.langs);
+            let savedLanguagePolicy = languagePolicy;
+            if (languagePolicy?.mode === 'per-domain') {
+                // A learner may rejoin a classroom later. Keep its server-side
+                // rule while replacing only the currently editable classrooms.
+                const current = await user.coll.findOne({ _id: uid }, { projection: { submissionLanguagePolicy: 1 } });
+                const previous = current?.submissionLanguagePolicy;
+                const editableDomains = new Set(domainState.domains.map((item) => item.id));
+                const retainedRules = previous?.version === 1 && previous.mode === 'per-domain' && Array.isArray(previous.domains)
+                    ? previous.domains.filter((item) => item && typeof item.domainId === 'string' && !editableDomains.has(item.domainId)) : [];
+                savedLanguagePolicy = { ...languagePolicy, domains: [...languagePolicy.domains, ...retainedRules] };
+            }
             const selectedDefaultDomain = domainState.domains.find(
                 (item) => item.id.toLowerCase() === (requestedDefaultDomain || domainState.selectedDefaultDomain).toLowerCase(),
             )?.id;
@@ -1472,6 +1498,7 @@ class SystemUserManagementHandler extends SystemHandler {
                 defaultDomain: selectedDefaultDomain,
                 cppEditorMode,
                 studentLevel: studentLevel ?? target.studentLevel,
+                ...(savedLanguagePolicy ? { submissionLanguagePolicy: savedLanguagePolicy } : {}),
             });
             await domain.updateUserInDomain(selectedDefaultDomain, uid, {
                 $set: { displayName: normalizedDisplayName },

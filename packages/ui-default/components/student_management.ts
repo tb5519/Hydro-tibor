@@ -1,5 +1,6 @@
 import { bindStudentDailyQuiz } from './student_daily_quiz';
 import { bindStudentOpeningMessage } from './student_opening_message';
+import { bindStudentSubmissionLanguage } from './student_submission_language';
 
 export function bindStudentManagement(doc: Document) {
   const root = doc.querySelector<HTMLElement>('[data-student-management]');
@@ -12,6 +13,7 @@ export function bindStudentManagement(doc: Document) {
   const pending = new Set<HTMLFormElement>();
   let daily = { isDirty: () => false, isPending: () => false };
   let openingMessage: ReturnType<typeof bindStudentOpeningMessage>;
+  let submissionLanguage: ReturnType<typeof bindStudentSubmissionLanguage>;
   let switching = false;
   let confirmedNavigation = false;
   let currentUrl = win.location.href;
@@ -145,6 +147,7 @@ export function bindStudentManagement(doc: Document) {
       daily = { isDirty: () => false, isPending: () => false };
       return;
     }
+    submissionLanguage = bindStudentSubmissionLanguage(editor);
     all<HTMLFormElement>('[data-student-profile-form], [data-student-password-form]', editor).forEach(remember);
     daily = bindStudentDailyQuiz(editor, (enabled) => {
       const note = all<HTMLElement>('[data-student-note]').find((item) => item.dataset.studentUid === editor.dataset.studentUid);
@@ -293,8 +296,20 @@ export function bindStudentManagement(doc: Document) {
     if (verify) {
       verify.setCustomValidity(password.value === verify.value ? '' : '两次输入的密码不一致。');
     }
+    const isProfile = form.matches('[data-student-profile-form]');
+    const languageChanged = isProfile && submissionLanguage?.isDirty();
+    if (languageChanged) {
+      const error = submissionLanguage?.validate();
+      if (error) {
+        activateTab('learning');
+        feedback(errorSelector, error, true);
+        return;
+      }
+    }
     if (!form.reportValidity()) return;
     const body = new win.FormData(form);
+    if (isProfile && !languageChanged) body.delete('submissionLanguagePolicy');
+    const savingLanguagePolicy = body.get('submissionLanguagePolicy');
     const saving = snapshot(form);
     const buttons = all<HTMLButtonElement>('button[type="submit"]', form);
     const savedLabels = buttons.map((button) => button.textContent);
@@ -307,6 +322,7 @@ export function bindStudentManagement(doc: Document) {
     try {
       const result = await post(body);
       baselines.set(form, saving);
+      if (typeof savingLanguagePolicy === 'string') submissionLanguage?.markSaved(savingLanguagePolicy);
       if (isAdd) {
         const destination = withViewState(result.url || result.redirect || win.location.href);
         if (result.uid) destination.searchParams.set('uid', `${result.uid}`);

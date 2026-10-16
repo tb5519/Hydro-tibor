@@ -102,6 +102,8 @@ export interface Udoc extends Record<string, any> {
     cppEditorMode?: CppEditorMode;
     /** Teacher-managed learning level: 1–8, or 9 for MAX. Missing means level 1. */
     studentLevel?: number;
+    /** Teacher-managed allowed programming languages; absent means unrestricted. */
+    submissionLanguagePolicy?: import('./lib/student_submission_language').StudentSubmissionLanguagePolicy;
     /** Preferred language in the Scratch editor, shared across this student's works. */
     scratchEditorLocale?: string;
     /** Orders language changes from one Scratch editor page. */

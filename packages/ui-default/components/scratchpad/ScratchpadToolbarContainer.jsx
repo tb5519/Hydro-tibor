@@ -74,7 +74,7 @@ const mapDispatchToProps = (dispatch) => ({
     });
   },
   postPretest(props) {
-    if (UiContext.homeworkReview || isUnavailableReplayLanguage(props.editorLang)) return;
+    if (UiContext.homeworkReview || !availableLangs[props.editorLang]) return;
     const req = request.post(UiContext.postSubmitUrl, {
       lang: props.editorLang,
       code: props.editorCode,
@@ -88,7 +88,7 @@ const mapDispatchToProps = (dispatch) => ({
     });
   },
   postSubmit(props) {
-    if (UiContext.homeworkReview || isUnavailableReplayLanguage(props.editorLang)) return;
+    if (UiContext.homeworkReview || !availableLangs[props.editorLang]) return;
     const req = request.post(UiContext.postSubmitUrl, {
       lang: props.editorLang,
       code: props.editorCode,
@@ -137,9 +137,9 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
 
   constructor(props) {
     super(props);
-    if (!UiContext.homeworkReview && !UiContext.recordReplay && !availableLangs[this.props.editorLang]) {
+    if (keys.length && !UiContext.homeworkReview && !UiContext.recordReplay && !availableLangs[this.props.editorLang]) {
       // preference not allowed
-      const key = this.props.editorLang ? keys.filter((i) => availableLangs[i].pretest)
+      const key = this.props.editorLang ? keys.filter((i) => typeof availableLangs[i].pretest === 'string')
         .find((i) => availableLangs[i].pretest.split('.')[0] === this.props.editorLang.split('.')[0]) : '';
       this.props.setEditorLanguage(key || keys[0]);
     }
@@ -164,6 +164,8 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
   render() {
     const review = UiContext.homeworkReview;
     const unavailableReplayLanguage = isUnavailableReplayLanguage(this.props.editorLang);
+    const unavailableLanguage = !availableLangs[this.props.editorLang];
+    const noAvailableLanguages = !review && !keys.length;
     let canUsePretest = UiContext.pdoc.config?.type === 'default';
     const langInfo = availableLangs[this.props.editorLang];
     if (UiContext.pdoc.config?.type === 'remote_judge' && langInfo) {
@@ -184,7 +186,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
             <select
               className="select"
               aria-label={i18n('Language')}
-              disabled={this.props.isPosting || !!review}
+              disabled={this.props.isPosting || !!review || noAvailableLanguages}
               value={this.props.editorLang}
               onChange={(ev) => this.props.setEditorLanguage(ev.target.value)}
             >
@@ -198,11 +200,12 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
               {_.map(availableLangs, (val, key) => (
                 <option value={key} key={key}>{val.display}</option>
               ))}
+              {noAvailableLanguages && !UiContext.recordReplay && <option value="">暂无可用语言</option>}
             </select>
           </ToolbarItem>
           {canUsePretest && (
             <ToolbarButton
-              disabled={unavailableReplayLanguage || this.props.isPosting || this.props.isRunning || !!this.props.pretestWaitSec}
+              disabled={unavailableLanguage || this.props.isPosting || this.props.isRunning || !!this.props.pretestWaitSec}
               className="scratchpad__toolbar__pretest"
               onClick={() => this.props.postPretest(this.props)}
               data-global-hotkey="f9"
@@ -217,7 +220,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
           )}
           {!UiContext.ideMode && !review && (
             <ToolbarButton
-              disabled={unavailableReplayLanguage || this.props.isPosting || !!this.props.submitWaitSec}
+              disabled={unavailableLanguage || this.props.isPosting || !!this.props.submitWaitSec}
               className="scratchpad__toolbar__submit"
               onClick={() => this.props.postSubmit(this.props)}
               data-global-hotkey="f10"
@@ -230,7 +233,10 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
                 : <kbd>F10</kbd>}
             </ToolbarButton>
           )}
-          {unavailableReplayLanguage && (
+          {noAvailableLanguages && (
+            <span className="scratchpad__toolbar__wait" role="status">当前题目的可用语言与老师设置不一致，请联系老师调整。</span>
+          )}
+          {unavailableReplayLanguage && !noAvailableLanguages && (
             <span className="scratchpad__toolbar__wait" role="status">原语言已停用，请先切换语言</span>
           )}
           {review && <span className="scratchpad__review-label">{review.name} 的作答<span>只读</span></span>}

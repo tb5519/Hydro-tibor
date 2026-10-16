@@ -13,7 +13,7 @@ const source = transformSync(fs.readFileSync(path.resolve(__dirname,
     loader: 'jsx', format: 'cjs',
 }).code;
 
-function harness({ replay = true, lang = 'python-old', languageKnown = true } = {}) {
+function harness({ replay = true, lang = 'python-old', languageKnown = true, availableLangs = { python3: { display: 'Python 3' }, cpp: { display: 'C++' } } } = {}) {
     const actions = [];
     const requests = [];
     let dispatchers;
@@ -44,7 +44,7 @@ function harness({ replay = true, lang = 'python-old', languageKnown = true } = 
             };
             if (id === 'vj/utils') return {
                 i18n: (value) => value,
-                getAvailableLangs: () => ({ python3: { display: 'Python 3' }, cpp: { display: 'C++' } }),
+                getAvailableLangs: () => availableLangs,
                 request: { post: (...args) => { requests.push(args); return Promise.resolve({}); } },
             };
             return require(id);
@@ -113,5 +113,19 @@ describe('imported programming record language', () => {
         assert.equal(valid.render().querySelector('[data-global-hotkey="f10"]').disabled, false);
         const ordinary = harness({ replay: false });
         assert.ok(ordinary.actions.some((action) => action.type === 'SCRATCHPAD_EDITOR_SET_LANG' && action.payload === 'python3'));
+    });
+
+    it('shows a clear empty-policy state and blocks hotkey dispatches without inventing a language', () => {
+        const h = harness({ replay: false, lang: '', availableLangs: {} });
+        assert.equal(h.actions.length, 0);
+        const document = h.render();
+        assert.equal(document.querySelector('select').disabled, true);
+        assert.match(document.querySelector('select').textContent, /暂无可用语言/);
+        assert.match(document.querySelector('[role="status"]').textContent, /当前题目的可用语言与老师设置不一致，请联系老师调整/);
+        assert.equal(document.querySelector('[data-global-hotkey="f9"]').disabled, true);
+        assert.equal(document.querySelector('[data-global-hotkey="f10"]').disabled, true);
+        h.dispatchers.postPretest(h.props);
+        h.dispatchers.postSubmit(h.props);
+        assert.equal(h.requests.length, 0);
     });
 });

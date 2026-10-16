@@ -23,6 +23,7 @@ function loadClass(file, start, end, className, globals) {
     }).code;
     const sandbox = {
         module: { exports: {} },
+        Schema: require('schemastery'),
         param, post: param, route: param, requireSudo: () => {},
         Types: { ...realTypes, Range: (values) => realTypes.Range(Array.from(values)) },
         STUDENT_LEVELS, normalizeStudentLevel, ...globals,

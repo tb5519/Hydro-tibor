@@ -283,6 +283,7 @@ function problemHandler(options = {}) {
         solution: { count: async () => 0 }, discussion: { count: async () => 0 },
         setting: { langs: { python3: {} } },
         pickPreferredCodeLang: () => 'python3', getCppEditorMode: () => 'proficient',
+        getStudentSubmissionLanguages: () => null,
         getActiveBadgeAcTheme: async () => null,
         assertRecordReplayRequest: (fromRecord) => { assert.equal(fromRecord, undefined); },
         canUseProblemRecordPicker: () => true,

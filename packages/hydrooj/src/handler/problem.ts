@@ -47,6 +47,7 @@ import {
     assertRecordReplayRequest, canUseProblemRecordPicker, loadProblemMergedReview, loadProblemRecordReplay,
 } from '../lib/problem_record_replay';
 import { canManageRecordList } from '../lib/record_list_scope';
+import { getStudentSubmissionLanguages } from '../lib/student_submission_language';
 import {
     appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
 } from '../lib/record_visibility';
@@ -645,6 +646,8 @@ export class OnlineIdeHandler extends Handler {
         const baseLangs = Object.keys(setting.langs).filter((i) =>
             (needHiddenLangs ? !setting.langs[i].remote : !setting.langs[i].remote && !setting.langs[i].hidden)
             && !setting.langs[i].disabled);
+        const studentLangs = getStudentSubmissionLanguages(this.user, ddoc?._id || pdoc.domainId);
+        if (studentLangs !== null) limits.push(studentLangs);
         return ['objective', 'submit_answer'].includes(pdoc.config.type) ? ['_'] : intersection(baseLangs, ...limits);
     }
 
@@ -704,7 +707,12 @@ export class OnlineIdeHandler extends Handler {
                 }
             }
         }
-        if (!pdoc) throw new NoProblemError();
+        if (!pdoc) {
+            if (getStudentSubmissionLanguages(this.user, domainId) !== null) {
+                throw new ValidationError('lang', null, '当前题目的可用语言与老师设置不一致，请联系老师调整。');
+            }
+            throw new NoProblemError();
+        }
         const ddoc = await domain.get(domainId);
         if (typeof pdoc.config === 'string') throw new NoProblemError();
         const ideAllowedLangs = this.getAllowedLangs(pdoc, ddoc);
@@ -742,6 +750,21 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
     psdoc: ProblemStatusDoc;
     mistakePromptState: Awaited<ReturnType<typeof getMistakePromptState>>;
     reviewMistakeStudent?: User;
+    studentSubmissionLanguageDomains: string[] = [];
+
+    getStudentLanguageLimit(domainId: string) {
+        // Shared contests keep records in the source domain. Also retain the
+        // enrolled entry domain: omitting/changing a URL parameter must not
+        // bypass that classroom's policy on a later submission.
+        const domains = new Set([domainId, ...this.studentSubmissionLanguageDomains]);
+        if (this.tdoc?.allDomains) {
+            if (this.entryDomain?._id) domains.add(this.entryDomain._id);
+            if (this.tsdoc?.entryDomainId) domains.add(this.tsdoc.entryDomainId);
+        }
+        const limits = [...domains].map((id) => getStudentSubmissionLanguages(this.user, id))
+            .filter((langs): langs is string[] => langs !== null);
+        return limits.length ? intersection(...limits) : null;
+    }
 
     @route('pid', Types.ProblemId, true)
     @query('tid', Types.ObjectId, true)
@@ -820,6 +843,11 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
                 baseLangs = Object.keys(setting.langs).filter((i) =>
                     (needHiddenLangs ? !setting.langs[i].remote : !setting.langs[i].remote && !setting.langs[i].hidden));
             }
+            const studentLangs = this.getStudentLanguageLimit(domainId);
+            if (this.tdoc?.allDomains && this.tsdoc?.entryDomainId) {
+                this.studentSubmissionLanguageDomains.push(this.tsdoc.entryDomainId);
+            }
+            if (studentLangs !== null) t.push(studentLangs);
             this.pdoc.config.langs = ['objective', 'submit_answer'].includes(this.pdoc.config.type) ? ['_'] : intersection(baseLangs, ...t);
         }
         await this.ctx.parallel('problem/get', this.pdoc, this);
@@ -1105,7 +1133,12 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
         else this.checkPriv(PRIV.PRIV_USER_PROFILE);
         if (tid && !contest.isOngoing(this.tdoc, this.tsdoc)) throw new ContestNotLiveError(this.tdoc.docId);
         if (typeof this.pdoc.config === 'string') throw new ProblemConfigError();
-        if (this.pdoc.config.langs && !this.pdoc.config.langs.length) throw new ProblemConfigError();
+        if (this.pdoc.config.langs && !this.pdoc.config.langs.length) {
+            if (this.getStudentLanguageLimit(domainId) !== null) {
+                throw new ValidationError('lang', null, '当前题目的可用语言与老师设置不一致，请联系老师调整。');
+            }
+            throw new ProblemConfigError();
+        }
     }
 
     async get() {
@@ -1138,7 +1171,8 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
         if (typeof config === 'string' || config === null) throw new ProblemConfigError();
         if (['submit_answer', 'objective'].includes(config.type)) {
             lang = '_';
-        } else if ((config.langs && !config.langs.includes(lang)) || !setting.langs[lang] || setting.langs[lang].disabled) {
+        } else if ((config.langs && !config.langs.includes(lang)) || !setting.langs[lang] || setting.langs[lang].disabled
+            || (this.getStudentLanguageLimit(domainId)?.includes(lang) === false)) {
             throw new ProblemNotAllowLanguageError();
         }
         if (pretest) {

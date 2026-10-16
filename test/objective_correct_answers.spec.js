@@ -155,13 +155,15 @@ function problemHandler(options = {}) {
         route: () => () => {}, query: () => () => {}, param: () => () => {}, Types: new Proxy({}, { get: () => () => {} }),
         ContestDetailBaseHandler: BaseHandler, PermissionError, ProblemNotFoundError: class extends Error {},
         rejectHomeworkReviewMutation: () => {}, assertRecordReplayRequest: () => {},
+        getStudentSubmissionLanguages: () => null, isScratchObjectiveTeacher: () => false,
         authorizeHomeworkReview: async () => {
             events.push('homework');
             if (options.denied === 'homework') throw new PermissionError();
             return { _id: 20, displayName: '学员' };
         },
         contest: { isNotStarted: () => false, isDone: () => false, getStatus: async () => ({}), canShowSelfRecord: () => true },
-        problem: { get: async () => f.pdoc, canViewBy: () => options.denied !== 'problem', getStatus: async () => null },
+        problem: { get: async () => f.pdoc, canViewBy: () => options.denied !== 'problem', getStatus: async () => null,
+            isObjectiveSource: () => false },
         domain: { get: async () => ({ _id: 'source' }) }, user: { getById: async () => ({ _id: 10 }) },
         solution: { count: async () => 0 }, discussion: { count: async () => 0 },
         setting: { langs: { _: {} } }, pickPreferredCodeLang: () => '_', getCppEditorMode: () => 'proficient',

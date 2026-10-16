@@ -9,7 +9,11 @@ export async function api(method: string, args: Record<string, any>, projection:
 }
 
 export function getAvailableLangs(langsList?: string[]) {
-  const prefixes = new Set(Object.keys(window.LANGS).filter((i) => i.includes('.')).map((i) => i.split('.')[0]));
+  // Hide a family compiler only when an allowed, usable version replaces it.
+  // A student explicitly limited to `cc` must still be able to choose `cc`.
+  const prefixes = new Set(Object.keys(window.LANGS).filter((i) => i.includes('.')
+    && (!(langsList instanceof Array) || langsList.includes(i)) && !window.LANGS[i].disabled
+    && (!window.LANGS[i].hidden || langsList?.includes(i))).map((i) => i.split('.')[0]));
   const Langs = {};
   for (const key in window.LANGS) {
     if (prefixes.has(key)) continue;
