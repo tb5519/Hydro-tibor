@@ -171,6 +171,101 @@ after(async () => {
     if (temp) fs.rmSync(temp, { recursive: true, force: true });
 });
 
+describe('Scratch library assignment snapshot rollback', () => {
+    async function snapshotState(actor) {
+        const documents = await model.files.find({ domainId: actor.domainId }).sort({ _id: 1 }).toArray();
+        return {
+            fileIds: documents.map((file) => file._id.toHexString()),
+            paths: [...blobs.keys()].filter((key) => key.startsWith(`scratch/${actor.domainId}/`)).sort(),
+            bytes: (await model.quotas.findOne({ _id: actor.domainId }))?.bytes || 0,
+        };
+    }
+
+    it('removes a copied starter and returns quota when creating the classroom assignment fails', async () => {
+        const actor = { ...teacher, domainId: 'snapshot-create-rollback' };
+        const source = await model.writeProblem(actor, { title: '源题', description: '原始任务' }, undefined, upload(project('starter')));
+        const before = await snapshotState(actor);
+        const insert = model.assignments.insertOne;
+        model.assignments.insertOne = async (doc, ...args) => {
+            if (doc.domainId === actor.domainId && doc.kind !== 'problem') throw new Error('assignment insert failed');
+            return insert.call(model.assignments, doc, ...args);
+        };
+        try {
+            await assert.rejects(model.writeAssignment(actor, { title: '布置给学生', description: '课堂任务', deadline: null,
+                projectProblemId: source._id.toHexString() }), /assignment insert failed/);
+        } finally { model.assignments.insertOne = insert; }
+        assert.deepEqual(await snapshotState(actor), before);
+        assert.equal(await model.assignments.countDocuments({ domainId: actor.domainId }), 1);
+        assert.equal((await model.getFile(actor, source.templateFileId)).assignmentId.toHexString(), source._id.toHexString());
+    });
+
+    it('keeps the existing assignment and starter intact when publishing a replacement source fails', async () => {
+        const actor = { ...teacher, domainId: 'snapshot-edit-rollback' };
+        const first = await model.writeProblem(actor, { title: '第一题', description: '第一题说明' }, undefined, upload(project('first starter')));
+        const second = await model.writeProblem(actor, { title: '第二题', description: '第二题说明' }, undefined, upload(project('second starter')));
+        const assigned = await model.writeAssignment(actor, { title: '老师调整过的标题', description: '老师补充的要求', deadline: null,
+            projectProblemId: first._id.toHexString() });
+        const before = await snapshotState(actor);
+        const update = model.assignments.updateOne;
+        model.assignments.updateOne = async (query, ...args) => {
+            if (query._id?.equals(assigned._id)) throw new Error('assignment update failed');
+            return update.call(model.assignments, query, ...args);
+        };
+        try {
+            await assert.rejects(model.writeAssignment(actor, { title: '替换标题', description: '替换任务', deadline: null,
+                projectProblemId: second._id.toHexString() }, assigned._id), /assignment update failed/);
+        } finally { model.assignments.updateOne = update; }
+        assert.deepEqual(await snapshotState(actor), before);
+        const retained = await model.getAssignment(actor, assigned._id);
+        assert.equal(retained.title, assigned.title);
+        assert.equal(retained.description, assigned.description);
+        assert(retained.templateFileId.equals(assigned.templateFileId));
+        assert(retained.sourceProblemId.equals(first._id));
+        const file = await model.getFile({ ...actor, uid: alice.uid, isTeacher: false }, retained.templateFileId);
+        assert(blobs.has(file.path));
+    });
+
+    it('returns quota and leaves no cloned file when publishing the copied file metadata fails', async () => {
+        const actor = { ...teacher, domainId: 'snapshot-file-rollback' };
+        const source = await model.writeProblem(actor, { title: '原题', description: '观察积木' }, undefined, upload());
+        const before = await snapshotState(actor);
+        const insert = model.files.insertOne;
+        model.files.insertOne = async (doc, ...args) => {
+            if (doc.domainId === actor.domainId && !doc.assignmentId?.equals(source._id)) throw new Error('file metadata insert failed');
+            return insert.call(model.files, doc, ...args);
+        };
+        try {
+            await assert.rejects(model.writeAssignment(actor, { title: '课堂作业', description: '课堂要求', deadline: null,
+                projectProblemId: source._id.toHexString() }), /file metadata insert failed/);
+        } finally { model.files.insertOne = insert; }
+        assert.deepEqual(await snapshotState(actor), before);
+        assert.equal(await model.assignments.countDocuments({ domainId: actor.domainId }), 1);
+    });
+
+    it('keeps a published assignment editable and its starter readable after the source is replaced and deleted', async () => {
+        const actor = { ...teacher, domainId: 'snapshot-source-removed' };
+        const source = await model.writeProblem(actor, { title: '题库原标题', description: '题库原要求' }, undefined, upload(project('original starter')));
+        const assigned = await model.writeAssignment(actor, { title: '老师的课堂标题', description: '老师修改过的课堂要求', deadline: null,
+            projectProblemId: source._id.toHexString() });
+        assert.equal(assigned.title, '老师的课堂标题');
+        assert.equal(assigned.description, '老师修改过的课堂要求');
+        const file = await model.getFile({ ...actor, uid: alice.uid, isTeacher: false }, assigned.templateFileId);
+        const originalBytes = Buffer.from(blobs.get(file.path));
+        await model.writeProblem(actor, { title: '题库新标题', description: '题库新要求', hidden: true }, source._id, upload(project('replacement starter')));
+        await model.assignments.deleteOne({ domainId: actor.domainId, _id: source._id });
+        for (const selection of [{}, { projectProblemId: source._id.toHexString() }]) {
+            const updated = await model.writeAssignment(actor, { title: '再次调整课堂标题', description: '再次调整课堂要求', deadline: null,
+                ...selection }, assigned._id);
+            assert.equal(updated.title, '再次调整课堂标题');
+            assert.equal(updated.description, '再次调整课堂要求');
+            assert(updated.sourceProblemId.equals(source._id));
+            assert(updated.templateFileId.equals(assigned.templateFileId));
+            const retained = await model.getFile({ ...actor, uid: alice.uid, isTeacher: false }, updated.templateFileId);
+            assert(blobs.get(retained.path).equals(originalBytes));
+        }
+    });
+});
+
 describe('Scratch native backend isolation and immutable submissions', () => {
     it('authorizes active Scratch members per request, blocks OJ routes, outsiders, and cross-origin mutations', async () => {
         await database.collection('domain.user').insertOne({ domainId: 'scratch-a', uid: 20, join: true });

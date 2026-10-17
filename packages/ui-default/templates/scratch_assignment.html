@@ -10,7 +10,7 @@
   <div><section class="sc-panel">
     <div class="sc-panel-head"><h2>{{ '任务说明' if isTeacher else '这次要做什么？' }}</h2></div>
     <div class="sc-panel-body">
-      <div class="sc-description">{{ assignment.description or ('发挥你的想象力，完成一个有趣的 Scratch 作品。' if hasProject else '认真读题，选出你的答案。每一道题，都是一次小小的进步。') }}</div>
+      <div class="sc-description typo sc-assignment-markdown">{{ (assignment.description or ('发挥你的想象力，完成一个有趣的 Scratch 作品。' if hasProject else '认真读题，选出你的答案。每一道题，都是一次小小的进步。'))|markdown|safe }}</div>
       {% if hasProject and assignment.templateFileId %}<div class="sc-spaced"><a class="sc-button" href="{{ url('scratch_file', fileId=assignment.templateFileId) }}">下载起始项目</a></div>{% endif %}
     </div>
   </section></div>

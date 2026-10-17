@@ -1,18 +1,19 @@
 {% extends "scratch_base.html" %}
 {% block scratch_content %}
 {% set selectedPaperIds = selectedObjectivePaperIds or assignment.objectiveQuiz.paperIds or [] %}
+{% set selectedProjectId = selectedProjectProblemId or '' %}
 {% set hasQuestions = selectedPaperIds|length > 0 %}
-{% set hasProject = (assignment.projectRequired != false) if assignment else not hasQuestions %}
+{% set hasProject = (assignment.projectRequired != false) if assignment else (selectedProjectId or not hasQuestions) %}
 <div class="sc-heading">
   <div><div class="sc-eyebrow">课堂教学 · 作业</div><h1>{{ '编辑作业' if assignment else '发布新作业' }}</h1><p class="sc-muted">搭积木，练知识，也可以放在同一份作业里。</p></div>
   <a class="sc-button" href="{{ url('scratch_assignment', assignmentId=assignment._id) if assignment else url('scratch_assignments') }}">{{ '返回作业' if assignment else '返回作业列表' }}</a>
 </div>
-<form class="sc-assignment-form" method="post" enctype="multipart/form-data" data-scratch-assignment-form>
+<form class="sc-assignment-form" method="post" enctype="multipart/form-data" data-scratch-assignment-form data-editing="{{ 'true' if assignment else 'false' }}" data-original-project-id="{{ selectedProjectId }}" data-original-template="{{ 'true' if assignment.templateFileId else 'false' }}" data-initial-project="{{ selectedProjectProblem|json }}">
   <section class="sc-panel">
     <div class="sc-panel-head"><h2>先写清楚这次的任务</h2></div>
     <div class="sc-panel-body sc-form">
       <label class="sc-field"><span>作业标题</span><input name="title" value="{{ assignment.title if assignment else '' }}" maxlength="120" required placeholder="例如：小猫的方向挑战"></label>
-      <label class="sc-field"><span>任务说明</span><textarea name="description" rows="4" maxlength="20000" placeholder="告诉孩子这次要学什么、完成什么，以及需要注意的小细节。">{{ assignment.description if assignment else '' }}</textarea><small>可以按步骤换行，让孩子一眼看懂。</small></label>
+      <div class="sc-field"><span><label for="scratch-assignment-description">任务说明</label></span><textarea id="scratch-assignment-description" name="description" rows="5" maxlength="20000" aria-describedby="scratch-assignment-description-help" placeholder="告诉孩子这次要学什么、完成什么，以及需要注意的小细节。">{{ assignment.description if assignment else '' }}</textarea><small id="scratch-assignment-description-help">可以分步骤说明，也可以粘贴作品效果或积木截图。选择题库创作题后，说明会自动带入。</small><div data-assignment-description-image-status></div></div>
     </div>
   </section>
   <section class="sc-panel">
@@ -24,9 +25,31 @@
         <label class="sc-assignment-mode"><input type="radio" name="assignmentMode" value="mixed" {% if hasQuestions and hasProject %}checked{% endif %}><span class="sc-assignment-mode-body"><span class="sc-assignment-mode-icon" aria-hidden="true">＋</span><strong>创作 + 练习</strong><small>动手实践，也检验理解</small></span></label>
       </fieldset>
       <div class="sc-assignment-section" data-assignment-project {% if not hasProject %}hidden{% endif %}>
-        <div class="sc-assignment-section-heading"><h3>作品起点</h3><span class="sc-badge">Scratch 创作</span></div>
-        <label class="sc-field"><span>起始项目（可选）</span><input type="file" name="template" accept=".sb3" {% if not hasProject %}disabled{% endif %}><small>上传 .sb3 文件，最大 20MB。{% if assignment.templateFileId %}不选择文件会保留现有模板。{% else %}留空时，孩子会从一个空白项目开始创作。{% endif %}</small></label>
-        {% if assignment.templateFileId %}<p class="sc-spaced"><a class="sc-button" href="{{ url('scratch_file', fileId=assignment.templateFileId) }}">下载当前起始项目</a></p>{% endif %}
+        <div class="sc-assignment-section-heading"><h3>创作任务</h3><span class="sc-badge">Scratch 创作</span></div>
+        <input type="hidden" name="projectProblemId" value="{{ selectedProjectId }}" data-assignment-project-id {% if not hasProject %}disabled{% endif %}>
+        <div class="sc-assignment-project-choice" data-assignment-project-choice>
+          <span class="sc-assignment-project-symbol" aria-hidden="true">✦</span>
+          <div class="sc-assignment-project-copy"><small data-assignment-project-kind>{{ '来自题库' if selectedProjectId else '自由创作' }}</small><strong data-assignment-project-title>{{ assignment.title if selectedProjectId and assignment else '按这次课堂的想法，布置一个作品' }}</strong><p data-assignment-project-copy>{{ '当前作业的任务说明和起始项目已保留。' if selectedProjectId and assignment else '直接填写上方任务，或从题库挑选已经准备好的创作题。' }}</p></div>
+          <div class="sc-actions"><button class="sc-button sc-button-soft" type="button" data-assignment-project-toggle aria-expanded="false" aria-controls="scratch-assignment-project-picker">{{ '更换题目' if selectedProjectId else '从题库选择' }}</button><button class="sc-assignment-text-button" type="button" data-assignment-project-clear {% if not selectedProjectId %}hidden{% endif %}>改为自由创作</button></div>
+        </div>
+        <div class="sc-assignment-project-notice" data-assignment-project-notice role="status" hidden><span data-assignment-project-notice-copy></span><button class="sc-assignment-text-button" type="button" data-assignment-project-apply hidden>改用题目标题与说明</button></div>
+        <details class="sc-assignment-project-selected-preview" data-assignment-project-selected-preview hidden><summary>预览题库原题</summary><div class="typo sc-assignment-markdown" data-assignment-project-preview-body></div><a class="sc-assignment-text-link" data-assignment-project-link target="_blank" rel="noopener">在题库中查看 ↗</a></details>
+        <div class="sc-assignment-project-picker" id="scratch-assignment-project-picker" data-assignment-project-picker hidden>
+          {% if projectProblems|length %}
+          <label class="sc-field sc-assignment-search"><span class="sc-assignment-sr-only">搜索创作题</span><input type="search" data-assignment-project-search placeholder="搜索创作题名称或知识点" autocomplete="off"></label>
+          <div class="sc-assignment-project-list">
+            {% for item in projectProblems %}
+            <article class="sc-assignment-project-item" data-assignment-project-item data-id="{{ item.id }}" data-title="{{ item.title }}" data-search="{{ item.title }} {{ item.tags|join(' ') }}" data-template="{{ 'true' if item.templateFileId else 'false' }}" data-url="{{ item.url }}" data-preview-url="{{ item.previewUrl }}">
+              <div class="sc-assignment-project-item-top"><div><h4>{{ item.title }}</h4><p>{{ '含起始作品' if item.templateFileId else '从空白作品开始' }}</p>{% if item.tags|length %}<div class="sc-assignment-paper-tags">{% for tag in item.tags.slice(0, 4) %}<span>{{ tag }}</span>{% endfor %}</div>{% endif %}</div><button class="sc-button" type="button" data-assignment-project-select aria-pressed="{{ 'true' if item.id == selectedProjectId else 'false' }}">{{ '已选择' if item.id == selectedProjectId else '选择这题' }}</button></div>
+              <details class="sc-assignment-project-preview" data-assignment-project-preview><summary>预览任务</summary><div class="typo sc-assignment-markdown" data-assignment-project-row-preview></div><p class="sc-muted sc-assignment-caption" data-assignment-project-row-status role="status"></p><button class="sc-assignment-text-button" type="button" data-assignment-project-preview-retry hidden>重新加载</button></details>
+            </article>
+            {% endfor %}
+          </div>
+          <p class="sc-empty sc-empty-compact" data-assignment-project-no-results hidden>没有找到匹配的创作题，试试其他关键词。</p>
+          {% else %}<div class="sc-empty sc-empty-compact"><strong>还没有创作题</strong><p>可以直接填写任务，也可以先把常用任务存入题库。</p><a class="sc-button sc-spaced" href="{{ url('scratch_problem_project_create') }}" target="_blank" rel="noopener">创建创作题 ↗</a></div>{% endif %}
+        </div>
+        <div class="sc-assignment-template"><label class="sc-field"><span>起始项目（可选）</span><input type="file" name="template" accept=".sb3" {% if not hasProject %}disabled{% endif %}><small data-assignment-project-template-hint>上传 .sb3 文件，最大 20MB。{% if assignment.templateFileId %}不选择文件会保留现有起始项目。{% else %}没有起始项目时，孩子从空白作品开始。{% endif %}</small></label>
+        {% if assignment.templateFileId %}<p data-assignment-original-template><a class="sc-assignment-text-link" href="{{ url('scratch_file', fileId=assignment.templateFileId) }}">↓ 下载当前起始项目</a></p>{% endif %}</div>
       </div>
       <div class="sc-assignment-section" data-assignment-objective {% if not hasQuestions %}hidden{% endif %}>
         <div class="sc-assignment-section-heading"><div><h3>选择客观题卷</h3><p class="sc-muted sc-assignment-caption">从已经组好的题卷中选择，最多 10 份、合计 100 题。</p></div><div class="sc-actions"><button class="sc-button" type="button" data-assignment-refresh>刷新题卷</button><a class="sc-button sc-button-soft" href="{{ url('problem_objective') }}" target="_blank" rel="noopener">去组题 ↗</a></div></div>

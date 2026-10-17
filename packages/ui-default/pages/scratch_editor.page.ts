@@ -286,7 +286,7 @@ export default new NamedPage('scratch_editor', () => {
         dirty = changes !== requestChanges;
         send('saved');
         if (pending === currentRequest) finish();
-        show(`${shouldSubmit ? (config.problemMode ? '作品已提交，等待老师批改' : '作业已提交') : config.saveForStudent ? `已为 ${config.ownerName || '学员'} 保存作品` : '作品已保存'}${dirty ? '，还有新修改未保存' : ''}`);
+        show(`${shouldSubmit ? (config.problemMode && config.submitLabel !== '提交作业' ? '作品已提交，等待老师批改' : '作业已提交') : config.saveForStudent ? `已为 ${config.ownerName || '学员'} 保存作品` : '作品已保存'}${dirty ? '，还有新修改未保存' : ''}`);
       } else if (message.type === 'error') {
         throw new Error(String(message.message || '编辑器操作失败'));
       }

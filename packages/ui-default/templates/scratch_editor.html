@@ -1,15 +1,16 @@
 {% extends "layout/basic.html" %}
 {% block content %}
+{% set isAssignmentTask = problem and problem.kind != 'problem' %}
 {% if problem %}
 <div class="scratch-problem-workspace" data-scratch-problem-workspace data-panel="question">
   <div class="scratch-problem-mobile-tabs" aria-label="题目与编辑器"><button type="button" data-scratch-panel="question" aria-pressed="true">题目</button><button type="button" data-scratch-panel="editor" aria-pressed="false">{{ '查看作品' if UiContext.scratchEditor.readOnly else '搭积木' }}</button></div>
   <aside class="scratch-problem-question" aria-label="题目说明">
-    <a class="scratch-problem-back" data-scratch-back href="{{ UiContext.scratchEditor.backUrl }}">← {{ '返回批改' if UiContext.scratchEditor.readOnly else '返回题目' }}</a>
-    <span class="scratch-problem-label">SCRATCH · {{ '提交作品' if UiContext.scratchEditor.readOnly else '创作挑战' }}</span>
+    <a class="scratch-problem-back" data-scratch-back href="{{ UiContext.scratchEditor.backUrl }}">← {{ '返回批改' if UiContext.scratchEditor.readOnly else ('返回作业' if isAssignmentTask else '返回题目') }}</a>
+    <span class="scratch-problem-label">SCRATCH · {{ '提交作品' if UiContext.scratchEditor.readOnly else ('课堂作业' if isAssignmentTask else '创作挑战') }}</span>
     <h1>{{ problem.title }}</h1>
     {% if UiContext.scratchEditor.readOnly %}<span class="scratch-problem-readonly">提交版本 · 只读查看</span>{% endif %}
     <div class="scratch-problem-description typo">{{ problem.description|markdown|safe }}</div>
-    <div class="scratch-problem-hint"><span aria-hidden="true">✦</span><p>{{ '这是学员提交时的作品。查看和运行都不会更改原来的提交。' if UiContext.scratchEditor.readOnly else '先试着运行一下，记得保存。完成后点「提交作品」，老师就能看到你的创意。' }}</p></div>
+    <div class="scratch-problem-hint"><span aria-hidden="true">✦</span><p>{% if UiContext.scratchEditor.readOnly %}这是学员提交时的作品。查看和运行都不会更改原来的提交。{% else %}先试着运行一下，记得保存。完成后点「{{ '提交作业' if isAssignmentTask else '提交作品' }}」，老师就能看到你的创意。{% endif %}</p></div>
   </aside>
   <section class="scratch-problem-editor" aria-label="Scratch 创作区">
 {% endif %}

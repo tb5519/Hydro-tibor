@@ -149,6 +149,31 @@ test('completed quizzes show results and teachers can assign the paper as homewo
     assert(teacher.window.document.querySelector('a[href="/edit/12"]'));
     dom.window.close(); teacher.window.close();
 });
+test('teachers can assign a project from its detail page while students never see assignment controls', () => {
+    const data = { problem: { id: 'p1', kind: 'project', title: '小猫冒险', tags: [], description: '任务',
+        editUrl: '/edit/p1', assignmentUrl: '/homework/new?projectProblemId=p1' } };
+    const teacher = render('scratch_problem_detail.html', { ...data, isTeacher: true });
+    assert.equal(teacher.window.document.querySelector('a[href="/homework/new?projectProblemId=p1"]').textContent, '布置为作业');
+    assert(teacher.window.document.querySelector('a[href="/scratch_problem_review"]'));
+    const student = render('scratch_problem_detail.html', data);
+    assert.equal(student.window.document.querySelector('a[href*="projectProblemId"]'), null);
+    teacher.window.close(); student.window.close();
+});
+test('imported homework keeps the split workspace but labels its back link and submission as homework', () => {
+    const config = { problemMode: true, title: '小猫', backUrl: '/homework/a1', readOnly: false, canSubmit: true, submitLabel: '提交作业' };
+    const dom = render('scratch_editor.html', { problem: { sourceProblemId: 'p1', title: '小猫冒险', description: '向右移动' },
+        UiContext: { scratchEditor: config } });
+    assert(dom.window.document.querySelector('.scratch-problem-workspace'));
+    assert.match(dom.window.document.querySelector('[data-scratch-back]').textContent, /返回作业/);
+    assert.equal(dom.window.document.querySelector('[data-scratch-back]').getAttribute('href'), '/homework/a1');
+    assert.match(dom.window.document.querySelector('.scratch-problem-hint').textContent, /提交作业/);
+    assert.equal(dom.window.document.querySelector('[data-scratch-submit] span').textContent, '提交作业');
+    const problem = render('scratch_editor.html', { problem: { kind: 'problem', title: '小猫冒险', description: '向右移动' },
+        UiContext: { scratchEditor: { ...config, submitLabel: '提交作品', backUrl: '/question/p1' } } });
+    assert.match(problem.window.document.querySelector('[data-scratch-back]').textContent, /返回题目/);
+    assert.match(problem.window.document.querySelector('.scratch-problem-hint').textContent, /提交作品/);
+    dom.window.close(); problem.window.close();
+});
 test('mobile question tabs work and code inspection requests a non-saving inspect bridge', async () => {
     const config = { problemMode: true, title: '小猫', projectUrl: null, maxFileSize: 1024, revision: 2,
         backUrl: '/review/s1', readOnly: true, canSubmit: false, inspectCode: true };

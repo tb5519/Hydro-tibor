@@ -1,4 +1,14 @@
 import { NamedPage } from 'vj/misc/Page';
+import { attachMarkdownImagePaste } from '../common/markdown-image-paste';
+import { createObjectiveMarkdown } from '../common/objective-markdown';
+
+interface ProjectProblem {
+  id: string;
+  title: string;
+  description: string;
+  templateFileId?: string;
+  url: string;
+}
 
 export default new NamedPage(['scratch_assignment_create', 'scratch_assignment_edit'], () => {
   const form = document.querySelector<HTMLFormElement>('[data-scratch-assignment-form]');
@@ -7,6 +17,40 @@ export default new NamedPage(['scratch_assignment_create', 'scratch_assignment_e
   const project = form.querySelector<HTMLElement>('[data-assignment-project]');
   const objective = form.querySelector<HTMLElement>('[data-assignment-objective]');
   const template = form.querySelector<HTMLInputElement>('input[name=template]');
+  const title = form.querySelector<HTMLInputElement>('input[name=title]');
+  const description = form.querySelector<HTMLTextAreaElement>('textarea[name=description]');
+  const imageStatus = form.querySelector<HTMLElement>('[data-assignment-description-image-status]');
+  if (description && imageStatus) attachMarkdownImagePaste(description, imageStatus);
+  const projectId = form.querySelector<HTMLInputElement>('[data-assignment-project-id]');
+  const projectRows = [...form.querySelectorAll<HTMLElement>('[data-assignment-project-item]')];
+  const projectPicker = form.querySelector<HTMLElement>('[data-assignment-project-picker]');
+  const projectToggle = form.querySelector<HTMLButtonElement>('[data-assignment-project-toggle]');
+  const projectClear = form.querySelector<HTMLButtonElement>('[data-assignment-project-clear]');
+  const projectSearch = form.querySelector<HTMLInputElement>('[data-assignment-project-search]');
+  const projectTitle = form.querySelector<HTMLElement>('[data-assignment-project-title]');
+  const projectKind = form.querySelector<HTMLElement>('[data-assignment-project-kind]');
+  const projectCopy = form.querySelector<HTMLElement>('[data-assignment-project-copy]');
+  const projectNotice = form.querySelector<HTMLElement>('[data-assignment-project-notice]');
+  const projectNoticeCopy = form.querySelector<HTMLElement>('[data-assignment-project-notice-copy]');
+  const projectApply = form.querySelector<HTMLButtonElement>('[data-assignment-project-apply]');
+  const projectPreview = form.querySelector<HTMLDetailsElement>('[data-assignment-project-selected-preview]');
+  const projectPreviewBody = form.querySelector<HTMLElement>('[data-assignment-project-preview-body]');
+  const projectLink = form.querySelector<HTMLAnchorElement>('[data-assignment-project-link]');
+  const projectTemplateHint = form.querySelector<HTMLElement>('[data-assignment-project-template-hint]');
+  const originalTemplate = form.querySelector<HTMLElement>('[data-assignment-original-template]');
+  const submitButton = form.querySelector<HTMLButtonElement>('button[type=submit]');
+  const submitLabel = submitButton?.textContent || '发布作业';
+  const originalProjectId = form.dataset.originalProjectId || '';
+  const isEditing = form.dataset.editing === 'true';
+  const projectCache = new Map<string, ProjectProblem>();
+  const projectRequests = new Map<string, Promise<ProjectProblem>>();
+  const projectControllers = new Set<AbortController>();
+  const markdown = createObjectiveMarkdown();
+  let projectGeneration = 0;
+  let projectLoading = false;
+  let autoTitle: string | undefined;
+  let autoDescription: string | undefined;
+  let selectedProject: ProjectProblem | null = null;
   let papers: HTMLInputElement[] = [];
   let summary: HTMLElement | null;
   let hint: HTMLElement | null;
@@ -22,6 +66,140 @@ export default new NamedPage(['scratch_assignment_create', 'scratch_assignment_e
   let request: AbortController | null = null;
   const publishSummary = form.querySelector<HTMLElement>('[data-assignment-publish-summary]');
   const currentMode = () => modes.find((input) => input.checked)?.value || 'project';
+  const projectRow = (id: string) => projectRows.find((row) => row.dataset.id === id);
+  const setProjectLoading = (loading: boolean) => {
+    projectLoading = loading;
+    form.setAttribute('aria-busy', String(loading));
+    if (submitButton) {
+      submitButton.disabled = loading;
+      submitButton.textContent = loading ? '正在载入创作题…' : submitLabel;
+    }
+  };
+  const setProjectNotice = (message: string, canApply = false) => {
+    if (projectNotice) projectNotice.hidden = !message;
+    if (projectNoticeCopy) projectNoticeCopy.textContent = message;
+    if (projectApply) projectApply.hidden = !canApply;
+  };
+  const setPickerOpen = (open: boolean) => {
+    if (projectPicker) projectPicker.hidden = !open;
+    projectToggle?.setAttribute('aria-expanded', String(open));
+    if (open) projectSearch?.focus();
+  };
+  const updateProject = () => {
+    const id = projectId?.value || '';
+    const row = projectRow(id);
+    if (projectTitle) projectTitle.textContent = row?.dataset.title || (id ? title.value || '已布置的创作题' : '按这次课堂的想法，布置一个作品');
+    if (projectKind) projectKind.textContent = id ? '来自题库' : '自由创作';
+    if (projectCopy) projectCopy.textContent = id
+      ? '标题和任务说明可在上方调整，修改只影响这份作业。'
+      : '直接填写上方任务，或从题库挑选已经准备好的创作题。';
+    if (projectToggle) projectToggle.textContent = id ? '更换题目' : '从题库选择';
+    if (projectClear) projectClear.hidden = !id;
+    if (projectPreview) projectPreview.hidden = !row;
+    if (projectLink && row) projectLink.href = row.dataset.url;
+    for (const item of projectRows) {
+      const chosen = item.dataset.id === id;
+      item.classList.toggle('is-selected', chosen);
+      const button = item.querySelector<HTMLButtonElement>('[data-assignment-project-select]');
+      button?.setAttribute('aria-pressed', String(chosen));
+      if (button) button.textContent = chosen ? '已选择' : '选择这题';
+    }
+    const keepsTemplate = form.dataset.originalTemplate === 'true' && id === originalProjectId;
+    if (originalTemplate) originalTemplate.hidden = !keepsTemplate;
+    if (projectTemplateHint) {
+      projectTemplateHint.textContent = template?.files?.length
+        ? '将使用你上传的 .sb3 文件作为起始项目，优先于题库中的起始作品。'
+        : keepsTemplate ? '已保留这份作业现有的起始项目；上传新的 .sb3 文件可替换，最大 20MB。'
+          : (selectedProject?.id === id ? !!selectedProject.templateFileId : row?.dataset.template === 'true')
+            ? '将沿用这道创作题的起始作品；也可以上传 .sb3 文件替换，最大 20MB。'
+            : '孩子将从空白作品开始。也可以上传 .sb3 文件作为起点，最大 20MB。';
+    }
+  };
+  const loadProject = (row: HTMLElement) => {
+    const id = row.dataset.id;
+    if (projectCache.has(id)) return Promise.resolve(projectCache.get(id));
+    if (projectRequests.has(id)) return projectRequests.get(id);
+    const controller = new AbortController();
+    projectControllers.add(controller);
+    const timer = setTimeout(() => controller.abort(), 20000);
+    const pending = (async () => {
+      try {
+        const response = await fetch(row.dataset.previewUrl, {
+          credentials: 'same-origin', signal: controller.signal,
+          headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        if (!response.ok) throw new Error('这道创作题暂时无法读取，请重试或选择其他题目。');
+        const data = (await response.json()).projectProblem;
+        if (!data || String(data.id) !== id || typeof data.title !== 'string' || typeof data.description !== 'string') {
+          throw new Error('题目内容未完整加载，请重试。');
+        }
+        projectCache.set(id, data);
+        return data as ProjectProblem;
+      } finally {
+        clearTimeout(timer);
+        projectControllers.delete(controller);
+        projectRequests.delete(id);
+      }
+    })();
+    projectRequests.set(id, pending);
+    return pending;
+  };
+  const previewProjectRow = async (row: HTMLElement) => {
+    const status = row.querySelector<HTMLElement>('[data-assignment-project-row-status]');
+    const content = row.querySelector<HTMLElement>('[data-assignment-project-row-preview]');
+    const retry = row.querySelector<HTMLButtonElement>('[data-assignment-project-preview-retry]');
+    if (status) status.textContent = '正在载入任务…';
+    if (retry) retry.hidden = true;
+    try {
+      const data = await loadProject(row);
+      if (content) content.innerHTML = markdown.render(data.description);
+      if (status) status.textContent = '';
+    } catch {
+      if (status) status.textContent = '暂时无法加载，请重试。';
+      if (retry) retry.hidden = false;
+    }
+  };
+  const fillProject = (data: ProjectProblem, force = false) => {
+    const filled: string[] = [];
+    const kept: string[] = [];
+    if (force || !title.value.trim() || title.value === autoTitle) {
+      title.value = data.title;
+      autoTitle = data.title;
+      filled.push('标题');
+    } else kept.push('标题');
+    if (force || !description.value.trim() || description.value === autoDescription) {
+      description.value = data.description;
+      autoDescription = data.description;
+      description.dispatchEvent(new Event('input', { bubbles: true }));
+      filled.push('任务说明（含图片）');
+    } else kept.push('任务说明');
+    const message = [filled.length ? `已将${filled.join('、')}带入上方。` : '',
+      kept.length ? `已保留你填写的${kept.join('、')}。` : '',
+      data.templateFileId ? '起始作品会一起用于这份作业。' : '这道题从空白作品开始。'].filter(Boolean).join('');
+    setProjectNotice(message, kept.length > 0);
+  };
+  const selectProject = async (row: HTMLElement) => {
+    const generation = ++projectGeneration;
+    setProjectLoading(true);
+    setProjectNotice(`正在载入「${row.dataset.title}」…`);
+    try {
+      const data = await loadProject(row);
+      if (generation !== projectGeneration || currentMode() === 'objective') return;
+      selectedProject = data;
+      projectId.value = data.id;
+      fillProject(data);
+      if (projectPreviewBody) projectPreviewBody.innerHTML = markdown.render(data.description);
+      if (projectPreview) projectPreview.open = false;
+      setPickerOpen(false);
+      updateProject();
+      projectToggle?.focus();
+    } catch {
+      if (generation !== projectGeneration) return;
+      setProjectNotice('这道题暂时无法加载，已保留原来的任务。请再次点击“选择这题”重试。');
+    } finally {
+      if (generation === projectGeneration) setProjectLoading(false);
+    }
+  };
   const selected = () => papers.filter((input) => input.checked);
   const questionCount = () => selected().reduce((total, input) => total + Number(input.dataset.questionCount || 0), 0);
   const selectionError = () => {
@@ -44,6 +222,12 @@ export default new NamedPage(['scratch_assignment_create', 'scratch_assignment_e
     if (project) project.hidden = !includesProject;
     if (objective) objective.hidden = !includesObjective;
     if (template) template.disabled = !includesProject;
+    if (projectId) projectId.disabled = !includesProject;
+    if (!includesProject && projectLoading) {
+      projectGeneration++;
+      setProjectLoading(false);
+      setProjectNotice('已保留原来的创作任务，切回作品创作后可以继续选择。');
+    }
     papers.forEach((input) => { input.disabled = !includesObjective; });
     const chosen = selected();
     const score = chosen.reduce((total, input) => total + Number(input.dataset.totalScore || 0), 0);
@@ -58,6 +242,53 @@ export default new NamedPage(['scratch_assignment_create', 'scratch_assignment_e
   form.addEventListener('change', (event) => {
     const input = event.target as HTMLInputElement;
     if (['assignmentMode', 'objectivePaperIds'].includes(input.name)) update();
+    if (input.name === 'template') updateProject();
+  });
+  projectToggle?.addEventListener('click', () => setPickerOpen(projectPicker?.hidden));
+  projectClear?.addEventListener('click', () => {
+    projectGeneration++;
+    setProjectLoading(false);
+    projectId.value = '';
+    selectedProject = null;
+    autoTitle = undefined;
+    autoDescription = undefined;
+    setPickerOpen(false);
+    if (projectPreview) projectPreview.open = false;
+    setProjectNotice('已改为自由创作，填写的标题与任务说明已保留。可在下方自行准备起始项目。');
+    updateProject();
+  });
+  projectApply?.addEventListener('click', () => {
+    if (selectedProject) fillProject(selectedProject, true);
+  });
+  projectSearch?.addEventListener('input', () => {
+    const query = projectSearch.value.trim().toLocaleLowerCase();
+    let visible = 0;
+    for (const row of projectRows) {
+      row.hidden = !(row.dataset.search || '').toLocaleLowerCase().includes(query);
+      if (!row.hidden) visible++;
+    }
+    const empty = form.querySelector<HTMLElement>('[data-assignment-project-no-results]');
+    if (empty) empty.hidden = visible > 0;
+  });
+  for (const row of projectRows) {
+    row.querySelector('[data-assignment-project-select]')?.addEventListener('click', () => { void selectProject(row); });
+    row.querySelector('[data-assignment-project-preview]')?.addEventListener('toggle', (event) => {
+      if ((event.target as HTMLDetailsElement).open) void previewProjectRow(row);
+    });
+    row.querySelector('[data-assignment-project-preview-retry]')?.addEventListener('click', () => { void previewProjectRow(row); });
+  }
+  projectPreview?.addEventListener('toggle', async () => {
+    if (!projectPreview.open) return;
+    const id = projectId?.value;
+    const row = projectRow(id);
+    if (!row || !projectPreviewBody) return;
+    projectPreviewBody.textContent = '正在载入题库原题…';
+    try {
+      const data = await loadProject(row);
+      if (projectId.value === id) projectPreviewBody.innerHTML = markdown.render(data.description);
+    } catch {
+      if (projectId.value === id) projectPreviewBody.textContent = '暂时无法加载，收起后再次展开即可重试。';
+    }
   });
   form.addEventListener('input', (event) => {
     const search = event.target as HTMLInputElement;
@@ -125,13 +356,32 @@ export default new NamedPage(['scratch_assignment_create', 'scratch_assignment_e
       refresh.disabled = false;
     }
   });
-  window.addEventListener('pagehide', () => request?.abort());
+  window.addEventListener('pagehide', () => {
+    request?.abort();
+    projectControllers.forEach((controller) => controller.abort());
+  });
   form.addEventListener('submit', (event) => {
+    if (projectLoading) {
+      event.preventDefault();
+      setProjectNotice('创作题正在载入，完成后即可发布。');
+      return;
+    }
     const message = selectionError();
     if (!message) return;
     event.preventDefault();
     showError(message);
     validation?.focus();
   });
+  if (form.dataset.initialProject) {
+    try {
+      const data: ProjectProblem = JSON.parse(form.dataset.initialProject);
+      if (data?.id === projectId?.value && typeof data.description === 'string') {
+        projectCache.set(data.id, data);
+        selectedProject = data;
+        if (!isEditing) fillProject(data);
+      }
+    } catch { /* Keep the draft usable if an optional preview is unavailable. */ }
+  }
+  updateProject();
   update();
 });

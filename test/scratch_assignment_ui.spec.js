@@ -6,9 +6,18 @@ const { describe, it } = require('node:test');
 const { transformSync } = require('esbuild');
 const nunjucks = require('nunjucks');
 const { JSDOM } = require('jsdom');
+const MarkdownIt = require('markdown-it');
 
 const ui = path.resolve(__dirname, '../packages/ui-default');
 const env = new nunjucks.Environment(new nunjucks.FileSystemLoader(path.join(ui, 'templates')), { autoescape: true });
+const markdown = new MarkdownIt({ html: false });
+env.addFilter('markdown', (value) => markdown.render(String(value || '')));
+env.addFilter('json', (value) => value ? JSON.stringify(value) : '');
+const projects = [
+    { id: 'project-1', title: '小猫的星空冒险', description: '点击绿旗。\n\n![积木截图](/file/2/blocks.png)', tags: ['事件'], templateFileId: 'starting-project', url: '/problem/project-1', previewUrl: '/preview/project-1' },
+    { id: 'project-2', title: '循环画花朵', description: '重复画一朵花。', tags: ['循环'], url: '/problem/project-2', previewUrl: '/preview/project-2' },
+    { id: 'project-3', title: '<img src=x onerror=alert(1)>', description: '<script>alert(1)</script>\n\n![示例](/file/2/example.png)', tags: ['<script>'], url: '/problem/project-3', previewUrl: '/preview/project-3' },
+];
 const state = {
     url: (name, params = {}) => `/${name}${params.assignmentId ? `/${params.assignmentId}` : ''}`,
     datetimeSpan: (date) => String(date),
@@ -19,6 +28,7 @@ const state = {
         { docId: 13, pid: 'P13', title: '<img src=x onerror=alert(1)>', questionCount: 96, totalScore: 960, tags: ['事件'] },
     ],
     deadlineInput: '',
+    projectProblems: projects.map(({ description, ...metadata }) => metadata),
     udict: {}, works: [], submissions: [], materials: [],
 };
 function render(name, overrides = {}) {
@@ -29,11 +39,21 @@ function editor(assignment, overrides = {}) {
     const dom = render('scratch_assignment_edit.html', { assignment, ...overrides });
     const code = transformSync(fs.readFileSync(path.join(ui, 'pages/scratch_assignment_edit.page.ts'), 'utf8'), { loader: 'ts', format: 'cjs' }).code;
     const mod = { exports: {} };
+    const imageBindings = [];
+    const requests = [];
     vm.runInNewContext(code, {
         document: dom.window.document, window: dom.window, module: mod, exports: mod.exports,
-        location: dom.window.location, DOMParser: dom.window.DOMParser, AbortController, setTimeout, clearTimeout,
-        fetch: overrides.fetch || (() => { throw new Error('Unexpected fetch'); }),
+        location: dom.window.location, DOMParser: dom.window.DOMParser, Event: dom.window.Event, AbortController, setTimeout, clearTimeout,
+        fetch: (url, options) => {
+            requests.push(url);
+            if (overrides.fetch) return overrides.fetch(url, options);
+            const item = projects.find((project) => project.previewUrl === url);
+            if (!item) throw new Error(`Unexpected fetch ${url}`);
+            return Promise.resolve({ ok: true, json: async () => ({ projectProblem: item }) });
+        },
         require: (name) => {
+            if (name.endsWith('markdown-image-paste')) return { attachMarkdownImagePaste: (textarea, status) => { imageBindings.push({ textarea, status }); } };
+            if (name.endsWith('objective-markdown')) return { createObjectiveMarkdown: () => markdown };
             assert.equal(name, 'vj/misc/Page');
             return { NamedPage: class { constructor(names, callback) { this.names = names; this.run = callback; } } };
         },
@@ -48,8 +68,161 @@ function editor(assignment, overrides = {}) {
         form.dispatchEvent(event);
         return !event.defaultPrevented;
     };
-    return { dom, doc, form, mode, paper, submit };
+    const chooseProject = (id) => doc.querySelector(`[data-assignment-project-item][data-id="${id}"] [data-assignment-project-select]`).click();
+    return { dom, doc, form, mode, paper, submit, chooseProject, requests, imageBindings };
 }
+
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+describe('Scratch question-bank project assignment', () => {
+    it('uses only metadata in the chooser and fills the explicitly preselected project including images', () => {
+        const view = editor(null, { selectedProjectProblemId: 'project-1', selectedProjectProblem: projects[0] });
+        assert.equal(view.requests.length, 0);
+        assert.equal(view.doc.querySelector('input[name=title]').value, projects[0].title);
+        assert.equal(view.doc.querySelector('textarea[name=description]').value, projects[0].description);
+        assert.equal(view.doc.querySelector('[name=projectProblemId]').value, 'project-1');
+        assert.match(view.doc.querySelector('[data-assignment-project-template-hint]').textContent, /沿用/);
+        assert.match(view.doc.querySelector('[data-assignment-project-notice]').textContent, /标题、任务说明（含图片）.*带入上方/);
+        assert.equal(view.doc.querySelectorAll('[data-assignment-project-item] img').length, 0, 'preview images load only on demand');
+        assert.equal(view.doc.querySelector('[data-assignment-project-item]').hasAttribute('data-description'), false);
+        assert.equal(view.imageBindings.length, 1);
+        assert.equal(view.imageBindings[0].textarea.name, 'description');
+        assert(view.imageBindings[0].status.matches('[data-assignment-description-image-status]'));
+        view.dom.window.close();
+    });
+
+    it('searches project metadata and lazily previews safe Markdown and images', async () => {
+        const view = editor();
+        view.doc.querySelector('[data-assignment-project-toggle]').click();
+        assert.equal(view.doc.querySelector('[data-assignment-project-picker]').hidden, false);
+        assert.equal(view.requests.length, 0);
+        const search = view.doc.querySelector('[data-assignment-project-search]');
+        search.value = '循环';
+        search.dispatchEvent(new view.dom.window.Event('input'));
+        const visible = [...view.doc.querySelectorAll('[data-assignment-project-item]')].filter((row) => !row.hidden);
+        assert.equal(visible.length, 1);
+        assert.equal(visible[0].dataset.id, 'project-2');
+        const row = view.doc.querySelector('[data-id="project-3"]');
+        const detail = row.querySelector('details');
+        detail.open = true;
+        detail.dispatchEvent(new view.dom.window.Event('toggle'));
+        await tick();
+        assert.equal(view.requests[0], '/preview/project-3');
+        assert.equal(row.querySelector('script'), null);
+        assert.equal(row.querySelector('[data-assignment-project-row-preview] img').getAttribute('src'), '/file/2/example.png');
+        assert.equal(row.querySelector('h4 img'), null);
+        view.dom.window.close();
+    });
+
+    it('preserves handwritten fields and offers an explicit way to apply the selected question', async () => {
+        const view = editor();
+        const title = view.doc.querySelector('input[name=title]');
+        const description = view.doc.querySelector('textarea[name=description]');
+        title.value = '老师已经写好的标题';
+        view.chooseProject('project-1');
+        await tick();
+        assert.equal(title.value, '老师已经写好的标题');
+        assert.equal(description.value, projects[0].description);
+        assert.match(view.doc.querySelector('[data-assignment-project-notice]').textContent, /已保留你填写的标题/);
+        assert.equal(view.doc.querySelector('[data-assignment-project-apply]').hidden, false);
+        view.doc.querySelector('[data-assignment-project-apply]').click();
+        assert.equal(title.value, projects[0].title);
+        assert.equal(view.doc.querySelector('[data-assignment-project-apply]').hidden, true);
+        description.value += '\n老师追加的要求';
+        description.dispatchEvent(new view.dom.window.Event('input'));
+        view.chooseProject('project-2');
+        await tick();
+        assert.equal(title.value, projects[1].title, 'untouched auto-filled title follows the new selection');
+        assert.match(description.value, /老师追加的要求/);
+        assert.match(view.doc.querySelector('[data-assignment-project-template-hint]').textContent, /空白作品/);
+        view.dom.window.close();
+    });
+
+    it('blocks publishing while loading and ignores stale results when A resolves after B', async () => {
+        const completions = {};
+        const view = editor(null, { fetch: (url) => new Promise((resolve) => { completions[url] = resolve; }) });
+        view.chooseProject('project-1');
+        assert.equal(view.submit(), false);
+        assert.equal(view.doc.querySelector('button[type=submit]').disabled, true);
+        view.chooseProject('project-2');
+        completions['/preview/project-2']({ ok: true, json: async () => ({ projectProblem: projects[1] }) });
+        await tick();
+        assert.equal(view.doc.querySelector('[name=projectProblemId]').value, 'project-2');
+        completions['/preview/project-1']({ ok: true, json: async () => ({ projectProblem: projects[0] }) });
+        await tick();
+        assert.equal(view.doc.querySelector('[name=projectProblemId]').value, 'project-2');
+        assert.equal(view.doc.querySelector('input[name=title]').value, projects[1].title);
+        assert.equal(view.doc.querySelector('button[type=submit]').disabled, false);
+        assert.equal(view.submit(), true);
+        view.dom.window.close();
+    });
+
+    it('keeps the previous draft on failed selection and lets a retry succeed', async () => {
+        let calls = 0;
+        const view = editor(null, { fetch: async () => {
+            calls++;
+            if (calls === 1) throw new Error('offline');
+            return { ok: true, json: async () => ({ projectProblem: projects[0] }) };
+        } });
+        view.doc.querySelector('input[name=title]').value = '保留的标题';
+        view.chooseProject('project-1');
+        await tick();
+        assert.equal(view.doc.querySelector('[name=projectProblemId]').value, '');
+        assert.equal(view.doc.querySelector('input[name=title]').value, '保留的标题');
+        assert.match(view.doc.querySelector('[data-assignment-project-notice]').textContent, /已保留原来的任务/);
+        view.chooseProject('project-1');
+        await tick();
+        assert.equal(view.doc.querySelector('[name=projectProblemId]').value, 'project-1');
+        assert.equal(view.doc.querySelector('input[name=title]').value, '保留的标题');
+        view.dom.window.close();
+    });
+
+    it('does not reload an existing assignment from its source and clears only its association on request', () => {
+        const view = editor({ title: '已发布时的标题', description: '已布置的说明', templateFileId: 'snapshot-template', sourceProblemId: 'project-1' }, { selectedProjectProblemId: 'project-1' });
+        assert.equal(view.requests.length, 0);
+        assert.equal(view.doc.querySelector('input[name=title]').value, '已发布时的标题');
+        assert.equal(view.doc.querySelector('textarea[name=description]').value, '已布置的说明');
+        view.doc.querySelector('[data-assignment-project-clear]').click();
+        assert.equal(new view.dom.window.FormData(view.form).get('projectProblemId'), '');
+        assert.equal(view.doc.querySelector('textarea[name=description]').value, '已布置的说明');
+        assert.equal(view.doc.querySelector('[data-assignment-original-template]').hidden, true);
+        assert.match(view.doc.querySelector('[data-assignment-project-template-hint]').textContent, /空白作品/);
+        view.dom.window.close();
+    });
+
+    it('keeps the chosen project in mixed work and excludes it from objective-only submissions', async () => {
+        const view = editor();
+        view.chooseProject('project-1');
+        await tick();
+        view.mode('mixed');
+        view.paper(12).click();
+        assert.equal(new view.dom.window.FormData(view.form).get('projectProblemId'), 'project-1');
+        assert.equal(view.submit(), true);
+        view.mode('objective');
+        assert.equal(new view.dom.window.FormData(view.form).has('projectProblemId'), false);
+        view.mode('mixed');
+        assert.equal(view.doc.querySelector('[name=projectProblemId]').value, 'project-1');
+        const upload = view.doc.querySelector('[name=template]');
+        Object.defineProperty(upload, 'files', { value: [new view.dom.window.File(['file'], 'custom.sb3')], configurable: true });
+        upload.dispatchEvent(new view.dom.window.Event('change', { bubbles: true }));
+        assert.match(view.doc.querySelector('[data-assignment-project-template-hint]').textContent, /优先于题库/);
+        view.dom.window.close();
+    });
+
+    it('does not apply a late selection after switching to objective-only work', async () => {
+        let complete;
+        const view = editor(null, { fetch: () => new Promise((resolve) => { complete = resolve; }) });
+        view.chooseProject('project-1');
+        view.mode('objective');
+        view.paper(11).click();
+        complete({ ok: true, json: async () => ({ projectProblem: projects[0] }) });
+        await tick();
+        assert.equal(view.doc.querySelector('input[name=title]').value, '');
+        assert.equal(new view.dom.window.FormData(view.form).has('projectProblemId'), false);
+        assert.equal(view.submit(), true);
+        view.dom.window.close();
+    });
+});
 
 describe('Scratch assignment content selection', () => {
     it('keeps legacy project assignments compatible and excludes hidden quiz/template fields from form submissions', () => {
@@ -188,6 +361,16 @@ describe('Scratch assignment content selection', () => {
 describe('Scratch assignment learner and teacher views', () => {
     const assignment = { _id: 'assignment', title: '方向小练习', projectRequired: false, objectiveQuiz: { paperIds: [11], total: 3 }, templateFileId: 'old-template' };
     const quiz = { total: 3, answered: 1, correct: 1, score: 10, totalScore: 30, completed: false, url: '/scratch/assignments/assignment/quiz' };
+    it('renders imported task images and formatting in the learner assignment page without raw markup', () => {
+        const dom = render('scratch_assignment.html', { assignment: { ...assignment, projectRequired: true,
+            description: '**完成目标**\n\n![积木截图](/file/2/blocks.png)\n\n<script>attack()</script>' }, isTeacher: false });
+        const description = dom.window.document.querySelector('.sc-assignment-markdown');
+        assert.equal(description.querySelector('strong').textContent, '完成目标');
+        assert.equal(description.querySelector('img').getAttribute('src'), '/file/2/blocks.png');
+        assert.equal(description.querySelector('script'), null);
+        assert.doesNotMatch(description.textContent, /!\[积木截图\]/);
+        dom.window.close();
+    });
     it('shows quiz progress and removes all project actions for objective-only homework', () => {
         const dom = render('scratch_assignment.html', { assignment, isTeacher: false, objectiveQuiz: quiz });
         const doc = dom.window.document;

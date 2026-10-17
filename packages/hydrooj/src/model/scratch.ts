@@ -21,6 +21,9 @@ export interface ScratchAssignment extends ScratchDoc {
     projectRequired?: boolean;
     objectiveQuiz?: scratchObjective.ScratchAssignmentQuiz | null;
     objectiveStarted?: boolean;
+    // A classroom assignment owns its description and template snapshot. This
+    // identifier is provenance only; reading it never reloads the library task.
+    sourceProblemId?: ObjectId | null;
     // Library challenges share the immutable work/submission pipeline, but are
     // never classroom assignments. Objective backing copies stay out of lists.
     kind?: 'problem';
@@ -177,6 +180,12 @@ export async function getAssignment(actor: ScratchActor, _id: ObjectId) {
             doc.tags = 'tags' in paper ? paper.tags : paper.tag || [];
         }
     }
+    return doc;
+}
+export async function getProjectProblem(actor: ScratchActor, _id: ObjectId) {
+    requireTeacher(actor);
+    const doc = await assignments.findOne({ domainId: actor.domainId, _id, kind: 'problem', problemPaperId: { $exists: false } });
+    if (!doc || doc.projectRequired === false) throw new NotFoundError('Scratch 创作题');
     return doc;
 }
 export async function getWork(actor: ScratchActor, _id: ObjectId, write = false) {
@@ -432,19 +441,61 @@ export interface AssignmentInput {
     deadline: Date | null;
     projectRequired?: boolean;
     objectivePaperIds?: number[];
+    projectProblemId?: string | ObjectId | null;
     kind?: 'problem';
     tags?: string[];
     hidden?: boolean;
 }
+
+async function copyAssignmentTemplate(actor: ScratchActor, assignmentId: ObjectId, source: ScratchAssignment) {
+    const original = await getFile(actor, source.templateFileId);
+    if (original.mime !== 'application/x.scratch.sb3') throw new ValidationError('projectProblemId', null, '创作题的起始作品不是有效的 Scratch 项目');
+    const file: ScratchFile = {
+        ...base(actor), assignmentId, path: '', filename: original.filename, size: original.size, mime: original.mime,
+    };
+    file.path = `scratch/${actor.domainId}/${file._id}.sb3`;
+    await reserveFileBytes(actor, file.size);
+    try {
+        await storage.copy(original.path, file.path);
+        await files.insertOne(file);
+    } catch (error) {
+        await files.deleteOne({ domainId: actor.domainId, _id: file._id });
+        await storage.del([file.path], actor.uid);
+        await releaseFileBytes(actor, file.size);
+        throw error;
+    }
+    await mirrorFile(file);
+    return file;
+}
+
 export async function writeAssignment(
     actor: ScratchActor, input: AssignmentInput, _id?: ObjectId, template?: { filepath: string, originalFilename?: string },
 ) {
     requireTeacher(actor);
     const current = _id ? await getAssignment(actor, _id) : null;
     if (current?.problemPaperId) throw new ValidationError('assignmentId', null, '题卷快照不能修改，请在客观题工作台编辑原题卷');
+    const projectRequired = input.projectRequired ?? current?.projectRequired ?? true;
+    let sourceProblemId: ObjectId = current?.sourceProblemId || null;
+    if (input.projectProblemId !== undefined) {
+        const id = input.projectProblemId;
+        if (id === null || id === '') sourceProblemId = null;
+        else if (id instanceof ObjectId) sourceProblemId = id;
+        else if (typeof id === 'string' && /^[a-f\d]{24}$/i.test(id)) sourceProblemId = new ObjectId(id);
+        else throw new ValidationError('projectProblemId');
+        if (sourceProblemId && (!projectRequired || input.kind === 'problem' || current?.kind === 'problem')) {
+            throw new ValidationError('projectProblemId', null, '只有包含 Scratch 作品的课堂作业可以选用创作题');
+        }
+    }
+    if (!projectRequired) sourceProblemId = null;
+    const changedSource = `${sourceProblemId || ''}` !== `${current?.sourceProblemId || ''}`;
+    // Unchanged selections deliberately do not read their source. A teacher may
+    // hide, replace or remove a bank problem without breaking an existing copy.
+    const source = sourceProblemId && changedSource ? await getProjectProblem(actor, sourceProblemId) : null;
     const fields = {
-        title: cleanText(input.title, 'title', 120), description: `${input.description || ''}`.trim(), deadline: input.deadline,
-        projectRequired: input.projectRequired ?? current?.projectRequired ?? true,
+        title: cleanText(input.title, 'title', 120, source?.title || ''),
+        description: `${input.description ?? source?.description ?? ''}`.trim(), deadline: input.deadline,
+        projectRequired,
+        ...(input.kind !== 'problem' && current?.kind !== 'problem' ? { sourceProblemId } : {}),
         ...(input.kind === 'problem' || current?.kind === 'problem' ? {
             kind: 'problem' as const, tags: input.tags ?? current?.tags ?? [], hidden: input.hidden ?? current?.hidden ?? false,
         } : {}),
@@ -458,23 +509,26 @@ export async function writeAssignment(
     const doc: ScratchAssignment = current || { ...base(actor), ...fields, templateFileId: null };
     let file: ScratchFile = null;
     try {
-        file = template ? await putFile(actor, template, { assignmentId: doc._id }, true) : null;
+        file = template ? await putFile(actor, template, { assignmentId: doc._id }, true)
+            : source?.templateFileId ? await copyAssignmentTemplate(actor, doc._id, source) : null;
+        const templateFileId = file?._id || (changedSource ? null : current?.templateFileId || null);
         if (current) {
             const changedQuiz = objectiveQuiz?.revision !== current.objectiveQuiz?.revision;
             const updated = await assignments.updateOne({
                 domainId: actor.domainId, _id, 'objectiveQuiz.revision': current.objectiveQuiz?.revision ?? { $exists: false },
+                sourceProblemId: current.sourceProblemId || null, templateFileId: current.templateFileId,
                 ...(changedQuiz ? { objectiveStarted: { $ne: true } } : {}),
             }, {
-                $set: { ...fields, objectiveQuiz, updatedAt: new Date(), ...(file ? { templateFileId: file._id } : {}) },
+                $set: { ...fields, objectiveQuiz, updatedAt: new Date(), templateFileId },
             });
             if (!updated.matchedCount) throw new ValidationError('objectivePaperIds', null, '作业已被更新或有学员开始答题，请刷新后重新保存');
-        } else await assignments.insertOne({ ...doc, objectiveQuiz, templateFileId: file?._id || null });
+        } else await assignments.insertOne({ ...doc, objectiveQuiz, templateFileId });
     } catch (error) {
         if (file) await removeFile(actor, file._id);
         if (objectiveQuiz && objectiveQuiz.revision !== current?.objectiveQuiz?.revision) await storage.del(Object.values(objectiveQuiz.files));
         throw error;
     }
-    if (file && current?.templateFileId) await removeFile(actor, current.templateFileId);
+    if ((file || changedSource) && current?.templateFileId) await removeFile(actor, current.templateFileId);
     if (current?.objectiveQuiz && objectiveQuiz?.revision !== current.objectiveQuiz.revision) {
         await storage.del(Object.values(current.objectiveQuiz.files));
     }

@@ -102,7 +102,7 @@ export class ScratchHandler extends Handler {
             if (!time.isValid()) throw new ValidationError('deadline');
             parsed = time.toDate();
         }
-        const { projectRequired, objectivePaperIds, assignmentMode } = this.request.body;
+        const { projectRequired, objectivePaperIds, assignmentMode, projectProblemId } = this.request.body;
         if (assignmentMode !== undefined && !['project', 'objective', 'mixed'].includes(assignmentMode)) throw new ValidationError('assignmentMode');
         if (projectRequired !== undefined && ![true, false, 'true', 'false', '1', '0'].includes(projectRequired)) {
             throw new ValidationError('projectRequired');
@@ -110,12 +110,14 @@ export class ScratchHandler extends Handler {
         if (assignmentMode) {
             const ids = assignmentMode === 'project' ? [] : scratchObjective.parsePaperIds(objectivePaperIds);
             if (assignmentMode !== 'project' && !ids.length) throw new ValidationError('objectivePaperIds', null, '请先选择一套客观题');
-            return { title, description, deadline: parsed, projectRequired: assignmentMode !== 'objective', objectivePaperIds: ids };
+            return { title, description, deadline: parsed, projectRequired: assignmentMode !== 'objective', objectivePaperIds: ids,
+                ...(projectProblemId !== undefined ? { projectProblemId } : {}) };
         }
         return {
             title, description, deadline: parsed,
             ...(projectRequired !== undefined ? { projectRequired: [true, 'true', '1'].includes(projectRequired) } : {}),
             ...(objectivePaperIds !== undefined ? { objectivePaperIds: scratchObjective.parsePaperIds(objectivePaperIds) } : {}),
+            ...(projectProblemId !== undefined ? { projectProblemId } : {}),
         };
     }
 
@@ -373,7 +375,8 @@ export class ScratchProblemHandler extends ScratchHandler {
         ]);
         await this.renderScratch('scratch_problem_detail.html', {
             problem: { ...problem, id: problem._id, kind: 'project', tags: problem.tags || [],
-                editUrl: this.actor.isTeacher ? this.url('scratch_problem_edit', { problemId: problem._id }) : null }, work, submissions,
+                editUrl: this.actor.isTeacher ? this.url('scratch_problem_edit', { problemId: problem._id }) : null,
+                assignmentUrl: this.actor.isTeacher ? this.url('scratch_assignment_create', { query: { projectProblemId: problem._id } }) : null }, work, submissions,
         });
     }
 
@@ -495,11 +498,28 @@ export class ScratchAssignmentEditHandler extends ScratchHandler {
         }
         const deadlineInput = assignment?.deadline
             ? moment(assignment.deadline).tz(this.user.timeZone || 'Asia/Shanghai').format('YYYY-MM-DDTHH:mm') : '';
-        const objectivePapers = await scratchObjective.listPapers(this.actor);
+        const [objectivePapers, projectProblems] = await Promise.all([
+            scratchObjective.listPapers(this.actor),
+            scratch.assignments.find({ domainId: this.actor.domainId, kind: 'problem', problemPaperId: { $exists: false },
+                projectRequired: { $ne: false } })
+                .project<scratch.ScratchAssignment>({ _id: 1, title: 1, tags: 1, templateFileId: 1, hidden: 1 })
+                .sort({ createdAt: -1 }).toArray(),
+        ]);
         const selectedPaper = Number(this.request.query.objectivePaperId);
+        const selectedProjectProblem = !assignment && this.request.query.projectProblemId
+            ? await scratch.getProjectProblem(this.actor, objectId(this.request.query.projectProblemId, 'projectProblemId')) : null;
+        const projectInfo = (problem: scratch.ScratchAssignment) => ({
+            id: problem._id.toHexString(), title: problem.title, tags: problem.tags || [], hidden: !!problem.hidden,
+            templateFileId: problem.templateFileId?.toHexString() || null,
+            url: this.url('scratch_problem_detail', { problemId: problem._id }),
+            previewUrl: this.url('scratch_assignment_project_preview', { problemId: problem._id }),
+        });
         await this.renderScratch('scratch_assignment_edit.html', {
             assignment, deadlineInput, timeZone: this.user.timeZone || 'Asia/Shanghai',
             objectivePapers,
+            projectProblems: projectProblems.map(projectInfo),
+            selectedProjectProblemId: (assignment?.sourceProblemId || selectedProjectProblem?._id)?.toHexString() || '',
+            selectedProjectProblem: selectedProjectProblem ? { ...projectInfo(selectedProjectProblem), description: selectedProjectProblem.description } : null,
             selectedObjectivePaperIds: !assignment && objectivePapers.some((paper) => paper.docId === selectedPaper) ? [selectedPaper] : null,
         });
     }
@@ -511,6 +531,16 @@ export class ScratchAssignmentEditHandler extends ScratchHandler {
         if (id && (await scratch.getAssignment(this.actor, id)).kind === 'problem') throw new ValidationError('assignmentId');
         const assignment = await scratch.writeAssignment(this.actor, this.assignmentInput(), id, this.upload('template', false));
         this.response.redirect = this.url('scratch_assignment', { assignmentId: assignment._id });
+    }
+}
+export class ScratchAssignmentProjectPreviewHandler extends ScratchHandler {
+    async get() {
+        const problem = await scratch.getProjectProblem(this.actor, this.routeId('problemId'));
+        this.response.body = { projectProblem: {
+            id: problem._id.toHexString(), title: problem.title, description: problem.description, tags: problem.tags || [], hidden: !!problem.hidden,
+            templateFileId: problem.templateFileId?.toHexString() || null,
+            url: this.url('scratch_problem_detail', { problemId: problem._id }),
+        } };
     }
 }
 export class ScratchAssignmentHandler extends ScratchHandler {
@@ -679,13 +709,17 @@ export class ScratchEditorHandler extends ScratchHandler {
             backUrl: submission ? this.url('scratch_submission', { submissionId: submission._id }) : this.url('scratch_work', { workId: work._id }),
             canSubmit: !readOnly && !saveForStudent && !!assignment && (!assignment.deadline || assignment.deadline.getTime() >= Date.now()),
             readOnly, saveForStudent, ownerName, revision: work.revision, maxFileSize: SCRATCH_MAX_FILE_SIZE,
-            problemMode: assignment?.kind === 'problem', submitLabel: assignment?.kind === 'problem' ? '提交作品' : '提交作业',
+            problemMode: assignment?.kind === 'problem' || !!assignment?.sourceProblemId,
+            submitLabel: assignment?.kind === 'problem' ? '提交作品' : '提交作业',
             inspectCode: !!submission && this.actor.isTeacher && query.inspect === 'true',
         };
         if (!submission && assignment?.kind === 'problem') {
             this.UiContext.scratchEditor.backUrl = this.url('scratch_problem_detail', { problemId: assignment._id });
+        } else if (!submission && assignment?.sourceProblemId) {
+            this.UiContext.scratchEditor.backUrl = this.url('scratch_assignment', { assignmentId: assignment._id });
         }
-        await this.renderScratch('scratch_editor.html', { work, assignment, submission, problem: assignment?.kind === 'problem' ? assignment : null });
+        await this.renderScratch('scratch_editor.html', { work, assignment, submission,
+            problem: assignment?.kind === 'problem' || assignment?.sourceProblemId ? assignment : null });
     }
 }
 export class ScratchLanguageHandler extends ScratchHandler {
@@ -1093,6 +1127,7 @@ export async function apply(ctx: Context) {
     ctx.Route('scratch_problem_review', '/scratch/problems/review', ScratchProblemReviewHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_problem_create', '/scratch/problem/create', ScratchProblemCreateHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_problem_project_create', '/scratch/problem/create/project', ScratchProblemEditHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('scratch_assignment_project_preview', '/scratch/problem/:problemId/assignment-preview', ScratchAssignmentProjectPreviewHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_problem_paper_edit', '/scratch/problem/paper/:paperId/edit', ScratchProblemPaperEditHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_problem_paper', '/scratch/problem/paper/:paperId', ScratchProblemPaperHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('scratch_problem_edit', '/scratch/problem/:problemId/edit', ScratchProblemEditHandler, PRIV.PRIV_USER_PROFILE);

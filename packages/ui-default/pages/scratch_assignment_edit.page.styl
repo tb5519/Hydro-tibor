@@ -101,6 +101,193 @@
       font-size: 14px
       padding: 8px 14px
 
+  .sc-assignment-project-choice
+    display: flex
+    align-items: center
+    gap: 16px
+    padding: 19px
+    background: var(--sc-soft)
+    border: 1px solid var(--sc-line)
+    border-radius: 16px
+
+    > .sc-actions
+      justify-content: flex-end
+      flex-wrap: wrap
+      flex: 0 0 auto
+
+  .sc-assignment-project-symbol
+    display: grid
+    place-items: center
+    flex: 0 0 auto
+    width: 44px
+    height: 44px
+    background: #eee7fc
+    color: #9064cf
+    border-radius: 14px
+    font-size: 26px
+
+  .sc-assignment-project-copy
+    flex: 1
+    min-width: 0
+
+    small
+      display: block
+      margin-bottom: 3px
+      color: var(--sc-blue)
+      font-size: 11px
+      font-weight: 700
+
+    strong
+      display: block
+      font-size: 16px
+      overflow-wrap: anywhere
+
+    p
+      margin-top: 5px
+      color: var(--sc-muted)
+      font-size: 12px
+
+  .sc-assignment-text-button, .sc-assignment-text-link
+    display: inline-flex
+    align-items: center
+    min-height: 32px
+    padding: 4px 0
+    border: 0
+    background: transparent
+    color: var(--sc-blue)
+    font-size: 13px
+    cursor: pointer
+    text-align: left
+
+    &:hover
+      text-decoration: underline
+
+  .sc-assignment-project-notice
+    display: flex
+    flex-wrap: wrap
+    align-items: center
+    gap: 6px 14px
+    margin-top: 12px
+    padding: 11px 14px
+    border-radius: 10px
+    background: var(--sc-warm)
+    color: var(--sc-warm-ink)
+    font-size: 12px
+    line-height: 1.8
+
+  .sc-assignment-project-picker
+    padding: 19px
+    margin-top: 15px
+    border: 1px solid var(--sc-line)
+    border-radius: 15px
+    background: var(--sc-paper)
+
+    .sc-assignment-search
+      margin-bottom: 15px
+
+  .sc-assignment-project-list
+    display: grid
+    gap: 11px
+    max-height: 470px
+    overflow-y: auto
+    scrollbar-gutter: stable
+    padding: 3px
+    margin: -3px
+
+  .sc-assignment-project-item
+    border: 1px solid var(--sc-line)
+    border-radius: 12px
+    padding: 16px
+    min-width: 0
+
+    &.is-selected
+      border-color: #92b5ee
+      background: var(--sc-soft)
+
+  .sc-assignment-project-item-top
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 16px
+
+    > div
+      min-width: 0
+
+    h4
+      color: var(--sc-ink)
+      font-size: 15px
+      line-height: 1.6
+      font-weight: 700
+      margin: 0
+      overflow-wrap: anywhere
+
+    p
+      margin-top: 4px
+      color: var(--sc-muted)
+      font-size: 12px
+
+    .sc-button
+      flex-shrink: 0
+      min-height: 37px
+      padding: 7px 12px
+      font-size: 13px
+
+  .sc-assignment-project-preview, .sc-assignment-project-selected-preview
+    margin-top: 13px
+    font-size: 13px
+
+    summary
+      width: fit-content
+      min-height: 29px
+      color: var(--sc-blue)
+      cursor: pointer
+      padding: 2px 0
+
+    &[open] summary
+      margin-bottom: 13px
+
+  .sc-assignment-project-selected-preview
+    padding: 0 4px
+
+    > .sc-assignment-markdown
+      max-height: 340px
+      overflow-y: auto
+      padding: 16px
+      border: 1px solid var(--sc-line)
+      border-radius: 12px
+
+  .sc-assignment-template
+    border-top: 1px dashed var(--sc-line)
+    margin-top: 22px
+    padding-top: 19px
+
+    .sc-field
+      margin-bottom: 0
+
+  .sc-assignment-markdown
+    min-width: 0
+    white-space: normal
+    overflow-wrap: anywhere
+    font-size: 14px
+
+    p, ul, ol, pre
+      margin-bottom: 12px
+
+    img
+      max-width: 100%
+      height: auto
+      border-radius: 9px
+
+    pre, table
+      max-width: 100%
+      overflow-x: auto
+
+    > :last-child
+      margin-bottom: 0
+
+  .sc-description.sc-assignment-markdown
+    white-space: normal
+
   .sc-assignment-summary
     display: flex
     justify-content: space-between
@@ -312,6 +499,26 @@
 
 @media(max-width: 540px)
   .scratch-app
+    .sc-assignment-project-choice
+      flex-wrap: wrap
+      padding: 16px
+      gap: 12px
+
+      > .sc-actions
+        width: 100%
+        justify-content: flex-start
+        padding-left: 56px
+
+    .sc-assignment-project-picker
+      padding: 13px
+
+    .sc-assignment-project-item
+      padding: 13px
+
+    .sc-assignment-project-item-top
+      align-items: flex-start
+      gap: 10px
+
     .sc-assignment-modes
       grid-template-columns: 1fr
       gap: 9px
