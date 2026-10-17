@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { NamedPage } from 'vj/misc/Page';
 import { request } from 'vj/utils';
+import { attachMarkdownImagePaste } from '../common/markdown-image-paste';
 import { createObjectiveMarkdown } from '../common/objective-markdown';
 
 type Kind = 'single' | 'multiple' | 'judge';
@@ -61,10 +62,14 @@ function ObjectiveEditor({ initial }: { initial: InitialData }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [imageUploading, setImageUploading] = useState(false);
   const pending = useRef(false);
   const saved = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
   const tagRef = useRef<HTMLInputElement>(null);
+  const stemRef = useRef<HTMLTextAreaElement>(null);
+  const stemStatusRef = useRef<HTMLDivElement>(null);
+  const stemImagePaste = useRef<ReturnType<typeof attachMarkdownImagePaste> | null>(null);
   const activeOptions = kind === 'judge' ? ['正确', '错误'] : options;
   const activeAnswers = kind === 'judge' ? judgeAnswers : choiceAnswers;
   const kindLabel = kinds.find((item) => item.value === kind).label;
@@ -93,6 +98,23 @@ function ObjectiveEditor({ initial }: { initial: InitialData }) {
     };
     window.addEventListener('beforeunload', beforeUnload);
     return () => window.removeEventListener('beforeunload', beforeUnload);
+  }, []);
+
+  useEffect(() => {
+    if (!stemRef.current || !stemStatusRef.current) return undefined;
+    const controller = attachMarkdownImagePaste(stemRef.current, stemStatusRef.current, {
+      onChange: (value) => {
+        setStem(value);
+        setErrors((previous) => ({ ...previous, stem: '' }));
+        setServerError('');
+      },
+      onPendingChange: setImageUploading,
+    });
+    stemImagePaste.current = controller;
+    return () => {
+      controller.dispose();
+      stemImagePaste.current = null;
+    };
   }, []);
 
   function clearError(field: string) {
@@ -147,7 +169,7 @@ function ObjectiveEditor({ initial }: { initial: InitialData }) {
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (pending.current) return;
+    if (pending.current || stemImagePaste.current?.hasPending()) return;
     const submittedTags = Array.from(new Set([...tags, ...parseTags(tagInput)]));
     setTags(submittedTags);
     setTagInput('');
@@ -206,7 +228,7 @@ function ObjectiveEditor({ initial }: { initial: InitialData }) {
   }
 
   return (
-    <form className="objective-workspace" ref={formRef} onSubmit={submit} noValidate aria-busy={submitting}>
+    <form className="objective-workspace" ref={formRef} onSubmit={submit} noValidate aria-busy={submitting || imageUploading}>
       <fieldset className="objective-editor" disabled={submitting}>
         <div className="objective-card">
           <div className="objective-section-heading">
@@ -266,9 +288,10 @@ function ObjectiveEditor({ initial }: { initial: InitialData }) {
               <label className="objective-label" htmlFor="objective-stem">
                 题干 <span aria-hidden="true">*</span>
               </label>
-              <span>支持 Markdown 与数学公式</span>
+              <span>支持 Markdown、公式与粘贴截图</span>
             </div>
             <textarea
+              ref={stemRef}
               id="objective-stem"
               data-field="stem"
               className="objective-input objective-stem"
@@ -276,13 +299,15 @@ function ObjectiveEditor({ initial }: { initial: InitialData }) {
               value={stem}
               required
               aria-invalid={!!errors.stem}
-              aria-describedby={errors.stem ? 'objective-stem-error' : undefined}
-              placeholder={'在这里写下问题…\n\n可以使用 **加粗**、代码块或 $数学公式$。'}
+              aria-describedby={errors.stem ? 'objective-stem-help objective-stem-error' : 'objective-stem-help'}
+              placeholder={'在这里写下问题…\n\n可以直接粘贴截图，也可以使用 **加粗**、代码块或 $数学公式$。'}
               onChange={(event) => {
                 setStem(event.target.value);
                 clearError('stem');
               }}
             />
+            <p className="objective-help" id="objective-stem-help">题干和图片会显示在右侧预览。</p>
+            <div ref={stemStatusRef} data-objective-stem-image-status />
             {errors.stem && (
               <p className="objective-error" id="objective-stem-error">
                 {errors.stem}
@@ -530,11 +555,11 @@ function ObjectiveEditor({ initial }: { initial: InitialData }) {
             <button
               type="submit"
               className="objective-submit"
-              disabled={submitting}
+              disabled={submitting || imageUploading}
               // This form owns its pending state; bypass the legacy document-wide five-second click lock.
               onClick={(event) => event.stopPropagation()}>
-              {submitting ? '正在保存…' : initial.editing ? '保存修改' : '保存到素材库'}
-              <span aria-hidden="true">{submitting ? '' : ' →'}</span>
+              {submitting ? '正在保存…' : imageUploading ? '图片上传中…' : initial.editing ? '保存修改' : '保存到素材库'}
+              <span aria-hidden="true">{submitting || imageUploading ? '' : ' →'}</span>
             </button>
           </div>
         </div>

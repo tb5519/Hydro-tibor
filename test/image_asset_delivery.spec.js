@@ -79,6 +79,7 @@ function handlers(options = {}) {
     const problemHandlers = load(problemSource.slice(problemSource.indexOf('export class ProblemFileDownloadHandler'),
         problemSource.indexOf('export class ProblemSolutionHandler')), {
         ...shared, ProblemDetailHandler, query: () => () => {}, PERM: {}, PRIV: {},
+        isScratchObjectiveTeacher: () => false,
         oplog: { log: async (...args) => { calls.log.push(args); } },
         problem: { get: async () => ({ domainId: 'library', docId: 30 }) },
         ProblemIsReferencedError: class extends Error {}, ProblemNotFoundError: NotFoundError,

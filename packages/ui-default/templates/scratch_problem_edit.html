@@ -4,10 +4,15 @@
 <div class="scb">
   <a class="scb-back" href="{{ url('scratch_problem_main') }}">← 返回题库</a>
   <header class="scb-heading"><div><span class="scb-kicker">SCRATCH · 创作题</span><h1>{{ '编辑创作题' if problem else '创建创作题' }}</h1><p>把任务说清楚，给孩子留出发挥的空间。</p></div></header>
-  <form class="scb-editor-form" method="post" enctype="multipart/form-data">
+  <form class="scb-editor-form" method="post" enctype="multipart/form-data" data-scratch-problem-form>
     <section class="scb-form-main">
       <label class="scb-field"><span>题目名称 <b>必填</b></span><input name="title" maxlength="120" required value="{{ problem.title }}" placeholder="例如：小猫的星空冒险"></label>
-      <label class="scb-field"><span>任务说明 <b>必填</b></span><textarea name="description" rows="12" maxlength="20000" required placeholder="孩子需要做什么？&#10;1. 点击绿旗，让小猫说一句问候。&#10;2. 用方向键控制小猫移动。&#10;3. 为你的故事添加合适的背景。">{{ problem.description }}</textarea><small>说明目标、操作方式和完成要求。学员创作时，题目会一直显示在编辑器左边。</small></label>
+      <div class="scb-field">
+        <span><label for="scratch-problem-description">任务说明</label><b>必填</b></span>
+        <textarea id="scratch-problem-description" name="description" rows="12" maxlength="20000" required aria-describedby="scratch-problem-description-help" placeholder="孩子需要做什么？&#10;1. 点击绿旗，让小猫说一句问候。&#10;2. 用方向键控制小猫移动。&#10;3. 为你的故事添加合适的背景。&#10;&#10;也可以直接粘贴截图，展示作品效果或积木示例。">{{ problem.description }}</textarea>
+        <small id="scratch-problem-description-help">说明目标、操作方式和完成要求。学员创作时，题目和图片会一直显示在编辑器左边。</small>
+        <div data-scratch-description-image-status></div>
+      </div>
       <label class="scb-field"><span>知识点标签</span><input name="tag" value="{{ tagInput }}" maxlength="2000" placeholder="例如：事件、运动、循环"><small>用逗号分隔，方便在题库中查找。</small></label>
     </section>
     <aside class="scb-form-aside"><h2>准备与发布</h2>
