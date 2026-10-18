@@ -3,9 +3,10 @@ import { useSyncExternalStore } from 'react';
 import Notification from 'vj/components/notification';
 import { request } from 'vj/utils';
 
-export type ScratchpadThemeId = 'cloud' | 'mist' | 'sand' | 'ocean';
+export type ScratchpadBuiltinThemeId = 'cloud' | 'mist' | 'sand' | 'ocean';
+export type ScratchpadThemeId = ScratchpadBuiltinThemeId | `badge:${number}`;
 
-interface ThemePalette {
+export interface ThemePalette {
   surface: string;
   muted: string;
   border: string;
@@ -27,6 +28,29 @@ export interface ScratchpadTheme {
   description: string;
   dark: boolean;
   palette: ThemePalette;
+  badgeId?: number;
+  badgeTitle?: string;
+  expiresAt?: string | null;
+  version?: string;
+  overlay?: number;
+  assets?: ScratchpadThemeAsset[];
+  slots?: Partial<Record<ScratchpadSkinSlot, ScratchpadThemeSlot>>;
+  posterAssetId?: string;
+  thumbnailUrl?: string;
+  previewUrl?: string;
+}
+
+export type ScratchpadSkinSlot = 'background' | 'toolbar' | 'editor' | 'panel' | 'runButton' | 'submitButton' | 'corner';
+export interface ScratchpadThemeAsset {
+  id: string;
+  name?: string;
+  type: string;
+  url: string;
+}
+export interface ScratchpadThemeSlot {
+  assetId: string;
+  fit: 'cover' | 'contain' | 'tile' | 'stretch';
+  position?: string;
 }
 
 export const SCRATCHPAD_THEMES: ScratchpadTheme[] = [
@@ -65,12 +89,29 @@ export const SCRATCHPAD_THEMES: ScratchpadTheme[] = [
 ];
 
 export function getScratchpadTheme(id: unknown): ScratchpadTheme {
-  return SCRATCHPAD_THEMES.find((theme) => theme.id === id) || SCRATCHPAD_THEMES[0];
+  return SCRATCHPAD_THEMES.find((theme) => theme.id === id)
+    || catalogForAccount()?.themes.find((theme) => theme.id === id && isUnexpired(theme))
+    || SCRATCHPAD_THEMES[0];
+}
+
+export function scratchpadSkinAsset(theme: ScratchpadTheme, slot: ScratchpadSkinSlot): ScratchpadThemeAsset | undefined {
+  const assignment = theme.slots?.[slot];
+  return assignment && theme.assets?.find((asset) => asset.id === assignment.assetId);
+}
+
+function rgba(hex: string, alpha: number) {
+  const rgb = [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16));
+  return `rgba(${rgb.join(',')},${alpha})`;
+}
+
+function cssAssetUrl(url: string) {
+  // JSON quoting also escapes quotes and control characters in uploaded names.
+  return `url(${JSON.stringify(url)})`;
 }
 
 export function scratchpadThemeVariables(theme: ScratchpadTheme): Record<string, string> {
   const { palette: p } = theme;
-  return {
+  const variables: Record<string, string> = {
     '--ui-v2-surface': p.surface,
     '--ui-v2-surface-muted': p.muted,
     '--ui-v2-border': p.border,
@@ -84,6 +125,24 @@ export function scratchpadThemeVariables(theme: ScratchpadTheme): Record<string,
     '--scratchpad-color-scheme': theme.dark ? 'dark' : 'light',
     '--scratchpad-on-accent': theme.dark ? '#14243b' : '#ffffff',
   };
+  if (theme.badgeId) {
+    // A readable scrim stays under live code and labels, never over controls.
+    const overlay = Math.max(0.35, Math.min(0.98, Number(theme.overlay) || 0.84));
+    variables['--scratchpad-skin-veil'] = rgba(p.surface, overlay);
+    variables['--scratchpad-skin-panel-veil'] = rgba(p.surface, Math.max(0.84, overlay));
+    variables['--scratchpad-skin-toolbar-veil'] = rgba(p.surface, 0.83);
+    variables['--scratchpad-skin-button-veil'] = rgba(p.surface, 0.56);
+    for (const slot of ['toolbar', 'editor', 'panel', 'runButton', 'submitButton', 'corner'] as ScratchpadSkinSlot[]) {
+      const asset = scratchpadSkinAsset(theme, slot);
+      const mapping = theme.slots?.[slot];
+      const prefix = `--scratchpad-skin-${slot}`;
+      variables[`${prefix}-image`] = asset?.type.startsWith('image/') ? cssAssetUrl(asset.url) : 'none';
+      variables[`${prefix}-size`] = mapping?.fit === 'stretch' ? '100% 100%' : mapping?.fit === 'tile' ? 'auto' : mapping?.fit || 'cover';
+      variables[`${prefix}-repeat`] = mapping?.fit === 'tile' ? 'repeat' : 'no-repeat';
+      variables[`${prefix}-position`] = mapping?.position || 'center';
+    }
+  }
+  return variables;
 }
 
 export function scratchpadMonacoTheme(theme: ScratchpadTheme): Monaco.editor.IStandaloneThemeData {
@@ -100,7 +159,7 @@ export function scratchpadMonacoTheme(theme: ScratchpadTheme): Monaco.editor.ISt
       { token: 'type', foreground: p.accent.slice(1) },
     ],
     colors: {
-      'editor.background': p.surface,
+      'editor.background': theme.badgeId ? '#00000000' : p.surface,
       'editor.foreground': p.text,
       'editor.lineHighlightBackground': p.muted,
       'editorLineNumber.foreground': p.comment,
@@ -111,7 +170,7 @@ export function scratchpadMonacoTheme(theme: ScratchpadTheme): Monaco.editor.ISt
       'editor.selectionHighlightBackground': `${p.selection}66`,
       'editorIndentGuide.background1': p.border,
       'editorIndentGuide.activeBackground1': p.borderStrong,
-      'editorGutter.background': p.surface,
+      'editorGutter.background': theme.badgeId ? '#00000000' : p.surface,
       'editorWhitespace.foreground': p.borderStrong,
       'editorWidget.background': p.muted,
       'editorWidget.border': p.border,
@@ -132,69 +191,255 @@ export function scratchpadMonacoTheme(theme: ScratchpadTheme): Monaco.editor.ISt
       'scrollbarSlider.background': `${p.textMuted}33`,
       'scrollbarSlider.hoverBackground': `${p.textMuted}55`,
       'scrollbarSlider.activeBackground': `${p.textMuted}77`,
-      'minimap.background': p.surface,
+      'minimap.background': theme.badgeId ? '#00000000' : p.surface,
     },
   };
 }
 
-export function scratchpadThemeStorageKey(uid: unknown): string {
-  return `scratchpad/theme/v1/${uid || 'guest'}`;
+export function scratchpadThemeStorageKey(uid: unknown, domainScope = ''): string {
+  return domainScope ? `scratchpad/theme/v2/${encodeURIComponent(domainScope)}/${uid || 'guest'}`
+    : `scratchpad/theme/v1/${uid || 'guest'}`;
 }
 
+interface ThemeCatalog {
+  themes: ScratchpadTheme[];
+  choices: ScratchpadTheme[];
+  fallback: ScratchpadBuiltinThemeId;
+  clockOffset: number;
+}
 const themeEvent = 'hydro:scratchpad-theme';
+export const SCRATCHPAD_THEME_PICKER_EVENT = 'hydro:open-scratchpad-themes';
 const memory = new Map<string, ScratchpadThemeId>();
+const catalogs = new Map<string, ThemeCatalog>();
+const fetches = new Map<string, Promise<boolean>>();
+const pendingSelection = new Map<string, ScratchpadThemeId>();
 const saveQueues = new Map<string, Promise<boolean>>();
 const saveRevisions = new Map<string, number>();
+let subscribers = 0;
+let pollTimer: number;
+let expiryTimer: number;
+
 function accountId(): number {
   return typeof UserContext === 'undefined' ? 0 : Number(UserContext._id) || 0;
 }
 
-function storageKey() {
-  return scratchpadThemeStorageKey(accountId());
+function workspaceEndpoint(): string {
+  return typeof UiContext === 'undefined' ? '' : UiContext.codeEditorThemesUrl || '';
 }
 
-function isThemeId(value: unknown): value is ScratchpadThemeId {
+function storageKey() {
+  return scratchpadThemeStorageKey(accountId(), workspaceEndpoint());
+}
+
+function catalogForAccount() {
+  return catalogs.get(storageKey());
+}
+
+function isBuiltin(value: unknown): value is ScratchpadBuiltinThemeId {
   return SCRATCHPAD_THEMES.some((theme) => theme.id === value);
 }
 
-export function currentScratchpadTheme(): ScratchpadTheme {
-  const key = storageKey();
-  if (memory.has(key)) return getScratchpadTheme(memory.get(key));
-  // The account preference is authoritative on every fresh page, including
-  // another browser. Local storage remains a fallback for signed-out users.
-  if (accountId() && isThemeId(UserContext.scratchpadTheme)) return getScratchpadTheme(UserContext.scratchpadTheme);
+function isUnexpired(theme: ScratchpadTheme, catalog = catalogForAccount()) {
+  return !theme.expiresAt || Date.parse(theme.expiresAt) > Date.now() + (catalog?.clockOffset || 0);
+}
+
+function fallbackTheme(): ScratchpadTheme {
+  const id = catalogForAccount()?.fallback || (accountId() && UserContext.scratchpadTheme);
+  return SCRATCHPAD_THEMES.find((theme) => theme.id === id) || SCRATCHPAD_THEMES[0];
+}
+
+function isAvailable(id: unknown): id is ScratchpadThemeId {
+  return isBuiltin(id) || !!catalogForAccount()?.themes.some((theme) => theme.id === id && isUnexpired(theme));
+}
+
+function emit() {
+  window.dispatchEvent(new Event(themeEvent));
+}
+
+function remember(id: ScratchpadThemeId) {
+  memory.set(storageKey(), id);
   try {
-    return getScratchpadTheme(window.localStorage.getItem(key));
+    window.localStorage.setItem(storageKey(), id);
+  } catch (e) { /* Theme changes still work when browser storage is unavailable. */ }
+}
+
+export function currentScratchpadTheme(): ScratchpadTheme {
+  const id = memory.get(storageKey());
+  if (id) return isAvailable(id) ? getScratchpadTheme(id) : fallbackTheme();
+  // Custom IDs in local storage never establish badge ownership. The first
+  // server catalog must verify the selection before any artwork is applied.
+  if (accountId() && isBuiltin(UserContext.scratchpadTheme)) return getScratchpadTheme(UserContext.scratchpadTheme);
+  try {
+    const stored = window.localStorage.getItem(storageKey());
+    return isBuiltin(stored) ? getScratchpadTheme(stored) : fallbackTheme();
   } catch (e) {
-    return SCRATCHPAD_THEMES[0];
+    return fallbackTheme();
   }
 }
 
-export function selectScratchpadTheme(id: ScratchpadThemeId): Promise<boolean> {
-  const theme = getScratchpadTheme(id);
-  const key = storageKey();
-  memory.set(key, theme.id);
+export function availableScratchpadThemes(): ScratchpadTheme[] {
+  return catalogForAccount()?.choices || SCRATCHPAD_THEMES;
+}
+
+function safeUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || !value || /[\u0000-\u001f]/.test(value)) return false;
   try {
-    window.localStorage.setItem(key, theme.id);
-  } catch (e) { /* Theme changes still work when browser storage is unavailable. */ }
-  window.dispatchEvent(new Event(themeEvent));
+    return ['https:', 'http:'].includes(new URL(value, window.location.href).protocol);
+  } catch (e) {
+    return false;
+  }
+}
+
+function normalizeTheme(value: any): ScratchpadTheme | null {
+  if (!value || !/^badge:[1-9]\d*$/.test(value.id) || Number(value.badgeId) !== Number(value.id.slice(6))) return null;
+  if (value.expiresAt && !Number.isFinite(Date.parse(value.expiresAt))) return null;
+  const base = SCRATCHPAD_THEMES.find((theme) => theme.id === value.base) || SCRATCHPAD_THEMES[3];
+  const palette = { ...base.palette };
+  for (const key of Object.keys(palette)) {
+    if (/^#[\da-f]{6}$/i.test(value.palette?.[key])) palette[key] = value.palette[key];
+  }
+  const assets: ScratchpadThemeAsset[] = Array.isArray(value.assets) ? value.assets
+    .filter((asset) => asset && typeof asset.id === 'string' && safeUrl(asset.url)
+      && /^(image\/(png|jpeg|webp|gif|avif)|video\/(mp4|webm))$/.test(asset.type))
+    .map((asset) => ({ id: asset.id, url: asset.url, name: asset.name, type: asset.type })) : [];
+  const slots: ScratchpadTheme['slots'] = {};
+  for (const slot of ['background', 'toolbar', 'editor', 'panel', 'runButton', 'submitButton', 'corner'] as ScratchpadSkinSlot[]) {
+    const assignment = value.slots?.[slot];
+    const asset = assets.find((item) => item.id === assignment?.assetId);
+    if (!asset || (slot !== 'background' && !asset.type.startsWith('image/'))) continue;
+    slots[slot] = {
+      assetId: asset.id,
+      fit: ['cover', 'contain', 'tile', 'stretch'].includes(assignment.fit) ? assignment.fit : 'cover',
+      position: typeof assignment.position === 'string' && /^(left|right|top|bottom|center|\d{1,3}%)( (left|right|top|bottom|center|\d{1,3}%))?$/.test(assignment.position)
+        ? assignment.position : 'center',
+    };
+  }
+  return {
+    id: value.id, badgeId: Number(value.badgeId), name: String(value.name || value.badgeTitle || '徽章主题').slice(0, 80),
+    description: String(value.badgeTitle || '').slice(0, 80), badgeTitle: String(value.badgeTitle || '').slice(0, 80),
+    dark: base.dark, palette, expiresAt: value.expiresAt || null, assets, slots,
+    overlay: Math.max(0.35, Math.min(0.98, Number(value.overlay) || 0.84)),
+    posterAssetId: assets.some((asset) => asset.id === value.posterAssetId && asset.type.startsWith('image/')) ? value.posterAssetId : undefined,
+    version: String(value.version || ''),
+    thumbnailUrl: safeUrl(value.thumbnailUrl) ? value.thumbnailUrl
+      : assets.find((asset) => asset.id === value.thumbnailAssetId && asset.type.startsWith('image/'))?.url,
+    previewUrl: safeUrl(value.previewUrl) ? value.previewUrl
+      : assets.find((asset) => asset.id === value.previewAssetId && asset.type.startsWith('image/'))?.url,
+  };
+}
+
+function scheduleExpiry() {
+  window.clearTimeout(expiryTimer);
+  const catalog = catalogForAccount();
+  if (!catalog) return;
+  const deadlines = catalog.themes.filter((theme) => theme.expiresAt && isUnexpired(theme, catalog))
+    .map((theme) => Date.parse(theme.expiresAt!) - Date.now() - catalog.clockOffset);
+  if (!deadlines.length) return;
+  expiryTimer = window.setTimeout(() => {
+    const active = catalogForAccount();
+    if (!active) return;
+    active.choices = [...SCRATCHPAD_THEMES, ...active.themes.filter((theme) => isUnexpired(theme, active))];
+    const id = memory.get(storageKey());
+    if (id && !isAvailable(id)) remember(fallbackTheme().id);
+    emit();
+    scheduleExpiry();
+    void refreshScratchpadThemes();
+  }, Math.min(2147483647, Math.max(1, Math.min(...deadlines) + 20)));
+}
+
+function applyCatalog(data: any, applySelection = true) {
+  if (!data || !Array.isArray(data.themes)) return false;
+  const now = typeof data.serverNow === 'number' ? data.serverNow : Date.parse(data.serverNow);
+  const catalog: ThemeCatalog = {
+    themes: data.themes.map(normalizeTheme).filter(Boolean), choices: [],
+    fallback: isBuiltin(data.fallback) ? data.fallback : (isBuiltin(UserContext.scratchpadTheme) ? UserContext.scratchpadTheme : 'cloud'),
+    clockOffset: Number.isFinite(now) ? now - Date.now() : 0,
+  };
+  catalog.choices = [...SCRATCHPAD_THEMES, ...catalog.themes.filter((theme) => isUnexpired(theme, catalog))];
+  catalogs.set(storageKey(), catalog);
+  const pending = pendingSelection.get(storageKey());
+  if (applySelection && !pending) remember(isAvailable(data.selectedId) ? data.selectedId : catalog.fallback);
+  else {
+    const id = memory.get(storageKey());
+    if (id && !isAvailable(id)) remember(catalog.fallback);
+  }
+  scheduleExpiry();
+  emit();
+  return true;
+}
+
+/** Permissions are never restored from a cached manifest or a saved theme ID. */
+export function refreshScratchpadThemes(): Promise<boolean> {
+  const endpoint = workspaceEndpoint();
+  if (!accountId() || !endpoint) return Promise.resolve(false);
+  const key = storageKey();
+  if (fetches.has(key)) return fetches.get(key)!;
+  const revision = saveRevisions.get(key) || 0;
+  const job = Promise.resolve().then(async () => {
+    try {
+      const data = await request.get(endpoint);
+      // An older GET cannot replace a catalog/version that was returned by a
+      // more recent verified selection, nor undo a selection still saving.
+      if (storageKey() !== key || (saveRevisions.get(key) || 0) !== revision) return false;
+      return applyCatalog(data);
+    } catch (e) {
+      // Keep the last verified theme only until its known expiry. An offline
+      // response cannot unlock another badge or extend an existing deadline.
+      return false;
+    } finally {
+      fetches.delete(key);
+    }
+  });
+  fetches.set(key, job);
+  return job;
+}
+
+export function selectScratchpadTheme(id: ScratchpadThemeId): Promise<boolean> {
+  if (!isAvailable(id)) return Promise.resolve(false);
+  const key = storageKey();
+  const builtin = isBuiltin(id);
+  if (builtin) {
+    remember(id);
+    emit();
+  }
   const uid = accountId();
   if (!uid) return Promise.resolve(true);
-  const endpoint = typeof UiContext === 'undefined' ? '' : UiContext.scratchpadThemePreferenceUrl;
+  const endpoint = workspaceEndpoint();
+  const legacyEndpoint = typeof UiContext === 'undefined' ? '' : UiContext.scratchpadThemePreferenceUrl;
   const revision = (saveRevisions.get(key) || 0) + 1;
   saveRevisions.set(key, revision);
-  // Serialize writes and skip superseded queued choices. An older, slower
-  // request must finish before the newest choice is sent to the account.
+  pendingSelection.set(key, id);
+  // Serialize writes and skip superseded queued choices. A slow selection of
+  // one skin cannot overwrite a newer theme or another student's account.
   const saved = (saveQueues.get(key) || Promise.resolve(true)).then(async () => {
-    if (accountId() !== uid || saveRevisions.get(key) !== revision) return false;
+    if (storageKey() !== key || saveRevisions.get(key) !== revision) {
+      if (saveRevisions.get(key) === revision) pendingSelection.delete(key);
+      return false;
+    }
     try {
-      if (!endpoint) throw new Error('Preference endpoint unavailable');
-      await request.post(endpoint, { scratchpadTheme: theme.id });
-      if (accountId() === uid) UserContext.scratchpadTheme = theme.id;
+      if (!endpoint && (!legacyEndpoint || !builtin)) throw new Error('Preference endpoint unavailable');
+      const data = await request.post(endpoint || legacyEndpoint, endpoint ? { id, operation: 'select' } : { scratchpadTheme: id });
+      if (storageKey() !== key || saveRevisions.get(key) !== revision) {
+        if (saveRevisions.get(key) === revision) pendingSelection.delete(key);
+        return false;
+      }
+      pendingSelection.delete(key);
+      if (endpoint) {
+        if (!applyCatalog(data)) throw new Error('Theme verification unavailable');
+        // A badge may have expired between opening the menu and saving.
+        return currentScratchpadTheme().id === id;
+      }
+      UserContext.scratchpadTheme = id;
       return true;
     } catch (e) {
-      if (accountId() === uid && saveRevisions.get(key) === revision) {
-        Notification.error('主题已在当前页面应用，但未能保存到账号。请重新选择该主题重试。', 6000);
+      if (storageKey() === key && saveRevisions.get(key) === revision) {
+        pendingSelection.delete(key);
+        if (!builtin) {
+          remember(fallbackTheme().id);
+          emit();
+          void refreshScratchpadThemes();
+          Notification.error('该徽章主题暂时无法使用，已保留基础主题。请刷新后重试。', 6000);
+        } else Notification.error('主题已在当前页面应用，但未能保存到账号。请重新选择该主题重试。', 6000);
       }
       return false;
     }
@@ -203,18 +448,38 @@ export function selectScratchpadTheme(id: ScratchpadThemeId): Promise<boolean> {
   return saved;
 }
 
+function onRefresh() {
+  if (window.document.visibilityState !== 'hidden') void refreshScratchpadThemes();
+}
+
 export function subscribeScratchpadTheme(listener: () => void): () => void {
   const onStorage = (event: StorageEvent) => {
     if (event.key !== null && event.key !== storageKey()) return;
-    if (isThemeId(event.newValue)) memory.set(storageKey(), event.newValue);
-    else memory.delete(storageKey());
+    if (isBuiltin(event.newValue)) memory.set(storageKey(), event.newValue);
+    else if (!workspaceEndpoint()) memory.delete(storageKey());
+    else void refreshScratchpadThemes();
     listener();
   };
   window.addEventListener(themeEvent, listener);
   window.addEventListener('storage', onStorage);
+  subscribers += 1;
+  if (subscribers === 1) {
+    window.addEventListener('focus', onRefresh);
+    window.addEventListener('online', onRefresh);
+    window.document.addEventListener('visibilitychange', onRefresh);
+    pollTimer = window.setInterval(onRefresh, 60000);
+    void refreshScratchpadThemes();
+  }
   return () => {
     window.removeEventListener(themeEvent, listener);
     window.removeEventListener('storage', onStorage);
+    subscribers -= 1;
+    if (!subscribers) {
+      window.removeEventListener('focus', onRefresh);
+      window.removeEventListener('online', onRefresh);
+      window.document.removeEventListener('visibilitychange', onRefresh);
+      window.clearInterval(pollTimer);
+    }
   };
 }
 
@@ -222,11 +487,25 @@ export function useScratchpadTheme(): ScratchpadTheme {
   return useSyncExternalStore(subscribeScratchpadTheme, currentScratchpadTheme, () => SCRATCHPAD_THEMES[0]);
 }
 
+export function useScratchpadThemes(): ScratchpadTheme[] {
+  return useSyncExternalStore(subscribeScratchpadTheme, availableScratchpadThemes, () => SCRATCHPAD_THEMES);
+}
+
+export function scratchpadMonacoThemeName(theme: ScratchpadTheme): string {
+  // Monaco rejects colons and underscores even though a catalog ID may contain
+  // them. Keep its internal name separate from the server's badge identifier.
+  return `hydro-scratchpad-${theme.id.replace(/[^a-z0-9-]/gi, '-')}${theme.badgeId ? `-${String(theme.version).replace(/[^a-z0-9-]/gi, '-')}` : ''}`;
+}
+
 export function attachScratchpadMonacoTheme(monaco: typeof Monaco, restoreTheme: () => string): () => void {
   for (const theme of SCRATCHPAD_THEMES) {
-    monaco.editor.defineTheme(`hydro-scratchpad-${theme.id}`, scratchpadMonacoTheme(theme));
+    monaco.editor.defineTheme(scratchpadMonacoThemeName(theme), scratchpadMonacoTheme(theme));
   }
-  const apply = () => monaco.editor.setTheme(`hydro-scratchpad-${currentScratchpadTheme().id}`);
+  const apply = () => {
+    const theme = currentScratchpadTheme();
+    if (theme.badgeId) monaco.editor.defineTheme(scratchpadMonacoThemeName(theme), scratchpadMonacoTheme(theme));
+    monaco.editor.setTheme(scratchpadMonacoThemeName(theme));
+  };
   apply();
   const unsubscribe = subscribeScratchpadTheme(apply);
   return () => {

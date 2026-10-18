@@ -16,26 +16,56 @@ function harness(options = {}) {
     const dom = new JSDOM('', { url: 'https://example.test/p/P1000' });
     const user = { _id: 11, scratchpadTheme: 'cloud', ...options.user };
     const requests = [];
+    const gets = [];
     const errors = [];
     const endpoint = '/d/class-a/home/settings/preference';
+    const ui = {
+        scratchpadThemePreferenceUrl: endpoint,
+        ...(options.workspace ? { codeEditorThemesUrl: '/d/class-a/code-editor/themes' } : {}),
+    };
     const mod = { exports: {} };
     const context = {
         require(id) {
             if (id === 'vj/components/notification') return { error: (...args) => errors.push(args) };
             if (id === 'vj/utils') {
-                return { request: { post: async (...args) => {
+                return { request: { get: async (...args) => {
+                    gets.push(args);
+                    return options.get ? options.get(...args) : {};
+                }, post: async (...args) => {
                     requests.push(args);
                     return options.post ? options.post(...args) : {};
                 } } };
             }
             return require(id);
         },
-        window: dom.window, Event: dom.window.Event, UserContext: user,
-        UiContext: { scratchpadThemePreferenceUrl: endpoint },
+        window: dom.window, Event: dom.window.Event, URL: dom.window.URL, Date: options.Date || Date, UserContext: user,
+        UiContext: ui,
         module: mod, exports: mod.exports,
     };
     vm.runInNewContext(themeSource, context);
-    return { dom, user, themes: mod.exports, requests, errors, endpoint };
+    return { dom, user, ui, themes: mod.exports, requests, gets, errors, endpoint };
+}
+
+function badgeSkin(overrides = {}) {
+    return {
+        id: 'badge:7', badgeId: 7, badgeTitle: '疾风剑客', name: '疾风图片主题', base: 'ocean', version: 'revision-1',
+        overlay: 0.82, expiresAt: null,
+        slots: {
+            background: { assetId: 'landscape', fit: 'cover', position: 'right center' },
+            editor: { assetId: 'panel', fit: 'tile' },
+            submitButton: { assetId: 'button', fit: 'stretch' },
+        },
+        assets: [
+            { id: 'landscape', name: '背景.jpg', type: 'image/jpeg', url: '/d/class-a/code-editor/theme-asset/v1/background.jpg' },
+            { id: 'panel', name: '面板.png', type: 'image/png', url: '/d/class-a/code-editor/theme-asset/v1/panel.png' },
+            { id: 'button', name: '按钮.webp', type: 'image/webp', url: '/d/class-a/code-editor/theme-asset/v1/button.webp' },
+        ],
+        ...overrides,
+    };
+}
+
+function catalog(overrides = {}) {
+    return { themes: [badgeSkin()], selectedId: 'badge:7', fallback: 'ocean', serverNow: new Date().toISOString(), ...overrides };
 }
 function contrast(first, second) {
     const luminance = (hex) => [1, 3, 5].map((start) => Number.parseInt(hex.slice(start, start + 2), 16) / 255)
@@ -220,8 +250,10 @@ describe('scratchpad workspace themes', () => {
             });
             const Editor = mod.exports.default;
             const component = new Editor({ value: draft, language: 'python' });
-            component.containerElement = {};
+            component.containerElement = dom.window.document.createElement('div');
+            assert.equal(component.containerElement.hasAttribute('data-editor-ready'), false);
             await component.componentDidMount();
+            assert.equal(component.containerElement.getAttribute('data-editor-ready'), 'true');
             assert.equal(currentTheme, 'hydro-scratchpad-sand');
             assert.equal(component.model.getValue(), draft);
             themes.selectScratchpadTheme('ocean');
@@ -231,5 +263,150 @@ describe('scratchpad workspace themes', () => {
             assert.equal(disposed, true);
             assert.equal(currentTheme, 'github-dark');
         } finally { dom.window.close(); }
+    });
+
+    it('requires a fresh server catalog before restoring any saved badge artwork', async () => {
+        let verify;
+        const h = harness({ workspace: true, get: () => new Promise((resolve) => { verify = resolve; }) });
+        try {
+            const key = h.themes.scratchpadThemeStorageKey(11, h.ui.codeEditorThemesUrl);
+            h.dom.window.localStorage.setItem(key, 'badge:7');
+            assert.equal(h.themes.currentScratchpadTheme().id, 'cloud');
+            assert.equal(await h.themes.selectScratchpadTheme('badge:7'), false);
+            assert.equal(h.requests.length, 0);
+            const loading = h.themes.refreshScratchpadThemes();
+            await Promise.resolve();
+            assert.equal(h.themes.currentScratchpadTheme().id, 'cloud');
+            verify(catalog());
+            assert.equal(await loading, true);
+            assert.equal(h.themes.currentScratchpadTheme().id, 'badge:7');
+            assert.equal(h.themes.availableScratchpadThemes().length, 5);
+            assert.equal(h.gets[0][0], '/d/class-a/code-editor/themes');
+        } finally { h.dom.window.close(); }
+    });
+
+    it('maps uploaded artwork, exact scrim and fit modes while rejecting active or unsafe assets', async () => {
+        const h = harness({ workspace: true, get: () => catalog({ themes: [badgeSkin({
+            overlay: 0.35, thumbnailUrl: 'javascript:alert(1)',
+            assets: [
+                ...badgeSkin().assets,
+                { id: 'script', type: 'image/png', url: 'javascript:alert(1)' },
+                { id: 'svg', type: 'image/svg+xml', url: '/x.svg' },
+            ],
+        })] }) });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            const theme = h.themes.currentScratchpadTheme();
+            const variables = h.themes.scratchpadThemeVariables(theme);
+            assert.equal(theme.assets.length, 3);
+            assert.equal(theme.thumbnailUrl, undefined);
+            assert.equal(variables['--scratchpad-skin-veil'], 'rgba(24,35,50,0.35)');
+            assert.equal(variables['--scratchpad-skin-editor-repeat'], 'repeat');
+            assert.equal(variables['--scratchpad-skin-submitButton-size'], '100% 100%');
+            assert.match(variables['--scratchpad-skin-editor-image'], /panel\.png/);
+            assert.equal(h.themes.scratchpadMonacoTheme(theme).colors['editor.background'], '#00000000');
+            assert.equal(h.themes.scratchpadMonacoThemeName(theme), 'hydro-scratchpad-badge-7-revision-1');
+            assert.match(h.themes.scratchpadMonacoThemeName(theme), /^[a-z0-9-]+$/i);
+        } finally { h.dom.window.close(); }
+    });
+
+    it('falls back when ownership is revoked without recreating or editing the Monaco model', async () => {
+        let response = catalog();
+        const h = harness({ workspace: true, get: () => response });
+        let release;
+        try {
+            const calls = [];
+            const monaco = { editor: {
+                defineTheme: (id) => calls.push(['define', id]),
+                setTheme: (id) => calls.push(['apply', id]),
+            } };
+            release = h.themes.attachScratchpadMonacoTheme(monaco, () => 'github-light');
+            await h.themes.refreshScratchpadThemes();
+            assert.equal(calls.at(-1)[1], 'hydro-scratchpad-badge-7-revision-1');
+            response = catalog({ themes: [], selectedId: 'ocean' });
+            await h.themes.refreshScratchpadThemes();
+            assert.equal(h.themes.currentScratchpadTheme().id, 'ocean');
+            assert.equal(calls.at(-1)[1], 'hydro-scratchpad-ocean');
+            assert.equal(h.themes.availableScratchpadThemes().length, 4);
+            assert.ok(calls.every(([operation]) => ['define', 'apply'].includes(operation)));
+        } finally { release?.(); h.dom.window.close(); }
+    });
+
+    it('expires against the server clock even when the device clock is an hour behind', async () => {
+        let deviceClock = Date.now();
+        const serverClock = deviceClock + 3600000;
+        class DeviceDate extends Date {
+            static now() { return deviceClock; }
+        }
+        const h = harness({ workspace: true, get: () => catalog({
+            serverNow: deviceClock + 3600000,
+            themes: [badgeSkin({ expiresAt: new Date(serverClock + 15).toISOString() })],
+        }), Date: DeviceDate });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            assert.equal(h.themes.currentScratchpadTheme().id, 'badge:7');
+            deviceClock += 100;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            assert.equal(h.themes.currentScratchpadTheme().id, 'ocean');
+            assert.equal(h.themes.availableScratchpadThemes().length, 4);
+        } finally { h.dom.window.close(); }
+    });
+
+    it('does not allow badge selections or artwork to leak across students or domains', async () => {
+        const h = harness({ workspace: true, get: () => catalog() });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            assert.equal(h.themes.currentScratchpadTheme().id, 'badge:7');
+            h.ui.codeEditorThemesUrl = '/d/class-b/code-editor/themes';
+            assert.equal(h.themes.currentScratchpadTheme().id, 'cloud');
+            assert.equal(h.themes.availableScratchpadThemes().length, 4);
+            assert.equal(await h.themes.selectScratchpadTheme('badge:7'), false);
+            h.ui.codeEditorThemesUrl = '/d/class-a/code-editor/themes';
+            h.user._id = 22;
+            assert.equal(h.themes.currentScratchpadTheme().id, 'cloud');
+            assert.equal(h.themes.availableScratchpadThemes().length, 4);
+        } finally { h.dom.window.close(); }
+    });
+
+    it('ignores an old catalog response after a newer verified selection', async () => {
+        let oldResponse;
+        let loads = 0;
+        const h = harness({
+            workspace: true,
+            get: () => (++loads === 1 ? catalog({ selectedId: 'cloud' }) : new Promise((resolve) => { oldResponse = resolve; })),
+            post: () => catalog({ selectedId: 'badge:7', themes: [badgeSkin({ version: 'revision-2' })] }),
+        });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            const old = h.themes.refreshScratchpadThemes();
+            await Promise.resolve();
+            assert.equal(await h.themes.selectScratchpadTheme('badge:7'), true);
+            oldResponse(catalog({ selectedId: 'cloud', themes: [badgeSkin({ version: 'revision-1' })] }));
+            assert.equal(await old, false);
+            assert.equal(h.themes.currentScratchpadTheme().id, 'badge:7');
+            assert.equal(h.themes.currentScratchpadTheme().version, 'revision-2');
+            assert.equal(h.requests[0][1].operation, 'select');
+        } finally { h.dom.window.close(); }
+    });
+
+    it('waits for badge selection verification and lets a later builtin choice win', async () => {
+        let accept;
+        const h = harness({
+            workspace: true, get: () => catalog({ selectedId: 'cloud' }),
+            post: (url, data) => (data.id === 'badge:7' ? new Promise((resolve) => { accept = resolve; })
+                : catalog({ selectedId: data.id, fallback: data.id })),
+        });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            const badge = h.themes.selectScratchpadTheme('badge:7');
+            await Promise.resolve();
+            assert.equal(h.themes.currentScratchpadTheme().id, 'cloud');
+            const builtin = h.themes.selectScratchpadTheme('mist');
+            assert.equal(h.themes.currentScratchpadTheme().id, 'mist');
+            accept(catalog());
+            await Promise.all([badge, builtin]);
+            assert.equal(h.themes.currentScratchpadTheme().id, 'mist');
+            assert.deepEqual(h.requests.map(([, data]) => data.id), ['badge:7', 'mist']);
+        } finally { h.dom.window.close(); }
     });
 });

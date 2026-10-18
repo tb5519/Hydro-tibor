@@ -40,6 +40,13 @@ class ChangeThemeAction extends EditorAction {
   }
 
   async run(accessor, editor: monaco.editor.IStandaloneCodeEditor) {
+    // The coding workspace has one theme for the editor and surrounding live
+    // controls. Keep F1 in that same, entitlement-checked chooser. Markdown and
+    // other editors continue to use Monaco's independent theme catalog.
+    if (editor.getDomNode()?.closest('.scratchpad__coding-area')) {
+      window.dispatchEvent(new Event('hydro:open-scratchpad-themes'));
+      return;
+    }
     const items = Object.keys(list).map((key) => ({
       label: list[key],
       command: key,

@@ -54,7 +54,8 @@
   position: fixed
   z-index: 10050
   box-sizing: border-box
-  width: 230px
+  width: 320px
+  max-width: calc(100vw - 24px)
   max-height: calc(100vh - 24px)
   overflow-y: auto
   padding: rem(8px)
@@ -73,6 +74,67 @@
     font-weight: 500
     letter-spacing: .04em
 
+  .scratchpad__theme-menu-heading--badges
+    display: flex
+    align-items: center
+    justify-content: space-between
+    margin-top: rem(9px)
+    padding-top: rem(13px)
+    border-top: 1px solid var(--ui-v2-border)
+
+    small
+      font-size: rem(10px)
+      letter-spacing: 0
+
+  .scratchpad__theme-builtins
+    display: grid
+    grid-template-columns: 1fr 1fr
+    gap: rem(3px)
+
+    button
+      gap: rem(7px)
+      padding: rem(8px 6px)
+
+    .scratchpad__theme-check
+      width: rem(12px)
+
+  .scratchpad__theme-thumbnail
+    display: grid
+    place-items: center
+    flex: 0 0 auto
+    overflow: hidden
+    width: rem(80px)
+    height: rem(52px)
+    border: 1px solid var(--ui-v2-border)
+    border-radius: rem(8px)
+    font-size: rem(25px)
+
+    img
+      width: 100%
+      height: 100%
+      object-fit: cover
+
+  button.scratchpad__theme-badge-option
+    padding-top: rem(10px)
+    padding-bottom: rem(10px)
+
+  .scratchpad__theme-validity
+    color: var(--ui-v2-accent)
+
+  .scratchpad__theme-empty
+    margin: rem(2px 8px 12px)
+    color: var(--ui-v2-text-muted)
+    font-size: rem(12px)
+    line-height: 1.7
+
+  .scratchpad__theme-menu-footer
+    margin: rem(6px 4px 0)
+    padding: rem(10px 5px 4px)
+    border-top: 1px solid var(--ui-v2-border)
+    color: var(--ui-v2-text-muted)
+    font-size: rem(10px)
+    text-align: center
+
   button
     display: flex
     align-items: center
@@ -87,6 +149,10 @@
     text-align: left
     cursor: pointer
     font: inherit
+
+    &:disabled
+      cursor: wait
+      opacity: .7
 
     &:hover,
     &:focus-visible
@@ -139,6 +205,94 @@
 
     &:nth-child(3)
       width: 80%
+
+// The artwork and controls are separate layers. This preserves split panes,
+// Monaco models and hit targets while the complete workspace changes skin.
+#scratchpad .scratchpad__coding-area[data-scratchpad-skin='true']
+  isolation: isolate
+
+  > .split-view
+    z-index: 1
+
+  .scratchpad__workspace,
+  .scratchpad__data-pane,
+  .scratchpad__data-input,
+  .scratchpad__records-scroll,
+  .scratchpad__records__table tbody tr
+    background: transparent
+
+  .ScratchpadMonacoEditor
+    background-image: linear-gradient(var(--scratchpad-skin-veil), var(--scratchpad-skin-veil)), var(--scratchpad-skin-editor-image)
+    background-size: 100% 100%, var(--scratchpad-skin-editor-size)
+    background-position: center, var(--scratchpad-skin-editor-position)
+    background-repeat: no-repeat, var(--scratchpad-skin-editor-repeat)
+
+  .scratchpad__toolbar
+    background-image: linear-gradient(var(--scratchpad-skin-toolbar-veil), var(--scratchpad-skin-toolbar-veil)), var(--scratchpad-skin-toolbar-image)
+    background-color: transparent
+    background-size: 100% 100%, var(--scratchpad-skin-toolbar-size)
+    background-position: center, var(--scratchpad-skin-toolbar-position)
+    background-repeat: no-repeat, var(--scratchpad-skin-toolbar-repeat)
+
+    .scratchpad__toolbar__pretest,
+    .scratchpad__toolbar__pretest.enabled:hover
+      background-image: linear-gradient(var(--scratchpad-skin-toolbar-veil), var(--scratchpad-skin-toolbar-veil)), var(--scratchpad-skin-runButton-image)
+      background-color: transparent
+      background-size: 100% 100%, var(--scratchpad-skin-runButton-size)
+      background-position: center, var(--scratchpad-skin-runButton-position)
+      background-repeat: no-repeat, var(--scratchpad-skin-runButton-repeat)
+
+    .scratchpad__toolbar__submit,
+    .scratchpad__toolbar__submit.enabled:hover
+      background-image: linear-gradient(var(--scratchpad-skin-button-veil), var(--scratchpad-skin-button-veil)), var(--scratchpad-skin-submitButton-image)
+      background-color: var(--ui-v2-accent)
+      background-size: 100% 100%, var(--scratchpad-skin-submitButton-size)
+      background-position: center, var(--scratchpad-skin-submitButton-position)
+      background-repeat: no-repeat, var(--scratchpad-skin-submitButton-repeat)
+      color: var(--ui-v2-text)
+      border-color: var(--ui-v2-accent)
+
+  .scratchpad__panel
+    background-image: linear-gradient(var(--scratchpad-skin-panel-veil), var(--scratchpad-skin-panel-veil)), var(--scratchpad-skin-panel-image)
+    background-color: transparent
+    background-size: 100% 100%, var(--scratchpad-skin-panel-size)
+    background-position: center, var(--scratchpad-skin-panel-position)
+    background-repeat: no-repeat, var(--scratchpad-skin-panel-repeat)
+
+  .scratchpad__panel-title,
+  .scratchpad__records__table th,
+  .scratchpad__record-source
+    background: var(--scratchpad-skin-panel-veil)
+
+.scratchpad__skin-background
+  position: absolute
+  z-index: 0
+  inset: 0
+  overflow: hidden
+  pointer-events: none
+
+  video
+    display: block
+    width: 100%
+    height: 100%
+    opacity: 0
+
+    &.is-ready
+      opacity: 1
+
+.scratchpad__skin-corner
+  position: absolute
+  z-index: 3
+  top: 0
+  right: 0
+  width: clamp(52px, 9%, 112px)
+  height: clamp(52px, 9vw, 112px)
+  max-height: 20%
+  background-image: var(--scratchpad-skin-corner-image)
+  background-size: var(--scratchpad-skin-corner-size)
+  background-position: var(--scratchpad-skin-corner-position)
+  background-repeat: var(--scratchpad-skin-corner-repeat)
+  pointer-events: none
 
 @media (prefers-reduced-motion: reduce)
   .scratchpad__theme-trigger

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "name": "疾风剑客",
+  "base": "ocean",
+  "overlay": 0.82,
+  "palette": {
+    "surface": "#102439",
+    "muted": "#132c45",
+    "text": "#e7f1fe",
+    "textMuted": "#a9c0db",
+    "accent": "#99dcff",
+    "accentSoft": "#284763",
+    "comment": "#a9c0db",
+    "keyword": "#c5b0ff",
+    "string": "#a8d7bd",
+    "number": "#f2d08e"
+  },
+  "slots": {
+    "background": { "asset": "background.jpg", "fit": "cover", "position": "right" },
+    "toolbar": { "asset": "background.jpg", "fit": "cover", "position": "right top" },
+    "runButton": { "asset": "background.jpg", "fit": "cover", "position": "right top" },
+    "submitButton": { "asset": "background.jpg", "fit": "cover", "position": "right top" }
+  },
+  "preview": "preview.jpg",
+  "thumbnail": "background.jpg"
+}

@@ -13,6 +13,7 @@ import ScratchpadEditor from './ScratchpadEditorContainer';
 import ScratchpadPretest from './ScratchpadPretestContainer';
 import ScratchpadRecords from './ScratchpadRecordsContainer';
 import ScratchpadSettings from './ScratchpadSettings';
+import ScratchpadSkin from './ScratchpadSkin';
 import ScratchpadToolbar from './ScratchpadToolbarContainer';
 import { scratchpadThemeVariables, useScratchpadTheme } from './themes';
 
@@ -120,7 +121,13 @@ export default function ScratchpadContainer() {
           })}
         </div>
       </Allotment.Pane>
-      <div className="scratchpad__coding-area" data-scratchpad-theme={theme.id} style={scratchpadThemeVariables(theme) as React.CSSProperties}>
+      <div
+        className="scratchpad__coding-area"
+        data-scratchpad-theme={theme.id}
+        data-scratchpad-skin={theme.badgeId ? 'true' : undefined}
+        style={scratchpadThemeVariables(theme) as React.CSSProperties}
+      >
+        <ScratchpadSkin theme={theme} />
         <Allotment vertical defaultSizes={UiContext.homeworkReview ? [730, 0, 270] : [450, 280, 270]} onChange={handleChangeSize}>
           <div key="editor" className="scratchpad__workspace flex-col splitpane-fill">
             <ScratchpadToolbar />

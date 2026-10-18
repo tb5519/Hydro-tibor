@@ -1,0 +1,755 @@
+.etm
+  --etm-ink: #24374d
+  --etm-muted: #7a8da3
+  --etm-accent: #4679c9
+  color: var(--etm-ink)
+  font-size: 14px
+  margin-bottom: 40px
+  [hidden]
+    display: none !important
+  *, *:before, *:after
+    box-sizing: border-box
+  button, input, select
+    font: inherit
+  button
+    cursor: pointer
+    &:disabled
+      cursor: default
+      opacity: .5
+  button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
+    outline: 3px solid #a4c9ff
+    outline-offset: 3px
+  h1, h2, h3, p
+    margin: 0
+  &__hero
+    display: flex
+    gap: 20px
+    align-items: center
+    padding: 30px
+    border-radius: 22px
+    border: 1px solid #dbe5f6
+    background: radial-gradient(ellipse at top right, #e8e7ff, transparent 65%), linear-gradient(110deg, #f4f9ff, #f9fbff)
+    h1
+      font-size: 29px
+      font-weight: 750
+      line-height: 1.35
+      margin: 8px 0 10px
+    p
+      color: #698199
+      line-height: 1.7
+  &__hero-symbol
+    flex: 0 0 60px
+    height: 60px
+    display: grid
+    place-items: center
+    font-size: 33px
+    color: #7773cc
+    background: rgba(255,255,255,.85)
+    border-radius: 20px
+    box-shadow: 0 6px 20px #7f94c71a
+  &__eyebrow
+    display: block
+    color: #6485bc
+    letter-spacing: .06em
+    font-size: 12px
+  &__message
+    border-radius: 12px
+    margin: 18px 0
+    padding: 14px 18px
+    line-height: 1.6
+    color: #2b7b68
+    background: #eef9f5
+    border: 1px solid #d6eee4
+    &.is-error
+      color: #aa5547
+      background: #fff5f0
+      border-color: #f0d6cb
+  &__button
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    gap: 8px
+    border: 1px solid #dbe5f2
+    border-radius: 11px
+    padding: 11px 17px
+    color: #5d7998
+    background: #fff
+    font-weight: 650
+    line-height: 1.4
+    white-space: nowrap
+    text-decoration: none
+    &:hover:not(:disabled)
+      border-color: #96b9ea
+      background: #f5f9ff
+    &.is-primary
+      background: #4b7dd2
+      border-color: #4b7dd2
+      color: #fff
+      box-shadow: 0 4px 10px #4b7dd225
+      &:hover:not(:disabled)
+        background: #3c6ec3
+    &.is-danger
+      border-color: #e6bbb4
+      color: #a65349
+      background: #fff7f5
+  &__section-heading, &__designer-heading
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 20px
+    margin-bottom: 17px
+    h2
+      font-size: 19px
+      font-weight: 700
+    p
+      font-size: 12px
+      color: var(--etm-muted)
+      line-height: 1.7
+      margin-top: 6px
+  &__collection
+    margin: 28px 0
+    h2 span
+      display: inline-flex
+      align-items: center
+      justify-content: center
+      font-size: 11px
+      min-width: 24px
+      height: 23px
+      border-radius: 7px
+      background: #eaf2fd
+      color: #7091bc
+      margin-left: 7px
+      vertical-align: 2px
+  &__theme-list
+    display: grid
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr))
+    gap: 12px
+  &__theme-card
+    display: flex
+    gap: 12px
+    align-items: center
+    text-align: left
+    border: 1px solid #e1e9f5
+    border-radius: 14px
+    padding: 12px
+    min-width: 0
+    background: #fff
+    color: var(--etm-ink)
+    &:hover, &[aria-pressed="true"]
+      border-color: #9fbde9
+      background: #f5f9ff
+    > span:first-child
+      width: 48px
+      height: 48px
+      flex: 0 0 48px
+      border-radius: 11px
+      background: linear-gradient(135deg, #24384c, #6c83a5)
+      background-position: center
+      background-size: cover
+      display: grid
+      place-items: center
+      color: #c6d9f6
+      overflow: hidden
+    > span:last-child
+      min-width: 0
+    strong, small
+      display: block
+      overflow: hidden
+      text-overflow: ellipsis
+      white-space: nowrap
+    strong
+      font-size: 13px
+    small
+      margin-top: 6px
+      color: var(--etm-muted)
+      font-size: 11px
+  &__collection-empty
+    padding: 22px
+    text-align: center
+    border: 1px dashed #d8e3f0
+    border-radius: 14px
+    color: #8a9bb0
+    background: #f9fbfe
+    line-height: 1.7
+  &__upload
+    display: flex
+    align-items: center
+    flex-wrap: wrap
+    gap: 18px
+    padding: 23px
+    border: 1px dashed #bacfee
+    background: #f5f9ff
+    border-radius: 18px
+    transition: background .15s, border-color .15s
+    &.is-dragging
+      border-color: #477bcc
+      background: #eaf2ff
+    > div:not(.etm__upload-progress)
+      flex: 1
+      min-width: 180px
+    h2
+      font-size: 17px
+      margin-bottom: 7px
+    p
+      color: #7086a0
+      font-size: 13px
+      line-height: 1.7
+    small
+      display: block
+      color: #94a4b7
+      margin-top: 6px
+      font-size: 11px
+      line-height: 1.6
+  &__upload-icon
+    flex: 0 0 44px
+    height: 44px
+    border-radius: 13px
+    background: #e6effe
+    color: #6996d7
+    text-align: center
+    font-size: 28px
+    line-height: 42px
+  &__upload-label
+    position: relative
+    overflow: hidden
+    cursor: pointer
+    &:focus-within
+      outline: 3px solid #a4c9ff
+      outline-offset: 3px
+    input
+      position: absolute
+      inset: 0
+      width: 100%
+      opacity: 0
+      cursor: pointer
+  &__upload-progress
+    flex: 0 0 100%
+    display: flex
+    gap: 14px
+    align-items: center
+    font-size: 12px
+    color: #6187b6
+    progress
+      flex: 1
+      height: 6px
+      accent-color: #5a8ed9
+  &__designer
+    margin-top: 32px
+  &__designer-heading h2
+    margin-top: 6px
+  &__draft-state
+    padding: 7px 11px
+    border-radius: 20px
+    font-size: 11px
+    color: #9a8057
+    background: #fff6e9
+    white-space: nowrap
+    &.is-published
+      color: #418777
+      background: #eaf7f1
+  &__workspace
+    display: grid
+    grid-template-columns: 270px minmax(0, 1fr)
+    gap: 20px
+    align-items: start
+  &__settings
+    display: grid
+    gap: 15px
+  &__setting-card
+    padding: 21px
+    background: #fff
+    border: 1px solid #e0e8f2
+    border-radius: 17px
+    h3
+      font-size: 14px
+      font-weight: 700
+      margin-bottom: 19px
+      span
+        display: inline-flex
+        font-size: 10px
+        width: 22px
+        height: 22px
+        align-items: center
+        justify-content: center
+        margin-right: 7px
+        color: #7597c8
+        background: #edf4ff
+        border-radius: 7px
+    > label, .etm__field-pair label, .etm__range-label label
+      display: block
+      margin: 14px 0 7px
+      font-size: 12px
+      color: #688099
+      font-weight: 650
+    input[type="text"], select
+      display: block
+      width: 100%
+      border: 1px solid #dce5f1
+      background: #fbfcff
+      color: #47617e
+      border-radius: 9px
+      padding: 10px
+      font-size: 12px
+      height: 40px
+      min-width: 0
+    input[type="range"]
+      width: 100%
+      margin: 9px 0 2px
+      accent-color: #5b8bd2
+  &__hint
+    color: #8e9eb1
+    font-size: 11px
+    line-height: 1.75
+    margin-top: 9px
+  &__slot-list
+    display: flex
+    flex-wrap: wrap
+    gap: 6px
+    margin: 15px 0
+    button
+      padding: 7px 9px
+      border: 1px solid #e4ebf4
+      border-radius: 7px
+      background: #f9fbfe
+      color: #879ab0
+      font-size: 11px
+      &[aria-pressed="true"]
+        color: #487dc9
+        border-color: #b1c9ec
+        background: #edf5ff
+  &__field-pair
+    display: grid
+    grid-template-columns: 1fr 1fr
+    gap: 9px
+  &__asset-grid
+    display: grid
+    grid-template-columns: repeat(3, minmax(0, 1fr))
+    gap: 7px
+    margin-top: 14px
+    max-height: 240px
+    overflow-y: auto
+    padding: 3px
+    button
+      padding: 0
+      border-radius: 9px
+      border: 2px solid transparent
+      background: #f0f4fa
+      color: #7189a5
+      overflow: hidden
+      text-align: left
+      min-width: 0
+      &[aria-pressed="true"]
+        border-color: #739fdf
+      img, .etm__video-thumb
+        display: block
+        width: 100%
+        height: 48px
+        object-fit: cover
+        background: repeating-conic-gradient(#e6ecf4 0 25%, #f6f9fc 0 50%) 50% / 12px 12px
+      .etm__video-thumb
+        display: grid
+        place-items: center
+        font-size: 20px
+      small
+        display: block
+        padding: 5px
+        font-size: 9px
+        overflow: hidden
+        text-overflow: ellipsis
+        white-space: nowrap
+  &__range-label
+    display: flex
+    align-items: center
+    justify-content: space-between
+    label
+      margin: 0 !important
+    output
+      font-size: 11px
+      color: #7b98bf
+  &__color-fields
+    display: grid
+    grid-template-columns: repeat(3, 1fr)
+    gap: 9px
+    margin: 18px 0 8px
+    label
+      font-size: 10px
+      color: #879bb1
+    input
+      display: block
+      border: 1px solid #dae5f2
+      border-radius: 7px
+      background: #f8fbff
+      height: 29px
+      width: 100%
+      margin-top: 6px
+      padding: 3px
+      cursor: pointer
+  &__text-button
+    color: #6a8bb8
+    padding: 7px 0
+    font-size: 11px
+    border: 0
+    background: transparent
+    &.is-danger
+      color: #b26e63
+  &__optional
+    margin-top: 12px
+    padding-top: 14px
+    border-top: 1px solid #eaf0f8
+    summary
+      font-size: 11px
+      color: #7390b3
+      cursor: pointer
+    > label
+      display: block
+      margin: 13px 0 7px
+      color: #7990aa
+      font-size: 11px
+  &__preview-column
+    min-width: 0
+    display: grid
+    gap: 18px
+    position: sticky
+    top: 22px
+  &__preview-card, &__reference
+    border: 1px solid #dce5f2
+    background: #fff
+    border-radius: 18px
+    overflow: hidden
+  &__preview-card > header
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 12px
+    padding: 18px 20px
+    > div
+      display: flex
+      align-items: center
+      gap: 7px
+    h3
+      font-size: 13px
+      font-weight: 700
+    > span
+      color: #91a2b5
+      font-size: 10px
+  &__live-dot
+    width: 6px
+    height: 6px
+    border-radius: 50%
+    background: #6bb9a5
+  &__preview
+    --etm-surface: #182534
+    --etm-muted-surface: #203144
+    --etm-text: #e6edf7
+    --etm-text-muted: #a4b6cc
+    --etm-preview-accent: #70a7ff
+    --etm-border: #3c536e
+    --etm-keyword: #c3a1ed
+    --etm-string: #9dd3b4
+    --etm-number: #e4bc86
+    --etm-comment: #99a9bb
+    position: relative
+    isolation: isolate
+    margin: 0 12px
+    border-radius: 13px
+    background-color: var(--etm-surface)
+    color: var(--etm-text)
+    min-height: 470px
+    overflow: hidden
+    border: 1px solid var(--etm-border)
+    box-shadow: 0 12px 24px #172d4c12
+    button
+      font-size: 10px
+      pointer-events: none
+  &__preview-video
+    position: absolute
+    inset: 0
+    width: 100%
+    height: 100%
+    object-fit: cover
+    z-index: -1
+  &__preview-content
+    position: relative
+    z-index: 1
+  &__preview-toolbar
+    display: flex
+    flex-wrap: wrap
+    align-items: center
+    gap: 7px
+    padding: 14px 12px
+    border-bottom: 1px solid var(--etm-border)
+    background-color: var(--etm-muted-surface)
+    > button
+      border-radius: 7px
+      padding: 9px 11px
+      border: 1px solid var(--etm-border)
+      color: var(--etm-text)
+      background-color: var(--etm-muted-surface)
+      font-weight: 700
+    > .etm__preview-submit
+      color: var(--etm-on-accent, #12253e)
+      background-color: var(--etm-preview-accent)
+  &__preview-language
+    font-size: 10px
+    border: 1px solid var(--etm-border)
+    border-radius: 7px
+    padding: 9px 10px
+    min-width: 65px
+    color: var(--etm-text-muted)
+    background: var(--etm-muted-surface)
+    > span
+      float: right
+      margin-left: 12px
+  &__preview-name
+    font-size: 9px
+    color: var(--etm-text-muted)
+    margin-left: auto
+    white-space: nowrap
+    max-width: 100px
+    overflow: hidden
+    text-overflow: ellipsis
+  &__preview-editor
+    position: relative
+    min-height: 268px
+    background-color: transparent
+  &__preview-editor-veil
+    position: absolute
+    inset: 0
+    background: var(--etm-surface)
+    opacity: .86
+    pointer-events: none
+  &__preview-code
+    display: flex
+    position: relative
+    z-index: 1
+    padding: 20px 0 20px 14px
+    line-height: 1.9
+    font: 11px / 1.9 'JetBrains Mono', Menlo, Consolas, monospace
+    pre
+      overflow-x: auto
+      color: var(--etm-text)
+      background: none
+      font: inherit
+      margin: 0
+      padding: 0 14px
+      white-space: pre
+      min-width: 0
+    code
+      font: inherit
+      color: inherit
+      background: none
+      padding: 0
+      border: 0
+  &__line-numbers
+    flex: 0 0 18px
+    color: var(--etm-text-muted)
+    text-align: right
+    user-select: none
+  &__syntax-keyword
+    color: var(--etm-keyword)
+  &__syntax-string
+    color: var(--etm-string)
+  &__syntax-number
+    color: var(--etm-number)
+  &__syntax-comment
+    color: var(--etm-comment)
+  &__preview-panel
+    position: relative
+    background-color: var(--etm-surface)
+    border-top: 1px solid var(--etm-border)
+    color: var(--etm-text)
+  &__preview-panel-title
+    font-size: 10px
+    font-weight: 700
+    padding: 12px 15px
+    background: unquote('color-mix(in srgb, var(--etm-muted-surface) 85%, transparent)')
+    border-bottom: 1px solid var(--etm-border)
+  &__preview-io
+    display: grid
+    grid-template-columns: 1fr 1fr
+    background: unquote('color-mix(in srgb, var(--etm-surface) 86%, transparent)')
+    > div
+      padding: 13px 15px 20px
+      min-width: 0
+      &:last-child
+        border-left: 1px solid var(--etm-border)
+    span
+      font-size: 10px
+      color: var(--etm-text-muted)
+    p
+      color: var(--etm-text-muted)
+      opacity: .65
+      margin-top: 14px
+      font-size: 9px
+    .etm__preview-output
+      color: var(--etm-string)
+      opacity: 1
+      font-family: monospace
+  &__preview-record
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 12px
+    font-size: 10px
+    padding: 14px 15px
+    border-top: 1px solid var(--etm-border)
+    background: unquote('color-mix(in srgb, var(--etm-muted-surface) 92%, transparent)')
+  &__preview-ac
+    color: var(--etm-string)
+    font-size: 9px
+  &__preview-corner
+    pointer-events: none
+    position: absolute
+    top: 0
+    right: 0
+    width: 90px
+    height: 90px
+    object-fit: contain
+    z-index: 2
+  &__preview-footnote
+    padding: 14px 20px
+    color: #93a2b4
+    font-size: 10px
+    line-height: 1.7
+  &__reference
+    padding: 18px
+    h3
+      font-size: 13px
+      font-weight: 650
+    p
+      margin-top: 6px
+      color: #8da0b6
+      font-size: 11px
+      line-height: 1.7
+    a
+      display: block
+      margin-top: 13px
+      border-radius: 10px
+      overflow: hidden
+      background: #eef4fd
+      color: #7193bd
+      text-decoration: none
+      img
+        display: block
+        width: 100%
+      span
+        display: block
+        text-align: right
+        font-size: 10px
+        padding: 9px 12px
+  &__publish-card
+    display: flex
+    flex-wrap: wrap
+    align-items: center
+    gap: 14px
+    border: 1px solid #dce7f3
+    border-radius: 16px
+    background: #f5f9ff
+    padding: 20px
+    > div:first-child
+      flex: 1 0 100%
+    strong
+      font-size: 12px
+      line-height: 1.8
+    p
+      color: #8da0b4
+      font-size: 10px
+      line-height: 1.8
+      margin-top: 5px
+  &__remove-confirm
+    flex: 0 0 100%
+    padding: 14px
+    border: 1px solid #efd6d0
+    border-radius: 11px
+    background: #fff8f5
+    p
+      color: #a16f65
+      margin-bottom: 12px
+      font-size: 11px
+    button
+      font-size: 11px
+      padding: 8px 12px
+      margin-right: 7px
+
+@media (max-width: 1100px)
+  .etm
+    &__workspace
+      grid-template-columns: 235px minmax(0, 1fr)
+      gap: 14px
+    &__setting-card
+      padding: 16px
+    &__preview-name
+      display: none
+    &__preview-toolbar
+      gap: 5px
+      padding: 10px 7px
+      > button
+        padding: 8px 7px
+        font-size: 9px
+
+@media (max-width: 850px)
+  .etm
+    &__workspace
+      grid-template-columns: minmax(0, 1fr)
+    &__settings
+      grid-template-columns: repeat(2, minmax(0, 1fr))
+      > :nth-child(2)
+        grid-column: 1 / -1
+        grid-row: 2
+    &__preview-column
+      position: static
+    &__asset-grid
+      grid-template-columns: repeat(auto-fill, minmax(68px, 1fr))
+      max-height: 150px
+    &__preview-name
+      display: block
+
+@media (max-width: 520px)
+  .etm
+    &__hero
+      padding: 22px
+      gap: 13px
+      align-items: flex-start
+      h1
+        font-size: 23px
+      p
+        font-size: 12px
+    &__hero-symbol
+      flex-basis: 39px
+      height: 39px
+      border-radius: 12px
+      font-size: 24px
+    &__eyebrow
+      font-size: 10px
+    &__section-heading, &__designer-heading
+      align-items: flex-start
+      gap: 10px
+      h2
+        font-size: 16px
+    &__section-heading > button
+      padding: 8px
+      font-size: 11px
+    &__upload
+      padding: 19px
+      gap: 12px
+    &__upload-label
+      margin-left: 56px
+    &__settings
+      grid-template-columns: minmax(0, 1fr)
+      > :nth-child(2)
+        grid-column: auto
+        grid-row: auto
+    &__preview-card > header > span
+      display: none
+    &__preview-name
+      display: none
+    &__preview-code
+      font-size: 9px
+      padding-left: 7px
+    &__preview
+      margin: 0 8px
+    &__publish-card
+      padding: 17px
+    &__preview-corner
+      width: 65px
+      height: 65px

@@ -3,7 +3,7 @@ import React from 'react';
 import { connect } from 'react-redux';
 import { load } from 'vj/components/monaco/loader';
 import { ctx } from 'vj/context';
-import { attachScratchpadMonacoTheme, currentScratchpadTheme } from './themes';
+import { attachScratchpadMonacoTheme, currentScratchpadTheme, scratchpadMonacoThemeName } from './themes';
 
 interface ScratchpadOptions {
   value?: string;
@@ -59,7 +59,7 @@ export default connect((state: any) => ({
       const config: monaco.editor.IStandaloneEditorConstructionOptions = {
         fontFamily: UserContext.codeFontFamily,
         ...customOptions,
-        theme: `hydro-scratchpad-${currentScratchpadTheme().id}`,
+        theme: scratchpadMonacoThemeName(currentScratchpadTheme()),
         readOnly: !!UiContext.homeworkReview,
         lineNumbers: 'on',
         glyphMargin: true,
@@ -72,7 +72,7 @@ export default connect((state: any) => ({
       if (this.unmounted) return;
       // The shared action registration restores editor.config asynchronously.
       // Keep the coding workspace on its own theme after that completes.
-      monaco.editor.setTheme(`hydro-scratchpad-${currentScratchpadTheme().id}`);
+      monaco.editor.setTheme(scratchpadMonacoThemeName(currentScratchpadTheme()));
       if (UiContext.homeworkReview) this.editor.updateOptions({ readOnly: true });
       this.disposable.push(
         this.editor.onDidChangeModelContent((event) => {
@@ -84,6 +84,9 @@ export default connect((state: any) => ({
       (window as any).editor = this.editor;
       (window as any).monaco = monaco;
       ctx.scratchpad.init(this.editor, monaco);
+      // The loader is an opaque fallback while Monaco initializes. A skin's
+      // transparent editor must never reveal it beneath the finished editor.
+      this.containerElement.setAttribute?.('data-editor-ready', 'true');
     }
   }
 
@@ -119,7 +122,7 @@ export default connect((state: any) => ({
     }
     if (editor && this.props.settings) {
       editor.updateOptions({
-        ...this.props.settings, theme: `hydro-scratchpad-${currentScratchpadTheme().id}`, readOnly: !!UiContext.homeworkReview,
+        ...this.props.settings, theme: scratchpadMonacoThemeName(currentScratchpadTheme()), readOnly: !!UiContext.homeworkReview,
       });
     }
     if (editor && !UiContext.homeworkReview && this.props.pendingCommand) {

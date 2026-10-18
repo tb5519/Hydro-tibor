@@ -734,6 +734,9 @@ manage_join_applications: 加域申请
 manage_module: 管理模块
 manage_script: 脚本管理
 manage_setting: 系统设置
+manage_editor_themes: 编辑器主题
+domain_editor_themes: 编辑器主题
+editor_theme_manage: 编辑器主题
 manage_shared_ranking: 排行榜设置
 manage_training_dashboard: 学员训练数据看板
 manage_lottery: 积分抽奖

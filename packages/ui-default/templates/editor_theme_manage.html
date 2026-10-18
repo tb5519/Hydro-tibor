@@ -1,0 +1,88 @@
+{% extends editorThemeBaseTemplate %}
+{% set page_name = 'editor_theme_manage' %}
+{% macro theme_designer() %}
+<section class="etm" data-editor-theme-manage>
+  <header class="etm__hero">
+    <div class="etm__hero-symbol" aria-hidden="true">✦</div>
+    <div><span class="etm__eyebrow">让每一份荣誉，都有自己的创作空间</span><h1>徽章编辑器主题</h1><p>上传图片，搭配一套专属界面。持有对应徽章的学员，即可在编程时选用。</p></div>
+  </header>
+
+  <div class="etm__message" data-theme-message role="status" aria-live="polite" tabindex="-1" hidden></div>
+  <noscript><p class="etm__message is-error">请启用 JavaScript，以使用主题上传、贴图分配和即时预览。</p></noscript>
+
+  <section class="etm__collection" aria-labelledby="etm-published-heading">
+    <div class="etm__section-heading"><div><h2 id="etm-published-heading">已发布主题 <span data-theme-count>0</span></h2><p>每枚徽章对应一套主题，更新后学员会看到新设计。</p></div><button type="button" class="etm__button" data-theme-new>＋ 新建主题</button></div>
+    <div class="etm__theme-list" data-theme-list></div>
+    <div class="etm__collection-empty" data-theme-collection-empty>还没有专属主题。把第一套素材放进来，为徽章添上一份惊喜。</div>
+  </section>
+
+  <section class="etm__upload" data-theme-dropzone aria-labelledby="etm-upload-heading">
+    <span class="etm__upload-icon" aria-hidden="true">↑</span>
+    <div><h2 id="etm-upload-heading">从一个 ZIP 开始</h2><p>把图片或背景视频放进压缩包，文件名随意。上传后选择每张图用在哪里。</p><small>已有完整主题包会自动恢复设计；包内的完整界面截图也会一同保留。</small></div>
+    <label class="etm__button is-primary etm__upload-label">选择主题包<input type="file" accept=".zip,application/zip,application/x-zip-compressed" data-theme-upload aria-label="上传 ZIP 主题包"></label>
+    <div class="etm__upload-progress" data-theme-upload-progress hidden><progress max="100" value="0"></progress><span data-theme-upload-status>准备上传…</span></div>
+  </section>
+
+  <form class="etm__designer" data-theme-form hidden>
+    <div class="etm__designer-heading"><div><span class="etm__eyebrow">主题设计</span><h2 data-theme-design-heading>把素材，变成完整界面</h2></div><span class="etm__draft-state" data-theme-draft-state>未发布</span></div>
+    <div class="etm__workspace">
+      <div class="etm__settings">
+        <section class="etm__setting-card">
+          <h3><span>01</span> 名称与徽章</h3>
+          <label for="etm-name">主题名称</label><input id="etm-name" type="text" maxlength="60" required placeholder="给这套主题起个名字" data-theme-name>
+          <label for="etm-badge">关联徽章</label><select id="etm-badge" required data-theme-badge><option value="">请选择徽章</option></select><p class="etm__hint" data-theme-badge-hint>持有有效徽章即可使用，无需佩戴。徽章失效后自动回到基础主题。</p>
+          <label for="etm-base">基础配色</label><select id="etm-base" data-theme-base><option value="ocean">深海 · 深色</option><option value="cloud">云白 · 明亮</option><option value="mist">雾青 · 柔和</option><option value="sand">暖砂 · 温暖</option></select>
+        </section>
+
+        <section class="etm__setting-card">
+          <h3><span>02</span> 图片放在哪里</h3>
+          <p class="etm__hint">先选一个区域，再为它挑一张图。未设置的区域沿用基础主题。</p>
+          <div class="etm__slot-list" data-theme-slots role="group" aria-label="选择贴图区域"></div>
+          <label for="etm-asset">区域素材 <span data-theme-selected-slot></span></label><select id="etm-asset" data-theme-asset></select>
+          <div class="etm__field-pair"><div><label for="etm-fit">图片适配</label><select id="etm-fit" data-theme-fit><option value="cover">铺满区域</option><option value="contain">完整显示</option><option value="tile">平铺纹理</option><option value="stretch">拉伸填充</option></select></div><div><label for="etm-position">图片位置</label><select id="etm-position" data-theme-position><option value="center">居中</option><option value="left">靠左</option><option value="right">靠右</option><option value="top">靠上</option><option value="bottom">靠下</option><option value="left top">左上角</option><option value="right top">右上角</option><option value="left bottom">左下角</option><option value="right bottom">右下角</option></select></div></div>
+          <div class="etm__asset-grid" data-theme-assets aria-label="主题包素材"></div>
+          <p class="etm__hint" data-theme-slot-hint>支持透明图片。背景区域还可使用静音循环视频。</p>
+        </section>
+
+        <section class="etm__setting-card">
+          <h3><span>03</span> 让代码清楚好读</h3>
+          <div class="etm__range-label"><label for="etm-overlay">代码区遮罩</label><output for="etm-overlay" data-theme-overlay-value>86%</output></div><input id="etm-overlay" type="range" min="0.35" max="0.98" step="0.01" value="0.86" data-theme-overlay><p class="etm__hint">向右调整，背景更柔和，代码更清晰。</p>
+          <div class="etm__color-fields"><label>文字<input type="color" value="#e6edf7" data-theme-color="text" aria-label="代码文字颜色"></label><label>强调色<input type="color" value="#70a7ff" data-theme-color="accent" aria-label="按钮强调颜色"></label><label>底色<input type="color" value="#182534" data-theme-color="surface" aria-label="代码区域底色"></label></div>
+          <button class="etm__text-button" type="button" data-theme-reset-palette>恢复基础配色</button>
+          <details class="etm__optional"><summary>完整截图与视频封面（可选）</summary><label for="etm-reference">完整界面截图</label><select id="etm-reference" data-theme-reference-asset><option value="">暂不设置</option></select><label for="etm-poster">背景视频封面</label><select id="etm-poster" data-theme-poster-asset><option value="">暂不设置</option></select><p class="etm__hint">可以直接选包里的图片，无需修改文件名。完整截图用于查看整体设计；视频封面在加载前显示。</p></details>
+        </section>
+      </div>
+
+      <div class="etm__preview-column">
+        <section class="etm__preview-card" aria-labelledby="etm-preview-heading">
+          <header><div><span class="etm__live-dot" aria-hidden="true"></span><h3 id="etm-preview-heading">即时预览</h3></div><span>界面布局与操作位置保持一致</span></header>
+          <div class="etm__preview" data-theme-preview>
+            <video class="etm__preview-video" data-theme-preview-video muted loop playsinline preload="metadata" aria-hidden="true" hidden></video>
+            <div class="etm__preview-content">
+              <div class="etm__preview-toolbar" data-theme-region="toolbar"><span class="etm__preview-language">C++14 <span aria-hidden="true">⌄</span></span><button type="button" class="etm__preview-run" data-theme-region="runButton">▶ 运行自测</button><button type="button" class="etm__preview-submit" data-theme-region="submitButton">➤ 递交评测</button><span class="etm__preview-name" data-theme-preview-name>专属主题</span></div>
+              <div class="etm__preview-editor" data-theme-region="editor"><div class="etm__preview-editor-veil" data-theme-preview-veil></div><div class="etm__preview-code"><span class="etm__line-numbers" aria-hidden="true">1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9</span><pre><code><span class="etm__syntax-comment">// 每一行代码，都在创造新的可能</span>
+<span class="etm__syntax-keyword">#include</span> &lt;iostream&gt;
+<span class="etm__syntax-keyword">using namespace</span> std;
+
+<span class="etm__syntax-keyword">int</span> main() {
+    cout &lt;&lt; <span class="etm__syntax-string">"Hello, World!"</span>;
+    <span class="etm__syntax-keyword">return</span> <span class="etm__syntax-number">0</span>;
+}
+</code></pre></div></div>
+              <div class="etm__preview-panel" data-theme-region="panel"><div class="etm__preview-panel-title">✎ 自测</div><div class="etm__preview-io"><div><span>输入</span><p>在这里输入测试数据</p></div><div><span>输出</span><p class="etm__preview-output" data-theme-preview-output>Hello, World!</p></div></div><div class="etm__preview-record"><span>⚑ 评测记录</span><span class="etm__preview-ac">✓ Accepted</span></div></div>
+            </div>
+            <img class="etm__preview-corner" data-theme-preview-corner alt="" hidden>
+          </div>
+          <p class="etm__preview-footnote" data-theme-preview-note>当前是界面预览，不会运行代码或产生提交记录。</p>
+        </section>
+
+        <section class="etm__reference" data-theme-reference hidden><div><h3>主题包中的完整界面</h3><p>作为整体设计参考，发布后保留在主题资料中。</p></div><a data-theme-reference-link target="_blank" rel="noopener"><img data-theme-reference-image loading="lazy" alt="主题包内所有素材组成的完整界面截图"><span>打开原图 ↗</span></a></section>
+
+        <div class="etm__publish-card"><div><strong data-theme-publish-summary>准备好后，发布给持有徽章的学员。</strong><p>原有四套基础主题始终保留，切换主题不会影响代码。</p></div><button class="etm__button is-primary" type="submit" data-theme-publish>发布主题</button><a class="etm__button" data-theme-export hidden>下载完整主题包</a><button class="etm__text-button is-danger" type="button" data-theme-remove hidden>下架此主题</button><div class="etm__remove-confirm" data-theme-remove-confirm hidden><p>下架后，学员将不能继续选用这套主题。已写的代码会保留。</p><button class="etm__button is-danger" type="button" data-theme-remove-apply>确认下架</button><button class="etm__button" type="button" data-theme-remove-cancel>取消</button></div></div>
+      </div>
+    </div>
+  </form>
+</section>
+{% endmacro %}
+{% block manage_content %}{{ theme_designer() }}{% endblock %}
+{% block domain_content %}{{ theme_designer() }}{% endblock %}
