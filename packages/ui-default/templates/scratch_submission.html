@@ -2,11 +2,13 @@
 {% block scratch_content %}
 {% include "partials/scratch_problem_style.html" %}
 {% set bankProblem = assignment.kind == 'problem' %}
+{% set assignmentDeleted = assignment.deletedAt and not bankProblem %}
 <div class="scb scb-submission-detail">
 <div class="sc-heading">
-  <div><div class="sc-eyebrow">{{ ('创作题批改' if bankProblem else '作业批改') if isTeacher else '我的作品反馈' }}</div><h1>{{ assignment.title }}</h1><p class="sc-muted">{% if isTeacher %}{{ (udict[submission.owner].displayName or udict[submission.owner].uname) if udict[submission.owner] else '' }} · 提交版本 v{{ submission.revision }} · {% else %}提交于 {% endif %}{{ datetimeSpan(submission.createdAt)|safe }}</p></div>
+  <div><div class="sc-eyebrow">{{ ('已删除作业 · 提交记录' if assignmentDeleted else ('创作题批改' if bankProblem else '作业批改')) if isTeacher else '我的作品反馈' }}</div><h1>{{ assignment.title }}</h1><p class="sc-muted">{% if isTeacher %}{{ (udict[submission.owner].displayName or udict[submission.owner].uname) if udict[submission.owner] else '' }} · 提交版本 v{{ submission.revision }} · {% else %}提交于 {% endif %}{{ datetimeSpan(submission.createdAt)|safe }}</p></div>
   <a class="scb-button" href="{{ url('scratch_problem_review') if bankProblem and isTeacher else (url('scratch_problem_detail', problemId=assignment._id) if bankProblem else url('scratch_assignment', assignmentId=assignment._id)) }}">{{ '返回批改列表' if bankProblem and isTeacher else ('返回题目' if bankProblem else '返回作业') }} →</a>
 </div>
+{% if assignmentDeleted %}<div class="sc-panel sc-panel-body sc-spaced" role="status"><strong>这份作业已删除</strong><p class="sc-muted">提交作品和批改记录已保留。恢复作业后，可以继续批改。</p></div>{% endif %}
 <section class="sc-panel">
   <div class="sc-panel-head"><h2>{{ '本次提交' if isTeacher else '我交给老师的作品' }}</h2><span class="sc-badge {{ 'sc-badge-success' if submission.reviewedAt else 'sc-badge-warm' }}">{{ '已批改' if submission.reviewedAt else '等待老师批改' }}</span></div>
   <div class="sc-panel-body">
@@ -15,9 +17,9 @@
   </div>
 </section>
 <section class="sc-panel">
-  <div class="sc-panel-head"><h2>{{ '批改作业' if isTeacher else '老师的反馈' }}</h2></div>
+  <div class="sc-panel-head"><h2>{{ ('批改记录' if assignmentDeleted else '批改作业') if isTeacher else '老师的反馈' }}</h2></div>
   <div class="sc-panel-body">
-    {% if isTeacher %}
+    {% if isTeacher and not assignmentDeleted %}
     <form class="sc-form scb-review-form" method="post">
       <label class="sc-field scb-field"><span>成绩 / 评价</span><input name="grade" maxlength="40" value="{{ submission.grade if submission.grade != null else '' }}" placeholder="例如：优秀、完成、95 分"></label>
       <label class="sc-field scb-field"><span>给学生的反馈</span><textarea name="feedback" maxlength="20000" rows="6" placeholder="说说作品的亮点，再给一个可以继续尝试的小建议。">{{ submission.feedback or '' }}</textarea></label>
@@ -25,10 +27,12 @@
     </form>
     {% elif submission.reviewedAt %}
     <div class="sc-feedback-card"><h3>{{ submission.grade or '老师看过你的作品啦' }}</h3><div class="sc-description sc-spaced">{{ submission.feedback or '老师已查看你的作品，继续加油！' }}</div><p class="sc-muted sc-spaced">老师留言于 {{ datetimeSpan(submission.reviewedAt)|safe }}</p></div>
+    {% elif assignmentDeleted %}
+    <div class="sc-empty"><strong>尚未批改</strong><p>恢复作业后，可以为这份作品评分和填写反馈。</p></div>
     {% else %}
     <div class="sc-empty"><strong>作品已送达，等老师来看看</strong><p>有了新点子，可以回去继续创作。</p></div>
     {% endif %}
-    {% if work.owner == handler.user._id %}<div class="sc-spaced"><a class="sc-button" data-no-instant href="{{ url('scratch_editor', query={workId:work._id}) }}">继续创作</a></div>{% endif %}
+    {% if work.owner == handler.user._id and not assignmentDeleted %}<div class="sc-spaced"><a class="sc-button" data-no-instant href="{{ url('scratch_editor', query={workId:work._id}) }}">继续创作</a></div>{% endif %}
   </div>
 </section>
 </div>

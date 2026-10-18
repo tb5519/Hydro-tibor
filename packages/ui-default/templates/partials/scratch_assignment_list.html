@@ -3,8 +3,8 @@
   {% for item in assignments %}
   <li class="sc-list-item">
     <div class="sc-assignment-title"><span class="sc-assignment-mark icon icon-flag" aria-hidden="true"></span><div><h3><a href="{{ url('scratch_assignment', assignmentId=item._id) }}">{{ item.title }}</a></h3>{% if item.objectiveQuiz.total %}<div class="sc-assignment-type"><span class="sc-badge">{{ item.objectiveQuiz.total }} 道客观题{% if item.projectRequired != false %} + 作品创作{% endif %}</span></div>{% endif %}<p>{% if item.deadline %}请在 {{ datetimeSpan(item.deadline)|safe }} 前完成{% else %}{{ '未设置截止时间' if isTeacher else '准备好了，就来试一试！' }}{% endif %}</p></div></div>
-    <a class="sc-button" href="{{ url('scratch_assignment', assignmentId=item._id) }}">{{ '查看进度' if isTeacher else '看看任务' }}<span class="icon icon-chevron_right" aria-hidden="true"></span></a>
+    <div class="sc-assignment-list-actions">{% if isTeacher %}<span class="sc-assignment-audience-label">{{ ('指定 ' ~ (item.recipientIds|length) ~ ' 位学员') if item.audience == 'selected' else '全体学员' }}</span>{% endif %}<div class="sc-actions"><a class="sc-button" href="{{ url('scratch_assignment', assignmentId=item._id) }}">{{ ('查看记录' if item.deletedAt else '查看进度') if isTeacher else '看看任务' }}<span class="icon icon-chevron_right" aria-hidden="true"></span></a>{% if isTeacher and showAssignmentActions %}<button class="sc-assignment-text-button {{ 'sc-assignment-delete-button' if not item.deletedAt }}" type="button" data-assignment-action="{{ 'restore' if item.deletedAt else 'delete' }}" data-assignment-url="{{ url('scratch_assignment', assignmentId=item._id) }}" data-assignment-title="{{ item.title }}">{{ '恢复作业' if item.deletedAt else '删除' }}</button>{% endif %}</div></div>
   </li>
   {% endfor %}
 </ul>
-{% else %}<div class="sc-empty"><strong>还没有课堂作业</strong><p>{{ '发布一份作业，让孩子动手创作或完成知识练习。' if isTeacher else '老师发布的新任务会显示在这里。' }}</p></div>{% endif %}
+{% else %}<div class="sc-empty"><strong>{{ '没有已删除的作业' if showDeleted else '还没有课堂作业' }}</strong><p>{{ '删除的作业会保留在这里，需要时可以恢复。' if showDeleted else ('发布一份作业，让孩子动手创作或完成知识练习。' if isTeacher else '老师发布的新任务会显示在这里。') }}</p></div>{% endif %}

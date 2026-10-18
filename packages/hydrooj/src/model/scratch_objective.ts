@@ -10,7 +10,7 @@ import { PERM, PRIV } from './builtin';
 import * as document from './document';
 import domain from './domain';
 import problem from './problem';
-import type { ScratchActor, ScratchAssignment } from './scratch';
+import { getAssignment, withAssignmentMutation, ScratchActor, ScratchAssignment } from './scratch';
 import storage from './storage';
 import user from './user';
 
@@ -222,6 +222,7 @@ export function summarize(quiz: ScratchAssignmentQuiz, result?: ScratchQuizResul
 
 export async function getState(actor: ScratchActor, assignment: ScratchAssignment, uid = actor.uid, fileUrl = (name: string) => name) {
     requireScope(actor, assignment);
+    assignment = await getAssignment(actor, assignment._id);
     if (!assignment.objectiveQuiz) throw new NotFoundError('客观题作业');
     if (uid !== actor.uid && !actor.isTeacher) throw new PermissionError('答题记录');
     const quiz = assignment.objectiveQuiz;
@@ -246,6 +247,7 @@ export async function answer(
     actor: ScratchActor, assignment: ScratchAssignment, questionId: unknown, input: unknown, revision = assignment.objectiveQuiz?.revision,
 ) {
     requireScope(actor, assignment);
+    assignment = await getAssignment(actor, assignment._id);
     if (actor.isTeacher) throw new PermissionError('教师预览不能提交学员答案');
     const quiz = assignment.objectiveQuiz;
     if (!quiz) throw new NotFoundError('客观题作业');
@@ -258,26 +260,30 @@ export async function answer(
     if (assignment.deadline && assignment.deadline.getTime() < Date.now()) throw new ValidationError('deadline', null, '作业已截止，可以继续查看已答题目');
     if (item.objective.kind === 'judge' && (!Array.isArray(input) || input.length !== 1)) throw new ValidationError('answers');
     const selected = parseAnswers(input, item.objective);
-    const locked = await assignments.updateOne({ _id: assignment._id, domainId: actor.domainId, 'objectiveQuiz.revision': quiz.revision }, {
-        $set: { objectiveStarted: true },
+    await withAssignmentMutation(actor, assignment._id, async (latest) => {
+        if (latest.deadline && latest.deadline.getTime() < Date.now()) throw new ValidationError('deadline');
+        const locked = await assignments.updateOne({ _id: assignment._id, domainId: actor.domainId, 'objectiveQuiz.revision': quiz.revision }, {
+            $set: { objectiveStarted: true },
+        });
+        if (!locked.matchedCount) throw new ValidationError('revision', null, '老师调整了题目，请刷新后重新开始');
+        const now = new Date();
+        try {
+            await results.updateOne({ _id }, { $setOnInsert: {
+                domainId: actor.domainId, assignmentId: assignment._id, revision: quiz.revision,
+                owner: actor.uid, answers: {}, createdAt: now, updatedAt: now,
+            } }, { upsert: true });
+        } catch (error) {
+            if (error.code !== 11000) throw error;
+        }
+        await results.updateOne({ _id, [`answers.${item.id}`]: { $exists: false } }, { $set: {
+            [`answers.${item.id}`]: { selected, correct: gradeAnswer(item.objective, selected), answeredAt: now }, updatedAt: now,
+        } });
     });
-    if (!locked.matchedCount) throw new ValidationError('revision', null, '老师调整了题目，请刷新后重新开始');
-    const now = new Date();
-    try {
-        await results.updateOne({ _id }, { $setOnInsert: {
-            domainId: actor.domainId, assignmentId: assignment._id, revision: quiz.revision,
-            owner: actor.uid, answers: {}, createdAt: now, updatedAt: now,
-        } }, { upsert: true });
-    } catch (error) {
-        if (error.code !== 11000) throw error;
-    }
-    await results.updateOne({ _id, [`answers.${item.id}`]: { $exists: false } }, { $set: {
-        [`answers.${item.id}`]: { selected, correct: gradeAnswer(item.objective, selected), answeredAt: now }, updatedAt: now,
-    } });
 }
 
 export async function getResults(actor: ScratchActor, assignment: ScratchAssignment) {
     requireScope(actor, assignment);
+    assignment = await getAssignment(actor, assignment._id);
     if (!actor.isTeacher) throw new PermissionError('Scratch 教学管理');
     if (!assignment.objectiveQuiz) return [];
     const docs = await results.find({ domainId: actor.domainId, assignmentId: assignment._id, revision: assignment.objectiveQuiz.revision })
@@ -286,7 +292,8 @@ export async function getResults(actor: ScratchActor, assignment: ScratchAssignm
         .project<{ uid: number }>({ uid: 1 }).limit(1000).toArray();
     const learners = await Promise.all(members.map(async (member) => {
         const account = await user.getById(actor.domainId, member.uid);
-        return account?.hasPriv(PRIV.PRIV_USER_PROFILE) && !account.hasPerm(PERM.PERM_EDIT_DOMAIN) ? member.uid : null;
+        return account?.hasPriv(PRIV.PRIV_USER_PROFILE) && !account.hasPerm(PERM.PERM_EDIT_DOMAIN)
+            && (assignment.audience !== 'selected' || assignment.recipientIds?.includes(member.uid)) ? member.uid : null;
     }));
     return [...new Set([...docs.map((doc) => doc.owner), ...learners.filter((uid) => uid !== null)])].map((uid) => {
         const doc = docs.find((entry) => entry.owner === uid);
@@ -296,6 +303,7 @@ export async function getResults(actor: ScratchActor, assignment: ScratchAssignm
 
 export async function getFile(actor: ScratchActor, assignment: ScratchAssignment, filename: string) {
     requireScope(actor, assignment);
+    assignment = await getAssignment(actor, assignment._id);
     const quiz = assignment.objectiveQuiz;
     if (!quiz || !Object.hasOwn(quiz.files, filename)) throw new NotFoundError('题目附件');
     if (!actor.isTeacher && !quiz.statementFiles.includes(filename)) {

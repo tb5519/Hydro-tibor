@@ -1,6 +1,6 @@
 /* eslint-disable no-await-in-loop */
 import { randomBytes } from 'crypto';
-import { ObjectId } from 'mongodb';
+import { AggregationCursor, Filter, ObjectId } from 'mongodb';
 import { Context } from '../context';
 import { NotFoundError, PermissionError, ValidationError } from '../error';
 import type { RemoteAsset } from '../interface';
@@ -18,6 +18,12 @@ export interface ScratchActor { domainId: string, uid: number, isTeacher: boolea
 interface ScratchDoc { _id: ObjectId, domainId: string, owner: number, createdAt: Date, updatedAt: Date }
 export interface ScratchAssignment extends ScratchDoc {
     title: string; description: string; deadline: Date | null; templateFileId: ObjectId | null;
+    audience?: 'all' | 'selected';
+    recipientIds?: number[];
+    deletedAt?: Date;
+    deletedBy?: number;
+    mutationToken?: ObjectId;
+    mutationUntil?: Date;
     projectRequired?: boolean;
     objectiveQuiz?: scratchObjective.ScratchAssignmentQuiz | null;
     objectiveStarted?: boolean;
@@ -35,6 +41,7 @@ export interface ScratchAssignment extends ScratchDoc {
 export interface ScratchWork extends ScratchDoc {
     title: string; assignmentId: ObjectId | null; currentFileId: ObjectId | null; revision: number; thumbnailFileId?: ObjectId;
     savingToken?: ObjectId; savingUntil?: Date;
+    sourceAssignmentId?: ObjectId;
 }
 export interface ScratchVersion extends ScratchDoc { workId: ObjectId, fileId: ObjectId, revision: number }
 export interface ScratchSubmission extends ScratchVersion {
@@ -55,6 +62,7 @@ export const SCRATCH_MAX_PRESETS = 500;
 export interface ScratchCommunityWork extends ScratchDoc {
     title: string; titleKey: string; instructions: string; workId: ObjectId; snapshotWorkId: ObjectId;
     fileId: ObjectId; thumbnailFileId: ObjectId | null; revision: number;
+    sourceAssignmentId?: ObjectId | null;
 }
 export interface ScratchCommunityEvent {
     _id: string; domainId: string; communityId: ObjectId; uid: number; isTeacher: boolean;
@@ -166,8 +174,83 @@ export function cleanText(value: unknown, field: string, max: number, fallback =
     if ((!text && !fallback) || text.length > max) throw new ValidationError(field);
     return text || fallback;
 }
+// Shared by direct reads and Mongo list filters. Legacy assignments are public
+// within their classroom; an explicit selected audience must never fail open.
+export function assignmentAccessFilter(actor: ScratchActor, active = false, publicOnly = false): Filter<ScratchAssignment> {
+    return {
+        domainId: actor.domainId,
+        ...((active || !actor.isTeacher || publicOnly) ? { deletedAt: null } : {}),
+        ...(publicOnly ? { audience: { $ne: 'selected' } } : !actor.isTeacher ? {
+            $or: [{ audience: { $ne: 'selected' } }, { recipientIds: actor.uid }],
+        } : {}),
+    };
+}
+export async function requireActiveAssignment(actor: ScratchActor, id: ObjectId) {
+    const assignment = await getAssignment(actor, id);
+    if (assignment.deletedAt) throw new ValidationError('assignmentId', null, '这份作业已删除，请先恢复后再操作。');
+    return assignment;
+}
+// Hold only across the final metadata publication, never during a file upload.
+// Audience changes/deletion and completed saves share this short Mongo lease,
+// so an upload cannot publish after the teacher has revoked access.
+export async function withAssignmentMutation<T>(actor: ScratchActor, id: ObjectId | null, action: (assignment?: ScratchAssignment) => Promise<T>, allowDeleted = false): Promise<T> {
+    if (!id) return action();
+    const token = new ObjectId();
+    let locked: ScratchAssignment;
+    for (let attempt = 0; attempt < 40; attempt++) {
+        const current = await getAssignment(actor, id);
+        if (current.deletedAt && !allowDeleted) throw new ValidationError('assignmentId', null, '这份作业已删除，请先恢复后再操作。');
+        locked = await assignments.findOneAndUpdate({ _id: id, ...assignmentAccessFilter(actor, !allowDeleted),
+            $and: [{ $or: [{ mutationUntil: { $exists: false } }, { mutationUntil: { $lt: new Date() } }] }],
+        }, { $set: { mutationToken: token, mutationUntil: new Date(Date.now() + 60000) } }, { returnDocument: 'after' });
+        if (locked) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    if (!locked) throw new ValidationError('assignmentId', null, '作业正在更新，请稍后重试。');
+    try { return await action(locked); } finally {
+        await assignments.updateOne({ domainId: actor.domainId, _id: id, mutationToken: token }, { $unset: { mutationToken: '', mutationUntil: '' } });
+    }
+}
+export async function deleteAssignment(actor: ScratchActor, id: ObjectId) {
+    requireTeacher(actor);
+    return withAssignmentMutation(actor, id, async (doc) => {
+        if (doc.kind === 'problem') throw new ValidationError('assignmentId', null, '请在题库中管理创作题。');
+        if (!doc.deletedAt) await assignments.updateOne({ domainId: actor.domainId, _id: id }, {
+            $set: { deletedAt: new Date(), deletedBy: actor.uid, updatedAt: new Date() },
+        });
+    }, true);
+}
+export async function restoreAssignment(actor: ScratchActor, id: ObjectId) {
+    requireTeacher(actor);
+    return withAssignmentMutation(actor, id, async (doc) => {
+        if (doc.kind === 'problem') throw new ValidationError('assignmentId');
+        await assignments.updateOne({ domainId: actor.domainId, _id: id }, {
+            $unset: { deletedAt: '', deletedBy: '' }, $set: { updatedAt: new Date() },
+        });
+    }, true);
+}
+async function assignmentAudience(input: AssignmentInput, current?: ScratchAssignment) {
+    const audience = input.audience ?? current?.audience ?? 'all';
+    if (!['all', 'selected'].includes(audience)) throw new ValidationError('audience');
+    let ids: unknown = input.recipientIds ?? current?.recipientIds ?? [];
+    if (typeof ids === 'string') {
+        try { ids = JSON.parse(ids); } catch { throw new ValidationError('recipientIds'); }
+    }
+    if (!Array.isArray(ids) || ids.length > 1000 || ids.some((uid) => !Number.isSafeInteger(uid) || uid < 1)
+        || new Set(ids).size !== ids.length) throw new ValidationError('recipientIds');
+    if (audience === 'all') return { audience: 'all' as const, recipientIds: [] };
+    if (!ids.length) throw new ValidationError('recipientIds', null, '请至少选择一位接收作业的学员。');
+    return { audience: 'selected' as const, recipientIds: ids as number[] };
+}
+async function validateRecipients(actor: ScratchActor, ids: number[]) {
+    if (!ids.length) return;
+    const count = await db.collection('domain.user').countDocuments({ domainId: actor.domainId, uid: { $in: ids },
+        join: true, blockedByStudentManagement: { $ne: true } });
+    if (count !== ids.length) throw new ValidationError('recipientIds', null, '接收学员必须是当前课堂已加入的成员，请移除已退出的学员。');
+}
+
 export async function getAssignment(actor: ScratchActor, _id: ObjectId) {
-    const doc = await assignments.findOne({ domainId: actor.domainId, _id });
+    const doc = await assignments.findOne({ _id, ...assignmentAccessFilter(actor) });
     if (!doc) throw new NotFoundError('Scratch 作业');
     if (doc.kind === 'problem') {
         if (doc.hidden && !actor.isTeacher) throw new NotFoundError('Scratch 题目');
@@ -188,21 +271,26 @@ export async function getProjectProblem(actor: ScratchActor, _id: ObjectId) {
     if (!doc || doc.projectRequired === false) throw new NotFoundError('Scratch 创作题');
     return doc;
 }
+export function workAssignmentId(work: ScratchWork) { return work.assignmentId || work.sourceAssignmentId || null; }
 export async function getWork(actor: ScratchActor, _id: ObjectId, write = false) {
     const doc = await works.findOne({ domainId: actor.domainId, _id });
     if (!doc) throw new NotFoundError('Scratch 作品');
     requireOwner(actor, doc, !write);
+    const assignmentId = workAssignmentId(doc);
+    if (assignmentId) await (write ? requireActiveAssignment(actor, assignmentId) : getAssignment(actor, assignmentId));
     return doc;
 }
 export async function getSubmission(actor: ScratchActor, _id: ObjectId) {
     const doc = await submissions.findOne({ domainId: actor.domainId, _id });
     if (!doc) throw new NotFoundError('Scratch 提交');
     requireOwner(actor, doc);
+    if (doc.assignmentId) await getAssignment(actor, doc.assignmentId);
     return doc;
 }
 export async function getMaterial(actor: ScratchActor, _id: ObjectId) {
     const doc = await materials.findOne({ domainId: actor.domainId, _id });
     if (!doc) throw new NotFoundError('Scratch 素材');
+    if (doc.assignmentId) await getAssignment(actor, doc.assignmentId);
     if (!actor.isTeacher && doc.recipientIds.length && !doc.recipientIds.includes(actor.uid)) throw new PermissionError('Scratch 素材访问');
     return doc;
 }
@@ -220,20 +308,50 @@ export async function getFile(actor: ScratchActor, _id: ObjectId) {
     } else throw new PermissionError('Scratch 文件访问');
     return doc;
 }
-export function listWorks(actor: ScratchActor, assignmentId?: ObjectId, owner?: number) {
-    return works.find({ domainId: actor.domainId, ...(!actor.isTeacher ? { owner: actor.uid } : owner ? { owner } : {}),
-        ...(assignmentId ? { assignmentId } : {}) }).sort({ updatedAt: -1 });
+function assignmentVisibilityStages(actor: ScratchActor, publicOnly = false) {
+    // Resolve the relationship in Mongo before sorting/limiting, including old
+    // documents without audience metadata. Missing parents fail closed.
+    return [
+        { $lookup: { from: assignments.collectionName, let: { id: { $ifNull: ['$assignmentId', '$sourceAssignmentId'] } }, pipeline: [
+            { $match: { ...assignmentAccessFilter(actor, true, publicOnly), $expr: { $eq: ['$_id', '$$id'] },
+                ...(!actor.isTeacher ? { hidden: { $ne: true } } : {}) } }, { $project: { _id: 1 } },
+        ], as: '_assignmentAccess' } },
+        { $match: { $or: [{ assignmentId: null, sourceAssignmentId: null }, { '_assignmentAccess.0': { $exists: true } }] } },
+        { $unset: '_assignmentAccess' },
+    ];
 }
-export function listAssignments(actor: ScratchActor) {
-    return assignments.find({ domainId: actor.domainId, kind: { $ne: 'problem' } }).sort({ createdAt: -1 });
+export function listWorks(actor: ScratchActor, assignmentId?: ObjectId, owner?: number, savedOnly = false) {
+    return works.aggregate<ScratchWork>([
+        { $match: { domainId: actor.domainId, ...(!actor.isTeacher ? { owner: actor.uid } : owner ? { owner } : {}),
+            ...(assignmentId ? { assignmentId } : {}), ...(savedOnly ? { currentFileId: { $type: 'objectId' } } : {}) } },
+        ...(actor.isTeacher && assignmentId ? [] : assignmentVisibilityStages(actor)), { $sort: { updatedAt: -1, _id: -1 } },
+    ]);
+}
+export function listAssignments(actor: ScratchActor, deleted = false) {
+    if (deleted) requireTeacher(actor);
+    return assignments.find({ ...assignmentAccessFilter(actor), kind: { $ne: 'problem' },
+        deletedAt: deleted ? { $type: 'date' } : null }).sort({ createdAt: -1 });
 }
 export function listSubmissions(actor: ScratchActor, extra: { workId?: ObjectId, purpose?: 'thumbnail', assignmentId?: ObjectId } = {}) {
-    return submissions.find({ ...extra, domainId: actor.domainId, ...(!actor.isTeacher ? { owner: actor.uid } : {}) }).sort({ createdAt: -1 });
+    return submissions.aggregate<ScratchSubmission>([
+        { $match: { ...extra, domainId: actor.domainId, ...(!actor.isTeacher ? { owner: actor.uid } : {}) } },
+        ...(actor.isTeacher && (extra.assignmentId || extra.workId) ? [] : assignmentVisibilityStages(actor)), { $sort: { createdAt: -1 } },
+    ]);
 }
 export function listMaterials(actor: ScratchActor, assignmentId?: ObjectId) {
-    return materials.find({ domainId: actor.domainId, ...(assignmentId ? { assignmentId } : {}),
-        ...(!actor.isTeacher ? { $or: [{ recipientIds: actor.uid }, { recipientIds: { $size: 0 } }] } : {}),
-    }).sort({ category: 1, createdAt: -1 });
+    return materials.aggregate<ScratchMaterial>([
+        { $match: { domainId: actor.domainId, ...(assignmentId ? { assignmentId } : {}),
+            ...(!actor.isTeacher ? { $or: [{ recipientIds: actor.uid }, { recipientIds: { $size: 0 } }] } : {}) } },
+        ...(actor.isTeacher && assignmentId ? [] : assignmentVisibilityStages(actor)), { $sort: { category: 1, createdAt: -1 } },
+    ]);
+}
+export async function paginateScratch<T>(cursor: AggregationCursor<T>, page: number, limit: number): Promise<[T[], number, number]> {
+    if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(limit) || limit < 1) throw new ValidationError('page');
+    const result = await cursor.addStage<{ docs: T[], total: { count: number }[] }>({ $facet: {
+        total: [{ $count: 'count' }], docs: [{ $skip: (page - 1) * limit }, { $limit: limit }],
+    } }).next();
+    const count = result?.total[0]?.count || 0;
+    return [result?.docs || [], Math.ceil(count / limit), count];
 }
 
 async function reserveFileBytes(actor: ScratchActor, size: number) {
@@ -310,7 +428,7 @@ async function removeFile(actor: ScratchActor, _id: ObjectId) {
 }
 
 export async function createWork(actor: ScratchActor, title: string, assignmentId: ObjectId = null, reuseTitle = true) {
-    const assignment = assignmentId ? await getAssignment(actor, assignmentId) : null;
+    const assignment = assignmentId ? await requireActiveAssignment(actor, assignmentId) : null;
     if (assignment?.projectRequired === false) throw new ValidationError('assignmentId', null, '这份作业只需要完成客观题');
     const cleanTitle = cleanText(title, 'title', 120, assignment?.title || '我的 Scratch 作品');
     if (assignment) {
@@ -331,7 +449,7 @@ export async function createWork(actor: ScratchActor, title: string, assignmentI
         assignmentId, currentFileId: null, revision: 0,
     };
     try {
-        await works.insertOne(doc);
+        await withAssignmentMutation(actor, assignmentId, () => works.insertOne(doc));
     } catch (error) {
         if (error.code === 11000 && assignmentId) return works.findOne({ domainId: actor.domainId, owner: actor.uid, assignmentId });
         throw error;
@@ -340,6 +458,7 @@ export async function createWork(actor: ScratchActor, title: string, assignmentI
 }
 export async function createWorkFromMaterial(actor: ScratchActor, materialId: ObjectId, title?: string) {
     const material = await getMaterial(actor, materialId);
+    if (material.assignmentId) await requireActiveAssignment(actor, material.assignmentId);
     const source = await getFile(actor, material.fileId);
     if (source.mime !== 'application/x.scratch.sb3') throw new ValidationError('materialId', null, '只有 SB3 素材可以直接创建作品。');
     const workTitle = cleanText(title || material.title, 'title', 120);
@@ -357,7 +476,9 @@ export async function createWorkFromMaterial(actor: ScratchActor, materialId: Ob
         await storage.copy(source.path, file.path);
         await files.insertOne(file);
         await versions.insertOne({ ...base(actor), workId: work._id, fileId: file._id, revision: 1 });
-        await works.updateOne({ domainId: actor.domainId, _id: work._id }, { $set: { currentFileId: file._id, revision: 1 } });
+        await withAssignmentMutation(actor, material.assignmentId, () => works.updateOne({ domainId: actor.domainId, _id: work._id }, {
+            $set: { currentFileId: file._id, revision: 1,  },
+        }));
         await mirrorFile(file);
         return getWork(actor, work._id);
     } catch (error) {
@@ -370,10 +491,10 @@ export async function createWorkFromMaterial(actor: ScratchActor, materialId: Ob
     }
 }
 export async function renameWork(actor: ScratchActor, _id: ObjectId, title: string) {
-    await getWork(actor, _id);
-    await works.updateOne({ domainId: actor.domainId, _id }, {
+    const work = await getWork(actor, _id);
+    await withAssignmentMutation(actor, workAssignmentId(work), () => works.updateOne({ domainId: actor.domainId, _id }, {
         $set: { title: cleanText(title, 'title', 120), updatedAt: new Date() },
-    });
+    }));
 }
 
 async function copyWorkFile(actor: ScratchActor, workId: ObjectId, sourceId: ObjectId, thumbnail = false) {
@@ -399,7 +520,8 @@ async function copyWorkFile(actor: ScratchActor, workId: ObjectId, sourceId: Obj
 
 export async function copyWork(actor: ScratchActor, sourceId: ObjectId) {
     const source = await getWork(actor, sourceId);
-    const assignment = source.assignmentId ? await getAssignment(actor, source.assignmentId) : null;
+    const sourceAssignmentId = workAssignmentId(source);
+    const assignment = sourceAssignmentId ? await requireActiveAssignment(actor, sourceAssignmentId) : null;
     const sourceFileId = source.currentFileId || assignment?.templateFileId;
     if (await works.countDocuments({ domainId: actor.domainId, owner: actor.uid }) >= 200) {
         throw new ValidationError('title', null, '每人最多保留 200 个作品。');
@@ -411,6 +533,7 @@ export async function copyWork(actor: ScratchActor, sourceId: ObjectId) {
     }
     const work: ScratchWork = {
         ...base(actor), title, assignmentId: null, currentFileId: null, revision: 0,
+
     };
     let project: ScratchFile;
     let thumbnail: ScratchFile;
@@ -425,7 +548,7 @@ export async function copyWork(actor: ScratchActor, sourceId: ObjectId) {
             thumbnail = await copyWorkFile(actor, work._id, source.thumbnailFileId, true);
             work.thumbnailFileId = thumbnail._id;
         }
-        await works.insertOne(work);
+        await withAssignmentMutation(actor, sourceAssignmentId, () => works.insertOne(work));
         return work;
     } catch (error) {
         await versions.deleteMany({ domainId: actor.domainId, workId: work._id });
@@ -442,6 +565,8 @@ export interface AssignmentInput {
     projectRequired?: boolean;
     objectivePaperIds?: number[];
     projectProblemId?: string | ObjectId | null;
+    audience?: 'all' | 'selected';
+    recipientIds?: number[] | string;
     kind?: 'problem';
     tags?: string[];
     hidden?: boolean;
@@ -472,7 +597,7 @@ export async function writeAssignment(
     actor: ScratchActor, input: AssignmentInput, _id?: ObjectId, template?: { filepath: string, originalFilename?: string },
 ) {
     requireTeacher(actor);
-    const current = _id ? await getAssignment(actor, _id) : null;
+    const current = _id ? await requireActiveAssignment(actor, _id) : null;
     if (current?.problemPaperId) throw new ValidationError('assignmentId', null, '题卷快照不能修改，请在客观题工作台编辑原题卷');
     const projectRequired = input.projectRequired ?? current?.projectRequired ?? true;
     let sourceProblemId: ObjectId = current?.sourceProblemId || null;
@@ -491,7 +616,10 @@ export async function writeAssignment(
     // Unchanged selections deliberately do not read their source. A teacher may
     // hide, replace or remove a bank problem without breaking an existing copy.
     const source = sourceProblemId && changedSource ? await getProjectProblem(actor, sourceProblemId) : null;
+    const audience = input.kind === 'problem' || current?.kind === 'problem' ? null : await assignmentAudience(input, current);
+    if (audience) await validateRecipients(actor, audience.recipientIds);
     const fields = {
+        ...(audience || {}),
         title: cleanText(input.title, 'title', 120, source?.title || ''),
         description: `${input.description ?? source?.description ?? ''}`.trim(), deadline: input.deadline,
         projectRequired,
@@ -514,13 +642,14 @@ export async function writeAssignment(
         const templateFileId = file?._id || (changedSource ? null : current?.templateFileId || null);
         if (current) {
             const changedQuiz = objectiveQuiz?.revision !== current.objectiveQuiz?.revision;
-            const updated = await assignments.updateOne({
+            const updated = await withAssignmentMutation(actor, _id, () => assignments.updateOne({
                 domainId: actor.domainId, _id, 'objectiveQuiz.revision': current.objectiveQuiz?.revision ?? { $exists: false },
-                sourceProblemId: current.sourceProblemId || null, templateFileId: current.templateFileId,
+                sourceProblemId: current.sourceProblemId || null, templateFileId: current.templateFileId, updatedAt: current.updatedAt,
+                audience: current.audience || null, recipientIds: current.recipientIds || null,
                 ...(changedQuiz ? { objectiveStarted: { $ne: true } } : {}),
             }, {
                 $set: { ...fields, objectiveQuiz, updatedAt: new Date(), templateFileId },
-            });
+            }));
             if (!updated.matchedCount) throw new ValidationError('objectivePaperIds', null, '作业已被更新或有学员开始答题，请刷新后重新保存');
         } else await assignments.insertOne({ ...doc, objectiveQuiz, templateFileId });
     } catch (error) {
@@ -562,7 +691,8 @@ export async function writeMaterial(
     requireTeacher(actor);
     const current = _id ? await getMaterial(actor, _id) : null;
     if (!current && !upload) throw new ValidationError('file');
-    if (input.assignmentId) await getAssignment(actor, input.assignmentId);
+    if (current?.assignmentId) await requireActiveAssignment(actor, current.assignmentId);
+    if (input.assignmentId) await requireActiveAssignment(actor, input.assignmentId);
     const fields = {
         title: cleanText(input.title, 'title', 120, upload?.originalFilename || current?.title || '学习素材'),
         category: cleanText(input.category, 'category', 40, '未分类'),
@@ -575,8 +705,11 @@ export async function writeMaterial(
     const file = upload ? await putFile(actor, upload, { materialId: doc._id }, false) : null;
     const update = { ...fields, ...(file ? { fileId: file._id, fileName: file.filename, size: file.size } : {}), updatedAt: new Date() };
     try {
-        if (current) await materials.updateOne({ domainId: actor.domainId, _id }, { $set: update });
-        else await materials.insertOne({ ...doc, ...update });
+        await withAssignmentMutation(actor, input.assignmentId || current?.assignmentId || null, async () => {
+            if (current?.assignmentId && !current.assignmentId.equals(input.assignmentId)) await requireActiveAssignment(actor, current.assignmentId);
+            if (current) await materials.updateOne({ domainId: actor.domainId, _id }, { $set: update });
+            else await materials.insertOne({ ...doc, ...update });
+        });
     } catch (error) {
         if (file) await removeFile(actor, file._id);
         throw error;
@@ -587,7 +720,7 @@ export async function writeMaterial(
 export async function deleteMaterial(actor: ScratchActor, _id: ObjectId) {
     requireTeacher(actor);
     const doc = await getMaterial(actor, _id);
-    await materials.deleteOne({ domainId: actor.domainId, _id });
+    await withAssignmentMutation(actor, doc.assignmentId, () => materials.deleteOne({ domainId: actor.domainId, _id }));
     await removeFile(actor, doc.fileId);
 }
 
@@ -649,6 +782,7 @@ async function pruneVersions(actor: ScratchActor, workId: ObjectId, currentRevis
 // revision check stops stale browser saves from silently overwriting newer work.
 async function lockWork(actor: ScratchActor, workId: ObjectId, revision: number, teacherWrite = false) {
     const work = await getWork(actor, workId, !teacherWrite);
+    if (workAssignmentId(work)) await requireActiveAssignment(actor, workAssignmentId(work));
     if (teacherWrite && (!actor.isTeacher || work.owner === actor.uid)) throw new PermissionError('Scratch 代学员保存');
     if (!Number.isSafeInteger(revision) || revision < 0) throw new ValidationError('revision');
     const token = new ObjectId();
@@ -703,15 +837,13 @@ export async function saveWork(
         if (submission) submission.fileId = file._id;
         await versions.insertOne(version);
         if (submission) await submissions.insertOne(submission);
-        // Re-check the deadline after uploading/validation as well.
-        if (submit) {
-            const latest = await getAssignment(actor, assignment._id);
-            if (latest.deadline && latest.deadline.getTime() < Date.now()) throw new ValidationError('submit', null, '作业已截止。');
-        }
-        const result = await works.updateOne({ domainId: actor.domainId, _id: workId, savingToken: token, revision }, {
-            $set: { currentFileId: file._id, revision: revision + 1, title: cleanTitle, updatedAt: new Date(),
-                ...(thumbnail ? { thumbnailFileId: thumbnail._id } : {}) },
-            ...(!thumbnail ? { $unset: { thumbnailFileId: '' } } : {}),
+        const result = await withAssignmentMutation(actor, workAssignmentId(work), async (latest) => {
+            if (submit && latest?.deadline && latest.deadline.getTime() < Date.now()) throw new ValidationError('submit', null, '作业已截止。');
+            return works.updateOne({ domainId: actor.domainId, _id: workId, savingToken: token, revision }, {
+                $set: { currentFileId: file._id, revision: revision + 1, title: cleanTitle, updatedAt: new Date(),
+                    ...(thumbnail ? { thumbnailFileId: thumbnail._id } : {}) },
+                ...(!thumbnail ? { $unset: { thumbnailFileId: '' } } : {}),
+            });
         });
         if (!result.matchedCount) throw new ValidationError('revision', null, '保存状态发生变化，请刷新重试。');
         published = true;
@@ -751,9 +883,9 @@ export async function cacheWorkThumbnail(actor: ScratchActor, workId: ObjectId, 
         if (doc.assignmentId && !doc.currentFileId) throw new ValidationError('thumbnail', null, '请先保存作业作品。');
         if (doc.thumbnailFileId) return doc.thumbnailFileId;
         thumbnail = await putThumbnail(actor, workId, buffer);
-        const result = await works.updateOne({ domainId: actor.domainId, _id: workId, savingToken: token, revision }, {
+        const result = await withAssignmentMutation(actor, workAssignmentId(doc), () => works.updateOne({ domainId: actor.domainId, _id: workId, savingToken: token, revision }, {
             $set: { thumbnailFileId: thumbnail._id },
-        });
+        }));
         if (!result.matchedCount) throw new ValidationError('revision');
         published = true;
         return thumbnail._id;
@@ -764,12 +896,52 @@ export async function cacheWorkThumbnail(actor: ScratchActor, workId: ObjectId, 
 }
 export async function reviewSubmission(actor: ScratchActor, submissionId: ObjectId, grade: string | null, feedback: string) {
     requireTeacher(actor);
-    await getSubmission(actor, submissionId);
+    const submission = await getSubmission(actor, submissionId);
     if (grade !== null && (typeof grade !== 'string' || grade.length > 40)) throw new ValidationError('grade');
     if (feedback.length > 20000) throw new ValidationError('feedback');
-    await submissions.updateOne({ domainId: actor.domainId, _id: submissionId }, {
+    await withAssignmentMutation(actor, submission.assignmentId, () => submissions.updateOne({ domainId: actor.domainId, _id: submissionId }, {
         $set: { grade, feedback: feedback.trim(), reviewer: actor.uid, reviewedAt: new Date(), updatedAt: new Date() },
-    });
+    }));
+}
+
+async function requirePublicWork(actor: ScratchActor, work: ScratchWork) {
+    if (!work) throw new NotFoundError('Scratch 作品');
+    if (!workAssignmentId(work)) return;
+    const assignment = await assignments.findOne({ _id: workAssignmentId(work), ...assignmentAccessFilter(actor, true, true) });
+    if (!assignment || assignment.hidden) throw new PermissionError('指定学员或已删除的作业不能公开分享');
+}
+function communityVisibilityStages(actor: ScratchActor) {
+    return [
+        { $lookup: { from: works.collectionName, localField: 'snapshotWorkId', foreignField: '_id', as: '_sourceWork' } },
+        { $lookup: { from: works.collectionName, localField: 'workId', foreignField: '_id', as: '_currentWork' } },
+        { $match: { '_currentWork.0': { $exists: true } } },
+        { $set: { _sourceAssignmentId: { $cond: [
+            { $ne: [{ $type: '$sourceAssignmentId' }, 'missing'] }, '$sourceAssignmentId',
+            { $cond: [{ $gt: [{ $size: '$_sourceWork' }, 0] },
+                { $ifNull: [{ $first: '$_sourceWork.assignmentId' }, { $first: '$_sourceWork.sourceAssignmentId' }, null] },
+                { $ifNull: [{ $first: '$_currentWork.assignmentId' }, { $first: '$_currentWork.sourceAssignmentId' }, null] }] },
+        ] } } },
+        { $lookup: { from: assignments.collectionName, let: { id: '$_sourceAssignmentId' }, pipeline: [
+            { $match: { ...assignmentAccessFilter(actor, true), $expr: { $eq: ['$_id', '$$id'] } } }, { $project: { _id: 1 } },
+        ], as: '_sourceAssignment' } },
+        { $match: { $or: [{ _sourceAssignmentId: null }, { '_sourceAssignment.0': { $exists: true } }] } },
+        { $unset: ['_sourceWork', '_currentWork', '_sourceAssignment', '_sourceAssignmentId'] },
+    ];
+}
+async function communityAssignmentId(actor: ScratchActor, doc: ScratchCommunityWork) {
+    if (Object.hasOwn(doc, 'sourceAssignmentId')) return doc.sourceAssignmentId;
+    const source = await works.findOne({ domainId: actor.domainId, _id: doc.snapshotWorkId })
+        || await works.findOne({ domainId: actor.domainId, _id: doc.workId });
+    if (!source) throw new NotFoundError('社区作品');
+    return workAssignmentId(source);
+}
+async function requireCommunityScope(actor: ScratchActor, doc: ScratchCommunityWork) {
+    const id = await communityAssignmentId(actor, doc);
+    if (id) await getAssignment(actor, id);
+}
+async function withCommunityMutation<T>(actor: ScratchActor, id: ObjectId, action: () => Promise<T>) {
+    const publication = await getCommunityWork(actor, id);
+    return withAssignmentMutation(actor, await communityAssignmentId(actor, publication), action);
 }
 
 // Authorize the real caller first. Teachers may share a student's saved work,
@@ -782,6 +954,7 @@ async function lockSharedWork(actor: ScratchActor, workId: ObjectId) {
 export async function shareWork(actor: ScratchActor, workId: ObjectId) {
     const { doc, token } = await lockSharedWork(actor, workId);
     try {
+        await requirePublicWork(actor, doc);
         if (!doc.currentFileId || doc.revision < 1) throw new ValidationError('workId', null, '请先保存作品，再分享给朋友。');
         const existing = await shares.findOne({ domainId: actor.domainId, workId, revision: doc.revision });
         if (existing) return existing;
@@ -789,7 +962,10 @@ export async function shareWork(actor: ScratchActor, workId: ObjectId) {
             _id: randomBytes(32).toString('hex'), domainId: actor.domainId, workId, fileId: doc.currentFileId,
             revision: doc.revision, title: doc.title, createdAt: new Date(),
         };
-        await shares.insertOne(share);
+        await withAssignmentMutation(actor, workAssignmentId(doc), async () => {
+            await requirePublicWork(actor, doc);
+            await shares.insertOne(share);
+        });
         return share;
     } finally {
         await works.updateOne({ domainId: actor.domainId, _id: workId, savingToken: token }, { $unset: { savingToken: '', savingUntil: '' } });
@@ -814,14 +990,16 @@ function communityTitleKey(title: string) {
 export function listCommunityWorks(actor: ScratchActor, query = '', mine = false) {
     const q = cleanText(query, 'q', 80, ' ').trim();
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return community.find({ domainId: actor.domainId, ...(mine ? { owner: actor.uid } : {}),
-        ...(q ? { title: { $regex: escaped, $options: 'i' } } : {}),
-    }).sort({ updatedAt: -1, _id: -1 });
+    return community.aggregate<ScratchCommunityWork>([ { $match: { domainId: actor.domainId, ...(mine ? { owner: actor.uid } : {}),
+        ...(q ? { title: { $regex: escaped, $options: 'i' } } : {}) } },
+        ...communityVisibilityStages(actor), { $sort: { updatedAt: -1, _id: -1 } },
+    ]);
 }
 
 export async function getCommunityWork(actor: ScratchActor, _id: ObjectId) {
     const doc = await community.findOne({ domainId: actor.domainId, _id });
     if (!doc) throw new NotFoundError('社区作品');
+    await requireCommunityScope(actor, doc);
     return doc;
 }
 
@@ -835,7 +1013,10 @@ export async function getCommunityState(actor: ScratchActor, id: ObjectId) {
     return stateResponse(publication, state);
 }
 
-export async function syncCommunityState(actor: ScratchActor, id: ObjectId, input: {
+export async function syncCommunityState(...args: Parameters<typeof syncCommunityStateImpl>) {
+    return withCommunityMutation(args[0], args[1], () => syncCommunityStateImpl(...args));
+}
+async function syncCommunityStateImpl(actor: ScratchActor, id: ObjectId, input: {
     requestId: unknown, clientId: unknown, seq: unknown, fileId: unknown, baseRevision: unknown, changes: unknown,
 }) {
     const requestId = metricRequestId(input.requestId);
@@ -949,11 +1130,11 @@ export async function pageCommunityWorks(actor: ScratchActor, query = '', mine =
         { $match: { '_myFavorite.0': { $exists: true } } },
         { $unset: '_myFavorite' },
     ] : [];
-    const count = favorites ? (await community.aggregate([
-        { $match: match }, ...favoriteFilter, { $count: 'count' },
-    ]).next())?.count || 0 : await community.countDocuments(match);
+    const count = (await community.aggregate([
+        { $match: match }, ...communityVisibilityStages(actor), ...favoriteFilter, { $count: 'count' },
+    ]).next())?.count || 0;
     const docs = await community.aggregate<ScratchCommunityWork & { likes: number, favorites: number, favorited: boolean, favoriteRevision: number, runtimeSeconds: number }>([
-        { $match: match }, ...favoriteFilter, ...communityMetricStages(actor.uid),
+        { $match: match }, ...communityVisibilityStages(actor), ...favoriteFilter, ...communityMetricStages(actor.uid),
         { $set: { hotScore: { $divide: [
             { $add: [{ $multiply: [15, '$favorites'] }, { $multiply: [5, '$likes'] },
                 { $multiply: [2, { $sqrt: { $divide: ['$runtimeSeconds', 60] } }] }] },
@@ -988,6 +1169,7 @@ function studentLikeId(actor: ScratchActor, id: ObjectId, now = new Date()) {
     return `${actor.domainId}:${id}:${actor.uid}:day:${communityDay(now)}`;
 }
 async function communityTotals(actor: ScratchActor, id: ObjectId) {
+    await getCommunityWork(actor, id);
     const doc = await community.aggregate([{ $match: { _id: id, domainId: actor.domainId } }, ...communityMetricStages(actor.uid)]).next();
     if (!doc) throw new NotFoundError('社区作品');
     return doc;
@@ -1006,7 +1188,10 @@ async function insertCommunityEvent(event: ScratchCommunityEvent) {
         if (error.code !== 11000) throw error;
     }
 }
-export async function likeCommunityWork(actor: ScratchActor, id: ObjectId, requestId: unknown) {
+export async function likeCommunityWork(...args: Parameters<typeof likeCommunityWorkImpl>) {
+    return withCommunityMutation(args[0], args[1], () => likeCommunityWorkImpl(...args));
+}
+async function likeCommunityWorkImpl(actor: ScratchActor, id: ObjectId, requestId: unknown) {
     await getCommunityWork(actor, id);
     const key = metricRequestId(requestId);
     await insertCommunityEvent({ _id: actor.isTeacher ? `${actor.domainId}:${id}:${actor.uid}:like:${key}` : studentLikeId(actor, id),
@@ -1014,7 +1199,10 @@ export async function likeCommunityWork(actor: ScratchActor, id: ObjectId, reque
         likes: 1, manualRuntimeSeconds: 0, createdAt: new Date() });
     return getCommunityMetrics(actor, id);
 }
-export async function favoriteCommunityWork(actor: ScratchActor, id: ObjectId, favorited: unknown, requestId: unknown, revision: unknown) {
+export async function favoriteCommunityWork(...args: Parameters<typeof favoriteCommunityWorkImpl>) {
+    return withCommunityMutation(args[0], args[1], () => favoriteCommunityWorkImpl(...args));
+}
+async function favoriteCommunityWorkImpl(actor: ScratchActor, id: ObjectId, favorited: unknown, requestId: unknown, revision: unknown) {
     if (![true, false, 'true', 'false'].includes(favorited as boolean | string)) throw new ValidationError('favorited');
     metricRequestId(requestId);
     const expectedRevision = metricInteger(revision, 'favoriteRevision', Number.MAX_SAFE_INTEGER - 1);
@@ -1046,7 +1234,10 @@ export async function favoriteCommunityWork(actor: ScratchActor, id: ObjectId, f
         throw error;
     }
 }
-export async function adjustCommunityMetrics(actor: ScratchActor, id: ObjectId, requestId: unknown, likes: unknown, seconds: unknown, favorites: unknown = 0) {
+export async function adjustCommunityMetrics(...args: Parameters<typeof adjustCommunityMetricsImpl>) {
+    return withCommunityMutation(args[0], args[1], () => adjustCommunityMetricsImpl(...args));
+}
+async function adjustCommunityMetricsImpl(actor: ScratchActor, id: ObjectId, requestId: unknown, likes: unknown, seconds: unknown, favorites: unknown = 0) {
     requireTeacher(actor);
     await getCommunityWork(actor, id);
     const key = metricRequestId(requestId);
@@ -1087,7 +1278,10 @@ export async function getCommunityAnalytics(actor: ScratchActor, id: ObjectId) {
         studentLikes: totals.studentLikes, teacherLikes: totals.teacherLikes,
         participants: [...participants.values()].sort((a, b) => b.runtimeSeconds - a.runtimeSeconds || b.likes - a.likes || a.uid - b.uid) };
 }
-export async function startCommunityRuntime(actor: ScratchActor, id: ObjectId, requestId: unknown) {
+export async function startCommunityRuntime(...args: Parameters<typeof startCommunityRuntimeImpl>) {
+    return withCommunityMutation(args[0], args[1], () => startCommunityRuntimeImpl(...args));
+}
+async function startCommunityRuntimeImpl(actor: ScratchActor, id: ObjectId, requestId: unknown) {
     await getCommunityWork(actor, id);
     const key = metricRequestId(requestId);
     const _id = `${actor.domainId}:${id}:${actor.uid}`;
@@ -1113,7 +1307,10 @@ export async function startCommunityRuntime(actor: ScratchActor, id: ObjectId, r
     }
     return { ...await getCommunityMetrics(actor, id), sessionId: session.sessionId };
 }
-export async function heartbeatCommunityRuntime(actor: ScratchActor, id: ObjectId, token: unknown, sequence: unknown, seconds: unknown) {
+export async function heartbeatCommunityRuntime(...args: Parameters<typeof heartbeatCommunityRuntimeImpl>) {
+    return withCommunityMutation(args[0], args[1], () => heartbeatCommunityRuntimeImpl(...args));
+}
+async function heartbeatCommunityRuntimeImpl(actor: ScratchActor, id: ObjectId, token: unknown, sequence: unknown, seconds: unknown) {
     await getCommunityWork(actor, id);
     if (typeof token !== 'string' || !/^[a-f0-9]{48}$/.test(token)) throw new ValidationError('sessionId');
     const seq = metricInteger(sequence, 'seq', Number.MAX_SAFE_INTEGER);
@@ -1138,6 +1335,7 @@ export async function heartbeatCommunityRuntime(actor: ScratchActor, id: ObjectI
 export async function getWorkCommunityPublication(actor: ScratchActor, workId: ObjectId) {
     const work = await getWork(actor, workId);
     const publication = await community.findOne({ domainId: actor.domainId, owner: work.owner, titleKey: communityTitleKey(work.title) });
+    if (publication) await requireCommunityScope(actor, publication);
     return { work, publication };
 }
 
@@ -1166,15 +1364,23 @@ export async function publishCommunityWork(actor: ScratchActor, workId: ObjectId
         const identity = { domainId: actor.domainId, owner: doc.owner, titleKey: communityTitleKey(doc.title) };
         const now = new Date();
         const initial = { _id: new ObjectId(), ...identity, createdAt: now };
-        const fields = { title: doc.title, instructions: instructions.trim(), workId, snapshotWorkId: workId,
+        const fields = { title: doc.title, instructions: instructions.trim(), workId, snapshotWorkId: workId, sourceAssignmentId: workAssignmentId(doc),
             fileId: doc.currentFileId, thumbnailFileId: doc.thumbnailFileId || null, revision: doc.revision, updatedAt: now };
         let previous: ScratchCommunityWork = null;
         // Distinct source works can have the same title. Their work leases are
         // separate, so the unique identity and atomic upsert are both required.
         for (let attempt = 0; ; attempt++) {
             try {
-                previous = await community.findOneAndUpdate(identity, { $set: fields, $setOnInsert: initial },
-                    { upsert: true, returnDocument: 'before' });
+                const existing = await community.findOne(identity);
+                const oldAssignmentId = existing ? await communityAssignmentId(actor, existing) : null;
+                if (existing) await requireCommunityScope(actor, existing);
+                const publish = () => community.findOneAndUpdate({ ...identity, _id: existing?._id || initial._id,
+                    ...(existing ? { updatedAt: existing.updatedAt } : {}) }, { $set: fields, $setOnInsert: initial },
+                { upsert: true, returnDocument: 'before' });
+                previous = await withAssignmentMutation(actor, workAssignmentId(doc), () => (
+                    oldAssignmentId && !oldAssignmentId.equals(workAssignmentId(doc))
+                        ? withAssignmentMutation(actor, oldAssignmentId, publish) : publish()
+                ));
                 break;
             } catch (error) {
                 if (error.code !== 11000 || attempt >= 2) throw error;
@@ -1188,7 +1394,10 @@ export async function publishCommunityWork(actor: ScratchActor, workId: ObjectId
     }
 }
 
-export async function unpublishCommunityWork(actor: ScratchActor, _id: ObjectId) {
+export async function unpublishCommunityWork(...args: Parameters<typeof unpublishCommunityWorkImpl>) {
+    return withCommunityMutation(args[0], args[1], () => unpublishCommunityWorkImpl(...args));
+}
+async function unpublishCommunityWorkImpl(actor: ScratchActor, _id: ObjectId) {
     const doc = await getCommunityWork(actor, _id);
     requireOwner(actor, doc);
     // Only the community entry is removed. Drafts, submissions and external
@@ -1203,7 +1412,8 @@ export async function unpublishCommunityWork(actor: ScratchActor, _id: ObjectId)
 export async function getPublicShare(domainId: string, token: unknown) {
     if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) throw new NotFoundError('分享作品');
     const share = await shares.findOne({ domainId, _id: token });
-    if (!share || !await works.findOne({ domainId, _id: share.workId })) throw new NotFoundError('分享作品');
+    if (!share) throw new NotFoundError('分享作品');
+    await requirePublicWork({ domainId, uid: 0, isTeacher: false }, await works.findOne({ domainId, _id: share.workId }));
     const file = await files.findOne({ domainId, _id: share.fileId, workId: share.workId, mime: 'application/x.scratch.sb3' });
     if (!file) throw new NotFoundError('分享作品');
     return { share, file };
@@ -1219,13 +1429,22 @@ export async function deleteWork(actor: ScratchActor, workId: ObjectId, mergeInt
     }
     const { token } = await lockWork(actor, workId, work.revision, actor.isTeacher && work.owner !== actor.uid);
     try {
-        if (mergeIntoWorkId) {
-            // Same-title draft consolidation keeps the published snapshot exactly
-            // as it was; only its future editing destination moves to the survivor.
-            await community.updateMany({ domainId: actor.domainId, workId }, { $set: { workId: mergeIntoWorkId } });
-        }
         const docs = await files.find({ domainId: actor.domainId, workId }).toArray();
-        const removed = await works.deleteOne({ domainId: actor.domainId, _id: workId, savingToken: token });
+        const removed = await withAssignmentMutation(actor, workAssignmentId(work), async () => {
+            if (mergeIntoWorkId) {
+                // Preserve the published snapshot's original scope across repeated
+                // merges; the replacement editing destination is not its source.
+                const publications = await community.find({ domainId: actor.domainId, workId }).toArray();
+                for (const publication of publications) {
+                    const sourceAssignmentId = await communityAssignmentId(actor, publication);
+                    if (sourceAssignmentId && !sourceAssignmentId.equals(workAssignmentId(work))) await requireActiveAssignment(actor, sourceAssignmentId);
+                    await community.updateOne({ domainId: actor.domainId, _id: publication._id, workId }, {
+                        $set: { workId: mergeIntoWorkId, sourceAssignmentId },
+                    });
+                }
+            }
+            return works.deleteOne({ domainId: actor.domainId, _id: workId, savingToken: token });
+        });
         if (!removed.deletedCount) throw new ValidationError('workId', null, '作品正在被其他窗口修改，请刷新后重试。');
         await versions.deleteMany({ domainId: actor.domainId, workId });
         await submissions.deleteMany({ domainId: actor.domainId, workId });

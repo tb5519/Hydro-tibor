@@ -115,6 +115,12 @@ function publicProjectHandler(token, domainId = alice.domainId) {
     });
     return handler;
 }
+async function insertPublicationSources(docs, target = model) {
+    await target.works.insertMany(docs.flatMap((doc) => [...new Set([`${doc.snapshotWorkId}`, `${doc.workId}`])].map((id) => ({
+        _id: new ObjectId(id), domainId: doc.domainId, owner: doc.owner, title: doc.title, assignmentId: null,
+        currentFileId: doc.fileId, revision: doc.revision, createdAt: doc.createdAt, updatedAt: doc.updatedAt,
+    }))));
+}
 before(async () => {
     temp = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-backend-test-'));
     mongod = await MongoMemoryServer.create();
@@ -169,6 +175,256 @@ after(async () => {
     await client?.close();
     await mongod?.stop();
     if (temp) fs.rmSync(temp, { recursive: true, force: true });
+});
+
+describe('Scratch assignment audience and recoverable deletion', () => {
+    const accessError = (error) => error instanceof PermissionError || error instanceof NotFoundError;
+    async function classroom(suffix) {
+        const domainId = `assignment-access-${suffix}`;
+        const actors = { teacher: { ...teacher, domainId }, alice: { ...alice, domainId }, bob: { ...bob, domainId } };
+        await database.collection('domain.user').insertMany([alice, bob].map(({ uid }) => ({ domainId, uid, join: true })));
+        return actors;
+    }
+    const assignmentInput = (extra = {}) => ({ title: '课堂创作', description: '完成动画', deadline: null, ...extra });
+    async function populated(actors) {
+        const assignment = await model.writeAssignment(actors.teacher, assignmentInput(), null, upload(project('starter')));
+        const work = await model.createWork(actors.alice, '课堂创作', assignment._id);
+        const saved = await model.saveWork(actors.alice, work._id, 0, upload(project('student')), true, undefined, thumbnailData().data);
+        const material = await model.writeMaterial(actors.teacher, {
+            title: '课堂素材', category: '练习', recipientIds: [], assignmentId: assignment._id,
+        }, upload(project('material')));
+        return { assignment, work: saved.work, submission: saved.submission, material };
+    }
+    async function rejectsEach(actions, matcher = accessError) {
+        for (const [label, action] of Object.entries(actions)) await assert.rejects(action, matcher, label);
+    }
+
+    it('revokes assignment, owned work, submission, thumbnail and material paths together when its audience shrinks', async () => {
+        const actors = await classroom('shrink');
+        const { assignment, work, submission, material } = await populated(actors);
+        const independentCopy = await model.copyWork(actors.alice, work._id);
+        await model.writeAssignment(actors.teacher, assignmentInput({ audience: 'selected', recipientIds: [bob.uid] }), assignment._id);
+        await rejectsEach({
+            assignment: () => model.getAssignment(actors.alice, assignment._id),
+            ownedWork: () => model.getWork(actors.alice, work._id),
+            submission: () => model.getSubmission(actors.alice, submission._id),
+            material: () => model.getMaterial(actors.alice, material._id),
+            starter: () => model.getFile(actors.alice, assignment.templateFileId),
+            savedProject: () => model.getFile(actors.alice, submission.fileId),
+            thumbnail: () => model.getFile(actors.alice, work.thumbnailFileId),
+            materialFile: () => model.getFile(actors.alice, material.fileId),
+            create: () => model.createWork(actors.alice, '伪造创建', assignment._id),
+            save: () => model.saveWork(actors.alice, work._id, work.revision, upload()),
+            rename: () => model.renameWork(actors.alice, work._id, '伪造改名'),
+            copy: () => model.copyWork(actors.alice, work._id),
+            materialCopy: () => model.createWorkFromMaterial(actors.alice, material._id),
+            thumbnailWrite: () => model.cacheWorkThumbnail(actors.alice, work._id, work.revision, thumbnailData().data),
+            deleteWork: () => model.deleteWork(actors.alice, work._id),
+            directFileHandler: () => fileHandler(actors.alice, submission.fileId).get(),
+            thumbnailHandler: () => thumbnailHandler(actors.alice, work._id).get(),
+            foreignAssignment: () => model.getAssignment(foreign, assignment._id),
+        });
+        for (const [label, cursor, id] of [
+            ['assignments', model.listAssignments(actors.alice), assignment._id],
+            ['works', model.listWorks(actors.alice), work._id],
+            ['submissions', model.listSubmissions(actors.alice), submission._id],
+            ['materials', model.listMaterials(actors.alice), material._id],
+        ]) assert(!(await cursor.toArray()).some((doc) => doc._id.equals(id)), label);
+        assert((await model.getWork(actors.alice, independentCopy._id)).currentFileId, 'an already copied free creation remains independent');
+        assert((await model.getAssignment(actors.bob, assignment._id))._id.equals(assignment._id));
+        assert((await model.getSubmission(actors.teacher, submission._id))._id.equals(submission._id));
+        assert.equal(redirectCalls.length, 0, 'authorization must fail before signing CDN URLs');
+        await model.works.updateOne({ _id: work._id }, { $set: { updatedAt: new Date(Date.now() + 86400000) } });
+        let home;
+        const handler = Object.assign(new handlers.ScratchMainHandler(), { actor: actors.alice,
+            renderScratch: async (_template, data) => { home = data; } });
+        await handler.get();
+        assert(home.continuationWork?._id.equals(independentCopy._id), 'home continuation skips a newer inaccessible assignment');
+    });
+
+    it('filters community counts and every sorting/favorites path before pagination and restores old links on public access', async () => {
+        const actors = await classroom('community');
+        const { assignment, work } = await populated(actors);
+        const { publication } = await model.publishCommunityWork(actors.alice, work._id);
+        const shared = await model.shareWork(actors.alice, work._id);
+        await model.community.updateOne({ _id: publication._id }, { $unset: { sourceAssignmentId: '' } });
+        await model.favoriteCommunityWork(actors.bob, publication._id, true, 'audience-favorite-0001', 0);
+        const runtime = await model.startCommunityRuntime(actors.bob, publication._id, 'audience-runtime-0001');
+        const free = await model.createWork(actors.alice, '独立作品');
+        await model.saveWork(actors.alice, free._id, 0, upload());
+        const { publication: visible } = await model.publishCommunityWork(actors.alice, free._id);
+        await model.favoriteCommunityWork(actors.bob, visible._id, true, 'audience-favorite-0002', 0);
+        await model.writeAssignment(actors.teacher, assignmentInput({ audience: 'selected', recipientIds: [alice.uid] }), assignment._id);
+        for (const favorites of [false, true]) for (const sort of [undefined, 'hot', 'latest', ...(favorites ? ['saved'] : [])]) {
+            const page = await model.pageCommunityWorks(actors.bob, '', false, sort, 1, 1, favorites);
+            assert.equal(page.count, 1, `${sort || 'default'} favorites=${favorites}: count excludes inaccessible publications`);
+            assert.equal(page.pcount, 1);
+            assert.equal(page.communityWorks.length, 1);
+            assert(page.communityWorks[0]._id.equals(visible._id));
+        }
+        assert(!(await model.listCommunityWorks(actors.bob).toArray()).some((doc) => doc._id.equals(publication._id)));
+        await rejectsEach({
+            detail: () => model.getCommunityWork(actors.bob, publication._id),
+            project: () => model.getCommunityFile(actors.bob, publication._id),
+            thumbnail: () => model.getCommunityFile(actors.bob, publication._id, true),
+            state: () => model.getCommunityState(actors.bob, publication._id),
+            metrics: () => model.getCommunityMetrics(actors.bob, publication._id),
+            likes: () => model.likeCommunityWork(actors.bob, publication._id, 'audience-denied-like'),
+            favorite: () => model.favoriteCommunityWork(actors.bob, publication._id, false, 'audience-denied-favorite', 1),
+            runtime: () => model.heartbeatCommunityRuntime(actors.bob, publication._id, runtime.sessionId, 1, 1),
+            anonymousShare: () => model.getPublicShare(actors.alice.domainId, shared._id),
+            publicShareHandler: () => publicProjectHandler(shared._id, actors.alice.domainId).prepare(),
+        });
+        await assert.rejects(model.shareWork(actors.alice, work._id), (error) => accessError(error) || error instanceof ValidationError);
+        assert((await model.getCommunityFile(actors.alice, publication._id))._id);
+        assert((await model.publishCommunityWork(actors.alice, work._id)).publication._id.equals(publication._id), 'selected classroom publication remains available to assigned members');
+        await model.writeAssignment(actors.teacher, assignmentInput({ audience: 'all', recipientIds: [] }), assignment._id);
+        assert((await model.getPublicShare(actors.alice.domainId, shared._id)).file._id);
+        assert((await model.getCommunityWork(actors.bob, publication._id))._id.equals(publication._id));
+        assert.equal((await model.getCommunityMetrics(actors.bob, publication._id)).favorited, true);
+    });
+
+    it('soft deletion retains learner data while teachers can only inspect it; restoration retains audience and original files', async () => {
+        const actors = await classroom('delete-restore');
+        const { assignment, work, submission, material } = await populated(actors);
+        const { publication } = await model.publishCommunityWork(actors.alice, work._id);
+        await model.reviewSubmission(actors.teacher, submission._id, '优秀', '继续加油');
+        await model.writeAssignment(actors.teacher, assignmentInput({ audience: 'selected', recipientIds: [alice.uid] }), assignment._id);
+        const beforeSubmission = await model.getSubmission(actors.teacher, submission._id);
+        const originalFiles = await model.files.find({ domainId: actors.teacher.domainId }).toArray();
+        const originalBytes = originalFiles.map((file) => [file.path, Buffer.from(blobs.get(file.path))]);
+        await assert.rejects(model.deleteAssignment(actors.alice, assignment._id), PermissionError);
+        await assert.rejects(model.deleteAssignment(foreign, assignment._id), NotFoundError);
+        await model.deleteAssignment(actors.teacher, assignment._id);
+        const deleted = await model.getAssignment(actors.teacher, assignment._id);
+        assert(deleted.deletedAt);
+        assert.equal(deleted.deletedBy, teacher.uid);
+        assert((await model.getSubmission(actors.teacher, submission._id))._id.equals(submission._id));
+        assert((await model.getFile(actors.teacher, submission.fileId))._id.equals(submission.fileId));
+        assert((await model.getCommunityFile(actors.teacher, publication._id))._id);
+        const studentLists = await Promise.all([model.listAssignments(actors.alice), model.listWorks(actors.alice),
+            model.listSubmissions(actors.alice), model.listMaterials(actors.alice), model.listCommunityWorks(actors.alice)].map((cursor) => cursor.toArray()));
+        assert(studentLists.every((docs) => docs.length === 0));
+        await rejectsEach({
+            studentRead: () => model.getAssignment(actors.alice, assignment._id),
+            studentWork: () => model.getWork(actors.alice, work._id),
+            studentCommunity: () => model.getCommunityWork(actors.alice, publication._id),
+            studentRestore: () => model.restoreAssignment(actors.alice, assignment._id),
+            teacherEdit: () => model.writeAssignment(actors.teacher, assignmentInput(), assignment._id),
+            teacherCreate: () => model.createWork(actors.teacher, '不可新建', assignment._id),
+            teacherSave: () => model.saveWork(actors.teacher, work._id, work.revision, upload(), false, undefined, undefined, true),
+            teacherRename: () => model.renameWork(actors.teacher, work._id, '不可改名'),
+            teacherCopy: () => model.copyWork(actors.teacher, work._id),
+            teacherThumbnail: () => model.cacheWorkThumbnail(actors.teacher, work._id, work.revision, thumbnailData().data),
+            teacherReview: () => model.reviewSubmission(actors.teacher, submission._id, '100', '不可改分'),
+            teacherMaterial: () => model.writeMaterial(actors.teacher, { title: '不可改素材', category: '', recipientIds: [], assignmentId: assignment._id }, undefined, material._id),
+            teacherMaterialDelete: () => model.deleteMaterial(actors.teacher, material._id),
+            teacherWorkDelete: () => model.deleteWork(actors.teacher, work._id),
+            teacherShare: () => model.shareWork(actors.teacher, work._id),
+            teacherPublish: () => model.publishCommunityWork(actors.teacher, work._id),
+            teacherUnpublish: () => model.unpublishCommunityWork(actors.teacher, publication._id),
+            teacherLike: () => model.likeCommunityWork(actors.teacher, publication._id, 'deleted-teacher-like'),
+            teacherAdjustMetrics: () => model.adjustCommunityMetrics(actors.teacher, publication._id, 'deleted-teacher-metric', 5, 5),
+        }, (error) => accessError(error) || error instanceof ValidationError);
+        assert.deepEqual(await model.getSubmission(actors.teacher, submission._id), beforeSubmission);
+        assert.equal(await model.files.countDocuments({ domainId: actors.teacher.domainId }), originalFiles.length);
+        for (const [key, bytes] of originalBytes) assert(blobs.get(key)?.equals(bytes), key);
+        await model.restoreAssignment(actors.teacher, assignment._id);
+        const restored = await model.getAssignment(actors.alice, assignment._id);
+        assert(!restored.deletedAt);
+        assert.equal(restored.audience, 'selected');
+        assert.deepEqual(Array.from(restored.recipientIds), [alice.uid]);
+        assert.deepEqual(await model.getSubmission(actors.alice, submission._id), beforeSubmission);
+        assert((await model.getWork(actors.alice, work._id)).currentFileId.equals(work.currentFileId));
+        assert((await model.getFile(actors.alice, material.fileId))._id.equals(material.fileId));
+        await assert.rejects(model.getAssignment(actors.bob, assignment._id), accessError);
+    });
+
+    it('keeps legacy assignments public without changing the problem bank or independent creations', async () => {
+        const actors = await classroom('legacy');
+        const legacy = await model.writeAssignment(actors.teacher, assignmentInput());
+        await model.assignments.updateOne({ _id: legacy._id }, { $unset: { audience: '', recipientIds: '' } });
+        assert((await model.getAssignment(actors.bob, legacy._id))._id.equals(legacy._id));
+        assert((await model.listAssignments(actors.bob).toArray()).some((doc) => doc._id.equals(legacy._id)));
+        const problem = await model.writeProblem(actors.teacher, { title: '题库创作', description: '题库要求' });
+        await assert.rejects(model.deleteAssignment(actors.teacher, problem._id), (error) => accessError(error) || error instanceof ValidationError);
+        assert((await model.getAssignment(actors.bob, problem._id))._id.equals(problem._id));
+        const free = await model.createWork(actors.alice, '自由创作');
+        await model.deleteAssignment(actors.teacher, legacy._id);
+        assert.equal((await model.saveWork(actors.alice, free._id, 0, upload())).work.revision, 1);
+    });
+
+    it('preserves the published assignment audience after two same-title editing-destination merges', async () => {
+        const actors = await classroom('double-merge');
+        const { assignment, work } = await populated(actors);
+        const { publication } = await model.publishCommunityWork(actors.alice, work._id);
+        await model.writeAssignment(actors.teacher, assignmentInput({ audience: 'selected', recipientIds: [alice.uid] }), assignment._id);
+        const second = await model.createWork(actors.alice, work.title, null, false);
+        await model.saveWork(actors.alice, second._id, 0, upload(project('second editing destination')));
+        await model.deleteWork(actors.alice, work._id, second._id);
+        const third = await model.createWork(actors.alice, work.title, null, false);
+        await model.saveWork(actors.alice, third._id, 0, upload(project('third editing destination')));
+        assert.equal(await model.works.findOne({ _id: work._id }), null);
+        assert.equal(await model.works.findOne({ _id: second._id }), null);
+        const retained = await model.community.findOne({ _id: publication._id });
+        assert(retained.workId.equals(third._id));
+        assert(retained.snapshotWorkId.equals(work._id));
+        assert(retained.sourceAssignmentId?.equals(assignment._id));
+        assert((await model.getCommunityFile(actors.alice, publication._id))._id.equals(publication.fileId));
+        for (const actor of [actors.bob, { ...actors.bob, uid: 0 }]) {
+            await assert.rejects(model.getCommunityWork(actor, publication._id), accessError);
+            await assert.rejects(model.getCommunityFile(actor, publication._id), accessError);
+            assert.equal((await model.pageCommunityWorks(actor)).count, 0);
+        }
+    });
+
+    it('does not expose or replace a deleted assignment publication through an independent same-title free work', async () => {
+        const actors = await classroom('same-title-publication');
+        const { assignment, work } = await populated(actors);
+        const { publication } = await model.publishCommunityWork(actors.alice, work._id, '保留原来的玩法说明');
+        const independent = await model.copyWork(actors.alice, work._id);
+        await model.renameWork(actors.alice, independent._id, work.title);
+        await model.deleteAssignment(actors.teacher, assignment._id);
+        const before = await model.community.findOne({ _id: publication._id });
+        const dialog = await model.getWorkCommunityPublication(actors.alice, independent._id).catch((error) => {
+            assert(accessError(error));
+            return { publication: null };
+        });
+        assert.equal(dialog.publication, null, 'the publication dialog cannot expose an inaccessible same-title snapshot');
+        await assert.rejects(model.publishCommunityWork(actors.alice, independent._id, '绕过删除限制的新说明'),
+            (error) => accessError(error) || error instanceof ValidationError);
+        assert.deepEqual(await model.community.findOne({ _id: publication._id }), before);
+        assert((await model.getWork(actors.alice, independent._id)).currentFileId, 'the independent work itself stays accessible');
+    });
+
+    it('rolls back uploaded drafts and submissions if assignment access is revoked before publication', async () => {
+        for (const submit of [false, true]) {
+            const actors = await classroom(`save-race-${submit}`);
+            const { assignment, work } = await populated(actors);
+            const beforeFiles = await model.files.countDocuments({ workId: work._id });
+            const beforeSubmissions = await model.submissions.countDocuments({ workId: work._id });
+            const insert = model.files.insertOne;
+            let revoked = false;
+            model.files.insertOne = async (doc, ...args) => {
+                const result = await insert.call(model.files, doc, ...args);
+                if (!revoked && doc.workId?.equals(work._id) && doc.mime === 'application/x.scratch.sb3') {
+                    revoked = true;
+                    await model.deleteAssignment(actors.teacher, assignment._id);
+                }
+                return result;
+            };
+            try {
+                await assert.rejects(model.saveWork(actors.alice, work._id, work.revision, upload(project('late upload')), submit), accessError);
+            } finally { model.files.insertOne = insert; }
+            assert(revoked, 'race must occur after the new upload metadata was saved');
+            const retained = await model.getWork(actors.teacher, work._id);
+            assert.equal(retained.revision, work.revision);
+            assert(retained.currentFileId.equals(work.currentFileId));
+            assert.equal(await model.files.countDocuments({ workId: work._id }), beforeFiles);
+            assert.equal(await model.submissions.countDocuments({ workId: work._id }), beforeSubmissions);
+            assert(!retained.savingToken, 'failed publish releases the saving lease');
+        }
+    });
 });
 
 describe('Scratch library assignment snapshot rollback', () => {
@@ -292,7 +548,7 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         await handler.prepare();
         handler.user.hasPerm = () => false;
         handler.user._id = 20;
-        await database.collection('domain.user').updateOne({ uid: 20 }, { $set: { join: false } });
+        await database.collection('domain.user').updateOne({ domainId: 'scratch-a', uid: 20 }, { $set: { join: false } });
         await assert.rejects(handler.prepare(), PermissionError); // revoked memberships are immediately effective
     });
 
@@ -917,6 +1173,10 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         assert(blobs.has(firstFile.path));
         assert(blobs.has(firstCover.path));
         assert((await model.getCommunityFile(bob, publication._id))._id.equals(firstFile._id));
+        await model.community.updateOne({ _id: publication._id }, { $unset: { sourceAssignmentId: '' } });
+        const legacyGallery = await model.pageCommunityWorks(bob, old.title);
+        assert.equal(legacyGallery.count, 1, 'legacy free snapshots remain listed after their editing destination was merged');
+        assert(legacyGallery.communityWorks[0]._id.equals(publication._id));
         const updated = await model.publishCommunityWork(alice, replacement._id);
         assert(updated.publication._id.equals(publication._id));
         assert(updated.publication.snapshotWorkId.equals(replacement._id));
@@ -1906,6 +2166,7 @@ describe('Scratch community engagement and private teacher analytics', () => {
             title: `Rank [A]+ ${i}`, titleKey: `Rank [A]+ ${i}`, instructions: '', workId: new ObjectId(), snapshotWorkId: new ObjectId(),
             fileId: new ObjectId(), thumbnailFileId: null, revision: 1, createdAt: new Date(now - 86400000), updatedAt: new Date(now.getTime() + i * 1000) }));
         await model.community.insertMany(docs);
+        await insertPublicationSources(docs);
         await model.adjustCommunityMetrics(actor, docs[0]._id, key('old-hot'), 20, 120);
         await model.adjustCommunityMetrics(actor, docs[1]._id, key('second'), 10, 600);
         const first = await model.pageCommunityWorks(actor, '[A]+', false, 'hot', 1, 24);
@@ -1973,6 +2234,7 @@ describe('Scratch community engagement and private teacher analytics', () => {
             instructions: '', workId: new ObjectId(), snapshotWorkId: new ObjectId(), fileId: new ObjectId(),
             thumbnailFileId: null, revision: 1, createdAt: now, updatedAt: now };
         await prefixed.community.insertOne(doc);
+        await insertPublicationSources([doc], prefixed);
         // A hardcoded lookup would read this unrelated table and return the wrong totals.
         await model.communityEvents.insertOne({ _id: 'misleading-unprefixed-row', communityId: id, domainId: alice.domainId,
             uid: alice.uid, isTeacher: false, likes: 999, manualRuntimeSeconds: 999, createdAt: now });
@@ -2094,6 +2356,7 @@ describe('Scratch community favorites and saved collection', () => {
             title: `Saved [B]+ ${i}`, titleKey: `Saved [B]+ ${i}`, instructions: '', workId: new ObjectId(), snapshotWorkId: new ObjectId(),
             fileId: new ObjectId(), thumbnailFileId: null, revision: 1, createdAt: now, updatedAt: new Date(+now + i * 1000) }));
         await model.community.insertMany(docs);
+        await insertPublicationSources(docs);
         metricNow = +now;
         for (const doc of docs.slice(0, 27).reverse()) {
             metricNow += 1000;
@@ -2135,6 +2398,7 @@ describe('Scratch community favorites and saved collection', () => {
             title: label, titleKey: label, instructions: '', workId: new ObjectId(), snapshotWorkId: new ObjectId(),
             fileId: new ObjectId(), thumbnailFileId: null, revision: 1, createdAt: now, updatedAt: now }));
         await model.community.insertMany(docs);
+        await insertPublicationSources(docs);
         await save(actor, docs[0]._id, true);
         await model.adjustCommunityMetrics(actor, docs[1]._id, key('two-likes'), 2, 0);
         assert((await model.pageCommunityWorks(actor)).communityWorks[0]._id.equals(docs[0]._id));

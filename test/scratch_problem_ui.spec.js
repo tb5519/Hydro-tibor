@@ -123,6 +123,25 @@ test('review detail offers read-only code inspection and returns to the right co
     assert(student.window.document.querySelector('a[href="/scratch_problem_detail/p1"]'));
     dom.window.close(); student.window.close();
 });
+test('deleted homework retains readable submissions and feedback without grading or continuation controls', () => {
+    const data = { isTeacher: true, assignment: { _id: 'a1', title: '课堂作业', deletedAt: '2026-10-18' }, work: { _id: 'w1', owner: 9 },
+        submission: { _id: 's1', owner: 9, revision: 2, fileId: 'f1', createdAt: '2026-10-15' } };
+    for (const reviewed of [false, true]) {
+        const dom = render('scratch_submission.html', { ...data, submission: { ...data.submission,
+            ...(reviewed ? { reviewedAt: '2026-10-16', grade: '优秀', feedback: '动作很流畅' } : {}) } });
+        const doc = dom.window.document;
+        assert.equal(doc.querySelector('form'), null);
+        assert.equal(doc.querySelector('[name=grade]'), null);
+        assert.equal(doc.querySelector('a[href="/scratch_editor?workId=w1"]'), null);
+        assert(![...doc.querySelectorAll('a')].some((link) => link.textContent.includes('继续创作')));
+        assert.match(doc.querySelector('[role=status]').textContent, /已删除[\s\S]*恢复作业/);
+        assert(doc.querySelector('a[href="/scratch_file/f1"]'));
+        assert(doc.querySelector('a[href*="inspect=true"]'));
+        assert.match(doc.querySelector('.sc-panel:last-child').textContent,
+            reviewed ? /优秀[\s\S]*动作很流畅/ : /尚未批改/);
+        dom.window.close();
+    }
+});
 test('problem workspace always includes the task, an accessible mobile switch and proper read-only controls', () => {
     const config = { problemMode: true, title: '小猫', backUrl: '/question/1', readOnly: false, canSubmit: true, submitLabel: '提交作品' };
     const dom = render('scratch_editor.html', { problem: { title: '小猫冒险', description: '<script>attack</script>' }, UiContext: { scratchEditor: config } });

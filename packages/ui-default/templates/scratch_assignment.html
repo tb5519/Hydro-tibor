@@ -4,8 +4,13 @@
 {% set hasQuestions = assignment.objectiveQuiz.total > 0 %}
 <div class="sc-heading">
   <div><div class="sc-eyebrow">{{ '课堂作业' if isTeacher else '老师的小任务' }}</div><h1>{{ assignment.title }}</h1><p class="sc-muted">{% if assignment.deadline %}截止时间 {{ datetimeSpan(assignment.deadline)|safe }}{% else %}{{ '未设置截止时间' if isTeacher else '没有截止时间，可以慢慢试一试' }}{% endif %}</p></div>
-  <div class="sc-actions">{% if isTeacher %}<a class="sc-button" href="{{ url('scratch_assignment_edit', assignmentId=assignment._id) }}">编辑作业</a>{% endif %}<a class="sc-button" href="{{ url('scratch_assignments') }}">所有作业 →</a></div>
+  <div class="sc-actions">{% if isTeacher %}{% if not assignment.deletedAt %}<a class="sc-button" href="{{ url('scratch_assignment_edit', assignmentId=assignment._id) }}">编辑作业</a>{% endif %}<button class="sc-button {{ 'sc-button-primary' if assignment.deletedAt else 'sc-assignment-delete-button' }}" type="button" data-assignment-action="{{ 'restore' if assignment.deletedAt else 'delete' }}" data-assignment-url="{{ url('scratch_assignment', assignmentId=assignment._id) }}" data-assignment-title="{{ assignment.title }}">{{ '恢复作业' if assignment.deletedAt else '删除作业' }}</button>{% endif %}<a class="sc-button" href="{{ url('scratch_assignments') }}">所有作业 →</a></div>
 </div>
+{% if isTeacher %}
+<div class="sc-assignment-detail-audience"><span class="sc-badge">{{ ('指定 ' ~ (assignment.recipientIds|length) ~ ' 位学员') if assignment.audience == 'selected' else '全体学员' }}</span><span class="sc-muted">{{ '恢复后仍使用这个发送范围' if assignment.deletedAt else '仅本课堂符合范围的学员可见' }}</span></div>
+{% if assignment.deletedAt %}<p class="sc-note sc-assignment-archive-note">这份作业已删除，学员无法访问。以下内容和记录仅供查看，恢复后可以继续编辑与批改。</p>{% endif %}
+<p class="sc-assignment-action-status" data-assignment-action-status role="status" aria-live="polite"></p>
+{% endif %}
 <div class="sc-columns">
   <div><section class="sc-panel">
     <div class="sc-panel-head"><h2>{{ '任务说明' if isTeacher else '这次要做什么？' }}</h2></div>
@@ -76,7 +81,7 @@
   <div class="sc-panel-head"><h2>{{ '提交与批改' if isTeacher else '交给老师的作品' }}</h2></div>
   {% if submissions|length %}
     {% if isTeacher %}
-    <div class="sc-table-wrap"><table class="sc-table"><thead><tr><th>学生</th><th>提交版本</th><th>提交时间</th><th>状态</th><th>成绩</th><th></th></tr></thead><tbody>{% for item in submissions %}<tr><td>{{ (udict[item.owner].displayName or udict[item.owner].uname) if udict[item.owner] else item.owner }}</td><td>v{{ item.revision }}</td><td>{{ datetimeSpan(item.createdAt)|safe }}</td><td><span class="sc-badge {{ 'sc-badge-success' if item.reviewedAt else 'sc-badge-warm' }}">{{ '已批改' if item.reviewedAt else '待批改' }}</span></td><td>{{ item.grade if item.grade != null else '—' }}</td><td><a class="sc-button" href="{{ url('scratch_submission', submissionId=item._id) }}">批改 / 查看</a></td></tr>{% endfor %}</tbody></table></div>
+    <div class="sc-table-wrap"><table class="sc-table"><thead><tr><th>学生</th><th>提交版本</th><th>提交时间</th><th>状态</th><th>成绩</th><th></th></tr></thead><tbody>{% for item in submissions %}<tr><td>{{ (udict[item.owner].displayName or udict[item.owner].uname) if udict[item.owner] else item.owner }}</td><td>v{{ item.revision }}</td><td>{{ datetimeSpan(item.createdAt)|safe }}</td><td><span class="sc-badge {{ 'sc-badge-success' if item.reviewedAt else 'sc-badge-warm' }}">{{ '已批改' if item.reviewedAt else '待批改' }}</span></td><td>{{ item.grade if item.grade != null else '—' }}</td><td><a class="sc-button" href="{{ url('scratch_submission', submissionId=item._id) }}">{{ '查看记录' if assignment.deletedAt else '批改 / 查看' }}</a></td></tr>{% endfor %}</tbody></table></div>
     {% else %}
     <div class="sc-panel-body"><ul class="sc-list">{% for item in submissions %}<li class="sc-list-item"><div><h3>{{ '老师有反馈啦' if item.reviewedAt else '已交给老师' }}</h3><p>提交于 {{ datetimeSpan(item.createdAt)|safe }}</p>{% if item.grade != null %}<span class="sc-badge sc-badge-success">{{ item.grade }}</span>{% endif %}</div><a class="sc-button {{ 'sc-button-primary' if item.reviewedAt else '' }}" href="{{ url('scratch_submission', submissionId=item._id) }}">{{ '查看老师反馈' if item.reviewedAt else '查看提交作品' }}</a></li>{% endfor %}</ul></div>
     {% endif %}
@@ -85,4 +90,5 @@
   {% endif %}
 </section>
 {% endif %}
+{% include "partials/scratch_assignment_delete_dialog.html" %}
 {% endblock %}

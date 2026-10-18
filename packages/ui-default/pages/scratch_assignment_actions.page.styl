@@ -1,0 +1,234 @@
+.scratch-app
+  .sc-assignment-audience .sc-assignment-audience-modes
+    grid-template-columns: repeat(2, minmax(0, 1fr))
+
+    .sc-assignment-mode-body
+      display: flex
+      padding: 20px 45px 20px 20px
+
+      strong
+        margin-top: 0
+
+    .sc-assignment-mode input
+      top: 21px
+
+  .sc-assignment-recipient-picker
+    padding: 20px
+    border: 1px solid var(--sc-line)
+    border-radius: 18px
+    background: var(--sc-paper)
+
+    .sc-assignment-search
+      box-sizing: border-box
+      width: 100%
+      min-width: 0
+
+      input
+        box-sizing: border-box
+        width: 100%
+        min-width: 0
+
+  .sc-assignment-recipient-heading, .sc-assignment-recipient-tools
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 14px
+
+  .sc-assignment-recipient-heading
+    margin-bottom: 14px
+
+  .sc-assignment-recipient-tools
+    margin: 10px 0
+    min-height: 28px
+
+  .sc-assignment-recipient-chips
+    display: flex
+    flex-wrap: wrap
+    gap: 7px
+    max-height: 134px
+    overflow-y: auto
+    margin-bottom: 15px
+
+  .sc-assignment-recipient-chip
+    border: 1px solid var(--sc-line)
+    border-radius: 9px
+    padding: 6px 10px
+    background: var(--sc-soft)
+    color: var(--sc-blue)
+    font: inherit
+    font-size: 13px
+    cursor: pointer
+    max-width: 100%
+    overflow-wrap: anywhere
+
+    &:hover
+      border-color: var(--sc-blue)
+
+    &.is-unavailable
+      color: var(--sc-warm-ink)
+      background: var(--sc-warm)
+
+  .sc-assignment-recipients
+    display: grid
+    grid-template-columns: repeat(2, minmax(0, 1fr))
+    gap: 9px
+    max-height: 328px
+    overflow-y: auto
+    overscroll-behavior: contain
+    scrollbar-gutter: stable
+    padding: 3px
+    margin: 0 -3px
+
+  .sc-assignment-recipient
+    display: flex
+    align-items: center
+    gap: 10px
+    padding: 12px
+    min-width: 0
+    margin: 0
+    border: 1px solid var(--sc-line)
+    border-radius: 12px
+    cursor: pointer
+
+    &:has(input:checked)
+      background: var(--sc-soft)
+      border-color: #a8c8f4
+
+    &:has(input:focus-visible)
+      outline: 3px solid #80aaff
+      outline-offset: 1px
+
+    &.is-unavailable
+      background: var(--sc-warm)
+      border-color: #ebd6ad
+
+    input
+      flex: 0 0 auto
+      width: 17px
+      height: 17px
+      margin: 0
+      accent-color: var(--sc-blue)
+
+  .sc-assignment-recipient-avatar
+    width: 36px
+    height: 36px
+    flex: 0 0 36px
+    object-fit: cover
+    border-radius: 11px
+    background: var(--sc-soft)
+
+  .sc-assignment-recipient-fallback
+    display: grid
+    place-items: center
+    color: var(--sc-muted)
+
+  .sc-assignment-recipient-copy
+    min-width: 0
+
+    strong, small
+      display: block
+      overflow-wrap: anywhere
+
+    strong
+      color: var(--sc-ink)
+      font-size: 14px
+      line-height: 1.4
+
+    small
+      margin-top: 3px
+      color: var(--sc-muted)
+      font-size: 12px
+
+      > span
+        color: var(--sc-warm-ink)
+
+  .sc-assignment-list-tabs
+    display: flex
+    gap: 6px
+    margin: -5px 0 18px
+    border-bottom: 1px solid var(--sc-line)
+
+    a
+      padding: 13px 18px
+      color: var(--sc-muted)
+      border-bottom: 3px solid transparent
+      font-weight: 700
+
+      &.is-active
+        color: var(--sc-blue)
+        border-bottom-color: var(--sc-blue)
+
+  .sc-assignment-list-actions
+    display: flex
+    flex-direction: column
+    align-items: flex-end
+    gap: 8px
+    flex: 0 0 auto
+
+    > .sc-actions
+      gap: 14px
+
+  .sc-assignment-audience-label
+    font-size: 12px
+    color: var(--sc-muted)
+
+  .sc-assignment-delete-button
+    color: #a15253
+
+    &:hover
+      color: #a52734
+      background: #fff0ef
+
+  .sc-assignment-detail-audience
+    display: flex
+    align-items: center
+    gap: 12px
+    flex-wrap: wrap
+    margin: -5px 0 22px
+    font-size: 13px
+
+  .sc-assignment-archive-note
+    margin-bottom: 20px
+
+  .sc-assignment-action-status
+    font-size: 14px
+    color: var(--sc-muted)
+    margin: 0 0 16px
+
+    &:empty
+      display: none
+
+    &[data-error=true]
+      color: #a52734
+
+  .sc-assignment-delete-dialog
+    .sc-dialog-symbol
+      background: #fff0ef
+      color: #bc5462
+
+    .sc-assignment-delete-name
+      font-weight: 700
+      color: var(--sc-ink)
+      margin: 13px 0 9px
+      overflow-wrap: anywhere
+
+    .sc-dialog-status[data-error=true]
+      color: #a52734
+
+  @media(max-width: 640px)
+    .sc-assignment-audience .sc-assignment-audience-modes
+      grid-template-columns: 1fr
+
+    .sc-assignment-recipient-picker
+      padding: 14px
+
+    .sc-assignment-recipients
+      grid-template-columns: 1fr
+
+    .sc-assignment-list-actions
+      align-items: flex-start
+      width: 100%
+
+      > .sc-actions
+        width: 100%
+        justify-content: space-between

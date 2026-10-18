@@ -102,7 +102,8 @@ export class ScratchHandler extends Handler {
             if (!time.isValid()) throw new ValidationError('deadline');
             parsed = time.toDate();
         }
-        const { projectRequired, objectivePaperIds, assignmentMode, projectProblemId } = this.request.body;
+        const { projectRequired, objectivePaperIds, assignmentMode, projectProblemId, audience, recipientIds } = this.request.body;
+        const audienceInput = { ...(audience !== undefined ? { audience } : {}), ...(recipientIds !== undefined ? { recipientIds } : {}) };
         if (assignmentMode !== undefined && !['project', 'objective', 'mixed'].includes(assignmentMode)) throw new ValidationError('assignmentMode');
         if (projectRequired !== undefined && ![true, false, 'true', 'false', '1', '0'].includes(projectRequired)) {
             throw new ValidationError('projectRequired');
@@ -110,11 +111,11 @@ export class ScratchHandler extends Handler {
         if (assignmentMode) {
             const ids = assignmentMode === 'project' ? [] : scratchObjective.parsePaperIds(objectivePaperIds);
             if (assignmentMode !== 'project' && !ids.length) throw new ValidationError('objectivePaperIds', null, '请先选择一套客观题');
-            return { title, description, deadline: parsed, projectRequired: assignmentMode !== 'objective', objectivePaperIds: ids,
+            return { ...audienceInput, title, description, deadline: parsed, projectRequired: assignmentMode !== 'objective', objectivePaperIds: ids,
                 ...(projectProblemId !== undefined ? { projectProblemId } : {}) };
         }
         return {
-            title, description, deadline: parsed,
+            ...audienceInput, title, description, deadline: parsed,
             ...(projectRequired !== undefined ? { projectRequired: [true, 'true', '1'].includes(projectRequired) } : {}),
             ...(objectivePaperIds !== undefined ? { objectivePaperIds: scratchObjective.parsePaperIds(objectivePaperIds) } : {}),
             ...(projectProblemId !== undefined ? { projectProblemId } : {}),
@@ -141,8 +142,7 @@ export class ScratchMainHandler extends ScratchHandler {
             scratch.listAssignments(this.actor).limit(6).toArray(),
             scratch.listWorks(this.actor).limit(6).toArray(),
             scratch.listSubmissions(this.actor).limit(6).toArray(),
-            scratch.works.find({ ...ownScope, currentFileId: { $type: 'objectId' } })
-                .sort({ updatedAt: -1, _id: -1 }).limit(1).next(),
+            scratch.listWorks(this.actor, undefined, this.actor.uid, true).limit(1).next(),
         ]);
         const assignmentScope = { ...ownScope, assignmentId: { $in: assignments.map((assignment) => assignment._id) } };
         const [assignmentWorks, latestSubmissions] = assignments.length ? await Promise.all([
@@ -182,7 +182,7 @@ export class ScratchWorksHandler extends ScratchHandler {
                 throw new ValidationError('owner', null, '请选择当前域的学员。');
             }
         }
-        const [works, numPages, count] = await this.paginate(scratch.listWorks(this.actor, undefined, selectedOwner), page, 50);
+        const [works, numPages, count] = await scratch.paginateScratch(scratch.listWorks(this.actor, undefined, selectedOwner), page, 50);
         let studentOptions: { uid: number, uname: string }[] = [];
         if (this.actor.isTeacher) {
             const owners = await scratch.works.distinct('owner', { domainId: this.domain._id });
@@ -248,8 +248,10 @@ export class ScratchWorkHandler extends ScratchHandler {
 export class ScratchAssignmentsHandler extends ScratchHandler {
     async get() {
         const page = Math.max(1, Math.floor(+this.request.query.page || 1));
-        const [assignments, numPages, count] = await this.paginate(scratch.listAssignments(this.actor), page, 30);
-        await this.renderScratch('scratch_assignments.html', { assignments, page, numPages, count });
+        const showDeleted = this.request.query.status === 'deleted';
+        if (showDeleted) scratch.requireTeacher(this.actor);
+        const [assignments, numPages, count] = await this.paginate(scratch.listAssignments(this.actor, showDeleted), page, 30);
+        await this.renderScratch('scratch_assignments.html', { assignments, page, numPages, count, showDeleted });
     }
 }
 
@@ -489,7 +491,7 @@ export class ScratchAssignmentEditHandler extends ScratchHandler {
     async get() {
         scratch.requireTeacher(this.actor);
         const id = this.request.params.assignmentId ? this.routeId('assignmentId') : null;
-        const assignment = id ? await scratch.getAssignment(this.actor, id) : null;
+        const assignment = id ? await scratch.requireActiveAssignment(this.actor, id) : null;
         if (assignment?.kind === 'problem') {
             this.response.redirect = assignment.problemPaperId
                 ? this.url('scratch_problem_paper', { paperId: assignment.problemPaperId })
@@ -514,8 +516,17 @@ export class ScratchAssignmentEditHandler extends ScratchHandler {
             url: this.url('scratch_problem_detail', { problemId: problem._id }),
             previewUrl: this.url('scratch_assignment_project_preview', { problemId: problem._id }),
         });
+        const members = await domain.collUser.find({ domainId: this.actor.domainId, join: true, blockedByStudentManagement: { $ne: true } })
+            .project<{ uid: number }>({ uid: 1 }).toArray();
+        const memberIds = new Set(members.map((member) => member.uid));
+        const ids = [...new Set([...memberIds, ...(assignment?.recipientIds || [])])];
+        const names = await user.getListForRender(this.actor.domainId, ids, false);
+        const assignmentStudents = ids.map((uid) => ({
+            uid, uname: names[uid]?.uname || `${uid}`, displayName: names[uid]?.displayName || names[uid]?.uname || `${uid}`,
+            avatarUrl: '', unavailable: !memberIds.has(uid),
+        })).sort((a, b) => a.displayName.localeCompare(b.displayName, 'zh-CN'));
         await this.renderScratch('scratch_assignment_edit.html', {
-            assignment, deadlineInput, timeZone: this.user.timeZone || 'Asia/Shanghai',
+            assignment, assignmentStudents, deadlineInput, timeZone: this.user.timeZone || 'Asia/Shanghai',
             objectivePapers,
             projectProblems: projectProblems.map(projectInfo),
             selectedProjectProblemId: (assignment?.sourceProblemId || selectedProjectProblem?._id)?.toHexString() || '',
@@ -570,9 +581,26 @@ export class ScratchAssignmentHandler extends ScratchHandler {
     }
 
     async post() {
-        const assignment = await scratch.getAssignment(this.actor, this.routeId('assignmentId'));
+        if (this.request.body.operation) return;
+        const assignment = await scratch.requireActiveAssignment(this.actor, this.routeId('assignmentId'));
         const work = await scratch.createWork(this.actor, assignment.title, assignment._id);
         this.response.redirect = this.url('scratch_editor', { query: { workId: work._id } });
+    }
+
+    async postDelete() {
+        const id = this.routeId('assignmentId');
+        await scratch.deleteAssignment(this.actor, id);
+        const url = this.url('scratch_assignments', { query: { status: 'deleted' } });
+        if (this.request.json || `${this.request.headers.accept || ''}`.includes('application/json')) this.response.body = { ok: true, url };
+        else this.response.redirect = url;
+    }
+
+    async postRestore() {
+        const id = this.routeId('assignmentId');
+        await scratch.restoreAssignment(this.actor, id);
+        const url = this.url('scratch_assignment', { assignmentId: id });
+        if (this.request.json || `${this.request.headers.accept || ''}`.includes('application/json')) this.response.body = { ok: true, url };
+        else this.response.redirect = url;
     }
 }
 export class ScratchObjectiveQuizHandler extends ScratchHandler {
@@ -684,8 +712,9 @@ export class ScratchEditorHandler extends ScratchHandler {
             return;
         }
         const assignment = work.assignmentId ? await scratch.getAssignment(this.actor, work.assignmentId) : null;
-        const readOnly = !!submission || (work.owner !== this.user._id && !this.actor.isTeacher)
+        let readOnly = !!submission || (work.owner !== this.user._id && !this.actor.isTeacher)
             || query.readOnly === 'true' || query.readonly === 'true';
+        if (assignment?.deletedAt) readOnly = true;
         const saveForStudent = !readOnly && this.actor.isTeacher && work.owner !== this.user._id;
         const ownerDict = saveForStudent ? await user.getListForRender(this.domain._id, [work.owner], false) : null;
         const ownerName = ownerDict?.[work.owner]?.displayName || ownerDict?.[work.owner]?.uname || String(work.owner);
@@ -745,6 +774,7 @@ export class ScratchLanguageHandler extends ScratchHandler {
             throw new ValidationError('generation');
         }
         const work = await scratch.getWork(this.actor, this.routeId('workId'));
+        if (scratch.workAssignmentId(work)) await scratch.requireActiveAssignment(this.actor, scratch.workAssignmentId(work));
         const updated = await user.coll.findOneAndUpdate({
             _id: work.owner,
             scratchEditorLocaleSessionCounter: { $gte: generation },
@@ -799,7 +829,7 @@ export class ScratchThumbnailHandler extends ScratchHandler {
             title: work.title, revision: work.revision,
             thumbnailUrl: work.thumbnailFileId ? this.url('scratch_file', { fileId: work.thumbnailFileId }) : null,
             projectUrl: fileId ? this.url('scratch_file', { fileId }) : null,
-            canCache: work.owner === this.user._id && (!work.assignmentId || !!work.currentFileId), maxFileSize: SCRATCH_MAX_FILE_SIZE,
+            canCache: !assignment?.deletedAt && work.owner === this.user._id && (!work.assignmentId || !!work.currentFileId), maxFileSize: SCRATCH_MAX_FILE_SIZE,
         };
     }
 

@@ -4,6 +4,13 @@
   <div><div class="sc-eyebrow">{{ '课堂教学' if isTeacher else '一步一步，试试新本领' }}</div><h1>{{ '作业管理' if isTeacher else '我的作业' }}</h1><p class="sc-muted">{{ '把创作和知识练习灵活组合，了解每个孩子的进步。' if isTeacher else '搭积木，练知识，一起解锁新本领。' }}</p></div>
   {% if isTeacher %}<a class="sc-button sc-button-primary" href="{{ url('scratch_assignment_create') }}">＋ 发布作业</a>{% endif %}
 </div>
+{% if isTeacher %}
+<nav class="sc-assignment-list-tabs" aria-label="作业状态"><a href="{{ url('scratch_assignments') }}" class="{{ 'is-active' if not showDeleted }}" {% if not showDeleted %}aria-current="page"{% endif %}>当前作业</a><a href="{{ url('scratch_assignments', query={status:'deleted'}) }}" class="{{ 'is-active' if showDeleted }}" {% if showDeleted %}aria-current="page"{% endif %}>已删除</a></nav>
+{% if showDeleted %}<p class="sc-note sc-assignment-archive-note">这里的作业对学员不可见。作品、答题与批改记录已保留，恢复后会按原发送范围重新开放。</p>{% endif %}
+<p class="sc-assignment-action-status" data-assignment-action-status role="status" aria-live="polite"></p>
+{% endif %}
+{% set showAssignmentActions = true %}
 <section class="sc-panel"><div class="sc-panel-body">{% include "partials/scratch_assignment_list.html" %}</div></section>
-{% if numPages > 1 %}<div class="sc-pagination">{{ paginator.render(page, numPages) }}</div>{% endif %}
+{% if numPages > 1 %}<div class="sc-pagination">{{ paginator.render(page, numPages, add_qs=utils.buildQueryString(status='deleted' if showDeleted else '')) }}</div>{% endif %}
+{% include "partials/scratch_assignment_delete_dialog.html" %}
 {% endblock %}

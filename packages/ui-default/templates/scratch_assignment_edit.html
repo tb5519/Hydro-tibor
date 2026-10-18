@@ -4,6 +4,8 @@
 {% set selectedProjectId = selectedProjectProblemId or '' %}
 {% set hasQuestions = selectedPaperIds|length > 0 %}
 {% set hasProject = (assignment.projectRequired != false) if assignment else (selectedProjectId or not hasQuestions) %}
+{% set selectedRecipients = assignment.recipientIds or [] %}
+{% set selectedAudience = assignment.audience == 'selected' %}
 <div class="sc-heading">
   <div><div class="sc-eyebrow">课堂教学 · 作业</div><h1>{{ '编辑作业' if assignment else '发布新作业' }}</h1><p class="sc-muted">搭积木，练知识，也可以放在同一份作业里。</p></div>
   <a class="sc-button" href="{{ url('scratch_assignment', assignmentId=assignment._id) if assignment else url('scratch_assignments') }}">{{ '返回作业' if assignment else '返回作业列表' }}</a>
@@ -75,6 +77,33 @@
         </div>
         <p class="sc-assignment-validation" data-assignment-validation role="alert" tabindex="-1" hidden></p>
       </div>
+    </div>
+  </section>
+  <section class="sc-panel sc-assignment-audience">
+    <div class="sc-panel-head"><h2>发送给谁</h2><span class="sc-muted sc-assignment-caption">按本次教学安排选择学员</span></div>
+    <div class="sc-panel-body sc-form">
+      <fieldset class="sc-assignment-modes sc-assignment-audience-modes"><legend class="sc-assignment-sr-only">作业发送对象</legend>
+        <label class="sc-assignment-mode"><input type="radio" name="audience" value="all" {% if not selectedAudience %}checked{% endif %}><span class="sc-assignment-mode-body"><strong>全体学员</strong><small>本课堂的所有学员都可以看到并完成</small></span></label>
+        <label class="sc-assignment-mode"><input type="radio" name="audience" value="selected" {% if selectedAudience %}checked{% endif %}><span class="sc-assignment-mode-body"><strong>指定学员</strong><small>选择一位或多位学员，其他学员不会看到</small></span></label>
+      </fieldset>
+      <input type="hidden" name="recipientIds" value="{{ (selectedRecipients if selectedAudience else [])|json }}" data-assignment-recipient-ids>
+      <div class="sc-assignment-recipient-picker" data-assignment-recipient-picker {% if not selectedAudience %}hidden{% endif %}>
+        <div class="sc-assignment-recipient-heading"><strong data-assignment-recipient-count aria-live="polite">已选 {{ selectedRecipients|length }} 位学员</strong><button class="sc-assignment-text-button" type="button" data-assignment-recipient-clear>清空已选</button></div>
+        <div class="sc-assignment-recipient-chips" data-assignment-recipient-chips aria-label="已选学员"></div>
+        <label class="sc-field sc-assignment-search"><span class="sc-assignment-sr-only">搜索学员姓名、账号或 UID</span><input type="search" data-assignment-recipient-search placeholder="搜索姓名、账号或 UID" autocomplete="off"></label>
+        <div class="sc-assignment-recipient-tools"><span class="sc-muted sc-assignment-caption" data-assignment-recipient-matches></span><button class="sc-assignment-text-button" type="button" data-assignment-recipient-select-all>全选当前名单</button></div>
+        <div class="sc-assignment-recipients">
+          {% for student in assignmentStudents %}
+          <label class="sc-assignment-recipient {% if student.unavailable %}is-unavailable{% endif %}" data-assignment-recipient-row data-search="{{ student.displayName }} {{ student.uname }} {{ student.uid }}">
+            <input type="checkbox" value="{{ student.uid }}" data-assignment-recipient data-label="{{ student.displayName or student.uname or student.uid }}" data-unavailable="{{ 'true' if student.unavailable else 'false' }}" {% if student.uid in selectedRecipients %}checked{% endif %} {% if student.unavailable and student.uid not in selectedRecipients %}disabled{% endif %}>
+            {% if student.avatarUrl %}<img class="sc-assignment-recipient-avatar" src="{{ student.avatarUrl }}" alt="" loading="lazy">{% else %}<span class="sc-assignment-recipient-avatar sc-assignment-recipient-fallback icon icon-user" aria-hidden="true"></span>{% endif %}
+            <span class="sc-assignment-recipient-copy"><strong>{{ student.displayName or student.uname or student.uid }}</strong><small>{% if student.unavailable %}<span>已离开课堂，请移除</span>{% else %}@{{ student.uname }} · UID {{ student.uid }}{% endif %}</small></span>
+          </label>
+          {% endfor %}
+        </div>
+        <p class="sc-empty sc-empty-compact" data-assignment-recipient-empty {% if assignmentStudents|length %}hidden{% endif %}>{{ '没有匹配的学员，试试其他关键词。' if assignmentStudents|length else '课堂里还没有学员。学员加入后，就可以在这里指定作业。' }}</p>
+      </div>
+      <p class="sc-assignment-validation" data-assignment-audience-error role="alert" tabindex="-1" hidden></p>
     </div>
   </section>
   <section class="sc-panel">

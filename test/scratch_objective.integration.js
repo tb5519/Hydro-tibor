@@ -179,10 +179,17 @@ async function run() {
         let reached;
         const gate = new Promise((resolve) => { release = resolve; });
         const ready = new Promise((resolve) => { reached = resolve; });
-        const originalUpdate = scratch.assignments.updateOne;
-        scratch.assignments.updateOne = async function pausedUpdate(filter, update, ...rest) {
-            if (update.$set?.title === '延迟保存') { reached(); await gate; }
-            return originalUpdate.call(this, filter, update, ...rest);
+        const originalFind = scratch.assignments.findOne;
+        let pauseNextRead = true;
+        scratch.assignments.findOne = async function pausedRead(filter, ...rest) {
+            const doc = await originalFind.call(this, filter, ...rest);
+            if (pauseNextRead && filter._id?.equals(initial._id)) {
+                pauseNextRead = false;
+                // Hold the stale metadata read before acquiring the mutation
+                // lease. A second writer must never pass through a held lease.
+                reached(); await gate;
+            }
+            return doc;
         };
         let pending;
         try {
@@ -202,7 +209,7 @@ async function run() {
         } finally {
             release();
             await pending?.catch(() => {});
-            scratch.assignments.updateOne = originalUpdate;
+            scratch.assignments.findOne = originalFind;
         }
     });
     await check('Assignment snapshots survive later source and paper edits; old Scratch projects remain compatible', async () => {

@@ -29,6 +29,12 @@ const state = {
     ],
     deadlineInput: '',
     projectProblems: projects.map(({ description, ...metadata }) => metadata),
+    assignmentStudents: [
+        { uid: 42, uname: 'kitten', displayName: '小猫', avatarUrl: '/avatars/42.png' },
+        { uid: 51, uname: 'StarOne', displayName: '星星' },
+        { uid: 52, uname: 'StarTwo', displayName: '月亮' },
+        { uid: 65, uname: 'safe', displayName: '<img src=x onerror=alert(1)>' },
+    ],
     udict: {}, works: [], submissions: [], materials: [],
 };
 function render(name, overrides = {}) {
@@ -62,7 +68,7 @@ function editor(assignment, overrides = {}) {
     const doc = dom.window.document;
     const form = doc.querySelector('form');
     const mode = (value) => doc.querySelector(`input[name=assignmentMode][value=${value}]`).click();
-    const paper = (id) => doc.querySelector(`input[type=checkbox][value="${id}"]`);
+    const paper = (id) => doc.querySelector(`input[type=checkbox][name=objectivePaperIds][value="${id}"]`);
     const submit = () => {
         const event = new dom.window.Event('submit', { cancelable: true, bubbles: true });
         form.dispatchEvent(event);
@@ -73,6 +79,123 @@ function editor(assignment, overrides = {}) {
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+describe('Scratch assignment recipients', () => {
+    const selectedMode = (view) => view.doc.querySelector('input[name=audience][value=selected]').click();
+    const recipient = (view, id) => view.doc.querySelector(`[data-assignment-recipient][value="${id}"]`);
+    const ids = (view) => JSON.parse(new view.dom.window.FormData(view.form).get('recipientIds'));
+    const search = (view, value) => {
+        const input = view.doc.querySelector('[data-assignment-recipient-search]');
+        input.value = value;
+        input.dispatchEvent(new view.dom.window.Event('input'));
+        return [...view.doc.querySelectorAll('[data-assignment-recipient-row]')].filter((row) => !row.hidden)
+            .map((row) => Number(row.querySelector('input').value));
+    };
+
+    it('defaults legacy and new assignments to all classroom learners, with no selected recipients', () => {
+        for (const assignment of [null, { _id: 'old', title: '旧作业' }]) {
+            const view = editor(assignment);
+            const data = new view.dom.window.FormData(view.form);
+            assert.equal(data.get('audience'), 'all');
+            assert.deepEqual(ids(view), []);
+            assert.equal(view.doc.querySelector('[data-assignment-recipient-picker]').hidden, true);
+            assert.match(view.doc.querySelector('.sc-assignment-audience').textContent, /本课堂的所有学员/);
+            assert.equal(view.submit(), true);
+            view.dom.window.close();
+        }
+    });
+
+    it('blocks an empty selected audience and immediately allows a single learner after choosing', () => {
+        const view = editor();
+        selectedMode(view);
+        assert.equal(view.doc.querySelector('[data-assignment-recipient-picker]').hidden, false);
+        assert.equal(view.submit(), false);
+        assert.match(view.doc.querySelector('[data-assignment-audience-error]').textContent, /至少选择一位/);
+        assert.equal(view.doc.activeElement, view.doc.querySelector('[data-assignment-audience-error]'));
+        recipient(view, 42).click();
+        assert.deepEqual(ids(view), [42]);
+        assert.equal(view.doc.querySelector('[data-assignment-audience-error]').hidden, true);
+        assert.equal(view.submit(), true);
+        view.dom.window.close();
+    });
+
+    it('searches nickname, account without case sensitivity and UID while retaining hidden selections', () => {
+        const view = editor();
+        selectedMode(view);
+        const originalOrder = [...view.doc.querySelectorAll('[data-assignment-recipient]')].map((input) => input.value);
+        recipient(view, 42).click();
+        assert.deepEqual(search(view, '星星'), [51]);
+        assert.deepEqual(search(view, 'STAR'), [51, 52]);
+        assert.match(view.doc.querySelector('[data-assignment-recipient-select-all]').textContent, /搜索结果/);
+        view.doc.querySelector('[data-assignment-recipient-select-all]').click();
+        assert.deepEqual(ids(view), [42, 51, 52]);
+        assert.equal(view.doc.querySelectorAll('.sc-assignment-recipient-chip').length, 3);
+        assert.deepEqual(search(view, '65'), [65]);
+        assert.deepEqual([...view.doc.querySelectorAll('[data-assignment-recipient]')].map((input) => input.value), originalOrder);
+        assert.deepEqual(search(view, 'missing'), []);
+        assert.equal(view.doc.querySelector('[data-assignment-recipient-empty]').hidden, false);
+        assert.equal(view.doc.querySelector('[data-assignment-recipient-select-all]').disabled, true);
+        assert.match(view.doc.querySelector('[data-assignment-recipient-count]').textContent, /3/);
+        view.dom.window.close();
+    });
+
+    it('retains the draft selection when switching audience and serializes only the active mode', () => {
+        const view = editor({ _id: 'saved', audience: 'selected', recipientIds: [42, 52] });
+        assert.deepEqual(ids(view), [42, 52]);
+        view.doc.querySelector('input[name=audience][value=all]').click();
+        assert.deepEqual(ids(view), []);
+        assert.equal(recipient(view, 42).checked, true);
+        selectedMode(view);
+        assert.deepEqual(ids(view), [42, 52]);
+        view.doc.querySelector('[aria-label="移除学员 小猫"]').click();
+        assert.deepEqual(ids(view), [52]);
+        assert.equal(recipient(view, 42).checked, false);
+        view.doc.querySelector('[data-assignment-recipient-clear]').click();
+        assert.deepEqual(ids(view), []);
+        assert.equal(view.submit(), false);
+        view.dom.window.close();
+    });
+
+    it('requires explicit removal of a departed learner without silently dropping the saved recipient', () => {
+        const departed = { uid: 99, uname: 'left', displayName: '离开的学员', unavailable: true };
+        const view = editor({ _id: 'saved', audience: 'selected', recipientIds: [42, 99] }, {
+            assignmentStudents: [...state.assignmentStudents, departed],
+        });
+        assert.deepEqual(ids(view), [42, 99]);
+        assert.equal(view.submit(), false);
+        assert.match(view.doc.querySelector('[data-assignment-audience-error]').textContent, /离开课堂/);
+        view.doc.querySelector('[aria-label="移除学员 离开的学员"]').click();
+        assert.equal(recipient(view, 99).disabled, true);
+        view.doc.querySelector('[data-assignment-recipient-select-all]').click();
+        assert.deepEqual(ids(view), [42, 51, 52, 65]);
+        assert.equal(view.submit(), true);
+        view.dom.window.close();
+    });
+
+    it('escapes roster names and selected chips, and does not erase content choices', () => {
+        const view = editor();
+        selectedMode(view);
+        recipient(view, 65).click();
+        assert.equal(view.doc.querySelector('[data-assignment-recipient-chips] img'), null);
+        assert.equal(view.doc.querySelector('[data-assignment-recipient-row] img[onerror]'), null);
+        view.mode('mixed');
+        view.paper(11).click();
+        const data = new view.dom.window.FormData(view.form);
+        assert.deepEqual(JSON.parse(data.get('recipientIds')), [65]);
+        assert.deepEqual(data.getAll('objectivePaperIds'), ['', '11']);
+        assert.equal(view.submit(), true);
+        view.dom.window.close();
+    });
+
+    it('explains an empty classroom and still blocks accidental empty specific assignments', () => {
+        const view = editor(null, { assignmentStudents: [] });
+        selectedMode(view);
+        assert.match(view.doc.querySelector('[data-assignment-recipient-empty]').textContent, /还没有学员/);
+        assert.equal(view.doc.querySelector('[data-assignment-recipient-select-all]').disabled, true);
+        assert.equal(view.submit(), false);
+        view.dom.window.close();
+    });
+});
 
 describe('Scratch question-bank project assignment', () => {
     it('uses only metadata in the chooser and fills the explicitly preselected project including images', () => {

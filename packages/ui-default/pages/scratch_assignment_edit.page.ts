@@ -13,6 +13,96 @@ interface ProjectProblem {
 export default new NamedPage(['scratch_assignment_create', 'scratch_assignment_edit'], () => {
   const form = document.querySelector<HTMLFormElement>('[data-scratch-assignment-form]');
   if (!form) return;
+  const audienceModes = [...form.querySelectorAll<HTMLInputElement>('input[name=audience]')];
+  const recipientIds = form.querySelector<HTMLInputElement>('[data-assignment-recipient-ids]');
+  const recipientPicker = form.querySelector<HTMLElement>('[data-assignment-recipient-picker]');
+  const recipientInputs = [...form.querySelectorAll<HTMLInputElement>('[data-assignment-recipient]')];
+  const recipientRows = [...form.querySelectorAll<HTMLElement>('[data-assignment-recipient-row]')];
+  const recipientSearch = form.querySelector<HTMLInputElement>('[data-assignment-recipient-search]');
+  const recipientChips = form.querySelector<HTMLElement>('[data-assignment-recipient-chips]');
+  const recipientCount = form.querySelector<HTMLElement>('[data-assignment-recipient-count]');
+  const recipientMatches = form.querySelector<HTMLElement>('[data-assignment-recipient-matches]');
+  const recipientEmpty = form.querySelector<HTMLElement>('[data-assignment-recipient-empty]');
+  const recipientClear = form.querySelector<HTMLButtonElement>('[data-assignment-recipient-clear]');
+  const recipientSelectAll = form.querySelector<HTMLButtonElement>('[data-assignment-recipient-select-all]');
+  const audienceError = form.querySelector<HTMLElement>('[data-assignment-audience-error]');
+  const isSelectedAudience = () => audienceModes.some((input) => input.checked && input.value === 'selected');
+  const selectedRecipients = () => recipientInputs.filter((input) => input.checked);
+  const recipientError = () => {
+    if (!isSelectedAudience()) return '';
+    const checked = selectedRecipients();
+    if (!checked.length) return '请至少选择一位学员，或改为发送给全体学员。';
+    if (checked.some((input) => input.dataset.unavailable === 'true')) return '已选名单中有离开课堂的学员，请移除后再保存。';
+    return '';
+  };
+  const showAudienceError = (message: string) => {
+    if (!audienceError) return;
+    audienceError.textContent = message;
+    audienceError.hidden = !message;
+  };
+  const filterRecipients = () => {
+    const term = recipientSearch?.value.trim().toLocaleLowerCase() || '';
+    let visible = 0;
+    let selectable = 0;
+    for (const row of recipientRows) {
+      row.hidden = !row.dataset.search?.toLocaleLowerCase().includes(term);
+      if (row.hidden) continue;
+      visible++;
+      const input = row.querySelector<HTMLInputElement>('[data-assignment-recipient]');
+      if (input && !input.checked && input.dataset.unavailable !== 'true') selectable++;
+    }
+    if (recipientMatches) recipientMatches.textContent = term ? `找到 ${visible} 位学员` : `共 ${recipientRows.length} 位学员`;
+    if (recipientEmpty) recipientEmpty.hidden = visible > 0;
+    if (recipientSelectAll) {
+      recipientSelectAll.textContent = term ? '选中搜索结果' : '全选当前名单';
+      recipientSelectAll.disabled = !selectable;
+    }
+  };
+  const updateRecipients = () => {
+    const checked = selectedRecipients();
+    const selected = isSelectedAudience();
+    if (recipientIds) recipientIds.value = JSON.stringify(selected ? checked.map((input) => Number(input.value)) : []);
+    if (recipientPicker) recipientPicker.hidden = !selected;
+    if (recipientCount) recipientCount.textContent = `已选 ${checked.length} 位学员`;
+    if (recipientClear) recipientClear.disabled = !checked.length;
+    recipientInputs.forEach((input) => { input.disabled = input.dataset.unavailable === 'true' && !input.checked; });
+    if (recipientChips) {
+      recipientChips.replaceChildren();
+      recipientChips.hidden = !checked.length;
+      for (const input of checked) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'sc-assignment-recipient-chip';
+        if (input.dataset.unavailable === 'true') chip.classList.add('is-unavailable');
+        const label = input.dataset.label || input.value;
+        chip.textContent = `${label} ×`;
+        chip.setAttribute('aria-label', `移除学员 ${label}`);
+        chip.addEventListener('click', () => {
+          input.checked = false;
+          updateRecipients();
+          recipientSearch?.focus();
+        });
+        recipientChips.appendChild(chip);
+      }
+    }
+    filterRecipients();
+    if (audienceError && !audienceError.hidden) showAudienceError(recipientError());
+  };
+  audienceModes.forEach((input) => input.addEventListener('change', updateRecipients));
+  recipientInputs.forEach((input) => input.addEventListener('change', updateRecipients));
+  recipientSearch?.addEventListener('input', filterRecipients);
+  recipientClear?.addEventListener('click', () => {
+    recipientInputs.forEach((input) => { input.checked = false; });
+    updateRecipients();
+  });
+  recipientSelectAll?.addEventListener('click', () => {
+    for (const row of recipientRows) {
+      const input = row.querySelector<HTMLInputElement>('[data-assignment-recipient]');
+      if (!row.hidden && input && input.dataset.unavailable !== 'true') input.checked = true;
+    }
+    updateRecipients();
+  });
+  updateRecipients();
   const modes = [...form.querySelectorAll<HTMLInputElement>('input[name=assignmentMode]')];
   const project = form.querySelector<HTMLElement>('[data-assignment-project]');
   const objective = form.querySelector<HTMLElement>('[data-assignment-objective]');
@@ -364,6 +454,13 @@ export default new NamedPage(['scratch_assignment_create', 'scratch_assignment_e
     if (projectLoading) {
       event.preventDefault();
       setProjectNotice('创作题正在载入，完成后即可发布。');
+      return;
+    }
+    const audienceMessage = recipientError();
+    if (audienceMessage) {
+      event.preventDefault();
+      showAudienceError(audienceMessage);
+      audienceError?.focus();
       return;
     }
     const message = selectionError();

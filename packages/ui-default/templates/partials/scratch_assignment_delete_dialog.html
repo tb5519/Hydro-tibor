@@ -1,0 +1,10 @@
+{% if isTeacher %}
+<dialog class="sc-dialog sc-assignment-delete-dialog" data-assignment-delete-dialog aria-labelledby="scratch-assignment-delete-title" aria-describedby="scratch-assignment-delete-description">
+  <div class="sc-dialog-head"><span class="sc-dialog-symbol" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9h22M12 9V5h8v4M8 9l1 18h14l1-18M13 14v8m6-8v8"/></svg></span><button class="sc-dialog-close" type="button" data-assignment-delete-cancel aria-label="关闭删除作业窗口">×</button></div>
+  <h2 id="scratch-assignment-delete-title">删除这份作业？</h2>
+  <p class="sc-assignment-delete-name" data-assignment-delete-name></p>
+  <p class="sc-muted" id="scratch-assignment-delete-description">删除后，学员将无法看到或进入这份作业。已有作品、答题和批改记录会保留，你可以在「已删除」中恢复。</p>
+  <p class="sc-dialog-status" data-assignment-delete-status role="status" aria-live="polite"></p>
+  <div class="sc-dialog-actions"><button class="sc-button" type="button" data-assignment-delete-cancel>取消</button><button class="sc-button sc-button-danger" type="button" data-assignment-delete-confirm>删除作业</button></div>
+</dialog>
+{% endif %}
