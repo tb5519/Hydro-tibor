@@ -108,13 +108,19 @@
 .scratch-app .sc-card .sc-button{min-height:46px;padding:9px 13px;font-size:15px}
 .scratch-app .sc-card-meta{font-size:13px;color:var(--sc-muted);margin-top:4px;overflow-wrap:anywhere}
 .scratch-app .sc-home-works{margin-top:24px}
-.scratch-app .sc-featured-task{display:flex;align-items:center;gap:20px}
-.scratch-app .sc-task-art{width:123px;height:126px;flex:none;position:relative;overflow:hidden;border-radius:18px;background:var(--sc-soft)}
-.scratch-app .sc-task-art .sc-mascot{transform:translateX(-50%) scale(.58);transform-origin:center top;top:48px}
-.scratch-app .sc-task-art>.icon{color:#98aed8;position:absolute;top:17px;left:18px;font-size:22px}
+.scratch-app .sc-featured-task{display:flex;align-items:center;gap:18px;padding-top:3px}
+.scratch-app .sc-task-art{width:84px;height:92px;flex:none;position:relative;overflow:hidden;border:1px solid #e2ebfa;border-radius:20px;background:linear-gradient(145deg,#f3f7ff,#e7efff)}
+.scratch-app .sc-task-art .sc-mascot{transform:translateX(-50%) scale(.43);transform-origin:center top;top:35px}
+.scratch-app .sc-task-art>.icon{color:#98aed8;position:absolute;top:12px;left:13px;font-size:17px}
 .scratch-app .sc-task-content{flex:1;min-width:0}
-.scratch-app .sc-task-content p{font-size:14px;color:var(--sc-muted);margin:6px 0 13px}
-.scratch-app .sc-task-content .sc-description-preview{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.scratch-app .sc-task-content h3{font-size:19px;line-height:1.5}
+.scratch-app .sc-task-content h3 a{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:var(--sc-ink)}
+.scratch-app .sc-task-content h3 a:hover{color:var(--sc-blue)}
+.scratch-app .sc-task-meta{display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px;margin:8px 0 14px;font-size:12px;color:var(--sc-muted)}
+.scratch-app .sc-task-kind{padding:3px 9px;border-radius:7px;background:var(--sc-soft);color:#5576a7;font-weight:600}
+.scratch-app .sc-task-deadline{overflow-wrap:anywhere}
+.scratch-app .sc-task-content .sc-actions{gap:8px 12px}
+.scratch-app .sc-task-content .sc-button{min-height:40px;padding:8px 14px;border-radius:11px;font-size:14px}
 .scratch-app .sc-toolbox{border:1px solid var(--sc-line);border-radius:21px;background:var(--sc-soft);padding:25px;display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;gap:16px}
 .scratch-app .sc-toolbox p{font-size:14px;color:var(--sc-muted);margin-top:6px}
 .scratch-app .sc-toolbox .sc-button{background:var(--sc-paper)}
@@ -251,7 +257,11 @@
   .scratch-app .sc-panel-head{padding:18px 19px 12px}
   .scratch-app .sc-panel-body{padding:6px 19px 21px}
   .scratch-app .sc-panel-body:first-child{padding-top:21px}
-  .scratch-app .sc-task-art{width:84px;height:117px}
+  .scratch-app .sc-task-art{width:64px;height:76px;border-radius:16px;align-self:flex-start;margin-top:3px}
+  .scratch-app .sc-task-art .sc-mascot{top:29px;transform:translateX(-50%) scale(.34)}
+  .scratch-app .sc-task-art>.icon{top:10px;left:10px;font-size:14px}
+  .scratch-app .sc-task-content h3{font-size:17px}
+  .scratch-app .sc-task-meta{margin:7px 0 12px;gap:6px 9px}
   .scratch-app .sc-featured-task{gap:13px}
   .scratch-app .sc-toolbox{padding:20px}
   .scratch-app .sc-tool-icons{gap:5px}

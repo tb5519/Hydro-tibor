@@ -52,14 +52,14 @@ before(async () => {
             collection: (name) => database.collection(name),
             ensureIndexes: (collection, ...indexes) => collection.createIndexes(indexes),
         },
-        './storage': {},
+        './storage': {}, './scratch_objective': {},
     });
     await model.apply({ on() {} });
     handlers = load('packages/hydrooj/src/handler/scratch.ts', {
         '../context': {}, '../error': {}, '../lib/domain_type': {}, '../lib/scratch_files': {},
         '../lib/scratch_editor_assets': { getScratchEditorVersion: () => 'a'.repeat(64) },
         '../lib/asset_delivery': { tryRedirectAsset: () => false },
-        '../model/builtin': {}, '../model/domain': {}, '../model/scratch': model,
+        '../model/builtin': {}, '../model/domain': {}, '../model/scratch': model, '../model/scratch_objective': {},
         '../model/storage': {}, '../model/user': {}, '../service/server': { Handler: class {} },
     });
 });

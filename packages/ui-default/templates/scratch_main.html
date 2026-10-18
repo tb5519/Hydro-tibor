@@ -29,12 +29,11 @@
       <div class="sc-featured-task">
         <div class="sc-task-art" aria-hidden="true"><span class="icon icon-star--outline"></span>{% include "partials/scratch_mascot.html" %}</div>
         <div class="sc-task-content">
-          <h3><a href="{{ url('scratch_assignment', assignmentId=task._id) }}">{{ task.title }}</a></h3>
-          {% if task.description %}<p class="sc-description-preview">{{ task.description }}</p>{% else %}<p>{{ '打开作业，查看学生的创作进度。' if isTeacher else '老师准备了一个小任务，来看看吧！' }}</p>{% endif %}
-          {% if task.deadline %}<p>请在 {{ datetimeSpan(task.deadline)|safe }} 前完成</p>{% endif %}
+          <h3><a href="{{ url('scratch_assignment', assignmentId=task._id) }}" title="{{ task.title }}">{{ task.title }}</a></h3>
+          <div class="sc-task-meta"><span class="sc-task-kind">{% if task.objectiveQuiz.total %}{{ task.objectiveQuiz.total }} 道小练习{% if task.projectRequired != false %} · 作品创作{% endif %}{% else %}作品创作{% endif %}</span>{% if task.deadline %}<span class="sc-task-deadline">截止 {{ datetimeSpan(task.deadline)|safe }}</span>{% endif %}</div>
           <div class="sc-actions">
-            {% if isTeacher %}<a class="sc-button sc-button-primary" href="{{ url('scratch_assignment', assignmentId=task._id) }}">查看进度</a>
-            {% elif task.objectiveQuiz.total %}<span class="sc-badge">{{ task.objectiveQuiz.total }} 道小练习{% if task.projectRequired != false %} + 作品创作{% endif %}</span><a class="sc-button sc-button-primary" href="{{ url('scratch_assignment', assignmentId=task._id) }}">看看任务<span class="icon icon-chevron_right" aria-hidden="true"></span></a>
+            {% if isTeacher %}<a class="sc-button sc-button-primary" href="{{ url('scratch_assignment', assignmentId=task._id) }}">查看进度<span class="icon icon-chevron_right" aria-hidden="true"></span></a>
+            {% elif task.objectiveQuiz.total %}<a class="sc-button sc-button-primary" href="{{ url('scratch_assignment', assignmentId=task._id) }}">看看任务<span class="icon icon-chevron_right" aria-hidden="true"></span></a>
             {% elif state.reviewed %}<span class="sc-badge sc-badge-success">老师有反馈啦</span><a class="sc-button sc-button-primary" href="{{ url('scratch_submission', submissionId=state.submissionId) }}">看看老师怎么说</a>
             {% elif state.submitted %}<span class="sc-badge sc-badge-success">已交给老师</span><a class="sc-button" href="{{ url('scratch_submission', submissionId=state.submissionId) }}">查看我的提交</a>
             {% elif state.hasSavedWork %}<span class="sc-badge sc-badge-warm">创作中</span><a class="sc-button sc-button-primary" data-no-instant href="{{ url('scratch_editor', query={workId:state.workId}) }}">接着做<span class="icon icon-chevron_right" aria-hidden="true"></span></a>
