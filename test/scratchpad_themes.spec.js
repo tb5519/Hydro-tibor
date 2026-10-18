@@ -88,6 +88,7 @@ describe('scratchpad workspace themes', () => {
                 assert.ok(contrast(theme.palette.accent, variables['--scratchpad-on-accent']) >= 4.5, `${theme.id} submit`);
                 const monaco = themes.scratchpadMonacoTheme(theme);
                 assert.equal(monaco.colors['editor.background'], variables['--ui-v2-surface']);
+                assert.equal(monaco.colors['editorOverviewRuler.background'], variables['--ui-v2-surface']);
                 assert.equal(monaco.colors['editorWidget.background'], variables['--ui-v2-surface-muted']);
             }
         } finally { dom.window.close(); }
@@ -307,6 +308,45 @@ describe('scratchpad workspace themes', () => {
             assert.equal(h.themes.scratchpadMonacoTheme(theme).colors['editor.background'], '#00000000');
             assert.equal(h.themes.scratchpadMonacoThemeName(theme), 'hydro-scratchpad-badge-7-revision-1');
             assert.match(h.themes.scratchpadMonacoThemeName(theme), /^[a-z0-9-]+$/i);
+        } finally { h.dom.window.close(); }
+    });
+
+    it('keeps the minimap and overview-ruler canvas transparent for badge backgrounds', async () => {
+        const h = harness({ workspace: true, get: () => catalog() });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            const colors = h.themes.scratchpadMonacoTheme(h.themes.currentScratchpadTheme()).colors;
+            assert.equal(colors['minimap.background'], '#00000000');
+            assert.equal(colors['editorOverviewRuler.background'], '#00000000');
+            assert.ok(colors['scrollbarSlider.background']);
+        } finally { h.dom.window.close(); }
+    });
+
+    it('accepts only bounded raster control artwork from the verified theme catalog', async () => {
+        const controls = {
+            run: { assetId: 'button', width: 999, height: 2, hoverAssetId: 'panel', activeAssetId: 'movie' },
+            submit: { assetId: 'movie', width: 120, height: 40 },
+            emptyOutput: { assetId: 'panel' },
+            settingsTab: { assetId: 'button', width: 40, height: 40, hoverAssetId: 'panel' },
+            unknownControl: { assetId: 'button' },
+        };
+        const skin = badgeSkin({ controls });
+        skin.assets.push({ id: 'movie', type: 'video/mp4', url: '/video.mp4' });
+        const h = harness({ workspace: true, get: () => catalog({ themes: [skin] }) });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            const result = h.themes.currentScratchpadTheme().controls;
+            assert.equal(result.run.width, 320);
+            assert.equal(result.run.height, 16);
+            assert.equal(result.run.hoverAssetId, 'panel');
+            assert.equal(result.run.activeAssetId, undefined);
+            assert.equal(result.submit, undefined);
+            assert.equal(result.unknownControl, undefined);
+            assert.equal(result.emptyOutput.width, 120);
+            assert.equal(result.emptyOutput.height, 40);
+            assert.equal(result.settingsTab.assetId, 'button');
+            assert.equal(result.settingsTab.width, 40);
+            assert.equal(result.settingsTab.hoverAssetId, 'panel');
         } finally { h.dom.window.close(); }
     });
 

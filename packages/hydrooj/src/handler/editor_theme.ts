@@ -77,6 +77,7 @@ function designFromArgs(args: any, previous: EditorThemeDesign, assets: EditorTh
         return normalizeEditorThemeDesign({
             name: args.name ?? previous.name, base: args.base ?? previous.base, overlay: args.overlay ?? previous.overlay,
             palette: jsonObject(args.palette, previous.palette), slots: jsonObject(args.slots, previous.slots),
+            controls: jsonObject(args.controls, previous.controls),
             previewAssetId: args.previewAssetId ?? previous.previewAssetId,
             thumbnailAssetId: args.thumbnailAssetId ?? previous.thumbnailAssetId,
             posterAssetId: args.posterAssetId ?? previous.posterAssetId,

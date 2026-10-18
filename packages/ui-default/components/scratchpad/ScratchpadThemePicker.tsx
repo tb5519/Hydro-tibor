@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useScratchpadControlArt } from './ScratchpadControlArt';
 import {
   refreshScratchpadThemes, SCRATCHPAD_THEMES, SCRATCHPAD_THEME_PICKER_EVENT, ScratchpadTheme,
   scratchpadThemeVariables, selectScratchpadTheme, useScratchpadTheme, useScratchpadThemes,
@@ -24,6 +25,7 @@ function PaletteIcon() {
 export default function ScratchpadThemePicker({ expanded = false }: { expanded?: boolean }) {
   const theme = useScratchpadTheme();
   const choices = useScratchpadThemes();
+  const { ready: artReady, art } = useScratchpadControlArt('theme', theme);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [verified, setVerified] = useState(true);
@@ -155,7 +157,9 @@ export default function ScratchpadThemePicker({ expanded = false }: { expanded?:
     <div className={`scratchpad__theme-picker${expanded ? ' scratchpad__theme-picker--expanded' : ''}`} style={variables}>
       <button
         type="button"
-        className="scratchpad__theme-trigger"
+        className={`scratchpad__theme-trigger${artReady ? ' scratchpad__image-control' : ''}`}
+        data-control-art="theme"
+        title={`代码区主题：${theme.name}`}
         ref={trigger}
         aria-label={`代码区主题：${theme.name}`}
         aria-haspopup="menu"
@@ -169,11 +173,14 @@ export default function ScratchpadThemePicker({ expanded = false }: { expanded?:
           }
         }}
       >
-        <PaletteIcon />
-        <span>{theme.name}</span>
-        <svg viewBox="0 0 12 12" width="12" height="12" fill="none" aria-hidden="true">
-          <path d="m3 4.5 3 3 3-3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        {art}
+        <span className={artReady ? 'scratchpad__art-sr-only' : 'scratchpad__control-fallback'}>
+          <PaletteIcon />
+          <span>{theme.name}</span>
+          <svg viewBox="0 0 12 12" width="12" height="12" fill="none" aria-hidden="true">
+            <path d="m3 4.5 3 3 3-3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
       </button>
       {open && createPortal(
         <div

@@ -4,6 +4,11 @@ import AdmZip from 'adm-zip';
 
 export const EDITOR_THEME_BASES = ['cloud', 'mist', 'sand', 'ocean'] as const;
 export const EDITOR_THEME_SLOTS = ['background', 'toolbar', 'editor', 'panel', 'runButton', 'submitButton', 'corner'] as const;
+export const EDITOR_THEME_CONTROLS = [
+    'run', 'submit', 'pretestTab', 'recordsTab', 'pretestTitle', 'recordsTitle', 'inputTitle', 'outputTitle',
+    'theme', 'language', 'close', 'problemTab', 'settingsTab', 'recordStatus', 'recordMemory', 'recordTime', 'recordDate',
+    'emptyRecords', 'emptyRecordsHint', 'emptyOutput', 'inputPlaceholder',
+] as const;
 export const EDITOR_THEME_PALETTE = [
     'surface', 'muted', 'border', 'borderStrong', 'text', 'textMuted', 'accent',
     'accentSoft', 'selection', 'comment', 'keyword', 'string', 'number',
@@ -22,12 +27,20 @@ export interface EditorThemeSlot {
     fit: 'cover' | 'contain' | 'tile' | 'stretch';
     position?: string;
 }
+export interface EditorThemeControl {
+    assetId: string;
+    width: number;
+    height: number;
+    hoverAssetId?: string;
+    activeAssetId?: string;
+}
 export interface EditorThemeDesign {
     name: string;
     base: typeof EDITOR_THEME_BASES[number];
     overlay: number;
     palette: Record<string, string>;
     slots: Partial<Record<typeof EDITOR_THEME_SLOTS[number], EditorThemeSlot>>;
+    controls?: Partial<Record<typeof EDITOR_THEME_CONTROLS[number], EditorThemeControl>>;
     previewAssetId?: string;
     thumbnailAssetId?: string;
     posterAssetId?: string;
@@ -101,8 +114,29 @@ export function normalizeEditorThemeDesign(value: unknown, files: EditorThemeAss
         if (key !== 'background' && assets.get(slot.assetId).type.startsWith('video/')) fail('视频只能用于整个编辑区的背景。');
         slots[key] = { assetId: slot.assetId, fit: slot.fit || 'cover', ...(slot.position ? { position: slot.position } : {}) };
     }
+    if (value.controls !== undefined && !plain(value.controls)) fail('图片控件配置无效。');
+    const controls: EditorThemeDesign['controls'] = {};
+    const controlAsset = (id: unknown) => {
+        if (typeof id !== 'string' || !assets.get(id)?.type.startsWith('image/')) fail('图片控件必须使用主题包内的图片。');
+        return id as string;
+    };
+    for (const [key, control] of Object.entries(value.controls || {})) {
+        if (!(EDITOR_THEME_CONTROLS as readonly string[]).includes(key) || !plain(control)) fail('不支持的图片控件。');
+        if (Object.keys(control).some((field) => !['assetId', 'width', 'height', 'hoverAssetId', 'activeAssetId'].includes(field))) {
+            fail('图片控件包含不支持的配置。');
+        }
+        const width = control.width === undefined ? 120 : control.width;
+        const height = control.height === undefined ? 40 : control.height;
+        if (!Number.isInteger(width) || width < 16 || width > 320 || !Number.isInteger(height) || height < 16 || height > 120) {
+            fail('图片控件宽度应为 16–320 像素，高度应为 16–120 像素，且必须是整数。');
+        }
+        controls[key] = { assetId: controlAsset(control.assetId), width, height,
+            ...(control.hoverAssetId !== undefined ? { hoverAssetId: controlAsset(control.hoverAssetId) } : {}),
+            ...(control.activeAssetId !== undefined ? { activeAssetId: controlAsset(control.activeAssetId) } : {}),
+        };
+    }
     return {
-        name, base, overlay, palette, slots,
+        name, base, overlay, palette, slots, controls,
         previewAssetId: optionalAsset(value.previewAssetId, assets, '完整界面预览'),
         thumbnailAssetId: optionalAsset(value.thumbnailAssetId, assets, '主题缩略图'),
         posterAssetId: optionalAsset(value.posterAssetId, assets, '视频封面'),
@@ -119,8 +153,26 @@ function resolveManifest(raw: any, files: EditorThemeAsset[], defaultName: strin
         slots[key] = typeof slot === 'string' ? { assetId: resolve(slot) }
             : plain(slot) ? { ...slot, assetId: resolve(slot.assetId || slot.asset || slot.file) } : slot;
     }
+    const controls: Record<string, any> = {};
+    if (raw.controls !== undefined && !plain(raw.controls)) fail('theme.json 的 controls 配置无效。');
+    for (const [key, control] of Object.entries(raw.controls || {})) {
+        if (!(EDITOR_THEME_CONTROLS as readonly string[]).includes(key)) fail('不支持的图片控件。');
+        if (typeof control === 'string') controls[key] = { assetId: resolve(control) };
+        else if (plain(control)) {
+            if (Object.keys(control).some((field) => ![
+                'assetId', 'asset', 'file', 'width', 'height', 'hoverAssetId', 'hover', 'activeAssetId', 'active',
+            ].includes(field))) fail('图片控件包含不支持的配置。');
+            controls[key] = { assetId: resolve(control.assetId ?? control.asset ?? control.file),
+                width: control.width, height: control.height,
+                ...(control.hoverAssetId !== undefined || control.hover !== undefined
+                    ? { hoverAssetId: resolve(control.hoverAssetId ?? control.hover) } : {}),
+                ...(control.activeAssetId !== undefined || control.active !== undefined
+                    ? { activeAssetId: resolve(control.activeAssetId ?? control.active) } : {}),
+            };
+        } else controls[key] = control;
+    }
     return normalizeEditorThemeDesign({
-        ...raw, name: raw.name || defaultName, slots,
+        ...raw, name: raw.name || defaultName, slots, controls,
         previewAssetId: resolve(raw.previewAssetId || raw.preview),
         thumbnailAssetId: resolve(raw.thumbnailAssetId || raw.thumbnail),
         posterAssetId: resolve(raw.posterAssetId || raw.poster),
@@ -234,6 +286,13 @@ export async function exportEditorThemeZip(
         slots: Object.fromEntries(Object.entries(normalized.slots).map(([slot, placement]) => [slot, {
             asset: byId.get(placement.assetId), fit: placement.fit, ...(placement.position ? { position: placement.position } : {}),
         }])),
+        ...(Object.keys(normalized.controls || {}).length ? { controls: Object.fromEntries(
+            Object.entries(normalized.controls).map(([key, control]) => [key, {
+                asset: byId.get(control.assetId), width: control.width, height: control.height,
+                ...(control.hoverAssetId ? { hover: byId.get(control.hoverAssetId) } : {}),
+                ...(control.activeAssetId ? { active: byId.get(control.activeAssetId) } : {}),
+            }]),
+        ) } : {}),
         preview: byId.get(normalized.previewAssetId), thumbnail: byId.get(normalized.thumbnailAssetId), poster: byId.get(normalized.posterAssetId),
     };
     zip.addFile('theme.json', Buffer.from(JSON.stringify(manifest, null, 2)));

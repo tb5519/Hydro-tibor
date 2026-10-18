@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "name": "疾风剑客 · 夏日海风",
+  "base": "cloud",
+  "overlay": 0.35,
+  "palette": {
+    "surface": "#eaf7ff",
+    "muted": "#dceef8",
+    "text": "#102f4a",
+    "textMuted": "#4d728c",
+    "border": "#c3dfed",
+    "borderStrong": "#85b6ce",
+    "accent": "#256fbb",
+    "accentSoft": "#d6ecfa",
+    "selection": "#acd8f3",
+    "comment": "#48687d",
+    "keyword": "#6045a0",
+    "string": "#126b5b",
+    "number": "#a14d25"
+  },
+  "slots": {
+    "background": {
+      "asset": "background.jpg",
+      "fit": "cover",
+      "position": "right top"
+    }
+  },
+  "controls": {
+    "inputTitle": {
+      "asset": "inputTitle.png",
+      "width": 90,
+      "height": 32
+    },
+    "outputTitle": {
+      "asset": "outputTitle.png",
+      "width": 90,
+      "height": 32
+    },
+    "recordStatus": {
+      "asset": "recordStatus.png",
+      "width": 130,
+      "height": 32
+    },
+    "recordMemory": {
+      "asset": "recordMemory.png",
+      "width": 90,
+      "height": 32
+    },
+    "recordTime": {
+      "asset": "recordTime.png",
+      "width": 90,
+      "height": 32
+    },
+    "recordDate": {
+      "asset": "recordDate.png",
+      "width": 125,
+      "height": 32
+    },
+    "emptyRecords": {
+      "asset": "emptyRecords.png",
+      "width": 220,
+      "height": 62
+    },
+    "emptyRecordsHint": {
+      "asset": "emptyRecordsHint.png",
+      "width": 280,
+      "height": 26
+    },
+    "emptyOutput": {
+      "asset": "emptyOutput.png",
+      "width": 280,
+      "height": 26
+    },
+    "inputPlaceholder": {
+      "asset": "inputPlaceholder.png",
+      "width": 230,
+      "height": 26
+    },
+    "language": {
+      "asset": "language.png",
+      "width": 152,
+      "height": 44
+    },
+    "close": {
+      "asset": "close.png",
+      "width": 36,
+      "height": 36
+    },
+    "problemTab": {
+      "asset": "problemTab.png",
+      "width": 42,
+      "height": 44
+    },
+    "run": {
+      "asset": "run.png",
+      "width": 216,
+      "height": 72
+    },
+    "submit": {
+      "asset": "submit.png",
+      "width": 224,
+      "height": 72
+    },
+    "pretestTab": {
+      "asset": "pretest.png",
+      "width": 132,
+      "height": 44
+    },
+    "recordsTab": {
+      "asset": "records.png",
+      "width": 180,
+      "height": 60
+    },
+    "pretestTitle": {
+      "asset": "pretest.png",
+      "width": 132,
+      "height": 44
+    },
+    "recordsTitle": {
+      "asset": "records.png",
+      "width": 180,
+      "height": 60
+    },
+    "theme": {
+      "asset": "theme.png",
+      "width": 120,
+      "height": 40
+    },
+    "settingsTab": {
+      "asset": "settingsTab.png",
+      "width": 42,
+      "height": 44
+    }
+  },
+  "thumbnail": "background.jpg",
+  "preview": "preview.jpg"
+}

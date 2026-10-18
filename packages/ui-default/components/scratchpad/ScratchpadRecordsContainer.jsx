@@ -4,6 +4,7 @@ import { connect } from 'react-redux';
 import Icon from 'vj/components/react/IconComponent';
 import { i18n } from 'vj/utils';
 import Panel from './PanelComponent';
+import { ScratchpadControlLabel } from './ScratchpadControlArt';
 import ScratchpadRecordsRow from './ScratchpadRecordsRowContainer';
 
 const mapStateToProps = (state) => ({
@@ -30,11 +31,11 @@ export default connect(mapStateToProps)(class ScratchpadRecordsContainer extends
     return (
       <Panel
         title={(
-          <span>
+          <ScratchpadControlLabel control="recordsTitle">
             <Icon name="flag" />
             {' '}
             {i18n('Records')}
-          </span>
+          </ScratchpadControlLabel>
         )}
       >
         <div ref={this.scrollContainer} className="scratchpad__records-scroll" aria-busy={this.props.isLoading}>
@@ -48,10 +49,10 @@ export default connect(mapStateToProps)(class ScratchpadRecordsContainer extends
               </colgroup>
               <thead>
                 <tr>
-                  <th scope="col">评测结果</th>
-                  <th scope="col">{i18n('Memory')}</th>
-                  <th scope="col">用时</th>
-                  <th scope="col">提交时间</th>
+                  <th scope="col"><ScratchpadControlLabel control="recordStatus">评测结果</ScratchpadControlLabel></th>
+                  <th scope="col"><ScratchpadControlLabel control="recordMemory">{i18n('Memory')}</ScratchpadControlLabel></th>
+                  <th scope="col"><ScratchpadControlLabel control="recordTime">用时</ScratchpadControlLabel></th>
+                  <th scope="col"><ScratchpadControlLabel control="recordDate">提交时间</ScratchpadControlLabel></th>
                 </tr>
               </thead>
               <tbody>
@@ -62,10 +63,13 @@ export default connect(mapStateToProps)(class ScratchpadRecordsContainer extends
             </table>
           ) : (
             <div className="scratchpad__records-empty" role="status">
-              <Icon name="flag" />
-              <span>{this.props.isLoading ? '正在加载评测记录' : '暂无评测记录'}</span>
+              {this.props.isLoading ? (
+                <><Icon name="flag" /><span>正在加载评测记录</span></>
+              ) : (
+                <ScratchpadControlLabel control="emptyRecords" fallbackDecoration={<Icon name="flag" />}>暂无评测记录</ScratchpadControlLabel>
+              )}
               {!this.props.isLoading && (
-                <small>{UiContext.homeworkReview ? '该学员尚未提交这道题' : '递交代码后，在这里查看评测结果'}</small>
+                <small>{UiContext.homeworkReview ? '该学员尚未提交这道题' : <ScratchpadControlLabel control="emptyRecordsHint">递交代码后，在这里查看评测结果</ScratchpadControlLabel>}</small>
               )}
             </div>
           )}

@@ -7,9 +7,18 @@ type Fit = 'cover' | 'contain' | 'tile' | 'stretch';
 type Base = 'cloud' | 'mist' | 'sand' | 'ocean';
 interface Asset { id: string; name: string; type: string; url: string }
 interface Placement { assetId: string; fit: Fit; position?: string }
+interface ImageControl { assetId: string; width: number; height: number; hoverAssetId?: string; activeAssetId?: string }
+const controlGroups = {
+  工具栏操作: { run: '运行自测', submit: '递交评测', pretestTab: '自测入口', recordsTab: '评测记录入口', theme: '主题入口', language: '语言入口', close: '关闭', problemTab: '题目入口', settingsTab: '设置入口' },
+  面板标题: { pretestTitle: '自测标题', recordsTitle: '评测记录标题', inputTitle: '输入标题', outputTitle: '输出标题' },
+  记录表头: { recordStatus: '评测结果', recordMemory: '内存', recordTime: '用时', recordDate: '提交时间' },
+  空白提示: { emptyRecords: '暂无评测记录', emptyRecordsHint: '提交后查看记录提示', emptyOutput: '等待自测结果提示', inputPlaceholder: '测试数据输入提示' },
+};
+const controlLabels = Object.assign({}, ...Object.values(controlGroups)) as Record<string, string>;
 interface Theme {
   id: string; badgeId?: number; name: string; base: Base; overlay: number;
   palette: Record<string, string>; slots: Partial<Record<Slot, Placement>>; assets: Asset[];
+  controls: Record<string, ImageControl>;
   previewAssetId?: string; posterAssetId?: string; thumbnailAssetId?: string; version?: string;
 }
 const slotLabels: Record<Slot, string> = {
@@ -35,6 +44,12 @@ export function bindEditorThemeManage() {
   const positionInput = find<HTMLSelectElement>('[data-theme-position]');
   const referenceInput = find<HTMLSelectElement>('[data-theme-reference-asset]');
   const posterInput = find<HTMLSelectElement>('[data-theme-poster-asset]');
+  const controlInput = find<HTMLSelectElement>('[data-theme-control-select]');
+  const controlAssetInput = find<HTMLSelectElement>('[data-theme-control-asset]');
+  const controlHoverInput = find<HTMLSelectElement>('[data-theme-control-hover]');
+  const controlActiveInput = find<HTMLSelectElement>('[data-theme-control-active]');
+  const controlWidthInput = find<HTMLInputElement>('[data-theme-control-width]');
+  const controlHeightInput = find<HTMLInputElement>('[data-theme-control-height]');
   const preview = find('[data-theme-preview]');
   const video = find<HTMLVideoElement>('[data-theme-preview-video]');
   const badgeNames = new Map<number, string>();
@@ -45,6 +60,8 @@ export function bindEditorThemeManage() {
   let originalBadgeId: number | undefined;
   let draftId: string | undefined;
   let selectedSlot: Slot = 'background';
+  let selectedControl = 'run';
+  let previewState = 'empty';
   let busy = false;
   let disposed = false;
   let upload: XMLHttpRequest | null = null;
@@ -82,15 +99,28 @@ export function bindEditorThemeManage() {
       if (!mapping || !assets.some((asset: Asset) => asset.id === mapping.assetId && (slot === 'background' || asset.type.startsWith('image/')))) continue;
       slots[slot] = { assetId: mapping.assetId, fit: ['cover', 'contain', 'tile', 'stretch'].includes(mapping.fit) ? mapping.fit : 'cover', position: mapping.position || 'center' };
     }
+    const controls: Theme['controls'] = {};
+    const isImage = (id: unknown) => assets.some((asset: Asset) => asset.id === id && asset.type.startsWith('image/'));
+    for (const key of Object.keys(controlLabels)) {
+      const control = value.controls?.[key];
+      if (!control || !isImage(control.assetId)) continue;
+      controls[key] = {
+        assetId: control.assetId,
+        width: Number.isFinite(Number(control.width)) ? Math.max(16, Math.min(320, Number(control.width))) : 120,
+        height: Number.isFinite(Number(control.height)) ? Math.max(16, Math.min(120, Number(control.height))) : 40,
+        ...(isImage(control.hoverAssetId) ? { hoverAssetId: control.hoverAssetId } : {}),
+        ...(isImage(control.activeAssetId) ? { activeAssetId: control.activeAssetId } : {}),
+      };
+    }
     return {
-      ...value, id: String(value.id), name: String(value.name || ''), assets, slots,
+      ...value, id: String(value.id), name: String(value.name || ''), assets, slots, controls,
       base: Object.hasOwn(basePalettes, value.base) ? value.base : 'ocean',
       overlay: Number.isFinite(Number(value.overlay)) ? Math.max(0.35, Math.min(0.98, Number(value.overlay))) : 0.86,
       palette: Object.fromEntries(Object.entries(value.palette || {}).filter(([, color]) => /^#[\da-f]{6}$/i.test(String(color)))),
     };
   };
   const assetFor = (theme: Theme, id?: string) => theme.assets.find((asset) => asset.id === id);
-  const snapshot = () => selected ? JSON.stringify({ name: selected.name, badgeId: selected.badgeId, base: selected.base, overlay: selected.overlay, palette: selected.palette, slots: selected.slots, previewAssetId: selected.previewAssetId, posterAssetId: selected.posterAssetId }) : '';
+  const snapshot = () => selected ? JSON.stringify({ name: selected.name, badgeId: selected.badgeId, base: selected.base, overlay: selected.overlay, palette: selected.palette, slots: selected.slots, controls: selected.controls, previewAssetId: selected.previewAssetId, posterAssetId: selected.posterAssetId }) : '';
   const dirty = () => snapshot() !== baseline;
   const canLeaveDesign = () => !dirty() || window.confirm('当前主题还有未发布的修改。放弃这些修改并继续吗？');
   const badgeTitle = (id?: number) => badgeNames.get(Number(id)) || '请选择关联徽章';
@@ -99,7 +129,7 @@ export function bindEditorThemeManage() {
     root.setAttribute('aria-busy', String(value));
     root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>('input, select, button').forEach((node) => { node.disabled = value; });
     badgeInput.disabled = value || !!originalThemeId;
-    if (!value) renderSlot();
+    if (!value) { renderSlot(); renderControl(); }
     find<HTMLButtonElement>('[data-theme-publish]').textContent = value ? '正在处理…' : originalThemeId ? '更新主题' : '发布主题';
   };
   const renderCollection = () => {
@@ -160,6 +190,49 @@ export function bindEditorThemeManage() {
     if (region === 'toolbar' || region === 'panel') node.style.backgroundColor = 'transparent';
     if (region === 'runButton' || region === 'submitButton') node.style.color = palette?.text || '';
   };
+  const renderPreviewControls = () => {
+    preview.querySelectorAll<HTMLElement>('[data-theme-control]').forEach((node) => {
+      const key = node.dataset.themeControl!;
+      let fallback = node.querySelector<HTMLElement>('.etm__control-fallback');
+      let image = node.querySelector<HTMLImageElement>('.etm__control-image');
+      if (!fallback) {
+        fallback = document.createElement('span'); fallback.className = 'etm__control-fallback';
+        fallback.append(...Array.from(node.childNodes)); node.append(fallback);
+        image = document.createElement('img'); image.className = 'etm__control-image'; image.alt = ''; image.hidden = true;
+        image.setAttribute('aria-hidden', 'true'); node.append(image);
+        node.setAttribute('aria-label', controlLabels[key]);
+        node.title = controlLabels[key];
+        image.addEventListener('load', () => { if (node.dataset.controlSource === image!.src) node.classList.add('has-control-image'); });
+        image.addEventListener('error', () => { node.classList.remove('has-control-image'); });
+        const showState = (state: 'default' | 'hover' | 'active') => {
+          const control = selected?.controls[key];
+          if (!control || !selected) return;
+          const asset = assetFor(selected, state === 'active' ? control.activeAssetId || control.hoverAssetId || control.assetId
+            : state === 'hover' ? control.hoverAssetId || control.assetId : control.assetId);
+          if (asset) { node.dataset.controlSource = asset.url; image!.src = asset.url; }
+        };
+        node.addEventListener('pointerenter', () => showState('hover'));
+        node.addEventListener('pointerleave', () => showState('default'));
+        node.addEventListener('pointerdown', () => showState('active'));
+        node.addEventListener('pointerup', () => showState('hover'));
+      }
+      const control = selected?.controls[key];
+      const asset = selected && assetFor(selected, control?.assetId);
+      if (!control || !asset) {
+        node.classList.remove('has-control-image'); image!.hidden = true; image!.removeAttribute('src'); delete node.dataset.controlSource;
+        node.style.removeProperty('--etm-control-width'); node.style.removeProperty('--etm-control-height');
+        return;
+      }
+      node.style.setProperty('--etm-control-width', `${control.width}px`);
+      node.style.setProperty('--etm-control-height', `${control.height}px`);
+      image!.hidden = false;
+      if (image!.getAttribute('src') !== asset.url) { node.classList.remove('has-control-image'); node.dataset.controlSource = asset.url; image!.src = asset.url; }
+      if (image!.complete && image!.naturalWidth > 0) node.classList.add('has-control-image');
+    });
+    preview.querySelectorAll<HTMLElement>('[data-theme-preview-empty]').forEach((node) => { node.hidden = previewState !== 'empty'; });
+    preview.querySelectorAll<HTMLElement>('[data-theme-preview-result]').forEach((node) => { node.hidden = previewState !== 'result'; });
+    root.querySelectorAll<HTMLElement>('[data-theme-preview-state]').forEach((node) => { node.setAttribute('aria-pressed', String(node.dataset.themePreviewState === previewState)); });
+  };
   const renderPreview = () => {
     if (!selected) return;
     const palette = { ...basePalettes[selected.base], ...selected.palette };
@@ -205,7 +278,31 @@ export function bindEditorThemeManage() {
       find<HTMLAnchorElement>('[data-theme-reference-link]').href = reference.url;
     }
     root.querySelectorAll<HTMLInputElement>('[data-theme-color]').forEach((input) => { input.value = palette[input.dataset.themeColor!]; });
+    renderPreviewControls();
     renderDraftState();
+  };
+  const renderControl = () => {
+    if (!selected) return;
+    const control = selected.controls[selectedControl];
+    controlInput.value = selectedControl;
+    const images = selected.assets.filter((asset) => asset.type.startsWith('image/'));
+    for (const input of [controlAssetInput, controlHoverInput, controlActiveInput]) {
+      input.replaceChildren(new Option(input === controlAssetInput ? '保留原有文字与按钮' : '沿用默认图片', ''));
+      for (const asset of images) input.add(new Option(asset.name, asset.id));
+    }
+    controlAssetInput.value = control?.assetId || '';
+    controlHoverInput.value = control?.hoverAssetId || '';
+    controlActiveInput.value = control?.activeAssetId || '';
+    controlWidthInput.value = String(control?.width || 120); controlHeightInput.value = String(control?.height || 40);
+    for (const input of [controlHoverInput, controlActiveInput, controlWidthInput, controlHeightInput]) input.disabled = busy || !control;
+    find('[data-theme-control-count]').textContent = `${Object.keys(selected.controls).length} 处已定制`;
+    find('[data-theme-control-hint]').textContent = selectedControl === 'language'
+      ? '图片装饰语言入口，当前语言名称仍会显示。请为语言文字留出清晰的区域。'
+      : '整张图片就是这个控件。文字可直接设计在图中，透明部分不会出现方形底框。图片加载失败会显示原有文字。';
+    const sample = find<HTMLImageElement>('[data-theme-control-sample]');
+    sample.hidden = !control;
+    if (control) { sample.src = assetFor(selected, control.assetId)!.url; sample.style.width = `${control.width}px`; sample.style.height = `${control.height}px`; }
+    else sample.removeAttribute('src');
   };
   const renderSlot = () => {
     if (!selected) return;
@@ -281,7 +378,7 @@ export function bindEditorThemeManage() {
     find('[data-theme-remove-confirm]').hidden = true;
     find<HTMLButtonElement>('[data-theme-publish]').textContent = published ? '更新主题' : '发布主题';
     baseline = snapshot();
-    renderCollection(); renderSlot(); renderPreview();
+    renderCollection(); renderSlot(); renderControl(); renderPreview();
   };
   const updateBadges = (badges: { id: number; title: string }[]) => {
     if (!Array.isArray(badges)) return;
@@ -299,6 +396,35 @@ export function bindEditorThemeManage() {
     button.addEventListener('click', () => { if (!busy) { selectedSlot = slot as Slot; renderSlot(); } });
     find('[data-theme-slots]').append(button);
   }
+  for (const [label, controls] of Object.entries(controlGroups)) {
+    const group = document.createElement('optgroup'); group.label = label;
+    for (const [key, text] of Object.entries(controls)) group.append(new Option(text, key));
+    controlInput.append(group);
+  }
+  controlInput.addEventListener('change', () => { selectedControl = controlInput.value; renderControl(); });
+  controlAssetInput.addEventListener('change', () => {
+    if (!selected) return;
+    if (!controlAssetInput.value) delete selected.controls[selectedControl];
+    else selected.controls[selectedControl] = { ...selected.controls[selectedControl], assetId: controlAssetInput.value, width: selected.controls[selectedControl]?.width || 120, height: selected.controls[selectedControl]?.height || 40 };
+    renderControl(); renderPreview();
+  });
+  for (const [input, field] of [[controlHoverInput, 'hoverAssetId'], [controlActiveInput, 'activeAssetId']] as const) {
+    input.addEventListener('change', () => {
+      const control = selected?.controls[selectedControl]; if (!control) return;
+      if (input.value) control[field] = input.value; else delete control[field];
+      renderPreview();
+    });
+  }
+  for (const [input, field, maximum] of [[controlWidthInput, 'width', 320], [controlHeightInput, 'height', 120]] as const) {
+    input.addEventListener('change', () => {
+      const control = selected?.controls[selectedControl]; if (!control) return;
+      const value = Number(input.value); if (!Number.isFinite(value)) return;
+      control[field] = Math.round(Math.max(16, Math.min(maximum, value))); renderControl(); renderPreview();
+    });
+  }
+  root.querySelectorAll<HTMLElement>('[data-theme-preview-state]').forEach((button) => button.addEventListener('click', () => {
+    previewState = button.dataset.themePreviewState!; renderPreviewControls();
+  }));
   renderCollection();
   nameInput.addEventListener('input', () => { if (selected) { selected.name = nameInput.value; renderPreview(); } });
   badgeInput.addEventListener('change', () => { if (selected) { selected.badgeId = Number(badgeInput.value) || undefined; renderDraftState(); } });
@@ -379,7 +505,7 @@ export function bindEditorThemeManage() {
       const result = await request.post(endpoint, {
         operation: 'publish', ...(draftId ? { draftId } : { themeId: originalThemeId }),
         badgeId: selected.badgeId, name: selected.name.trim(), base: selected.base, overlay: selected.overlay,
-        palette: JSON.stringify(selected.palette), slots: JSON.stringify(selected.slots),
+        palette: JSON.stringify(selected.palette), slots: JSON.stringify(selected.slots), controls: JSON.stringify(selected.controls),
         previewAssetId: selected.previewAssetId || '', posterAssetId: selected.posterAssetId || '', thumbnailAssetId: selected.thumbnailAssetId || '',
       });
       if (disposed) return;

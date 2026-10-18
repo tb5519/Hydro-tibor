@@ -200,6 +200,60 @@ async function run() {
         const configuration = JSON.parse(new Zip(result.body).readAsText('theme.json'));
         assert(!Object.hasOwn(configuration, 'badgeId') && !Object.hasOwn(configuration, 'domainId'));
     });
+    await check('Image control upload, publication, edits and export retain dimensions and independent visual states', async () => {
+        const controlArchive = new Zip();
+        const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6R0sAAAAASUVORK5CYII=', 'base64');
+        for (const name of ['sword.png', 'sword-hover.png', 'sword-active.png', 'heading.png']) controlArchive.addFile(name, png);
+        controlArchive.addFile('theme.json', Buffer.from(JSON.stringify({ version: 1, name: '图片控件验收', controls: {
+            run: { asset: 'sword.png', width: 208, height: 64, hover: 'sword-hover.png', active: 'sword-active.png' },
+            inputTitle: 'heading.png',
+            settingsTab: { asset: 'heading.png', width: 42, height: 44 },
+        } })));
+        const uploaded = await upload(controlArchive.toBuffer());
+        status(uploaded, 200);
+        const controlDraft = uploaded.body.draft;
+        const byName = Object.fromEntries(controlDraft.assets.map((asset) => [asset.name, asset.id]));
+        assert.deepEqual(controlDraft.controls.run, { assetId: byName['sword.png'], width: 208, height: 64,
+            hoverAssetId: byName['sword-hover.png'], activeAssetId: byName['sword-active.png'] });
+        assert.deepEqual(controlDraft.controls.settingsTab, { assetId: byName['heading.png'], width: 42, height: 44 });
+        const created = await post(teacher, managementUrl, { operation: 'publish', draftId: controlDraft.id, badgeId: 701 });
+        status(created, 200);
+        assert.deepEqual(created.body.theme.controls, controlDraft.controls);
+        const controls = { ...controlDraft.controls, run: { ...controlDraft.controls.run, width: 240 },
+            recordsTitle: { assetId: byName['heading.png'], width: 180, height: 40 } };
+        const edited = await post(teacher, managementUrl, { operation: 'publish', themeId: 'badge:701', badgeId: 701,
+            controls: JSON.stringify(controls) });
+        status(edited, 200);
+        assert.deepEqual(edited.body.theme.controls, controls);
+        assert.deepEqual((await get(student, catalogUrl)).body.themes.find((theme) => theme.badgeId === 701).controls, controls);
+        const preserved = await post(teacher, managementUrl, { operation: 'publish', themeId: 'badge:701', badgeId: 701, name: '改名保留图片控件' });
+        status(preserved, 200);
+        assert.deepEqual(preserved.body.theme.controls, controls, 'Omitted controls preserve published designs');
+        for (const invalid of [{ run: { ...controls.run, width: 321 } }, { run: { ...controls.run, assetId: 'missing' } },
+            { unexpected: controls.run }, { run: { ...controls.run, onClick: 'script' } }]) {
+            denied(await post(teacher, managementUrl, { operation: 'publish', themeId: 'badge:701', badgeId: 701,
+                controls: JSON.stringify(invalid) }));
+        }
+        const current = (await get(student, catalogUrl)).body.themes.find((theme) => theme.badgeId === 701);
+        assert.equal(current.version, preserved.body.theme.version, 'Invalid replacements must preserve the published version');
+        const download = await teacher.get(`${managementUrl}?export=badge%3A701`).buffer(true).parse((res, done) => {
+            const parts = []; res.on('data', (part) => parts.push(part));
+            res.on('end', () => done(null, Buffer.concat(parts)));
+        });
+        status(download, 200);
+        const configuration = JSON.parse(new Zip(download.body).readAsText('theme.json'));
+        assert.deepEqual(configuration.controls.run, { asset: 'sword.png', width: 240, height: 64,
+            hover: 'sword-hover.png', active: 'sword-active.png' });
+        const reimported = await upload(download.body);
+        status(reimported, 200);
+        assert.deepEqual(reimported.body.draft.controls, controls);
+        const removed = await post(teacher, managementUrl, { operation: 'publish', themeId: 'badge:701', badgeId: 701, controls: '{}' });
+        status(removed, 200);
+        assert.deepEqual(removed.body.theme.controls, {}, 'Teacher can explicitly restore text controls');
+        const restored = await publish();
+        status(restored, 200);
+        published = restored.body.theme;
+    });
     await check('Object-storage failure and malformed replacement uploads preserve the published version', async () => {
         storageEnabled = false;
         const fresh = new Zip();

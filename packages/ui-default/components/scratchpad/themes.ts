@@ -35,6 +35,7 @@ export interface ScratchpadTheme {
   overlay?: number;
   assets?: ScratchpadThemeAsset[];
   slots?: Partial<Record<ScratchpadSkinSlot, ScratchpadThemeSlot>>;
+  controls?: Partial<Record<ScratchpadControlKey, ScratchpadControlImage>>;
   posterAssetId?: string;
   thumbnailUrl?: string;
   previewUrl?: string;
@@ -51,6 +52,20 @@ export interface ScratchpadThemeSlot {
   assetId: string;
   fit: 'cover' | 'contain' | 'tile' | 'stretch';
   position?: string;
+}
+
+export const SCRATCHPAD_CONTROL_KEYS = [
+  'run', 'submit', 'pretestTab', 'recordsTab', 'pretestTitle', 'recordsTitle', 'inputTitle', 'outputTitle',
+  'theme', 'language', 'close', 'problemTab', 'settingsTab', 'recordStatus', 'recordMemory', 'recordTime', 'recordDate',
+  'emptyRecords', 'emptyRecordsHint', 'emptyOutput', 'inputPlaceholder',
+] as const;
+export type ScratchpadControlKey = typeof SCRATCHPAD_CONTROL_KEYS[number];
+export interface ScratchpadControlImage {
+  assetId: string;
+  width: number;
+  height: number;
+  hoverAssetId?: string;
+  activeAssetId?: string;
 }
 
 export const SCRATCHPAD_THEMES: ScratchpadTheme[] = [
@@ -192,6 +207,9 @@ export function scratchpadMonacoTheme(theme: ScratchpadTheme): Monaco.editor.ISt
       'scrollbarSlider.hoverBackground': `${p.textMuted}55`,
       'scrollbarSlider.activeBackground': `${p.textMuted}77`,
       'minimap.background': theme.badgeId ? '#00000000' : p.surface,
+      // Without an explicit color Monaco paints this canvas from the token
+      // registry, which strips alpha and leaves a black gutter beside artwork.
+      'editorOverviewRuler.background': theme.badgeId ? '#00000000' : p.surface,
     },
   };
 }
@@ -314,10 +332,24 @@ function normalizeTheme(value: any): ScratchpadTheme | null {
         ? assignment.position : 'center',
     };
   }
+  const controls: ScratchpadTheme['controls'] = {};
+  for (const key of SCRATCHPAD_CONTROL_KEYS) {
+    const assignment = value.controls?.[key];
+    const asset = assets.find((item) => item.id === assignment?.assetId && item.type.startsWith('image/'));
+    if (!asset) continue;
+    const imageId = (id: unknown) => assets.find((item) => item.id === id && item.type.startsWith('image/'))?.id;
+    controls[key] = {
+      assetId: asset.id,
+      width: Math.max(16, Math.min(320, Number(assignment.width) || 120)),
+      height: Math.max(16, Math.min(120, Number(assignment.height) || 40)),
+      hoverAssetId: imageId(assignment.hoverAssetId),
+      activeAssetId: imageId(assignment.activeAssetId),
+    };
+  }
   return {
     id: value.id, badgeId: Number(value.badgeId), name: String(value.name || value.badgeTitle || '徽章主题').slice(0, 80),
     description: String(value.badgeTitle || '').slice(0, 80), badgeTitle: String(value.badgeTitle || '').slice(0, 80),
-    dark: base.dark, palette, expiresAt: value.expiresAt || null, assets, slots,
+    dark: base.dark, palette, expiresAt: value.expiresAt || null, assets, slots, controls,
     overlay: Math.max(0.35, Math.min(0.98, Number(value.overlay) || 0.84)),
     posterAssetId: assets.some((asset) => asset.id === value.posterAssetId && asset.type.startsWith('image/')) ? value.posterAssetId : undefined,
     version: String(value.version || ''),

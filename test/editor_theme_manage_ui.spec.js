@@ -59,7 +59,7 @@ function harness(options = {}) {
             if (id === '../components/scratchpad/themes') return runtime.exports;
             if (id === 'vj/utils') return { request: { post: async (url, body) => {
                 requests.push({ url, body });
-                return options.post ? options.post(url, body) : { theme: { ...fixture(), name: body.name, palette: JSON.parse(body.palette), slots: JSON.parse(body.slots), posterAssetId: body.posterAssetId, previewAssetId: body.previewAssetId } };
+                return options.post ? options.post(url, body) : { theme: { ...fixture(), name: body.name, palette: JSON.parse(body.palette), slots: JSON.parse(body.slots), controls: JSON.parse(body.controls || '{}'), posterAssetId: body.posterAssetId, previewAssetId: body.previewAssetId } };
             } } };
             return require(id);
         },
@@ -148,6 +148,136 @@ describe('teacher badge image theme designer', () => {
             assert.match(h.get('[data-theme-message]').textContent, /对象存储暂不可用/);
             assert.equal(h.get('[data-theme-publish]').disabled, false);
             assert.match(h.get('[data-theme-draft-state]').textContent, /未发布的修改/);
+        } finally { h.close(); }
+    });
+
+    it('designs full image controls with dimensions and interaction states without changing an old package’s placements', async () => {
+        const h = harness();
+        try {
+            h.get('[data-theme-id]').click();
+            assert.equal(h.get('[data-theme-control-asset]').value, '');
+            assert.equal(h.get('[data-theme-control-asset] option[value="clip"]'), null);
+            assert.equal(h.get('[data-theme-control-width]').disabled, true);
+            assert.equal(h.get('[data-theme-control-select] option[value="settingsTab"]').textContent, '设置入口');
+            h.change('[data-theme-control-asset]', 'button');
+            h.change('[data-theme-control-width]', '210');
+            h.change('[data-theme-control-height]', '72');
+            h.change('[data-theme-control-hover]', 'bg');
+            h.change('[data-theme-control-active]', 'reference');
+            h.change('[data-theme-control-select]', 'recordsTitle');
+            h.change('[data-theme-control-asset]', 'reference');
+            h.change('[data-theme-control-select]', 'settingsTab');
+            h.change('[data-theme-control-asset]', 'button');
+            h.change('[data-theme-control-width]', '32');
+            h.change('[data-theme-control-height]', '32');
+            const settingsImage = h.get('[data-theme-control="settingsTab"] img');
+            settingsImage.dispatchEvent(new h.window.Event('load'));
+            assert.equal(h.get('[data-theme-control="settingsTab"]').classList.contains('has-control-image'), true);
+            assert.equal(h.get('[data-theme-control-count]').textContent, '3 处已定制');
+            assert.match(h.get('[data-theme-draft-state]').textContent, /未发布的修改/);
+            h.get('[data-theme-form]').dispatchEvent(new h.window.Event('submit', { cancelable: true }));
+            await flush();
+            const body = h.requests[0].body;
+            assert.equal(body.operation, 'publish');
+            assert.equal(body.themeId, 'badge:6');
+            assert.deepEqual(JSON.parse(body.controls).run, { assetId: 'button', width: 210, height: 72, hoverAssetId: 'bg', activeAssetId: 'reference' });
+            assert.deepEqual(JSON.parse(body.controls).recordsTitle, { assetId: 'reference', width: 120, height: 40 });
+            assert.deepEqual(JSON.parse(body.controls).settingsTab, { assetId: 'button', width: 32, height: 32 });
+            assert.deepEqual(JSON.parse(body.slots), { ...fixture().slots, submitButton: { ...fixture().slots.submitButton, position: 'center' } });
+            h.change('[data-theme-control-select]', 'run');
+            assert.equal(h.get('[data-theme-control-width]').value, '210');
+            assert.equal(h.get('[data-theme-control-hover]').value, 'bg');
+            h.change('[data-theme-control-asset]', '');
+            assert.equal(h.get('[data-theme-control-width]').disabled, true);
+            assert.equal(h.get('[data-theme-control-count]').textContent, '2 处已定制');
+            h.get('[data-theme-form]').dispatchEvent(new h.window.Event('submit', { cancelable: true }));
+            await flush();
+            assert.equal(JSON.parse(h.requests[1].body.controls).run, undefined);
+        } finally { h.close(); }
+    });
+
+    it('keeps a working text fallback until the PNG loads, previews hover and press artwork, and retains dynamic language/data', () => {
+        const theme = fixture();
+        theme.controls = {
+            run: { assetId: 'button', width: 180, height: 64, hoverAssetId: 'bg', activeAssetId: 'reference' },
+            language: { assetId: 'button', width: 32, height: 32 },
+            emptyOutput: { assetId: 'reference', width: 200, height: 40 },
+        };
+        const h = harness({ themes: [theme] });
+        try {
+            h.get('[data-theme-id]').click();
+            const run = h.get('[data-theme-control="run"]');
+            const image = run.querySelector('img');
+            assert.equal(run.classList.contains('has-control-image'), false);
+            assert.match(run.querySelector('.etm__control-fallback').textContent, /运行自测/);
+            image.dispatchEvent(new h.window.Event('load'));
+            assert.equal(run.classList.contains('has-control-image'), true);
+            assert.equal(run.style.getPropertyValue('--etm-control-width'), '180px');
+            run.dispatchEvent(new h.window.Event('pointerenter'));
+            assert.match(image.src, /bg\.jpg$/);
+            run.dispatchEvent(new h.window.Event('pointerdown'));
+            assert.match(image.src, /reference\.png$/);
+            run.dispatchEvent(new h.window.Event('pointerleave'));
+            assert.match(image.src, /button\.png$/);
+            image.dispatchEvent(new h.window.Event('error'));
+            assert.equal(run.classList.contains('has-control-image'), false);
+            assert.equal(h.get('[data-theme-dynamic-language]').textContent, 'C++14');
+            assert.equal(h.get('[data-theme-control="language"]').classList.contains('etm__preview-language'), true);
+            assert.equal(h.get('[data-theme-preview-output]').hidden, true);
+            h.get('[data-theme-preview-state="result"]').click();
+            assert.equal(h.get('[data-theme-preview-output]').hidden, false);
+            assert.equal(h.get('[data-theme-preview-output]').textContent, 'Hello, World!');
+            assert.equal(h.get('[data-theme-control="emptyOutput"]').parentElement.hidden, true);
+            assert.match(h.get('.etm__preview-record-row').textContent, /3 MB/);
+        } finally { h.close(); }
+    });
+
+    it('normalizes relative protected media URLs before first image load and interaction state changes', () => {
+        const theme = fixture();
+        theme.assets = theme.assets.map((asset) => ({ ...asset, url: `/d/S0001/code-editor/theme-asset/version/${asset.id}` }));
+        theme.controls = { pretestTitle: { assetId: 'button', width: 120, height: 40, hoverAssetId: 'bg', activeAssetId: 'reference' } };
+        const h = harness({ themes: [theme] });
+        try {
+            h.get('[data-theme-id]').click();
+            const title = h.get('[data-theme-control="pretestTitle"]');
+            const image = title.querySelector('img');
+            assert.equal(image.src, 'https://school.example/d/S0001/code-editor/theme-asset/version/button');
+            assert.equal(title.dataset.controlSource, image.src);
+            image.dispatchEvent(new h.window.Event('load'));
+            assert.equal(title.classList.contains('has-control-image'), true);
+            title.dispatchEvent(new h.window.Event('pointerenter'));
+            assert.equal(title.dataset.controlSource, image.src);
+            assert.match(image.src, /\/bg$/);
+            image.dispatchEvent(new h.window.Event('load'));
+            assert.equal(title.classList.contains('has-control-image'), true);
+            title.dispatchEvent(new h.window.Event('pointerdown'));
+            assert.match(image.src, /\/reference$/);
+            title.dispatchEvent(new h.window.Event('pointerleave'));
+            assert.match(image.src, /\/button$/);
+        } finally { h.close(); }
+    });
+
+    it('normalizes optional control artwork, excludes videos, and bounds visible dimensions', () => {
+        const theme = fixture();
+        theme.controls = {
+            run: { assetId: 'clip', width: 120, height: 40 },
+            submit: { assetId: 'button', width: 99999, height: 1, hoverAssetId: 'clip', activeAssetId: 'missing' },
+            recordsTitle: { assetId: 'reference' },
+            unknownControl: { assetId: 'button' },
+        };
+        const h = harness({ themes: [theme] });
+        try {
+            h.get('[data-theme-id]').click();
+            assert.equal(h.get('[data-theme-control-count]').textContent, '2 处已定制');
+            assert.equal(h.get('[data-theme-control-asset]').value, '');
+            h.change('[data-theme-control-select]', 'submit');
+            assert.equal(h.get('[data-theme-control-width]').value, '320');
+            assert.equal(h.get('[data-theme-control-height]').value, '16');
+            assert.equal(h.get('[data-theme-control-hover]').value, '');
+            assert.equal(h.get('[data-theme-control-active]').value, '');
+            h.change('[data-theme-control-select]', 'recordsTitle');
+            assert.equal(h.get('[data-theme-control-width]').value, '120');
+            assert.equal(h.get('[data-theme-control-height]').value, '40');
         } finally { h.close(); }
     });
 

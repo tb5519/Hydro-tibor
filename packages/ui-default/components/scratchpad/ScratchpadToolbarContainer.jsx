@@ -5,6 +5,7 @@ import { connect } from 'react-redux';
 import Icon from 'vj/components/react/IconComponent';
 import { getAvailableLangs, i18n, request } from 'vj/utils';
 import ScratchpadThemePicker from './ScratchpadThemePicker';
+import { ScratchpadLanguageArt } from './ScratchpadControlArt';
 import Toolbar, {
   ToolbarButtonComponent as ToolbarButton,
   ToolbarItemComponent as ToolbarItem,
@@ -183,30 +184,36 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
       <Toolbar role="toolbar" aria-label="代码编辑工具栏">
         <div className="scratchpad__toolbar__actions">
           <ToolbarItem className="scratchpad__toolbar__language">
-            <select
-              className="select"
-              aria-label={i18n('Language')}
-              disabled={this.props.isPosting || !!review || noAvailableLanguages}
-              value={this.props.editorLang}
-              onChange={(ev) => this.props.setEditorLanguage(ev.target.value)}
-            >
-              {(review || unavailableReplayLanguage) && !availableLangs[this.props.editorLang] && (
-                <option value={this.props.editorLang} disabled={unavailableReplayLanguage}>
-                  {window.LANGS?.[this.props.editorLang]?.display
-                    || UiContext.recordReplay?.langName || this.props.editorLang || '暂无提交'}
-                  {unavailableReplayLanguage ? '（已停用）' : ''}
-                </option>
-              )}
-              {_.map(availableLangs, (val, key) => (
-                <option value={key} key={key}>{val.display}</option>
-              ))}
-              {noAvailableLanguages && !UiContext.recordReplay && <option value="">暂无可用语言</option>}
-            </select>
+            <ScratchpadLanguageArt>
+              <select
+                className="select"
+                aria-label={i18n('Language')}
+                disabled={this.props.isPosting || !!review || noAvailableLanguages}
+                value={this.props.editorLang}
+                onChange={(ev) => this.props.setEditorLanguage(ev.target.value)}
+              >
+                {(review || unavailableReplayLanguage) && !availableLangs[this.props.editorLang] && (
+                  <option value={this.props.editorLang} disabled={unavailableReplayLanguage}>
+                    {window.LANGS?.[this.props.editorLang]?.display
+                      || UiContext.recordReplay?.langName || this.props.editorLang || '暂无提交'}
+                    {unavailableReplayLanguage ? '（已停用）' : ''}
+                  </option>
+                )}
+                {_.map(availableLangs, (val, key) => (
+                  <option value={key} key={key}>{val.display}</option>
+                ))}
+                {noAvailableLanguages && !UiContext.recordReplay && <option value="">暂无可用语言</option>}
+              </select>
+            </ScratchpadLanguageArt>
           </ToolbarItem>
           {canUsePretest && (
             <ToolbarButton
               disabled={unavailableLanguage || this.props.isPosting || this.props.isRunning || !!this.props.pretestWaitSec}
               className="scratchpad__toolbar__pretest"
+              controlArt="run"
+              artLabel={UiContext.ideMode ? '运行代码' : i18n('Run Pretest')}
+              artStatus={this.props.isRunning ? '运行中…' : this.props.isPosting ? '提交中…' : this.props.pretestWaitSec ? `${this.props.pretestWaitSec}s` : null}
+              aria-busy={this.props.isRunning || this.props.isPosting}
               onClick={() => this.props.postPretest(this.props)}
               data-global-hotkey="f9"
               data-tooltip={`${UiContext.ideMode ? '运行代码' : i18n('Pretest Your Code')} (F9)`}
@@ -222,6 +229,10 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
             <ToolbarButton
               disabled={unavailableLanguage || this.props.isPosting || !!this.props.submitWaitSec}
               className="scratchpad__toolbar__submit"
+              controlArt="submit"
+              artLabel={i18n('Submit Solution')}
+              artStatus={this.props.isPosting ? '提交中…' : this.props.submitWaitSec ? `${this.props.submitWaitSec}s` : null}
+              aria-busy={this.props.isPosting}
               onClick={() => this.props.postSubmit(this.props)}
               data-global-hotkey="f10"
               data-tooltip={`${i18n('Submit Your Code')} (F10)`}
@@ -269,6 +280,8 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
           <ScratchpadThemePicker />
           {canUsePretest && (
             <ToolbarButton
+              controlArt="pretestTab"
+              artLabel={i18n('Pretest')}
               activated={this.props.pretestVisible}
               onClick={() => this.props.togglePanel('pretest')}
               data-global-hotkey="alt+p"
@@ -280,6 +293,8 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
           )}
           {!UiContext.ideMode && UiContext.canViewRecord && (
             <ToolbarButton
+              controlArt="recordsTab"
+              artLabel={i18n('Records')}
               activated={this.props.recordsVisible}
               onClick={() => this.props.togglePanel('records')}
               data-global-hotkey="alt+r"
@@ -292,6 +307,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
           {!UiContext.ideMode && (
             <ToolbarButton
               className="scratchpad__toolbar__exit"
+              controlArt="close"
               data-global-hotkey="alt+q"
               data-tooltip={`${i18n('Quit Scratchpad')} (Alt+Q)`}
               aria-label={`${i18n('Quit Scratchpad')} (Alt+Q)`}

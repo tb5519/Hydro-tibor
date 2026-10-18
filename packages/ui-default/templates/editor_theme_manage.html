@@ -45,7 +45,18 @@
         </section>
 
         <section class="etm__setting-card">
-          <h3><span>03</span> 让代码清楚好读</h3>
+          <h3><span>03</span> 图片控件 <small data-theme-control-count>0 处已定制</small></h3>
+          <p class="etm__hint">一把剑也可以是运行键。用带文字的透明 PNG，自由设计按钮、标题与提示。</p>
+          <label for="etm-control">选择要替换的内容</label><select id="etm-control" data-theme-control-select></select>
+          <label for="etm-control-asset">默认图片</label><select id="etm-control-asset" data-theme-control-asset></select>
+          <div class="etm__control-sample"><img data-theme-control-sample alt="所选控件图片" hidden></div>
+          <div class="etm__field-pair"><div><label for="etm-control-width">宽度 · 像素</label><input id="etm-control-width" type="number" min="16" max="320" step="1" value="120" data-theme-control-width></div><div><label for="etm-control-height">高度 · 像素</label><input id="etm-control-height" type="number" min="16" max="120" step="1" value="40" data-theme-control-height></div></div>
+          <details class="etm__optional"><summary>鼠标互动图片（可选）</summary><label for="etm-control-hover">悬停时</label><select id="etm-control-hover" data-theme-control-hover></select><label for="etm-control-active">按下时</label><select id="etm-control-active" data-theme-control-active></select><p class="etm__hint">可用发光或拔剑的变化，给点击增加反馈。在右侧图片上移动鼠标或按住即可预览。</p></details>
+          <p class="etm__hint" data-theme-control-hint>整张图片就是这个控件，透明部分不会出现方形底框。</p>
+        </section>
+
+        <section class="etm__setting-card">
+          <h3><span>04</span> 让代码清楚好读</h3>
           <div class="etm__range-label"><label for="etm-overlay">代码区遮罩</label><output for="etm-overlay" data-theme-overlay-value>86%</output></div><input id="etm-overlay" type="range" min="0.35" max="0.98" step="0.01" value="0.86" data-theme-overlay><p class="etm__hint">向右调整，背景更柔和，代码更清晰。</p>
           <div class="etm__color-fields"><label>文字<input type="color" value="#e6edf7" data-theme-color="text" aria-label="代码文字颜色"></label><label>强调色<input type="color" value="#70a7ff" data-theme-color="accent" aria-label="按钮强调颜色"></label><label>底色<input type="color" value="#182534" data-theme-color="surface" aria-label="代码区域底色"></label></div>
           <button class="etm__text-button" type="button" data-theme-reset-palette>恢复基础配色</button>
@@ -55,11 +66,11 @@
 
       <div class="etm__preview-column">
         <section class="etm__preview-card" aria-labelledby="etm-preview-heading">
-          <header><div><span class="etm__live-dot" aria-hidden="true"></span><h3 id="etm-preview-heading">即时预览</h3></div><span>界面布局与操作位置保持一致</span></header>
+          <header><div><span class="etm__live-dot" aria-hidden="true"></span><h3 id="etm-preview-heading">即时预览</h3></div><div class="etm__preview-states" role="group" aria-label="预览状态"><button type="button" data-theme-preview-state="empty" aria-pressed="true">空白状态</button><button type="button" data-theme-preview-state="result" aria-pressed="false">已有结果</button></div></header>
           <div class="etm__preview" data-theme-preview>
             <video class="etm__preview-video" data-theme-preview-video muted loop playsinline preload="metadata" aria-hidden="true" hidden></video>
             <div class="etm__preview-content">
-              <div class="etm__preview-toolbar" data-theme-region="toolbar"><span class="etm__preview-language">C++14 <span aria-hidden="true">⌄</span></span><button type="button" class="etm__preview-run" data-theme-region="runButton">▶ 运行自测</button><button type="button" class="etm__preview-submit" data-theme-region="submitButton">➤ 递交评测</button><span class="etm__preview-name" data-theme-preview-name>专属主题</span></div>
+              <div class="etm__preview-toolbar" data-theme-region="toolbar"><span class="etm__preview-language" data-theme-control="language"><span data-theme-dynamic-language>C++14</span><span aria-hidden="true">⌄</span></span><button type="button" class="etm__preview-run" data-theme-region="runButton" data-theme-control="run">▶ 运行自测</button><button type="button" class="etm__preview-submit" data-theme-region="submitButton" data-theme-control="submit">➤ 递交评测</button><button type="button" data-theme-control="theme">◉ 主题</button><button type="button" data-theme-control="pretestTab">✎ 自测</button><button type="button" data-theme-control="recordsTab">⚑ 评测记录</button><button type="button" data-theme-control="problemTab">题目</button><button type="button" data-theme-control="settingsTab">设置</button><button type="button" data-theme-control="close">×</button><span class="etm__preview-name" data-theme-preview-name>专属主题</span></div>
               <div class="etm__preview-editor" data-theme-region="editor"><div class="etm__preview-editor-veil" data-theme-preview-veil></div><div class="etm__preview-code"><span class="etm__line-numbers" aria-hidden="true">1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9</span><pre><code><span class="etm__syntax-comment">// 每一行代码，都在创造新的可能</span>
 <span class="etm__syntax-keyword">#include</span> &lt;iostream&gt;
 <span class="etm__syntax-keyword">using namespace</span> std;
@@ -69,11 +80,18 @@
     <span class="etm__syntax-keyword">return</span> <span class="etm__syntax-number">0</span>;
 }
 </code></pre></div></div>
-              <div class="etm__preview-panel" data-theme-region="panel"><div class="etm__preview-panel-title">✎ 自测</div><div class="etm__preview-io"><div><span>输入</span><p>在这里输入测试数据</p></div><div><span>输出</span><p class="etm__preview-output" data-theme-preview-output>Hello, World!</p></div></div><div class="etm__preview-record"><span>⚑ 评测记录</span><span class="etm__preview-ac">✓ Accepted</span></div></div>
+              <div class="etm__preview-panel" data-theme-region="panel">
+                <div class="etm__preview-panel-title"><span data-theme-control="pretestTitle">✎ 自测</span></div>
+                <div class="etm__preview-io"><div><span data-theme-control="inputTitle">输入</span><p data-theme-preview-empty><span data-theme-control="inputPlaceholder">在这里输入测试数据</span></p><p class="etm__preview-data" data-theme-preview-result hidden>5 8</p></div><div><span data-theme-control="outputTitle">输出</span><p data-theme-preview-empty><span data-theme-control="emptyOutput">运行自测后，结果会显示在这里</span></p><p class="etm__preview-output" data-theme-preview-output data-theme-preview-result hidden>Hello, World!</p></div></div>
+                <div class="etm__preview-panel-title"><span data-theme-control="recordsTitle">⚑ 评测记录</span></div>
+                <div class="etm__preview-record-head"><span data-theme-control="recordStatus">评测结果</span><span data-theme-control="recordMemory">内存</span><span data-theme-control="recordTime">用时</span><span data-theme-control="recordDate">提交时间</span></div>
+                <div class="etm__preview-record-row" data-theme-preview-result hidden><span class="etm__preview-ac">✓ Accepted</span><span>3 MB</span><span>0.1s</span><span>刚刚</span></div>
+                <div class="etm__preview-empty" data-theme-preview-empty><span data-theme-control="emptyRecords">暂无评测记录</span><span data-theme-control="emptyRecordsHint">提交代码后，在这里查看评测结果</span></div>
+              </div>
             </div>
             <img class="etm__preview-corner" data-theme-preview-corner alt="" hidden>
           </div>
-          <p class="etm__preview-footnote" data-theme-preview-note>当前是界面预览，不会运行代码或产生提交记录。</p>
+          <p class="etm__preview-footnote" data-theme-preview-note>预览按比例展示；实际控件使用设置的尺寸。语言名称、代码和评测数据保持实时显示。这里不会运行代码或产生提交记录。</p>
         </section>
 
         <section class="etm__reference" data-theme-reference hidden><div><h3>主题包中的完整界面</h3><p>作为整体设计参考，发布后保留在主题资料中。</p></div><a data-theme-reference-link target="_blank" rel="noopener"><img data-theme-reference-image loading="lazy" alt="主题包内所有素材组成的完整界面截图"><span>打开原图 ↗</span></a></section>

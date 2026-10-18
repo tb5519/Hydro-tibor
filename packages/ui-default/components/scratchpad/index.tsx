@@ -10,6 +10,7 @@ import Dom from 'vj/components/react/DomComponent';
 import { ctx, Service } from 'vj/context';
 import RecordReplaySource from './RecordReplaySource';
 import ScratchpadEditor from './ScratchpadEditorContainer';
+import { ScratchpadArtThemeContext, ScratchpadControlLabel } from './ScratchpadControlArt';
 import ScratchpadPretest from './ScratchpadPretestContainer';
 import ScratchpadRecords from './ScratchpadRecordsContainer';
 import ScratchpadSettings from './ScratchpadSettings';
@@ -92,59 +93,66 @@ export default function ScratchpadContainer() {
   const ideMode = !!UiContext.ideMode;
 
   return (
-    <Allotment onChange={handleChangeSize}>
-      <Allotment.Pane visible={!ideMode && Object.keys(pages).length > 1} minSize={50} maxSize={50}>
-        <div className="scratchpad__tablist">
-          {Object.keys(pages).map((key) => {
-            const Component = pages[key].icon;
-            return (
-              <div
-                key={key}
-                className={`scratchpad__tabicon-${key}${key === ui.activePage ? ' scratchpad__tab-active' : ''}`}
-                onClick={() => switchToPage(key)}
-              >
-                <Component />
-              </div>
-            );
-          })}
-        </div>
-      </Allotment.Pane>
-      <Allotment.Pane visible={!ideMode && !!ui.activePage}>
-        <div className="scratchpad__problem">
-          {Object.keys(pages).map((key) => {
-            const Component = pages[key].component;
-            return (
-              <div key={key} style={{ display: key === ui.activePage ? 'block' : 'none' }}>
-                <Component />
-              </div>
-            );
-          })}
-        </div>
-      </Allotment.Pane>
-      <div
-        className="scratchpad__coding-area"
-        data-scratchpad-theme={theme.id}
-        data-scratchpad-skin={theme.badgeId ? 'true' : undefined}
-        style={scratchpadThemeVariables(theme) as React.CSSProperties}
-      >
-        <ScratchpadSkin theme={theme} />
-        <Allotment vertical defaultSizes={UiContext.homeworkReview ? [730, 0, 270] : [450, 280, 270]} onChange={handleChangeSize}>
-          <div key="editor" className="scratchpad__workspace flex-col splitpane-fill">
-            <ScratchpadToolbar />
-            <RecordReplaySource />
-            {UiContext.homeworkReview && !UiContext.homeworkReview.rid && (
-              <p className="scratchpad__review-empty">该学员尚未提交这道题。</p>
-            )}
-            <ScratchpadEditor />
+    <ScratchpadArtThemeContext.Provider value={theme}>
+      <Allotment onChange={handleChangeSize}>
+        <Allotment.Pane visible={!ideMode && Object.keys(pages).length > 1} minSize={50} maxSize={50}>
+          <div className="scratchpad__tablist">
+            {Object.keys(pages).map((key) => {
+              const Component = pages[key].icon;
+              return (
+                <button
+                  type="button"
+                  aria-label={key === 'problem' ? '题目' : key === 'settings' ? '设置' : key}
+                  aria-pressed={key === ui.activePage}
+                  key={key}
+                  className={`scratchpad__tabicon-${key}${key === ui.activePage ? ' scratchpad__tab-active' : ''}`}
+                  onClick={() => switchToPage(key)}
+                >
+                  {key === 'problem' || key === 'settings' ? (
+                    <ScratchpadControlLabel control={key === 'problem' ? 'problemTab' : 'settingsTab'}><Component /></ScratchpadControlLabel>
+                  ) : <Component />}
+                </button>
+              );
+            })}
           </div>
-          <Allotment.Pane visible={ui.pretest.visible}>
-            <ScratchpadPretest key="pretest" />
-          </Allotment.Pane>
-          <Allotment.Pane visible={ui.records.visible}>
-            <ScratchpadRecords key="records" />
-          </Allotment.Pane>
-        </Allotment>
-      </div>
-    </Allotment>
+        </Allotment.Pane>
+        <Allotment.Pane visible={!ideMode && !!ui.activePage}>
+          <div className="scratchpad__problem">
+            {Object.keys(pages).map((key) => {
+              const Component = pages[key].component;
+              return (
+                <div key={key} style={{ display: key === ui.activePage ? 'block' : 'none' }}>
+                  <Component />
+                </div>
+              );
+            })}
+          </div>
+        </Allotment.Pane>
+        <div
+          className="scratchpad__coding-area"
+          data-scratchpad-theme={theme.id}
+          data-scratchpad-skin={theme.badgeId ? 'true' : undefined}
+          style={scratchpadThemeVariables(theme) as React.CSSProperties}
+        >
+          <ScratchpadSkin theme={theme} />
+          <Allotment vertical defaultSizes={UiContext.homeworkReview ? [730, 0, 270] : [450, 280, 270]} onChange={handleChangeSize}>
+            <div key="editor" className="scratchpad__workspace flex-col splitpane-fill">
+              <ScratchpadToolbar />
+              <RecordReplaySource />
+              {UiContext.homeworkReview && !UiContext.homeworkReview.rid && (
+                <p className="scratchpad__review-empty">该学员尚未提交这道题。</p>
+              )}
+              <ScratchpadEditor />
+            </div>
+            <Allotment.Pane visible={ui.pretest.visible}>
+              <ScratchpadPretest key="pretest" />
+            </Allotment.Pane>
+            <Allotment.Pane visible={ui.records.visible}>
+              <ScratchpadRecords key="records" />
+            </Allotment.Pane>
+          </Allotment>
+        </div>
+      </Allotment>
+    </ScratchpadArtThemeContext.Provider>
   );
 }

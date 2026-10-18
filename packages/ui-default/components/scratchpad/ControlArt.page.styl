@@ -1,0 +1,228 @@
+// A picture is only the visual face of a real button, label or select. Hide
+// fallback text after decode; failed images retain the ordinary usable UI.
+.scratchpad__art-sr-only
+  position: absolute !important
+  width: 1px !important
+  height: 1px !important
+  padding: 0 !important
+  margin: -1px !important
+  overflow: hidden !important
+  clip: rect(0, 0, 0, 0) !important
+  white-space: nowrap !important
+  border: 0 !important
+
+.scratchpad__control-art
+  display: none
+  position: relative
+  flex: 0 1 auto
+  box-sizing: border-box
+  width: var(--scratchpad-art-width)
+  max-width: 100%
+  height: var(--scratchpad-art-height)
+  vertical-align: middle
+  pointer-events: none
+
+  &[data-ready='true']
+    display: inline-block
+
+  img
+    position: absolute
+    inset: 0
+    display: block
+    width: 100%
+    height: 100%
+    margin: 0
+    object-fit: contain
+    border: 0
+    border-radius: 0
+    opacity: 0
+    pointer-events: none
+    user-select: none
+
+  img[data-art-variant='base']
+    opacity: 1
+
+.scratchpad__control-fallback
+  display: inline-flex
+  align-items: center
+  justify-content: center
+  gap: rem(6px)
+
+.scratchpad__image-label
+  display: inline-flex
+  align-items: center
+  max-width: 100%
+  vertical-align: middle
+  line-height: 1.3
+
+#scratchpad .scratchpad__coding-area
+  .scratchpad__image-control,
+  .scratchpad__image-control.enabled:hover,
+  .scratchpad__image-control.activated,
+  .scratchpad__image-control[aria-expanded='true']
+    position: relative
+    flex-shrink: 1
+    min-width: 32px
+    max-width: 100%
+    min-height: 32px
+    width: auto !important
+    padding: 0 !important
+    border: 0 !important
+    border-radius: 0
+    background: none !important
+    background-image: none !important
+    box-shadow: none !important
+    transition: filter .15s ease, transform .15s ease
+
+    > div
+      position: relative
+      max-width: 100%
+
+    .scratchpad__control-art
+      max-width: unquote('min(320px, calc(100vw - 48px))')
+
+    &:hover:not(:disabled),
+    &:focus-visible
+      filter: brightness(1.16) drop-shadow(0 0 5px var(--ui-v2-accent))
+
+    &:focus-visible
+      outline: 2px solid var(--ui-v2-accent)
+      outline-offset: 3px
+      border-radius: 5px
+
+    &:active:not(:disabled)
+      transform: translateY(1px)
+
+    &:disabled
+      opacity: .45
+      filter: grayscale(.45)
+      cursor: not-allowed
+
+    &[aria-pressed='true'],
+    &[aria-expanded='true']
+      filter: brightness(1.12) drop-shadow(0 0 4px var(--ui-v2-accent))
+
+    &:hover:not(:disabled),
+    &:focus-visible
+      .scratchpad__control-art[data-hover='true'] img[data-art-variant='base']
+        opacity: 0
+      .scratchpad__control-art[data-hover='true'] img[data-art-variant='hover']
+        opacity: 1
+
+    &[aria-pressed='true'],
+    &[aria-expanded='true'],
+    &:active:not(:disabled)
+      .scratchpad__control-art[data-active='true'] img
+        opacity: 0
+      .scratchpad__control-art[data-active='true'] img[data-art-variant='active']
+        opacity: 1
+
+  .scratchpad__art-status
+    position: absolute
+    right: 0
+    bottom: -3px
+    z-index: 1
+    padding: rem(2px 5px)
+    border: 1px solid var(--ui-v2-border-strong)
+    border-radius: rem(5px)
+    background: var(--ui-v2-surface)
+    color: var(--ui-v2-text)
+    font-size: rem(10px)
+    line-height: 1.3
+    white-space: nowrap
+
+  .scratchpad__language-art
+    display: block
+    position: relative
+    max-width: 100%
+
+  .scratchpad__language-art.scratchpad__language-art--ready
+    width: var(--scratchpad-art-width)
+    min-width: 88px
+    min-height: 34px
+    height: var(--scratchpad-art-height)
+
+    > .scratchpad__control-art
+      position: absolute
+      inset: 0
+      width: 100%
+      height: 100%
+
+    > .select
+      position: relative
+      width: 100%
+      height: 100%
+      border-color: transparent
+      background-color: transparent
+      text-shadow: 0 1px 3px var(--ui-v2-surface)
+
+      option
+        background: var(--ui-v2-surface)
+        color: var(--ui-v2-text)
+
+  .scratchpad__data-entry
+    position: relative
+    display: flex
+    flex: 1 1 0
+    min-width: 0
+    min-height: 0
+
+  .scratchpad__input-art-placeholder
+    position: absolute
+    z-index: 1
+    top: rem(6px)
+    left: rem(16px)
+    right: rem(16px)
+    pointer-events: none
+
+#scratchpad .scratchpad__tablist button
+  display: flex
+  align-items: center
+  justify-content: center
+  width: 100%
+  padding: 0
+  border: 0
+  background: transparent
+  cursor: pointer
+
+  &[aria-pressed='true']
+    border-left: 4px solid var(--ui-v2-accent, #729eed)
+
+  &:focus-visible
+    outline: 2px solid var(--ui-v2-accent, #729eed)
+    outline-offset: -2px
+
+  .scratchpad__control-art
+    max-width: 44px
+    max-height: 44px
+
+// Native selects and sidebar buttons use the same optional image states.
+// Noninteractive headings may react visually, without becoming fake buttons.
+#scratchpad
+  .scratchpad__tablist button:hover:not(:disabled),
+  .scratchpad__tablist button:focus-visible,
+  .scratchpad__language-art--ready:not(:has(> select:disabled)):hover,
+  .scratchpad__language-art--ready:not(:has(> select:disabled)):focus-within,
+  .scratchpad__image-label:hover
+    .scratchpad__control-art[data-hover='true'] img[data-art-variant='base']
+      opacity: 0
+    .scratchpad__control-art[data-hover='true'] img[data-art-variant='hover']
+      opacity: 1
+
+  .scratchpad__tablist button[aria-pressed='true'],
+  .scratchpad__tablist button:active:not(:disabled),
+  .scratchpad__language-art--ready:not(:has(> select:disabled)):active,
+  .scratchpad__image-label:active
+    .scratchpad__control-art[data-active='true'] img
+      opacity: 0
+    .scratchpad__control-art[data-active='true'] img[data-art-variant='active']
+      opacity: 1
+
+@container scratchpad-editor (max-width: 480px)
+  #scratchpad .scratchpad__coding-area .scratchpad__image-control .scratchpad__control-art
+    width: unquote('min(var(--scratchpad-art-width), 160px)')
+    height: unquote('min(var(--scratchpad-art-height), 64px)')
+
+@media (prefers-reduced-motion: reduce)
+  #scratchpad .scratchpad__coding-area .scratchpad__image-control
+    transition: none

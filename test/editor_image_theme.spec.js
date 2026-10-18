@@ -38,6 +38,7 @@ it('accepts a folder of arbitrary-named artwork without configuration, keeping s
     assert.equal(names.get(result.design.previewAssetId), 'preview.png');
     assert.equal(result.design.base, 'ocean');
     assert.equal(result.design.overlay, 0.86);
+    assert.deepEqual(result.design.controls, {}, 'Existing packages keep their original text controls');
 });
 
 it('does not turn a full-interface screenshot into a live skin if the package has only a preview', () => {
@@ -58,6 +59,61 @@ it('imports a complete simple manifest by filenames, including preview, thumbnai
     assert.equal(result.design.slots.submitButton.fit, 'stretch');
     assert.equal(result.files.find((file) => file.id === result.design.thumbnailAssetId).name, 'thumb.png');
     assert.equal(result.files.find((file) => file.id === result.design.posterAssetId).name, 'main.png');
+});
+
+it('imports transparent image controls by filename with independent dimensions and hover/active artwork', () => {
+    const controls = Object.fromEntries(lib.EDITOR_THEME_CONTROLS.map((key) => [key, '控件/剑.png']));
+    controls.run = { file: '控件/剑.png', width: 208, height: 64, hover: '控件/剑-亮.png', active: '控件/剑-按下.png' };
+    controls.inputTitle = { asset: '控件/剑.png', width: 16, height: 16 };
+    controls.emptyOutput = { asset: '控件/剑.png', width: 320, height: 120 };
+    const source = parse({ '控件/剑.png': image, '控件/剑-亮.png': image, '控件/剑-按下.png': image,
+        'theme.json': JSON.stringify({ version: 1, name: '图片控件', controls }) });
+    const byName = Object.fromEntries(source.files.map((file) => [file.name, file.id]));
+    assert.equal(Object.keys(source.design.controls).length, lib.EDITOR_THEME_CONTROLS.length);
+    assert.deepEqual(source.design.controls.run, { assetId: byName['控件/剑.png'], width: 208, height: 64,
+        hoverAssetId: byName['控件/剑-亮.png'], activeAssetId: byName['控件/剑-按下.png'] });
+    assert.deepEqual(source.design.controls.submit, { assetId: byName['控件/剑.png'], width: 120, height: 40 });
+    assert.deepEqual(source.design.controls.settingsTab, { assetId: byName['控件/剑.png'], width: 120, height: 40 });
+    assert.equal(source.design.controls.inputTitle.width, 16);
+    assert.equal(source.design.controls.emptyOutput.width, 320);
+});
+
+it('keeps existing twenty-control manifests compatible when the settings tab artwork is omitted', () => {
+    const keys = lib.EDITOR_THEME_CONTROLS.filter((key) => key !== 'settingsTab');
+    assert.equal(keys.length, 20);
+    const source = parse({ 'main.png': image, 'theme.json': JSON.stringify({ version: 1,
+        controls: Object.fromEntries(keys.map((key) => [key, 'main.png'])) }) });
+    assert.equal(Object.keys(source.design.controls).length, 20);
+    assert.equal(source.design.controls.settingsTab, undefined);
+});
+
+it('rejects unknown controls, executable configuration, missing media and non-image control states', () => {
+    const mp4 = Buffer.from('000000206674797069736f6d0000020069736f6d69736f32617663316d703431', 'hex');
+    for (const controls of [
+        null, [], 'main.png', { unknown: 'main.png' }, { run: null }, { run: [] },
+        { run: 'https://evil.test/button.png' }, { run: '../button.png' }, { run: 'missing.png' },
+        { run: 'loop.mp4' }, { run: { asset: 'main.png', hover: 'loop.mp4' } },
+        { run: { asset: 'main.png', active: 'loop.mp4' } }, { run: { asset: 'main.png', hover: null } },
+        { run: { asset: 'main.png', active: 'missing.png' } },
+        { run: { asset: 'main.png', onClick: 'alert(1)' } }, { run: { asset: 'main.png', style: 'position:fixed' } },
+    ]) assert.throws(() => parse({ 'main.png': image, 'loop.mp4': mp4,
+        'theme.json': JSON.stringify({ version: 1, controls }) }));
+    const files = parse({ 'main.png': image }).files;
+    const assetId = files[0].id;
+    assert.throws(() => lib.normalizeEditorThemeDesign({ name: 'Bad', controls: { run: { assetId, url: 'https://evil.test' } } }, files));
+    assert.throws(() => parse({ 'main.png': image,
+        'theme.json': '{"version":1,"controls":{"__proto__":{"asset":"main.png"}}}' }));
+});
+
+it('accepts only bounded finite integer image-control dimensions without coercing strings or null', () => {
+    const files = parse({ 'main.png': image }).files;
+    const assetId = files[0].id;
+    for (const [field, values] of [
+        ['width', [0, 15, 321, 24.5, Infinity, NaN, '100', null, true]],
+        ['height', [0, 15, 121, 24.5, Infinity, NaN, '40', null, true]],
+    ]) for (const value of values) {
+        assert.throws(() => lib.normalizeEditorThemeDesign({ name: 'Bad', controls: { run: { assetId, [field]: value } } }, files), /整数/);
+    }
 });
 
 it('rejects path traversal, platform separators and symlink ZIP entries', () => {
@@ -125,9 +181,11 @@ it('uses hashed object-storage paths rather than uploading user filenames as sto
 });
 
 it('exports reusable artwork and a portable manifest that roundtrips without badge or classroom bindings', async () => {
-    const source = parse({ '素材/星海.png': image, 'preview.png': image, 'theme.json': JSON.stringify({
+    const source = parse({ '素材/星海.png': image, 'preview.png': image, 'hover.png': image, 'active.png': image, 'theme.json': JSON.stringify({
         version: 1, name: '可复用设计', base: 'ocean', overlay: 0.82, preview: 'preview.png',
         slots: { background: { asset: '素材/星海.png', fit: 'cover', position: 'right top' }, submitButton: '素材/星海.png' },
+        controls: { run: { asset: '素材/星海.png', width: 208, height: 64, hover: 'hover.png', active: 'active.png' },
+            close: '素材/星海.png', settingsTab: { asset: '素材/星海.png', width: 42, height: 44 } },
     }) });
     const zip = await lib.exportEditorThemeZip(source.design, source.files, async (asset) => Readable.from([asset.data]));
     const exported = new AdmZip(zip);
@@ -135,6 +193,9 @@ it('exports reusable artwork and a portable manifest that roundtrips without bad
     assert.equal(manifest.preview, 'preview.png');
     assert.equal(manifest.slots.background.asset, '素材/星海.png');
     assert.equal(manifest.slots.background.position, 'right top');
+    assert.deepEqual(manifest.controls.run, { asset: '素材/星海.png', width: 208, height: 64, hover: 'hover.png', active: 'active.png' });
+    assert.deepEqual(manifest.controls.close, { asset: '素材/星海.png', width: 120, height: 40 });
+    assert.deepEqual(manifest.controls.settingsTab, { asset: '素材/星海.png', width: 42, height: 44 });
     assert(!Object.hasOwn(manifest, 'badgeId'));
     assert(!Object.hasOwn(manifest, 'domainId'));
     const reimported = lib.parseEditorThemeZip(zip, '可复用设计.zip');

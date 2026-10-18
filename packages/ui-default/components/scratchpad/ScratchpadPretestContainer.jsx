@@ -6,6 +6,7 @@ import Icon from 'vj/components/react/IconComponent';
 import { i18n } from 'vj/utils';
 import DataInput from './DataInputComponent';
 import Panel from './PanelComponent';
+import { ScratchpadControlLabel } from './ScratchpadControlArt';
 
 const AU = new AnsiUp();
 
@@ -33,21 +34,23 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadPret
     return (
       <Panel
         title={(
-          <span>
+          <ScratchpadControlLabel control="pretestTitle">
             <Icon name="edit" />
             {' '}
             {i18n('Pretest')}
-          </span>
+          </ScratchpadControlLabel>
         )}
       >
         <Allotment>
           <DataInput
             title={i18n('Input')}
+            titleArt="inputTitle"
             value={this.props.input}
             onChange={(v) => this.props.handleDataChange('input', v)}
           />
           <DataInput
             title={i18n('Output')}
+            titleArt="outputTitle"
             value={AU.ansi_to_html(this.props.output)}
             metadata={this.props.summary && [
               this.props.summary.status,
