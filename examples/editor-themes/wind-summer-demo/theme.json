@@ -4,19 +4,19 @@
   "base": "cloud",
   "overlay": 0.35,
   "palette": {
-    "surface": "#eaf7ff",
-    "muted": "#dceef8",
-    "text": "#102f4a",
-    "textMuted": "#4d728c",
+    "surface": "#f4f8fc",
+    "muted": "#e6eef6",
+    "text": "#142c42",
+    "textMuted": "#50677b",
     "border": "#c3dfed",
     "borderStrong": "#85b6ce",
-    "accent": "#256fbb",
+    "accent": "#23679e",
     "accentSoft": "#d6ecfa",
     "selection": "#acd8f3",
-    "comment": "#48687d",
-    "keyword": "#6045a0",
-    "string": "#126b5b",
-    "number": "#a14d25"
+    "comment": "#50677b",
+    "keyword": "#593981",
+    "string": "#14624e",
+    "number": "#923c1e"
   },
   "slots": {
     "background": {
@@ -78,13 +78,13 @@
     },
     "language": {
       "asset": "language.png",
-      "width": 152,
-      "height": 44
+      "width": 112,
+      "height": 36
     },
     "close": {
       "asset": "close.png",
-      "width": 36,
-      "height": 36
+      "width": 30,
+      "height": 30
     },
     "problemTab": {
       "asset": "problemTab.png",
@@ -93,38 +93,38 @@
     },
     "run": {
       "asset": "run.png",
-      "width": 216,
-      "height": 72
+      "width": 118,
+      "height": 40
     },
     "submit": {
       "asset": "submit.png",
-      "width": 224,
-      "height": 72
+      "width": 118,
+      "height": 40
     },
     "pretestTab": {
       "asset": "pretest.png",
-      "width": 132,
-      "height": 44
+      "width": 64,
+      "height": 36
     },
     "recordsTab": {
       "asset": "records.png",
-      "width": 180,
-      "height": 60
+      "width": 94,
+      "height": 36
     },
     "pretestTitle": {
       "asset": "pretest.png",
-      "width": 132,
-      "height": 44
+      "width": 64,
+      "height": 36
     },
     "recordsTitle": {
       "asset": "records.png",
-      "width": 180,
-      "height": 60
+      "width": 94,
+      "height": 36
     },
     "theme": {
       "asset": "theme.png",
-      "width": 120,
-      "height": 40
+      "width": 64,
+      "height": 36
     },
     "settingsTab": {
       "asset": "settingsTab.png",

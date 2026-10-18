@@ -644,7 +644,7 @@
   &__preview-io
     display: grid
     grid-template-columns: 1fr 1fr
-    background: unquote('color-mix(in srgb, var(--etm-surface) 86%, transparent)')
+    background: var(--etm-surface)
     > div
       padding: 13px 15px 20px
       min-width: 0
@@ -655,7 +655,7 @@
       color: var(--etm-text-muted)
     p
       color: var(--etm-text-muted)
-      opacity: .65
+      opacity: 1
       margin-top: 14px
       font-size: 9px
     .etm__preview-output
@@ -693,7 +693,6 @@
     color: var(--etm-text-muted)
     > span:last-child
       font-size: 9px
-      opacity: .75
   &__preview-data
     font-family: monospace
   &__preview-ac

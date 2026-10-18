@@ -257,6 +257,28 @@ describe('teacher badge image theme designer', () => {
         } finally { h.close(); }
     });
 
+    it('previews the same strong reading veil and readable syntax colors used by the actual image theme', () => {
+        const theme = { ...fixture(), base: 'cloud', overlay: 0.35, palette: {
+            surface: '#f4f8fc', text: '#d0ddeb', comment: '#dce8f4', keyword: '#b2a2ed', string: '#b6dfcd', number: '#ecc597',
+        } };
+        const h = harness({ themes: [theme] });
+        try {
+            h.get('[data-theme-id]').click();
+            assert.equal(h.get('[data-theme-preview-veil]').style.opacity, '0.94');
+            assert.equal(h.get('[data-theme-overlay-value]').textContent, '94%');
+            assert.equal(h.get('[data-theme-overlay]').min, '0.94');
+            assert.equal(h.get('[data-theme-preview]').style.getPropertyValue('--etm-surface'), '#f4f8fc');
+            assert.notEqual(h.get('[data-theme-preview]').style.getPropertyValue('--etm-text'), theme.palette.text);
+            assert.notEqual(h.get('[data-theme-preview]').style.getPropertyValue('--etm-keyword'), theme.palette.keyword);
+            assert.match(h.get('[data-theme-region="panel"]').style.backgroundImage, /0\.94/);
+            h.change('[data-theme-overlay]', '0.98', 'input');
+            assert.equal(h.get('[data-theme-preview-veil]').style.opacity, '0.98');
+            h.change('[data-theme-base]', 'ocean');
+            assert.equal(h.get('[data-theme-overlay]').min, '0.92');
+            assert.equal(h.get('[data-theme-preview]').style.getPropertyValue('--etm-surface'), '#182332');
+        } finally { h.close(); }
+    });
+
     it('normalizes optional control artwork, excludes videos, and bounds visible dimensions', () => {
         const theme = fixture();
         theme.controls = {

@@ -119,6 +119,63 @@ function rgba(hex: string, alpha: number) {
   return `rgba(${rgb.join(',')},${alpha})`;
 }
 
+function mixColor(first: string, second: string, amount: number) {
+  return `#${[1, 3, 5].map((offset) => Math.round(parseInt(first.slice(offset, offset + 2), 16) * (1 - amount)
+    + parseInt(second.slice(offset, offset + 2), 16) * amount).toString(16).padStart(2, '0')).join('')}`;
+}
+
+function luminance(color: string) {
+  return [1, 3, 5].map((offset) => parseInt(color.slice(offset, offset + 2), 16) / 255)
+    .map((value) => (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4))
+    .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+}
+
+function colorContrast(first: string, second: string) {
+  const low = Math.min(luminance(first), luminance(second));
+  const high = Math.max(luminance(first), luminance(second));
+  return (high + 0.05) / (low + 0.05);
+}
+
+/** Shared by Monaco and the teacher preview. Decorative artwork never dictates
+ * the contrast of live code or input/output; only the reading surfaces need
+ * this stronger veil, so the rest of the theme retains its illustrated style. */
+export function scratchpadReadingStyle(theme: Pick<ScratchpadTheme, 'badgeId' | 'dark' | 'overlay' | 'palette'>) {
+  const palette = { ...theme.palette };
+  if (!theme.badgeId) return { palette, overlay: 1, lineHighlight: palette.muted, selection: palette.selection };
+  const dark = luminance(palette.surface) < 0.35;
+  let overlay = Math.max(dark ? 0.92 : 0.94, Math.min(0.98, Number(theme.overlay) || 0.84));
+  let readingBounds = [mixColor(palette.surface, '#000000', 1 - overlay), mixColor(palette.surface, '#ffffff', 1 - overlay)];
+  const minimumContrast = (color: string, backgrounds: string[]) => Math.min(...backgrounds.map((background) => colorContrast(color, background)));
+  // An unusual middle-grey surface can straddle the black/white contrast
+  // threshold. Make only that reading layer opaque instead of accepting
+  // unreadable text or changing the teacher's artwork and palette surface.
+  if (Math.max(minimumContrast('#000000', readingBounds), minimumContrast('#ffffff', readingBounds)) < 4.5) {
+    overlay = 1;
+    readingBounds = [palette.surface];
+  }
+  const textTarget = minimumContrast('#000000', readingBounds) >= minimumContrast('#ffffff', readingBounds) ? '#000000' : '#ffffff';
+  const readable = (color: string, backgrounds: string[]) => {
+    if (minimumContrast(color, backgrounds) >= 4.5) return color;
+    for (let step = 1; step <= 100; step++) {
+      const adjusted = mixColor(color, textTarget, step / 100);
+      if (minimumContrast(adjusted, backgrounds) >= 4.5) return adjusted;
+    }
+    return textTarget;
+  };
+  // Restrained highlights preserve a quiet editing canvas; arbitrary vivid
+  // palette.muted or inherited Monaco selection fills cannot wash code out.
+  const safeHighlight = (amount: number) => {
+    let highlight = mixColor(palette.surface, palette.accent, amount);
+    if (colorContrast(textTarget, highlight) < 4.5) highlight = palette.surface;
+    return highlight;
+  };
+  const lineHighlight = safeHighlight(0.045);
+  const selection = safeHighlight(0.16);
+  const backgrounds = [...readingBounds, lineHighlight, selection];
+  for (const key of ['text', 'textMuted', 'comment', 'keyword', 'string', 'number', 'accent'] as const) palette[key] = readable(palette[key], backgrounds);
+  return { palette, overlay, lineHighlight, selection };
+}
+
 function cssAssetUrl(url: string) {
   // JSON quoting also escapes quotes and control characters in uploaded names.
   return `url(${JSON.stringify(url)})`;
@@ -126,13 +183,14 @@ function cssAssetUrl(url: string) {
 
 export function scratchpadThemeVariables(theme: ScratchpadTheme): Record<string, string> {
   const { palette: p } = theme;
+  const reading = scratchpadReadingStyle(theme);
   const variables: Record<string, string> = {
     '--ui-v2-surface': p.surface,
     '--ui-v2-surface-muted': p.muted,
     '--ui-v2-border': p.border,
     '--ui-v2-border-strong': p.borderStrong,
-    '--ui-v2-text': p.text,
-    '--ui-v2-text-muted': p.textMuted,
+    '--ui-v2-text': reading.palette.text,
+    '--ui-v2-text-muted': reading.palette.textMuted,
     '--ui-v2-accent': p.accent,
     '--ui-v2-accent-soft': p.accentSoft,
     '--separator-border': p.border,
@@ -142,9 +200,11 @@ export function scratchpadThemeVariables(theme: ScratchpadTheme): Record<string,
   };
   if (theme.badgeId) {
     // A readable scrim stays under live code and labels, never over controls.
-    const overlay = Math.max(0.35, Math.min(0.98, Number(theme.overlay) || 0.84));
-    variables['--scratchpad-skin-veil'] = rgba(p.surface, overlay);
-    variables['--scratchpad-skin-panel-veil'] = rgba(p.surface, Math.max(0.84, overlay));
+    variables['--scratchpad-skin-veil'] = rgba(p.surface, reading.overlay);
+    variables['--scratchpad-skin-panel-veil'] = rgba(p.surface, reading.overlay);
+    variables['--scratchpad-reading-surface'] = p.surface;
+    variables['--scratchpad-reading-text'] = reading.palette.text;
+    variables['--scratchpad-reading-muted'] = reading.palette.textMuted;
     variables['--scratchpad-skin-toolbar-veil'] = rgba(p.surface, 0.83);
     variables['--scratchpad-skin-button-veil'] = rgba(p.surface, 0.56);
     for (const slot of ['toolbar', 'editor', 'panel', 'runButton', 'submitButton', 'corner'] as ScratchpadSkinSlot[]) {
@@ -161,10 +221,16 @@ export function scratchpadThemeVariables(theme: ScratchpadTheme): Record<string,
 }
 
 export function scratchpadMonacoTheme(theme: ScratchpadTheme): Monaco.editor.IStandaloneThemeData {
-  const { palette: p } = theme;
+  const reading = scratchpadReadingStyle(theme);
+  const { palette: p } = reading;
+  const widgetBackground = theme.badgeId ? reading.lineHighlight : p.muted;
+  const selectedBackground = theme.badgeId ? reading.selection : p.accentSoft;
   return {
     base: theme.dark ? 'vs-dark' : 'vs',
-    inherit: true,
+    // Badge palettes are checked as a complete set. Inheriting more specific
+    // rules (number.hex, keyword.flow, variable.predefined, etc.) would bypass
+    // the contrast adjustment for exactly those tokens.
+    inherit: !theme.badgeId,
     rules: [
       { token: '', foreground: p.text.slice(1) },
       { token: 'comment', foreground: p.comment.slice(1), fontStyle: 'italic' },
@@ -172,37 +238,52 @@ export function scratchpadMonacoTheme(theme: ScratchpadTheme): Monaco.editor.ISt
       { token: 'string', foreground: p.string.slice(1) },
       { token: 'number', foreground: p.number.slice(1) },
       { token: 'type', foreground: p.accent.slice(1) },
+      ...(theme.badgeId ? [
+        { token: 'identifier', foreground: p.text.slice(1) },
+        { token: 'variable', foreground: p.text.slice(1) },
+        { token: 'delimiter', foreground: p.text.slice(1) },
+        { token: 'operator', foreground: p.text.slice(1) },
+        { token: 'predefined', foreground: p.accent.slice(1) },
+        { token: 'constant', foreground: p.number.slice(1) },
+        { token: 'function', foreground: p.accent.slice(1) },
+        { token: 'regexp', foreground: p.string.slice(1) },
+        { token: 'annotation', foreground: p.comment.slice(1) },
+        { token: 'tag', foreground: p.keyword.slice(1) },
+        { token: 'attribute', foreground: p.accent.slice(1) },
+        { token: 'metatag', foreground: p.keyword.slice(1) },
+        { token: 'invalid', foreground: p.number.slice(1), fontStyle: 'underline' },
+      ] : []),
     ],
     colors: {
       'editor.background': theme.badgeId ? '#00000000' : p.surface,
       'editor.foreground': p.text,
-      'editor.lineHighlightBackground': p.muted,
+      'editor.lineHighlightBackground': reading.lineHighlight,
       'editorLineNumber.foreground': p.comment,
       'editorLineNumber.activeForeground': p.textMuted,
       'editorCursor.foreground': p.accent,
-      'editor.selectionBackground': p.selection,
-      'editor.inactiveSelectionBackground': `${p.selection}99`,
-      'editor.selectionHighlightBackground': `${p.selection}66`,
+      'editor.selectionBackground': reading.selection,
+      'editor.inactiveSelectionBackground': `${reading.selection}99`,
+      'editor.selectionHighlightBackground': `${reading.selection}66`,
       'editorIndentGuide.background1': p.border,
       'editorIndentGuide.activeBackground1': p.borderStrong,
       'editorGutter.background': theme.badgeId ? '#00000000' : p.surface,
       'editorWhitespace.foreground': p.borderStrong,
-      'editorWidget.background': p.muted,
+      'editorWidget.background': widgetBackground,
       'editorWidget.border': p.border,
       'editorSuggestWidget.background': p.surface,
       'editorSuggestWidget.border': p.border,
       'editorSuggestWidget.foreground': p.text,
-      'editorSuggestWidget.selectedBackground': p.accentSoft,
-      'editorHoverWidget.background': p.muted,
+      'editorSuggestWidget.selectedBackground': selectedBackground,
+      'editorHoverWidget.background': widgetBackground,
       'editorHoverWidget.foreground': p.text,
       'editorHoverWidget.border': p.border,
       'input.background': p.surface,
       'input.foreground': p.text,
       'input.border': p.border,
       focusBorder: p.accent,
-      'list.activeSelectionBackground': p.accentSoft,
+      'list.activeSelectionBackground': selectedBackground,
       'list.activeSelectionForeground': p.text,
-      'list.hoverBackground': p.muted,
+      'list.hoverBackground': widgetBackground,
       'scrollbarSlider.background': `${p.textMuted}33`,
       'scrollbarSlider.hoverBackground': `${p.textMuted}55`,
       'scrollbarSlider.activeBackground': `${p.textMuted}77`,
@@ -210,6 +291,19 @@ export function scratchpadMonacoTheme(theme: ScratchpadTheme): Monaco.editor.ISt
       // Without an explicit color Monaco paints this canvas from the token
       // registry, which strips alpha and leaves a black gutter beside artwork.
       'editorOverviewRuler.background': theme.badgeId ? '#00000000' : p.surface,
+      ...(theme.badgeId ? {
+        'editorSuggestWidget.highlightForeground': p.accent,
+        'editorSuggestWidget.selectedForeground': p.text,
+        'editor.lineHighlightBorder': '#00000000',
+        'editor.wordHighlightBackground': `${reading.selection}99`,
+        'editor.wordHighlightStrongBackground': reading.selection,
+        'editorBracketHighlight.foreground1': p.text,
+        'editorBracketHighlight.foreground2': p.keyword,
+        'editorBracketHighlight.foreground3': p.accent,
+        'editorBracketHighlight.foreground4': p.string,
+        'editorBracketHighlight.foreground5': p.number,
+        'editorBracketHighlight.foreground6': p.keyword,
+      } : {}),
     },
   };
 }

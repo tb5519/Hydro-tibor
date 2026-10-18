@@ -9,6 +9,7 @@ const React = require('react');
 const ReactDOM = require('react-dom/client');
 const stylus = require('stylus');
 const controlStyles = stylus.render(fs.readFileSync(path.resolve(__dirname, '../packages/ui-default/components/scratchpad/ControlArt.page.styl'), 'utf8'));
+const toolbarStyles = stylus.render(fs.readFileSync(path.resolve(__dirname, '../packages/ui-default/components/scratchpad/Toolbar.page.styl'), 'utf8'));
 // jsdom does not yet parse container queries; compile them above, then use the
 // real base CSS for native focus/disabled/selected image-state assertions.
 const domStyles = controlStyles.slice(0, controlStyles.indexOf('@container'));
@@ -31,7 +32,7 @@ const skin = (version = 'v1') => ({
 });
 
 async function harness() {
-    const dom = new JSDOM('<div id="scratchpad"><div id="root"></div></div>', { url: 'https://example.test/p/1' });
+    const dom = new JSDOM('<div id="scratchpad"><div class="scratchpad__coding-area" data-scratchpad-skin="true"><div id="root"></div></div></div>', { url: 'https://example.test/p/1' });
     const previous = { window: global.window, document: global.document, act: global.IS_REACT_ACT_ENVIRONMENT };
     global.window = dom.window;
     global.document = dom.window.document;
@@ -39,13 +40,14 @@ async function harness() {
     const mod = { exports: {} };
     vm.runInNewContext(source, { require, module: mod, exports: mod.exports, React });
     const style = dom.window.document.createElement('style');
-    style.textContent = domStyles;
+    style.textContent = domStyles + toolbarStyles.slice(0, toolbarStyles.indexOf('@container'));
     dom.window.document.head.appendChild(style);
     const components = mod.exports;
     const root = ReactDOM.createRoot(dom.window.document.getElementById('root'));
     return {
         ...components, document: dom.window.document,
         opacity(selector) { return dom.window.getComputedStyle(dom.window.document.querySelector(selector)).opacity; },
+        computed(selector) { return dom.window.getComputedStyle(dom.window.document.querySelector(selector)); },
         async render(theme, child) {
             await React.act(async () => root.render(React.createElement(components.ScratchpadArtThemeContext.Provider, { value: theme }, child)));
         },
@@ -55,6 +57,15 @@ async function harness() {
             await React.act(async () => image.dispatchEvent(new dom.window.Event(type)));
         },
         async click(element) { await React.act(async () => element.click()); },
+        async focus(element, focused = true) {
+            await React.act(async () => {
+                if (focused) element.focus();
+                else element.blur();
+                // jsdom caches computed styles across native focus/blur changes.
+                // A neutral DOM mutation invalidates that cache, as a browser does.
+                element.setAttribute('data-test-focus-revision', String(Number(element.getAttribute('data-test-focus-revision') || 0) + 1));
+            });
+        },
         async close() {
             await React.act(async () => root.unmount());
             dom.window.close();
@@ -96,6 +107,70 @@ describe('transparent scratchpad control artwork', () => {
             assert.equal(node.querySelector('[role="status"]').textContent, '运行中…');
             await h.click(node);
             assert.equal(clicks, 1);
+        } finally { await h.close(); }
+    });
+
+    it('gives a selected image tab stronger focus feedback and the hover drawing without moving disabled controls', async () => {
+        const h = await harness();
+        const button = (disabled = false) => React.createElement('div', { className: 'scratchpad__toolbar' },
+            React.createElement(h.Button, { controlArt: 'run', activated: true, disabled, artLabel: '自测' }, '自测'));
+        try {
+            await h.render(skin(), button());
+            for (const variant of ['base', 'hover', 'active']) await h.imageEvent(`[data-art-variant="${variant}"]`);
+            const control = h.document.querySelector('button');
+            assert.equal(h.opacity('[data-art-variant="active"]'), '1');
+            await h.focus(control);
+            assert.equal(h.opacity('[data-art-variant="hover"]'), '1');
+            assert.equal(h.opacity('[data-art-variant="active"]'), '0');
+            assert.equal(h.computed('button').transform, 'translateY(-2px)');
+            assert.match(h.computed('button').filter, /drop-shadow/);
+            assert.match(controlStyles, /::before[^}]*background: var\(--ui-v2-accent-soft\)/s);
+            assert.match(controlStyles, /::after[^}]*height: 3px/);
+            await h.render(skin(), button(true));
+            assert.equal(control.disabled, true);
+            assert.equal(h.computed('button').transform, 'none');
+            assert.equal(h.opacity('[data-art-variant="base"]'), '1');
+            assert.equal(h.opacity('[data-art-variant="hover"]'), '0');
+            assert.match(controlStyles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*transform: none !important/);
+        } finally { await h.close(); }
+    });
+
+    it('keeps configured artwork readable in stable toolbar groups and unwraps groups only on narrow editors', async () => {
+        const h = await harness();
+        const compact = skin();
+        compact.controls.run = { ...compact.controls.run, width: 118, height: 40 };
+        try {
+            await h.render(compact, React.createElement('div', { className: 'scratchpad__toolbar' },
+                React.createElement('div', { className: 'scratchpad__toolbar__actions' },
+                    React.createElement(h.Button, { controlArt: 'run', artLabel: '运行自测' }, '运行自测')),
+                React.createElement('div', { className: 'scratchpad__toolbar__views' }, '主题')));
+            await h.imageEvent('[data-art-variant="base"]');
+            assert.equal(h.computed('.scratchpad__toolbar__actions').flexWrap, 'wrap');
+            assert.equal(h.computed('.scratchpad__toolbar__actions').maxWidth, '100%');
+            assert.equal(h.computed('.scratchpad__toolbar__actions').flexShrink, '0');
+            assert.equal(h.computed('button').flexShrink, '0');
+            assert.equal(h.document.querySelector('.scratchpad__control-art').style.getPropertyValue('--scratchpad-art-width'), '118px');
+            assert.match(toolbarStyles, /@container scratchpad-editor \(max-width: 640px\)[\s\S]*display: contents/);
+            // Both action groups, their gaps, and existing padding fit inside a
+            // 700px editor without having to shrink the text baked into artwork.
+            const widths = [112, 118, 118, 64, 64, 94, 30];
+            const total = widths.reduce((sum, width) => sum + width, 0) + 5 * 6 + 12 + 28 + 4 + 2;
+            assert.ok(total <= 700, `${total}px toolbar`);
+            // A legal 320px+320px package must keep its drawings intact and
+            // break inside the max-width-limited group rather than overflow.
+            const large = skin();
+            large.controls.run = { ...large.controls.run, width: 320 };
+            await h.render(large, React.createElement('div', { className: 'scratchpad__toolbar', style: { width: 700 } },
+                React.createElement('div', { className: 'scratchpad__toolbar__actions' },
+                    React.createElement('select', { style: { width: 152 } }, React.createElement('option', null, 'C++14')),
+                    React.createElement(h.Button, { controlArt: 'run', artLabel: '运行' }, '运行'),
+                    React.createElement(h.Button, { controlArt: 'run', artLabel: '提交' }, '提交'))));
+            for (const image of h.document.querySelectorAll('[data-art-variant="base"]')) await React.act(async () => image.dispatchEvent(new h.document.defaultView.Event('load')));
+            assert.equal(h.computed('.scratchpad__toolbar__actions').flexWrap, 'wrap');
+            assert.equal(h.computed('.scratchpad__toolbar__actions').maxWidth, '100%');
+            assert.equal(h.computed('.scratchpad__toolbar__actions').flexShrink, '0');
+            assert.equal(h.computed('button').flexShrink, '0');
+            assert.equal(h.document.querySelector('.scratchpad__control-art').style.getPropertyValue('--scratchpad-art-width'), '320px');
         } finally { await h.close(); }
     });
 
@@ -148,8 +223,9 @@ describe('transparent scratchpad control artwork', () => {
     it('compiles responsive image sizes and applies real language focus and sidebar selected artwork', async () => {
         assert.match(controlStyles, /@container scratchpad-editor \(max-width: 480px\)/);
         assert.doesNotMatch(controlStyles, /max-width: 740px/);
-        assert.match(controlStyles, /max-width: min\(320px, calc\(100vw - 48px\)\)/);
-        assert.match(controlStyles, /width: min\(var\(--scratchpad-art-width\), 160px\)/);
+        assert.match(controlStyles, /max-width: min\(320px, calc\(100vw - 24px\)\)/);
+        assert.match(controlStyles, /width: min\(var\(--scratchpad-art-width\), max\(30px, calc\(100cqw - 24px\)\)\)/);
+        assert.doesNotMatch(controlStyles, /height: min\(var\(--scratchpad-art-height\), 64px\)/);
         const h = await harness();
         const controls = (disabled = false) => React.createElement(React.Fragment, null,
             React.createElement(h.ScratchpadLanguageArt, null,
@@ -192,11 +268,18 @@ describe('transparent scratchpad control artwork', () => {
             const button = h.document.querySelector('button[aria-label="设置"]');
             for (const variant of ['base', 'hover', 'active']) await h.imageEvent(`[data-control-art="settingsTab"] [data-art-variant="${variant}"]`);
             assert.equal(h.opacity('[data-control-art="settingsTab"] [data-art-variant="base"]'), '1');
-            await React.act(async () => button.focus());
+            await h.focus(button);
             assert.equal(h.opacity('[data-control-art="settingsTab"] [data-art-variant="hover"]'), '1');
             await h.click(button);
             assert.equal(button.getAttribute('aria-pressed'), 'true');
             assert.equal(h.document.querySelector('button[aria-label="题目"]').getAttribute('aria-pressed'), 'false');
+            assert.equal(h.opacity('[data-control-art="settingsTab"] [data-art-variant="hover"]'), '1');
+            assert.equal(h.opacity('[data-control-art="settingsTab"] [data-art-variant="active"]'), '0');
+            await h.focus(button, false);
+            await React.act(async () => {
+                button.dispatchEvent(new h.document.defaultView.MouseEvent('mouseout', { bubbles: true, relatedTarget: h.document.body }));
+                button.setAttribute('data-test-pointer-revision', 'left');
+            });
             assert.equal(h.opacity('[data-control-art="settingsTab"] [data-art-variant="active"]'), '1');
             await h.imageEvent('[data-control-art="settingsTab"] [data-art-variant="base"]', 'error');
             assert.equal(button.querySelector('.scratchpad__art-sr-only'), null);

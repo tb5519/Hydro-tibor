@@ -215,11 +215,29 @@
     z-index: 1
 
   .scratchpad__workspace,
-  .scratchpad__data-pane,
   .scratchpad__data-input,
   .scratchpad__records-scroll,
   .scratchpad__records__table tbody tr
     background: transparent
+
+  // Input and output are working surfaces, not part of the illustration.
+  // Keep them quiet even when an uploaded panel has bright, detailed artwork.
+  .scratchpad__data-pane
+    background: var(--scratchpad-reading-surface)
+    color: var(--scratchpad-reading-text)
+
+  .scratchpad__data-label,
+  .scratchpad__data-metadata,
+  .scratchpad__data-input::placeholder,
+  .scratchpad__data-placeholder
+    color: var(--scratchpad-reading-muted)
+    opacity: 1
+
+  .scratchpad__data-input
+    color: var(--scratchpad-reading-text)
+
+  .scratchpad__records-empty small
+    opacity: 1
 
   .ScratchpadMonacoEditor
     background-image: linear-gradient(var(--scratchpad-skin-veil), var(--scratchpad-skin-veil)), var(--scratchpad-skin-editor-image)

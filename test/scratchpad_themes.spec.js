@@ -286,7 +286,7 @@ describe('scratchpad workspace themes', () => {
         } finally { h.dom.window.close(); }
     });
 
-    it('maps uploaded artwork, exact scrim and fit modes while rejecting active or unsafe assets', async () => {
+    it('maps uploaded artwork and fit modes while protecting code from low scrims and rejecting unsafe assets', async () => {
         const h = harness({ workspace: true, get: () => catalog({ themes: [badgeSkin({
             overlay: 0.35, thumbnailUrl: 'javascript:alert(1)',
             assets: [
@@ -301,13 +301,76 @@ describe('scratchpad workspace themes', () => {
             const variables = h.themes.scratchpadThemeVariables(theme);
             assert.equal(theme.assets.length, 3);
             assert.equal(theme.thumbnailUrl, undefined);
-            assert.equal(variables['--scratchpad-skin-veil'], 'rgba(24,35,50,0.35)');
+            assert.equal(variables['--scratchpad-skin-veil'], 'rgba(24,35,50,0.92)');
             assert.equal(variables['--scratchpad-skin-editor-repeat'], 'repeat');
             assert.equal(variables['--scratchpad-skin-submitButton-size'], '100% 100%');
             assert.match(variables['--scratchpad-skin-editor-image'], /panel\.png/);
             assert.equal(h.themes.scratchpadMonacoTheme(theme).colors['editor.background'], '#00000000');
             assert.equal(h.themes.scratchpadMonacoThemeName(theme), 'hydro-scratchpad-badge-7-revision-1');
             assert.match(h.themes.scratchpadMonacoThemeName(theme), /^[a-z0-9-]+$/i);
+        } finally { h.dom.window.close(); }
+    });
+
+    it('protects every syntax color against the brightest and darkest artwork and restrained current-line/selection fills', () => {
+        const h = harness();
+        try {
+            const samples = [
+                { ...h.themes.SCRATCHPAD_THEMES[0], badgeId: 7, overlay: 0.35, palette: {
+                    ...h.themes.SCRATCHPAD_THEMES[0].palette, surface: '#f4f8fc', muted: '#e6eef6', text: '#142c42', textMuted: '#50677b',
+                    comment: '#50677b', keyword: '#593981', string: '#14624e', number: '#923c1e', accent: '#23679e',
+                } },
+                { ...h.themes.SCRATCHPAD_THEMES[3], badgeId: 7, overlay: 0.35 },
+                { ...h.themes.SCRATCHPAD_THEMES[0], badgeId: 7, overlay: 0.4, palette: {
+                    ...h.themes.SCRATCHPAD_THEMES[0].palette, text: '#e9eff6', textMuted: '#d1dce9', comment: '#e6eff5', keyword: '#b8a4f2',
+                    string: '#a4d7bd', number: '#edbd8b', accent: '#b9d8ec', muted: '#000000', selection: '#ff0099',
+                } },
+                { ...h.themes.SCRATCHPAD_THEMES[3], badgeId: 7, overlay: 0.35, palette: {
+                    ...h.themes.SCRATCHPAD_THEMES[3].palette, surface: '#777777', text: '#777777', comment: '#777777', accent: '#777777',
+                } },
+            ];
+            for (const theme of samples) {
+                const reading = h.themes.scratchpadReadingStyle(theme);
+                assert.ok(reading.overlay >= 0.92);
+                const composite = (underlay) => `#${[1, 3, 5].map((offset) => Math.round(
+                    parseInt(theme.palette.surface.slice(offset, offset + 2), 16) * reading.overlay
+                    + underlay * (1 - reading.overlay),
+                ).toString(16).padStart(2, '0')).join('')}`;
+                const backgrounds = [composite(0), composite(255), reading.lineHighlight, reading.selection, theme.palette.surface];
+                for (const key of ['text', 'textMuted', 'comment', 'keyword', 'string', 'number', 'accent']) {
+                    for (const background of backgrounds) {
+                        assert.ok(contrast(reading.palette[key], background) >= 4.5, `${theme.palette.surface} ${key}: ${reading.palette[key]} on ${background}`);
+                    }
+                }
+                const monaco = h.themes.scratchpadMonacoTheme(theme);
+                assert.equal(monaco.inherit, false, 'specific inherited tokens cannot bypass contrast protection');
+                assert.equal(monaco.colors['editor.background'], '#00000000');
+                assert.equal(monaco.colors['editorGutter.background'], '#00000000');
+                assert.equal(monaco.colors['editor.lineHighlightBackground'], reading.lineHighlight);
+                assert.equal(monaco.colors['editor.selectionBackground'], reading.selection);
+                assert.equal(monaco.colors['editorLineNumber.foreground'], reading.palette.comment);
+                for (const token of ['identifier', 'delimiter', 'operator', 'variable', 'comment', 'keyword', 'string', 'number', 'type']) {
+                    const rule = monaco.rules.find((item) => item.token === token);
+                    assert.ok(rule, `explicit ${token} token avoids inherited low contrast colors`);
+                    for (const background of backgrounds) assert.ok(contrast(`#${rule.foreground}`, background) >= 4.5);
+                }
+                for (let i = 1; i <= 6; i++) {
+                    for (const background of backgrounds) assert.ok(contrast(monaco.colors[`editorBracketHighlight.foreground${i}`], background) >= 4.5);
+                }
+                const vars = h.themes.scratchpadThemeVariables(theme);
+                assert.equal(vars['--scratchpad-reading-surface'], theme.palette.surface);
+                assert.equal(vars['--scratchpad-reading-text'], reading.palette.text);
+                assert.equal(vars['--scratchpad-reading-muted'], reading.palette.textMuted);
+            }
+            const high = h.themes.scratchpadReadingStyle({ ...samples[0], overlay: 0.98 });
+            assert.equal(high.overlay, 0.98);
+            for (const builtin of h.themes.SCRATCHPAD_THEMES) {
+                const reading = h.themes.scratchpadReadingStyle(builtin);
+                assert.deepEqual(JSON.parse(JSON.stringify(reading.palette)), JSON.parse(JSON.stringify(builtin.palette)));
+                assert.equal(reading.lineHighlight, builtin.palette.muted);
+                assert.equal(reading.selection, builtin.palette.selection);
+                assert.equal(h.themes.scratchpadMonacoTheme(builtin).inherit, true);
+                assert.equal(h.themes.scratchpadThemeVariables(builtin)['--scratchpad-reading-surface'], undefined);
+            }
         } finally { h.dom.window.close(); }
     });
 

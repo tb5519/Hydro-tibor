@@ -12,9 +12,11 @@
   .scratchpad__toolbar__views
     display: flex
     align-items: center
+    flex: 0 0 auto
     flex-wrap: wrap
     gap: rem(6px)
     min-width: 0
+    max-width: 100%
 
   .scratchpad__toolbar__views
     margin-left: auto
@@ -215,6 +217,16 @@
 
     .scratchpad__toolbar__language
       max-width: rem(128px)
+
+// At narrow widths, wrap individual controls in their visual order. Above
+// this breakpoint, groups stay whole when they fit and oversized groups wrap
+// internally within max-width instead of shrinking or clipping the artwork.
+@container scratchpad-editor (max-width: 640px)
+  #scratchpad .scratchpad__toolbar
+    gap: rem(8px 6px)
+    .scratchpad__toolbar__actions,
+    .scratchpad__toolbar__views
+      display: contents
 
 @media (prefers-reduced-motion: reduce)
   #scratchpad .scratchpad__toolbar .scratchpad__toolbar__button

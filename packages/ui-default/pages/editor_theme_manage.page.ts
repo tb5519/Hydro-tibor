@@ -1,6 +1,6 @@
 import { NamedPage } from 'vj/misc/Page';
 import { request } from 'vj/utils';
-import { SCRATCHPAD_THEMES, type ThemePalette } from '../components/scratchpad/themes';
+import { SCRATCHPAD_THEMES, scratchpadReadingStyle, type ThemePalette } from '../components/scratchpad/themes';
 
 type Slot = 'background' | 'toolbar' | 'editor' | 'panel' | 'runButton' | 'submitButton' | 'corner';
 type Fit = 'cover' | 'contain' | 'tile' | 'stretch';
@@ -120,6 +120,10 @@ export function bindEditorThemeManage() {
     };
   };
   const assetFor = (theme: Theme, id?: string) => theme.assets.find((asset) => asset.id === id);
+  const readingStyle = (theme: Theme) => scratchpadReadingStyle({
+    badgeId: theme.badgeId || -1, dark: theme.base === 'ocean', overlay: theme.overlay,
+    palette: { ...basePalettes[theme.base], ...theme.palette },
+  });
   const snapshot = () => selected ? JSON.stringify({ name: selected.name, badgeId: selected.badgeId, base: selected.base, overlay: selected.overlay, palette: selected.palette, slots: selected.slots, controls: selected.controls, previewAssetId: selected.previewAssetId, posterAssetId: selected.posterAssetId }) : '';
   const dirty = () => snapshot() !== baseline;
   const canLeaveDesign = () => !dirty() || window.confirm('当前主题还有未发布的修改。放弃这些修改并继续吗？');
@@ -175,9 +179,9 @@ export function bindEditorThemeManage() {
   const paint = (node: HTMLElement, placement?: Placement) => {
     const asset = selected && assetFor(selected, placement?.assetId);
     const region = node.dataset.themeRegion;
-    const palette = selected && { ...basePalettes[selected.base], ...selected.palette };
+    const palette = selected && readingStyle(selected).palette;
     const alpha = region === 'submitButton' ? 0.56 : region === 'toolbar' || region === 'runButton' ? 0.83
-      : region === 'panel' ? Math.max(0.84, selected!.overlay) : 0;
+      : region === 'panel' ? readingStyle(selected!).overlay : 0;
     const rgb = palette && [1, 3, 5].map((start) => parseInt(palette.surface.slice(start, start + 2), 16));
     const veil = alpha && rgb ? `linear-gradient(rgba(${rgb.join(',')},${alpha}),rgba(${rgb.join(',')},${alpha}))` : '';
     const picture = asset?.type.startsWith('image/') ? cssUrl(asset.url) : 'none';
@@ -235,10 +239,11 @@ export function bindEditorThemeManage() {
   };
   const renderPreview = () => {
     if (!selected) return;
-    const palette = { ...basePalettes[selected.base], ...selected.palette };
+    const reading = readingStyle(selected);
+    const palette = reading.palette;
     for (const [key, color] of Object.entries(palette)) {
       const cssKey = key === 'accent' ? 'preview-accent' : key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
-      preview.style.setProperty(`--etm-${cssKey}`, color);
+      preview.style.setProperty(`--etm-${cssKey}`, key === 'accent' ? selected.palette.accent || basePalettes[selected.base].accent : color);
     }
     preview.style.setProperty('--etm-muted-surface', palette.muted);
     preview.style.setProperty('--etm-on-accent', selected.base === 'ocean' ? '#14243b' : '#ffffff');
@@ -268,8 +273,10 @@ export function bindEditorThemeManage() {
       if (!document.hidden && !reducedMotion?.matches) video.play().catch(() => {});
       else video.pause();
     } else if (video.hasAttribute('src')) { video.pause(); video.removeAttribute('src'); video.load(); }
-    find('[data-theme-preview-veil]').style.opacity = String(selected.overlay);
-    find('[data-theme-overlay-value]').textContent = `${Math.round(selected.overlay * 100)}%`;
+    find('[data-theme-preview-veil]').style.opacity = String(reading.overlay);
+    find('[data-theme-overlay-value]').textContent = `${Math.round(reading.overlay * 100)}%`;
+    overlayInput.min = String(Math.min(0.98, readingStyle({ ...selected, overlay: 0.35 }).overlay));
+    overlayInput.value = String(Math.min(0.98, reading.overlay));
     find('[data-theme-preview-name]').textContent = selected.name || '专属主题';
     const reference = assetFor(selected, selected.previewAssetId);
     find('[data-theme-reference]').hidden = !reference?.type.startsWith('image/');
