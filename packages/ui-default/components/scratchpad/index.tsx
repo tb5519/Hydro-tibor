@@ -78,12 +78,20 @@ export default function ScratchpadContainer() {
   const dispatch = useDispatch();
   const ui = useSelector<any, any>((state) => state.ui, _.isEqual);
 
-  const handleChangeSize = React.useMemo(() => _.debounce(() => {
-    ctx.scratchpad.editor?.layout?.();
-    $('#scratchpad').trigger('vjScratchpadRelayout');
-    forceUpdate();
-  }, 500), [forceUpdate]);
-  React.useEffect(() => () => handleChangeSize.cancel(), [handleChangeSize]);
+  const relayoutFrame = React.useRef<number | null>(null);
+  const handleChangeSize = React.useCallback(() => {
+    if (relayoutFrame.current !== null) return;
+    relayoutFrame.current = window.requestAnimationFrame(() => {
+      relayoutFrame.current = null;
+      // Monaco observes its actual container. Split-pane changes only need to
+      // reposition outside overlays, without re-rendering the editor tree.
+      $('#scratchpad').trigger('vjScratchpadRelayout');
+    });
+  }, []);
+  React.useEffect(() => () => {
+    if (relayoutFrame.current !== null) window.cancelAnimationFrame(relayoutFrame.current);
+    relayoutFrame.current = null;
+  }, []);
   const switchToPage = (target) => {
     dispatch({
       type: 'SCRATCHPAD_SWITCH_TO_PAGE',

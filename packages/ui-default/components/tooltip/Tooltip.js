@@ -15,6 +15,23 @@ export default class Tooltip extends DOMAttachedObject {
       openOn: 'hover',
       constrainToWindow: true,
       constrainToScrollParent: false,
+      addTargetClasses: false,
+      tetherOptions: {
+        constraints: [{
+          // Tether's default center-to-center constraint can overflow at either
+          // edge. Use the visible document viewport, including existing scrollbars.
+          get to() {
+            const { clientWidth, clientHeight } = document.documentElement;
+            return [
+              window.pageXOffset, window.pageYOffset,
+              window.pageXOffset + (clientWidth || window.innerWidth),
+              window.pageYOffset + (clientHeight || window.innerHeight),
+            ];
+          },
+          attachment: 'both',
+          pin: true,
+        }],
+      },
       content: $dom.attr('data-tooltip'),
     });
     this.isOpen = false;

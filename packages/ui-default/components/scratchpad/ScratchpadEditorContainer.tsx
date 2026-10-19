@@ -59,6 +59,9 @@ export default connect((state: any) => ({
       const config: monaco.editor.IStandaloneEditorConstructionOptions = {
         fontFamily: UserContext.codeFontFamily,
         ...customOptions,
+        // Monaco's ResizeObserver coalesces layout per animation frame. This
+        // also follows toolbar wrapping and image loads, not only sash drags.
+        automaticLayout: true,
         theme: scratchpadMonacoThemeName(currentScratchpadTheme()),
         readOnly: !!UiContext.homeworkReview,
         lineNumbers: 'on',
@@ -122,7 +125,10 @@ export default connect((state: any) => ({
     }
     if (editor && this.props.settings) {
       editor.updateOptions({
-        ...this.props.settings, theme: scratchpadMonacoThemeName(currentScratchpadTheme()), readOnly: !!UiContext.homeworkReview,
+        ...this.props.settings,
+        automaticLayout: true,
+        theme: scratchpadMonacoThemeName(currentScratchpadTheme()),
+        readOnly: !!UiContext.homeworkReview,
       });
     }
     if (editor && !UiContext.homeworkReview && this.props.pendingCommand) {

@@ -2,14 +2,10 @@ import $ from 'jquery';
 import { AutoloadPage } from 'vj/misc/Page';
 import Tooltip from './Tooltip';
 
-function getClosestTooltipElement(element) {
-  const MAX_DEPTH = 3;
-  for (let i = 0, e = element; i < MAX_DEPTH && e !== null && e !== document; e = e.parentNode, i++) {
-    if (e.getAttribute('data-tooltip')) {
-      return e;
-    }
-  }
-  return null;
+export function getClosestTooltipElement(node) {
+  // Icons may contain nested SVG elements; text nodes can be event targets too.
+  const element = node?.nodeType === 1 ? node : node?.parentElement;
+  return element?.closest?.('[data-tooltip]:not([data-tooltip=""])') || null;
 }
 
 const tooltipPage = new AutoloadPage('tooltipPage', () => {

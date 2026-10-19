@@ -19,6 +19,17 @@
   overflow: hidden
   --separator-border: var(--ui-v2-border)
   --focus-border: var(--ui-v2-accent)
+  --sash-hover-size: 2px
+
+  // Keep Allotment's full drag target, but use current pointer state instead
+  // of its delayed hover class so a released divider never leaves a trail.
+  .sash::before
+    background: transparent
+    transition: none
+
+  .sash:not(.sash-disabled):hover::before,
+  .sash.sash-active::before
+    background: var(--focus-border)
 
   .scratchpad__workspace
     min-width: 0

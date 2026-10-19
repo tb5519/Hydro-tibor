@@ -1,7 +1,9 @@
-.tooltip
-
-  &.drop-element
-    pointer-events: none
+.tooltip.drop-element
+  pointer-events: none
+  max-width: 100%
+  max-height: 100vh
+  // Include the gap and arrow in the box Tether measures and constrains.
+  padding: 10px
 
   .drop-content
     transition: transform .1s ease-in-out
@@ -10,18 +12,23 @@
     font-size: rem($font-size-small)
     padding: .7em 0.9em
     max-width: rem(250px)
+    max-height: calc(100vh - 20px)
+    overflow: hidden
+    overflow-wrap: anywhere
+    white-space: normal
     box-shadow: 1px 1px 4px rgba(#000, 0.3)
     line-height: 1
     position: relative
+    transform: scale(.96)
 
-    &:before
-      content: ''
-      display: block
-      position: absolute
-      width: 0
-      height: 0
-      border: rem(6px) solid transparent
-      pointer-events: none
+  &:before
+    content: ''
+    display: block
+    position: absolute
+    width: 0
+    height: 0
+    border: 5px solid transparent
+    pointer-events: none
 
   &.drop-after-open
     transition-delay: .4s
@@ -29,41 +36,34 @@
     .drop-content
       transition-delay: .4s
 
-  // Transitions
-  &.drop-element-attached-bottom.drop-element-attached-center .drop-content
-    transform: scale(0.9) translate(0, 5px) translateZ(0)
-  &.drop-element-attached-bottom.drop-element-attached-left .drop-content
-    transform: scale(0.9) translate(5px, 5px) translateZ(0)
-  &.drop-element-attached-bottom.drop-element-attached-right .drop-content
-    transform: scale(0.9) translate(-5px, 5px) translateZ(0)
-  &.drop-element-attached-top.drop-element-attached-center .drop-content
-    transform: scale(0.9) translate(0, -5px) translateZ(0)
-  &.drop-element-attached-top.drop-element-attached-left .drop-content
-    transform: scale(0.9) translate(5px, -5px) translateZ(0)
-  &.drop-element-attached-top.drop-element-attached-right .drop-content
-    transform: scale(0.9) translate(-5px, -5px) translateZ(0)
   &.drop-after-open .drop-content
     transform: scale(1) translateZ(0) !important
 
-  // Triangle Borders
-  &.drop-element-attached-bottom .drop-content
-    bottom: rem(10px)
-    &:before
-      border-top-color: #333
-  &.drop-element-attached-top .drop-content
-    top: rem(10px)
-    &:before
-      border-bottom-color: #333
-
-  // Triangle Positions
-  &.drop-element-attached-bottom .drop-content:before
-    bottom: rem(-12px)
-  &.drop-element-attached-top .drop-content:before
-    top: rem(-12px)
-  &.drop-element-attached-center .drop-content:before
-    margin-left: rem(-6px)
+  // Arrows stay inside the measured padding, even at a viewport edge.
+  &.drop-element-attached-bottom:before
+    bottom: 0
+    border-top-color: #333
+  &.drop-element-attached-top:before
+    top: 0
+    border-bottom-color: #333
+  &.drop-element-attached-center:before
+    margin-left: -5px
     left: 50%
-  &.drop-element-attached-left .drop-content:before
+  &.drop-element-attached-left:before
+    left: 10px
+  &.drop-element-attached-right:before
+    right: 10px
+
+  &.drop-element-attached-middle.drop-element-attached-left:before
+    top: 50%
     left: 0
-  &.drop-element-attached-right .drop-content:before
+    margin-top: -5px
+    border-right-color: #333
+  &.drop-element-attached-middle.drop-element-attached-right:before
+    top: 50%
     right: 0
+    margin-top: -5px
+    border-left-color: #333
+
+  &.drop-pinned:before
+    display: none
