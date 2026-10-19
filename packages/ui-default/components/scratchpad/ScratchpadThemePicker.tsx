@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useScratchpadControlArt } from './ScratchpadControlArt';
 import {
-  refreshScratchpadThemes, SCRATCHPAD_THEMES, SCRATCHPAD_THEME_PICKER_EVENT, ScratchpadTheme,
+  hasScratchpadAdministratorThemeAccess, refreshScratchpadThemes, SCRATCHPAD_THEMES, SCRATCHPAD_THEME_PICKER_EVENT, ScratchpadTheme,
   scratchpadThemeVariables, selectScratchpadTheme, useScratchpadTheme, useScratchpadThemes,
 } from './themes';
 
@@ -25,6 +25,7 @@ function PaletteIcon() {
 export default function ScratchpadThemePicker({ expanded = false }: { expanded?: boolean }) {
   const theme = useScratchpadTheme();
   const choices = useScratchpadThemes();
+  const administratorAccess = hasScratchpadAdministratorThemeAccess();
   const { ready: artReady, art } = useScratchpadControlArt('theme', theme);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -146,7 +147,7 @@ export default function ScratchpadThemePicker({ expanded = false }: { expanded?:
         <span className="scratchpad__theme-option-label">
           <strong>{option.name}</strong>
           <small>{option.badgeId ? option.badgeTitle || '徽章专属图片皮肤' : option.description}</small>
-          {option.badgeId && <small className="scratchpad__theme-validity">{until ? `有效至 ${until}` : '永久'}</small>}
+          {option.badgeId && <small className="scratchpad__theme-validity">{option.administratorAccess ? '管理员可用' : until ? `有效至 ${until}` : '永久'}</small>}
         </span>
         <span className="scratchpad__theme-check" aria-hidden="true">{pending === option.id ? '…' : selected ? '✓' : ''}</span>
       </button>
@@ -195,14 +196,15 @@ export default function ScratchpadThemePicker({ expanded = false }: { expanded?:
           <div className="scratchpad__theme-menu-heading">基础主题</div>
           <div className="scratchpad__theme-builtins">{SCRATCHPAD_THEMES.map(optionButton)}</div>
           <div className="scratchpad__theme-menu-heading scratchpad__theme-menu-heading--badges">
-            <span>我的徽章主题</span><small>{loading ? '正在验证' : `${choices.filter((option) => option.badgeId).length} 款`}</small>
+            <span>{administratorAccess ? '全部徽章主题' : '我的徽章主题'}</span><small>{loading ? '正在验证' : `${choices.filter((option) => option.badgeId).length} 款`}</small>
           </div>
           {choices.filter((option) => option.badgeId).map(optionButton)}
           {!choices.some((option) => option.badgeId) && (
             <p className="scratchpad__theme-empty">{loading ? '正在加载可用的图片皮肤…'
-              : !verified ? '暂时无法验证徽章，请联网后重新打开。' : '获得带有专属主题的徽章后，即可在这里选择。'}</p>
+              : !verified ? '暂时无法验证徽章，请联网后重新打开。'
+                : administratorAccess ? '当前域还没有已发布的徽章主题。' : '获得带有专属主题的徽章后，即可在这里选择。'}</p>
           )}
-          <div className="scratchpad__theme-menu-footer">持有徽章即可使用，无需佩戴</div>
+          <div className="scratchpad__theme-menu-footer">{administratorAccess ? '管理员可使用当前域的全部已发布主题' : '持有徽章即可使用，无需佩戴'}</div>
         </div>, document.body,
       )}
     </div>

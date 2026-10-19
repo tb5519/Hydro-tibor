@@ -413,6 +413,25 @@ describe('scratchpad workspace themes', () => {
         } finally { h.dom.window.close(); }
     });
 
+    it('uses a verified administrator catalog and drops its theme when administrator access is revoked', async () => {
+        let response = catalog({ administratorAccess: true, themes: [badgeSkin({ administratorAccess: true })] });
+        const h = harness({ workspace: true, get: () => response });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            assert.equal(h.themes.currentScratchpadTheme().administratorAccess, true);
+            assert.equal(h.themes.hasScratchpadAdministratorThemeAccess(), true);
+            assert.equal(h.themes.currentScratchpadTheme().id, 'badge:7');
+            response = catalog({ themes: [], selectedId: 'ocean' });
+            await h.themes.refreshScratchpadThemes();
+            assert.equal(h.themes.currentScratchpadTheme().id, 'ocean');
+            assert.equal(h.themes.hasScratchpadAdministratorThemeAccess(), false);
+            assert.equal(await h.themes.selectScratchpadTheme('badge:7'), false);
+            response = catalog({ administratorAccess: true, themes: [], selectedId: 'ocean' });
+            await h.themes.refreshScratchpadThemes();
+            assert.equal(h.themes.hasScratchpadAdministratorThemeAccess(), true, 'An empty admin catalog keeps its accurate empty state');
+        } finally { h.dom.window.close(); }
+    });
+
     it('falls back when ownership is revoked without recreating or editing the Monaco model', async () => {
         let response = catalog();
         const h = harness({ workspace: true, get: () => response });

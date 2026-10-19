@@ -235,14 +235,18 @@ it('extends primary object storage only for exact editor-theme passive-media pat
 
 let retired = [];
 let retireFailure;
+let galleryForUser = async () => ({ badgeCards: [] });
+const storageMeta = new Map();
 const workspace = { LEGACY_WORKSPACE_ID: 'tang', resolveDomainWorkspaceId: (domain) => domain.workspaceId || 'tang',
+    isPlatformAdmin: (uid) => uid === 100,
     getLegacyWorkspace: async () => ({ ownerUid: 2 }) };
 const handlerModule = load('packages/hydrooj/src/handler/editor_theme.ts', {
     '../error': { NotFoundError: Error, PermissionError: Error, ValidationError: Error },
-    '../lib/asset_delivery': { tryRedirectAsset: () => false }, '../lib/asset_storage': {},
-    '../lib/editor_image_theme': lib, '../lib/user_badge_gallery': {},
-    '../model/builtin': { PERM: { PERM_EDIT_DOMAIN: 1n }, PRIV: { PRIV_USER_PROFILE: 1 } },
-    '../model/storage': { del: async (paths) => {
+    '../lib/asset_delivery': { tryRedirectAsset: () => false },
+    '../lib/asset_storage': { signDownloadLink: async () => 'https://objects.example/theme.png' },
+    '../lib/editor_image_theme': lib, '../lib/user_badge_gallery': { getUserBadgeGallery: (...args) => galleryForUser(...args) },
+    '../model/builtin': { PERM: { PERM_EDIT_DOMAIN: 1n }, PRIV: { PRIV_USER_PROFILE: 1, PRIV_EDIT_SYSTEM: 2, PRIV_MANAGE_ALL_DOMAIN: 4 } },
+    '../model/storage': { getMeta: async (target) => storageMeta.get(target), del: async (paths) => {
         if (retireFailure?.(paths)) throw new Error('Storage retirement interrupted');
         retired.push(...paths);
     } },
@@ -271,7 +275,8 @@ function draftDatabase(fixtures) {
     return { collection(name) {
         const rows = fixtures[name] || (fixtures[name] = []);
         return {
-            find(query) { return { limit() { return this; }, async toArray() { return rows.filter((row) => matches(row, query)).map((row) => ({ ...row })); } }; },
+            find(query) { return { limit() { return this; }, project() { return this; }, sort() { return this; },
+                async toArray() { return rows.filter((row) => matches(row, query)).map((row) => ({ ...row })); } }; },
             async findOne(query) { return rows.find((row) => matches(row, query)); },
             async findOneAndUpdate(query, update) {
                 const row = rows.find((item) => matches(item, query));
@@ -301,6 +306,88 @@ it('keeps legacy teacher ownership and modern classroom administrator permission
     assert.equal(await handlerModule.canManageEditorThemes({ ...teacher, user: { _id: 3, hasPerm: () => true } }), false);
     assert.equal(await handlerModule.canManageEditorThemes({ ...teacher, domain: { _id: 'A', workspaceId: 'school' } }), false);
     assert.equal(await handlerModule.canManageEditorThemes({ user: { _id: 9, hasPerm: () => true }, domain: { _id: 'A', workspaceId: 'school' } }), true);
+});
+
+it('allows current-domain administrators, the legacy owner and platform administrators to use all published themes', async () => {
+    const handler = (uid, domain, perm = false, priv = 0) => ({
+        domain, user: { _id: uid, hasPerm: () => perm, hasPriv: (...values) => values.some((value) => (priv & value) === value) },
+    });
+    const legacy = { _id: 'system' }, classroom = { _id: 'A', workspaceId: 'school' };
+    assert.equal(await handlerModule.canUseAllEditorThemes(handler(2, legacy)), true);
+    assert.equal(await handlerModule.canUseAllEditorThemes(handler(3, legacy, true)), false, 'Legacy badge scope is owned by the legacy teacher');
+    assert.equal(await handlerModule.canUseAllEditorThemes(handler(9, classroom, true)), true);
+    assert.equal(await handlerModule.canUseAllEditorThemes(handler(9, classroom)), false);
+    assert.equal(await handlerModule.canUseAllEditorThemes(handler(2, classroom)), false, 'Legacy ownership does not grant access to another workspace');
+    for (const priv of [2, 4]) assert.equal(await handlerModule.canUseAllEditorThemes(handler(3, legacy, false, priv)), true);
+    assert.equal(await handlerModule.canUseAllEditorThemes(handler(100, classroom)), true);
+});
+
+it('lists and selects only published scoped themes for administrators without creating badge ownership', async () => {
+    const fixtures = {
+        badge: [{ _id: 7, domainId: 'A', title: '疾风剑客' }, { _id: 8, domainId: 'A', title: '月下漫游' },
+            { _id: 9, domainId: 'B', title: '其他课堂' }],
+        'editor.theme': [7, 8, 9, 10].map((badgeId) => ({ _id: `domain:${badgeId === 9 ? 'B' : 'A'}:${badgeId}`,
+            scope: `domain:${badgeId === 9 ? 'B' : 'A'}`, badgeId, version: String(badgeId), design: {}, assets: [] })),
+        'editor.themeDraft': [{ _id: 'draft', scope: 'domain:A', badgeId: 7, design: {}, assets: [] }],
+        'editor.themeSelection': [{ _id: 'domain:A:11', themeId: 'badge:8' }],
+    };
+    let administrator = true;
+    const handler = {
+        ctx: { db: draftDatabase(fixtures) }, domain: { _id: 'A', workspaceId: 'school' },
+        user: { _id: 11, scratchpadTheme: 'ocean', hasPriv: () => false, hasPerm: () => administrator },
+        url: () => '/theme-asset', args: { id: 'badge:7' }, response: {},
+    };
+    const before = JSON.stringify(fixtures.badge);
+    let catalog = await handlerModule.getEditorThemeCatalog(handler);
+    assert.equal(catalog.administratorAccess, true);
+    assert.deepEqual(catalog.themes.map((theme) => theme.id), ['badge:7', 'badge:8']);
+    assert(catalog.themes.every((theme) => theme.administratorAccess && theme.expiresAt === null));
+    await handlerModule.EditorThemeCatalogHandler.prototype.postSelect.call(handler);
+    assert.equal(handler.response.body.selectedId, 'badge:7');
+    assert.equal(JSON.stringify(fixtures.badge), before);
+    assert.equal(fixtures.userBadge, undefined, 'Theme access must never create real badge ownership');
+    administrator = false;
+    galleryForUser = async () => ({ badgeCards: [{ id: 8, title: '月下漫游', expiresAt: '2099-01-01T00:00:00.000Z' }] });
+    catalog = await handlerModule.getEditorThemeCatalog(handler);
+    assert.equal(catalog.administratorAccess, false);
+    assert.equal(catalog.selectedId, 'ocean');
+    assert.deepEqual(catalog.themes.map((theme) => theme.id), ['badge:8']);
+    assert.equal(catalog.themes[0].administratorAccess, undefined);
+    assert.equal(catalog.themes[0].expiresAt, '2099-01-01T00:00:00.000Z');
+    assert.equal(fixtures['editor.themeSelection'][0].themeId, undefined);
+    await assert.rejects(handlerModule.EditorThemeCatalogHandler.prototype.postSelect.call(handler));
+    galleryForUser = async () => ({ badgeCards: [] });
+});
+
+it('allows non-manager platform administrators only current scoped published media, never drafts or deleted badges', async () => {
+    const version = 'a'.repeat(32), oldVersion = 'b'.repeat(32), draft = 'c'.repeat(32), assetId = 'd'.repeat(24);
+    const asset = { id: assetId, path: 'theme.png', type: 'image/png', size: 10 };
+    storageMeta.set(asset.path, { size: 10, 'Content-Type': 'image/png', remoteAsset: { size: 10, contentType: 'image/png' } });
+    const fixtures = {
+        badge: [{ _id: 7, domainId: 'A', title: '疾风剑客' }],
+        'editor.theme': [{ _id: 'domain:A:7', scope: 'domain:A', badgeId: 7, version }],
+        'editor.themeVersion': [{ _id: version, scope: 'domain:A', badgeId: 7, assets: [asset] },
+            { _id: oldVersion, scope: 'domain:A', badgeId: 7, assets: [asset] }],
+        'editor.themeDraft': [{ _id: draft, scope: 'domain:A', owner: 11, expiresAt: new Date('2099-01-01'), assets: [asset] }],
+    };
+    let privileged = true;
+    const handler = { ctx: { db: draftDatabase(fixtures) }, domain: { _id: 'A', workspaceId: 'school' },
+        user: { _id: 11, hasPriv: () => privileged, hasPerm: () => false },
+        checkPriv() {}, response: { addHeader() {} } };
+    const read = (target = version) => handlerModule.EditorThemeAssetHandler.prototype.get.call(handler, handler.domain._id, target, assetId);
+    await read();
+    assert.equal(handler.response.status, 302);
+    await assert.rejects(read(oldVersion));
+    await assert.rejects(read(draft));
+    handler.domain = { _id: 'B', workspaceId: 'school' };
+    await assert.rejects(read());
+    handler.domain = { _id: 'A', workspaceId: 'school' };
+    fixtures.badge.length = 0;
+    await assert.rejects(read(), 'Deleted badge artwork must not remain unlocked by an orphan theme record');
+    fixtures.badge.push({ _id: 7, domainId: 'A' });
+    privileged = false;
+    await assert.rejects(read());
+    storageMeta.clear();
 });
 
 it('retires only abandoned draft objects, preserving published versions and uploads that are still being published', async () => {

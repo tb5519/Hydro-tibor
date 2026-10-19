@@ -38,6 +38,12 @@ export async function canManageEditorThemes(handler: Handler) {
     if (editorThemeScope(handler.domain) === 'global') return (await workspace.getLegacyWorkspace()).ownerUid === handler.user._id;
     return handler.user.hasPerm(PERM.PERM_EDIT_DOMAIN);
 }
+/** Theme access never grants a badge or changes the account's real collection. */
+export async function canUseAllEditorThemes(handler: Handler) {
+    return handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM, PRIV.PRIV_MANAGE_ALL_DOMAIN)
+        || workspace.isPlatformAdmin(handler.user._id)
+        || await canManageEditorThemes(handler);
+}
 async function assertManage(handler: Handler) {
     handler.checkPriv(PRIV.PRIV_USER_PROFILE);
     if (!await canManageEditorThemes(handler)) throw new PermissionError(PERM.PERM_EDIT_DOMAIN);
@@ -320,20 +326,27 @@ export class EditorThemeManageHandler extends Handler {
 export async function getEditorThemeCatalog(handler: Handler) {
     const now = new Date();
     const scope = editorThemeScope(handler.domain);
-    const { themes, selections } = collections(handler);
-    const gallery = await getUserBadgeGallery(handler.ctx, handler.domain, handler.user._id, now);
-    const byId = new Map(gallery.badgeCards.map((badge) => [badge.id, badge]));
+    const { badges, themes, selections } = collections(handler);
+    const administrator = await canUseAllEditorThemes(handler);
+    const eligible = administrator
+        ? (await badges.find(badgeScope(handler.domain)).project({ _id: 1, title: 1, short: 1 }).toArray())
+            .map((badge: any) => ({ id: badge._id, title: `${badge.title || badge.short || `徽章 ${badge._id}`}`, expiresAt: null }))
+        : (await getUserBadgeGallery(handler.ctx, handler.domain, handler.user._id, now)).badgeCards;
+    const byId = new Map<number, { title: string; expiresAt: string | null }>(eligible.map((badge: any) => [badge.id, badge]));
     const [rows, selection] = await Promise.all([
         byId.size ? themes.find({ scope, badgeId: { $in: [...byId.keys()] } }).sort({ updatedAt: -1 }).toArray() : Promise.resolve([]),
         selections.findOne({ _id: `${scope}:${handler.user._id}` }),
     ]);
     const fallback = EDITOR_THEME_BASES.includes(handler.user['scratchpadTheme']) ? handler.user['scratchpadTheme'] : 'ocean';
-    const available = rows.map((theme: any) => present(handler, theme, byId.get(theme.badgeId)!.expiresAt, byId.get(theme.badgeId)!.title));
+    const available = rows.map((theme: any) => ({
+        ...present(handler, theme, byId.get(theme.badgeId)!.expiresAt, byId.get(theme.badgeId)!.title),
+        ...(administrator ? { administratorAccess: true } : {}),
+    }));
     const selectedId = available.some((theme: any) => theme.id === selection?.themeId) ? selection.themeId : fallback;
     if (selection?.themeId && selectedId !== selection.themeId) {
         await selections.updateOne({ _id: selection._id, themeId: selection.themeId }, { $unset: { themeId: '' } });
     }
-    return { themes: available, selectedId, fallback, serverNow: now.toISOString() };
+    return { themes: available, selectedId, fallback, administratorAccess: administrator, serverNow: now.toISOString() };
 }
 
 export class EditorThemeCatalogHandler extends Handler {
@@ -365,16 +378,20 @@ export class EditorThemeAssetHandler extends Handler {
         this.checkPriv(PRIV.PRIV_USER_PROFILE);
         if (!/^[a-f\d]{32}$/.test(version) || !/^[a-f\d]{24}$/.test(assetId)) throw new NotFoundError('theme asset');
         const scope = editorThemeScope(this.domain);
-        const { drafts, versions, themes } = collections(this);
+        const { badges, drafts, versions, themes } = collections(this);
         const manager = await canManageEditorThemes(this);
+        const administrator = manager || await canUseAllEditorThemes(this);
         let source = await versions.findOne({ _id: version, scope });
         if (source) {
             if (!manager) {
-                const [current, gallery] = await Promise.all([
+                const [current, gallery, badge] = await Promise.all([
                     themes.findOne({ _id: `${scope}:${source.badgeId}`, version }),
-                    getUserBadgeGallery(this.ctx, this.domain, this.user._id),
+                    administrator ? Promise.resolve(null) : getUserBadgeGallery(this.ctx, this.domain, this.user._id),
+                    administrator ? badges.findOne({ _id: source.badgeId, ...badgeScope(this.domain) }) : Promise.resolve(null),
                 ]);
-                if (!current || !gallery.badgeCards.some((badge) => badge.id === source.badgeId)) throw new NotFoundError('theme asset');
+                if (!current || (administrator ? !badge : !gallery.badgeCards.some((item) => item.id === source.badgeId))) {
+                    throw new NotFoundError('theme asset');
+                }
             }
         } else if (manager) source = await drafts.findOne({ _id: version, scope, owner: this.user._id, expiresAt: { $gt: new Date() } });
         if (!source) throw new NotFoundError('theme asset');

@@ -30,6 +30,7 @@ export interface ScratchpadTheme {
   palette: ThemePalette;
   badgeId?: number;
   badgeTitle?: string;
+  administratorAccess?: boolean;
   expiresAt?: string | null;
   version?: string;
   overlay?: number;
@@ -318,6 +319,7 @@ interface ThemeCatalog {
   choices: ScratchpadTheme[];
   fallback: ScratchpadBuiltinThemeId;
   clockOffset: number;
+  administratorAccess: boolean;
 }
 const themeEvent = 'hydro:scratchpad-theme';
 export const SCRATCHPAD_THEME_PICKER_EVENT = 'hydro:open-scratchpad-themes';
@@ -393,6 +395,10 @@ export function availableScratchpadThemes(): ScratchpadTheme[] {
   return catalogForAccount()?.choices || SCRATCHPAD_THEMES;
 }
 
+export function hasScratchpadAdministratorThemeAccess(): boolean {
+  return catalogForAccount()?.administratorAccess === true;
+}
+
 function safeUrl(value: unknown): value is string {
   if (typeof value !== 'string' || !value || /[\u0000-\u001f]/.test(value)) return false;
   try {
@@ -444,6 +450,7 @@ function normalizeTheme(value: any): ScratchpadTheme | null {
     id: value.id, badgeId: Number(value.badgeId), name: String(value.name || value.badgeTitle || '徽章主题').slice(0, 80),
     description: String(value.badgeTitle || '').slice(0, 80), badgeTitle: String(value.badgeTitle || '').slice(0, 80),
     dark: base.dark, palette, expiresAt: value.expiresAt || null, assets, slots, controls,
+    administratorAccess: value.administratorAccess === true,
     overlay: Math.max(0.35, Math.min(0.98, Number(value.overlay) || 0.84)),
     posterAssetId: assets.some((asset) => asset.id === value.posterAssetId && asset.type.startsWith('image/')) ? value.posterAssetId : undefined,
     version: String(value.version || ''),
@@ -480,6 +487,7 @@ function applyCatalog(data: any, applySelection = true) {
     themes: data.themes.map(normalizeTheme).filter(Boolean), choices: [],
     fallback: isBuiltin(data.fallback) ? data.fallback : (isBuiltin(UserContext.scratchpadTheme) ? UserContext.scratchpadTheme : 'cloud'),
     clockOffset: Number.isFinite(now) ? now - Date.now() : 0,
+    administratorAccess: data.administratorAccess === true,
   };
   catalog.choices = [...SCRATCHPAD_THEMES, ...catalog.themes.filter((theme) => isUnexpired(theme, catalog))];
   catalogs.set(storageKey(), catalog);

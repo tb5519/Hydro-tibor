@@ -170,6 +170,37 @@ async function run() {
         denied(await post(student, catalogUrl, { operation: 'select', id: limited.id }));
         status(await post(student, catalogUrl, { operation: 'select', id: published.id }), 200);
     });
+    await check('Administrators can choose every published theme in the current scope without being awarded badges', async () => {
+        const before = await db.collection('userBadge').find({ owner: teacherId }).toArray();
+        const response = await get(teacher, catalogUrl);
+        status(response, 200);
+        assert.deepEqual(response.body.themes.map((theme) => theme.badgeId).sort(), [701, 702]);
+        assert(response.body.themes.every((theme) => theme.administratorAccess === true && theme.expiresAt === null));
+        for (const theme of response.body.themes) {
+            status(await post(teacher, catalogUrl, { operation: 'select', id: theme.id }), 200);
+            status(await get(teacher, theme.assets[0].url), 302);
+        }
+        assert.deepEqual(await db.collection('userBadge').find({ owner: teacherId }).toArray(), before);
+        assert.equal((await get(teacher, `/d/${otherDomainId}/code-editor/themes`)).body.themes.length, 0);
+    });
+    await check('Domain administrator access is revoked immediately when the role is removed, retaining normal student badge checks', async () => {
+        await domains.setUserRole(domainId, otherUid, 'root', true);
+        const response = await get(other, catalogUrl);
+        status(response, 200);
+        assert.equal(response.body.themes.length, 2);
+        assert(response.body.themes.every((theme) => theme.administratorAccess === true));
+        const chosen = response.body.themes.find((theme) => theme.badgeId === 701);
+        status(await post(other, catalogUrl, { operation: 'select', id: chosen.id }), 200);
+        status(await get(other, chosen.assets[0].url), 302);
+        assert.equal(await db.collection('userBadge').countDocuments({ owner: otherUid }), 0);
+        assert.equal((await get(other, `/d/${otherDomainId}/code-editor/themes`)).body.themes.length, 0);
+        await domains.setUserRole(domainId, otherUid, 'default');
+        const revoked = (await get(other, catalogUrl)).body;
+        assert.equal(revoked.themes.length, 0);
+        assert.equal(revoked.selectedId, 'ocean');
+        denied(await post(other, catalogUrl, { operation: 'select', id: chosen.id }));
+        denied(await get(other, chosen.assets[0].url));
+    });
     await check('Media is private to eligible students and a new publication invalidates the old student asset version', async () => {
         const asset = published.assets[0];
         denied(await get(other, asset.url));
