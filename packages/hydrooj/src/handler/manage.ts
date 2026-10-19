@@ -1024,6 +1024,9 @@ async function presentManagedDailyQuizLearning(state: dailyQuiz.AdminQuizLearnin
         upcomingUrl: handler.url('manage_daily_quiz_student', {
             uid: state.uid, query: { upcoming: '1', ...(classroom ? { classroom } : {}) },
         }),
+        explanationUrl: handler.url('manage_daily_quiz_student', {
+            uid: state.uid, query: classroom ? { classroom } : {},
+        }),
         questions: rewriteManagedDailyQuizItems(learning.questions, state.uid, handler),
         sessions: learning.sessions.map((session) => ({
             ...session,
@@ -1144,6 +1147,25 @@ class SystemDailyQuizStudentHandler extends SystemHandler {
         const upcoming = await dailyQuiz.replaceAdminUpcoming(uid, day, questionId, sourceDomain, sourceId, classroom);
         await oplog.log(this, 'manage.replaceDailyQuizQuestion', { uid, day, questionId, sourceDomain, sourceId });
         this.response.body = { upcoming: rewriteManagedDailyQuizUpcoming(upcoming, uid, this) };
+    }
+
+    @requireSudo
+    @param('uid', Types.PositiveInt)
+    @param('classroom', Types.String, true)
+    @param('sourceDomain', Types.String)
+    @param('sourceId', Types.PositiveInt)
+    @param('wrongCount', Types.PositiveInt)
+    async postMarkExplained(domainId: string, uid: number, classroom = '', sourceDomain: string, sourceId: number, wrongCount: number) {
+        const domains = await getManagedDomains();
+        classroom = selectDailyQuizClassroom(classroom, domains);
+        const target = (await getManagedDailyQuizRoster(domains, uid))[0];
+        if (!target || !target.eligibleDomainIds.includes(sourceDomain)
+            || (classroom && (!target.domainIds.includes(classroom) || sourceDomain !== classroom))) throw new UserNotFoundError(uid);
+        const batch = await getManagedDailyQuizBatch([target], domains, classroom);
+        const explanation = await dailyQuiz.markAdminQuestionExplained(batch.byUid.get(uid), sourceDomain, sourceId, wrongCount, this.user._id);
+        await oplog.log(this, 'manage.explainDailyQuizQuestion', { uid, sourceDomain, sourceId, wrongCount, count: explanation.count });
+        const updated = await getManagedDailyQuizBatch([target], domains, classroom);
+        this.response.body = { saved: true, learning: await presentManagedDailyQuizLearning(updated.byUid.get(uid), this, classroom) };
     }
 }
 

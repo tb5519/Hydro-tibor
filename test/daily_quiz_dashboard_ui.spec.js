@@ -814,3 +814,23 @@ test('switching learner aborts an outstanding replacement and never paints its r
         assert(!h.root.textContent.includes('已换题'));
     } finally { h.close(); }
 });
+
+test('teacher explanations stay saved when the dashboard detail is collapsed and reopened', async () => {
+    const detail = learning();
+    detail.explanationUrl = '/manage/daily-quiz/student/11?classroom=python';
+    Object.assign(detail.questions[0], { sourceId: '101', domainId: 'python', wrongCount: 2,
+        explanation: { count: 0, explainedAt: null, explainedWrongCount: 0, needsReteach: false } });
+    const saved = structuredClone(detail);
+    saved.questions[0].explanation = { count: 1, explainedAt: '2026-10-19T08:00Z', explainedWrongCount: 2, needsReteach: false };
+    const h = harness(initial(), async (url, options) => ok(options.method === 'POST' ? { saved: true, learning: saved } : { learning: detail }));
+    try {
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+        await h.click('[data-learning-action="mark-explained"]');
+        assert.match(h.get('[data-learning-review-key="python:101"]').textContent, /已讲解 1 次/);
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+        await h.click('[data-quiz-action="detail"][data-quiz-uid="11"]');
+        assert.match(h.get('[data-learning-review-key="python:101"]').textContent, /已讲解 1 次/);
+        assert.equal(h.get('[data-learning-action="mark-explained"]').disabled, true);
+        assert.equal(h.calls.length, 2, 'the shared learning cache reflects the saved teaching record');
+    } finally { h.close(); }
+});

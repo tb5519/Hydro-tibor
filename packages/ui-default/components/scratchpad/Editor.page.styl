@@ -7,6 +7,20 @@
   &[data-editor-ready='true'] > .loader-container
     display: none
 
+  // Monaco draws its outline inside the code layer. The first line's
+  // highlight can paint over it, so keep the frame above the editing layers.
+  &[data-editor-ready='true']::after
+    content: ''
+    position: absolute
+    inset: 0
+    z-index: 10
+    box-sizing: border-box
+    border: 1px solid var(--focus-border, var(--ui-v2-accent))
+    pointer-events: none
+
+  > .monaco-editor
+    outline: none
+
 .cm-s-vjcm
   position: absolute
   left: 0

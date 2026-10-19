@@ -48,6 +48,16 @@ export interface DailyQuizSession {
     selectionLockUntil?: Date;
 }
 interface QuizConfig { _id: number, policy: DailyQuizPolicy, updatedAt: Date, updatedBy: number }
+interface QuizExplanation {
+    _id: string;
+    uid: number;
+    domainId: string;
+    sourceId: number;
+    count: number;
+    explainedWrongCount: number;
+    explainedAt: Date;
+    explainedBy: number;
+}
 interface QuizProgress {
     _id: string;
     uid: number;
@@ -81,12 +91,14 @@ declare module '../service/db' {
         'daily.quiz.session': DailyQuizSession;
         'daily.quiz.progress': QuizProgress;
         'daily.quiz.plan': QuizPlan;
+        'daily.quiz.explanation': QuizExplanation;
     }
 }
 export const configColl = db.collection('daily.quiz.config');
 export const sessionColl = db.collection('daily.quiz.session');
 export const progressColl = db.collection('daily.quiz.progress');
 export const planColl = db.collection('daily.quiz.plan');
+export const explanationColl = db.collection('daily.quiz.explanation');
 
 function replacementError(message: string): never {
     throw new ValidationError('questionId', null, message);
@@ -631,6 +643,13 @@ interface AdminQuizLatestAnswer extends AdminQuizAnswerAttempt {
     wrongCount: number;
     correctCount: number;
     reviewRecovered: boolean;
+    lastWrongAt: string | null;
+    explanation: {
+        count: number;
+        explainedAt: string | null;
+        explainedWrongCount: number;
+        needsReteach: boolean;
+    };
 }
 
 export interface AdminQuizLearningState {
@@ -666,7 +685,7 @@ export async function getAdminLearningBatch(
 ) {
     const uids = students.map((student) => student.uid);
     const domainIds = [...new Set(students.flatMap((student) => student.domainIds))];
-    const [configs, sources, history] = await Promise.all([
+    const [configs, sources, history, explanations] = await Promise.all([
         listConfigs(uids),
         domainIds.length ? document.coll.find({
             domainId: { $in: domainIds }, docType: document.TYPE_PROBLEM,
@@ -676,6 +695,7 @@ export async function getAdminLearningBatch(
             _id: 1, uid: 1, day: 1, round: 1, 'items.id': 1, 'items.domainId': 1, 'items.sourceId': 1, 'items.cancelled': 1,
             'items.answer.correct': 1, 'items.answer.earnedPoints': 1, 'items.answer.answeredAt': 1,
         }).toArray() : [],
+        uids.length && domainIds.length ? explanationColl.find({ uid: { $in: uids }, domainId: { $in: domainIds } }).toArray() : [],
     ]);
     const catalogue: AdminQuizMaterial[] = [];
     for (const source of sources) {
@@ -689,6 +709,9 @@ export async function getAdminLearningBatch(
     }
     const domainNames = new Map(domains.map((item) => [item.id, item.name]));
     const historyByUid = new Map<number, AdminQuizHistory[]>();
+    const explanationsByKey = new Map<string, QuizExplanation>(explanations.map((item) => [
+        JSON.stringify([item.uid, item.domainId, item.sourceId]), item,
+    ] as const));
     for (const session of history) {
         const entries = historyByUid.get(session.uid) || [];
         entries.push(session);
@@ -705,8 +728,9 @@ export async function getAdminLearningBatch(
             return rule && (!rule.tags.length || item.tags.some((tag) => rule.tags.includes(tag)));
         });
         const keys = new Set(pool.map(adminQuizSourceKey));
+        const materialsByKey = new Map(pool.map((item) => [adminQuizSourceKey(item), item]));
         const latest = new Map<string, AdminQuizLatestAnswer>();
-        const answerCounts = new Map<string, { wrongCount: number, correctCount: number }>();
+        const answerCounts = new Map<string, { wrongCount: number, correctCount: number, lastWrongAt: number }>();
         const countedAttempts = new Set<string>();
         const sessions: AdminQuizLearningState['sessions'] = [];
         let participationCount = 0;
@@ -725,15 +749,20 @@ export async function getAdminLearningBatch(
                 // carryovers and cancelled slots add no attempt to the counters.
                 const attemptKey = `${session._id}:${item.id}:${key}`;
                 if (!countedAttempts.has(attemptKey)) {
-                    const counts = answerCounts.get(key) || { wrongCount: 0, correctCount: 0 };
+                    const counts = answerCounts.get(key) || { wrongCount: 0, correctCount: 0, lastWrongAt: 0 };
                     if (item.answer.correct) counts.correctCount++;
-                    else counts.wrongCount++;
+                    else {
+                        counts.wrongCount++;
+                        counts.lastWrongAt = Math.max(counts.lastWrongAt, +new Date(item.answer.answeredAt) || +new Date(session.day));
+                    }
                     answerCounts.set(key, counts);
                     countedAttempts.add(attemptKey);
                 }
                 const candidate = {
                     sessionId: session._id, day: session.day, round: session.round, itemId: item.id, answer: item.answer,
                     wrongCount: 0, correctCount: 0, reviewRecovered: false,
+                    lastWrongAt: null,
+                    explanation: { count: 0, explainedAt: null, explainedWrongCount: 0, needsReteach: false },
                 };
                 const previous = latest.get(key);
                 if (!previous || latestAnswerOrder(candidate, previous) > 0) latest.set(key, candidate);
@@ -741,7 +770,19 @@ export async function getAdminLearningBatch(
         }
         for (const [key, answer] of latest) {
             const counts = answerCounts.get(key);
-            Object.assign(answer, counts, { reviewRecovered: answer.answer.correct && counts.wrongCount > 0 });
+            const material = materialsByKey.get(key);
+            const explanation = explanationsByKey.get(JSON.stringify([student.uid, material.domainId, material.sourceId]));
+            Object.assign(answer, {
+                wrongCount: counts.wrongCount, correctCount: counts.correctCount,
+                lastWrongAt: counts.lastWrongAt ? new Date(counts.lastWrongAt).toISOString() : null,
+                reviewRecovered: answer.answer.correct && counts.wrongCount > 0,
+                explanation: {
+                    count: explanation?.count || 0,
+                    explainedAt: explanation?.explainedAt?.toISOString() || null,
+                    explainedWrongCount: explanation?.explainedWrongCount || 0,
+                    needsReteach: !answer.answer.correct && !!explanation?.count && counts.wrongCount > explanation.explainedWrongCount,
+                },
+            });
         }
         sessions.sort((a, b) => b.round - a.round || b.day.localeCompare(a.day));
         const answered = latest.size;
@@ -1026,7 +1067,8 @@ export async function getAdminLearningDetail(state: AdminQuizLearningState) {
     const ids = [...new Set([...state.latest.values()].map((item) => item.sessionId))];
     const snapshots = ids.length ? await sessionColl.find({ uid: state.uid, _id: { $in: ids } }).toArray() : [];
     const byId = new Map(snapshots.map((session) => [session._id, session]));
-    const questions: (ReturnType<typeof presentAdminQuizItem> & Pick<AdminQuizLatestAnswer, 'wrongCount' | 'correctCount' | 'reviewRecovered'>)[] = [];
+    const questions: (ReturnType<typeof presentAdminQuizItem> & Pick<AdminQuizLatestAnswer,
+        'wrongCount' | 'correctCount' | 'reviewRecovered' | 'lastWrongAt' | 'explanation'>)[] = [];
     const materialsByKey = new Map(state.pool.map((material) => [adminQuizSourceKey(material), material]));
     for (const [key, latest] of state.latest) {
         const session = byId.get(latest.sessionId);
@@ -1035,11 +1077,44 @@ export async function getAdminLearningDetail(state: AdminQuizLearningState) {
             ...presentAdminQuizItem(item, questions.length + 1, session),
             tags: materialsByKey.get(key)?.tags || item.tags,
             wrongCount: latest.wrongCount, correctCount: latest.correctCount, reviewRecovered: latest.reviewRecovered,
+            lastWrongAt: latest.lastWrongAt, explanation: latest.explanation,
         });
     }
     questions.sort((a, b) => +new Date(b.answeredAt) - +new Date(a.answeredAt) || b.round - a.round || a.sourceId - b.sourceId);
     questions.forEach((item, index) => { item.index = index + 1; });
     return { summary: state.summary, tags: state.tags, questions, sessions: state.sessions };
+}
+
+/** Teacher-only annotation: immutable answer counts fence retries and concurrent clicks. */
+export async function markAdminQuestionExplained(
+    state: AdminQuizLearningState, domainId: string, sourceId: number, expectedWrongCount: number, actor: number,
+) {
+    if (!Number.isSafeInteger(expectedWrongCount) || expectedWrongCount < 1) throw new ValidationError('wrongCount');
+    const key = adminQuizSourceKey({ domainId, sourceId });
+    const latest = state.latest.get(key);
+    if (!state.pool.some((item) => adminQuizSourceKey(item) === key) || !latest) throw new NotFoundError();
+    if (latest.answer.correct) throw new ValidationError('question', null, '这道题已答对，请刷新待复习列表');
+    if (latest.wrongCount !== expectedWrongCount) {
+        throw new ValidationError('wrongCount', null, '学员的作答记录已更新，请刷新后再标记讲解');
+    }
+    // A JSON tuple avoids ambiguous separators in domain names. The saved cursor
+    // counts actual immutable answers, so even new errors in the same millisecond
+    // reopen the question. Neither mastery nor the daily allocation is touched.
+    const id = JSON.stringify([state.uid, domainId, sourceId]);
+    const now = new Date();
+    try {
+        return await explanationColl.findOneAndUpdate({
+            _id: id, explainedWrongCount: { $lt: expectedWrongCount },
+        }, {
+            $set: { uid: state.uid, domainId, sourceId, explainedWrongCount: expectedWrongCount, explainedAt: now, explainedBy: actor },
+            $inc: { count: 1 },
+        }, { upsert: true, returnDocument: 'after' });
+    } catch (error) {
+        // Concurrent/duplicate requests with the same cursor hit the unique _id
+        // after the first one wins. Treat the already-recorded mark as success.
+        if (error.code !== 11000) throw error;
+        return explanationColl.findOne({ _id: id });
+    }
 }
 
 export async function getAdminLearningSession(state: AdminQuizLearningState, sessionId: string) {
@@ -1123,4 +1198,5 @@ export async function apply() {
     await db.ensureIndexes(sessionColl, { key: { uid: 1, day: -1 }, name: 'uid_day', unique: true });
     await db.ensureIndexes(progressColl, { key: { uid: 1, domainId: 1, sourceId: 1 }, name: 'uid_source', unique: true });
     await db.ensureIndexes(planColl, { key: { expiresAt: 1 }, name: 'plan_expiry', expireAfterSeconds: 0 });
+    await db.ensureIndexes(explanationColl, { key: { uid: 1, domainId: 1, sourceId: 1 }, name: 'uid_source', unique: true });
 }

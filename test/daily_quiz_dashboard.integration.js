@@ -783,6 +783,107 @@ async function run() {
         }
     });
 
+    await check('Teacher explanation marks are scoped, idempotent, and do not alter answers, points or daily allocation', async () => {
+        const uid = roster.completed.uid;
+        const learning = await readLearning(uid);
+        const question = learning.questions.find((item) => item.domainId === python && item.correct === false);
+        assert.equal(question.wrongCount, 2);
+        assert.equal(question.lastWrongAt, question.answeredAt);
+        assert.deepEqual(question.explanation, { count: 0, explainedAt: null, explainedWrongCount: 0, needsReteach: false });
+        assert.equal(learning.explanationUrl, detail(uid));
+        const beforeSessions = await daily.sessionColl.find().sort({ _id: 1 }).toArray();
+        const beforeProgress = await daily.progressColl.find().sort({ _id: 1 }).toArray();
+        const beforePolicies = await daily.configColl.find().sort({ _id: 1 }).toArray();
+        const beforeAccount = await users.coll.findOne({ _id: uid });
+        const payload = { operation: 'mark_explained', sourceDomain: python, sourceId: question.sourceId, wrongCount: question.wrongCount };
+        const responses = await Promise.all(Array.from({ length: 8 }, () => teacher.post(learning.explanationUrl).send(payload)));
+        for (const response of responses) {
+            status(response, 200);
+            const marked = response.body.learning.questions.find((item) => item.domainId === python && item.sourceId === question.sourceId);
+            assert.equal(marked.explanation.count, 1);
+            assert.equal(marked.explanation.explainedWrongCount, 2);
+            assert.equal(marked.explanation.needsReteach, false);
+            assert(Number.isFinite(Date.parse(marked.explanation.explainedAt)));
+            assert.deepEqual(response.body.learning.summary, learning.summary);
+        }
+        assert.equal(await daily.explanationColl.countDocuments({ uid }), 1);
+        const again = await teacher.post(learning.explanationUrl).send(payload);
+        status(again, 200);
+        assert.equal((await daily.explanationColl.findOne({ uid })).count, 1);
+        denied(await teacher.post(learning.explanationUrl).send({ ...payload, wrongCount: 1 }));
+        denied(await teacher.post(learning.explanationUrl).send({ ...payload, sourceId: sourceIds[python][0] }));
+        denied(await teacher.post(`${learning.explanationUrl}?classroom=${cpp}`).send(payload));
+        denied(await teacher.post(detail(foreignUid)).send(payload));
+        denied(await learner.post(learning.explanationUrl).send(payload));
+        redirectedTo(await withoutSudo.post(learning.explanationUrl).send(payload), '/user/sudo');
+        redirectedTo(await supertest.agent(httpServer).post(learning.explanationUrl).send(payload), '/login');
+        const scoped = await readLearning(uid, python);
+        assert.equal(scoped.questions.find((item) => item.sourceId === question.sourceId).explanation.count, 1);
+        assert.equal(scoped.explanationUrl, `${detail(uid)}?classroom=${python}`);
+        assert((await readLearning(uid, cpp)).questions.every((item) => item.explanation.count === 0));
+        const other = (await readLearning(roster.cancelled.uid)).questions.find((item) => item.correct === false);
+        assert.equal(other.explanation.count, 0, 'Another learner never inherits the explanation for this source');
+        assert.deepEqual(await daily.sessionColl.find().sort({ _id: 1 }).toArray(), beforeSessions);
+        assert.deepEqual(await daily.progressColl.find().sort({ _id: 1 }).toArray(), beforeProgress);
+        assert.deepEqual(await daily.configColl.find().sort({ _id: 1 }).toArray(), beforePolicies);
+        assert.deepEqual(await users.coll.findOne({ _id: uid }), beforeAccount);
+    });
+    await check('New wrong attempts reopen explanations even at identical timestamps, and repeated teaching counts each new failure once', async () => {
+        const uid = roster.completed.uid;
+        const find = (learning) => learning.questions.find((item) => item.domainId === python && item.sourceId === sourceIds[python][1]);
+        const initial = find(await readLearning(uid));
+        const sameTime = new Date(initial.answeredAt);
+        const ids = [];
+        async function addAttempt(round, correct) {
+            const day = offsetDay(-round);
+            const id = `${uid}-${day}`;
+            ids.push(id);
+            const item = question(2, python, correct, day);
+            item.answer.answeredAt = sameTime;
+            await daily.sessionColl.insertOne({
+                _id: id, uid, day, round, cooldownRounds: 3, cursor: 1, requested: 1, settledAnswers: 1,
+                createdAt: sameTime, items: [item],
+            });
+        }
+        try {
+            await addAttempt(3, false);
+            let question = find(await readLearning(uid));
+            assert.equal(question.wrongCount, 3);
+            assert.equal(question.explanation.count, 1);
+            assert.equal(question.explanation.needsReteach, true, 'Same-millisecond mistakes must not be hidden by the explanation timestamp');
+            assert.equal(question.lastWrongAt, initial.answeredAt);
+            const mark = (wrongCount) => teacher.post(detail(uid)).send({
+                operation: 'mark_explained', sourceDomain: python, sourceId: question.sourceId, wrongCount,
+            });
+            denied(await mark(2), 'A stale page must not acknowledge a newly arrived error');
+            const responses = await Promise.all(Array.from({ length: 5 }, () => mark(3)));
+            for (const response of responses) status(response, 200);
+            question = find(await readLearning(uid));
+            assert.equal(question.explanation.count, 2);
+            assert.equal(question.explanation.explainedWrongCount, 3);
+            assert.equal(question.explanation.needsReteach, false);
+            await addAttempt(4, true);
+            question = find(await readLearning(uid));
+            assert.equal(question.correct, true);
+            assert.equal(question.reviewRecovered, true);
+            assert.equal(question.explanation.needsReteach, false);
+            denied(await mark(3));
+            await addAttempt(5, false);
+            question = find(await readLearning(uid));
+            assert.equal(question.correct, false);
+            assert.equal(question.wrongCount, 4);
+            assert.equal(question.explanation.count, 2);
+            assert.equal(question.explanation.needsReteach, true, 'An intervening correct answer must not erase the teaching history');
+            status(await mark(4), 200);
+            question = find(await readLearning(uid));
+            assert.equal(question.explanation.count, 3);
+            assert.equal(question.explanation.needsReteach, false);
+        } finally {
+            await daily.sessionColl.deleteMany({ _id: { $in: ids } });
+            await daily.explanationColl.deleteMany({ uid });
+        }
+    });
+
     console.log(`RESULT ${results.filter(Boolean).length}/${results.length} daily dashboard checks passed`);
     clearTimeout(timeout);
     if (process.env.DAILY_DASHBOARD_SERVE === '1' && results.every(Boolean)) {

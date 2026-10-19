@@ -475,3 +475,28 @@ describe('daily quiz teacher configuration and reports', () => {
         assert.equal($('[data-daily-point="system:0"]').value, '-1');
     });
 });
+
+it('marks taught questions from student management while retaining an unsaved question-policy draft', async (t) => {
+    const selectedDailyQuiz = structuredClone(daily);
+    selectedDailyQuiz.learning.explanationUrl = '/manage/daily-quiz/student/44';
+    Object.assign(selectedDailyQuiz.learning.questions[1], { sourceId: '102', wrongCount: 3,
+        explanation: { count: 0, explainedAt: null, explainedWrongCount: 0, needsReteach: false } });
+    const { dom, $, change } = harness(t, { selectedDailyQuiz }, 'uid=44&tab=daily');
+    change('[data-daily-enabled]', true, 'change');
+    const changed = structuredClone(selectedDailyQuiz.learning);
+    changed.questions[1].explanation = { count: 1, explainedAt: '2026-10-19T08:00Z', explainedWrongCount: 3, needsReteach: false };
+    const calls = [];
+    dom.window.fetch = async (url, options) => { calls.push({ url, options }); return { ok: true, status: 200, json: async () => ({ saved: true, learning: changed }) }; };
+    const mark = $('[data-learning-action="mark-explained"]');
+    assert(mark);
+    assert.equal(mark.closest('details'), null);
+    mark.click(); await settle();
+    assert.match($('[data-learning-review-key="system:102"]').textContent, /已讲解 1 次/);
+    assert.equal($('[data-learning-action="mark-explained"]').disabled, true);
+    assert.equal($('[data-daily-enabled]').checked, true);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(JSON.parse(calls[0].options.body), { operation: 'mark_explained', sourceDomain: 'system', sourceId: 102, wrongCount: 3 });
+    const event = new dom.window.Event('beforeunload', { cancelable: true });
+    dom.window.dispatchEvent(event);
+    assert.equal(event.defaultPrevented, true, 'teaching does not save or discard the independent settings draft');
+});

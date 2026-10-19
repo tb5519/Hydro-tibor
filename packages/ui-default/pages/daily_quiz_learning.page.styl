@@ -198,6 +198,91 @@
     &.is-upcoming
       background: #edf6fc
       color: #4d8bab
+    &.is-explained
+      background: #edf6f4
+      color: #548a7f
+    &.is-reteach
+      background: #fff0eb
+      color: #b36650
+
+  .dql-review-order
+    margin: 0 0 10px
+    color: #8b9fac
+    font-size: 11px
+
+  .dql-review-card
+    overflow: hidden
+    margin-top: 9px
+    border: 1px solid #e0e9f0
+    border-radius: 9px
+    background: #fff
+    > .dql-question
+      margin: 0
+      border: 0
+      border-radius: 0
+    &.needs-reteach
+      border-color: #ebd3c9
+      .dql-explanation-actions
+        background: #fffaf7
+        border-top-color: #f3e9e3
+    &.is-explained
+      border-color: #dbe8e3
+
+  .dql-explanation-actions
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 12px
+    padding: 8px 14px
+    border-top: 1px solid #edf2f5
+    background: #fbfdfe
+
+  .dql-explanation-record
+    display: flex
+    flex-wrap: wrap
+    align-items: baseline
+    gap: 3px 11px
+    min-width: 0
+    color: #8ca1ae
+    font-size: 10px
+    small
+      color: #9daeb9
+      font-size: 10px
+    .dql-reteach-label
+      color: #ac705b
+
+  .dql-explanation-mark
+    flex: 0 0 auto
+    min-height: 29px
+    padding: 4px 10px
+    font-size: 11px
+    &:disabled
+      opacity: 1
+      color: #9bafb6
+      border-color: #e4ede9
+      background: #f3f8f6
+    &[aria-busy='true']
+      color: #6c91a9
+      border-color: #dce7ef
+      background: #f4f9fc
+
+  .dql-explanation-feedback
+    display: flex
+    align-items: center
+    justify-content: space-between
+    flex-wrap: wrap
+    gap: 7px 12px
+    margin-bottom: 11px
+    padding: 9px 12px
+    border: 1px solid #dbe9e2
+    border-radius: 7px
+    background: #f4faf7
+    color: #558572
+    font-size: 11px
+    &.is-error
+      border-color: #ebdacb
+      background: #fff9f2
+      color: #ac7a46
 
   .dql-upcoming-header
     display: flex
@@ -645,6 +730,14 @@
         align-self: center
     .dql-question-body
       padding: 2px 10px 13px
+    .dql-explanation-actions
+      padding: 8px 10px
+      gap: 9px
+    .dql-explanation-record
+      display: block
+      small
+        display: block
+        margin-top: 2px
     .dql-upcoming-header
       flex-wrap: wrap
       padding: 12px

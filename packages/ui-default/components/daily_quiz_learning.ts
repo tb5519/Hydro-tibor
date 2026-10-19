@@ -31,6 +31,13 @@ export interface LearningQuestion {
   wrongCount?: number;
   correctCount?: number;
   reviewRecovered?: boolean;
+  lastWrongAt?: string | null;
+  explanation?: {
+    count: number;
+    explainedAt: string | null;
+    explainedWrongCount: number;
+    needsReteach: boolean;
+  };
 }
 export interface LearningSession {
   id: string;
@@ -50,6 +57,7 @@ export interface QuizLearning {
   questions: LearningQuestion[];
   sessions: LearningSession[];
   upcomingUrl?: string;
+  explanationUrl?: string;
 }
 interface UpcomingQuestion extends LearningQuestion {
   current: boolean;
@@ -89,6 +97,22 @@ interface ReplacementState {
 
 export const learningAccuracy = (correct: number, answered: number) => answered > 0 ? `${Math.round(correct / answered * 100)}%` : '--';
 
+const timestamp = (value?: string | null) => Number.isFinite(Date.parse(value || '')) ? Date.parse(value || '') : 0;
+const attempts = (value: number | undefined, fallback = 0) => Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+const explanationCount = (item: LearningQuestion) => attempts(item.explanation?.count);
+const reviewGroup = (item: LearningQuestion) => explanationCount(item) ? item.explanation.needsReteach ? 0 : 2 : 1;
+
+/** Use the same priority for the on-screen review list and its Word export. */
+export function compareReviewQuestions(a: LearningQuestion, b: LearningQuestion) {
+  const group = reviewGroup(a) - reviewGroup(b);
+  if (group) return group;
+  const stable = `${a.domainId || ''}:${a.sourceId || a.id}`.localeCompare(`${b.domainId || ''}:${b.sourceId || b.id}`);
+  if (reviewGroup(a) === 2) return timestamp(a.explanation?.explainedAt) - timestamp(b.explanation?.explainedAt) || stable;
+  return (reviewGroup(a) === 0 ? explanationCount(b) - explanationCount(a) : 0)
+    || attempts(b.wrongCount, 1) - attempts(a.wrongCount, 1)
+    || timestamp(b.lastWrongAt || b.answeredAt) - timestamp(a.lastWrongAt || a.answeredAt) || stable;
+}
+
 /** Shared by the teacher overview and the student's management panel. */
 export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning) {
   const doc = host.ownerDocument;
@@ -96,9 +120,9 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
   const lifetime = new win.AbortController();
   const markdown = createObjectiveMarkdown();
   const sessions = new Map<string, SessionState>();
-  const participatedSessions = learning.sessions.filter((session) => session.answered > 0);
-  const recoveredQuestions = learning.questions.filter((item) => item.correct === true && item.reviewRecovered === true);
-  const sessionOrdinals = new Map([...participatedSessions]
+  let participatedSessions = learning.sessions.filter((session) => session.answered > 0);
+  let recoveredQuestions = learning.questions.filter((item) => item.correct === true && item.reviewRecovered === true);
+  let sessionOrdinals = new Map([...participatedSessions]
     .sort((a, b) => a.day.localeCompare(b.day) || a.round - b.round || a.id.localeCompare(b.id))
     .map((session, index) => [session.id, index + 1] as const));
   let view: View = 'review';
@@ -110,6 +134,10 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
   let replacementNeedsRefresh = false;
   const replacementMessages = new Map<number, { text: string, error: boolean }>();
   const upcomingExpansion = new Map<number, { question: boolean, solution: boolean }>();
+  const questionExpansion = new Map<string, boolean>();
+  let explanationRequest: { key: string, controller: AbortController } | null = null;
+  let explanationNeedsRefresh = false;
+  let explanationFeedback: { text: string, error: boolean } | null = null;
   let disposed = false;
 
   function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = '') {
@@ -135,21 +163,27 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
       timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
     }).format(parsed) : '';
   }
+  const questionKey = (item: LearningQuestion) => `${item.domainId || ''}:${item.sourceId || item.id}`;
   function question(item: LearningQuestion, index: number, historical = false) {
     const node = el('details', 'dql-question');
     node.dataset.learningQuestion = item.sourceId || item.id;
+    if (!historical) {
+      node.dataset.learningKey = questionKey(item);
+      node.open = questionExpansion.get(questionKey(item)) || false;
+    }
     const summary = el('summary');
     const name = el('div', 'dql-question-name');
     name.append(el('strong', '', item.title || `第 ${index + 1} 题`));
     const kind = { single: '单选', multiple: '多选', judge: '判断' }[item.kind] || item.kind;
     name.append(el('small', '', [item.domainName, kind, ...(item.tags || [])].filter(Boolean).join(' · ')));
-    const status = item.correct == null ? '未作答' : item.correct ? '答对' : historical ? '答错' : '待复习';
-    summary.append(el('span', `dql-result ${item.correct == null ? 'is-unanswered' : item.correct ? 'is-correct' : 'is-wrong'}`, status), name);
+    const explained = !historical && explanationCount(item) > 0;
+    const reteach = explained && item.explanation.needsReteach;
+    const status = item.correct == null ? '未作答' : item.correct ? '答对' : historical ? '答错' : reteach ? '讲后仍错' : explained ? '已讲解' : '待复习';
+    summary.append(el('span', `dql-result ${item.correct == null ? 'is-unanswered' : item.correct ? 'is-correct' : reteach ? 'is-reteach' : explained ? 'is-explained' : 'is-wrong'}`, status), name);
     if (!historical && item.correct != null) {
       const counts = el('div', 'dql-question-counts');
       counts.dataset.learningAttempts = '';
       counts.setAttribute('aria-label', '这道题的累计作答次数');
-      const attempts = (value: number | undefined, fallback: number) => Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
       const wrong = attempts(item.wrongCount, item.correct === false ? 1 : 0);
       const correct = attempts(item.correctCount, item.correct === true ? 1 : 0);
       if (wrong) counts.append(el('span', 'dql-attempt-wrong', `答错 ${wrong} 次`));
@@ -185,6 +219,32 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
     }
     node.append(summary, body);
     return node;
+  }
+  function reviewQuestion(item: LearningQuestion, index: number) {
+    if (!learning.explanationUrl || !item.domainId || item.sourceId == null) return question(item, index);
+    const card = el('section', 'dql-review-card');
+    card.dataset.learningReviewKey = questionKey(item);
+    const count = explanationCount(item);
+    const reteach = count > 0 && item.explanation.needsReteach;
+    if (reteach) card.classList.add('needs-reteach');
+    if (count && !reteach) card.classList.add('is-explained');
+    card.append(question(item, index));
+    const actions = el('div', 'dql-explanation-actions');
+    const record = el('div', 'dql-explanation-record');
+    if (count) {
+      record.append(el('span', reteach ? 'dql-reteach-label' : '', reteach ? `已讲解 ${count} 次，之后仍答错` : `已讲解 ${count} 次`));
+      if (item.explanation.explainedAt) record.append(el('small', '', `最近讲解 ${time(item.explanation.explainedAt)}`));
+    } else record.append(el('span', '', '尚未讲解'));
+    const mark = button(count ? reteach ? '再次标记讲解' : '已标记讲解' : '标记讲解', 'mark-explained', 'dql-button dql-explanation-mark');
+    mark.dataset.learningExplanationKey = questionKey(item);
+    mark.dataset.learningExplanationLabel = mark.textContent;
+    mark.dataset.learningExplanationEligible = `${!count || reteach}`;
+    mark.setAttribute('aria-label', `${count && reteach ? '再次' : ''}标记已讲解：${item.title || '这道题'}`);
+    mark.title = count && !reteach ? '已记录本次讲解；学员再次答错后，可记录下一次讲解。' : '记录老师已为学员讲解这道题，题目将排到待复习末尾。';
+    mark.disabled = !!explanationRequest || explanationNeedsRefresh || (!!count && !reteach);
+    actions.append(record, mark);
+    card.append(actions);
+    return card;
   }
   function message(title: string, detail: string) {
     const node = el('div', 'dql-empty');
@@ -278,23 +338,45 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
   host.classList.add('daily-quiz-learning');
   const summary = el('div', 'dql-overview');
   const { summary: stats } = learning;
-  const summaryEntries = [
-    ['已答 / 当前题目', `${stats.answered} / ${stats.total}`], ['最近答对', `${stats.correctCount}`],
-    ['答错待复习', `${stats.wrongCount}`], ['正确率', learningAccuracy(stats.correctCount, stats.answered)],
-    ['参与练习', `${stats.participationCount} 次`],
-  ];
-  summaryEntries.forEach(([label, value]) => {
-    const item = el('div');
-    item.append(el('span', '', label), el('strong', '', value));
-    summary.append(item);
-  });
+  function renderOverview() {
+    summary.replaceChildren();
+    const summaryEntries = [
+      ['已答 / 当前题目', `${stats.answered} / ${stats.total}`], ['最近答对', `${stats.correctCount}`],
+      ['答错待复习', `${stats.wrongCount}`], ['正确率', learningAccuracy(stats.correctCount, stats.answered)],
+      ['参与练习', `${stats.participationCount} 次`],
+    ];
+    summaryEntries.forEach(([label, value]) => {
+      const item = el('div');
+      item.append(el('span', '', label), el('strong', '', value));
+      summary.append(item);
+    });
+  }
   const note = el('p', 'dql-scope-note', '上方题数与正确率按每题最近结果统计，未答题不计入正确率；题目卡片显示累计答对、答错次数。仅统计当前指定知识点范围。');
   const tabs = el('div', 'dql-tabs');
   tabs.setAttribute('role', 'group');
   tabs.setAttribute('aria-label', '知识掌握详情');
   const panel = el('div', 'dql-panel');
   panel.dataset.learningPanel = '';
-  host.append(summary, note, tabs, panel);
+  const explanationNotice = el('div', 'dql-explanation-feedback');
+  explanationNotice.dataset.learningExplanationFeedback = '';
+  explanationNotice.tabIndex = -1;
+  explanationNotice.hidden = true;
+  host.append(summary, note, tabs, explanationNotice, panel);
+
+  function renderExplanationFeedback() {
+    explanationNotice.replaceChildren();
+    explanationNotice.hidden = !explanationFeedback || view !== 'review';
+    explanationNotice.classList.toggle('is-error', !!explanationFeedback?.error);
+    explanationNotice.setAttribute('role', explanationFeedback?.error ? 'alert' : 'status');
+    if (!explanationFeedback) return;
+    explanationNotice.append(el('span', '', explanationFeedback.text));
+    if (explanationNeedsRefresh) {
+      const refresh = button(explanationRequest ? '正在刷新…' : '刷新讲解记录', 'refresh-explanations');
+      refresh.disabled = !!explanationRequest;
+      explanationNotice.append(refresh);
+    }
+    if (explanationFeedback.error && explanationFeedback.text.includes('身份验证')) explanationNotice.append(verificationLink());
+  }
 
   function renderTabs() {
     tabs.replaceChildren();
@@ -408,6 +490,9 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
     }
   }
   function renderPanel() {
+    panel.querySelectorAll<HTMLDetailsElement>('[data-learning-key]').forEach((node) => {
+      questionExpansion.set(node.dataset.learningKey, node.open);
+    });
     panel.querySelectorAll<HTMLDetailsElement>('[data-learning-upcoming-index]').forEach((node) => {
       if (node.tagName !== 'DETAILS') return;
       upcomingExpansion.set(Number(node.dataset.learningUpcomingIndex), {
@@ -415,12 +500,14 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
       });
     });
     panel.replaceChildren();
+    renderExplanationFeedback();
     if (view === 'upcoming') {
       renderUpcoming();
     } else if (view === 'review' || view === 'answered' || view === 'recovered') {
       const all = learning.questions.filter((item) => (view === 'answered' || (view === 'recovered' ? item.correct === true && item.reviewRecovered === true : item.correct === false))
         && (!selectedTag || (item.domainId === selectedTag.domainId
           && (selectedTag.name === '未标注知识点' ? !item.tags?.length : item.tags?.includes(selectedTag.name)))));
+      if (view === 'review') all.sort(compareReviewQuestions);
       if (selectedTag) {
         const scope = el('div', 'dql-tag-filter');
         scope.append(el('span', '', `${selectedTag.domainName} · ${selectedTag.name} · ${view === 'recovered' ? '复习后正确' : '待复习'} ${all.length} 题`), button(view === 'recovered' ? '查看全部复习后正确题目' : '查看全部错题', 'clear-tag'));
@@ -433,7 +520,8 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
           : '学员作答后，将按题目汇总最近结果。'));
         return;
       }
-      all.slice(0, limit).forEach((item, index) => panel.append(question(item, index)));
+      if (view === 'review' && learning.explanationUrl) panel.append(el('p', 'dql-review-order', '讲后仍错优先；其余按答错次数、最近错误排序，已讲解题在最后。'));
+      all.slice(0, limit).forEach((item, index) => panel.append(view === 'review' ? reviewQuestion(item, index) : question(item, index)));
       if (all.length > limit) panel.append(button(`再显示 ${Math.min(20, all.length - limit)} 题`, 'more', 'dql-button dql-more'));
     } else if (view === 'tags') {
       if (!learning.tags.length) {
@@ -618,11 +706,129 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
       }
     }
   }
+  function syncExplanationControls() {
+    host.querySelectorAll<HTMLButtonElement>('[data-learning-action="mark-explained"]').forEach((control) => {
+      const pending = explanationRequest?.key === control.dataset.learningExplanationKey;
+      control.disabled = !!explanationRequest || explanationNeedsRefresh || control.dataset.learningExplanationEligible !== 'true';
+      control.setAttribute('aria-busy', `${pending}`);
+      control.textContent = pending ? '正在标记…' : control.dataset.learningExplanationLabel;
+    });
+    renderExplanationFeedback();
+  }
+  function reviewPosition(key: string) {
+    const cards = Array.from(panel.querySelectorAll<HTMLElement>('[data-learning-review-key]'));
+    const index = cards.findIndex((card) => card.dataset.learningReviewKey === key);
+    const anchor = cards[index + 1] || cards[index - 1];
+    let scrollParent: HTMLElement | null = anchor?.parentElement || null;
+    while (scrollParent && !/(auto|scroll)/.test(win.getComputedStyle(scrollParent).overflowY)) scrollParent = scrollParent.parentElement;
+    return { key: anchor?.dataset.learningReviewKey, top: anchor?.getBoundingClientRect().top, scrollParent };
+  }
+  function restoreReviewPosition(position: ReturnType<typeof reviewPosition>, focus = false) {
+    const anchor = Array.from(panel.querySelectorAll<HTMLElement>('[data-learning-review-key]'))
+      .find((card) => card.dataset.learningReviewKey === position.key);
+    if (anchor && position.top != null) {
+      const delta = anchor.getBoundingClientRect().top - position.top;
+      if (Math.abs(delta) > 1) {
+        if (position.scrollParent) position.scrollParent.scrollTop += delta;
+        else win.scrollBy(0, delta);
+      }
+    }
+    if (focus) (anchor?.querySelector('summary') || explanationNotice).focus({ preventScroll: true });
+  }
+  function applyLearning(next: QuizLearning) {
+    Object.assign(stats, next.summary);
+    Object.assign(learning, next, { summary: stats });
+    participatedSessions = learning.sessions.filter((session) => session.answered > 0);
+    recoveredQuestions = learning.questions.filter((item) => item.correct === true && item.reviewRecovered === true);
+    sessionOrdinals = new Map([...participatedSessions]
+      .sort((a, b) => a.day.localeCompare(b.day) || a.round - b.round || a.id.localeCompare(b.id))
+      .map((session, index) => [session.id, index + 1] as const));
+    renderOverview();
+    renderTabs();
+  }
+  async function updateExplanation(key?: string) {
+    if (!learning.explanationUrl || explanationRequest || (key && explanationNeedsRefresh)) return;
+    const item = key ? learning.questions.find((value) => questionKey(value) === key && value.correct === false) : null;
+    if (key && (!item || !item.domainId || item.sourceId == null || (explanationCount(item) && !item.explanation.needsReteach))) return;
+    const position = reviewPosition(key || '');
+    const controller = new win.AbortController();
+    const pending = { key: key || '', controller };
+    explanationRequest = pending;
+    if (key) explanationFeedback = null;
+    syncExplanationControls();
+    restoreReviewPosition(position);
+    const timeout = win.setTimeout(() => controller.abort(), 20_000);
+    let uncertain = false;
+    try {
+      const url = new win.URL(learning.explanationUrl, win.location.href);
+      if (url.origin !== win.location.origin || !['http:', 'https:'].includes(url.protocol)) throw new Error('讲解记录地址无效，请刷新页面后重试。');
+      uncertain = !!key;
+      const response = await win.fetch(url.href, {
+        method: key ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+        headers: { Accept: 'application/json', ...(key ? { 'Content-Type': 'application/json' } : {}) },
+        ...(key ? { body: JSON.stringify({ operation: 'mark_explained', sourceDomain: item.domainId, sourceId: Number(item.sourceId), wrongCount: attempts(item.wrongCount, 1) }) } : {}),
+      });
+      let result;
+      try { result = await response.json(); } catch { throw new Error('身份验证可能已过期，请验证后刷新讲解记录。'); }
+      if (result.url && !result.learning) throw new Error('身份验证可能已过期，请验证后刷新讲解记录。');
+      if (!response.ok) {
+        const params = result.error?.params;
+        const validation = Array.isArray(params) && typeof params[2] === 'string'
+          && (result.error?.name === 'ValidationError' || /validation failed/i.test(result.error?.message || ''));
+        const auth = response.status === 401 || (response.status === 403 && !validation);
+        const errorText = validation ? params[2] : result.error?.message || result.message || '';
+        uncertain = response.status >= 500 || auth || response.status === 409 || /刷新|已.*讲解|作答.*变化/.test(errorText);
+        throw new Error(auth ? '身份验证可能已过期，请验证后刷新讲解记录。' : response.status >= 500
+          ? '暂时无法确认讲解记录，请刷新后查看。' : errorText || '讲解记录未能保存，请稍后重试。');
+      }
+      if (!result.learning?.summary || !Array.isArray(result.learning.questions) || !Array.isArray(result.learning.tags)
+        || !Array.isArray(result.learning.sessions) || (key && result.saved !== true)) throw new Error('无法确认讲解记录，请刷新后查看。');
+      if (disposed || controller.signal.aborted || explanationRequest !== pending) return;
+      const active = doc.activeElement as HTMLElement;
+      const focusedQuestion = active?.closest<HTMLElement>('[data-learning-key]')?.dataset.learningKey;
+      const focusedView = active?.dataset.learningView;
+      const focusedAction = active?.dataset.learningAction;
+      const retainFocus = !!key && view === 'review' && (active === doc.body || active?.dataset.learningExplanationKey === key);
+      applyLearning(result.learning);
+      explanationNeedsRefresh = false;
+      const updated = key ? learning.questions.find((value) => questionKey(value) === key) : null;
+      const count = updated?.explanation ? explanationCount(updated) : item ? explanationCount(item) + 1 : 0;
+      const resultText = updated?.correct === true ? '学员已答对，题目已移出待复习。'
+        : updated?.explanation?.needsReteach ? '学员又有新的答错记录，题目仍优先显示。' : '题目已移至待复习末尾。';
+      explanationFeedback = { text: key ? `已记录第 ${count} 次讲解，${resultText}` : '讲解记录已刷新，可继续操作。', error: false };
+      explanationRequest = null;
+      renderPanel();
+      restoreReviewPosition(position, retainFocus);
+      if (!retainFocus && host.contains(active) === false && !active?.isConnected) {
+        const preserved = focusedView
+          ? Array.from(tabs.querySelectorAll<HTMLButtonElement>('[data-learning-view]')).find((control) => control.dataset.learningView === focusedView)
+          : focusedQuestion
+            ? Array.from(panel.querySelectorAll<HTMLDetailsElement>('[data-learning-key]')).find((card) => card.dataset.learningKey === focusedQuestion)?.querySelector('summary')
+            : Array.from(host.querySelectorAll<HTMLButtonElement>('[data-learning-action]')).find((control) => control.dataset.learningAction === focusedAction && !control.disabled);
+        preserved?.focus({ preventScroll: true });
+      }
+    } catch (error) {
+      if (disposed || explanationRequest !== pending) return;
+      explanationNeedsRefresh ||= uncertain;
+      explanationFeedback = { text: controller.signal.aborted ? '请求超时，请刷新讲解记录后查看结果。' : error instanceof Error && error.name !== 'TypeError'
+        ? error.message : '暂时无法确认讲解记录，请刷新后查看。', error: true };
+    } finally {
+      win.clearTimeout(timeout);
+      if (!disposed && explanationRequest === pending) {
+        explanationRequest = null;
+        syncExplanationControls();
+        restoreReviewPosition(position);
+      }
+    }
+  }
   host.addEventListener('click', (event) => {
     const control = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-learning-action]');
     if (!control || !host.contains(control)) return;
     const action = control.dataset.learningAction;
-    if (action === 'view') {
+    if (action === 'mark-explained' || action === 'refresh-explanations') {
+      event.preventDefault();
+      updateExplanation(action === 'mark-explained' ? control.dataset.learningExplanationKey : undefined);
+    } else if (action === 'view') {
       const previousView = view;
       view = control.dataset.learningView as View;
       if (!['review', 'recovered'].includes(previousView) || !['review', 'recovered'].includes(view)) selectedTag = null;
@@ -657,6 +863,7 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
       } else loadSession(session);
     }
   }, { signal: lifetime.signal });
+  renderOverview();
   renderTabs();
   renderPanel();
   return {
@@ -665,6 +872,7 @@ export function bindDailyQuizLearning(host: HTMLElement, learning: QuizLearning)
       lifetime.abort();
       upcoming?.controller?.abort();
       replacement?.controller.abort();
+      explanationRequest?.controller.abort();
       sessions.forEach((state) => state.controller?.abort());
       sessions.clear();
     },

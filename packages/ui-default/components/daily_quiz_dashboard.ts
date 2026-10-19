@@ -1,4 +1,4 @@
-import { bindDailyQuizLearning, learningAccuracy, type LearningSummary, type QuizLearning } from './daily_quiz_learning';
+import { bindDailyQuizLearning, compareReviewQuestions, learningAccuracy, type LearningSummary, type QuizLearning } from './daily_quiz_learning';
 
 interface DashboardRow extends LearningSummary {
   uid: number;
@@ -369,7 +369,7 @@ export function bindDailyQuizDashboard(root: HTMLElement, win = root.ownerDocume
       }
       if (!isCurrent()) return;
       if (controller.signal.aborted) throw new Error('整理超时，请双击头像重试。');
-      const questions = result.learning.questions.filter((question) => question.correct === false);
+      const questions = result.learning.questions.filter((question) => question.correct === false).sort(compareReviewQuestions);
       if (!questions.length) {
         exportMessages.set(row.uid, { message: '暂无待复习题目', error: false });
         return;
