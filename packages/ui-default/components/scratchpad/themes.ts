@@ -2,6 +2,8 @@ import type * as Monaco from 'monaco-editor';
 import { useSyncExternalStore } from 'react';
 import Notification from 'vj/components/notification';
 import { request } from 'vj/utils';
+import { prepareScratchpadThemeAssets } from './themeAssets';
+import { transitionScratchpadTheme } from './themeTransition';
 
 export type ScratchpadBuiltinThemeId = 'cloud' | 'mist' | 'sand' | 'ocean';
 export type ScratchpadThemeId = ScratchpadBuiltinThemeId | `badge:${number}`;
@@ -323,12 +325,18 @@ interface ThemeCatalog {
 }
 const themeEvent = 'hydro:scratchpad-theme';
 export const SCRATCHPAD_THEME_PICKER_EVENT = 'hydro:open-scratchpad-themes';
+export const SCRATCHPAD_THEME_READY_EVENT = 'hydro:scratchpad-theme-ready';
 const memory = new Map<string, ScratchpadThemeId>();
 const catalogs = new Map<string, ThemeCatalog>();
 const fetches = new Map<string, Promise<boolean>>();
 const pendingSelection = new Map<string, ScratchpadThemeId>();
 const saveQueues = new Map<string, Promise<boolean>>();
 const saveRevisions = new Map<string, number>();
+// A saved selection is not yet a displayable theme. Keep every consumer,
+// including Monaco, on the same verified, fully prepared visual snapshot.
+const displayedThemes = new Map<string, ScratchpadTheme>();
+const displayRevisions = new Map<string, number>();
+const displayJobs = new Map<string, { signature: string; promise: Promise<boolean> }>();
 let subscribers = 0;
 let pollTimer: number;
 let expiryTimer: number;
@@ -377,7 +385,7 @@ function remember(id: ScratchpadThemeId) {
   } catch (e) { /* Theme changes still work when browser storage is unavailable. */ }
 }
 
-export function currentScratchpadTheme(): ScratchpadTheme {
+function selectedScratchpadTheme(): ScratchpadTheme {
   const id = memory.get(storageKey());
   if (id) return isAvailable(id) ? getScratchpadTheme(id) : fallbackTheme();
   // Custom IDs in local storage never establish badge ownership. The first
@@ -389,6 +397,54 @@ export function currentScratchpadTheme(): ScratchpadTheme {
   } catch (e) {
     return fallbackTheme();
   }
+}
+
+export function currentScratchpadTheme(): ScratchpadTheme {
+  const key = storageKey();
+  const displayed = displayedThemes.get(key);
+  if (displayed) return isAvailable(displayed.id) && isUnexpired(displayed) ? displayed : fallbackTheme();
+  const selected = selectedScratchpadTheme();
+  const initial = isBuiltin(selected.id) ? selected : fallbackTheme();
+  displayedThemes.set(key, initial);
+  return initial;
+}
+
+function appearance(theme: ScratchpadTheme) {
+  // A permission refresh often changes only expiry/administrative metadata.
+  // It must not replay the transition or reload unchanged artwork every minute.
+  const { expiresAt, administratorAccess, ...visual } = theme;
+  return JSON.stringify(visual);
+}
+
+function prepareDisplay(): Promise<boolean> {
+  const key = storageKey();
+  const previous = currentScratchpadTheme();
+  const selected = selectedScratchpadTheme();
+  const signature = appearance(selected);
+  const existing = displayJobs.get(key);
+  if (existing?.signature === signature) return existing.promise;
+  const revision = (displayRevisions.get(key) || 0) + 1;
+  displayRevisions.set(key, revision);
+  const valid = () => storageKey() === key && displayRevisions.get(key) === revision
+    && isAvailable(selected.id) && isUnexpired(selected) && appearance(selectedScratchpadTheme()) === signature;
+  const commit = () => {
+    displayedThemes.set(key, selectedScratchpadTheme());
+    emit();
+  };
+  const unchanged = appearance(previous) === signature;
+  const apply = () => {
+    if (!valid()) return Promise.resolve(false);
+    if (!unchanged) window.dispatchEvent(new Event(SCRATCHPAD_THEME_READY_EVENT));
+    return transitionScratchpadTheme(commit, valid, { immediate: unchanged });
+  };
+  const promise = (unchanged || !selected.badgeId ? apply() : prepareScratchpadThemeAssets(selected)
+    .then((ready) => ready && valid() ? apply() : false)).catch(() => false);
+  const job = { signature, promise };
+  displayJobs.set(key, job);
+  void promise.finally(() => {
+    if (displayJobs.get(key) === job) displayJobs.delete(key);
+  });
+  return promise;
 }
 
 export function availableScratchpadThemes(): ScratchpadTheme[] {
@@ -475,13 +531,16 @@ function scheduleExpiry() {
     const id = memory.get(storageKey());
     if (id && !isAvailable(id)) remember(fallbackTheme().id);
     emit();
+    void prepareDisplay();
     scheduleExpiry();
     void refreshScratchpadThemes();
   }, Math.min(2147483647, Math.max(1, Math.min(...deadlines) + 20)));
 }
 
 function applyCatalog(data: any, applySelection = true) {
-  if (!data || !Array.isArray(data.themes)) return false;
+  if (!data || !Array.isArray(data.themes)) return null;
+  // Capture the old visual before replacing its catalog/version.
+  currentScratchpadTheme();
   const now = typeof data.serverNow === 'number' ? data.serverNow : Date.parse(data.serverNow);
   const catalog: ThemeCatalog = {
     themes: data.themes.map(normalizeTheme).filter(Boolean), choices: [],
@@ -499,7 +558,7 @@ function applyCatalog(data: any, applySelection = true) {
   }
   scheduleExpiry();
   emit();
-  return true;
+  return prepareDisplay();
 }
 
 /** Permissions are never restored from a cached manifest or a saved theme ID. */
@@ -515,7 +574,12 @@ export function refreshScratchpadThemes(): Promise<boolean> {
       // An older GET cannot replace a catalog/version that was returned by a
       // more recent verified selection, nor undo a selection still saving.
       if (storageKey() !== key || (saveRevisions.get(key) || 0) !== revision) return false;
-      return applyCatalog(data);
+      const prepared = applyCatalog(data);
+      if (!prepared) return false;
+      await prepared;
+      // The catalog is verified even if a media request failed. The old
+      // visual stays intact and the picker remains available for a retry.
+      return true;
     } catch (e) {
       // Keep the last verified theme only until its known expiry. An offline
       // response cannot unlock another badge or extend an existing deadline.
@@ -532,12 +596,13 @@ export function selectScratchpadTheme(id: ScratchpadThemeId): Promise<boolean> {
   if (!isAvailable(id)) return Promise.resolve(false);
   const key = storageKey();
   const builtin = isBuiltin(id);
+  let prepared: Promise<boolean> | null = null;
   if (builtin) {
     remember(id);
-    emit();
+    prepared = prepareDisplay();
   }
   const uid = accountId();
-  if (!uid) return Promise.resolve(true);
+  if (!uid) return prepared || Promise.resolve(false);
   const endpoint = workspaceEndpoint();
   const legacyEndpoint = typeof UiContext === 'undefined' ? '' : UiContext.scratchpadThemePreferenceUrl;
   const revision = (saveRevisions.get(key) || 0) + 1;
@@ -559,9 +624,9 @@ export function selectScratchpadTheme(id: ScratchpadThemeId): Promise<boolean> {
       }
       pendingSelection.delete(key);
       if (endpoint) {
-        if (!applyCatalog(data)) throw new Error('Theme verification unavailable');
-        // A badge may have expired between opening the menu and saving.
-        return currentScratchpadTheme().id === id;
+        prepared = applyCatalog(data);
+        if (!prepared) throw new Error('Theme verification unavailable');
+        return true;
       }
       UserContext.scratchpadTheme = id;
       return true;
@@ -571,6 +636,7 @@ export function selectScratchpadTheme(id: ScratchpadThemeId): Promise<boolean> {
         if (!builtin) {
           remember(fallbackTheme().id);
           emit();
+          void prepareDisplay();
           void refreshScratchpadThemes();
           Notification.error('该徽章主题暂时无法使用，已保留基础主题。请刷新后重试。', 6000);
         } else Notification.error('主题已在当前页面应用，但未能保存到账号。请重新选择该主题重试。', 6000);
@@ -578,8 +644,19 @@ export function selectScratchpadTheme(id: ScratchpadThemeId): Promise<boolean> {
       return false;
     }
   });
+  // Only serialize account writes. A slow artwork download must not hold a
+  // later selection's server request behind it.
   saveQueues.set(key, saved);
-  return saved;
+  return saved.then(async (success) => {
+    if (!success) return false;
+    const ready = prepared ? await prepared : true;
+    if (storageKey() !== key || saveRevisions.get(key) !== revision) return false;
+    if (!ready && isAvailable(id)) {
+      Notification.error('主题素材暂时未能加载完整，已保留原主题。请重新选择后重试。', 6000);
+    }
+    // A badge may have expired while its artwork was loading.
+    return ready && currentScratchpadTheme().id === id;
+  });
 }
 
 function onRefresh() {
@@ -592,6 +669,7 @@ export function subscribeScratchpadTheme(listener: () => void): () => void {
     if (isBuiltin(event.newValue)) memory.set(storageKey(), event.newValue);
     else if (!workspaceEndpoint()) memory.delete(storageKey());
     else void refreshScratchpadThemes();
+    void prepareDisplay();
     listener();
   };
   window.addEventListener(themeEvent, listener);

@@ -49,6 +49,14 @@ function harness(options = {}) {
             if (id === 'react') return { useSyncExternalStore() {} };
             if (id === 'vj/components/notification') return {};
             if (id === 'vj/utils') return {};
+            // The designer uses pure palette/preview helpers, not the live
+            // scratchpad's media preparation or transition coordinator.
+            if (id === './themeAssets') return { prepareScratchpadThemeAssets: () => Promise.resolve(true) };
+            if (id === './themeTransition') return { transitionScratchpadTheme: (commit, isCurrent) => {
+                const ready = isCurrent();
+                if (ready) commit();
+                return Promise.resolve(ready);
+            } };
             return require(id);
         }, module: runtime, exports: runtime.exports, window,
     });

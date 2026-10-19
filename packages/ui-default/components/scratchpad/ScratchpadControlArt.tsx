@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useRef, useState } from 'react';
+import { isScratchpadThemeImageReady } from './themeAssets';
 import type { ScratchpadControlKey, ScratchpadTheme } from './themes';
 
 // Artwork changes the presentation only; the surrounding native control and
@@ -20,8 +21,12 @@ export function useScratchpadControlArt(control?: ScratchpadControlKey, supplied
   const current = useRef(identity);
   current.current = identity;
   const [state, setState] = useState({ identity: '', loaded: [] as string[], failed: [] as string[] });
-  const loaded = state.identity === identity ? state.loaded : [];
   const failed = state.identity === identity ? state.failed : [];
+  // Prepared themes render every PNG (including hover/active states) on their
+  // very first render, rather than each control waiting for its own load event.
+  const loaded = images.filter(({ variant, asset }) => !failed.includes(variant)
+    && ((state.identity === identity && state.loaded.includes(variant)) || isScratchpadThemeImageReady(asset!.url)))
+    .map(({ variant }) => variant);
   const ready = !!base && loaded.includes('base') && !failed.includes('base');
   const settle = (variant: string, success: boolean) => {
     if (current.current !== identity) return;

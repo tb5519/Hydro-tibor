@@ -180,6 +180,7 @@
     max-width: 100%
 
   .scratchpad__language-art.scratchpad__language-art--ready
+    isolation: isolate
     width: var(--scratchpad-art-width)
     min-width: 88px
     min-height: 34px
@@ -187,21 +188,55 @@
 
     > .scratchpad__control-art
       position: absolute
+      z-index: 0
       inset: 0
       width: 100%
       height: 100%
 
-    > .select
+    // Keep the native value above the artwork. Safari otherwise retains its
+    // own raised popup bezel, which overlaps the PNG and can obscure the name.
+    > select
       position: relative
+      z-index: 1
+      display: block
+      box-sizing: border-box
       width: 100%
       height: 100%
-      border-color: transparent
-      background-color: transparent
+      margin: 0
+      padding: 0 26px 0 12px
+      border: 0
+      border-radius: 6px
+      -webkit-appearance: none
+      appearance: none
+      background: transparent
+      color: var(--ui-v2-text)
+      font: inherit
+      font-size: rem(13px)
+      line-height: normal
+      cursor: pointer
       text-shadow: 0 1px 3px var(--ui-v2-surface)
+
+      &:focus-visible
+        outline: 2px solid var(--ui-v2-accent)
+        outline-offset: 2px
 
       option
         background: var(--ui-v2-surface)
         color: var(--ui-v2-text)
+
+    &::after
+      content: ''
+      position: absolute
+      z-index: 2
+      top: 50%
+      right: 13px
+      width: 5px
+      height: 5px
+      margin-top: -4px
+      border-right: 2px solid var(--ui-v2-text)
+      border-bottom: 2px solid var(--ui-v2-text)
+      transform: rotate(45deg)
+      pointer-events: none
 
   .scratchpad__data-entry
     position: relative

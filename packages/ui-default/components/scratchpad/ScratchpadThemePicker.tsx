@@ -2,7 +2,8 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useScratchpadControlArt } from './ScratchpadControlArt';
 import {
-  hasScratchpadAdministratorThemeAccess, refreshScratchpadThemes, SCRATCHPAD_THEMES, SCRATCHPAD_THEME_PICKER_EVENT, ScratchpadTheme,
+  hasScratchpadAdministratorThemeAccess, refreshScratchpadThemes, SCRATCHPAD_THEMES, SCRATCHPAD_THEME_PICKER_EVENT,
+  SCRATCHPAD_THEME_READY_EVENT, ScratchpadTheme,
   scratchpadThemeVariables, selectScratchpadTheme, useScratchpadTheme, useScratchpadThemes,
 } from './themes';
 
@@ -44,6 +45,15 @@ export default function ScratchpadThemePicker({ expanded = false }: { expanded?:
     window.addEventListener(SCRATCHPAD_THEME_PICKER_EVENT, onOpen);
     return () => window.removeEventListener(SCRATCHPAD_THEME_PICKER_EVENT, onOpen);
   }, []);
+
+  useEffect(() => {
+    const onReady = () => {
+      setOpen(false);
+      if (pending) trigger.current?.focus();
+    };
+    window.addEventListener(SCRATCHPAD_THEME_READY_EVENT, onReady);
+    return () => window.removeEventListener(SCRATCHPAD_THEME_READY_EVENT, onReady);
+  }, [pending]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -204,7 +214,8 @@ export default function ScratchpadThemePicker({ expanded = false }: { expanded?:
               : !verified ? '暂时无法验证徽章，请联网后重新打开。'
                 : administratorAccess ? '当前域还没有已发布的徽章主题。' : '获得带有专属主题的徽章后，即可在这里选择。'}</p>
           )}
-          <div className="scratchpad__theme-menu-footer">{administratorAccess ? '管理员可使用当前域的全部已发布主题' : '持有徽章即可使用，无需佩戴'}</div>
+          <div className="scratchpad__theme-menu-footer" role="status">{pending ? '正在准备完整主题…'
+            : administratorAccess ? '管理员可使用当前域的全部已发布主题' : '持有徽章即可使用，无需佩戴'}</div>
         </div>, document.body,
       )}
     </div>
