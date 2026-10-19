@@ -140,6 +140,13 @@
       --badge-scan-width: 34%;
       --badge-sweep-period: 2400px;
       --badge-sweep-start: -2400px;
+      background-color: #fff;
+    }
+
+    /* WebKit fragments tr backgrounds at cell boundaries. Every cell paints
+       the measured full-row artwork with a matching offset and animation phase. */
+    .homepage-ranking-table tbody tr.ranking-row--badge[data-ranking-effect-ready] td:not([data-scoreboard-cell-style]) {
+      --badge-cell-x: 0px;
       animation: homepage-ranking-row-flow var(--badge-flow-speed) linear infinite;
       background:
         linear-gradient(105deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0) 31%, rgba(255, 255, 255, .9) 44%, rgba(var(--badge-third), .28) 52%, rgba(255, 255, 255, 0) 66%, rgba(255, 255, 255, 0) 100%),
@@ -147,11 +154,10 @@
         linear-gradient(90deg, rgba(255, 255, 255, var(--badge-wash)) 0%, rgba(255, 255, 255, var(--badge-wash-2)) 50%, rgba(255, 255, 255, var(--badge-wash)) 100%),
         linear-gradient(120deg, rgba(var(--badge-primary), var(--badge-alpha)) 0%, rgba(var(--badge-secondary), var(--badge-alpha-2)) 30%, rgba(var(--badge-third), var(--badge-alpha-3)) 58%, rgba(var(--badge-primary), var(--badge-alpha)) 100%),
         #fff;
-      background-position: var(--badge-sweep-start) 50%, 0% 50%, 0 0, 0% 50%, 0 0;
-      background-repeat: repeat-x, no-repeat, no-repeat, no-repeat, repeat;
-      background-size: var(--badge-sweep-period) 100%, 180% 100%, 100% 100%, 300% 100%, 100% 100%;
-      isolation: isolate;
-      position: relative;
+      background-position: calc(var(--badge-sweep-start) + var(--badge-cell-x)) 50%, var(--badge-cell-x) 50%, var(--badge-cell-x) 0, var(--badge-cell-x) 50%;
+      background-origin: border-box;
+      background-repeat: repeat-x, no-repeat, no-repeat, no-repeat;
+      background-size: var(--badge-sweep-period) 100%, calc(var(--badge-row-width) * 1.8) 100%, var(--badge-row-width) 100%, calc(var(--badge-row-width) * 3) 100%;
     }
 
     .homepage-ranking-table tbody tr.ranking-row--badge-1 {
@@ -502,16 +508,15 @@
       --badge-scan-width: 190%;
     }
 
-    .homepage-ranking-table tbody tr.ranking-row--badge:nth-child(2n) {
+    .homepage-ranking-table tbody tr.ranking-row--badge[data-ranking-effect-ready]:nth-child(2n) td {
       animation-delay: -2.2s;
     }
 
-    .homepage-ranking-table tbody tr.ranking-row--badge:nth-child(3n) {
+    .homepage-ranking-table tbody tr.ranking-row--badge[data-ranking-effect-ready]:nth-child(3n) td {
       animation-delay: -4.1s;
     }
 
     .homepage-ranking-table tbody tr.ranking-row--badge td {
-      background: transparent !important;
       border-bottom-color: rgba(147, 197, 253, .4);
       border-top-color: rgba(255, 255, 255, .42);
       position: relative;
@@ -555,16 +560,16 @@
 
     @keyframes homepage-ranking-row-flow {
       0% {
-        background-position: var(--badge-sweep-start) 50%, 0% 50%, 0 0, 0% 50%, 0 0;
+        background-position: calc(var(--badge-sweep-start) + var(--badge-cell-x)) 50%, var(--badge-cell-x) 50%, var(--badge-cell-x) 0, var(--badge-cell-x) 50%;
       }
 
       100% {
-        background-position: 0 50%, 0% 50%, 0 0, 0% 50%, 0 0;
+        background-position: var(--badge-cell-x) 50%, var(--badge-cell-x) 50%, var(--badge-cell-x) 0, var(--badge-cell-x) 50%;
       }
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .homepage-ranking-table tbody tr.ranking-row--badge,
+      .homepage-ranking-table tbody tr.ranking-row--badge[data-ranking-effect-ready] td,
       .homepage-ranking-user__badge:not(.user-profile-badge--more)::after {
         animation: none;
       }

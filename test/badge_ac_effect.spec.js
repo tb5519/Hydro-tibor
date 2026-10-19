@@ -24,11 +24,13 @@ function fixture(options = {}) {
         removeAttribute(name) { delete this.attributes[name]; if (name === 'src') this._src = ''; }
     }
     class Image extends Element {
-        constructor() { super('img'); this.complete = false; this.naturalWidth = 0; this.decoded = deferred(); images.push(this); }
-        set src(value) { this._src = value; if (options.cached) { this.complete = true; this.naturalWidth = 384; } }
+        constructor() { super('img'); this.complete = false; this.naturalWidth = 0; this.naturalHeight = 0;
+            this.decoded = deferred(); if (options.noDecode) this.decode = undefined; images.push(this); }
+        set src(value) { this._src = value; if (options.cached) { this.complete = true; this.naturalWidth = 384; this.naturalHeight = 384; } }
         get src() { return this._src; }
-        load() { this.complete = true; this.naturalWidth = 384; this.onload?.(); }
-        decode() { this.decodeCalls = (this.decodeCalls || 0) + 1; return this.decoded.promise; }
+        load(width = 384, height = 384) { this.complete = true; this.naturalWidth = width; this.naturalHeight = height; this.onload?.(); }
+        decode() { this.decodeCalls = (this.decodeCalls || 0) + 1;
+            if (options.decodeThrows) throw Error('Safari decode exception'); return this.decoded.promise; }
     }
     class Audio extends Element {
         constructor(src) { super('audio'); this.src = src; this.calls = []; this.pauseCalls = 0; sounds.push(this); }
@@ -46,6 +48,7 @@ function fixture(options = {}) {
     const window = { ...events,
         setTimeout(fn, delay) { timers.set(++nextId, { fn, delay }); return nextId; },
         clearTimeout(id) { timers.delete(id); }, requestAnimationFrame: (fn) => window.setTimeout(fn, 16),
+        cancelAnimationFrame: (id) => timers.delete(id),
     };
     const module = { exports: {} };
     vm.runInNewContext(compiled, { module, exports: module.exports, document, window, Image, Audio,
@@ -85,11 +88,11 @@ it('uses a cached, decoded image immediately and preserves the full celebration 
     f.run(2200); assert.equal(f.document.body.children.length, 1);
     f.run(340); await playback; assert.equal(f.document.body.children.length, 0); player.dispose();
 });
-it('uses a text celebration on failed or excessively slow images instead of showing partial or broken pixels', async () => {
-    for (const failure of ['network', 'decode', 'timeout']) {
+it('uses a text celebration on failed or excessively slow downloads instead of broken pixels', async () => {
+    for (const failure of ['network', 'timeout', 'invalid-size']) {
         const f = fixture(); const player = f.create({ acImage: theme.acImage, name: theme.name }); const playback = player.play();
         if (failure === 'network') f.images[0].onerror();
-        if (failure === 'decode') { f.images[0].load(); f.images[0].decoded.reject(Error('decode failed')); }
+        if (failure === 'invalid-size') f.images[0].load(384, 0);
         if (failure === 'timeout') f.run(4000);
         await settle();
         const frame = f.document.body.children[0].children[0];
@@ -99,6 +102,57 @@ it('uses a text celebration on failed or excessively slow images instead of show
             assert.equal(frame.children.some((child) => child.tag === 'img'), false, 'late pixels do not replace an active celebration'); }
         f.run(2200); f.run(340); await playback; player.dispose();
     }
+});
+it('uses a successfully loaded image when decode rejects, throws or is unavailable and starts sound with it', async () => {
+    for (const failure of ['reject', 'throw', 'unavailable']) {
+        const f = fixture({ decodeThrows: failure === 'throw', noDecode: failure === 'unavailable' });
+        const player = f.create(theme); const playback = player.play(); await settle();
+        assert.equal(f.document.body.children.length, 0);
+        assert.equal(f.sounds[0].calls.filter((call) => call.volume > 0).length, 0);
+        f.images[0].load();
+        if (failure === 'reject') f.images[0].decoded.reject(Error('Safari decode rejected a valid image'));
+        await settle();
+        const frame = f.document.body.children[0].children[0];
+        assert.strictEqual(frame.children[1], f.images[0]);
+        assert.deepEqual(f.sounds[0].calls.filter((call) => call.volume > 0), [{ volume: 0.25, visibleEffects: 1 }]);
+        player.dispose(); await playback; assert.equal(f.timers.size, 0);
+    }
+});
+it('uses and caches a loaded image within the wait budget when decode hangs without playing twice', async () => {
+    const f = fixture(); const player = f.create(theme); const playback = player.play();
+    f.images[0].load(); await settle(); assert.equal(f.document.body.children.length, 0);
+    f.run(4000); await settle();
+    assert.strictEqual(f.document.body.children[0].children[0].children[1], f.images[0]);
+    f.images[0].decoded.resolve(); await settle();
+    assert.equal(f.document.body.children.length, 1);
+    assert.equal(f.sounds[0].calls.filter((call) => call.volume > 0).length, 1);
+    f.sounds[0].onended(); f.run(340); await playback;
+    const second = player.play(); await settle();
+    assert.equal(f.images.length, 1); assert.equal(f.document.body.children.length, 1);
+    assert.equal([...f.timers.values()].some((timer) => timer.delay === 4000), false);
+    player.dispose(); await second; assert.equal(f.timers.size, 0);
+});
+it('does not retry a failed download automatically but retries on the next celebration', async () => {
+    const f = fixture(); const player = f.create({ acImage: theme.acImage }); const first = player.play();
+    f.images[0].onerror(); await settle();
+    assert.equal(f.images.length, 1); assert.equal(f.document.body.children[0].children[0].children[1].tag, 'div');
+    f.run(2200); f.run(340); await first; await settle(); assert.equal(f.images.length, 1);
+    const second = player.play(); assert.equal(f.images.length, 2);
+    f.images[1].load(); f.images[1].decoded.resolve(); await settle();
+    assert.strictEqual(f.document.body.children[0].children[0].children[1], f.images[1]);
+    player.dispose(); await second; assert.equal(f.timers.size, 0);
+});
+it('keeps a timed-out network request so a late successful image is available on the next celebration', async () => {
+    const f = fixture(); const player = f.create({ acImage: theme.acImage }); const first = player.play();
+    f.run(4000); await settle(); const frame = f.document.body.children[0].children[0];
+    assert.equal(frame.children[1].tag, 'div');
+    f.images[0].load(); f.images[0].decoded.resolve(); await settle();
+    assert.equal(frame.children[1].tag, 'div', 'late pixels never replace the current text celebration');
+    f.run(2200); f.run(340); await first;
+    const second = player.play(); await settle();
+    assert.equal(f.images.length, 1);
+    assert.strictEqual(f.document.body.children[0].children[0].children[1], f.images[0]);
+    player.dispose(); await second; assert.equal(f.timers.size, 0);
 });
 it('cancels pending decode on navigation or disposal and never displays the old badge afterward', async () => {
     for (const navigate of [false, true]) {
@@ -125,7 +179,18 @@ it('cancels a visible effect and its completion promise when its owner is dispos
     const f = fixture({ cached: true }); const player = f.create(theme); f.images[0].decoded.resolve();
     const playback = player.play(); await settle(); assert.equal(f.document.body.children.length, 1);
     player.dispose(); await playback; f.run(16); assert.equal(f.document.body.children.length, 0);
-    assert.equal(f.sounds[0].onended, null);
+    assert.equal(f.sounds[0].onended, null); assert.equal(f.timers.size, 0);
+});
+it('removes a fading effect and all animation timers on disposal or back/forward-cache navigation', async () => {
+    for (const navigate of [false, true]) {
+        const f = fixture({ cached: true }); const player = f.create({ acImage: theme.acImage });
+        f.images[0].decoded.resolve(); const playback = player.play(); await settle();
+        f.run(2200); assert.equal(f.document.body.children.length, 1);
+        if (navigate) f.fire('pagehide', { persisted: true }); else player.dispose();
+        await playback;
+        assert.equal(f.document.body.children.length, 0); assert.equal(f.timers.size, 0);
+        player.dispose();
+    }
 });
 it('late audio priming cannot pause or reset the real celebration', async () => {
     const prime = deferred(); const f = fixture({ delayedPrime: prime, cached: true }); const player = f.create(theme);

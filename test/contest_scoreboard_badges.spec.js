@@ -381,7 +381,7 @@ describe('shared ranking badge effect contract', () => {
         }
         assert.match(effects, /animation:\s*ranking-row-flow var\(--badge-flow-speed\) linear infinite/);
         assert.match(effects, /@keyframes\s+ranking-row-flow/);
-        assert.match(effects, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*ranking-row--badge\s*\{\s*animation:\s*none;/);
+        assert.match(effects, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*ranking-row--badge\[data-ranking-effect-ready\] td\s*\{\s*animation:\s*none;/);
     });
 
     it('is shared by ranking and every scoreboard, including reduced-motion badge shine', () => {
@@ -416,7 +416,7 @@ describe('shared ranking badge effect contract', () => {
         assert.match(scoreboard, /data-scoreboard-cell-style style="\{\{ column\.style \}\}"/);
         assert.match(
             effects,
-            /tr\.ranking-row--badge td:not\(\[data-scoreboard-cell-style\]\)\s*\{\s*background:\s*transparent !important;/,
+            /tr\.ranking-row--badge:not\(\[data-ranking-effect-ready\]\) td:not\(\[data-scoreboard-cell-style\]\)\s*\{\s*background:\s*transparent !important;/,
         );
         assert.doesNotMatch(
             effects,

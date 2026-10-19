@@ -9,7 +9,8 @@ const IMAGE_WAIT_MS = 4000;
 
 /**
  * Warm the exact image used by the celebration, and keep it detached until it
- * is fully decoded. Sound and animation start together once the image is ready.
+ * is ready to draw. Decode is an optimization: some Safari versions reject it
+ * even after a successful load. Sound and animation still start together.
  */
 export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined) {
   const acImage = String(theme?.acImage || '');
@@ -17,6 +18,8 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
   let activeEffect: Promise<void> | null = null;
   let playGeneration = 0;
   let preparedImage: Promise<HTMLImageElement | null> | null = null;
+  let loadedImage: HTMLImageElement | null = null;
+  let useLoadedImage: (() => void) | null = null;
   let cancelImage: (() => void) | null = null;
   let cancelImageWait: (() => void) | null = null;
   let finishEffect: (() => void) | null = null;
@@ -30,24 +33,36 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
   function prepareImage() {
     if (!acImage || disposed) return Promise.resolve(null);
     if (preparedImage) return preparedImage;
-    preparedImage = new Promise<HTMLImageElement | null>((resolve) => {
+    const preparation = new Promise<HTMLImageElement | null>((resolve) => {
       const image = new Image();
       let settled = false;
+      let decoding = false;
+      const isUsable = () => image.complete && image.naturalWidth > 0 && image.naturalHeight > 0;
       const finish = (ready: boolean) => {
         if (settled) return;
         settled = true;
         image.onload = null;
         image.onerror = null;
+        useLoadedImage = null;
+        if (!ready) loadedImage = null;
         resolve(ready && !disposed ? image : null);
       };
+      useLoadedImage = () => finish(isUsable());
       cancelImage = () => {
         finish(false);
         image.removeAttribute('src');
       };
       const decode = () => {
-        if (!image.naturalWidth) { finish(false); return; }
+        if (settled || decoding) return;
+        if (!isUsable()) { finish(false); return; }
+        loadedImage = image;
         if (typeof image.decode !== 'function') { finish(true); return; }
-        image.decode().then(() => finish(true), () => finish(false));
+        decoding = true;
+        try {
+          image.decode().then(() => finish(isUsable()), () => finish(isUsable()));
+        } catch {
+          finish(isUsable());
+        }
       };
       image.className = 'badge-ac-theme-effect__image';
       image.alt = '';
@@ -59,7 +74,13 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
       // Cached images can complete synchronously without a later load event.
       if (image.complete) decode();
     });
-    return preparedImage;
+    preparedImage = preparation;
+    void preparation.then((image) => {
+      // A failed download may be retried by the next explicit play(), but must
+      // never start an automatic retry loop in the background.
+      if (!image && preparedImage === preparation) preparedImage = null;
+    });
+    return preparation;
   }
 
   function readyImage() {
@@ -73,7 +94,13 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
         cancelImageWait = null;
         resolve(image);
       };
-      const timeout = window.setTimeout(() => done(null), IMAGE_WAIT_MS);
+      const timeout = window.setTimeout(() => {
+        const image = loadedImage;
+        // A loaded image can be painted even if Safari's decode never settles.
+        // Pending network requests keep preparing for the next celebration.
+        if (image) useLoadedImage?.();
+        done(image);
+      }, IMAGE_WAIT_MS);
       cancelImageWait = () => done(null);
       void prepareImage().then(done);
     });
@@ -157,31 +184,36 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
     return new Promise<void>((resolve) => {
       let finished = false;
       let timeout = 0;
+      let exitTimeout = 0;
+      let animationFrame = 0;
       const player = getAudio();
       const finish = (immediate = false) => {
-        if (finished) return;
+        if (finished && !immediate) return;
         finished = true;
-        finishEffect = null;
         window.clearTimeout(timeout);
+        window.clearTimeout(exitTimeout);
+        window.cancelAnimationFrame(animationFrame);
         if (player) {
           player.onended = null;
           player.onerror = null;
           player.pause();
         }
         if (immediate) {
+          finishEffect = null;
           effect.remove();
           resolve();
           return;
         }
         effect.classList.remove('is-visible');
         effect.classList.add('is-leaving');
-        window.setTimeout(() => {
+        exitTimeout = window.setTimeout(() => {
+          finishEffect = null;
           effect.remove();
           resolve();
         }, 340);
       };
       finishEffect = () => finish(true);
-      window.requestAnimationFrame(() => {
+      animationFrame = window.requestAnimationFrame(() => {
         if (!finished && !disposed) effect.classList.add('is-visible');
       });
 
@@ -229,6 +261,8 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
     finishEffect?.();
     cancelImage?.();
     preparedImage = null;
+    loadedImage = null;
+    useLoadedImage = null;
     cancelImage = null;
     window.removeEventListener('pagehide', onPageHide);
     if (themeSound) {
