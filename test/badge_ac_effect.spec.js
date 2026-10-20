@@ -59,7 +59,58 @@ function fixture(options = {}) {
         run(delay) { for (const [id, timer] of [...timers]) if (timer.delay === delay) { timers.delete(id); timer.fn(); } },
     };
 }
-const theme = { acImage: '/d/Python/badge/7/ac-image?size=384&v=version-1', name: '勇者', themeSound: '/sound?v=1' };
+const theme = { acImage: '/d/Python/badge/7/ac-image?v=version-1', name: '勇者', themeSound: '/sound?v=1' };
+it('keeps the full-resolution original through preparation, decoding and display without a thumbnail or canvas substitute', async () => {
+    const f = fixture(); const player = f.create(theme);
+    const playback = player.play();
+    const image = f.images[0];
+    image.load(2048, 1536); image.decoded.resolve(); await settle();
+    const frame = f.document.body.children[0].children[0];
+    assert.strictEqual(frame.children[1], image);
+    assert.equal(image.src, theme.acImage);
+    assert.equal(image.naturalWidth, 2048);
+    assert.equal(image.naturalHeight, 1536);
+    assert.equal(f.images.length, 1, 'display reuses the decoded original instead of requesting a smaller second image');
+    assert.equal(frame.children.some((child) => child.tag === 'canvas'), false);
+    assert.equal(image.attributes.srcset, undefined);
+    player.dispose(); await playback;
+});
+it('administrator simulation uses the same original-image player for saved artwork and a newly selected local file', async () => {
+    const previewSource = fs.readFileSync(path.join(root, 'addons/badge-for-hydrooj/frontend/badge.page.ts'), 'utf8');
+    const previewCompiled = transformSync(previewSource, { loader: 'ts', format: 'cjs' }).code;
+    for (const uploading of [false, true]) {
+        const f = fixture(); const clickHandlers = {}; const revoked = [];
+        const preview = {
+            dataset: { acImage: theme.acImage }, classList: { add() {}, remove() {} },
+            addEventListener: (name, handler) => { clickHandlers[name] = handler; },
+        };
+        const fields = {
+            '[data-badge-ac-preview]': preview,
+            '[name="acImage"]': { files: uploading ? [{ size: 4096 }] : [] },
+            '[name="short"]': { value: theme.name }, '[name="title"]': { value: '' },
+        };
+        f.document.querySelector = (selector) => fields[selector] || null;
+        const api = {
+            $: () => ({}), UserSelectAutoComplete: { getOrConstruct() {} },
+            NamedPage: class { constructor(names, initialize) { this.initialize = initialize; } },
+            addPage: (page) => page.initialize(), createBadgeAcThemePlayer: f.create,
+            Notification: { info: () => assert.fail('valid artwork must be previewable') },
+        };
+        vm.runInNewContext(previewCompiled, {
+            require: (name) => { assert.equal(name, '@hydrooj/ui-default'); return api; },
+            document: f.document,
+            URL: { createObjectURL: () => 'blob:full-resolution-upload', revokeObjectURL: (url) => revoked.push(url) },
+        });
+        const playback = clickHandlers.click();
+        const image = f.images[0]; image.load(2048, 1536); image.decoded.resolve(); await settle();
+        assert.equal(image.src, uploading ? 'blob:full-resolution-upload' : theme.acImage);
+        assert.strictEqual(f.document.body.children[0].children[0].children[1], image);
+        assert.equal(image.naturalWidth, 2048);
+        f.run(2200); f.run(340); await playback;
+        assert.equal(preview.disabled, false);
+        assert.deepEqual(revoked, uploading ? ['blob:full-resolution-upload'] : []);
+    }
+});
 it('prepares the exact image immediately and waits for full decode before attaching it or playing audible sound', async () => {
     const f = fixture(); const player = f.create(theme);
     assert.equal(f.images.length, 1, 'cold page starts image download before any AC');

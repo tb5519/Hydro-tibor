@@ -270,6 +270,14 @@ export function scratchpadMonacoTheme(theme: ScratchpadTheme): Monaco.editor.ISt
       'editorIndentGuide.background1': p.border,
       'editorIndentGuide.activeBackground1': p.borderStrong,
       'editorGutter.background': theme.badgeId ? '#00000000' : p.surface,
+      // Sticky scope lines sit above the scrolling code. They must stay opaque:
+      // Monaco otherwise inherits our transparent artwork canvas and renders
+      // two different source lines on top of each other.
+      'editorStickyScroll.background': p.surface,
+      'editorStickyScrollHover.background': theme.badgeId ? reading.lineHighlight : p.surface,
+      'editorStickyScroll.border': p.border,
+      'editorStickyScroll.shadow': '#00000000',
+      'peekViewEditorStickyScroll.background': p.surface,
       'editorWhitespace.foreground': p.borderStrong,
       'editorWidget.background': widgetBackground,
       'editorWidget.border': p.border,
@@ -336,7 +344,11 @@ const saveRevisions = new Map<string, number>();
 // including Monaco, on the same verified, fully prepared visual snapshot.
 const displayedThemes = new Map<string, ScratchpadTheme>();
 const displayRevisions = new Map<string, number>();
-const displayJobs = new Map<string, { signature: string; promise: Promise<boolean> }>();
+const displayJobs = new Map<string, { signature: string; animate: boolean; promise: Promise<boolean> }>();
+const initializations = new Map<string, Promise<boolean>>();
+const initializedCatalogs = new Map<string, number>();
+const consumedBootstraps = new Set<string>();
+const INITIAL_CATALOG_FRESHNESS = 60000;
 let subscribers = 0;
 let pollTimer: number;
 let expiryTimer: number;
@@ -416,13 +428,18 @@ function appearance(theme: ScratchpadTheme) {
   return JSON.stringify(visual);
 }
 
-function prepareDisplay(): Promise<boolean> {
+function prepareDisplay(animate = false): Promise<boolean> {
   const key = storageKey();
   const previous = currentScratchpadTheme();
   const selected = selectedScratchpadTheme();
   const signature = appearance(selected);
   const existing = displayJobs.get(key);
-  if (existing?.signature === signature) return existing.promise;
+  if (existing?.signature === signature) {
+    // A passive catalog refresh must not cancel an explicit switch's fade;
+    // selecting a theme while its initial preparation runs upgrades that job.
+    existing.animate ||= animate;
+    return existing.promise;
+  }
   const revision = (displayRevisions.get(key) || 0) + 1;
   displayRevisions.set(key, revision);
   const valid = () => storageKey() === key && displayRevisions.get(key) === revision
@@ -432,14 +449,17 @@ function prepareDisplay(): Promise<boolean> {
     emit();
   };
   const unchanged = appearance(previous) === signature;
+  const job = { signature, animate, promise: undefined as unknown as Promise<boolean> };
   const apply = () => {
     if (!valid()) return Promise.resolve(false);
-    if (!unchanged) window.dispatchEvent(new Event(SCRATCHPAD_THEME_READY_EVENT));
-    return transitionScratchpadTheme(commit, valid, { immediate: unchanged });
+    if (!unchanged && job.animate) window.dispatchEvent(new Event(SCRATCHPAD_THEME_READY_EVENT));
+    // Entering another problem, server restoration and permission refreshes
+    // apply prepared artwork directly. Only a deliberate menu choice fades.
+    return transitionScratchpadTheme(commit, valid, { immediate: unchanged || !job.animate });
   };
   const promise = (unchanged || !selected.badgeId ? apply() : prepareScratchpadThemeAssets(selected)
     .then((ready) => ready && valid() ? apply() : false)).catch(() => false);
-  const job = { signature, promise };
+  job.promise = promise;
   displayJobs.set(key, job);
   void promise.finally(() => {
     if (displayJobs.get(key) === job) displayJobs.delete(key);
@@ -537,7 +557,7 @@ function scheduleExpiry() {
   }, Math.min(2147483647, Math.max(1, Math.min(...deadlines) + 20)));
 }
 
-function applyCatalog(data: any, applySelection = true) {
+function applyCatalog(data: any, applySelection = true, animate = false) {
   if (!data || !Array.isArray(data.themes)) return null;
   // Capture the old visual before replacing its catalog/version.
   currentScratchpadTheme();
@@ -558,7 +578,46 @@ function applyCatalog(data: any, applySelection = true) {
   }
   scheduleExpiry();
   emit();
-  return prepareDisplay();
+  return prepareDisplay(animate);
+}
+
+function hasFreshInitialCatalog(key = storageKey()) {
+  const verified = initializedCatalogs.get(key);
+  const age = verified === undefined ? Infinity : Date.now() - verified;
+  return age >= 0 && age < INITIAL_CATALOG_FRESHNESS;
+}
+
+/** Prepare the server-verified selection before the editor's first mount. A
+ * page bootstrap removes the extra catalog round trip without treating local
+ * storage or previously downloaded artwork as proof of badge ownership. */
+export function initializeScratchpadTheme(): Promise<boolean> {
+  const key = storageKey();
+  if (hasFreshInitialCatalog(key)) return Promise.resolve(true);
+  const pending = initializations.get(key);
+  if (pending) return pending;
+  const bootstrap = typeof UiContext === 'undefined' ? undefined : UiContext.codeEditorThemeCatalog;
+  const validBootstrap = !consumedBootstraps.has(key) && accountId() > 0 && !!workspaceEndpoint()
+    && bootstrap?.accountId === accountId() && bootstrap?.scope === workspaceEndpoint();
+  const job = Promise.resolve().then(async () => {
+    let ready: boolean;
+    if (validBootstrap) {
+      consumedBootstraps.add(key);
+      const preparation = applyCatalog(bootstrap);
+      if (!preparation) return false;
+      ready = await preparation;
+    } else {
+      const verified = await refreshScratchpadThemes();
+      ready = verified && appearance(currentScratchpadTheme()) === appearance(selectedScratchpadTheme());
+    }
+    if (storageKey() !== key || !ready) return false;
+    initializedCatalogs.set(key, Date.now());
+    return true;
+  }).catch(() => false);
+  initializations.set(key, job);
+  void job.finally(() => {
+    if (initializations.get(key) === job) initializations.delete(key);
+  });
+  return job;
 }
 
 /** Permissions are never restored from a cached manifest or a saved theme ID. */
@@ -599,7 +658,7 @@ export function selectScratchpadTheme(id: ScratchpadThemeId): Promise<boolean> {
   let prepared: Promise<boolean> | null = null;
   if (builtin) {
     remember(id);
-    prepared = prepareDisplay();
+    prepared = prepareDisplay(true);
   }
   const uid = accountId();
   if (!uid) return prepared || Promise.resolve(false);
@@ -624,7 +683,7 @@ export function selectScratchpadTheme(id: ScratchpadThemeId): Promise<boolean> {
       }
       pendingSelection.delete(key);
       if (endpoint) {
-        prepared = applyCatalog(data);
+        prepared = applyCatalog(data, true, true);
         if (!prepared) throw new Error('Theme verification unavailable');
         return true;
       }
@@ -680,7 +739,9 @@ export function subscribeScratchpadTheme(listener: () => void): () => void {
     window.addEventListener('online', onRefresh);
     window.document.addEventListener('visibilitychange', onRefresh);
     pollTimer = window.setInterval(onRefresh, 60000);
-    void refreshScratchpadThemes();
+    // initializeScratchpadTheme already verified this page's account and
+    // prepared its selection before mounting React. Keep later checks live.
+    if (!hasFreshInitialCatalog()) void refreshScratchpadThemes();
   }
   return () => {
     window.removeEventListener(themeEvent, listener);

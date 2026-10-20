@@ -106,8 +106,10 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
     });
   }
 
-  // The normal problem and record templates also preload this versioned URL
-  // before the main UI starts. No decoded bytes persist beyond this player.
+  // All entry points use the same versioned original artwork: a gallery
+  // thumbnail would be enlarged here (up to 520 CSS pixels on Retina screens).
+  // Problem and record templates preload this exact URL before the UI starts.
+  // No decoded bytes persist beyond this player.
   const connection = (navigator as any).connection;
   if (!connection?.saveData) void prepareImage();
 

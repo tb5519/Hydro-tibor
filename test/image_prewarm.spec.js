@@ -14,9 +14,9 @@ function load(relative, dependencies = {}) {
     return module.exports;
 }
 const access = load('packages/hydrooj/src/lib/decorative_image_access.ts');
-const { getBadgeAcDisplayUrl } = load('packages/hydrooj/src/lib/badge_image.ts');
+const { getBadgeAcCelebrationUrl } = load('packages/hydrooj/src/lib/badge_image.ts');
 const { getImageWarmupPage } = load('packages/hydrooj/src/lib/image_prewarm.ts', {
-    './badge_image': { getBadgeAcDisplayUrl }, '../model/workspace': {
+    './badge_image': { getBadgeAcCelebrationUrl }, '../model/workspace': {
         resolveDomainWorkspaceId: (domain) => domain.workspaceId || 'tang', LEGACY_WORKSPACE_ID: 'tang',
     },
 });

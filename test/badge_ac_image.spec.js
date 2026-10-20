@@ -6,7 +6,7 @@ const { Readable } = require('node:stream');
 const { describe, it } = require('node:test');
 const { PNG } = require('pngjs');
 const { BadgeAcImageCache, resizeBadgeAcPng } = require('../addons/badge-for-hydrooj/ac_image_cache');
-const { getBadgeAcDisplayUrl } = require('../packages/hydrooj/src/lib/badge_image');
+const { getBadgeAcCelebrationUrl, getBadgeAcDisplayUrl } = require('../packages/hydrooj/src/lib/badge_image');
 
 function artwork(width, height, alpha = 128) {
     const data = Buffer.alloc(width * height * 4);
@@ -222,6 +222,14 @@ describe('badge AC display cache and fallback', () => {
 });
 
 describe('shared badge AC display URL', () => {
+    it('keeps live celebrations at original quality, separately versioned from gallery thumbnails', () => {
+        const badge = { _id: 7, acImagePath: 'private-storage.png', acImageUpdatedAt: 'a & b' };
+        assert.equal(getBadgeAcCelebrationUrl('C++', badge), '/d/C%2B%2B/badge/7/ac-image?v=a%20%26%20b');
+        assert.equal(getBadgeAcCelebrationUrl('Python', { _id: 7 }), '');
+        assert.equal(getBadgeAcCelebrationUrl('Python', { ...badge, acImageUpdatedAt: undefined }), '/d/Python/badge/7/ac-image?v=');
+        assert.notEqual(getBadgeAcCelebrationUrl('C++', badge), getBadgeAcDisplayUrl('C++', badge));
+    });
+
     it('is domain-scoped, versioned, uses only the two dimensions, and has no URL for missing artwork', () => {
         const badge = { _id: 7, acImagePath: 'private-storage.png', acImageUpdatedAt: 'a & b' };
         assert.equal(getBadgeAcDisplayUrl('C++', badge), '/d/C%2B%2B/badge/7/ac-image?size=384&v=a%20%26%20b');

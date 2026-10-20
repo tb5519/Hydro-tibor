@@ -422,9 +422,25 @@ export async function apply(ctx: Context) {
     ctx.interval(() => cleanEditorThemeDrafts(ctx).catch((error) => ctx.logger.warn('Editor theme draft cleanup failed: %s', error.message)), 60 * 60 * 1000);
     ctx.injectUI('ControlPanel', 'manage_editor_themes', { before: 'manage_setting' }, (handler) => handler.user._id === ownerUid);
     ctx.injectUI('DomainManage', 'domain_editor_themes', { family: 'Properties', icon: 'info', before: 'domain_edit' }, PERM.PERM_EDIT_DOMAIN);
-    ctx.on('handler/after', (handler: Handler) => {
+    ctx.on('handler/after', async (handler: Handler) => {
         if (handler.response.template && !handler.request.json && handler.user?._id > 0) {
             handler.UiContext.codeEditorThemesUrl = handler.url('code_editor_themes', { domainId: handler.domain._id });
+            if (!['problem_detail.html', 'online_ide.html'].includes(handler.response.template)) return;
+            // Resolve the account's current permissions with this HTML response,
+            // so a new problem can restore its theme before mounting the editor.
+            // Never let a shared page cache reuse another student's catalog.
+            privateResponse(handler);
+            try {
+                handler.UiContext.codeEditorThemeCatalog = {
+                    ...await getEditorThemeCatalog(handler),
+                    accountId: handler.user._id,
+                    scope: handler.UiContext.codeEditorThemesUrl,
+                };
+            } catch (error) {
+                // Theme decoration must not prevent students opening a problem.
+                // The browser can still retry the existing catalog endpoint.
+                ctx.logger.warn('Unable to prepare editor theme for uid %s: %o', handler.user._id, error);
+            }
         }
     });
 }

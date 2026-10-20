@@ -298,6 +298,121 @@ function draftDatabase(fixtures) {
         };
     } };
 }
+
+async function bootstrapHarness(fixtures = {}) {
+    let after;
+    const warnings = [];
+    const ctx = {
+        db: draftDatabase(fixtures),
+        Route() {}, interval() {}, injectUI() {},
+        on(event, listener) { if (event === 'handler/after') after = listener; },
+        logger: { warn: (...args) => warnings.push(args) },
+    };
+    await handlerModule.apply(ctx);
+    return {
+        ctx, after, warnings,
+        handler(options = {}) {
+            const headers = new Map();
+            return {
+                ctx, domain: { _id: 'A', workspaceId: 'school' },
+                user: { _id: 11, scratchpadTheme: 'ocean', hasPriv: () => false, hasPerm: () => false },
+                request: {}, UiContext: {},
+                response: { template: 'problem_detail.html', addHeader: (key, value) => headers.set(key, value) },
+                url: (name, args) => `/d/${args.domainId}/${name === 'code_editor_themes' ? 'code-editor/themes' : 'theme-asset'}`,
+                headers, ...options,
+            };
+        },
+    };
+}
+
+it('bootstraps only fresh account- and classroom-scoped editor themes into private editor HTML', async () => {
+    const fixtures = {
+        'editor.theme': [
+            { _id: 'domain:A:7', scope: 'domain:A', badgeId: 7, version: 'v7', design: {}, assets: [] },
+            { _id: 'domain:B:8', scope: 'domain:B', badgeId: 8, version: 'v8', design: {}, assets: [] },
+        ],
+        'editor.themeSelection': [
+            { _id: 'domain:A:11', themeId: 'badge:7' },
+            { _id: 'domain:B:11', themeId: 'badge:8' },
+        ],
+    };
+    const h = await bootstrapHarness(fixtures);
+    let owned = true;
+    const galleryReads = [];
+    galleryForUser = async (ctx, domain, uid) => {
+        galleryReads.push([domain._id, uid]);
+        const id = domain._id === 'A' ? 7 : 8;
+        return { badgeCards: owned && uid === 11 ? [{ id, title: `徽章 ${id}`, expiresAt: '2099-01-01T00:00:00.000Z' }] : [] };
+    };
+    try {
+        const first = h.handler();
+        await h.after(first);
+        const initial = first.UiContext.codeEditorThemeCatalog;
+        assert.equal(initial.accountId, 11);
+        assert.equal(initial.scope, '/d/A/code-editor/themes');
+        assert.equal(initial.scope, first.UiContext.codeEditorThemesUrl);
+        assert.equal(initial.selectedId, 'badge:7');
+        assert.deepEqual(initial.themes.map((theme) => theme.id), ['badge:7']);
+        assert.equal(first.headers.get('Cache-Control'), 'private, no-store');
+        assert.equal(first.headers.get('Vary'), 'Cookie, Authorization');
+        assert.equal(initial.administratorAccess, false);
+        assert.ok(Number.isFinite(Date.parse(initial.serverNow)));
+
+        const otherDomain = h.handler({ domain: { _id: 'B', workspaceId: 'school' } });
+        otherDomain.response.template = 'online_ide.html';
+        await h.after(otherDomain);
+        assert.equal(otherDomain.UiContext.codeEditorThemeCatalog.scope, '/d/B/code-editor/themes');
+        assert.deepEqual(otherDomain.UiContext.codeEditorThemeCatalog.themes.map((theme) => theme.id), ['badge:8']);
+
+        const otherStudent = h.handler({ user: { _id: 12, scratchpadTheme: 'cloud', hasPriv: () => false, hasPerm: () => false } });
+        await h.after(otherStudent);
+        assert.equal(otherStudent.UiContext.codeEditorThemeCatalog.accountId, 12);
+        assert.equal(otherStudent.UiContext.codeEditorThemeCatalog.selectedId, 'cloud');
+        assert.deepEqual(otherStudent.UiContext.codeEditorThemeCatalog.themes, []);
+
+        owned = false;
+        const nextProblem = h.handler();
+        await h.after(nextProblem);
+        assert.equal(nextProblem.UiContext.codeEditorThemeCatalog.selectedId, 'ocean');
+        assert.deepEqual(nextProblem.UiContext.codeEditorThemeCatalog.themes, []);
+        assert.equal(fixtures['editor.themeSelection'][0].themeId, undefined, 'fresh ownership revocation clears the stale selection');
+        assert.notStrictEqual(nextProblem.UiContext.codeEditorThemeCatalog, initial);
+        assert.deepEqual(galleryReads, [['A', 11], ['B', 11], ['A', 12], ['A', 11]]);
+        assert.equal(h.warnings.length, 0);
+    } finally { galleryForUser = async () => ({ badgeCards: [] }); }
+});
+
+it('does not read theme ownership or embed a catalog for guests, JSON or non-editor pages', async () => {
+    const h = await bootstrapHarness();
+    h.ctx.db = { collection() { throw new Error('Unexpected catalog lookup'); } };
+    for (const options of [
+        { user: { _id: 0 } },
+        { request: { json: true } },
+        { response: { template: 'ranking.html' } },
+        { response: { template: 'homework_detail.html' } },
+        { response: {} },
+    ]) {
+        const handler = h.handler(options);
+        await h.after(handler);
+        assert.equal(handler.UiContext.codeEditorThemeCatalog, undefined);
+    }
+    assert.equal(h.warnings.length, 0, 'ordinary pages should not attempt the expensive optional lookup');
+});
+
+it('keeps the editor page usable and its catalog endpoint available when optional bootstrap fails', async () => {
+    const h = await bootstrapHarness();
+    h.ctx.db = { collection() { throw new Error('Temporary database failure'); } };
+    const handler = h.handler();
+    await h.after(handler);
+    assert.equal(handler.response.template, 'problem_detail.html');
+    assert.equal(handler.UiContext.codeEditorThemeCatalog, undefined);
+    assert.equal(handler.UiContext.codeEditorThemesUrl, '/d/A/code-editor/themes');
+    assert.equal(handler.headers.get('Cache-Control'), 'private, no-store');
+    assert.equal(h.warnings.length, 1);
+    assert.equal(h.warnings[0][1], 11);
+    assert.match(h.warnings[0][2].message, /Temporary database failure/);
+});
+
 it('keeps legacy teacher ownership and modern classroom administrator permissions scoped independently', async () => {
     assert.equal(handlerModule.editorThemeScope({ _id: 'system' }), 'global');
     assert.equal(handlerModule.editorThemeScope({ _id: 'A', workspaceId: 'school' }), 'domain:A');

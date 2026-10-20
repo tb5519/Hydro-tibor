@@ -1,4 +1,4 @@
-import { getBadgeAcDisplayUrl } from './badge_image';
+import { getBadgeAcCelebrationUrl } from './badge_image';
 import workspace from '../model/workspace';
 
 /** Bounded, read-only catalog using the same scope as authorized badge image handlers. */
@@ -12,7 +12,7 @@ export async function getImageWarmupPage(ctx: any, domain: { _id: string; worksp
     const page = rows.slice(0, 8);
     const candidates = page.flatMap((badge) => [
         { path: badge.backgroundImagePath, url: `/d/${encodeURIComponent(domain._id)}/badge/${badge._id}/background?v=${encodeURIComponent(badge.backgroundImageUpdatedAt || '')}` },
-        { path: badge.acImagePath, url: getBadgeAcDisplayUrl(domain._id, badge) },
+        { path: badge.acImagePath, url: getBadgeAcCelebrationUrl(domain._id, badge) },
     ].filter((item) => item.path && item.url));
     const metadata = candidates.length ? await ctx.db.collection('storage').find({
         path: { $in: candidates.map((item) => item.path) }, autoDelete: null,

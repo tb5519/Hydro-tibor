@@ -1,7 +1,7 @@
 import type { Context } from '../context';
 import type { DomainDoc, User } from '../interface';
 import workspace from '../model/workspace';
-import { getBadgeAcDisplayUrl } from './badge_image';
+import { getBadgeAcCelebrationUrl } from './badge_image';
 
 type RouteUrl = (routeName: string, args?: any) => string;
 
@@ -74,9 +74,9 @@ export async function getActiveBadgeAcTheme(
         id: activeBadge._id,
         name: activeBadge.short || activeBadge.title || '徽章主题',
         acImage: activeBadge.acImagePath
-            ? (currentDomain?._id ? getBadgeAcDisplayUrl(currentDomain._id, activeBadge) : routeUrl('badge_ac_image', {
+            ? (currentDomain?._id ? getBadgeAcCelebrationUrl(currentDomain._id, activeBadge) : routeUrl('badge_ac_image', {
                 id: activeBadge._id,
-                query: { size: 384, v: activeBadge.acImageUpdatedAt || '' },
+                query: { v: activeBadge.acImageUpdatedAt || '' },
             }))
             : '',
         themeSound: activeBadge.themeSoundPath

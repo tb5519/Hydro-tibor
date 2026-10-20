@@ -12,6 +12,7 @@ import {
 import {
     deleteBackgroundVideo, isBackgroundVideoPath, redirectBackgroundVideo, storeBackgroundVideo,
 } from 'hydrooj/src/lib/background_video';
+import { getBadgeAcCelebrationUrl } from 'hydrooj/src/lib/badge_image';
 import { getSharedRankingSnapshot } from 'hydrooj/src/lib/shared_ranking';
 import { getUserBadgeGallery } from 'hydrooj/src/lib/user_badge_gallery';
 import DomainModel from 'hydrooj/src/model/domain';
@@ -74,11 +75,7 @@ function getBadgeBackgroundVideoUrl(handler: Handler, badge: Badge, poster = fal
 }
 
 function getBadgeAcImageUrl(handler: Handler, badge: Badge) {
-    if (!badge?.acImagePath) return '';
-    return handler.url('badge_ac_image', {
-        id: badge._id,
-        query: { v: badge.acImageUpdatedAt || '' },
-    });
+    return getBadgeAcCelebrationUrl(handler.domain._id, badge);
 }
 
 function getBadgeThemeSoundUrl(handler: Handler, badge: Badge) {

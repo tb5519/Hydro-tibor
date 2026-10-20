@@ -39,13 +39,14 @@ function fixture(badges) {
     const route = (name, args) => `/${name}/${args.id}?${new URLSearchParams(args.query)}`;
     return { ctx, state, calls, route };
 }
-it('the active celebration uses the exact warmup display URL with encoded domain and current image version', async () => {
+it('the active celebration and warmup use the original artwork URL, never a gallery thumbnail', async () => {
     const badge = { _id: 7, short: '勇者', acImagePath: 'badge/7/ac.png', acImageUpdatedAt: 'v 1&new' };
     const f = fixture([badge]); const domain = { _id: 'C++', workspaceId: 'classroom' };
     const theme = await getActiveBadgeAcTheme(f.ctx, { _id: 42 }, f.route, domain);
     const warm = await getImageWarmupPage(f.ctx, domain, 42);
-    assert.equal(theme.acImage, '/d/C%2B%2B/badge/7/ac-image?size=384&v=v%201%26new');
-    assert.equal(theme.acImage, warm.items[0].url, 'full-size originals cannot bypass the prewarmed display variant');
+    assert.equal(theme.acImage, '/d/C%2B%2B/badge/7/ac-image?v=v%201%26new');
+    assert.equal(theme.acImage, warm.items[0].url, 'prewarming and live playback share the same original image');
+    assert.equal(new URL(theme.acImage, 'https://example.test').searchParams.has('size'), false);
     assert.equal(f.calls[0].query.owner, 42); assert.equal(f.calls[0].query.domainId, 'C++');
     assert.equal(f.calls[1].query.domainId, 'C++');
     badge.acImageUpdatedAt = 'v2';
@@ -58,7 +59,7 @@ it('theme switching follows the current user and preserves legacy badge scope an
         { _id: 9, title: '星空', themeSoundPath: 'badge/9/sound.mp3', themeSoundUpdatedAt: 's2' },
     ]);
     const first = await getActiveBadgeAcTheme(f.ctx, { _id: 42 }, f.route, { _id: 'system' });
-    assert.equal(first.id, 7); assert.equal(first.acImage, '/d/system/badge/7/ac-image?size=384&v=v1');
+    assert.equal(first.id, 7); assert.equal(first.acImage, '/d/system/badge/7/ac-image?v=v1');
     assert.equal(f.calls[0].query.domainId.$exists, false); assert.equal(f.calls[1].query.domainId.$exists, false);
     f.state.selected = 9;
     const switched = await getActiveBadgeAcTheme(f.ctx, { _id: 42 }, f.route, { _id: 'system' });
@@ -66,10 +67,10 @@ it('theme switching follows the current user and preserves legacy badge scope an
     f.state.badgeIds = [];
     assert.equal(await getActiveBadgeAcTheme(f.ctx, { _id: 43 }, f.route, { _id: 'system' }), null);
 });
-it('callers without a domain still request the display variant through their authorized route helper', async () => {
+it('callers without a domain request original artwork through their authorized route helper', async () => {
     const f = fixture([{ _id: 7, acImagePath: 'badge/7/ac.png', acImageUpdatedAt: 'v1' }]);
     const theme = await getActiveBadgeAcTheme(f.ctx, { _id: 42 }, f.route);
-    assert.equal(theme.acImage, '/badge_ac_image/7?size=384&v=v1');
+    assert.equal(theme.acImage, '/badge_ac_image/7?v=v1');
 });
 it('a selected video-only profile theme does not fall back to another badge celebration', async () => {
     const f = fixture([

@@ -24,6 +24,7 @@ function harness(options = {}) {
     const ui = {
         scratchpadThemePreferenceUrl: endpoint,
         ...(options.workspace ? { codeEditorThemesUrl: '/d/class-a/code-editor/themes' } : {}),
+        ...options.ui,
     };
     const mod = { exports: {} };
     const context = {
@@ -403,6 +404,34 @@ describe('scratchpad workspace themes', () => {
         } finally { h.dom.window.close(); }
     });
 
+    it('keeps pinned scope lines opaque and readable above scrolling code in default and image themes', () => {
+        const h = harness();
+        try {
+            for (const builtin of h.themes.SCRATCHPAD_THEMES) {
+                for (const theme of [builtin, { ...builtin, badgeId: 7, overlay: 0.35 }]) {
+                    const monaco = h.themes.scratchpadMonacoTheme(theme);
+                    const reading = h.themes.scratchpadReadingStyle(theme);
+                    const background = monaco.colors['editorStickyScroll.background'];
+                    const hovered = monaco.colors['editorStickyScrollHover.background'];
+                    assert.match(background, /^#[a-f\d]{6}$/i, `${theme.id} pinned rows must fully hide the code beneath`);
+                    assert.match(hovered, /^#[a-f\d]{6}$/i, `${theme.id} hover cannot make pinned rows translucent`);
+                    assert.equal(background, theme.palette.surface);
+                    assert.equal(monaco.colors['peekViewEditorStickyScroll.background'], background);
+                    assert.equal(monaco.colors['editorStickyScroll.border'], theme.palette.border);
+                    assert.equal(monaco.colors['editorStickyScroll.shadow'], '#00000000', 'avoid the bright doubled seam around pinned code');
+                    for (const key of ['text', 'keyword', 'string', 'number']) {
+                        assert.ok(contrast(reading.palette[key], background) >= 4.5, `${theme.id} ${key} pinned text`);
+                        assert.ok(contrast(reading.palette[key], hovered) >= 4.5, `${theme.id} ${key} pinned hover`);
+                    }
+                    if (theme.badgeId) {
+                        assert.equal(monaco.colors['editor.background'], '#00000000', 'the image canvas itself remains transparent');
+                        assert.notEqual(background, monaco.colors['editor.background']);
+                    }
+                }
+            }
+        } finally { h.dom.window.close(); }
+    });
+
     it('accepts only bounded raster control artwork from the verified theme catalog', async () => {
         const controls = {
             run: { assetId: 'button', width: 999, height: 2, hoverAssetId: 'panel', activeAssetId: 'movie' },
@@ -732,8 +761,190 @@ describe('scratchpad workspace themes', () => {
             assert.equal(await restoring, true);
             assert.equal(h.themes.currentScratchpadTheme().id, 'badge:7');
             assert.equal(h.preparations.length, 1);
+            assert.equal(h.transitions.filter((settings) => !settings.immediate).length, 0,
+                'restoring a saved theme must not replay a manual theme-switch animation');
+        } finally { assets.resolve(false); h.dom.window.close(); }
+    });
+
+
+    it('applies automatic catalog version updates atomically without replaying the user switch animation', async () => {
+        let response = catalog();
+        const nextAssets = deferred();
+        const started = deferred();
+        const h = harness({
+            workspace: true, get: () => response,
+            prepare: (theme) => {
+                if (theme.version === 'revision-2') { started.resolve(); return nextAssets.promise; }
+                return Promise.resolve(true);
+            },
+        });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            const displayed = h.themes.currentScratchpadTheme();
+            response = catalog({ themes: [badgeSkin({ version: 'revision-2' })] });
+            const refreshing = h.themes.refreshScratchpadThemes();
+            await started.promise;
+            assert.strictEqual(h.themes.currentScratchpadTheme(), displayed);
+            nextAssets.resolve(true);
+            assert.equal(await refreshing, true);
+            assert.equal(h.themes.currentScratchpadTheme().version, 'revision-2');
+            assert.equal(h.transitions.filter((settings) => !settings.immediate).length, 0);
+        } finally { nextAssets.resolve(false); h.dom.window.close(); }
+    });
+
+    it('keeps a deliberate theme switch animated when a passive refresh arrives while its assets load', async () => {
+        const assets = deferred();
+        const started = deferred();
+        let response = catalog({ selectedId: 'cloud' });
+        let refreshRequested;
+        const h = harness({
+            workspace: true, get: () => { refreshRequested?.resolve(); return response; }, post: () => catalog(),
+            prepare: () => { started.resolve(); return assets.promise; },
+        });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            const selecting = h.themes.selectScratchpadTheme('badge:7');
+            await started.promise;
+            response = catalog();
+            refreshRequested = deferred();
+            const refreshing = h.themes.refreshScratchpadThemes();
+            await refreshRequested.promise;
+            await Promise.resolve();
+            assert.equal(h.themes.currentScratchpadTheme().id, 'cloud');
+            assets.resolve(true);
+            assert.equal(await selecting, true);
+            assert.equal(await refreshing, true);
+            assert.equal(h.themes.currentScratchpadTheme().id, 'badge:7');
             assert.equal(h.transitions.filter((settings) => !settings.immediate).length, 1);
         } finally { assets.resolve(false); h.dom.window.close(); }
+    });
+
+    it("restores another tab's builtin choice directly without replaying a theme-switch fade", async () => {
+        const h = harness({ workspace: true, get: () => catalog({ selectedId: 'cloud' }) });
+        let release;
+        try {
+            await h.themes.refreshScratchpadThemes();
+            release = h.themes.subscribeScratchpadTheme(() => {});
+            const key = h.themes.scratchpadThemeStorageKey(11, h.ui.codeEditorThemesUrl);
+            h.dom.window.dispatchEvent(new h.dom.window.StorageEvent('storage', { key, newValue: 'mist' }));
+            assert.equal(h.themes.currentScratchpadTheme().id, 'mist');
+            assert.equal(h.transitions.filter((settings) => !settings.immediate).length, 0);
+        } finally { release?.(); h.dom.window.close(); }
+    });
+
+
+    it('mounts with the complete page-verified theme after bootstrap preparation, without a fallback frame or duplicate initial GET', async () => {
+        const assets = deferred();
+        const started = deferred();
+        const h = harness({
+            workspace: true,
+            ui: { codeEditorThemeCatalog: { ...catalog(), accountId: 11, scope: '/d/class-a/code-editor/themes' } },
+            get: () => catalog(),
+            prepare: () => { started.resolve(); return assets.promise; },
+        });
+        let release;
+        try {
+            const first = h.themes.initializeScratchpadTheme();
+            const second = h.themes.initializeScratchpadTheme();
+            assert.strictEqual(first, second, 'module preloading and opening the editor share one initialization');
+            await started.promise;
+            assert.equal(h.gets.length, 0, 'the current page already contains a server-verified catalog');
+            assets.resolve(true);
+            assert.equal(await first, true);
+            // No theme consumer has rendered yet: its first snapshot is the
+            // prepared badge, not the temporary builtin used during fetching.
+            assert.equal(h.themes.currentScratchpadTheme().id, 'badge:7');
+            assert.equal(h.preparations.length, 1);
+            assert.equal(h.transitions.filter((settings) => !settings.immediate).length, 0);
+            release = h.themes.subscribeScratchpadTheme(() => {});
+            await Promise.resolve();
+            assert.equal(h.gets.length, 0, 'mounting consumers must not repeat the initial verification');
+            assert.equal(await h.themes.initializeScratchpadTheme(), true);
+            assert.equal(h.preparations.length, 1);
+        } finally { assets.resolve(false); release?.(); h.dom.window.close(); }
+    });
+
+    it('rejects page bootstrap catalogs belonging to another account or domain and verifies the active context instead', async () => {
+        for (const mismatch of [
+            { accountId: 22, scope: '/d/class-a/code-editor/themes' },
+            { accountId: 11, scope: '/d/class-b/code-editor/themes' },
+            { accountId: '11', scope: '/d/class-a/code-editor/themes' },
+            { accountId: 11 },
+        ]) {
+            const h = harness({
+                workspace: true,
+                ui: { codeEditorThemeCatalog: { ...catalog(), ...mismatch } },
+                get: () => catalog({ themes: [], selectedId: 'ocean' }),
+            });
+            try {
+                assert.equal(await h.themes.initializeScratchpadTheme(), true);
+                assert.equal(h.gets.length, 1);
+                assert.equal(h.themes.currentScratchpadTheme().id, 'ocean');
+                assert.equal(h.themes.availableScratchpadThemes().length, 4);
+                assert.equal(h.preparations.length, 0);
+            } finally { h.dom.window.close(); }
+        }
+    });
+
+    it('does not restore expired badge ownership from a page bootstrap, even when its selected ID and artwork are cached', async () => {
+        const now = Date.now();
+        const h = harness({
+            workspace: true,
+            ui: { codeEditorThemeCatalog: {
+                ...catalog({ serverNow: now, themes: [badgeSkin({ expiresAt: new Date(now - 1000).toISOString() })] }),
+                accountId: 11, scope: '/d/class-a/code-editor/themes',
+            } },
+        });
+        try {
+            const key = h.themes.scratchpadThemeStorageKey(11, h.ui.codeEditorThemesUrl);
+            h.dom.window.localStorage.setItem(key, 'badge:7');
+            assert.equal(await h.themes.initializeScratchpadTheme(), true);
+            assert.equal(h.themes.currentScratchpadTheme().id, 'ocean');
+            assert.equal(h.themes.availableScratchpadThemes().length, 4);
+            assert.equal(h.preparations.length, 0);
+            assert.equal(h.gets.length, 0);
+            assert.equal(h.transitions.filter((settings) => !settings.immediate).length, 0);
+        } finally { h.dom.window.close(); }
+    });
+
+    it('retries initialization after a failed preload and keeps focus-triggered permission checks active after successful bootstrap', async () => {
+        let available = false;
+        let focusRequested;
+        const h = harness({
+            workspace: true,
+            ui: { codeEditorThemeCatalog: { ...catalog(), accountId: 11, scope: '/d/class-a/code-editor/themes' } },
+            get: () => { focusRequested?.resolve(); return catalog(); },
+            prepare: () => Promise.resolve(available),
+        });
+        let release;
+        try {
+            assert.equal(await h.themes.initializeScratchpadTheme(), false);
+            assert.notEqual(h.themes.currentScratchpadTheme().id, 'badge:7');
+            available = true;
+            assert.equal(await h.themes.initializeScratchpadTheme(), true);
+            assert.equal(h.gets.length, 1, 'retry obtains current permissions instead of replaying stale page payload');
+            assert.equal(h.themes.currentScratchpadTheme().id, 'badge:7');
+            release = h.themes.subscribeScratchpadTheme(() => {});
+            const count = h.gets.length;
+            focusRequested = deferred();
+            h.dom.window.dispatchEvent(new h.dom.window.Event('focus'));
+            await focusRequested.promise;
+            assert.equal(h.gets.length, count + 1);
+        } finally { release?.(); h.dom.window.close(); }
+    });
+
+    it('verifies a normal catalog before first mount when the page has no bootstrap', async () => {
+        const h = harness({ workspace: true, get: () => catalog() });
+        let release;
+        try {
+            assert.equal(await h.themes.initializeScratchpadTheme(), true);
+            assert.equal(h.gets.length, 1);
+            assert.equal(h.themes.currentScratchpadTheme().id, 'badge:7');
+            assert.equal(h.transitions.filter((settings) => !settings.immediate).length, 0);
+            release = h.themes.subscribeScratchpadTheme(() => {});
+            await Promise.resolve();
+            assert.equal(h.gets.length, 1);
+        } finally { release?.(); h.dom.window.close(); }
     });
 
 });

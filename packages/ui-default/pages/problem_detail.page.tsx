@@ -664,11 +664,17 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
       import('../components/socket'),
       import('../components/scratchpad'),
       import('../components/scratchpad/reducers'),
-    ]).then(([socketModule, scratchpadModule, reducerModule]) => ({
-      WebSocket: socketModule.default,
-      ScratchpadApp: scratchpadModule.default,
-      ScratchpadReducer: reducerModule.default,
-    })).catch((err) => {
+      import('../components/scratchpad/themes'),
+    ]).then(async ([socketModule, scratchpadModule, reducerModule, themeModule]) => {
+      // The first mounted editor already has its complete verified theme;
+      // opening another problem must not replay the theme-switch animation.
+      await themeModule.initializeScratchpadTheme();
+      return {
+        WebSocket: socketModule.default,
+        ScratchpadApp: scratchpadModule.default,
+        ScratchpadReducer: reducerModule.default,
+      };
+    }).catch((err) => {
       scratchpadModulesPromise = null;
       throw err;
     });

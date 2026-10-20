@@ -6,6 +6,7 @@ const path = require('node:path');
 const { it } = require('node:test');
 const { PNG } = require('pngjs');
 const { BadgeAcImageCache } = require('../addons/badge-for-hydrooj/ac_image_cache');
+const badgeImage = require('../packages/hydrooj/src/lib/badge_image');
 
 let fixtures = {};
 let cache;
@@ -51,6 +52,7 @@ try {
                 };
             }
             if (request === 'hydrooj/src/model/storage') return storageStub;
+            if (request === 'hydrooj/src/lib/badge_image') return badgeImage;
             if (request === 'hydrooj/src/model/workspace') {
                 return { LEGACY_WORKSPACE_ID: 'tang', resolveDomainWorkspaceId: (domain) => domain?.workspaceId || 'tang' };
             }
@@ -104,6 +106,30 @@ it('returns the original unchanged without a size or with non-whitelisted sizes'
     await arbitrary.get('Python', 1, 999);
     assert.strictEqual(arbitrary.response.body, fixtures.images['global.png'].bytes);
     assert.equal(cacheCalls, 0);
+});
+
+it('the saved administrator preview and student celebration both deliver the same full-resolution PNG bytes', async (test) => {
+    await setup(test);
+    const original = PNG.sync.write({ width: 2048, height: 1536, data: Buffer.alloc(2048 * 1536 * 4, 128) });
+    fixtures.images['global.png'] = {
+        bytes: original, meta: { size: original.length, 'Content-Type': 'image/png', etag: 'retina-original' },
+    };
+    const admin = new addon.BadgeEditHandler({ _id: 'C++' });
+    admin.request.path = '/manage/badge/1/edit';
+    await admin.get('C++', 1);
+    const studentImageUrl = badgeImage.getBadgeAcCelebrationUrl('C++', fixtures.badges[0]);
+    assert.equal(admin.response.body.badge.acImage, studentImageUrl);
+    const url = new URL(studentImageUrl, 'https://example.test');
+    assert.equal(url.searchParams.has('size'), false, 'live effects never use the 384/768 thumbnail variants');
+    for (const role of ['administrator', 'student']) {
+        const image = new addon.BadgeAcImageHandler({ _id: 'C++' });
+        await image.get('C++', 1); // eslint-disable-line no-await-in-loop
+        assert.strictEqual(image.response.body, original, `${role} receives the uploaded bytes without resampling`);
+        const decoded = PNG.sync.read(image.response.body);
+        assert.deepEqual([decoded.width, decoded.height, decoded.data[3]], [2048, 1536, 128]);
+        assert.equal(deliveryCalls.at(-1).variant, undefined);
+    }
+    assert.equal(cacheCalls, 0, 'the PNG thumbnail worker is never part of AC playback');
 });
 
 it('returns real 384/768 PNGs with transparency and short private caching for versioned display variants', async (test) => {
