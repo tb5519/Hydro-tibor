@@ -651,16 +651,32 @@ describe('footer honor wall UI', () => {
         } finally { ui.dispose(); }
     });
 
-    it('prefers the uploaded badge icon while keeping AC artwork as the image-less-icon fallback', async () => {
+    it('always uses the AC thumbnail when the same badge also has an uploaded small-label icon', async () => {
         const ui = fixture();
         try {
             ui.intersect();
-            ui.finish({ badges: [badge(7, { iconUrl: '/badge/7/icon-image?v=2' }), badge(8)] });
+            ui.finish({ badges: [badge(7, {
+                iconUrl: '/badge/7/icon-image?v=2', acImage: '/badge/7/ac-image?size=384&v=ac-v1',
+            }), badge(8)] });
             await eventually(() => ui.grid.children.length === 2);
             const images = [...ui.grid.querySelectorAll('.honor-wall__ac-image')];
-            assert.equal(images[0].getAttribute('src') || images[0].dataset.honorSrc, 'http://localhost/badge/7/icon-image?v=2');
-            assert.match(images[0].alt, /徽章小图/);
+            assert.equal(images[0].getAttribute('src') || images[0].dataset.honorSrc, 'http://localhost/badge/7/ac-image?size=384&v=ac-v1');
+            assert.match(images[0].alt, /AC 徽章展示图/);
             assert.equal(images[1].getAttribute('src') || images[1].dataset.honorSrc, 'http://localhost/badge/8/ac.png');
+            assert.equal(ui.grid.querySelector('img[src*="icon-image"], img[data-honor-src*="icon-image"]'), null);
+        } finally { ui.dispose(); }
+    });
+
+    it('never substitutes small-label artwork when an AC thumbnail fails to load', async () => {
+        const ui = fixture();
+        try {
+            ui.finish({ badges: [badge(7, { iconUrl: '/badge/7/icon-image?v=2' })] });
+            await eventually(() => ui.grid.children.length === 1);
+            const image = ui.grid.querySelector('.honor-wall__ac-image');
+            image.dispatchEvent(new ui.window.Event('error'));
+            assert.equal(ui.grid.querySelector('.honor-wall__ac-image'), null);
+            assert.equal(ui.grid.querySelector('img[src*="icon-image"], img[data-honor-src*="icon-image"]'), null);
+            assert.equal(ui.grid.firstElementChild.classList.contains('is-art-ready'), false);
         } finally { ui.dispose(); }
     });
 
@@ -763,7 +779,7 @@ describe('footer honor wall UI', () => {
     it('never creates a yellow fallback for a badge with no AC image', async () => {
         const ui = fixture();
         try {
-            ui.finish({ badges: [badge(1, { acImage: '' })] });
+            ui.finish({ badges: [badge(1, { acImage: '', iconUrl: '/badge/1/icon-image?v=2' })] });
             await eventually(() => ui.grid.children.length === 1);
             assert.equal(ui.grid.querySelector('.honor-wall__ac-image, .honor-wall__art-fallback'), null);
             assert.equal(ui.grid.firstElementChild.classList.contains('is-art-ready'), false);

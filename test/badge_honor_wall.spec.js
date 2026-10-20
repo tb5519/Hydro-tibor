@@ -128,6 +128,31 @@ describe('honor wall effective ownership', () => {
 });
 
 describe('honor wall scope, public data, and ordering', () => {
+    it('uses only AC thumbnails on the honor wall even when separate small-label artwork exists', async () => {
+        const fixtures = {
+            badge: [badge(1, { title: '暗影骑士',
+                iconImagePath: 'badge/1/badge-icon-small-label.png', iconImageUpdatedAt: 'label-v2',
+                acImagePath: 'badge/1/ac-effect-large-artwork.png', acImageUpdatedAt: 'ac-v1' }),
+            badge(2, { title: '小丑皇', iconImagePath: 'badge/2/badge-icon-small-label.png', iconImageUpdatedAt: 'label-only' })],
+            userBadge: [{ owner: 10, badgeId: 1 }, { owner: 10, badgeId: 2 }],
+            user: [account(10)],
+        };
+        const original = structuredClone(fixtures);
+        const ctx = context(fixtures);
+        const result = await honor.getBadgeHonorWall(ctx, { _id: 'Python' }, now);
+        const full = result.badges.find((item) => item.id === 1);
+        assert.equal(full.acImage, '/d/Python/badge/1/ac-image?size=384&v=ac-v1');
+        assert.equal(Object.hasOwn(full, 'iconUrl'), false, 'small label artwork is not part of the honor-wall contract');
+        const labelOnly = result.badges.find((item) => item.id === 2);
+        assert.equal(Object.hasOwn(labelOnly, 'iconUrl'), false);
+        assert.equal(labelOnly.acImage, '', 'label art must never be silently promoted to AC artwork');
+        assert.deepEqual(fixtures, original, 'honor-wall reads never migrate, swap or overwrite stored image fields');
+        const projection = ctx.queries.find((query) => query.name === 'badge').projection;
+        assert.equal(projection.iconImagePath, undefined);
+        assert.equal(projection.iconImageUpdatedAt, undefined);
+        assert.equal(projection.acImagePath, 1);
+    });
+
     it('keeps Tang badges global but excludes modern workspace accounts, staff, admins, judges, and banned users', async () => {
         const uids = [1, 2, 10, 11, 12, 13, 90];
         const ctx = context({

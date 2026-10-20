@@ -79,6 +79,7 @@ const storage = {
     async put(filename, bytes, owner) {
         state.uploads.push({ filename, bytes, owner });
         if (state.storageFailure) throw new Error('OSS unavailable');
+        state.images[filename] = Buffer.isBuffer(bytes) ? bytes : await fs.readFile(bytes);
     },
     async del(paths) { state.removals.push(...paths); },
     async getMeta(filename) { state.reads.push(filename); return { size: 99, 'Content-Type': 'image/png' }; },
@@ -150,6 +151,55 @@ it('stores the independent icon, keeps AC bytes untouched, cleans replaced objec
     assert.equal(state.badge.iconImagePath, state.uploads[0].filename);
     assert.equal(state.invalidated, 1);
     assert.deepEqual(state.updates[0].query.domainId, { $exists: false });
+});
+
+it('simultaneous small-icon and AC uploads retain separate storage fields, versions and exact delivered bytes', async (test) => {
+    setup({ iconImagePath: 'old-icon.png', iconImageUpdatedAt: 'old-icon-version' });
+    const iconBytes = png(320, 96);
+    const acBytes = png(1200, 1200);
+    const handler = new addon.BadgeEditHandler();
+    handler.request.files.iconImage = await uploadFile(test, iconBytes, 'label.png');
+    handler.request.files.acImage = await uploadFile(test, acBytes, 'celebration.png');
+    await update(handler);
+    const saved = { ...state.badge };
+    assert.match(saved.iconImagePath, /^badge\/7\/badge-icon-/);
+    assert.match(saved.acImagePath, /^badge\/7\/ac-effect-/);
+    assert.equal(typeof saved.iconImageUpdatedAt, 'string');
+    assert.equal(typeof saved.acImageUpdatedAt, 'string');
+    assert.notEqual(saved.iconImageUpdatedAt, 'old-icon-version');
+    assert.notEqual(saved.acImageUpdatedAt, 'unchanged');
+    assert.equal(state.updates[0].update.$set.iconImagePath, saved.iconImagePath);
+    assert.equal(state.updates[0].update.$set.acImagePath, saved.acImagePath);
+    assert.deepEqual(state.removals.sort(), ['old-icon.png', 'original-ac.png']);
+    const icon = new addon.BadgeIconImageHandler();
+    const ac = new addon.BadgeAcImageHandler();
+    await icon.get('Python', 7);
+    await ac.get('Python', 7);
+    assert.deepEqual(icon.response.body, iconBytes);
+    assert.deepEqual(ac.response.body, acBytes);
+    assert.equal(PNG.sync.read(icon.response.body).width, 320);
+    assert.equal(PNG.sync.read(ac.response.body).width, 1200);
+    assert.deepEqual(state.delivery.map((item) => item.path), [saved.iconImagePath, saved.acImagePath]);
+    assert.equal(badgeImage.getBadgeAcCelebrationUrl('Python', saved).includes('/icon-image'), false);
+    assert.equal(badgeImage.getBadgeIconUrl('Python', saved).includes('/ac-image'), false);
+    assert.deepEqual(state.badge, saved, 'delivery and URL generation never rewrite saved artwork');
+});
+
+it('replacing or removing only AC artwork never replaces or removes the small-icon label', async (test) => {
+    setup({ iconImagePath: 'label.png', iconImageUpdatedAt: 'label-version' });
+    const handler = new addon.BadgeEditHandler();
+    handler.request.files.acImage = await uploadFile(test, png(600, 800), 'new-ac.png');
+    await update(handler);
+    assert.equal(state.badge.iconImagePath, 'label.png');
+    assert.equal(state.badge.iconImageUpdatedAt, 'label-version');
+    assert.deepEqual(state.removals, ['original-ac.png']);
+    const acPath = state.badge.acImagePath;
+    await new addon.BadgeEditHandler().postUpdate('Python', 7, 'Badge', 'Badge title', '123456', 'ffffff', 'Content', [], false, true, false, false);
+    assert.equal(state.badge.acImagePath, undefined);
+    assert.equal(state.badge.acImageUpdatedAt, undefined);
+    assert.equal(state.badge.iconImagePath, 'label.png');
+    assert.equal(state.badge.iconImageUpdatedAt, 'label-version');
+    assert.deepEqual(state.removals, ['original-ac.png', acPath]);
 });
 
 it('removal restores the original badge label without removing AC effects', async () => {

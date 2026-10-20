@@ -3,7 +3,7 @@ import type { DomainDoc } from '../interface';
 import { PRIV } from '../model/builtin';
 import workspace from '../model/workspace';
 import avatar from './avatar';
-import { getBadgeAcDisplayUrl, getBadgeIconUrl } from './badge_image';
+import { getBadgeAcDisplayUrl } from './badge_image';
 
 export interface HonorWallStudent {
     uid: number;
@@ -16,7 +16,6 @@ export interface HonorWallBadge {
     id: number;
     name: string;
     acImage: string;
-    iconUrl: string;
     badgeHref: string;
     backgroundColor: string;
     fontColor: string;
@@ -109,7 +108,7 @@ export async function getBadgeHonorWall(
     const db = ctx.db as any;
     const badges: any[] = await db.collection('badge').find(scope).project({
         _id: 1, short: 1, title: 1, users: 1, createAt: 1,
-        iconImagePath: 1, iconImageUpdatedAt: 1, acImagePath: 1, acImageUpdatedAt: 1, backgroundColor: 1, fontColor: 1,
+        acImagePath: 1, acImageUpdatedAt: 1, backgroundColor: 1, fontColor: 1,
     }).toArray();
     if (!badges.length) return { badges: [] };
     const userBadges: any[] = await db.collection('userBadge').find({
@@ -161,7 +160,6 @@ export async function getBadgeHonorWall(
         result.push({
             id: badge._id,
             name: `${badge.short || badge.title || badge._id}`,
-            iconUrl: getBadgeIconUrl(currentDomain._id, badge),
             acImage: getBadgeAcDisplayUrl(currentDomain._id, badge),
             badgeHref: `${domainPrefix}/badge/${badge._id}`,
             backgroundColor: color(badge.backgroundColor, 'e5edf5'),
