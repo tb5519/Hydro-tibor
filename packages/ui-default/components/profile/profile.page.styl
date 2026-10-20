@@ -24,6 +24,7 @@ for key, _ in $badge-bg-color
 
 // Display the uploaded badge artwork at its own shape, without a capsule or cropping.
 .user-profile-badge[data-badge-icon-state='ready']
+  position: relative
   display: inline-flex !important
   align-items: center
   justify-content: center
@@ -60,6 +61,51 @@ for key, _ in $badge-bg-color
 
 img[data-badge-icon][hidden]
   display: none !important
+
+// The white bitmap keeps the uploaded image's alpha. Only this local gradient
+// moves, so CDN redirects never need CORS permission for an external mask.
+.user-profile-badge > img[data-badge-icon-shine]
+  display: none !important
+  position: absolute !important
+  inset: 0
+  z-index: 1
+  width: 100% !important
+  height: 100% !important
+  max-width: none !important
+  margin: 0 !important
+  padding: 0 !important
+  border: 0 !important
+  border-radius: 0 !important
+  object-fit: contain
+  object-position: center
+  pointer-events: none
+  user-select: none
+
+@supports (mask-image: linear-gradient(white, transparent)) or (-webkit-mask-image: linear-gradient(white, transparent))
+  .user-profile-badge[data-badge-icon-state='ready'] > img[data-badge-icon-shine]
+    display: block !important
+    filter: brightness(0) invert(1)
+    opacity: .68
+    -webkit-mask-image: linear-gradient(110deg, transparent 43%, rgba(0, 0, 0, .12) 46%, black 50%, rgba(0, 0, 0, .12) 54%, transparent 57%)
+    mask-image: linear-gradient(110deg, transparent 43%, rgba(0, 0, 0, .12) 46%, black 50%, rgba(0, 0, 0, .12) 54%, transparent 57%)
+    -webkit-mask-size: 300% 100%
+    mask-size: 300% 100%
+    -webkit-mask-repeat: no-repeat
+    mask-repeat: no-repeat
+    animation: badge-icon-sweep 4.8s ease-in-out infinite
+
+@keyframes badge-icon-sweep
+  0%, 44%
+    -webkit-mask-position: 150% 0
+    mask-position: 150% 0
+  76%, 100%
+    -webkit-mask-position: -50% 0
+    mask-position: -50% 0
+
+@media (prefers-reduced-motion: reduce)
+  .user-profile-badge > img[data-badge-icon-shine]
+    display: none !important
+    animation: none !important
 
 @media (max-width: 767px)
   .user-profile-badge[data-badge-icon-state='ready']
