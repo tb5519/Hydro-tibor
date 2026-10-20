@@ -149,7 +149,7 @@
                             title="{{ '当前主题：' + badge.displayName if badge.id == badgeProfileBackground.selectedId else '点击切换为 ' + badge.displayName + ' 主题' }}"
                             data-tooltip="{{ '当前主题：' + badge.displayName if badge.id == badgeProfileBackground.selectedId else '点击切换为 ' + badge.displayName + ' 主题' }}"
                             {% if badge.id == badgeProfileBackground.selectedId %}aria-current="true"{% endif %}
-                          >{{ badge.displayName }}</button>
+                          >{{ user.render_badge_icon(badge.iconUrl, badge.displayName) }}</button>
                         </form>
                       {% else %}
                         {{ user.render_custom_badge_item(badge) }}

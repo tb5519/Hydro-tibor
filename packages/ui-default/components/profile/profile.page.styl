@@ -21,3 +21,46 @@ for key, _ in $badge-bg-color
   .badge--{key}
     background-color: $badge-bg-color[key] !important
     color: $badge-text-color[key] !important
+
+// Display the uploaded badge artwork at its own shape, without a capsule or cropping.
+.user-profile-badge[data-badge-icon-state='ready']
+  display: inline-flex !important
+  align-items: center
+  justify-content: center
+  flex: 0 1 auto
+  max-width: min(var(--badge-icon-max-width, 180px), 100%) !important
+  height: var(--badge-icon-height, 26px)
+  min-height: 0
+  padding: 0 !important
+  border: 0 !important
+  border-radius: 0 !important
+  background: transparent !important
+  box-shadow: none !important
+  overflow: visible !important
+  vertical-align: middle
+
+  > [data-badge-icon-fallback]
+    display: none !important
+
+  > img[data-badge-icon]
+    display: block !important
+    position: static !important
+    width: auto !important
+    height: var(--badge-icon-height, 26px) !important
+    max-width: 100% !important
+    margin: 0 !important
+    padding: 0 !important
+    border: 0 !important
+    border-radius: 0 !important
+    object-fit: contain
+    object-position: center
+
+  &:not(.ui-v2-user-detail-badge-row__selector)::after
+    display: none !important
+
+img[data-badge-icon][hidden]
+  display: none !important
+
+@media (max-width: 767px)
+  .user-profile-badge[data-badge-icon-state='ready']
+    max-width: min(132px, 100%) !important

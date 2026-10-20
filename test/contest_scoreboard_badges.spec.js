@@ -386,7 +386,7 @@ describe('shared ranking badge effect contract', () => {
 
     it('is shared by ranking and every scoreboard, including reduced-motion badge shine', () => {
         assert.match(ranking, /include\s+"partials\/ranking_badge_effects\.html"/);
-        assert.match(ranking, /<table class="data-table ranking-table ranking-badge-effects">/);
+        assert.match(ranking + fs.readFileSync(path.join(workspaceRoot, 'packages/ui-default/templates/partials/ranking_content.html'), 'utf8'), /<table class="data-table ranking-table ranking-badge-effects">/);
         assert.match(scoreboardStyles, /include\s+"partials\/ranking_badge_effects\.html"/);
         assert.match(scoreboard, /include\s+"partials\/scoreboard_badge_styles\.html"/);
         assert.match(scoreboard, /contest-scoreboard-table ranking-badge-effects/);

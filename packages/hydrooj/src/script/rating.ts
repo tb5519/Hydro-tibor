@@ -8,6 +8,7 @@ import { Udoc } from '../interface';
 import difficultyAlgorithm from '../lib/difficulty';
 import { getOjDomainQuery, isScratchDomain } from '../lib/domain_type';
 import { invalidateSharedRankingSnapshot } from '../lib/shared_ranking';
+import { applyIncrementalRanking, publishRankingUpdate, publicRankingStatuses, withRankingRebuild } from '../lib/incremental_ranking';
 import { PRIV, STATUS } from '../model/builtin';
 import domain from '../model/domain';
 import problem from '../model/problem';
@@ -56,8 +57,8 @@ export const RpTypes: Record<string, RpDef> = {
                         score: { $gt: 0 },
                     },
                 );
-                let psdoc;
-                while (psdoc = await cursor.next()) {
+                const statuses = await publicRankingStatuses(await cursor.toArray());
+                for (const psdoc of statuses) {
                     const scoreRatio = min(psdoc.score, 100) / 100;
                     solved[psdoc.uid] += scoreRatio;
                 }
@@ -192,7 +193,7 @@ async function runAcrossDomains(domainIds: string[], report: Report) {
     if (bulk.batches.length) await bulk.execute();
 }
 
-export async function run({ domainId }, report: Report) {
+async function runUnlocked({ domainId }, report: Report) {
     if (!domainId) {
         const domains = await domain.getMulti(getOjDomainQuery()).toArray();
         await report({ message: `Found ${domains.length} domains` });
@@ -233,7 +234,19 @@ export async function run({ domainId }, report: Report) {
     return true;
 }
 
-export const apply = (ctx) => ctx.addScript(
-    'rp', 'Calculate RP for a domain and refresh shared rankings when enabled.',
-    Schema.object({ domainId: Schema.string() }), run,
-);
+export async function run(args: { domainId?: string }, report: Report) {
+    return withRankingRebuild(async () => {
+        const result = await runUnlocked({ domainId: args.domainId }, report);
+        const domainIds = (await domain.getMulti(getOjDomainQuery()).project<{ _id: string }>({ _id: 1 }).toArray()).map((item) => item._id);
+        await publishRankingUpdate(domainIds);
+        return result;
+    });
+}
+
+export async function apply(ctx) {
+    await applyIncrementalRanking(ctx);
+    ctx.addScript(
+        'rp', 'Calculate RP for a domain and refresh shared rankings when enabled.',
+        Schema.object({ domainId: Schema.string() }), run,
+    );
+}

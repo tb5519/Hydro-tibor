@@ -208,87 +208,8 @@
   <div class="medium-12 columns">
     <div class="section">
       <div class="section__body no-padding">
-        <div data-fragment-id="ranking">
-          {% if not udocs.length %}
-            {% if page == 1 %}
-              <blockquote class="note">{{ _('The ranking page is not updated realtime.') }}</blockquote>
-            {% endif %}
-          {{ nothing.render('Sorry, there are no users in this domain.') }}
-          {% else %}
-          <table class="data-table ranking-table ranking-badge-effects">
-            <colgroup>
-              <col class="col--rank">
-              <col class="col--user">
-              <col class="col--rp">
-              {% if rankingMode != 'all' %}
-                {% for key, def in model.rp %}
-                  {% if not def.hidden %}
-                    <col class="col--detail rp-{{ key }}">
-                  {% endif %}
-                {% endfor %}
-              {% endif %}
-              <col class="col--ac">
-              <col class="col--bio">
-            </colgroup>
-            <thead>
-              <tr>
-                <th class="col--rank">{{ _('Rank') }}</th>
-                <th class="col--user">{{ _('Username') }}</th>
-                <th class="col--rp">{{ _('RP') }}</th>
-                {% if rankingMode != 'all' %}
-                  {% for key, def in model.rp %}
-                    {% if not def.hidden %}
-                      <th class="col--detail rp-{{ key }}">{{ _('rpDetailText_' + key) }}</th>
-                    {% endif %}
-                  {% endfor %}
-                {% endif %}
-                <th class="col--ac">{{ _('Accept') }}</th>
-                <th class="col--bio">{{ _('Bio') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
-              {% set currentOwnedBadges = handler.user.ownedBadges|default([]) %}
-              {% set currentBadgeCount = currentOwnedBadges|length or (1 if handler.user.badge else 0) %}
-              {% set currentBadgeLevel = 20 if currentBadgeCount > 20 else currentBadgeCount %}
-              <tr{% if currentBadgeCount %} class="ranking-row--badge ranking-row--badge-{{ currentBadgeLevel }}"{% endif %}>
-                <td class="col--rank">{{ handler.user.rank|default('-') }}</td>
-                <td class="col--user">{{ user.render_ranking(handler.user) }}</td>
-                <td class="col--rp">{{ handler.user.rp|default(0)|round(0) }}</td>
-                {% if rankingMode != 'all' %}
-                  {% for key, def in model.rp %}
-                    {% if not def.hidden %}
-                      <td class="col--detail rp-{{ key }}">{{ handler.user.rpInfo[key]|round if (handler.user.rpInfo|default({}))[key] else '-' }}</td>
-                    {% endif %}
-                  {% endfor %}
-                {% endif %}
-                <td class="col--ac">{{ handler.user.nAccept|default(0) }}</td>
-                <td class="col--bio">{{ handler.user.bio|default('')|truncate(64, true)|markdownInline|safe }}</td>
-              </tr>
-              {% endif %}
-              {%- for udoc in udocs -%}
-              {% set rowOwnedBadges = udoc.ownedBadges|default([]) %}
-              {% set rowBadgeCount = rowOwnedBadges|length or (1 if udoc.badge else 0) %}
-              {% set rowBadgeLevel = 20 if rowBadgeCount > 20 else rowBadgeCount %}
-              <tr{% if rowBadgeCount %} class="ranking-row--badge ranking-row--badge-{{ rowBadgeLevel }}"{% endif %}>
-                <td class="col--rank">{{ (page - 1) * model.system.get('pagination.ranking') + loop.index }}</td>
-                <td class="col--user">{{ user.render_ranking(udoc) }}</td>
-                <td class="col--rp">{{ udoc.rp|default(0)|round(0) }}</td>
-                {% if rankingMode != 'all' %}
-                  {% for key, def in model.rp %}
-                    {% if not def.hidden %}
-                      <td class="col--detail rp-{{ key }}">{{ udoc.rpInfo[key]|round if udoc.rpInfo[key] else '-' }}</td>
-                    {% endif %}
-                  {% endfor %}
-                {% endif %}
-                <td class="col--ac">{{ udoc.nAccept|default(0) }}</td>
-                <td class="col--bio">{{ udoc.bio|default('')|truncate(64, true)|markdownInline|safe }}</td>
-              </tr>
-              {%- endfor -%}
-            </tbody>
-          </table>
-          {{ paginator.render(page, upcount) }}
-          {% endif %}
+        <div data-fragment-id="ranking" data-ranking-live="ranking" data-ranking-page="{{ page }}">
+          {% include "partials/ranking_content.html" %}
         </div>
       </div>
     </div>

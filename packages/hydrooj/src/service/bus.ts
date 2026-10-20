@@ -96,6 +96,8 @@ export interface EventMap {
     'training/list': (query: Filter<TrainingDoc>, handler: any) => VoidReturn;
     'training/get': (tdoc: TrainingDoc, handler: any) => VoidReturn;
 
+    'ranking/update': (payload: { uid?: number, domainIds: string[], revision: string }) => VoidReturn;
+
     'record/change': (rdoc: RecordDoc, $set?: any, $push?: any, body?: any) => void;
     'record/judge': (rdoc: RecordDoc, updated: boolean, pdoc?: ProblemDoc, updater?: any) => VoidReturn;
 }

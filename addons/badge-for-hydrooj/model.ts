@@ -27,6 +27,9 @@ export interface Badge {
     backgroundVideoUpdatedAt?: string;
     acImagePath?: string;
     acImageUpdatedAt?: string;
+    /** Independent small artwork for badge labels, never the AC celebration. */
+    iconImagePath?: string;
+    iconImageUpdatedAt?: string;
     themeSoundPath?: string;
     themeSoundUpdatedAt?: string;
     content: string;

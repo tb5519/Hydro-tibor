@@ -59,6 +59,7 @@ import token from '../model/token';
 import * as training from '../model/training';
 import user from '../model/user';
 import workspace from '../model/workspace';
+import { getBadgeIconUrl } from '../lib/badge_image';
 import {
     Handler, param, query, requireSudo, Types,
 } from '../service/server';
@@ -116,6 +117,7 @@ async function attachOwnedBadges(ctx: Context, udocs: any[], currentDomainId: st
         ownedBadges[doc.owner] ||= [];
         ownedBadges[doc.owner].push({
             id: badge._id,
+            iconUrl: getBadgeIconUrl(currentDomainId, badge),
             displayName: badge.short || `${badge._id}`,
             backgroundColor: normalizeBadgeColor(badge.backgroundColor, 'e5edf5'),
             fontColor: normalizeBadgeColor(badge.fontColor, '1f2937'),

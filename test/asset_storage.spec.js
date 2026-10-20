@@ -125,7 +125,8 @@ it('requires an exact media business path and matching MIME/extension, excluding
     for (const filename of [imagePath, 'problem/main/1/additional_file/cat.png', 'contest/main/1/public/cat.png',
         'user/12/.avatar.png', 'user/12/lesson.png', 'domain/main/avatar-12345678-1234-1234-1234-123456789abc.png',
         'domain/main/home-poster-1234.png', 'badge/12/profile-background-123.png',
-        'domain/main/badge/12/ac-effect-123.png', 'system/point-lottery/lottery-prize-123-1-abc.png']) {
+        'domain/main/badge/12/ac-effect-123.png', 'badge/12/badge-icon-123-0123456789abcdef.png',
+        'domain/main/badge/12/badge-icon-123-0123456789abcdef.png', 'system/point-lottery/lottery-prize-123-1-abc.png']) {
         assert.equal(eligibleAsset(filename, 'image/png'), true, filename);
     }
     assert.equal(eligibleAsset(projectPath, 'application/octet-stream'), true);

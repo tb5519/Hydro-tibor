@@ -162,6 +162,10 @@ describe('Scratch exclusion in shared RP calculation and reads', () => {
             '../lib/domain_type': domainType,
             '../lib/difficulty': () => 5,
             '../lib/shared_ranking': { invalidateSharedRankingSnapshot: () => { invalidated++; } },
+            '../lib/incremental_ranking': {
+                withRankingRebuild: (callback) => callback(),
+                publishRankingUpdate: async () => {},
+            },
             '../model/builtin': { PRIV: { PRIV_USER_PROFILE: 1 }, STATUS: { STATUS_ACCEPTED: 1 } },
             '../model/domain': domain,
             '../model/problem': {},
@@ -186,7 +190,7 @@ describe('Scratch exclusion in shared RP calculation and reads', () => {
         // A direct request to recalculate Scratch must still skip local OJ RP.
         await rating.run({ domainId: 'art' }, () => {});
         assert.deepEqual(sourceCalls, [['legacy', 'modern']]);
-        assert.deepEqual(domainQueries, [{ domainType: { $ne: 'scratch' } }]);
+        assert.deepEqual(domainQueries, [{ domainType: { $ne: 'scratch' } }, { domainType: { $ne: 'scratch' } }]);
         assert.equal(invalidated, 1);
         assert.equal(memberships[0].sharedRp, 10);
         assert.equal(memberships[1].sharedRp, 20);

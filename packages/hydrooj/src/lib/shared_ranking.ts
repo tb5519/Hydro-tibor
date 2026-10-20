@@ -20,9 +20,12 @@ interface SharedRankingCache {
 
 const SHARED_RANKING_CACHE_TTL = 5 * 60 * 1000;
 let sharedRankingCache: SharedRankingCache | null = null;
+let snapshotGeneration = 0;
+let inFlight: { key: string; generation: number; promise: Promise<SharedRankingRow[]> } | null = null;
 
 export function invalidateSharedRankingSnapshot() {
     sharedRankingCache = null;
+    snapshotGeneration++;
 }
 
 function getLevelByRank(rank: number, count: number) {
@@ -45,11 +48,21 @@ function assignRanksAndLevels(rows: SharedRankingRow[]) {
 }
 
 export async function getSharedRankingSnapshot() {
+    const generation = snapshotGeneration;
     const domains = await domain.getMulti(getOjDomainQuery()).project<{ _id: string }>({ _id: 1 }).toArray();
     const domainIds = domains.map((ddoc) => ddoc._id).filter(Boolean).sort();
     const cacheKey = domainIds.join('\n');
     if (sharedRankingCache?.key === cacheKey && sharedRankingCache.expiresAt > Date.now()) return sharedRankingCache.rows;
 
+    if (inFlight?.key === cacheKey && inFlight.generation === generation) return inFlight.promise;
+    const build = buildSharedRankingSnapshot(domainIds, cacheKey, generation);
+    inFlight = { key: cacheKey, generation, promise: build };
+    try { return await build; } finally {
+        if (inFlight?.promise === build) inFlight = null;
+    }
+}
+
+async function buildSharedRankingSnapshot(domainIds: string[], cacheKey: string, generation: number) {
     const dudocs = await domain.collUser.find({
         domainId: { $in: domainIds },
         uid: { $gt: 1 },
@@ -66,7 +79,10 @@ export async function getSharedRankingSnapshot() {
     // `sharedRp` is calculated separately from a domain's own RP. Old
     // installations have no such field until the next RP task, so retain a
     // read-only local-RP fallback during the migration.
-    const hasSharedRp = dudocs.some((dudoc) => typeof dudoc.sharedRp === 'number');
+    // During lazy migration, a different student's new shared field must not
+    // zero this student's legacy local fallback. Once a user has a shared value,
+    // ignore that same user's remaining legacy memberships to avoid duplicates.
+    const usersWithSharedRp = new Set(dudocs.filter((dudoc) => typeof dudoc.sharedRp === 'number').map((dudoc) => dudoc.uid));
     const merged = new Map<number, SharedRankingRow>();
     for (const dudoc of dudocs) {
         if (!merged.has(dudoc.uid)) {
@@ -82,6 +98,7 @@ export async function getSharedRankingSnapshot() {
         const row = merged.get(dudoc.uid)!;
         row.totalAccept += dudoc.nAccept || 0;
         row.totalSubmit += dudoc.nSubmit || 0;
+        const hasSharedRp = usersWithSharedRp.has(dudoc.uid);
         const rp = Math.max(0, +(hasSharedRp ? dudoc.sharedRp : dudoc.rp) || 0);
         // The shared calculation is written identically to every membership;
         // select it once instead of adding the same score multiple times.
@@ -104,6 +121,9 @@ export async function getSharedRankingSnapshot() {
             || a.uid - b.uid
         ));
     assignRanksAndLevels(rows);
+    // A judged result may invalidate the snapshot while its Mongo query is
+    // in flight. Never cache (or return) the older result after that update.
+    if (generation !== snapshotGeneration) return getSharedRankingSnapshot();
     sharedRankingCache = {
         key: cacheKey,
         expiresAt: Date.now() + SHARED_RANKING_CACHE_TTL,

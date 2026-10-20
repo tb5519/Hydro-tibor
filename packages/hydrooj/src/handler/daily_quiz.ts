@@ -87,6 +87,13 @@ export class DailyQuizFileHandler extends Handler {
 // eslint-disable-next-line max-len
 const exemptPath = /^\/(?:daily-quiz|student-message\/ack|login|logout|oauth|lostpass|user\/(?:sudo|tfa|avatar-effects)|home\/security|language|fs|asset|lazy|resource|service-worker-config)(?:\/|$)/;
 
+/** Decorative reads keep their own authentication/ownership checks. Never
+ * exempt page navigation, theme selection, uploads or other mutations. */
+export function isDailyQuizMediaRead(path: string, method: string) {
+    if (!['GET', 'HEAD'].includes(method?.toUpperCase())) return false;
+    return /^\/(?:image-warmup|background-video-warmup|learning-media-warmup|code-editor\/themes|code-editor\/theme-asset\/[a-f\d]{32}\/[a-f\d]{24}|home\/(?:poster|video|video-poster)|badge\/[1-9]\d*\/(?:background|ac-image|background-video|background-video-poster|theme-sound|icon-image))$/.test(path);
+}
+
 export async function apply(ctx: Context) {
     ctx.Route('daily_quiz', '/daily-quiz', DailyQuizHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('daily_quiz_status', '/daily-quiz/status', DailyQuizStatusHandler, PRIV.PRIV_USER_PROFILE);
@@ -94,7 +101,8 @@ export async function apply(ctx: Context) {
     // The serial preparation phase follows authentication and workspace checks.
     ctx.on('handler/before-prepare', async (handler: Handler) => {
         if (isTeacherView(handler) || !handler.user?.hasPriv(PRIV.PRIV_USER_PROFILE) || handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM)
-            || handler.user.hasPriv(PRIV.PRIV_JUDGE) || exemptPath.test(handler.request.path)) return undefined;
+            || handler.user.hasPriv(PRIV.PRIV_JUDGE) || exemptPath.test(handler.request.path)
+            || isDailyQuizMediaRead(handler.request.path, handler.request.method)) return undefined;
         const { policy, session } = await quiz.getSession(handler.user._id);
         if (!quiz.presentSession(policy, session).required) return undefined;
         const returnUrl = safeReturnUrl(handler.request.originalPath

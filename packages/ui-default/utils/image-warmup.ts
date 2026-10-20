@@ -85,7 +85,7 @@ export function startImageWarmup(config: WarmupConfig, env: any = window) {
       const response = await env.fetch(url.toString(), { credentials: 'same-origin', priority: 'low', signal: controller.signal });
       if (!response.ok || !/^application\/json/i.test(response.headers.get('Content-Type') || '')) return;
       const data = await response.json();
-      for (const item of (Array.isArray(data.items) ? data.items : []).slice(0, 16)) {
+      for (const item of (Array.isArray(data.items) ? data.items : []).slice(0, 24)) {
         if (!Number.isSafeInteger(item.size) || item.size <= 0 || item.size > 8 * 1024 * 1024) continue;
         if (new URL(item.url, env.location.href).origin !== env.location.origin) continue;
         await idle();

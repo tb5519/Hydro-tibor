@@ -681,6 +681,18 @@
     };
     pill.style.backgroundColor = color(badge.backgroundColor, '#e5edf5');
     pill.style.color = color(badge.fontColor, '#1f2937');
+    if (badge.iconUrl && (/^\/(?!\/)/.test(badge.iconUrl) || /^https?:\/\//i.test(badge.iconUrl))) {
+      var label = document.createElement('span');
+      label.dataset.badgeIconFallback = '';
+      label.textContent = pill.textContent;
+      var icon = document.createElement('img');
+      icon.dataset.badgeIcon = '';
+      icon.src = badge.iconUrl;
+      icon.alt = pill.textContent;
+      icon.decoding = 'async';
+      icon.hidden = true;
+      pill.replaceChildren(label, icon);
+    }
     preview.appendChild(pill);
     if (!badge.image) return;
     var image = document.createElement('img');

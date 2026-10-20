@@ -194,6 +194,21 @@ describe('coordinated scratchpad theme asset preparation', () => {
         assert.equal(await second, true);
     });
 
+    it('can warm static theme artwork without downloading video for reduced-motion preloading', async () => {
+        const h = harness();
+        const selected = theme([{ id: 'movie', type: 'video/mp4', url: '/movie.mp4' }, image('poster'), image('run')], {
+            slots: { background: { assetId: 'movie' } }, posterAssetId: 'poster', controls: { run: { assetId: 'run' } },
+        });
+        const pending = h.prepareScratchpadThemeAssets(selected, { includeVideo: false });
+        assert.equal(h.videos.length, 0);
+        assert.equal(h.images.length, 2);
+        h.images.forEach((entry) => entry.loaded());
+        assert.equal(await pending, true);
+        const active = h.prepareScratchpadThemeAssets(selected);
+        assert.equal(h.videos.length, 1, 'normal editor preparation still waits for video');
+        h.videos[0].loaded(); assert.equal(await active, true);
+    });
+
     it('deduplicates video loads, retries failed video requests and releases timed-out decoders', async () => {
         const h = harness();
         const selected = theme([{ id: 'movie', type: 'video/webm', url: '/movie.webm' }], { slots: { background: { assetId: 'movie' } } });

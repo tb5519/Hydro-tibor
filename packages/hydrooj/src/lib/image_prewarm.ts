@@ -1,4 +1,4 @@
-import { getBadgeAcCelebrationUrl } from './badge_image';
+import { getBadgeAcCelebrationUrl, getBadgeIconUrl } from './badge_image';
 import workspace from '../model/workspace';
 
 /** Bounded, read-only catalog using the same scope as authorized badge image handlers. */
@@ -7,12 +7,14 @@ export async function getImageWarmupPage(ctx: any, domain: { _id: string; worksp
     const legacy = workspace.resolveDomainWorkspaceId(domain) === workspace.LEGACY_WORKSPACE_ID;
     const rows = await ctx.db.collection('badge').find({
         ...(legacy ? { domainId: { $exists: false } } : { domainId: domain._id }), _id: { $gt: after },
-    }).project({ _id: 1, backgroundImagePath: 1, backgroundImageUpdatedAt: 1, acImagePath: 1, acImageUpdatedAt: 1 })
+    }).project({ _id: 1, backgroundImagePath: 1, backgroundImageUpdatedAt: 1, acImagePath: 1, acImageUpdatedAt: 1,
+        iconImagePath: 1, iconImageUpdatedAt: 1 })
         .sort({ _id: 1 }).limit(9).toArray();
     const page = rows.slice(0, 8);
     const candidates = page.flatMap((badge) => [
         { path: badge.backgroundImagePath, url: `/d/${encodeURIComponent(domain._id)}/badge/${badge._id}/background?v=${encodeURIComponent(badge.backgroundImageUpdatedAt || '')}` },
         { path: badge.acImagePath, url: getBadgeAcCelebrationUrl(domain._id, badge) },
+        { path: badge.iconImagePath, url: getBadgeIconUrl(domain._id, badge) },
     ].filter((item) => item.path && item.url));
     const metadata = candidates.length ? await ctx.db.collection('storage').find({
         path: { $in: candidates.map((item) => item.path) }, autoDelete: null,

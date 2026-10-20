@@ -1,0 +1,29 @@
+<style>
+  .badge-icon-upload { margin: 20px 0 24px; padding: 22px; border: 1px solid #dce5f1; border-radius: 14px; background: #f8faff; }
+  .badge-icon-upload__heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 9px; }
+  .badge-icon-upload__heading h2 { margin: 0; color: #22334d; font-size: 16px; font-weight: 650; }
+  .badge-icon-upload__optional { color: #8996ab; font-size: 12px; }
+  .badge-icon-upload__hint { margin: 0 0 16px; color: #73839b; font-size: 13px; line-height: 1.7; }
+  .badge-icon-upload__preview { display: flex; align-items: center; min-height: 76px; margin: 0 0 16px; padding: 20px; border: 1px solid #e0e7f2; border-radius: 10px; background: linear-gradient(135deg, #fff, #eef4fc); }
+  .badge-icon-upload__preview-label { margin-right: 18px; color: #8b98ac; font-size: 12px; }
+  .badge-icon-upload__file { display: block; max-width: 100%; margin: 0; color: #6c7c94; font-size: 13px; }
+  .badge-icon-upload__file::file-selector-button { margin-right: 12px; padding: 9px 15px; border: 1px solid #c9d9f0; border-radius: 8px; background: #fff; color: #2d67b7; cursor: pointer; }
+  .badge-icon-upload__file::file-selector-button:hover { border-color: #82a8db; background: #edf4ff; }
+  .badge-icon-upload__clear { display: block; margin: 14px 0 0; color: #73839b; font-size: 13px; }
+  .badge-icon-upload__status { margin: 12px 0 0; color: #527c9c; font-size: 12px; line-height: 1.7; }
+  .badge-icon-upload__status:empty { display: none; }
+  .badge-icon-upload__status.is-error { color: #c25062; }
+  @media (max-width: 767px) { .badge-icon-upload { padding: 18px; } .badge-icon-upload__preview { padding: 16px; } }
+</style>
+<section class="badge-icon-upload" data-badge-icon-upload data-saved-icon="{{ badge.iconUrl|default('') }}" aria-labelledby="badge-icon-upload-title">
+  <div class="badge-icon-upload__heading"><h2 id="badge-icon-upload-title">徽章小图</h2><span class="badge-icon-upload__optional">选填</span></div>
+  <p class="badge-icon-upload__hint">在排行榜、个人主页等位置用图片展示这枚徽章，保留图片原有形状与比例。未上传时，继续使用原来的文字样式。</p>
+  <div class="badge-icon-upload__preview">
+    <span class="badge-icon-upload__preview-label">显示预览</span>
+    <span class="user-profile-badge v-center user-profile-badge--custom" data-badge-icon-preview style="background-color:{{ badge.backgroundColor|default('#345477') }};color:{{ badge.fontColor|default('#ffffff') }}" title="{{ badge.title|default('') }}"><span data-badge-icon-fallback>{{ badge.short or badge.title }}</span>{% if badge.iconUrl %}<img data-badge-icon src="{{ badge.iconUrl }}" alt="{{ badge.short or badge.title }}" decoding="async" hidden>{% endif %}</span>
+  </div>
+  <input class="badge-icon-upload__file" type="file" name="iconImage" accept="image/png,image/webp,image/jpeg,image/gif" aria-label="上传徽章小图">
+  <p class="badge-icon-upload__hint" style="margin:12px 0 0">支持 PNG、WebP、JPG、GIF，最大 2 MB。推荐透明 PNG；图片可以自带文字，也可以只保留图案。此处不会更换 AC 特效图片。</p>
+  {% if badge.iconUrl %}<label class="checkbox badge-icon-upload__clear"><input type="checkbox" name="removeIconImage" value="true">移除当前小图，恢复文字样式</label>{% endif %}
+  <p class="badge-icon-upload__status" data-badge-icon-upload-status role="status" aria-live="polite"></p>
+</section>

@@ -14,9 +14,9 @@ function load(relative, dependencies = {}) {
     return module.exports;
 }
 const access = load('packages/hydrooj/src/lib/decorative_image_access.ts');
-const { getBadgeAcCelebrationUrl } = load('packages/hydrooj/src/lib/badge_image.ts');
+const { getBadgeAcCelebrationUrl, getBadgeIconUrl } = load('packages/hydrooj/src/lib/badge_image.ts');
 const { getImageWarmupPage } = load('packages/hydrooj/src/lib/image_prewarm.ts', {
-    './badge_image': { getBadgeAcCelebrationUrl }, '../model/workspace': {
+    './badge_image': { getBadgeAcCelebrationUrl, getBadgeIconUrl }, '../model/workspace': {
         resolveDomainWorkspaceId: (domain) => domain.workspaceId || 'tang', LEGACY_WORKSPACE_ID: 'tang',
     },
 });
@@ -35,12 +35,15 @@ it('allows only GET/HEAD selected-poster routes and exact current-domain raster 
 it('catalog skips guest queries, batches active metadata, pages and strips private fields within the exact badge scope', async () => {
     const calls = [];
     const rows = Array.from({ length: 9 }, (_, index) => ({ _id: index + 1, backgroundImagePath: `badge/${index}/profile-background.png`,
-        backgroundImageUpdatedAt: 'version-1', acImagePath: index ? '' : 'badge/1/ac.png', users: [42], title: 'private title' }));
+        backgroundImageUpdatedAt: 'version-1', acImagePath: index ? '' : 'badge/1/ac.png', users: [42], title: 'private title',
+        iconImagePath: `badge/${index}/icon.png`, iconImageUpdatedAt: 'icon-v2' }));
     const ctx = { db: { collection: (name) => ({ find(query) {
         const call = { name, query }; calls.push(call);
         return { project(value) { call.projection = value; return this; }, sort(value) { call.sort = value; return this; },
             limit(value) { call.limit = value; return this; }, async toArray() {
-                return name === 'badge' ? rows : rows.slice(0, 8).map((r) => ({ path: r.backgroundImagePath, size: 100 }));
+                return name === 'badge' ? rows : rows.slice(0, 8).flatMap((r) => [
+                    { path: r.backgroundImagePath, size: 100 }, { path: r.iconImagePath, size: 50 },
+                ]);
             } };
     } }) } };
     assert.equal((await getImageWarmupPage(ctx, { _id: 'class-a', workspaceId: 'workspace-a' }, 0)).items.length, 0);
@@ -51,10 +54,13 @@ it('catalog skips guest queries, batches active metadata, pages and strips priva
     assert.equal(calls[0].query._id.$gt, 3);
     assert.equal(calls[0].limit, 9);
     assert.equal(calls[1].query.autoDelete, null);
-    assert.equal(result.items.length, 8);
+    assert.equal(result.items.length, 16);
     assert.equal(result.next, 8);
     assert.deepEqual(Object.keys(result.items[0]).sort(), ['size', 'url']);
     assert.match(result.items[0].url, /^\/d\/class-a\/badge\/1\/background\?v=version-1$/);
+    assert.equal(result.items.filter((item) => item.url.includes('/icon-image?v=icon-v2')).length, 8);
+    assert.equal(calls[0].projection.iconImagePath, 1);
+    assert.equal(result.items.some((item) => item.url.includes('/ac-image')), false, 'missing AC metadata remains excluded');
     assert.equal(JSON.stringify(result).includes('private title'), false);
     calls.length = 0;
     await getImageWarmupPage(ctx, { _id: 'system' }, 42);
@@ -104,4 +110,18 @@ it('respects mobile save-data, slow networks, hidden pages and navigation cancel
     assert.equal(f.requests.length, 1, '3g warms only the poster');
     const g = environment(); startImageWarmup({ poster: '/home/poster' }, g.env); g.listeners.pagehide(); await settle();
     assert.equal(g.requests.length, 0);
+});
+it('warms all three image variants for an eight-badge catalog page without dropping the final icons', async () => {
+    const f = environment();
+    const items = Array.from({ length: 24 }, (_, index) => ({ url: `/badge/${Math.floor(index / 3) + 1}/image-${index}?v=1`, size: 3 }));
+    f.env.fetch = async (url) => {
+        f.requests.push(url);
+        return url.endsWith('/image-warmup')
+            ? { ok: true, headers: new Headers({ 'Content-Type': 'application/json' }), json: async () => ({ items, next: null }) }
+            : { ok: true, headers: new Headers({ 'Content-Type': 'image/png', 'Content-Length': '3' }), arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer };
+    };
+    startImageWarmup({ catalog: '/image-warmup', scope: '42:class-a' }, f.env);
+    for (let round = 0; round < 6 && f.requests.length < 25; round++) await settle();
+    assert.equal(f.requests.length, 25);
+    assert.equal(f.requests.at(-1), 'https://onebyone.test/badge/8/image-23?v=1');
 });

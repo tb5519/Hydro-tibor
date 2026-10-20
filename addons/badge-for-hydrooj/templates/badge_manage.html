@@ -40,7 +40,7 @@
             <td class="col--id">{{ ddoc._id }}</td>
             <td class="col--title">{{ ddoc.title }}</td>
             <td class="col--preview">
-              <a href="{{ url('badge_detail', { id: ddoc._id }) }}" class="user-profile-badge v-center" style="background-color:{{ ddoc.backgroundColor }};color:{{ ddoc.fontColor }};" data-tooltip="{{ ddoc.title }}">{{ ddoc.short }}</a>
+              <a href="{{ url('badge_detail', { id: ddoc._id }) }}" class="user-profile-badge v-center user-profile-badge--custom" style="background-color:{{ ddoc.backgroundColor }};color:{{ ddoc.fontColor }};" data-tooltip="{{ ddoc.title }}">{{ user.render_badge_icon(ddoc.iconUrl, ddoc.short or ddoc.title) }}</a>
             </td>
             <td class="col--actions">
               <a href="{{ url(editRoute, { id: ddoc._id }) }}" class="typo-a">{{ _('Edit') }}</a>

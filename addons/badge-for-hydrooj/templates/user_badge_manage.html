@@ -62,7 +62,9 @@
         {% for badge in badgeCards %}
         <article class="badge-gallery__card" aria-labelledby="badge-gallery-title-{{ badge.id }}">
           <a class="badge-gallery__art" href="{{ badge.detailUrl }}" aria-label="查看{{ badge.title }}的介绍">
-            {% if badge.acImage %}
+            {% if badge.iconUrl %}
+            <span class="user-profile-badge user-profile-badge--custom badge-gallery__icon" style="--badge-icon-height: 88px; --badge-icon-max-width: 100%; background-color:{{ badge.backgroundColor }};color:{{ badge.fontColor }}">{{ user.render_badge_icon(badge.iconUrl, badge.short or badge.title) }}</span>
+            {% elif badge.acImage %}
             <img src="{{ badge.acImage }}" alt="{{ badge.title }}的 AC 图片" loading="lazy" decoding="async">
             {% else %}
             <span class="badge-gallery__fallback">{{ medal(66) }}<span class="badge-gallery__short"{% if badge.backgroundColor or badge.fontColor %} style="{% if badge.backgroundColor %}background-color:{{ badge.backgroundColor }};{% endif %}{% if badge.fontColor %}color:{{ badge.fontColor }};{% endif %}"{% endif %}>{{ badge.short or badge.title }}</span></span>

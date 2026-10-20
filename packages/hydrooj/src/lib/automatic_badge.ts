@@ -8,6 +8,7 @@ import { BadRequestError, NotFoundError } from '../error';
 import type { DomainDoc } from '../interface';
 import workspace from '../model/workspace';
 import avatar from './avatar';
+import { getBadgeIconUrl } from './badge_image';
 import {
     addLotteryBadgeToUser, removeLotteryBadgeIfUnreferenced, schedulePointLotteryBadgeExpiry,
     selectLotteryBadgeForUser, userBadgeScopeQuery, withPointLotteryBadgeLock,
@@ -114,6 +115,7 @@ export async function getAutomaticBadgeManagement(
             userAvatar: avatar(group.account.avatar || '', 64), userUrl: `/d/${encodeURIComponent(domain._id)}/user/${group.uid}`,
             badgeId: group.badge._id, badgeName: group.badge.title || group.badge.short,
             badgeShort: group.badge.short || group.badge.title,
+            badgeIconUrl: getBadgeIconUrl(domain._id, group.badge),
             backgroundColor: badgeColor(group.badge.backgroundColor, 'eff6ff'),
             fontColor: badgeColor(group.badge.fontColor, '2563eb'), sourcesText: sources.join(' · '),
             grantedAtText: dateText(new Date(awarded)),

@@ -34,6 +34,7 @@ import storage from '../model/storage';
 import system from '../model/system';
 import user from '../model/user';
 import workspace from '../model/workspace';
+import { getBadgeIconUrl } from '../lib/badge_image';
 import {
     Handler, Mutation, param, post, Query, query, Types,
 } from '../service/server';
@@ -74,6 +75,7 @@ async function attachOwnedBadges(ctx: Context, udocs: any[], currentDomainId: st
         ownedBadges[doc.owner] ||= [];
         ownedBadges[doc.owner].push({
             id: badge._id,
+            iconUrl: getBadgeIconUrl(currentDomainId, badge),
             displayName: badge.short || `${badge._id}`,
             backgroundColor: normalizeBadgeColor(badge.backgroundColor, 'e5edf5'),
             fontColor: normalizeBadgeColor(badge.fontColor, '1f2937'),
@@ -140,45 +142,48 @@ async function getSharedRankingRows(ctx: Context, currentUser: any, currentDomai
     };
 }
 
+/** Ranking reads use persisted user aggregates, never rescan problem results. */
+export async function getRankingPage(handler: Handler, domainId: string, page: number, pageSize: number) {
+    if (getDomainRankingMode(handler.domain) === 'all') {
+        const result = await getSharedRankingRows(handler.ctx, handler.user, domainId, page, pageSize);
+        handler.user = result.currentUser;
+        return { udocs: result.udocs, upcount: result.upcount, ucount: result.ucount, page, rankingMode: 'all', pageSize };
+    }
+    const filter = { uid: { $gt: 1 }, rp: { $gt: 0 }, join: true };
+    const [dudocs, ucount, current] = await Promise.all([
+        domain.getMultiUserInDomain(domainId, filter).sort({ rp: -1, nAccept: -1, nSubmit: 1, uid: 1 })
+            .skip((page - 1) * pageSize).limit(pageSize).toArray(),
+        domain.collUser.countDocuments({ domainId, ...filter }),
+        handler.user._id > 1 ? domain.collUser.findOne({ domainId, uid: handler.user._id }) : Promise.resolve(null),
+    ]);
+    const udict = await user.getList(domainId, dudocs.map((dudoc) => dudoc.uid));
+    const udocs = dudocs.map((dudoc) => {
+        const udoc = cloneUserForDisplay(udict[dudoc.uid]);
+        if (!udoc) return null;
+        Object.assign(udoc, {
+            rp: dudoc.rp, nAccept: dudoc.nAccept, nSubmit: dudoc.nSubmit,
+            rank: dudoc.rank, level: dudoc.level, rpInfo: dudoc.rpInfo || {},
+        });
+        return udoc;
+    }).filter(Boolean);
+    handler.user = cloneUserForDisplay(handler.user);
+    if (current) Object.assign(handler.user, {
+        rp: current.rp, nAccept: current.nAccept, nSubmit: current.nSubmit,
+        rank: current.rank, level: current.level, rpInfo: current.rpInfo || {},
+    });
+    const badgeDomainId = workspace.resolveDomainWorkspaceId(handler.domain) === workspace.LEGACY_WORKSPACE_ID
+        ? undefined : domainId;
+    await attachOwnedBadges(handler.ctx, [handler.user, ...udocs], domainId, badgeDomainId);
+    return { udocs, ucount, upcount: Math.ceil(ucount / pageSize), page, pageSize, rankingMode: 'single' };
+}
+
 class DomainRankHandler extends Handler {
     @query('page', Types.PositiveInt, true)
     async get(domainId: string, page = 1) {
-        if (getDomainRankingMode(this.domain) === 'all') {
-            const pageSize = system.get('pagination.ranking') || 100;
-            const {
-                udocs, upcount, ucount, currentUser,
-            } = await getSharedRankingRows(this.ctx, this.user, domainId, page, pageSize);
-            this.user = currentUser;
-            this.response.template = 'ranking.html';
-            this.response.body = {
-                udocs, upcount, ucount, page, rankingMode: 'all',
-            };
-            return;
-        }
-        const [dudocs, upcount, ucount] = await this.paginate(
-            domain.getMultiUserInDomain(domainId, { uid: { $gt: 1 }, rp: { $gt: 0 }, join: true }).sort({ rp: -1 }),
-            page,
-            'ranking',
-        );
-        const udict = await user.getList(domainId, dudocs.map((dudoc) => dudoc.uid));
-        const udocs = dudocs.map((dudoc) => {
-            const udoc = udict[dudoc.uid];
-            udoc.rp = dudoc.rp;
-            udoc.nAccept = dudoc.nAccept;
-            udoc.nSubmit = dudoc.nSubmit;
-            udoc.rank = dudoc.rank;
-            udoc.level = dudoc.level;
-            udoc.rpInfo = dudoc.rpInfo || udoc.rpInfo || {};
-            return udoc;
-        });
-        const badgeDomainId = workspace.resolveDomainWorkspaceId(this.domain) === workspace.LEGACY_WORKSPACE_ID
-            ? undefined
-            : domainId;
-        await attachOwnedBadges(this.ctx, [this.user, ...udocs], domainId, badgeDomainId);
+        this.UiContext.rankingLiveUrl = this.url('ranking_live');
+        this.UiContext.rankingLiveSocket = this.url('ranking_live_conn');
         this.response.template = 'ranking.html';
-        this.response.body = {
-            udocs, upcount, ucount, page,
-        };
+        this.response.body = await getRankingPage(this, domainId, page, system.get('pagination.ranking') || 100);
     }
 }
 

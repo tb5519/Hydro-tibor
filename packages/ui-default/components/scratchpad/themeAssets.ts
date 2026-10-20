@@ -167,12 +167,13 @@ function requiredAssets(theme: ScratchpadTheme): ScratchpadThemeAsset[] | undefi
 
 /** Resolve only when every assigned image variant and the first video frame is
  * ready. Failure leaves the caller free to retain the complete previous theme. */
-export async function prepareScratchpadThemeAssets(theme: ScratchpadTheme): Promise<boolean> {
+export async function prepareScratchpadThemeAssets(theme: ScratchpadTheme, { includeVideo = true } = {}): Promise<boolean> {
   const assets = requiredAssets(theme);
   if (!assets) return false;
   const requests = new Map<string, Promise<boolean>>();
   for (const asset of assets) {
     const kind = asset.type.startsWith('video/') ? 'video' : 'image';
+    if (kind === 'video' && !includeVideo) continue;
     const key = `${kind}:${asset.url}`;
     if (!requests.has(key)) requests.set(key, kind === 'video' ? prepareVideo(asset.url) : prepareImage(asset.url));
   }

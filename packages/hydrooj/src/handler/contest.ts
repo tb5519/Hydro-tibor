@@ -33,6 +33,7 @@ import ScheduleModel from '../model/schedule';
 import storage from '../model/storage';
 import user from '../model/user';
 import workspace from '../model/workspace';
+import { getBadgeIconUrl } from '../lib/badge_image';
 import {
     Handler, param, post, query, Type, Types,
 } from '../service/server';
@@ -73,6 +74,7 @@ async function attachContestOwnedBadges(
         ownedBadges[doc.owner] ||= [];
         ownedBadges[doc.owner].push({
             id: badge._id,
+            iconUrl: getBadgeIconUrl(currentDomainId, badge),
             displayName: badge.short || `${badge._id}`,
             backgroundColor: normalizeContestBadgeColor(badge.backgroundColor, 'e5edf5'),
             fontColor: normalizeContestBadgeColor(badge.fontColor, '1f2937'),

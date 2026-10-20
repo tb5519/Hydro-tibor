@@ -12,26 +12,7 @@
     {% endif %}
   </a>
   {% if badge %}
-    {% if udoc.badge %}
-      {% set _badge = udoc.badge.split('#') %}
-      {# 与 user_detail / badge-for-hydrooj 一致：slug#显示名#背景色#前景色#tooltip；旧数据：显示名#背景色#前景色 #}
-      {% if _badge|length >= 4 %}
-      <a href="/badge/{{ _badge[0] }}" class="user-profile-badge v-center user-profile-badge--custom" style="background-color:#{{ _badge[2] }}{% if _badge[3] %};color:#{{ _badge[3] }}{% endif %}"{% if _badge[4] %} data-tooltip="{{ _badge[4] }}"{% endif %}>{{ _badge[1] }}</a>
-      {% elif _badge|length == 3 %}
-        {# 旧：显示名#背景色#前景色（第二段为纯 hex）；新：slug#显示名#背景色 #}
-        {% set _mid = _badge[1]|default('') %}
-        {% set _strip = _mid|replace('0','')|replace('1','')|replace('2','')|replace('3','')|replace('4','')|replace('5','')|replace('6','')|replace('7','')|replace('8','')|replace('9','')|replace('a','')|replace('b','')|replace('c','')|replace('d','')|replace('e','')|replace('f','')|replace('A','')|replace('B','')|replace('C','')|replace('D','')|replace('E','')|replace('F','') %}
-        {% if _strip|length == 0 and _mid|length >= 3 and _mid|length <= 8 %}
-      <span class="user-profile-badge v-center user-profile-badge--custom" style="background-color:#{{ _badge[1] }}{% if _badge[2] %};color:#{{ _badge[2] }}{% endif %}">{{ _badge[0] }}</span>
-        {% else %}
-      <a href="/badge/{{ _badge[0] }}" class="user-profile-badge v-center user-profile-badge--custom" style="background-color:#{{ _badge[2] }}{% if _badge[3] %};color:#{{ _badge[3] }}{% endif %}"{% if _badge[4] %} data-tooltip="{{ _badge[4] }}"{% endif %}>{{ _badge[1] }}</a>
-        {% endif %}
-      {% elif _badge|length == 2 %}
-      <span class="user-profile-badge v-center user-profile-badge--custom" style="background-color:#{{ _badge[1] }}">{{ _badge[0] }}</span>
-      {% else %}
-      <span class="user-profile-badge v-center user-profile-badge--custom">{{ _badge[0]|default(udoc.badge) }}</span>
-      {% endif %}
-    {% endif %}
+    {{ render_selected_custom_badge(udoc) }}
     {% if levelbadge and udoc.level %}
       {% set level = udoc.level %}
       <a class="user-profile-badge v-center badge--lv{{ level }}" href="{{ url('user_detail', uid=udoc._id) }}" data-tooltip="{{ _('LV '+ level) }}: Top {{ model.builtin.LEVELS[level]|default('N/A') }}%">{{ _('LV '+ level) }}</a>
@@ -60,12 +41,19 @@
 {% endif %}
 {% endmacro %}
 
+{# The original label remains usable while loading, after an image error, or without JavaScript. #}
+{% macro render_badge_icon(iconUrl, label) %}
+{% if iconUrl %}<span data-badge-icon-fallback>{{ label }}</span><img data-badge-icon src="{{ iconUrl }}" alt="{{ label }}" decoding="async" hidden>{% else %}{{ label }}{% endif %}
+{% endmacro %}
+
 {% macro render_custom_badge_item(badge, extra_class='') %}
-<a href="{{ badge.href }}" class="user-profile-badge v-center user-profile-badge--custom {{ extra_class }}" style="background-color:{{ badge.backgroundColor }}{% if badge.fontColor %};color:{{ badge.fontColor }}{% endif %}"{% if badge.tooltip %} title="{{ badge.tooltip }}" data-tooltip="{{ badge.tooltip }}"{% endif %}>{{ badge.displayName }}</a>
+<a href="{{ badge.href }}" class="user-profile-badge v-center user-profile-badge--custom {{ extra_class }}" style="background-color:{{ badge.backgroundColor }}{% if badge.fontColor %};color:{{ badge.fontColor }}{% endif %}" title="{{ badge.tooltip or badge.displayName }}"{% if badge.tooltip %} data-tooltip="{{ badge.tooltip }}"{% endif %}>{{ render_badge_icon(badge.iconUrl, badge.displayName) }}</a>
 {% endmacro %}
 
 {% macro render_selected_custom_badge(udoc, extra_class='') %}
-{% if udoc and udoc.badge %}
+{% if udoc and udoc.selectedBadgePresentation %}
+  {{ render_custom_badge_item(udoc.selectedBadgePresentation, extra_class) }}
+{% elif udoc and udoc.badge %}
   {% set _badge = udoc.badge.split('#') %}
   {% if _badge|length >= 4 %}
     <a href="/badge/{{ _badge[0] }}" class="user-profile-badge v-center user-profile-badge--custom {{ extra_class }}" style="background-color:#{{ _badge[2] }}{% if _badge[3] %};color:#{{ _badge[3] }}{% endif %}"{% if _badge[4] %} title="{{ _badge[4] }}" data-tooltip="{{ _badge[4] }}"{% endif %}>{{ _badge[1] }}</a>

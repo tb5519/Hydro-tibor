@@ -80,6 +80,7 @@ export function eligibleAsset(path: string, contentType: string) {
         || /^domain\/[^/]+\/avatar-[a-f0-9-]{36}\.png$/.test(path)
         || /^domain\/[^/]+\/home-poster-\d+\.[a-z0-9]+$/.test(path)
         || /^(?:domain\/[^/]+\/)?badge\/[^/]+\/(profile-background|ac-effect|theme-sound)-\d+\.[a-z0-9]+$/.test(path)
+        || /^(?:domain\/[^/]+\/)?badge\/\d+\/badge-icon-\d+-[a-f0-9]{16}\.(?:png|jpe?g|gif|webp)$/.test(path)
         || /^(?:domain\/[^/]+|system)\/point-lottery\/lottery-prize-[a-z0-9-]+\.[a-z0-9]+$/.test(path)
         || /^training\/[^/]+\/[^/]+\/[^/]+$/.test(path)
         || /^problem\/[^/]+\/[^/]+\/additional_file\/[^/]+$/.test(path)

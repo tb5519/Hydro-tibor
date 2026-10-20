@@ -32,6 +32,8 @@ function context(badges = []) {
         title: 1,
         backgroundColor: 1,
         fontColor: 1,
+        iconImagePath: 1,
+        iconImageUpdatedAt: 1,
         acImagePath: 1,
         acImageUpdatedAt: 1,
     };
@@ -91,6 +93,7 @@ describe('point lottery ranking-style badge catalog', () => {
         assert.deepEqual(await getPointLotteryBadgeStyles(ctx, [prize(7, { name: '奖励一天', image: '/prize.png' })]), {
             7: {
                 id: 7,
+                iconUrl: '',
                 displayName: '⭐幸运女神',
                 tooltip: '幸运女神称号',
                 backgroundColor: '#48348b',
@@ -136,7 +139,7 @@ describe('point lottery ranking-style badge catalog', () => {
         const styles = await getPointLotteryBadgeStyles(ctx, [prize(7), prize(8), prize(9)]);
         assert.deepEqual(styles[7], {
             id: 7, displayName: '7', tooltip: '7', backgroundColor: '#e5edf5', fontColor: '#1f2937',
-            image: '', resultImage: '',
+            image: '', resultImage: '', iconUrl: '',
         });
         assert.equal(styles[8].tooltip, '勋章八');
         assert.equal(styles[8].backgroundColor, '#abc');
@@ -166,6 +169,7 @@ describe('point lottery ranking-style badge catalog', () => {
         assert.deepEqual(await getPointLotteryBadges(ctx, { _id: 'Python', workspaceId: 'teacher-workspace' }), [{
             _id: 8,
             id: 8,
+            iconUrl: '',
             short: '状态二',
             title: '状态二说明',
             acImagePath: 'badge/ac-state-2.png',

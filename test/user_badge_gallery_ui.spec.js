@@ -7,11 +7,11 @@ const nunjucks = require('nunjucks');
 
 const template = fs.readFileSync(path.resolve(__dirname, '../addons/badge-for-hydrooj/templates/user_badge_manage.html'), 'utf8')
     .replace('{% extends "layout/basic.html" %}', '');
-const env = new nunjucks.Environment(null, { autoescape: true });
+const env = new nunjucks.Environment(new nunjucks.FileSystemLoader(path.resolve(__dirname, '../packages/ui-default/templates')), { autoescape: true });
 
 function render(cards = [], options = {}) {
     const pagination = [];
-    const html = env.renderString(template, {
+    const html = env.renderString("{% import 'components/user.html' as user with context %}" + template, {
         badgeCards: cards,
         badgeCollection: { total: cards.length, currentName: cards.find((card) => card.isCurrent)?.title || '' },
         handler: { user: { _id: 28 } },
@@ -52,6 +52,18 @@ describe('earned badge collection', () => {
             assert.match(cards[1].querySelector('.badge-gallery__validity').textContent, /到期/);
             assert.equal(cards[1].querySelector('.badge-gallery__art').getAttribute('href'), temporary.detailUrl);
             assert.equal(app.document.querySelector('.badge-gallery__wearing-copy'), null);
+        } finally { app.dom.window.close(); }
+    });
+
+    it('uses an uploaded badge icon for its collection without changing the AC source', () => {
+        const iconUrl = '/badge/4/icon-image?v=3';
+        const app = render([{ ...permanent, iconUrl }]);
+        try {
+            const image = app.document.querySelector('[data-badge-icon]');
+            assert.equal(image.getAttribute('src'), iconUrl);
+            assert.equal(image.alt, permanent.short);
+            assert.equal(app.document.querySelector('[data-badge-icon-fallback]').textContent, permanent.short);
+            assert.equal(permanent.acImage, '/badge/4/ac.webp');
         } finally { app.dom.window.close(); }
     });
 

@@ -86,6 +86,30 @@ describe('daily quiz entry is isolated from teacher account inspection', () => {
         assert.equal(handler.response.status, undefined);
     });
 
+    it('allows only decorative GET/HEAD requests during the quiz; mutations and learning pages remain gated', async () => {
+        const paths = ['/image-warmup', '/background-video-warmup', '/learning-media-warmup', '/code-editor/themes',
+            '/code-editor/theme-asset/' + 'a'.repeat(32) + '/' + 'b'.repeat(24),
+            '/home/poster', '/home/video', '/home/video-poster',
+            ...['background', 'ac-image', 'background-video', 'background-video-poster', 'theme-sound', 'icon-image'].map((kind) => `/badge/7/${kind}`)];
+        for (const path of paths) {
+            for (const method of ['GET', 'HEAD']) {
+                const f = await fixture({ json: true });
+                Object.assign(f.handler.request, { path, method });
+                assert.equal(await f.events.get('handler/before-prepare')(f.handler), undefined, `${method} ${path}`);
+                assert.equal(f.reads.length, 0, 'asset warming must not create/advance a quiz session');
+            }
+            const f = await fixture({ json: true });
+            Object.assign(f.handler.request, { path, method: 'POST' });
+            assert.equal(await f.events.get('handler/before-prepare')(f.handler), 'cleanup', `POST ${path}`);
+            assert.equal(f.handler.response.status, 403);
+        }
+        for (const path of ['/code-editor/themes/select', '/code-editor/theme-asset/private', '/badge/7/edit', '/badge/7', '/home', '/p/1/submit']) {
+            const f = await fixture({ json: true });
+            f.handler.request.path = path;
+            assert.equal(await f.events.get('handler/before-prepare')(f.handler), 'cleanup', path);
+        }
+    });
+
     it('still redirects the same learner using their own login before a normal HTML page', async () => {
         const { events, handler, reads } = await fixture();
         assert.equal(await events.get('handler/before-prepare')(handler), 'cleanup');

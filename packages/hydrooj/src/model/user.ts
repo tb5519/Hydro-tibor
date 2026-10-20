@@ -7,6 +7,7 @@ import {
     OwnerInfo, Udict, Udoc, VUdoc,
 } from '../interface';
 import avatar from '../lib/avatar';
+import { attachSelectedBadgePresentations } from '../lib/badge_presentation';
 import pwhash from '../lib/hash.hydro';
 import { normalizeStudentLevel } from '../lib/student_level';
 import bus from '../service/bus';
@@ -126,6 +127,11 @@ export class User {
 
     async init() {
         await bus.parallel('user/get', this);
+        if (this.badge) {
+            const currentDomain = await domain.get(this._dudoc.domainId || 'system');
+            if (currentDomain) await attachSelectedBadgePresentations({ db }, [this], currentDomain);
+            this._publicFields.push('selectedBadgePresentation');
+        }
         return this;
     }
 
@@ -467,6 +473,10 @@ class UserModel {
             udict[key].studentId ||= '';
             udict[key].displayName ||= udict[key].uname;
             udict[key].avatar ||= `gravatar:${udict[key].mail}`;
+        }
+        if (Object.values(udict).some((udoc: any) => udoc.badge)) {
+            const currentDomain = await domain.get(domainId);
+            if (currentDomain) await attachSelectedBadgePresentations({ db }, Object.values(udict), currentDomain);
         }
         return udict as BaseUserDict;
     }

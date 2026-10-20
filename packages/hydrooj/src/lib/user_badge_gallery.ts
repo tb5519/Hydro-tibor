@@ -2,13 +2,14 @@ import moment from 'moment-timezone';
 import type { Context } from '../context';
 import type { DomainDoc } from '../interface';
 import workspace from '../model/workspace';
-import { getBadgeAcDisplayUrl } from './badge_image';
+import { getBadgeAcDisplayUrl, getBadgeIconUrl } from './badge_image';
 
 export interface UserBadgeCard {
     id: number;
     title: string;
     short: string;
     acImage: string;
+    iconUrl: string;
     backgroundColor: string;
     fontColor: string;
     getAt: Date | null;
@@ -118,7 +119,7 @@ export async function getUserBadgeGallery(
     if (!ownedDates.size) return empty();
     const [badges, grants, account] = await Promise.all([
         db.collection('badge').find({ _id: { $in: [...ownedDates.keys()] }, ...scope }).project({
-            _id: 1, title: 1, short: 1, users: 1, acImagePath: 1, acImageUpdatedAt: 1, backgroundColor: 1, fontColor: 1,
+            _id: 1, title: 1, short: 1, users: 1, iconImagePath: 1, iconImageUpdatedAt: 1, acImagePath: 1, acImageUpdatedAt: 1, backgroundColor: 1, fontColor: 1,
         }).toArray(),
         db.collection('lottery.badgeGrant').find({ uid, ...scope }).project({
             _id: 1, badgeId: 1, sourceBadgeId: 1, repeatEffect: 1, grantedAt: 1,
@@ -139,6 +140,7 @@ export async function getUserBadgeGallery(
             id: badge._id,
             title,
             short: `${badge.short || title}`,
+            iconUrl: getBadgeIconUrl(currentDomain._id, badge),
             acImage: getBadgeAcDisplayUrl(currentDomain._id, badge, 768),
             backgroundColor: badgeColor(badge.backgroundColor, 'eff6ff'),
             fontColor: badgeColor(badge.fontColor, '2563eb'),

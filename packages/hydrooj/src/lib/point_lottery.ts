@@ -8,7 +8,7 @@ import system from '../model/system';
 import { deleteUserCache } from '../model/user';
 import workspace from '../model/workspace';
 import db from '../service/db';
-import { getBadgeAcDisplayUrl } from './badge_image';
+import { getBadgeAcDisplayUrl, getBadgeIconUrl } from './badge_image';
 
 export const POINT_LOTTERY_CONFIG_KEY = 'pointLottery.config';
 export const POINT_LOTTERY_POINTS_FIELD = 'lotteryPoints';
@@ -206,6 +206,7 @@ export interface PointLotteryBadgeStyle {
     tooltip: string;
     image: string;
     resultImage: string;
+    iconUrl: string;
 }
 
 /** Match ranking badge colors without allowing arbitrary inline CSS. */
@@ -223,6 +224,8 @@ export function buildPointLotteryBadgeStyle(
         title?: string;
         backgroundColor?: string;
         fontColor?: string;
+        iconImagePath?: string;
+        iconImageUpdatedAt?: string;
         acImagePath?: string;
         acImageUpdatedAt?: string;
     },
@@ -233,6 +236,7 @@ export function buildPointLotteryBadgeStyle(
         backgroundColor: normalizePointLotteryBadgeColor(badge.backgroundColor, 'e5edf5'),
         fontColor: normalizePointLotteryBadgeColor(badge.fontColor, '1f2937'),
         tooltip: `${badge.title || badge.short || badge._id}`,
+        iconUrl: getBadgeIconUrl(domainId, badge),
         image: getBadgeAcDisplayUrl(domainId, badge, 384),
         resultImage: getBadgeAcDisplayUrl(domainId, badge, 768),
     };
@@ -246,6 +250,8 @@ export async function getPointLotteryBadges(ctx: Context, domain?: Pick<DomainDo
             title: 1,
             backgroundColor: 1,
             fontColor: 1,
+            iconImagePath: 1,
+            iconImageUpdatedAt: 1,
             acImagePath: 1,
             acImageUpdatedAt: 1,
         })
@@ -285,6 +291,8 @@ export async function getPointLotteryBadgeStyles(
         title: 1,
         backgroundColor: 1,
         fontColor: 1,
+        iconImagePath: 1,
+        iconImageUpdatedAt: 1,
         acImagePath: 1,
         acImageUpdatedAt: 1,
     }).toArray();

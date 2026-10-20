@@ -651,6 +651,19 @@ describe('footer honor wall UI', () => {
         } finally { ui.dispose(); }
     });
 
+    it('prefers the uploaded badge icon while keeping AC artwork as the image-less-icon fallback', async () => {
+        const ui = fixture();
+        try {
+            ui.intersect();
+            ui.finish({ badges: [badge(7, { iconUrl: '/badge/7/icon-image?v=2' }), badge(8)] });
+            await eventually(() => ui.grid.children.length === 2);
+            const images = [...ui.grid.querySelectorAll('.honor-wall__ac-image')];
+            assert.equal(images[0].getAttribute('src') || images[0].dataset.honorSrc, 'http://localhost/badge/7/icon-image?v=2');
+            assert.match(images[0].alt, /徽章小图/);
+            assert.equal(images[1].getAttribute('src') || images[1].dataset.honorSrc, 'http://localhost/badge/8/ac.png');
+        } finally { ui.dispose(); }
+    });
+
     it('continues to use the readable 3D orbit for two or more distinct recipients', async () => {
         const ui = fixture();
         try {

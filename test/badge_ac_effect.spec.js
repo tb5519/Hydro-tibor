@@ -97,8 +97,12 @@ it('administrator simulation uses the same original-image player for saved artwo
             Notification: { info: () => assert.fail('valid artwork must be previewable') },
         };
         vm.runInNewContext(previewCompiled, {
-            require: (name) => { assert.equal(name, '@hydrooj/ui-default'); return api; },
+            require: (name) => {
+                if (name === './badge_icon_upload') return { bindBadgeIconUpload: () => () => {} };
+                assert.equal(name, '@hydrooj/ui-default'); return api;
+            },
             document: f.document,
+            window: { addEventListener() {} },
             URL: { createObjectURL: () => 'blob:full-resolution-upload', revokeObjectURL: (url) => revoked.push(url) },
         });
         const playback = clickHandlers.click();

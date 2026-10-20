@@ -1,3 +1,5 @@
+import { randomBytes } from 'crypto';
+import { readFile, stat } from 'fs/promises';
 import path from 'path';
 import { lookup } from 'mime-types';
 import moment from 'moment-timezone';
@@ -12,16 +14,18 @@ import {
 import {
     deleteBackgroundVideo, isBackgroundVideoPath, redirectBackgroundVideo, storeBackgroundVideo,
 } from 'hydrooj/src/lib/background_video';
-import { getBadgeAcCelebrationUrl } from 'hydrooj/src/lib/badge_image';
+import { getBadgeAcCelebrationUrl, getBadgeIconUrl } from 'hydrooj/src/lib/badge_image';
 import { getSharedRankingSnapshot } from 'hydrooj/src/lib/shared_ranking';
 import { getUserBadgeGallery } from 'hydrooj/src/lib/user_badge_gallery';
 import DomainModel from 'hydrooj/src/model/domain';
 import RecordModel from 'hydrooj/src/model/record';
 import storage from 'hydrooj/src/model/storage';
 import system from 'hydrooj/src/model/system';
+import { deleteUserCache } from 'hydrooj/src/model/user';
 import workspace from 'hydrooj/src/model/workspace';
 import { Time } from 'hydrooj/src/utils';
 import { badgeAcImageCache } from './ac_image_cache';
+import { BADGE_ICON_IMAGE_EXTS, BADGE_ICON_IMAGE_LIMIT, validateBadgeIconImage } from './icon_image';
 import { Badge } from './model';
 
 const UserBadgeModel = global.Hydro.model.userBadge;
@@ -56,6 +60,21 @@ const SPECIAL_BADGES = {
 function getRequestFile(files: any, key: string) {
     const file = files?.[key];
     return Array.isArray(file) ? file[0] : file;
+}
+
+async function readBadgeIconImage(file: any): Promise<Buffer | undefined> {
+    if (!file?.size) return undefined;
+    try {
+        const ext = path.extname(file.originalFilename || '').toLowerCase();
+        if (file.size > BADGE_ICON_IMAGE_LIMIT || !BADGE_ICON_IMAGE_EXTS.includes(ext)) throw new Error('Invalid icon');
+        const fileStat = await stat(file.filepath);
+        if (!fileStat.isFile() || fileStat.size > BADGE_ICON_IMAGE_LIMIT) throw new Error('Invalid icon');
+        const bytes = await readFile(file.filepath);
+        validateBadgeIconImage(bytes, ext);
+        return bytes;
+    } catch {
+        throw new ValidationError('iconImage', null, '请上传有效的 PNG、WebP、JPG 或 GIF 图片，大小不超过 2 MB。');
+    }
 }
 
 function getBadgeBackgroundImageUrl(handler: Handler, badge: Badge) {
@@ -299,7 +318,7 @@ export class BadgeManageHandler extends Handler {
         );
         this.response.template = 'badge_manage.html';
         this.response.body = {
-            ddocs,
+            ddocs: ddocs.map((badge: Badge) => ({ ...badge, iconUrl: getBadgeIconUrl(this.domain._id, badge) })),
             dpcount,
             page,
             ...getBadgeManageContext(this),
@@ -326,7 +345,7 @@ export class BadgeManageHandler extends Handler {
     }
 }
 
-class BadgeAddHandler extends Handler {
+export class BadgeAddHandler extends Handler {
     async prepare() {
         await checkBadgeManageAccess(this);
     }
@@ -343,10 +362,29 @@ class BadgeAddHandler extends Handler {
     @param('content', Types.Content)
     @param('users', Types.NumericArray, true)
     async postAdd(_: string, short: string, title: string, backgroundColor: string, fontColor: string, content: string, users: number[] = []) {
+        const iconFile = getRequestFile(this.request.files, 'iconImage');
+        const iconBytes = await readBadgeIconImage(iconFile);
         const owners = await validateBadgeOwners(this.ctx, this, users);
+        const domainId = getBadgeDomainScope(this);
         const badgeId = await BadgeModel.badgeAdd(
-            this.ctx, short, title, backgroundColor, fontColor, content, owners, undefined, getBadgeDomainScope(this),
+            this.ctx, short, title, backgroundColor, fontColor, content, owners, undefined, domainId,
         );
+        if (iconBytes) {
+            const version = `${Date.now()}-${randomBytes(8).toString('hex')}`;
+            const filename = `badge-icon-${version}${path.extname(iconFile.originalFilename).toLowerCase()}`;
+            const iconPath = `${domainId ? `domain/${domainId}/` : ''}badge/${badgeId}/${filename}`;
+            try {
+                await storage.put(iconPath, iconBytes, this.user._id);
+                await this.ctx.db.collection('badge').updateOne({ _id: badgeId,
+                    ...(domainId ? { domainId } : { domainId: { $exists: false } }) },
+                { $set: { iconImagePath: iconPath, iconImageUpdatedAt: version } });
+                deleteUserCache(true);
+            } catch (error) {
+                await BadgeModel.badgeDel(this.ctx, badgeId, domainId);
+                await storage.del([iconPath], this.user._id).catch(() => {});
+                throw error;
+            }
+        }
         this.response.redirect = this.url('badge_detail', { id: badgeId });
     }
 }
@@ -364,6 +402,7 @@ export class BadgeEditHandler extends Handler {
         this.response.body = {
             badge: {
                 ...badge,
+                iconUrl: getBadgeIconUrl(this.domain._id, badge),
                 backgroundImage: getBadgeBackgroundImageUrl(this, badge),
                 backgroundVideo: getBadgeBackgroundVideoUrl(this, badge),
                 backgroundVideoPoster: getBadgeBackgroundVideoUrl(this, badge, true),
@@ -384,6 +423,7 @@ export class BadgeEditHandler extends Handler {
     @param('removeBackground', Types.Boolean, true)
     @param('removeAcImage', Types.Boolean, true)
     @param('removeThemeSound', Types.Boolean, true)
+    @param('removeIconImage', Types.Boolean, true)
     async postUpdate(
         _: string,
         id: number,
@@ -396,6 +436,7 @@ export class BadgeEditHandler extends Handler {
         removeBackground = false,
         removeAcImage = false,
         removeThemeSound = false,
+        removeIconImage = false,
     ) {
         const domainId = getBadgeDomainScope(this);
         const badge = await BadgeModel.badgeGet(this.ctx, id, domainId);
@@ -403,6 +444,7 @@ export class BadgeEditHandler extends Handler {
         const backgroundFile = getRequestFile(this.request.files, 'backgroundImage');
         const acImageFile = getRequestFile(this.request.files, 'acImage');
         const themeSoundFile = getRequestFile(this.request.files, 'themeSound');
+        const iconImageFile = getRequestFile(this.request.files, 'iconImage');
         const fileSpecs = [
             {
                 file: backgroundFile,
@@ -422,12 +464,14 @@ export class BadgeEditHandler extends Handler {
                 limit: BADGE_THEME_SOUND_LIMIT,
                 extensions: BADGE_THEME_SOUND_EXTS,
             },
+            { file: iconImageFile, input: 'iconImage', limit: BADGE_ICON_IMAGE_LIMIT, extensions: BADGE_ICON_IMAGE_EXTS },
         ];
         for (const spec of fileSpecs) {
             if (spec.file?.size > spec.limit) throw new ValidationError(spec.input);
             const ext = spec.file?.size ? path.extname(spec.file.originalFilename || '').toLowerCase() : '';
             if (spec.file?.size && !spec.extensions.includes(ext)) throw new ValidationError(spec.input);
         }
+        const iconBytes = await readBadgeIconImage(iconImageFile);
 
         const owners = await validateBadgeOwners(this.ctx, this, users);
         const users_old = badge.users;
@@ -437,6 +481,7 @@ export class BadgeEditHandler extends Handler {
         const setFields: Record<string, string> = {};
         const unsetFields: Record<string, string> = {};
         const obsoletePaths: string[] = [];
+        const uploadedPaths: string[] = [];
         const uploadAsset = async (
             file: any,
             filename: string,
@@ -447,12 +492,14 @@ export class BadgeEditHandler extends Handler {
             const oldPath = badge[pathField] as string | undefined;
             if (file?.size) {
                 const ext = path.extname(file.originalFilename || '').toLowerCase();
+                const stamp = `${Date.now()}${filename === 'badge-icon' ? `-${randomBytes(8).toString('hex')}` : ''}`;
                 const storagePath = domainId
-                    ? `domain/${domainId}/badge/${id}/${filename}-${Date.now()}${ext}`
-                    : `badge/${id}/${filename}-${Date.now()}${ext}`;
-                await storage.put(storagePath, file.filepath, this.user._id);
+                    ? `domain/${domainId}/badge/${id}/${filename}-${stamp}${ext}`
+                    : `badge/${id}/${filename}-${stamp}${ext}`;
+                await storage.put(storagePath, filename === 'badge-icon' ? iconBytes : file.filepath, this.user._id);
+                uploadedPaths.push(storagePath);
                 setFields[pathField] = storagePath;
-                setFields[updatedAtField] = new Date().toISOString();
+                setFields[updatedAtField] = filename === 'badge-icon' ? stamp : new Date().toISOString();
                 if (oldPath && oldPath !== storagePath) obsoletePaths.push(oldPath);
             } else if (remove && oldPath) {
                 unsetFields[pathField] = '';
@@ -460,17 +507,38 @@ export class BadgeEditHandler extends Handler {
                 obsoletePaths.push(oldPath);
             }
         };
-        await uploadAsset(backgroundFile, 'profile-background', 'backgroundImagePath', 'backgroundImageUpdatedAt', removeBackground);
-        await uploadAsset(acImageFile, 'ac-effect', 'acImagePath', 'acImageUpdatedAt', removeAcImage);
-        await uploadAsset(themeSoundFile, 'theme-sound', 'themeSoundPath', 'themeSoundUpdatedAt', removeThemeSound);
-        if (Object.keys(setFields).length || Object.keys(unsetFields).length) {
-            const update: any = {};
-            if (Object.keys(setFields).length) update.$set = setFields;
-            if (Object.keys(unsetFields).length) update.$unset = unsetFields;
-            await this.ctx.db.collection('badge').updateOne({
-                _id: id,
-                ...(domainId ? { domainId } : { domainId: { $exists: false } }),
-            }, update);
+        let metadataWriteStarted = false;
+        try {
+            await uploadAsset(backgroundFile, 'profile-background', 'backgroundImagePath', 'backgroundImageUpdatedAt', removeBackground);
+            await uploadAsset(acImageFile, 'ac-effect', 'acImagePath', 'acImageUpdatedAt', removeAcImage);
+            await uploadAsset(themeSoundFile, 'theme-sound', 'themeSoundPath', 'themeSoundUpdatedAt', removeThemeSound);
+            await uploadAsset(iconImageFile, 'badge-icon', 'iconImagePath', 'iconImageUpdatedAt', removeIconImage);
+            if (Object.keys(setFields).length || Object.keys(unsetFields).length) {
+                const update: any = {};
+                if (Object.keys(setFields).length) update.$set = setFields;
+                if (Object.keys(unsetFields).length) update.$unset = unsetFields;
+                metadataWriteStarted = true;
+                const result = await this.ctx.db.collection('badge').updateOne({
+                    _id: id,
+                    ...(domainId ? { domainId } : { domainId: { $exists: false } }),
+                }, update);
+                if (result.matchedCount === 0) throw new NotFoundError(`Badge ${id} is not exist!`);
+                // Selected badge artwork is hydrated into the ordinary user cache as well.
+                deleteUserCache(true);
+            }
+        } catch (error) {
+            let disposable = uploadedPaths;
+            if (metadataWriteStarted) {
+                // A failed database acknowledgement may still have committed. Never delete referenced artwork.
+                try {
+                    const current = await this.ctx.db.collection('badge').findOne({
+                        _id: id, ...(domainId ? { domainId } : { domainId: { $exists: false } }),
+                    });
+                    disposable = uploadedPaths.filter((storagePath) => !Object.values(current || {}).includes(storagePath));
+                } catch { disposable = []; }
+            }
+            if (disposable.length) await storage.del(disposable, this.user._id).catch(() => {});
+            throw error;
         }
         if (obsoletePaths.length) storage.del(obsoletePaths, this.user._id).catch(() => {});
         this.response.redirect = this.url('badge_detail', { id });
@@ -529,7 +597,7 @@ export class BadgeEditHandler extends Handler {
         const badge = await BadgeModel.badgeGet(this.ctx, id, domainId);
         if (!badge) throw new NotFoundError(`Badge ${id} is not exist!`);
         await BadgeModel.badgeDel(this.ctx, id, domainId);
-        const assetPaths = [badge?.backgroundImagePath, badge?.acImagePath, badge?.themeSoundPath].filter(Boolean) as string[];
+        const assetPaths = [badge?.backgroundImagePath, badge?.acImagePath, badge?.themeSoundPath, badge?.iconImagePath].filter(Boolean) as string[];
         if (assetPaths.length) storage.del(assetPaths, this.user._id).catch(() => {});
         await deleteBackgroundVideo(
             [badge.backgroundVideoPath, badge.backgroundVideoPosterPath].filter(Boolean) as string[], this.user._id,
@@ -551,7 +619,7 @@ abstract class BadgeAssetHandler extends Handler {
         const meta = await storage.getMeta(assetPath);
         if (!meta) throw new NotFoundError(`Badge ${this.assetName} ${id} is not exist!`);
         if (await assetDelivery.tryRedirectAsset(this, { path: assetPath, meta,
-            ...(['backgroundImagePath', 'acImagePath'].includes(this.assetField) ? { decoration: 'badge' as const } : {}),
+            ...(['backgroundImagePath', 'acImagePath', 'iconImagePath'].includes(this.assetField) ? { decoration: 'badge' as const } : {}),
         })) return;
         this.response.body = await storage.get(assetPath);
         this.response.type = meta['Content-Type'] || lookup(assetPath) || 'application/octet-stream';
@@ -564,6 +632,11 @@ abstract class BadgeAssetHandler extends Handler {
 class BadgeBackgroundImageHandler extends BadgeAssetHandler {
     protected readonly assetField = 'backgroundImagePath' as const;
     protected readonly assetName = 'background';
+}
+
+export class BadgeIconImageHandler extends BadgeAssetHandler {
+    protected readonly assetField = 'iconImagePath' as const;
+    protected readonly assetName = 'icon';
 }
 
 export class BadgeBackgroundVideoHandler extends Handler {
@@ -643,7 +716,7 @@ class BadgeDetailHandler extends Handler {
         });
         const udict = await user.getList(domainId, holderUids);
         this.response.template = 'badge_detail.html';
-        this.response.body = { badge: { ...badge, users: holderUids }, udict };
+        this.response.body = { badge: { ...badge, iconUrl: getBadgeIconUrl(this.domain._id, badge), users: holderUids }, udict };
     }
 }
 
@@ -688,6 +761,7 @@ export async function apply(ctx: Context) {
     ctx.Route('badge_background_video', '/badge/:id/background-video', BadgeBackgroundVideoHandler);
     ctx.Route('badge_background_video_poster', '/badge/:id/background-video-poster', BadgeBackgroundVideoPosterHandler);
     ctx.Route('badge_ac_image', '/badge/:id/ac-image', BadgeAcImageHandler);
+    ctx.Route('badge_icon_image', '/badge/:id/icon-image', BadgeIconImageHandler);
     ctx.Route('badge_theme_sound', '/badge/:id/theme-sound', BadgeThemeSoundHandler);
     ctx.Route('badge_detail', '/badge/:id', BadgeDetailHandler);
     ctx.Route('user_badge_manage', '/mybadge', UserBadgeManageHandler, PRIV.PRIV_USER_PROFILE);

@@ -23,7 +23,7 @@
 	    </div>
       <div class="section__footer" style="display:flex;justify-content: space-between;">
         <h3>{{ _('badge preview') }}：{{ user.render_inline(handler.user, badge=false) }}
-          <span class="user-profile-badge v-center" style="background-color:{{ badge.backgroundColor }};color:{{ badge.fontColor }};" data-tooltip="{{ badge.title }}">{{ badge.short }}</span>
+          <span class="user-profile-badge v-center user-profile-badge--custom" style="background-color:{{ badge.backgroundColor }};color:{{ badge.fontColor }};" data-tooltip="{{ badge.title }}">{{ user.render_badge_icon(badge.iconUrl, badge.short or badge.title) }}</span>
         </h3> 
         <h3>{{_('create at') }}：{{ datetimeSpan(badge.createAt, false, 'YYYY-MM-DD')|safe }}</h3>
 	    </div>

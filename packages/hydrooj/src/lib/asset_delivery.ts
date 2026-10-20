@@ -198,7 +198,7 @@ export class AssetDelivery {
             || !/^image\/(png|jpeg|gif|webp|avif)$/.test(type) || source.meta.size > 8 * 1024 * 1024
             || (source.decoration === 'home-poster'
                 ? !/^domain\/[^/]+\/home-poster-[\w-]+\.(png|jpe?g|gif|webp|avif)$/i.test(source.path)
-                : !/^(?:domain\/[^/]+\/)?badge\/\d+\/(?:profile-background|ac-effect)-[\w-]+\.(png|jpe?g|gif|webp)$/i.test(source.path)))) return null;
+                : !/^(?:domain\/[^/]+\/)?badge\/\d+\/(?:profile-background|ac-effect|badge-icon)-[\w-]+\.(png|jpe?g|gif|webp)$/i.test(source.path)))) return null;
         const maxBytes = !requireUpload && source?.meta?.remoteAsset && !source.variant
             ? 512 * 1024 * 1024 : (this.options.maxBytes ?? 32 * 1024 * 1024);
         if (!config || !base || base.pathname !== '/'

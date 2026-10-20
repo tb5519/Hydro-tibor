@@ -1122,9 +1122,12 @@
     var safeColor = function (value, fallback) {
       return /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(String(value)) ? value : fallback;
     };
+    var label = escapeHtml(badge.displayName);
+    var icon = typeof badge.iconUrl === 'string' && (/^\/(?!\/)/.test(badge.iconUrl) || /^https?:\/\//i.test(badge.iconUrl)) ? badge.iconUrl : '';
+    var content = icon ? '<span data-badge-icon-fallback>' + label + '</span><img data-badge-icon src="' + escapeHtml(icon) + '" alt="' + label + '" decoding="async" hidden>' : label;
     return '<span class="user-profile-badge v-center user-profile-badge--custom point-lottery__badge" style="background-color:' + safeColor(badge.backgroundColor, '#e5edf5')
       + ';color:' + safeColor(badge.fontColor, '#1f2937') + '" title="' + escapeHtml(badge.tooltip || badge.displayName)
-      + '">' + escapeHtml(badge.displayName) + '</span>';
+      + '">' + content + '</span>';
   }
 
   function prizeImagePlaceholder(prize, result) {

@@ -34,6 +34,11 @@ startBackgroundVideoWarmup(window.UiContext.backgroundVideoWarmup);
 try {
   __webpack_public_path__ = UiContext.cdn_prefix;
 } catch (e) { }
+if (window.UiContext.learningMediaWarmup) {
+  void import('./utils/learning-media-warmup').then(({ startLearningMediaWarmup }) => {
+    startLearningMediaWarmup(window.UiContext.learningMediaWarmup);
+  }).catch(() => {});
+}
 if ('serviceWorker' in navigator) {
   const sendConfig = () => fetch('/service-worker-config', {
     method: 'POST',

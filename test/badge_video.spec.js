@@ -176,7 +176,7 @@ function loadProfileFunctions() {
     const module = { exports: {} };
     vm.runInNewContext(transformSync(`${relevant}\nexport { attachOwnedBadges, getBadgeProfileBackground };`, {
         loader: 'ts', format: 'cjs',
-    }).code, { module, exports: module.exports });
+    }).code, { module, exports: module.exports, getBadgeIconUrl: require('../packages/hydrooj/src/lib/badge_image').getBadgeIconUrl });
     return module.exports;
 }
 

@@ -9,6 +9,7 @@ interface HonorBadge {
   id: number;
   name: string;
   acImage?: string;
+  iconUrl?: string;
   badgeHref: string;
   backgroundColor?: string;
   fontColor?: string;
@@ -74,11 +75,11 @@ function* badgeCard(badge: HonorBadge, students: HonorStudent[], order: number):
     art.href = href;
     art.setAttribute('aria-label', `查看${badgeName}徽章`);
   }
-  const imageUrl = safeUrl(badge.acImage);
+  const imageUrl = safeUrl(badge.iconUrl) || safeUrl(badge.acImage);
   if (imageUrl) {
     const img = element('img', 'honor-wall__ac-image');
     img.dataset.honorSrc = imageUrl;
-    img.alt = `${badgeName} AC 徽章展示图`;
+    img.alt = badge.iconUrl ? `${badgeName}徽章小图` : `${badgeName} AC 徽章展示图`;
     img.loading = 'lazy';
     img.decoding = 'async';
     img.setAttribute('fetchpriority', 'low');

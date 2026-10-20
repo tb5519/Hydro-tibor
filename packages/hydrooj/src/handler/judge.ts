@@ -14,6 +14,7 @@ import {
 } from '../error';
 import { RecordDoc, Task } from '../interface';
 import { Logger } from '../logger';
+import { scheduleRankingRecovery, updateIncrementalRanking } from '../lib/incremental_ranking';
 import * as builtin from '../model/builtin';
 import { PERM, STATUS } from '../model/builtin';
 import * as contest from '../model/contest';
@@ -146,6 +147,14 @@ export class JudgeResultCallbackContext {
                 problem.inc(pdoc.domainId, pdoc.docId, `stats.${builtin.STATUS_SHORT_TEXTS[rdoc.status]}`, 1),
                 problem.inc(pdoc.domainId, pdoc.docId, `stats.s${Math.floor(rdoc.score)}`, 1),
             ]);
+        }
+        try {
+            await updateIncrementalRanking(rdoc, pdoc, firstAccepted);
+        } catch (error) {
+            // A failed auxiliary ranking update must not prevent an AC result
+            // from completing. The durable retry repairs this user only.
+            logger.error('Unable to update ranking for %s/%d: %o', rdoc.domainId, rdoc.uid, error);
+            await scheduleRankingRecovery(rdoc.uid, firstAccepted ? { domainId: rdoc.domainId, pid: rdoc.pid } : undefined).catch((retryError) => logger.error('Unable to schedule ranking recovery: %o', retryError));
         }
         await app.parallel('record/judge', rdoc, updated, pdoc, context);
     }

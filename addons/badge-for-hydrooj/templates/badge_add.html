@@ -12,7 +12,7 @@
       </div>
       <div class="section__body">
         <div class="badge-editor__scope"><strong>{{ badgeScopeTitle }}</strong> · {{ _('Only students in this scope can receive these badges.') }}</div>
-        <form method="post">
+        <form method="post" enctype="multipart/form-data">
           {{ form.form_text({
             columns:12,
             label:('{0} ({1})').format(_('badge title'), _('Also used as badge hover text')),
@@ -46,6 +46,7 @@
               row:false
             }) }}
           </div>
+          {% include 'partials/badge_icon_upload.html' %}
           {{ form.form_text({
             columns:12,
             label:'badge assignment',

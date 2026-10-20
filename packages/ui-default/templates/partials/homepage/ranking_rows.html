@@ -1,0 +1,20 @@
+{% import "components/user.html" as user with context %}
+            {%- for uid in payload -%}
+              {% set udoc = udict[uid] %}
+              {% set rowOwnedBadges = udoc.ownedBadges|default([]) %}
+              {% set rowBadgeCount = rowOwnedBadges|length or (1 if udoc.badge else 0) %}
+              {% set rowBadgeLevel = 20 if rowBadgeCount > 20 else rowBadgeCount %}
+              <tr{% if rowBadgeCount %} class="ranking-row--badge ranking-row--badge-{{ rowBadgeLevel }}"{% endif %}>
+                <td class="col--rank">{{ loop.index }}</td>
+                <td class="col--user">
+                  <span class="homepage-ranking-user">
+                    {{ user.render_inline(udoc, badge=false, levelbadge=false) }}
+                    <span class="homepage-ranking-user__badges">{{ user.render_custom_badges(udoc, 4, 'homepage-ranking-user__badge') }}</span>
+                  </span>
+                </td>
+                <td class="col--rp">{{ udoc.rp|default(0)|round(0) }}</td>
+                <td class="col--bio">{{ udoc.bio|default('')|truncate(64, true)|markdownInline|safe }}</td>
+              </tr>
+            {%- else -%}
+              <tr><td colspan="4" class="text-center">完成第一道题后，就能在这里看到排名。</td></tr>
+            {%- endfor -%}
