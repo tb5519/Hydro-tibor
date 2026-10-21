@@ -145,7 +145,7 @@
         <a class="auto-badges__student" href="{{ row.userUrl }}" title="{{ row.userName }}"><img data-badge-avatar-uid="{{ row.uid }}" class="auto-badges__avatar" src="{{ row.userAvatar }}" alt="" loading="lazy"><span class="auto-badges__name">{{ row.userName }}</span></a>
       </div>
       <div class="auto-badges__cell auto-badges__cell--badge">
-        <span class="auto-badges__pill user-profile-badge user-profile-badge--custom" style="background-color: {{ row.backgroundColor }}; color: {{ row.fontColor }}" title="{{ row.badgeName }}">{{ user.render_badge_icon(row.badgeIconUrl, row.badgeShort or row.badgeName) }}</span>
+        <span{% if row.badgeIconUrl %} data-badge-icon-state="loading" aria-busy="true" aria-label="{{ row.badgeShort or row.badgeName }}"{% endif %} class="auto-badges__pill user-profile-badge user-profile-badge--custom" style="background-color: {{ row.backgroundColor }}; color: {{ row.fontColor }}" title="{{ row.badgeName }}">{{ user.render_badge_icon(row.badgeIconUrl, row.badgeShort or row.badgeName, 'high' if loop.index <= 8 else 'auto') }}</span>
         <div class="auto-badges__secondary">{{ row.sourcesText }}</div>
         {% if row.manualOverlap %}<span class="auto-badges__overlap" title="另有永久授予，移除自动记录后仍保留徽章">另有永久授予</span>{% endif %}
       </div>

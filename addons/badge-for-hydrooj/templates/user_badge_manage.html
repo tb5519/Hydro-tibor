@@ -63,7 +63,7 @@
         <article class="badge-gallery__card" aria-labelledby="badge-gallery-title-{{ badge.id }}">
           <a class="badge-gallery__art" href="{{ badge.detailUrl }}" aria-label="查看{{ badge.title }}的介绍">
             {% if badge.iconUrl %}
-            <span class="user-profile-badge user-profile-badge--custom badge-gallery__icon" style="--badge-icon-height: 88px; --badge-icon-max-width: 100%; background-color:{{ badge.backgroundColor }};color:{{ badge.fontColor }}">{{ user.render_badge_icon(badge.iconUrl, badge.short or badge.title) }}</span>
+            <span data-badge-icon-state="loading" aria-busy="true" aria-label="{{ badge.short or badge.title }}" class="user-profile-badge user-profile-badge--custom badge-gallery__icon" style="--badge-icon-height: 88px; --badge-icon-max-width: 100%; background-color:{{ badge.backgroundColor }};color:{{ badge.fontColor }}">{{ user.render_badge_icon(badge.iconUrl, badge.short or badge.title, 'high' if loop.index <= 4 else 'auto') }}</span>
             {% elif badge.acImage %}
             <img src="{{ badge.acImage }}" alt="{{ badge.title }}的 AC 图片" loading="lazy" decoding="async">
             {% else %}

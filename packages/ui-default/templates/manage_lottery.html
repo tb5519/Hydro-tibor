@@ -682,16 +682,22 @@
     pill.style.backgroundColor = color(badge.backgroundColor, '#e5edf5');
     pill.style.color = color(badge.fontColor, '#1f2937');
     if (badge.iconUrl && (/^\/(?!\/)/.test(badge.iconUrl) || /^https?:\/\//i.test(badge.iconUrl))) {
+      pill.dataset.badgeIconState = 'loading';
+      pill.setAttribute('aria-busy', 'true');
+      pill.setAttribute('aria-label', pill.textContent);
       var label = document.createElement('span');
       label.dataset.badgeIconFallback = '';
+      label.setAttribute('aria-hidden', 'true');
       label.textContent = pill.textContent;
       var icon = document.createElement('img');
       icon.dataset.badgeIcon = '';
-      icon.src = badge.iconUrl;
       icon.alt = pill.textContent;
+      icon.loading = 'eager';
+      icon.setAttribute('fetchpriority', 'high');
       icon.decoding = 'async';
       icon.hidden = true;
       pill.replaceChildren(label, icon);
+      icon.src = badge.iconUrl;
     }
     preview.appendChild(pill);
     if (!badge.image) return;

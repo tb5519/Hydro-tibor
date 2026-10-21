@@ -23,6 +23,14 @@ for key, _ in $badge-bg-color
     color: $badge-text-color[key] !important
 
 // Display the uploaded badge artwork at its own shape, without a capsule or cropping.
+.user-profile-badge[data-badge-icon-state='loading']
+  // Reserve the label's slot without showing a text pill or an empty colored box.
+  visibility: hidden !important
+  pointer-events: none
+
+  > [data-badge-icon-fallback]
+    visibility: hidden !important
+
 .user-profile-badge[data-badge-icon-state='ready']
   position: relative
   display: inline-flex !important
@@ -58,6 +66,16 @@ for key, _ in $badge-bg-color
 
   &:not(.ui-v2-user-detail-badge-row__selector)::after
     display: none !important
+
+.user-profile-badge[data-badge-icon-state='ready'][data-badge-icon-reveal='fade']
+  // Animate the artwork and its sweep together; cached nodes never get this flag.
+  animation: badge-icon-reveal 260ms ease-out both
+
+@keyframes badge-icon-reveal
+  from
+    opacity: 0
+  to
+    opacity: 1
 
 img[data-badge-icon][hidden]
   display: none !important
@@ -103,6 +121,9 @@ img[data-badge-icon][hidden]
     mask-position: -50% 0
 
 @media (prefers-reduced-motion: reduce)
+  .user-profile-badge[data-badge-icon-reveal='fade']
+    animation: none !important
+
   .user-profile-badge > img[data-badge-icon-shine]
     display: none !important
     animation: none !important

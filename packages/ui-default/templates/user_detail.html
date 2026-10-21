@@ -144,19 +144,20 @@
                           <input type="hidden" name="badgeId" value="{{ badge.id }}">
                           <button
                             type="submit"
+                            {% if badge.iconUrl %}data-badge-icon-state="loading" aria-busy="true" aria-label="{{ badge.displayName }}"{% endif %}
                             class="user-profile-badge v-center user-profile-badge--custom ui-v2-user-detail-badge-row__selector{% if badge.id == badgeProfileBackground.selectedId %} is-current{% endif %}"
                             style="background-color:{{ badge.backgroundColor }}{% if badge.fontColor %};color:{{ badge.fontColor }}{% endif %}"
                             title="{{ '当前主题：' + badge.displayName if badge.id == badgeProfileBackground.selectedId else '点击切换为 ' + badge.displayName + ' 主题' }}"
                             data-tooltip="{{ '当前主题：' + badge.displayName if badge.id == badgeProfileBackground.selectedId else '点击切换为 ' + badge.displayName + ' 主题' }}"
                             {% if badge.id == badgeProfileBackground.selectedId %}aria-current="true"{% endif %}
-                          >{{ user.render_badge_icon(badge.iconUrl, badge.displayName) }}</button>
+                          >{{ user.render_badge_icon(badge.iconUrl, badge.displayName, 'high' if loop.index <= 4 else 'auto') }}</button>
                         </form>
                       {% else %}
-                        {{ user.render_custom_badge_item(badge) }}
+                        {{ user.render_custom_badge_item(badge, '', 'high' if loop.index <= 4 else 'auto') }}
                       {% endif %}
                     {% endfor %}
                   {% else %}
-                    {{ user.render_custom_badges(udoc) }}
+                    {{ user.render_custom_badges(udoc, 0, '', 'high') }}
                   {% endif %}
                 </div>
               {% endif %}

@@ -46,6 +46,7 @@
       <tbody>
       {%- set canViewAll = handler.user.own(tdoc) or model.contest.canShowRecord.call(handler, tdoc) -%}
       {%- for row in rows -%}{%- if loop.index0 > 0 -%}
+        {%- set badgeImagePriority = 'high' if loop.index <= 9 else 'auto' -%}
         {%- set scoreboardRowUdoc = scoreboardUserDict[row[1].raw] -%}
         {%- set scoreboardRowBadges = scoreboardRowUdoc.ownedBadges|default([]) -%}
         {%- set scoreboardRowBadgeCount = scoreboardRowBadges|length or (1 if scoreboardRowUdoc.badge else 0) -%}
@@ -70,7 +71,7 @@
                     {%- set scoreboardUserLevel = scoreboardUserDict[column.raw].level -%}
                     <a class="user-profile-badge v-center badge--lv{{ scoreboardUserLevel }}" href="{{ url('user_detail', uid=column.raw) }}" data-tooltip="{{ _('LV '+ scoreboardUserLevel) }}: Top {{ model.builtin.LEVELS[scoreboardUserLevel]|default('N/A') }}%">{{ _('LV '+ scoreboardUserLevel) }}</a>
                   {%- endif -%}
-                  {{ user.render_custom_badges(scoreboardUserDict[column.raw], 4, 'ranking-user__badge') }}
+                  {{ user.render_custom_badges(scoreboardUserDict[column.raw], 4, 'ranking-user__badge', badgeImagePriority) }}
                 </div>
               </div>
             {%- elif column.type == 'record' and column.raw -%}

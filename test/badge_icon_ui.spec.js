@@ -136,7 +136,7 @@ describe('badge artwork upload preview', () => {
             const file = new f.dom.window.File(['fake png'], '剑客.png', { type: 'image/png' });
             f.select(file);
             assert.equal(f.preview.querySelector('img').getAttribute('src'), 'blob:test-0');
-            assert.equal(f.preview.dataset.badgeIconState, 'fallback');
+            assert.equal(f.preview.dataset.badgeIconState, 'loading');
             const image = f.preview.querySelector('img');
             imageState(image, true);
             image.dispatchEvent(new f.dom.window.Event('load'));

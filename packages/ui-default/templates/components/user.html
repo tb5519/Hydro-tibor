@@ -41,18 +41,18 @@
 {% endif %}
 {% endmacro %}
 
-{# The original label remains usable while loading, after an image error, or without JavaScript. #}
-{% macro render_badge_icon(iconUrl, label) %}
-{% if iconUrl %}<span data-badge-icon-fallback>{{ label }}</span><img data-badge-icon src="{{ iconUrl }}" alt="{{ label }}" decoding="async" hidden>{% else %}{{ label }}{% endif %}
+{# Uploaded artwork starts as a quiet placeholder; the original label is shown only after a real image error. #}
+{% macro render_badge_icon(iconUrl, label, image_priority='auto') %}
+{% if iconUrl %}<span data-badge-icon-fallback aria-hidden="true">{{ label }}</span><img data-badge-icon src="{{ iconUrl }}" alt="{{ label }}" loading="eager" fetchpriority="{{ image_priority }}" decoding="async" hidden>{% else %}{{ label }}{% endif %}
 {% endmacro %}
 
-{% macro render_custom_badge_item(badge, extra_class='') %}
-<a href="{{ badge.href }}" class="user-profile-badge v-center user-profile-badge--custom {{ extra_class }}" style="background-color:{{ badge.backgroundColor }}{% if badge.fontColor %};color:{{ badge.fontColor }}{% endif %}" title="{{ badge.tooltip or badge.displayName }}"{% if badge.tooltip %} data-tooltip="{{ badge.tooltip }}"{% endif %}>{{ render_badge_icon(badge.iconUrl, badge.displayName) }}</a>
+{% macro render_custom_badge_item(badge, extra_class='', image_priority='auto') %}
+<a href="{{ badge.href }}"{% if badge.iconUrl %} data-badge-icon-state="loading" aria-busy="true" aria-label="{{ badge.displayName }}"{% endif %} class="user-profile-badge v-center user-profile-badge--custom {{ extra_class }}" style="background-color:{{ badge.backgroundColor }}{% if badge.fontColor %};color:{{ badge.fontColor }}{% endif %}" title="{{ badge.tooltip or badge.displayName }}"{% if badge.tooltip %} data-tooltip="{{ badge.tooltip }}"{% endif %}>{{ render_badge_icon(badge.iconUrl, badge.displayName, image_priority) }}</a>
 {% endmacro %}
 
-{% macro render_selected_custom_badge(udoc, extra_class='') %}
+{% macro render_selected_custom_badge(udoc, extra_class='', image_priority='auto') %}
 {% if udoc and udoc.selectedBadgePresentation %}
-  {{ render_custom_badge_item(udoc.selectedBadgePresentation, extra_class) }}
+  {{ render_custom_badge_item(udoc.selectedBadgePresentation, extra_class, image_priority) }}
 {% elif udoc and udoc.badge %}
   {% set _badge = udoc.badge.split('#') %}
   {% if _badge|length >= 4 %}
@@ -73,7 +73,7 @@
 {% endif %}
 {% endmacro %}
 
-{% macro render_custom_badges(udoc, limit=0, extra_class='') %}
+{% macro render_custom_badges(udoc, limit=0, extra_class='', image_priority='auto') %}
 {% set badges = [] %}
 {% if udoc and udoc.ownedBadges %}
   {% set badges = udoc.ownedBadges %}
@@ -85,13 +85,13 @@
     {% set visibleBadges = badges %}
   {% endif %}
   {% for badge in visibleBadges %}
-    {{ render_custom_badge_item(badge, extra_class) }}
+    {{ render_custom_badge_item(badge, extra_class, image_priority) }}
   {% endfor %}
   {% if limit and badges|length > limit %}
     <span class="user-profile-badge v-center user-profile-badge--custom user-profile-badge--more {{ extra_class }}" title="{% for badge in badges.slice(limit) %}{{ badge.displayName }}{% if not loop.last %}, {% endif %}{% endfor %}">+{{ badges|length - limit }}</span>
   {% endif %}
 {% else %}
-  {{ render_selected_custom_badge(udoc, extra_class) }}
+  {{ render_selected_custom_badge(udoc, extra_class, image_priority) }}
 {% endif %}
 {% endmacro %}
 
@@ -111,7 +111,7 @@
 {% endif %}
 {% endmacro %}
 
-{% macro render_ranking(udoc) %}
+{% macro render_ranking(udoc, image_priority='auto') %}
 {% if udoc %}
 <div class="ranking-user">
   <div class="ranking-user__main">
@@ -124,7 +124,7 @@
       {% endif %}
     </a>
     <span class="ranking-user__short-badges">{{ render_short_badges(udoc) }}</span>
-    <span class="ranking-user__custom-badges">{{ render_custom_badges(udoc, 4, 'ranking-user__badge') }}</span>
+    <span class="ranking-user__custom-badges">{{ render_custom_badges(udoc, 4, 'ranking-user__badge', image_priority) }}</span>
   </div>
 </div>
 {% else %}

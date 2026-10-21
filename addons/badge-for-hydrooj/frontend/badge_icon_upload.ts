@@ -37,7 +37,8 @@ export function bindBadgeIconUpload(root: ParentNode = document) {
     preview.title = title?.value.trim() || label;
     preview.style.backgroundColor = safeColor(background?.value || '') || '#345477';
     preview.style.color = safeColor(foreground?.value || '') || '#ffffff';
-    preview.dataset.badgeIconState = 'fallback';
+    preview.dataset.badgeIconState = source ? 'loading' : 'fallback';
+    delete preview.dataset.badgeIconReveal;
     const fallback = document.createElement('span');
     fallback.dataset.badgeIconFallback = '';
     fallback.textContent = label;
@@ -48,8 +49,14 @@ export function bindBadgeIconUpload(root: ParentNode = document) {
       image.hidden = true;
       image.dataset.badgeIcon = '';
       image.decoding = 'async';
+      image.loading = 'eager';
+      image.setAttribute('fetchpriority', 'high');
+      fallback.setAttribute('aria-hidden', 'true');
       image.addEventListener('load', () => {
         if (disposed || image.parentElement !== preview || !image.naturalWidth || !image.naturalHeight) return;
+        // The shared installer owns decode/reveal when present. Its capture
+        // listener runs first; this local preview must not reveal ahead of it.
+        if (image.hasAttribute('data-badge-icon-managed')) return;
         preview.dataset.badgeIconState = 'ready';
         image.hidden = false;
         fallback.setAttribute('aria-hidden', 'true');
@@ -58,6 +65,7 @@ export function bindBadgeIconUpload(root: ParentNode = document) {
         if (disposed || image.parentElement !== preview) return;
         preview.dataset.badgeIconState = 'fallback';
         image.hidden = true;
+        fallback.setAttribute('aria-hidden', 'false');
         status.textContent = '小图暂时无法显示，当前保留文字样式。';
       });
       preview.appendChild(image);

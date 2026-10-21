@@ -27,7 +27,7 @@
     <div class="homepage-personal__badges">
       <div class="homepage-personal__label">我的荣誉徽章</div>
       <div class="homepage-personal__badge-list">
-        {{ user.render_custom_badges(udoc, 6, 'homepage-personal__badge') }}
+        {{ user.render_custom_badges(udoc, 6, 'homepage-personal__badge', 'high') }}
         {% if not udoc.ownedBadges and not udoc.badge %}
           <span class="homepage-personal__empty">暂无荣誉徽章</span>
         {% endif %}

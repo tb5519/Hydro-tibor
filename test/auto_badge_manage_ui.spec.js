@@ -11,7 +11,7 @@ const template = fs.readFileSync(path.join(root, 'addons/badge-for-hydrooj/templ
 const frontend = ts.transpileModule(fs.readFileSync(path.join(root, 'packages/ui-default/pages/auto_badge_manage.page.ts'), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
 }).outputText;
-const env = new nunjucks.Environment(null, { autoescape: true });
+const env = new nunjucks.Environment(new nunjucks.FileSystemLoader(path.join(root, 'packages/ui-default/templates')), { autoescape: true });
 
 const badge = {
     key: 'opaque/record+1', uid: 12, userName: '君豪', userUrl: '/user/12', userAvatar: '/avatar/12.png',
@@ -21,7 +21,7 @@ const badge = {
 };
 
 function fixture(overrides = {}) {
-    const dom = new JSDOM(env.renderString(template, {
+    const dom = new JSDOM(env.renderString("{% import 'components/user.html' as user with context %}" + template, {
         autoBadgeRows: [badge], autoBadgeTotal: 1, autoBadgePage: 1, autoBadgePageCount: 1,
         autoBadgeQuery: '', autoBadgeStatus: 'active', autoBadgeTimezone: 'Asia/Shanghai', page: 2, ...overrides,
     }), { url: 'https://example.test/domain/badge?page=2&autoStatus=active', runScripts: 'outside-only', virtualConsole: new VirtualConsole() });

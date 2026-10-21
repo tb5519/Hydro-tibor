@@ -9,7 +9,7 @@
                 <td class="col--user">
                   <span class="homepage-ranking-user">
                     {{ user.render_inline(udoc, badge=false, levelbadge=false) }}
-                    <span class="homepage-ranking-user__badges">{{ user.render_custom_badges(udoc, 4, 'homepage-ranking-user__badge') }}</span>
+                    <span class="homepage-ranking-user__badges">{{ user.render_custom_badges(udoc, 4, 'homepage-ranking-user__badge', 'high' if loop.index <= 8 else 'auto') }}</span>
                   </span>
                 </td>
                 <td class="col--rp">{{ udoc.rp|default(0)|round(0) }}</td>

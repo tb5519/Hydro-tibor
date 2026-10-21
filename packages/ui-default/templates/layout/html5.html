@@ -48,6 +48,9 @@
   {% else %}
     <link rel="stylesheet" media="all" href="{{ UiContext.cdn_prefix }}theme-{{ global.Hydro.version['ui-default'] }}.css?{{ UiContext.themeVersion|default(global.Hydro.version['ui-default']) }}">
   {% endif %}
+  {% for badgeIconUrl in UiContext.badgeIconPreloads %}
+    <link rel="preload" as="image" href="{{ badgeIconUrl }}" fetchpriority="high">
+  {% endfor %}
   {% if not isIE(handler.request.headers['user-agent']) and not handler.session.legacy %}
     <script>
       var _htmlNode = document.documentElement;
