@@ -16,6 +16,7 @@ import { TokenDoc, Udoc, User } from '../interface';
 import avatar from '../lib/avatar';
 import { contestLevelQuery } from '../lib/contest_access';
 import { sendMail } from '../lib/mail';
+import { getProfileAcDifficulty } from '../lib/profile_ac_difficulty';
 import { selectProfileBadgeSound } from '../lib/profile_badge_sound';
 import { getUserAvatarEffects, parseAvatarEffectUids } from '../lib/user_avatar_effects';
 import { getUserBadgeGallery } from '../lib/user_badge_gallery';
@@ -592,12 +593,13 @@ class UserDetailHandler extends Handler {
             }
         }
         const tags = Object.entries(acInfo).sort((a, b) => b[1] - a[1]).slice(0, 20);
+        const acDifficulty = getProfileAcDifficulty(pdocs);
         const tsdocs = await ContestModel.getMultiStatus(domainId, { uid, attend: { $exists: true } }).project({ docId: 1 }).toArray();
         const tdocs = await ContestModel.getMulti(domainId, { docId: { $in: tsdocs.map((i) => i.docId) }, ...contestLevelQuery(this.user, domainId) })
             .project({ docId: 1, title: 1, rule: 1 }).sort({ _id: -1 }).toArray();
         this.response.template = 'user_detail.html';
         this.response.body = {
-            isSelfProfile, udoc, sdoc, pdocs, tags, tdocs, badgeProfileBackground, profileBadgeSound,
+            isSelfProfile, udoc, sdoc, pdocs, tags, acDifficulty, tdocs, badgeProfileBackground, profileBadgeSound,
         };
         if (this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_SOLUTION)) {
             const psdocs = await SolutionModel.getByUser(domainId, uid).limit(10).toArray();
