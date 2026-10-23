@@ -8,10 +8,11 @@ import { Udoc } from '../interface';
 import difficultyAlgorithm from '../lib/difficulty';
 import { getOjDomainQuery, isScratchDomain } from '../lib/domain_type';
 import { invalidateSharedRankingSnapshot } from '../lib/shared_ranking';
-import { applyIncrementalRanking, publishRankingUpdate, publicRankingStatuses, withRankingRebuild } from '../lib/incremental_ranking';
+import {
+    applyIncrementalRanking, freezeProblemRpForRebuild, publishRankingUpdate, withRankingRebuild,
+} from '../lib/incremental_ranking';
 import { PRIV, STATUS } from '../model/builtin';
 import domain from '../model/domain';
-import problem from '../model/problem';
 import UserModel from '../model/user';
 import db from '../service/db';
 
@@ -21,15 +22,18 @@ type ND = NumericDictionary<number>;
 type Report = (data: any) => void;
 
 interface RpDef {
-    run(domainIds: string[], udict: ND, report: Report): Promise<void>;
+    run(domainIds: string[], udict: ND, report: Report, frozen?: FrozenProblemRpSnapshot, scope?: 'local' | 'shared'): Promise<void>;
     hidden: boolean;
     base: number;
 }
 
-const { log, max, min } = Math;
+interface FrozenProblemRpSnapshot {
+    local: Map<string, Map<number, number>>;
+    shared: Map<number, number>;
+}
+
 const AUTO_DIFFICULTY_PRIOR_SUBMIT = 30;
 const AUTO_DIFFICULTY_PRIOR_ACCEPT_RATE = 0.45;
-const PROBLEM_RP_SOLVED_LOG_WEIGHT = 52;
 
 export function getProblemRpDifficulty(pdoc: { difficulty?: number, nSubmit?: number, nAccept?: number }) {
     const fixedDifficulty = +pdoc.difficulty;
@@ -43,30 +47,12 @@ export function getProblemRpDifficulty(pdoc: { difficulty?: number, nSubmit?: nu
 
 export const RpTypes: Record<string, RpDef> = {
     problem: {
-        async run(domainIds, udict, report) {
-            const problems = await problem.getMulti('', { domainId: { $in: domainIds }, nAccept: { $gt: 0 } }).toArray();
-            if (problems.length) await report({ message: `Found ${problems.length} problems in ${domainIds[0]}` });
-            const solved = Counter();
-            for (const pdoc of problems) {
-                const cursor = problem.getMultiStatus(
-                    pdoc.domainId,
-                    {
-                        docId: pdoc.docId,
-                        rid: { $ne: null },
-                        uid: { $ne: pdoc.owner },
-                        score: { $gt: 0 },
-                    },
-                );
-                const statuses = await publicRankingStatuses(await cursor.toArray());
-                for (const psdoc of statuses) {
-                    const scoreRatio = min(psdoc.score, 100) / 100;
-                    solved[psdoc.uid] += scoreRatio;
-                }
-            }
-            for (const key in solved) {
-                const solvedRp = log(solved[key] + 1) * PROBLEM_RP_SOLVED_LOG_WEIGHT;
-                udict[key] = max(0, solvedRp);
-            }
+        async run(domainIds, udict, report, frozen, scope) {
+            const snapshot = frozen || await freezeProblemRpForRebuild(domainIds);
+            const shared = scope === 'shared' || (!scope && domainIds.length > 1);
+            const values = shared ? snapshot.shared : snapshot.local.get(domainIds[0]);
+            for (const [uid, value] of values || []) udict[uid] = value;
+            await report({ message: `Restored frozen problem RP for ${values?.size || 0} users` });
         },
         hidden: false,
         base: 0,
@@ -118,14 +104,14 @@ export async function calcLevel(domainId: string, report: Report) {
     await bulk.execute();
 }
 
-async function runInDomain(domainId: string, report: Report) {
+async function runInDomain(domainId: string, report: Report, frozen: FrozenProblemRpSnapshot) {
     if (isScratchDomain(await domain.get(domainId))) return;
     const results: Record<keyof typeof RpTypes, ND> = {};
     const udict = Counter();
     await db.collection('domain.user').updateMany({ domainId }, { $set: { rpInfo: {} } });
     for (const type in RpTypes) {
         results[type] = new Proxy({}, { get: (self, key) => self[key] || RpTypes[type].base });
-        await RpTypes[type].run([domainId], results[type], report);
+        await RpTypes[type].run([domainId], results[type], report, frozen, 'local');
         const bulk = db.collection('domain.user').initializeUnorderedBulkOp();
         for (const uid in results[type]) {
             const udoc = await UserModel.getById(domainId, +uid);
@@ -144,11 +130,9 @@ async function runInDomain(domainId: string, report: Report) {
     await calcLevel(domainId, report);
 }
 
-// A global result is kept separately from the regular per-domain RP fields so
-// one domain can show a shared board without changing another domain's local
-// board. The formula is the original all-domain RP formula, not a sum of each
-// domain's displayed RP.
-async function runAcrossDomains(domainIds: string[], report: Report) {
+// Shared problem RP has its own frozen baseline and awards. Never sum local
+// values or recompute historical awards from today's problem difficulty.
+async function runAcrossDomains(domainIds: string[], report: Report, frozen: FrozenProblemRpSnapshot) {
     const membershipDocs = await domain.collUser.find({
         domainId: { $in: domainIds },
         join: true,
@@ -168,7 +152,7 @@ async function runAcrossDomains(domainIds: string[], report: Report) {
     const total = Counter();
     for (const type in RpTypes) {
         const result: ND = new Proxy({}, { get: (self, key) => self[key] || RpTypes[type].base });
-        await RpTypes[type].run(domainIds, result, report);
+        await RpTypes[type].run(domainIds, result, report, frozen, 'shared');
         const bulk = coll.initializeUnorderedBulkOp();
         for (const uidText in result) {
             const uid = +uidText;
@@ -194,12 +178,18 @@ async function runAcrossDomains(domainIds: string[], report: Report) {
 }
 
 async function runUnlocked({ domainId }, report: Report) {
+    const allDomains = await domain.getMulti(getOjDomainQuery()).project<{ _id: string, rankingMode?: string }>({ _id: 1, rankingMode: 1 }).toArray();
+    const allDomainIds = allDomains.map((ddoc) => ddoc._id);
+    // Take the immutable ledger snapshot before clearing any displayed RP.
+    // First-time migration must retain the RP already earned, even when a
+    // teacher changed difficulty before this maintenance command was run.
+    const frozen = await freezeProblemRpForRebuild(allDomainIds);
     if (!domainId) {
-        const domains = await domain.getMulti(getOjDomainQuery()).toArray();
+        const domains = allDomains;
         await report({ message: `Found ${domains.length} domains` });
         for (const i in domains) {
             const start = Date.now();
-            await runInDomain(domains[i]._id, report);
+            await runInDomain(domains[i]._id, report, frozen);
             await report({
                 case: {
                     status: STATUS.STATUS_ACCEPTED,
@@ -211,14 +201,13 @@ async function runUnlocked({ domainId }, report: Report) {
                 progress: Math.floor(((+i + 1) / domains.length) * 100),
             });
         }
-    } else await runInDomain(domainId, report);
+    } else await runInDomain(domainId, report, frozen);
 
-    const allDomains = await domain.getMulti(getOjDomainQuery()).project<{ _id: string, rankingMode?: string }>({ _id: 1, rankingMode: 1 }).toArray();
     if (allDomains.some((ddoc) => ddoc.rankingMode === 'all')) {
         const start = Date.now();
         const domainIds = allDomains.map((ddoc) => ddoc._id);
         await report({ message: `Calculating shared RP across ${domainIds.length} domains` });
-        await runAcrossDomains(domainIds, report);
+        await runAcrossDomains(domainIds, report, frozen);
         await report({
             case: {
                 status: STATUS.STATUS_ACCEPTED,

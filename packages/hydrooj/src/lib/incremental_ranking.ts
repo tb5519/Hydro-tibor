@@ -14,6 +14,9 @@ import bus from '../service/bus';
 import db from '../service/db';
 import { getOjDomainQuery } from './domain_type';
 import { invalidateSharedRankingSnapshot } from './shared_ranking';
+import {
+    initializeRpAwards, recordRpAward, applyFrozenRpAwards, getFrozenRpSnapshot,
+} from './rp_award_ledger';
 
 interface DomainProgress { domainId: string; solved: number; accepted: number }
 interface RankingProgress {
@@ -40,6 +43,13 @@ interface PendingContest {
     domainId: string;
     tid: ObjectId;
     uids: number[];
+}
+
+export interface RankingAwardSource {
+    rdoc: Pick<RecordDoc, '_id' | 'uid' | 'pid' | 'domainId' | 'status' | 'score' | 'judgeAt' | 'contest'>;
+    pdoc: Pick<ProblemDoc, 'domainId' | 'docId' | 'owner' | 'nAccept' | 'difficulty'>;
+    contestFactor: 1 | 2;
+    deferred: boolean;
 }
 
 declare module '../service/db' {
@@ -345,6 +355,9 @@ async function updateUser(uid: number, affected?: { domainId: string; pid: numbe
         const scope = JSON.stringify(domainIds);
         const seed = forceSeed || previous.generation !== generation || previous.scope !== scope || previous.dirty;
         await progress().updateOne({ _id: stateId }, { $set: { dirty: true } });
+        // This durable balance is independent of disposable canonical-status
+        // caches. Read/advance it before seeding can replace legacy entries.
+        const frozen = await applyFrozenRpAwards(uid, domainIds, recordVisibility);
         const sums = seed ? await seedUser(uid, domainIds, generation) : previous.domains;
         if (!seed && affected) {
             const key = identity(uid, affected.domainId, affected.pid);
@@ -369,12 +382,12 @@ async function updateUser(uid: number, affected?: { domainId: string; pid: numbe
         const sharedInfo = memberships.find((item) => item.sharedRpInfo)?.sharedRpInfo
             || Object.fromEntries(Object.keys(memberships.reduce((all, item) => ({ ...all, ...item.rpInfo }), {}))
                 .filter((key) => key !== 'problem').map((key) => [key, memberships.reduce((sum, item) => sum + (+item.rpInfo?.[key] || 0), 0)]));
-        const sharedProblemRp = problemRpFromSolved(sums.reduce((sum, item) => sum + item.solved, 0));
+        const sharedProblemRp = frozen.shared;
         const changedDomains: string[] = [];
         for (const membership of memberships) {
             const local = sums.find((item) => item.domainId === membership.domainId);
             if (!local) continue;
-            const problemRp = problemRpFromSolved(local.solved);
+            const problemRp = frozen.local.get(membership.domainId) || 0;
             if (membership.rpInfo?.problem !== problemRp) changedDomains.push(membership.domainId);
             const $set: any = { 'rpInfo.problem': problemRp, nAccept: local.accepted };
             if (membership.join) $set.sharedRpInfo = { ...sharedInfo, problem: sharedProblemRp };
@@ -408,8 +421,26 @@ async function scheduleContest(domainId: string, tdoc: any) {
 /** Called after the canonical problem status and counters have been persisted. */
 export async function updateIncrementalRanking(rdoc: RecordDoc, pdoc?: ProblemDoc, firstAccepted = false) {
     if (rdoc.uid <= 1 || !pdoc || rdoc.contest?.toString().startsWith('0'.repeat(23))) return false;
+    await initializeRpAwards();
+    const tdoc = rdoc.contest ? await contest.get(rdoc.domainId, rdoc.contest) : null;
+    // Homework shares the contest storage model but earns the ordinary rate.
+    // Capture at judgement, even for a hidden scoreboard: later edits cannot
+    // change the difficulty or competition bonus of an already judged result.
+    const awardSource: RankingAwardSource = {
+        rdoc: { _id: rdoc._id, uid: rdoc.uid, pid: rdoc.pid, domainId: rdoc.domainId,
+            status: rdoc.status, score: rdoc.score, judgeAt: rdoc.judgeAt, contest: rdoc.contest },
+        pdoc: { domainId: pdoc.domainId, docId: pdoc.docId, owner: pdoc.owner, nAccept: pdoc.nAccept, difficulty: pdoc.difficulty },
+        contestFactor: tdoc && tdoc.rule !== 'homework' ? 2 : 1,
+        deferred: !!rdoc.contest && !canPublishContest(tdoc),
+    };
+    try {
+        await recordRpAward(rdoc, pdoc, awardSource.contestFactor, awardSource.deferred);
+    } catch (error) {
+        // Keep the original award context even if persisting its event failed.
+        // A retry after a teacher edit must not silently use the new difficulty.
+        throw Object.assign(new Error('Unable to persist RP award source', { cause: error }), { rankingAwardSource: awardSource });
+    }
     if (rdoc.contest) {
-        const tdoc = await contest.get(rdoc.domainId, rdoc.contest);
         if (!canPublishContest(tdoc)) {
             await pendingContests().updateOne({ _id: contestKey(rdoc.domainId, rdoc.contest) }, {
                 $set: { domainId: rdoc.domainId, tid: rdoc.contest }, $addToSet: { uids: rdoc.uid },
@@ -424,14 +455,31 @@ export async function updateIncrementalRanking(rdoc: RecordDoc, pdoc?: ProblemDo
         // other students with a partial result on this question are affected.
         const partials = await problem.getMultiStatus(rdoc.domainId, {
             docId: rdoc.pid, uid: { $nin: [rdoc.uid, pdoc.owner] }, rid: { $ne: null }, score: { $gt: 0 },
-        }).project({ uid: 1 }).toArray();
+        }).project({ uid: 1, rid: 1 }).toArray();
         for (const status of partials) {
-            try { await updateUser(status.uid, { domainId: rdoc.domainId, pid: rdoc.pid }); } catch {
+            try {
+                // An older partial first becomes eligible when this question
+                // receives its first AC. Credit its own source, not the first
+                // solver's difficulty/competition context.
+                const source = await record.coll.findOne({ _id: status.rid });
+                if (source) {
+                    const sourceContest = source.contest ? await contest.get(source.domainId, source.contest) : null;
+                    await recordRpAward(source, pdoc, sourceContest && sourceContest.rule !== 'homework' ? 2 : 1,
+                        !!source.contest && !canPublishContest(sourceContest));
+                }
+                await updateUser(status.uid, { domainId: rdoc.domainId, pid: rdoc.pid });
+            } catch {
                 await scheduleRankingRecovery(status.uid);
             }
         }
     }
     return updated;
+}
+
+/** A maintenance rebuild projects immutable earned balances, never current difficulty. */
+export async function freezeProblemRpForRebuild(domainIds: string[]) {
+    await initializeRpAwards();
+    return getFrozenRpSnapshot(domainIds);
 }
 
 export async function publishContestRanking(domainId: string, tid: ObjectId) {
@@ -443,15 +491,20 @@ export async function publishContestRanking(domainId: string, tid: ObjectId) {
     await pendingContests().deleteOne({ _id: pending._id });
 }
 
-export async function scheduleRankingRecovery(uid: number, question?: { domainId: string; pid: number }) {
+export async function scheduleRankingRecovery(uid: number, question?: { domainId: string; pid: number }, awardSource?: RankingAwardSource) {
     const _id = new ObjectId(createHash('sha256').update(`ranking/user/${uid}`).digest('hex').slice(0, 24));
     await db.collection('schedule').updateOne({ _id }, {
         $set: { uid, type: 'schedule', subType: 'ranking.user', executeAfter: new Date(Date.now() + 10_000) },
-        ...(question ? { $addToSet: { questions: question } } : {}),
+        ...((question || awardSource) ? { $addToSet: {
+            ...(question ? { questions: question } : {}), ...(awardSource ? { awards: awardSource } : {}),
+        } } : {}),
     }, { upsert: true });
 }
 
 export async function applyIncrementalRanking(ctx: Context) {
+    // This metadata-only migration freezes existing displayed RP before any
+    // post-deployment judgement can earn a new difficulty/contest bonus.
+    await initializeRpAwards();
     await db.ensureIndexes(contributions(), { key: { uid: 1, domainId: 1 }, name: 'byUser' });
     await db.ensureIndexes(record.coll, { key: { domainId: 1, uid: 1, pid: 1, status: 1, _id: -1 }, name: 'rankingUserProblem' });
     await ctx.inject(['worker'], (c) => {
@@ -462,8 +515,20 @@ export async function applyIncrementalRanking(ctx: Context) {
                 throw error;
             }
         });
-        c.worker.addHandler('ranking.user', async ({ uid, questions = [] }) => {
+        c.worker.addHandler('ranking.user', async ({ uid, questions = [], awards = [] }) => {
             try {
+                for (const source of awards as RankingAwardSource[]) {
+                    await recordRpAward(source.rdoc as RecordDoc, source.pdoc as ProblemDoc, source.contestFactor, source.deferred);
+                    if (source.deferred && source.rdoc.contest) {
+                        const tdoc = await contest.get(source.rdoc.domainId, source.rdoc.contest);
+                        if (!canPublishContest(tdoc)) {
+                            await pendingContests().updateOne({ _id: contestKey(source.rdoc.domainId, source.rdoc.contest) }, {
+                                $set: { domainId: source.rdoc.domainId, tid: source.rdoc.contest }, $addToSet: { uids: uid },
+                            }, { upsert: true });
+                            await scheduleContest(source.rdoc.domainId, tdoc);
+                        }
+                    }
+                }
                 await updateUser(uid, undefined, true);
                 for (const question of questions) {
                     const statuses = await problem.getMultiStatus(question.domainId, { docId: question.pid, score: { $gt: 0 } }).project({ uid: 1 }).toArray();
@@ -473,6 +538,7 @@ export async function applyIncrementalRanking(ctx: Context) {
                 }
             } catch (error) {
                 await scheduleRankingRecovery(uid);
+                for (const source of awards as RankingAwardSource[]) await scheduleRankingRecovery(uid, undefined, source);
                 for (const question of questions) await scheduleRankingRecovery(uid, question);
                 throw error;
             }

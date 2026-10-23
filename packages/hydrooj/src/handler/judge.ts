@@ -154,7 +154,8 @@ export class JudgeResultCallbackContext {
             // A failed auxiliary ranking update must not prevent an AC result
             // from completing. The durable retry repairs this user only.
             logger.error('Unable to update ranking for %s/%d: %o', rdoc.domainId, rdoc.uid, error);
-            await scheduleRankingRecovery(rdoc.uid, firstAccepted ? { domainId: rdoc.domainId, pid: rdoc.pid } : undefined).catch((retryError) => logger.error('Unable to schedule ranking recovery: %o', retryError));
+            await scheduleRankingRecovery(rdoc.uid, firstAccepted ? { domainId: rdoc.domainId, pid: rdoc.pid } : undefined,
+                error.rankingAwardSource).catch((retryError) => logger.error('Unable to schedule ranking recovery: %o', retryError));
         }
         await app.parallel('record/judge', rdoc, updated, pdoc, context);
     }

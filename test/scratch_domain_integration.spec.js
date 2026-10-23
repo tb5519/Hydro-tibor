@@ -165,6 +165,7 @@ describe('Scratch exclusion in shared RP calculation and reads', () => {
             '../lib/incremental_ranking': {
                 withRankingRebuild: (callback) => callback(),
                 publishRankingUpdate: async () => {},
+                freezeProblemRpForRebuild: async () => ({ local: new Map(), shared: new Map() }),
             },
             '../model/builtin': { PRIV: { PRIV_USER_PROFILE: 1 }, STATUS: { STATUS_ACCEPTED: 1 } },
             '../model/domain': domain,
