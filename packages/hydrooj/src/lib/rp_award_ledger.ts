@@ -8,7 +8,9 @@ import problem from '../model/problem';
 import record from '../model/record';
 import db from '../service/db';
 import { getOjDomainQuery, isScratchDomain } from './domain_type';
-import { calculateProblemRpAward, normalizeRpDifficulty } from './rp_award';
+import {
+    calculateProblemRpAward, getLegacyRpDifficultyMultiplier, getRpDifficultyMultiplier, normalizeRpDifficulty,
+} from './rp_award';
 
 interface EarnedDomain {
     domainId: string;
@@ -38,6 +40,9 @@ interface AwardEvent {
     score: number;
     status: number;
     difficulty: number;
+    /** Numeric coefficient is immutable, including across later policy upgrades. */
+    difficultyMultiplier?: number;
+    awardPolicy?: 'pre-earned-rp-v1' | 'earned-rp-v1' | 'challenge-rp-v2';
     contestFactor: 1 | 2;
     contest?: ObjectId;
     judgeAt: Date;
@@ -45,7 +50,7 @@ interface AwardEvent {
     processed: boolean;
     deferred: boolean;
 }
-interface AwardPolicy { _id: string; version: 1; epoch: Date; baselinesFrozen?: boolean }
+interface AwardPolicy { _id: string; version: 1 | 2; epoch: Date; baselinesFrozen?: boolean }
 export type RpAwardVisibility = (records: any[]) => Promise<Map<string, boolean>>;
 export interface FrozenRpSnapshot {
     local: Map<string, Map<number, number>>;
@@ -77,6 +82,25 @@ async function policyEpoch() {
         if (error.code !== 11000) throw error;
     }
     return (await policies().findOne({ _id: 'earned-rp-v1' })).epoch;
+}
+
+/** A separate cutover never resets the original earned-RP epoch or balances. */
+async function challengePolicyEpoch() {
+    try {
+        await policies().updateOne({ _id: 'challenge-rp-v2' }, {
+            $setOnInsert: { version: 2, epoch: new Date() },
+        }, { upsert: true });
+    } catch (error) {
+        if (error.code !== 11000) throw error;
+    }
+    return (await policies().findOne({ _id: 'challenge-rp-v2' })).epoch;
+}
+
+function frozenDifficultyMultiplier(event: AwardEvent) {
+    // Missing numeric fields identify deployed v1 events, even when they only
+    // become visible after v2. They must never inherit the newer curve.
+    return typeof event.difficultyMultiplier === 'number' && Number.isFinite(event.difficultyMultiplier) && event.difficultyMultiplier >= 1
+        ? event.difficultyMultiplier : getLegacyRpDifficultyMultiplier(event.difficulty);
 }
 
 async function ojDomains() {
@@ -124,6 +148,7 @@ function freshLedger(uid: number, memberships: any[], epoch: Date): EarnedLedger
  * or ranking projection is performed, and an existing policy is never reset. */
 export async function initializeRpAwards(): Promise<Date> {
     const epoch = await policyEpoch();
+    await challengePolicyEpoch();
     if ((await policies().findOne({ _id: 'earned-rp-v1' }))?.baselinesFrozen) return epoch;
     const domainIds = await ojDomains();
     const memberships = await domain.collUser.find({ uid: { $gt: 1 }, domainId: { $in: domainIds } })
@@ -148,15 +173,21 @@ export async function initializeRpAwards(): Promise<Date> {
 export async function recordRpAward(rdoc: RecordDoc, pdoc: ProblemDoc, contestFactor: 1 | 2, deferred = false): Promise<void> {
     if (!pdoc || rdoc.uid <= 1 || rdoc.contest?.toString().startsWith('0'.repeat(23))) return;
     if (isScratchDomain(await domain.get(rdoc.domainId))) return;
-    await policyEpoch();
+    const epoch = await policyEpoch();
+    const challengeEpoch = await challengePolicyEpoch();
     if (!rdoc.judgeAt) throw new Error('RP award requires a completed judge timestamp');
     const judgeAt = new Date(rdoc.judgeAt);
     if (!Number.isFinite(+judgeAt)) throw new Error('RP award requires a completed judge timestamp');
     const score = ratio(finite(rdoc.score) / 100);
     const _id = createHash('sha256').update(JSON.stringify([String(rdoc._id), +judgeAt, score])).digest('hex');
+    const difficulty = normalizeRpDifficulty(pdoc.difficulty);
+    const awardPolicy = +judgeAt < +epoch ? 'pre-earned-rp-v1'
+        : +judgeAt < +challengeEpoch ? 'earned-rp-v1' : 'challenge-rp-v2';
+    const difficultyMultiplier = awardPolicy === 'pre-earned-rp-v1' ? 1
+        : awardPolicy === 'earned-rp-v1' ? getLegacyRpDifficultyMultiplier(difficulty) : getRpDifficultyMultiplier(difficulty);
     const event: AwardEvent = {
         _id, rid: rdoc._id, uid: rdoc.uid, domainId: rdoc.domainId, pid: rdoc.pid,
-        score, status: rdoc.status, difficulty: normalizeRpDifficulty(pdoc.difficulty),
+        score, status: rdoc.status, difficulty, difficultyMultiplier, awardPolicy,
         contestFactor: contestFactor === 2 ? 2 : 1, contest: rdoc.contest,
         judgeAt, owner: pdoc.owner, processed: false, deferred: !!deferred,
     };
@@ -330,6 +361,7 @@ export async function applyFrozenRpAwards(uid: number, domainIds: string[], visi
         const input = {
             previousValue: previous, nextValue: event.score,
             difficulty: oldSource ? 1 : event.difficulty,
+            difficultyMultiplier: oldSource ? 1 : frozenDifficultyMultiplier(event),
             contestMultiplier: (oldSource ? 1 : event.contestFactor) as 1 | 2,
         };
         const localAward = calculateProblemRpAward({ ...input, solvedBefore: local.solved });

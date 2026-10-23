@@ -93,7 +93,7 @@ describe('persistent frozen RP ledger', () => {
     it('awards a first new AC after the cutoff even though its canonical result is already stored', async () => {
         await source(2, { difficulty: 10 });
         const result = await apply();
-        near(result.local.get('cpp'), rp(1) + 52 * Math.log(3 / 2) * 1.9);
+        near(result.local.get('cpp'), rp(1) + 52 * Math.log(3 / 2) * 4);
         near(result.shared, result.local.get('cpp'));
     });
 
@@ -133,7 +133,7 @@ describe('persistent frozen RP ledger', () => {
         near(hidden.local.get('cpp'), rp(1));
         await coll('problem').updateMany({}, { $set: { difficulty: 1 } });
         const result = await apply();
-        near(result.local.get('cpp'), rp(1) + 52 * Math.log(3 / 2) * 1.7 * 2);
+        near(result.local.get('cpp'), rp(1) + 52 * Math.log(3 / 2) * 2.5 * 2);
     });
 
     it('retains ineligible old partial events, then uses only legacy factors when the question becomes eligible', async () => {
@@ -159,8 +159,8 @@ describe('persistent frozen RP ledger', () => {
         ]);
         epoch = await ledger.initializeRpAwards(); await source(2, { difficulty: 5 });
         const result = await apply();
-        near(result.local.get('cpp'), rp(1) + 52 * Math.log(3 / 2) * 1.4);
-        near(result.shared, rp(9) + 52 * Math.log(11 / 10) * 1.4);
+        near(result.local.get('cpp'), rp(1) + 52 * Math.log(3 / 2) * 1.5);
+        near(result.shared, rp(9) + 52 * Math.log(11 / 10) * 1.5);
     });
 
     it('credits only the newly earned part of a same-record rejudge and never deducts later regressions', async () => {
@@ -241,4 +241,60 @@ it('pre-policy AC record history remains credited when its current record has si
     await apply();
     await source(1, { rid, judgeAt: new Date(+epoch + 2000), difficulty: 10, factor: 2 });
     near((await apply()).local.get('cpp'), rp(1));
+});
+
+it('adds the v2 cutover before the frozen-baseline fast path without resetting any earned balance', async () => {
+    await source(2, { difficulty: 1 }); await apply();
+    const before = await coll('ranking.earned').findOne({ _id: 11 });
+    const original = await coll('ranking.awardPolicy').findOne({ _id: 'earned-rp-v1' });
+    await coll('ranking.awardPolicy').deleteOne({ _id: 'challenge-rp-v2' });
+    await ledger.initializeRpAwards();
+    const challenge = await coll('ranking.awardPolicy').findOne({ _id: 'challenge-rp-v2' });
+    assert.equal(challenge.version, 2);
+    assert.equal(+(await coll('ranking.awardPolicy').findOne({ _id: 'earned-rp-v1' })).epoch, +original.epoch);
+    assert.deepEqual(await coll('ranking.earned').findOne({ _id: 11 }), before);
+    await ledger.initializeRpAwards();
+    assert.equal(+(await coll('ranking.awardPolicy').findOne({ _id: 'challenge-rp-v2' })).epoch, +challenge.epoch);
+});
+
+it('a source judged before v2 but captured late keeps its v1 linear coefficient', async () => {
+    await coll('ranking.awardPolicy').updateOne({ _id: 'challenge-rp-v2' }, { $set: { epoch: new Date(+epoch + 2000) } });
+    const item = await source(2, { judgeAt: new Date(+epoch + 1000), difficulty: 10, factor: 2 });
+    const event = await coll('ranking.awardEvent').findOne({ rid: item.rdoc._id });
+    assert.equal(event.awardPolicy, 'earned-rp-v1'); near(event.difficultyMultiplier, 1.9);
+    near((await apply()).local.get('cpp'), rp(1) + 52 * Math.log(3 / 2) * 1.9 * 2);
+});
+
+it('a source judged after v2 captures the stronger curve and a separate contest factor', async () => {
+    await coll('ranking.awardPolicy').updateOne({ _id: 'challenge-rp-v2' }, { $set: { epoch: new Date(+epoch + 500) } });
+    const item = await source(2, { judgeAt: new Date(+epoch + 1000), difficulty: 10, factor: 2 });
+    const event = await coll('ranking.awardEvent').findOne({ rid: item.rdoc._id });
+    assert.equal(event.awardPolicy, 'challenge-rp-v2'); assert.equal(event.difficultyMultiplier, 4); assert.equal(event.contestFactor, 2);
+    near((await apply()).local.get('cpp'), rp(1) + 52 * Math.log(3 / 2) * 8);
+});
+
+it('an old hidden event without numeric snapshots never inherits the newer curve after release', async () => {
+    await coll('ranking.awardPolicy').updateOne({ _id: 'challenge-rp-v2' }, { $set: { epoch: new Date(+epoch + 2000) } });
+    const item = await source(2, { judgeAt: new Date(+epoch + 1000), difficulty: 10, factor: 2, contest: new ObjectId(), deferred: true });
+    await coll('ranking.awardEvent').updateOne({ rid: item.rdoc._id }, { $unset: { difficultyMultiplier: '', awardPolicy: '' } });
+    near((await apply(async (records) => new Map(records.map((record) => [String(record._id), false])))).local.get('cpp'), rp(1));
+    await coll('ranking.awardPolicy').updateOne({ _id: 'challenge-rp-v2' }, { $set: { epoch: new Date(+epoch + 500) } });
+    await coll('problem').updateMany({}, { $set: { difficulty: 1 } });
+    near((await apply()).local.get('cpp'), rp(1) + 52 * Math.log(3 / 2) * 1.9 * 2);
+});
+
+it('an explicit saved numeric coefficient survives later curve changes and duplicate capture', async () => {
+    const item = await source(2, { difficulty: 10, factor: 2 });
+    await coll('ranking.awardEvent').updateOne({ rid: item.rdoc._id }, { $set: { difficultyMultiplier: 2.75 } });
+    await ledger.recordRpAward(item.rdoc, { ...item.pdoc, difficulty: 1 }, 1, false);
+    const event = await coll('ranking.awardEvent').findOne({ rid: item.rdoc._id });
+    assert.equal(event.difficultyMultiplier, 2.75); assert.equal(event.contestFactor, 2);
+    near((await apply()).local.get('cpp'), rp(1) + 52 * Math.log(3 / 2) * 2.75 * 2);
+});
+
+it('pre-original-rollout sources retain the unweighted original formula through the v2 upgrade', async () => {
+    const item = await source(2, { judgeAt: new Date(+epoch - 1000), difficulty: 10, factor: 2, contest: new ObjectId(), deferred: true });
+    const event = await coll('ranking.awardEvent').findOne({ rid: item.rdoc._id });
+    assert.equal(event.awardPolicy, 'pre-earned-rp-v1'); assert.equal(event.difficultyMultiplier, 1);
+    near((await apply()).local.get('cpp'), rp(1) + 52 * Math.log(3 / 2));
 });

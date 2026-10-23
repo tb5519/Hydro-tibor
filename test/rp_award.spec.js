@@ -10,7 +10,7 @@ const mod = { exports: {} };
 vm.runInNewContext(transformSync(source, { loader: 'ts', format: 'cjs' }).code, {
     module: mod, exports: mod.exports,
 });
-const { normalizeRpDifficulty, getRpDifficultyMultiplier, calculateProblemRpAward } = mod.exports;
+const { normalizeRpDifficulty, getRpDifficultyMultiplier, getLegacyRpDifficultyMultiplier, calculateProblemRpAward } = mod.exports;
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) <= Math.max(1e-12, Math.abs(expected) * 1e-12), `${actual} != ${expected}`);
 const calculate = (extra = {}) => calculateProblemRpAward({ solvedBefore: 0, previousValue: 0, nextValue: 1, ...extra });
 
@@ -49,13 +49,15 @@ describe('new earned RP increments', () => {
         near(earned, 52 * Math.log(2));
     });
 
-    it('uses a 10% per explicit difficulty level, capped at a 90% bonus', () => {
+    it('increases the reward progressively across all ten difficulty levels', () => {
         const base = calculate({ difficulty: 1 }).award;
+        const curve = [1, 1.1, 1.2, 1.35, 1.5, 1.75, 2.1, 2.5, 3.2, 4];
         for (let difficulty = 1; difficulty <= 10; difficulty++) {
-            near(calculate({ difficulty }).award, base * (1 + (difficulty - 1) * 0.1));
+            near(calculate({ difficulty }).award, base * curve[difficulty - 1]);
+            assert.ok(curve[difficulty - 1] >= getLegacyRpDifficultyMultiplier(difficulty));
         }
-        near(calculate({ difficulty: 10 }).award, base * 1.9);
-        near(calculate({ difficulty: 1000 }).award, base * 1.9);
+        near(calculate({ difficulty: 10 }).award, base * 4);
+        near(calculate({ difficulty: 1000 }).award, base * 4);
     });
 
     it('keeps unmarked and invalid difficulty on the original formula', () => {
@@ -70,7 +72,8 @@ describe('new earned RP increments', () => {
     it('normalizes numeric stored difficulty without losing a fractional explicit value', () => {
         assert.equal(normalizeRpDifficulty('7'), 7);
         assert.equal(normalizeRpDifficulty(4.5), 4.5);
-        near(getRpDifficultyMultiplier(4.5), 1.35);
+        near(getRpDifficultyMultiplier(4.5), 1.425);
+        near(getRpDifficultyMultiplier(9.5), 3.6);
     });
 
     it('never awards the same completed question again in a contest', () => {
@@ -102,7 +105,8 @@ describe('new earned RP increments', () => {
         const contest = calculate({ ...input, contestMultiplier: 2 });
         near(contest.delta, 0.6);
         near(contest.award, ordinary.award * 2);
-        near(contest.multiplier, 3);
+        near(contest.multiplier, 3.5);
+        near(calculate({ difficulty: 10, contestMultiplier: 2 }).multiplier, 8);
     });
 
     it('does not retroactively double an earlier ordinary partial score', () => {
@@ -123,8 +127,8 @@ describe('new earned RP increments', () => {
     it('calculates independent local and shared marginal awards', () => {
         const local = calculate({ solvedBefore: 0, difficulty: 4, contestMultiplier: 2 });
         const shared = calculate({ solvedBefore: 19, difficulty: 4, contestMultiplier: 2 });
-        near(local.award, 52 * Math.log(2) * 1.3 * 2);
-        near(shared.award, 52 * Math.log(21 / 20) * 1.3 * 2);
+        near(local.award, 52 * Math.log(2) * 1.35 * 2);
+        near(shared.award, 52 * Math.log(21 / 20) * 1.35 * 2);
         assert.ok(local.award > shared.award);
     });
 
@@ -155,6 +159,23 @@ describe('new earned RP increments', () => {
         input.difficulty = 10;
         assert.equal(earned.award, frozenAmount);
         near(earned.difficultyMultiplier, 1.2);
-        near(calculateProblemRpAward(input).difficultyMultiplier, 1.9);
+        near(calculateProblemRpAward(input).difficultyMultiplier, 4);
+    });
+
+    it('retains the deployed linear coefficients for old source events', () => {
+        for (let difficulty = 1; difficulty <= 10; difficulty++) {
+            near(getLegacyRpDifficultyMultiplier(difficulty), 1 + (difficulty - 1) * 0.1);
+        }
+        const frozen = calculate({ difficulty: 10, difficultyMultiplier: 1.9, contestMultiplier: 2 });
+        near(frozen.multiplier, 3.8);
+        near(frozen.award, 52 * Math.log(2) * 3.8);
+    });
+
+    it('accepts only a valid numeric frozen coefficient and keeps invalid snapshots on the current curve', () => {
+        for (const difficultyMultiplier of [undefined, null, '', '1.9', 0, -1, NaN, Infinity, true]) {
+            near(calculate({ difficulty: 10, difficultyMultiplier }).multiplier, 4);
+        }
+        near(calculate({ difficulty: 10, difficultyMultiplier: 1 }).multiplier, 1);
+        near(calculate({ difficulty: 1, difficultyMultiplier: 2.5, contestMultiplier: 2 }).multiplier, 5);
     });
 });

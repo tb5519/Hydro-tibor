@@ -86,6 +86,43 @@ async function legacyStartup() {
     await Promise.all(['ranking.earned', 'ranking.awardPolicy', 'ranking.awardEvent'].map((name) => collection(name).deleteMany({})));
     await startup();
 }
+async function useLinearPolicy() {
+    await collection('ranking.awardPolicy').updateOne({ _id: 'challenge-rp-v2' }, {
+        $set: { version: 2, epoch: new Date(Date.now() + 60_000) },
+    }, { upsert: true });
+}
+async function upgradeToChallengePolicy() {
+    await collection('ranking.awardPolicy').deleteOne({ _id: 'challenge-rp-v2' });
+    await startup();
+}
+async function failAwardEventInsert(item) {
+    const originalCollection = dependencies['../service/db'].collection;
+    let fail = true;
+    let source;
+    dependencies['../service/db'].collection = (name) => {
+        const target = originalCollection(name);
+        if (name !== 'ranking.awardEvent') return target;
+        return new Proxy(target, {
+            get(collectionTarget, property) {
+                if (property === 'updateOne') return async (...args) => {
+                    if (fail) { fail = false; throw new Error('simulated award-event insert failure'); }
+                    return collectionTarget.updateOne(...args);
+                };
+                const value = Reflect.get(collectionTarget, property);
+                return typeof value === 'function' ? value.bind(collectionTarget) : value;
+            },
+        });
+    };
+    try {
+        await assert.rejects(judged(item), (error) => {
+            assert.match(error.cause?.message || error.message, /simulated award-event insert failure/);
+            source = error.rankingAwardSource;
+            assert.ok(source, 'the judge must receive enough immutable evidence to retry the lost event');
+            return true;
+        });
+    } finally { dependencies['../service/db'].collection = originalCollection; }
+    return source;
+}
 async function member(uid, domainId = 'cpp', extra = {}) {
     await collection('domain.user').insertOne({ domainId, uid, join: true, nAccept: 0, nSubmit: 1, rp: 0, rpInfo: { problem: 0, delta: 7, bonus: 3 }, ...extra });
 }
@@ -365,7 +402,7 @@ describe('immutable difficulty and contest RP awards', () => {
         const tid = new ObjectId();
         await collection('contests').insertOne({ domainId: 'cpp', docId: tid, rule: 'oi', endAt: new Date(Date.now() - 1000) });
         await judged(await result(11, 1, 100, { contest: tid }));
-        const expected = baseline + (rp(1) - rp(0.4)) * 1.5 * 2;
+        const expected = baseline + (rp(1) - rp(0.4)) * 1.75 * 2;
         near((await membership(11)).rpInfo.problem, expected);
         near((await membership(11)).sharedRpInfo.problem, expected);
         await judged(await result(11, 1, 100, { contest: tid }));
@@ -375,14 +412,14 @@ describe('immutable difficulty and contest RP awards', () => {
     it('does not reprice an awarded question after difficulty edits or a later contest AC', async () => {
         await member(11);
         await judged(await result(11, 1, 100, { difficulty: 6 }));
-        near((await membership(11)).rpInfo.problem, rp(1) * 1.5);
+        near((await membership(11)).rpInfo.problem, rp(1) * 1.75);
         await collection('problems').updateOne({ domainId: 'cpp', docId: 1 }, { $set: { difficulty: 10 } });
         const tid = new ObjectId();
         await collection('contests').insertOne({ domainId: 'cpp', docId: tid, rule: 'oi', endAt: new Date(Date.now() - 1000) });
         await judged(await result(11, 1, 100, { contest: tid }));
-        near((await membership(11)).rpInfo.problem, rp(1) * 1.5);
+        near((await membership(11)).rpInfo.problem, rp(1) * 1.75);
         await judged(await result(11, 2, 100, { difficulty: 1 }));
-        near((await membership(11)).rpInfo.problem, rp(1) * 1.5 + rp(2) - rp(1));
+        near((await membership(11)).rpInfo.problem, rp(1) * 1.75 + rp(2) - rp(1));
     });
 
     it('snapshots a hidden contest result at judge time and keeps its difficulty when the teacher publishes later', async () => {
@@ -394,9 +431,9 @@ describe('immutable difficulty and contest RP awards', () => {
         await collection('problems').updateOne({ domainId: 'cpp', docId: 1 }, { $set: { difficulty: 10 } });
         await collection('contests').updateOne({ docId: tid }, { $set: { keepScoreboardHidden: false } });
         await ranking.publishContestRanking('cpp', tid);
-        near((await membership(11)).rpInfo.problem, rp(1) * 1.5 * 2);
+        near((await membership(11)).rpInfo.problem, rp(1) * 1.75 * 2);
         await ranking.publishContestRanking('cpp', tid);
-        near((await membership(11)).rpInfo.problem, rp(1) * 1.5 * 2);
+        near((await membership(11)).rpInfo.problem, rp(1) * 1.75 * 2);
     });
 
     it('computes local and shared marginal awards independently without duplicating shared balances', async () => {
@@ -406,8 +443,8 @@ describe('immutable difficulty and contest RP awards', () => {
         await collection('contests').insertOne({ domainId: 'python', docId: tid, rule: 'acm', endAt: new Date(Date.now() - 1000) });
         await judged(await result(11, 2, 100, { domainId: 'python', contest: tid, difficulty: 10 }));
         near((await membership(11)).rpInfo.problem, rp(1));
-        near((await membership(11, 'python')).rpInfo.problem, rp(1) * 1.9 * 2);
-        const shared = rp(1) + (rp(2) - rp(1)) * 1.9 * 2;
+        near((await membership(11, 'python')).rpInfo.problem, rp(1) * 4 * 2);
+        const shared = rp(1) + (rp(2) - rp(1)) * 4 * 2;
         near((await membership(11)).sharedRpInfo.problem, shared);
         near((await membership(11, 'python')).sharedRpInfo.problem, shared);
     });
@@ -418,10 +455,10 @@ describe('immutable difficulty and contest RP awards', () => {
         await collection('contests').insertOne({ domainId: 'cpp', docId: tid, rule: 'oi', keepScoreboardHidden: true, endAt: new Date(Date.now() - 1000) });
         await judged(await result(11, 1, 90, { contest: tid, difficulty: 6 }));
         await judged(await result(11, 1, 30));
-        near((await membership(11)).rpInfo.problem, rp(0.3) * 1.5);
+        near((await membership(11)).rpInfo.problem, rp(0.3) * 1.75);
         await collection('contests').updateOne({ docId: tid }, { $set: { keepScoreboardHidden: false } });
         await ranking.publishContestRanking('cpp', tid);
-        near((await membership(11)).rpInfo.problem, (rp(0.3) + 2 * (rp(0.9) - rp(0.3))) * 1.5);
+        near((await membership(11)).rpInfo.problem, (rp(0.3) + 2 * (rp(0.9) - rp(0.3))) * 1.75);
     });
 
     it('does not give the new bonus retroactively to an old hidden contest published after rollout', async () => {
@@ -440,7 +477,7 @@ describe('immutable difficulty and contest RP awards', () => {
         await member(11);
         const item = await result(11, 1, 100, { difficulty: 8 });
         await judged(item);
-        const expected = rp(1) * 1.7;
+        const expected = rp(1) * 2.5;
         await collection('ranking.awardEvent').updateMany({ uid: 11 }, { $set: { processed: false } });
         await collection('ranking.progress').updateOne({ _id: 'user:11' }, { $set: { dirty: true } });
         await judged(item);
@@ -476,7 +513,7 @@ describe('immutable difficulty and contest RP awards', () => {
         try { await assert.rejects(judged(item), /simulated display projection failure/); }
         finally { Object.defineProperty(domain, 'collUser', descriptor); }
         near((await membership(11)).rpInfo.problem, 0);
-        const expected = rp(1) * 1.4;
+        const expected = rp(1) * 1.5;
         const ledger = await collection('ranking.earned').findOne({ _id: 11 });
         near(ledger.domains.find((item) => item.domainId === 'cpp').awardedRp, expected);
         await ranking.scheduleRankingRecovery(11);
@@ -495,31 +532,7 @@ describe('immutable difficulty and contest RP awards', () => {
         const tid = new ObjectId();
         await collection('contests').insertOne({ domainId: 'cpp', docId: tid, rule: 'oi', endAt: new Date(Date.now() - 1000) });
         const item = await result(11, 1, 100, { contest: tid, difficulty: 4 });
-        const originalCollection = dependencies['../service/db'].collection;
-        let fail = true;
-        let source;
-        dependencies['../service/db'].collection = (name) => {
-            const target = originalCollection(name);
-            if (name !== 'ranking.awardEvent') return target;
-            return new Proxy(target, {
-                get(collectionTarget, property) {
-                    if (property === 'updateOne') return async (...args) => {
-                        if (fail) { fail = false; throw new Error('simulated award-event insert failure'); }
-                        return collectionTarget.updateOne(...args);
-                    };
-                    const value = Reflect.get(collectionTarget, property);
-                    return typeof value === 'function' ? value.bind(collectionTarget) : value;
-                },
-            });
-        };
-        try {
-            await assert.rejects(judged(item), (error) => {
-                assert.match(error.cause?.message || error.message, /simulated award-event insert failure/);
-                source = error.rankingAwardSource;
-                assert.ok(source, 'the judge must receive enough immutable evidence to retry the lost event');
-                return true;
-            });
-        } finally { dependencies['../service/db'].collection = originalCollection; }
+        const source = await failAwardEventInsert(item);
         assert.equal(await collection('ranking.awardEvent').countDocuments({ uid: 11 }), 0);
         near((await membership(11)).rpInfo.problem, 0);
         await ranking.scheduleRankingRecovery(11, undefined, source);
@@ -529,12 +542,99 @@ describe('immutable difficulty and contest RP awards', () => {
         const handlers = {};
         await ranking.applyIncrementalRanking({ inject: async (_, callback) => callback({ worker: { addHandler: (name, handler) => { handlers[name] = handler; } } }), on() {} });
         await handlers['ranking.user'](retry);
-        const expected = rp(1) * 1.3 * 2;
+        const expected = rp(1) * 1.35 * 2;
         near((await membership(11)).rpInfo.problem, expected);
         near((await membership(11)).sharedRpInfo.problem, expected);
         await handlers['ranking.user'](retry);
         await judged(item);
         near((await membership(11)).rpInfo.problem, expected);
         assert.equal(await collection('ranking.awardEvent').countDocuments({ uid: 11 }), 1);
+    });
+});
+
+describe('linear-policy to challenge-curve upgrade', () => {
+    it('preserves already paid linear RP, never tops up an old AC, and uses the new curve only for a new question', async () => {
+        await useLinearPolicy();
+        await member(11);
+        await judged(await result(11, 1, 100, { difficulty: 10 }));
+        const paid = rp(1) * 1.9;
+        near((await membership(11)).rpInfo.problem, paid);
+        await collection('ranking.awardEvent').updateMany({ uid: 11 }, { $unset: { difficultyMultiplier: '', awardPolicy: '' } });
+        const originalEpoch = (await collection('ranking.awardPolicy').findOne({ _id: 'earned-rp-v1' })).epoch;
+        await upgradeToChallengePolicy();
+        assert.equal(+(await collection('ranking.awardPolicy').findOne({ _id: 'earned-rp-v1' })).epoch, +originalEpoch);
+        near((await membership(11)).rpInfo.problem, paid);
+        const snapshot = await ranking.withRankingRebuild(() => ranking.freezeProblemRpForRebuild(['cpp', 'python']));
+        near(snapshot.local.get('cpp').get(11), paid);
+        near(snapshot.shared.get(11), paid);
+        await judged(await result(11, 1, 100));
+        near((await membership(11)).rpInfo.problem, paid);
+        const tid = new ObjectId();
+        await collection('contests').insertOne({ domainId: 'cpp', docId: tid, rule: 'oi', endAt: new Date(Date.now() - 1000) });
+        await judged(await result(11, 2, 100, { contest: tid, difficulty: 10 }));
+        near((await membership(11)).rpInfo.problem, paid + (rp(2) - rp(1)) * 4 * 2);
+        near((await membership(11)).sharedRpInfo.problem, paid + (rp(2) - rp(1)) * 4 * 2);
+        const event = await collection('ranking.awardEvent').findOne({ uid: 11, pid: 2 });
+        assert.equal(event.difficultyMultiplier, 4);
+        assert.equal(event.awardPolicy, 'challenge-rp-v2');
+    });
+
+    it('publishes an old hidden contest with its linear snapshot even when its event lacks the new multiplier field', async () => {
+        await useLinearPolicy();
+        await member(11);
+        const tid = new ObjectId();
+        await collection('contests').insertOne({ domainId: 'cpp', docId: tid, rule: 'oi', keepScoreboardHidden: true, endAt: new Date(Date.now() - 1000) });
+        await judged(await result(11, 1, 100, { contest: tid, difficulty: 10 }));
+        near((await membership(11)).rpInfo.problem, 0);
+        await collection('ranking.awardEvent').updateMany({ uid: 11 }, { $unset: { difficultyMultiplier: '', awardPolicy: '' } });
+        await upgradeToChallengePolicy();
+        await collection('problems').updateOne({ domainId: 'cpp', docId: 1 }, { $set: { difficulty: 1 } });
+        await collection('contests').updateOne({ docId: tid }, { $set: { keepScoreboardHidden: false } });
+        await ranking.publishContestRanking('cpp', tid);
+        near((await membership(11)).rpInfo.problem, rp(1) * 1.9 * 2);
+        await judged(await result(11, 1, 100, { contest: tid }));
+        near((await membership(11)).rpInfo.problem, rp(1) * 1.9 * 2);
+    });
+
+    it('retries an unpersisted linear-policy source after upgrade without switching it to the challenge curve', async () => {
+        await useLinearPolicy();
+        await member(11);
+        const tid = new ObjectId();
+        await collection('contests').insertOne({ domainId: 'cpp', docId: tid, rule: 'oi', endAt: new Date(Date.now() - 1000) });
+        const item = await result(11, 1, 100, { contest: tid, difficulty: 10 });
+        const source = await failAwardEventInsert(item);
+        await ranking.scheduleRankingRecovery(11, undefined, source);
+        await upgradeToChallengePolicy();
+        await collection('problems').updateOne({ domainId: 'cpp', docId: 1 }, { $set: { difficulty: 1 } });
+        const handlers = {};
+        await ranking.applyIncrementalRanking({ inject: async (_, callback) => callback({ worker: { addHandler: (name, handler) => { handlers[name] = handler; } } }), on() {} });
+        const retry = await collection('schedule').findOne({ uid: 11 });
+        await handlers['ranking.user'](retry);
+        near((await membership(11)).rpInfo.problem, rp(1) * 1.9 * 2);
+        await handlers['ranking.user'](retry);
+        near((await membership(11)).rpInfo.problem, rp(1) * 1.9 * 2);
+        assert.equal(await collection('ranking.awardEvent').countDocuments({ uid: 11 }), 1);
+        const event = await collection('ranking.awardEvent').findOne({ uid: 11 });
+        assert.equal(event.difficultyMultiplier, 1.9);
+        assert.equal(event.awardPolicy, 'earned-rp-v1');
+    });
+
+    it('keeps the linear reward for an old 40 percent result and applies the challenge curve only to the remaining 60 percent', async () => {
+        await useLinearPolicy();
+        await member(11);
+        await judged(await result(11, 1, 40, { difficulty: 10 }));
+        const paid = rp(0.4) * 1.9;
+        near((await membership(11)).rpInfo.problem, paid);
+        await collection('ranking.awardEvent').updateMany({ uid: 11 }, { $unset: { difficultyMultiplier: '', awardPolicy: '' } });
+        await upgradeToChallengePolicy();
+        const tid = new ObjectId();
+        await collection('contests').insertOne({ domainId: 'cpp', docId: tid, rule: 'oi', endAt: new Date(Date.now() - 1000) });
+        await judged(await result(11, 1, 100, { contest: tid }));
+        const expected = paid + (rp(1) - rp(0.4)) * 4 * 2;
+        near((await membership(11)).rpInfo.problem, expected);
+        near((await membership(11)).sharedRpInfo.problem, expected);
+        await judged(await result(11, 1, 20));
+        await judged(await result(11, 1, 100, { contest: tid }));
+        near((await membership(11)).rpInfo.problem, expected);
     });
 });

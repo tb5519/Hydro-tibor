@@ -1,7 +1,9 @@
 /** Award policy snapshots must be stored with the earned-RP ledger. These
  * helpers calculate a new increment only; they never reprice earlier awards. */
 export const PROBLEM_RP_LOG_WEIGHT = 52;
+/** The already deployed v1 rule. Retained only for old award snapshots. */
 export const PROBLEM_RP_DIFFICULTY_STEP = 0.1;
+export const PROBLEM_RP_DIFFICULTY_MULTIPLIERS = Object.freeze([1, 1.1, 1.2, 1.35, 1.5, 1.75, 2.1, 2.5, 3.2, 4]);
 
 function finiteNumber(value: unknown, fallback: number) {
     if (typeof value !== 'number' && typeof value !== 'string') return fallback;
@@ -9,13 +11,20 @@ function finiteNumber(value: unknown, fallback: number) {
     return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-/** Unmarked difficulty keeps the original RP formula. Explicit difficulty is
- * bounded to 1–10; fractional difficulty retains the same linear scale. */
+/** Unmarked difficulty keeps the original RP formula; explicit difficulty is bounded to 1–10. */
 export function normalizeRpDifficulty(difficulty?: unknown) {
     return Math.min(10, Math.max(1, finiteNumber(difficulty, 1)));
 }
 
 export function getRpDifficultyMultiplier(difficulty?: unknown) {
+    const normalized = normalizeRpDifficulty(difficulty);
+    const lower = Math.floor(normalized);
+    const left = PROBLEM_RP_DIFFICULTY_MULTIPLIERS[lower - 1];
+    const right = PROBLEM_RP_DIFFICULTY_MULTIPLIERS[Math.min(lower, 9)];
+    return left + (right - left) * (normalized - lower);
+}
+
+export function getLegacyRpDifficultyMultiplier(difficulty?: unknown) {
     return 1 + (normalizeRpDifficulty(difficulty) - 1) * PROBLEM_RP_DIFFICULTY_STEP;
 }
 
@@ -33,6 +42,9 @@ export interface ProblemRpAwardInput {
     nextValue: number;
     /** Use the immutable explicit difficulty snapshot from the source event. */
     difficulty?: unknown;
+    /** The coefficient captured with this source event. Existing snapshots
+     * must keep their numeric value when a later reward curve is published. */
+    difficultyMultiplier?: number;
     /** Set 2 only after verifying a real contest; all other contexts use 1. */
     contestMultiplier?: 1 | 2;
 }
@@ -55,7 +67,9 @@ export function calculateProblemRpAward(input: ProblemRpAwardInput): ProblemRpAw
     const nextValue = scoreRatio(input.nextValue);
     const delta = Math.max(0, nextValue - previousValue);
     const baseAward = PROBLEM_RP_LOG_WEIGHT * Math.log1p(delta / (1 + solvedBefore));
-    const difficultyMultiplier = getRpDifficultyMultiplier(input.difficulty);
+    const difficultyMultiplier = typeof input.difficultyMultiplier === 'number'
+        && Number.isFinite(input.difficultyMultiplier) && input.difficultyMultiplier >= 1
+        ? input.difficultyMultiplier : getRpDifficultyMultiplier(input.difficulty);
     const multiplier = difficultyMultiplier * (input.contestMultiplier === 2 ? 2 : 1);
     return {
         delta,
