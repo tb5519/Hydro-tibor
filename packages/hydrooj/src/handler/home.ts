@@ -29,6 +29,8 @@ import { getImageWarmupPage } from '../lib/image_prewarm';
 import { getBackgroundVideoWarmup } from '../lib/background_video_prewarm';
 import * as mail from '../lib/mail';
 import { getPersonalAcGrowth, invalidatePersonalAcGrowth } from '../lib/personal_ac_growth';
+import { getProfileAcDifficulty } from '../lib/profile_ac_difficulty';
+import { getProfileStatistics } from '../lib/profile_statistics';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
 import {
     canReceivePointLotteryBadge, ensureGlobalPointLotteryState, expireDuePointLotteryBadgeGrants, expirePointLotteryBadgeGrant,
@@ -49,7 +51,6 @@ import * as discussion from '../model/discussion';
 import * as document from '../model/document';
 import domain from '../model/domain';
 import message from '../model/message';
-import * as mistake from '../model/mistake';
 import ProblemModel from '../model/problem';
 import ScheduleModel from '../model/schedule';
 import * as setting from '../model/setting';
@@ -377,63 +378,26 @@ export class HomeHandler extends Handler {
         return discussion.getNodes(domainId);
     }
 
-    async getPersonalMistakes(domainId: string, limit = 5) {
-        if (!this.user.hasPriv(PRIV.PRIV_USER_PROFILE) || !this.user.hasPerm(PERM.PERM_VIEW_PROBLEM) || this.user._id <= 1) return [];
-        const [mdocs] = await mistake.getPage(domainId, {
-            uid: this.user._id,
-            status: 'review',
-        }, 1, limit);
-        if (!mdocs.length) return [];
-        const pdict = await ProblemModel.getList(
-            domainId,
-            mdocs.map((mdoc) => mdoc.pid),
-            this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN) || this.user._id,
-            false,
-            ProblemModel.PROJECTION_LIST,
-            true,
-        );
-        return mdocs.map((mdoc) => ({ mdoc, pdoc: pdict[mdoc.pid] })).filter((item) => item.pdoc);
-    }
-
-    async getPersonalStats(domainId: string) {
+    async getPersonalStats(_domainId: string) {
         if (!this.user.hasPriv(PRIV.PRIV_USER_PROFILE) || this.user._id <= 1) return null;
         const uid = this.user._id;
         this.collectUser([uid]);
 
-        let rankingRow = this.rankingRows.get(uid);
-        if (!rankingRow && getDomainRankingMode(this.domain) === 'all') {
-            rankingRow = (await getSharedRankingSnapshot()).find((row) => row.uid === uid);
-        }
-
         const [
-            domainRankingDoc,
+            profile,
             acGrowth,
-            mistakes,
         ] = await Promise.all([
-            rankingRow ? null : domain.collUser.findOne(
-                { domainId, uid },
-                { projection: { rp: 1, nAccept: 1, nSubmit: 1, level: 1, rpInfo: 1 } },
-            ),
+            getProfileStatistics(this.domain, this.user, this.user),
             getPersonalAcGrowth(this.ctx, this.domain, uid, system.get('timeZone') || 'Asia/Shanghai'),
-            this.getPersonalMistakes(domainId),
         ]);
-
-        let rank: number | null = rankingRow?.rank || null;
-        if (!rankingRow && domainRankingDoc?.rp) {
-            const strongerCount = await domain.collUser.countDocuments({
-                domainId,
-                uid: { $gt: 1 },
-                rp: { $gt: domainRankingDoc.rp },
-            });
-            rank = strongerCount + 1;
-        }
 
         return {
             uid,
-            rp: Math.floor(rankingRow ? rankingRow.totalRp : (+domainRankingDoc?.rp || 0)),
-            rank,
+            rp: Math.floor(profile.stats.rp || 0),
+            rank: profile.stats.rank,
             ...acGrowth,
-            mistakes,
+            rankingMode: profile.rankingMode,
+            acDifficulty: getProfileAcDifficulty(profile.acceptedProblems),
         };
     }
 

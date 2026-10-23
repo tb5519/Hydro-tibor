@@ -16,13 +16,13 @@ import { TokenDoc, Udoc, User } from '../interface';
 import avatar from '../lib/avatar';
 import { contestLevelQuery } from '../lib/contest_access';
 import { sendMail } from '../lib/mail';
-import { getProfileAcDifficulty } from '../lib/profile_ac_difficulty';
+import { getProfileStatistics } from '../lib/profile_statistics';
 import { selectProfileBadgeSound } from '../lib/profile_badge_sound';
 import { getUserAvatarEffects, parseAvatarEffectUids } from '../lib/user_avatar_effects';
 import { getUserBadgeGallery } from '../lib/user_badge_gallery';
 import { verifyTFA } from '../lib/verifyTFA';
 import BlackListModel from '../model/blacklist';
-import { PERM, PRIV, STATUS } from '../model/builtin';
+import { PERM, PRIV } from '../model/builtin';
 import * as ContestModel from '../model/contest';
 import domain from '../model/domain';
 import * as oplog from '../model/oplog';
@@ -574,18 +574,10 @@ class UserDetailHandler extends Handler {
             ? await getUserBadgeGallery(this.ctx, this.domain, uid) : null;
         const profileBadgeSound = badgeGallery
             ? selectProfileBadgeSound(udoc.ownedBadges, badgeGallery.badgeCards, badgeProfileBackground.selectedId) : null;
-        const pdocs: ProblemDoc[] = [];
+        const profile = await getProfileStatistics(this.domain, this.user, udoc);
+        const pdocs: ProblemDoc[] = profile.acceptedProblems;
         const acInfo: Record<string, number> = {};
         const canViewHidden = this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_HIDDEN) || this.user._id;
-        if (this.user.hasPerm(PERM.PERM_VIEW_PROBLEM)) {
-            const psdocs = await problem.getMultiStatus(domainId, { uid, status: STATUS.STATUS_ACCEPTED }).toArray();
-            pdocs.push(...Object.values(
-                await problem.getList(
-                    domainId, psdocs.map((i) => i.docId), canViewHidden,
-                    false, problem.PROJECTION_LIST, true,
-                ),
-            ));
-        }
         for (const pdoc of pdocs) {
             for (const tag of pdoc.tag) {
                 if (acInfo[tag]) acInfo[tag]++;
@@ -593,13 +585,13 @@ class UserDetailHandler extends Handler {
             }
         }
         const tags = Object.entries(acInfo).sort((a, b) => b[1] - a[1]).slice(0, 20);
-        const acDifficulty = getProfileAcDifficulty(pdocs);
         const tsdocs = await ContestModel.getMultiStatus(domainId, { uid, attend: { $exists: true } }).project({ docId: 1 }).toArray();
         const tdocs = await ContestModel.getMulti(domainId, { docId: { $in: tsdocs.map((i) => i.docId) }, ...contestLevelQuery(this.user, domainId) })
             .project({ docId: 1, title: 1, rule: 1 }).sort({ _id: -1 }).toArray();
         this.response.template = 'user_detail.html';
         this.response.body = {
-            isSelfProfile, udoc, sdoc, pdocs, tags, acDifficulty, tdocs, badgeProfileBackground, profileBadgeSound,
+            isSelfProfile, udoc, sdoc, pdocs, tags, tdocs, badgeProfileBackground, profileBadgeSound,
+            profileStats: profile.stats, rankingMode: profile.rankingMode,
         };
         if (this.user.hasPerm(PERM.PERM_VIEW_PROBLEM_SOLUTION)) {
             const psdocs = await SolutionModel.getByUser(domainId, uid).limit(10).toArray();

@@ -1,6 +1,7 @@
-{% macro render_problem_title(pdoc, tdoc=none, show_tags=true, show_invisible_flag=true, invalid=false, inline=false, show_pid=true, small=false, alphabetic=false) %}
+{% macro render_problem_title(pdoc, tdoc=none, show_tags=true, show_invisible_flag=true, invalid=false, inline=false, show_pid=true, small=false, alphabetic=false, domainId=none) %}
 {%- if not invalid -%}
   {% set _linkArgs = { pid:pdoc.pid|default(pdoc.docId) } %}
+  {% if domainId %}{{ set(_linkArgs, 'domainId', domainId) }}{% endif %}
   {% if tdoc %}{{ set(_linkArgs, 'query', {tid:tdoc.docId}) }}{% endif %}
   <a href="{{ url('problem_detail', _linkArgs) }}" data-no-instant{% if small %} data-tooltip="{{ pdoc.title }}"{% endif %}>
 {%- endif -%}

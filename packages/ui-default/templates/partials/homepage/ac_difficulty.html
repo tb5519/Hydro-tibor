@@ -1,0 +1,40 @@
+{% if acDifficulty %}
+  <section class="profile-ac-difficulty" aria-labelledby="homepage-ac-difficulty-title">
+    <header class="profile-ac-difficulty__header">
+      <span class="profile-ac-difficulty__icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none"><path d="m7 12 3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 12a8 8 0 1 1-4.7-7.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </span>
+      <div>
+        <h2 id="homepage-ac-difficulty-title">AC 难度分布</h2>
+        <p>{{ '全域' if acDifficultyScope == 'all' else '当前课堂' }} · 每道题只计一次</p>
+      </div>
+    </header>
+    <div class="profile-ac-difficulty__summary">
+      <div>
+        <span class="profile-ac-difficulty__summary-label">累计 AC</span>
+        <div class="profile-ac-difficulty__total"><strong>{{ acDifficulty.total }}</strong><span>题</span></div>
+      </div>
+      {% if acDifficulty.highestLevel %}
+        <div class="profile-ac-difficulty__highest">
+          <span>最高难度</span>
+          <strong>{{ acDifficulty.highestLevel }}</strong>
+        </div>
+      {% else %}
+        <span class="profile-ac-difficulty__summary-note">{{ '从第一道挑战开始' if not acDifficulty.total else '题目暂未设置难度' }}</span>
+      {% endif %}
+    </div>
+    <div class="profile-ac-difficulty__column-labels" aria-hidden="true"><span>题目难度</span><span>AC 题数</span></div>
+    <ol class="profile-ac-difficulty__levels" aria-label="各难度通过题数">
+      {% for item in acDifficulty.levels %}
+        <li class="profile-ac-difficulty__row{{ ' is-empty' if not item.count else '' }}" data-level="{{ item.level }}">
+          <span class="profile-ac-difficulty__level">{{ item.level }}</span>
+          <span class="profile-ac-difficulty__track" aria-hidden="true"><span style="width: {{ item.width }}%"></span></span>
+          <span class="profile-ac-difficulty__count">{{ item.count }}<small>题</small></span>
+        </li>
+      {% endfor %}
+    </ol>
+    {% if acDifficulty.unrated %}
+      <div class="profile-ac-difficulty__unrated"><span>未设置难度</span><span><strong>{{ acDifficulty.unrated }}</strong> 题</span></div>
+    {% endif %}
+  </section>
+{% endif %}

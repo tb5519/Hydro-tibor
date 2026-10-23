@@ -353,14 +353,9 @@ describe('problem retry/deepen request protections', () => {
         assert.match(list, /domainId, mistakeQuery, page, this\.ctx\.setting\.get\('pagination\.problem'\)/);
     });
 
-    it('uses the same importance ordering and legacy defaults for the home-page review list', () => {
+    it('keeps the mistake book independent of the private home dashboard', () => {
         const home = fs.readFileSync(path.join(__dirname, '../packages/hydrooj/src/handler/home.ts'), 'utf8');
-        const start = home.indexOf('    async getPersonalMistakes(');
-        const end = home.indexOf('\n    }', start);
-        assert.ok(start > 0 && end > start);
-        const method = home.slice(start, end);
-        assert.match(method, /const \[mdocs\] = await mistake\.getPage\(domainId,/);
-        assert.match(method, /uid: this\.user\._id,[\s\S]*status: 'review',[\s\S]*}, 1, limit\)/);
-        assert.doesNotMatch(method, /sort\(\{ updatedAt/);
+        assert.doesNotMatch(home, /getPersonalMistakes\(/);
+        assert.doesNotMatch(home, /from '\.\.\/model\/mistake'/);
     });
 });
