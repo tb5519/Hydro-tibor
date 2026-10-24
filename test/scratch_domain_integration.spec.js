@@ -515,6 +515,46 @@ describe('Scratch domain navigation, footer and creation templates', () => {
         guest.window.close();
     });
 
+    it('hides community navigation and publication URLs only when the domain disables it', () => {
+        for (const enabled of [undefined, true, false]) {
+            for (const teacher of [false, true]) {
+                const view = templateHarness('scratch', teacher);
+                view.state.handler.domain.scratchCommunityEnabled = enabled;
+                const dom = view.render('partials/nav.html');
+                assert.equal(!!dom.window.document.querySelector('a[href="/scratch_community"]'), enabled !== false);
+                assert(dom.window.document.querySelector('a[href="/scratch_works"]'));
+                dom.window.close();
+                const cards = view.render('partials/scratch_work_cards.html', {
+                    works: [{ _id: 'work-one', owner: 20, title: '海岛', updatedAt: new Date() }],
+                    isTeacher: teacher, udict: {}, datetimeSpan: () => '刚刚',
+                });
+                const share = cards.window.document.querySelector('[data-scratch-share]');
+                assert(share, 'external sharing remains available');
+                assert.equal(share.hasAttribute('data-community-url'), enabled !== false);
+                cards.window.close();
+            }
+        }
+    });
+
+    it('renders the community switch with its saved state and explains preservation and external links', () => {
+        const view = templateHarness('scratch', true);
+        const source = fs.readFileSync(path.resolve(root, '../../ui-default/templates/domain_scratch_community.html'), 'utf8')
+            .replace('{% extends "domain_base.html" %}', '');
+        for (const enabled of [true, false]) {
+            const dom = new JSDOM(view.env.renderString(source, { ...view.state, enabled, saved: 1 }));
+            const doc = dom.window.document;
+            const form = doc.querySelector('form');
+            assert.equal(form.getAttribute('method'), 'post');
+            assert.equal(form.getAttribute('action'), '/domain_scratch_community');
+            assert.equal(form.querySelector('[name="enabled"]').checked, enabled);
+            assert.match(doc.querySelector('[role="status"]').textContent, /已保存/);
+            assert.match(form.textContent, /数据会保留/);
+            assert.match(form.textContent, /站外链接/);
+            assert.match(form.textContent, /已有社区链接也无法进入/);
+            dom.window.close();
+        }
+    });
+
     it('omits the Scratch honor wall and its API URL but preserves ordinary and legacy OJ footers', () => {
         for (const value of ['scratch', 'oj', undefined]) {
             const view = templateHarness(value, true);

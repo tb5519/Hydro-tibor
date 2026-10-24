@@ -523,6 +523,76 @@ describe('Scratch library assignment snapshot rollback', () => {
 });
 
 describe('Scratch native backend isolation and immutable submissions', () => {
+    it('blocks every community surface when closed, retains its data, and keeps private work and external shares usable', async () => {
+        const owner = { ...alice, domainId: 'community-switch' };
+        const visitor = { ...bob, domainId: owner.domainId };
+        const admin = { ...teacher, domainId: owner.domainId };
+        await database.collection('domain.user').insertMany([owner, visitor].map((actor) => ({ domainId: actor.domainId, uid: actor.uid, join: true })));
+        const work = await model.createWork(owner, '社区开关保留作品');
+        await model.saveWork(owner, work._id, 0, upload(), false, undefined, thumbnailData().data);
+        const { publication } = await model.publishCommunityWork(owner, work._id, '说明同样保留');
+        await model.likeCommunityWork(visitor, publication._id, 'switch-like-request-0001');
+        await model.syncCommunityState(visitor, publication._id, {
+            fileId: publication.fileId.toHexString(), requestId: 'switch-state-request-0001', clientId: 'switch-state-client-0001',
+            seq: 1, baseRevision: 0,
+            changes: JSON.stringify([{ key: JSON.stringify(['stage', 'score']), kind: 'variable', before: 0, value: 42 }]),
+        });
+        const before = await model.getCommunityMetrics(visitor, publication._id);
+        const stateBefore = JSON.stringify(await model.getCommunityState(visitor, publication._id));
+        const make = (Class, actor = visitor, method = 'get', enabled = false) => {
+            const result = new Class();
+            const headers = {};
+            Object.assign(result, {
+                domain: { _id: actor.domainId, domainType: 'scratch', scratchCommunityEnabled: enabled },
+                UiContext: {}, headers, context: {}, user: { _id: actor.uid, hasPerm: () => actor.isTeacher },
+                checkPriv: () => { if (!actor.uid) throw new PermissionError('Login required'); },
+                request: { method, headers: { origin: 'https://onebyone.test', 'if-none-match': '*' }, host: 'onebyone.test',
+                    params: { communityId: publication._id.toHexString(), workId: work._id.toHexString() }, body: {}, query: {} },
+                response: { addHeader: (key, value) => { headers[key] = value; } },
+                url: (name, params = {}) => `/${name}/${params.token || ''}`, limitRate: async () => {},
+            });
+            return result;
+        };
+        const routes = [];
+        await handlers.apply({ Route: (...args) => routes.push(args) });
+        const communityRoutes = routes.filter(([name]) => name.startsWith('scratch_community'));
+        assert.equal(communityRoutes.length, 8);
+        for (const [, , Class] of communityRoutes) {
+            for (const actor of [owner, visitor, admin]) {
+                for (const method of ['get', 'head', 'post']) {
+                    const blocked = make(Class, actor, method);
+                    await assert.rejects(blocked.prepare(), PermissionError);
+                    assert.equal(blocked.headers['Cache-Control'], 'private, no-store');
+                }
+            }
+            // Existing domains without the setting and reopened domains remain usable.
+            for (const enabled of [undefined, true]) {
+                const reopened = make(Class, visitor, 'get', enabled);
+                reopened.domain.scratchCommunityEnabled = enabled;
+                await reopened.prepare();
+                assert.equal(reopened.UiContext.scratch.communityEnabled, true);
+            }
+        }
+        const privateWork = make(handlers.ScratchHandler, owner);
+        await privateWork.prepare();
+        assert.equal(privateWork.UiContext.scratch.communityEnabled, false);
+        assert.equal((await model.getWork(privateWork.actor, work._id)).title, work.title);
+        const external = make(handlers.ScratchShareCreateHandler, owner, 'post');
+        await external.prepare();
+        await external.post();
+        const token = external.response.body.url.split('/').at(-1);
+        const publicFile = publicProjectHandler(token, owner.domainId);
+        publicFile.domain.scratchCommunityEnabled = false;
+        await publicFile.prepare();
+        await publicFile.get();
+        assert(Buffer.isBuffer(publicFile.response.body));
+        const retained = await model.getCommunityWork(visitor, publication._id);
+        assert.equal(retained.instructions, '说明同样保留');
+        assert.equal((await model.getCommunityMetrics(visitor, publication._id)).likes, before.likes);
+        assert.equal(JSON.stringify(await model.getCommunityState(visitor, publication._id)), stateBefore);
+        await assert.rejects(model.getFile(visitor, retained.fileId), PermissionError);
+    });
+
     it('authorizes active Scratch members per request, blocks OJ routes, outsiders, and cross-origin mutations', async () => {
         await database.collection('domain.user').insertOne({ domainId: 'scratch-a', uid: 20, join: true });
         const handler = Object.create(handlers.ScratchHandler.prototype);

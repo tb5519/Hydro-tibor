@@ -85,11 +85,12 @@ const projectResponse = (data = 'sb3-bytes', headers = {}) => ({
 });
 const shareResponse = (data, ok = true) => ({ ok, json: async () => data });
 
-function actions(t, templateName = 'scratch_works.html') {
+function actions(t, templateName = 'scratch_works.html', communityEnabled) {
+    const dialogContext = { url: () => '/d/art/scratch/works', handler: { domain: { scratchCommunityEnabled: communityEnabled } } };
     let body = `<button type="button" data-scratch-create>开始创作</button>
       <button type="button" data-scratch-share="/d/art/scratch/work/one/share" data-community-url="/d/art/scratch/work/one/community">分享作品一</button>
       <button type="button" data-scratch-share="/d/art/scratch/work/two/share" data-community-url="/d/art/scratch/work/two/community">分享作品二</button>` +
-      env.render('partials/scratch_dialogs.html', { url: () => '/d/art/scratch/works' });
+      env.render('partials/scratch_dialogs.html', dialogContext);
     if (templateName === 'scratch_community_detail.html') {
         const template = fs.readFileSync(path.join(root, 'templates', templateName), 'utf8')
             .replace('{% extends "scratch_base.html" %}', '');
@@ -101,7 +102,7 @@ function actions(t, templateName = 'scratch_works.html') {
                 scratch_share_create: '/d/art/scratch/work/one/share',
                 scratch_community_publish: '/d/art/scratch/work/one/community',
             })[name] || '/d/art/scratch/community',
-        }) + env.render('partials/scratch_dialogs.html', { url: () => '/d/art/scratch/works' });
+        }) + env.render('partials/scratch_dialogs.html', dialogContext);
     }
     const html = `<html data-page="${templateName.split('.')[0]}"><body>${body}</body></html>`;
     const h = browser(t, html, 'https://onebyone.test/d/art/scratch/works');
@@ -133,6 +134,7 @@ function actions(t, templateName = 'scratch_works.html') {
         status: h.document.querySelector('[data-scratch-share-status]'),
         copy: h.document.querySelector('[data-scratch-copy-share]'),
         revoke: h.document.querySelector('[data-scratch-revoke-share]'),
+        retryShare: h.document.querySelector('[data-scratch-share-retry]'),
         external: h.document.querySelector('[data-scratch-share-destination=external]'),
         community: h.document.querySelector('[data-scratch-share-destination=community]'),
         publish: h.document.querySelector('[data-scratch-community-submit]'),
@@ -147,6 +149,56 @@ async function openShare(h, title = '我的作品') {
     h.requests.at(-1).resolve(shareResponse({ ok: true, title, url: '/d/art/scratch/share/token' }));
     await settle();
 }
+
+describe('sharing while the Scratch community is closed', () => {
+    it('opens the external link flow directly without community choices or return links', async (t) => {
+        const h = actions(t, 'scratch_works.html', false);
+        assert.equal(h.community, null);
+        assert.equal(h.external, null);
+        assert.equal(h.communityForm, null);
+        assert.equal(h.document.querySelector('[data-scratch-share-pane="choice"]'), null);
+        assert.equal(h.document.querySelector('[data-scratch-share-pane="success"]'), null);
+        assert.equal(h.document.querySelector('[data-scratch-share-back]'), null);
+        // Even a stale direct-community trigger cannot override the domain policy.
+        h.share[0].setAttribute('data-community-direct', '');
+        h.share[0].click();
+        assert.equal(h.shareDialog.open, true);
+        assert.equal(h.requests.length, 1);
+        assert.equal(h.requests[0].url, 'https://onebyone.test/d/art/scratch/work/one/share');
+        assert.equal(h.requests[0].options.method, 'POST');
+        assert.equal(h.document.querySelector('[data-scratch-share-pane="external"]').hidden, false);
+        h.requests[0].resolve(shareResponse({ ok: true, title: '海岛冒险', url: '/d/art/scratch/share/token' }));
+        await settle();
+        assert.match(h.text.value, /海岛冒险/);
+        assert.match(h.text.value, /无需登录/);
+        assert.equal(h.copy.disabled, false);
+        assert.equal(h.retryShare.hidden, true);
+    });
+
+    it('allows retry and regeneration after revoking without needing a destination chooser', async (t) => {
+        const h = actions(t, 'scratch_works.html', false);
+        h.share[0].click();
+        h.requests[0].reject(new TypeError('offline'));
+        await settle();
+        assert.equal(h.retryShare.hidden, false);
+        assert.match(h.status.textContent, /重新生成链接/);
+        h.retryShare.click();
+        assert.equal(h.retryShare.hidden, true);
+        h.requests[1].resolve(shareResponse({ ok: true, title: '海岛冒险', url: '/d/art/scratch/share/token' }));
+        await settle();
+        h.revoke.click();
+        h.requests[2].resolve(shareResponse({ ok: true }));
+        await settle();
+        assert.equal(h.copy.disabled, true);
+        assert.equal(h.text.value, '');
+        assert.equal(h.retryShare.hidden, false);
+        h.retryShare.click();
+        h.requests[3].resolve(shareResponse({ ok: true, title: '海岛冒险', url: '/d/art/scratch/share/new-token' }));
+        await settle();
+        assert.match(h.text.value, /new-token/);
+        assert(h.requests.every((request) => request.url.endsWith('/share')));
+    });
+});
 
 describe('public Scratch player template and bridge', () => {
     it('escapes public metadata and requires the exact frame, opaque origin and channel', async (t) => {

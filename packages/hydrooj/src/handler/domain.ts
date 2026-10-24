@@ -6,7 +6,7 @@ import moment from 'moment-timezone';
 import Schema from 'schemastery';
 import type { Context } from '../context';
 import {
-    CannotDeleteSystemDomainError, DomainJoinAlreadyMemberError, DomainJoinForbiddenError, ForbiddenError,
+    CannotDeleteSystemDomainError, CsrfTokenError, DomainJoinAlreadyMemberError, DomainJoinForbiddenError, ForbiddenError,
     InvalidJoinInvitationCodeError, NotFoundError, OnlyOwnerCanDeleteDomainError, PermissionError,
     RoleAlreadyExistError, UserNotFoundError, ValidationError,
 } from '../error';
@@ -357,6 +357,43 @@ class DomainNavigationSettingHandler extends ManageHandler {
         ])) as Record<DomainNavigationItem, boolean>;
         await domain.edit(args.domainId, { navVisibility });
         this.response.redirect = this.url('domain_navigation_setting', { query: { saved: 1 } });
+    }
+}
+
+export class DomainScratchCommunitySettingHandler extends ManageHandler {
+    async prepare(args) {
+        // Query/body fields are merged into args before permission loading.
+        // Keep this setting bound to the domain resolved from the request URL.
+        if (args.domainId !== this.domain._id) throw new ValidationError('domainId');
+        await super.prepare(args);
+        if (!isScratchDomain(this.domain)) throw new NotFoundError('Scratch 域');
+        this.response.addHeader('Cache-Control', 'private, no-store');
+        if (this.request.method.toLowerCase() === 'post') {
+            const source = this.request.headers.origin || this.request.headers.referer;
+            try {
+                if (typeof source !== 'string' || new URL(source).host !== this.request.host) throw new CsrfTokenError();
+            } catch {
+                throw new CsrfTokenError();
+            }
+        }
+    }
+
+    async get() {
+        this.response.template = 'domain_scratch_community.html';
+        this.response.body = {
+            domain: this.domain,
+            enabled: this.domain.scratchCommunityEnabled !== false,
+            saved: this.request.query.saved === '1',
+        };
+    }
+
+    async post(args) {
+        const { enabled } = args;
+        if (![undefined, 'on', 'off', 'true', 'false', '1', '0', true, false, 1, 0].includes(enabled)) {
+            throw new ValidationError('enabled');
+        }
+        await domain.edit(this.domain._id, { scratchCommunityEnabled: ['on', 'true', '1', true, 1].includes(enabled) });
+        this.response.redirect = this.url('domain_scratch_community', { query: { saved: 1 } });
     }
 }
 
@@ -939,10 +976,13 @@ export async function apply(ctx: Context) {
     ctx.Route('domain_ranking_setting', '/domain/ranking-setting', DomainRankingSettingHandler);
     ctx.Route('domain_home_poster', '/domain/home-poster', DomainHomePosterHandler);
     ctx.Route('domain_navigation_setting', '/domain/navigation', DomainNavigationSettingHandler);
+    ctx.Route('domain_scratch_community', '/domain/scratch-community', DomainScratchCommunitySettingHandler);
     const isOjDomain = (handler) => !isScratchDomain(handler.domain);
     ctx.injectUI('DomainManage', 'domain_ranking_setting', { family: 'Properties', icon: 'info', before: 'domain_edit' }, isOjDomain);
     ctx.injectUI('DomainManage', 'domain_home_poster', { family: 'Properties', icon: 'image', before: 'domain_edit' }, isOjDomain);
     ctx.injectUI('DomainManage', 'domain_navigation_setting', { family: 'Properties', icon: 'menu', before: 'domain_edit' }, isOjDomain);
+    ctx.injectUI('DomainManage', 'domain_scratch_community', { family: 'Properties', icon: 'user', before: 'domain_edit' },
+        (handler) => isScratchDomain(handler.domain) && handler.user.hasPerm(PERM.PERM_EDIT_DOMAIN));
     ctx.Route('domain_user', '/domain/user', DomainUserHandler);
     ctx.Route('domain_permission', '/domain/permission', DomainPermissionHandler);
     ctx.Route('domain_role', '/domain/role', DomainRoleHandler);

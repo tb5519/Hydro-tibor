@@ -3,6 +3,8 @@ import { NamedPage } from 'vj/misc/Page';
 export default new NamedPage(['scratch_main', 'scratch_works', 'scratch_assignment', 'scratch_community', 'scratch_community_detail'], () => {
   const createDialog = document.querySelector<HTMLDialogElement>('[data-scratch-create-dialog]');
   const shareDialog = document.querySelector<HTMLDialogElement>('[data-scratch-share-dialog]');
+  const communityEnabled = shareDialog?.dataset.communityEnabled !== 'false';
+  const retryShareButton = document.querySelector<HTMLButtonElement>('[data-scratch-share-retry]');
   const createForm = document.querySelector<HTMLFormElement>('[data-scratch-create-form]');
   const shareText = document.querySelector<HTMLTextAreaElement>('[data-scratch-share-text]');
   const shareStatus = document.querySelector<HTMLElement>('[data-scratch-share-status]');
@@ -76,6 +78,7 @@ export default new NamedPage(['scratch_main', 'scratch_works', 'scratch_assignme
     instructions?.setCustomValidity('');
   };
   const openCommunity = async () => {
+    if (!communityEnabled) return;
     const id = ++sequence;
     publishing = false;
     showPane('community');
@@ -117,6 +120,7 @@ export default new NamedPage(['scratch_main', 'scratch_works', 'scratch_assignme
   const openExternal = async () => {
     const id = ++sequence;
     showPane('external');
+    if (retryShareButton) retryShareButton.hidden = true;
     if (shareText) shareText.value = '';
     if (copyButton) copyButton.disabled = true;
     if (revokeButton) revokeButton.hidden = true;
@@ -132,7 +136,8 @@ export default new NamedPage(['scratch_main', 'scratch_works', 'scratch_assignme
       status('链接准备好啦，复制后发给家人或朋友吧。');
     } catch (error) {
       if (!alive(id)) return;
-      status(['AbortError', 'TypeError'].includes(error.name) ? '网络有点慢，请返回后重试。' : error.message, true);
+      if (retryShareButton) retryShareButton.hidden = false;
+      status(['AbortError', 'TypeError'].includes(error.name) ? '网络有点慢，请重新生成链接。' : error.message, true);
     }
   };
 
@@ -198,21 +203,26 @@ export default new NamedPage(['scratch_main', 'scratch_works', 'scratch_assignme
       if (revokeButton) revokeButton.hidden = true;
       status('');
       setStatus(communityStatus, '');
-      showPane('choice');
+      showPane(communityEnabled ? 'choice' : 'external');
       shareDialog.showModal();
-      if (button.hasAttribute('data-community-direct')) openCommunity();
+      if (!communityEnabled) openExternal();
+      else if (button.hasAttribute('data-community-direct')) openCommunity();
       else shareDialog.querySelector<HTMLButtonElement>('[data-scratch-share-destination="community"]')?.focus();
     });
   });
+  retryShareButton?.addEventListener('click', () => {
+    if (shareDialog?.open && pane === 'external') openExternal();
+  });
   document.querySelectorAll<HTMLElement>('[data-scratch-share-destination]').forEach((button) => {
     button.addEventListener('click', () => {
-      if (!shareDialog?.open || pane !== 'choice') return;
+      if (!communityEnabled || !shareDialog?.open || pane !== 'choice') return;
       if (button.dataset.scratchShareDestination === 'community') openCommunity();
       else openExternal();
     });
   });
   document.querySelectorAll<HTMLElement>('[data-scratch-share-back]').forEach((button) => {
     button.addEventListener('click', () => {
+      if (!communityEnabled) return;
       sequence += 1;
       request?.abort();
       publishing = false;
@@ -223,7 +233,7 @@ export default new NamedPage(['scratch_main', 'scratch_works', 'scratch_assignme
   instructions?.addEventListener('input', updateCount);
   communityForm?.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (publishing || publishButton?.disabled || !instructions || pane !== 'community' || !shareDialog?.open) return;
+    if (!communityEnabled || publishing || publishButton?.disabled || !instructions || pane !== 'community' || !shareDialog?.open) return;
     const value = instructions.value.trim();
     if (value.length > 300) {
       instructions.setCustomValidity('玩法说明最多写 300 字。');
@@ -278,6 +288,7 @@ export default new NamedPage(['scratch_main', 'scratch_works', 'scratch_assignme
       if (!alive(id)) return;
       if (shareText) shareText.value = '';
       revokeButton.hidden = true;
+      if (retryShareButton) retryShareButton.hidden = false;
       status('分享已关闭，以前发出的链接已失效。');
     } catch (error) {
       if (!alive(id)) return;

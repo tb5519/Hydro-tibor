@@ -55,7 +55,8 @@ export class ScratchHandler extends Handler {
             }
         }
         this.actor = { domainId: this.domain._id, uid: this.user._id, isTeacher };
-        this.UiContext.scratch = { domainId: this.domain._id, isTeacher, editorVersion: getScratchEditorVersion() };
+        this.UiContext.scratch = { domainId: this.domain._id, isTeacher,
+            communityEnabled: this.domain.scratchCommunityEnabled !== false, editorVersion: getScratchEditorVersion() };
         this.response.addHeader('Cache-Control', 'private, no-store');
     }
 
@@ -841,7 +842,16 @@ export class ScratchThumbnailHandler extends ScratchHandler {
         this.response.body = { ok: true, thumbnailUrl: this.url('scratch_file', { fileId }) };
     }
 }
-export class ScratchCommunityHandler extends ScratchHandler {
+// Every community route, including publication APIs and conditional file
+// reads, must pass this check. External token shares remain independent.
+export class ScratchCommunityAccessHandler extends ScratchHandler {
+    async prepare() {
+        await super.prepare();
+        if (this.domain.scratchCommunityEnabled === false) throw new PermissionError('创作社区暂未开放');
+    }
+}
+
+export class ScratchCommunityHandler extends ScratchCommunityAccessHandler {
     async get() {
         const rawPage = this.request.query.page;
         const page = rawPage === undefined ? 1 : +rawPage;
@@ -861,7 +871,7 @@ export class ScratchCommunityHandler extends ScratchHandler {
     }
 }
 
-export class ScratchCommunityPublishHandler extends ScratchHandler {
+export class ScratchCommunityPublishHandler extends ScratchCommunityAccessHandler {
     async get() {
         const { work, publication } = await scratch.getWorkCommunityPublication(this.actor, this.routeId('workId'));
         this.response.type = 'application/json';
@@ -881,7 +891,7 @@ export class ScratchCommunityPublishHandler extends ScratchHandler {
     }
 }
 
-export class ScratchCommunityWorkHandler extends ScratchHandler {
+export class ScratchCommunityWorkHandler extends ScratchCommunityAccessHandler {
     async get() {
         const communityWork = await scratch.getCommunityWork(this.actor, this.routeId('communityId'));
         const isOwner = communityWork.owner === this.actor.uid;
@@ -907,7 +917,7 @@ export class ScratchCommunityWorkHandler extends ScratchHandler {
     }
 }
 
-export class ScratchCommunityMetricsHandler extends ScratchHandler {
+export class ScratchCommunityMetricsHandler extends ScratchCommunityAccessHandler {
     async get() {
         this.response.type = 'application/json';
         this.response.body = await scratch.getCommunityMetrics(this.actor, this.routeId('communityId'));
@@ -940,7 +950,7 @@ export class ScratchCommunityMetricsHandler extends ScratchHandler {
     }
 }
 
-export class ScratchCommunityStateHandler extends ScratchHandler {
+export class ScratchCommunityStateHandler extends ScratchCommunityAccessHandler {
     async get() {
         this.response.type = 'application/json';
         this.response.body = await scratch.getCommunityState(this.actor, this.routeId('communityId'));
@@ -953,7 +963,7 @@ export class ScratchCommunityStateHandler extends ScratchHandler {
     }
 }
 
-export class ScratchCommunityAnalyticsHandler extends ScratchHandler {
+export class ScratchCommunityAnalyticsHandler extends ScratchCommunityAccessHandler {
     async get() {
         const analytics = await scratch.getCommunityAnalytics(this.actor, this.routeId('communityId'));
         const names = await user.getListForRender(this.actor.domainId, analytics.participants.map((row) => row.uid), false);
@@ -970,7 +980,7 @@ export class ScratchCommunityAnalyticsHandler extends ScratchHandler {
     }
 }
 
-export class ScratchCommunityProjectHandler extends ScratchHandler {
+export class ScratchCommunityProjectHandler extends ScratchCommunityAccessHandler {
     thumbnail = false;
 
     private fileHeaders(file: scratch.ScratchFile) {

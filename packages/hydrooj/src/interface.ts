@@ -366,6 +366,8 @@ export interface DomainDoc extends Record<string, any> {
     _id: string;
     /** Missing on legacy domains, which remain OJ domains. */
     domainType?: 'oj' | 'scratch';
+    /** Missing preserves the existing Scratch community. Closing it retains all publications and interactions. */
+    scratchCommunityEnabled?: boolean;
     owner: number;
     roles: Dictionary<string>;
     avatar: string;

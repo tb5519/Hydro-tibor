@@ -1,0 +1,43 @@
+{% extends "domain_base.html" %}
+{% block domain_content %}
+<style>
+  .domain-community-setting { display: grid; gap: 20px; color: #283a51; }
+  .domain-community-setting__hero, .domain-community-setting__card { border: 1px solid #e1e9f2; border-radius: 20px; background: #fff; }
+  .domain-community-setting__hero { display: flex; align-items: center; gap: 18px; padding: 26px; background: linear-gradient(120deg, #f3f0ff, #fff 65%); }
+  .domain-community-setting__icon { display: grid; place-items: center; flex: 0 0 56px; height: 56px; border-radius: 17px; background: #ebe5ff; color: #7960c7; }
+  .domain-community-setting__icon svg { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .domain-community-setting h1 { margin: 0; font-size: 1.5rem; font-weight: 700; color: #283a51; }
+  .domain-community-setting p { margin: 7px 0 0; color: #7b8ca2; font-size: .9rem; line-height: 1.7; }
+  .domain-community-setting__card { padding: 26px; }
+  .domain-community-setting__saved { margin-bottom: 20px; padding: 12px 16px; border: 1px solid #cce9dc; border-radius: 12px; background: #f0faf5; color: #347958; }
+  .domain-community-setting .domain-community-setting__option { display: flex; color: #283a51; align-items: flex-start; gap: 14px; padding: 20px; border: 1px solid #dce5f0; border-radius: 15px; background: #f8faff; cursor: pointer; }
+  .domain-community-setting__option:has(input:checked) { border-color: #b9a7ed; background: #f7f4ff; }
+  .domain-community-setting__option input { flex: 0 0 20px; width: 20px; height: 20px; margin: 2px 0 0; accent-color: #7960c7; }
+  .domain-community-setting__option strong { display: block; font-size: 1.05rem; line-height: 1.5; }
+  .domain-community-setting__details { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin: 24px 0 0; }
+  .domain-community-setting__details dt { margin: 0; font-weight: 700; font-size: .9rem; }
+  .domain-community-setting__details dd { margin: 7px 0 0; font-size: .86rem; color: #7b8ca2; line-height: 1.8; }
+  .domain-community-setting__footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; margin-top: 26px; padding-top: 20px; border-top: 1px solid #edf1f6; }
+  .domain-community-setting__footer p { margin: 0; font-size: .82rem; }
+  .domain-community-setting__footer .button { margin: 0; }
+  @media (max-width: 42em) { .domain-community-setting__hero, .domain-community-setting__card { padding: 20px; } .domain-community-setting__details { grid-template-columns: 1fr; gap: 16px; } }
+</style>
+<div class="domain-community-setting">
+  <header class="domain-community-setting__hero">
+    <span class="domain-community-setting__icon" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M12 14a5 5 0 1 0 0-10 5 5 0 0 0 0 10ZM3 28v-4a7 7 0 0 1 7-7h4a7 7 0 0 1 7 7v4m1-14a4 4 0 1 0 0-8m2 12a5 5 0 0 1 5 5v5"/></svg></span>
+    <div><h1>创作社区</h1><p>为 {{ handler.domain.name }} 选择是否开放作品交流。</p></div>
+  </header>
+  <form method="post" action="{{ url('domain_scratch_community') }}" class="domain-community-setting__card">
+    {% if saved %}<div class="domain-community-setting__saved" role="status">创作社区设置已保存。</div>{% endif %}
+    <label class="domain-community-setting__option">
+      <input type="checkbox" name="enabled" value="on"{% if enabled %} checked{% endif %} aria-describedby="community-setting-description">
+      <span><strong>开放创作社区</strong><p id="community-setting-description">让学员分享创意，欣赏本课堂小伙伴的作品。</p></span>
+    </label>
+    <dl class="domain-community-setting__details">
+      <div><dt>开放时</dt><dd>导航栏显示“创作社区”。学员可以进入社区，并将已保存的作品分享到社区。</dd></div>
+      <div><dt>关闭时</dt><dd>隐藏社区入口，已有社区链接也无法进入。分享作品时直接生成站外链接，可发给家人和朋友。</dd></div>
+    </dl>
+    <footer class="domain-community-setting__footer"><p>已有社区作品和互动数据会保留，重新开放后恢复展示。</p><button type="submit" class="rounded primary button">保存设置</button></footer>
+  </form>
+</div>
+{% endblock %}
