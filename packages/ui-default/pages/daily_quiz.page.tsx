@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { NamedPage } from 'vj/misc/Page';
 import { request } from 'vj/utils';
 import { createObjectiveMarkdown } from '../common/objective-markdown';
+import { setTrainingTimeContext, type TrainingTimeConfig } from '../components/training_time';
 
 interface Feedback {
   correct: boolean;
@@ -45,8 +46,9 @@ interface InitialData {
   actionUrl: string;
   statusUrl: string;
   returnUrl: string;
+  trainingTime?: TrainingTimeConfig | null;
 }
-type Post = (url: string, data: Record<string, any>) => Promise<{ state: QuizState }>;
+type Post = (url: string, data: Record<string, any>) => Promise<{ state: QuizState, trainingTime?: TrainingTimeConfig | null }>;
 
 // Match the existing objective editor: disable raw HTML and retain safe Markdown and math.
 const markdown = createObjectiveMarkdown();
@@ -75,6 +77,9 @@ function dateLabel(value: string) {
 
 export function DailyQuiz({ initial, post = request.post.bind(request) }: { initial: InitialData, post?: Post }) {
   const [state, setState] = useState(initial.state);
+  const [trainingTime, setTrainingTime] = useState<TrainingTimeConfig | null>(
+    initial.trainingTime || (typeof UiContext === 'undefined' ? null : UiContext.trainingTime) || null,
+  );
   const [selection, setSelection] = useState<string[]>(initial.state.current?.feedback?.selectedAnswers || []);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -97,6 +102,11 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
   const answerText = (answers: string[]) => answers.map((answer) => (judge ? { A: '正确', B: '错误' }[answer] || answer : answer)).join('、');
   const activeAnswers = feedback?.selectedAnswers || selection;
   const returnUrl = safeQuizReturnUrl(initial.returnUrl, window.location.origin);
+
+  useEffect(() => {
+    setTrainingTimeContext(current && !complete ? trainingTime : null);
+  }, [trainingTime, current?.id, current?.domainId, complete]);
+  useEffect(() => () => setTrainingTimeContext(null), []);
 
   useEffect(() => {
     const options = { preventScroll: !hasFocused.current };
@@ -143,6 +153,7 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
         throw new Error('暂未确认保存结果，请再试一次。');
       }
       setState(next);
+      setTrainingTime(result.trainingTime || null);
       setSelection(next.current?.feedback?.selectedAnswers || []);
     } catch (cause) {
       const changed = cause?.params?.[0] === 'questionId'

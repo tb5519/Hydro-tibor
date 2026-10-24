@@ -113,6 +113,30 @@ async function harness(data = initial(), handler = async () => answerResult()) {
 }
 
 describe('daily quiz learner page', () => {
+    it('silently follows the visible question training grant across domains and clears it on completion', async () => {
+        const pythonClock = { enabled: true, startUrl: '/d/python/training-time/session', heartbeatUrl: '/d/python/training-time/heartbeat',
+            sourceToken: 'python-grant', contextKey: 'python:daily:1' };
+        const cppClock = { ...pythonClock, sourceToken: 'cpp-grant', contextKey: 'cpp:daily:2',
+            startUrl: '/d/cpp/training-time/session', heartbeatUrl: '/d/cpp/training-time/heartbeat' };
+        const h = await harness(initial({ trainingTime: pythonClock,
+            state: state({ answered: 1, current: question({ feedback: feedback() }) }) }), async () => ({
+            state: state({ answered: 1, current: question({ id: 2, position: 2, domainId: 'cpp', domainName: 'C++ 训练' }) }),
+            trainingTime: cppClock,
+        }));
+        try {
+            assert.equal(h.dom.window.__trainingTimeContext.sourceToken, 'python-grant');
+            await h.click('button[type=submit]');
+            assert.equal(h.dom.window.__trainingTimeContext.sourceToken, 'cpp-grant');
+            assert.match(h.query('.daily-quiz__meta').textContent, /C\+\+ 训练/);
+            assert.doesNotMatch(h.dom.window.document.body.textContent, /训练时长|计时|python-grant|cpp-grant/);
+            h.setPost(async () => ({ state: state({ completed: true, required: false, answered: 2, current: null }), trainingTime: null }));
+            await h.click('input[value=A]');
+            await h.submit();
+            assert.equal(h.dom.window.__trainingTimeContext, null);
+            assert(h.query('[data-daily-quiz-complete]'));
+        } finally { await h.cleanup(); }
+    });
+
     it('preserves Python power operators in the reported wrong-answer explanation', async () => {
         const analysis = '**答案：B（错误）。**\n\n左侧 4**2=16，右侧先算 2**2=4，再乘2得8。16 与8不相等，所以实际输出 False。';
         const item = question({ kind: 'judge', stem: 'Python 代码`print(4 ** 2 == 2 * 2 ** 2)`执行后的输出是True。(  )', options: ['正确', '错误'] });

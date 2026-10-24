@@ -85,7 +85,7 @@ export class DailyQuizFileHandler extends Handler {
 
 // Authentication and JavaScript bootstrap must remain reachable while entry is gated.
 // eslint-disable-next-line max-len
-const exemptPath = /^\/(?:daily-quiz|student-message\/ack|login|logout|oauth|lostpass|user\/(?:sudo|tfa|avatar-effects)|home\/security|language|fs|asset|lazy|resource|service-worker-config)(?:\/|$)/;
+const exemptPath = /^\/(?:daily-quiz|student-message\/ack|training-time\/(?:session|heartbeat)|login|logout|oauth|lostpass|user\/(?:sudo|tfa|avatar-effects)|home\/security|language|fs|asset|lazy|resource|service-worker-config)(?:\/|$)/;
 
 /** Decorative reads keep their own authentication/ownership checks. Never
  * exempt page navigation, theme selection, uploads or other mutations. */
