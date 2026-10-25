@@ -120,6 +120,8 @@ test('remove controls are teacher-only, independent of roster links and safely e
     const button = teacher.$('[data-training-remove-user]');
     assert.equal(button.attr('type'), 'button');
     assert.equal(button.attr('data-name'), unsafe);
+    assert.ok(button.attr('aria-label').includes(unsafe));
+    assert.ok(!button.attr('aria-label').includes('{0}'));
     assert.equal(button.closest('a').length, 0);
     assert.equal(teacher.$('[onerror]').length, 0);
     teacher.click();

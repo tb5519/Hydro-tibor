@@ -205,7 +205,7 @@
                   </span>
                   <span class="icon icon-chevron_right" aria-hidden="true"></span>
                 </a>
-                <button type="button" class="ui-v2-training-detail__remove-user" data-training-remove-user data-uid="{{ uid }}" data-name="{{ enrolledUser.displayName if handler.user.hasPerm(perm.PERM_VIEW_USER_PRIVATE_INFO) and enrolledUser.displayName else enrolledUser.uname }}" aria-label="{{ _('Remove {0} from this training plan?', enrolledUser.displayName if handler.user.hasPerm(perm.PERM_VIEW_USER_PRIVATE_INFO) and enrolledUser.displayName else enrolledUser.uname) }}">{{ _('Remove student') }}</button>
+                <button type="button" class="ui-v2-training-detail__remove-user" data-training-remove-user data-uid="{{ uid }}" data-name="{{ enrolledUser.displayName if handler.user.hasPerm(perm.PERM_VIEW_USER_PRIVATE_INFO) and enrolledUser.displayName else enrolledUser.uname }}" aria-label="{{ _('Remove student') }} {{ enrolledUser.displayName if handler.user.hasPerm(perm.PERM_VIEW_USER_PRIVATE_INFO) and enrolledUser.displayName else enrolledUser.uname }}">{{ _('Remove student') }}</button>
               </li>
             {%- endfor -%}
           </ul>
