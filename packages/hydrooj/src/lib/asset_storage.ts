@@ -82,6 +82,7 @@ export function eligibleAsset(path: string, contentType: string) {
         || /^(?:domain\/[^/]+\/)?badge\/[^/]+\/(profile-background|ac-effect|theme-sound)-\d+\.[a-z0-9]+$/.test(path)
         || /^(?:domain\/[^/]+\/)?badge\/\d+\/badge-icon-\d+-[a-f0-9]{16}\.(?:png|jpe?g|gif|webp)$/.test(path)
         || /^achievement\/[a-f0-9]{32}\/[a-z0-9-]+\/[a-f0-9]{32}(?:-384)?\.png$/.test(path)
+        || /^achievement\/[a-f0-9]{32}\/sound\/[a-f0-9]{32}\.(?:mp3|ogg|wav|m4a)$/.test(path)
         || /^(?:domain\/[^/]+|system)\/point-lottery\/lottery-prize-[a-z0-9-]+\.[a-z0-9]+$/.test(path)
         || /^training\/[^/]+\/[^/]+\/[^/]+$/.test(path)
         || /^problem\/[^/]+\/[^/]+\/additional_file\/[^/]+$/.test(path)

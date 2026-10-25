@@ -10,6 +10,10 @@ import {
     ACHIEVEMENT_IMAGE_LIMIT, achievementDefinition, getAchievementArtwork, presentAchievements,
     removeAchievementImage, setAchievementImage,
 } from '../lib/achievement_image';
+import {
+    ACHIEVEMENT_SOUND_LIMIT, getAchievementSound, presentAchievementSound,
+    removeAchievementSound, saveAchievementSound, setAchievementSound,
+} from '../lib/achievement_sound';
 import { tryRedirectAsset } from '../lib/asset_delivery';
 import assetStorage from '../lib/asset_storage';
 import { isScratchDomain } from '../lib/domain_type';
@@ -54,6 +58,8 @@ export class AchievementManageHandler extends Handler {
             badgeManageRoute: scoped ? 'domain_badge_manage' : 'badge_manage',
             manageRoute: scoped ? 'domain_achievement_manage' : 'achievement_manage',
             maxImageSize: ACHIEVEMENT_IMAGE_LIMIT,
+            achievementSound: await presentAchievementSound(this.ctx, this.domain),
+            maxSoundSize: ACHIEVEMENT_SOUND_LIMIT,
         };
     }
 
@@ -81,6 +87,35 @@ export class AchievementManageHandler extends Handler {
         await removeAchievementImage(this.ctx, this.domain, id, this.user._id);
         await this.finishImageEdit(id);
     }
+
+    async finishSoundEdit() {
+        privateResponse(this);
+        if (this.request.json) {
+            this.response.body = { ok: true, achievementSound: await presentAchievementSound(this.ctx, this.domain) };
+        } else this.response.redirect = this.url(domainManagement(this) ? 'domain_achievement_manage' : 'achievement_manage');
+    }
+
+    async postUploadSound() {
+        await checkAchievementManageAccess(this);
+        await this.limitRate('achievement_sound', 60, 15);
+        const sound = this.request.files?.sound;
+        await setAchievementSound(this.ctx, this.domain, Array.isArray(sound) ? sound[0] : sound, this.user._id);
+        await this.finishSoundEdit();
+    }
+
+    async postRemoveSound() {
+        await checkAchievementManageAccess(this);
+        await removeAchievementSound(this.ctx, this.domain, this.user._id);
+        await this.finishSoundEdit();
+    }
+
+    @param('volume', Types.UnsignedInt)
+    @param('enabled', Types.Boolean)
+    async postSaveSound(_: string, volume: number, enabled: boolean) {
+        await checkAchievementManageAccess(this);
+        await saveAchievementSound(this.ctx, this.domain, volume, enabled, this.user._id);
+        await this.finishSoundEdit();
+    }
 }
 
 export class AchievementImageHandler extends Handler {
@@ -101,6 +136,23 @@ export class AchievementImageHandler extends Handler {
         }
         this.response.type = 'image/png';
         this.response.body = await storage.get(imagePath);
+    }
+}
+
+export class AchievementSoundHandler extends Handler {
+    async get() {
+        const sound = await getAchievementSound(this.ctx, this.domain);
+        if (!sound?.soundPath) throw new NotFoundError('成就音效尚未上传。');
+        const meta = await storage.getMeta(sound.soundPath);
+        if (!meta) throw new NotFoundError('成就音效暂不可用。');
+        privateResponse(this);
+        if (tryRedirectAsset(this, { path: sound.soundPath, meta })) return;
+        if (meta.remoteAsset) {
+            this.response.redirect = await assetStorage.signDownloadLink(meta.remoteAsset);
+            return;
+        }
+        this.response.type = sound.contentType || 'application/octet-stream';
+        this.response.body = await storage.get(sound.soundPath);
     }
 }
 
@@ -173,6 +225,12 @@ export async function injectAchievementContext(handler: Handler) {
     handler.UiContext.achievementAckUrl = handler.url('achievement_ack');
     handler.UiContext.achievementScope = `${getAchievementScope(handler.domain)}/${handler.user._id}`;
     handler.UiContext.achievementAutoShow = selfProfile || template === 'main.html';
+    try {
+        handler.UiContext.achievementSound = await presentAchievementSound(handler.ctx, handler.domain);
+    } catch (error) {
+        handler.UiContext.achievementSound = { soundUrl: '', volume: 70, enabled: false, filename: '' };
+        logger.warn('Unable to load achievement sound: %o', error);
+    }
     if (template === 'record_detail.html') {
         const rdoc = handler.response.body.rdoc;
         const timestamp = rdoc?._id?.getTimestamp?.()?.getTime() || 0;
@@ -189,6 +247,7 @@ export async function apply(ctx: Context) {
     ctx.Route('achievement_manage', '/manage/achievement', AchievementManageHandler);
     ctx.Route('domain_achievement_manage', '/domain/achievement', AchievementManageHandler);
     ctx.Route('achievement_image', '/achievement/:id/image', AchievementImageHandler);
+    ctx.Route('achievement_sound', '/achievement/sound', AchievementSoundHandler);
     ctx.Route('achievement_pending', '/achievement/pending', AchievementPendingHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('achievement_ack', '/achievement/ack', AchievementAckHandler, PRIV.PRIV_USER_PROFILE);
     ctx.injectUI('ControlPanel', 'achievement_manage', { before: 'badge_manage', icon: 'crown' },

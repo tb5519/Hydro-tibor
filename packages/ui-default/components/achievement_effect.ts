@@ -11,17 +11,26 @@ export interface AchievementPendingResponse {
   settled?: boolean;
 }
 
+export interface AchievementSoundSettings {
+  soundUrl?: string;
+  volume?: number;
+  enabled?: boolean;
+  filename?: string;
+}
+
 interface AchievementCelebrationOptions {
   fetchPending: (rid?: string) => Promise<AchievementPendingResponse>;
   acknowledge: (ids: string[]) => Promise<unknown>;
   lockName?: string;
   canPresent?: () => boolean;
+  sound?: AchievementSoundSettings;
 }
 
 interface AchievementContext {
   achievementPendingUrl?: string;
   achievementAckUrl?: string;
   achievementScope?: string;
+  achievementSound?: AchievementSoundSettings;
 }
 
 const IMAGE_WAIT_MS = 3000;
@@ -29,7 +38,7 @@ const INPUT_GUARD_MS = 700;
 const EXIT_MS = 360;
 const POLL_DELAYS = [0, 700, 1400, 2400, 4000, 6000];
 
-function artworkUrl(value?: string) {
+function assetUrl(value?: string) {
   if (!value) return '';
   try {
     const url = new URL(value, window.location.href);
@@ -49,6 +58,104 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
   const records = new Map<string, Promise<void>>();
   const shown = new Set<string>();
   const cancellations = new Set<() => void>();
+  const configuredVolume = options.sound?.volume;
+  const soundVolume = Math.max(0, Math.min(100,
+    typeof configuredVolume === 'number' && Number.isFinite(configuredVolume) ? configuredVolume : 25)) / 100;
+  const soundUrl = options.sound?.enabled === true && soundVolume > 0 ? assetUrl(options.sound.soundUrl) : '';
+  let presenting = false;
+  let audio: HTMLAudioElement | null = null;
+  let audioGeneration = 0;
+  let audioPrimed = false;
+  let audioPriming = false;
+  let soundActive = false;
+
+  function getAudio() {
+    if (!soundUrl || disposed || suspended) return null;
+    if (!audio) {
+      try {
+        const player = new Audio(soundUrl);
+        player.preload = 'auto';
+        player.loop = false;
+        player.muted = true;
+        player.volume = 0;
+        player.load();
+        audio = player;
+      } catch { return null; }
+    }
+    return audio;
+  }
+
+  function stopSound(release = false) {
+    audioGeneration++;
+    audioPriming = false;
+    soundActive = false;
+    if (!audio) return;
+    // Mute before pausing: a late play() or priming callback must never emit
+    // sound during the exit animation, navigation or a suspended bfcache page.
+    audio.muted = true;
+    audio.pause();
+    try { audio.currentTime = 0; } catch { /* The media may not have loaded yet. */ }
+    if (release) {
+      audio.removeAttribute('src');
+      audio.load();
+      audio = null;
+      audioPrimed = false;
+    }
+  }
+
+  function primeAudio() {
+    if (disposed || suspended || presenting || audioPrimed || audioPriming || document.querySelector('.achievement-reveal')) return;
+    const player = getAudio();
+    if (!player) return;
+    const version = ++audioGeneration;
+    audioPriming = true;
+    player.muted = true;
+    player.volume = 0;
+    // Match the AC player's gesture unlock: an unmuted element played at zero
+    // volume can retain audible playback permission for the later reveal.
+    // Some mobile engines ignore programmatic volume; keep those muted so
+    // warming the asset can never make the achievement audible ahead of AC.
+    player.muted = player.volume !== 0;
+    const finish = (ready: boolean) => {
+      if (player !== audio || version !== audioGeneration) {
+        if (player !== audio || !soundActive) { player.muted = true; player.pause(); }
+        return;
+      }
+      player.muted = true;
+      player.pause();
+      try { player.currentTime = 0; } catch { /* A rejected load need not have a seekable timeline. */ }
+      audioPrimed = ready;
+      audioPriming = false;
+      // Keep the element muted until the achievement actually enters. Merely
+      // finishing a silent warmup while AC plays must not restore its volume.
+    };
+    try { void Promise.resolve(player.play()).then(() => finish(true), () => finish(false)); } catch { finish(false); }
+  }
+
+  function playSound() {
+    const player = getAudio();
+    if (!player) return;
+    stopSound();
+    const version = audioGeneration;
+    soundActive = true;
+    player.muted = false;
+    player.volume = soundVolume;
+    // Sound is an enhancement, never a prerequisite for showing or closing
+    // the artwork. Autoplay denial and a failed download leave the UI intact.
+    try {
+      void Promise.resolve(player.play()).then(() => {
+        if (player === audio && version === audioGeneration) audioPrimed = true;
+        else if (player !== audio || !soundActive) { player.muted = true; player.pause(); }
+      }, () => {
+        if (player === audio && version === audioGeneration) stopSound();
+      });
+    } catch { stopSound(); }
+  }
+
+  if (soundUrl) {
+    document.addEventListener('pointerdown', primeAudio, true);
+    document.addEventListener('keydown', primeAudio, true);
+  }
 
   function wait(ms: number) {
     return new Promise<void>((resolve) => {
@@ -63,7 +170,7 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
   }
 
   function readyImage(value?: string) {
-    const src = artworkUrl(value);
+    const src = assetUrl(value);
     if (!src) return Promise.resolve<HTMLImageElement | null>(null);
     return new Promise<HTMLImageElement | null>((resolve) => {
       const image = new Image();
@@ -112,6 +219,7 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
 
   function display(awards: EarnedAchievement[], image: HTMLImageElement | null) {
     if (disposed || suspended || !awards.length) return Promise.resolve(false);
+    presenting = true;
     const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     const previousFocus = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
@@ -152,7 +260,7 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
         const tile = element('li', 'tile');
         tile.title = `${award.name}：${award.description}`;
         const icon = element('span', 'thumbnail');
-        const src = artworkUrl(award.imageUrl);
+        const src = assetUrl(award.imageUrl);
         if (src) {
           const thumbnail = new Image();
           thumbnail.alt = '';
@@ -196,6 +304,8 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
       const cleanup = (dismissed: boolean) => {
         if (finished) return;
         finished = true;
+        presenting = false;
+        stopSound();
         window.clearTimeout(armTimer);
         window.clearTimeout(exitTimer);
         window.cancelAnimationFrame(frame);
@@ -216,6 +326,7 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
       const dismiss = () => {
         if (!armed || leaving) return;
         leaving = true;
+        stopSound();
         effect.classList.add('is-leaving');
         // Keep the dialog and capture handlers through pointerup/click so the
         // dismissal can never also submit code or open a link underneath it.
@@ -259,7 +370,11 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
         armed = true;
         effect.classList.add('is-ready');
       }, INPUT_GUARD_MS);
-      const frame = window.requestAnimationFrame(() => effect.classList.add('is-visible'));
+      const frame = window.requestAnimationFrame(() => {
+        if (finished || leaving || disposed || suspended) return;
+        effect.classList.add('is-visible');
+        playSound();
+      });
       finishDisplay = () => cleanup(false);
     });
   }
@@ -324,6 +439,7 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
   function cancelPending() {
     generation++;
     finishDisplay?.();
+    stopSound(true);
     for (const cancel of [...cancellations]) cancel();
     records.clear();
     shown.clear();
@@ -336,6 +452,8 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
     cancelPending();
     window.removeEventListener('pagehide', onPageHide);
     window.removeEventListener('pageshow', onPageShow);
+    document.removeEventListener('pointerdown', primeAudio, true);
+    document.removeEventListener('keydown', primeAudio, true);
   }
 
   function onPageHide(event: PageTransitionEvent) {
@@ -365,6 +483,7 @@ export function createAchievementClient(context: AchievementContext, request: {
   post: (url: string, data: { ids: string[] }, options?: { timeout: number }) => Promise<any>;
 }) {
   return createAchievementCelebration({
+    sound: context.achievementSound,
     lockName: context.achievementScope ? `hydro:achievements:${context.achievementScope}`
       : context.achievementPendingUrl ? `hydro:achievements:${context.achievementPendingUrl}` : undefined,
     canPresent: () => {

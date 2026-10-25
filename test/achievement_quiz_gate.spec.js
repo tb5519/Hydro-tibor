@@ -24,10 +24,12 @@ it('daily quiz allows reading earned notifications and acknowledging only their 
     }
 });
 
-it('image exemption permits only artwork reads while all upload and management operations remain gated', () => {
-    for (const method of ['GET', 'HEAD']) assert.equal(isDailyQuizMediaRead('/achievement/difficulty-1/image', method), true);
-    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) assert.equal(isDailyQuizMediaRead('/achievement/difficulty-1/image', method), false);
-    for (const path of ['/achievement/difficulty-1/image/upload', '/achievement/../image', '/manage/achievement', '/domain/achievement']) {
+it('media exemption permits only artwork and sound reads while all upload and management operations remain gated', () => {
+    for (const route of ['/achievement/difficulty-1/image', '/achievement/sound']) {
+        for (const method of ['GET', 'HEAD']) assert.equal(isDailyQuizMediaRead(route, method), true);
+        for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) assert.equal(isDailyQuizMediaRead(route, method), false);
+    }
+    for (const path of ['/achievement/difficulty-1/image/upload', '/achievement/../image', '/achievement/sound/upload', '/manage/achievement', '/domain/achievement']) {
         assert.equal(isDailyQuizMediaRead(path, 'GET'), false);
     }
 });

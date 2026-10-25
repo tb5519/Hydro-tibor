@@ -28,13 +28,23 @@ const items = [
 const context = {
     achievements: items, manageRoute: 'achievement_manage', badgeManageRoute: 'badge_manage',
     url: (route) => `/${route}`, maxImageSize: 8388608,
+    achievementSound: { soundUrl: '', filename: '', volume: 70, enabled: true }, maxSoundSize: 8388608,
 };
-function fixture({ wall = false, overrides = {} } = {}) {
+function fixture({ wall = false, overrides = {}, onReload } = {}) {
     const html = env.render(wall ? 'partials/achievement_wall.html' : 'achievement_manage.html', {
         ...context, achievementWall: { items, unlocked: items.length, total: 50 }, ...overrides,
     });
     const dom = new JSDOM(html, { url: 'https://school.test/achievement_manage', runScripts: 'outside-only', pretendToBeVisual: true });
     const requests = [];
+    const audio = [];
+    let rejectAudio = false;
+    dom.window.Audio = class {
+        constructor(url) { this.src = url; this.paused = true; audio.push(this); }
+        play() { this.paused = false; return rejectAudio ? Promise.reject(new Error('media unavailable')) : Promise.resolve(); }
+        pause() { this.paused = true; }
+        removeAttribute(name) { if (name === 'src') this.src = ''; }
+        load() { this.loaded = true; }
+    };
     let respond = async (body) => ({ ok: true, achievement: { ...items.find((item) => item.id === body.get('id')), imageUrl: 'https://images.test/new.png', thumbnailUrl: 'https://images.test/new-thumb.webp' } });
     dom.window.fetch = async (url, options) => {
         requests.push({ url, ...options });
@@ -47,9 +57,11 @@ function fixture({ wall = false, overrides = {} } = {}) {
     dom.window.exports = {};
     dom.window.require = () => ({ NamedPage: class { constructor(names, callback) { this.names = names; this.callback = callback; } } });
     dom.window.eval(source);
-    dom.window.exports.default.callback();
+    if (onReload) dom.window.exports.bindAchievementManage(onReload);
+    else dom.window.exports.default.callback();
     return {
-        dom, document: dom.window.document, requests, exports: dom.window.exports,
+        dom, document: dom.window.document, requests, audio, exports: dom.window.exports,
+        rejectAudio: () => { rejectAudio = true; },
         setResponse: (fn) => { respond = fn; },
         flush: () => new Promise((resolve) => setImmediate(resolve)),
         input: (selector, value, type = 'input') => {
@@ -58,6 +70,11 @@ function fixture({ wall = false, overrides = {} } = {}) {
         },
         selectFile: (id, file) => {
             const input = dom.window.document.querySelector(`[data-id="${id}"] [data-achievement-file]`);
+            Object.defineProperty(input, 'files', { configurable: true, value: [file] });
+            input.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+        },
+        selectSound: (file) => {
+            const input = dom.window.document.querySelector('[data-achievement-sound-file]');
             Object.defineProperty(input, 'files', { configurable: true, value: [file] });
             input.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
         },
@@ -198,5 +215,154 @@ describe('achievement management and profile wall', () => {
         assert.match(css, /object-fit: contain/);
         assert.match(css, /\.achievement-wall__tooltip[\s\S]*?position: fixed/);
         assert.match(css, /max-width: 640px/);
+    });
+});
+
+describe('achievement sound management', () => {
+    const configured = { soundUrl: 'https://images.test/unlock.mp3', filename: '解锁.mp3', volume: 60, enabled: true };
+    const submit = (h, selector) => h.document.querySelector(selector).dispatchEvent(new h.dom.window.Event('submit', { bubbles: true, cancelable: true }));
+
+    it('keeps one shared sound panel and requires an explicit save for volume and enable changes', async (t) => {
+        const h = fixture({ overrides: { achievementSound: configured } }); t.after(h.close);
+        assert.equal(h.document.querySelectorAll('[data-achievement-sound]').length, 1);
+        assert.equal(h.document.querySelector('[data-achievement-sound-save]').disabled, true);
+        h.input('[data-achievement-sound-volume]', '35');
+        h.document.querySelector('[data-achievement-sound-enabled]').click();
+        assert.equal(h.requests.length, 0);
+        assert.equal(h.document.querySelector('[data-achievement-sound-volume-value]').textContent, '35%');
+        assert.match(h.document.querySelector('[data-achievement-sound-save-state]').textContent, /未保存/);
+        h.setResponse(async () => ({ ok: true, achievementSound: { ...configured, enabled: false, volume: 35 } }));
+        submit(h, '[data-achievement-sound-settings]'); await h.flush();
+        assert.equal(h.requests.length, 1);
+        assert.equal(h.requests[0].body.get('operation'), 'save_sound');
+        assert.equal(h.requests[0].body.get('enabled'), 'false');
+        assert.equal(h.requests[0].body.get('volume'), '35');
+        assert.equal(h.document.querySelector('[data-achievement-sound-save]').disabled, true);
+        assert.equal(h.document.querySelector('[data-achievement-sound-enabled]').checked, false);
+    });
+
+    it('uploads immediately to the scoped endpoint while preserving unsaved settings', async (t) => {
+        const h = fixture({ overrides: { manageRoute: 'domain_achievement_manage' } }); t.after(h.close);
+        h.input('[data-achievement-sound-volume]', '25');
+        h.setResponse(async () => ({ ok: true, achievementSound: { ...configured, volume: 70 } }));
+        h.selectSound(new h.dom.window.File(['audio'], '解锁.mp3', { type: 'audio/mpeg' })); await h.flush();
+        assert.equal(h.requests[0].url, 'https://school.test/domain_achievement_manage');
+        assert.equal(h.requests[0].credentials, 'same-origin');
+        assert.equal(h.requests[0].body.get('operation'), 'upload_sound');
+        assert.equal(h.requests[0].body.get('sound').name, '解锁.mp3');
+        assert.equal(h.document.querySelector('[data-achievement-sound-filename]').textContent, '解锁.mp3');
+        assert.equal(h.document.querySelector('[data-achievement-sound-upload-label]').textContent, '替换音效');
+        assert.equal(h.document.querySelector('[data-achievement-sound-volume]').value, '25');
+        assert.equal(h.document.querySelector('[data-achievement-sound-save]').disabled, false);
+        assert.match(h.document.querySelector('[data-achievement-sound-status]').textContent, /尚未保存/);
+        assert.equal(h.document.querySelector('[data-achievement-sound-preview]').disabled, false);
+    });
+
+    it('rejects unsupported and oversized files before uploading and accepts supported audio', async (t) => {
+        const h = fixture(); t.after(h.close);
+        h.selectSound(new h.dom.window.File(['script'], 'sound.svg', { type: 'image/svg+xml' }));
+        h.selectSound(new h.dom.window.File([new Uint8Array(8388609)], 'big.wav', { type: 'audio/wav' }));
+        h.selectSound(new h.dom.window.File([], 'empty.mp3', { type: 'audio/mpeg' }));
+        await h.flush();
+        assert.equal(h.requests.length, 0);
+        assert.match(h.document.querySelector('[data-achievement-sound-status]').textContent, /8 MB/);
+        h.setResponse(async () => ({ ok: true, achievementSound: configured }));
+        for (const [name, type] of [['sound.OGG', 'audio/ogg'], ['sound.wav', 'audio/x-wav'], ['sound.m4a', 'audio/mp4']]) {
+            h.selectSound(new h.dom.window.File(['audio'], name, { type })); await h.flush();
+        }
+        assert.equal(h.requests.length, 3);
+    });
+
+    it('preserves the previous sound and draft after a failed save and exposes retry', async (t) => {
+        const h = fixture({ overrides: { achievementSound: configured } }); t.after(h.close);
+        h.input('[data-achievement-sound-volume]', '42');
+        h.setResponse(async () => ({ error: { message: '存储暂时不可用' } }));
+        submit(h, '[data-achievement-sound-settings]'); await h.flush();
+        assert.equal(h.document.querySelector('[data-achievement-sound]').dataset.soundUrl, configured.soundUrl);
+        assert.equal(h.document.querySelector('[data-achievement-sound-volume]').value, '42');
+        assert.equal(h.document.querySelector('[data-achievement-sound-save]').disabled, false);
+        assert.equal(h.document.querySelector('[data-achievement-sound-status]').getAttribute('role'), 'alert');
+        assert.match(h.document.querySelector('[data-achievement-sound-status]').textContent, /存储暂时不可用/);
+    });
+
+    it('previews the draft volume, adjusts live, stops on demand and cleans up when navigating', (t) => {
+        const h = fixture({ overrides: { achievementSound: configured } }); t.after(h.close);
+        const preview = h.document.querySelector('[data-achievement-sound-preview]');
+        assert.equal(h.audio.length, 0);
+        h.input('[data-achievement-sound-volume]', '30'); preview.click();
+        assert.equal(h.audio[0].src, configured.soundUrl);
+        assert.equal(h.audio[0].volume, .3);
+        assert.equal(h.audio[0].loop, false);
+        assert.equal(preview.textContent, '停止试听');
+        h.input('[data-achievement-sound-volume]', '45');
+        assert.equal(h.audio[0].volume, .45);
+        preview.click();
+        assert.equal(h.audio[0].paused, true);
+        assert.equal(h.audio[0].src, '');
+        preview.click();
+        h.dom.window.dispatchEvent(new h.dom.window.Event('pagehide'));
+        assert.equal(h.audio[1].paused, true);
+        assert.equal(h.audio[1].src, '');
+        assert.equal(h.requests.length, 0);
+    });
+
+    it('reports unavailable playback and restores preview after the audio ends', async (t) => {
+        const h = fixture({ overrides: { achievementSound: configured } }); t.after(h.close);
+        const preview = h.document.querySelector('[data-achievement-sound-preview]');
+        preview.click(); h.audio[0].onended();
+        assert.equal(preview.getAttribute('aria-pressed'), 'false');
+        assert.match(h.document.querySelector('[data-achievement-sound-status]').textContent, /试听结束/);
+        h.rejectAudio(); preview.click(); await h.flush();
+        assert.equal(preview.textContent, '试听');
+        assert.equal(h.audio[1].paused, true);
+        assert.match(h.document.querySelector('[data-achievement-sound-status]').textContent, /暂时无法播放/);
+    });
+
+    it('removes audio independently from achievement artwork and stops any preview', async (t) => {
+        const h = fixture({ overrides: { achievementSound: configured } }); t.after(h.close);
+        h.document.querySelector('[data-achievement-sound-preview]').click();
+        h.setResponse(async () => ({ ok: true, achievementSound: { ...configured, soundUrl: '', filename: '' } }));
+        submit(h, '[data-achievement-sound-remove-form]'); await h.flush();
+        assert.equal(h.requests[0].body.get('operation'), 'remove_sound');
+        assert.equal(h.audio[0].paused, true);
+        assert.equal(h.document.querySelector('[data-achievement-sound-preview]').disabled, true);
+        assert.equal(h.document.querySelector('[data-achievement-sound-remove-form]').hidden, true);
+        assert.equal(h.document.querySelector('[data-achievement-sound-filename]').textContent, '还未上传音效');
+        assert.equal(h.document.querySelector('[data-id="library-10"] img').src, items[1].thumbnailUrl);
+    });
+
+    it('aborts pending sound updates on navigation without overwriting the removed view', async (t) => {
+        const h = fixture({ overrides: { achievementSound: configured } }); t.after(h.close);
+        let finish;
+        h.setResponse(() => new Promise((resolve) => { finish = resolve; }));
+        h.input('[data-achievement-sound-volume]', '20');
+        submit(h, '[data-achievement-sound-settings]');
+        h.dom.window.dispatchEvent(new h.dom.window.Event('pagehide'));
+        assert.equal(h.requests[0].signal.aborted, true);
+        finish({ ok: true, achievementSound: { ...configured, volume: 20 } }); await h.flush();
+        assert.equal(h.document.querySelector('[data-achievement-sound-volume]').value, '20');
+        assert.match(h.document.querySelector('[data-achievement-sound-save-state]').textContent, /未保存/);
+    });
+
+    it('reloads cached management pages to reconcile interrupted saves and ignores late responses', async (t) => {
+        let reloads = 0;
+        const h = fixture({ overrides: { achievementSound: configured }, onReload: () => { reloads++; } }); t.after(h.close);
+        let finish;
+        h.setResponse(() => new Promise((resolve) => { finish = resolve; }));
+        h.dom.window.dispatchEvent(new h.dom.window.PageTransitionEvent('pageshow', { persisted: true }));
+        assert.equal(reloads, 0);
+        h.input('[data-achievement-sound-volume]', '20');
+        submit(h, '[data-achievement-sound-settings]');
+        h.dom.window.dispatchEvent(new h.dom.window.PageTransitionEvent('pagehide', { persisted: true }));
+        assert.equal(h.requests[0].signal.aborted, true);
+        h.dom.window.dispatchEvent(new h.dom.window.PageTransitionEvent('pageshow', { persisted: false }));
+        assert.equal(reloads, 0);
+        h.dom.window.dispatchEvent(new h.dom.window.PageTransitionEvent('pageshow', { persisted: true }));
+        assert.equal(reloads, 1);
+        finish({ ok: true, achievementSound: { ...configured, volume: 20 } }); await h.flush();
+        assert.match(h.document.querySelector('[data-achievement-sound-save-state]').textContent, /未保存/);
+        h.document.querySelector('[data-achievement-manage]').remove();
+        h.dom.window.dispatchEvent(new h.dom.window.PageTransitionEvent('pageshow', { persisted: true }));
+        assert.equal(reloads, 1);
     });
 });

@@ -7,7 +7,137 @@ function imageUrl(value: unknown) {
   return url.href;
 }
 
-export function bindAchievementManage() {
+function bindAchievementSound(root: HTMLElement, endpoint: URL) {
+  const panel = root.querySelector<HTMLElement>('[data-achievement-sound]');
+  if (!panel) return () => {};
+  const find = <T extends HTMLElement = HTMLElement>(selector: string) => panel.querySelector<T>(selector)!;
+  const file = find<HTMLInputElement>('[data-achievement-sound-file]');
+  const enabled = find<HTMLInputElement>('[data-achievement-sound-enabled]');
+  const volume = find<HTMLInputElement>('[data-achievement-sound-volume]');
+  const preview = find<HTMLButtonElement>('[data-achievement-sound-preview]');
+  const saveButton = find<HTMLButtonElement>('[data-achievement-sound-save]');
+  const removeForm = find<HTMLFormElement>('[data-achievement-sound-remove-form]');
+  const uploadForm = find<HTMLFormElement>('[data-achievement-sound-upload-form]');
+  const settingsForm = find<HTMLFormElement>('[data-achievement-sound-settings]');
+  const status = find('[data-achievement-sound-status]');
+  const maxSize = Number(root.dataset.maxSoundSize) || 8 * 1024 * 1024;
+  let saved = { enabled: enabled.checked, volume: Number(volume.value) };
+  let soundUrl = panel.dataset.soundUrl || '';
+  let audio: HTMLAudioElement | null = null;
+  let request: AbortController | null = null;
+  let busy = false;
+  let disposed = false;
+  const message = (text: string, error = false) => {
+    status.textContent = text; status.hidden = !text;
+    status.classList.toggle('is-error', error); status.setAttribute('role', error ? 'alert' : 'status');
+  };
+  const dirty = () => saved.enabled !== enabled.checked || saved.volume !== Number(volume.value);
+  const refresh = () => {
+    panel.setAttribute('aria-busy', String(busy));
+    panel.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input,button').forEach((input) => { input.disabled = busy; });
+    saveButton.disabled = busy || !dirty();
+    preview.disabled = busy || !soundUrl;
+    preview.textContent = audio ? '停止试听' : '试听';
+    preview.setAttribute('aria-pressed', String(!!audio));
+    find('[data-achievement-sound-save-state]').textContent = dirty() ? '有未保存的设置' : '设置已保存';
+    find('[data-achievement-sound-volume-value]').textContent = `${volume.value}%`;
+    find('[data-achievement-sound-upload-label]').textContent = soundUrl ? '替换音效' : '上传音效';
+    removeForm.hidden = !soundUrl;
+  };
+  const stop = () => {
+    if (!audio) return;
+    const current = audio; audio = null;
+    current.onended = null; current.onerror = null; current.pause(); current.removeAttribute('src'); current.load();
+    if (!disposed) refresh();
+  };
+  preview.addEventListener('click', () => {
+    if (audio) { stop(); message('试听已停止。'); return; }
+    if (!soundUrl || busy) return;
+    if (!Number(volume.value)) { message('音量为 0，请调高音量后试听。'); return; }
+    try {
+      const url = new URL(soundUrl, window.location.href);
+      if (!['https:', 'http:'].includes(url.protocol)) throw new Error('音效地址无法使用，请重新上传。');
+      const current = new Audio(url.href);
+      audio = current; current.volume = Number(volume.value) / 100; current.loop = false;
+      current.onended = () => { if (audio === current) { stop(); message('试听结束。'); } };
+      const failed = () => {
+        if (disposed || audio !== current) return;
+        stop(); message('音效暂时无法播放，请检查文件或重新上传后重试。', true);
+      };
+      current.onerror = failed;
+      refresh(); message('正在试听当前音量…');
+      void current.play().catch(failed);
+    } catch (error) { stop(); message(error.message || '音效暂时无法播放，请稍后重试。', true); }
+  });
+  enabled.addEventListener('change', refresh);
+  volume.addEventListener('input', () => { if (audio) audio.volume = Number(volume.value) / 100; refresh(); });
+  const save = async (form: HTMLFormElement, operation: 'upload_sound' | 'remove_sound' | 'save_sound') => {
+    if (busy) return;
+    const body = new FormData(form);
+    if (operation === 'upload_sound' && file.files?.[0]) body.set('sound', file.files[0]);
+    if (operation === 'save_sound') {
+      body.set('enabled', String(enabled.checked)); body.set('volume', volume.value);
+    }
+    const preserveDraft = operation !== 'save_sound' && dirty();
+    const controller = new AbortController(); request = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 120000);
+    stop(); busy = true; refresh();
+    message(operation === 'upload_sound' ? '正在保存音效…' : operation === 'remove_sound' ? '正在移除音效…' : '正在保存设置…');
+    try {
+      const response = await fetch(endpoint.href, {
+        method: 'POST', credentials: 'same-origin', body, signal: controller.signal,
+        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      const result = await response.json();
+      if (disposed) return;
+      if (!response.ok || result.error || result.ok === false) {
+        const detail = result?.error?.params?.[2] || result?.error?.message || result?.message;
+        throw new Error(typeof detail === 'string' && !/\{\d+\}/.test(detail) ? detail : '保存未完成，请稍后重试。');
+      }
+      const value = result.achievementSound;
+      if (!value || typeof value.soundUrl !== 'string' || typeof value.enabled !== 'boolean'
+        || !Number.isInteger(value.volume) || value.volume < 0 || value.volume > 100) {
+        throw new Error('保存结果未能确认，请刷新页面检查。');
+      }
+      if (value.soundUrl && !['http:', 'https:'].includes(new URL(value.soundUrl, window.location.href).protocol)) {
+        throw new Error('音效地址无法使用，请刷新页面检查。');
+      }
+      soundUrl = value.soundUrl; panel.dataset.soundUrl = soundUrl;
+      saved = { enabled: value.enabled, volume: value.volume };
+      if (!preserveDraft) { enabled.checked = saved.enabled; volume.value = String(saved.volume); }
+      find('[data-achievement-sound-filename]').textContent = soundUrl ? value.filename || '已上传音效' : '还未上传音效';
+      message(`${operation === 'upload_sound' ? '音效已保存' : operation === 'remove_sound' ? '音效已移除' : '设置已保存'}。${dirty() ? '音量和开关的修改尚未保存。' : ''}`);
+    } catch (error) {
+      if (!disposed) message(error.name === 'AbortError' ? '保存超时，请刷新页面确认结果后再试。' : error.message || '保存未完成，请稍后重试。', true);
+    } finally {
+      clearTimeout(timeout); request = null; busy = false;
+      if (!disposed) { file.value = ''; refresh(); }
+    }
+  };
+  const upload = () => {
+    const selected = file.files?.[0];
+    if (!selected || busy) return;
+    if (!/\.(mp3|ogg|wav|m4a)$/i.test(selected.name)
+      || (selected.type && !/^(audio\/(mpeg|mp3|ogg|x-ogg|wav|wave|x-wav|mp4|x-m4a|aac)|application\/octet-stream)$/i.test(selected.type))) {
+      message('请选择 MP3、OGG、WAV 或 M4A 音频。', true); file.value = ''; return;
+    }
+    if (!selected.size || selected.size > maxSize) {
+      message(`请选择不超过 ${Math.round(maxSize / 1024 / 1024)} MB 的有效音频。`, true); file.value = ''; return;
+    }
+    void save(uploadForm, 'upload_sound');
+  };
+  file.addEventListener('change', upload);
+  uploadForm.addEventListener('submit', (event) => { event.preventDefault(); upload(); });
+  settingsForm.addEventListener('submit', (event) => { event.preventDefault(); if (dirty()) void save(settingsForm, 'save_sound'); });
+  removeForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!busy && window.confirm('移除解锁音效？成就图片和已获得的成就会保留。')) void save(removeForm, 'remove_sound');
+  });
+  refresh();
+  return () => { disposed = true; request?.abort(); stop(); };
+}
+
+export function bindAchievementManage(reload = () => window.location.reload()) {
   const root = document.querySelector<HTMLElement>('[data-achievement-manage]');
   if (!root || root.dataset.bound === 'true') return;
   root.dataset.bound = 'true';
@@ -19,6 +149,7 @@ export function bindAchievementManage() {
   const endpoint = new URL(root.dataset.endpoint || window.location.href, window.location.href);
   if (endpoint.origin !== window.location.origin) return;
   const maxSize = Number(root.dataset.maxImageSize) || 8 * 1024 * 1024;
+  const disposeSound = bindAchievementSound(root, endpoint);
   const activeUploads = new Set<AbortController>();
   let category = 'all';
   let previewTrigger: HTMLElement | null = null;
@@ -162,8 +293,12 @@ export function bindAchievementManage() {
       dialog.showModal();
     });
   });
-  const dispose = () => { disposed = true; activeUploads.forEach((controller) => controller.abort()); };
+  const dispose = () => { disposed = true; activeUploads.forEach((controller) => controller.abort()); disposeSound(); };
   window.addEventListener('pagehide', dispose, { once: true });
+  // A cached page retains disposed handlers; reload to reconcile any interrupted save.
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted && disposed && root.isConnected) reload();
+  });
   document.addEventListener('vjContentRemove', (event) => { if ((event.target as HTMLElement)?.contains(root)) dispose(); }, { once: true });
   filter();
 }

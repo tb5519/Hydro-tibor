@@ -1,6 +1,6 @@
 {% extends achievementBaseTemplate|default('manage_base.html') %}
 {% macro render_achievement_manage() %}
-<div class="achievement-manage" data-achievement-manage data-endpoint="{{ url(manageRoute) }}" data-max-image-size="{{ maxImageSize|default(8388608) }}">
+<div class="achievement-manage" data-achievement-manage data-endpoint="{{ url(manageRoute) }}" data-max-image-size="{{ maxImageSize|default(8388608) }}" data-max-sound-size="{{ maxSoundSize|default(8388608) }}">
   <header class="achievement-manage__header">
     <div>
       <a class="achievement-manage__back" href="{{ url(badgeManageRoute) }}"><span aria-hidden="true">←</span> 徽章管理</a>
@@ -10,6 +10,34 @@
     </div>
     <div class="achievement-manage__hero-mark" aria-hidden="true">✦</div>
   </header>
+
+  <section class="achievement-sound" data-achievement-sound data-sound-url="{{ achievementSound.soundUrl }}" aria-labelledby="achievement-sound-title">
+    <div class="achievement-sound__heading">
+      <span class="achievement-sound__mark" aria-hidden="true">♪</span>
+      <div><h2 id="achievement-sound-title">解锁音效 <span>全部成就共用</span></h2><p>成就入场时播放一次，多个成就同时出现也只播放一次；退场时停止。</p></div>
+    </div>
+    <div class="achievement-sound__file-row">
+      <div class="achievement-sound__file"><span data-achievement-sound-filename>{{ achievementSound.filename or ('已上传音效' if achievementSound.soundUrl else '还未上传音效') }}</span><small>MP3 / OGG / WAV / M4A · 不超过 8 MB，建议使用简短音效</small></div>
+      <div class="achievement-sound__actions">
+        <form method="post" action="{{ url(manageRoute) }}" enctype="multipart/form-data" data-achievement-sound-upload-form>
+          <input type="hidden" name="operation" value="upload_sound">
+          <label class="achievement-manage__upload"><span data-achievement-sound-upload-label>{{ '替换音效' if achievementSound.soundUrl else '上传音效' }}</span><input type="file" name="sound" accept="audio/mpeg,audio/ogg,audio/wav,audio/mp4,audio/x-m4a,.mp3,.ogg,.wav,.m4a" required data-achievement-sound-file aria-label="上传成就解锁音效"></label>
+          <noscript><button type="submit" class="button">保存音效</button></noscript>
+        </form>
+        <button type="button" class="achievement-sound__button" data-achievement-sound-preview aria-pressed="false"{% if not achievementSound.soundUrl %} disabled{% endif %}>试听</button>
+        <form method="post" action="{{ url(manageRoute) }}" data-achievement-sound-remove-form{% if not achievementSound.soundUrl %} hidden{% endif %}>
+          <input type="hidden" name="operation" value="remove_sound"><button type="submit" class="achievement-manage__remove">移除音效</button>
+        </form>
+      </div>
+    </div>
+    <form method="post" action="{{ url(manageRoute) }}" class="achievement-sound__settings" data-achievement-sound-settings>
+      <input type="hidden" name="operation" value="save_sound">
+      <label class="achievement-sound__enabled"><input type="checkbox" name="enabled" value="true" data-achievement-sound-enabled{% if achievementSound.enabled|default(true) %} checked{% endif %}>启用解锁音效</label>
+      <label class="achievement-sound__volume"><span>音量</span><input type="range" name="volume" min="0" max="100" step="1" value="{{ achievementSound.volume|default(70) }}" data-achievement-sound-volume aria-label="解锁音效音量"><output data-achievement-sound-volume-value>{{ achievementSound.volume|default(70) }}%</output></label>
+      <div class="achievement-sound__save"><span data-achievement-sound-save-state>设置已保存</span><button type="submit" class="achievement-sound__button achievement-sound__button--save" data-achievement-sound-save>保存设置</button></div>
+    </form>
+    <p class="achievement-sound__status" data-achievement-sound-status role="status" hidden></p>
+  </section>
 
   <div class="achievement-manage__note">
     <span class="achievement-manage__note-mark" aria-hidden="true">✧</span>

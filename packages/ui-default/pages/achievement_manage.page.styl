@@ -23,6 +23,157 @@
     outline: 3px solid #6e9de4
     outline-offset: 3px
 
+.achievement-sound
+  margin-bottom: 22px
+  padding: 19px 20px 16px
+  border: 1px solid var(--achievement-line)
+  border-radius: 12px
+  background: var(--achievement-soft)
+  &__heading
+    display: flex
+    align-items: flex-start
+    gap: 12px
+    h2
+      display: flex
+      align-items: center
+      flex-wrap: wrap
+      gap: 10px
+      font-size: 16px
+      font-weight: 650
+      span
+        padding: 2px 7px
+        border-radius: 5px
+        color: var(--achievement-gold)
+        background: var(--achievement-tint)
+        font-size: 10px
+        font-weight: 400
+    p
+      margin-top: 4px !important
+      color: var(--achievement-muted)
+      font-size: 11px
+      line-height: 1.8
+  &__mark
+    display: grid
+    flex: 0 0 35px
+    height: 35px
+    place-items: center
+    border: 1px solid var(--achievement-line)
+    border-radius: 10px
+    color: var(--achievement-gold)
+    background: var(--achievement-paper)
+    font-size: 24px
+    line-height: 1
+  &__file-row
+    display: flex
+    align-items: center
+    justify-content: space-between
+    flex-wrap: wrap
+    gap: 12px 20px
+    margin: 19px 0 16px
+  &__file
+    min-width: 0
+    flex: 1 1 230px
+    > span
+      display: block
+      overflow: hidden
+      text-overflow: ellipsis
+      white-space: nowrap
+      color: var(--achievement-ink)
+      font-size: 12px
+    small
+      display: block
+      margin-top: 4px
+      color: var(--achievement-muted)
+      font-size: 10px
+      line-height: 1.6
+  &__actions
+    display: flex
+    align-items: center
+    flex-wrap: wrap
+    gap: 9px
+    form
+      margin: 0
+    .achievement-manage__upload
+      margin: 0
+  &__button
+    min-height: 33px
+    padding: 6px 11px
+    border: 1px solid var(--achievement-line)
+    border-radius: 7px
+    color: var(--achievement-ink)
+    background: var(--achievement-paper)
+    font-size: 12px !important
+    line-height: 1.5
+    &[aria-pressed=true]
+      border-color: #c5ab76
+      color: var(--achievement-gold)
+      background: var(--achievement-tint)
+    &:disabled
+      cursor: default
+    &--save
+      color: #fff
+      border-color: #405d85
+      background: #405d85
+  &__settings
+    display: flex
+    align-items: center
+    flex-wrap: wrap
+    gap: 14px 24px
+    margin: 0
+    padding-top: 16px
+    border-top: 1px solid var(--achievement-line)
+  &__enabled
+    display: inline-flex
+    align-items: center
+    gap: 8px
+    margin: 0
+    color: var(--achievement-ink)
+    font-size: 12px
+    cursor: pointer
+    input
+      width: 15px
+      height: 15px
+      margin: 0
+      accent-color: #5777a4
+  &__volume
+    display: flex
+    align-items: center
+    gap: 10px
+    flex: 1 1 180px
+    max-width: 220px
+    margin: 0
+    color: var(--achievement-muted)
+    font-size: 11px
+    > span
+      white-space: nowrap
+    input
+      width: 100%
+      min-width: 65px
+      height: 18px
+      margin: 0
+      padding: 0
+      accent-color: #5777a4
+      cursor: pointer
+    output
+      flex: 0 0 34px
+      text-align: right
+      font-variant-numeric: tabular-nums
+  &__save
+    display: flex
+    align-items: center
+    flex-wrap: wrap
+    gap: 10px
+    margin-left: auto
+    > span
+      color: var(--achievement-muted)
+      font-size: 10px
+  &__status
+    margin-top: 12px !important
+    color: #366b55
+    font-size: 11px
+    &.is-error
+      color: #a44343
+
 .achievement-manage
   padding: 28px
   border: 1px solid var(--achievement-line)
@@ -401,10 +552,12 @@
 
 // Hydro's base label:not(...) rule otherwise turns these inline controls into blocks.
 .achievement-manage label.achievement-manage__search,
-.achievement-manage label.achievement-manage__image-filter
+.achievement-manage label.achievement-manage__image-filter,
+.achievement-manage label.achievement-sound__volume
   display: flex
 
-.achievement-manage label.achievement-manage__upload
+.achievement-manage label.achievement-manage__upload,
+.achievement-manage label.achievement-sound__enabled
   display: inline-flex
 
 .achievement-wall
@@ -609,6 +762,10 @@
     color: #a3ceb6
     &.is-error
       color: #efabab
+  .achievement-sound__status
+    color: #a3ceb6
+    &.is-error
+      color: #efabab
   .badge-manage__achievements
     background: linear-gradient(110deg, #39392f, #293448)
     border-color: #615638
@@ -628,6 +785,23 @@
     grid-template-columns: repeat(3, minmax(0, 1fr))
 
 @media (max-width: 640px)
+  .achievement-sound
+    padding: 16px 13px
+  .achievement-sound__mark
+    display: none
+  .achievement-sound__file-row
+    gap: 12px
+  .achievement-sound__file
+    flex-basis: 100%
+  .achievement-sound__settings
+    gap: 13px
+  .achievement-sound__enabled
+    flex-basis: 100%
+  .achievement-sound__volume
+    max-width: none
+  .achievement-sound__save
+    justify-content: flex-end
+    flex-basis: 100%
   .achievement-manage
     padding: 17px 14px
     border-radius: 12px

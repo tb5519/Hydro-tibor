@@ -58,7 +58,7 @@ try {
                 LEGACY_WORKSPACE_ID: 'tang', resolveDomainWorkspaceId: (domain) => domain?.workspaceId || 'tang',
                 getLegacyWorkspace: async () => ({ ownerUid: 2 }), isLegacyOwner: (uid) => uid === 2,
             };
-            if (request === '../service/server') return { Handler, param: () => () => {}, Types: { String: 'string', PositiveInt: 'positive-int' } };
+            if (request === '../service/server') return { Handler, param: () => () => {}, Types: { String: 'string', PositiveInt: 'positive-int', UnsignedInt: 'unsigned-int', Boolean: 'boolean' } };
             if (request === '../lib/domain_type') return { isScratchDomain: (domain) => domain.domainType === 'scratch' };
             if (request === '../lib/achievement') return {
                 applyAchievementHooks: async () => { await new Promise((resolve) => setTimeout(resolve, 1)); calls.push(['initialized']); },
@@ -84,6 +84,17 @@ try {
                 getAchievementArtwork: async (ctx, domain, id) => { definition(id); calls.push(['art', domain._id, id]); return fixtures.artwork; },
                 setAchievementImage: async (ctx, domain, id, file, owner) => calls.push(['upload', domain._id, id, file, owner]),
                 removeAchievementImage: async (ctx, domain, id, owner) => { definition(id); calls.push(['remove', domain._id, id, owner]); },
+            };
+            if (request === '../lib/achievement_sound') return {
+                ACHIEVEMENT_SOUND_LIMIT: 8 * 1024 * 1024,
+                presentAchievementSound: async (ctx, domain) => {
+                    if (fixtures.soundReadError) throw new Error('sound database unavailable');
+                    return fixtures.soundPresentation || { soundUrl: '', volume: 70, enabled: true, filename: '' };
+                },
+                getAchievementSound: async (ctx, domain) => { calls.push(['sound', domain._id]); return fixtures.sound; },
+                setAchievementSound: async (ctx, domain, file, owner) => calls.push(['uploadSound', domain._id, file, owner]),
+                removeAchievementSound: async (ctx, domain, owner) => calls.push(['removeSound', domain._id, owner]),
+                saveAchievementSound: async (ctx, domain, volume, enabled, owner) => calls.push(['saveSound', domain._id, volume, enabled, owner]),
             };
             if (request === '../model/storage') return {
                 getMeta: async (path) => { calls.push(['meta', path]); return fixtures.meta; },
@@ -125,6 +136,8 @@ describe('achievement management and image handlers', () => {
         assert.equal(handler.response.body.achievements.length, 50);
         assert.equal(handler.response.body.achievementBaseTemplate, 'domain_base.html');
         assert.equal(handler.response.body.badgeManageRoute, 'domain_badge_manage');
+        assert.deepEqual(handler.response.body.achievementSound, { soundUrl: '', volume: 70, enabled: true, filename: '' });
+        assert.equal(handler.response.body.maxSoundSize, 8 * 1024 * 1024);
         assert.equal(handler.response.headers['Cache-Control'], 'private, no-store');
         assert.equal(handler.response.headers.Vary, 'Accept, Cookie, Authorization');
     });
@@ -174,6 +187,46 @@ describe('achievement management and image handlers', () => {
         assert.equal(cdn.response.redirect, fixtures.cdn);
         fixtures.artwork = null;
         await assert.rejects(cdn.get('system', 'difficulty-1'), NotFoundError);
+    });
+
+    it('checks sound-management permissions and uses only the authenticated owner and current domain', async () => {
+        const file = { filepath: '/tmp/sound.mp3', size: 100 };
+        const handler = new handlers.AchievementManageHandler({ uid: 2, args: { uid: 99 }, request: { json: true, files: { sound: [file] } } });
+        await handler.postUploadSound();
+        assert.deepEqual(calls.find((call) => call[0] === 'uploadSound'), ['uploadSound', 'system', file, 2]);
+        assert.deepEqual(handler.response.body, { ok: true, achievementSound: { soundUrl: '', volume: 70, enabled: true, filename: '' } });
+        await handler.postSaveSound('system', 35, false);
+        assert.deepEqual(calls.find((call) => call[0] === 'saveSound'), ['saveSound', 'system', 35, false, 2]);
+        await handler.postRemoveSound();
+        assert.deepEqual(calls.find((call) => call[0] === 'removeSound'), ['removeSound', 'system', 2]);
+        const denied = new handlers.AchievementManageHandler({ uid: 11 });
+        await assert.rejects(denied.postUploadSound(), PermissionError);
+        await assert.rejects(denied.postRemoveSound(), PermissionError);
+        await assert.rejects(denied.postSaveSound('system', 35, true), PermissionError);
+        const modernHandler = new handlers.AchievementManageHandler({ domain: modern, path: '/domain/achievement', uid: 90, canManage: true });
+        await modernHandler.postRemoveSound();
+        assert.deepEqual(calls.at(-1), ['removeSound', 'class', 90]);
+        assert.equal(modernHandler.response.redirect, '/d/class/domain_achievement_manage');
+    });
+
+    it('delivers only the current scope sound with private headers and never reads another scope from request arguments', async () => {
+        fixtures.sound = { soundPath: 'achievement/scoped/sound.wav', contentType: 'audio/wav' }; fixtures.meta = { size: 46 };
+        const handler = new handlers.AchievementSoundHandler({ domain: modern, args: { domainId: 'system', soundPath: 'elsewhere.mp3' } });
+        await handler.get();
+        assert.deepEqual(calls[0], ['sound', 'class']);
+        assert.deepEqual(calls.at(-1), ['download', 'achievement/scoped/sound.wav']);
+        assert.equal(handler.response.type, 'audio/wav');
+        assert.equal(handler.response.headers['Cache-Control'], 'private, no-store');
+        assert.equal(handler.response.headers['X-Content-Type-Options'], 'nosniff');
+        fixtures.meta = { remoteAsset: { key: 'scoped-sound' } }; calls = [];
+        await handler.get();
+        assert.equal(handler.response.redirect, 'https://objects.test/signed');
+        assert.equal(calls.some((call) => call[0] === 'download'), false);
+        fixtures.cdn = 'https://cdn.test/sound.wav';
+        await handler.get(); assert.equal(handler.response.redirect, fixtures.cdn);
+        fixtures.sound = null; await assert.rejects(handler.get(), NotFoundError);
+        fixtures.sound = { soundPath: 'lost.wav' }; fixtures.meta = null;
+        await assert.rejects(handler.get(), NotFoundError);
     });
 });
 
@@ -268,6 +321,16 @@ describe('profile and live-record integration', () => {
         assert.equal(handler.UiContext.achievementPendingUrl, '/d/system/achievement_pending');
         assert.equal(handler.UiContext.achievementAckUrl, '/d/system/achievement_ack');
         assert.equal(handler.UiContext.achievementScope, 'legacy/11');
+        assert.deepEqual(handler.UiContext.achievementSound, { soundUrl: '', volume: 70, enabled: true, filename: '' });
+    });
+
+    it('keeps ordinary pages available and silently disables sound when optional audio configuration cannot load', async () => {
+        fixtures.soundReadError = true;
+        const handler = new Handler(); handler.response.template = 'problem_detail.html';
+        await handlers.injectAchievementContext(handler);
+        assert.equal(handler.UiContext.achievementPendingUrl, '/d/system/achievement_pending');
+        assert.deepEqual(handler.UiContext.achievementSound, { soundUrl: '', volume: 70, enabled: false, filename: '' });
+        assert.equal(handler.response.status, 200);
     });
 
     it('injects a passive quiz client and automatic homepage playback with one legacy cross-domain lock', async () => {
@@ -326,7 +389,8 @@ describe('profile and live-record integration', () => {
             i18n: { load: () => {} }, on: (...args) => calls.push(['event', ...args]),
         };
         await handlers.apply(ctx);
-        assert.equal(registered.length, 5);
+        assert.equal(registered.length, 6);
+        assert.deepEqual(registered.find((route) => route[0] === 'achievement_sound').slice(1), ['/achievement/sound', handlers.AchievementSoundHandler]);
         assert.deepEqual(registered.find((route) => route[0] === 'achievement_pending').slice(1),
             ['/achievement/pending', handlers.AchievementPendingHandler, PRIV.PRIV_USER_PROFILE]);
         assert.equal(registered.find((route) => route[0] === 'achievement_ack')[3], PRIV.PRIV_USER_PROFILE);

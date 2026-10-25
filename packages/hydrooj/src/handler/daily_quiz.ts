@@ -91,7 +91,7 @@ const exemptPath = /^\/(?:daily-quiz|student-message\/ack|training-time\/(?:sess
  * exempt page navigation, theme selection, uploads or other mutations. */
 export function isDailyQuizMediaRead(path: string, method: string) {
     if (!['GET', 'HEAD'].includes(method?.toUpperCase())) return false;
-    if (/^\/achievement\/[a-z0-9-]+\/image$/.test(path)) return true;
+    if (/^\/achievement\/[a-z0-9-]+\/image$/.test(path) || path === '/achievement/sound') return true;
     return /^\/(?:image-warmup|background-video-warmup|learning-media-warmup|code-editor\/themes|code-editor\/theme-asset\/[a-f\d]{32}\/[a-f\d]{24}|home\/(?:poster|video|video-poster)|badge\/[1-9]\d*\/(?:background|ac-image|background-video|background-video-poster|theme-sound|icon-image))$/.test(path);
 }
 

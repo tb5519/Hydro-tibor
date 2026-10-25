@@ -24,6 +24,8 @@ function fixture(options = {}) {
     const { document } = window;
     const timers = new Map();
     const images = [];
+    const audios = [];
+    const audioPlays = [];
     const acknowledgements = [];
     const requests = [];
     let now = 0;
@@ -52,9 +54,26 @@ function fixture(options = {}) {
         images.push(image);
         return image;
     }
+    function Audio(src) {
+        if (options.audioConstructorThrows) throw new Error('Audio unavailable');
+        const audio = {
+            src, paused: true, volume: 1, muted: false, loop: false, currentTime: 0, pauseCount: 0, loadCount: 0,
+            play() {
+                this.paused = false;
+                audioPlays.push({ player: this, muted: this.muted, volume: this.volume, loop: this.loop });
+                return options.audioPlay ? options.audioPlay(this, audioPlays.length) : Promise.resolve();
+            },
+            pause() { this.paused = true; this.pauseCount++; },
+            load() { this.loadCount++; },
+            removeAttribute(name) { if (name === 'src') this.src = ''; },
+        };
+        if (options.audioVolumeReadOnly) Object.defineProperty(audio, 'volume', { get: () => 1, set() {} });
+        audios.push(audio);
+        return audio;
+    }
     const mod = { exports: {} };
     vm.runInNewContext(compiled, {
-        module: mod, exports: mod.exports, window, document, Image,
+        module: mod, exports: mod.exports, window, document, Image, Audio,
         Event: window.Event, URL: window.URL,
     });
     const create = (overrides = {}) => mod.exports.createAchievementCelebration({
@@ -98,7 +117,7 @@ function fixture(options = {}) {
         fire('pointerup', { pointerId: 1, clientX: 10, clientY: 10, pointerType: 'mouse', ...props });
         fire('click', { detail: 1 });
     };
-    return { dom, window, document, images, timers, acknowledgements, requests, create, fire, tick, tap,
+    return { dom, window, document, images, audios, audioPlays, timers, acknowledgements, requests, create, fire, tick, tap,
         client: mod.exports.createAchievementClient,
         dialog: () => document.querySelector('.achievement-reveal'),
     };
@@ -541,4 +560,230 @@ it('page-scoped points events queue a fresh pending read behind the initial cele
         await settle();
         f.dom.window.close();
     }
+});
+
+const sound = { enabled: true, soundUrl: '/achievement/sound?v=1', volume: 37, filename: 'unlock.mp3' };
+
+it('silently primes on an early gesture and starts sound only when the artwork enters after AC', async () => {
+    const f = fixture();
+    const player = f.create({ sound });
+    const ac = deferred();
+    f.fire('pointerdown');
+    await settle();
+    assert.equal(f.audios.length, 1);
+    assert.equal(f.audios[0].src, 'https://oj.example/achievement/sound?v=1');
+    assert.equal(f.audioPlays.length, 1);
+    assert.equal(f.audioPlays[0].muted, false, 'unlock the unmuted element inside the original user gesture');
+    assert.equal(f.audioPlays[0].volume, 0);
+    assert.equal(f.audios[0].paused, true);
+    assert.equal(f.audios[0].muted, true, 'the completed warmup stays muted until the reveal');
+    const task = player.afterResult('with-ac', ac.promise);
+    await f.tick(5000);
+    assert.equal(f.dialog(), null);
+    assert.equal(f.audioPlays.length, 1, 'AC keeps the achievement sound silent');
+    ac.resolve();
+    await f.tick(15);
+    assert.equal(f.dialog().classList.contains('is-visible'), false);
+    assert.equal(f.audioPlays.length, 1);
+    await f.tick(1);
+    assert.equal(f.audioPlays.length, 2);
+    assert.equal(f.audioPlays[1].muted, false);
+    assert.equal(f.audioPlays[1].volume, 0.37);
+    assert.equal(f.audioPlays[1].loop, false);
+    assert.equal(f.dialog().classList.contains('is-visible'), true);
+    player.dispose();
+    await task;
+    f.dom.window.close();
+});
+
+it('passes configured sound through the client and waits for the lottery result to close', async () => {
+    const f = fixture();
+    const lottery = f.document.createElement('div');
+    lottery.setAttribute('data-point-lottery', '');
+    lottery.innerHTML = '<div data-point-lottery-result></div>';
+    f.document.body.appendChild(lottery);
+    const player = f.client({
+        achievementPendingUrl: '/achievement/pending', achievementAckUrl: '/achievement/ack', achievementSound: sound,
+    }, { get: async () => ({ achievements: [award], settled: true }), post: async () => {} });
+    const task = player.showPending();
+    await f.tick(1000);
+    assert.equal(f.dialog(), null);
+    assert.equal(f.audioPlays.length, 0);
+    lottery.querySelector('[data-point-lottery-result]').hidden = true;
+    await f.tick(166);
+    assert.equal(f.audioPlays.length, 1);
+    assert.equal(f.audioPlays[0].volume, 0.37);
+    player.dispose();
+    await task;
+    f.dom.window.close();
+});
+
+it('keeps gesture warmup muted when the browser ignores a zero-volume setting', async () => {
+    const f = fixture({ audioVolumeReadOnly: true });
+    const player = f.create({ sound });
+    f.fire('pointerdown');
+    await settle();
+    assert.equal(f.audioPlays.length, 1);
+    assert.equal(f.audioPlays[0].volume, 1);
+    assert.equal(f.audioPlays[0].muted, true, 'a system-controlled volume must not leak sound during warmup');
+    assert.equal(f.audios[0].paused, true);
+    player.dispose();
+    f.dom.window.close();
+});
+
+it('never initializes or plays sound when disabled, muted, missing or unsafe', async () => {
+    for (const settings of [undefined, { ...sound, enabled: false }, { ...sound, volume: 0 },
+        { ...sound, soundUrl: '' }, { ...sound, soundUrl: 'javascript:alert(1)' }]) {
+        const f = fixture();
+        const player = f.create({ sound: settings });
+        f.fire('keydown', { key: 'a' });
+        const task = player.showPending();
+        await f.tick(700);
+        assert.equal(f.audios.length, 0);
+        assert.ok(f.dialog().classList.contains('is-visible'));
+        f.tap();
+        await f.tick(360);
+        await task;
+        assert.equal(f.audioPlays.length, 0);
+        player.dispose();
+        f.dom.window.close();
+    }
+});
+
+it('plays once for grouped awards and never replays on guarded or dismissal gestures', async () => {
+    for (const input of ['keyboard', 'mouse']) {
+        const f = fixture({ awards: [award, { ...award, id: 'ten', name: '十题斩' }] });
+        const idlePageClient = f.create({ sound });
+        const player = f.create({ sound });
+        const task = player.showPending();
+        await f.tick(16);
+        assert.equal(f.audioPlays.length, 1);
+        assert.equal(f.dialog().querySelectorAll('.achievement-reveal__tile').length, 2);
+        // Even if the short clip has already ended, the next gesture belongs
+        // to the open achievement rather than an audio-unlocking retry.
+        f.audios[0].paused = true;
+        f.fire('keydown', { key: 'a' });
+        f.tap();
+        assert.equal(f.audioPlays.length, 1);
+        assert.equal(f.audios.length, 1, 'another page client must not prime during an active celebration');
+        assert.equal(f.dialog().classList.contains('is-leaving'), false);
+        await f.tick(684);
+        f.audios[0].paused = false;
+        if (input === 'keyboard') f.fire('keydown', { key: 'Enter' });
+        else f.tap();
+        assert.equal(f.audioPlays.length, 1);
+        assert.ok(f.dialog().classList.contains('is-leaving'));
+        assert.equal(f.audios[0].paused, true, 'audio stops at exit start, without waiting for its animation');
+        assert.equal(f.audios[0].muted, true);
+        await f.tick(360);
+        await task;
+        assert.equal(f.acknowledgements.length, 1);
+        player.dispose();
+        idlePageClient.dispose();
+        f.dom.window.close();
+    }
+});
+
+it('keeps artwork and dismissal working when the browser denies or cannot create audio', async () => {
+    for (const options of [
+        { audioPlay: () => Promise.reject(new Error('NotAllowedError')) },
+        { audioPlay: () => { throw new Error('Media failure'); } },
+        { audioConstructorThrows: true },
+    ]) {
+        const f = fixture(options);
+        const player = f.create({ sound });
+        const task = player.showPending();
+        await f.tick(700);
+        assert.ok(f.dialog().classList.contains('is-visible'));
+        f.tap();
+        await f.tick(360);
+        await task;
+        assert.equal(f.acknowledgements.length, 1);
+        assert.equal(f.dialog(), null);
+        player.dispose();
+        f.dom.window.close();
+    }
+});
+
+it('a delayed silent warmup cannot pause or change the volume of the actual reveal', async () => {
+    const prime = deferred();
+    const f = fixture({ audioPlay: (_, count) => count === 1 ? prime.promise : Promise.resolve() });
+    const player = f.create({ sound });
+    f.fire('pointerdown');
+    const task = player.showPending();
+    await f.tick(16);
+    assert.equal(f.audioPlays.length, 2);
+    const pauses = f.audios[0].pauseCount;
+    prime.resolve();
+    await settle();
+    assert.equal(f.audios[0].pauseCount, pauses);
+    assert.equal(f.audios[0].muted, false);
+    assert.equal(f.audios[0].volume, 0.37);
+    assert.equal(f.audios[0].paused, false);
+    player.dispose();
+    await task;
+    f.dom.window.close();
+});
+
+it('stops and releases sound on disposal or navigation without reviving from a late play promise', async () => {
+    for (const mode of ['dispose', 'navigate', 'bfcache']) {
+        const playback = deferred();
+        const f = fixture({ audioPlay: () => playback.promise });
+        const player = f.create({ sound });
+        const task = player.afterResult('record');
+        await f.tick(16);
+        const audio = f.audios[0];
+        assert.equal(audio.paused, false);
+        if (mode === 'dispose') player.dispose();
+        else f.window.dispatchEvent(new f.window.PageTransitionEvent('pagehide', { persisted: mode === 'bfcache' }));
+        assert.equal(audio.paused, true);
+        assert.equal(audio.muted, true);
+        assert.equal(audio.src, '');
+        assert.equal(f.dialog(), null);
+        // Emulate a late media completion after the page has stopped its
+        // playback. The stale callback must mute and stop that element again.
+        audio.paused = false;
+        playback.resolve();
+        await task;
+        await settle();
+        assert.equal(audio.paused, true);
+        assert.equal(audio.muted, true);
+        assert.equal(f.timers.size, 0);
+        assert.deepEqual(f.acknowledgements, []);
+        f.fire('pointerdown');
+        assert.equal(f.audios.length, 1, 'a hidden or disposed page cannot prime another element');
+        if (mode === 'bfcache') {
+            f.window.dispatchEvent(new f.window.PageTransitionEvent('pageshow', { persisted: true }));
+            await f.tick(1000);
+            assert.equal(f.audios.length, 1, 'restoring the page does not replay a past sound');
+            const next = player.afterResult('record');
+            await f.tick(16);
+            assert.equal(f.audios.length, 2);
+            assert.equal(f.audioPlays.length, 2);
+            assert.equal(f.audios[1].paused, false);
+            player.dispose();
+            await next;
+        }
+        f.dom.window.close();
+    }
+});
+
+it('a pending play completion after an intentional dismissal stays silent through exit', async () => {
+    const playback = deferred();
+    const f = fixture({ audioPlay: () => playback.promise });
+    const player = f.create({ sound });
+    const task = player.showPending();
+    await f.tick(700);
+    f.tap();
+    f.audios[0].paused = false;
+    playback.resolve();
+    await settle();
+    assert.equal(f.audios[0].paused, true);
+    assert.equal(f.audios[0].muted, true);
+    assert.ok(f.dialog().classList.contains('is-leaving'));
+    assert.equal(f.audioPlays.length, 1);
+    await f.tick(360);
+    await task;
+    player.dispose();
+    f.dom.window.close();
 });
