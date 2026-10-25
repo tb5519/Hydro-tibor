@@ -899,6 +899,9 @@ html.page--training_detail > body > .main
     color: var(--ui-v2-text-muted, #64748b)
     text-align: center
 
+    &[hidden]
+      display: none
+
     .icon
       color: #a5b4c7
       font-size: rem(28px)
@@ -935,7 +938,16 @@ html.page--training_detail > body > .main
     overflow-y: auto
     list-style: none
 
+    &[hidden]
+      display: none
+
+  .ui-v2-training-detail__user-search[hidden]
+    display: none
+
   .enroll_user_menu_item
+    display: flex
+    align-items: center
+    gap: rem(4px)
     margin: rem(3px 0)
 
     &.is-filtered-out
@@ -943,6 +955,8 @@ html.page--training_detail > body > .main
 
     > a
       display: flex
+      flex: 1 1 auto
+      min-width: 0
       align-items: center
       gap: rem(10px)
       min-height: rem(50px)
@@ -979,6 +993,28 @@ html.page--training_detail > body > .main
         background: var(--ui-v2-accent-soft, #eff6ff)
         color: var(--ui-v2-accent, #2563eb)
         text-decoration: none
+
+  .ui-v2-training-detail__remove-user
+    flex: 0 0 auto
+    min-height: rem(36px)
+    padding: rem(6px 10px)
+    border: 1px solid transparent
+    border-radius: rem(8px)
+    background: transparent
+    color: #9c4848
+    font-size: rem(12px)
+    cursor: pointer
+
+    &:hover,
+    &:focus-visible
+      border-color: #fecaca
+      background: #fff1f2
+      color: #b91c1c
+      outline: none
+
+    &:disabled
+      opacity: .5
+      cursor: wait
 
 body.training-user-drawer-open
   overflow: hidden
@@ -1329,6 +1365,15 @@ html.theme--dark.page--training_detail > body > .main
       border-color: #405e82
       background: #243b58
       color: #a9ccff
+
+  .ui-v2-training-detail__remove-user
+    color: #fda4af
+
+    &:hover,
+    &:focus-visible
+      border-color: #9f4454
+      background: #4a2635
+      color: #fecdd3
 
   @media (max-width: 720px)
     .training__problems

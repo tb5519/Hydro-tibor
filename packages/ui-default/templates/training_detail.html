@@ -26,7 +26,7 @@
         {% endif %}
         <dl class="ui-v2-training-detail__meta">
           <div><dt>{{ _('Created By') }}</dt><dd>{{ user.render_inline(udoc, badge=false) }}</dd></div>
-          <div><dt>{{ _('Enrollees') }}</dt><dd>{{ model.training.getDisplayAttend(tdoc) }}</dd></div>
+          <div><dt>{{ _('Enrollees') }}</dt><dd data-training-participant-count>{{ model.training.getDisplayAttend(tdoc) }}</dd></div>
           <div><dt>{{ _('Section') }}</dt><dd>{{ tdoc['dag']|length }}</dd></div>
           <div><dt>{{ _('Problem') }}</dt><dd>{{ totalProblemCount }}</dd></div>
         </dl>
@@ -126,7 +126,7 @@
           <span style="width: {{ trainingProgress }}%"></span>
         </div>
         <dl class="ui-v2-training-detail__summary-meta">
-          <div><dt>{{ _('Enrollees') }}</dt><dd>{{ model.training.getDisplayAttend(tdoc) }}</dd></div>
+          <div><dt>{{ _('Enrollees') }}</dt><dd data-training-participant-count>{{ model.training.getDisplayAttend(tdoc) }}</dd></div>
           <div><dt>{{ _('Created By') }}</dt><dd>{{ user.render_inline(udoc, badge=false) }}</dd></div>
         </dl>
 
@@ -176,10 +176,10 @@
             <input id="training-add-users" name="training_add_users" type="text" class="textbox" data-training-add-users-input placeholder="{{ _('Select students to add') }}" autocomplete="off">
             <button class="button rounded primary" type="submit">{{ _('Add') }}</button>
           </div>
-          <p>{{ _('Only teachers can see this roster and add students.') }}</p>
+          <p>{{ _('Only teachers can manage this roster. Removing a student keeps their learning records.') }}</p>
         </form>
         {% if Object.keys(udict).length %}
-          <form method="get" id="searchForm" class="ui-v2-training-detail__user-search">
+          <form method="get" id="searchForm" class="ui-v2-training-detail__user-search" data-training-roster-search>
             <label class="ui-v2-training-detail__visually-hidden" for="training-user-search">{{ _('Search enrolled students') }}</label>
             <select name="group" class="select"{% if not groups.length %} style="display:none"{% endif %} aria-label="{{ _('All') }}">
               <option value="all" selected>{{ _('All') }}</option>
@@ -205,15 +205,15 @@
                   </span>
                   <span class="icon icon-chevron_right" aria-hidden="true"></span>
                 </a>
+                <button type="button" class="ui-v2-training-detail__remove-user" data-training-remove-user data-uid="{{ uid }}" data-name="{{ enrolledUser.displayName if handler.user.hasPerm(perm.PERM_VIEW_USER_PRIVATE_INFO) and enrolledUser.displayName else enrolledUser.uname }}" aria-label="{{ _('Remove {0} from this training plan?', enrolledUser.displayName if handler.user.hasPerm(perm.PERM_VIEW_USER_PRIVATE_INFO) and enrolledUser.displayName else enrolledUser.uname) }}">{{ _('Remove student') }}</button>
               </li>
             {%- endfor -%}
           </ul>
-        {% else %}
-          <div class="ui-v2-training-detail__roster-empty">
-            <span class="icon icon-account--circle" aria-hidden="true"></span>
-            <p>{{ _('No students enrolled yet.') }}</p>
-          </div>
         {% endif %}
+        <div class="ui-v2-training-detail__roster-empty" data-training-roster-empty{% if Object.keys(udict).length %} hidden{% endif %}>
+          <span class="icon icon-account--circle" aria-hidden="true"></span>
+          <p>{{ _('No students enrolled yet.') }}</p>
+        </div>
       </section>
     </div>
   {% endif %}

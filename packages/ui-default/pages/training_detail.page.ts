@@ -1,6 +1,7 @@
 import $ from 'jquery';
 import _ from 'lodash';
 import UserSelectAutoComplete from 'vj/components/autocomplete/UserSelectAutoComplete';
+import { ConfirmDialog } from 'vj/components/dialog';
 import Notification from 'vj/components/notification';
 import { NamedPage } from 'vj/misc/Page';
 import { i18n, request } from 'vj/utils';
@@ -9,6 +10,7 @@ import { slideDown, slideUp } from 'vj/utils/slide';
 type SectionState = 'expanded' | 'collapsed';
 
 let drawerRestoreFocus: HTMLElement | null = null;
+let activeRemoveDialog: JQuery<HTMLElement> | null = null;
 
 function prefersReducedMotion() {
   return typeof window.matchMedia === 'function'
@@ -212,19 +214,23 @@ function handleDrawerKeydown(ev: JQuery.KeyDownEvent<Document>) {
   const $drawer = $('[data-training-user-drawer].is-open');
   if (!$drawer.length) return;
   if (ev.key === 'Escape') {
+    if (activeRemoveDialog) return;
     ev.preventDefault();
     closeUserDrawer();
     return;
   }
   if (ev.key !== 'Tab') return;
 
-  const $focusable = $drawer.find('.ui-v2-training-detail__drawer-panel')
+  const $focusable = (activeRemoveDialog || $drawer.find('.ui-v2-training-detail__drawer-panel'))
     .find<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')
     .filter(':visible');
   if (!$focusable.length) return;
   const first = $focusable.get(0);
   const last = $focusable.get($focusable.length - 1);
-  if (ev.shiftKey && document.activeElement === first) {
+  if (activeRemoveDialog && !$focusable.get().includes(document.activeElement as HTMLElement)) {
+    ev.preventDefault();
+    (ev.shiftKey ? last : first).focus();
+  } else if (ev.shiftKey && document.activeElement === first) {
     ev.preventDefault();
     last.focus();
   } else if (!ev.shiftKey && document.activeElement === last) {
@@ -239,6 +245,62 @@ function navigateToUser(ev: JQuery.ClickEvent<Document>) {
   const destination = new URL((ev.currentTarget as HTMLAnchorElement).href, window.location.href);
   if (window.location.hash.startsWith('#node-')) destination.hash = window.location.hash;
   window.location.assign(destination.href);
+}
+
+async function removeUser(ev: JQuery.ClickEvent<Document>) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  const $button = $(ev.currentTarget as HTMLButtonElement);
+  if ($button.prop('disabled')) return;
+  const uid = Number($button.attr('data-uid'));
+  if (!Number.isSafeInteger(uid) || uid <= 1) return;
+  const name = $button.attr('data-name') || String(uid);
+  $button.prop('disabled', true);
+  try {
+    const dialog = new ConfirmDialog({
+      $body: $('<div>').append(
+        $('<p>').text(i18n('Remove {0} from this training plan?', name)),
+        $('<p>').text(i18n('Their submissions, accepted problems and RP will be kept. Adding them again restores their progress.')),
+      ),
+      $action: $('<div>').append(
+        $('<button type="button" class="rounded button" data-action="cancel" data-autofocus>').text(i18n('Cancel')),
+        $('<button type="button" class="primary rounded button" data-action="yes">').text(i18n('Remove student')),
+      ),
+      canCancel: true,
+    });
+    activeRemoveDialog = dialog.$dom;
+    dialog.$dom.attr({ role: 'alertdialog', 'aria-modal': 'true', 'aria-label': i18n('Remove {0} from this training plan?', name) });
+    let action: string;
+    try {
+      const completion = dialog.open();
+      dialog.$dom.find<HTMLElement>('[data-autofocus]').get(0)?.focus();
+      action = await completion;
+    } finally {
+      activeRemoveDialog = null;
+    }
+    if (action !== 'yes') return;
+    const result = await request.post('', { operation: 'remove_user', uids: String(uid) });
+    Notification.success(i18n('Student removed from this training plan.'));
+    const destination = new URL(window.location.href);
+    if (Number(destination.searchParams.get('uid')) === uid) {
+      destination.searchParams.delete('uid');
+      window.location.assign(destination.href);
+      return;
+    }
+    $button.closest('.enroll_user_menu_item').remove();
+    if (Number.isFinite(result.displayAttend)) {
+      $('[data-training-participant-count]').text(String(result.displayAttend));
+    }
+    const hasStudents = $('[data-training-user-drawer] .enroll_user_menu_item').length > 0;
+    $('[data-training-roster-empty]').prop('hidden', hasStudents);
+    $('[data-training-roster-search], [data-training-user-drawer] .enroll_user_menu').prop('hidden', !hasStudents);
+    searchUser();
+  } catch (error) {
+    Notification.error([error.message, ...(error.params || [])].join(' '));
+  } finally {
+    $button.prop('disabled', false);
+    if ($button.get(0)?.isConnected) $button.get(0).focus();
+  }
 }
 
 const page = new NamedPage('training_detail', () => {
@@ -265,6 +327,7 @@ const page = new NamedPage('training_detail', () => {
   $document.on('click.trainingDetail', '[data-training-user-drawer-open]', openUserDrawer);
   $document.on('click.trainingDetail', '[data-training-user-drawer-close]', closeUserDrawer);
   $document.on('click.trainingDetail', '.enroll_user_menu_item > a', navigateToUser);
+  $document.on('click.trainingDetail', '[data-training-remove-user]', removeUser);
   $document.on('keydown.trainingDetail', handleDrawerKeydown);
   $document.on('submit.trainingDetail', '[data-training-add-users]', async (ev) => {
     ev.preventDefault();

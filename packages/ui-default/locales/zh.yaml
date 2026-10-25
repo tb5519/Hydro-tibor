@@ -1360,6 +1360,11 @@ Only teachers can see this roster and add students.: 仅老师可查看参加名
 Search enrolled students: 搜索已参加学员
 No students enrolled yet.: 暂无学员参加。
 Students added.: 已添加学员。
+Only teachers can manage this roster. Removing a student keeps their learning records.: 仅老师可管理参加名单。移除学员后，学习记录仍会保留。
+Remove student: 移除
+Remove {0} from this training plan?: 确认将 {0} 移出此训练计划？
+Their submissions, accepted problems and RP will be kept. Adding them again restores their progress.: 已有提交、AC 和 RP 都会保留，重新添加后可恢复原有进度。
+Student removed from this training plan.: 已将学员移出此训练计划。
 Expand description: 展开完整说明
 Collapse description: 收起说明
 Locked: 待解锁

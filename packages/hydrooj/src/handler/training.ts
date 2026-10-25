@@ -4,7 +4,7 @@ import { Filter, ObjectId } from 'mongodb';
 import { sortFiles } from '@hydrooj/utils/lib/utils';
 import {
     FileLimitExceededError, FileUploadError, PermissionError, ProblemNotFoundError, TrainingAlreadyEnrollError,
-    TrainingSelfEnrollDisabledError, ValidationError,
+    TrainingNotFoundError, TrainingSelfEnrollDisabledError, ValidationError,
 } from '../error';
 import { Tdoc, TrainingDoc } from '../interface';
 import { canManageTrainingPlans } from '../lib/training_access';
@@ -19,6 +19,15 @@ import user from '../model/user';
 import {
     Handler, param, post, Types,
 } from '../service/server';
+
+async function checkTrainingViewAccess(handler: Handler, domainId: string, tdoc: TrainingDoc) {
+    const canManageTraining = canManageTrainingPlans(handler.user);
+    if (!canManageTraining && !training.canSelfEnroll(tdoc) && tdoc.owner !== handler.user._id) {
+        const ownStatus = await training.getStatus(domainId, tdoc.docId, handler.user._id);
+        if (ownStatus?.enroll !== 1) throw new TrainingNotFoundError(domainId, tdoc.docId);
+    }
+    return canManageTraining;
+}
 
 async function _parseDagJson(domainId: string, _dag: string): Promise<Tdoc['dag']> {
     const parsed = [];
@@ -110,8 +119,8 @@ class TrainingDetailHandler extends Handler {
     @param('uid', Types.PositiveInt, true)
     async get(domainId: string, tid: ObjectId, uid = this.user._id) {
         const tdoc = await training.get(domainId, tid);
+        const canManageTraining = await checkTrainingViewAccess(this, domainId, tdoc);
         await this.ctx.parallel('training/get', tdoc, this);
-        const canManageTraining = canManageTrainingPlans(this.user);
         const canEditTraining = canManageTraining;
         let enrollUsers: number[] = [];
         let shouldCompare = false;
@@ -212,6 +221,21 @@ class TrainingDetailHandler extends Handler {
             }
         }));
         this.back();
+    }
+
+    @param('tid', Types.ObjectId)
+    @param('uids', Types.NumericArray)
+    async postRemoveUser(domainId: string, tid: ObjectId, uids: number[]) {
+        if (!canManageTrainingPlans(this.user)) throw new PermissionError(PERM.PERM_EDIT_TRAINING);
+        await training.get(domainId, tid);
+        if (!Array.isArray(uids) || !uids.length || uids.length > 500
+            || uids.some((uid) => !Number.isSafeInteger(uid) || uid <= 1)) throw new ValidationError('uids');
+
+        const removed = await Promise.all(Array.from(new Set(uids)).map((uid) => training.unenroll(domainId, tid, uid)));
+        this.back({
+            removedCount: removed.filter(Boolean).length,
+            displayAttend: training.getDisplayAttend(await training.get(domainId, tid)),
+        });
     }
 
     @param('tid', Types.ObjectId)
@@ -343,7 +367,9 @@ export class TrainingFileDownloadHandler extends Handler {
     @param('filename', Types.Filename)
     @param('noDisposition', Types.Boolean)
     async get(domainId: string, tid: ObjectId, filename: string, noDisposition = false) {
-        this.response.addHeader('Cache-Control', 'public');
+        this.response.addHeader('Cache-Control', 'private, no-store');
+        const tdoc = await training.get(domainId, tid);
+        await checkTrainingViewAccess(this, domainId, tdoc);
         const target = `training/${domainId}/${tid}/${filename}`;
         const file = await storage.getMeta(target);
         await oplog.log(this, 'download.file.training', {

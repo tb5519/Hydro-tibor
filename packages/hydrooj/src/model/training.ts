@@ -21,6 +21,23 @@ export async function getListStatus(domainId: string, uid: number, tids: ObjectI
     return r;
 }
 
+function changeAttend(domainId: string, tid: ObjectId, delta: 1 | -1) {
+    // Enrollment state and its display counter live in separate documents. Keep
+    // the signed balance so a racing remove cannot lose its decrement when its
+    // counter update reaches Mongo before the corresponding enroll increment.
+    // Only attend is public, and it can never become negative.
+    return document.coll.findOneAndUpdate(
+        { domainId, docType: document.TYPE_TRAINING, docId: tid },
+        [
+            { $set: { enrollmentCountBalance: { $add: [
+                { $ifNull: ['$enrollmentCountBalance', { $ifNull: ['$attend', 0] }] }, delta,
+            ] } } },
+            { $set: { attend: { $max: [0, '$enrollmentCountBalance'] } } },
+        ],
+        { returnDocument: 'after' },
+    );
+}
+
 export async function enroll(domainId: string, tid: ObjectId, uid: number) {
     try {
         const status = await document.setIfNotStatus(
@@ -31,7 +48,20 @@ export async function enroll(domainId: string, tid: ObjectId, uid: number) {
         if (e instanceof TrainingAlreadyEnrollError) throw e;
         throw new TrainingAlreadyEnrollError(tid, uid);
     }
-    return document.inc(domainId, document.TYPE_TRAINING, tid, 'attend', 1);
+    return changeAttend(domainId, tid, 1);
+}
+
+export async function unenroll(domainId: string, tid: ObjectId, uid: number) {
+    // Do not upsert: absent or already removed learners are an idempotent no-op.
+    // Preserve all progress; a later enrollment resumes the same status record.
+    const status = await document.collStatus.findOneAndUpdate(
+        { domainId, docType: document.TYPE_TRAINING, docId: tid, uid, enroll: 1 },
+        { $set: { enroll: 0 } },
+        { returnDocument: 'after' },
+    );
+    if (!status) return false;
+    await changeAttend(domainId, tid, -1);
+    return true;
 }
 
 export function setStatus(domainId: string, tid: ObjectId, uid: number, $set: any) {
@@ -66,7 +96,7 @@ export function getDisplayAttend(tdoc: TrainingDoc) {
         ? Math.floor(+tdoc.initialAttendCount) : 0);
     const actualAtSave = Math.max(0, Number.isFinite(+tdoc.initialAttendActualCount)
         ? Math.floor(+tdoc.initialAttendActualCount) : 0);
-    return initial + Math.max(0, actual - actualAtSave);
+    return Math.max(0, initial + actual - actualAtSave);
 }
 
 export function edit(domainId: string, tid: ObjectId, $set: Partial<TrainingDoc>) {
@@ -151,6 +181,7 @@ global.Hydro.model.training = {
     getMultiStatus,
     getStatus,
     enroll,
+    unenroll,
     setStatus,
     getListStatus,
 };
