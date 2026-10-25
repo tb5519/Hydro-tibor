@@ -996,6 +996,7 @@
   var previewPrize = null;
   var resultPrize = null;
   var resultError = '';
+  var earnedPointsAwaitingResult = false;
   var previewIsAward = false;
   var serverClockOffset = 0;
   syncServerClock(pointLottery.serverNow);
@@ -1275,13 +1276,20 @@
     });
   }
 
-  function hideResult() {
+  function announceEarnedPoints() {
+    if (!earnedPointsAwaitingResult) return;
+    earnedPointsAwaitingResult = false;
+    window.dispatchEvent(new CustomEvent('hydro:points-earned', { detail: { source: 'point-lottery' } }));
+  }
+
+  function hideResult(announce) {
     resultNode.hidden = true;
     resultImageNode.lotteryImageVersion = (resultImageNode.lotteryImageVersion || 0) + 1;
     resultImageNode.querySelectorAll('img').forEach(function (image) { image.removeAttribute('src'); });
     resultImageNode.innerHTML = '';
     if (!drawInProgress) resetChests();
     if (!modal.hidden && activeChest && !activeChest.disabled) activeChest.focus({ preventScroll: true });
+    if (announce !== false) announceEarnedPoints();
   }
 
   function showResult(prize, points, error) {
@@ -1334,7 +1342,7 @@
 
   function drawChest(chest) {
     if (drawInProgress || chest.disabled) return;
-    hideResult();
+    hideResult(false);
     resetChests();
     activeChest = chest;
     drawInProgress = true;
@@ -1372,6 +1380,9 @@
       return revealChest(chest).then(function () {
         startAnnouncements();
         showResult(data.prize, data.points);
+        if (Number.isFinite(Number(data.prize && data.prize.pointDelta)) && Number(data.prize.pointDelta) > 0) {
+          earnedPointsAwaitingResult = true;
+        }
       });
     }).catch(function (err) {
       resetChests();
@@ -1380,6 +1391,7 @@
       drawInProgress = false;
       chestStageNode.classList.remove('is-busy');
       syncState();
+      if (modal.hidden) announceEarnedPoints();
     });
   }
 

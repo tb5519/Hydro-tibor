@@ -9,6 +9,7 @@ import { STATUS_CODES, STATUS_TEXTS } from 'vj/constant/record';
 import { delay, i18n, request, tpl } from 'vj/utils';
 import { openDB } from 'vj/utils/db';
 import { mergedResultLabel } from '../../common/objective-merged-review';
+import { createAchievementClient } from '../achievement_effect';
 import { rememberRecordReplaySubmission } from '../record_replay_import';
 import { ObjectiveResult } from './ObjectiveResult';
 
@@ -91,12 +92,14 @@ export async function loadObjective() {
   const replay = !UiContext.homeworkReview && !merged && UiContext.recordReplay?.objective ? UiContext.recordReplay : null;
   let replayResultActive = !answerSheet && !!replay && UiContext.recordReplayResultActive === true;
   const loggedOut = !UserContext._id;
+  const achievements = createAchievementClient(UiContext, request);
   let resultDialog: InfoDialog;
   const active = () => !disposed && statement.isConnected;
   releasePrevious = () => {
     disposed = true;
     navigationRoot?.unmount();
     resultDialog?.close();
+    achievements.dispose();
     $statement.off('.objective');
   };
   $('.outer-loader-container').show();
@@ -478,7 +481,10 @@ export async function loadObjective() {
       decorateAnswers();
       if (objective.state === 'complete') {
         setBusy(false, silent ? '' : '评测完成，答题情况已更新。');
-        if (!silent) showResult(objective);
+        if (!silent) {
+          if (!readOnly && !loggedOut) await achievements.afterResult(rid);
+          if (active()) showResult(objective);
+        }
       } else if (objective.state === 'hidden') {
         setBusy(false, '递交成功，本场比赛暂不公开成绩。');
         if (!silent) Notification.info('递交成功，本场比赛暂不公开成绩。');

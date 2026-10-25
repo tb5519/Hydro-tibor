@@ -1,11 +1,12 @@
-import { STATUS } from '@hydrooj/common';
+import { NORMAL_STATUS, STATUS } from '@hydrooj/common';
 import Clipboard from 'clipboard';
 import $ from 'jquery';
 import React from 'react';
 import { InfoDialog } from 'vj/components/dialog';
 import Notification from 'vj/components/notification';
 import { NamedPage } from 'vj/misc/Page';
-import { i18n, tpl, withTransitionCallback } from 'vj/utils';
+import { i18n, request, tpl, withTransitionCallback } from 'vj/utils';
+import { createAchievementClient } from '../components/achievement_effect';
 import { createBadgeAcThemePlayer } from '../components/badge_ac_effect';
 
 let testcaseClipboard: Clipboard | null = null;
@@ -26,14 +27,21 @@ function setAllTestcases(root: ParentNode, expanded: boolean) {
 }
 
 export default new NamedPage('record_detail', async () => {
+  const achievements = createAchievementClient(UiContext, request);
   const badgeThemeEffect = UiContext.badgeAcEffect && UiContext.badgeAcFirstEligible !== false
     ? createBadgeAcThemePlayer(UiContext.badgeAcTheme)
     : null;
   let badgeEffectPlayed = false;
-  const maybePlayBadgeEffect = (status: unknown) => {
-    if (badgeEffectPlayed || Number(status) !== STATUS.STATUS_ACCEPTED) return;
-    badgeEffectPlayed = true;
-    void badgeThemeEffect?.play();
+  let acFinished = Promise.resolve();
+  const maybePlayRecordEffects = (status: unknown) => {
+    if (!NORMAL_STATUS.includes(Number(status) as STATUS)) return;
+    if (Number(status) === STATUS.STATUS_ACCEPTED && !badgeEffectPlayed) {
+      badgeEffectPlayed = true;
+      acFinished = badgeThemeEffect?.play() || Promise.resolve();
+    }
+    if (UiContext.achievementLive === true && UiContext.achievementRecordId) {
+      void achievements.afterResult(UiContext.achievementRecordId, acFinished);
+    }
   };
   let failingCaseAutoOpened = false;
   const maybeOpenFirstFailingCase = (root: ParentNode = document) => {
@@ -98,7 +106,7 @@ export default new NamedPage('record_detail', async () => {
   maybeOpenFirstFailingCase();
 
   if (!UiContext.socketUrl) {
-    maybePlayBadgeEffect(UiContext.recordStatus);
+    maybePlayRecordEffects(UiContext.recordStatus);
     return;
   }
   const [{ default: WebSocket }, { DiffDOM }] = await Promise.all([
@@ -110,7 +118,7 @@ export default new NamedPage('record_detail', async () => {
   const dd = new DiffDOM();
   sock.onmessage = (_, data) => {
     const msg = JSON.parse(data);
-    maybePlayBadgeEffect(msg.status);
+    maybePlayRecordEffects(msg.status);
     if (typeof msg.status === 'number' && window.parent) window.parent.postMessage({ status: msg.status });
     withTransitionCallback(() => {
       const newStatus = $(msg.status_html);

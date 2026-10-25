@@ -1,0 +1,72 @@
+{% extends achievementBaseTemplate|default('manage_base.html') %}
+{% macro render_achievement_manage() %}
+<div class="achievement-manage" data-achievement-manage data-endpoint="{{ url(manageRoute) }}" data-max-image-size="{{ maxImageSize|default(8388608) }}">
+  <header class="achievement-manage__header">
+    <div>
+      <a class="achievement-manage__back" href="{{ url(badgeManageRoute) }}"><span aria-hidden="true">←</span> 徽章管理</a>
+      <p class="achievement-manage__eyebrow">每一次突破，都值得被看见</p>
+      <h1>成就系统 <span>{{ achievements.length }}</span></h1>
+      <p class="achievement-manage__intro">达成条件时自动点亮，在个人主页留下成长的印记。</p>
+    </div>
+    <div class="achievement-manage__hero-mark" aria-hidden="true">✦</div>
+  </header>
+
+  <div class="achievement-manage__note">
+    <span class="achievement-manage__note-mark" aria-hidden="true">✧</span>
+    <p><strong>为成就配上专属图片</strong><span>上传 PNG 图片，建议使用透明背景；单张不超过 8 MB。系统会自动生成轻量缩略图，并保留完整画面用于解锁展示。</span></p>
+  </div>
+
+  <div class="achievement-manage__toolbar">
+    <label class="achievement-manage__search"><span class="icon icon-search" aria-hidden="true"></span><input type="search" data-achievement-search placeholder="搜索成就名称或达成条件" aria-label="搜索成就名称或达成条件"></label>
+    <label class="achievement-manage__image-filter"><span>图片</span><select data-achievement-image-filter aria-label="按图片状态筛选"><option value="all">全部状态</option><option value="missing">待上传</option><option value="ready">已上传</option></select></label>
+  </div>
+  <div class="achievement-manage__filters" role="group" aria-label="成就分类">
+    <button type="button" data-achievement-category="all" aria-pressed="true">全部成就 <span>{{ achievements.length }}</span></button>
+    {% for category, items in achievements|groupby('category') %}
+      <button type="button" data-achievement-category="{{ category }}" aria-pressed="false">{{ items[0].categoryLabel or category }} <span>{{ items.length }}</span></button>
+    {% endfor %}
+  </div>
+  <div class="achievement-manage__results"><span data-achievement-result-count aria-live="polite">共 {{ achievements.length }} 项成就</span><span data-achievement-ready-count></span></div>
+  <p class="achievement-manage__status" data-achievement-status role="status" hidden></p>
+
+  {% for category, items in achievements|groupby('category') %}
+  <section class="achievement-manage__group" data-achievement-group="{{ category }}" aria-labelledby="achievement-group-{{ loop.index }}">
+    <h2 id="achievement-group-{{ loop.index }}">{{ items[0].categoryLabel or category }}<span>{{ items.length }} 项</span></h2>
+    <div class="achievement-manage__grid">
+      {% for item in items %}
+      <article class="achievement-manage__card{% if item.imageUrl %} has-image{% endif %}" data-achievement-card data-id="{{ item.id }}" data-name="{{ item.name }}" data-description="{{ item.description }}" data-category="{{ item.category }}" data-image="{{ item.imageUrl }}">
+        <div class="achievement-manage__art">
+          <span class="achievement-manage__placeholder" data-achievement-placeholder{% if item.imageUrl %} hidden{% endif %} aria-hidden="true">✦</span>
+          <img data-achievement-image{% if item.thumbnailUrl or item.imageUrl %} src="{{ item.thumbnailUrl or item.imageUrl }}"{% else %} hidden{% endif %} alt="{{ item.name }}" width="120" height="120" loading="lazy" decoding="async">
+          <button type="button" class="achievement-manage__preview" data-achievement-preview{% if not item.imageUrl %} hidden{% endif %} aria-label="预览{{ item.name }}图片">预览</button>
+          <span class="achievement-manage__image-state" data-achievement-image-state>{{ '已上传' if item.imageUrl else '待上传图片' }}</span>
+        </div>
+        <div class="achievement-manage__card-body">
+          <h3>{{ item.name }}</h3>
+          <p>{{ item.description }}</p>
+          <form method="post" action="{{ url(manageRoute) }}" enctype="multipart/form-data" data-achievement-upload-form>
+            <input type="hidden" name="operation" value="upload"><input type="hidden" name="id" value="{{ item.id }}">
+            <label class="achievement-manage__upload"><span class="icon icon-upload" aria-hidden="true"></span><span data-achievement-upload-label>{{ '替换图片' if item.imageUrl else '上传图片' }}</span><input type="file" name="image" accept="image/png,.png" required data-achievement-file aria-label="为{{ item.name }}上传 PNG 图片"></label>
+            <noscript><button type="submit" class="button">保存图片</button></noscript>
+          </form>
+          <form method="post" action="{{ url(manageRoute) }}" data-achievement-remove-form{% if not item.imageUrl %} hidden{% endif %}>
+            <input type="hidden" name="operation" value="remove_image"><input type="hidden" name="id" value="{{ item.id }}">
+            <button type="submit" class="achievement-manage__remove" aria-label="移除{{ item.name }}图片">移除图片</button>
+          </form>
+          <p class="achievement-manage__card-status" data-achievement-card-status role="status" hidden></p>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+  <div class="achievement-manage__empty" data-achievement-empty hidden><span aria-hidden="true">⌕</span><h2>没有找到匹配的成就</h2><p>试试其他关键词，或重置筛选查看全部成就。</p><button type="button" data-achievement-reset>重置筛选</button></div>
+  <dialog class="achievement-preview" data-achievement-preview-dialog aria-labelledby="achievement-preview-title">
+    <button type="button" class="achievement-preview__close" data-achievement-preview-close aria-label="关闭图片预览">×</button>
+    <div class="achievement-preview__art"><img data-achievement-preview-image alt=""></div>
+    <p class="achievement-preview__eyebrow">成就图片预览</p><h2 id="achievement-preview-title" data-achievement-preview-title></h2><p data-achievement-preview-description></p>
+  </dialog>
+</div>
+{% endmacro %}
+{% block manage_content %}{{ render_achievement_manage() }}{% endblock %}
+{% block domain_content %}{{ render_achievement_manage() }}{% endblock %}

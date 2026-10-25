@@ -91,7 +91,14 @@ const exemptPath = /^\/(?:daily-quiz|student-message\/ack|training-time\/(?:sess
  * exempt page navigation, theme selection, uploads or other mutations. */
 export function isDailyQuizMediaRead(path: string, method: string) {
     if (!['GET', 'HEAD'].includes(method?.toUpperCase())) return false;
+    if (/^\/achievement\/[a-z0-9-]+\/image$/.test(path)) return true;
     return /^\/(?:image-warmup|background-video-warmup|learning-media-warmup|code-editor\/themes|code-editor\/theme-asset\/[a-f\d]{32}\/[a-f\d]{24}|home\/(?:poster|video|video-poster)|badge\/[1-9]\d*\/(?:background|ac-image|background-video|background-video-poster|theme-sound|icon-image))$/.test(path);
+}
+
+/** Quiz rewards may unlock a notification while ordinary navigation stays gated. */
+export function isDailyQuizAchievementRequest(path: string, method: string) {
+    return (path === '/achievement/pending' && ['GET', 'HEAD'].includes(method?.toUpperCase()))
+        || (path === '/achievement/ack' && method?.toUpperCase() === 'POST');
 }
 
 export async function apply(ctx: Context) {
@@ -102,7 +109,8 @@ export async function apply(ctx: Context) {
     ctx.on('handler/before-prepare', async (handler: Handler) => {
         if (isTeacherView(handler) || !handler.user?.hasPriv(PRIV.PRIV_USER_PROFILE) || handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM)
             || handler.user.hasPriv(PRIV.PRIV_JUDGE) || exemptPath.test(handler.request.path)
-            || isDailyQuizMediaRead(handler.request.path, handler.request.method)) return undefined;
+            || isDailyQuizMediaRead(handler.request.path, handler.request.method)
+            || isDailyQuizAchievementRequest(handler.request.path, handler.request.method)) return undefined;
         const { policy, session } = await quiz.getSession(handler.user._id);
         if (!quiz.presentSession(policy, session).required) return undefined;
         const returnUrl = safeReturnUrl(handler.request.originalPath

@@ -1,0 +1,384 @@
+export interface EarnedAchievement {
+  id: string;
+  name: string;
+  description: string;
+  imageUrl?: string;
+  thumbnailUrl?: string;
+}
+
+export interface AchievementPendingResponse {
+  achievements: EarnedAchievement[];
+  settled?: boolean;
+}
+
+interface AchievementCelebrationOptions {
+  fetchPending: (rid?: string) => Promise<AchievementPendingResponse>;
+  acknowledge: (ids: string[]) => Promise<unknown>;
+  lockName?: string;
+  canPresent?: () => boolean;
+}
+
+interface AchievementContext {
+  achievementPendingUrl?: string;
+  achievementAckUrl?: string;
+  achievementScope?: string;
+}
+
+const IMAGE_WAIT_MS = 3000;
+const INPUT_GUARD_MS = 700;
+const EXIT_MS = 360;
+const POLL_DELAYS = [0, 700, 1400, 2400, 4000, 6000];
+
+function artworkUrl(value?: string) {
+  if (!value) return '';
+  try {
+    const url = new URL(value, window.location.href);
+    return ['https:', 'http:'].includes(url.protocol) ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
+/** One page-scoped queue. Only explicit dismissal acknowledges an award. */
+export function createAchievementCelebration(options: AchievementCelebrationOptions) {
+  let disposed = false;
+  let suspended = false;
+  let generation = 0;
+  let queue = Promise.resolve();
+  let finishDisplay: (() => void) | undefined;
+  const records = new Map<string, Promise<void>>();
+  const shown = new Set<string>();
+  const cancellations = new Set<() => void>();
+
+  function wait(ms: number) {
+    return new Promise<void>((resolve) => {
+      const cancel = () => {
+        window.clearTimeout(timer);
+        cancellations.delete(cancel);
+        resolve();
+      };
+      const timer = window.setTimeout(cancel, ms);
+      cancellations.add(cancel);
+    });
+  }
+
+  function readyImage(value?: string) {
+    const src = artworkUrl(value);
+    if (!src) return Promise.resolve<HTMLImageElement | null>(null);
+    return new Promise<HTMLImageElement | null>((resolve) => {
+      const image = new Image();
+      let finished = false;
+      const usable = () => image.complete && image.naturalWidth > 0 && image.naturalHeight > 0;
+      const finish = (ready: boolean) => {
+        if (finished) return;
+        finished = true;
+        window.clearTimeout(timer);
+        cancellations.delete(cancel);
+        image.onload = null;
+        image.onerror = null;
+        if (!ready) image.removeAttribute('src');
+        resolve(ready ? image : null);
+      };
+      const cancel = () => finish(false);
+      const timer = window.setTimeout(() => finish(usable()), IMAGE_WAIT_MS);
+      cancellations.add(cancel);
+      image.alt = '';
+      image.decoding = 'async';
+      image.onload = () => {
+        if (!usable()) { finish(false); return; }
+        try {
+          if (image.decode) void image.decode().then(() => finish(usable()), () => finish(usable()));
+          else finish(true);
+        } catch { finish(usable()); }
+      };
+      image.onerror = () => finish(false);
+      image.src = src;
+      if (image.complete) image.onload?.(new Event('load'));
+    });
+  }
+
+  function element(tag: string, suffix: string, text?: string) {
+    const result = document.createElement(tag);
+    result.className = `achievement-reveal__${suffix}`;
+    if (text) result.textContent = text;
+    return result;
+  }
+
+  function fallbackArt() {
+    const fallback = element('span', 'fallback', '✦');
+    fallback.setAttribute('aria-hidden', 'true');
+    return fallback;
+  }
+
+  function display(awards: EarnedAchievement[], image: HTMLImageElement | null) {
+    if (disposed || suspended || !awards.length) return Promise.resolve(false);
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    const effect = document.createElement('div');
+    effect.className = `achievement-reveal${awards.length > 1 ? ' achievement-reveal--multiple' : ''}`;
+    effect.setAttribute('role', 'dialog');
+    effect.setAttribute('aria-modal', 'true');
+    effect.setAttribute('aria-label', awards.length > 1 ? `解锁 ${awards.length} 项成就` : `解锁成就：${awards[0].name}`);
+    effect.tabIndex = -1;
+    const sky = element('div', 'sky');
+    sky.setAttribute('aria-hidden', 'true');
+    for (let i = 0; i < 12; i++) {
+      const star = element('i', 'star');
+      star.style.setProperty('--star-index', `${i}`);
+      star.style.setProperty('--star-left', `${8 + (i * 37) % 86}%`);
+      star.style.setProperty('--star-top', `${8 + (i * 19) % 81}%`);
+      sky.appendChild(star);
+    }
+    effect.appendChild(sky);
+    const panel = element('div', 'panel');
+    const eyebrow = element('div', 'eyebrow', 'ACHIEVEMENT UNLOCKED');
+    panel.appendChild(eyebrow);
+    const artwork = element('div', 'artwork');
+    const orbit = element('div', 'orbit');
+    orbit.setAttribute('aria-hidden', 'true');
+    artwork.appendChild(orbit);
+    if (image) {
+      image.className = 'achievement-reveal__image';
+      artwork.appendChild(image);
+    } else artwork.appendChild(fallbackArt());
+    panel.appendChild(artwork);
+    panel.appendChild(element('h2', 'title', awards.length === 1 ? awards[0].name : `${awards.length} 项成就，一起点亮`));
+    if (awards.length === 1) panel.appendChild(element('p', 'description', awards[0].description));
+    else {
+      const collection = element('ul', 'collection');
+      collection.setAttribute('aria-label', '本次解锁的成就');
+      for (const award of awards) {
+        const tile = element('li', 'tile');
+        tile.title = `${award.name}：${award.description}`;
+        const icon = element('span', 'thumbnail');
+        const src = artworkUrl(award.imageUrl);
+        if (src) {
+          const thumbnail = new Image();
+          thumbnail.alt = '';
+          thumbnail.loading = 'lazy';
+          thumbnail.decoding = 'async';
+          thumbnail.onerror = () => { thumbnail.remove(); icon.appendChild(fallbackArt()); };
+          thumbnail.src = src;
+          icon.appendChild(thumbnail);
+        } else icon.appendChild(fallbackArt());
+        tile.appendChild(icon);
+        const text = element('span', 'tile-text');
+        text.appendChild(element('strong', 'tile-name', award.name));
+        text.appendChild(element('span', 'tile-description', award.description));
+        tile.appendChild(text);
+        collection.appendChild(tile);
+      }
+      panel.appendChild(collection);
+    }
+    panel.appendChild(element('p', 'saved', '已点亮个人主页成就墙'));
+    panel.appendChild(element('p', 'hint', '点击任意处或按下任意键收起'));
+    effect.appendChild(panel);
+    const background = Array.from(document.body.children).map((node) => ({
+      node: node as HTMLElement,
+      inert: (node as HTMLElement).inert,
+    }));
+    for (const { node } of background) node.inert = true;
+    document.body.style.overflow = 'hidden';
+    document.body.appendChild(effect);
+    effect.focus({ preventScroll: true });
+
+    return new Promise<boolean>((resolve) => {
+      let armed = false;
+      let leaving = false;
+      let finished = false;
+      let exitTimer = 0;
+      let pointer: { id: number, x: number, y: number } | null = null;
+      const block = (event: Event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      };
+      const cleanup = (dismissed: boolean) => {
+        if (finished) return;
+        finished = true;
+        window.clearTimeout(armTimer);
+        window.clearTimeout(exitTimer);
+        window.cancelAnimationFrame(frame);
+        document.removeEventListener('keydown', onKey, true);
+        document.removeEventListener('keyup', block, true);
+        document.removeEventListener('pointerdown', onPointerDown, true);
+        document.removeEventListener('pointerup', onPointerUp, true);
+        document.removeEventListener('click', onClick, true);
+        document.removeEventListener('contextmenu', onContextMenu, true);
+        document.removeEventListener('focusin', onFocus, true);
+        effect.remove();
+        for (const { node, inert } of background) node.inert = inert;
+        document.body.style.overflow = previousOverflow;
+        if (dismissed && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+        finishDisplay = undefined;
+        resolve(dismissed);
+      };
+      const dismiss = () => {
+        if (!armed || leaving) return;
+        leaving = true;
+        effect.classList.add('is-leaving');
+        // Keep the dialog and capture handlers through pointerup/click so the
+        // dismissal can never also submit code or open a link underneath it.
+        exitTimer = window.setTimeout(() => cleanup(true), reducedMotion ? 80 : EXIT_MS);
+      };
+      const onKey = (event: KeyboardEvent) => {
+        block(event);
+        if (event.repeat || event.isComposing) return;
+        dismiss();
+      };
+      const onPointerDown = (event: PointerEvent) => {
+        // A touch drag may scroll a large collection without dismissing it.
+        if (event.pointerType !== 'touch') block(event);
+        pointer = armed ? { id: event.pointerId, x: event.clientX, y: event.clientY } : null;
+      };
+      const onPointerUp = (event: PointerEvent) => {
+        block(event);
+        if (pointer?.id === event.pointerId && Math.hypot(pointer.x - event.clientX, pointer.y - event.clientY) < 12) dismiss();
+        pointer = null;
+      };
+      const onClick = (event: MouseEvent) => {
+        block(event);
+        // Keyboard/screen-reader activation has no pointerdown/up pair.
+        if (event.detail === 0) dismiss();
+      };
+      const onContextMenu = (event: MouseEvent) => {
+        block(event);
+        dismiss();
+      };
+      const onFocus = (event: FocusEvent) => {
+        if (!effect.contains(event.target as Node)) effect.focus({ preventScroll: true });
+      };
+      document.addEventListener('keydown', onKey, true);
+      document.addEventListener('keyup', block, true);
+      document.addEventListener('pointerdown', onPointerDown, true);
+      document.addEventListener('pointerup', onPointerUp, true);
+      document.addEventListener('click', onClick, true);
+      document.addEventListener('contextmenu', onContextMenu, true);
+      document.addEventListener('focusin', onFocus, true);
+      const armTimer = window.setTimeout(() => {
+        armed = true;
+        effect.classList.add('is-ready');
+      }, INPUT_GUARD_MS);
+      const frame = window.requestAnimationFrame(() => effect.classList.add('is-visible'));
+      finishDisplay = () => cleanup(false);
+    });
+  }
+
+  async function pending(rid: string | undefined, version: number) {
+    let available: EarnedAchievement[] = [];
+    for (const pause of POLL_DELAYS) {
+      if (pause) await wait(pause);
+      if (disposed || suspended || generation !== version) break;
+      try {
+        const result = await options.fetchPending(rid);
+        if (disposed || suspended || generation !== version) break;
+        available = (result?.achievements || []).filter((item) => item && typeof item.id === 'string' && item.name);
+        if (result?.settled === true || (result?.settled !== false && available.length)) return available;
+      } catch {
+        // A transient network failure must neither acknowledge nor suppress an
+        // award: it can still be fetched on the next visit to the user's page.
+      }
+    }
+    return disposed || suspended || generation !== version ? [] : available;
+  }
+
+  function enqueue(rid?: string, acFinished: Promise<unknown> = Promise.resolve()) {
+    if (disposed || suspended) return Promise.resolve();
+    const key = rid || '@profile';
+    if (records.has(key)) return records.get(key)!;
+    const version = generation;
+    const present = async () => {
+      if (disposed || suspended || generation !== version) return;
+      // Start the small result request while AC is playing, but do not mount or
+      // focus the achievement until that effect's exit animation has finished.
+      const loaded = pending(rid, version);
+      const prepared = loaded.then((awards) => readyImage(awards[0]?.imageUrl));
+      await acFinished.catch(() => undefined);
+      const awards = await loaded;
+      const image = await prepared;
+      while (!disposed && !suspended && generation === version && options.canPresent?.() === false) await wait(150);
+      if (disposed || suspended || generation !== version) return;
+      const unique = [...new Map(awards.filter((award) => !shown.has(award.id)).map((award) => [award.id, award])).values()];
+      if (!unique.length) return;
+      unique.forEach((award) => shown.add(award.id));
+      const dismissed = await display(unique, unique[0].id === awards[0]?.id ? image : null);
+      if (!dismissed || disposed || generation !== version) return;
+      // A failed acknowledgement remains pending on the server. Never claim
+      // success locally in persistent storage or acknowledge on pagehide.
+      try { await options.acknowledge(unique.map((award) => award.id)); } catch { /* Retry on the next explicit presentation. */ }
+    };
+    const task = queue.then(() => {
+      const locks = window.navigator?.locks;
+      // A second tab must fetch only after it has acquired the shared lock;
+      // otherwise it could display a stale response already dismissed here.
+      if (options.lockName && locks?.request) {
+        return locks.request(options.lockName, { ifAvailable: true }, (lock) => (lock ? present() : undefined));
+      }
+      return present();
+    });
+    queue = task.catch(() => undefined);
+    records.set(key, queue);
+    return queue;
+  }
+
+  function cancelPending() {
+    generation++;
+    finishDisplay?.();
+    for (const cancel of [...cancellations]) cancel();
+    records.clear();
+    shown.clear();
+    queue = Promise.resolve();
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    cancelPending();
+    window.removeEventListener('pagehide', onPageHide);
+    window.removeEventListener('pageshow', onPageShow);
+  }
+
+  function onPageHide(event: PageTransitionEvent) {
+    suspended = true;
+    if (!event.persisted) dispose();
+    else cancelPending();
+  }
+
+  function onPageShow() { suspended = false; }
+  window.addEventListener('pagehide', onPageHide);
+  window.addEventListener('pageshow', onPageShow);
+  function showPending() {
+    const task = enqueue();
+    // Quiz answers and lottery draws can each cross a new points threshold in
+    // one visit. Deduplicate concurrent triggers, not all future live events.
+    void task.finally(() => {
+      if (records.get('@profile') === task) records.delete('@profile');
+    });
+    return task;
+  }
+  return { afterResult: enqueue, showPending, dispose };
+}
+
+/** Use Hydro's request helper so acknowledgements retain its CSRF handling. */
+export function createAchievementClient(context: AchievementContext, request: {
+  get: (url: string, query?: Record<string, string>, options?: { timeout: number }) => Promise<any>;
+  post: (url: string, data: { ids: string[] }, options?: { timeout: number }) => Promise<any>;
+}) {
+  return createAchievementCelebration({
+    lockName: context.achievementScope ? `hydro:achievements:${context.achievementScope}`
+      : context.achievementPendingUrl ? `hydro:achievements:${context.achievementPendingUrl}` : undefined,
+    canPresent: () => {
+      const lottery = document.querySelector<HTMLElement>('[data-point-lottery]');
+      if (!lottery || lottery.hidden) return true;
+      const result = lottery.querySelector<HTMLElement>('[data-point-lottery-result]');
+      return !lottery.querySelector('[data-point-lottery-chest-stage][aria-busy="true"]') && (!result || result.hidden);
+    },
+    fetchPending: (rid) => {
+      if (!context.achievementPendingUrl || !context.achievementAckUrl) return Promise.resolve({ achievements: [], settled: true });
+      return request.get(context.achievementPendingUrl, rid ? { rid } : {}, { timeout: 10000 });
+    },
+    acknowledge: (ids) => (context.achievementAckUrl
+      ? request.post(context.achievementAckUrl, { ids }, { timeout: 10000 })
+      : Promise.resolve()),
+  });
+}

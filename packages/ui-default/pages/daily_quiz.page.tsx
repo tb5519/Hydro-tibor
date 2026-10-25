@@ -85,6 +85,7 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
   const [error, setError] = useState('');
   const [needsRefresh, setNeedsRefresh] = useState(false);
   const inFlight = useRef(false);
+  const announcePoints = useRef(false);
   const hasFocused = useRef(false);
   const questionRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
@@ -115,6 +116,13 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
     else questionRef.current?.focus(options);
     hasFocused.current = true;
   }, [current?.id, !!feedback, complete]);
+  useEffect(() => {
+    if (!announcePoints.current) return;
+    announcePoints.current = false;
+    // Announce after React commits the confirmed answer and moves focus to its
+    // feedback. The achievement player can then restore that focus on exit.
+    window.dispatchEvent(new window.CustomEvent('hydro:points-earned', { detail: { source: 'daily-quiz' } }));
+  }, [state]);
 
   function choose(answer: string) {
     if (inFlight.current || feedback || needsRefresh) return;
@@ -152,6 +160,9 @@ export function DailyQuiz({ initial, post = request.post.bind(request) }: { init
         || (!feedback && !next.current?.feedback && !next.completed)) {
         throw new Error('暂未确认保存结果，请再试一次。');
       }
+      announcePoints.current = !feedback && next.current?.id === current.id
+        && next.current.feedback?.correct === true && Number(next.current.feedback.earnedPoints) > 0
+        && Number(next.earnedPoints) > Number(state.earnedPoints);
       setState(next);
       setTrainingTime(result.trainingTime || null);
       setSelection(next.current?.feedback?.selectedAnswers || []);

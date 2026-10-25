@@ -1,0 +1,335 @@
+const assert = require('node:assert/strict');
+const Module = require('node:module');
+const { beforeEach, describe, it } = require('node:test');
+const { ObjectId } = require('mongodb');
+const { STATUS } = require('@hydrooj/common');
+const { ACHIEVEMENT_CATALOG } = require('../packages/hydrooj/src/lib/achievement_catalog');
+
+class PermissionError extends Error {}
+class ValidationError extends Error {}
+class NotFoundError extends Error {}
+const PRIV = { PRIV_USER_PROFILE: 1 };
+const PERM = { PERM_EDIT_DOMAIN: 2n };
+let fixtures;
+let calls;
+const legacy = { _id: 'system', owner: 2 };
+const modern = { _id: 'class', workspaceId: 'teacher', owner: 90 };
+const definition = (id) => {
+    const value = ACHIEVEMENT_CATALOG.find((item) => item.id === id);
+    if (!value) throw new ValidationError('id');
+    return value;
+};
+class Handler {
+    constructor(options = {}) {
+        this.domain = options.domain || legacy;
+        this.user = {
+            _id: options.uid ?? 11,
+            hasPriv: () => options.profile !== false && (options.uid ?? 11) > 1,
+        };
+        this.checkPriv = () => { if (!this.user.hasPriv()) throw new PermissionError('profile'); };
+        this.checkPerm = () => { if (!options.canManage) throw new PermissionError('domain'); };
+        this.request = {
+            path: options.path || '/manage/achievement', query: {}, files: {}, headers: {}, method: 'get', ...options.request,
+        };
+        this.response = { body: {}, status: 200, headers: { Vary: 'Accept' }, addHeader(key, value) { this.headers[key] = value; } };
+        this.context = { vary: (name) => {
+            const previous = this.response.headers.Vary.split(',').map((item) => item.trim());
+            if (!previous.includes(name)) previous.push(name);
+            this.response.headers.Vary = previous.join(', ');
+        } };
+        this.args = options.args || {};
+        this.session = options.session || {};
+        this.UiContext = {};
+        this.ctx = {};
+        this.url = (route) => `/d/${this.domain._id}/${route}`;
+        this.limitRate = async (...args) => calls.push(['rate', ...args]);
+    }
+}
+
+const originalLoad = Module._load;
+let handlers;
+try {
+    Module._load = function patchedLoad(request, parent, isMain) {
+        if (parent?.filename?.endsWith('/packages/hydrooj/src/handler/achievement.ts')) {
+            if (request === '../error') return { PermissionError, ValidationError, NotFoundError };
+            if (request === '../logger') return { Logger: class { warn() {} } };
+            if (request === '../model/builtin') return { PRIV, PERM, STATUS };
+            if (request === '../model/workspace') return {
+                LEGACY_WORKSPACE_ID: 'tang', resolveDomainWorkspaceId: (domain) => domain?.workspaceId || 'tang',
+                getLegacyWorkspace: async () => ({ ownerUid: 2 }), isLegacyOwner: (uid) => uid === 2,
+            };
+            if (request === '../service/server') return { Handler, param: () => () => {}, Types: { String: 'string', PositiveInt: 'positive-int' } };
+            if (request === '../lib/domain_type') return { isScratchDomain: (domain) => domain.domainType === 'scratch' };
+            if (request === '../lib/achievement') return {
+                applyAchievementHooks: async () => { await new Promise((resolve) => setTimeout(resolve, 1)); calls.push(['initialized']); },
+                getAchievementScope: (domain) => domain.workspaceId && domain.workspaceId !== 'tang' ? `domain:${domain._id}` : 'legacy',
+                isAchievementRecordReady: async (ctx, record) => { calls.push(['ready', record._id.toString()]); return record.pointsSettled !== false; },
+                getAchievementRecord: async (ctx, domain, uid, rid) => {
+                    calls.push(['record', domain._id, uid, rid.toString()]);
+                    return (fixtures.records || []).find((record) => record.uid === uid && record._id.equals(rid) && record.allowed !== false) || null;
+                },
+                syncUserAchievements: async (ctx, domain, uid, options) => {
+                    calls.push(['sync', domain._id, uid, options]);
+                    return fixtures.rows || [];
+                },
+                getPendingAchievements: async (ctx, domain, uid, limit) => {
+                    calls.push(['pending', domain._id, uid, limit]);
+                    return fixtures.pending || [];
+                },
+                acknowledgeAchievements: async (ctx, domain, uid, ids) => calls.push(['ack', domain._id, uid, ids]),
+            };
+            if (request === '../lib/achievement_image') return {
+                ACHIEVEMENT_IMAGE_LIMIT: 8 * 1024 * 1024, achievementDefinition: definition,
+                presentAchievements: async (ctx, domain, entries) => entries.map((item) => ({ ...item, imageUrl: `/d/${domain._id}/${item.id}.png` })),
+                getAchievementArtwork: async (ctx, domain, id) => { definition(id); calls.push(['art', domain._id, id]); return fixtures.artwork; },
+                setAchievementImage: async (ctx, domain, id, file, owner) => calls.push(['upload', domain._id, id, file, owner]),
+                removeAchievementImage: async (ctx, domain, id, owner) => { definition(id); calls.push(['remove', domain._id, id, owner]); },
+            };
+            if (request === '../model/storage') return {
+                getMeta: async (path) => { calls.push(['meta', path]); return fixtures.meta; },
+                get: async (path) => { calls.push(['download', path]); return Buffer.from('png'); },
+            };
+            if (request === '../lib/asset_delivery') return { tryRedirectAsset: (handler, source) => {
+                calls.push(['delivery', source.path]);
+                if (!fixtures.cdn) return false;
+                handler.response.redirect = fixtures.cdn;
+                return true;
+            } };
+            if (request === '../lib/asset_storage') return { signDownloadLink: async (asset) => { calls.push(['sign', asset]); return 'https://objects.test/signed'; } };
+        }
+        return originalLoad.call(this, request, parent, isMain);
+    };
+    handlers = require('../packages/hydrooj/src/handler/achievement');
+} finally { Module._load = originalLoad; }
+
+beforeEach(() => { fixtures = {}; calls = []; });
+
+describe('achievement management and image handlers', () => {
+    it('allows the legacy owner and the current modern-domain manager, with no cross-scope management', async () => {
+        await handlers.checkAchievementManageAccess(new Handler({ uid: 2 }));
+        await handlers.checkAchievementManageAccess(new Handler({ domain: modern, path: '/domain/achievement', uid: 90, canManage: true }));
+        for (const handler of [
+            new Handler({ uid: 99, canManage: true }),
+            new Handler({ domain: modern, uid: 2 }),
+            new Handler({ path: '/domain/achievement', uid: 2, canManage: true }),
+            new Handler({ domain: modern, path: '/domain/achievement', uid: 90 }),
+            new Handler({ uid: 1 }),
+        ]) await assert.rejects(handlers.checkAchievementManageAccess(handler), PermissionError);
+    });
+
+    it('renders all 50 achievements with the correct menu context and private cache headers', async () => {
+        const handler = new handlers.AchievementManageHandler({ domain: modern, path: '/domain/achievement', uid: 90, canManage: true });
+        await handler.prepare();
+        await handler.get();
+        assert.equal(handler.response.template, 'achievement_manage.html');
+        assert.equal(handler.response.body.achievements.length, 50);
+        assert.equal(handler.response.body.achievementBaseTemplate, 'domain_base.html');
+        assert.equal(handler.response.body.badgeManageRoute, 'domain_badge_manage');
+        assert.equal(handler.response.headers['Cache-Control'], 'private, no-store');
+        assert.equal(handler.response.headers.Vary, 'Accept, Cookie, Authorization');
+    });
+
+    it('rechecks access before upload, uses the real signed-in owner and returns the JSON card', async () => {
+        const file = { filepath: '/tmp/image.png', size: 30 };
+        const handler = new handlers.AchievementManageHandler({ uid: 2, args: { uid: 99 }, request: { json: true, files: { image: [file] } } });
+        await handler.postUpload('system', 'difficulty-1');
+        assert.deepEqual(calls.find((call) => call[0] === 'upload'), ['upload', 'system', 'difficulty-1', file, 2]);
+        assert.equal(handler.response.body.ok, true);
+        assert.equal(handler.response.body.achievement.id, 'difficulty-1');
+        assert.equal(handler.response.redirect, undefined);
+        const denied = new handlers.AchievementManageHandler({ uid: 11, request: { files: { image: file } } });
+        await assert.rejects(denied.postUpload('system', 'difficulty-1'), PermissionError);
+        await assert.rejects(handler.postUpload('system', 'made-up'), ValidationError);
+    });
+
+    it('removes only artwork and redirects a regular form submission back to its scoped manager', async () => {
+        const handler = new handlers.AchievementManageHandler({ domain: modern, path: '/domain/achievement', uid: 90, canManage: true });
+        await handler.postRemoveImage('class', 'difficulty-1');
+        assert.deepEqual(calls, [['remove', 'class', 'difficulty-1', 90]]);
+        assert.equal(handler.response.redirect, '/d/class/domain_achievement_manage');
+    });
+
+    it('serves only the requested stored thumbnail, preserving negotiation headers', async () => {
+        fixtures.artwork = { imagePath: 'original.png', thumbnailPath: 'thumb.png' };
+        fixtures.meta = { size: 20 };
+        const handler = new handlers.AchievementImageHandler();
+        await handler.get('system', 'difficulty-1', 384);
+        assert.deepEqual(calls.map((call) => call[0]), ['art', 'meta', 'delivery', 'download']);
+        assert.equal(calls.at(-1)[1], 'thumb.png');
+        assert.equal(handler.response.type, 'image/png');
+        assert.equal(handler.response.headers.Vary, 'Accept, Cookie, Authorization');
+        await assert.rejects(handler.get('system', 'difficulty-1', 768), ValidationError);
+    });
+
+    it('uses the prepared CDN or signed object URL and does not download originals for thumbnails', async () => {
+        fixtures.artwork = { imagePath: 'original.png', thumbnailPath: 'thumb.png' };
+        fixtures.meta = { remoteAsset: { key: 'object' } };
+        const signed = new handlers.AchievementImageHandler();
+        await signed.get('system', 'difficulty-1');
+        assert.equal(signed.response.redirect, 'https://objects.test/signed');
+        assert.equal(calls.some((call) => call[0] === 'download'), false);
+        fixtures.cdn = 'https://cdn.test/thumb.png';
+        const cdn = new handlers.AchievementImageHandler();
+        await cdn.get('system', 'difficulty-1', 384);
+        assert.equal(cdn.response.redirect, fixtures.cdn);
+        fixtures.artwork = null;
+        await assert.rejects(cdn.get('system', 'difficulty-1'), NotFoundError);
+    });
+});
+
+describe('achievement pending and acknowledgement handlers', () => {
+    it('requires a signed-in profile and does not show or dismiss awards while impersonating a student', async () => {
+        await assert.rejects(new handlers.AchievementPendingHandler({ uid: 1 }).get(), PermissionError);
+        const pending = new handlers.AchievementPendingHandler({ session: { sudoUid: 2 } });
+        await pending.get();
+        assert.deepEqual(pending.response.body, { achievements: [], settled: true });
+        const ack = new handlers.AchievementAckHandler({ session: { sudoUid: 2 }, args: { ids: ['difficulty-1'] } });
+        await ack.post();
+        assert.deepEqual(calls, []);
+    });
+
+    it('waits for all active judge states and never imports a partial verdict', async () => {
+        for (const status of [STATUS.STATUS_WAITING, STATUS.STATUS_FETCHED, STATUS.STATUS_JUDGING, STATUS.STATUS_COMPILING]) {
+            const record = { _id: new ObjectId(), uid: 11, status, judgeAt: new Date() };
+            fixtures.records = [record];
+            const handler = new handlers.AchievementPendingHandler({ request: { query: { rid: record._id.toString() } } });
+            await handler.get();
+            assert.deepEqual(handler.response.body, { achievements: [], settled: false });
+        }
+        assert.equal(calls.some((call) => call[0] === 'sync'), false);
+    });
+
+    it('rejects invalid, another owner, out-of-scope and pretest record IDs before syncing', async () => {
+        for (const record of [
+            { _id: new ObjectId(), uid: 12, judgeAt: new Date() },
+            { _id: new ObjectId(), uid: 11, allowed: false, judgeAt: new Date() },
+            { _id: new ObjectId(), uid: 11, contest: new ObjectId('000000000000000000000000'), judgeAt: new Date() },
+        ]) {
+            fixtures.records = [record];
+            const handler = new handlers.AchievementPendingHandler({ request: { query: { rid: record._id.toString() } } });
+            await assert.rejects(handler.get(), NotFoundError);
+        }
+        for (const rid of ['bad', [], {}, 11]) {
+            await assert.rejects(new handlers.AchievementPendingHandler({ request: { query: { rid } } }).get(), ValidationError);
+        }
+        assert.equal(calls.some((call) => call[0] === 'sync'), false);
+    });
+
+    it('settles an owned completed verdict before retrieving at most ten pending images', async () => {
+        const record = { _id: new ObjectId(), uid: 11, status: STATUS.STATUS_ACCEPTED, judgeAt: new Date(), domainId: 'system', pid: 1 };
+        fixtures.records = [record]; fixtures.pending = [definition('difficulty-1')];
+        const handler = new handlers.AchievementPendingHandler({ args: { uid: 12 }, request: { query: { rid: record._id.toString(), uid: 12 } } });
+        await handler.get();
+        assert.deepEqual(calls.map((call) => call[0]), ['record', 'ready', 'sync', 'pending']);
+        assert.equal(calls[2][2], 11);
+        assert.equal(calls[2][3].record, record);
+        assert.deepEqual(calls[3], ['pending', 'system', 11, 10]);
+        assert.equal(handler.response.body.settled, true);
+        assert.equal(handler.response.body.achievements[0].imageUrl, '/d/system/difficulty-1.png');
+    });
+
+    it('waits when AC is final but the contest-point callback has not reached record/judge', async () => {
+        const record = { _id: new ObjectId(), uid: 11, status: STATUS.STATUS_ACCEPTED, judgeAt: new Date(), pointsSettled: false };
+        fixtures.records = [record];
+        const handler = new handlers.AchievementPendingHandler({ request: { query: { rid: record._id.toString() } } });
+        await handler.get();
+        assert.deepEqual(handler.response.body, { achievements: [], settled: false });
+        assert.deepEqual(calls.map((call) => call[0]), ['record', 'ready']);
+    });
+
+    it('validates finite catalogue IDs and always acknowledges the session owner', async () => {
+        const handler = new handlers.AchievementAckHandler({ args: { uid: 99, ids: ['difficulty-1'] } });
+        await handler.post();
+        assert.deepEqual(calls, [['ack', 'system', 11, ['difficulty-1']]]);
+        for (const ids of [undefined, 'difficulty-1', [null], [{}], ['fake'], Array(11).fill('difficulty-1')]) {
+            await assert.rejects(new handlers.AchievementAckHandler({ args: { ids } }).post(), ValidationError);
+        }
+    });
+});
+
+describe('profile and live-record integration', () => {
+    it('populates another student’s wall without suppressing their new awards or showing the viewer a celebration', async () => {
+        fixtures.rows = [{ ...definition('difficulty-1'), unlocked: true }, { ...definition('difficulty-2'), unlocked: false }];
+        const handler = new Handler();
+        handler.response.template = 'user_detail.html'; handler.response.body.udoc = { _id: 12 };
+        await handlers.injectAchievementContext(handler);
+        assert.deepEqual(calls, [['sync', 'system', 12, undefined]]);
+        assert.equal(handler.response.body.achievementWall.unlocked, 1);
+        assert.equal(handler.response.body.achievementWall.items.length, 1);
+        assert.equal(handler.UiContext.achievementAutoShow, undefined);
+        assert.equal(calls.some((call) => call[0] === 'ack'), false);
+    });
+
+    it('enables pending playback on the owner’s profile with the user and domain scope', async () => {
+        const handler = new Handler();
+        handler.response.template = 'user_detail.html'; handler.response.body.udoc = { _id: 11 };
+        await handlers.injectAchievementContext(handler);
+        assert.equal(handler.UiContext.achievementAutoShow, true);
+        assert.equal(handler.UiContext.achievementPendingUrl, '/d/system/achievement_pending');
+        assert.equal(handler.UiContext.achievementAckUrl, '/d/system/achievement_ack');
+        assert.equal(handler.UiContext.achievementScope, 'legacy/11');
+    });
+
+    it('injects a passive quiz client and automatic homepage playback with one legacy cross-domain lock', async () => {
+        const home = new Handler(); home.response.template = 'main.html';
+        await handlers.injectAchievementContext(home);
+        assert.equal(home.UiContext.achievementAutoShow, true);
+        const quiz = new Handler({ domain: { _id: 'python' } }); quiz.response.template = 'daily_quiz.html';
+        await handlers.injectAchievementContext(quiz);
+        assert.equal(quiz.UiContext.achievementAutoShow, false);
+        assert.equal(quiz.UiContext.achievementScope, home.UiContext.achievementScope);
+    });
+
+    it('marks only a recent ordinary owned record live, excluding old, future, revision, hidden and generated views', async () => {
+        const make = (rdoc, query = {}, extra = {}) => {
+            const handler = new Handler({ request: { query } });
+            handler.response.template = 'record_detail.html'; handler.response.body = { rdoc, ...extra };
+            return handler;
+        };
+        const owned = { _id: new ObjectId(), uid: 11, status: STATUS.STATUS_ACCEPTED };
+        const current = make(owned);
+        await handlers.injectAchievementContext(current);
+        assert.equal(current.UiContext.achievementLive, true);
+        assert.equal(current.UiContext.achievementAutoShow, false);
+        for (const handler of [
+            make({ ...owned, uid: 12 }),
+            make({ ...owned, _id: ObjectId.createFromTime(Math.floor(Date.now() / 1000) - 3600) }),
+            make({ ...owned, _id: ObjectId.createFromTime(Math.floor(Date.now() / 1000) + 3600) }),
+            make(owned, { rev: new ObjectId().toString() }),
+            make({ _id: owned._id, lang: 'cc' }),
+            make({ ...owned, contest: new ObjectId('000000000000000000000001') }),
+            make(owned, {}, { isPretestRecord: true }),
+        ]) {
+            await handlers.injectAchievementContext(handler);
+            assert.equal(handler.UiContext.achievementLive, false);
+        }
+    });
+
+    it('does not inject into JSON, errors, redirects, scratch or websocket responses', async () => {
+        for (const options of [{ request: { json: true } }, { request: { websocket: true } }, { domain: { ...legacy, domainType: 'scratch' } }, {}]) {
+            const handler = new Handler(options);
+            handler.response.template = 'user_detail.html'; handler.response.body.udoc = { _id: 11 };
+            if (!Object.keys(options).length) handler.response.status = 500;
+            await handlers.injectAchievementContext(handler);
+            assert.deepEqual(handler.UiContext, {});
+        }
+        const redirect = new Handler(); redirect.response.template = 'user_detail.html'; redirect.response.redirect = '/login';
+        await handlers.injectAchievementContext(redirect);
+        assert.deepEqual(calls, []);
+    });
+
+    it('finishes durable initialization before registering authenticated endpoints and profile hooks', async () => {
+        const registered = [];
+        const ctx = {
+            Route: (...args) => { assert.equal(calls[0][0], 'initialized'); registered.push(args); },
+            injectUI: (...args) => calls.push(['menu', ...args]),
+            i18n: { load: () => {} }, on: (...args) => calls.push(['event', ...args]),
+        };
+        await handlers.apply(ctx);
+        assert.equal(registered.length, 5);
+        assert.deepEqual(registered.find((route) => route[0] === 'achievement_pending').slice(1),
+            ['/achievement/pending', handlers.AchievementPendingHandler, PRIV.PRIV_USER_PROFILE]);
+        assert.equal(registered.find((route) => route[0] === 'achievement_ack')[3], PRIV.PRIV_USER_PROFILE);
+        assert.ok(calls.some((call) => call[0] === 'event' && call[1] === 'handler/after'));
+    });
+});

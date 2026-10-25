@@ -113,6 +113,31 @@ async function harness(data = initial(), handler = async () => answerResult()) {
 }
 
 describe('daily quiz learner page', () => {
+    it('announces points only after a confirmed newly rewarded answer, not hydration, wrong answers or failures', async () => {
+        for (const variant of ['earned', 'wrong', 'unchanged', 'error', 'invalid']) {
+            const h = await harness(initial(), async () => {
+                if (variant === 'error') throw new Error('Network unavailable');
+                if (variant === 'invalid') return { state: { sessionId: 'other-session' } };
+                return answerResult({
+                    earnedPoints: variant === 'earned' ? 5 : 0,
+                    current: question({ feedback: feedback({ correct: variant !== 'wrong', earnedPoints: variant === 'earned' ? 5 : 0 }) }),
+                });
+            });
+            try {
+                const events = [];
+                h.dom.window.addEventListener('hydro:points-earned', (event) => events.push({
+                    source: event.detail.source,
+                    hasFeedback: !!h.query('[data-daily-quiz-feedback]'),
+                }));
+                assert.equal(events.length, 0);
+                await h.click('input[value=A]');
+                await h.submit();
+                assert.equal(events.length, variant === 'earned' ? 1 : 0, variant);
+                if (events.length) assert.deepEqual(events[0], { source: 'daily-quiz', hasFeedback: true });
+            } finally { await h.cleanup(); }
+        }
+    });
+
     it('silently follows the visible question training grant across domains and clears it on completion', async () => {
         const pythonClock = { enabled: true, startUrl: '/d/python/training-time/session', heartbeatUrl: '/d/python/training-time/heartbeat',
             sourceToken: 'python-grant', contextKey: 'python:daily:1' };

@@ -9,6 +9,7 @@ import { NamedPage } from 'vj/misc/Page';
 import {
   delay, loadReactRedux, pjax, request, tpl,
 } from 'vj/utils';
+import { createAchievementClient } from '../components/achievement_effect';
 import { createBadgeAcThemePlayer } from '../components/badge_ac_effect';
 import { ContestPoints } from '../components/contest_points';
 import { copyHomeworkReviewToOwnDraft } from '../components/homework_review_copy';
@@ -177,6 +178,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   let formalSubmitEventListenerBound = false;
   let badgeAcFirstEligible = UiContext.badgeAcFirstEligible !== false;
   const badgeThemeEffect = createBadgeAcThemePlayer(UiContext.badgeAcTheme);
+  const achievements = createAchievementClient(UiContext, request);
   const contestProgressDetails = {
     ...(UiContext.tsdoc?.detail || {}),
   } as Record<string, any>;
@@ -535,7 +537,8 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
         const isAccepted = isFullScoreAccepted(rdoc);
         const shouldPlayBadgeEffect = isAccepted && badgeAcFirstEligible;
         if (isAccepted) badgeAcFirstEligible = false;
-        effectPromise = shouldPlayBadgeEffect ? playBadgeThemeAcEffect() : Promise.resolve();
+        const acFinished = shouldPlayBadgeEffect ? playBadgeThemeAcEffect() : Promise.resolve();
+        effectPromise = achievements.afterResult(recordId, acFinished);
         formalSubmitEffectPromises.set(recordId, effectPromise);
       }
       await effectPromise;

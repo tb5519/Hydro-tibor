@@ -83,6 +83,48 @@ async function eventually(predicate) {
 }
 
 describe('treasure chest lottery inline UI', () => {
+    it('announces positive points only after the completed lottery result is dismissed', async () => {
+        for (const earned of [0, 25]) {
+            const ui = fixture();
+            try {
+                const events = [];
+                ui.window.addEventListener('hydro:points-earned', (event) => events.push({
+                    source: event.detail.source,
+                    resultHidden: ui.get('[data-point-lottery-result]').hidden,
+                    busy: ui.get('[data-point-lottery-chest-stage]').getAttribute('aria-busy'),
+                }));
+                ui.open();
+                ui.chests[0].click();
+                assert.equal(events.length, 0);
+                ui.finish({ prize: { kind: 'normal', name: '积分奖励', pointDelta: earned }, prizeIndex: 0, points: 90 + earned });
+                await eventually(() => !ui.get('[data-point-lottery-result]').hidden && !ui.chests[0].disabled);
+                assert.equal(events.length, 0, 'the revealed prize has the first presentation turn');
+                ui.get('[data-point-lottery-result-close]').click();
+                assert.equal(events.length, earned ? 1 : 0);
+                if (earned) assert.deepEqual(events[0], { source: 'point-lottery', resultHidden: true, busy: 'false' });
+                ui.close();
+                assert.equal(events.length, earned ? 1 : 0, 'closing the parent modal does not announce twice');
+            } finally { ui.dispose(); }
+        }
+    });
+
+    it('does not announce failed lottery requests and still announces earned points if the modal was closed during animation', async () => {
+        for (const failed of [false, true]) {
+            const ui = fixture();
+            try {
+                let announcements = 0;
+                ui.window.addEventListener('hydro:points-earned', () => announcements++);
+                ui.open();
+                ui.chests[0].click();
+                ui.close();
+                if (failed) ui.requests.at(-1).reject(new Error('Network unavailable'));
+                else ui.finish({ prize: { kind: 'normal', name: '积分奖励', pointDelta: 25 }, prizeIndex: 0, points: 115 });
+                await eventually(() => !ui.chests[0].disabled);
+                assert.equal(announcements, failed ? 0 : 1);
+            } finally { ui.dispose(); }
+        }
+    });
+
     it('formats badge durations in readable day, hour, and minute units without mislabelling permanent prizes', () => {
         const ui = fixture();
         try {
