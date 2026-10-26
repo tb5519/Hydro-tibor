@@ -1,19 +1,19 @@
 {% if achievementWall %}
-<section class="achievement-wall" data-achievement-wall aria-labelledby="achievement-wall-title">
+<section class="achievement-wall" data-achievement-wall data-achievement-wall-loading aria-busy="true" aria-labelledby="achievement-wall-title">
   <header class="achievement-wall__header"><h2 id="achievement-wall-title"><span aria-hidden="true">✦</span> 成就墙</h2><span class="achievement-wall__count"><strong>{{ achievementWall.unlocked or 0 }}</strong> / {{ achievementWall.total or 50 }}</span></header>
   {% if achievementWall.items.length %}
     <p class="achievement-wall__intro">每一次突破，都在这里闪耀</p>
     <div class="achievement-wall__grid">
     {% for item in achievementWall.items %}
       <button type="button" class="achievement-wall__item{% if not item.thumbnailUrl %} achievement-wall__item--placeholder{% endif %}" data-achievement-tile data-name="{{ item.name }}" data-description="{{ item.description }}" data-unlocked-at="{{ item.unlockedAtText or '' }}" aria-label="{{ item.name }}，{{ item.description }}，已解锁" title="{{ item.name }} · {{ item.description }}" aria-describedby="achievement-wall-tooltip">
-        {% if item.thumbnailUrl %}<img src="{{ item.thumbnailUrl }}" alt="" width="72" height="72" loading="lazy" decoding="async">{% else %}<span class="achievement-wall__placeholder" aria-hidden="true">✦</span><span class="achievement-wall__fallback-name" aria-hidden="true">{{ item.name }}</span>{% endif %}
+        {% if item.thumbnailUrl %}<img src="{{ item.thumbnailUrl }}" alt="" width="72" height="72" loading="eager" decoding="async">{% else %}<span class="achievement-wall__placeholder" aria-hidden="true">✦</span><span class="achievement-wall__fallback-name" aria-hidden="true">{{ item.name }}</span>{% endif %}
       </button>
     {% endfor %}
     </div>
     <p class="achievement-wall__hint">悬停或点按图片，查看成就故事</p>
     <div class="achievement-wall__tooltip" id="achievement-wall-tooltip" data-achievement-tooltip role="tooltip" hidden><span class="achievement-wall__tooltip-eyebrow">已解锁成就</span><strong data-achievement-tooltip-name></strong><p data-achievement-tooltip-description></p><small data-achievement-tooltip-date hidden></small></div>
   {% else %}
-    <div class="achievement-wall__empty"><span aria-hidden="true">✧</span><strong>成长的第一束光，即将点亮</strong><p>首次通过一道难度题，<br>开启属于{{ '你' if isSelfProfile else 'TA' }}的成就之旅。</p></div>
+    <div class="achievement-wall__empty"><span aria-hidden="true">✧</span><strong>成长的第一束光，即将点亮</strong><p>首次通过一道难度题，<br>开启属于{{ '你' if isSelfProfile or achievementWallIsSelf else 'TA' }}的成就之旅。</p></div>
   {% endif %}
 </section>
 {% endif %}

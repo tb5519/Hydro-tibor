@@ -567,6 +567,8 @@
   border-radius: 13px
   padding: 18px 15px 14px
   background: linear-gradient(160deg, var(--achievement-paper), var(--achievement-soft))
+  opacity: 1
+  transition: opacity .42s ease
   &__header
     display: flex
     align-items: center
@@ -598,12 +600,8 @@
     grid-template-columns: repeat(4, minmax(0, 1fr))
     align-content: start
     gap: 8px
-    max-height: 352px
-    overflow-y: auto
     padding: 4px
     margin: 0 -4px
-    scrollbar-width: thin
-    scrollbar-color: #cdd6e3 transparent
   &__item
     position: relative
     display: flex
@@ -700,6 +698,25 @@
     color: #ddc794
     font-size: 10px
     letter-spacing: 1px
+
+// Keep the final grid geometry while thumbnails load, then reveal it together.
+.hasjs [data-achievement-wall-loading]
+  opacity: 0
+  visibility: hidden
+  pointer-events: none
+
+.homepage-personal .achievement-wall
+  margin: 18px 0 0
+  padding: 20px 0 0
+  border: 0
+  border-top: 1px solid var(--achievement-line)
+  border-radius: 0
+  background: none
+  &__grid
+    grid-template-columns: repeat(auto-fill, minmax(54px, 1fr))
+    gap: 8px
+  &__header h2
+    font-size: 17px
 
 .badge-manage__achievements
   display: flex
@@ -833,7 +850,6 @@
     padding: 20px 17px 16px
   .achievement-wall__grid
     grid-template-columns: repeat(5, minmax(0, 1fr))
-    max-height: 344px
     gap: 9px
   .achievement-wall__fallback-name
     font-size: 9px
@@ -845,7 +861,7 @@
     grid-template-columns: repeat(4, minmax(0, 1fr))
 
 @media (prefers-reduced-motion: reduce)
-  .achievement-wall__item, .achievement-manage__card
+  .achievement-wall, .achievement-wall__item, .achievement-manage__card
     transition: none
   .achievement-wall__item:hover, .achievement-wall__item.is-active
     transform: none

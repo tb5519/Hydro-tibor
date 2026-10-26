@@ -70,6 +70,7 @@ try {
                 },
                 syncUserAchievements: async (ctx, domain, uid, options) => {
                     calls.push(['sync', domain._id, uid, options]);
+                    if (fixtures.wallReadError) throw new Error('achievement database unavailable');
                     return fixtures.rows || [];
                 },
                 getPendingAchievements: async (ctx, domain, uid, limit) => {
@@ -80,7 +81,10 @@ try {
             };
             if (request === '../lib/achievement_image') return {
                 ACHIEVEMENT_IMAGE_LIMIT: 8 * 1024 * 1024, achievementDefinition: definition,
-                presentAchievements: async (ctx, domain, entries) => entries.map((item) => ({ ...item, imageUrl: `/d/${domain._id}/${item.id}.png` })),
+                presentAchievements: async (ctx, domain, entries) => {
+                    if (fixtures.artworkReadError) throw new Error('artwork database unavailable');
+                    return entries.map((item) => ({ ...item, imageUrl: `/d/${domain._id}/${item.id}.png` }));
+                },
                 getAchievementArtwork: async (ctx, domain, id) => { definition(id); calls.push(['art', domain._id, id]); return fixtures.artwork; },
                 setAchievementImage: async (ctx, domain, id, file, owner) => calls.push(['upload', domain._id, id, file, owner]),
                 removeAchievementImage: async (ctx, domain, id, owner) => { definition(id); calls.push(['remove', domain._id, id, owner]); },
@@ -300,7 +304,63 @@ describe('achievement pending and acknowledgement handlers', () => {
     });
 });
 
-describe('profile and live-record integration', () => {
+describe('homepage, profile and live-record integration', () => {
+    it('populates the homepage with only the session owner’s unlocked achievements in the current domain', async () => {
+        fixtures.rows = [{ ...definition('difficulty-1'), unlocked: true }, { ...definition('difficulty-2'), unlocked: false }];
+        const handler = new Handler({ domain: modern, args: { uid: 99 }, request: { query: { uid: 99 } } });
+        handler.response.template = 'main.html'; handler.response.body.udoc = { _id: 99 };
+        await handlers.injectAchievementContext(handler);
+        assert.deepEqual(calls, [['sync', 'class', 11, undefined]]);
+        assert.deepEqual(handler.response.body.achievementWall, {
+            items: [{ ...fixtures.rows[0], imageUrl: '/d/class/difficulty-1.png' }], total: 50, unlocked: 1,
+        });
+        assert.equal(handler.UiContext.achievementAutoShow, true);
+        assert.equal(handler.UiContext.achievementScope, 'domain:class/11');
+        assert.equal(handler.response.headers['Cache-Control'], 'private, no-store');
+        assert.equal(handler.response.headers.Vary, 'Accept, Cookie, Authorization');
+    });
+
+    it('shows an empty homepage wall for a new user and no personal wall for anonymous or profile-disabled visitors', async () => {
+        const signedIn = new Handler(); signedIn.response.template = 'main.html';
+        await handlers.injectAchievementContext(signedIn);
+        assert.deepEqual(signedIn.response.body.achievementWall, { items: [], total: 50, unlocked: 0 });
+        calls = [];
+        for (const options of [{ uid: 1 }, { uid: 0 }, { profile: false }]) {
+            const handler = new Handler(options); handler.response.template = 'main.html';
+            handler.response.body.udoc = { _id: 99 };
+            await handlers.injectAchievementContext(handler);
+            assert.equal(handler.response.body.achievementWall, undefined);
+            assert.deepEqual(handler.UiContext, {});
+        }
+        assert.deepEqual(calls, []);
+    });
+
+    it('keeps the impersonated student’s homepage wall private without showing or acknowledging celebrations', async () => {
+        fixtures.rows = [{ ...definition('difficulty-2'), unlocked: true }];
+        const handler = new Handler({ session: { sudoUid: 2 } }); handler.response.template = 'main.html';
+        await handlers.injectAchievementContext(handler);
+        assert.deepEqual(calls, [['sync', 'system', 11, undefined]]);
+        assert.equal(handler.response.body.achievementWall.items[0].id, 'difficulty-2');
+        assert.deepEqual(handler.UiContext, {});
+        assert.equal(handler.response.headers['Cache-Control'], 'private, no-store');
+        assert.equal(handler.response.headers.Vary, 'Accept, Cookie, Authorization');
+    });
+
+    it('keeps homepage and profile pages available when achievement or artwork storage cannot be read', async () => {
+        for (const template of ['main.html', 'user_detail.html']) {
+            for (const failure of ['wallReadError', 'artworkReadError']) {
+                fixtures = { [failure]: true };
+                const handler = new Handler(); handler.response.template = template;
+                if (template === 'user_detail.html') handler.response.body.udoc = { _id: 11 };
+                await handlers.injectAchievementContext(handler);
+                assert.equal(handler.response.body.achievementWall, undefined);
+                assert.equal(handler.response.status, 200);
+                assert.equal(handler.response.headers['Cache-Control'], 'private, no-store');
+                assert.equal(handler.UiContext.achievementAutoShow, true);
+            }
+        }
+    });
+
     it('populates another student’s wall without suppressing their new awards or showing the viewer a celebration', async () => {
         fixtures.rows = [{ ...definition('difficulty-1'), unlocked: true }, { ...definition('difficulty-2'), unlocked: false }];
         const handler = new Handler();
@@ -311,6 +371,8 @@ describe('profile and live-record integration', () => {
         assert.equal(handler.response.body.achievementWall.items.length, 1);
         assert.equal(handler.UiContext.achievementAutoShow, undefined);
         assert.equal(calls.some((call) => call[0] === 'ack'), false);
+        assert.equal(handler.response.headers['Cache-Control'], 'private, no-store');
+        assert.equal(handler.response.headers.Vary, 'Accept, Cookie, Authorization');
     });
 
     it('enables pending playback on the owner’s profile with the user and domain scope', async () => {
@@ -369,15 +431,18 @@ describe('profile and live-record integration', () => {
     });
 
     it('does not inject into JSON, errors, redirects, scratch or websocket responses', async () => {
-        for (const options of [{ request: { json: true } }, { request: { websocket: true } }, { domain: { ...legacy, domainType: 'scratch' } }, {}]) {
-            const handler = new Handler(options);
-            handler.response.template = 'user_detail.html'; handler.response.body.udoc = { _id: 11 };
-            if (!Object.keys(options).length) handler.response.status = 500;
-            await handlers.injectAchievementContext(handler);
-            assert.deepEqual(handler.UiContext, {});
+        for (const template of ['main.html', 'user_detail.html']) {
+            for (const options of [{ request: { json: true } }, { request: { websocket: true } }, { domain: { ...legacy, domainType: 'scratch' } }, {}]) {
+                const handler = new Handler(options);
+                handler.response.template = template; handler.response.body.udoc = { _id: 11 };
+                if (!Object.keys(options).length) handler.response.status = 500;
+                await handlers.injectAchievementContext(handler);
+                assert.deepEqual(handler.UiContext, {});
+                assert.equal(handler.response.body.achievementWall, undefined);
+            }
+            const redirect = new Handler(); redirect.response.template = template; redirect.response.redirect = '/login';
+            await handlers.injectAchievementContext(redirect);
         }
-        const redirect = new Handler(); redirect.response.template = 'user_detail.html'; redirect.response.redirect = '/login';
-        await handlers.injectAchievementContext(redirect);
         assert.deepEqual(calls, []);
     });
 

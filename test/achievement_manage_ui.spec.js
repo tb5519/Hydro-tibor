@@ -12,6 +12,9 @@ const templates = path.join(root, 'packages/ui-default/templates');
 const source = ts.transpileModule(fs.readFileSync(path.join(root, 'packages/ui-default/pages/achievement_manage.page.ts'), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
 }).outputText;
+const wallSource = ts.transpileModule(fs.readFileSync(path.join(root, 'packages/ui-default/components/achievement_wall.ts'), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+}).outputText;
 class LayoutLoader extends nunjucks.Loader {
     getSource(name) {
         if (name === 'manage_base.html') return { src: '{% block manage_content %}{% endblock %}', path: name };
@@ -54,13 +57,21 @@ function fixture({ wall = false, overrides = {}, onReload } = {}) {
     dom.window.confirm = () => true;
     dom.window.HTMLDialogElement.prototype.showModal = function showModal() { this.open = true; };
     dom.window.HTMLDialogElement.prototype.close = function close() { this.open = false; this.dispatchEvent(new dom.window.Event('close')); };
+    const wallExports = {};
+    new dom.window.Function('exports', wallSource)(wallExports);
+    const jquery = require('jquery')(dom.window);
     dom.window.exports = {};
-    dom.window.require = () => ({ NamedPage: class { constructor(names, callback) { this.names = names; this.callback = callback; } } });
+    dom.window.require = (name) => {
+        if (name === 'jquery') return { default: jquery };
+        if (name === 'vj/components/achievement_wall') return wallExports;
+        if (name === 'vj/misc/Page') return { NamedPage: class { constructor(names, callback) { this.names = names; this.callback = callback; } } };
+        throw new Error(`Unexpected module: ${name}`);
+    };
     dom.window.eval(source);
     if (onReload) dom.window.exports.bindAchievementManage(onReload);
     else dom.window.exports.default.callback();
     return {
-        dom, document: dom.window.document, requests, audio, exports: dom.window.exports,
+        dom, document: dom.window.document, requests, audio, exports: dom.window.exports, jquery,
         rejectAudio: () => { rejectAudio = true; },
         setResponse: (fn) => { respond = fn; },
         flush: () => new Promise((resolve) => setImmediate(resolve)),
@@ -206,6 +217,26 @@ describe('achievement management and profile wall', () => {
         assert.equal(h.document.querySelector('img'), null);
         assert.equal(h.document.querySelector('.achievement-wall__fallback-name').textContent, '十题斩');
         assert.doesNotMatch(h.document.documentElement.innerHTML, /https:\/\/images\.test\/full\.png/);
+    });
+
+    it('binds homepage walls and restores bindings after content replacement without duplicate tooltips', (t) => {
+        const h = fixture({ wall: true }); t.after(h.close);
+        assert.ok(h.exports.default.names.includes('homepage'));
+        const wall = h.document.querySelector('[data-achievement-wall]');
+        const tile = wall.querySelector('[data-achievement-tile]');
+        const tooltip = wall.querySelector('[data-achievement-tooltip]');
+        tile.click();
+        assert.equal(tooltip.hidden, false);
+        h.jquery(wall).trigger('vjContentRemove');
+        assert.equal(tooltip.hidden, true);
+        assert.equal(wall.dataset.bound, undefined);
+        tile.click();
+        assert.equal(tooltip.hidden, true);
+        h.jquery(wall).trigger('vjContentNew');
+        h.jquery(wall).trigger('vjContentNew');
+        tile.click();
+        assert.equal(tooltip.hidden, false);
+        assert.equal(wall.dataset.bound, 'true');
     });
 
     it('compiles responsive styles with dark-theme, reduced-motion and aspect-preserving artwork rules', () => {

@@ -206,9 +206,12 @@ export async function injectAchievementContext(handler: Handler) {
     if (!handler.response.template || handler.request.json || handler.response.redirect || handler.response.status >= 400
         || handler.request.websocket || isScratchDomain(handler.domain)) return;
     const template = handler.response.template;
-    if (template === 'user_detail.html' && handler.response.body.udoc) {
+    const homeWall = template === 'main.html' && handler.user._id > 1 && handler.user.hasPriv(PRIV.PRIV_USER_PROFILE);
+    const wallUid = homeWall ? handler.user._id : template === 'user_detail.html' ? handler.response.body.udoc?._id : undefined;
+    if (wallUid !== undefined) {
+        privateResponse(handler);
         try {
-            const progress = await syncUserAchievements(handler.ctx, handler.domain, handler.response.body.udoc._id);
+            const progress = await syncUserAchievements(handler.ctx, handler.domain, wallUid);
             const earned = progress.filter((entry) => entry.unlocked);
             handler.response.body.achievementWall = {
                 items: await presentAchievements(handler.ctx, handler.domain, earned),

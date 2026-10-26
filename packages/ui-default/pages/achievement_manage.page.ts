@@ -1,3 +1,5 @@
+import $ from 'jquery';
+import { prepareAchievementWall } from 'vj/components/achievement_wall';
 import { NamedPage } from 'vj/misc/Page';
 
 function imageUrl(value: unknown) {
@@ -303,18 +305,35 @@ export function bindAchievementManage(reload = () => window.location.reload()) {
   filter();
 }
 
-export function bindAchievementWall() {
-  const root = document.querySelector<HTMLElement>('[data-achievement-wall]');
-  const tooltip = root?.querySelector<HTMLElement>('[data-achievement-tooltip]');
-  if (!root || !tooltip || root.dataset.bound === 'true') return;
+const wallDisposers = new WeakMap<HTMLElement, () => void>();
+
+function wallsIn(scope: Document | HTMLElement) {
+  const walls = Array.from(scope.querySelectorAll<HTMLElement>('[data-achievement-wall]'));
+  if ((scope as HTMLElement).matches?.('[data-achievement-wall]')) walls.unshift(scope as HTMLElement);
+  return walls;
+}
+
+function bindWall(root: HTMLElement) {
+  if (wallDisposers.has(root)) return;
   root.dataset.bound = 'true';
+  const disposeLoading = prepareAchievementWall(root);
+  const controller = new AbortController();
+  const options = { signal: controller.signal };
+  const tooltip = root.querySelector<HTMLElement>('[data-achievement-tooltip]');
   const tiles = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-achievement-tile]'));
   let active: HTMLButtonElement | null = null;
   let hideTimer: number | undefined;
   const hide = () => {
-    clearTimeout(hideTimer); tooltip.hidden = true;
+    clearTimeout(hideTimer); if (tooltip) tooltip.hidden = true;
     active?.removeAttribute('aria-describedby'); active?.classList.remove('is-active'); active = null;
   };
+  const dispose = () => {
+    hide(); controller.abort(); disposeLoading();
+    wallDisposers.delete(root); delete root.dataset.bound;
+  };
+  wallDisposers.set(root, dispose);
+  window.addEventListener('pagehide', (event) => { hide(); if (!event.persisted) dispose(); }, options);
+  if (!tooltip) return;
   const position = () => {
     if (!active) return;
     const rect = active.getBoundingClientRect();
@@ -340,42 +359,33 @@ export function bindAchievementWall() {
   const deferHide = () => { clearTimeout(hideTimer); hideTimer = window.setTimeout(hide, 120); };
   tiles.forEach((tile) => {
     tile.removeAttribute('title'); tile.removeAttribute('aria-describedby');
-    tile.addEventListener('pointerenter', (event) => { if (event.pointerType !== 'touch') show(tile); });
-    tile.addEventListener('pointerleave', deferHide);
-    tile.addEventListener('focus', () => show(tile));
-    tile.addEventListener('blur', deferHide);
-    tile.addEventListener('click', () => show(tile));
-    const img = tile.querySelector('img');
-    const imageFailed = () => {
-      if (!img) return;
-      img.hidden = true;
-      if (tile.querySelector('.achievement-wall__placeholder')) return;
-      tile.classList.add('achievement-wall__item--placeholder');
-      const star = document.createElement('span');
-      star.className = 'achievement-wall__placeholder'; star.textContent = '✦'; star.setAttribute('aria-hidden', 'true');
-      const name = document.createElement('span');
-      name.className = 'achievement-wall__fallback-name'; name.textContent = tile.dataset.name || ''; name.setAttribute('aria-hidden', 'true');
-      tile.append(star, name);
-    };
-    img?.addEventListener('error', imageFailed);
-    if (img?.complete && !img.naturalWidth) imageFailed();
+    tile.addEventListener('pointerenter', (event) => { if (event.pointerType !== 'touch') show(tile); }, options);
+    tile.addEventListener('pointerleave', deferHide, options);
+    tile.addEventListener('focus', () => show(tile), options);
+    tile.addEventListener('blur', deferHide, options);
+    tile.addEventListener('click', () => show(tile), options);
   });
-  tooltip.addEventListener('pointerenter', () => clearTimeout(hideTimer));
-  tooltip.addEventListener('pointerleave', deferHide);
+  tooltip.addEventListener('pointerenter', () => clearTimeout(hideTimer), options);
+  tooltip.addEventListener('pointerleave', deferHide, options);
   const outside = (event: PointerEvent) => { if (!root.contains(event.target as Node)) hide(); };
   const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') hide(); };
-  document.addEventListener('pointerdown', outside);
-  document.addEventListener('keydown', escape);
-  window.addEventListener('resize', position);
-  window.addEventListener('scroll', position, true);
-  const dispose = () => {
-    hide(); document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape);
-    window.removeEventListener('resize', position); window.removeEventListener('scroll', position, true);
-  };
-  window.addEventListener('pagehide', dispose, { once: true });
-  document.addEventListener('vjContentRemove', (event) => { if ((event.target as HTMLElement)?.contains(root)) dispose(); }, { once: true });
+  document.addEventListener('pointerdown', outside, options);
+  document.addEventListener('keydown', escape, options);
+  window.addEventListener('resize', position, options);
+  window.addEventListener('scroll', position, { ...options, capture: true });
 }
 
-export default new NamedPage(['achievement_manage', 'domain_achievement_manage', 'user_detail'], () => {
+export function bindAchievementWall(scope: Document | HTMLElement = document) {
+  wallsIn(scope).forEach(bindWall);
+}
+
+export function disposeAchievementWall(scope: Document | HTMLElement = document) {
+  wallsIn(scope).forEach((root) => wallDisposers.get(root)?.());
+}
+
+export default new NamedPage(['achievement_manage', 'domain_achievement_manage', 'user_detail', 'homepage'], () => {
   bindAchievementManage(); bindAchievementWall();
+  $(document).off('.achievementWall')
+    .on('vjContentNew.achievementWall', (event) => bindAchievementWall(event.target as HTMLElement))
+    .on('vjContentRemove.achievementWall', (event) => disposeAchievementWall(event.target as HTMLElement));
 });
