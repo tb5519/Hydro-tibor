@@ -3,7 +3,7 @@ import type { Context } from '../context';
 import { NotFoundError, PermissionError, ValidationError } from '../error';
 import {
     acknowledgeAchievements, applyAchievementHooks, getAchievementRecord, getAchievementScope,
-    getPendingAchievements, isAchievementRecordReady, syncUserAchievements,
+    getPendingAchievements, isAchievementContestSubmission, isAchievementRecordReady, syncUserAchievements,
 } from '../lib/achievement';
 import { ACHIEVEMENT_CATALOG } from '../lib/achievement_catalog';
 import {
@@ -128,16 +128,16 @@ export class AchievementImageHandler extends Handler {
         if (!imagePath) throw new NotFoundError('成就图片尚未上传。');
         privateResponse(this);
         const version = this.request.query.v;
-        const versionedThumbnail = size === 384 && typeof version === 'string' && !!version && version === artwork.version;
+        const versionedImage = typeof version === 'string' && !!version && version === artwork.version;
         // Never put replacement artwork in the cache under an old version's URL.
-        if (size === 384 && version && !versionedThumbnail) throw new NotFoundError('成就图片版本已更新。');
+        if (version && !versionedImage) throw new NotFoundError('成就图片版本已更新。');
         const meta = await storage.getMeta(imagePath);
         if (!meta) throw new NotFoundError('成就图片暂不可用。');
-        if (versionedThumbnail) {
-            // Keep the versioned thumbnail URL stable: caching a redirect would
+        if (versionedImage) {
+            // Keep the versioned image URL stable: caching a redirect would
             // eventually point to an expired CDN/OSS signature. storage.get streams
-            // the stored thumbnail from OSS without downloading the original.
-            const etag = `"${version}-384"`;
+            // only the requested object, so thumbnails never download the original.
+            const etag = `"${version}-${size === 384 ? '384' : 'original'}"`;
             const condition = this.request.headers?.['if-none-match'];
             const notModified = typeof condition === 'string' && condition.split(',').some((value) => {
                 const tag = value.trim().replace(/^W\//, '');
@@ -186,6 +186,51 @@ function canCelebrate(handler: Handler) {
     return handler.user._id > 1 && handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) && !handler.session?.sudoUid;
 }
 
+type AchievementProgress = Awaited<ReturnType<typeof syncUserAchievements>>;
+
+/** Prewarming is a read-only prediction; only the ordinary AC pipeline grants achievements. */
+async function nextAchievementImages(handler: Handler, progress: AchievementProgress, artwork: any[]) {
+    const close = progress.filter((item) => !item.unlocked && Number.isFinite(item.progress) && item.target - item.progress === 1);
+    if (!close.length) return [];
+    let candidates: AchievementProgress;
+    if (handler.response.template === 'main.html') {
+        // Do not fetch all ten first-difficulty originals for a new account.
+        candidates = close.filter((item) => item.progress > 0 && ['solved', 'mastery'].includes(item.category));
+    } else {
+        const { pdoc, tdoc, mode } = handler.response.body;
+        if (!pdoc || pdoc.objectiveKind || !Number.isInteger(pdoc.docId) || pdoc.docId <= 0
+            || ['review', 'view', 'none'].includes(mode)) return [];
+        const scope = getAchievementScope(handler.domain);
+        const uid = handler.user._id;
+        const domainId = pdoc.domainId || handler.domain._id;
+        // Cross-domain linked questions cannot change this independent domain's progress.
+        if (scope !== 'legacy' && domainId !== handler.domain._id) return [];
+        const now = new Date();
+        const solved = handler.ctx.db.collection('achievement.solved');
+        const [alreadySolved, participant] = await Promise.all([
+            solved.findOne({ scope, uid, domainId, pid: pdoc.docId, acceptedAt: { $lte: now } }),
+            tdoc?.docId ? (handler.ctx.db.collection('document.status') as any).findOne({
+                docType: 30, domainId: tdoc.domainId || domainId, docId: tdoc.docId, uid,
+            }) : null,
+        ]);
+        if (tdoc && scope !== 'legacy' && participant?.entryDomainId && participant.entryDomainId !== handler.domain._id) return [];
+        candidates = alreadySolved ? [] : close.filter((item) => item.category === 'solved'
+            || (['difficulty', 'mastery'].includes(item.category) && item.difficulty === pdoc.difficulty));
+        if (tdoc && (tdoc.domainId || domainId) === domainId
+            && isAchievementContestSubmission(tdoc, participant, { pid: pdoc.docId, submittedAt: now })) {
+            const contestSolves = await solved.find({ scope, uid, domainId, contestId: String(tdoc.docId), acceptedAt: { $lte: now } }).toArray();
+            const accepted = new Set(contestSolves.filter((entry) => isAchievementContestSubmission(tdoc, participant, entry))
+                .map((entry) => entry.pid));
+            if (!accepted.has(pdoc.docId)) {
+                candidates.push(...close.filter((item) => item.category === 'contest_ac'
+                    || (item.category === 'contest_ak' && tdoc.pids.every((pid) => pid === pdoc.docId || accepted.has(pid)))));
+            }
+        }
+    }
+    const byId = new Map(artwork.map((item) => [item.id, item.imageUrl]));
+    return [...new Set(candidates.map((item) => byId.get(item.id)).filter((url): url is string => !!url))].slice(0, 6);
+}
+
 export class AchievementPendingHandler extends Handler {
     async get() {
         this.checkPriv(PRIV.PRIV_USER_PROFILE);
@@ -232,12 +277,15 @@ export async function injectAchievementContext(handler: Handler) {
     if (!handler.response.template || handler.request.json || handler.response.redirect || handler.response.status >= 400
         || handler.request.websocket || isScratchDomain(handler.domain)) return;
     const template = handler.response.template;
+    let ownProgress: AchievementProgress;
+    let preloadArtwork: any[] = [];
     const homeWall = template === 'main.html' && handler.user._id > 1 && handler.user.hasPriv(PRIV.PRIV_USER_PROFILE);
     const wallUid = homeWall ? handler.user._id : template === 'user_detail.html' ? handler.response.body.udoc?._id : undefined;
     if (wallUid !== undefined) {
         privateResponse(handler);
         try {
             const progress = await syncUserAchievements(handler.ctx, handler.domain, wallUid);
+            if (wallUid === handler.user._id) ownProgress = progress;
             const earned = progress.filter((entry) => entry.unlocked);
             handler.response.body.achievementWall = {
                 items: await presentAchievements(handler.ctx, handler.domain, earned),
@@ -247,6 +295,18 @@ export async function injectAchievementContext(handler: Handler) {
             logger.warn('Unable to load achievement wall: %o', error);
         }
     }
+    if (handler.user._id > 1 && handler.user.hasPriv(PRIV.PRIV_USER_PROFILE)
+        && ['main.html', 'user_detail.html', 'problem_detail.html', 'record_detail.html'].includes(template)) {
+        privateResponse(handler);
+        try {
+            preloadArtwork = await presentAchievements(handler.ctx, handler.domain, ACHIEVEMENT_CATALOG);
+            // Artwork belongs to the domain/scope, never to the profile being viewed.
+            handler.UiContext.achievementThumbnailPreload = [...new Set(preloadArtwork.map((item) => item.thumbnailUrl).filter(Boolean))];
+        } catch (error) {
+            handler.UiContext.achievementThumbnailPreload = [];
+            logger.warn('Unable to preload achievement thumbnails: %o', error);
+        }
+    }
     if (!canCelebrate(handler)) return;
     const selfProfile = template === 'user_detail.html' && handler.response.body.udoc?._id === handler.user._id;
     if (!selfProfile && !['problem_detail.html', 'record_detail.html', 'main.html', 'daily_quiz.html'].includes(template)) return;
@@ -254,6 +314,15 @@ export async function injectAchievementContext(handler: Handler) {
     handler.UiContext.achievementAckUrl = handler.url('achievement_ack');
     handler.UiContext.achievementScope = `${getAchievementScope(handler.domain)}/${handler.user._id}`;
     handler.UiContext.achievementAutoShow = selfProfile || template === 'main.html';
+    if (['main.html', 'problem_detail.html'].includes(template)) {
+        try {
+            ownProgress ??= await syncUserAchievements(handler.ctx, handler.domain, handler.user._id);
+            handler.UiContext.achievementImagePreload = await nextAchievementImages(handler, ownProgress, preloadArtwork);
+        } catch (error) {
+            handler.UiContext.achievementImagePreload = [];
+            logger.warn('Unable to predict achievement images: %o', error);
+        }
+    }
     try {
         handler.UiContext.achievementSound = await presentAchievementSound(handler.ctx, handler.domain);
     } catch (error) {

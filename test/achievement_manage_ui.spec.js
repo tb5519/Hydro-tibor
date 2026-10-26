@@ -33,9 +33,10 @@ const context = {
     url: (route) => `/${route}`, maxImageSize: 8388608,
     achievementSound: { soundUrl: '', filename: '', volume: 70, enabled: true }, maxSoundSize: 8388608,
 };
-function fixture({ wall = false, overrides = {}, onReload } = {}) {
+function fixture({ wall = false, readyWall = true, overrides = {}, onReload } = {}) {
+    const wallItems = items.map((item, index) => ({ ...item, thumbnailUrl: item.thumbnailUrl || `https://images.test/thumb-${index}.webp` }));
     const html = env.render(wall ? 'partials/achievement_wall.html' : 'achievement_manage.html', {
-        ...context, achievementWall: { items, unlocked: items.length, total: 50 }, ...overrides,
+        ...context, achievementWall: { items: wallItems, unlocked: items.length, total: 50 }, ...overrides,
     });
     const dom = new JSDOM(html, { url: 'https://school.test/achievement_manage', runScripts: 'outside-only', pretendToBeVisual: true });
     const requests = [];
@@ -57,6 +58,9 @@ function fixture({ wall = false, overrides = {}, onReload } = {}) {
     dom.window.confirm = () => true;
     dom.window.HTMLDialogElement.prototype.showModal = function showModal() { this.open = true; };
     dom.window.HTMLDialogElement.prototype.close = function close() { this.open = false; this.dispatchEvent(new dom.window.Event('close')); };
+    if (wall && readyWall) dom.window.document.querySelectorAll('[data-achievement-tile] img').forEach((image) => {
+        Object.defineProperties(image, { complete: { value: true }, naturalWidth: { value: 384 } });
+    });
     const wallExports = {};
     new dom.window.Function('exports', wallSource)(wallExports);
     const jquery = require('jquery')(dom.window);
@@ -195,16 +199,21 @@ describe('achievement management and profile wall', () => {
         tile.click();
         assert.equal(tooltip.hidden, false);
         assert.match(tooltip.textContent, /首次AC难度1/);
-        assert.equal(h.document.querySelector('img').src, items[1].thumbnailUrl);
+        assert.equal(h.document.querySelectorAll('img')[1].src, items[1].thumbnailUrl);
         assert.equal(h.document.querySelectorAll('[data-achievement-tile]').length, 3);
+        assert.equal(h.document.querySelector('[data-achievement-count]').textContent, '3');
+        assert.equal(h.document.querySelector('[data-achievement-pending]'), null);
     });
 
-    it('keeps earned titles visible if thumbnail loading fails and shows a friendly empty wall', (t) => {
-        const h = fixture({ wall: true }); t.after(h.close);
+    it('keeps failed thumbnails hidden without stars while preserving the heading and a friendly empty wall', (t) => {
+        const h = fixture({ wall: true, readyWall: false }); t.after(h.close);
         const image = h.document.querySelector('img');
         image.dispatchEvent(new h.dom.window.Event('error'));
-        assert.equal(image.hidden, true);
-        assert.equal(image.parentElement.querySelector('.achievement-wall__fallback-name').textContent, '十题斩');
+        assert.ok(image.parentElement.hasAttribute('data-achievement-pending'));
+        assert.equal(h.document.querySelector('[data-achievement-count]').textContent, '0');
+        assert.equal(h.document.querySelector('[data-achievement-wall] header').hidden, false);
+        assert.equal(h.document.querySelector('.achievement-wall__placeholder'), null);
+        assert.equal(h.document.querySelector('.achievement-wall__fallback-name'), null);
         const empty = fixture({ wall: true, overrides: { achievementWall: { items: [], unlocked: 0, total: 50 }, isSelfProfile: true } });
         t.after(empty.close);
         assert.equal(empty.document.querySelectorAll('[data-achievement-tile]').length, 0);
@@ -215,7 +224,10 @@ describe('achievement management and profile wall', () => {
         const h = fixture({ wall: true, overrides: { achievementWall: { items: [{ ...items[1], thumbnailUrl: '' }], unlocked: 1, total: 50 } } });
         t.after(h.close);
         assert.equal(h.document.querySelector('img'), null);
-        assert.equal(h.document.querySelector('.achievement-wall__fallback-name').textContent, '十题斩');
+        assert.equal(h.document.querySelector('.achievement-wall__fallback-name'), null);
+        assert.equal(h.document.querySelector('.achievement-wall__placeholder'), null);
+        assert.equal(h.document.querySelector('[data-achievement-count]').textContent, '0');
+        assert.ok(h.document.querySelector('[data-achievement-tile]').hasAttribute('data-achievement-pending'));
         assert.doesNotMatch(h.document.documentElement.innerHTML, /https:\/\/images\.test\/full\.png/);
     });
 

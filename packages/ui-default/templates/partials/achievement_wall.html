@@ -5,8 +5,8 @@
     <p class="achievement-wall__intro">每一次突破，都在这里闪耀</p>
     <div class="achievement-wall__grid" data-achievement-grid-empty>
     {% for item in achievementWall.items %}
-      <button type="button" class="achievement-wall__item{% if not item.thumbnailUrl %} achievement-wall__item--placeholder{% endif %}" data-achievement-tile data-achievement-pending data-name="{{ item.name }}" data-description="{{ item.description }}" data-unlocked-at="{{ item.unlockedAtText or '' }}" aria-label="{{ item.name }}，{{ item.description }}，已解锁" title="{{ item.name }} · {{ item.description }}" aria-describedby="achievement-wall-tooltip">
-        {% if item.thumbnailUrl %}<img src="{{ item.thumbnailUrl }}" alt="" width="72" height="72" loading="eager" decoding="async">{% else %}<span class="achievement-wall__placeholder" aria-hidden="true">✦</span><span class="achievement-wall__fallback-name" aria-hidden="true">{{ item.name }}</span>{% endif %}
+      <button type="button" class="achievement-wall__item" data-achievement-tile data-achievement-pending{% if not item.thumbnailUrl %} hidden{% endif %} data-name="{{ item.name }}" data-description="{{ item.description }}" data-unlocked-at="{{ item.unlockedAtText or '' }}" aria-label="{{ item.name }}，{{ item.description }}，已解锁" title="{{ item.name }} · {{ item.description }}" aria-describedby="achievement-wall-tooltip">
+        {% if item.thumbnailUrl %}<img src="{{ item.thumbnailUrl }}" alt="" width="72" height="72" loading="eager" decoding="async" fetchpriority="high">{% endif %}
       </button>
     {% endfor %}
     </div>

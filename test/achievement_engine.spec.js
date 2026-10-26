@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const Module = require('node:module');
 const { before, beforeEach, after, describe, it } = require('node:test');
 const { MongoClient, ObjectId } = require('mongodb');
@@ -54,7 +55,10 @@ async function acceptance(uid, pid, difficulty, options = {}) {
     const domainId = options.domainId || 'system';
     const at = options.at || '2026-10-25T02:00:00Z';
     await database.collection('document').updateOne({ domainId, docType: 10, docId: pid }, {
-        $set: { difficulty, ...(options.objectiveKind ? { objectiveKind: options.objectiveKind } : {}) },
+        $set: {
+            difficulty, ...(options.objectiveKind ? { objectiveKind: options.objectiveKind } : {}),
+            ...(options.hidden !== undefined ? { hidden: options.hidden } : {}),
+        },
     }, { upsert: true });
     const record = {
         _id: rid(at), uid, pid, domainId, status: STATUS.STATUS_ACCEPTED, judgeAt: new Date(at),
@@ -232,7 +236,12 @@ describe('achievement ledger with actual MongoDB', () => {
         for (const [extra, participant, at] of [
             [{ rule: 'homework' }, {}, '2026-10-25T02:00:00Z'],
             [{}, { unrank: true }, '2026-10-25T02:00:00Z'],
+            [{}, { virtual: true }, '2026-10-25T02:00:00Z'],
+            [{}, { practice: true }, '2026-10-25T02:00:00Z'],
             [{}, { attend: 0 }, '2026-10-25T02:00:00Z'],
+            [{}, { startAt: new Date('2026-10-25T02:30:00Z') }, '2026-10-25T02:00:00Z'],
+            [{}, { endAt: new Date('2026-10-25T01:30:00Z') }, '2026-10-25T02:00:00Z'],
+            [{ pids: [2] }, {}, '2026-10-25T02:00:00Z'],
             [{}, {}, '2026-10-25T04:00:00Z'],
             [{ duration: 0.5 }, { startAt: new Date('2026-10-25T01:00:00Z') }, '2026-10-25T02:00:00Z'],
         ]) {
@@ -245,66 +254,108 @@ describe('achievement ledger with actual MongoDB', () => {
         assert.equal(rows.find((item) => item.id === 'solved-10').progress, 1);
     });
 
-    it('reveals neither solves nor earned-point thresholds from a sealed contest, then settles when published', async () => {
-        const contest = await competition(11, [1], { rule: 'oi', keepScoreboardHidden: true });
-        await acceptance(11, 1, 8, { contest: contest.docId, scorePointAward: { points: 1500 } });
+    it('awards live hidden-problem, contest and point milestones without waiting for hidden results to be published', async () => {
+        const contest = await competition(11, [1], {
+            rule: 'oi', hideScoreboard: true, keepScoreboardHidden: true,
+            lockAt: new Date('2026-10-25T01:30:00Z'), endAt: new Date('2026-10-26T00:00:00Z'),
+        });
+        const record = await acceptance(11, 1, 8, { contest: contest.docId, hidden: true, scorePointAward: { points: 1500 } });
         await database.collection('user').insertOne({
             _id: 11, lotteryTotalPoints: 1500, lotteryPoints: 1500, contestScorePointAwards: { [contest.docId.toString()]: 1500 },
         });
-        assert.deepEqual(unlocked(await sync()), []);
-        await database.collection('document').updateOne({ _id: contest._id }, { $set: { keepScoreboardHidden: false } });
-        const rows = await sync();
+        const judgedNow = new Date('2026-10-25T02:00:00Z');
+        const rows = await sync(11, legacy, { record, now: judgedNow });
         assert.deepEqual(unlocked(rows), ['difficulty-8', 'contest-ak-1', 'contest-ac-1', 'points-1000']);
+        assert.equal(rows.find((item) => item.id === 'solved-10').progress, 1);
+        const grants = await pending();
+        assert.equal(grants.length, 4);
+        assert.ok(grants.every((item) => item.unlockedAt.getTime() === judgedNow.getTime()));
+        assert.deepEqual(unlocked(await sync()), unlocked(rows));
         assert.equal((await pending()).length, 4);
     });
 
-    it('settles a completed IOI contest with hidden rankings once its records are public', async () => {
+    it('counts hidden-rank IOI ACs while the contest runs and still requires every contest problem for AK', async () => {
         const contest = await competition(11, [1, 2, 3, 4], { rule: 'ioi', hideScoreboard: true });
         for (const pid of [1, 2, 3]) await acceptance(11, pid, 2, { contest: contest.docId });
-        await database.collection('user').insertOne({
-            _id: 11, lotteryTotalPoints: 1200, contestScorePointAwards: { [contest.docId.toString()]: 1200 },
-        });
-
-        // Import the verdicts while the contest is still running. Ending it must
-        // unlock the existing ledger without another submission or a full reimport.
-        assert.deepEqual(unlocked(await sync(11, legacy, { now: new Date('2026-10-25T02:30:00Z') })), []);
-        const rows = await sync();
-        assert.deepEqual(unlocked(rows), ['difficulty-2', 'contest-ac-1', 'points-1000']);
+        const rows = await sync(11, legacy, { now: new Date('2026-10-25T02:30:00Z') });
+        assert.deepEqual(unlocked(rows), ['difficulty-2', 'contest-ac-1']);
         assert.equal(rows.find((item) => item.id === 'contest-ac-10').progress, 3);
         assert.equal(rows.find((item) => item.id === 'contest-ak-1').progress, 0);
-        assert.equal((await pending()).length, 3);
+        assert.equal((await pending()).length, 2);
         assert.deepEqual(unlocked(await sync()), unlocked(rows));
-        assert.equal((await pending()).length, 3);
+        assert.equal((await pending()).length, 2);
     });
 
-    it('keeps hidden-rank contests sealed by the result embargo or scoreboard lock', async () => {
-        const contest = await competition(11, [1], { rule: 'oi', hideScoreboard: true, keepScoreboardHidden: true });
-        await acceptance(11, 1, 8, { contest: contest.docId });
-        assert.deepEqual(unlocked(await sync()), []);
-
-        await database.collection('document').updateOne({ _id: contest._id }, {
-            $set: { keepScoreboardHidden: false, lockAt: new Date('2026-10-25T02:30:00Z') },
+    it('backfills old hidden-contest records silently while preserving live milestones and existing notifications', async () => {
+        const contest = await competition(11, [1, 2, 3], {
+            rule: 'strictioi', hideScoreboard: true, keepScoreboardHidden: true,
+            beginAt: new Date('2026-10-24T00:00:00Z'), endAt: new Date('2026-10-26T00:00:00Z'),
         });
-        assert.deepEqual(unlocked(await sync()), []);
-
-        await database.collection('document').updateOne({ _id: contest._id }, { $set: { unlocked: true } });
-        assert.deepEqual(unlocked(await sync()), ['difficulty-8', 'contest-ak-1', 'contest-ac-1']);
+        await acceptance(11, 1, 2, { contest: contest.docId, hidden: true, at: '2026-10-24T02:00:00Z', scorePointAward: { points: 1200 } });
+        await acceptance(11, 2, 3, { contest: contest.docId, hidden: true, scorePointAward: { points: 2000 } });
+        await database.collection('user').insertOne({ _id: 11, lotteryTotalPoints: 3200 });
+        const stateId = createHash('sha256').update(JSON.stringify(['user', 'legacy', 11])).digest('hex');
+        await database.collection('achievement.state').insertOne({
+            _id: stateId, scope: 'legacy', uid: 11, version: 1, importedAt: now, pointSource: 'account', baselinePoints: 0,
+        });
+        const existing = {
+            _id: createHash('sha256').update(JSON.stringify(['unlock', 'legacy', 11, 'contest-ac-1'])).digest('hex'),
+            scope: 'legacy', uid: 11, achievementId: 'contest-ac-1',
+            unlockedAt: new Date('2026-10-25T10:00:00Z'), historical: false, pending: true,
+        };
+        await database.collection('achievement.unlock').insertOne(existing);
+        const rows = await sync();
+        assert.deepEqual(unlocked(rows), ['difficulty-2', 'difficulty-3', 'contest-ac-1', 'points-1000', 'points-3000']);
+        assert.equal(rows.find((item) => item.id === 'difficulty-2').historical, true);
+        assert.equal(rows.find((item) => item.id === 'points-1000').historical, true);
+        assert.equal(rows.find((item) => item.id === 'contest-ak-1').unlocked, false);
+        assert.deepEqual((await pending()).map((item) => item.id).sort(), ['contest-ac-1', 'difficulty-3', 'points-3000']);
+        assert.deepEqual(await database.collection('achievement.unlock').findOne({ _id: existing._id }), existing);
+        assert.equal((await database.collection('achievement.state').findOne({ _id: stateId })).baselinePoints, 1200);
+        assert.equal((await database.collection('achievement.state').findOne({ _id: stateId })).version, 2);
     });
 
-    it('ignores a running contest even when it already has a visible partial scoreboard', async () => {
+    it('awards valid ACs during a running public contest, excluding judgments that have not happened yet', async () => {
         const contest = await competition(11, [1], { endAt: new Date('2026-10-26T00:00:00Z') });
         await acceptance(11, 1, 9, { contest: contest.docId });
-        assert.deepEqual(unlocked(await sync()), []);
+        assert.deepEqual(unlocked(await sync(11, legacy, { now: new Date('2026-10-25T01:30:00Z') })), []);
+        assert.deepEqual(unlocked(await sync()), ['difficulty-9', 'contest-ak-1', 'contest-ac-1']);
     });
 
-    it('does not expose cached score-point awards when a sealed contest document was deleted', async () => {
+    it('retains real solves and credited points when a contest was deleted, without inventing competition eligibility', async () => {
         const tid = new ObjectId();
         await database.collection('user').insertOne({
             _id: 11, lotteryTotalPoints: 1500, contestScorePointAwards: { [tid.toString()]: 1500 },
         });
         await acceptance(11, 1, 8, { contest: tid, scorePointAward: { points: 1500 } });
-        assert.deepEqual(unlocked(await sync()), []);
-        assert.deepEqual(await pending(), []);
+        const rows = await sync();
+        assert.deepEqual(unlocked(rows), ['difficulty-8', 'points-1000']);
+        assert.equal(rows.find((item) => item.id === 'solved-10').progress, 1);
+        assert.equal((await pending()).length, 2);
+    });
+
+    it('counts hidden library problems toward solve and difficulty milestones with duplicate submissions deduplicated', async () => {
+        for (let pid = 1; pid <= 10; pid++) await acceptance(11, pid, 4, { hidden: true });
+        await acceptance(11, 1, 4, { hidden: true });
+        const rows = await sync();
+        assert.deepEqual(unlocked(rows), ['difficulty-4', 'solved-10', 'mastery-4-10']);
+        assert.equal(rows.find((item) => item.id === 'solved-100').progress, 10);
+        assert.equal(rows.find((item) => item.id === 'contest-ac-1').progress, 0);
+    });
+
+    it('deduplicates simultaneous hidden-contest judge callbacks and preserves dismissal', async () => {
+        const contest = await competition(11, [1], {
+            rule: 'oi', hideScoreboard: true, keepScoreboardHidden: true,
+            endAt: new Date('2026-10-26T00:00:00Z'), lockAt: new Date('2026-10-25T01:30:00Z'),
+        });
+        const record = await acceptance(11, 1, 4, { contest: contest.docId, hidden: true });
+        await Promise.all(Array.from({ length: 6 }, () => engine.recordAchievementAcceptance(ctx, record)));
+        assert.equal(await database.collection('achievement.solved').countDocuments({ uid: 11 }), 1);
+        assert.equal(await database.collection('achievement.unlock').countDocuments({ uid: 11 }), 3);
+        assert.equal((await pending()).length, 3);
+        await engine.acknowledgeAchievements(ctx, legacy, 11, ['contest-ac-1']);
+        await engine.recordAchievementAcceptance(ctx, record);
+        assert.ok(!(await pending()).some((item) => item.id === 'contest-ac-1'));
     });
 
     it('uses cumulative earned points after spending and recovers a first-live contest point receipt', async () => {

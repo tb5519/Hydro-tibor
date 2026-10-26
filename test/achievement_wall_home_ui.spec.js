@@ -43,13 +43,16 @@ describe('homepage achievement wall', () => {
         assert.equal(document.querySelector('[src*="original-"]'), null);
     });
 
-    it('addresses the homepage owner directly and keeps image-less achievements available', (t) => {
+    it('addresses the homepage owner directly and never substitutes stars for missing achievement artwork', (t) => {
         const empty = render({ count: 0 }); t.after(() => empty.window.close());
         assert.match(empty.window.document.querySelector('.achievement-wall__empty').textContent, /属于你的成就之旅/);
         const noArtwork = render({ artwork: false }); t.after(() => noArtwork.window.close());
         const wall = noArtwork.window.document.querySelector('[data-achievement-wall]');
         assert.equal(wall.querySelectorAll('img').length, 0);
-        assert.equal(wall.querySelectorAll('.achievement-wall__fallback-name').length, 3);
+        assert.equal(wall.querySelector('.achievement-wall__fallback-name'), null);
+        assert.equal(wall.querySelector('.achievement-wall__placeholder'), null);
+        assert.equal(wall.querySelectorAll('[data-achievement-pending]').length, 3);
+        assert.equal(wall.querySelector('[data-achievement-count]').textContent, '0');
     });
 
     it('does not show a personal wall when there is no signed-in personal card', (t) => {

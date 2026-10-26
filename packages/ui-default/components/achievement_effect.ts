@@ -191,6 +191,7 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
       cancellations.add(cancel);
       image.alt = '';
       image.decoding = 'async';
+      image.fetchPriority = 'high';
       image.onload = () => {
         if (!usable()) { finish(false); return; }
         try {

@@ -4,6 +4,7 @@ import $ from 'jquery';
 import { startImageWarmup } from './utils/image-warmup';
 import { startBackgroundVideoWarmup } from './utils/background-video-warmup';
 import { installAchievementWallReadiness } from './components/achievement_wall';
+import { startAchievementAssetWarmup } from './components/achievement_assets';
 
 installAchievementWallReadiness();
 
@@ -32,6 +33,8 @@ console.log(
 
 window.UiContext = JSON.parse(window.UiContext);
 window.UserContext = JSON.parse(window.UserContext);
+startAchievementAssetWarmup(window.UiContext);
+$(document).on('vjContentNew.achievementAssets', () => startAchievementAssetWarmup(window.UiContext));
 startImageWarmup(window.UiContext.imageWarmup);
 startBackgroundVideoWarmup(window.UiContext.backgroundVideoWarmup);
 try {
@@ -78,6 +81,7 @@ if (process.env.NODE_ENV === 'production' && UiContext.sentry_dsn) {
 document.addEventListener('DOMContentLoaded', async () => {
   Object.assign(window.UiContext, JSON.parse(window.UiContextNew));
   Object.assign(window.UserContext, JSON.parse(window.UserContextNew));
+  startAchievementAssetWarmup(window.UiContext);
   window.HydroExports = await import('./api');
   await window._hydroLoad();
   await window.HydroExports.initPageLoader();

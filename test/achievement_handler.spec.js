@@ -19,6 +19,15 @@ const definition = (id) => {
     if (!value) throw new ValidationError('id');
     return value;
 };
+const progress = (id, value, unlocked = false) => ({ ...definition(id), progress: value, unlocked });
+const art = (id, domain = 'system', version = 'v1') => ({
+    imageUrl: `/d/${domain}/achievement/${id}/image?v=${version}`,
+    thumbnailUrl: `/d/${domain}/achievement/${id}/image?size=384&v=${version}`,
+});
+const matches = (document, query) => Object.entries(query).every(([key, value]) => {
+    if (value && typeof value === 'object' && '$lte' in value) return document[key] <= value.$lte;
+    return String(document[key]) === String(value);
+});
 class Handler {
     constructor(options = {}) {
         this.domain = options.domain || legacy;
@@ -40,7 +49,16 @@ class Handler {
         this.args = options.args || {};
         this.session = options.session || {};
         this.UiContext = {};
-        this.ctx = {};
+        this.ctx = { db: { collection: (name) => ({
+            findOne: async (query) => {
+                calls.push(['dbFindOne', name, query]);
+                return (fixtures.collections?.[name] || []).find((document) => matches(document, query)) || null;
+            },
+            find: (query) => ({ toArray: async () => {
+                calls.push(['dbFind', name, query]);
+                return (fixtures.collections?.[name] || []).filter((document) => matches(document, query));
+            } }),
+        }) } };
         this.url = (route) => `/d/${this.domain._id}/${route}`;
         this.limitRate = async (...args) => calls.push(['rate', ...args]);
     }
@@ -63,6 +81,15 @@ try {
             if (request === '../lib/achievement') return {
                 applyAchievementHooks: async () => { await new Promise((resolve) => setTimeout(resolve, 1)); calls.push(['initialized']); },
                 getAchievementScope: (domain) => domain.workspaceId && domain.workspaceId !== 'tang' ? `domain:${domain._id}` : 'legacy',
+                isAchievementContestSubmission: (contest, participant, solve) => {
+                    if (!contest || !['acm', 'oi', 'ioi', 'ledo', 'strictioi'].includes(contest.rule)
+                        || !participant?.attend || participant.unrank || participant.virtual || participant.practice
+                        || !contest.pids?.includes(solve.pid)) return false;
+                    const start = Math.max(+contest.beginAt, +(participant.startAt || 0));
+                    const end = Math.min(+contest.endAt, +(participant.endAt || contest.endAt),
+                        contest.duration && participant.startAt ? +participant.startAt + contest.duration * 3600000 : +contest.endAt);
+                    return +solve.submittedAt >= start && +solve.submittedAt <= end;
+                },
                 isAchievementRecordReady: async (ctx, record) => { calls.push(['ready', record._id.toString()]); return record.pointsSettled !== false; },
                 getAchievementRecord: async (ctx, domain, uid, rid) => {
                     calls.push(['record', domain._id, uid, rid.toString()]);
@@ -83,7 +110,11 @@ try {
                 ACHIEVEMENT_IMAGE_LIMIT: 8 * 1024 * 1024, achievementDefinition: definition,
                 presentAchievements: async (ctx, domain, entries) => {
                     if (fixtures.artworkReadError) throw new Error('artwork database unavailable');
-                    return entries.map((item) => ({ ...item, imageUrl: `/d/${domain._id}/${item.id}.png` }));
+                    return entries.map((item) => ({
+                        ...item,
+                        ...(fixtures.preloadArt ? (fixtures.preloadArt[item.id] || { imageUrl: '', thumbnailUrl: '' })
+                            : { imageUrl: `/d/${domain._id}/${item.id}.png` }),
+                    }));
                 },
                 getAchievementArtwork: async (ctx, domain, id) => { definition(id); calls.push(['art', domain._id, id]); return fixtures.artwork; },
                 setAchievementImage: async (ctx, domain, id, file, owner) => calls.push(['upload', domain._id, id, file, owner]),
@@ -224,6 +255,41 @@ describe('achievement management and image handlers', () => {
         assert.equal(missing.response.headers['Cache-Control'], 'private, no-store');
     });
 
+    it('caches the matching original at its stable URL and distinguishes its ETag from the thumbnail', async () => {
+        fixtures.artwork = { imagePath: 'original.png', thumbnailPath: 'thumb.png', version: 'revision1' };
+        fixtures.meta = { size: 2000, remoteAsset: { key: 'original-object' } };
+        fixtures.cdn = 'https://cdn.test/original.png?auth_key=short-lived';
+        const original = new handlers.AchievementImageHandler({ request: { query: { v: 'revision1' } } });
+        await original.get('system', 'difficulty-1');
+        assert.deepEqual(calls, [['art', 'system', 'difficulty-1'], ['meta', 'original.png'], ['download', 'original.png']]);
+        assert.equal(original.response.redirect, undefined);
+        assert.equal(original.response.headers['Cache-Control'], 'private, max-age=604800, immutable');
+        assert.equal(original.response.headers.ETag, '"revision1-original"');
+        assert.equal(original.response.headers.Vary, 'Accept, Cookie, Authorization');
+        calls = [];
+        const cached = new handlers.AchievementImageHandler({ request: {
+            query: { v: 'revision1' }, headers: { 'if-none-match': 'W/"revision1-original"' },
+        } });
+        await cached.get('system', 'difficulty-1');
+        assert.equal(cached.response.status, 304);
+        assert.equal(calls.some((call) => call[0] === 'download'), false);
+        const thumbnailTag = new handlers.AchievementImageHandler({ request: {
+            query: { v: 'revision1' }, headers: { 'if-none-match': '"revision1-384"' },
+        } });
+        await thumbnailTag.get('system', 'difficulty-1');
+        assert.equal(thumbnailTag.response.status, 200);
+        assert.deepEqual(calls.at(-1), ['download', 'original.png']);
+        for (const v of ['stale', ['revision1'], { value: 'revision1' }]) {
+            const invalid = new handlers.AchievementImageHandler({ request: { query: { v } } });
+            await assert.rejects(invalid.get('system', 'difficulty-1'), NotFoundError);
+            assert.equal(invalid.response.headers['Cache-Control'], 'private, no-store');
+        }
+        fixtures.storageReadError = true;
+        const failed = new handlers.AchievementImageHandler({ request: { query: { v: 'revision1' } } });
+        await assert.rejects(failed.get('system', 'difficulty-1'), /object storage unavailable/);
+        assert.equal(failed.response.headers['Cache-Control'], 'private, no-store');
+    });
+
     it('does not store a replacement thumbnail under a stale or malformed requested version', async () => {
         fixtures.artwork = { imagePath: 'new-original.png', thumbnailPath: 'new-thumb.png', version: 'revision2' };
         fixtures.meta = { size: 20 };
@@ -247,7 +313,7 @@ describe('achievement management and image handlers', () => {
         fixtures.artwork = { imagePath: 'original.png', thumbnailPath: 'thumb.png', version: 'revision1' };
         fixtures.meta = { size: 20, remoteAsset: { key: 'object' } };
         fixtures.cdn = 'https://cdn.test/image.png?auth_key=short-lived';
-        for (const [query, size] of [[{}, 384], [{ v: '' }, 384], [{ v: 'revision1' }, undefined]]) {
+        for (const [query, size] of [[{}, 384], [{ v: '' }, 384], [{}, undefined], [{ v: '' }, undefined]]) {
             const handler = new handlers.AchievementImageHandler({ request: { query } });
             await handler.get('system', 'difficulty-1', size);
             assert.equal(handler.response.redirect, fixtures.cdn);
@@ -394,6 +460,117 @@ describe('achievement pending and acknowledgement handlers', () => {
 });
 
 describe('homepage, profile and live-record integration', () => {
+    it('preloads the same configured thumbnail URLs across home, problems, records and different profiles', async () => {
+        fixtures.preloadArt = { 'difficulty-2': art('difficulty-2'), 'solved-100': art('solved-100') };
+        for (const [template, viewedUid] of [
+            ['main.html', 11], ['problem_detail.html'], ['record_detail.html'], ['user_detail.html', 12], ['user_detail.html', 32],
+        ]) {
+            const handler = new Handler({ args: { uid: 999, domainId: 'elsewhere' } });
+            handler.response.template = template;
+            if (viewedUid) handler.response.body.udoc = { _id: viewedUid };
+            await handlers.injectAchievementContext(handler);
+            assert.deepEqual(handler.UiContext.achievementThumbnailPreload,
+                [art('difficulty-2').thumbnailUrl, art('solved-100').thumbnailUrl]);
+            if (template === 'user_detail.html') assert.equal(handler.UiContext.achievementImagePreload, undefined);
+        }
+        assert.equal(calls.some((call) => call[0] === 'ack'), false);
+    });
+
+    it('prewarms only the current account’s next reachable original at 99 solves and the current difficulty', async () => {
+        fixtures.preloadArt = Object.fromEntries(['difficulty-2', 'difficulty-3', 'solved-100'].map((id) => [id, art(id)]));
+        fixtures.rows = [progress('difficulty-2', 0), progress('difficulty-3', 0), progress('solved-100', 99)];
+        const make = () => {
+            const handler = new Handler({ args: { uid: 99 }, request: { query: { uid: 99 } } });
+            handler.response.template = 'problem_detail.html';
+            handler.response.body = { pdoc: { docId: 100, domainId: 'system', difficulty: 2, hidden: true }, udoc: { _id: 99 } };
+            return handler;
+        };
+        const handler = make();
+        await handlers.injectAchievementContext(handler);
+        assert.deepEqual(handler.UiContext.achievementImagePreload, [art('difficulty-2').imageUrl, art('solved-100').imageUrl]);
+        assert.deepEqual(calls.find((call) => call[0] === 'sync'), ['sync', 'system', 11, undefined]);
+        assert.ok(calls.filter((call) => call[0] === 'dbFindOne').every((call) => call[2].uid === 11 && call[2].scope === 'legacy'));
+        assert.equal(calls.some((call) => ['ack', 'pending'].includes(call[0])), false);
+        fixtures.rows = [progress('difficulty-2', 1, true), progress('solved-100', 98)];
+        const farther = make(); await handlers.injectAchievementContext(farther);
+        assert.deepEqual(farther.UiContext.achievementImagePreload, []);
+        fixtures.rows = [progress('solved-100', 99)];
+        fixtures.collections = { 'achievement.solved': [{ scope: 'legacy', uid: 11, domainId: 'system', pid: 100, acceptedAt: new Date(0) }] };
+        const repeat = make(); await handlers.injectAchievementContext(repeat);
+        assert.deepEqual(repeat.UiContext.achievementImagePreload, []);
+        delete fixtures.collections;
+        const review = make(); review.response.body.mode = 'review'; await handlers.injectAchievementContext(review);
+        assert.deepEqual(review.UiContext.achievementImagePreload, []);
+        const objective = make(); objective.response.body.pdoc.objectiveKind = 'single'; await handlers.injectAchievementContext(objective);
+        assert.deepEqual(objective.UiContext.achievementImagePreload, []);
+    });
+
+    it('prewarms homepage solve and mastery thresholds in a six-image budget without fetching every first-difficulty original', async () => {
+        const ids = ['solved-100', ...Array.from({ length: 7 }, (_, index) => `mastery-${index + 4}-10`), 'difficulty-1', 'points-1000'];
+        fixtures.preloadArt = Object.fromEntries(ids.map((id) => [id, art(id)]));
+        fixtures.rows = ids.map((id) => progress(id, definition(id).target - 1));
+        const home = new Handler(); home.response.template = 'main.html';
+        await handlers.injectAchievementContext(home);
+        assert.equal(home.UiContext.achievementImagePreload.length, 6);
+        assert.equal(home.UiContext.achievementImagePreload[0], art('solved-100').imageUrl);
+        assert.ok(!home.UiContext.achievementImagePreload.includes(art('difficulty-1').imageUrl));
+        assert.ok(!home.UiContext.achievementImagePreload.includes(art('points-1000').imageUrl));
+        assert.equal(calls.filter((call) => call[0] === 'sync').length, 1);
+    });
+
+    it('prewarms contest AC and AK only for a formal participant whose current problem completes the required threshold', async () => {
+        const tid = new ObjectId();
+        const present = new Date();
+        const start = new Date(+present - 3600000);
+        const end = new Date(+present + 3600000);
+        const tdoc = { domainId: 'system', docId: tid, rule: 'oi', pids: [1, 2, 3], beginAt: start, endAt: end, hideScoreboard: true, keepScoreboardHidden: true };
+        const participant = { docType: 30, domainId: 'system', docId: tid, uid: 11, attend: 1, startAt: start };
+        const solves = [1, 2].map((pid) => ({
+            scope: 'legacy', uid: 11, domainId: 'system', pid, contestId: String(tid),
+            submittedAt: new Date(+present - 10000), acceptedAt: new Date(+present - 9000),
+        }));
+        fixtures.rows = [progress('contest-ac-10', 9), progress('contest-ak-5', 4)];
+        fixtures.preloadArt = { 'contest-ac-10': art('contest-ac-10'), 'contest-ak-5': art('contest-ak-5') };
+        const make = async (member = participant, entries = solves, contest = tdoc) => {
+            fixtures.collections = { 'document.status': [member], 'achievement.solved': entries };
+            const handler = new Handler(); handler.response.template = 'problem_detail.html';
+            handler.response.body = { pdoc: { domainId: 'system', docId: 3, difficulty: 4 }, tdoc: contest };
+            await handlers.injectAchievementContext(handler);
+            return handler.UiContext.achievementImagePreload;
+        };
+        assert.deepEqual(await make(), [art('contest-ac-10').imageUrl, art('contest-ak-5').imageUrl]);
+        assert.deepEqual(await make(participant, [...solves, { ...solves[0], pid: 3, contestId: '' }]),
+            [art('contest-ac-10').imageUrl, art('contest-ak-5').imageUrl]);
+        assert.deepEqual(await make(participant, solves.slice(0, 1)), [art('contest-ac-10').imageUrl]);
+        for (const extra of [{ uid: 99 }, { attend: 0 }, { unrank: true }, { virtual: true }, { practice: true }, { endAt: start }]) {
+            assert.deepEqual(await make({ ...participant, ...extra }), []);
+        }
+        assert.deepEqual(await make(participant, [...solves, { ...solves[0], pid: 3 }]), []);
+        assert.deepEqual(await make(participant, solves, { ...tdoc, endAt: start }), []);
+        assert.deepEqual(await make(participant, solves, { ...tdoc, pids: [1, 2] }), []);
+        assert.deepEqual(await make(participant, solves, { ...tdoc, rule: 'homework' }), []);
+    });
+
+    it('keeps prediction scoped to the active domain and disables originals while impersonating or viewing another profile', async () => {
+        fixtures.rows = [progress('solved-100', 99)];
+        fixtures.preloadArt = { 'solved-100': art('solved-100', 'class') };
+        const modernHandler = new Handler({ domain: modern, args: { uid: 99, domainId: 'system' } });
+        modernHandler.response.template = 'problem_detail.html';
+        modernHandler.response.body = { pdoc: { domainId: 'class', docId: 10, difficulty: 2 } };
+        await handlers.injectAchievementContext(modernHandler);
+        assert.deepEqual(modernHandler.UiContext.achievementImagePreload, [art('solved-100', 'class').imageUrl]);
+        assert.ok(calls.some((call) => call[0] === 'dbFindOne' && call[2].scope === 'domain:class' && call[2].uid === 11));
+        const before = calls.length;
+        const impersonated = new Handler({ session: { sudoUid: 2 } }); impersonated.response.template = 'problem_detail.html';
+        await handlers.injectAchievementContext(impersonated);
+        assert.equal(impersonated.UiContext.achievementImagePreload, undefined);
+        assert.equal(calls.length, before);
+        const foreign = new Handler({ domain: modern }); foreign.response.template = 'problem_detail.html';
+        foreign.response.body = { pdoc: { domainId: 'other', docId: 10, difficulty: 2 } };
+        await handlers.injectAchievementContext(foreign);
+        assert.deepEqual(foreign.UiContext.achievementImagePreload, []);
+    });
+
     it('populates the homepage with only the session owner’s unlocked achievements in the current domain', async () => {
         fixtures.rows = [{ ...definition('difficulty-1'), unlocked: true }, { ...definition('difficulty-2'), unlocked: false }];
         const handler = new Handler({ domain: modern, args: { uid: 99 }, request: { query: { uid: 99 } } });
@@ -430,7 +607,7 @@ describe('homepage, profile and live-record integration', () => {
         await handlers.injectAchievementContext(handler);
         assert.deepEqual(calls, [['sync', 'system', 11, undefined]]);
         assert.equal(handler.response.body.achievementWall.items[0].id, 'difficulty-2');
-        assert.deepEqual(handler.UiContext, {});
+        assert.deepEqual(handler.UiContext, { achievementThumbnailPreload: [] });
         assert.equal(handler.response.headers['Cache-Control'], 'private, no-store');
         assert.equal(handler.response.headers.Vary, 'Accept, Cookie, Authorization');
     });

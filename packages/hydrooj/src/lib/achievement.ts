@@ -14,7 +14,7 @@ import {
 type AchievementDomain = Pick<DomainDoc, '_id' | 'workspaceId' | 'owner'>;
 const LEASE_MS = 120_000;
 const MAX_PENDING = 10;
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
 const logger = new Logger('achievement');
 
 interface SolvedAchievement {
@@ -126,15 +126,6 @@ async function withUserLock<T>(ctx: Context, scope: string, uid: number, callbac
     }
 }
 
-/** Wait until verdicts can be public, independently of whether the ranking UI is shown. */
-export function isAchievementContestVisible(contest: any, now = new Date()) {
-    if (!contest || !contest.endAt || new Date(contest.endAt) > now) return false;
-    // hideScoreboard only hides the ranking page from students; it does not
-    // restrict the finished contest's records. The result embargo and lock do.
-    if (contest.keepScoreboardHidden) return false;
-    return !(contest.lockAt && new Date(contest.lockAt) < now && !contest.unlocked);
-}
-
 export function isAchievementCompetition(contest: any, participant: any) {
     return !!contest && ['acm', 'oi', 'ioi', 'ledo', 'strictioi'].includes(contest.rule)
         && !!participant?.attend && !participant.unrank && !participant.virtual && !participant.practice
@@ -239,8 +230,9 @@ function metricsFromSolves(
         const key = `${solved.domainId}:${solved.contestId}`;
         const contest = data.contestsById.get(key);
         if (!domainIds.has(solved.domainId) && (!contest || !contest.allDomains)) continue;
-        // A deleted, still-running or sealed contest must never leak its verdict through achievements.
-        if (solved.contestId && (!contest || (contest.rule !== 'homework' && !isAchievementContestVisible(contest, now)))) continue;
+        // Every real AC counts toward solving milestones, including hidden
+        // problems and active/sealed contests. Competition milestones below
+        // still require a known contest and a valid formal submission window.
         const problemKey = `${solved.domainId}:${solved.pid}`;
         if (!unique.has(problemKey) || unique.get(problemKey)!.acceptedAt > solved.acceptedAt) unique.set(problemKey, solved);
         const participant = data.statusesById.get(key);
@@ -260,47 +252,23 @@ function metricsFromSolves(
     return { solved: unique.size, difficulties, contestAc, contestAk, points };
 }
 
-async function pointMetrics(ctx: Context, uid: number, data: Awaited<ReturnType<typeof getScopeData>>, activatedAt: Date, now: Date) {
+async function pointMetrics(ctx: Context, uid: number, data: Awaited<ReturnType<typeof getScopeData>>, activatedAt: Date) {
     const account: any = await ctx.db.collection('user').findOne({ _id: uid }, { projection: {
-        lotteryTotalPoints: 1, contestScorePointAwards: 1, contestScorePointBonusUnits: 1,
+        lotteryTotalPoints: 1,
     } });
     const source: 'account' | 'legacy' = account?.lotteryTotalPoints === undefined ? 'legacy' : 'account';
     // Old installations stored the explicit lifetime counter on each membership.
     // Never use the spendable balance or RP as evidence of earned points.
     const legacyStates = source === 'legacy' ? await (ctx.db.collection('domain.user') as Collection<any>).find({
         uid, join: true, lotteryTotalPoints: { $exists: true },
-    }, { projection: { lotteryTotalPoints: 1, contestScorePointAwards: 1, contestScorePointBonusUnits: 1 } }).toArray() : [];
-    let points = source === 'account' ? nonnegative(account?.lotteryTotalPoints)
+    }, { projection: { lotteryTotalPoints: 1 } }).toArray() : [];
+    const points = source === 'account' ? nonnegative(account?.lotteryTotalPoints)
         : legacyStates.reduce((sum, state) => sum + nonnegative(state.lotteryTotalPoints), 0);
-    const pointAwards = { ...(account?.contestScorePointAwards || {}) };
-    const pointBonusUnits = { ...(account?.contestScorePointBonusUnits || {}) };
-    for (const state of legacyStates) {
-        for (const [key, value] of Object.entries(state.contestScorePointAwards || {})) {
-            pointAwards[key] = Math.max(nonnegative(pointAwards[key]), nonnegative(value));
-        }
-        for (const [key, value] of Object.entries(state.contestScorePointBonusUnits || {})) {
-            pointBonusUnits[key] = Math.max(nonnegative(pointBonusUnits[key]), nonnegative(value));
-        }
-    }
-    // Point totals can already contain an OI score while its result is hidden.
-    const pointContestIds = Object.keys(pointAwards).filter((id) => ObjectId.isValid(id)).map((id) => new ObjectId(id));
-    const pointContests = pointContestIds.length ? await (ctx.db.collection('document') as Collection<any>).find({
-        docType: 30, docId: { $in: pointContestIds },
-    }).toArray() : [];
-    const pointContestsById = new Map(pointContests.map((contest) => [`${contest.docId}`, contest]));
-    for (const key of Object.keys(pointAwards)) {
-        const contest = pointContestsById.get(key);
-        if (contest?.rule === 'homework' || isAchievementContestVisible(contest, now)) continue;
-        points -= nonnegative(pointAwards[key]) + Math.floor(nonnegative(pointBonusUnits[key]) / 20);
-    }
+    // Credited points count immediately, regardless of contest visibility.
     const recentRecords = await (ctx.db.collection('record') as Collection<any>).find({
         uid, ...data.recordScope, judgeAt: { $gt: activatedAt }, 'scorePointAward.points': { $gt: 0 },
-    }, { projection: { domainId: 1, contest: 1, scorePointAward: 1 } }).toArray();
-    let recent = recentRecords.reduce((sum, record) => {
-        const contest = data.contestsById.get(`${record.domainId}:${record.contest}`);
-        if (record.contest && contest?.rule !== 'homework' && !isAchievementContestVisible(contest, now)) return sum;
-        return sum + nonnegative(record.scorePointAward?.points);
-    }, 0);
+    }, { projection: { scorePointAward: 1 } }).toArray();
+    let recent = recentRecords.reduce((sum, record) => sum + nonnegative(record.scorePointAward?.points), 0);
     const draws = await (ctx.db.collection('lottery.draw') as Collection<any>).find({
         uid, domainId: { $in: data.domainIds }, createdAt: { $gt: activatedAt }, deleted: { $ne: true },
     }, { projection: { pointDelta: 1, prize: 1 } }).toArray();
@@ -370,9 +338,12 @@ export async function syncUserAchievements(ctx: Context, domain: AchievementDoma
             problemMap.set(`${actualRecord.domainId}:${actualRecord.pid}`, options.problem);
         }
         const solves = await importAcceptances(ctx, scope, uid, records, problemMap);
-        const { points, historicalPoints, source: pointSource } = await pointMetrics(ctx, uid, data, activatedAt, now);
-        const baselinePoints = state?.pointSource === 'legacy' && pointSource === 'account'
-            ? Math.max(state.baselinePoints || 0, historicalPoints) : (state?.baselinePoints ?? historicalPoints);
+        const { points, historicalPoints, source: pointSource } = await pointMetrics(ctx, uid, data, activatedAt);
+        // The former visibility filter excluded historical contest points from
+        // the baseline. Reconcile it once without rewriting existing grants.
+        const refreshBaseline = state?.version !== STATE_VERSION || (state?.pointSource === 'legacy' && pointSource === 'account');
+        const baselinePoints = refreshBaseline
+            ? Math.max(state?.baselinePoints || 0, historicalPoints) : (state?.baselinePoints ?? historicalPoints);
         const progress = evaluateAchievementProgress(metricsFromSolves(solves, data, now, points));
         const historical = new Set(evaluateAchievementProgress(metricsFromSolves(solves, data, activatedAt, baselinePoints))
             .filter((item) => item.achieved).map((item) => item.id));

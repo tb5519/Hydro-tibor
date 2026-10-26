@@ -37,24 +37,30 @@ function fixture(count = 2, { storage = {}, urls = [], placeholders = [], reduce
         const image = win.document.createElement('img');
         image.src = urls[index] || `https://images.test/${index}.webp?v=1`;
         image.loading = 'lazy';
-        const decoded = deferred();
-        const state = { complete: false, width: 0, decodeCalls: 0 };
+        let decoded = deferred();
+        const state = { complete: false, width: 0, decodeCalls: 0, requests: 0 };
+        const sourceAttribute = Object.getOwnPropertyDescriptor(win.HTMLImageElement.prototype, 'src');
+        Object.defineProperty(image, 'src', {
+            get() { return sourceAttribute.get.call(image); },
+            set(value) { state.requests++; state.complete = false; state.width = 0; sourceAttribute.set.call(image, value); },
+        });
+        const setAttribute = image.setAttribute.bind(image);
+        image.setAttribute = (name, value) => {
+            if (name === 'src') { state.requests++; state.complete = false; state.width = 0; }
+            return setAttribute(name, value);
+        };
         Object.defineProperties(image, {
             complete: { get: () => state.complete },
             naturalWidth: { get: () => state.width },
         });
         image.decode = () => { state.decodeCalls++; return decoded.promise; };
-        if (placeholders.includes(index)) {
-            const placeholder = win.document.createElement('span');
-            placeholder.className = 'achievement-wall__placeholder'; placeholder.textContent = '✦';
-            tile.append(placeholder);
-        } else {
-            tile.dataset.achievementPending = '';
-            tile.append(image);
-        }
+        tile.dataset.achievementPending = '';
+        if (!placeholders.includes(index)) tile.append(image);
         grid.append(tile);
         return {
-            image, tile, state, decoded,
+            image, tile, state,
+            get decoded() { return decoded; },
+            nextDecode() { decoded = deferred(); return decoded; },
             visible: () => !tile.hasAttribute('data-achievement-pending'),
             load() { state.width = 384; state.complete = true; image.dispatchEvent(new win.Event('load')); },
             fail() { state.width = 0; state.complete = true; image.dispatchEvent(new win.Event('error')); },
@@ -89,48 +95,51 @@ function fixture(count = 2, { storage = {}, urls = [], placeholders = [], reduce
     };
 }
 
-describe('progressive achievement wall', () => {
-    it('keeps the heading available and reveals each decoded thumbnail without waiting for a slow sibling', async (t) => {
+describe('complete-batch achievement wall', () => {
+    it('keeps only the heading and zero count until every thumbnail has loaded and decoded', async (t) => {
         const h = fixture(3); t.after(h.close); h.bind();
         assert.equal(h.root.hasAttribute('data-achievement-wall-loading'), false);
         assert.equal(h.root.querySelector('header').hidden, false);
-        assert.equal(h.count(), 0);
-        assert.equal(h.visible(), 0);
-        assert.ok(h.grid.hasAttribute('data-achievement-grid-empty'));
         assert.ok(h.pictures.every(({ image }) => image.loading === 'eager'));
-        const [, fast, next] = h.pictures;
-        fast.load(); await h.flush(); await h.advance(100);
-        assert.equal(h.visible(), 0, 'loading an image must still wait for its own decode');
-        fast.decoded.resolve(); await h.flush(); await h.advance(100);
-        assert.equal(fast.visible(), true);
-        assert.equal(h.pictures[0].visible(), false, 'the slow image must remain out of the grid');
+        h.pictures[2].load(); h.pictures[2].decoded.resolve();
+        h.pictures[1].load(); h.pictures[1].decoded.resolve();
+        await h.flush(); await h.advance(500);
+        assert.equal(h.count(), 0);
+        assert.equal(h.visible(), 0, 'a fast image must not reveal an incomplete collection');
+        assert.ok(h.grid.hasAttribute('data-achievement-grid-empty'));
+        assert.equal(h.root.querySelector('[data-achievement-hint]').hidden, true);
+        h.pictures[0].load(); await h.flush(); await h.advance(500);
+        assert.equal(h.count(), 0, 'the last image must finish decoding before any tile appears');
+        assert.equal(h.visible(), 0);
+        h.pictures[0].decoded.resolve(); await h.flush(); await h.advance(0);
         assert.equal(h.count(), 1);
+        assert.equal(h.pictures[0].visible(), true, 'reveal follows catalogue order, not download order');
         assert.equal(h.grid.hasAttribute('data-achievement-grid-empty'), false);
         assert.equal(h.root.querySelector('[data-achievement-hint]').hidden, false);
-        next.load(); next.decoded.resolve(); await h.flush(); await h.advance(100);
-        assert.equal(h.count(), 2);
-        assert.equal(h.root.getAttribute('aria-busy'), 'true');
-        h.pictures[0].load(); h.pictures[0].decoded.resolve(); await h.flush(); await h.advance(100);
-        assert.equal(h.count(), 3);
+        await h.advance(59); assert.equal(h.count(), 1);
+        await h.advance(1); assert.equal(h.count(), 2);
+        await h.advance(60); assert.equal(h.count(), 3);
         assert.equal(h.root.getAttribute('aria-busy'), 'false');
     });
 
-    it('increments the count as a ready batch enters quickly one tile at a time', async (t) => {
+    it('animates the fully prepared first batch and increments its count once per tile', async (t) => {
         const h = fixture(3); t.after(h.close); h.bind();
         h.pictures.forEach((picture) => { picture.load(); picture.decoded.resolve(); });
         await h.flush(); await h.advance(0);
         assert.equal(h.count(), 1);
         assert.equal(h.pictures[0].tile.classList.contains('is-entering'), true);
-        await h.advance(59);
-        assert.equal(h.count(), 1);
-        await h.advance(1);
+        await h.advance(60);
         assert.equal(h.count(), 2);
         await h.advance(60);
         assert.equal(h.count(), 3);
-        assert.equal(h.root.getAttribute('aria-busy'), 'false');
+        h.pictures.forEach((picture) => picture.load());
+        await h.flush(); await h.advance(500);
+        assert.equal(h.count(), 3, 'duplicate load events must not replay or increment the batch again');
+        assert.ok(h.pictures.every(({ tile }) => !tile.classList.contains('is-entering')));
+        assert.equal(h.timers.size, 0);
     });
 
-    it('shows browser-cached thumbnails synchronously without decoding, waiting, or entry animation', (t) => {
+    it('shows an entirely browser-cached wall synchronously without decoding or entry animation', (t) => {
         const h = fixture(2); t.after(h.close);
         h.pictures.forEach(({ state }) => { state.complete = true; state.width = 384; });
         const dispose = h.bind();
@@ -139,130 +148,196 @@ describe('progressive achievement wall', () => {
         assert.equal(h.visible(), 2);
         assert.ok(h.pictures.every(({ state, tile }) => !state.decodeCalls && !tile.classList.contains('is-entering')));
         assert.equal(h.root.getAttribute('aria-busy'), 'false');
+        assert.equal(h.timers.size, 0);
     });
 
-    it('restores cached thumbnails at DOM readiness before the rest of the page widgets bind', async (t) => {
+    it('does not show a cached subset while another thumbnail is still missing', async (t) => {
         const h = fixture(2); t.after(h.close);
         h.pictures[0].state.complete = true; h.pictures[0].state.width = 384;
+        h.bind();
+        assert.equal(h.count(), 0);
+        assert.equal(h.visible(), 0);
+        assert.equal(h.pictures[0].state.decodeCalls, 0);
+        h.pictures[1].load(); h.pictures[1].decoded.resolve(); await h.flush(); await h.advance(0);
+        assert.equal(h.count(), 1);
+        assert.equal(h.pictures[0].tile.classList.contains('is-entering'), true);
+        await h.advance(60); assert.equal(h.count(), 2);
+    });
+
+    it('restores a fully cached wall before the rest of the page widgets bind', (t) => {
+        const h = fixture(2); t.after(h.close);
+        h.pictures.forEach(({ state }) => { state.complete = true; state.width = 384; });
         h.install();
         h.win.document.dispatchEvent(new h.win.Event('DOMContentLoaded'));
-        assert.equal(h.count(), 1);
-        assert.equal(h.pictures[0].state.decodeCalls, 0);
-        assert.equal(h.pictures[0].tile.classList.contains('is-entering'), false);
+        assert.equal(h.count(), 2);
         h.bind();
-        h.pictures[1].load(); h.pictures[1].decoded.resolve(); await h.flush(); await h.advance(100);
-        assert.equal(h.count(), 2, 'later widget initialization must reuse the early binding');
-        assert.equal(h.pictures[1].state.decodeCalls, 1);
+        assert.equal(h.count(), 2);
+        assert.ok(h.pictures.every(({ state, tile }) => !state.decodeCalls && !tile.classList.contains('is-entering')));
     });
 
-    it('restores previously loaded URL versions on another page without replaying and treats changed versions as new', async (t) => {
-        const first = fixture(1); t.after(first.close); first.bind();
-        first.pictures[0].load(); first.pictures[0].decoded.resolve(); await first.flush(); await first.advance(100);
-        const storage = first.storage();
-        assert.ok(Object.keys(storage).length, 'successful downloads should be remembered across page loads');
-        const restored = fixture(2, { storage, urls: ['https://images.test/0.webp?v=1', 'https://images.test/0.webp?v=2'] });
-        t.after(restored.close); restored.bind();
-        assert.equal(restored.pictures[0].visible(), false, 'a remembered URL cannot substitute for bytes missing from the browser cache');
+    it('waits for remembered images to actually load and decode, then restores the whole wall without replaying', async (t) => {
+        const first = fixture(2); t.after(first.close); first.bind();
+        first.pictures.forEach((picture) => { picture.load(); picture.decoded.resolve(); });
+        await first.flush(); await first.advance(100);
+        const restored = fixture(2, { storage: first.storage() }); t.after(restored.close); restored.bind();
         assert.equal(restored.count(), 0);
         restored.pictures[0].load();
-        assert.equal(restored.pictures[0].visible(), true);
-        assert.equal(restored.pictures[0].tile.classList.contains('is-entering'), false);
-        assert.equal(restored.pictures[0].state.decodeCalls, 0);
-        assert.equal(restored.count(), 1);
-        assert.equal(restored.pictures[1].visible(), false, 'a changed artwork URL must load before entering');
-        restored.pictures[1].load(); restored.pictures[1].decoded.resolve(); await restored.flush(); await restored.advance(100);
+        assert.equal(restored.count(), 0, 'history must not substitute for a still-missing sibling');
+        restored.pictures[1].load();
+        await restored.flush();
+        assert.equal(restored.count(), 0, 'a saved success marker must not bypass this page’s unfinished decode');
+        restored.pictures.forEach((picture) => picture.decoded.resolve());
+        await restored.flush();
         assert.equal(restored.count(), 2);
+        assert.equal(restored.visible(), 2);
+        assert.ok(restored.pictures.every(({ state, tile }) => state.decodeCalls === 1 && !tile.classList.contains('is-entering')));
     });
 
-    it('immediately counts image-less achievements and handles an empty wall without pending work', (t) => {
+    it('treats a replacement URL as a new batch and waits for the replacement to decode', async (t) => {
+        const first = fixture(2); t.after(first.close);
+        first.pictures.forEach(({ state }) => { state.complete = true; state.width = 384; }); first.bind();
+        const h = fixture(2, { storage: first.storage(), urls: ['https://images.test/0.webp?v=1', 'https://images.test/1.webp?v=2'] });
+        t.after(h.close); h.bind();
+        h.pictures[0].load(); h.pictures[0].decoded.resolve(); h.pictures[1].load(); await h.flush(); await h.advance(500);
+        assert.equal(h.visible(), 0);
+        assert.equal(h.count(), 0);
+        assert.equal(h.pictures[1].state.decodeCalls, 1);
+        h.pictures[1].decoded.resolve(); await h.flush(); await h.advance(0);
+        assert.equal(h.count(), 1);
+        assert.equal(h.pictures[0].tile.classList.contains('is-entering'), true);
+        await h.advance(60); assert.equal(h.count(), 2);
+    });
+
+    it('never substitutes stars or reveals a partial batch when earned artwork has not been uploaded', async (t) => {
         const h = fixture(3, { placeholders: [0, 2] }); t.after(h.close); h.bind();
-        assert.equal(h.count(), 2);
-        assert.equal(h.visible(), 2);
-        assert.ok(h.pictures.filter((_, i) => i !== 1).every(({ tile }) => !tile.classList.contains('is-entering')));
+        h.pictures[1].load(); h.pictures[1].decoded.resolve(); await h.flush(); await h.advance(1000);
+        assert.equal(h.count(), 0);
+        assert.equal(h.visible(), 0);
+        assert.ok(h.grid.hasAttribute('data-achievement-grid-empty'));
+        assert.equal(h.root.querySelector('.achievement-wall__placeholder'), null);
+        assert.equal(h.root.querySelector('.achievement-wall__fallback-name'), null);
         const empty = fixture(0); t.after(empty.close); empty.bind();
         assert.equal(empty.count(), 0);
         assert.equal(empty.root.getAttribute('aria-busy'), 'false');
         assert.equal(empty.timers.size, 0);
     });
 
-    it('reveals named fallbacks for network and decode errors without marking failed images as loaded', async (t) => {
+    it('keeps network and decode failures hidden, retries, and releases the batch only after recovery', async (t) => {
         const h = fixture(); t.after(h.close); h.bind();
         const [networkFailure, decodeFailure] = h.pictures;
         networkFailure.fail();
         decodeFailure.load(); decodeFailure.decoded.reject(new Error('corrupt image'));
         await h.flush(); await h.advance(200);
+        assert.equal(h.count(), 0);
+        assert.equal(h.visible(), 0);
+        assert.equal(h.root.querySelector('.achievement-wall__placeholder'), null);
+        assert.equal(h.root.querySelector('.achievement-wall__fallback-name'), null);
+        const persisted = JSON.stringify(h.storage());
+        assert.doesNotMatch(persisted, /images\.test/);
+        await h.advance(1000);
+        assert.ok(h.pictures.every(({ state }) => state.requests > 0), 'failed images must be retried');
+        decodeFailure.nextDecode();
+        networkFailure.load(); networkFailure.decoded.resolve();
+        decodeFailure.load(); decodeFailure.decoded.resolve();
+        await h.flush(); await h.advance(100);
         assert.equal(h.count(), 2);
-        for (const [i, { image, tile }] of h.pictures.entries()) {
-            assert.equal(image.hidden, true);
-            assert.equal(tile.querySelector('.achievement-wall__fallback-name').textContent, `成就 ${i + 1}`);
-        }
-        const retry = fixture(2, { storage: h.storage() }); t.after(retry.close); retry.bind();
-        assert.equal(retry.visible(), 0);
-        assert.equal(retry.count(), 0);
+        assert.equal(h.visible(), 2);
+        assert.equal(h.root.querySelector('.achievement-wall__placeholder'), null);
     });
 
-    it('invalidates remembered success if the image has failed before the next binding', async (t) => {
+    it('removes stale success history after a previously cached image fails', async (t) => {
         const first = fixture(1); t.after(first.close);
         first.pictures[0].state.complete = true; first.pictures[0].state.width = 384; first.bind();
         const failed = fixture(1, { storage: first.storage() }); t.after(failed.close);
         failed.pictures[0].state.complete = true; failed.bind(); await failed.advance(100);
-        assert.equal(failed.count(), 1);
-        assert.equal(failed.pictures[0].image.hidden, true);
+        assert.equal(failed.count(), 0);
+        assert.equal(failed.visible(), 0);
+        assert.equal(failed.root.querySelector('.achievement-wall__placeholder'), null);
         const retry = fixture(1, { storage: failed.storage() }); t.after(retry.close); retry.bind();
-        assert.equal(retry.visible(), 0);
+        retry.pictures[0].load(); await retry.flush();
+        assert.equal(retry.count(), 0, 'failed history cannot bypass decode on the next visit');
+        assert.equal(retry.pictures[0].state.decodeCalls, 1);
+        retry.pictures[0].decoded.resolve(); await retry.flush(); await retry.advance(0);
+        assert.equal(retry.count(), 1);
+        assert.equal(retry.pictures[0].tile.classList.contains('is-entering'), true);
     });
 
-    it('bounds stalled downloads and decodes and ignores late events after showing fallbacks', async (t) => {
+    it('ignores an obsolete decode completion after an image retry has started', async (t) => {
+        const h = fixture(2); t.after(h.close); h.bind();
+        const first = h.pictures[0];
+        const obsoleteDecode = first.decoded;
+        first.load(); await h.flush(); first.fail(); await h.advance(1000);
+        first.nextDecode(); first.load();
+        h.pictures[1].load(); h.pictures[1].decoded.resolve();
+        obsoleteDecode.resolve(); await h.flush(); await h.advance(100);
+        assert.equal(h.count(), 0);
+        assert.equal(h.visible(), 0, 'an old attempt cannot release the current batch');
+        first.decoded.resolve(); await h.flush(); await h.advance(100);
+        assert.equal(h.count(), 2);
+    });
+
+    it('keeps a stalled batch at zero past the timeout and accepts a genuine late completion', async (t) => {
         const h = fixture(); t.after(h.close); h.bind(8000);
         h.pictures[0].load(); await h.flush();
         await h.advance(8000); await h.advance(200);
+        assert.equal(h.count(), 0);
+        assert.equal(h.visible(), 0);
+        assert.equal(h.root.getAttribute('aria-busy'), 'true');
+        assert.equal(h.root.querySelector('.achievement-wall__placeholder'), null);
+        h.pictures[0].decoded.resolve();
+        h.pictures[1].load(); h.pictures[1].decoded.resolve(); await h.flush(); await h.advance(100);
         assert.equal(h.count(), 2);
-        assert.equal(h.root.getAttribute('aria-busy'), 'false');
-        assert.ok(h.pictures.every(({ image, tile }) => image.hidden && tile.querySelector('.achievement-wall__placeholder')));
-        h.pictures[0].decoded.resolve(); h.pictures[1].load(); await h.flush(); await h.advance(100);
-        assert.ok(h.pictures.every(({ image }) => image.hidden));
-        assert.equal(h.root.querySelectorAll('.achievement-wall__fallback-name').length, 2);
-        const retry = fixture(2, { storage: h.storage() }); t.after(retry.close); retry.bind();
-        assert.equal(retry.visible(), 0);
+        assert.equal(h.root.querySelector('.achievement-wall__placeholder'), null);
     });
 
-    it('continues progressive loading when browser storage is unavailable', async (t) => {
-        const h = fixture(1); t.after(h.close);
-        Object.defineProperty(h.win, 'localStorage', { configurable: true, get() { throw new Error('blocked'); } });
-        assert.doesNotThrow(() => h.bind());
-        h.pictures[0].load(); h.pictures[0].decoded.resolve(); await h.flush(); await h.advance(100);
-        assert.equal(h.count(), 1);
-        assert.equal(h.pictures[0].image.hidden, false);
+    it('bounds automatic retries without ever exposing failed artwork or manufacturing loaded cache entries', async (t) => {
+        const h = fixture(1); t.after(h.close); h.bind(100);
+        h.pictures[0].fail();
+        for (let i = 0; i < 8; i++) { await h.advance(30000); h.pictures[0].fail(); }
+        await h.advance(60000);
+        assert.equal(h.pictures[0].state.requests, 5);
+        assert.equal(h.count(), 0);
+        assert.equal(h.visible(), 0);
+        assert.equal(h.timers.size, 0);
+        assert.equal(h.root.querySelector('.achievement-wall__placeholder'), null);
+        assert.doesNotMatch(JSON.stringify(h.storage()), /images\.test/);
     });
 
-    it('recovers from malformed saved cache data without hiding the wall', (t) => {
-        const h = fixture(1, { storage: { 'hydro:achievement-wall:ready:v1': '{interrupted' } }); t.after(h.close);
-        h.pictures[0].state.complete = true; h.pictures[0].state.width = 384;
-        assert.doesNotThrow(() => h.bind());
-        assert.equal(h.count(), 1);
-        assert.equal(h.pictures[0].state.decodeCalls, 0);
-        assert.equal(h.pictures[0].tile.classList.contains('is-entering'), false);
+    it('keeps batch behavior when browser storage is blocked or malformed', async (t) => {
+        for (const blocked of [true, false]) {
+            const h = fixture(2, { storage: { 'hydro:achievement-wall:ready:v1': '{interrupted' } }); t.after(h.close);
+            if (blocked) Object.defineProperty(h.win, 'localStorage', { configurable: true, get() { throw new Error('blocked'); } });
+            assert.doesNotThrow(() => h.bind());
+            h.pictures[0].load(); h.pictures[0].decoded.resolve(); await h.flush(); await h.advance(100);
+            assert.equal(h.count(), 0);
+            h.pictures[1].load(); h.pictures[1].decoded.resolve(); await h.flush(); await h.advance(100);
+            assert.equal(h.count(), 2);
+        }
     });
 
-    it('does not animate fresh arrivals when reduced motion is requested', async (t) => {
+    it('respects the full-batch barrier but skips animation for reduced motion', async (t) => {
         const h = fixture(2, { reducedMotion: true }); t.after(h.close); h.bind();
-        h.pictures.forEach((picture) => { picture.load(); picture.decoded.resolve(); });
-        await h.flush(); await h.advance(200);
+        h.pictures[0].load(); h.pictures[0].decoded.resolve(); await h.flush(); await h.advance(100);
+        assert.equal(h.count(), 0);
+        h.pictures[1].load(); h.pictures[1].decoded.resolve(); await h.flush(); await h.advance(0);
         assert.equal(h.count(), 2);
         assert.ok(h.pictures.every(({ tile }) => !tile.classList.contains('is-entering')));
     });
 
-    it('cancels pending work on disposal and permits a fresh binding', async (t) => {
+    it('cancels retries and late completions on disposal, then permits a fresh complete-batch binding', async (t) => {
         const h = fixture(2); t.after(h.close);
         const dispose = h.bind();
-        h.pictures[0].load(); await h.flush();
+        h.pictures[0].load(); await h.flush(); h.pictures[1].fail();
         dispose(); dispose();
-        h.pictures[0].decoded.resolve(); await h.flush(); await h.advance(10000);
+        h.pictures[0].decoded.resolve(); await h.flush(); await h.advance(100000);
         assert.equal(h.count(), 0);
+        assert.equal(h.visible(), 0);
         assert.equal(h.timers.size, 0);
-        assert.equal(h.pictures[1].image.hidden, false);
+        assert.equal(h.pictures[1].state.requests, 0);
+        h.pictures[1].state.complete = false;
         h.bind();
-        assert.equal(h.count(), 1, 'a new binding may immediately use the now-cached thumbnail');
-        assert.equal(h.pictures[1].visible(), false);
+        assert.equal(h.count(), 0);
+        h.pictures[1].load(); h.pictures[1].decoded.resolve(); await h.flush(); await h.advance(100);
+        assert.equal(h.count(), 2);
     });
 });

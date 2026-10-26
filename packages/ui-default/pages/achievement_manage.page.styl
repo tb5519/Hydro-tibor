@@ -631,22 +631,6 @@
       transform: translateY(-2px)
       border-color: #e8dbbe
       background: var(--achievement-tint)
-    &--placeholder
-      flex-direction: column
-      gap: 0
-      background: var(--achievement-tint)
-  &__placeholder
-    color: #b39350
-    font-size: 26px
-    line-height: 1.15
-  &__fallback-name
-    max-width: 100%
-    color: var(--achievement-gold)
-    font-size: 8px
-    line-height: 1.4
-    white-space: nowrap
-    overflow: hidden
-    text-overflow: ellipsis
   &__hint
     margin: 14px 0 0
     color: var(--achievement-muted)
@@ -875,8 +859,6 @@
   .achievement-wall__grid
     grid-template-columns: repeat(5, minmax(0, 1fr))
     gap: 9px
-  .achievement-wall__fallback-name
-    font-size: 9px
 
 @media (max-width: 360px)
   .achievement-manage__grid

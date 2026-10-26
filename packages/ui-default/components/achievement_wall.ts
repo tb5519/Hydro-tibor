@@ -1,17 +1,5 @@
 const pendingWalls = new WeakMap<HTMLElement, () => void>();
 
-function useFallback(image: HTMLImageElement) {
-  image.hidden = true;
-  const tile = image.closest<HTMLElement>('[data-achievement-tile]');
-  if (!tile || tile.querySelector('.achievement-wall__placeholder')) return;
-  tile.classList.add('achievement-wall__item--placeholder');
-  const star = image.ownerDocument.createElement('span');
-  star.className = 'achievement-wall__placeholder'; star.textContent = '✦'; star.setAttribute('aria-hidden', 'true');
-  const name = image.ownerDocument.createElement('span');
-  name.className = 'achievement-wall__fallback-name'; name.textContent = tile.dataset.name || ''; name.setAttribute('aria-hidden', 'true');
-  tile.append(star, name);
-}
-
 const CACHE_KEY = 'hydro:achievement-wall:ready:v1';
 const READY_LIMIT = 256;
 const REVEAL_STEP_MS = 60;
@@ -41,7 +29,12 @@ function rememberImage(win: Window, url: string, success: boolean) {
   try { win.localStorage.setItem(CACHE_KEY, JSON.stringify([...history])); } catch { /* Optional animation history. */ }
 }
 
-/** Cached thumbnails show immediately; new thumbnails grow the wall as each is ready. */
+/** Preloaded thumbnails share the same URL/version history as visible walls. */
+export function markAchievementThumbnailReady(url: string, win: Window = window) {
+  rememberImage(win, url, true);
+}
+
+/** Keep the whole collection hidden until every thumbnail can be painted. */
 export function prepareAchievementWall(root: HTMLElement, timeoutMs = 8000) {
   const existing = pendingWalls.get(root);
   if (existing) return existing;
@@ -52,27 +45,30 @@ export function prepareAchievementWall(root: HTMLElement, timeoutMs = 8000) {
   const count = root.querySelector<HTMLElement>('[data-achievement-count]');
   const grid = root.querySelector<HTMLElement>('.achievement-wall__grid');
   const hint = root.querySelector<HTMLElement>('[data-achievement-hint]');
-  const pending = new Map<HTMLImageElement, (success: boolean) => void>();
+  const ready = new Set<HTMLElement>();
   const shown = new Set<HTMLElement>();
   const queue: HTMLElement[] = [];
   const cleanups: Array<() => void> = [];
   const animationTimers = new Set<number>();
   let disposed = false;
-  let timeout: number | undefined;
+  let released = false;
   let revealTimer: number | undefined;
   let countTimer: number | undefined;
   let nextRevealAt = 0;
+  const warm = tiles.every((tile) => {
+    const image = tile.querySelector<HTMLImageElement>('img');
+    return image && (history.has(image.src) || image.complete && image.naturalWidth > 0);
+  });
   root.removeAttribute('data-achievement-wall-loading');
   root.setAttribute('aria-busy', 'true');
   root.classList.remove('is-ready');
   if (count) count.textContent = '0';
   grid?.setAttribute('data-achievement-grid-empty', '');
   if (hint) hint.hidden = true;
+  tiles.forEach((tile) => tile.setAttribute('data-achievement-pending', ''));
 
   const settled = () => {
-    if (pending.size) return;
-    win.clearTimeout(timeout);
-    if (queue.length) return;
+    if (!released || queue.length) return;
     root.setAttribute('aria-busy', 'false');
     root.classList.add('is-ready');
   };
@@ -108,23 +104,22 @@ export function prepareAchievementWall(root: HTMLElement, timeoutMs = 8000) {
     if (queue.length) revealTimer = win.setTimeout(revealNext, REVEAL_STEP_MS);
     settled();
   };
-  const arrive = (tile: HTMLElement, instant: boolean) => {
-    if (instant || reducedMotion) show(tile, false);
-    else {
-      queue.push(tile);
-      if (revealTimer === undefined) revealNext();
-    }
+  const release = () => {
+    if (disposed || released || ready.size !== tiles.length) return;
+    released = true;
+    if (warm || reducedMotion) tiles.forEach((tile) => show(tile, false));
+    else { queue.push(...tiles); revealNext(); }
     settled();
   };
   const dispose = () => {
     if (disposed) return;
     disposed = true;
-    win.clearTimeout(timeout); win.clearTimeout(revealTimer); win.clearTimeout(countTimer);
+    win.clearTimeout(revealTimer); win.clearTimeout(countTimer);
     animationTimers.forEach((timer) => win.clearTimeout(timer));
     cleanups.forEach((cleanup) => cleanup());
     tiles.forEach((tile) => tile.classList.remove('is-entering'));
     count?.classList.remove('is-counting');
-    pending.clear(); queue.length = 0;
+    queue.length = 0;
     pendingWalls.delete(root);
   };
   pendingWalls.set(root, dispose);
@@ -133,45 +128,71 @@ export function prepareAchievementWall(root: HTMLElement, timeoutMs = 8000) {
   tiles.forEach((tile) => {
     tile.classList.remove('is-entering');
     const image = tile.querySelector<HTMLImageElement>('img');
-    if (!image || image.hidden) { show(tile, false); return; }
-    // A loaded native image is already paintable. Do not decode or fade it again.
-    if (image.complete && image.naturalWidth > 0) {
-      rememberImage(win, image.src, true);
-      show(tile, false);
-      return;
-    }
-    tile.setAttribute('data-achievement-pending', '');
-    const previouslyLoaded = history.has(image.src);
+    // Missing artwork must never turn into a star or a partially filled wall.
+    if (!image || image.hidden) return;
+    const source = image.src;
+    const nativeReady = image.complete && image.naturalWidth > 0;
     let decoding = false;
-    const cleanup = () => { image.removeEventListener('load', loaded); image.removeEventListener('error', failed); };
-    const finish = (success: boolean) => {
-      if (disposed || !pending.has(image)) return;
+    let generation = 0;
+    let retries = 0;
+    let retryTimer: number | undefined;
+    let watchdog: number | undefined;
+    const cleanup = () => {
+      image.removeEventListener('load', loaded); image.removeEventListener('error', failed);
+      win.clearTimeout(retryTimer); win.clearTimeout(watchdog);
+    };
+    const finish = () => {
+      if (disposed || ready.has(tile)) return;
       cleanup();
-      rememberImage(win, image.src, success);
-      if (!success) useFallback(image);
-      pending.delete(image);
-      arrive(tile, previouslyLoaded);
+      rememberImage(win, source, true);
+      ready.add(tile);
+      release();
     };
-    const failed = () => finish(false);
+    const watch = () => {
+      win.clearTimeout(watchdog);
+      watchdog = win.setTimeout(() => {
+        // Slow downloads stay hidden and may still complete. Never abort them
+        // just because eight seconds elapsed or substitute a placeholder.
+        if (!disposed && !ready.has(tile) && image.complete && !image.naturalWidth) failed();
+      }, timeoutMs);
+    };
+    const failed = () => {
+      if (disposed || ready.has(tile)) return;
+      generation++; decoding = false;
+      rememberImage(win, source, false);
+      win.clearTimeout(watchdog);
+      if (retryTimer !== undefined || retries >= 5) return;
+      const delay = Math.min(30_000, 1000 * 2 ** retries++);
+      retryTimer = win.setTimeout(() => {
+        retryTimer = undefined;
+        if (disposed || ready.has(tile)) return;
+        generation++; decoding = false;
+        // Retain the versioned URL so successful responses remain cacheable.
+        image.src = source;
+        watch();
+      }, delay);
+    };
     const loaded = () => {
-      if (decoding || disposed || !pending.has(image)) return;
+      if (decoding || disposed || ready.has(tile)) return;
       if (!image.naturalWidth) { failed(); return; }
-      // History suppresses repeat animation, not the actual load readiness check.
-      if (previouslyLoaded) { finish(true); return; }
+      // Previously displayed native pixels can be reused without re-animation.
+      if (nativeReady) { finish(); return; }
       decoding = true;
-      Promise.resolve().then(() => image.decode?.()).then(() => finish(true), failed);
+      const attempt = generation;
+      Promise.resolve().then(() => image.decode?.()).then(() => {
+        if (attempt === generation && image.naturalWidth) finish();
+      }, () => { if (attempt === generation) failed(); });
     };
-    pending.set(image, finish);
     cleanups.push(cleanup);
     begin.push(() => { if (image.complete) loaded(); });
     image.addEventListener('load', loaded);
     image.addEventListener('error', failed);
     image.loading = 'eager';
     image.decoding = 'async';
+    watch();
   });
-  if (pending.size) timeout = win.setTimeout(() => Array.from(pending.values()).forEach((finish) => finish(false)), timeoutMs);
   begin.forEach((check) => check());
-  settled();
+  release();
   return dispose;
 }
 
