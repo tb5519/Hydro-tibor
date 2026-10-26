@@ -46,7 +46,8 @@ it('edits and submits an independent badge volume and auditions at exactly that 
         assert.equal(f.volume.disabled, false);
         f.adjust('73');
         assert.equal(f.output.value, '73%');
-        assert.match(f.status.textContent, /点击下方「更新」保存/);
+        assert.match(f.status.textContent, /点击「更新」/);
+        assert.match(f.status.textContent, /个人主页和 AC 特效/);
         assert.equal(new f.dom.window.FormData(f.document.querySelector('form')).get('themeSoundVolume'), '73');
         f.preview.click(); await settle();
         assert.equal(f.sounds[0].src, '/saved.mp3');

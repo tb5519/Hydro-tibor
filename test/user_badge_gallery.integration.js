@@ -103,8 +103,8 @@ async function run() {
     const expiry = new Date(now + 86400000);
     const extendedExpiry = new Date(now + 3 * 86400000);
     const records = [
-        { _id: 101, title: '星光探索者', short: '✦ 星光探索者', color: [94, 146, 255], sound: 660 },
-        { _id: 102, title: '最强王者', short: '🏆 最强王者', color: [246, 188, 64], sound: 880 },
+        { _id: 101, title: '星光探索者', short: '✦ 星光探索者', color: [94, 146, 255], sound: 660, themeSoundVolume: 0 },
+        { _id: 102, title: '最强王者', short: '🏆 最强王者', color: [246, 188, 64], sound: 880, themeSoundVolume: 42 },
         { _id: 103, title: '已到期的徽章', short: '已过期', sound: 440 },
         { _id: 104, title: '另一个学员的徽章', short: '其他学员', owner: otherUid },
         { _id: 105, title: '幸运女神', short: '★ 幸运女神', color: [180, 113, 244] },
@@ -129,6 +129,7 @@ async function run() {
             content: '这是隔离的徽章展示测试素材。', backgroundColor: 'eff6ff', fontColor: '2563eb',
             createAt: new Date(now), ...(imagePath ? { acImagePath: imagePath, acImageUpdatedAt: 'fixture-1' } : {}),
             ...(soundPath ? { themeSoundPath: soundPath, themeSoundUpdatedAt: 'fixture-sound-1' } : {}),
+            ...(record.themeSoundVolume !== undefined ? { themeSoundVolume: record.themeSoundVolume } : {}),
         });
         await db.collection('userBadge').insertOne({
             owner: record.owner || uid, badgeId: record._id, getAt: new Date(now - record._id * 1000), ...scope,
@@ -295,11 +296,13 @@ async function run() {
         assert.equal(sound.id, 102, 'Selected profile theme wins over legacy worn badge 101');
         assert.equal(sound.name, '🏆 最强王者');
         assert.equal(sound.themeSound, `/d/${legacyId}/badge/102/theme-sound?v=fixture-sound-1`);
+        assert.equal(sound.themeSoundVolume, 42);
         assert.deepEqual(visitedProfile.body.profileBadgeSound, sound, 'Profile owner determines the sound for visitors');
         const html = await other.get(profileUrl).set('Accept', 'text/html');
         status(html, 200);
         const dom = new JSDOM(html.text);
         assert.equal(dom.window.document.querySelector('[data-profile-badge-sound]').getAttribute('data-profile-badge-sound'), sound.themeSound);
+        assert.equal(dom.window.document.querySelector('[data-profile-badge-sound]').getAttribute('data-profile-badge-sound-volume'), '42');
         dom.window.close();
         const audio = await other.get(sound.themeSound).redirects(3).buffer(true).parse((response, callback) => {
             const chunks = [];
@@ -320,6 +323,7 @@ async function run() {
             const changed = (await get(profileUrl)).body.profileBadgeSound;
             assert.equal(changed.id, 101);
             assert.equal(changed.themeSound, `/d/${legacyId}/badge/101/theme-sound?v=fixture-sound-1`);
+            assert.equal(changed.themeSoundVolume, 0, 'Switching profile themes also switches to that badge\'s saved volume');
             status(await chooseTheme(105), 200);
             assert.equal((await get(profileUrl)).body.profileBadgeSound, null);
             status(await post('reset'), 200);
@@ -327,6 +331,36 @@ async function run() {
         } finally {
             status(await chooseTheme(102), 200);
             status(await post('enable', { badgeId: 101 }), 200);
+        }
+    });
+    await check('Profile visitors, theme choices and AC share the saved volume including mute, maximum and legacy defaults', async () => {
+        const { getActiveBadgeAcTheme } = require('../packages/hydrooj/src/lib/badge_ac_theme');
+        const route = (name, args) => `/d/${legacyId}/badge/${args.id}/theme-sound?v=fixture-sound-1`;
+        try {
+            for (const [saved, expected] of [[0, 0], [100, 100], [undefined, 25], [-1, 25], ['70', 25]]) {
+                await db.collection('badge').updateOne({ _id: 102 }, saved === undefined
+                    ? { $unset: { themeSoundVolume: '' } } : { $set: { themeSoundVolume: saved } });
+                const ownProfile = await get(profileUrl);
+                const visitorProfile = await get(profileUrl, other);
+                status(ownProfile, 200);
+                status(visitorProfile, 200);
+                const profile = ownProfile.body;
+                assert.equal(profile.profileBadgeSound.themeSoundVolume, expected);
+                assert.equal(profile.badgeProfileBackground.currentTheme.themeSoundVolume, expected);
+                assert.equal(profile.badgeProfileBackground.themes.find((badge) => badge.id === 102).themeSoundVolume, expected);
+                assert.deepEqual(visitorProfile.body.profileBadgeSound, profile.profileBadgeSound);
+                const celebration = await getActiveBadgeAcTheme({ db }, { _id: uid }, route, { _id: legacyId });
+                assert.equal(celebration.id, profile.profileBadgeSound.id);
+                assert.equal(celebration.themeSoundVolume, expected);
+                const html = await other.get(profileUrl).set('Accept', 'text/html');
+                status(html, 200);
+                const dom = new JSDOM(html.text);
+                assert.equal(dom.window.document.querySelector('[data-profile-badge-sound]')
+                    .getAttribute('data-profile-badge-sound-volume'), `${expected}`);
+                dom.window.close();
+            }
+        } finally {
+            await db.collection('badge').updateOne({ _id: 102 }, { $set: { themeSoundVolume: 42 } });
         }
     });
     await check('Expired, foreign classroom and soundless profile badges do not render a playback source or button', async () => {

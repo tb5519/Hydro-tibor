@@ -79,6 +79,28 @@ function fixture(options = {}) {
 }
 
 describe('profile badge sound', () => {
+    it('uses the selected badge volume for the profile greeting, including mute and full volume', async () => {
+        for (const value of [0, 1, 25, 63, 100]) {
+            const f = fixture({ markup: control.replace(' hidden', ` hidden data-profile-badge-sound-volume="${value}"`) });
+            try {
+                f.initPage(); await settle();
+                assert.equal(f.sounds.length, 1);
+                assert.equal(f.sounds[0].volume, value / 100);
+                assert.equal(f.sounds[0].playCalls, 1);
+            } finally { f.cleanup(); }
+        }
+    });
+
+    it('retains the legacy volume for missing or invalid settings', async () => {
+        for (const value of ['', ' ', 'no-volume', '-1', '101', '25.5', 'Infinity']) {
+            const f = fixture({ markup: control.replace(' hidden', ` hidden data-profile-badge-sound-volume="${value}"`) });
+            try {
+                f.initPage(); await settle();
+                assert.equal(f.sounds[0].volume, 0.25);
+            } finally { f.cleanup(); }
+        }
+    });
+
     it('tries the supplied sound once at a moderate volume without adding visible controls', async () => {
         const f = fixture();
         try {
@@ -97,7 +119,10 @@ describe('profile badge sound', () => {
     it('retries blocked autoplay on one ordinary click or key gesture without interfering with its action', async () => {
         for (const eventName of ['click', 'keydown']) {
             const blocked = Object.assign(Error('autoplay blocked'), { name: 'NotAllowedError' });
-            const f = fixture({ play: (count) => (count === 1 ? Promise.reject(blocked) : Promise.resolve()) });
+            const f = fixture({
+                markup: control.replace(' hidden', ' hidden data-profile-badge-sound-volume="63"'),
+                play: (count) => (count === 1 ? Promise.reject(blocked) : Promise.resolve()),
+            });
             try {
                 f.bind(); await settle();
                 assert.equal(f.source().dataset.soundState, 'blocked');
@@ -113,6 +138,7 @@ describe('profile badge sound', () => {
                 assert.equal(actions, 1);
                 assert.equal(gesture.defaultPrevented, false);
                 assert.equal(f.sounds[0].playCalls, 2);
+                assert.equal(f.sounds[0].volume, 0.63, 'the gesture retry keeps the configured volume');
                 assert.equal(f.source().dataset.soundState, 'playing');
                 f.document.dispatchEvent(new f.window.Event('click'));
                 f.document.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'b' }));
@@ -213,12 +239,13 @@ describe('profile badge sound', () => {
             f.$(section).trigger('vjContentRemove');
             assert.equal(first.paused, true);
             assert.equal(first.src, '');
-            section.innerHTML = control;
+            section.innerHTML = control.replace(' hidden', ' hidden data-profile-badge-sound-volume="35"');
             f.$(section).trigger('vjContentNew');
             f.$(section).trigger('vjContentNew');
             await settle();
             assert.equal(f.sounds.length, 2);
             assert.equal(f.sounds[1].playCalls, 1);
+            assert.equal(f.sounds[1].volume, 0.35, 'a replacement profile uses its own badge volume');
         } finally { f.cleanup(); }
     });
 

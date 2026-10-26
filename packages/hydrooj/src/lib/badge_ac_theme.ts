@@ -2,6 +2,7 @@ import type { Context } from '../context';
 import type { DomainDoc, User } from '../interface';
 import workspace from '../model/workspace';
 import { getBadgeAcCelebrationUrl } from './badge_image';
+import { normalizeBadgeSoundVolume } from './badge_sound_volume';
 
 type RouteUrl = (routeName: string, args?: any) => string;
 
@@ -75,8 +76,7 @@ export async function getActiveBadgeAcTheme(
     return {
         id: activeBadge._id,
         name: activeBadge.short || activeBadge.title || '徽章主题',
-        themeSoundVolume: Number.isInteger(activeBadge.themeSoundVolume) && activeBadge.themeSoundVolume >= 0
-            && activeBadge.themeSoundVolume <= 100 ? activeBadge.themeSoundVolume : 25,
+        themeSoundVolume: normalizeBadgeSoundVolume(activeBadge.themeSoundVolume),
         acImage: activeBadge.acImagePath
             ? (currentDomain?._id ? getBadgeAcCelebrationUrl(currentDomain._id, activeBadge) : routeUrl('badge_ac_image', {
                 id: activeBadge._id,

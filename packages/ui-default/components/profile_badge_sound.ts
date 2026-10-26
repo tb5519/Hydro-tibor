@@ -1,6 +1,5 @@
 type AudioFactory = (source: string) => HTMLAudioElement;
 const bindings = new WeakMap<HTMLElement, () => void>();
-const SOUND_VOLUME = 0.25;
 
 function sourcesIn(root: Document | HTMLElement) {
   const sources = Array.from(root.querySelectorAll<HTMLElement>('[data-profile-badge-sound]'));
@@ -12,6 +11,10 @@ function bindSource(sourceNode: HTMLElement, createAudio: AudioFactory) {
   const existing = bindings.get(sourceNode);
   if (existing) return existing;
   const source = sourceNode.dataset.profileBadgeSound?.trim();
+  const volumeSetting = sourceNode.dataset.profileBadgeSoundVolume?.trim();
+  const configuredVolume = volumeSetting ? Number(volumeSetting) : NaN;
+  const soundVolume = Number.isInteger(configuredVolume) && configuredVolume >= 0 && configuredVolume <= 100
+    ? configuredVolume / 100 : 0.25;
   const doc = sourceNode.ownerDocument;
   const win = doc.defaultView;
   if (!source || !win) return () => {};
@@ -64,7 +67,7 @@ function bindSource(sourceNode: HTMLElement, createAudio: AudioFactory) {
     if (!audio) {
       try {
         audio = createAudio(source);
-        audio.volume = SOUND_VOLUME;
+        audio.volume = soundVolume;
         audio.loop = false;
         audio.preload = 'none';
         audio.addEventListener('ended', onEnded);

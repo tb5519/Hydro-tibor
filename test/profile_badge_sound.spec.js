@@ -8,7 +8,7 @@ const card = (id, extra = {}) => ({ id, title: `徽章标题 ${id}`, isCurrent: 
 describe('profile badge sound selection', () => {
     it('uses the valid displayed profile theme when no username badge is worn', () => {
         assert.deepEqual(selectProfileBadgeSound([own(1), own(2)], [card(1), card(2)], 2), {
-            id: 2, name: '徽章 2', themeSound: '/d/Python/badge/2/theme-sound?v=s1',
+            id: 2, name: '徽章 2', themeSound: '/d/Python/badge/2/theme-sound?v=s1', themeSoundVolume: 25,
         });
     });
 
@@ -27,6 +27,22 @@ describe('profile badge sound selection', () => {
         }
         assert.equal(selectProfileBadgeSound([own(1, { themeSound: '' }), own(2)], [card(1), card(2)], 1), null);
         assert.equal(selectProfileBadgeSound([own(1, { themeSound: '' }), own(2)], [card(1, { isCurrent: true }), card(2)], 0), null);
+    });
+
+    it('follows the selected badge volume, including muted and full-volume themes', () => {
+        const owned = [own(1, { themeSoundVolume: 0 }), own(2, { themeSoundVolume: 100 })];
+        const cards = [card(1), card(2, { isCurrent: true })];
+        assert.equal(selectProfileBadgeSound(owned, cards, 1).themeSoundVolume, 0);
+        assert.equal(selectProfileBadgeSound(owned, cards, 2).themeSoundVolume, 100);
+        assert.equal(selectProfileBadgeSound(owned, cards, 0).themeSoundVolume, 100);
+        owned[1].themeSoundVolume = 63;
+        assert.equal(selectProfileBadgeSound(owned, cards, 2).themeSoundVolume, 63);
+    });
+
+    it('keeps the AC default of 25 percent for old badges and invalid saved volume', () => {
+        for (const themeSoundVolume of [undefined, null, -1, 101, 2.5, NaN, Infinity, '60', false]) {
+            assert.equal(selectProfileBadgeSound([own(1, { themeSoundVolume })], [card(1)], 1).themeSoundVolume, 25);
+        }
     });
 
     it('never plays expired, cross-domain or unknown IDs absent from the valid gallery', () => {

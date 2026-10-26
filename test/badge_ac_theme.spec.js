@@ -16,7 +16,8 @@ function load(relative, dependencies = {}) {
     return module.exports;
 }
 const badgeImage = load('packages/hydrooj/src/lib/badge_image.ts');
-const dependencies = { './badge_image': badgeImage, '../model/workspace': {
+const dependencies = { './badge_image': badgeImage,
+    './badge_sound_volume': load('packages/hydrooj/src/lib/badge_sound_volume.ts'), '../model/workspace': {
     LEGACY_WORKSPACE_ID: 'tang', resolveDomainWorkspaceId: (domain) => domain?.workspaceId || 'tang',
 } };
 const { getActiveBadgeAcTheme } = load('packages/hydrooj/src/lib/badge_ac_theme.ts', dependencies);

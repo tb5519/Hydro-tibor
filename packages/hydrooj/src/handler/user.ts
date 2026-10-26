@@ -34,6 +34,7 @@ import token from '../model/token';
 import user, { deleteUserCache } from '../model/user';
 import workspace from '../model/workspace';
 import { getBadgeIconUrl } from '../lib/badge_image';
+import { normalizeBadgeSoundVolume } from '../lib/badge_sound_volume';
 import {
     Handler, param, post, Query, Types,
 } from '../service/server';
@@ -98,6 +99,7 @@ async function attachOwnedBadges(ctx: Context, udocs: any[], currentDomainId: st
             themeSound: badge.themeSoundPath
                 ? `/d/${encodeURIComponent(currentDomainId)}/badge/${badge._id}/theme-sound?v=${encodeURIComponent(badge.themeSoundUpdatedAt || '')}`
                 : '',
+            themeSoundVolume: normalizeBadgeSoundVolume(badge.themeSoundVolume),
             isTheme: !!(badge.backgroundImagePath || badge.backgroundVideoPath || badge.acImagePath || badge.themeSoundPath),
         });
     }
@@ -118,6 +120,7 @@ function getBadgeProfileBackground(udoc: any) {
             backgroundColor: badge.backgroundColor,
             acImage: badge.acImage,
             themeSound: badge.themeSound,
+            themeSoundVolume: badge.themeSoundVolume,
             getAt: badge.getAt,
         }))
         .sort((a: any, b: any) => {

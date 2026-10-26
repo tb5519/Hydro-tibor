@@ -37,8 +37,9 @@ export function bindBadgeSoundVolume(doc: Document = document) {
     output.value = value === 0 ? '0% · 静音' : `${value}%`;
     if (audio) audio.volume = value / 100;
     if (value === 0) stop();
-    status.textContent = !hasSound() ? '上传音效后即可调节音量和试听。'
-      : value !== initial ? '音量已调整，点击下方「更新」保存。' : '0% 为静音。修改音量后，点击下方「更新」保存。';
+    status.textContent = !hasSound() ? '上传音效后即可调节音量和试听，个人主页与 AC 特效使用相同音量。'
+      : value !== initial ? '音量已调整，点击「更新」后同步用于个人主页和 AC 特效。'
+        : '个人主页与 AC 特效共用此音量。0% 为静音，点击下方「更新」保存。';
   };
   const changeSound = () => { stop(); refresh(); };
   const play = async () => {

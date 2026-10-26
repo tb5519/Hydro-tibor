@@ -1,9 +1,11 @@
 import type { UserBadgeCard } from './user_badge_gallery';
+import { normalizeBadgeSoundVolume } from './badge_sound_volume';
 
 interface OwnedProfileBadge {
     id: number;
     displayName?: string;
     themeSound?: string;
+    themeSoundVolume?: number;
 }
 
 type AuthorizedProfileBadge = Pick<UserBadgeCard, 'id' | 'title' | 'isCurrent' | 'detailUrl'>;
@@ -12,6 +14,7 @@ export interface ProfileBadgeSound {
     id: number;
     name: string;
     themeSound: string;
+    themeSoundVolume: number;
 }
 
 function validId(id: unknown): id is number {
@@ -49,5 +52,6 @@ export function selectProfileBadgeSound(
         id: selected.id,
         name: owned.displayName || selected.title || '徽章主题',
         themeSound: owned.themeSound,
+        themeSoundVolume: normalizeBadgeSoundVolume(owned.themeSoundVolume),
     };
 }

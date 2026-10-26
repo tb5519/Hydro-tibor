@@ -182,13 +182,13 @@
             {% endif %}
             <div class="badge-sound-volume" data-badge-sound-volume data-saved-sound="{{ badge.themeSound|default('') }}">
               <label class="badge-sound-volume__label" for="badge-sound-volume">
-                <span>AC 音效音量</span><output for="badge-sound-volume" data-badge-sound-volume-value>{{ badge.themeSoundVolume|default(25) }}%</output>
+                <span>徽章音效音量</span><output for="badge-sound-volume" data-badge-sound-volume-value>{{ badge.themeSoundVolume|default(25) }}%</output>
               </label>
               <div class="badge-sound-volume__controls">
                 <input id="badge-sound-volume" type="range" name="themeSoundVolume" min="0" max="100" step="1" value="{{ badge.themeSoundVolume|default(25) }}" {% if not badge.themeSound %}disabled{% endif %}>
                 <button type="button" class="rounded button" data-badge-sound-preview {% if not badge.themeSound %}disabled{% endif %}>试听音效</button>
               </div>
-              <p class="badge-sound-volume__status" data-badge-sound-status role="status">{% if badge.themeSound %}0% 为静音。修改音量后，点击下方「更新」保存。{% else %}上传音效后即可调节音量和试听。{% endif %}</p>
+              <p class="badge-sound-volume__status" data-badge-sound-status role="status">{% if badge.themeSound %}个人主页与 AC 特效共用此音量。0% 为静音，点击下方「更新」保存。{% else %}上传音效后即可调节音量和试听，个人主页与 AC 特效使用相同音量。{% endif %}</p>
             </div>
           </div>
           <div class="badge-ac-preview">

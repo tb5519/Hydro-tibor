@@ -168,7 +168,7 @@
                 <p class="ui-v2-current-badge-theme">当前主题：{{ badgeProfileBackground.currentTheme.name }}</p>
               {% endif %}
               {% if profileBadgeSound.themeSound %}
-                <span hidden data-profile-badge-sound="{{ profileBadgeSound.themeSound }}" data-profile-badge-sound-name="{{ profileBadgeSound.name }}"></span>
+                <span hidden data-profile-badge-sound="{{ profileBadgeSound.themeSound }}" data-profile-badge-sound-name="{{ profileBadgeSound.name }}" data-profile-badge-sound-volume="{{ profileBadgeSound.themeSoundVolume|default(25) }}"></span>
               {% endif %}
               <p>
                 {{ _('Registered at') }} {{ datetimeSpan(udoc['regat'])|safe }}{% if canViewUserPresence %},
