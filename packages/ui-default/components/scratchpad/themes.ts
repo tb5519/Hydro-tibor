@@ -7,6 +7,7 @@ import { transitionScratchpadTheme } from './themeTransition';
 
 export type ScratchpadBuiltinThemeId = 'cloud' | 'mist' | 'sand' | 'ocean';
 export type ScratchpadThemeId = ScratchpadBuiltinThemeId | `badge:${number}`;
+export type ScratchpadThemeBasePreference = ScratchpadBuiltinThemeId | 'default';
 
 export interface ThemePalette {
   surface: string;
@@ -30,6 +31,9 @@ export interface ScratchpadTheme {
   description: string;
   dark: boolean;
   palette: ThemePalette;
+  base?: ScratchpadBuiltinThemeId;
+  defaultBase?: ScratchpadBuiltinThemeId;
+  preferredBase?: ScratchpadBuiltinThemeId | null;
   badgeId?: number;
   badgeTitle?: string;
   administratorAccess?: boolean;
@@ -73,7 +77,7 @@ export interface ScratchpadControlImage {
 
 export const SCRATCHPAD_THEMES: ScratchpadTheme[] = [
   {
-    id: 'cloud', name: '云白', description: '清透蓝白', dark: false,
+    id: 'cloud', base: 'cloud', defaultBase: 'cloud', name: '云白', description: '清透蓝白', dark: false,
     palette: {
       surface: '#ffffff', muted: '#f6f8fc', border: '#e0e7f1', borderStrong: '#bfcee4',
       text: '#22304a', textMuted: '#63728a', accent: '#3568e8', accentSoft: '#edf3ff',
@@ -81,7 +85,7 @@ export const SCRATCHPAD_THEMES: ScratchpadTheme[] = [
     },
   },
   {
-    id: 'mist', name: '雾青', description: '柔和青绿', dark: false,
+    id: 'mist', base: 'mist', defaultBase: 'mist', name: '雾青', description: '柔和青绿', dark: false,
     palette: {
       surface: '#f7fbf9', muted: '#eef5f2', border: '#d7e5de', borderStrong: '#b5cdc1',
       text: '#2d4740', textMuted: '#597267', accent: '#347d69', accentSoft: '#e2f0e9',
@@ -89,7 +93,7 @@ export const SCRATCHPAD_THEMES: ScratchpadTheme[] = [
     },
   },
   {
-    id: 'sand', name: '暖砂', description: '温润米色', dark: false,
+    id: 'sand', base: 'sand', defaultBase: 'sand', name: '暖砂', description: '温润米色', dark: false,
     palette: {
       surface: '#fffcf5', muted: '#f6f0e5', border: '#e8dfcf', borderStrong: '#d5c5ab',
       text: '#4b443a', textMuted: '#7d705e', accent: '#976f3c', accentSoft: '#f3e8d5',
@@ -97,7 +101,7 @@ export const SCRATCHPAD_THEMES: ScratchpadTheme[] = [
     },
   },
   {
-    id: 'ocean', name: '深海', description: '静谧深蓝', dark: true,
+    id: 'ocean', base: 'ocean', defaultBase: 'ocean', name: '深海', description: '静谧深蓝', dark: true,
     palette: {
       surface: '#182332', muted: '#1e2c3e', border: '#2d3e54', borderStrong: '#425a77',
       text: '#dce6f3', textMuted: '#99abc2', accent: '#729eed', accentSoft: '#283e5b',
@@ -340,6 +344,7 @@ const fetches = new Map<string, Promise<boolean>>();
 const pendingSelection = new Map<string, ScratchpadThemeId>();
 const saveQueues = new Map<string, Promise<boolean>>();
 const saveRevisions = new Map<string, number>();
+const confirmedCatalogRevisions = new Map<string, number>();
 // A saved selection is not yet a displayable theme. Keep every consumer,
 // including Monaco, on the same verified, fully prepared visual snapshot.
 const displayedThemes = new Map<string, ScratchpadTheme>();
@@ -428,6 +433,11 @@ function appearance(theme: ScratchpadTheme) {
   return JSON.stringify(visual);
 }
 
+function artwork(theme: ScratchpadTheme) {
+  const { id, version, assets, slots, controls, posterAssetId } = theme;
+  return JSON.stringify({ id, version, assets, slots, controls, posterAssetId });
+}
+
 function prepareDisplay(animate = false): Promise<boolean> {
   const key = storageKey();
   const previous = currentScratchpadTheme();
@@ -449,6 +459,10 @@ function prepareDisplay(animate = false): Promise<boolean> {
     emit();
   };
   const unchanged = appearance(previous) === signature;
+  // The current complete theme already owns its decoded artwork/video. A
+  // student's palette choice changes colors only; preparing that same video
+  // again would fetch a second copy and needlessly interrupt the scene.
+  const artworkReady = previous.badgeId && artwork(previous) === artwork(selected);
   const job = { signature, animate, promise: undefined as unknown as Promise<boolean> };
   const apply = () => {
     if (!valid()) return Promise.resolve(false);
@@ -457,7 +471,7 @@ function prepareDisplay(animate = false): Promise<boolean> {
     // apply prepared artwork directly. Only a deliberate menu choice fades.
     return transitionScratchpadTheme(commit, valid, { immediate: unchanged || !job.animate });
   };
-  const promise = (unchanged || !selected.badgeId ? apply() : prepareScratchpadThemeAssets(selected)
+  const promise = (unchanged || !selected.badgeId || artworkReady ? apply() : prepareScratchpadThemeAssets(selected)
     .then((ready) => ready && valid() ? apply() : false)).catch(() => false);
   job.promise = promise;
   displayJobs.set(key, job);
@@ -487,10 +501,16 @@ function safeUrl(value: unknown): value is string {
 function normalizeTheme(value: any): ScratchpadTheme | null {
   if (!value || !/^badge:[1-9]\d*$/.test(value.id) || Number(value.badgeId) !== Number(value.id.slice(6))) return null;
   if (value.expiresAt && !Number.isFinite(Date.parse(value.expiresAt))) return null;
-  const base = SCRATCHPAD_THEMES.find((theme) => theme.id === value.base) || SCRATCHPAD_THEMES[3];
+  const defaultBase = isBuiltin(value.base) ? value.base : 'ocean';
+  const preferredBase = isBuiltin(value.preferredBase) ? value.preferredBase : null;
+  const base = SCRATCHPAD_THEMES.find((theme) => theme.id === (preferredBase || defaultBase))!;
   const palette = { ...base.palette };
-  for (const key of Object.keys(palette)) {
-    if (/^#[\da-f]{6}$/i.test(value.palette?.[key])) palette[key] = value.palette[key];
+  // A personal light palette must replace the entire published dark palette,
+  // including syntax colors. The original design remains available unchanged.
+  if (!preferredBase) {
+    for (const key of Object.keys(palette)) {
+      if (/^#[\da-f]{6}$/i.test(value.palette?.[key])) palette[key] = value.palette[key];
+    }
   }
   const assets: ScratchpadThemeAsset[] = Array.isArray(value.assets) ? value.assets
     .filter((asset) => asset && typeof asset.id === 'string' && safeUrl(asset.url)
@@ -525,7 +545,8 @@ function normalizeTheme(value: any): ScratchpadTheme | null {
   return {
     id: value.id, badgeId: Number(value.badgeId), name: String(value.name || value.badgeTitle || '徽章主题').slice(0, 80),
     description: String(value.badgeTitle || '').slice(0, 80), badgeTitle: String(value.badgeTitle || '').slice(0, 80),
-    dark: base.dark, palette, expiresAt: value.expiresAt || null, assets, slots, controls,
+    dark: base.dark, palette, base: preferredBase || defaultBase, defaultBase, preferredBase,
+    expiresAt: value.expiresAt || null, assets, slots, controls,
     administratorAccess: value.administratorAccess === true,
     overlay: Math.max(0.35, Math.min(0.98, Number(value.overlay) || 0.84)),
     posterAssetId: assets.some((asset) => asset.id === value.posterAssetId && asset.type.startsWith('image/')) ? value.posterAssetId : undefined,
@@ -557,10 +578,10 @@ function scheduleExpiry() {
   }, Math.min(2147483647, Math.max(1, Math.min(...deadlines) + 20)));
 }
 
-function applyCatalog(data: any, applySelection = true, animate = false) {
+function applyCatalog(data: any, applySelection = true, animate = false, preserveAppearance = false) {
   if (!data || !Array.isArray(data.themes)) return null;
   // Capture the old visual before replacing its catalog/version.
-  currentScratchpadTheme();
+  const previous = currentScratchpadTheme();
   const now = typeof data.serverNow === 'number' ? data.serverNow : Date.parse(data.serverNow);
   const catalog: ThemeCatalog = {
     themes: data.themes.map(normalizeTheme).filter(Boolean), choices: [],
@@ -577,6 +598,20 @@ function applyCatalog(data: any, applySelection = true, animate = false) {
     if (id && !isAvailable(id)) remember(catalog.fallback);
   }
   scheduleExpiry();
+  if (preserveAppearance && isAvailable(previous.id)) {
+    const verified = getScratchpadTheme(previous.id);
+    // Rechecking a failed save is about access. Even if the server saved a
+    // preference before the response was lost, do not unexpectedly recolor
+    // the editor while telling the student that their save could not finish.
+    remember(previous.id);
+    displayedThemes.set(storageKey(), previous.expiresAt === verified.expiresAt
+      && previous.administratorAccess === verified.administratorAccess ? previous : {
+        ...previous, expiresAt: verified.expiresAt, administratorAccess: verified.administratorAccess,
+      });
+    displayRevisions.set(storageKey(), (displayRevisions.get(storageKey()) || 0) + 1);
+    emit();
+    return Promise.resolve(true);
+  }
   emit();
   return prepareDisplay(animate);
 }
@@ -627,12 +662,14 @@ export function refreshScratchpadThemes(): Promise<boolean> {
   const key = storageKey();
   if (fetches.has(key)) return fetches.get(key)!;
   const revision = saveRevisions.get(key) || 0;
+  const confirmedRevision = confirmedCatalogRevisions.get(key) || 0;
   const job = Promise.resolve().then(async () => {
     try {
       const data = await request.get(endpoint);
       // An older GET cannot replace a catalog/version that was returned by a
       // more recent verified selection, nor undo a selection still saving.
-      if (storageKey() !== key || (saveRevisions.get(key) || 0) !== revision) return false;
+      if (storageKey() !== key || (saveRevisions.get(key) || 0) !== revision
+        || (confirmedCatalogRevisions.get(key) || 0) !== confirmedRevision) return false;
       const prepared = applyCatalog(data);
       if (!prepared) return false;
       await prepared;
@@ -651,8 +688,24 @@ export function refreshScratchpadThemes(): Promise<boolean> {
   return job;
 }
 
-export function selectScratchpadTheme(id: ScratchpadThemeId): Promise<boolean> {
-  if (!isAvailable(id)) return Promise.resolve(false);
+async function recheckAfterFailedThemeSave(key: string, revision: number, endpoint: string) {
+  if (!endpoint) return;
+  const confirmedRevision = confirmedCatalogRevisions.get(key) || 0;
+  try {
+    // Deliberately bypass the ordinary GET deduplication: an in-flight refresh
+    // may predate the revocation that rejected this save.
+    const data = await request.get(endpoint, {}, { timeout: 10000 });
+    if (storageKey() !== key || saveRevisions.get(key) !== revision
+      || (confirmedCatalogRevisions.get(key) || 0) !== confirmedRevision || !Array.isArray(data?.themes)) return;
+    confirmedCatalogRevisions.set(key, confirmedRevision + 1);
+    await applyCatalog(data, false, false, true);
+  } catch { /* Offline access never grants a badge or extends its known expiry. */ }
+}
+
+export function selectScratchpadTheme(id: ScratchpadThemeId, base?: ScratchpadThemeBasePreference): Promise<boolean> {
+  if (!isAvailable(id) || (base !== undefined && (isBuiltin(id) || (base !== 'default' && !isBuiltin(base))))) {
+    return Promise.resolve(false);
+  }
   const key = storageKey();
   const builtin = isBuiltin(id);
   let prepared: Promise<boolean> | null = null;
@@ -676,13 +729,24 @@ export function selectScratchpadTheme(id: ScratchpadThemeId): Promise<boolean> {
     }
     try {
       if (!endpoint && (!legacyEndpoint || !builtin)) throw new Error('Preference endpoint unavailable');
-      const data = await request.post(endpoint || legacyEndpoint, endpoint ? { id, operation: 'select' } : { scratchpadTheme: id });
+      const data = await request.post(endpoint || legacyEndpoint, endpoint
+        ? { id, operation: 'select', ...(base === undefined ? {} : { base }) } : { scratchpadTheme: id });
       if (storageKey() !== key || saveRevisions.get(key) !== revision) {
         if (saveRevisions.get(key) === revision) pendingSelection.delete(key);
         return false;
       }
       pendingSelection.delete(key);
       if (endpoint) {
+        if (base !== undefined) {
+          const verified = data?.themes?.find((theme) => theme.id === id);
+          const preference = isBuiltin(verified?.preferredBase) ? verified.preferredBase : null;
+          if (data.selectedId !== id || !verified || preference !== (base === 'default' ? null : base)) {
+            throw new Error('Theme palette preference verification unavailable');
+          }
+        }
+        // A GET begun while this POST was pending may have read the old
+        // preference. Invalidate it even though no newer selection started.
+        confirmedCatalogRevisions.set(key, (confirmedCatalogRevisions.get(key) || 0) + 1);
         prepared = applyCatalog(data, true, true);
         if (!prepared) throw new Error('Theme verification unavailable');
         return true;
@@ -693,11 +757,10 @@ export function selectScratchpadTheme(id: ScratchpadThemeId): Promise<boolean> {
       if (storageKey() === key && saveRevisions.get(key) === revision) {
         pendingSelection.delete(key);
         if (!builtin) {
-          remember(fallbackTheme().id);
-          emit();
-          void prepareDisplay();
-          void refreshScratchpadThemes();
-          Notification.error('该徽章主题暂时无法使用，已保留基础主题。请刷新后重试。', 6000);
+          // Keep the last verified, unexpired visual on a failed save. A
+          // network error must not strip the student's current badge artwork.
+          Notification.error('未能保存主题设置，已保留原主题与配色。请重试。', 6000);
+          void recheckAfterFailedThemeSave(key, revision, endpoint);
         } else Notification.error('主题已在当前页面应用，但未能保存到账号。请重新选择该主题重试。', 6000);
       }
       return false;
@@ -767,7 +830,7 @@ export function useScratchpadThemes(): ScratchpadTheme[] {
 export function scratchpadMonacoThemeName(theme: ScratchpadTheme): string {
   // Monaco rejects colons and underscores even though a catalog ID may contain
   // them. Keep its internal name separate from the server's badge identifier.
-  return `hydro-scratchpad-${theme.id.replace(/[^a-z0-9-]/gi, '-')}${theme.badgeId ? `-${String(theme.version).replace(/[^a-z0-9-]/gi, '-')}` : ''}`;
+  return `hydro-scratchpad-${theme.id.replace(/[^a-z0-9-]/gi, '-')}${theme.badgeId ? `-${String(theme.version).replace(/[^a-z0-9-]/gi, '-')}${theme.preferredBase ? `-${theme.preferredBase}` : ''}` : ''}`;
 }
 
 export function attachScratchpadMonacoTheme(monaco: typeof Monaco, restoreTheme: () => string): () => void {

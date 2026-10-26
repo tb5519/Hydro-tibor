@@ -198,8 +198,10 @@ describe('prepared scratchpad artwork and video integration', () => {
             assert.equal(video.style.objectFit, 'cover');
             assert.equal(video.style.objectPosition, 'top center');
             assert.match(h.document.querySelector('.scratchpad__skin-background').style.backgroundImage, /poster\.png/);
-            await h.render(interfaceFor({ ...theme, description: 'another render' }));
+            video.currentTime = 18.5;
+            await h.render(interfaceFor({ ...theme, base: 'cloud', preferredBase: 'cloud', dark: false, palette: { surface: '#ffffff' } }));
             assert.strictEqual(h.document.querySelector('video'), video);
+            assert.equal(video.currentTime, 18.5, 'changing the palette must not rewind the theme video');
             assert.equal(h.createdVideos, 1);
             assert.deepEqual(h.claims, ['/v1/movie.mp4']);
             assert.equal(calls.pause, 0);

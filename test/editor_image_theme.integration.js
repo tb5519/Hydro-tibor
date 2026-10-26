@@ -157,6 +157,53 @@ async function run() {
         assert.equal((await get(student, catalogUrl)).body.selectedId, published.id);
         assert.equal((await get(student, `/d/${otherDomainId}/code-editor/themes`)).body.themes.length, 0);
     });
+    await check('Students retain independent badge colors across sessions without editing published themes or other accounts', async () => {
+        status(await publish(702, { name: '限时主题' }), 200);
+        const before = await db.collection('editor.theme').find({ scope: `domain:${domainId}` }).sort({ badgeId: 1 }).toArray();
+        const select = (id, base, agent = student, url = catalogUrl) => post(agent, url, {
+            operation: 'select', id, ...(base === undefined ? {} : { base }),
+        });
+        let response = await select('badge:701', 'cloud');
+        status(response, 200);
+        assert.equal(response.body.themes.find((theme) => theme.id === 'badge:701').preferredBase, 'cloud');
+        assert.equal(response.body.themes.find((theme) => theme.id === 'badge:701').base, published.base);
+        assert.deepEqual(response.body.themes.find((theme) => theme.id === 'badge:701').palette, published.palette);
+        status(await select('badge:702', 'sand'), 200);
+        response = await select('badge:701');
+        status(response, 200);
+        assert.equal(response.body.themes.find((theme) => theme.id === 'badge:701').preferredBase, 'cloud');
+        assert.equal(response.body.themes.find((theme) => theme.id === 'badge:702').preferredBase, 'sand');
+        const newSession = supertest.agent(httpServer);
+        status(await newSession.post('/login').send({ uname: 'theme_student', password }), 302);
+        const restored = (await get(newSession, catalogUrl)).body;
+        assert.equal(restored.selectedId, 'badge:701');
+        assert.equal(restored.themes.find((theme) => theme.id === 'badge:701').preferredBase, 'cloud');
+        assert.equal((await get(teacher, catalogUrl)).body.themes.find((theme) => theme.id === 'badge:701').preferredBase, null);
+        const selectionId = `domain:${domainId}:${uid}`;
+        let saved = await db.collection('editor.themeSelection').findOne({ _id: selectionId });
+        assert.deepEqual(saved.badgeBases, { 701: 'cloud', 702: 'sand' });
+        for (const base of ['', null, ['cloud'], { $set: 'ocean' }, 'default.badge', 'purple']) denied(await select('badge:701', base));
+        denied(await select('cloud', 'ocean'));
+        denied(await select('ocean', 'default'));
+        denied(await select('badge:701', 'mist', other));
+        denied(await select('badge:701', 'mist', student, `/d/${otherDomainId}/code-editor/themes`));
+        assert.equal(await db.collection('editor.themeSelection').findOne({ _id: `domain:${domainId}:${otherUid}` }), null);
+        assert.equal(await db.collection('editor.themeSelection').findOne({ _id: `domain:${otherDomainId}:${uid}` }), null);
+        assert.deepEqual((await db.collection('editor.themeSelection').findOne({ _id: selectionId })).badgeBases, saved.badgeBases);
+        status(await select('mist'), 200);
+        response = await select('badge:701');
+        status(response, 200);
+        assert.equal(response.body.themes.find((theme) => theme.id === 'badge:701').preferredBase, 'cloud');
+        response = await select('badge:701', 'default');
+        status(response, 200);
+        assert.equal(response.body.themes.find((theme) => theme.id === 'badge:701').preferredBase, null);
+        saved = await db.collection('editor.themeSelection').findOne({ _id: selectionId });
+        assert.deepEqual(saved.badgeBases, { 702: 'sand' });
+        assert.deepEqual(await db.collection('editor.theme').find({ scope: `domain:${domainId}` }).sort({ badgeId: 1 }).toArray(), before);
+        // Keep the next expiry scenario's original built-in fallback.
+        status(await select('ocean'), 200);
+        status(await select('badge:701'), 200);
+    });
     await check('Temporary badge expiry is returned accurately and an expired badge cannot select or fetch its theme', async () => {
         status(await publish(702, { name: '限时主题' }), 200);
         const limited = (await get(student, catalogUrl)).body.themes.find((theme) => theme.badgeId === 702);
@@ -168,6 +215,9 @@ async function run() {
         assert(!after.themes.some((theme) => theme.badgeId === 702));
         denied(await get(student, limited.assets[0].url));
         denied(await post(student, catalogUrl, { operation: 'select', id: limited.id }));
+        const previous = await db.collection('editor.themeSelection').findOne({ _id: `domain:${domainId}:${uid}` });
+        denied(await post(student, catalogUrl, { operation: 'select', id: limited.id, base: 'mist' }));
+        assert.deepEqual((await db.collection('editor.themeSelection').findOne({ _id: previous._id })).badgeBases, previous.badgeBases);
         status(await post(student, catalogUrl, { operation: 'select', id: published.id }), 200);
     });
     await check('Administrators can choose every published theme in the current scope without being awarded badges', async () => {

@@ -340,6 +340,9 @@ export async function getEditorThemeCatalog(handler: Handler) {
     const fallback = EDITOR_THEME_BASES.includes(handler.user['scratchpadTheme']) ? handler.user['scratchpadTheme'] : 'ocean';
     const available = rows.map((theme: any) => ({
         ...present(handler, theme, byId.get(theme.badgeId)!.expiresAt, byId.get(theme.badgeId)!.title),
+        // Personal colors never alter the published design or its asset version.
+        preferredBase: (EDITOR_THEME_BASES as readonly string[]).includes(selection?.badgeBases?.[theme.badgeId])
+            ? selection.badgeBases[theme.badgeId] as typeof EDITOR_THEME_BASES[number] : null,
         ...(administrator ? { administratorAccess: true } : {}),
     }));
     const selectedId = available.some((theme: any) => theme.id === selection?.themeId) ? selection.themeId : fallback;
@@ -354,18 +357,30 @@ export class EditorThemeCatalogHandler extends Handler {
     async get() { this.response.body = await getEditorThemeCatalog(this); }
     async postSelect() {
         const id = this.args.id;
-        const catalog = await getEditorThemeCatalog(this);
+        const base = this.args.base;
         const builtin = (EDITOR_THEME_BASES as readonly string[]).includes(id);
-        if (!builtin && !catalog.themes.some((theme: any) => theme.id === id)) {
+        if (base !== undefined && (builtin || typeof base !== 'string'
+            || (base !== 'default' && !(EDITOR_THEME_BASES as readonly string[]).includes(base)))) {
+            throw new ValidationError('base', null, '请选择徽章主题的有效配色。');
+        }
+        const catalog = await getEditorThemeCatalog(this);
+        const selected = catalog.themes.find((theme: any) => theme.id === id);
+        if (!builtin && (!selected || !Number.isSafeInteger(selected.badgeId) || selected.badgeId <= 0)) {
             throw new ValidationError('theme', null, '你暂未持有这个主题对应的有效徽章，请选择其他主题。');
         }
         const scope = editorThemeScope(this.domain);
+        // Only a server-authorized numeric badge ID can enter a MongoDB field path.
+        const preferenceKey = !builtin && base !== undefined ? `badgeBases.${selected.badgeId}` : null;
+        const unset = { ...(builtin ? { themeId: '' } : {}), ...(base === 'default' ? { [preferenceKey]: '' } : {}) };
         if (builtin) await user.setById(this.user._id, { scratchpadTheme: id } as any);
         await collections(this).selections.updateOne({ _id: `${scope}:${this.user._id}` }, {
-            $set: { scope, uid: this.user._id, updatedAt: new Date(), ...(builtin ? {} : { themeId: id }) },
-            ...(builtin ? { $unset: { themeId: '' } } : {}),
+            $set: { scope, uid: this.user._id, updatedAt: new Date(), ...(builtin ? {} : { themeId: id }),
+                ...(preferenceKey && base !== 'default' ? { [preferenceKey]: base } : {}) },
+            ...(Object.keys(unset).length ? { $unset: unset } : {}),
         }, { upsert: true });
-        this.response.body = { ...catalog, selectedId: id, fallback: builtin ? id : catalog.fallback };
+        this.response.body = { ...catalog, selectedId: id, fallback: builtin ? id : catalog.fallback,
+            themes: catalog.themes.map((theme) => theme.id === id && base !== undefined
+                ? { ...theme, preferredBase: base === 'default' ? null : base } : theme) };
     }
     async post() { await this.postSelect(); }
 }

@@ -947,4 +947,283 @@ describe('scratchpad workspace themes', () => {
         } finally { release?.(); h.dom.window.close(); }
     });
 
+    it('restores each student palette as a complete color set without discarding the original badge artwork', async () => {
+        const custom = { surface: '#112233', text: '#ddeeff', keyword: '#bbccdd', accent: '#aabbcc' };
+        let response = catalog({ themes: [badgeSkin({ palette: custom })] });
+        const h = harness({ workspace: true, get: () => response });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            const original = h.themes.currentScratchpadTheme();
+            assert.equal(original.base, 'ocean');
+            assert.equal(original.defaultBase, 'ocean');
+            assert.equal(original.preferredBase, null);
+            assert.equal(original.palette.surface, custom.surface);
+            for (const builtin of h.themes.SCRATCHPAD_THEMES) {
+                response = catalog({ themes: [badgeSkin({ palette: custom, preferredBase: builtin.id })] });
+                assert.equal(await h.themes.refreshScratchpadThemes(), true);
+                const current = h.themes.currentScratchpadTheme();
+                assert.equal(current.id, original.id);
+                assert.equal(current.version, original.version);
+                assert.equal(current.base, builtin.id);
+                assert.equal(current.defaultBase, 'ocean');
+                assert.equal(current.preferredBase, builtin.id);
+                assert.equal(current.dark, builtin.dark);
+                assert.deepEqual(current.palette, builtin.palette);
+                for (const key of ['assets', 'slots', 'controls']) assert.deepEqual(current[key], original[key]);
+            }
+            response = catalog({ themes: [badgeSkin({ palette: custom, preferredBase: 'invalid' })] });
+            await h.themes.refreshScratchpadThemes();
+            assert.equal(h.themes.currentScratchpadTheme().preferredBase, null);
+            assert.equal(h.themes.currentScratchpadTheme().palette.surface, custom.surface);
+        } finally { h.dom.window.close(); }
+    });
+
+    it('saves a palette before synchronizing the same badge shell and Monaco without reloading artwork', async () => {
+        const response = deferred();
+        const h = harness({ workspace: true, get: () => catalog(), post: () => response.promise });
+        let release;
+        try {
+            await h.themes.refreshScratchpadThemes();
+            const before = h.themes.currentScratchpadTheme();
+            const definitions = [];
+            const applied = [];
+            release = h.themes.attachScratchpadMonacoTheme({ editor: {
+                defineTheme: (id, data) => definitions.push({ id, data }),
+                setTheme: (id) => applied.push(id),
+            } }, () => 'outside');
+            const choosing = h.themes.selectScratchpadTheme('badge:7', 'cloud');
+            await Promise.resolve();
+            assert.strictEqual(h.themes.currentScratchpadTheme(), before, 'do not claim an unsaved color preference');
+            assert.deepEqual(JSON.parse(JSON.stringify(h.requests[0][1])), { id: 'badge:7', operation: 'select', base: 'cloud' });
+            response.resolve(catalog({ themes: [badgeSkin({ preferredBase: 'cloud' })] }));
+            assert.equal(await choosing, true);
+            const current = h.themes.currentScratchpadTheme();
+            assert.equal(current.base, 'cloud');
+            assert.equal(current.dark, false);
+            assert.equal(h.themes.scratchpadThemeVariables(current)['--scratchpad-color-scheme'], 'light');
+            assert.equal(applied.at(-1), 'hydro-scratchpad-badge-7-revision-1-cloud');
+            assert.equal(definitions.at(-1).data.base, 'vs');
+            assert.equal(h.preparations.length, 1, 'the displayed images and video already belong to the prepared theme');
+            assert.equal(h.transitions.filter((settings) => !settings.immediate).length, 1);
+        } finally { response.resolve({}); release?.(); h.dom.window.close(); }
+    });
+
+    it('keeps palette choices across theme switches and resets explicitly to the teacher original', async () => {
+        let preference = 'mist';
+        const custom = { surface: '#16202f', keyword: '#ddbbff' };
+        const themeCatalog = (selectedId) => catalog({ selectedId, themes: [badgeSkin({ preferredBase: preference, palette: custom })] });
+        const h = harness({
+            workspace: true, get: () => themeCatalog('badge:7'),
+            post: (url, data) => {
+                if (data.base !== undefined) preference = data.base === 'default' ? null : data.base;
+                return themeCatalog(data.id);
+            },
+        });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            assert.equal(h.themes.currentScratchpadTheme().base, 'mist');
+            assert.equal(await h.themes.selectScratchpadTheme('cloud'), true);
+            assert.equal(await h.themes.selectScratchpadTheme('badge:7'), true);
+            assert.equal('base' in h.requests.at(-1)[1], false, 'selecting a theme does not erase its existing preference');
+            assert.equal(h.themes.currentScratchpadTheme().base, 'mist');
+            assert.equal(await h.themes.selectScratchpadTheme('badge:7', 'default'), true);
+            assert.equal(h.themes.currentScratchpadTheme().preferredBase, null);
+            assert.equal(h.themes.currentScratchpadTheme().base, 'ocean');
+            assert.equal(h.themes.currentScratchpadTheme().palette.surface, custom.surface);
+            assert.equal(h.themes.currentScratchpadTheme().palette.keyword, custom.keyword);
+            assert.equal(h.themes.scratchpadMonacoThemeName(h.themes.currentScratchpadTheme()), 'hydro-scratchpad-badge-7-revision-1');
+        } finally { h.dom.window.close(); }
+    });
+
+    it('serializes rapid same-badge palette saves and ignores a stale refresh or older saved color', async () => {
+        const first = deferred();
+        const stale = deferred();
+        let reads = 0;
+        const h = harness({
+            workspace: true, get: () => (++reads === 1 ? catalog() : stale.promise),
+            post: (url, data) => (data.base === 'cloud' ? first.promise
+                : catalog({ themes: [badgeSkin({ preferredBase: data.base })] })),
+        });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            const refresh = h.themes.refreshScratchpadThemes();
+            await Promise.resolve();
+            const cloud = h.themes.selectScratchpadTheme('badge:7', 'cloud');
+            await Promise.resolve();
+            const mist = h.themes.selectScratchpadTheme('badge:7', 'mist');
+            const sand = h.themes.selectScratchpadTheme('badge:7', 'sand');
+            first.resolve(catalog({ themes: [badgeSkin({ preferredBase: 'cloud' })] }));
+            assert.deepEqual(await Promise.all([cloud, mist, sand]), [false, false, true]);
+            stale.resolve(catalog({ themes: [badgeSkin({ preferredBase: 'ocean' })] }));
+            assert.equal(await refresh, false);
+            assert.deepEqual(h.requests.map(([, data]) => data.base), ['cloud', 'sand']);
+            assert.equal(h.themes.currentScratchpadTheme().base, 'sand');
+            assert.equal(h.preparations.length, 1);
+            assert.equal(h.errors.length, 0);
+        } finally { first.resolve({}); stale.resolve({}); h.dom.window.close(); }
+    });
+
+    it('retains the previous complete badge and color when saving fails or the response does not verify the requested color', async () => {
+        let mode = 'error';
+        const h = harness({
+            workspace: true, get: () => catalog({ themes: [badgeSkin({ preferredBase: 'mist' })] }),
+            post: () => {
+                if (mode === 'error') throw new Error('offline');
+                return catalog({ themes: [badgeSkin({ preferredBase: mode === 'wrong' ? 'ocean' : 'cloud' })] });
+            },
+        });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            const before = h.themes.currentScratchpadTheme();
+            for (mode of ['error', 'wrong']) {
+                assert.equal(await h.themes.selectScratchpadTheme('badge:7', 'cloud'), false);
+                assert.strictEqual(h.themes.currentScratchpadTheme(), before);
+                assert.match(h.errors.at(-1)[0], /未能保存.*保留原主题与配色/);
+            }
+            mode = 'ok';
+            assert.equal(await h.themes.selectScratchpadTheme('badge:7', 'cloud'), true);
+            assert.equal(h.themes.currentScratchpadTheme().base, 'cloud');
+        } finally { h.dom.window.close(); }
+    });
+
+    it('rejects a stale catalog requested during a pending save when it arrives after the newly saved palette', async () => {
+        const savedResponse = deferred();
+        const staleResponse = deferred();
+        let reads = 0;
+        const h = harness({
+            workspace: true,
+            get: () => (++reads === 1 ? catalog() : staleResponse.promise),
+            post: () => savedResponse.promise,
+        });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            const saving = h.themes.selectScratchpadTheme('badge:7', 'cloud');
+            await Promise.resolve();
+            assert.equal(h.requests.length, 1);
+            const refreshing = h.themes.refreshScratchpadThemes();
+            await Promise.resolve();
+            assert.equal(h.gets.length, 2, 'the permission refresh actually started while the save was pending');
+            savedResponse.resolve(catalog({ themes: [badgeSkin({ preferredBase: 'cloud' })] }));
+            assert.equal(await saving, true);
+            const savedTheme = h.themes.currentScratchpadTheme();
+            assert.equal(savedTheme.base, 'cloud');
+            staleResponse.resolve(catalog({ themes: [badgeSkin({ preferredBase: 'ocean' })] }));
+            assert.equal(await refreshing, false);
+            assert.strictEqual(h.themes.currentScratchpadTheme(), savedTheme);
+            assert.equal(h.themes.getScratchpadTheme('badge:7').preferredBase, 'cloud');
+            assert.equal(h.errors.length, 0);
+        } finally { savedResponse.resolve({}); staleResponse.resolve({}); h.dom.window.close(); }
+    });
+
+    it('checks revoked ownership after a failed save with a fresh request instead of reusing an older catalog request', async () => {
+        const oldResponse = deferred();
+        const freshResponse = deferred();
+        const freshStarted = deferred();
+        let reads = 0;
+        const h = harness({
+            workspace: true,
+            get: () => {
+                reads += 1;
+                if (reads === 1) return catalog();
+                if (reads === 2) return oldResponse.promise;
+                freshStarted.resolve();
+                return freshResponse.promise;
+            },
+            post: () => { throw new Error('badge ownership revoked'); },
+        });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            const stale = h.themes.refreshScratchpadThemes();
+            await Promise.resolve();
+            assert.equal(await h.themes.selectScratchpadTheme('badge:7', 'cloud'), false);
+            await freshStarted.promise;
+            assert.equal(h.gets.length, 3);
+            assert.equal(h.themes.currentScratchpadTheme().id, 'badge:7', 'keep the last complete visual until access is verified');
+            freshResponse.resolve(catalog({ themes: [], selectedId: 'ocean' }));
+            for (let index = 0; index < 8; index += 1) await Promise.resolve();
+            assert.equal(h.themes.currentScratchpadTheme().id, 'ocean');
+            assert.equal(h.themes.availableScratchpadThemes().length, 4);
+            oldResponse.resolve(catalog());
+            assert.equal(await stale, false, 'the pre-revocation GET cannot restore revoked artwork');
+            assert.equal(h.themes.currentScratchpadTheme().id, 'ocean');
+        } finally { oldResponse.resolve({}); freshResponse.resolve({}); h.dom.window.close(); }
+    });
+
+    it('keeps the previous colors during failure revalidation and does not let it overwrite a later choice', async () => {
+        const permissions = deferred();
+        let reads = 0;
+        let failed = false;
+        const h = harness({
+            workspace: true,
+            get: () => (++reads === 1 ? catalog({ themes: [badgeSkin({ preferredBase: 'mist' })] }) : permissions.promise),
+            post: (url, data) => {
+                if (!failed) { failed = true; throw new Error('offline'); }
+                return catalog({ themes: [badgeSkin({ preferredBase: data.base })] });
+            },
+        });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            assert.equal(await h.themes.selectScratchpadTheme('badge:7', 'cloud'), false);
+            assert.equal(h.gets.length, 2);
+            assert.equal(h.themes.currentScratchpadTheme().base, 'mist');
+            assert.equal(await h.themes.selectScratchpadTheme('badge:7', 'sand'), true);
+            permissions.resolve(catalog({ themes: [], selectedId: 'ocean' }));
+            for (let index = 0; index < 8; index += 1) await Promise.resolve();
+            assert.equal(h.themes.currentScratchpadTheme().id, 'badge:7');
+            assert.equal(h.themes.currentScratchpadTheme().base, 'sand');
+        } finally { permissions.resolve({}); h.dom.window.close(); }
+    });
+
+    it('preserves the last available visual if failure revalidation confirms ownership with a different stored palette', async () => {
+        let reads = 0;
+        const h = harness({
+            workspace: true,
+            get: () => catalog({ themes: [badgeSkin({ preferredBase: ++reads === 1 ? 'mist' : 'cloud' })] }),
+            post: () => { throw new Error('response lost after saving'); },
+        });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            assert.equal(await h.themes.selectScratchpadTheme('badge:7', 'cloud'), false);
+            for (let index = 0; index < 8; index += 1) await Promise.resolve();
+            assert.equal(h.themes.currentScratchpadTheme().base, 'mist');
+            assert.equal(h.themes.currentScratchpadTheme().id, 'badge:7');
+            assert.equal(h.preparations.length, 1);
+        } finally { h.dom.window.close(); }
+    });
+
+    it('cannot carry a pending palette change into another account or workspace', async () => {
+        for (const changeScope of [(h) => { h.user._id = 22; }, (h) => { h.ui.codeEditorThemesUrl = '/d/class-b/code-editor/themes'; }]) {
+            const response = deferred();
+            const h = harness({ workspace: true, get: () => catalog(), post: () => response.promise });
+            try {
+                await h.themes.refreshScratchpadThemes();
+                const choosing = h.themes.selectScratchpadTheme('badge:7', 'sand');
+                await Promise.resolve();
+                changeScope(h);
+                response.resolve(catalog({ themes: [badgeSkin({ preferredBase: 'sand' })] }));
+                assert.equal(await choosing, false);
+                assert.equal(h.themes.currentScratchpadTheme().id, 'cloud');
+                assert.equal(h.themes.availableScratchpadThemes().length, 4);
+                assert.equal(h.errors.length, 0);
+            } finally { response.resolve({}); h.dom.window.close(); }
+        }
+    });
+
+    it('rejects unsupported palettes and a palette save that returns an expired badge', async () => {
+        const h = harness({
+            workspace: true, get: () => catalog(),
+            post: () => catalog({ themes: [badgeSkin({ preferredBase: 'cloud', expiresAt: new Date(Date.now() - 1000).toISOString() })] }),
+        });
+        try {
+            await h.themes.refreshScratchpadThemes();
+            assert.equal(await h.themes.selectScratchpadTheme('badge:7', 'unknown'), false);
+            assert.equal(await h.themes.selectScratchpadTheme('cloud', 'mist'), false);
+            assert.equal(h.requests.length, 0);
+            assert.equal(await h.themes.selectScratchpadTheme('badge:7', 'cloud'), false);
+            assert.equal(h.themes.currentScratchpadTheme().id, 'ocean');
+            assert.equal(await h.themes.selectScratchpadTheme('badge:7', 'cloud'), false);
+            assert.equal(h.requests.length, 1);
+        } finally { h.dom.window.close(); }
+    });
+
 });

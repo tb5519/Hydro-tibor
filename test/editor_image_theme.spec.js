@@ -286,11 +286,27 @@ function draftDatabase(fixtures) {
                 for (const [key, value] of Object.entries(update.$max || {})) if (row[key] === undefined || row[key] < value) row[key] = value;
                 return before;
             },
-            async updateOne(query, update) {
-                const row = rows.find((item) => matches(item, query));
+            async updateOne(query, update, options) {
+                let row = rows.find((item) => matches(item, query));
+                if (!row && options?.upsert) {
+                    row = { ...query };
+                    rows.push(row);
+                }
                 if (!row) return { matchedCount: 0 };
-                Object.assign(row, update.$set);
-                for (const key of Object.keys(update.$unset || {})) delete row[key];
+                const parent = (key) => {
+                    const parts = key.split('.');
+                    let value = row;
+                    for (const part of parts.slice(0, -1)) value = value[part] ||= {};
+                    return [value, parts.at(-1)];
+                };
+                for (const [key, value] of Object.entries(update.$set || {})) {
+                    const [target, name] = parent(key);
+                    target[name] = value;
+                }
+                for (const key of Object.keys(update.$unset || {})) {
+                    const [target, name] = parent(key);
+                    delete target[name];
+                }
                 for (const [key, value] of Object.entries(update.$max || {})) if (row[key] === undefined || row[key] < value) row[key] = value;
                 return { matchedCount: 1 };
             },
@@ -379,6 +395,80 @@ it('bootstraps only fresh account- and classroom-scoped editor themes into priva
         assert.notStrictEqual(nextProblem.UiContext.codeEditorThemeCatalog, initial);
         assert.deepEqual(galleryReads, [['A', 11], ['B', 11], ['A', 12], ['A', 11]]);
         assert.equal(h.warnings.length, 0);
+    } finally { galleryForUser = async () => ({ badgeCards: [] }); }
+});
+
+it('saves one personal base per authorized badge without changing the publication, preserving it across theme switches', async () => {
+    const fixtures = { 'editor.theme': [7, 8].map((badgeId) => ({ _id: `domain:A:${badgeId}`, scope: 'domain:A', badgeId,
+        version: `v${badgeId}`, design: { base: 'ocean', palette: { text: '#ffffff' } }, assets: [] })) };
+    const h = await bootstrapHarness(fixtures);
+    galleryForUser = async () => ({ badgeCards: [7, 8].map((id) => ({ id, title: `${id}`, expiresAt: null })) });
+    const original = JSON.stringify(fixtures['editor.theme']);
+    const handler = h.handler();
+    const select = async (id, base) => {
+        handler.args = { id, ...(base === undefined ? {} : { base }) };
+        await handlerModule.EditorThemeCatalogHandler.prototype.postSelect.call(handler);
+        return handler.response.body;
+    };
+    try {
+        assert.equal((await select('badge:7', 'cloud')).themes.find((theme) => theme.id === 'badge:7').preferredBase, 'cloud');
+        await select('badge:8', 'sand');
+        const restored = await select('badge:7');
+        assert.equal(restored.selectedId, 'badge:7');
+        assert.equal(restored.themes.find((theme) => theme.id === 'badge:7').preferredBase, 'cloud');
+        const stored = fixtures['editor.themeSelection'][0];
+        assert.equal(stored._id, 'domain:A:11');
+        assert.deepEqual(stored.badgeBases, { 7: 'cloud', 8: 'sand' });
+        assert.equal(restored.themes[0].base, 'ocean');
+        assert.deepEqual(restored.themes[0].palette, { text: '#ffffff' });
+        const reset = await select('badge:7', 'default');
+        assert.equal(reset.themes.find((theme) => theme.id === 'badge:7').preferredBase, null);
+        assert.deepEqual(stored.badgeBases, { 8: 'sand' });
+        assert.equal(JSON.stringify(fixtures['editor.theme']), original);
+    } finally { galleryForUser = async () => ({ badgeCards: [] }); }
+});
+
+it('restores personal colors only for the same account and scope, ignoring corrupt stored values', async () => {
+    const fixtures = {
+        'editor.theme': ['A', 'B'].map((id) => ({ _id: `domain:${id}:7`, scope: `domain:${id}`, badgeId: 7,
+            version: `v${id}`, design: { base: 'ocean' }, assets: [] })),
+        'editor.themeSelection': [
+            { _id: 'domain:A:11', themeId: 'badge:7', badgeBases: { 7: 'mist' } },
+            { _id: 'domain:B:11', themeId: 'badge:7', badgeBases: { 7: 'sand' } },
+            { _id: 'domain:A:12', themeId: 'badge:7', badgeBases: { 7: 'invalid' } },
+        ],
+    };
+    const h = await bootstrapHarness(fixtures);
+    galleryForUser = async () => ({ badgeCards: [{ id: 7, title: '徽章', expiresAt: null }] });
+    try {
+        const owner = h.handler();
+        await h.after(owner);
+        assert.equal(owner.UiContext.codeEditorThemeCatalog.themes[0].preferredBase, 'mist');
+        const another = h.handler({ user: { ...owner.user, _id: 12 } });
+        assert.equal((await handlerModule.getEditorThemeCatalog(another)).themes[0].preferredBase, null);
+        const elsewhere = h.handler({ domain: { _id: 'B', workspaceId: 'school' } });
+        assert.equal((await handlerModule.getEditorThemeCatalog(elsewhere)).themes[0].preferredBase, 'sand');
+    } finally { galleryForUser = async () => ({ badgeCards: [] }); }
+});
+
+it('rejects invalid bases, builtin overrides and unavailable badge preferences without writing selections', async () => {
+    const fixtures = { 'editor.theme': [{ _id: 'domain:A:7', scope: 'domain:A', badgeId: 7,
+        version: 'v7', design: { base: 'ocean' }, assets: [] }] };
+    const h = await bootstrapHarness(fixtures);
+    const handler = h.handler();
+    galleryForUser = async () => ({ badgeCards: [{ id: 7, title: '徽章', expiresAt: null }] });
+    try {
+        for (const args of [{ id: 'badge:7', base: null }, { id: 'badge:7', base: ['cloud'] },
+            { id: 'badge:7', base: { cloud: true } }, { id: 'badge:7', base: 'default.badge' },
+            { id: 'cloud', base: 'mist' }, { id: 'ocean', base: 'default' },
+            { id: 'badge:8', base: 'cloud' }, { id: 'badge:7.x', base: 'cloud' }]) {
+            handler.args = args;
+            await assert.rejects(handlerModule.EditorThemeCatalogHandler.prototype.postSelect.call(handler));
+        }
+        galleryForUser = async () => ({ badgeCards: [] });
+        handler.args = { id: 'badge:7', base: 'sand' };
+        await assert.rejects(handlerModule.EditorThemeCatalogHandler.prototype.postSelect.call(handler));
+        assert.equal((fixtures['editor.themeSelection'] || []).length, 0);
     } finally { galleryForUser = async () => ({ badgeCards: [] }); }
 });
 
