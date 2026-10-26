@@ -5,6 +5,7 @@ import { startImageWarmup } from './utils/image-warmup';
 import { startBackgroundVideoWarmup } from './utils/background-video-warmup';
 import { installAchievementWallReadiness } from './components/achievement_wall';
 import { startAchievementAssetWarmup } from './components/achievement_assets';
+import { startDailyQuizGate } from './components/daily_quiz_gate';
 
 installAchievementWallReadiness();
 
@@ -33,6 +34,8 @@ console.log(
 
 window.UiContext = JSON.parse(window.UiContext);
 window.UserContext = JSON.parse(window.UserContext);
+startDailyQuizGate(window.UiContext);
+$(document).on('vjContentNew.dailyQuizGate', () => startDailyQuizGate(window.UiContext));
 startAchievementAssetWarmup(window.UiContext);
 $(document).on('vjContentNew.achievementAssets', () => startAchievementAssetWarmup(window.UiContext));
 startImageWarmup(window.UiContext.imageWarmup);
@@ -81,6 +84,7 @@ if (process.env.NODE_ENV === 'production' && UiContext.sentry_dsn) {
 document.addEventListener('DOMContentLoaded', async () => {
   Object.assign(window.UiContext, JSON.parse(window.UiContextNew));
   Object.assign(window.UserContext, JSON.parse(window.UserContextNew));
+  startDailyQuizGate(window.UiContext);
   startAchievementAssetWarmup(window.UiContext);
   window.HydroExports = await import('./api');
   await window._hydroLoad();

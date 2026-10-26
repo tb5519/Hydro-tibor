@@ -1,0 +1,183 @@
+.contest-practice-result
+  position fixed
+  inset 0
+  z-index 10000
+  display flex
+  align-items center
+  justify-content center
+  padding 24px
+  box-sizing border-box
+  background rgba(19, 35, 62, .38)
+  backdrop-filter blur(7px)
+  animation contest-practice-overlay .2s ease-out both
+
+  &__card
+    position relative
+    width 100%
+    max-width 520px
+    max-height calc(100vh - 48px)
+    overflow auto
+    box-sizing border-box
+    padding 34px 38px 30px
+    border 1px solid rgba(255, 255, 255, .9)
+    border-radius 24px
+    background linear-gradient(135deg, #fffdf7 0%, #fff 55%, #f1f6ff 100%)
+    box-shadow 0 28px 90px rgba(18, 35, 63, .24), inset 0 1px 0 #fff
+    color #223753
+    animation contest-practice-enter .28s cubic-bezier(.2, .8, .2, 1) both
+
+  &__accent
+    position absolute
+    top 0
+    left 38px
+    width 64px
+    height 4px
+    border-radius 0 0 4px 4px
+    background linear-gradient(90deg, #c49a4d, #eed49e)
+
+  &__eyebrow
+    display flex
+    align-items center
+    gap 8px
+    color #9a7637
+    font-size 13px
+    font-weight 600
+    letter-spacing 2px
+
+    span
+      width 6px
+      height 6px
+      border-radius 50%
+      background #c8a15b
+
+  &__top
+    display flex
+    justify-content space-between
+    align-items center
+    margin-top 24px
+    margin-bottom 22px
+
+  &__symbol
+    display grid
+    place-items center
+    width 62px
+    height 62px
+    border 1px solid #e7d9bb
+    border-radius 19px
+    background #fbf4e5
+    color #b18a43
+
+    svg
+      width 43px
+      height 43px
+
+  &__status
+    padding 8px 13px
+    border 1px solid #dce5f2
+    border-radius 10px
+    background #f2f6fc
+    color #557397
+    font-size 15px
+    font-weight 700
+    letter-spacing 1px
+
+  &.is-accepted &__status
+    background #eaf8ef
+    border-color #cce9d5
+    color #268a55
+
+  h2
+    margin 0 0 12px
+    color #233a59
+    font-size 25px
+    font-weight 700
+    line-height 1.4
+
+  &__message
+    margin 0
+    color #53657c
+    font-size 15px
+    line-height 1.9
+
+  &__note
+    display flex
+    align-items center
+    gap 10px
+    margin-top 24px
+    padding 14px 16px
+    border 1px solid #e4eaf3
+    border-radius 12px
+    background rgba(246, 249, 254, .8)
+    color #5d7390
+    font-size 14px
+
+  &__check
+    color #6d90bc
+    font-weight 700
+
+  &__encouragement
+    margin 20px 0 24px
+    color #8b98a9
+    font-size 13px
+    line-height 1.8
+
+  &__continue
+    width 100%
+    padding 13px 20px
+    border 1px solid #3d6fba
+    border-radius 12px
+    background linear-gradient(115deg, #477ac8, #3565b0)
+    box-shadow 0 5px 14px rgba(56, 105, 179, .16)
+    color white
+    font-size 15px
+    font-weight 600
+    cursor pointer
+
+    &:hover
+      filter brightness(1.06)
+
+    &:focus-visible
+      outline 3px solid #a5c9ff
+      outline-offset 3px
+
+    span
+      margin-left 5px
+
+  &.is-leaving
+    animation contest-practice-overlay .16s ease-in reverse both
+
+    .contest-practice-result__card
+      animation contest-practice-enter .16s ease-in reverse both
+
+@keyframes contest-practice-overlay
+  from
+    opacity 0
+  to
+    opacity 1
+
+@keyframes contest-practice-enter
+  from
+    opacity 0
+    transform translateY(14px) scale(.97)
+  to
+    opacity 1
+    transform translateY(0) scale(1)
+
+@media (max-width: 560px)
+  .contest-practice-result
+    padding 16px
+
+    &__card
+      padding 28px 24px 24px
+      max-height calc(100vh - 32px)
+
+    h2
+      font-size 22px
+
+    &__accent
+      left 24px
+
+@media (prefers-reduced-motion: reduce)
+  .contest-practice-result,
+  .contest-practice-result__card
+    animation none !important

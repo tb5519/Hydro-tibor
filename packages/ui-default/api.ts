@@ -1,5 +1,7 @@
 /* eslint-disable import/first */
 export { createBadgeAcThemePlayer } from './components/badge_ac_effect';
+export { bindBadgeAcPreview } from './components/badge_ac_preview';
+export { bindBadgeSoundVolume } from './components/badge_sound_volume';
 export * from './components/dialog';
 export { default as loadMonaco } from './components/monaco/loader';
 export { default as Notification } from './components/notification';
@@ -53,7 +55,7 @@ declare global {
   }
 
   let UserContext: Record<string, any>; // eslint-disable-line
-  let UiContext: Record<string, any> & { // eslint-disable-line
+  let UiContext: Record<string, any> & import('./components/achievement_effect').AchievementContext & { // eslint-disable-line
     objectiveMergedReview?: import('./common/objective-merged-review').ObjectiveMergedReview;
     objectiveCorrectAnswers?: Record<string, string | string[]>;
     objectiveAnswerSheet?: { rid: string };

@@ -10,6 +10,7 @@ export interface BadgeAcTheme {
     name: string;
     acImage: string;
     themeSound: string;
+    themeSoundVolume: number;
 }
 
 /**
@@ -49,6 +50,7 @@ export async function getActiveBadgeAcTheme(
             acImageUpdatedAt: 1,
             themeSoundPath: 1,
             themeSoundUpdatedAt: 1,
+            themeSoundVolume: 1,
         })
         .toArray();
     const themedBadges = badges.filter((badge: any) => (
@@ -73,6 +75,8 @@ export async function getActiveBadgeAcTheme(
     return {
         id: activeBadge._id,
         name: activeBadge.short || activeBadge.title || '徽章主题',
+        themeSoundVolume: Number.isInteger(activeBadge.themeSoundVolume) && activeBadge.themeSoundVolume >= 0
+            && activeBadge.themeSoundVolume <= 100 ? activeBadge.themeSoundVolume : 25,
         acImage: activeBadge.acImagePath
             ? (currentDomain?._id ? getBadgeAcCelebrationUrl(currentDomain._id, activeBadge) : routeUrl('badge_ac_image', {
                 id: activeBadge._id,

@@ -26,6 +26,8 @@ interface SolvedAchievement {
     domainId: string;
     pid: number;
     contestId: string;
+    /** Practice retains its source for shared-domain access, never for competition credit. */
+    practiceContestId?: string;
     rid: ObjectId;
     difficulty: number;
     acceptedAt: Date;
@@ -49,6 +51,7 @@ interface AchievementDay {
     uid: number;
     domainId: string;
     contestId: string;
+    practiceContestId?: string;
     /** UTC day number shifted to the fixed Beijing UTC+8 calendar. */
     day: number;
     acceptedAt: Date;
@@ -187,9 +190,13 @@ async function getScopeData(ctx: Context, domain: AchievementDomain, uid: number
     const sharedRecords = shared.filter((item) => contestIds.has(`${item.domainId}:${item.docId}`));
     const localRecordScope = {
         domainId: { $in: domainIds }, ...(redirected.length ? { contest: { $nin: redirected.map((item) => item.docId) } } : {}),
+        ...(!legacy ? { $or: [{ practiceEntryDomain: { $exists: false } }, { practiceEntryDomain: domain._id }] } : {}),
     };
     const recordScope = sharedRecords.length ? {
-        $or: [localRecordScope, ...sharedRecords.map((item) => ({ domainId: item.domainId, contest: item.docId }))],
+        $or: [localRecordScope, ...sharedRecords.map((item) => ({
+            domainId: item.domainId,
+            $or: [{ contest: item.docId }, { practiceContest: item.docId, practiceEntryDomain: domain._id }],
+        }))],
     } : localRecordScope;
     const statuses = [...localStatuses, ...sharedRecords];
     return {
@@ -219,14 +226,16 @@ async function importAcceptances(ctx: Context, scope: string, uid: number, recor
         const key = `${record.domainId}:${record.pid}`;
         const problem = problems.get(key);
         if (!isRealAcceptance(record) || !problem || problem.objectiveKind) continue;
-        const contestId = record.contest?.toString() || '';
-        const _id = hash(['solve', scope, uid, record.domainId, record.pid, contestId]);
+        const practiceContestId = record.practiceContest?.toString();
+        const contestId = practiceContestId ? '' : record.contest?.toString() || '';
+        const _id = hash(['solve', scope, uid, record.domainId, record.pid, contestId, ...(practiceContestId ? [practiceContestId] : [])]);
         if (byId.has(_id)) continue;
         // Once captured, difficulty is immutable even after edits and rejudges.
         const difficulty = firstDifficulty.get(key) ?? achievementDifficulty(problem.difficulty);
         firstDifficulty.set(key, difficulty);
         const solved: SolvedAchievement = {
             _id, scope, uid, domainId: record.domainId, pid: record.pid, contestId, rid: record._id, difficulty,
+            ...(practiceContestId ? { practiceContestId } : {}),
             acceptedAt: record.judgeAt || record._id.getTimestamp(), submittedAt: record._id.getTimestamp(),
         };
         byId.set(_id, solved);
@@ -251,11 +260,15 @@ async function importAchievementDays(ctx: Context, scope: string, uid: number, r
         const submittedAt = record._id.getTimestamp();
         const day = beijingDay(submittedAt);
         const acceptedAt = record.judgeAt || submittedAt;
-        const contestId = record.contest?.toString() || '';
-        const _id = hash(['day', scope, uid, record.domainId, contestId, day]);
+        const practiceContestId = record.practiceContest?.toString();
+        const contestId = practiceContestId ? '' : record.contest?.toString() || '';
+        const _id = hash(['day', scope, uid, record.domainId, contestId, day, ...(practiceContestId ? [practiceContestId] : [])]);
         const previous = additions.get(_id);
         if (!previous || previous.acceptedAt > acceptedAt) {
-            additions.set(_id, { _id, scope, uid, domainId: record.domainId, contestId, day, acceptedAt });
+            additions.set(_id, {
+                _id, scope, uid, domainId: record.domainId, contestId, day, acceptedAt,
+                ...(practiceContestId ? { practiceContestId } : {}),
+            });
         }
     }
     if (additions.size) await collection.bulkWrite([...additions.values()].map(({ acceptedAt, ...entry }) => ({
@@ -272,7 +285,7 @@ function streakMetrics(days: AchievementDay[], data: Awaited<ReturnType<typeof g
     const available = [...new Set(days.filter((entry) => {
         if (entry.acceptedAt > now || entry.day > today) return false;
         if (local.has(entry.domainId)) return true;
-        return !!data.contestsById.get(`${entry.domainId}:${entry.contestId}`)?.allDomains;
+        return !!data.contestsById.get(`${entry.domainId}:${entry.practiceContestId || entry.contestId}`)?.allDomains;
     }).map((entry) => entry.day))].sort((a, b) => a - b);
     let best = 0;
     let run = 0;
@@ -296,7 +309,7 @@ function metricsFromSolves(
     const domainIds = new Set(data.domainIds);
     for (const solved of solves) {
         if (solved.acceptedAt > now) continue;
-        const key = `${solved.domainId}:${solved.contestId}`;
+        const key = `${solved.domainId}:${solved.practiceContestId || solved.contestId}`;
         const contest = data.contestsById.get(key);
         if (!domainIds.has(solved.domainId) && (!contest || !contest.allDomains)) continue;
         // Every real AC counts toward solving milestones, including hidden
@@ -304,6 +317,8 @@ function metricsFromSolves(
         // still require a known contest and a valid formal submission window.
         const problemKey = `${solved.domainId}:${solved.pid}`;
         if (!unique.has(problemKey) || unique.get(problemKey)!.acceptedAt > solved.acceptedAt) unique.set(problemKey, solved);
+        // A later deadline extension or rejudge cannot turn practice into a competition result.
+        if (solved.practiceContestId) continue;
         const participant = data.statusesById.get(key);
         if (solved.contestId && isAchievementContestSubmission(contest, participant, solved)) {
             if (!competition.has(key)) competition.set(key, new Set());
@@ -395,7 +410,8 @@ export async function syncUserAchievements(ctx: Context, domain: AchievementDoma
         // Keep a one-minute overlap for a result committed during the previous import.
         if (state?.version === STATE_VERSION && state.importedAt) query.judgeAt = { $gte: new Date(state.importedAt.getTime() - 60_000) };
         const records = await recordColl.find(query, { projection: {
-            _id: 1, uid: 1, domainId: 1, pid: 1, contest: 1, status: 1, judgeAt: 1, hackTarget: 1,
+            _id: 1, uid: 1, domainId: 1, pid: 1, contest: 1, practiceContest: 1, practiceEntryDomain: 1,
+            status: 1, judgeAt: 1, hackTarget: 1,
         } }).sort({ _id: 1 }).toArray();
         const actualRecord = options.record && await recordColl.findOne({ _id: options.record._id, uid, ...data.recordScope });
         if (actualRecord && isRealAcceptance(actualRecord) && !records.some((item) => item._id.equals(actualRecord._id))) records.push(actualRecord);
@@ -483,7 +499,10 @@ export async function recordAchievementAcceptance(ctx: Context, record: RecordDo
     }
     let domain = await ctx.db.collection('domain').findOne({ _id: record.domainId });
     if (!domain) return;
-    if (record.contest) {
+    if (record.practiceContest && record.practiceEntryDomain && record.practiceEntryDomain !== domain._id) {
+        const entry = await ctx.db.collection('domain').findOne({ _id: record.practiceEntryDomain });
+        if (entry && workspace.resolveDomainWorkspaceId(entry) === workspace.resolveDomainWorkspaceId(domain)) domain = entry;
+    } else if (record.contest) {
         const participant: any = await (ctx.db.collection('document.status') as Collection<any>).findOne({
             domainId: record.domainId, docType: 30, docId: record.contest, uid: record.uid,
         });

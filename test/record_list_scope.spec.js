@@ -72,6 +72,7 @@ function matches(row, filter) {
                 if (operator === '$in') return value.some((item) => same(row[key], item));
                 if (operator === '$nin') return !value.some((item) => same(row[key], item));
                 if (operator === '$gt') return row[key] > value;
+                if (operator === '$exists') return (row[key] !== undefined) === value;
                 throw new Error(`Unexpected filter operator ${operator}`);
             });
         }
@@ -141,6 +142,7 @@ const handlers = loadSource('handler/record.ts', {
     '../lib/badge_ac_theme': {}, '../lib/record_list_scope': scope,
     '../lib/record_testcase_data': { loadRecordTestcaseData: async () => null },
     '../lib/contest_access': contestAccess,
+    '../lib/contest_practice': loadSource('lib/contest_practice.ts', {}),
     '../lib/homework_review': {}, '../lib/objective_submission': {}, '../lib/problem_record_replay': {},
     '../lib/record_visibility': {
         async getHiddenSuperAdminUids() { return hiddenUids; },
@@ -229,6 +231,16 @@ describe('record list manager capability and navigation', () => {
 });
 
 describe('HTTP record list ownership boundary', () => {
+    it('does not expose another learner practice attempt to read-only record inspectors', async () => {
+        const ownPractice = { ...fixtures[0], _id: new ObjectId(), practiceContest: contestId };
+        const otherPractice = { ...fixtures[1], _id: new ObjectId(), practiceContest: contestId };
+        fixtures.push(ownPractice, otherPractice);
+        const reader = account({ perm: PERM.PERM_DEFAULT | PERM.PERM_READ_RECORD_CODE });
+        const visible = (await http(reader)).response.body.rdocs;
+        assert(visible.some((row) => row._id.equals(ownPractice._id)));
+        assert(!visible.some((row) => row._id.equals(otherPractice._id)));
+        assert((await http(teacher())).response.body.rdocs.some((row) => row._id.equals(otherPractice._id)));
+    });
     it('excludes old source-question submissions before pagination, including contest and full-status lists', async () => {
         objectiveSourceIds = [1];
         fixtures.push({ ...fixtures[0], _id: new ObjectId(), pid: 2 });
@@ -362,6 +374,17 @@ describe('record-conn ownership boundary', () => {
         await connection.onRecordChange(fixtures[1]);
         assert.equal(calls.length, 0);
         assert.equal(connection.deliveries.length, 0);
+    });
+
+    it('filters another learner practice before loading or streaming it to a read-only inspector', async () => {
+        const reader = account({ perm: PERM.PERM_DEFAULT | PERM.PERM_READ_RECORD_CODE });
+        const connection = await socket(reader);
+        calls = [];
+        await connection.onRecordChange({ ...fixtures[1], practiceContest: contestId });
+        assert.equal(connection.deliveries.length, 0);
+        assert.equal(calls.length, 0);
+        await connection.onRecordChange({ ...fixtures[0], practiceContest: contestId });
+        assert.equal(connection.deliveries.length, 1);
     });
 
     it('constrains arbitrary requested record IDs to the student and current domain', async () => {

@@ -4,8 +4,18 @@ import ReactDOM from 'react-dom/client';
 import { renderLanguageSelect } from 'vj/components/languageselect';
 import { NamedPage } from 'vj/misc/Page';
 import { getAvailableLangs, i18n, tpl } from 'vj/utils';
+import { bindDailyQuizSubmitDraft } from '../components/daily_quiz_submit_draft';
+
+let releaseDailyQuizDraft: (() => void) | undefined;
 
 const page = new NamedPage(['problem_submit', 'contest_detail_problem_submit', 'homework_detail_problem_submit'], async () => {
+  releaseDailyQuizDraft?.();
+  const form = document.querySelector<HTMLFormElement>('[name="submit_section"] form');
+  if (form && UiContext.dailyQuizGate) {
+    releaseDailyQuizDraft = bindDailyQuizSubmitDraft(form, Number(UserContext._id));
+    const savedLanguage = form.querySelector<HTMLInputElement | HTMLSelectElement>('[name="lang"]')?.value;
+    if (savedLanguage) UiContext.codeLang = savedLanguage;
+  }
   const { config } = UiContext.pdoc;
   if (config.type === 'submit_answer') {
     $('[name="lang"]').val('_');

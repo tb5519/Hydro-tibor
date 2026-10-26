@@ -286,7 +286,7 @@ function problemHandler(options = {}) {
         getStudentSubmissionLanguages: () => null,
         getActiveBadgeAcTheme: async () => null,
         assertRecordReplayRequest: (fromRecord) => { assert.equal(fromRecord, undefined); },
-        canUseProblemRecordPicker: () => true,
+        canUseProblemRecordPicker: () => true, getContestPracticeWindow: () => null,
         canManageRecordList: (viewer) => viewer.hasPerm(PERM.PERM_EDIT_HOMEWORK),
         mistake: { get: async () => null, getPracticeState: () => null },
         loadOwnObjectiveSubmission: async (...args) => { ownLoads.push(args); return null; },

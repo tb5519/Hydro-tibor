@@ -1,4 +1,5 @@
 import { NamedPage } from 'vj/misc/Page';
+import { redirectToDailyQuiz, type DailyQuizRedirectDetail } from '../components/daily_quiz_gate';
 import { createScratchPresetPicker } from '../utils/scratch-preset-picker';
 
 interface ScratchEditorConfig {
@@ -96,6 +97,25 @@ export default new NamedPage('scratch_editor', () => {
     status.dataset.error = String(error);
     status.dataset.phase = error ? 'error' : pending ? 'busy' : loaded ? 'done' : 'loading';
   };
+  const preserveDailyQuizWork = (event: Event) => {
+    if (!frame.isConnected || !status.isConnected || config.readOnly || (!dirty && !pending && !presetBusy)) return;
+    event.preventDefault();
+    const target = new URL((event as CustomEvent<DailyQuizRedirectDetail>).detail?.url || '/daily-quiz', location.href);
+    if (target.origin !== location.origin || !/^\/(?:d\/[^/]+\/)?daily-quiz\/?$/.test(target.pathname)) return;
+    show('今天的每日一练还没完成。作品已保留在当前页面，完成练习后回来继续保存。', true);
+    let link = document.querySelector<HTMLAnchorElement>('[data-scratch-daily-quiz]');
+    if (!link) {
+      link = document.createElement('a');
+      link.dataset.scratchDailyQuiz = '';
+      link.className = 'button rounded primary';
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = '打开每日一练';
+      status.insertAdjacentElement('afterend', link);
+    }
+    link.href = target.href;
+  };
+  window.addEventListener('hydro:daily-quiz-redirect', preserveDailyQuizWork);
   const buttons = () => {
     if (save) save.disabled = !loaded || !!pending || presetBusy;
     if (submit) submit.disabled = !loaded || !!pending || presetBusy;
@@ -278,12 +298,21 @@ export default new NamedPage('scratch_editor', () => {
           headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         });
         const result = await response.json();
+        if (response.status === 403 && (result.code === 'daily_quiz_required'
+          || result.error === 'daily_quiz_required' || result.error?.code === 'daily_quiz_required')) {
+          // The pending upload is still protected by the redirect event. Never
+          // discard its in-memory SB3 or pretend the blocked save succeeded.
+          redirectToDailyQuiz(result.dailyQuizUrl || '/daily-quiz');
+          finish();
+          return;
+        }
         if (!response.ok || !result.ok) {
           throw new Error(result.error?.params?.join(' ') || result.error?.message || result.message || '保存失败，请刷新页面检查作品版本后重试。');
         }
         if (!Number.isInteger(result.revision)) throw new Error('保存响应无效，请刷新后检查作品。');
         revision = result.revision;
         dirty = changes !== requestChanges;
+        document.querySelector('[data-scratch-daily-quiz]')?.remove();
         send('saved');
         if (pending === currentRequest) finish();
         show(`${shouldSubmit ? (config.problemMode && config.submitLabel !== '提交作业' ? '作品已提交，等待老师批改' : '作业已提交') : config.saveForStudent ? `已为 ${config.ownerName || '学员'} 保存作品` : '作品已保存'}${dirty ? '，还有新修改未保存' : ''}`);

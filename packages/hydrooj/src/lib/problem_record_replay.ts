@@ -11,7 +11,7 @@ import type { Handler } from '../service/server';
 import { canViewContestLevel } from './contest_access';
 import { buildObjectiveMergedReview } from './objective_merged_review';
 import { buildObjectiveInitialSubmission, loadObjectiveSubmissionConfig } from './objective_submission';
-import { canManageRecordList } from './record_list_scope';
+import { canInspectContestPractice, canManageRecordList } from './record_list_scope';
 import { appendHiddenSuperAdminFilter, getHiddenSuperAdminUids } from './record_visibility';
 
 export function canUseProblemRecordPicker(viewer: Handler['user']) {
@@ -64,6 +64,7 @@ async function createRecordReader(handler: Handler, domainId: string, pdoc: Prob
     }>>();
     async function read(rdoc: RecordDoc) {
         if (!isFormalProblemRecord(rdoc, domainId, pdoc.docId) || hiddenUids.includes(rdoc.uid)) return null;
+        if (rdoc.practiceContest && !rdoc.contest && rdoc.uid !== handler.user._id && !canInspectContestPractice(handler.user)) return null;
         // The list picker remains administrative. The answer-sheet replay may also
         // be opened by the owner, but a guessed RID must never expose another user.
         if (!canManageRecords && rdoc.uid !== handler.user._id) return null;

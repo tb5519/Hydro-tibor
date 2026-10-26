@@ -25,7 +25,7 @@ export default class RecordModel {
     static PROJECTION_LIST: (keyof RecordDoc)[] = [
         '_id', 'score', 'time', 'memory', 'lang',
         'uid', 'pid', 'rejudged', 'progress', 'domainId',
-        'contest', 'judger', 'judgeAt', 'status', 'source',
+        'contest', 'practiceContest', 'practiceEntryDomain', 'judger', 'judgeAt', 'status', 'source',
         'files', 'hackTarget',
     ];
 
@@ -131,6 +131,8 @@ export default class RecordModel {
         lang: string, code: string, addTask: boolean,
         args: {
             contest?: ObjectId;
+            practiceContest?: ObjectId;
+            practiceEntryDomain?: string;
             input?: string[];
             files?: Record<string, string>;
             hackTarget?: ObjectId;
@@ -158,6 +160,10 @@ export default class RecordModel {
         };
         let isContest = !!args.contest;
         if (args.contest) data.contest = args.contest;
+        else if (args.practiceContest && args.type === 'judge') {
+            data.practiceContest = args.practiceContest;
+            data.practiceEntryDomain = args.practiceEntryDomain || domainId;
+        }
         if (args.files) data.files = args.files;
         if (args.hackTarget) data.hackTarget = args.hackTarget;
         if (args.notify) data.notify = true;

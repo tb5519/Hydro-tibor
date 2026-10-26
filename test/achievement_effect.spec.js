@@ -411,6 +411,10 @@ it('record detail passes its AC completion barrier only for an eligible live sel
             'vj/utils': {},
             '../components/badge_ac_effect': { createBadgeAcThemePlayer: () => ({ play: () => { played++; return ac.promise; } }) },
             '../components/achievement_effect': { createAchievementClient: () => ({ afterResult: (...args) => { calls.push(args); return Promise.resolve(); } }) },
+            '../components/contest_practice_result': {
+                createContestPracticeFeedback: () => ({ afterResult: async () => {} }),
+                isContestPracticeResultReady: () => false,
+            },
         };
         const mod = { exports: {} };
         vm.runInNewContext(recordCode, {

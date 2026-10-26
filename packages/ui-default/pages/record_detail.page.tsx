@@ -8,6 +8,7 @@ import { NamedPage } from 'vj/misc/Page';
 import { i18n, request, tpl, withTransitionCallback } from 'vj/utils';
 import { createAchievementClient } from '../components/achievement_effect';
 import { createBadgeAcThemePlayer } from '../components/badge_ac_effect';
+import { createContestPracticeFeedback, isContestPracticeResultReady } from '../components/contest_practice_result';
 
 let testcaseClipboard: Clipboard | null = null;
 
@@ -28,20 +29,28 @@ function setAllTestcases(root: ParentNode, expanded: boolean) {
 
 export default new NamedPage('record_detail', async () => {
   const achievements = createAchievementClient(UiContext, request);
+  const practiceFeedback = createContestPracticeFeedback(typeof UserContext === 'undefined' ? 0 : Number(UserContext._id));
   const badgeThemeEffect = UiContext.badgeAcEffect && UiContext.badgeAcFirstEligible !== false
     ? createBadgeAcThemePlayer(UiContext.badgeAcTheme)
     : null;
   let badgeEffectPlayed = false;
   let acFinished = Promise.resolve();
   const maybePlayRecordEffects = (status: unknown) => {
-    if (!NORMAL_STATUS.includes(Number(status) as STATUS)) return;
+    const practiceRecord = {
+      _id: UiContext.contestPracticeRecordId,
+      practiceContest: UiContext.contestPractice === true,
+      uid: typeof UserContext === 'undefined' ? 0 : UserContext._id,
+      status,
+    };
+    if (!NORMAL_STATUS.includes(Number(status) as STATUS) && !isContestPracticeResultReady(practiceRecord)) return;
     if (Number(status) === STATUS.STATUS_ACCEPTED && !badgeEffectPlayed) {
       badgeEffectPlayed = true;
       acFinished = badgeThemeEffect?.play() || Promise.resolve();
     }
-    if (UiContext.achievementLive === true && UiContext.achievementRecordId) {
-      void achievements.afterResult(UiContext.achievementRecordId, acFinished);
-    }
+    const achievementFinished = UiContext.achievementLive === true && UiContext.achievementRecordId
+      ? achievements.afterResult(UiContext.achievementRecordId, acFinished) : acFinished;
+    const effectsFinished = Promise.all([acFinished.catch(() => undefined), achievementFinished]);
+    void practiceFeedback.afterResult(practiceRecord, UiContext.contestPracticeLive === true, effectsFinished);
   };
   let failingCaseAutoOpened = false;
   const maybeOpenFirstFailingCase = (root: ParentNode = document) => {
@@ -109,6 +118,7 @@ export default new NamedPage('record_detail', async () => {
     maybePlayRecordEffects(UiContext.recordStatus);
     return;
   }
+  if (UiContext.contestPractice === true) maybePlayRecordEffects(UiContext.recordStatus);
   const [{ default: WebSocket }, { DiffDOM }] = await Promise.all([
     import('../components/socket'),
     import('diff-dom'),

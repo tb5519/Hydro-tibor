@@ -26,7 +26,7 @@ interface AchievementCelebrationOptions {
   sound?: AchievementSoundSettings;
 }
 
-interface AchievementContext {
+export interface AchievementContext {
   achievementPendingUrl?: string;
   achievementAckUrl?: string;
   achievementScope?: string;

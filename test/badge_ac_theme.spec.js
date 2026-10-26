@@ -79,3 +79,17 @@ it('a selected video-only profile theme does not fall back to another badge cele
     ]);
     assert.equal(await getActiveBadgeAcTheme(f.ctx, { _id: 42 }, f.route, { _id: 'system' }), null);
 });
+
+it('reads each selected badge volume independently and preserves legacy 25 percent including mute', async () => {
+    const f = fixture([
+        { _id: 7, themeSoundPath: 'first.mp3', themeSoundVolume: 0 },
+        { _id: 9, themeSoundPath: 'second.mp3', themeSoundVolume: 87 },
+    ]);
+    assert.equal((await getActiveBadgeAcTheme(f.ctx, { _id: 42 }, f.route)).themeSoundVolume, 0);
+    f.state.selected = 9;
+    assert.equal((await getActiveBadgeAcTheme(f.ctx, { _id: 42 }, f.route)).themeSoundVolume, 87);
+    for (const invalid of [undefined, null, -1, 101, 0.5, '50']) {
+        const legacy = fixture([{ _id: 7, themeSoundPath: 'legacy.mp3', themeSoundVolume: invalid }]);
+        assert.equal((await getActiveBadgeAcTheme(legacy.ctx, { _id: 42 }, legacy.route)).themeSoundVolume, 25);
+    }
+});

@@ -3,6 +3,7 @@ import _ from 'lodash';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import DOMServer from 'react-dom/server';
+import { redirectToDailyQuiz } from '../components/daily_quiz_gate';
 
 export function substitute(str: string, obj: any) {
   return str.replace(/\{([^{}]+)\}/g, (match, key) => {
@@ -103,7 +104,21 @@ export const request = {
           ...options,
         })
         .fail((jqXHR, textStatus, errorThrown: any) => {
-          if (textStatus === 'abort') {
+          const result = jqXHR.responseJSON;
+          const dailyRequired = jqXHR.status === 403 && (result?.error === 'daily_quiz_required'
+            || result?.error?.code === 'daily_quiz_required' || result?.code === 'daily_quiz_required');
+          if (dailyRequired) {
+            const err = new Error(result.message || result.error?.message || '请先完成今天的每日一练，再继续做题。') as any;
+            err.isUserFacingError = true;
+            err.dailyQuizRequired = true;
+            // Requests to third-party APIs must never navigate the learning page.
+            try {
+              if (new URL(options.url || window.location.href, window.location.href).origin === window.location.origin) {
+                redirectToDailyQuiz(result.dailyQuizUrl || '/daily-quiz');
+              }
+            } catch { /* A malformed request URL cannot trigger navigation. */ }
+            reject(err);
+          } else if (textStatus === 'abort') {
             const err = new Error(i18n('Aborted')) as any;
             err.aborted = true;
             err.isUserFacingError = true;

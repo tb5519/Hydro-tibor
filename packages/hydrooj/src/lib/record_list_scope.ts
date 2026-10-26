@@ -23,3 +23,9 @@ export function canManageRecordList(udoc: RecordListUser) {
         PERM.PERM_EDIT_HOMEWORK,
     ].some((perm) => udoc.hasPerm(perm));
 }
+
+/** Practice keeps the source competition private; read-only record access
+ * alone must not reveal another participant's formerly hidden attempts. */
+export function canInspectContestPractice(udoc: RecordListUser) {
+    return udoc.hasPriv(PRIV.PRIV_EDIT_SYSTEM) || udoc.hasPerm(PERM.PERM_EDIT_DOMAIN) || udoc.hasPerm(PERM.PERM_EDIT_CONTEST);
+}

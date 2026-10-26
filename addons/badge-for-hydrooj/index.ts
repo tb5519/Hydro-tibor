@@ -408,6 +408,8 @@ export class BadgeEditHandler extends Handler {
                 backgroundVideoPoster: getBadgeBackgroundVideoUrl(this, badge, true),
                 acImage: getBadgeAcImageUrl(this, badge),
                 themeSound: getBadgeThemeSoundUrl(this, badge),
+                themeSoundVolume: Number.isInteger(badge.themeSoundVolume) && badge.themeSoundVolume >= 0
+                    && badge.themeSoundVolume <= 100 ? badge.themeSoundVolume : 25,
             },
             ...getBadgeManageContext(this),
         };
@@ -424,6 +426,7 @@ export class BadgeEditHandler extends Handler {
     @param('removeAcImage', Types.Boolean, true)
     @param('removeThemeSound', Types.Boolean, true)
     @param('removeIconImage', Types.Boolean, true)
+    @param('themeSoundVolume', Types.UnsignedInt, true)
     async postUpdate(
         _: string,
         id: number,
@@ -437,10 +440,15 @@ export class BadgeEditHandler extends Handler {
         removeAcImage = false,
         removeThemeSound = false,
         removeIconImage = false,
+        themeSoundVolume?: number,
     ) {
         const domainId = getBadgeDomainScope(this);
         const badge = await BadgeModel.badgeGet(this.ctx, id, domainId);
         if (!badge) throw new NotFoundError(`Badge ${id} is not exist!`);
+        if (themeSoundVolume !== undefined
+            && (!Number.isInteger(themeSoundVolume) || themeSoundVolume < 0 || themeSoundVolume > 100)) {
+            throw new ValidationError('themeSoundVolume', null, 'AC 音效音量应为 0 到 100 的整数。');
+        }
         const backgroundFile = getRequestFile(this.request.files, 'backgroundImage');
         const acImageFile = getRequestFile(this.request.files, 'acImage');
         const themeSoundFile = getRequestFile(this.request.files, 'themeSound');
@@ -478,7 +486,8 @@ export class BadgeEditHandler extends Handler {
         await BadgeModel.badgeEdit(
             this.ctx, id, short, title, backgroundColor, fontColor, content, owners, users_old, domainId,
         );
-        const setFields: Record<string, string> = {};
+        const setFields: Record<string, string | number> = {};
+        if (themeSoundVolume !== undefined) setFields.themeSoundVolume = themeSoundVolume;
         const unsetFields: Record<string, string> = {};
         const obsoletePaths: string[] = [];
         const uploadedPaths: string[] = [];

@@ -99,13 +99,14 @@ async function run() {
                 const response = await teacherPreview.get(`/d/${did}/p`).set('Accept', accept);
                 status(response, 200);
                 assert(!response.headers.location);
-                assert.notEqual(response.body.error, 'daily_quiz_required');
+                assert.notEqual(response.body.error?.code, 'daily_quiz_required');
             }
         }
         const response = await get(teacherPreview);
         status(response, 200);
         assert.equal(response.body.state.required, false);
         assert.equal(response.body.state.teacherPreview, true);
+        assert.equal(typeof response.body.serverNow, 'number');
         assert.notEqual(response.body.state.completed, true, 'Teacher browsing must not claim that the learner completed the quiz');
         assert.equal(response.headers['cache-control'], 'private, no-store');
         for (const accept of ['text/html', 'application/json']) {
@@ -161,11 +162,11 @@ async function run() {
         const query = await teacherPreview.get(`/d/${dids[0]}/p?sudoUid=${admin}&teacherPreview=true&skipDailyQuiz=true`)
             .set('Accept', 'application/json');
         status(query, 403);
-        assert.equal(query.body.error, 'daily_quiz_required');
+        assert.equal(query.body.error.code, 'daily_quiz_required');
         const body = await teacherPreview.post('/home/profile').set('Accept', 'application/json')
             .send({ bio: 'Must not be saved through forged preview flags', gender: 0, sudoUid: admin, teacherPreview: true, skipDailyQuiz: true });
         status(body, 403);
-        assert.equal(body.body.error, 'daily_quiz_required');
+        assert.equal(body.body.error.code, 'daily_quiz_required');
         assert.equal((await get(teacherPreview)).body.state.answered, 0);
     });
     await check('Persistent login HTML and JSON entry gates cannot be bypassed by changing domains', async () => {
@@ -175,7 +176,9 @@ async function run() {
             assert(html.headers.location.startsWith('/daily-quiz?return='));
             const json = await student.get(`/d/${did}/p`).set('Accept', 'application/json');
             status(json, 403);
-            assert.equal(json.body.error, 'daily_quiz_required');
+            assert.equal(json.body.error.code, 'daily_quiz_required');
+            assert.equal(json.body.error.message, json.body.message);
+            assert.equal(json.headers['cache-control'], 'private, no-store');
         }
         status(await student.get('/daily-quiz').set('Accept', 'text/html'), 200);
         for (const url of ['/resource/test/entry.js', '/lazy/test/lang-zh.js']) {
@@ -186,6 +189,74 @@ async function run() {
         status(await student.post('/service-worker-config'), 204);
         const api = await student.get(`/d/${dids[0]}/api/problems`).set('Accept', 'application/json');
         status(api, 403);
+    });
+    await check('Old logged-in tabs recheck a new Beijing day and blocked submissions explain or redirect to practice', async () => {
+        const staleUid = await users.create('dq-stale-tab@test.example', 'dq_stale_tab', 'DailyTest123!');
+        await domains.setUserRole(dids[0], staleUid, 'student', true);
+        for (let index = 0; index < 2; index++) {
+            await problems.add(dids[0], `STALETAB${index}`, 'Old tab practice source', '', admin, ['old-tab'], {
+                hidden: true, objectiveKind: 'single', objective: source('single', `New day ${index}`, ['A']),
+            });
+        }
+        const staleAgent = supertest.agent(httpServer);
+        status(await staleAgent.post('/login').send({ uname: 'dq_stale_tab', password: 'DailyTest123!' }), 302);
+        const openPage = await staleAgent.get(`/d/${dids[0]}/p`).set('Accept', 'text/html');
+        status(openPage, 200);
+        assert(openPage.text.includes('dailyQuizGate'), 'even a currently disabled student page watches for later teacher configuration');
+        assert(openPage.text.includes('/daily-quiz/status'));
+        assert.equal(openPage.headers['cache-control'], 'private, no-store');
+        await quiz.savePolicy(staleUid, {
+            ...policy, domains: [{ ...policy.domains[0], tags: ['old-tab'], count: 1, points: [0] }],
+        }, admin);
+        const yesterday = new Date(Date.now() - 86400000);
+        const previous = await quiz.getSession(staleUid, yesterday);
+        const oldQuestion = previous.session.items[0];
+        await quiz.answerQuestion(staleUid, previous.session._id, oldQuestion.id, ['B'], yesterday);
+        const complete = await quiz.getSession(staleUid, yesterday);
+        assert.equal(quiz.presentSession(complete.policy, complete.session, yesterday).completed, true);
+        const current = await get(staleAgent);
+        status(current, 200);
+        assert.equal(current.body.state.day, lib.beijingDay());
+        assert.equal(current.body.state.required, true);
+        assert.notEqual(current.body.state.sessionId, previous.session._id);
+        assert(Math.abs(current.body.serverNow - Date.now()) < 10000);
+        assert.equal(current.headers['cache-control'], 'private, no-store');
+        const page = `/d/${dids[0]}/p/${ids[0]}?tid=stale-tab`;
+        const referer = `http://127.0.0.1:${httpServer.address().port}${page}`;
+        const action = `/d/${dids[0]}/p/${ids[0]}/submit`;
+        const form = await staleAgent.post(action).set('Accept', 'text/html').set('Referer', referer)
+            .type('form').send({ lang: 'cpp', code: 'int main() {}' });
+        status(form, 302);
+        assert.equal(form.headers.location, `/daily-quiz?return=${encodeURIComponent(page)}`);
+        const json = await staleAgent.post(action).set('Accept', 'application/json').set('Referer', referer)
+            .send({ lang: 'cpp', code: 'int main() {}' });
+        status(json, 403);
+        assert.equal(json.body.error.code, 'daily_quiz_required');
+        assert.equal(json.body.error.message, '今天的每日一练尚未完成，请先完成后继续做题。');
+        assert.equal(json.body.dailyQuizUrl, form.headers.location);
+        const xhr = await staleAgent.post(action).set('Accept', '*/*').set('X-Requested-With', 'XMLHttpRequest')
+            .type('form').send({ lang: 'cpp', code: 'int main() {}' });
+        status(xhr, 403);
+        assert.equal(xhr.body.code, 'daily_quiz_required');
+        assert.equal(xhr.body.dailyQuizUrl, `/daily-quiz?return=${encodeURIComponent(`/d/${dids[0]}/p/${ids[0]}`)}`);
+        assert.equal((await get(other)).body.state.required, false, 'another account never inherits the required state');
+    });
+    await check('Enabled practice without available questions stays open and still installs the new-day watcher', async () => {
+        const emptyUid = await users.create('dq-empty-tab@test.example', 'dq_empty_tab', 'DailyTest123!');
+        await domains.setUserRole(dids[0], emptyUid, 'student', true);
+        const emptyAgent = supertest.agent(httpServer);
+        status(await emptyAgent.post('/login').send({ uname: 'dq_empty_tab', password: 'DailyTest123!' }), 302);
+        await quiz.savePolicy(emptyUid, {
+            ...policy, domains: [{ ...policy.domains[0], tags: ['no-available-questions'], count: 1, points: [0] }],
+        }, admin);
+        const response = await get(emptyAgent);
+        status(response, 200);
+        assert.equal(response.body.state.required, false);
+        assert.equal(response.body.state.total, 0);
+        const page = await emptyAgent.get(`/d/${dids[0]}/p`).set('Accept', 'text/html');
+        status(page, 200);
+        assert(page.text.includes('dailyQuizGate'));
+        assert.equal(page.headers.location, undefined);
     });
     await check('Session media is copied and restricted to owner/current question/visible statement', async () => {
         const img = state.current.stem.match(/\]\(([^)]+)\)/)[1];

@@ -64,6 +64,8 @@ async function acceptance(uid, pid, difficulty, options = {}) {
     const record = {
         _id: rid(at), uid, pid, domainId, status: STATUS.STATUS_ACCEPTED, judgeAt: new Date(at),
         ...(options.contest ? { contest: options.contest } : {}),
+        ...(options.practiceContest ? { practiceContest: options.practiceContest } : {}),
+        ...(options.practiceEntryDomain ? { practiceEntryDomain: options.practiceEntryDomain } : {}),
         ...(options.scorePointAward ? { scorePointAward: options.scorePointAward } : {}),
     };
     await database.collection('record').insertOne(record);
@@ -598,5 +600,83 @@ describe('consecutive AC milestones', () => {
         await engine.acknowledgeAchievements(ctx, legacy, 11, ['streak-100']);
         assert.deepEqual(await engine.getPendingAchievements(ctx, legacy, 11, 10, ['streak-100']), []);
         assert.equal(await database.collection('achievement.unlock').countDocuments({ uid: 11, pending: true }), 13);
+    });
+});
+
+describe('post-deadline contest practice remains ordinary achievement progress', () => {
+    it('counts practice AC days and difficulty but never competition awards, including after extending the deadline', async () => {
+        const contest = await competition(11, [1, 2, 3], {
+            duration: 2, beginAt: new Date('2026-10-20T01:00:00Z'), endAt: new Date('2026-10-23T03:00:00Z'),
+        }, { startAt: new Date('2026-10-20T01:00:00Z') });
+        await acceptance(11, 1, 4, { contest: contest.docId, at: '2026-10-20T02:00:00Z' });
+        const practices = [];
+        for (const [index, day] of ['23', '24', '25'].entries()) {
+            practices.push(await acceptance(11, index + 1, 4, {
+                practiceContest: contest.docId, practiceEntryDomain: 'system', hidden: true,
+                at: `2026-10-${day}T04:00:00Z`,
+            }));
+        }
+        let rows = await sync();
+        assert.ok(unlocked(rows).includes('difficulty-4'));
+        assert.ok(unlocked(rows).includes('streak-3'));
+        assert.equal(rows.find((item) => item.id === 'solved-10').progress, 3);
+        assert.equal(rows.find((item) => item.id === 'contest-ac-10').progress, 1);
+        assert.ok(!unlocked(rows).includes('contest-ak-1'));
+        await database.collection('document').updateOne({ docType: 30, docId: contest.docId }, {
+            $set: { duration: 1000, endAt: new Date('2026-12-01T00:00:00Z') },
+        });
+        await database.collection('record').updateOne({ _id: practices[2]._id }, { $set: { judgeAt: now } });
+        rows = await sync(11, legacy, { record: practices[2] });
+        assert.equal(rows.find((item) => item.id === 'contest-ac-10').progress, 1);
+        assert.ok(!unlocked(rows).includes('contest-ak-1'));
+        assert.equal(await database.collection('achievement.solved').countDocuments({ uid: 11, practiceContestId: String(contest.docId), contestId: '' }), 3);
+    });
+
+    it('attributes shared practice only to its authorized entry domain and keeps it out of contest achievements', async () => {
+        assigned.set(11, 'teacher');
+        const source = { _id: 'source', workspaceId: 'teacher', owner: 91 };
+        await database.collection('domain').insertOne(source);
+        await database.collection('domain.user').insertMany([
+            { domainId: 'class', uid: 11, join: true }, { domainId: 'source', uid: 11, join: true },
+        ]);
+        const contest = await competition(11, [1], {
+            domainId: 'source', allDomains: true, duration: 2,
+            beginAt: new Date('2026-10-20T01:00:00Z'), endAt: new Date('2026-10-21T03:00:00Z'),
+        }, { entryDomainId: 'class', startAt: new Date('2026-10-20T01:00:00Z') });
+        let latest;
+        for (const day of ['23', '24', '25']) {
+            latest = await acceptance(11, 1, 5, {
+                domainId: 'source', practiceContest: contest.docId, practiceEntryDomain: 'class',
+                at: `2026-10-${day}T02:00:00Z`, hidden: true,
+            });
+        }
+        await engine.recordAchievementAcceptance(ctx, latest);
+        const rows = await sync(11, modern);
+        assert.ok(unlocked(rows).includes('difficulty-5'));
+        assert.ok(unlocked(rows).includes('streak-3'));
+        assert.equal(rows.find((item) => item.id === 'solved-10').progress, 1);
+        assert.equal(rows.find((item) => item.id === 'contest-ac-1').progress, 0);
+        assert.equal(rows.find((item) => item.id === 'contest-ak-1').progress, 0);
+        assert.deepEqual(unlocked(await sync(11, source)), []);
+        assert.equal(await database.collection('achievement.day').countDocuments({ uid: 11, scope: 'domain:class' }), 3);
+        assert.equal(await database.collection('achievement.day').countDocuments({ uid: 11, scope: 'domain:source' }), 0);
+        await database.collection('document.status').updateOne({ docType: 30, docId: contest.docId, uid: 11 }, {
+            $set: { entryDomainId: 'source' },
+        });
+        assert.deepEqual(unlocked(await sync(11, source)), [], 'historical practice stays with the stored authorized entry');
+    });
+
+    it('does not double-count a library problem solved both in ordinary practice and post-contest practice', async () => {
+        const contest = await competition(11, Array.from({ length: 10 }, (_, i) => i + 1), { duration: 2 });
+        for (let pid = 1; pid <= 10; pid++) {
+            await acceptance(11, pid, 4, { practiceContest: contest.docId, practiceEntryDomain: 'system' });
+            await acceptance(11, pid, 4);
+        }
+        const rows = await sync();
+        assert.ok(unlocked(rows).includes('solved-10'));
+        assert.equal(rows.find((item) => item.id === 'solved-100').progress, 10);
+        assert.equal(rows.find((item) => item.id === 'mastery-4-50').progress, 10);
+        assert.equal(rows.find((item) => item.id === 'contest-ac-1').progress, 0);
+        assert.equal(rows.find((item) => item.id === 'contest-ak-1').progress, 0);
     });
 });

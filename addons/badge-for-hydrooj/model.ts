@@ -32,6 +32,8 @@ export interface Badge {
     iconImageUpdatedAt?: string;
     themeSoundPath?: string;
     themeSoundUpdatedAt?: string;
+    /** AC playback volume, 0–100. Older badges retain their original 25%. */
+    themeSoundVolume?: number;
     content: string;
     users: number[];
     createAt: Date;

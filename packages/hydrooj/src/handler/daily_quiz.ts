@@ -15,6 +15,11 @@ function isTeacherView(handler: { session?: { sudoUid?: number } }) {
     return !!handler.session?.sudoUid;
 }
 
+function isExemptAccount(handler: Pick<Handler, 'session' | 'user'>) {
+    return isTeacherView(handler) || !handler.user?.hasPriv(PRIV.PRIV_USER_PROFILE)
+        || handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM) || handler.user.hasPriv(PRIV.PRIV_JUDGE);
+}
+
 export class DailyQuizHandler extends Handler {
     noCheckPermView = true;
 
@@ -57,12 +62,13 @@ export class DailyQuizStatusHandler extends Handler {
 
     async get() {
         this.response.addHeader('Cache-Control', 'private, no-store');
-        if (isTeacherView(this)) {
-            this.response.body = { state: { required: false, teacherPreview: true } };
+        const serverNow = Date.now();
+        if (isExemptAccount(this)) {
+            this.response.body = { state: { required: false, ...(isTeacherView(this) ? { teacherPreview: true } : {}) }, serverNow };
             return;
         }
         const { policy, session } = await quiz.getSession(this.user._id);
-        this.response.body = { state: quiz.presentSession(policy, session) };
+        this.response.body = { state: quiz.presentSession(policy, session), serverNow };
     }
 }
 
@@ -101,31 +107,65 @@ export function isDailyQuizAchievementRequest(path: string, method: string) {
         || (path === '/achievement/ack' && method?.toUpperCase() === 'POST');
 }
 
+/** A blocked mutation must resume its page, never repeat an action endpoint. */
+function returnPage(handler: Handler) {
+    const request = handler.request;
+    if (['GET', 'HEAD'].includes(request.method.toUpperCase())) {
+        return safeReturnUrl(request.originalPath + (request.querystring ? `?${request.querystring}` : ''));
+    }
+    const source = request.referer || request.headers?.referer;
+    if (source && !source.startsWith('//')) {
+        if (source.startsWith('/')) return safeReturnUrl(source);
+        try {
+            const url = new URL(source);
+            if (['http:', 'https:'].includes(url.protocol) && url.host === request.host && !url.username && !url.password) {
+                return safeReturnUrl(`${url.pathname}${url.search}${url.hash}`);
+            }
+        } catch { /* Missing or foreign referrers fall back to a known read-only page. */ }
+    }
+    const problemPage = request.originalPath.match(/^(\/(?:d\/[^/]+\/)?p\/[^/]+)\/submit\/?$/)?.[1];
+    return safeReturnUrl(problemPage);
+}
+
+export function injectDailyQuizGate(handler: Handler) {
+    if (isExemptAccount(handler) || handler.request.method.toUpperCase() !== 'GET'
+        || handler.request.json || handler.request.websocket || exemptPath.test(handler.request.path)
+        || !handler.response.template || handler.response.redirect || handler.response.status >= 300
+        || handler.request.query.noTemplate || handler.args?.pjax || handler.response.template === 'daily_quiz.html') return;
+    // Keep checking even if a teacher enables practice after this page was opened.
+    handler.UiContext.dailyQuizGate = { statusUrl: '/daily-quiz/status', serverNow: Date.now() };
+    handler.response.addHeader('Cache-Control', 'private, no-store');
+}
+
 export async function apply(ctx: Context) {
     ctx.Route('daily_quiz', '/daily-quiz', DailyQuizHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('daily_quiz_status', '/daily-quiz/status', DailyQuizStatusHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('daily_quiz_file', '/daily-quiz/:sessionId/file/:questionId/:filename', DailyQuizFileHandler, PRIV.PRIV_USER_PROFILE);
     // The serial preparation phase follows authentication and workspace checks.
     ctx.on('handler/before-prepare', async (handler: Handler) => {
-        if (isTeacherView(handler) || !handler.user?.hasPriv(PRIV.PRIV_USER_PROFILE) || handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM)
-            || handler.user.hasPriv(PRIV.PRIV_JUDGE) || exemptPath.test(handler.request.path)
+        if (isExemptAccount(handler) || exemptPath.test(handler.request.path)
             || isDailyQuizMediaRead(handler.request.path, handler.request.method)
             || isDailyQuizAchievementRequest(handler.request.path, handler.request.method)) return undefined;
         const { policy, session } = await quiz.getSession(handler.user._id);
         if (!quiz.presentSession(policy, session).required) return undefined;
-        const returnUrl = safeReturnUrl(handler.request.originalPath
-            + (handler.request.querystring ? `?${handler.request.querystring}` : ''));
+        const returnUrl = returnPage(handler);
         const url = `/daily-quiz?return=${encodeURIComponent(returnUrl)}`;
-        if (handler.request.json || !['GET', 'HEAD'].includes(handler.request.method.toUpperCase())) {
+        const headers = handler.request.headers || {};
+        const json = handler.request.json || String(headers['x-requested-with'] || '').toLowerCase() === 'xmlhttprequest'
+            || String(headers['content-type'] || '').includes('application/json')
+            || (['cors', 'same-origin', 'no-cors'].includes(String(headers['sec-fetch-mode'])) && headers['sec-fetch-dest'] === 'empty');
+        handler.response.addHeader('Cache-Control', 'private, no-store');
+        if (json) {
+            const message = '今天的每日一练尚未完成，请先完成后继续做题。';
             handler.response.status = 403;
-            handler.response.body = { error: 'daily_quiz_required', message: '请先完成今天的每日问答', dailyQuizUrl: url };
+            handler.response.body = { error: { code: 'daily_quiz_required', message }, code: 'daily_quiz_required', message, dailyQuizUrl: url };
         } else handler.response.redirect = url;
         return 'cleanup';
     });
     ctx.on('handler/create/ws', async (handler) => {
-        if (isTeacherView(handler) || !handler.user?.hasPriv(PRIV.PRIV_USER_PROFILE) || handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM)
-            || handler.user.hasPriv(PRIV.PRIV_JUDGE)) return;
+        if (isExemptAccount(handler)) return;
         const { policy, session } = await quiz.getSession(handler.user._id);
         if (quiz.presentSession(policy, session).required) throw new ForbiddenError('请先完成今天的每日问答');
     });
+    ctx.on('handler/after', injectDailyQuizGate);
 }

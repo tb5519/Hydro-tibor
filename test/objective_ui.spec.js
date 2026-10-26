@@ -181,7 +181,7 @@ async function harness(options = {}) {
         'vj/utils/db': {
             openDB: options.storageUnavailable ? Promise.reject(new Error('Storage unavailable')) : Promise.resolve({
                 get: async (...args) => { calls.load.push(args); return options.saved; },
-                put: async (...args) => { calls.save.push(args); },
+                put: async (...args) => { calls.save.push(args); return options.put?.(...args); },
             }),
         },
     });
@@ -227,6 +227,57 @@ async function harness(options = {}) {
 }
 
 describe('objective answer submission UI', { concurrency: false }, () => {
+    it('waits for the latest objective draft transaction before a daily practice redirect', async () => {
+        const first = deferred();
+        const last = deferred();
+        let writes = 0;
+        const ui = await harness({ put: () => (++writes === 1 ? first.promise : last.promise) });
+        try {
+            await ui.answer(4, 'first');
+            await ui.answer(4, 'last keystroke');
+            const waits = [];
+            ui.dom.window.dispatchEvent(new ui.dom.window.CustomEvent('hydro:daily-quiz-redirect', {
+                cancelable: true, detail: { waitUntil: promise => waits.push(promise) },
+            }));
+            assert.equal(waits.length, 1);
+            let finished = false;
+            waits[0].then(() => { finished = true; });
+            first.resolve();
+            await ui.flush();
+            assert.equal(finished, false);
+            last.resolve();
+            await waits[0];
+            assert.equal(JSON.parse(ui.calls.save.at(-1)[1].value)['4'], 'last keystroke');
+        } finally { first.resolve(); last.resolve(); await ui.close(); }
+    });
+
+    it('propagates unavailable or failed objective storage to mandatory navigation without losing the live answers', async () => {
+        for (const options of [{ storageUnavailable: true }, { put: () => { throw new Error('Quota exceeded'); } }]) {
+            const ui = await harness(options);
+            try {
+                await ui.answer(4, 'keep this answer');
+                const waits = [];
+                ui.dom.window.dispatchEvent(new ui.dom.window.CustomEvent('hydro:daily-quiz-redirect', {
+                    cancelable: true, detail: { waitUntil: promise => waits.push(promise) },
+                }));
+                await assert.rejects(waits[0]);
+                assert.equal(ui.doc.querySelector('[name="4"]').value, 'keep this answer');
+            } finally { await ui.close(); }
+        }
+    });
+
+    it('does not save a reviewed student answer when a teacher leaves for daily practice', async () => {
+        const ui = await harness({ context: { homeworkReview: { uid: 22 } } });
+        try {
+            const waits = [];
+            ui.dom.window.dispatchEvent(new ui.dom.window.CustomEvent('hydro:daily-quiz-redirect', {
+                cancelable: true, detail: { waitUntil: promise => waits.push(promise) },
+            }));
+            assert.equal(waits.length, 0);
+            assert.equal(ui.calls.save.length, 0);
+        } finally { await ui.close(); }
+    });
+
     it('keeps pending and failed first attempts neutral until a reliable aggregate result is available', async (t) => {
         const merged = mergedReviewFixture();
         merged.questions[0].result = 'pending';

@@ -10,6 +10,7 @@ import { delay, i18n, request, tpl } from 'vj/utils';
 import { openDB } from 'vj/utils/db';
 import { mergedResultLabel } from '../../common/objective-merged-review';
 import { createAchievementClient } from '../achievement_effect';
+import type { DailyQuizRedirectDetail } from '../daily_quiz_gate';
 import { rememberRecordReplaySubmission } from '../record_replay_import';
 import { ObjectiveResult } from './ObjectiveResult';
 
@@ -101,6 +102,7 @@ export async function loadObjective() {
     resultDialog?.close();
     achievements.dispose();
     $statement.off('.objective');
+    window.removeEventListener('hydro:daily-quiz-redirect', preserveDailyQuizDraft);
   };
   $('.outer-loader-container').show();
   document.documentElement.classList.add('objective-problem-mode');
@@ -172,12 +174,30 @@ export async function loadObjective() {
   if (UiContext.tdoc?._id && UiContext.tdoc.rule !== 'homework') cacheKey += `@${UiContext.tdoc._id}`;
 
   const db = await openDB.catch(() => null);
+  let pendingDraftSave: Promise<unknown> = Promise.resolve();
   async function saveAns() {
     if (readOnly) return;
+    // Keep the actual transaction available to a mandatory navigation even
+    // though ordinary answering/submitting may continue after a storage error.
+    const value = JSON.stringify(ans);
+    pendingDraftSave = Promise.resolve().then(() => {
+      if (!db) throw new Error('无法保存当前作答，请保留此页面。');
+      return db.put('solutions', { id: `${cacheKey}#objective`, value });
+    });
     try {
-      await db?.put('solutions', { id: `${cacheKey}#objective`, value: JSON.stringify(ans) });
+      await pendingDraftSave;
     } catch { /* A storage failure must not prevent submitting answers. */ }
   }
+  function preserveDailyQuizDraft(event: Event) {
+    if (readOnly || !active()) return;
+    (event as CustomEvent<DailyQuizRedirectDetail>).detail?.waitUntil((async () => {
+      // A final answer can arrive while an earlier IndexedDB write completes.
+      let saved: Promise<unknown>;
+      do { saved = pendingDraftSave; await saved; } while (saved !== pendingDraftSave);
+    })());
+  }
+  if (!active()) return;
+  window.addEventListener('hydro:daily-quiz-redirect', preserveDailyQuizDraft);
   async function clearAns() {
     if (readOnly || busy || !(await confirm(i18n('All changes will be lost. Are you sure to clear all answers?')))) return;
     Object.keys(ans).forEach((id) => { delete ans[id]; });

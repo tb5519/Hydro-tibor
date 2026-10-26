@@ -8,7 +8,7 @@ import { attachScratchpadMonacoTheme, currentScratchpadTheme, scratchpadMonacoTh
 interface ScratchpadOptions {
   value?: string;
   language?: string;
-  handleUpdateCode?: (str: string, event: monaco.editor.IModelContentChangedEvent) => void;
+  handleUpdateCode?: (str: string, event?: monaco.editor.IModelContentChangedEvent) => void;
   settings?: any;
   pendingCommand?: string;
   commandDone?: () => void;
@@ -46,6 +46,16 @@ export default connect((state: any) => ({
   containerElement: HTMLElement;
   releaseTheme?: () => void;
   unmounted = false;
+
+  flushDailyQuizDraft = (event: Event) => {
+    if (UiContext.homeworkReview || !this.editor || this.unmounted) return;
+    try {
+      this.props.handleUpdateCode?.(this.editor.getValue({ lineEnding: '\n', preserveBOM: false }));
+    } catch {
+      // Storage may be unavailable or full. Keep the only live copy open.
+      event.preventDefault();
+    }
+  };
 
   async componentDidMount() {
     const value = this.props.value || '';
@@ -87,6 +97,7 @@ export default connect((state: any) => ({
       (window as any).editor = this.editor;
       (window as any).monaco = monaco;
       ctx.scratchpad.init(this.editor, monaco);
+      window.addEventListener('hydro:daily-quiz-redirect', this.flushDailyQuizDraft);
       // The loader is an opaque fallback while Monaco initializes. A skin's
       // transparent editor must never reveal it beneath the finished editor.
       this.containerElement.setAttribute?.('data-editor-ready', 'true');
@@ -140,6 +151,7 @@ export default connect((state: any) => ({
 
   componentWillUnmount() {
     this.unmounted = true;
+    window.removeEventListener('hydro:daily-quiz-redirect', this.flushDailyQuizDraft);
     if (this.editor) this.editor.dispose();
     if (this.model) this.model.dispose();
     this.disposable.map((i) => i.dispose());

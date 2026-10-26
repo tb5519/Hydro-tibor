@@ -43,7 +43,10 @@ export async function resolveContestEntry(handler: Handler | ConnectionHandler) 
     if (rid) {
         rdoc = await record.get(rid);
         if (!rdoc) return;
-        if (rdoc.contest && ![record.RECORD_PRETEST, record.RECORD_GENERATE].some((id) => id.equals(rdoc.contest))) {
+        if (!rdoc.contest && rdoc.practiceContest && rdoc.uid === handler.user._id) {
+            if (tid && !tid.equals(rdoc.practiceContest)) throw new NotFoundError(rid);
+            tid = rdoc.practiceContest;
+        } else if (rdoc.contest && ![record.RECORD_PRETEST, record.RECORD_GENERATE].some((id) => id.equals(rdoc.contest))) {
             if (tid && !tid.equals(rdoc.contest)) throw new NotFoundError(rid);
             tid = rdoc.contest;
         } else if (!tid || rdoc.uid !== handler.user._id) return;

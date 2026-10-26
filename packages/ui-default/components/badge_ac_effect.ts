@@ -2,9 +2,9 @@ export interface BadgeAcTheme {
   acImage?: string;
   name?: string;
   themeSound?: string;
+  themeSoundVolume?: number;
 }
 
-const CELEBRATION_VOLUME = 0.25;
 const IMAGE_WAIT_MS = 4000;
 
 /**
@@ -15,6 +15,8 @@ const IMAGE_WAIT_MS = 4000;
 export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined) {
   const acImage = String(theme?.acImage || '');
   const themeSound = String(theme?.themeSound || '');
+  const soundVolume = Number.isInteger(theme?.themeSoundVolume) && theme.themeSoundVolume >= 0
+    && theme.themeSoundVolume <= 100 ? theme.themeSoundVolume / 100 : 0.25;
   let activeEffect: Promise<void> | null = null;
   let playGeneration = 0;
   let preparedImage: Promise<HTMLImageElement | null> | null = null;
@@ -123,7 +125,7 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
       audio = new Audio(themeSound);
       audioSource = themeSound;
       audio.preload = 'auto';
-      audio.volume = CELEBRATION_VOLUME;
+      audio.volume = soundVolume;
       audio.load();
     }
     return audio;
@@ -136,7 +138,7 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
     const generation = ++audioGeneration;
     audioPriming = true;
     const restoreAudio = () => {
-      player.volume = CELEBRATION_VOLUME;
+      player.volume = soundVolume;
       player.muted = false;
     };
     player.muted = false;
@@ -225,7 +227,7 @@ export function createBadgeAcThemePlayer(theme: BadgeAcTheme | null | undefined)
         player.pause();
         player.currentTime = 0;
         player.muted = false;
-        player.volume = CELEBRATION_VOLUME;
+        player.volume = soundVolume;
         audioPrimed = true;
         player.onended = () => finish();
         player.onerror = () => finish();

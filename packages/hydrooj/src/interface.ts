@@ -246,6 +246,9 @@ export type RecordDoc = {
 } & {
     _id: ObjectId;
     notify?: boolean;
+    /** Audit/access context only. Ordinary practice never has `contest` set. */
+    practiceContest?: ObjectId;
+    practiceEntryDomain?: string;
     scorePointAward?: import('./lib/contest_score_points').ContestScorePointAward;
 };
 

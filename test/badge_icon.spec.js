@@ -128,6 +128,44 @@ async function uploadFile(test, bytes = png(), name = 'custom.png') {
     return { size: bytes.length, filepath, originalFilename: name };
 }
 const update = (handler, remove = false) => handler.postUpdate(handler.domain._id, 7, 'Badge', 'Badge title', '123456', 'ffffff', 'Content', [], false, false, false, remove);
+const updateVolume = (handler, value) => handler.postUpdate(handler.domain._id, 7, 'Badge', 'Badge title', '123456', 'ffffff', 'Content', [], false, false, false, false, value);
+
+it('saves AC volume in the same authorized badge scope, accepts mute and preserves missing legacy form values', async () => {
+    for (const domain of [{ _id: 'Python' }, { _id: 'A', workspaceId: 'teacher' }]) {
+        setup({ ...(domain.workspaceId ? { domainId: 'A' } : {}), themeSoundPath: 'theme.mp3' });
+        const handler = new addon.BadgeEditHandler(domain);
+        await handler.prepare();
+        for (const value of [0, 73, 100]) {
+            await updateVolume(handler, value);
+            assert.equal(state.badge.themeSoundVolume, value);
+            assert.deepEqual(state.updates.at(-1).query, { _id: 7, domainId: domain.workspaceId ? 'A' : { $exists: false } });
+            assert.equal(state.badge.themeSoundPath, 'theme.mp3');
+            await handler.get(domain._id, 7);
+            assert.equal(handler.response.body.badge.themeSoundVolume, value);
+        }
+        await update(handler);
+        assert.equal(state.badge.themeSoundVolume, 100, 'older forms do not erase the saved volume');
+        assert.equal(state.uploads.length, 0);
+        assert.equal(state.removals.length, 0);
+    }
+    setup();
+    const legacy = new addon.BadgeEditHandler();
+    await legacy.get('Python', 7);
+    assert.equal(legacy.response.body.badge.themeSoundVolume, 25);
+});
+
+it('rejects invalid AC volume before changing any badge data and cannot cross the badge domain', async () => {
+    for (const value of [-1, 101, 1.5, NaN, Infinity, '50', null]) {
+        setup({ themeSoundVolume: 37 });
+        await assert.rejects(updateVolume(new addon.BadgeEditHandler(), value), ValidationError);
+        assert.equal(state.badge.themeSoundVolume, 37);
+        assert.equal(state.edited, 0);
+        assert.equal(state.updates.length, 0);
+    }
+    setup({ domainId: 'A', themeSoundVolume: 37 });
+    await assert.rejects(updateVolume(new addon.BadgeEditHandler({ _id: 'B', workspaceId: 'teacher' }), 5), NotFoundError);
+    assert.equal(state.updates.length, 0);
+});
 
 it('inherits the existing legacy owner and domain teacher permissions for icon upload', async () => {
     setup();

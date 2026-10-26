@@ -77,7 +77,7 @@ function harness(options = {}) {
         solution: { count: async () => 0 }, discussion: { count: async () => 0 }, system: { get: () => 1000 },
         rejectHomeworkReviewMutation: () => {}, assertRecordReplayRequest: () => {}, isScratchObjectiveTeacher: () => false,
         authorizeHomeworkReview: async () => ({ _id: 21, uname: 'Student' }), canAccessHomeworkProblem: async () => true,
-        canUseProblemRecordPicker: () => false, canManageRecordList: () => false,
+        canUseProblemRecordPicker: () => false, canManageRecordList: () => false, getContestPracticeWindow: () => null,
         getActiveBadgeAcTheme: async () => null, getCppEditorMode: () => 'proficient', isCppLanguage: () => false,
         mistake: { get: async () => null, getPracticeState: () => null }, loadObjectiveCorrectAnswers: async () => null,
         loadHomeworkReviewRecord: async () => ({ _id: new ObjectId(), lang: 'cc.cc17', code: 'old code' }),

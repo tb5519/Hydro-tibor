@@ -12,6 +12,7 @@ import {
 import { createAchievementClient } from '../components/achievement_effect';
 import { createBadgeAcThemePlayer } from '../components/badge_ac_effect';
 import { ContestPoints } from '../components/contest_points';
+import { createContestPracticeFeedback, isContestPracticeRecord, isContestPracticeResultReady } from '../components/contest_practice_result';
 import { copyHomeworkReviewToOwnDraft } from '../components/homework_review_copy';
 import { bindHomeworkReviewMistake } from '../components/homework_review_mistake';
 import { bindMistakeActions } from '../components/mistake_actions';
@@ -179,6 +180,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   let badgeAcFirstEligible = UiContext.badgeAcFirstEligible !== false;
   const badgeThemeEffect = createBadgeAcThemePlayer(UiContext.badgeAcTheme);
   const achievements = createAchievementClient(UiContext, request);
+  const practiceFeedback = createContestPracticeFeedback(typeof UserContext === 'undefined' ? 0 : Number(UserContext._id));
   const contestProgressDetails = {
     ...(UiContext.tsdoc?.detail || {}),
   } as Record<string, any>;
@@ -192,6 +194,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   }
 
   function isContestResultReady(rdoc: any) {
+    if (isContestPracticeRecord(rdoc)) return isContestPracticeResultReady(rdoc);
     return isFinalRecordStatus(+rdoc.status) && (!UiContext.tdoc?.scoreToPoints || !!rdoc.scorePointAward);
   }
 
@@ -232,6 +235,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   }
 
   function updateContestProgress(rdoc: any) {
+    if (isContestPracticeRecord(rdoc)) return;
     const pid = Number(rdoc?.pid);
     if (!Number.isFinite(pid) || !UiContext.tdoc?.pids?.some((item) => Number(item) === pid)) return;
 
@@ -397,9 +401,16 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   }
 
   function showContestSubmitResult(store, rdoc: any) {
-    if (!isContestSubmitFeedbackEnabled() || !isCurrentFormalSubmitRecord(store, rdoc)) return;
+    if (!isCurrentFormalSubmitRecord(store, rdoc)) return;
     const recordId = getRecordId(rdoc);
     const status = +rdoc.status;
+    if (isContestPracticeRecord(rdoc)) {
+      if (!recordId || !isContestPracticeResultReady(rdoc) || reportedFormalSubmitRids.has(recordId)) return;
+      reportedFormalSubmitRids.add(recordId);
+      void practiceFeedback.afterResult(rdoc, true);
+      return;
+    }
+    if (!isContestSubmitFeedbackEnabled()) return;
     if (!recordId || !isContestResultReady(rdoc) || reportedFormalSubmitRids.has(recordId)) return;
     reportedFormalSubmitRids.add(recordId);
 
@@ -531,14 +542,17 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
     maybeRevealMistakePrompt(store, rdoc);
 
     const recordId = getRecordId(rdoc);
-    if (recordId && isCurrentFormalSubmitRecord(store, rdoc) && isFinalRecordStatus(+rdoc.status)) {
+    if (recordId && isCurrentFormalSubmitRecord(store, rdoc)
+      && (isFinalRecordStatus(+rdoc.status) || isContestPracticeResultReady(rdoc))) {
       let effectPromise = formalSubmitEffectPromises.get(recordId);
       if (!effectPromise) {
         const isAccepted = isFullScoreAccepted(rdoc);
         const shouldPlayBadgeEffect = isAccepted && badgeAcFirstEligible;
         if (isAccepted) badgeAcFirstEligible = false;
         const acFinished = shouldPlayBadgeEffect ? playBadgeThemeAcEffect() : Promise.resolve();
-        effectPromise = achievements.afterResult(recordId, acFinished);
+        // The achievement client may skip presentation when another tab owns
+        // its lock. Our own AC effect still has to finish before result feedback.
+        effectPromise = Promise.all([acFinished.catch(() => undefined), achievements.afterResult(recordId, acFinished)]).then(() => undefined);
         formalSubmitEffectPromises.set(recordId, effectPromise);
       }
       await effectPromise;

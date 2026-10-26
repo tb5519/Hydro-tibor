@@ -58,6 +58,13 @@
     color: #6b7b93;
     font-size: 13px;
   }
+  .badge-sound-volume { margin-top: 16px; padding-top: 14px; border-top: 1px solid #dce6f5; }
+  .badge-sound-volume__label { display: flex; justify-content: space-between; gap: 16px; max-width: 520px; color: #1f2a44; font-weight: 600; }
+  .badge-sound-volume__controls { display: flex; align-items: center; gap: 16px; max-width: 520px; margin: 10px 0; }
+  .badge-sound-volume__controls input { flex: 1; min-width: 0; accent-color: #3478f6; }
+  .badge-sound-volume__controls .button { margin: 0; white-space: nowrap; }
+  .badge-sound-volume__label output { color: #245fd0; font-variant-numeric: tabular-nums; }
+  .badge-sound-volume__status { margin: 0; color: #6b7b93; font-size: 13px; }
   .badge-background-video {
     margin-top: 26px;
     padding: 22px;
@@ -166,9 +173,6 @@
             <p class="badge-profile-background-upload__title">{{ _('Badge theme sound') }}</p>
             <p class="badge-profile-background-upload__hint">{{ _('Upload an MP3, WAV, OGG or M4A sound played with the full-score AC effect.') }}</p>
             <p class="badge-profile-background-upload__hint">{{ _('Recommended length: 2-10 seconds, up to 10 MB.') }}</p>
-            {% if badge.themeSound %}
-              <audio class="badge-profile-background-upload__audio" controls preload="metadata" src="{{ badge.themeSound }}"></audio>
-            {% endif %}
             <input type="file" name="themeSound" accept="audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/x-m4a">
             {% if badge.themeSound %}
               <label class="checkbox badge-profile-background-upload__clear">
@@ -176,6 +180,16 @@
                 {{ _('Remove current badge theme sound') }}
               </label>
             {% endif %}
+            <div class="badge-sound-volume" data-badge-sound-volume data-saved-sound="{{ badge.themeSound|default('') }}">
+              <label class="badge-sound-volume__label" for="badge-sound-volume">
+                <span>AC 音效音量</span><output for="badge-sound-volume" data-badge-sound-volume-value>{{ badge.themeSoundVolume|default(25) }}%</output>
+              </label>
+              <div class="badge-sound-volume__controls">
+                <input id="badge-sound-volume" type="range" name="themeSoundVolume" min="0" max="100" step="1" value="{{ badge.themeSoundVolume|default(25) }}" {% if not badge.themeSound %}disabled{% endif %}>
+                <button type="button" class="rounded button" data-badge-sound-preview {% if not badge.themeSound %}disabled{% endif %}>试听音效</button>
+              </div>
+              <p class="badge-sound-volume__status" data-badge-sound-status role="status">{% if badge.themeSound %}0% 为静音。修改音量后，点击下方「更新」保存。{% else %}上传音效后即可调节音量和试听。{% endif %}</p>
+            </div>
           </div>
           <div class="badge-ac-preview">
             <button

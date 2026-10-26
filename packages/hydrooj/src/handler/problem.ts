@@ -28,6 +28,7 @@ import { tryRedirectAsset } from '../lib/asset_delivery';
 import avatar from '../lib/avatar';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
 import { canViewContestLevel } from '../lib/contest_access';
+import { getContestPracticeWindow } from '../lib/contest_practice';
 import { isScratchDomain } from '../lib/domain_type';
 import {
     authorizeHomeworkReview, loadHomeworkReviewRecord, loadHomeworkReviewRecords, publicHomeworkReviewRecord, rejectHomeworkReviewMutation,
@@ -751,6 +752,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
     mistakePromptState: Awaited<ReturnType<typeof getMistakePromptState>>;
     reviewMistakeStudent?: User;
     studentSubmissionLanguageDomains: string[] = [];
+    practiceEntryDomain = '';
 
     getStudentLanguageLimit(domainId: string) {
         // Shared contests keep records in the source domain. Also retain the
@@ -861,6 +863,12 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
         ]);
         const isProgrammingProblem = !!this.pdoc.config && typeof this.pdoc.config === 'object'
             && !['objective', 'submit_answer'].includes(this.pdoc.config.type);
+        const practiceWindow = !reviewStudent && !fromRecord && mergedUid === undefined
+            ? getContestPracticeWindow(this.tdoc, this.tsdoc) : null;
+        if (practiceWindow) {
+            this.UiContext.contestPracticeWindow = practiceWindow;
+            this.practiceEntryDomain = this.entryDomain?._id || this.tsdoc?.entryDomainId || domainId;
+        }
         const preferredCodeDomain = this.tdoc?.allDomains && this.entryDomain ? this.entryDomain : this.domain;
         const codeLang = this.pdoc.config && typeof this.pdoc.config === 'object'
             ? pickPreferredCodeLang(this.pdoc.config.langs || [], this.user, preferredCodeDomain)
@@ -901,6 +909,7 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             tdoc: this.tdoc,
             owner_udoc: (tid && this.tdoc.owner !== this.pdoc.owner) ? await user.getById(domainId, this.tdoc.owner) : null,
             mode: reviewStudent || mergedUid !== undefined ? 'review' : !tid ? 'normal'
+                : practiceWindow?.active ? 'contest'
                 : !this.tsdoc?.attend ? 'view'
                     : !contest.isDone(this.tdoc) ? 'contest'
                         : problem.canViewBy(this.pdoc, this.user) ? 'correction' : 'none',
@@ -1131,7 +1140,9 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
         rejectHomeworkReviewMutation(this.request);
         if (!this.tdoc?.allDomains) this.checkPerm(PERM.PERM_SUBMIT_PROBLEM);
         else this.checkPriv(PRIV.PRIV_USER_PROFILE);
-        if (tid && !contest.isOngoing(this.tdoc, this.tsdoc)) throw new ContestNotLiveError(this.tdoc.docId);
+        if (tid && !contest.isOngoing(this.tdoc, this.tsdoc) && !getContestPracticeWindow(this.tdoc, this.tsdoc)?.active) {
+            throw new ContestNotLiveError(this.tdoc.docId);
+        }
         if (typeof this.pdoc.config === 'string') throw new ProblemConfigError();
         if (this.pdoc.config.langs && !this.pdoc.config.langs.length) {
             if (this.getStudentLanguageLimit(domainId) !== null) {
@@ -1217,18 +1228,25 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
             code = code.replace(/\r\n/g, '\n');
             if (code.length > lengthLimit) throw new ValidationError('code');
         }
+        // Decide once at submission, never at judgement/rejudge. The separate
+        // audit context preserves access without entering competition scoring.
+        const practice = !!tid && !!getContestPracticeWindow(this.tdoc, this.tsdoc)?.active;
+        const formalTid = practice ? undefined : tid;
         const rid = await record.add(
             domainId, this.pdoc.docId, this.user._id, lang, code, true,
-            pretest ? { input, type: 'pretest' } : { contest: tid, files, type: 'judge' },
+            pretest ? { input, type: 'pretest' } : {
+                contest: formalTid, files, type: 'judge',
+                ...(practice ? { practiceContest: tid, practiceEntryDomain: this.practiceEntryDomain || domainId } : {}),
+            },
         );
         if (!pretest) {
             await Promise.all([
                 problem.inc(domainId, this.pdoc.docId, 'nSubmit', 1),
                 domain.incUserInDomain(domainId, this.user._id, 'nSubmit'),
-                tid && contest.updateStatus(domainId, tid, this.user._id, rid, this.pdoc.docId),
+                formalTid && contest.updateStatus(domainId, formalTid, this.user._id, rid, this.pdoc.docId),
             ]);
         }
-        if (tid && !pretest && !contest.canShowSelfRecord.call(this, this.tdoc)) {
+        if (formalTid && !pretest && !contest.canShowSelfRecord.call(this, this.tdoc)) {
             // The regular record page remains hidden for contests that do not expose
             // submissions, but the editor still needs this id for its own result prompt.
             this.response.body = { rid, tid };
@@ -1237,11 +1255,12 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
                 query: this.contestEntryQuery,
             });
         } else {
-            this.response.body = { rid };
+            this.response.body = { rid, ...(practice && !pretest ? { practice: true, practiceContest: tid } : {}) };
             this.response.redirect = this.url('record_detail', {
                 rid,
                 query: {
                     badgeAcEffect: this.psdoc?.status === STATUS.STATUS_ACCEPTED ? '0' : '1',
+                    ...(practice && !pretest ? { practiceResult: '1', tid, ...this.contestEntryQuery } : {}),
                 },
             });
         }

@@ -124,8 +124,11 @@ describe('scratchpad live resizing', () => {
         const configurations = [];
         let created = 0;
         let disposed = 0;
+        let failSave = false;
+        const saved = [];
         const model = { dispose() {}, getValue: () => draft };
         const editor = {
+            getValue: () => `${draft}\n# final keystroke`,
             onDidChangeModelContent: () => ({ dispose() {} }),
             updateOptions: (options) => configurations.push(options),
             dispose: () => disposed++,
@@ -155,7 +158,9 @@ describe('scratchpad live resizing', () => {
             },
         });
         try {
-            const component = new mod.exports.default({ value: draft, language: 'python', settings: { automaticLayout: false, fontSize: 18 } });
+            const component = new mod.exports.default({ value: draft, language: 'python', settings: { automaticLayout: false, fontSize: 18 },
+                handleUpdateCode(value) { if (failSave) throw new Error('Storage full'); saved.push(value); },
+            });
             component.containerElement = dom.window.document.createElement('div');
             await component.componentDidMount();
             assert.equal(configurations[0].automaticLayout, true);
@@ -164,8 +169,15 @@ describe('scratchpad live resizing', () => {
             assert.equal(configurations.at(-1).fontSize, 18);
             assert.equal(created, 1);
             assert.equal(component.model.getValue(), draft);
+            assert.equal(dom.window.dispatchEvent(new dom.window.Event('hydro:daily-quiz-redirect', { cancelable: true })), true);
+            assert.deepEqual(saved, [`${draft}\n# final keystroke`], 'flushes the actual editor value before navigation');
+            failSave = true;
+            assert.equal(dom.window.dispatchEvent(new dom.window.Event('hydro:daily-quiz-redirect', { cancelable: true })), false,
+                'keeps the only copy in the editor when storage fails');
             component.componentWillUnmount();
             assert.equal(disposed, 1, 'Monaco disposal releases the automatic container observer');
+            assert.equal(dom.window.dispatchEvent(new dom.window.Event('hydro:daily-quiz-redirect', { cancelable: true })), true,
+                'unmount removes the draft listener');
         } finally { dom.window.close(); }
     });
 

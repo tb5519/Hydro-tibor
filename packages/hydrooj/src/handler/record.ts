@@ -10,10 +10,11 @@ import {
 import { RecordDoc, Tdoc } from '../interface';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
 import { canViewContestLevel } from '../lib/contest_access';
+import { getContestPracticeWindow } from '../lib/contest_practice';
 import { authorizeHomeworkReview, isHomeworkReviewRecord } from '../lib/homework_review';
 import { buildObjectiveInitialSubmission, loadObjectiveSubmissionConfig, loadOwnObjectiveRecordSubmission } from '../lib/objective_submission';
 import { listProblemMergedSubmissions, listProblemSubmissionRecords, loadProblemRecordReplay } from '../lib/problem_record_replay';
-import { canManageRecordList } from '../lib/record_list_scope';
+import { canInspectContestPractice, canManageRecordList } from '../lib/record_list_scope';
 import type { RecordTestcaseData } from '../lib/record_testcase_data';
 import { loadRecordTestcaseData } from '../lib/record_testcase_data';
 import {
@@ -40,6 +41,22 @@ function canViewAllPretestRecords(udoc: { hasPriv(priv: number): boolean, hasPer
         || udoc.hasPriv(PRIV.PRIV_MANAGE_ALL_DOMAIN)
         || udoc.hasPriv(PRIV.PRIV_READ_RECORD_CODE)
         || udoc.hasPerm(PERM.PERM_READ_RECORD_CODE);
+}
+
+/** A practice receipt grants its author access to their own formerly timed task,
+ * without making hidden problems or anyone else's submissions public. */
+async function ownContestPractice(handler: Handler | ConnectionHandler, rdoc: RecordDoc) {
+    if (rdoc.contest || !rdoc.practiceContest || rdoc.uid !== handler.user._id) return null;
+    if (handler.args.tid && String(handler.args.tid) !== String(rdoc.practiceContest)) throw new RecordNotFoundError(rdoc._id);
+    const tdoc = await contest.get(rdoc.domainId, rdoc.practiceContest);
+    if (!tdoc || !tdoc.pids.includes(rdoc.pid) || !canViewContestLevel(handler.user, tdoc)) throw new RecordNotFoundError(rdoc._id);
+    const status = await contest.getStatus(rdoc.domainId, rdoc.practiceContest, handler.user._id);
+    if (!status?.attend || !status.startAt) throw new RecordNotFoundError(rdoc._id);
+    if (tdoc.assign?.length && !handler.user.own(tdoc) && !handler.user.hasPerm(PERM.PERM_VIEW_HIDDEN_CONTEST)) {
+        const groups = await user.listGroup(rdoc.domainId, handler.user._id);
+        if (!tdoc.assign.some((group) => groups.some((entry) => entry.name === group))) throw new RecordNotFoundError(rdoc._id);
+    }
+    return tdoc;
 }
 
 function formalRecordFilter(includePretest: boolean, canViewAllPretest: boolean, uid: number) {
@@ -143,13 +160,27 @@ export class RecordListHandler extends ContestDetailBaseHandler {
             tdoc = await contest.get(domainId, tid);
             this.tdoc = tdoc;
             if (!tdoc) throw new ContestNotFoundError(domainId, pid);
+            const participation = await contest.getStatus(domainId, tid, this.user._id);
+            const ownPractice = q.uid === this.user._id && getContestPracticeWindow(tdoc, participation)?.active;
             if (q.uid !== this.user._id && !contest.canShowScoreboard.call(this, tdoc, true)) {
                 throw new PermissionError(PERM.PERM_VIEW_CONTEST_HIDDEN_SCOREBOARD);
             }
-            if (!contest[q.uid === this.user._id ? 'canShowSelfRecord' : 'canShowRecord'].call(this, tdoc, true)) {
+            const canViewFormal = contest[q.uid === this.user._id ? 'canShowSelfRecord' : 'canShowRecord'].call(this, tdoc, true);
+            if (!canViewFormal && !ownPractice) {
                 throw new PermissionError(PERM.PERM_VIEW_CONTEST_HIDDEN_SCOREBOARD);
             }
-            if (!(await contest.getStatus(domainId, tid, this.user._id))?.attend) {
+            if (ownPractice) {
+                const formalFilter = { ...q };
+                delete q.contest;
+                delete q.$or;
+                q.$and ||= [];
+                q.$and.push({ $or: [
+                    { practiceContest: tid, contest: { $exists: false }, uid: this.user._id },
+                    ...(canViewFormal ? [formalFilter] : []),
+                    ...(!canViewFormal && includePretest ? [{ contest: record.RECORD_PRETEST, uid: this.user._id }] : []),
+                ] });
+            }
+            if (!participation?.attend) {
                 const name = tdoc.rule === 'homework'
                     ? "You haven't claimed this homework yet."
                     : "You haven't attended this contest yet.";
@@ -193,6 +224,10 @@ export class RecordListHandler extends ContestDetailBaseHandler {
                 : { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] } as any;
         }
         appendHiddenSuperAdminFilter(q, await getHiddenSuperAdminUids(this.user));
+        if (q.uid !== this.user._id && !canInspectContestPractice(this.user)) {
+            q.$and ||= [];
+            q.$and.push({ $or: [{ practiceContest: { $exists: false } }, { uid: this.user._id }] });
+        }
         if (!this.user.hasPerm(PERM.PERM_CREATE_PROBLEM) || !this.user.hasPerm(PERM.PERM_VIEW_PROBLEM)) {
             const sources = await problem.getMulti(allDomain ? '' : domainId,
                 { objectiveKind: { $exists: true }, ...allDomain ? { domainId: { $exists: true } } : {} }, ['domainId', 'docId'], true).toArray();
@@ -222,7 +257,8 @@ export class RecordListHandler extends ContestDetailBaseHandler {
                 tid ? {} : getHomeworkTdocsForRecords(rdocs),
             ]);
         if (this.tdoc && !this.user.own(this.tdoc) && !this.user.hasPerm(PERM.PERM_EDIT_CONTEST)) {
-            rdocs = rdocs.map((i) => contest.applyProjection(tdoc, i, this.user));
+            rdocs = rdocs.map((i) => i.practiceContest && !i.contest && i.uid === this.user._id
+                ? i : contest.applyProjection(tdoc, i, this.user));
         }
         this.response.body = {
             page,
@@ -257,6 +293,12 @@ export class RecordDetailHandler extends ContestDetailBaseHandler {
     async prepare(domainId: string, rid: ObjectId) {
         this.rdoc = await record.get(domainId, rid);
         if (!this.rdoc) throw new RecordNotFoundError(rid);
+        if (this.rdoc.practiceContest && !this.rdoc.contest) {
+            if (this.args.tid && String(this.args.tid) !== String(this.rdoc.practiceContest)) throw new RecordNotFoundError(rid);
+            if (this.rdoc.uid !== this.user._id && !canInspectContestPractice(this.user)) throw new RecordNotFoundError(rid);
+            this.tdoc = await contest.get(domainId, this.rdoc.practiceContest);
+            this.args.tid = this.rdoc.practiceContest;
+        }
         if (!(await canViewRecordOwner(this.user, this.rdoc.uid))) throw new RecordNotFoundError(rid);
         const pdoc = await problem.get(domainId, this.rdoc.pid);
         if (problem.isObjectiveSource(pdoc) && !problem.canViewBy(pdoc, this.user)) throw new RecordNotFoundError(rid);
@@ -283,6 +325,15 @@ export class RecordDetailHandler extends ContestDetailBaseHandler {
     // eslint-disable-next-line consistent-return
     async get(domainId: string, rid: ObjectId, download = false, rev?: ObjectId) {
         let rdoc = this.rdoc;
+        const practice = await ownContestPractice(this, rdoc);
+        if (practice) {
+            this.tdoc = practice;
+            this.UiContext.contestPractice = true;
+            this.UiContext.contestPracticeRecordId = String(rdoc._id);
+            const age = Date.now() - rdoc._id.getTimestamp().getTime();
+            this.UiContext.contestPracticeLive = this.request.query.practiceResult === '1' && !rev && !this.session.sudoUid
+                && age >= 0 && age < 30 * 60_000;
+        }
         const isPretestRecord = rdoc.contest?.toHexString() === record.RECORD_PRETEST.toHexString();
         const allRev = await record.collHistory.find({ rid }).project({ _id: 1, judgeAt: 1 }).sort({ _id: -1 }).toArray();
         const allRevs: Record<string, Date> = Object.fromEntries(allRev.map((i) => [i._id.toString(), i.judgeAt]));
@@ -417,6 +468,7 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
     applyProjection = false;
     noTemplate = false;
     recordListSelfOnly = true;
+    ownPractice = false;
     hiddenSuperAdminUids: number[] = [];
     queue: Map<string, () => Promise<any>> = new Map();
     throttleQueueClear: () => void;
@@ -438,8 +490,9 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
         if (tid) {
             this.tdoc = await contest.get(domainId, tid);
             if (!this.tdoc || !canViewContestLevel(this.user, this.tdoc)) throw new ContestNotFoundError(domainId, tid);
+            this.ownPractice = !!getContestPracticeWindow(this.tdoc, await contest.getStatus(domainId, tid, this.user._id))?.active;
             if (pretest || (this.recordListSelfOnly && contest.canShowSelfRecord.call(this, this.tdoc, true))
-                || contest.canShowScoreboard.call(this, this.tdoc, true)) this.tid = tid.toHexString();
+                || this.ownPractice || contest.canShowScoreboard.call(this, this.tdoc, true)) this.tid = tid.toHexString();
             else throw new PermissionError(PERM.PERM_VIEW_CONTEST_HIDDEN_SCOREBOARD);
             if (!this.user.own(this.tdoc) && !this.user.hasPerm(PERM.PERM_EDIT_CONTEST)) {
                 this.applyProjection = true;
@@ -497,6 +550,7 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
     @subscribe('record/change')
     async onRecordChange(rdoc: RecordDoc) {
         if (this.recordListSelfOnly && rdoc.uid !== this.user._id) return;
+        if (rdoc.practiceContest && !rdoc.contest && rdoc.uid !== this.user._id && !canInspectContestPractice(this.user)) return;
         if (this.hiddenSuperAdminUids.includes(rdoc.uid)) return;
         const isPretestRecord = rdoc.contest?.toHexString() === record.RECORD_PRETEST.toHexString();
         const isGeneratedRecord = rdoc.contest?.toHexString() === record.RECORD_GENERATE.toHexString();
@@ -508,11 +562,12 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
             if (rdoc.domainId !== this.args.domainId) return;
             if (this.includePretest && this.tid && isPretestRecord && this.tdoc?.pids?.length && !this.tdoc.pids.includes(rdoc.pid)) return;
             if (!this.all && this.tid) {
-                if (!rdoc.contest) return;
+                const ownPractice = this.ownPractice && !rdoc.contest && rdoc.practiceContest?.toString() === this.tid && rdoc.uid === this.user._id;
+                if (!rdoc.contest && !ownPractice) return;
                 const allowedContests = [this.tid];
                 if (this.includePretest || this.pretest) allowedContests.push(record.RECORD_PRETEST.toHexString());
                 if (rdoc.contest && !allowedContests.includes(rdoc.contest.toString())) return;
-                if (!isPretestRecord) {
+                if (!isPretestRecord && !ownPractice) {
                     if (rdoc.uid !== this.user._id && !contest.canShowRecord.call(this, this.tdoc, true)) return;
                     if (rdoc.uid === this.user._id && !contest.canShowSelfRecord.call(this, this.tdoc, true)) return;
                 }
@@ -532,7 +587,7 @@ export class RecordMainConnectionHandler extends ConnectionHandler {
             if (!problem.canViewBy(pdoc, this.user)) pdoc = null;
             if (!this.user.hasPerm(PERM.PERM_VIEW_PROBLEM)) pdoc = null;
         }
-        if (this.applyProjection && rdoc.contest?.toString() !== '0'.repeat(24)) rdoc = contest.applyProjection(tdoc, rdoc, this.user);
+        if (this.applyProjection && rdoc.contest && rdoc.contest.toString() !== '0'.repeat(24)) rdoc = contest.applyProjection(tdoc, rdoc, this.user);
         if (this.pretest) {
             this.queueSend(rdoc._id.toHexString(), async () => ({ rdoc: omit(rdoc, ['code', 'input']) }));
         } else if (this.noTemplate) {
@@ -575,6 +630,10 @@ export class RecordDetailConnectionHandler extends ConnectionHandler {
         const rdoc = await record.get(domainId, rid);
         if (!rdoc) return;
         if (!(await canViewRecordOwner(this.user, rdoc.uid))) throw new RecordNotFoundError(rid);
+        if (rdoc.practiceContest && !rdoc.contest && rdoc.uid !== this.user._id && !canInspectContestPractice(this.user)) {
+            throw new RecordNotFoundError(rid);
+        }
+        const practice = await ownContestPractice(this, rdoc);
         if (rdoc.contest && ![record.RECORD_GENERATE, record.RECORD_PRETEST].some((i) => i.toHexString() === rdoc.contest.toHexString())) {
             this.tdoc = await contest.get(domainId, rdoc.contest);
             if (!canViewContestLevel(this.user, this.tdoc)) throw new RecordNotFoundError(domainId, rid);
@@ -599,7 +658,7 @@ export class RecordDetailConnectionHandler extends ConnectionHandler {
         this.canViewCode ||= this.user.hasPerm(PERM.PERM_READ_RECORD_CODE);
         this.canViewCode ||= this.user.hasPerm(PERM.PERM_READ_RECORD_CODE_ACCEPT) && self?.status === STATUS.STATUS_ACCEPTED;
 
-        if (!rdoc.contest || this.user._id !== rdoc.uid) {
+        if ((!rdoc.contest || this.user._id !== rdoc.uid) && !practice) {
             if (!problem.canViewBy(pdoc, this.user)) throw new PermissionError(PERM.PERM_VIEW_PROBLEM_HIDDEN);
         }
 
@@ -622,6 +681,7 @@ export class RecordDetailConnectionHandler extends ConnectionHandler {
         } else {
             this.send({
                 status: rdoc.status,
+                practiceContest: rdoc.practiceContest,
                 status_html: await this.renderHTML('record_detail_status.html', {
                     rdoc,
                     pdoc: this.pdoc,
@@ -670,11 +730,11 @@ export class ContestSubmitFeedbackConnectionHandler extends ConnectionHandler {
     @param('rid', Types.ObjectId)
     async prepare(domainId: string, rid: ObjectId) {
         const rdoc = await record.get(domainId, rid);
-        if (!rdoc || rdoc.uid !== this.user._id || !rdoc.contest
+        if (!rdoc || rdoc.uid !== this.user._id || (!rdoc.contest && !rdoc.practiceContest)
             || [record.RECORD_GENERATE, record.RECORD_PRETEST].some((i) => i.equals(rdoc.contest))) {
             throw new RecordNotFoundError(domainId, rid);
         }
-        const tdoc = await contest.get(domainId, rdoc.contest);
+        const tdoc = rdoc.practiceContest && !rdoc.contest ? await ownContestPractice(this, rdoc) : await contest.get(domainId, rdoc.contest);
         if (!tdoc || !canViewContestLevel(this.user, tdoc)) throw new RecordNotFoundError(domainId, rid);
         const pdoc = await problem.get(domainId, rdoc.pid);
         if (problem.isObjectiveSource(pdoc) && !problem.canViewBy(pdoc, this.user)) throw new RecordNotFoundError(rid);
@@ -690,6 +750,8 @@ export class ContestSubmitFeedbackConnectionHandler extends ConnectionHandler {
         this.send({
             rdoc: {
                 _id: rdoc._id.toString(),
+                uid: rdoc.uid,
+                practiceContest: rdoc.practiceContest,
                 memory: rdoc.memory,
                 pid: rdoc.pid,
                 score: rdoc.score,
@@ -713,11 +775,11 @@ export class ContestSubmitFeedbackHandler extends Handler {
     @param('rid', Types.ObjectId)
     async get(domainId: string, rid: ObjectId) {
         const rdoc = await record.get(domainId, rid);
-        if (!rdoc || rdoc.uid !== this.user._id || !rdoc.contest
+        if (!rdoc || rdoc.uid !== this.user._id || (!rdoc.contest && !rdoc.practiceContest)
             || [record.RECORD_GENERATE, record.RECORD_PRETEST].some((i) => i.equals(rdoc.contest))) {
             throw new RecordNotFoundError(domainId, rid);
         }
-        const tdoc = await contest.get(domainId, rdoc.contest);
+        const tdoc = rdoc.practiceContest && !rdoc.contest ? await ownContestPractice(this, rdoc) : await contest.get(domainId, rdoc.contest);
         if (!tdoc || !canViewContestLevel(this.user, tdoc)) throw new RecordNotFoundError(domainId, rid);
         const pdoc = await problem.get(domainId, rdoc.pid);
         if (problem.isObjectiveSource(pdoc) && !problem.canViewBy(pdoc, this.user)) throw new RecordNotFoundError(rid);
@@ -725,6 +787,8 @@ export class ContestSubmitFeedbackHandler extends Handler {
         this.response.body = {
             rdoc: {
                 _id: rdoc._id.toString(),
+                uid: rdoc.uid,
+                practiceContest: rdoc.practiceContest,
                 memory: rdoc.memory,
                 pid: rdoc.pid,
                 score: rdoc.score,

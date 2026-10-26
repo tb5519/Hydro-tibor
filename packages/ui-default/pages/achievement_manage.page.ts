@@ -386,6 +386,6 @@ export function disposeAchievementWall(scope: Document | HTMLElement = document)
 export default new NamedPage(['achievement_manage', 'domain_achievement_manage', 'user_detail', 'homepage'], () => {
   bindAchievementManage(); bindAchievementWall();
   $(document).off('.achievementWall')
-    .on('vjContentNew.achievementWall', (event) => bindAchievementWall(event.target as HTMLElement))
-    .on('vjContentRemove.achievementWall', (event) => disposeAchievementWall(event.target as HTMLElement));
+    .on('vjContentNew.achievementWall', (event) => bindAchievementWall(event.target as Document | HTMLElement))
+    .on('vjContentRemove.achievementWall', (event) => disposeAchievementWall(event.target as Document | HTMLElement));
 });

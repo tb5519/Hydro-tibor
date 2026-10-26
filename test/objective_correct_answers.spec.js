@@ -168,7 +168,7 @@ function problemHandler(options = {}) {
         solution: { count: async () => 0 }, discussion: { count: async () => 0 },
         setting: { langs: { _: {} } }, pickPreferredCodeLang: () => '_', getCppEditorMode: () => 'proficient',
         getActiveBadgeAcTheme: async () => null, canManageRecordList: () => false, mistake: { getPracticeState: () => null },
-        canUseProblemRecordPicker: () => true,
+        canUseProblemRecordPicker: () => true, getContestPracticeWindow: () => null,
         loadHomeworkReviewRecord: async () => null, publicHomeworkReviewRecord: () => null,
         loadHomeworkReviewRecords: async () => [], loadObjectiveSubmissionConfig: async () => ({ config: {} }),
         buildObjectiveMergedReview: () => ({ uid: 20, questions: [] }),
