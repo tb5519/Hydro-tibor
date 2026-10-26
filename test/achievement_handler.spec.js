@@ -102,7 +102,11 @@ try {
             };
             if (request === '../model/storage') return {
                 getMeta: async (path) => { calls.push(['meta', path]); return fixtures.meta; },
-                get: async (path) => { calls.push(['download', path]); return Buffer.from('png'); },
+                get: async (path) => {
+                    calls.push(['download', path]);
+                    if (fixtures.storageReadError) throw new Error('object storage unavailable');
+                    return Buffer.from('png');
+                },
             };
             if (request === '../lib/asset_delivery') return { tryRedirectAsset: (handler, source) => {
                 calls.push(['delivery', source.path]);
@@ -174,8 +178,93 @@ describe('achievement management and image handlers', () => {
         assert.deepEqual(calls.map((call) => call[0]), ['art', 'meta', 'delivery', 'download']);
         assert.equal(calls.at(-1)[1], 'thumb.png');
         assert.equal(handler.response.type, 'image/png');
+        assert.equal(handler.response.headers['Cache-Control'], 'private, no-store');
         assert.equal(handler.response.headers.Vary, 'Accept, Cookie, Authorization');
         await assert.rejects(handler.get('system', 'difficulty-1', 768), ValidationError);
+    });
+
+    it('caches only the current versioned thumbnail privately at a stable URL instead of an expiring redirect', async () => {
+        fixtures.artwork = { imagePath: 'original.png', thumbnailPath: 'thumb.png', version: 'revision1' };
+        fixtures.meta = { size: 20, remoteAsset: { key: 'object' } };
+        fixtures.cdn = 'https://cdn.test/thumb.png?auth_key=short-lived';
+        const handler = new handlers.AchievementImageHandler({
+            domain: modern, args: { domainId: 'system', imagePath: 'other.png' },
+            request: { query: { v: 'revision1', domainId: 'system' } },
+        });
+        await handler.get('system', 'difficulty-1', 384);
+        assert.deepEqual(calls, [['art', 'class', 'difficulty-1'], ['meta', 'thumb.png'], ['download', 'thumb.png']]);
+        assert.equal(handler.response.redirect, undefined);
+        assert.equal(handler.response.type, 'image/png');
+        assert.deepEqual(handler.response.body, Buffer.from('png'));
+        assert.equal(handler.response.headers['Cache-Control'], 'private, max-age=604800, immutable');
+        assert.equal(handler.response.headers.Vary, 'Accept, Cookie, Authorization');
+        assert.equal(handler.response.headers['X-Content-Type-Options'], 'nosniff');
+        assert.equal(handler.response.headers.ETag, '"revision1-384"');
+        assert.equal(handler.response.etag, undefined); // Generic etag handling would make this response public.
+    });
+
+    it('revalidates the version and stored thumbnail before returning a private 304 without reading image bytes', async () => {
+        fixtures.artwork = { imagePath: 'original.png', thumbnailPath: 'thumb.png', version: 'revision1' };
+        fixtures.meta = { size: 20 };
+        const handler = new handlers.AchievementImageHandler({
+            request: { query: { v: 'revision1' }, headers: { 'if-none-match': '"older-384", W/"revision1-384"' } },
+        });
+        await handler.get('system', 'difficulty-1', 384);
+        assert.deepEqual(calls, [['art', 'system', 'difficulty-1'], ['meta', 'thumb.png']]);
+        assert.equal(handler.response.status, 304);
+        assert.equal(handler.context.status, 304);
+        assert.equal(handler.response.body, '');
+        assert.equal(handler.response.headers['Cache-Control'], 'private, max-age=604800, immutable');
+        assert.equal(handler.response.headers.Vary, 'Accept, Cookie, Authorization');
+        fixtures.meta = null;
+        const missing = new handlers.AchievementImageHandler({
+            request: { query: { v: 'revision1' }, headers: { 'if-none-match': '"revision1-384"' } },
+        });
+        await assert.rejects(missing.get('system', 'difficulty-1', 384), NotFoundError);
+        assert.equal(missing.response.headers['Cache-Control'], 'private, no-store');
+    });
+
+    it('does not store a replacement thumbnail under a stale or malformed requested version', async () => {
+        fixtures.artwork = { imagePath: 'new-original.png', thumbnailPath: 'new-thumb.png', version: 'revision2' };
+        fixtures.meta = { size: 20 };
+        for (const v of ['revision1', ['revision2'], { value: 'revision2' }]) {
+            const handler = new handlers.AchievementImageHandler({ request: { query: { v }, headers: { 'if-none-match': '*' } } });
+            await assert.rejects(handler.get('system', 'difficulty-1', 384), NotFoundError);
+            assert.equal(handler.response.headers['Cache-Control'], 'private, no-store');
+            assert.equal(handler.response.headers.Vary, 'Accept, Cookie, Authorization');
+        }
+        assert.equal(calls.some((call) => ['meta', 'download', 'delivery', 'sign'].includes(call[0])), false);
+        const updated = new handlers.AchievementImageHandler({
+            request: { query: { v: 'revision2' }, headers: { 'if-none-match': '"revision1-384"' } },
+        });
+        await updated.get('system', 'difficulty-1', 384);
+        assert.equal(updated.response.status, 200);
+        assert.equal(updated.response.headers.ETag, '"revision2-384"');
+        assert.deepEqual(calls.at(-1), ['download', 'new-thumb.png']);
+    });
+
+    it('preserves no-store CDN delivery for originals and thumbnails without a requested version', async () => {
+        fixtures.artwork = { imagePath: 'original.png', thumbnailPath: 'thumb.png', version: 'revision1' };
+        fixtures.meta = { size: 20, remoteAsset: { key: 'object' } };
+        fixtures.cdn = 'https://cdn.test/image.png?auth_key=short-lived';
+        for (const [query, size] of [[{}, 384], [{ v: '' }, 384], [{ v: 'revision1' }, undefined]]) {
+            const handler = new handlers.AchievementImageHandler({ request: { query } });
+            await handler.get('system', 'difficulty-1', size);
+            assert.equal(handler.response.redirect, fixtures.cdn);
+            assert.equal(handler.response.headers['Cache-Control'], 'private, no-store');
+            assert.equal(handler.response.headers.ETag, undefined);
+        }
+        assert.equal(calls.some((call) => call[0] === 'download'), false);
+    });
+
+    it('does not cache a failure when the stored thumbnail cannot be streamed', async () => {
+        fixtures.artwork = { thumbnailPath: 'thumb.png', version: 'revision1' };
+        fixtures.meta = { size: 20 };
+        fixtures.storageReadError = true;
+        const handler = new handlers.AchievementImageHandler({ request: { query: { v: 'revision1' } } });
+        await assert.rejects(handler.get('system', 'difficulty-1', 384), /object storage unavailable/);
+        assert.equal(handler.response.headers['Cache-Control'], 'private, no-store');
+        assert.equal(handler.response.headers.ETag, undefined);
     });
 
     it('uses the prepared CDN or signed object URL and does not download originals for thumbnails', async () => {

@@ -246,6 +246,8 @@ describe('achievement management and profile wall', () => {
         assert.match(css, /object-fit: contain/);
         assert.match(css, /\.achievement-wall__tooltip[\s\S]*?position: fixed/);
         assert.match(css, /max-width: 640px/);
+        assert.match(css, /\.hasjs \.achievement-wall \[data-achievement-pending\]\s*\{\s*display: none;/);
+        assert.doesNotMatch(css, /\[data-achievement-wall-loading\]/);
     });
 });
 

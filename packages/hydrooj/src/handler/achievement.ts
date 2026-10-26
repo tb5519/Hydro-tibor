@@ -126,9 +126,35 @@ export class AchievementImageHandler extends Handler {
         const artwork = await getAchievementArtwork(this.ctx, this.domain, id);
         const imagePath = size === 384 ? artwork?.thumbnailPath : artwork?.imagePath;
         if (!imagePath) throw new NotFoundError('成就图片尚未上传。');
+        privateResponse(this);
+        const version = this.request.query.v;
+        const versionedThumbnail = size === 384 && typeof version === 'string' && !!version && version === artwork.version;
+        // Never put replacement artwork in the cache under an old version's URL.
+        if (size === 384 && version && !versionedThumbnail) throw new NotFoundError('成就图片版本已更新。');
         const meta = await storage.getMeta(imagePath);
         if (!meta) throw new NotFoundError('成就图片暂不可用。');
-        privateResponse(this);
+        if (versionedThumbnail) {
+            // Keep the versioned thumbnail URL stable: caching a redirect would
+            // eventually point to an expired CDN/OSS signature. storage.get streams
+            // the stored thumbnail from OSS without downloading the original.
+            const etag = `"${version}-384"`;
+            const condition = this.request.headers?.['if-none-match'];
+            const notModified = typeof condition === 'string' && condition.split(',').some((value) => {
+                const tag = value.trim().replace(/^W\//, '');
+                return tag === etag || tag === '*';
+            });
+            // Failed object reads must keep no-store instead of caching an error page.
+            if (!notModified) this.response.body = await storage.get(imagePath);
+            this.response.type = 'image/png';
+            this.response.addHeader('Cache-Control', 'private, max-age=604800, immutable');
+            this.response.addHeader('ETag', etag);
+            if (notModified) {
+                this.response.status = 304;
+                this.response.body = '';
+                this.context.status = 304;
+            }
+            return;
+        }
         if (tryRedirectAsset(this, { path: imagePath, meta })) return;
         if (meta.remoteAsset) {
             this.response.redirect = await assetStorage.signDownloadLink(meta.remoteAsset);

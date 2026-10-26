@@ -29,12 +29,17 @@ describe('homepage achievement wall', () => {
         assert.equal(wall.previousElementSibling.className, 'homepage-personal__stats');
         assert.equal(wall.nextElementSibling.className, 'profile-ac-difficulty');
         assert.equal(wall.querySelectorAll('[data-achievement-tile]').length, 50);
-        assert.equal(wall.querySelector('.achievement-wall__count strong').textContent, '50');
+        assert.equal(wall.querySelector('[data-achievement-count]').textContent, '0');
+        assert.match(wall.querySelector('.achievement-wall__count').textContent, /\/ 50/);
+        assert.equal(wall.querySelectorAll('[data-achievement-pending]').length, 50);
+        assert.equal(wall.querySelector('header').hidden, false);
+        assert.match(wall.querySelector('.achievement-wall__intro').textContent, /每一次突破/);
         for (const img of wall.querySelectorAll('img')) {
             assert.match(img.src, /\/thumb-\d+\.webp$/);
             assert.equal(img.getAttribute('loading'), 'eager');
         }
-        assert.equal(wall.hasAttribute('data-achievement-wall-loading'), true);
+        assert.equal(wall.hasAttribute('data-achievement-wall-loading'), false);
+        assert.ok(wall.querySelector('[data-achievement-grid-empty]'));
         assert.equal(document.querySelector('[src*="original-"]'), null);
     });
 

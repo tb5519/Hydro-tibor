@@ -126,10 +126,12 @@ async function withUserLock<T>(ctx: Context, scope: string, uid: number, callbac
     }
 }
 
-/** Full contest results stay private until the public result is available. */
+/** Wait until verdicts can be public, independently of whether the ranking UI is shown. */
 export function isAchievementContestVisible(contest: any, now = new Date()) {
     if (!contest || !contest.endAt || new Date(contest.endAt) > now) return false;
-    if (contest.hideScoreboard || contest.keepScoreboardHidden) return false;
+    // hideScoreboard only hides the ranking page from students; it does not
+    // restrict the finished contest's records. The result embargo and lock do.
+    if (contest.keepScoreboardHidden) return false;
     return !(contest.lockAt && new Date(contest.lockAt) < now && !contest.unlocked);
 }
 

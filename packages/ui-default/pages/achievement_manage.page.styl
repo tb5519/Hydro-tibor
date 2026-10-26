@@ -567,8 +567,6 @@
   border-radius: 13px
   padding: 18px 15px 14px
   background: linear-gradient(160deg, var(--achievement-paper), var(--achievement-soft))
-  opacity: 1
-  transition: opacity .42s ease
   &__header
     display: flex
     align-items: center
@@ -587,9 +585,15 @@
     color: var(--achievement-muted)
     font-size: 11px
     letter-spacing: .5px
+    font-variant-numeric: tabular-nums
     strong
+      display: inline-block
+      min-width: 2ch
+      text-align: right
       color: var(--achievement-gold)
       font-size: 16px
+      &.is-counting
+        animation: achievement-wall-count-rise .12s ease-out both
   &__intro
     margin: 8px 0 15px
     color: var(--achievement-muted)
@@ -615,6 +619,8 @@
     padding: 3px
     background: transparent
     transition: transform .2s, background .2s, border-color .2s
+    &.is-entering
+      animation: achievement-wall-item-enter .18s cubic-bezier(.2, .75, .3, 1) both
     img
       display: block
       width: 100%
@@ -699,11 +705,29 @@
     font-size: 10px
     letter-spacing: 1px
 
-// Keep the final grid geometry while thumbnails load, then reveal it together.
-.hasjs [data-achievement-wall-loading]
-  opacity: 0
-  visibility: hidden
-  pointer-events: none
+// Keep the heading visible; only ready tiles take up room in the growing grid.
+.hasjs .achievement-wall [data-achievement-pending]
+  display: none
+
+.hasjs .achievement-wall [data-achievement-grid-empty]
+  padding: 0
+  margin: 0
+
+@keyframes achievement-wall-item-enter
+  from
+    opacity: 0
+    transform: translateY(6px) scale(.88)
+  to
+    opacity: 1
+    transform: translateY(0) scale(1)
+
+@keyframes achievement-wall-count-rise
+  from
+    opacity: .55
+    transform: translateY(2px)
+  to
+    opacity: 1
+    transform: translateY(0)
 
 .homepage-personal .achievement-wall
   margin: 18px 0 0
@@ -863,5 +887,7 @@
 @media (prefers-reduced-motion: reduce)
   .achievement-wall, .achievement-wall__item, .achievement-manage__card
     transition: none
+  .achievement-wall__item.is-entering, .achievement-wall__count strong.is-counting
+    animation: none
   .achievement-wall__item:hover, .achievement-wall__item.is-active
     transform: none

@@ -3,6 +3,9 @@ import './polyfill';
 import $ from 'jquery';
 import { startImageWarmup } from './utils/image-warmup';
 import { startBackgroundVideoWarmup } from './utils/background-video-warmup';
+import { installAchievementWallReadiness } from './components/achievement_wall';
+
+installAchievementWallReadiness();
 
 window.Hydro = {
   extraPages: [],

@@ -258,6 +258,39 @@ describe('achievement ledger with actual MongoDB', () => {
         assert.equal((await pending()).length, 4);
     });
 
+    it('settles a completed IOI contest with hidden rankings once its records are public', async () => {
+        const contest = await competition(11, [1, 2, 3, 4], { rule: 'ioi', hideScoreboard: true });
+        for (const pid of [1, 2, 3]) await acceptance(11, pid, 2, { contest: contest.docId });
+        await database.collection('user').insertOne({
+            _id: 11, lotteryTotalPoints: 1200, contestScorePointAwards: { [contest.docId.toString()]: 1200 },
+        });
+
+        // Import the verdicts while the contest is still running. Ending it must
+        // unlock the existing ledger without another submission or a full reimport.
+        assert.deepEqual(unlocked(await sync(11, legacy, { now: new Date('2026-10-25T02:30:00Z') })), []);
+        const rows = await sync();
+        assert.deepEqual(unlocked(rows), ['difficulty-2', 'contest-ac-1', 'points-1000']);
+        assert.equal(rows.find((item) => item.id === 'contest-ac-10').progress, 3);
+        assert.equal(rows.find((item) => item.id === 'contest-ak-1').progress, 0);
+        assert.equal((await pending()).length, 3);
+        assert.deepEqual(unlocked(await sync()), unlocked(rows));
+        assert.equal((await pending()).length, 3);
+    });
+
+    it('keeps hidden-rank contests sealed by the result embargo or scoreboard lock', async () => {
+        const contest = await competition(11, [1], { rule: 'oi', hideScoreboard: true, keepScoreboardHidden: true });
+        await acceptance(11, 1, 8, { contest: contest.docId });
+        assert.deepEqual(unlocked(await sync()), []);
+
+        await database.collection('document').updateOne({ _id: contest._id }, {
+            $set: { keepScoreboardHidden: false, lockAt: new Date('2026-10-25T02:30:00Z') },
+        });
+        assert.deepEqual(unlocked(await sync()), []);
+
+        await database.collection('document').updateOne({ _id: contest._id }, { $set: { unlocked: true } });
+        assert.deepEqual(unlocked(await sync()), ['difficulty-8', 'contest-ak-1', 'contest-ac-1']);
+    });
+
     it('ignores a running contest even when it already has a visible partial scoreboard', async () => {
         const contest = await competition(11, [1], { endAt: new Date('2026-10-26T00:00:00Z') });
         await acceptance(11, 1, 9, { contest: contest.docId });
