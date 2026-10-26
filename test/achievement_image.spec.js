@@ -8,6 +8,7 @@ const { MongoClient } = require('mongodb');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { PNG } = require('pngjs');
 const { eligibleAsset } = require('../packages/hydrooj/src/lib/asset_storage');
+const { ACHIEVEMENT_CATALOG } = require('../packages/hydrooj/src/lib/achievement_catalog');
 
 let server; let client; let db; let directory;
 let bytes; let file; let art;
@@ -96,6 +97,25 @@ it('requires object storage and refuses unknown achievement identifiers', async 
     await assert.rejects(art.setAchievementImage(ctx, legacy, '../../user', file, 2), ValidationError);
     assert.equal(uploads.length, 0);
     assert.equal(await db.collection('achievement.image').countDocuments(), 0);
+});
+
+it('labels every continuous-AC achievement in Chinese and accepts its original and thumbnail upload', async () => {
+    const streaks = ACHIEVEMENT_CATALOG.filter((item) => item.category === 'streak');
+    assert.equal(streaks.length, 14);
+    const unconfigured = await art.presentAchievements(ctx, legacy, streaks);
+    for (const item of unconfigured) {
+        assert.equal(item.categoryLabel, '连续 AC');
+        assert.equal(item.thumbnailUrl, '');
+        assert.equal(art.achievementDefinition(item.id).category, 'streak');
+    }
+    const selected = streaks.at(-1);
+    await art.setAchievementImage(ctx, legacy, selected.id, file, 2);
+    const [card] = await art.presentAchievements(ctx, legacy, [selected]);
+    assert.equal(card.categoryLabel, '连续 AC');
+    assert.match(card.imageUrl, new RegExp(`/achievement/${selected.id}/image\\?v=[a-f0-9]{32}$`));
+    assert.match(card.thumbnailUrl, new RegExp(`/achievement/${selected.id}/image\\?size=384&v=[a-f0-9]{32}$`));
+    assert.equal(uploads.length, 2);
+    assert.ok(uploads.every(({ name }) => name.includes(`/${selected.id}/`)));
 });
 
 it('failed thumbnail upload retains prior image and cleans only the new incomplete object', async () => {

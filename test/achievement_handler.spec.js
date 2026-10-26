@@ -100,9 +100,9 @@ try {
                     if (fixtures.wallReadError) throw new Error('achievement database unavailable');
                     return fixtures.rows || [];
                 },
-                getPendingAchievements: async (ctx, domain, uid, limit) => {
-                    calls.push(['pending', domain._id, uid, limit]);
-                    return fixtures.pending || [];
+                getPendingAchievements: async (ctx, domain, uid, limit, ids) => {
+                    calls.push(['pending', domain._id, uid, limit, ids]);
+                    return (fixtures.pending || []).filter((item) => !ids || ids.includes(item.id)).slice(0, limit);
                 },
                 acknowledgeAchievements: async (ctx, domain, uid, ids) => calls.push(['ack', domain._id, uid, ids]),
             };
@@ -172,7 +172,7 @@ describe('achievement management and image handlers', () => {
         await handler.prepare();
         await handler.get();
         assert.equal(handler.response.template, 'achievement_manage.html');
-        assert.equal(handler.response.body.achievements.length, 50);
+        assert.equal(handler.response.body.achievements.length, 64);
         assert.equal(handler.response.body.achievementBaseTemplate, 'domain_base.html');
         assert.equal(handler.response.body.badgeManageRoute, 'domain_badge_manage');
         assert.deepEqual(handler.response.body.achievementSound, { soundUrl: '', volume: 70, enabled: true, filename: '' });
@@ -435,9 +435,27 @@ describe('achievement pending and acknowledgement handlers', () => {
         assert.deepEqual(calls.map((call) => call[0]), ['record', 'ready', 'sync', 'pending']);
         assert.equal(calls[2][2], 11);
         assert.equal(calls[2][3].record, record);
-        assert.deepEqual(calls[3], ['pending', 'system', 11, 10]);
+        assert.deepEqual(calls[3], ['pending', 'system', 11, 10, ACHIEVEMENT_CATALOG.map((item) => item.id)]);
         assert.equal(handler.response.body.settled, true);
         assert.equal(handler.response.body.achievements[0].imageUrl, '/d/system/difficulty-1.png');
+    });
+
+    it('waits for unconfigured artwork without consuming notifications or blocking other configured rewards', async () => {
+        fixtures.pending = [...ACHIEVEMENT_CATALOG.filter((item) => item.category === 'streak'), definition('difficulty-1')];
+        fixtures.preloadArt = { 'difficulty-1': art('difficulty-1') };
+        const handler = new handlers.AchievementPendingHandler();
+        await handler.get();
+        assert.deepEqual(handler.response.body.achievements.map((item) => item.id), ['difficulty-1']);
+        assert.deepEqual(calls.find((call) => call[0] === 'pending')[4], ['difficulty-1']);
+        assert.equal(fixtures.pending.length, 15);
+        fixtures.preloadArt['streak-3'] = art('streak-3');
+        await handler.get();
+        assert.deepEqual(handler.response.body.achievements.map((item) => item.id), ['streak-3', 'difficulty-1']);
+        assert.equal(handler.response.body.achievements[0].imageUrl, art('streak-3').imageUrl);
+        fixtures.preloadArt = {};
+        await handler.get();
+        assert.deepEqual(handler.response.body, { achievements: [], settled: true });
+        assert.equal(calls.some((call) => call[0] === 'ack'), false);
     });
 
     it('waits when AC is final but the contest-point callback has not reached record/judge', async () => {
@@ -518,6 +536,31 @@ describe('homepage, profile and live-record integration', () => {
         assert.equal(calls.filter((call) => call[0] === 'sync').length, 1);
     });
 
+    it('prewarms consecutive-day artwork only when today’s next AC can extend the current streak', async () => {
+        fixtures.preloadArt = { 'streak-3': art('streak-3'), 'streak-100': art('streak-100') };
+        // A fresh AC of an already-solved question can still count for a new day.
+        fixtures.collections = { 'achievement.solved': [
+            { scope: 'legacy', uid: 11, domainId: 'system', pid: 100, acceptedAt: new Date(0) },
+        ] };
+        const make = async (row, template = 'problem_detail.html') => {
+            fixtures.rows = [row];
+            const handler = new Handler();
+            handler.response.template = template;
+            handler.response.body = { pdoc: { docId: 100, domainId: 'system', difficulty: 2, hidden: true } };
+            await handlers.injectAchievementContext(handler);
+            return handler.UiContext.achievementImagePreload;
+        };
+        const nextDay = { ...progress('streak-3', 2), nextAcProgress: 3 };
+        assert.deepEqual(await make(nextDay), [art('streak-3').imageUrl]);
+        assert.deepEqual(await make(nextDay, 'main.html'), [art('streak-3').imageUrl]);
+        assert.deepEqual(await make({ ...nextDay, nextAcProgress: 2 }), [], 'another AC today cannot add a day');
+        assert.deepEqual(await make({ ...progress('streak-100', 99), nextAcProgress: 1 }), [], 'a broken record is not a current streak');
+        assert.deepEqual(await make({ ...progress('streak-100', 99), nextAcProgress: 100 }), [art('streak-100').imageUrl]);
+        assert.deepEqual(await make({ ...nextDay, unlocked: true }), []);
+        assert.deepEqual(await make(progress('streak-3', 2)), [], 'missing current-streak evidence must not be guessed');
+        assert.equal(calls.some((call) => ['ack', 'pending'].includes(call[0])), false);
+    });
+
     it('prewarms contest AC and AK only for a formal participant whose current problem completes the required threshold', async () => {
         const tid = new ObjectId();
         const present = new Date();
@@ -578,7 +621,7 @@ describe('homepage, profile and live-record integration', () => {
         await handlers.injectAchievementContext(handler);
         assert.deepEqual(calls, [['sync', 'class', 11, undefined]]);
         assert.deepEqual(handler.response.body.achievementWall, {
-            items: [{ ...fixtures.rows[0], imageUrl: '/d/class/difficulty-1.png' }], total: 50, unlocked: 1,
+            items: [{ ...fixtures.rows[0], imageUrl: '/d/class/difficulty-1.png' }], total: 64, unlocked: 1,
         });
         assert.equal(handler.UiContext.achievementAutoShow, true);
         assert.equal(handler.UiContext.achievementScope, 'domain:class/11');
@@ -589,7 +632,7 @@ describe('homepage, profile and live-record integration', () => {
     it('shows an empty homepage wall for a new user and no personal wall for anonymous or profile-disabled visitors', async () => {
         const signedIn = new Handler(); signedIn.response.template = 'main.html';
         await handlers.injectAchievementContext(signedIn);
-        assert.deepEqual(signedIn.response.body.achievementWall, { items: [], total: 50, unlocked: 0 });
+        assert.deepEqual(signedIn.response.body.achievementWall, { items: [], total: 64, unlocked: 0 });
         calls = [];
         for (const options of [{ uid: 1 }, { uid: 0 }, { profile: false }]) {
             const handler = new Handler(options); handler.response.template = 'main.html';

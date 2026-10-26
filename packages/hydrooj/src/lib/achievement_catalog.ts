@@ -1,4 +1,4 @@
-export type AchievementCategory = 'difficulty' | 'solved' | 'contest_ak' | 'contest_ac' | 'points' | 'mastery';
+export type AchievementCategory = 'difficulty' | 'solved' | 'contest_ak' | 'contest_ac' | 'points' | 'mastery' | 'streak';
 
 export interface AchievementDefinition {
     id: string;
@@ -11,7 +11,7 @@ export interface AchievementDefinition {
 
 export const ACHIEVEMENT_CATEGORIES: Record<AchievementCategory, string> = {
     difficulty: '初越山海', solved: '题库征途', contest_ak: '赛场称冠',
-    contest_ac: '竞赛锋芒', points: '星河成长', mastery: '难度精通',
+    contest_ac: '竞赛锋芒', points: '星河成长', mastery: '难度精通', streak: '连续 AC',
 };
 
 const firstNames = ['初战告捷', '渐入佳境', '锋芒初露', '势如破竹', '强者进阶',
@@ -49,6 +49,12 @@ export const ACHIEVEMENT_CATALOG: readonly AchievementDefinition[] = [
         description: `累计AC难度${index + 4}题目${target}道`,
         category: 'mastery' as const, target, difficulty: index + 4,
     }))),
+    ...[3, 7, 10, 14, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100].map((target, index) => ({
+        id: `streak-${target}`,
+        name: ['锋芒初燃', '持之以恒', '十日磨剑', '意志如铁', '破晓行者', '不屈斗魂', '月度战神',
+            '百炼成钢', '永恒之刃', '不灭战魂', '传奇征途', '超凡入圣', '九十日神话', '百日封神'][index],
+        description: `连续${target}天AC题目`, category: 'streak' as const, target,
+    })),
 ];
 
 export interface AchievementMetrics {
@@ -57,6 +63,8 @@ export interface AchievementMetrics {
     contestAc: number;
     contestAk: number;
     points: number;
+    streakBest?: number;
+    streakNextAc?: number;
 }
 
 export function evaluateAchievementProgress(metrics: AchievementMetrics) {
@@ -64,8 +72,12 @@ export function evaluateAchievementProgress(metrics: AchievementMetrics) {
         const value = achievement.difficulty ? metrics.difficulties[achievement.difficulty] || 0
             : ({
                 solved: metrics.solved, contest_ac: metrics.contestAc, contest_ak: metrics.contestAk, points: metrics.points,
+                streak: metrics.streakBest,
             })[achievement.category];
         const progress = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
-        return { ...achievement, progress: Math.min(progress, achievement.target), achieved: progress >= achievement.target };
+        return {
+            ...achievement, progress: Math.min(progress, achievement.target), achieved: progress >= achievement.target,
+            ...(achievement.category === 'streak' ? { nextAcProgress: Math.max(0, Math.floor(metrics.streakNextAc || 0)) } : {}),
+        };
     });
 }

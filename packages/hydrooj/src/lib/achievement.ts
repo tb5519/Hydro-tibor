@@ -14,7 +14,9 @@ import {
 type AchievementDomain = Pick<DomainDoc, '_id' | 'workspaceId' | 'owner'>;
 const LEASE_MS = 120_000;
 const MAX_PENDING = 10;
-const STATE_VERSION = 2;
+const STATE_VERSION = 3;
+const DAY_MS = 86_400_000;
+const BEIJING_OFFSET_MS = 8 * 3600_000;
 const logger = new Logger('achievement');
 
 interface SolvedAchievement {
@@ -41,6 +43,17 @@ interface AchievementUnlock {
     acknowledgedAt?: Date;
 }
 
+interface AchievementDay {
+    _id: string;
+    scope: string;
+    uid: number;
+    domainId: string;
+    contestId: string;
+    /** UTC day number shifted to the fixed Beijing UTC+8 calendar. */
+    day: number;
+    acceptedAt: Date;
+}
+
 interface AchievementState {
     _id: string;
     scope?: string;
@@ -56,6 +69,7 @@ interface AchievementState {
 declare module '../service/db' {
     interface Collections {
         'achievement.solved': SolvedAchievement;
+        'achievement.day': AchievementDay;
         'achievement.unlock': AchievementUnlock;
         'achievement.state': AchievementState;
     }
@@ -85,15 +99,20 @@ export async function canViewUserAchievements(ctx: Context, domain: AchievementD
     return domain.owner === uid || !!await ctx.db.collection('domain.user').findOne({ domainId: domain._id, uid, join: true });
 }
 
-export async function initializeAchievementSystem(ctx: Context) {
+async function initializeAchievementClock(ctx: Context, id: string) {
     const coll = ctx.db.collection('achievement.state');
     try {
-        await coll.updateOne({ _id: 'activation' }, { $setOnInsert: { activatedAt: new Date() } }, { upsert: true });
+        await coll.updateOne({ _id: id }, { $setOnInsert: { activatedAt: new Date() } }, { upsert: true });
     } catch (error) {
         if (error.code !== 11000) throw error;
     }
-    return (await coll.findOne({ _id: 'activation' }))!.activatedAt!;
+    return (await coll.findOne({ _id: id }))!.activatedAt!;
 }
+
+export function initializeAchievementSystem(ctx: Context) { return initializeAchievementClock(ctx, 'activation'); }
+
+/** New streak milestones have their own rollout baseline; the original fifty keep theirs. */
+export function initializeStreakAchievements(ctx: Context) { return initializeAchievementClock(ctx, 'streak-activation'); }
 
 async function withUserLock<T>(ctx: Context, scope: string, uid: number, callback: () => Promise<T>) {
     const coll = ctx.db.collection('achievement.state');
@@ -219,6 +238,56 @@ async function importAcceptances(ctx: Context, scope: string, uid: number, recor
     return [...byId.values()];
 }
 
+function beijingDay(time: Date) { return Math.floor((time.getTime() + BEIJING_OFFSET_MS) / DAY_MS); }
+
+/** Import raw AC records: solving the same problem on another day still sustains a streak. */
+async function importAchievementDays(ctx: Context, scope: string, uid: number, records: any[], problems: Map<string, any>) {
+    const collection = ctx.db.collection('achievement.day');
+    const additions = new Map<string, AchievementDay>();
+    for (const record of records) {
+        const problem = problems.get(`${record.domainId}:${record.pid}`);
+        if (!isRealAcceptance(record) || !problem || problem.objectiveKind) continue;
+        // An ObjectId retains the original submission instant across every rejudge.
+        const submittedAt = record._id.getTimestamp();
+        const day = beijingDay(submittedAt);
+        const acceptedAt = record.judgeAt || submittedAt;
+        const contestId = record.contest?.toString() || '';
+        const _id = hash(['day', scope, uid, record.domainId, contestId, day]);
+        const previous = additions.get(_id);
+        if (!previous || previous.acceptedAt > acceptedAt) {
+            additions.set(_id, { _id, scope, uid, domainId: record.domainId, contestId, day, acceptedAt });
+        }
+    }
+    if (additions.size) await collection.bulkWrite([...additions.values()].map(({ acceptedAt, ...entry }) => ({
+        updateOne: {
+            filter: { _id: entry._id }, update: { $setOnInsert: entry, $min: { acceptedAt } }, upsert: true,
+        },
+    })));
+    return collection.find({ scope, uid }).sort({ day: 1 }).toArray();
+}
+
+function streakMetrics(days: AchievementDay[], data: Awaited<ReturnType<typeof getScopeData>>, now: Date) {
+    const today = beijingDay(now);
+    const local = new Set(data.domainIds);
+    const available = [...new Set(days.filter((entry) => {
+        if (entry.acceptedAt > now || entry.day > today) return false;
+        if (local.has(entry.domainId)) return true;
+        return !!data.contestsById.get(`${entry.domainId}:${entry.contestId}`)?.allDomains;
+    }).map((entry) => entry.day))].sort((a, b) => a - b);
+    let best = 0;
+    let run = 0;
+    let previous = -Infinity;
+    for (const day of available) {
+        run = day === previous + 1 ? run + 1 : 1;
+        best = Math.max(best, run);
+        previous = day;
+    }
+    // A record today does not add another day; a run ending yesterday can grow
+    // by one. Older best runs must never prewarm an unreachable next milestone.
+    const next = previous === today ? run : previous === today - 1 ? run + 1 : 1;
+    return { streakBest: best, streakNextAc: next };
+}
+
 function metricsFromSolves(
     solves: SolvedAchievement[], data: Awaited<ReturnType<typeof getScopeData>>, now: Date, points: number,
 ): AchievementMetrics {
@@ -312,7 +381,9 @@ export async function isAchievementRecordReady(ctx: Context, record: RecordDoc) 
 
 export async function syncUserAchievements(ctx: Context, domain: AchievementDomain, uid: number, options: SyncAchievementOptions = {}) {
     if (!await canViewUserAchievements(ctx, domain, uid)) return [];
-    const activatedAt = await initializeAchievementSystem(ctx);
+    const [activatedAt, streakActivatedAt] = await Promise.all([
+        initializeAchievementSystem(ctx), initializeStreakAchievements(ctx),
+    ]);
     const scope = getAchievementScope(domain);
     return withUserLock(ctx, scope, uid, async () => {
         const now = options.now || new Date();
@@ -338,14 +409,19 @@ export async function syncUserAchievements(ctx: Context, domain: AchievementDoma
             problemMap.set(`${actualRecord.domainId}:${actualRecord.pid}`, options.problem);
         }
         const solves = await importAcceptances(ctx, scope, uid, records, problemMap);
+        const days = await importAchievementDays(ctx, scope, uid, records, problemMap);
         const { points, historicalPoints, source: pointSource } = await pointMetrics(ctx, uid, data, activatedAt);
         // The former visibility filter excluded historical contest points from
         // the baseline. Reconcile it once without rewriting existing grants.
-        const refreshBaseline = state?.version !== STATE_VERSION || (state?.pointSource === 'legacy' && pointSource === 'account');
+        const refreshBaseline = !state?.version || state.version < 2 || (state?.pointSource === 'legacy' && pointSource === 'account');
         const baselinePoints = refreshBaseline
             ? Math.max(state?.baselinePoints || 0, historicalPoints) : (state?.baselinePoints ?? historicalPoints);
-        const progress = evaluateAchievementProgress(metricsFromSolves(solves, data, now, points));
-        const historical = new Set(evaluateAchievementProgress(metricsFromSolves(solves, data, activatedAt, baselinePoints))
+        const progress = evaluateAchievementProgress({
+            ...metricsFromSolves(solves, data, now, points), ...streakMetrics(days, data, now),
+        });
+        const historical = new Set(evaluateAchievementProgress({
+            ...metricsFromSolves(solves, data, activatedAt, baselinePoints), ...streakMetrics(days, data, streakActivatedAt),
+        })
             .filter((item) => item.achieved).map((item) => item.id));
         for (const achievement of progress.filter((item) => item.achieved)) {
             const old = historical.has(achievement.id);
@@ -368,11 +444,18 @@ export async function syncUserAchievements(ctx: Context, domain: AchievementDoma
 }
 
 /** The route must take uid from its authenticated session, never from a posted field. */
-export async function getPendingAchievements(ctx: Context, domain: AchievementDomain, uid: number, limit = 5) {
+export async function getPendingAchievements(
+    ctx: Context, domain: AchievementDomain, uid: number, limit = 5, achievementIds?: readonly string[],
+) {
     if (!await canViewUserAchievements(ctx, domain, uid)) return [];
-    const grants = await ctx.db.collection('achievement.unlock').find({ scope: getAchievementScope(domain), uid, pending: true })
-        .sort({ unlockedAt: 1, _id: 1 }).limit(Math.max(1, Math.min(MAX_PENDING, nonnegative(limit) || 5))).toArray();
     const definitions = new Map(ACHIEVEMENT_CATALOG.map((item) => [item.id, item]));
+    const selected = achievementIds === undefined ? undefined
+        : [...new Set((Array.isArray(achievementIds) ? achievementIds : []).filter((id) => definitions.has(id)))];
+    if (selected && !selected.length) return [];
+    const grants = await ctx.db.collection('achievement.unlock').find({
+        scope: getAchievementScope(domain), uid, pending: true,
+        ...(selected ? { achievementId: { $in: selected } } : {}),
+    }).sort({ unlockedAt: 1, _id: 1 }).limit(Math.max(1, Math.min(MAX_PENDING, nonnegative(limit) || 5))).toArray();
     return grants.filter((item) => definitions.has(item.achievementId)).map((item) => ({
         ...definitions.get(item.achievementId)!, unlocked: true, unlockedAt: item.unlockedAt,
     }));
@@ -413,13 +496,16 @@ export async function recordAchievementAcceptance(ctx: Context, record: RecordDo
 }
 
 export async function applyAchievementHooks(ctx: Context) {
-    await initializeAchievementSystem(ctx);
+    await Promise.all([initializeAchievementSystem(ctx), initializeStreakAchievements(ctx)]);
     await Promise.all([
         ctx.db.ensureIndexes(ctx.db.collection('achievement.solved'), {
             key: { scope: 1, uid: 1, domainId: 1, pid: 1 }, name: 'achievement_user_solves',
         }),
         ctx.db.ensureIndexes(ctx.db.collection('achievement.unlock'), {
             key: { scope: 1, uid: 1, pending: 1, unlockedAt: 1 }, name: 'achievement_pending',
+        }),
+        ctx.db.ensureIndexes(ctx.db.collection('achievement.day'), {
+            key: { scope: 1, uid: 1, day: 1 }, name: 'achievement_user_days',
         }),
     ]);
     ctx.on('record/judge', async (record, _updated, problem) => {

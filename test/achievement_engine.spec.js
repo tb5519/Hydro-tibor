@@ -45,6 +45,7 @@ beforeEach(async () => {
     assigned.clear();
     await database.collection('domain').insertMany([legacy, { _id: 'python' }, modern, { _id: 'other', workspaceId: 'other' }]);
     await database.collection('achievement.state').insertOne({ _id: 'activation', activatedAt: activation });
+    await database.collection('achievement.state').insertOne({ _id: 'streak-activation', activatedAt: activation });
 });
 
 function rid(time) {
@@ -83,15 +84,22 @@ async function competition(uid, pids, extra = {}, participant = {}) {
 const sync = (uid = 11, domain = legacy, options = {}) => engine.syncUserAchievements(ctx, domain, uid, { now, ...options });
 const unlocked = (rows) => rows.filter((item) => item.unlocked).map((item) => item.id);
 const pending = (uid = 11, domain = legacy, limit = 10) => engine.getPendingAchievements(ctx, domain, uid, limit);
+const streak = (rows, target = 100) => rows.find((item) => item.id === `streak-${target}`);
 
 describe('achievement catalog', () => {
-    it('contains the exact 50 named milestones and no duplicate identifier', () => {
-        assert.equal(ACHIEVEMENT_CATALOG.length, 50);
-        assert.equal(new Set(ACHIEVEMENT_CATALOG.map((item) => item.id)).size, 50);
+    it('retains the original 50 and adds the 14 named streak milestones with no duplicate identifier', () => {
+        assert.equal(ACHIEVEMENT_CATALOG.length, 64);
+        assert.equal(new Set(ACHIEVEMENT_CATALOG.map((item) => item.id)).size, 64);
         assert.deepEqual(ACHIEVEMENT_CATALOG.slice(0, 10).map((item) => item.name),
             ['初战告捷', '渐入佳境', '锋芒初露', '势如破竹', '强者进阶', '烈火淬锋', '破境而上', '登峰造极', '傲视群雄', '巅峰封神']);
-        assert.equal(ACHIEVEMENT_CATALOG.at(-1).name, '神域之主');
+        assert.equal(ACHIEVEMENT_CATALOG[49].name, '神域之主');
         assert.equal(ACHIEVEMENT_CATALOG.find((item) => item.id === 'solved-1000').name, '千题封神');
+        assert.deepEqual(ACHIEVEMENT_CATALOG.slice(50).map((item) => [item.target, item.name]), [
+            [3, '锋芒初燃'], [7, '持之以恒'], [10, '十日磨剑'], [14, '意志如铁'], [20, '破晓行者'], [25, '不屈斗魂'], [30, '月度战神'],
+            [40, '百炼成钢'], [50, '永恒之刃'], [60, '不灭战魂'], [70, '传奇征途'], [80, '超凡入圣'], [90, '九十日神话'], [100, '百日封神'],
+        ]);
+        assert.ok(ACHIEVEMENT_CATALOG.slice(50).every((item) => item.id === `streak-${item.target}`
+            && item.description === `连续${item.target}天AC题目` && item.category === 'streak'));
     });
     it('awards each threshold exactly at its boundary', () => {
         for (const item of ACHIEVEMENT_CATALOG) {
@@ -101,6 +109,7 @@ describe('achievement catalog', () => {
                 contestAc: item.category === 'contest_ac' ? value : 0,
                 contestAk: item.category === 'contest_ak' ? value : 0,
                 points: item.category === 'points' ? value : 0,
+                streakBest: item.category === 'streak' ? value : 0,
             });
             assert.equal(evaluateAchievementProgress(make(item.target - 1)).find((row) => row.id === item.id).achieved, false, item.id);
             assert.equal(evaluateAchievementProgress(make(item.target)).find((row) => row.id === item.id).achieved, true, item.id);
@@ -312,7 +321,7 @@ describe('achievement ledger with actual MongoDB', () => {
         assert.deepEqual((await pending()).map((item) => item.id).sort(), ['contest-ac-1', 'difficulty-3', 'points-3000']);
         assert.deepEqual(await database.collection('achievement.unlock').findOne({ _id: existing._id }), existing);
         assert.equal((await database.collection('achievement.state').findOne({ _id: stateId })).baselinePoints, 1200);
-        assert.equal((await database.collection('achievement.state').findOne({ _id: stateId })).version, 2);
+        assert.equal((await database.collection('achievement.state').findOne({ _id: stateId })).version, 3);
     });
 
     it('awards valid ACs during a running public contest, excluding judgments that have not happened yet', async () => {
@@ -416,5 +425,178 @@ describe('achievement ledger with actual MongoDB', () => {
         await engine.acknowledgeAchievements(ctx, legacy, 11, ['difficulty-1']);
         await sync();
         assert.ok(!(await pending()).some((item) => item.id === 'difficulty-1'));
+    });
+});
+
+describe('consecutive AC milestones', () => {
+    it('initializes one dedicated streak rollout clock without modifying the original activation', async () => {
+        await database.collection('achievement.state').deleteOne({ _id: 'streak-activation' });
+        const before = Date.now();
+        const timestamps = await Promise.all(Array.from({ length: 5 }, () => engine.initializeStreakAchievements(ctx)));
+        assert.ok(timestamps.every((time) => +time === +timestamps[0] && +time >= before && +time <= Date.now()));
+        assert.equal(+await engine.initializeAchievementSystem(ctx), +activation);
+        assert.equal(await database.collection('achievement.state').countDocuments({ _id: 'streak-activation' }), 1);
+    });
+
+    it('uses Beijing midnight, counts repeat-problem submissions on new days, and never adds days for a rejudge', async () => {
+        const first = await acceptance(11, 1, 2, { at: '2026-10-22T15:59:59Z' });
+        await acceptance(11, 1, 2, { at: '2026-10-22T16:00:00Z' });
+        await acceptance(11, 1, 2, { at: '2026-10-22T16:05:00Z' });
+        await acceptance(11, 1, 2, { at: '2026-10-23T16:00:00Z' });
+        let rows = await sync();
+        assert.equal(streak(rows).progress, 3);
+        assert.equal(streak(rows).nextAcProgress, 4); // The latest AC was yesterday in Beijing.
+        assert.equal(streak(rows, 3).historical, true);
+        assert.equal(await database.collection('achievement.solved').countDocuments({ uid: 11 }), 1);
+        assert.equal(await database.collection('achievement.day').countDocuments({ uid: 11 }), 3);
+        const days = await database.collection('achievement.day').find({ uid: 11 }).sort({ day: 1 }).toArray();
+        assert.equal(days[2].day - days[0].day, 2);
+
+        await database.collection('record').updateOne({ _id: first._id }, { $set: { judgeAt: new Date('2026-10-25T10:00:00Z') } });
+        rows = await sync(11, legacy, { record: first });
+        assert.equal(streak(rows).progress, 3);
+        assert.equal(streak(rows).nextAcProgress, 4);
+        assert.deepEqual(await database.collection('achievement.day').find({ uid: 11 }).sort({ day: 1 }).toArray(), days);
+        const today = await acceptance(11, 1, 2, { at: '2026-10-24T16:00:00Z' });
+        rows = await sync(11, legacy, { record: today });
+        assert.equal(streak(rows).progress, 4);
+        assert.equal(streak(rows).nextAcProgress, 4); // A second AC today cannot make five days.
+        assert.equal((await pending()).filter((item) => item.category === 'streak').length, 0);
+    });
+
+    it('retains historical best and awards after a break but predicts only the current run', async () => {
+        for (let day = 1; day <= 6; day++) await acceptance(11, 1, 1, { at: `2026-10-${String(day).padStart(2, '0')}T02:00:00Z` });
+        await acceptance(11, 1, 1, { at: '2026-10-24T02:00:00Z' });
+        let rows = await sync();
+        assert.equal(streak(rows).progress, 6);
+        assert.equal(streak(rows, 7).unlocked, false);
+        assert.equal(streak(rows, 7).nextAcProgress, 2);
+        assert.equal(streak(rows, 3).unlocked, true);
+        const today = await acceptance(11, 1, 1, { at: '2026-10-25T02:00:00Z' });
+        rows = await sync(11, legacy, { record: today });
+        assert.equal(streak(rows, 7).nextAcProgress, 2);
+        rows = await sync(11, legacy, { now: new Date('2026-10-27T02:00:00Z') });
+        assert.equal(streak(rows, 7).nextAcProgress, 1);
+        assert.equal(streak(rows).progress, 6);
+        assert.equal(streak(rows, 3).unlocked, true);
+    });
+
+    it('silently imports pre-rollout streaks once, preserves older baselines, then notifies only a newly reached tier', async () => {
+        const rollout = new Date('2026-11-01T00:00:00Z');
+        await database.collection('achievement.state').updateOne({ _id: 'streak-activation' }, { $set: { activatedAt: rollout } });
+        for (let day = 26; day <= 31; day++) await acceptance(11, 1, 2, { at: `2026-10-${day}T02:00:00Z` });
+        const stateId = createHash('sha256').update(JSON.stringify(['user', 'legacy', 11])).digest('hex');
+        await database.collection('achievement.state').insertOne({
+            _id: stateId, scope: 'legacy', uid: 11, version: 2, importedAt: rollout, pointSource: 'account', baselinePoints: 800,
+        });
+        await database.collection('user').insertOne({ _id: 11, lotteryTotalPoints: 1000 });
+        let rows = await sync(11, legacy, { now: new Date('2026-11-01T00:30:00Z') });
+        assert.equal(streak(rows).progress, 6);
+        assert.equal(streak(rows, 3).historical, true);
+        assert.equal(streak(rows, 3).nextAcProgress, 7);
+        assert.equal((await pending()).some((item) => item.category === 'streak'), false);
+        assert.equal((await pending()).some((item) => item.id === 'points-1000'), true);
+        assert.equal((await database.collection('achievement.state').findOne({ _id: stateId })).baselinePoints, 800);
+        assert.equal((await database.collection('achievement.state').findOne({ _id: 'activation' })).activatedAt.getTime(), +activation);
+        const seventh = await acceptance(11, 1, 2, { at: '2026-11-01T02:00:00Z' });
+        rows = await sync(11, legacy, { record: seventh, now: new Date('2026-11-01T03:00:00Z') });
+        assert.equal(streak(rows, 7).unlocked, true);
+        assert.equal(streak(rows, 7).historical, false);
+        assert.deepEqual((await pending()).filter((item) => item.category === 'streak').map((item) => item.id), ['streak-7']);
+        await engine.acknowledgeAchievements(ctx, legacy, 11, ['streak-7']);
+        await sync(11, legacy, { now: new Date('2026-11-03T03:00:00Z') });
+        assert.equal((await pending()).some((item) => item.id === 'streak-7'), false);
+    });
+
+    it('counts hidden active-contest ACs but excludes pretests, hack records, objective sources and non-AC verdicts', async () => {
+        await acceptance(11, 1, 2, { hidden: true, at: '2026-10-23T02:00:00Z' });
+        await acceptance(11, 1, 2, { hidden: true, at: '2026-10-25T02:00:00Z' });
+        await acceptance(11, 2, 2, { at: '2026-10-24T02:00:00Z', objectiveKind: 'single' });
+        await acceptance(11, 3, 2, { at: '2026-10-24T02:00:00Z', contest: new ObjectId('000000000000000000000000') });
+        const hack = await acceptance(11, 4, 2, { at: '2026-10-24T02:00:00Z' });
+        await database.collection('record').updateOne({ _id: hack._id }, { $set: { hackTarget: new ObjectId() } });
+        const failed = await acceptance(11, 5, 2, { at: '2026-10-24T02:00:00Z' });
+        await database.collection('record').updateOne({ _id: failed._id }, { $set: { status: STATUS.STATUS_WRONG_ANSWER } });
+        assert.equal(streak(await sync()).progress, 1);
+        const contest = await competition(11, [6], {
+            rule: 'oi', beginAt: new Date('2026-10-22T00:00:00Z'), endAt: new Date('2026-10-26T00:00:00Z'),
+            hideScoreboard: true, keepScoreboardHidden: true, lockAt: new Date('2026-10-22T01:00:00Z'),
+        });
+        const valid = await acceptance(11, 6, 2, { hidden: true, at: '2026-10-24T02:00:00Z', contest: contest.docId });
+        const rows = await sync(11, legacy, { record: valid });
+        assert.equal(streak(rows).progress, 3);
+        assert.equal(streak(rows, 3).historical, false);
+        assert.equal(await database.collection('achievement.day').countDocuments({ uid: 11 }), 3);
+    });
+
+    it('combines legacy-domain days without combining other accounts or workspaces', async () => {
+        await acceptance(11, 1, 1, { domainId: 'system', at: '2026-10-23T02:00:00Z' });
+        await acceptance(11, 1, 1, { domainId: 'python', at: '2026-10-24T02:00:00Z' });
+        await acceptance(11, 1, 1, { domainId: 'system', at: '2026-10-25T02:00:00Z' });
+        await acceptance(12, 1, 1, { domainId: 'system', at: '2026-10-22T02:00:00Z' });
+        await acceptance(11, 1, 1, { domainId: 'other', at: '2026-10-22T02:00:00Z' });
+        assert.equal(streak(await sync()).progress, 3);
+        assert.equal(streak(await sync(12)).progress, 1);
+        assert.equal(await database.collection('achievement.day').countDocuments({ uid: 11 }), 3);
+    });
+
+    it('attributes shared-contest days only to the participant’s entry domain within the same workspace', async () => {
+        assigned.set(11, 'teacher');
+        await database.collection('domain').insertOne({ _id: 'source', workspaceId: 'teacher' });
+        await database.collection('domain.user').insertMany([
+            { domainId: 'class', uid: 11, join: true }, { domainId: 'source', uid: 11, join: true },
+        ]);
+        await acceptance(11, 1, 1, { domainId: 'class', at: '2026-10-23T02:00:00Z' });
+        await acceptance(11, 1, 1, { domainId: 'class', at: '2026-10-24T02:00:00Z' });
+        const contest = await competition(11, [1], { domainId: 'source', allDomains: true }, { entryDomainId: 'class' });
+        await acceptance(11, 1, 1, { domainId: 'source', contest: contest.docId });
+        assert.equal(streak(await sync(11, modern)).progress, 3);
+        assert.equal(streak(await sync(11, { _id: 'source', workspaceId: 'teacher' })).progress, 0);
+        assert.deepEqual(await sync(11, legacy), []);
+        assert.deepEqual(await sync(11, { _id: 'other', workspaceId: 'other' }), []);
+        assert.equal(await database.collection('achievement.day').countDocuments({ scope: 'domain:class', uid: 11 }), 3);
+        assert.equal(await database.collection('achievement.day').countDocuments({ scope: 'domain:source', uid: 11 }), 0);
+    });
+
+    it('imports all one hundred days of the same problem and grants all fourteen historical tiers', async () => {
+        for (let offset = 0; offset < 100; offset++) {
+            await acceptance(11, 1, 1, { at: new Date(Date.parse('2026-06-01T02:00:00Z') + offset * 86400000).toISOString() });
+        }
+        const rows = await sync();
+        assert.equal(rows.filter((item) => item.category === 'streak' && item.unlocked && item.historical).length, 14);
+        assert.equal(streak(rows).progress, 100);
+        assert.equal(streak(rows).nextAcProgress, 1);
+        assert.equal(await database.collection('achievement.day').countDocuments({ uid: 11 }), 100);
+        assert.equal(await database.collection('achievement.solved').countDocuments({ uid: 11 }), 1);
+        assert.deepEqual(await pending(), []);
+    });
+
+    it('deduplicates concurrent daily imports and awards one new streak notification', async () => {
+        await acceptance(11, 1, 1, { at: '2026-10-24T02:00:00Z' });
+        await acceptance(11, 1, 1, { at: '2026-10-25T02:00:00Z' });
+        const third = await acceptance(11, 1, 1, { at: '2026-10-26T02:00:00Z' });
+        await Promise.all(Array.from({ length: 8 }, () => sync(11, legacy, { record: third, now: new Date('2026-10-26T03:00:00Z') })));
+        assert.equal(await database.collection('achievement.day').countDocuments({ uid: 11 }), 3);
+        assert.equal(await database.collection('achievement.unlock').countDocuments({ uid: 11, achievementId: 'streak-3' }), 1);
+        assert.deepEqual((await pending()).filter((item) => item.category === 'streak').map((item) => item.id), ['streak-3']);
+    });
+
+    it('filters displayable pending IDs before the batch limit without consuming missing artwork or crossing scope', async () => {
+        const candidates = ACHIEVEMENT_CATALOG.filter((item) => item.category === 'streak');
+        await database.collection('achievement.unlock').insertMany(candidates.map((item, index) => ({
+            _id: `pending-${index}`, scope: 'legacy', uid: 11, achievementId: item.id,
+            unlockedAt: new Date(+now + index * 1000), historical: false, pending: true,
+        })));
+        const result = await engine.getPendingAchievements(ctx, legacy, 11, 10, ['streak-100', 'invalid', 'streak-100']);
+        assert.deepEqual(result.map((item) => item.id), ['streak-100']);
+        assert.equal((await pending()).length, 10);
+        assert.deepEqual(await engine.getPendingAchievements(ctx, legacy, 11, 10, []), []);
+        assert.deepEqual(await engine.getPendingAchievements(ctx, legacy, 11, 10, ['invalid']), []);
+        assert.deepEqual(await engine.getPendingAchievements(ctx, legacy, 12, 10, ['streak-100']), []);
+        assert.deepEqual(await engine.getPendingAchievements(ctx, modern, 11, 10, ['streak-100']), []);
+        assert.equal(await database.collection('achievement.unlock').countDocuments({ uid: 11, pending: true }), 14);
+        await engine.acknowledgeAchievements(ctx, legacy, 11, ['streak-100']);
+        assert.deepEqual(await engine.getPendingAchievements(ctx, legacy, 11, 10, ['streak-100']), []);
+        assert.equal(await database.collection('achievement.unlock').countDocuments({ uid: 11, pending: true }), 13);
     });
 });

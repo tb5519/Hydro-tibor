@@ -1,6 +1,6 @@
 {% if achievementWall %}
 <section class="achievement-wall" data-achievement-wall aria-busy="true" aria-labelledby="achievement-wall-title">
-  <header class="achievement-wall__header"><h2 id="achievement-wall-title"><span aria-hidden="true">✦</span> 成就墙</h2><span class="achievement-wall__count" aria-label="已解锁 {{ achievementWall.unlocked or 0 }} / {{ achievementWall.total or 50 }} 项成就"><strong class="nojs--hide" data-achievement-count>0</strong><noscript><strong>{{ achievementWall.unlocked or 0 }}</strong></noscript> / {{ achievementWall.total or 50 }}</span></header>
+  <header class="achievement-wall__header"><h2 id="achievement-wall-title"><span aria-hidden="true">✦</span> 成就墙</h2><span class="achievement-wall__count" aria-label="已解锁 {{ achievementWall.unlocked or 0 }} / {{ achievementWall.total or 0 }} 项成就"><strong class="nojs--hide" data-achievement-count>0</strong><noscript><strong>{{ achievementWall.unlocked or 0 }}</strong></noscript> / {{ achievementWall.total or 0 }}</span></header>
   {% if achievementWall.items.length %}
     <p class="achievement-wall__intro">每一次突破，都在这里闪耀</p>
     <div class="achievement-wall__grid" data-achievement-grid-empty>

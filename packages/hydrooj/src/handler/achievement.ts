@@ -190,12 +190,15 @@ type AchievementProgress = Awaited<ReturnType<typeof syncUserAchievements>>;
 
 /** Prewarming is a read-only prediction; only the ordinary AC pipeline grants achievements. */
 async function nextAchievementImages(handler: Handler, progress: AchievementProgress, artwork: any[]) {
-    const close = progress.filter((item) => !item.unlocked && Number.isFinite(item.progress) && item.target - item.progress === 1);
+    const close = progress.filter((item) => !item.unlocked && (item.category === 'streak'
+        ? Number.isFinite(item.nextAcProgress) && item.nextAcProgress >= item.target
+        : Number.isFinite(item.progress) && item.target - item.progress === 1));
     if (!close.length) return [];
     let candidates: AchievementProgress;
     if (handler.response.template === 'main.html') {
         // Do not fetch all ten first-difficulty originals for a new account.
-        candidates = close.filter((item) => item.progress > 0 && ['solved', 'mastery'].includes(item.category));
+        candidates = close.filter((item) => item.category === 'streak'
+            || (item.progress > 0 && ['solved', 'mastery'].includes(item.category)));
     } else {
         const { pdoc, tdoc, mode } = handler.response.body;
         if (!pdoc || pdoc.objectiveKind || !Number.isInteger(pdoc.docId) || pdoc.docId <= 0
@@ -214,8 +217,8 @@ async function nextAchievementImages(handler: Handler, progress: AchievementProg
             }) : null,
         ]);
         if (tdoc && scope !== 'legacy' && participant?.entryDomainId && participant.entryDomainId !== handler.domain._id) return [];
-        candidates = alreadySolved ? [] : close.filter((item) => item.category === 'solved'
-            || (['difficulty', 'mastery'].includes(item.category) && item.difficulty === pdoc.difficulty));
+        candidates = close.filter((item) => item.category === 'streak' || (!alreadySolved && (item.category === 'solved'
+            || (['difficulty', 'mastery'].includes(item.category) && item.difficulty === pdoc.difficulty))));
         if (tdoc && (tdoc.domainId || domainId) === domainId
             && isAchievementContestSubmission(tdoc, participant, { pid: pdoc.docId, submittedAt: now })) {
             const contestSolves = await solved.find({ scope, uid, domainId, contestId: String(tdoc.docId), acceptedAt: { $lte: now } }).toArray();
@@ -256,8 +259,12 @@ export class AchievementPendingHandler extends Handler {
             }
         }
         await syncUserAchievements(this.ctx, this.domain, this.user._id, { record: rdoc });
-        const pending = await getPendingAchievements(this.ctx, this.domain, this.user._id, 10);
-        this.response.body = { achievements: await presentAchievements(this.ctx, this.domain, pending), settled: true };
+        const artwork = await presentAchievements(this.ctx, this.domain, ACHIEVEMENT_CATALOG);
+        const available = new Map(artwork.filter((item) => item.imageUrl).map((item) => [item.id, item]));
+        // Unconfigured rewards keep their notification for a later visit after
+        // upload, without blocking configured rewards behind the display limit.
+        const pending = await getPendingAchievements(this.ctx, this.domain, this.user._id, 10, [...available.keys()]);
+        this.response.body = { achievements: pending.map((item) => ({ ...available.get(item.id), ...item })), settled: true };
     }
 }
 

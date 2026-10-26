@@ -16,7 +16,7 @@ function deferred() {
 }
 
 function fixture(count = 2, { storage = {}, urls = [], placeholders = [], reducedMotion = false } = {}) {
-    const dom = new JSDOM('<section data-achievement-wall aria-busy="true"><header>成就墙 <strong data-achievement-count>0</strong> / 50</header><p class="achievement-wall__intro">每一次突破，都在这里闪耀</p><div class="achievement-wall__grid" data-achievement-grid-empty></div><p data-achievement-hint hidden>悬停或点按图片，查看成就故事</p></section>', { url: 'https://school.test/', runScripts: 'outside-only' });
+    const dom = new JSDOM('<section data-achievement-wall aria-busy="true"><header>成就墙 <strong data-achievement-count>0</strong> / 64</header><p class="achievement-wall__intro">每一次突破，都在这里闪耀</p><div class="achievement-wall__grid" data-achievement-grid-empty></div><p data-achievement-hint hidden>悬停或点按图片，查看成就故事</p></section>', { url: 'https://school.test/', runScripts: 'outside-only' });
     const win = dom.window;
     const root = win.document.querySelector('section');
     const grid = root.querySelector('.achievement-wall__grid');
@@ -208,18 +208,57 @@ describe('complete-batch achievement wall', () => {
         await h.advance(60); assert.equal(h.count(), 2);
     });
 
-    it('never substitutes stars or reveals a partial batch when earned artwork has not been uploaded', async (t) => {
-        const h = fixture(3, { placeholders: [0, 2] }); t.after(h.close); h.bind();
+    it('excludes unconfigured artwork while still waiting for every configured thumbnail before revealing the batch', async (t) => {
+        const h = fixture(4, { placeholders: [0, 2] }); t.after(h.close); h.bind();
         h.pictures[1].load(); h.pictures[1].decoded.resolve(); await h.flush(); await h.advance(1000);
         assert.equal(h.count(), 0);
         assert.equal(h.visible(), 0);
         assert.ok(h.grid.hasAttribute('data-achievement-grid-empty'));
+        assert.ok([0, 2].every((index) => h.pictures[index].tile.hidden));
         assert.equal(h.root.querySelector('.achievement-wall__placeholder'), null);
         assert.equal(h.root.querySelector('.achievement-wall__fallback-name'), null);
-        const empty = fixture(0); t.after(empty.close); empty.bind();
-        assert.equal(empty.count(), 0);
-        assert.equal(empty.root.getAttribute('aria-busy'), 'false');
-        assert.equal(empty.timers.size, 0);
+        h.pictures[3].load(); await h.flush();
+        assert.equal(h.count(), 0, 'configured artwork must decode before the collection can appear');
+        h.pictures[3].decoded.resolve(); await h.flush();
+        assert.equal(h.count(), 1);
+        assert.equal(h.pictures[1].visible(), true);
+        await h.advance(60);
+        assert.equal(h.count(), 2);
+        assert.equal(h.visible(), 2);
+        assert.ok([0, 2].every((index) => !h.pictures[index].visible() && h.pictures[index].tile.hidden));
+        assert.equal(h.root.getAttribute('aria-busy'), 'false');
+    });
+
+    it('shows cached configured artwork immediately even when other earned achievements await images', (t) => {
+        const h = fixture(4, { placeholders: [1, 3] }); t.after(h.close);
+        [0, 2].forEach((index) => { h.pictures[index].state.complete = true; h.pictures[index].state.width = 384; });
+        h.bind();
+        assert.equal(h.count(), 2);
+        assert.equal(h.visible(), 2);
+        assert.ok(h.pictures.every(({ state, tile }) => !state.decodeCalls && !tile.classList.contains('is-entering')));
+        assert.ok([1, 3].every((index) => h.pictures[index].tile.hidden));
+        assert.equal(h.root.getAttribute('aria-busy'), 'false');
+        assert.equal(h.timers.size, 0);
+    });
+
+    it('settles empty and entirely unconfigured walls at zero without placeholders, image requests or timers', (t) => {
+        for (const count of [0, 2]) {
+            const h = fixture(count, { placeholders: [0, 1] }); t.after(h.close);
+            if (count) {
+                const emptyImage = h.win.document.createElement('img');
+                emptyImage.hidden = true;
+                h.pictures[0].tile.append(emptyImage);
+            }
+            h.bind();
+            assert.equal(h.count(), 0);
+            assert.equal(h.visible(), 0);
+            assert.ok(h.pictures.every(({ tile }) => tile.hidden));
+            assert.ok(h.grid.hasAttribute('data-achievement-grid-empty'));
+            assert.equal(h.root.querySelector('[data-achievement-hint]').hidden, true);
+            assert.equal(h.root.querySelector('.achievement-wall__placeholder'), null);
+            assert.equal(h.root.getAttribute('aria-busy'), 'false');
+            assert.equal(h.timers.size, 0);
+        }
     });
 
     it('keeps network and decode failures hidden, retries, and releases the batch only after recovery', async (t) => {

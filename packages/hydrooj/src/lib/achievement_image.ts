@@ -13,7 +13,7 @@ import assetStorage from './asset_storage';
 export const ACHIEVEMENT_IMAGE_LIMIT = 8 * 1024 * 1024;
 export const ACHIEVEMENT_CATEGORY_NAMES = {
     difficulty: '初次突破', solved: '解题里程碑', contest_ak: '全场制霸',
-    contest_ac: '赛场征程', points: '星光积累', mastery: '难度专精',
+    contest_ac: '赛场征程', points: '星光积累', mastery: '难度专精', streak: '连续 AC',
 };
 
 type AchievementDomain = Pick<DomainDoc, '_id' | 'workspaceId'>;

@@ -34,14 +34,22 @@ export function markAchievementThumbnailReady(url: string, win: Window = window)
   rememberImage(win, url, true);
 }
 
-/** Keep the whole collection hidden until every thumbnail can be painted. */
+/** Keep configured artwork hidden until every thumbnail can be painted. */
 export function prepareAchievementWall(root: HTMLElement, timeoutMs = 8000) {
   const existing = pendingWalls.get(root);
   if (existing) return existing;
   const win = root.ownerDocument.defaultView!;
   const history = imageHistory(win);
   const reducedMotion = win.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  const tiles = Array.from(root.querySelectorAll<HTMLElement>('[data-achievement-tile]'));
+  const tiles = Array.from(root.querySelectorAll<HTMLElement>('[data-achievement-tile]')).filter((tile) => {
+    const image = tile.querySelector<HTMLImageElement>('img');
+    if (image?.getAttribute('src')?.trim()) return true;
+    // Achievements awaiting artwork do not block the configured collection.
+    // A configured image that is still downloading must remain in the batch.
+    tile.hidden = true;
+    tile.setAttribute('data-achievement-pending', '');
+    return false;
+  });
   const count = root.querySelector<HTMLElement>('[data-achievement-count]');
   const grid = root.querySelector<HTMLElement>('.achievement-wall__grid');
   const hint = root.querySelector<HTMLElement>('[data-achievement-hint]');
@@ -127,9 +135,7 @@ export function prepareAchievementWall(root: HTMLElement, timeoutMs = 8000) {
   const begin: Array<() => void> = [];
   tiles.forEach((tile) => {
     tile.classList.remove('is-entering');
-    const image = tile.querySelector<HTMLImageElement>('img');
-    // Missing artwork must never turn into a star or a partially filled wall.
-    if (!image || image.hidden) return;
+    const image = tile.querySelector<HTMLImageElement>('img')!;
     const source = image.src;
     const nativeReady = image.complete && image.naturalWidth > 0;
     let decoding = false;
