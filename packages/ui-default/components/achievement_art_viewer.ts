@@ -132,7 +132,13 @@ export function createAchievementArtworkViewer(doc: Document = document) {
       spark.dataset.index = String(index);
       welcome.append(spark);
     }
-    const status = element('span', 'status', '正在呈现成就高清图');
+    const welcomeMessage = element('span', 'welcome-message');
+    welcomeMessage.append(element('span', 'welcome-label', '正在迎接成就'));
+    const dots = element('span', 'welcome-dots');
+    for (let index = 0; index < 3; index++) dots.append(element('span', 'welcome-dot', '.'));
+    welcomeMessage.append(dots);
+    welcome.append(welcomeMessage);
+    const status = element('span', 'status', '正在迎接成就…');
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
     art.append(welcome, status);

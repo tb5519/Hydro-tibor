@@ -143,6 +143,41 @@
     background: radial-gradient(ellipse, rgba(214, 178, 105, .18), rgba(84, 125, 177, .09) 40%, transparent 69%)
     animation: achievement-art-aura 3.2s ease-in-out infinite
 
+  &__welcome-message
+    position: relative
+    z-index: 3
+    display: inline-flex
+    align-items: baseline
+    padding: 18px 26px
+    color: #f5e8c8
+    font-size: unquote('clamp(14px, 2.2vw, 17px)')
+    font-weight: 500
+    line-height: 1.6
+    letter-spacing: .12em
+    white-space: nowrap
+    background: radial-gradient(ellipse, rgba(7, 16, 32, .65), transparent 72%)
+    text-shadow: 0 2px 12px rgba(0, 0, 0, .8)
+
+  &__welcome-label
+    animation: achievement-art-welcome-text 2.8s ease-in-out infinite
+
+  &__welcome-dots
+    display: inline-flex
+    width: 1.5em
+    margin-left: .25em
+    letter-spacing: 0
+
+  &__welcome-dot
+    display: inline-block
+    width: .5em
+    animation: achievement-art-welcome-dot 1.5s ease-in-out infinite
+
+    &:nth-child(2)
+      animation-delay: .18s
+
+    &:nth-child(3)
+      animation-delay: .36s
+
   &__silhouette
     position: absolute
     inset: 0
@@ -366,6 +401,18 @@
     transform: scale(1.04)
     opacity: 1
 
+@keyframes achievement-art-welcome-text
+  0%, 100%
+    opacity: .78
+  50%
+    opacity: 1
+
+@keyframes achievement-art-welcome-dot
+  0%, 70%, 100%
+    opacity: .3
+  35%
+    opacity: 1
+
 @keyframes achievement-art-silhouette
   0%, 100%
     transform: scale(.88)
@@ -507,6 +554,8 @@
     transform: none !important
 
   .achievement-art-viewer__aura,
+  .achievement-art-viewer__welcome-label,
+  .achievement-art-viewer__welcome-dot,
   .achievement-art-viewer__silhouette,
   .achievement-art-viewer__spark,
   .achievement-art-viewer__ring::before,

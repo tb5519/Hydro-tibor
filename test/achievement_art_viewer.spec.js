@@ -85,7 +85,7 @@ it('opens a native welcome layer without visible loading copy and reveals only t
     assert.equal(f.dialog().querySelectorAll('.achievement-art-viewer__spark').length, 6);
     assert.equal(f.images[0].node.src, 'https://school.test/d/source/achievement/weekly-ac-50/image?v=17');
     await f.tick(180);
-    assert.equal(f.dialog().querySelector('[role=status]').textContent, '正在呈现成就高清图');
+    assert.equal(f.dialog().querySelector('[role=status]').textContent, '正在迎接成就…');
     assert.equal(f.dialog().textContent.includes('正在载入高清原图'), false);
     f.images[0].load(); await settle();
     assert.equal(f.dialog().querySelector('img'), null, 'download completion is not decoding completion');
