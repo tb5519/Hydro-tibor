@@ -325,25 +325,16 @@ function bindWall(root: HTMLElement) {
   const viewer = createAchievementArtworkViewer(root.ownerDocument);
   let active: HTMLButtonElement | null = null;
   let hideTimer: number | undefined;
-  let preloadTimer: number | undefined;
-  const stopPreload = () => { clearTimeout(preloadTimer); preloadTimer = undefined; };
-  const prewarm = (tile: HTMLButtonElement, immediate = false) => {
-    stopPreload();
-    if (!tile.dataset.imageUrl || tile.hidden || tile.hasAttribute('data-achievement-pending')) return;
-    const load = () => viewer.preload(tile.dataset.imageUrl!);
-    if (immediate) load();
-    else preloadTimer = window.setTimeout(load, 140);
-  };
   const hide = () => {
     clearTimeout(hideTimer); if (tooltip) tooltip.hidden = true;
     active?.removeAttribute('aria-describedby'); active?.classList.remove('is-active'); active = null;
   };
   const dispose = () => {
-    hide(); stopPreload(); controller.abort(); viewer.dispose(); disposeLoading();
+    hide(); controller.abort(); viewer.dispose(); disposeLoading();
     wallDisposers.delete(root); delete root.dataset.bound;
   };
   wallDisposers.set(root, dispose);
-  window.addEventListener('pagehide', (event) => { hide(); stopPreload(); if (!event.persisted) dispose(); }, options);
+  window.addEventListener('pagehide', (event) => { hide(); if (!event.persisted) dispose(); }, options);
   if (!tooltip) return;
   const position = () => {
     if (!active) return;
@@ -371,16 +362,18 @@ function bindWall(root: HTMLElement) {
   tiles.forEach((tile) => {
     tile.removeAttribute('title'); tile.removeAttribute('aria-describedby');
     tile.addEventListener('pointerenter', (event) => {
-      if (event.pointerType !== 'touch') { show(tile); prewarm(tile); }
+      if (event.pointerType !== 'touch') show(tile);
     }, options);
-    tile.addEventListener('pointerleave', () => { stopPreload(); deferHide(); }, options);
-    tile.addEventListener('focus', () => { show(tile); prewarm(tile, true); }, options);
-    tile.addEventListener('blur', () => { stopPreload(); deferHide(); }, options);
+    tile.addEventListener('pointerleave', deferHide, options);
+    tile.addEventListener('focus', () => show(tile), options);
+    tile.addEventListener('blur', deferHide, options);
     tile.addEventListener('click', () => {
       if (tile.hidden || tile.hasAttribute('data-achievement-pending') || !tile.dataset.imageUrl) return;
-      hide(); stopPreload();
+      hide();
+      const thumbnail = tile.querySelector<HTMLImageElement>('img');
       viewer.open({
         imageUrl: tile.dataset.imageUrl, name: tile.dataset.name || '',
+        thumbnailUrl: thumbnail?.currentSrc || thumbnail?.src || '',
         description: tile.dataset.description || '', unlockedAt: tile.dataset.unlockedAt || '',
       }, tile);
     }, options);

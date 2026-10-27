@@ -72,7 +72,7 @@ function fixture({ native = false, reducedMotion = false } = {}) {
         stats: () => ({ nativeOpens, nativeCloses, sideEffects }), close: () => win.close() };
 }
 
-it('opens a native top-layer immediately, delays loading text and reveals only the decoded canonical original', async () => {
+it('opens a native welcome layer without visible loading copy and reveals only the decoded canonical original', async () => {
     const f = fixture({ native: true });
     const viewer = f.create();
     viewer.open({ ...art, unlockedAt: '2026-10-26T16:00:00Z' }, f.doc.querySelector('#tile'));
@@ -80,10 +80,13 @@ it('opens a native top-layer immediately, delays loading text and reveals only t
     assert.equal(f.dialog().hasAttribute('open'), true);
     assert.equal(f.dialog().querySelector('button'), null);
     assert.equal(f.dialog().querySelector('img'), null);
-    assert.equal(f.dialog().querySelector('[role=status]').hidden, true);
+    assert.equal(f.dialog().querySelector('[role=status]').hidden, false, 'the pending status remains available to screen readers');
+    assert.equal(f.dialog().querySelector('.achievement-art-viewer__welcome').getAttribute('aria-hidden'), 'true');
+    assert.equal(f.dialog().querySelectorAll('.achievement-art-viewer__spark').length, 6);
     assert.equal(f.images[0].node.src, 'https://school.test/d/source/achievement/weekly-ac-50/image?v=17');
     await f.tick(180);
-    assert.equal(f.dialog().querySelector('[role=status]').textContent, '正在载入高清原图…');
+    assert.equal(f.dialog().querySelector('[role=status]').textContent, '正在呈现成就高清图');
+    assert.equal(f.dialog().textContent.includes('正在载入高清原图'), false);
     f.images[0].load(); await settle();
     assert.equal(f.dialog().querySelector('img'), null, 'download completion is not decoding completion');
     f.images[0].decode(); await settle();
@@ -102,11 +105,14 @@ it('opens a native top-layer immediately, delays loading text and reveals only t
     viewer.dispose(); f.close();
 });
 
-it('reuses a selected versioned preload without a spinner flash and bounds the decoded cache', async () => {
+it('requests originals only on open, reuses clicked versions and bounds the decoded cache', async () => {
     const f = fixture(); const viewer = f.create();
-    viewer.preload(art.imageUrl); viewer.preload(art.imageUrl);
+    assert.equal(viewer.preload, undefined, 'hover/focus cannot request an original through this API');
+    assert.equal(f.images.length, 0);
+    viewer.open(art); viewer.open(art);
     assert.equal(f.images.length, 1);
-    f.images[0].ready(); await settle();
+    f.images[0].ready(); await f.tick(32);
+    f.fire('click'); await f.tick(280);
     viewer.open(art); await f.tick(32);
     assert.ok(f.dialog().classList.contains('is-ready'));
     assert.equal(f.dialog().querySelector('[role=status]').hidden, true);
@@ -115,9 +121,104 @@ it('reuses a selected versioned preload without a spinner flash and bounds the d
     viewer.open({ ...art, imageUrl: `${art.imageUrl}8` });
     assert.equal(f.images.length, 2, 'a new asset version never reuses the old decoded artwork');
     await settle(); f.fire('click'); await f.tick(280);
-    for (let i = 0; i < 8; i++) viewer.preload(`/image/${i}?v=1`);
+    for (let i = 0; i < 8; i++) viewer.open({ ...art, imageUrl: `/image/${i}?v=1` });
     assert.equal(f.images.filter(({ node }) => node.hasAttribute('src')).length, 6);
     viewer.dispose(); assert.equal(f.timers.size, 0); f.close();
+});
+
+it('uses a decoded thumbnail only as a welcome silhouette and reveals HD without waiting for the welcome loop', async () => {
+    const f = fixture(); const viewer = f.create();
+    viewer.open({ ...art, thumbnailUrl: '/thumb.webp?v=17' });
+    assert.equal(f.images.length, 2);
+    assert.equal(f.images[1].node.src, 'https://school.test/thumb.webp?v=17');
+    f.images[1].load(); await settle();
+    assert.equal(f.dialog().querySelector('img'), null, 'an undecoded thumbnail never becomes a visible broken preview');
+    f.images[1].decode(); await settle();
+    const welcome = f.dialog().querySelector('.achievement-art-viewer__welcome');
+    assert.equal(welcome.querySelector('.achievement-art-viewer__silhouette'), f.images[1].node);
+    assert.equal(f.images[1].node.alt, '');
+    assert.equal(f.dialog().classList.contains('is-ready'), false, 'a clear thumbnail cannot stand in for the original');
+    f.images[0].load(); await settle();
+    assert.equal(f.dialog().querySelector('.achievement-art-viewer__image'), null);
+    f.images[0].decode(); await f.tick(32);
+    assert.ok(f.dialog().classList.contains('is-ready'), 'HD starts revealing as soon as its two paint frames finish');
+    assert.equal(f.dialog().querySelector('.achievement-art-viewer__image'), f.images[0].node);
+    assert.ok(welcome.isConnected, 'the decoded silhouette survives the transition instead of popping out');
+    assert.ok(f.images[1].node.hasAttribute('src'));
+    await f.tick(479); assert.ok(welcome.isConnected);
+    await f.tick(1); assert.equal(welcome.isConnected, false, 'all looping welcome elements are removed after the reveal');
+    assert.equal(f.images[1].node.hasAttribute('src'), false);
+    assert.equal(f.timers.size, 0);
+    viewer.dispose(); f.close();
+});
+
+it('never lets a late thumbnail revive a completed original and skips thumbnail work for decoded HD cache hits', async () => {
+    const f = fixture(); const viewer = f.create();
+    const selected = { ...art, thumbnailUrl: '/thumb.webp?v=17' };
+    viewer.open(selected); f.images[1].load();
+    f.images[0].ready(); await f.tick(32);
+    assert.ok(f.dialog().classList.contains('is-ready'));
+    f.images[1].decode(); await settle();
+    assert.equal(f.dialog().querySelector('.achievement-art-viewer__silhouette'), null);
+    assert.equal(f.images[1].node.hasAttribute('src'), false);
+    f.fire('click'); await f.tick(280);
+    viewer.open(selected); await f.tick(32);
+    assert.equal(f.images.length, 2, 'a decoded original immediately reopens without even starting another thumbnail');
+    assert.ok(f.dialog().classList.contains('is-ready'));
+    const welcome = f.dialog().querySelector('.achievement-art-viewer__welcome');
+    const ended = new f.win.Event('transitionend', { bubbles: true });
+    Object.defineProperty(ended, 'propertyName', { value: 'opacity' });
+    welcome.dispatchEvent(ended);
+    assert.equal(welcome.isConnected, false, 'a real transition end cleans up before the fallback timer');
+    assert.equal(f.timers.size, 0);
+    viewer.dispose(); f.close();
+});
+
+it('keeps the atmosphere when the thumbnail fails, but ends it on HD failure and rejects late thumbnail callbacks', async () => {
+    for (const failure of ['thumbnail', 'original']) {
+        const f = fixture(); const viewer = f.create();
+        viewer.open({ ...art, thumbnailUrl: '/thumb.webp' });
+        if (failure === 'thumbnail') {
+            f.images[1].fail(); await settle();
+            assert.ok(f.dialog().querySelector('.achievement-art-viewer__welcome'));
+            assert.equal(f.dialog().querySelector('img'), null);
+            assert.equal(f.dialog().classList.contains('is-error'), false);
+            f.images[0].ready(); await f.tick(32);
+            assert.ok(f.dialog().classList.contains('is-ready'));
+        } else {
+            f.images[1].load(); f.images[0].fail(); await settle();
+            f.images[1].decode(); await settle();
+            assert.equal(f.dialog().querySelector('.achievement-art-viewer__welcome'), null);
+            assert.equal(f.dialog().querySelector('img'), null);
+            assert.ok(f.dialog().classList.contains('is-error'));
+            assert.equal(f.dialog().querySelector('[role=status]').hidden, false);
+            assert.equal(f.dialog().querySelector('[role=status]').textContent, '高清图片暂时无法加载');
+        }
+        f.fire('click'); await f.tick(280); assert.equal(f.dialog(), null);
+        viewer.dispose(); f.close();
+    }
+});
+
+it('can close a welcoming layer immediately and cancels its thumbnail through replacement, navigation and reduced motion', async () => {
+    const f = fixture({ reducedMotion: true }); const viewer = f.create();
+    viewer.open({ ...art, thumbnailUrl: '/thumb.webp' }); f.images[1].load(); await settle();
+    const closed = f.dialog();
+    f.fire('keydown', { key: 'Escape' }); await f.tick(60);
+    f.images[1].decode(); await settle();
+    assert.equal(closed.querySelector('.achievement-art-viewer__welcome'), null);
+    assert.equal(f.dialog(), null);
+    viewer.open({ ...art, imageUrl: '/next', thumbnailUrl: '/next-thumb' });
+    f.images[3].load();
+    viewer.open({ ...art, imageUrl: '/last', thumbnailUrl: '/last-thumb' });
+    f.images[3].decode(); await settle();
+    assert.equal(f.dialog().querySelector('.achievement-art-viewer__silhouette'), null);
+    f.images[4].ready(); await f.tick(32);
+    await f.tick(59); assert.ok(f.dialog().querySelector('.achievement-art-viewer__welcome'));
+    await f.tick(1); assert.equal(f.dialog().querySelector('.achievement-art-viewer__welcome'), null);
+    f.win.dispatchEvent(new f.win.PageTransitionEvent('pagehide', { persisted: true }));
+    f.images[5].ready(); await settle();
+    assert.equal(f.dialog(), null); assert.equal(f.timers.size, 0);
+    viewer.dispose(); f.close();
 });
 
 it('ignores its opening click, captures dismissal through exit, and restores focus and fallback background state', async () => {
@@ -207,7 +308,7 @@ it('cleans navigation and late loads, reopens after bfcache, and stays closed af
     f.win.dispatchEvent(new f.win.PageTransitionEvent('pageshow', { persisted: true }));
     viewer.open(art); assert.ok(f.dialog()); assert.equal(f.images.length, 2);
     viewer.dispose(); f.images[1].ready(); await settle();
-    viewer.open(art); viewer.preload('/never-requested');
+    viewer.open(art);
     assert.equal(f.dialog(), null); assert.equal(f.images.length, 2);
     assert.equal(f.doc.body.style.overflow, ''); assert.equal(f.timers.size, 0);
     f.close();

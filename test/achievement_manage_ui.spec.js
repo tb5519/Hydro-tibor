@@ -75,8 +75,7 @@ function fixture({ wall = false, readyWall = true, overrides = {}, onReload } = 
         if (name === 'vj/components/achievement_wall') return wallExports;
         if (name === 'vj/components/achievement_art_viewer') return {
             createAchievementArtworkViewer: () => {
-                const viewer = { preloads: [], opened: [], disposed: false,
-                    preload(url) { this.preloads.push(url); },
+                const viewer = { opened: [], disposed: false,
                     open(artwork, trigger) { this.opened.push({ artwork, trigger }); },
                     dispose() { this.disposed = true; },
                 };
@@ -300,11 +299,11 @@ describe('achievement management and profile wall', () => {
         assert.equal(h.viewers[0].opened.length, 1);
         assert.deepEqual(JSON.parse(JSON.stringify(h.viewers[0].opened[0].artwork)), {
             imageUrl: items[1].imageUrl, name: '十题斩', description: '题库累计AC10道题', unlockedAt: '',
+            thumbnailUrl: items[1].thumbnailUrl,
         });
         assert.strictEqual(h.viewers[0].opened[0].trigger, tile);
         assert.equal(tile.getAttribute('aria-haspopup'), 'dialog');
         assert.match(tile.getAttribute('aria-label'), /点击查看高清图/);
-        assert.deepEqual(h.viewers[0].preloads, [items[1].imageUrl]);
         assert.equal(h.requests.length, 0);
         assert.equal(h.audio.length, 0);
         assert.equal(tooltip.querySelector('.achievement-wall__tooltip-eyebrow').textContent, '本系列最高成就');
@@ -314,7 +313,7 @@ describe('achievement management and profile wall', () => {
         assert.equal(h.document.querySelector('[data-achievement-pending]'), null);
     });
 
-    it('prewarms only the deliberately hovered original and cancels fleeting hover or removed content', async (t) => {
+    it('keeps hover and focus descriptive without fetching originals and passes the displayed thumbnail only on click', async (t) => {
         const h = fixture({ wall: true }); t.after(h.close);
         const wall = h.document.querySelector('[data-achievement-wall]');
         const tile = wall.querySelectorAll('[data-achievement-tile]')[1];
@@ -323,20 +322,25 @@ describe('achievement management and profile wall', () => {
             Object.defineProperty(event, 'pointerType', { value: type });
             tile.dispatchEvent(event);
         };
-        assert.deepEqual(h.viewers[0].preloads, [], 'initial page load retains thumbnails only');
+        assert.equal(h.viewers[0].opened.length, 0, 'initial page load retains thumbnails only');
         pointer('pointerenter'); pointer('pointerleave');
         await new Promise((resolve) => setTimeout(resolve, 160));
-        assert.deepEqual(h.viewers[0].preloads, []);
         pointer('pointerenter', 'touch');
         assert.equal(wall.querySelector('[data-achievement-tooltip]').hidden, true);
         pointer('pointerenter');
+        tile.focus();
         assert.equal(wall.querySelector('[data-achievement-tooltip]').hidden, false);
         await new Promise((resolve) => setTimeout(resolve, 160));
-        assert.deepEqual(h.viewers[0].preloads, [items[1].imageUrl]);
-        assert.equal(h.viewers[0].opened.length, 0, 'hover only explains and prewarms');
-        pointer('pointerenter'); h.exports.disposeAchievementWall(wall);
-        await new Promise((resolve) => setTimeout(resolve, 160));
-        assert.deepEqual(h.viewers[0].preloads, [items[1].imageUrl]);
+        assert.equal(h.viewers[0].opened.length, 0, 'hover and focus never start a full image request');
+        assert.equal(h.requests.length, 0);
+        const currentThumbnail = 'https://images.test/cached-thumb.webp?v=3';
+        Object.defineProperty(tile.querySelector('img'), 'currentSrc', { value: currentThumbnail });
+        tile.click();
+        assert.equal(h.viewers[0].opened[0].artwork.thumbnailUrl, currentThumbnail);
+        assert.equal(h.viewers[0].opened[0].artwork.imageUrl, items[1].imageUrl);
+        h.exports.disposeAchievementWall(wall);
+        tile.click();
+        assert.equal(h.viewers[0].opened.length, 1);
         assert.equal(h.viewers[0].disposed, true);
     });
 
@@ -373,7 +377,6 @@ describe('achievement management and profile wall', () => {
         assert.equal(h.document.querySelector('[data-achievement-tile]:not([hidden])').hasAttribute('data-achievement-pending'), false);
         assert.equal(h.document.querySelector('.is-entering'), null);
         assert.equal(h.document.querySelector('img[src="https://images.test/full.png"]'), null);
-        assert.deepEqual(h.viewers[0].preloads, []);
         assert.equal(h.viewers[0].opened.length, 0);
     });
 

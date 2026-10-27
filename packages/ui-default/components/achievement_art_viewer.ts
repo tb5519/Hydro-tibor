@@ -1,5 +1,6 @@
 export interface AchievementArtwork {
   imageUrl: string;
+  thumbnailUrl?: string;
   name: string;
   description: string;
   unlockedAt?: string | Date;
@@ -8,12 +9,13 @@ export interface AchievementArtwork {
 interface ArtworkEntry {
   promise: Promise<HTMLImageElement | null>;
   cancel: () => void;
+  ready?: HTMLImageElement;
 }
 
 const activeViewers = new WeakMap<Document, (restoreFocus: boolean) => void>();
 const CACHE_LIMIT = 6;
 const LOAD_TIMEOUT_MS = 20_000;
-const STATUS_DELAY_MS = 180;
+const WELCOME_EXIT_MS = 480;
 const EXIT_MS = 280;
 let nextId = 0;
 
@@ -31,15 +33,9 @@ export function createAchievementArtworkViewer(doc: Document = document) {
     } catch { return ''; }
   }
 
-  function load(url: string) {
-    const existing = cache.get(url);
-    if (existing) {
-      cache.delete(url);
-      cache.set(url, existing);
-      return existing.promise;
-    }
+  function decodedImage(url: string, className: string): ArtworkEntry {
     const image = doc.createElement('img');
-    image.className = 'achievement-art-viewer__image';
+    image.className = className;
     image.decoding = 'async';
     image.draggable = false;
     let settled = false;
@@ -53,16 +49,14 @@ export function createAchievementArtworkViewer(doc: Document = document) {
       win.clearTimeout(timer);
       image.onload = null;
       image.onerror = null;
-      if (!success) {
-        image.removeAttribute('src');
-        if (cache.get(url) === entry) cache.delete(url);
-      }
+      if (!success) image.removeAttribute('src');
+      else entry.ready = image;
       resolve(success ? image : null);
     };
     const timer = win.setTimeout(() => finish(false), LOAD_TIMEOUT_MS);
     const entry: ArtworkEntry = {
       promise,
-      cancel: () => { finish(false); image.removeAttribute('src'); },
+      cancel: () => { finish(false); entry.ready = undefined; image.removeAttribute('src'); },
     };
     const loaded = () => {
       if (settled || decoding) return;
@@ -75,7 +69,23 @@ export function createAchievementArtworkViewer(doc: Document = document) {
     };
     image.onload = loaded;
     image.onerror = () => finish(false);
+    image.src = url;
+    if (image.complete) loaded();
+    return entry;
+  }
+
+  function load(url: string) {
+    const existing = cache.get(url);
+    if (existing) {
+      cache.delete(url);
+      cache.set(url, existing);
+      return existing.promise;
+    }
+    const entry = decodedImage(url, 'achievement-art-viewer__image');
     cache.set(url, entry);
+    void entry.promise.then((image) => {
+      if (!image && cache.get(url) === entry) cache.delete(url);
+    });
     while (cache.size > CACHE_LIMIT) {
       const oldest = [...cache.keys()].find((key) => key !== current?.url && key !== url);
       if (!oldest) break;
@@ -83,15 +93,7 @@ export function createAchievementArtworkViewer(doc: Document = document) {
       cache.delete(oldest);
       removed.cancel();
     }
-    image.src = url;
-    if (image.complete) loaded();
-    return promise;
-  }
-
-  function preload(value: string) {
-    if (disposed) return;
-    const url = imageUrl(value);
-    if (url) void load(url);
+    return entry.promise;
   }
 
   function open(artwork: AchievementArtwork, trigger?: HTMLElement) {
@@ -121,11 +123,19 @@ export function createAchievementArtworkViewer(doc: Document = document) {
     ambient.setAttribute('aria-hidden', 'true');
     const content = element('div', 'content');
     const art = element('div', 'art');
-    const status = element('span', 'status');
-    status.hidden = true;
+    const welcome = element('div', 'welcome');
+    welcome.setAttribute('aria-hidden', 'true');
+    welcome.append(element('span', 'aura'), element('span', 'ring'));
+    for (let index = 0; index < 6; index++) {
+      const spark = element('span', 'spark');
+      spark.style.setProperty('--spark-i', String(index));
+      spark.dataset.index = String(index);
+      welcome.append(spark);
+    }
+    const status = element('span', 'status', '正在呈现成就高清图');
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
-    art.append(status);
+    art.append(welcome, status);
     const copy = element('div', 'copy');
     const title = element('h2', 'title', artwork.name);
     title.id = `${id}-title`;
@@ -149,6 +159,11 @@ export function createAchievementArtworkViewer(doc: Document = document) {
     let armed = false;
     let exitTimer: number | undefined;
     let artworkFrame: number | undefined;
+    let welcomeTimer: number | undefined;
+    let thumbnail: ArtworkEntry | undefined;
+    let thumbnailVisible = false;
+    let hdDecoded = false;
+    let welcomeDone = false;
     const background: Array<{ node: HTMLElement; inert: boolean; hidden: string | null }> = [];
     // Native modal dialogs provide the top layer and platform inert handling.
     // The fallback also traps input/focus when a browser lacks inert support.
@@ -171,19 +186,25 @@ export function createAchievementArtworkViewer(doc: Document = document) {
     doc.documentElement.style.overflow = 'hidden';
     dialog.focus({ preventScroll: true });
 
-    const statusTimer = win.setTimeout(() => {
-      if (finished || leaving || !dialog.classList.contains('is-loading')) return;
-      status.textContent = '正在载入高清原图…';
-      status.hidden = false;
-    }, STATUS_DELAY_MS);
     const frame = win.requestAnimationFrame(() => {
       if (!finished && !leaving) dialog.classList.add('is-visible');
     });
+    const finishWelcome = () => {
+      welcomeDone = true;
+      win.clearTimeout(welcomeTimer);
+      thumbnail?.cancel();
+      welcome.removeEventListener('transitionend', onWelcomeTransitionEnd);
+      welcome.remove();
+    };
+    const onWelcomeTransitionEnd = (event: TransitionEvent) => {
+      if (event.target === welcome && event.propertyName === 'opacity' && dialog.classList.contains('is-ready')) finishWelcome();
+    };
+    welcome.addEventListener('transitionend', onWelcomeTransitionEnd);
     const block = (event: Event) => { event.preventDefault(); event.stopImmediatePropagation(); };
     const cleanup = (restoreFocus: boolean) => {
       if (finished) return;
       finished = true;
-      win.clearTimeout(statusTimer);
+      finishWelcome();
       win.clearTimeout(exitTimer);
       win.cancelAnimationFrame(frame);
       if (artworkFrame !== undefined) win.cancelAnimationFrame(artworkFrame);
@@ -215,7 +236,7 @@ export function createAchievementArtworkViewer(doc: Document = document) {
     const dismiss = () => {
       if (!armed || finished || leaving) return;
       leaving = true;
-      win.clearTimeout(statusTimer);
+      if (!thumbnailVisible) thumbnail?.cancel();
       if (artworkFrame !== undefined) win.cancelAnimationFrame(artworkFrame);
       dialog.classList.add('is-leaving');
       exitTimer = win.setTimeout(() => cleanup(true), reducedMotion ? 60 : EXIT_MS);
@@ -245,11 +266,22 @@ export function createAchievementArtworkViewer(doc: Document = document) {
     // Ignore the event that opened the layer, even if open() was called from
     // an ancestor's capture listener. Subsequent input can close while loading.
     void Promise.resolve().then(() => { armed = true; });
-    void (url ? load(url) : Promise.resolve(null)).then((image) => {
+    const original = url ? load(url) : Promise.resolve(null);
+    const outlineUrl = artwork.thumbnailUrl && imageUrl(artwork.thumbnailUrl);
+    if (outlineUrl && !cache.get(url)?.ready) {
+      thumbnail = decodedImage(outlineUrl, 'achievement-art-viewer__silhouette');
+      void thumbnail.promise.then((image) => {
+        if (!image || finished || leaving || hdDecoded || welcomeDone) return;
+        image.alt = '';
+        image.setAttribute('aria-hidden', 'true');
+        welcome.append(image);
+        thumbnailVisible = true;
+      });
+    }
+    void original.then((image) => {
       if (finished || leaving) return;
-      win.clearTimeout(statusTimer);
-      dialog.classList.remove('is-loading');
-      dialog.setAttribute('aria-busy', 'false');
+      hdDecoded = true;
+      if (!thumbnailVisible) thumbnail?.cancel();
       if (image) {
         image.alt = artwork.name;
         status.hidden = true;
@@ -260,10 +292,17 @@ export function createAchievementArtworkViewer(doc: Document = document) {
           if (finished || leaving) return;
           artworkFrame = win.requestAnimationFrame(() => {
             artworkFrame = undefined;
-            if (!finished && !leaving) dialog.classList.add('is-ready');
+            if (finished || leaving) return;
+            dialog.classList.remove('is-loading');
+            dialog.setAttribute('aria-busy', 'false');
+            dialog.classList.add('is-ready');
+            welcomeTimer = win.setTimeout(finishWelcome, reducedMotion ? 60 : WELCOME_EXIT_MS);
           });
         });
       } else {
+        finishWelcome();
+        dialog.classList.remove('is-loading');
+        dialog.setAttribute('aria-busy', 'false');
         dialog.classList.add('is-error');
         status.textContent = '高清图片暂时无法加载';
         status.hidden = false;
@@ -284,5 +323,5 @@ export function createAchievementArtworkViewer(doc: Document = document) {
     onPageHide();
     win.removeEventListener('pagehide', onPageHide);
   }
-  return { preload, open, dispose };
+  return { open, dispose };
 }
