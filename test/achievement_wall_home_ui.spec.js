@@ -6,7 +6,7 @@ const { JSDOM } = require('jsdom');
 
 const env = new nunjucks.Environment(new nunjucks.FileSystemLoader(path.join(__dirname, '../packages/ui-default/templates')), { autoescape: true });
 
-function render({ count = 3, total = 64, member = true, artwork = true } = {}) {
+function render({ count = 3, total = 14, member = true, artwork = true } = {}) {
     const items = Array.from({ length: count }, (_, i) => ({
         id: `award-${i}`, name: `成就 ${i + 1}`, description: `达成要求 ${i + 1}`,
         thumbnailUrl: artwork ? `https://objects.test/thumb-${i}.webp` : '',
@@ -22,19 +22,22 @@ function render({ count = 3, total = 64, member = true, artwork = true } = {}) {
 }
 
 describe('homepage achievement wall', () => {
-    it('places the complete earned collection between personal statistics and AC difficulty using only thumbnails', (t) => {
-        const dom = render({ count: 64 }); t.after(() => dom.window.close());
+    it('places the highest earned achievement from each series between personal statistics and AC difficulty using only thumbnails', (t) => {
+        const dom = render({ count: 14 }); t.after(() => dom.window.close());
         const document = dom.window.document;
         const wall = document.querySelector('[data-achievement-wall]');
         assert.equal(wall.previousElementSibling.className, 'homepage-personal__stats');
         assert.equal(wall.nextElementSibling.className, 'profile-ac-difficulty');
-        assert.equal(wall.querySelectorAll('[data-achievement-tile]').length, 64);
+        assert.equal(wall.querySelectorAll('[data-achievement-tile]').length, 14);
         assert.equal(wall.querySelector('[data-achievement-count]').textContent, '0');
-        assert.match(wall.querySelector('.achievement-wall__count').textContent, /\/ 64/);
-        assert.equal(wall.querySelector('.achievement-wall__count').getAttribute('aria-label'), '已解锁 64 / 64 项成就');
-        assert.equal(wall.querySelectorAll('[data-achievement-pending]').length, 64);
+        assert.match(wall.querySelector('.achievement-wall__count').textContent, /\/ 14/);
+        assert.equal(wall.querySelector('.achievement-wall__count').getAttribute('aria-label'), '已点亮 14 / 14 个成就系列');
+        assert.equal(wall.querySelectorAll('[data-achievement-pending]').length, 14);
+        assert.equal(wall.querySelector('.achievement-wall__count small').textContent, '系列');
+        assert.equal(wall.querySelector('[data-achievement-count-label]').dataset.achievementTotal, '14');
+        assert.match(wall.querySelector('.achievement-wall__tooltip-eyebrow').textContent, /本系列最高成就/);
         assert.equal(wall.querySelector('header').hidden, false);
-        assert.match(wall.querySelector('.achievement-wall__intro').textContent, /每一次突破/);
+        assert.match(wall.querySelector('.achievement-wall__intro').textContent, /每个系列.*最高成就/);
         for (const img of wall.querySelectorAll('img')) {
             assert.match(img.src, /\/thumb-\d+\.webp$/);
             assert.equal(img.getAttribute('loading'), 'eager');
@@ -58,11 +61,11 @@ describe('homepage achievement wall', () => {
     });
 
     it('takes its denominator from the server and uses zero when the catalogue total is unavailable', (t) => {
-        for (const total of [72, 0, null]) {
+        for (const total of [14, 15, 0, null]) {
             const dom = render({ count: 0, total }); t.after(() => dom.window.close());
             const count = dom.window.document.querySelector('.achievement-wall__count');
-            assert.match(count.textContent, new RegExp(`/ ${total || 0}$`));
-            assert.equal(count.getAttribute('aria-label'), `已解锁 0 / ${total || 0} 项成就`);
+            assert.match(count.textContent, new RegExp(`/ ${total || 0} 系列$`));
+            assert.equal(count.getAttribute('aria-label'), `已点亮 0 / ${total || 0} 个成就系列`);
         }
     });
 

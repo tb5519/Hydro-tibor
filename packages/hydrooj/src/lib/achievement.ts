@@ -8,13 +8,14 @@ import type { DomainDoc, ProblemDoc, RecordDoc } from '../interface';
 import type { DailyQuizSession } from '../model/daily_quiz';
 import workspace from '../model/workspace';
 import {
-    ACHIEVEMENT_CATALOG, AchievementMetrics, evaluateAchievementProgress,
+    ACHIEVEMENT_CATALOG, ACHIEVEMENT_EXPANSION_IDS, AchievementMetrics, evaluateAchievementProgress,
+    getAchievementSeriesId, getAchievementTier, selectHighestAchievements,
 } from './achievement_catalog';
 
 type AchievementDomain = Pick<DomainDoc, '_id' | 'workspaceId' | 'owner'>;
 const LEASE_MS = 120_000;
 const MAX_PENDING = 10;
-const STATE_VERSION = 3;
+const STATE_VERSION = 4;
 const DAY_MS = 86_400_000;
 const BEIJING_OFFSET_MS = 8 * 3600_000;
 const logger = new Logger('achievement');
@@ -43,6 +44,8 @@ interface AchievementUnlock {
     historical: boolean;
     pending: boolean;
     acknowledgedAt?: Date;
+    supersededAt?: Date;
+    supersededBy?: string;
 }
 
 interface AchievementDay {
@@ -57,6 +60,10 @@ interface AchievementDay {
     acceptedAt: Date;
 }
 
+interface WeeklyAchievement extends AchievementDay {
+    pid: number;
+}
+
 interface AchievementState {
     _id: string;
     scope?: string;
@@ -66,6 +73,8 @@ interface AchievementState {
     pointSource?: 'account' | 'legacy';
     importedAt?: Date;
     version?: number;
+    weeklyBest?: number;
+    baselineWeeklyBest?: number;
     lease?: { owner: string, expiresAt: Date };
 }
 
@@ -73,6 +82,7 @@ declare module '../service/db' {
     interface Collections {
         'achievement.solved': SolvedAchievement;
         'achievement.day': AchievementDay;
+        'achievement.weekly': WeeklyAchievement;
         'achievement.unlock': AchievementUnlock;
         'achievement.state': AchievementState;
     }
@@ -88,6 +98,28 @@ function nonnegative(value: unknown) {
 
 function achievementDifficulty(value: unknown) {
     return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 10 ? value : 0;
+}
+
+function highestAchievementGrants(grants: AchievementUnlock[]) {
+    return selectHighestAchievements(grants.map((grant) => ({ ...grant, id: grant.achievementId })));
+}
+
+/** Keep the earned history, but retire announcements replaced by an already earned higher tier. */
+async function supersedeAchievementAnnouncements(ctx: Context, grants: AchievementUnlock[], now: Date) {
+    const definitions = new Map(ACHIEVEMENT_CATALOG.map((achievement) => [achievement.id, achievement]));
+    const highest = new Map(highestAchievementGrants(grants).map((grant) => [
+        getAchievementSeriesId(definitions.get(grant.achievementId)!), grant,
+    ]));
+    const updates = grants.filter((grant) => grant.pending).flatMap((grant) => {
+        const definition = definitions.get(grant.achievementId);
+        const winner = definition && highest.get(getAchievementSeriesId(definition));
+        if (!winner || winner.achievementId === grant.achievementId) return [];
+        return [{ updateOne: {
+            filter: { _id: grant._id, scope: grant.scope, uid: grant.uid, pending: true },
+            update: { $set: { pending: false, supersededAt: now, supersededBy: winner.achievementId } },
+        } }];
+    });
+    if (updates.length) await ctx.db.collection('achievement.unlock').bulkWrite(updates);
 }
 
 export function getAchievementScope(domain: Pick<DomainDoc, '_id' | 'workspaceId'>) {
@@ -116,6 +148,7 @@ export function initializeAchievementSystem(ctx: Context) { return initializeAch
 
 /** New streak milestones have their own rollout baseline; the original fifty keep theirs. */
 export function initializeStreakAchievements(ctx: Context) { return initializeAchievementClock(ctx, 'streak-activation'); }
+export function initializeAchievementExpansion(ctx: Context) { return initializeAchievementClock(ctx, 'catalog-expansion-activation'); }
 
 async function withUserLock<T>(ctx: Context, scope: string, uid: number, callback: () => Promise<T>) {
     const coll = ctx.db.collection('achievement.state');
@@ -301,6 +334,81 @@ function streakMetrics(days: AchievementDay[], data: Awaited<ReturnType<typeof g
     return { streakBest: best, streakNextAc: next };
 }
 
+/** Unlike the first-AC ledger, later ACs of the same problem can contribute to a later seven-day window. */
+async function importWeeklyAcceptances(ctx: Context, scope: string, uid: number, records: any[], problems: Map<string, any>) {
+    const additions = new Map<string, WeeklyAchievement>();
+    for (const record of records) {
+        const problem = problems.get(`${record.domainId}:${record.pid}`);
+        if (!isRealAcceptance(record) || !problem || problem.objectiveKind) continue;
+        const submittedAt = record._id.getTimestamp();
+        const day = beijingDay(submittedAt);
+        const acceptedAt = record.judgeAt || submittedAt;
+        const practiceContestId = record.practiceContest?.toString();
+        const contestId = practiceContestId ? '' : record.contest?.toString() || '';
+        const _id = hash(['weekly', scope, uid, record.domainId, record.pid, day, contestId, ...(practiceContestId ? [practiceContestId] : [])]);
+        const previous = additions.get(_id);
+        if (!previous || previous.acceptedAt > acceptedAt) additions.set(_id, {
+            _id, scope, uid, domainId: record.domainId, pid: record.pid, contestId, day, acceptedAt,
+            ...(practiceContestId ? { practiceContestId } : {}),
+        });
+    }
+    if (additions.size) await ctx.db.collection('achievement.weekly').bulkWrite([...additions.values()].map(({ acceptedAt, ...entry }) => ({
+        updateOne: { filter: { _id: entry._id }, update: { $setOnInsert: entry, $min: { acceptedAt } }, upsert: true },
+    })));
+}
+
+/** Reference counts retain a problem when an older AC leaves the window but a newer one is still inside it. */
+function weeklyWindow() {
+    const counts = new Map<string, number>();
+    let queue: { day: number; problem: string }[] = [];
+    let head = 0;
+    let best = 0;
+    const discardBefore = (day: number) => {
+        while (head < queue.length && queue[head].day < day) {
+            const key = queue[head++].problem;
+            const count = counts.get(key)! - 1;
+            if (count) counts.set(key, count);
+            else counts.delete(key);
+        }
+        if (head >= 1024 && head > queue.length / 2) {
+            queue = queue.slice(head);
+            head = 0;
+        }
+    };
+    return {
+        add(entry: WeeklyAchievement) {
+            discardBefore(entry.day - 6);
+            const problem = JSON.stringify([entry.domainId, entry.pid]);
+            queue.push({ day: entry.day, problem });
+            counts.set(problem, (counts.get(problem) || 0) + 1);
+            best = Math.max(best, counts.size);
+        },
+        result(today: number) {
+            discardBefore(today - 6);
+            return { best, current: counts.size };
+        },
+    };
+}
+
+/** Consume the ordered, compact per-user ledger once; memory is bounded by the active seven-day window. */
+async function weeklyMetrics(
+    entries: AsyncIterable<WeeklyAchievement>, data: Awaited<ReturnType<typeof getScopeData>>, now: Date, historicalAt: Date,
+) {
+    const local = new Set(data.domainIds);
+    const today = beijingDay(now);
+    const historicalDay = beijingDay(historicalAt);
+    const current = weeklyWindow();
+    const historical = weeklyWindow();
+    for await (const entry of entries) {
+        if (!local.has(entry.domainId)
+            && !data.contestsById.get(`${entry.domainId}:${entry.practiceContestId || entry.contestId}`)?.allDomains) continue;
+        if (entry.acceptedAt <= now && entry.day <= today) current.add(entry);
+        if (entry.acceptedAt <= historicalAt && entry.day <= historicalDay) historical.add(entry);
+    }
+    const result = current.result(today);
+    return { weeklyAcBest: result.best, weeklyAcCurrent: result.current, historicalBest: historical.result(historicalDay).best };
+}
+
 function metricsFromSolves(
     solves: SolvedAchievement[], data: Awaited<ReturnType<typeof getScopeData>>, now: Date, points: number,
 ): AchievementMetrics {
@@ -396,8 +504,8 @@ export async function isAchievementRecordReady(ctx: Context, record: RecordDoc) 
 
 export async function syncUserAchievements(ctx: Context, domain: AchievementDomain, uid: number, options: SyncAchievementOptions = {}) {
     if (!await canViewUserAchievements(ctx, domain, uid)) return [];
-    const [activatedAt, streakActivatedAt] = await Promise.all([
-        initializeAchievementSystem(ctx), initializeStreakAchievements(ctx),
+    const [activatedAt, streakActivatedAt, expansionActivatedAt] = await Promise.all([
+        initializeAchievementSystem(ctx), initializeStreakAchievements(ctx), initializeAchievementExpansion(ctx),
     ]);
     const scope = getAchievementScope(domain);
     return withUserLock(ctx, scope, uid, async () => {
@@ -426,6 +534,12 @@ export async function syncUserAchievements(ctx: Context, domain: AchievementDoma
         }
         const solves = await importAcceptances(ctx, scope, uid, records, problemMap);
         const days = await importAchievementDays(ctx, scope, uid, records, problemMap);
+        await importWeeklyAcceptances(ctx, scope, uid, records, problemMap);
+        const weekly = await weeklyMetrics(ctx.db.collection('achievement.weekly').find({ scope, uid }, { projection: {
+            _id: 0, domainId: 1, pid: 1, day: 1, acceptedAt: 1, contestId: 1, practiceContestId: 1,
+        } }).sort({ day: 1 }), data, now, expansionActivatedAt);
+        const weeklyBest = Math.max(nonnegative(state?.weeklyBest), weekly.weeklyAcBest);
+        const baselineWeeklyBest = Math.max(nonnegative(state?.baselineWeeklyBest), weekly.historicalBest);
         const { points, historicalPoints, source: pointSource } = await pointMetrics(ctx, uid, data, activatedAt);
         // The former visibility filter excluded historical contest points from
         // the baseline. Reconcile it once without rewriting existing grants.
@@ -434,11 +548,17 @@ export async function syncUserAchievements(ctx: Context, domain: AchievementDoma
             ? Math.max(state?.baselinePoints || 0, historicalPoints) : (state?.baselinePoints ?? historicalPoints);
         const progress = evaluateAchievementProgress({
             ...metricsFromSolves(solves, data, now, points), ...streakMetrics(days, data, now),
+            weeklyAcBest: weeklyBest, weeklyAcCurrent: weekly.weeklyAcCurrent,
         });
         const historical = new Set(evaluateAchievementProgress({
             ...metricsFromSolves(solves, data, activatedAt, baselinePoints), ...streakMetrics(days, data, streakActivatedAt),
         })
-            .filter((item) => item.achieved).map((item) => item.id));
+            .filter((item) => item.achieved && !ACHIEVEMENT_EXPANSION_IDS.has(item.id)).map((item) => item.id));
+        for (const item of evaluateAchievementProgress({
+            ...metricsFromSolves(solves, data, expansionActivatedAt, 0), weeklyAcBest: baselineWeeklyBest,
+        })) {
+            if (item.achieved && ACHIEVEMENT_EXPANSION_IDS.has(item.id)) historical.add(item.id);
+        }
         for (const achievement of progress.filter((item) => item.achieved)) {
             const old = historical.has(achievement.id);
             await ctx.db.collection('achievement.unlock').updateOne({ _id: hash(['unlock', scope, uid, achievement.id]) }, { $setOnInsert: {
@@ -447,10 +567,11 @@ export async function syncUserAchievements(ctx: Context, domain: AchievementDoma
             } }, { upsert: true });
         }
         await ctx.db.collection('achievement.state').updateOne({ _id: stateId }, {
-            $set: { baselinePoints, pointSource, importedAt: now, version: STATE_VERSION },
+            $set: { baselinePoints, pointSource, importedAt: now, version: STATE_VERSION, weeklyBest, baselineWeeklyBest },
         });
-        const unlocked = new Map((await ctx.db.collection('achievement.unlock').find({ scope, uid }).toArray())
-            .map((item) => [item.achievementId, item]));
+        const grants = await ctx.db.collection('achievement.unlock').find({ scope, uid }).toArray();
+        await supersedeAchievementAnnouncements(ctx, grants, now);
+        const unlocked = new Map(grants.map((item) => [item.achievementId, item]));
         return progress.map(({ achieved, ...achievement }) => ({
             ...achievement, progress: unlocked.has(achievement.id) ? achievement.target : achievement.progress,
             unlocked: unlocked.has(achievement.id), unlockedAt: unlocked.get(achievement.id)?.unlockedAt,
@@ -468,13 +589,18 @@ export async function getPendingAchievements(
     const selected = achievementIds === undefined ? undefined
         : [...new Set((Array.isArray(achievementIds) ? achievementIds : []).filter((id) => definitions.has(id)))];
     if (selected && !selected.length) return [];
-    const grants = await ctx.db.collection('achievement.unlock').find({
-        scope: getAchievementScope(domain), uid, pending: true,
-        ...(selected ? { achievementId: { $in: selected } } : {}),
-    }).sort({ unlockedAt: 1, _id: 1 }).limit(Math.max(1, Math.min(MAX_PENDING, nonnegative(limit) || 5))).toArray();
-    return grants.filter((item) => definitions.has(item.achievementId)).map((item) => ({
-        ...definitions.get(item.achievementId)!, unlocked: true, unlockedAt: item.unlockedAt,
-    }));
+    const grants = await ctx.db.collection('achievement.unlock').find({ scope: getAchievementScope(domain), uid })
+        .sort({ unlockedAt: 1, _id: 1 }).toArray();
+    // Rank before pending/artwork filters and the limit. An acknowledged or not-yet-
+    // illustrated top tier must never make an obsolete lower tier reappear.
+    return highestAchievementGrants(grants).filter((item) => item.pending && (!selected || selected.includes(item.achievementId)))
+        .slice(0, Math.max(1, Math.min(MAX_PENDING, nonnegative(limit) || 5))).map((item) => {
+            const definition = definitions.get(item.achievementId)!;
+            return {
+                ...definition, unlocked: true, unlockedAt: item.unlockedAt,
+                seriesId: getAchievementSeriesId(definition), seriesRank: getAchievementTier(definition),
+            };
+        });
 }
 
 export async function acknowledgeAchievements(ctx: Context, domain: AchievementDomain, uid: number, ids: string[]) {
@@ -482,8 +608,16 @@ export async function acknowledgeAchievements(ctx: Context, domain: AchievementD
     const allowed = new Set(ACHIEVEMENT_CATALOG.map((item) => item.id));
     const selected = [...new Set((Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && allowed.has(id)))].slice(0, MAX_PENDING);
     if (!selected.length) return;
+    const scope = getAchievementScope(domain);
+    // Do not let an invented/unearned high-tier acknowledgement silence a real lower reward.
+    const earned = await ctx.db.collection('achievement.unlock').find({ scope, uid, achievementId: { $in: selected } }).toArray();
+    const acknowledged = ACHIEVEMENT_CATALOG.filter((definition) => earned.some((grant) => grant.achievementId === definition.id));
+    const covered = ACHIEVEMENT_CATALOG.filter((definition) => acknowledged.some((higher) => (
+        getAchievementSeriesId(definition) === getAchievementSeriesId(higher) && getAchievementTier(definition) <= getAchievementTier(higher)
+    ))).map((definition) => definition.id);
+    if (!covered.length) return;
     await ctx.db.collection('achievement.unlock').updateMany({
-        scope: getAchievementScope(domain), uid, achievementId: { $in: selected }, pending: true,
+        scope, uid, achievementId: { $in: covered }, pending: true,
     }, { $set: { pending: false, acknowledgedAt: new Date() } });
 }
 
@@ -515,7 +649,7 @@ export async function recordAchievementAcceptance(ctx: Context, record: RecordDo
 }
 
 export async function applyAchievementHooks(ctx: Context) {
-    await Promise.all([initializeAchievementSystem(ctx), initializeStreakAchievements(ctx)]);
+    await Promise.all([initializeAchievementSystem(ctx), initializeStreakAchievements(ctx), initializeAchievementExpansion(ctx)]);
     await Promise.all([
         ctx.db.ensureIndexes(ctx.db.collection('achievement.solved'), {
             key: { scope: 1, uid: 1, domainId: 1, pid: 1 }, name: 'achievement_user_solves',
@@ -525,6 +659,14 @@ export async function applyAchievementHooks(ctx: Context) {
         }),
         ctx.db.ensureIndexes(ctx.db.collection('achievement.day'), {
             key: { scope: 1, uid: 1, day: 1 }, name: 'achievement_user_days',
+        }),
+        ctx.db.ensureIndexes(ctx.db.collection('achievement.weekly'), {
+            key: { scope: 1, uid: 1, day: 1 }, name: 'achievement_weekly_days',
+        }, {
+            key: { scope: 1, uid: 1, domainId: 1, pid: 1, day: 1 }, name: 'achievement_weekly_problem',
+        }),
+        ctx.db.ensureIndexes(ctx.db.collection('record'), {
+            key: { uid: 1, status: 1, judgeAt: 1, domainId: 1 }, name: 'achievement_record_incremental',
         }),
     ]);
     ctx.on('record/judge', async (record, _updated, problem) => {

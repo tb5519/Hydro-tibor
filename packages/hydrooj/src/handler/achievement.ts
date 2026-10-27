@@ -5,7 +5,10 @@ import {
     acknowledgeAchievements, applyAchievementHooks, getAchievementRecord, getAchievementScope,
     getPendingAchievements, isAchievementContestSubmission, isAchievementRecordReady, syncUserAchievements,
 } from '../lib/achievement';
-import { ACHIEVEMENT_CATALOG } from '../lib/achievement_catalog';
+import {
+    ACHIEVEMENT_CATALOG, ACHIEVEMENT_SERIES_COUNT, getAchievementSeriesId,
+    getAchievementTier, selectHighestAchievements,
+} from '../lib/achievement_catalog';
 import {
     ACHIEVEMENT_IMAGE_LIMIT, achievementDefinition, getAchievementArtwork, presentAchievements,
     removeAchievementImage, setAchievementImage,
@@ -190,14 +193,19 @@ type AchievementProgress = Awaited<ReturnType<typeof syncUserAchievements>>;
 
 /** Prewarming is a read-only prediction; only the ordinary AC pipeline grants achievements. */
 async function nextAchievementImages(handler: Handler, progress: AchievementProgress, artwork: any[]) {
-    const close = progress.filter((item) => !item.unlocked && (item.category === 'streak'
-        ? Number.isFinite(item.nextAcProgress) && item.nextAcProgress >= item.target
-        : Number.isFinite(item.progress) && item.target - item.progress === 1));
+    const earnedTiers = new Map(selectHighestAchievements(progress.filter((item) => item.unlocked))
+        .map((item) => [getAchievementSeriesId(item), getAchievementTier(item)]));
+    const close = progress.filter((item) => {
+        if (item.unlocked || getAchievementTier(item) <= (earnedTiers.get(getAchievementSeriesId(item)) ?? 0)) return false;
+        if (item.category === 'streak') return Number.isFinite(item.nextAcProgress) && item.nextAcProgress >= item.target;
+        const value = item.category === 'weekly_ac' ? item.currentWindowProgress : item.progress;
+        return Number.isFinite(value) && item.target - value === 1;
+    });
     if (!close.length) return [];
     let candidates: AchievementProgress;
     if (handler.response.template === 'main.html') {
         // Do not fetch all ten first-difficulty originals for a new account.
-        candidates = close.filter((item) => item.category === 'streak'
+        candidates = close.filter((item) => ['streak', 'weekly_ac'].includes(item.category)
             || (item.progress > 0 && ['solved', 'mastery'].includes(item.category)));
     } else {
         const { pdoc, tdoc, mode } = handler.response.body;
@@ -209,15 +217,22 @@ async function nextAchievementImages(handler: Handler, progress: AchievementProg
         // Cross-domain linked questions cannot change this independent domain's progress.
         if (scope !== 'legacy' && domainId !== handler.domain._id) return [];
         const now = new Date();
+        const today = Math.floor((now.getTime() + 8 * 3600_000) / 86_400_000);
         const solved = handler.ctx.db.collection('achievement.solved');
-        const [alreadySolved, participant] = await Promise.all([
+        const [alreadySolved, participant, alreadySolvedThisWeek] = await Promise.all([
             solved.findOne({ scope, uid, domainId, pid: pdoc.docId, acceptedAt: { $lte: now } }),
             tdoc?.docId ? (handler.ctx.db.collection('document.status') as any).findOne({
                 docType: 30, domainId: tdoc.domainId || domainId, docId: tdoc.docId, uid,
             }) : null,
+            close.some((item) => item.category === 'weekly_ac')
+                ? handler.ctx.db.collection('achievement.weekly').findOne({
+                    scope, uid, domainId, pid: pdoc.docId, day: { $gte: today - 6, $lte: today }, acceptedAt: { $lte: now },
+                }) : null,
         ]);
         if (tdoc && scope !== 'legacy' && participant?.entryDomainId && participant.entryDomainId !== handler.domain._id) return [];
-        candidates = close.filter((item) => item.category === 'streak' || (!alreadySolved && (item.category === 'solved'
+        candidates = close.filter((item) => item.category === 'streak'
+            || (item.category === 'weekly_ac' && !alreadySolvedThisWeek)
+            || (!alreadySolved && (item.category === 'solved'
             || (['difficulty', 'mastery'].includes(item.category) && item.difficulty === pdoc.difficulty))));
         if (tdoc && (tdoc.domainId || domainId) === domainId
             && isAchievementContestSubmission(tdoc, participant, { pid: pdoc.docId, submittedAt: now })) {
@@ -231,7 +246,8 @@ async function nextAchievementImages(handler: Handler, progress: AchievementProg
         }
     }
     const byId = new Map(artwork.map((item) => [item.id, item.imageUrl]));
-    return [...new Set(candidates.map((item) => byId.get(item.id)).filter((url): url is string => !!url))].slice(0, 6);
+    return [...new Set(selectHighestAchievements(candidates).map((item) => byId.get(item.id))
+        .filter((url): url is string => !!url))].slice(0, 6);
 }
 
 export class AchievementPendingHandler extends Handler {
@@ -293,10 +309,10 @@ export async function injectAchievementContext(handler: Handler) {
         try {
             const progress = await syncUserAchievements(handler.ctx, handler.domain, wallUid);
             if (wallUid === handler.user._id) ownProgress = progress;
-            const earned = progress.filter((entry) => entry.unlocked);
+            const earned = selectHighestAchievements(progress.filter((entry) => entry.unlocked));
             handler.response.body.achievementWall = {
                 items: await presentAchievements(handler.ctx, handler.domain, earned),
-                total: ACHIEVEMENT_CATALOG.length, unlocked: earned.length,
+                total: ACHIEVEMENT_SERIES_COUNT, unlocked: earned.length,
             };
         } catch (error) {
             logger.warn('Unable to load achievement wall: %o', error);

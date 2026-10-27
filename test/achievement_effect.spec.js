@@ -460,6 +460,131 @@ it('refreshes pending awards after successive points events without redisplaying
     f.dom.window.close();
 });
 
+it('shows only the highest rank per series while keeping mastery difficulties independent', async () => {
+    const level = (id, seriesId, seriesRank) => ({ ...award, id, name: id, seriesId, seriesRank });
+    const awards = [
+        level('difficulty-1', 'difficulty', 1), level('difficulty-10', 'difficulty', 10),
+        level('solved-10', 'solved', 10), level('solved-100', 'solved', 100),
+        level('mastery-4-50', 'mastery-4', 50), level('mastery-4-10', 'mastery-4', 10),
+        level('mastery-5-10', 'mastery-5', 10), level('streak-14', 'streak', 14),
+        level('streak-7', 'streak', 7),
+    ];
+    const f = fixture({ awards });
+    const player = f.create();
+    const task = player.showPending();
+    await f.tick(700);
+    const names = [...f.dialog().querySelectorAll('.achievement-reveal__tile-name')].map((tile) => tile.textContent);
+    assert.equal(names.length, 5);
+    for (const id of ['difficulty-10', 'solved-100', 'mastery-4-50', 'mastery-5-10', 'streak-14']) {
+        assert.ok(names.includes(id), id);
+    }
+    f.tap();
+    await f.tick(360);
+    await task;
+    assert.deepEqual(f.acknowledgements, [['difficulty-10', 'solved-100', 'mastery-4-50', 'mastery-5-10', 'streak-14']]);
+    player.dispose();
+    f.dom.window.close();
+});
+
+it('remembers the highest displayed rank, ignores stale lower levels, and allows a later upgrade', async () => {
+    const points = (rank) => ({ ...award, id: `points-${rank}`, name: `积分 ${rank}`, seriesId: 'points', seriesRank: rank });
+    let awards = [points(3000)];
+    const f = fixture({ fetchPending: async () => ({ achievements: awards, settled: true }) });
+    const player = f.create();
+    const first = player.showPending();
+    await f.tick(700);
+    f.tap();
+    await f.tick(360);
+    await first;
+    awards = [points(1000), points(3000)];
+    await player.showPending();
+    assert.equal(f.dialog(), null, 'neither the already shown tier nor an older tier may replay');
+    awards = [points(1000)];
+    await player.showPending();
+    assert.equal(f.dialog(), null, 'a lower ID alone cannot evade the series watermark');
+    awards = [points(1000), points(5000)];
+    const upgraded = player.showPending();
+    await f.tick(700);
+    assert.ok(f.dialog().textContent.includes('积分 5000'));
+    assert.equal(f.dialog().textContent.includes('积分 1000'), false);
+    f.tap();
+    await f.tick(360);
+    await upgraded;
+    assert.deepEqual(f.acknowledgements, [['points-3000'], ['points-5000']]);
+    player.dispose();
+    f.dom.window.close();
+});
+
+it('replaces prefetched lower tiers upgraded during AC and again during original artwork decoding', async () => {
+    const difficulty = (rank) => ({ ...award, id: `difficulty-${rank}`, name: `难度 ${rank}`,
+        seriesId: 'difficulty', seriesRank: rank, imageUrl: `/original-${rank}.png` });
+    let awards = [difficulty(1)];
+    const f = fixture({ fetchPending: async () => ({ achievements: awards, settled: true }) });
+    const player = f.create();
+    const ac = deferred();
+    const task = player.afterResult('record', ac.promise);
+    await settle();
+    f.images[0].ready();
+    await settle();
+    awards = [difficulty(2)];
+    ac.resolve();
+    await settle();
+    assert.equal(f.dialog(), null);
+    assert.equal(f.images[1].src, 'https://oj.example/original-2.png');
+    awards = [difficulty(3)];
+    f.images[1].ready();
+    await settle();
+    assert.equal(f.dialog(), null);
+    assert.equal(f.images[2].src, 'https://oj.example/original-3.png');
+    f.images[2].ready();
+    await f.tick(700);
+    assert.ok(f.dialog().textContent.includes('难度 3'));
+    assert.equal(f.dialog().querySelector('img'), f.images[2]);
+    assert.equal(f.dialog().querySelector('.achievement-reveal__title').textContent, '难度 3');
+    f.tap();
+    await f.tick(360);
+    await task;
+    assert.deepEqual(f.acknowledgements, [['difficulty-3']]);
+    assert.equal(f.requests.length, 4, 'every replacement artwork is confirmed after its load');
+    player.dispose();
+    f.dom.window.close();
+});
+
+it('drops a prefetched tier read elsewhere while waiting for the lottery result to close', async () => {
+    let awards = [{ ...award, seriesId: 'difficulty', seriesRank: 1 }];
+    let canPresent = false;
+    const f = fixture({ fetchPending: async () => ({ achievements: awards, settled: true }) });
+    const player = f.create({ canPresent: () => canPresent });
+    const task = player.showPending();
+    await f.tick(150);
+    awards = [];
+    canPresent = true;
+    await f.tick(150);
+    await task;
+    assert.equal(f.dialog(), null);
+    assert.deepEqual(f.acknowledgements, [], 'the old list is neither shown nor acknowledged locally');
+    assert.equal(f.requests.length, 2);
+    player.dispose();
+    f.dom.window.close();
+});
+
+it('keeps superseded snapshots unacknowledged when the final series refresh fails', async () => {
+    let reads = 0;
+    const f = fixture({ fetchPending: async () => {
+        if (++reads === 1) return { achievements: [{ ...award, seriesId: 'difficulty', seriesRank: 1 }], settled: true };
+        throw new Error('offline');
+    } });
+    const player = f.create();
+    const task = player.showPending();
+    await f.tick(16000);
+    await task;
+    assert.equal(f.dialog(), null, 'a failed confirmation cannot fall back to a potentially superseded level');
+    assert.deepEqual(f.acknowledgements, []);
+    assert.equal(reads, 7, 'confirmation retries remain bounded');
+    player.dispose();
+    f.dom.window.close();
+});
+
 it('waits for the record settlement marker even when its first achievement is already visible to the server', async () => {
     let reads = 0;
     const points = { ...award, id: 'points-1000', name: '星火觉醒' };

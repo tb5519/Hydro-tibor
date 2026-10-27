@@ -51,6 +51,12 @@ export function prepareAchievementWall(root: HTMLElement, timeoutMs = 8000) {
     return false;
   });
   const count = root.querySelector<HTMLElement>('[data-achievement-count]');
+  const countLabel = root.querySelector<HTMLElement>('[data-achievement-count-label]');
+  const total = Number(countLabel?.dataset.achievementTotal) || 0;
+  const updateCount = (value: number) => {
+    if (count) count.textContent = String(value);
+    countLabel?.setAttribute('aria-label', `已点亮 ${value} / ${total} 个成就系列`);
+  };
   const grid = root.querySelector<HTMLElement>('.achievement-wall__grid');
   const hint = root.querySelector<HTMLElement>('[data-achievement-hint]');
   const ready = new Set<HTMLElement>();
@@ -70,7 +76,7 @@ export function prepareAchievementWall(root: HTMLElement, timeoutMs = 8000) {
   root.removeAttribute('data-achievement-wall-loading');
   root.setAttribute('aria-busy', 'true');
   root.classList.remove('is-ready');
-  if (count) count.textContent = '0';
+  updateCount(0);
   grid?.setAttribute('data-achievement-grid-empty', '');
   if (hint) hint.hidden = true;
   tiles.forEach((tile) => tile.setAttribute('data-achievement-pending', ''));
@@ -87,7 +93,7 @@ export function prepareAchievementWall(root: HTMLElement, timeoutMs = 8000) {
     grid?.removeAttribute('data-achievement-grid-empty');
     if (hint) hint.hidden = false;
     if (count) {
-      count.textContent = String(shown.size);
+      updateCount(shown.size);
       count.classList.remove('is-counting');
       win.clearTimeout(countTimer);
       if (animate && !reducedMotion) {

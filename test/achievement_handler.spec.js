@@ -25,7 +25,9 @@ const art = (id, domain = 'system', version = 'v1') => ({
     thumbnailUrl: `/d/${domain}/achievement/${id}/image?size=384&v=${version}`,
 });
 const matches = (document, query) => Object.entries(query).every(([key, value]) => {
-    if (value && typeof value === 'object' && '$lte' in value) return document[key] <= value.$lte;
+    if (value && typeof value === 'object' && ('$lte' in value || '$gte' in value)) {
+        return (!('$lte' in value) || document[key] <= value.$lte) && (!('$gte' in value) || document[key] >= value.$gte);
+    }
     return String(document[key]) === String(value);
 });
 class Handler {
@@ -167,12 +169,12 @@ describe('achievement management and image handlers', () => {
         ]) await assert.rejects(handlers.checkAchievementManageAccess(handler), PermissionError);
     });
 
-    it('renders all 50 achievements with the correct menu context and private cache headers', async () => {
+    it('keeps all 87 achievement levels editable with the correct menu context and private cache headers', async () => {
         const handler = new handlers.AchievementManageHandler({ domain: modern, path: '/domain/achievement', uid: 90, canManage: true });
         await handler.prepare();
         await handler.get();
         assert.equal(handler.response.template, 'achievement_manage.html');
-        assert.equal(handler.response.body.achievements.length, 64);
+        assert.equal(handler.response.body.achievements.length, 87);
         assert.equal(handler.response.body.achievementBaseTemplate, 'domain_base.html');
         assert.equal(handler.response.body.badgeManageRoute, 'domain_badge_manage');
         assert.deepEqual(handler.response.body.achievementSound, { soundUrl: '', volume: 70, enabled: true, filename: '' });
@@ -478,6 +480,74 @@ describe('achievement pending and acknowledgement handlers', () => {
 });
 
 describe('homepage, profile and live-record integration', () => {
+    it('shows the highest earned level of each series on both walls while retaining separate difficulty mastery series', async () => {
+        fixtures.rows = [
+            progress('difficulty-8', 1, true), progress('solved-10', 1000, true),
+            progress('streak-3', 30, true), progress('mastery-4-10', 100, true),
+            progress('mastery-5-50', 50, true), progress('difficulty-1', 1, true),
+            { ...progress('solved-1000', 1000, true), unlockedAt: new Date('2026-10-01') },
+            progress('streak-30', 30, true), progress('mastery-4-100', 100, true),
+            progress('difficulty-10', 0), progress('streak-40', 30), progress('mastery-5-100', 50),
+        ];
+        const winners = ['difficulty-8', 'mastery-5-50', 'solved-1000', 'streak-30', 'mastery-4-100'];
+        for (const template of ['main.html', 'user_detail.html']) {
+            const handler = new Handler(); handler.response.template = template;
+            handler.response.body.udoc = { _id: 12 };
+            await handlers.injectAchievementContext(handler);
+            const wall = handler.response.body.achievementWall;
+            assert.deepEqual(wall.items.map((item) => item.id), winners);
+            assert.equal(wall.total, 14);
+            assert.equal(wall.unlocked, 5);
+            assert.deepEqual(wall.items.find((item) => item.id === 'solved-1000').unlockedAt, new Date('2026-10-01'));
+        }
+        assert.equal(fixtures.rows.filter((item) => item.unlocked).length, 9, 'display does not erase earned history');
+        assert.equal(calls.some((call) => call[0] === 'ack'), false);
+    });
+
+    it('does not fall back to a covered lower image when the highest earned image is unconfigured', async () => {
+        fixtures.rows = [progress('solved-10', 100, true), progress('solved-100', 100, true)];
+        fixtures.preloadArt = { 'solved-10': art('solved-10') };
+        const handler = new Handler(); handler.response.template = 'user_detail.html';
+        handler.response.body.udoc = { _id: 12 };
+        await handlers.injectAchievementContext(handler);
+        assert.deepEqual(handler.response.body.achievementWall.items.map((item) => [item.id, item.imageUrl]), [['solved-100', '']]);
+    });
+
+    it('prewarms only upgrades above the earned series tier, with mastery independent of first difficulty', async () => {
+        fixtures.rows = [progress('difficulty-8', 1, true), progress('difficulty-4', 0), progress('mastery-4-10', 9)];
+        fixtures.preloadArt = { 'difficulty-4': art('difficulty-4'), 'mastery-4-10': art('mastery-4-10') };
+        const handler = new Handler(); handler.response.template = 'problem_detail.html';
+        handler.response.body = { pdoc: { docId: 100, domainId: 'system', difficulty: 4 } };
+        await handlers.injectAchievementContext(handler);
+        assert.deepEqual(handler.UiContext.achievementImagePreload, [art('mastery-4-10').imageUrl]);
+    });
+
+    it('prewarms weekly upgrades from the current seven days and excludes questions already counted in that window', async () => {
+        fixtures.rows = [{ ...progress('weekly-ac-5', 4), currentWindowProgress: 4 }];
+        fixtures.preloadArt = { 'weekly-ac-5': art('weekly-ac-5') };
+        const today = Math.floor((Date.now() + 8 * 3600000) / 86400000);
+        const entry = { scope: 'legacy', uid: 11, domainId: 'system', pid: 100, acceptedAt: new Date(0) };
+        fixtures.collections = { 'achievement.solved': [entry], 'achievement.weekly': [] };
+        const make = async (template = 'problem_detail.html') => {
+            const handler = new Handler(); handler.response.template = template;
+            handler.response.body.pdoc = { domainId: 'system', docId: 100, difficulty: 4 };
+            await handlers.injectAchievementContext(handler);
+            return handler.UiContext.achievementImagePreload;
+        };
+        assert.deepEqual(await make(), [art('weekly-ac-5').imageUrl], 'an old lifetime solve can count in a new seven-day window');
+        assert.deepEqual(await make('main.html'), [art('weekly-ac-5').imageUrl]);
+        fixtures.collections['achievement.weekly'] = [{ ...entry, day: today - 6 }];
+        assert.deepEqual(await make(), [], 'the first day of the seven-day window remains included');
+        fixtures.collections['achievement.weekly'] = [{ ...entry, day: today - 7 }];
+        assert.deepEqual(await make(), [art('weekly-ac-5').imageUrl]);
+        fixtures.rows[0].currentWindowProgress = 0;
+        assert.deepEqual(await make(), [], 'historical progress cannot prewarm an unreachable upgrade');
+        assert.deepEqual(await make('main.html'), []);
+        fixtures.rows[0].currentWindowProgress = 4;
+        fixtures.rows.push(progress('weekly-ac-10', 10, true));
+        assert.deepEqual(await make(), [], 'a covered lower weekly milestone is never prewarmed');
+    });
+
     it('preloads the same configured thumbnail URLs across home, problems, records and different profiles', async () => {
         fixtures.preloadArt = { 'difficulty-2': art('difficulty-2'), 'solved-100': art('solved-100') };
         for (const [template, viewedUid] of [
@@ -621,7 +691,7 @@ describe('homepage, profile and live-record integration', () => {
         await handlers.injectAchievementContext(handler);
         assert.deepEqual(calls, [['sync', 'class', 11, undefined]]);
         assert.deepEqual(handler.response.body.achievementWall, {
-            items: [{ ...fixtures.rows[0], imageUrl: '/d/class/difficulty-1.png' }], total: 64, unlocked: 1,
+            items: [{ ...fixtures.rows[0], imageUrl: '/d/class/difficulty-1.png' }], total: 14, unlocked: 1,
         });
         assert.equal(handler.UiContext.achievementAutoShow, true);
         assert.equal(handler.UiContext.achievementScope, 'domain:class/11');
@@ -632,7 +702,7 @@ describe('homepage, profile and live-record integration', () => {
     it('shows an empty homepage wall for a new user and no personal wall for anonymous or profile-disabled visitors', async () => {
         const signedIn = new Handler(); signedIn.response.template = 'main.html';
         await handlers.injectAchievementContext(signedIn);
-        assert.deepEqual(signedIn.response.body.achievementWall, { items: [], total: 64, unlocked: 0 });
+        assert.deepEqual(signedIn.response.body.achievementWall, { items: [], total: 14, unlocked: 0 });
         calls = [];
         for (const options of [{ uid: 1 }, { uid: 0 }, { profile: false }]) {
             const handler = new Handler(options); handler.response.template = 'main.html';

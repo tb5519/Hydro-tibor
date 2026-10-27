@@ -4,6 +4,8 @@ export interface EarnedAchievement {
   description: string;
   imageUrl?: string;
   thumbnailUrl?: string;
+  seriesId?: string;
+  seriesRank?: number;
 }
 
 export interface AchievementPendingResponse {
@@ -48,6 +50,24 @@ function assetUrl(value?: string) {
   }
 }
 
+function seriesOf(award: EarnedAchievement) {
+  return typeof award.seriesId === 'string' && award.seriesId
+    && typeof award.seriesRank === 'number' && Number.isFinite(award.seriesRank) && award.seriesRank > 0
+    ? { id: award.seriesId, rank: award.seriesRank } : undefined;
+}
+
+function highestAwards(awards: EarnedAchievement[]) {
+  const highest = new Map<string, EarnedAchievement>();
+  for (const award of awards) {
+    const series = seriesOf(award);
+    // Older responses without series metadata retain their ID-based behavior.
+    const key = series ? `series:${series.id}` : `award:${award.id}`;
+    const previous = highest.get(key);
+    if (!previous || (series && series.rank > seriesOf(previous)!.rank)) highest.set(key, award);
+  }
+  return [...highest.values()];
+}
+
 /** One page-scoped queue. Only explicit dismissal acknowledges an award. */
 export function createAchievementCelebration(options: AchievementCelebrationOptions) {
   let disposed = false;
@@ -57,6 +77,7 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
   let finishDisplay: (() => void) | undefined;
   const records = new Map<string, Promise<void>>();
   const shown = new Set<string>();
+  const shownSeries = new Map<string, number>();
   const cancellations = new Set<() => void>();
   const configuredVolume = options.sound?.volume;
   const soundVolume = Math.max(0, Math.min(100,
@@ -380,7 +401,7 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
     });
   }
 
-  async function pending(rid: string | undefined, version: number) {
+  async function pending(rid: string | undefined, version: number, requireConfirmation = false) {
     let available: EarnedAchievement[] = [];
     for (const pause of POLL_DELAYS) {
       if (pause) await wait(pause);
@@ -388,14 +409,31 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
       try {
         const result = await options.fetchPending(rid);
         if (disposed || suspended || generation !== version) break;
-        available = (result?.achievements || []).filter((item) => item && typeof item.id === 'string' && item.name);
+        available = highestAwards((result?.achievements || []).filter((item) => item && typeof item.id === 'string' && item.name));
         if (result?.settled === true || (result?.settled !== false && available.length)) return available;
       } catch {
         // A transient network failure must neither acknowledge nor suppress an
         // award: it can still be fetched on the next visit to the user's page.
       }
     }
-    return disposed || suspended || generation !== version ? [] : available;
+    return disposed || suspended || generation !== version || requireConfirmation ? [] : available;
+  }
+
+  function unseenAwards(awards: EarnedAchievement[]) {
+    return awards.filter((award) => {
+      if (shown.has(award.id)) return false;
+      const series = seriesOf(award);
+      return !series || series.rank > (shownSeries.get(series.id) ?? 0);
+    });
+  }
+
+  async function prepareArtwork(awards: EarnedAchievement[]) {
+    const hero = unseenAwards(awards)[0];
+    return { id: hero?.id, url: assetUrl(hero?.imageUrl), image: await readyImage(hero?.imageUrl) };
+  }
+
+  async function waitForTurn(version: number) {
+    while (!disposed && !suspended && generation === version && options.canPresent?.() === false) await wait(150);
   }
 
   function enqueue(rid?: string, acFinished: Promise<unknown> = Promise.resolve()) {
@@ -408,16 +446,42 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
       // Start the small result request while AC is playing, but do not mount or
       // focus the achievement until that effect's exit animation has finished.
       const loaded = pending(rid, version);
-      const prepared = loaded.then((awards) => readyImage(awards[0]?.imageUrl));
+      const prepared = loaded.then(prepareArtwork);
       await acFinished.catch(() => undefined);
-      const awards = await loaded;
-      const image = await prepared;
-      while (!disposed && !suspended && generation === version && options.canPresent?.() === false) await wait(150);
+      let awards = await loaded;
+      let artwork = await prepared;
+      await waitForTurn(version);
       if (disposed || suspended || generation !== version) return;
-      const unique = [...new Map(awards.filter((award) => !shown.has(award.id)).map((award) => [award.id, award])).values()];
+      let unique = unseenAwards(awards);
+      if (awards.some(seriesOf)) {
+        // The prefetched level may have been superseded (or read in another
+        // tab) during AC, image loading or a lottery result. Confirm immediately
+        // before mounting; an unavailable refresh must never replay the snapshot.
+        let confirmed = false;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          awards = await pending(rid, version, true);
+          if (disposed || suspended || generation !== version) return;
+          unique = unseenAwards(awards);
+          if (!unique.length) return;
+          const artworkMatches = artwork.id === unique[0].id && artwork.url === assetUrl(unique[0].imageUrl);
+          if (artworkMatches && options.canPresent?.() !== false) {
+            confirmed = true;
+            break;
+          }
+          if (!artworkMatches) artwork = await prepareArtwork(awards);
+          await waitForTurn(version);
+        }
+        // Rapid successive upgrades remain pending for a later event/visit,
+        // rather than displaying a level that has not been confirmed again.
+        if (!confirmed || disposed || suspended || generation !== version) return;
+      }
       if (!unique.length) return;
-      unique.forEach((award) => shown.add(award.id));
-      const dismissed = await display(unique, unique[0].id === awards[0]?.id ? image : null);
+      unique.forEach((award) => {
+        shown.add(award.id);
+        const series = seriesOf(award);
+        if (series) shownSeries.set(series.id, series.rank);
+      });
+      const dismissed = await display(unique, artwork.id === unique[0].id ? artwork.image : null);
       if (!dismissed || disposed || generation !== version) return;
       // A failed acknowledgement remains pending on the server. Never claim
       // success locally in persistent storage or acknowledge on pagehide.
@@ -444,6 +508,7 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
     for (const cancel of [...cancellations]) cancel();
     records.clear();
     shown.clear();
+    shownSeries.clear();
     queue = Promise.resolve();
   }
 

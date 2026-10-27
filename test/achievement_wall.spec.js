@@ -16,7 +16,7 @@ function deferred() {
 }
 
 function fixture(count = 2, { storage = {}, urls = [], placeholders = [], reducedMotion = false } = {}) {
-    const dom = new JSDOM('<section data-achievement-wall aria-busy="true"><header>成就墙 <strong data-achievement-count>0</strong> / 64</header><p class="achievement-wall__intro">每一次突破，都在这里闪耀</p><div class="achievement-wall__grid" data-achievement-grid-empty></div><p data-achievement-hint hidden>悬停或点按图片，查看成就故事</p></section>', { url: 'https://school.test/', runScripts: 'outside-only' });
+    const dom = new JSDOM('<section data-achievement-wall aria-busy="true"><header>成就墙 <span data-achievement-count-label data-achievement-total="14" aria-label="已点亮 3 / 14 个成就系列"><strong data-achievement-count>0</strong> / 14 <small>系列</small></span></header><p class="achievement-wall__intro">每个系列，展示已获得的最高成就</p><div class="achievement-wall__grid" data-achievement-grid-empty></div><p data-achievement-hint hidden>悬停或点按图片，查看成就故事</p></section>', { url: 'https://school.test/', runScripts: 'outside-only' });
     const win = dom.window;
     const root = win.document.querySelector('section');
     const grid = root.querySelector('.achievement-wall__grid');
@@ -105,6 +105,7 @@ describe('complete-batch achievement wall', () => {
         h.pictures[1].load(); h.pictures[1].decoded.resolve();
         await h.flush(); await h.advance(500);
         assert.equal(h.count(), 0);
+        assert.equal(h.root.querySelector('[data-achievement-count-label]').getAttribute('aria-label'), '已点亮 0 / 14 个成就系列');
         assert.equal(h.visible(), 0, 'a fast image must not reveal an incomplete collection');
         assert.ok(h.grid.hasAttribute('data-achievement-grid-empty'));
         assert.equal(h.root.querySelector('[data-achievement-hint]').hidden, true);
@@ -118,6 +119,7 @@ describe('complete-batch achievement wall', () => {
         assert.equal(h.root.querySelector('[data-achievement-hint]').hidden, false);
         await h.advance(59); assert.equal(h.count(), 1);
         await h.advance(1); assert.equal(h.count(), 2);
+        assert.equal(h.root.querySelector('[data-achievement-count-label]').getAttribute('aria-label'), '已点亮 2 / 14 个成就系列');
         await h.advance(60); assert.equal(h.count(), 3);
         assert.equal(h.root.getAttribute('aria-busy'), 'false');
     });
@@ -146,6 +148,7 @@ describe('complete-batch achievement wall', () => {
         assert.equal(h.bind(), dispose);
         assert.equal(h.count(), 2);
         assert.equal(h.visible(), 2);
+        assert.equal(h.root.querySelector('[data-achievement-count-label]').getAttribute('aria-label'), '已点亮 2 / 14 个成就系列');
         assert.ok(h.pictures.every(({ state, tile }) => !state.decodeCalls && !tile.classList.contains('is-entering')));
         assert.equal(h.root.getAttribute('aria-busy'), 'false');
         assert.equal(h.timers.size, 0);
