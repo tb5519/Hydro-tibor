@@ -173,7 +173,8 @@ class SystemTrainingDashboardHandler extends Handler {
         const status = issued?.status || await classTime.tokenStatus(this.user._id, scope.workspaceId);
         const endpoint = this.url('training_time_classes', { domainId: this.domain._id });
         dashboard.integration = {
-            url: new URL(endpoint, this.context.origin).toString(),
+            // Koa's origin is the optional incoming Origin header, absent on normal navigation.
+            url: new URL(endpoint, `${this.context.protocol}://${this.request.host}`).toString(),
             manageUrl: this.url('manage_training_dashboard'), domains: scope.domains,
             status: { ...status, expiresLabel: status.expiresAt ? moment(status.expiresAt).tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm') : '' },
             token: issued?.token || '',

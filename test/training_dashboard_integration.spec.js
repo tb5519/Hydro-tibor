@@ -5,6 +5,9 @@ const path = require('node:path');
 const { test } = require('node:test');
 const { transformSync } = require('esbuild');
 const moment = require('moment-timezone');
+const Koa = require('koa');
+const { IncomingMessage, ServerResponse } = require('node:http');
+const { Socket } = require('node:net');
 
 class CsrfTokenError extends Error {}
 class ValidationError extends Error {}
@@ -32,7 +35,7 @@ function setup(body = {}, origin = 'https://school.test') {
         },
     });
     const handler = Object.assign(new module.exports(), {
-        user: { _id: 10 }, domain: { _id: 'python' }, context: { origin: 'https://school.test' },
+        user: { _id: 10 }, domain: { _id: 'python' }, context: { protocol: 'https', origin: 'https://school.test' },
         request: { body, query: {}, host: 'school.test', headers: { origin } },
         response: { addHeader() {} }, limitRate: async () => {},
         url: (name) => name === 'training_time_classes' ? '/d/python/training-time/classes' : '/d/python/manage/training-dashboard',
@@ -73,4 +76,38 @@ test('revocation uses current teacher and workspace and blocks cross-origin requ
     handler.request.headers.origin = 'https://evil.test';
     await assert.rejects(() => handler.postRevokeClassToken(), CsrfTokenError);
     assert.equal(calls.length, 1);
+});
+
+function koaContext(headers, proxy = false) {
+    const app = new Koa({ proxy });
+    const request = new IncomingMessage(new Socket());
+    request.method = 'GET';
+    request.url = '/manage/training-dashboard';
+    request.headers = headers;
+    return app.createContext(request, new ServerResponse(request));
+}
+
+test('normal dashboard navigation has no Origin header and still generates the public HTTPS endpoint behind a trusted proxy', async () => {
+    const { handler } = setup();
+    handler.context = koaContext({ host: '127.0.0.1:8888', 'x-forwarded-host': 'onebyone.run', 'x-forwarded-proto': 'https' }, true);
+    handler.request.host = handler.context.host;
+    assert.equal(handler.context.origin, null);
+    await handler.get();
+    assert.equal(handler.response.body.dashboard.integration.url, 'https://onebyone.run/d/python/training-time/classes');
+});
+
+test('endpoint generation ignores the incoming Origin and preserves the real host and port', async () => {
+    const { handler } = setup();
+    handler.context = koaContext({ host: 'localhost:18888', origin: 'https://unrelated.test', 'x-forwarded-proto': 'https' });
+    handler.request.host = handler.context.host;
+    await handler.get();
+    assert.equal(handler.response.body.dashboard.integration.url, 'http://localhost:18888/d/python/training-time/classes');
+});
+
+test('endpoint generation respects the Hydro host resolved from a configured proxy header', async () => {
+    const { handler } = setup();
+    handler.context = koaContext({ host: 'internal:8888', 'x-public-host': 'school.example', 'x-forwarded-proto': 'https' }, true);
+    handler.request.host = 'school.example';
+    await handler.get();
+    assert.equal(handler.response.body.dashboard.integration.url, 'https://school.example/d/python/training-time/classes');
 });
