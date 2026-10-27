@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import type { Context } from '../context';
 import { ValidationError } from '../error';
 import {
-    TRAINING_GRANT_MS, trainingDay, trainingIntervals, TrainingSource, trainingSourceKey,
+    TRAINING_GRANT_MS, trainingDay, TrainingInterval, trainingIntervals, TrainingSource, trainingSourceKey,
 } from '../lib/training_time';
 import { Logger } from '../logger';
 import db from '../service/db';
@@ -14,6 +14,7 @@ interface TrainingGrant {
 interface TrainingBucket {
     domainId: string; day: string; milliseconds: number; startedAt: Date; updatedAt: Date;
     sources: { key: string, kind: TrainingSource['kind'], pid: number, milliseconds: number }[];
+    intervals?: TrainingInterval[];
 }
 interface TrainingState {
     _id: number; version: number; dirty: boolean; buckets: TrainingBucket[]; updatedAt: Date;
@@ -24,6 +25,7 @@ export interface TrainingDaily {
     _id: string; uid: number; domainId: string; day: string; seconds: number; version: number;
     sources: { key: string, kind: TrainingSource['kind'], pid: number, seconds: number }[];
     startedAt: Date; updatedAt: Date;
+    intervals?: TrainingInterval[];
 }
 
 declare module '../service/db' {
@@ -74,6 +76,7 @@ export async function flushState(state: TrainingState) {
             uid: state._id, domainId: bucket.domainId, day: bucket.day,
             seconds: bucket.milliseconds / 1000, version: state.version,
             sources: bucket.sources.map(({ milliseconds, ...source }) => ({ ...source, seconds: milliseconds / 1000 })),
+            intervals: bucket.intervals || [],
             startedAt: bucket.startedAt, updatedAt: bucket.updatedAt || bucket.startedAt,
         };
         try {
@@ -170,6 +173,16 @@ export async function heartbeat(
             }
             source.milliseconds += interval.milliseconds;
             bucket.milliseconds += interval.milliseconds;
+            bucket.intervals ||= [];
+            const previous = bucket.intervals[bucket.intervals.length - 1];
+            if (previous?.end === interval.start && previous.kind === lease.source.kind && previous.pid === lease.source.pid) {
+                previous.end = interval.end;
+            } else if (state.buckets.reduce((count, item) => count + (item.intervals?.length || 0), 0) < 10_000) {
+                // Bound the durable outbox even during prolonged projection
+                // failures. Counters beyond this cap remain explicitly
+                // unaligned, like historical daily-only measurements.
+                bucket.intervals.push({ start: interval.start, end: interval.end, ...lease.source });
+            }
             bucket.updatedAt = new Date(interval.end);
         }
         // A backwards server clock never credits the intervening span.

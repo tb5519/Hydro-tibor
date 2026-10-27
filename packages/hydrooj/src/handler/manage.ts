@@ -9,7 +9,7 @@ import { ObjectId } from 'mongodb';
 import Schema from 'schemastery';
 import { randomstring } from '@hydrooj/utils';
 import {
-    CannotEditSuperAdminError, NotLaunchedByPM2Error, PermissionError, UserAlreadyExistError, UserNotFoundError, ValidationError,
+    CannotEditSuperAdminError, CsrfTokenError, NotLaunchedByPM2Error, PermissionError, UserAlreadyExistError, UserNotFoundError, ValidationError,
     VerifyPasswordError,
 } from '../error';
 import type { CppEditorMode } from '../interface';
@@ -17,6 +17,7 @@ import avatar from '../lib/avatar';
 import { beijingDay, defaultPolicy, parsePolicy } from '../lib/daily_quiz';
 import { withDomainMembershipRemoval } from '../lib/domain_membership';
 import { isScratchDomain } from '../lib/domain_type';
+import { trainingDomainSelection } from '../lib/training_dashboard';
 import { presentOpeningMessage, updateOpeningMessage } from '../lib/opening_message';
 import {
     bindPointLotteryBadgePrizes, buildPointLotteryConfigFromForm, ensureGlobalPointLotteryState,
@@ -30,6 +31,7 @@ import {
 } from '../lib/student_submission_language';
 import { Logger } from '../logger';
 import { BUILTIN_ROLES, PERM, PRIV, STATUS } from '../model/builtin';
+import * as classTime from '../model/class_time';
 import * as dailyQuiz from '../model/daily_quiz';
 import * as document from '../model/document';
 import domain from '../model/domain';
@@ -165,9 +167,51 @@ class SystemTrainingDashboardHandler extends Handler {
         this.response.addHeader('Vary', 'Cookie, Authorization');
     }
 
-    async get() {
+    async showClassIntegration(issued?: { token: string, status: Awaited<ReturnType<typeof classTime.tokenStatus>> }) {
+        const scope = await trainingDashboardScope(this);
+        const dashboard = await loadTrainingDashboard(this);
+        const status = issued?.status || await classTime.tokenStatus(this.user._id, scope.workspaceId);
+        const endpoint = this.url('training_time_classes', { domainId: this.domain._id });
+        dashboard.integration = {
+            url: new URL(endpoint, this.context.origin).toString(),
+            manageUrl: this.url('manage_training_dashboard'), domains: scope.domains,
+            status: { ...status, expiresLabel: status.expiresAt ? moment(status.expiresAt).tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm') : '' },
+            token: issued?.token || '',
+        };
         this.response.template = 'manage_training_dashboard.html';
-        this.response.body = { dashboard: await loadTrainingDashboard(this) };
+        this.response.body = { dashboard };
+    }
+
+    async get() {
+        await this.showClassIntegration();
+    }
+
+    verifyClassTokenOrigin() {
+        const source = this.request.headers.origin || this.request.headers.referer;
+        try {
+            if (typeof source !== 'string' || new URL(source).host !== this.request.host) throw new CsrfTokenError();
+        } catch { throw new CsrfTokenError(); }
+    }
+
+    async postIssueClassToken() {
+        this.verifyClassTokenOrigin();
+        await this.limitRate('class_time_token', 60, 10);
+        const scope = await trainingDashboardScope(this);
+        const raw = this.request.body.domains;
+        if (!raw || (Array.isArray(raw) && !raw.length)) throw new ValidationError('请选择需要同步的课堂');
+        let selection: ReturnType<typeof trainingDomainSelection>;
+        try { selection = trainingDomainSelection(raw, scope.domains.map((item) => item.id)); } catch { throw new ValidationError('domains'); }
+        const configured = { ...scope, domains: scope.domains.filter((item) => selection.ids.includes(item.id)) };
+        const issued = await classTime.issueToken(configured, this.user._id);
+        await this.showClassIntegration(issued);
+    }
+
+    async postRevokeClassToken() {
+        this.verifyClassTokenOrigin();
+        await this.limitRate('class_time_token', 60, 10);
+        const scope = await trainingDashboardScope(this);
+        await classTime.revokeToken(this.user._id, scope.workspaceId);
+        await this.showClassIntegration();
     }
 }
 

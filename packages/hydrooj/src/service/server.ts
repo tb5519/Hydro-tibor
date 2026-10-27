@@ -47,8 +47,13 @@ const GUEST_ACCESSIBLE_PATHS = [
     /^\/service-worker-config$/,
 ];
 
+export function isClassTimeIngestionRequest(path: string, method: string) {
+    return path === '/training-time/classes' && method.toUpperCase() === 'POST';
+}
+
 function isGuestAccessiblePath(path: string, method: string) {
     return isDomainAvatarImageRequest(path, method) || isHomePosterImageRequest(path, method) || isScratchShareRequest(path, method)
+        || isClassTimeIngestionRequest(path, method)
         || GUEST_ACCESSIBLE_PATHS.some((pattern) => pattern.test(path));
 }
 
@@ -126,6 +131,8 @@ export async function apply(ctx: Context) {
             } finally {
                 const finish = Date.now();
                 if (finish - init > 5000) {
+                    // JSON credentials must never enter the persistent slow-request log.
+                    if (isClassTimeIngestionRequest(c.request.path, c.request.method) && c.handler?.args) delete c.handler.args.token;
                     const method = c.request.method;
                     const id = await OplogModel.log(c.handler, 'slow_request', { method, processtime: finish - init });
                     logger.warn(`Slow handler: ID=${id}, `, method, c.path, `${finish - init}ms`);
@@ -331,7 +338,10 @@ export async function apply(ctx: Context) {
                     }
                 }
             }
-            const workspaceAccess = await resolveWorkspaceAccess(h.context);
+            // The class-time writer authenticates its scoped secret independently
+            // of any unrelated browser session; all other routes retain this gate.
+            const workspaceAccess = isClassTimeIngestionRequest(h.request.path, h.request.method)
+                ? { allowed: true, redirect: '' } : await resolveWorkspaceAccess(h.context);
             if (!workspaceAccess.allowed) {
                 if (workspaceAccess.redirect) h.response.redirect = workspaceAccess.redirect;
                 throw new NotFoundError(h.args.domainId);

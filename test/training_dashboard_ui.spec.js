@@ -12,7 +12,7 @@ function page(t, overrides = {}) {
 test('teacher dashboard provides coherent summaries and server-paged roster without a public ranking', (t) => {
     const { document } = page(t).window;
     assert.match(document.querySelector('h1').textContent, /学员训练看板/);
-    assert.equal(document.querySelectorAll('.tdash-stat').length, 4);
+    assert.equal(document.querySelectorAll('.tdash-stat').length, 6);
     assert.match(document.querySelector('.tdash-private').textContent, /仅教师可见/);
     assert.match(document.querySelector('.tdash-stat--time').textContent, /24 小时 50 分/);
     assert.equal(document.querySelectorAll('.tdash-table--roster tbody tr').length, 6);
@@ -91,7 +91,7 @@ test('selected learner shows cross-period duration, classroom breakdown and effo
     assert.equal(panel.querySelectorAll('.tdash-domain-stat').length, 2);
     const rows = [...panel.querySelectorAll('.tdash-problem-table tbody tr')];
     assert.equal(rows.length, 3);
-    assert.match(rows[0].textContent, /数字替换.*1 小时 15 分.*4.*未通过/s);
+    assert.match(rows[0].textContent, /数字替换.*45 分钟.*课堂练习 30 分钟.*4.*未通过/s);
     assert.match(rows[1].textContent, /已通过/);
     assert.equal(rows[2].querySelector('a'), null);
     assert.match(rows[2].textContent, /每日一练.*练习记录/s);
@@ -144,4 +144,88 @@ test('90-day charts preserve every day and reduce axis labels without dropping l
     assert.equal(labels[0], '1');
     assert.equal(labels.at(-1), '90');
     assert.ok(labels.length <= 8);
+});
+
+test('learning time distinguishes autonomous training and class time in summaries, charts, roster and details', (t) => {
+    const { document } = page(t, { detail: studentDetail() }).window;
+    assert.match(document.querySelector('.tdash-stat--training').textContent, /自主训练.*17 小时 20 分/s);
+    assert.match(document.querySelector('.tdash-stat--class').textContent, /上课时长.*7 小时 30 分/s);
+    const firstDay = document.querySelector('.tdash-trend__column');
+    assert.match(firstDay.getAttribute('aria-label'), /总计 180 分钟，自主训练 150 分钟，上课 30 分钟/);
+    const stack = firstDay.querySelector('.tdash-trend__stack');
+    const classPart = parseFloat(stack.querySelector('.is-class').style.height);
+    const trainingPart = parseFloat(stack.querySelector('.is-training').style.height);
+    assert.equal(classPart + trainingPart, 100);
+    assert.ok(classPart > 0 && classPart < 100);
+    assert.match(document.querySelector('.tdash-legend').textContent, /自主训练上课时间/);
+    assert.match(document.querySelector('.tdash-table--roster tbody tr').textContent, /学员 10.*3 小时 30 分.*自主训练 2 小时.*上课 1 小时 30 分/s);
+    assert.match(document.querySelector('.tdash-time-breakdown').textContent, /本期学习总时长.*2 小时 30 分.*自主训练.*1 小时 30 分.*上课时长.*1 小时.*已归入上课时间/s);
+    assert.match(document.querySelector('.tdash-lessons').textContent, /外部课堂.*循环结构与课堂练习.*2026-10-24 10:00.*2026-10-24 11:00.*1 小时/s);
+});
+
+test('integration shows a single-use secret only after issuance and uses scoped POST management forms', async (t) => {
+    const data = fixture();
+    assert.ok(!render(data).includes('test-secret-once'));
+    data.integration.token = 'test-secret-once-<escaped>';
+    const dom = new JSDOM(render(data), { url: 'https://onebyone.test/manage/training-dashboard', runScripts: 'dangerously' });
+    t.after(() => dom.window.close());
+    const { document, FormData } = dom.window;
+    assert.equal(document.querySelector('[data-class-integration]').open, true);
+    const token = document.querySelector('#training-class-token');
+    assert.equal(token.readOnly, true);
+    assert.equal(token.value, data.integration.token);
+    const issue = document.querySelector('[data-class-token-form]');
+    assert.equal(issue.method, 'post');
+    assert.equal(new FormData(issue).get('operation'), 'issueClassToken');
+    assert.deepEqual(new FormData(issue).getAll('domains'), ['python', 'cpp']);
+    assert.equal(new FormData(issue).has('token'), false);
+    const revoke = document.querySelector('.tdash-token-actions form');
+    assert.equal(revoke.method, 'post');
+    assert.equal(new FormData(revoke).get('operation'), 'revokeClassToken');
+    for (const form of document.querySelectorAll('form[method=get]')) assert.equal(new FormData(form).has('token'), false);
+    let copied;
+    Object.defineProperty(dom.window.navigator, 'clipboard', { value: { writeText: async (value) => { copied = value; } } });
+    document.querySelector('[data-copy-class-token]').click();
+    await Promise.resolve();
+    assert.equal(copied, data.integration.token);
+    assert.equal(document.querySelector('[data-copy-class-status]').textContent, '已复制');
+    assert.match(document.querySelector('.tdash-api-help').textContent, /externalId.*domainId.*uid.*startAt.*durationHours/s);
+    assert.match(document.querySelector('.tdash-api-help').textContent, /classflow-lesson-123-student-101/);
+    assert.match(document.querySelector('.tdash-api-help').textContent, /每名学员需使用各自的记录编号/);
+    assert.match(document.querySelector('.tdash-api-help').textContent, /同一编号、同一内容重复推送不会重复累计/);
+});
+
+test('token generation requires a selected classroom and clearing the error allows valid submission', (t) => {
+    const { document, Event } = page(t).window;
+    const form = document.querySelector('[data-class-token-form]');
+    const domains = [...form.querySelectorAll('input[name=domains]')];
+    domains.forEach((input) => { input.checked = false; });
+    let event = new Event('submit', { cancelable: true });
+    form.dispatchEvent(event);
+    assert.equal(event.defaultPrevented, true);
+    assert.match(domains[0].validationMessage, /至少选择一个/);
+    domains[1].checked = true;
+    domains[1].dispatchEvent(new Event('change'));
+    event = new Event('submit', { cancelable: true });
+    form.dispatchEvent(event);
+    assert.equal(event.defaultPrevented, false);
+    assert.equal(domains[0].validationMessage, '');
+});
+
+test('historical daily-only caveat appears with imported classes and untrusted course content is escaped', (t) => {
+    const data = fixture();
+    data.summary.legacySeconds = 60;
+    data.detail = studentDetail();
+    data.detail.lessons[0].title = '<img src=x onerror=alert(1)>';
+    const dom = new JSDOM(render(data));
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    assert.match(document.querySelector('.tdash-legacy-note').textContent, /历史训练.*无法精确.*新记录/s);
+    assert.equal(document.querySelectorAll('[onerror]').length, 0);
+    assert.match(document.querySelector('.tdash-lessons strong').textContent, /<img src=x onerror=alert\(1\)>/);
+    const noClass = fixture();
+    noClass.summary.classSeconds = 0;
+    const clean = new JSDOM(render(noClass));
+    t.after(() => clean.window.close());
+    assert.equal(clean.window.document.querySelector('.tdash-legacy-note'), null);
 });

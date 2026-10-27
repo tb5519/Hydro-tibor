@@ -112,6 +112,33 @@ describe('incremental training time ledger', () => {
         assert(replies.every((reply) => reply.accepted));
         assert.equal(await total(), 30);
     });
+    it('projects exact credited intervals and coalesces contiguous same-source heartbeats', async () => {
+        const session = await start();
+        await pulse(session, 1, 30);
+        await Promise.all(Array.from({ length: 5 }, () => pulse(session, 2, 60)));
+        const row = await model.daily.findOne({ uid });
+        assert.deepEqual(row.intervals, [{ start: +at(0), end: +at(60), ...source }]);
+        assert.equal(row.seconds, 60);
+    });
+    it('captures only the bounded credited tail and never fills sleeping gaps', async () => {
+        const session = await start();
+        await pulse(session, 1, 80);
+        await pulse(session, 2, 400);
+        await pulse(session, 3, 430);
+        const row = await model.daily.findOne({ uid });
+        assert.deepEqual(row.intervals, [{ start: +at(20), end: +at(80), ...source }, { start: +at(400), end: +at(430), ...source }]);
+    });
+    it('preserves legacy counters and records only subsequent precise intervals after upgrade', async () => {
+        const session = await start();
+        await pulse(session, 1, 30);
+        const state = await model.states.findOne({ _id: uid });
+        for (const bucket of state.buckets) delete bucket.intervals;
+        await model.states.replaceOne({ _id: uid }, state);
+        await pulse(session, 2, 60);
+        const row = await model.daily.findOne({ uid });
+        assert.equal(row.seconds, 60);
+        assert.deepEqual(row.intervals, [{ start: +at(30), end: +at(60), ...source }]);
+    });
     it('one global learner lease deduplicates tabs, devices and domains', async () => {
         const python = await start();
         await pulse(python, 1, 30);

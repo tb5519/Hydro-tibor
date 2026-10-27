@@ -10,10 +10,14 @@ const moment = require('moment-timezone');
 const root = path.resolve(__dirname, '..');
 class PermissionError extends Error {}
 class ValidationError extends Error {}
+class DashboardDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+}
 const load = (relative, dependencies = {}) => {
     const module = { exports: {} };
     vm.runInNewContext(transformSync(fs.readFileSync(path.join(root, relative), 'utf8'), { loader: 'ts', format: 'cjs' }).code,
-        { module, exports: module.exports, URLSearchParams, Date, require: (id) => dependencies[id] ?? require(id) });
+        { module, exports: module.exports, URLSearchParams, Date: DashboardDate, require: (id) => dependencies[id] ?? require(id) });
     return module.exports;
 };
 const PERM = { PERM_EDIT_DOMAIN: 2n, PERM_VIEW_PROBLEM_HIDDEN: 4n };
@@ -21,7 +25,7 @@ const PRIV = { PRIV_USER_PROFILE: 2, PRIV_EDIT_SYSTEM: 1, PRIV_JUDGE: 4 };
 const STATUS = { STATUS_ACCEPTED: 1 };
 const fixedNow = Date.parse('2026-10-25T18:00:00+08:00');
 const priorNow = moment.now;
-let mongod; let client; let db; let daily; let records; let domains; let accounts; let problems;
+let mongod; let client; let db; let daily; let records; let domains; let accounts; let problems; let classes;
 let model;
 let startedAt = new Date('2026-10-05T00:00:00+08:00');
 const classrooms = [
@@ -58,11 +62,14 @@ before(async () => {
     client = await MongoClient.connect(mongod.getUri());
     db = client.db('training_dashboard');
     daily = db.collection('daily'); records = db.collection('records'); domains = db.collection('domain.user');
-    accounts = db.collection('user'); problems = db.collection('problem');
+    accounts = db.collection('user'); problems = db.collection('problem'); classes = db.collection('classes');
     const helper = load('packages/hydrooj/src/lib/training_dashboard.ts');
+    const clock = load('packages/hydrooj/src/lib/training_time.ts');
+    const learning = load('packages/hydrooj/src/lib/learning_time.ts', { './training_time': clock });
     model = load('packages/hydrooj/src/model/training_dashboard.ts', {
         '../error': { PermissionError, ValidationError }, '../lib/domain_type': { isScratchDomain: (d) => d.domainType === 'scratch' },
         '../lib/training_dashboard': helper, './builtin': { PERM, PRIV, STATUS },
+        '../lib/learning_time': learning, './class_time': { classes },
         '../utils': { Time: { getObjectID: (time) => ObjectId.createFromTime(Math.floor(+time / 1000)) } },
         './domain': { collUser: domains },
         './problem': {
@@ -80,7 +87,7 @@ before(async () => {
     });
 });
 beforeEach(async () => {
-    await Promise.all([daily.deleteMany({}), records.deleteMany({}), domains.deleteMany({}), accounts.deleteMany({}), problems.deleteMany({})]);
+    await Promise.all([daily.deleteMany({}), records.deleteMany({}), domains.deleteMany({}), accounts.deleteMany({}), problems.deleteMany({}), classes.deleteMany({})]);
     startedAt = new Date('2026-10-05T00:00:00+08:00');
     await accounts.insertMany([
         { _id: 101, uname: 'alice', displayName: '小艾', priv: 2 },
@@ -262,5 +269,56 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         assert.deepEqual(Array.from(quiet.rows.map((row) => row.uid)), [103]);
         const search = await model.loadTrainingDashboard(handler({ q: '小艾' }));
         assert.deepEqual(Array.from(search.rows.map((row) => row.uid)), [101]);
+    });
+    it('merges imported classes into all dashboard views and removes only precise training overlap', async () => {
+        const start = Date.parse('2026-10-25T10:00:00+08:00');
+        await daily.updateOne({ uid: 101, domainId: 'python', day: '2026-10-25' }, { $set: {
+            seconds: 5400, intervals: [{ start, end: start + 5400_000, kind: 'problem', pid: 1 }],
+            sources: [{ key: 'problem:1', kind: 'problem', pid: 1, seconds: 5400 }],
+        } });
+        await classes.insertMany([
+            { workspaceId: 'school', domainId: 'python', uid: 101, externalId: 'lesson-a', title: 'Python 课堂',
+                startAt: new Date(start + 1800_000), endAt: new Date(start + 7200_000) },
+            { workspaceId: 'school', domainId: 'python', uid: 101, externalId: 'lesson-overlap', title: '重复时间段',
+                startAt: new Date(start + 3600_000), endAt: new Date(start + 5400_000) },
+            { workspaceId: 'school', domainId: 'python', uid: 103, externalId: 'class-only', title: '入门课',
+                startAt: new Date(start + 14400_000), endAt: new Date(start + 18000_000) },
+            { workspaceId: 'other-school', domainId: 'python', uid: 101, externalId: 'foreign',
+                startAt: new Date(start), endAt: new Date(start + 20000_000) },
+            { workspaceId: 'school', domainId: 'python', uid: 104, externalId: 'blocked',
+                startAt: new Date(start), endAt: new Date(start + 20000_000) },
+        ]);
+        const result = await model.loadTrainingDashboard(handler({ period: 'today', domains: 'python', student: '101' }));
+        assert.equal(result.summary.seconds, 10800);
+        assert.equal(result.summary.trainingSeconds, 1800);
+        assert.equal(result.summary.classSeconds, 9000);
+        assert.equal(result.summary.overlapSeconds, 3600);
+        assert.equal(result.summary.legacySeconds, 0);
+        assert.equal(result.summary.activeStudents, 2);
+        assert.equal(result.daily[0].seconds, 10800);
+        assert.equal(result.domains.find((item) => item.id === 'python').seconds, 10800);
+        const classOnly = result.rows.find((item) => item.uid === 103);
+        assert.equal(classOnly.classSeconds, 3600);
+        assert.equal(classOnly.attentionKind, 'normal');
+        assert.equal(result.detail.timeBreakdown.seconds, 7200);
+        assert.equal(result.detail.timeBreakdown.trainingSeconds, 1800);
+        assert.equal(result.detail.lessons.length, 2);
+        assert.equal(result.detail.lessons[0].title, '重复时间段');
+        assert.equal(result.detail.problems[0].timeLabel, '30 分钟');
+        assert.equal(result.detail.problems[0].classTrainingLabel, '1 小时');
+    });
+    it('clips midnight classes to the selected days and preserves historical uncertainty without guessed deductions', async () => {
+        await classes.insertOne({ workspaceId: 'school', domainId: 'python', uid: 101, externalId: 'overnight', title: '跨日课堂',
+            startAt: new Date('2026-10-24T23:30:00+08:00'), endAt: new Date('2026-10-25T01:00:00+08:00') });
+        const result = await model.loadTrainingDashboard(handler({ period: 'today', domains: 'python', student: '101' }));
+        assert.equal(result.summary.classSeconds, 3600);
+        assert.equal(result.summary.trainingSeconds, 900);
+        assert.equal(result.summary.legacySeconds, 900);
+        assert.equal(result.summary.seconds, 4500);
+        assert.equal(result.detail.lessons[0].timeLabel, '1 小时');
+        assert.equal(result.detail.overview[0].value, '1 小时 15 分钟');
+        assert.equal(result.detail.daily[0].classSeconds, 3600);
+        const restricted = await model.loadTrainingDashboard(handler({ domains: 'python' }, 11));
+        assert.equal(restricted.summary.classSeconds, 5400);
     });
 });

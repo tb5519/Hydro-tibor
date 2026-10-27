@@ -11,6 +11,13 @@ export interface TrainingSource {
     pid: number;
 }
 
+/** Exact server-credited activity, retained so imported lessons can mask only
+ * the overlapping part of a learner's training. */
+export interface TrainingInterval extends TrainingSource {
+    start: number;
+    end: number;
+}
+
 export function trainingDay(time: Date | number = Date.now()) {
     return new Date(+time + 8 * 3600_000).toISOString().slice(0, 10);
 }
@@ -25,12 +32,12 @@ export function trainingIntervals(from: number, to: number, discard = false) {
     const gap = to - from;
     if (discard || gap <= 0 || gap > TRAINING_MAX_GAP_MS) return [];
     let cursor = Math.max(from, to - TRAINING_MAX_CREDIT_MS);
-    const result: { day: string, milliseconds: number, end: number }[] = [];
+    const result: { day: string, milliseconds: number, start: number, end: number }[] = [];
     while (cursor < to) {
         const day = trainingDay(cursor);
         const boundary = Date.parse(`${day}T00:00:00+08:00`) + 86400_000;
         const end = Math.min(boundary, to);
-        result.push({ day, milliseconds: end - cursor, end });
+        result.push({ day, milliseconds: end - cursor, start: cursor, end });
         cursor = end;
     }
     return result;
