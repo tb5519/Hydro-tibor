@@ -637,6 +637,41 @@ it('shares the canonical award scope across different legacy domain URLs and wai
     f.dom.window.close();
 });
 
+it('defers a late automatic reward until a manual original-art viewer has fully exited', async () => {
+    const f = fixture();
+    const response = deferred();
+    const calls = [];
+    const player = f.client({ achievementPendingUrl: '/achievement/pending', achievementAckUrl: '/achievement/ack' }, {
+        get: () => response.promise,
+        post: async (_url, data) => calls.push(Array.from(data.ids)),
+    });
+    const viewerCode = transformSync(fs.readFileSync(path.resolve(__dirname, '../packages/ui-default/components/achievement_art_viewer.ts'), 'utf8'), {
+        loader: 'ts', format: 'cjs',
+    }).code;
+    const mod = { exports: {} };
+    vm.runInNewContext(viewerCode, { module: mod, exports: mod.exports, document: f.document, URL: f.window.URL, Date: f.window.Date });
+    const viewer = mod.exports.createAchievementArtworkViewer(f.document);
+    const task = player.showPending();
+    await settle();
+    viewer.open({ ...award, imageUrl: '' }, f.document.querySelector('#submit'));
+    response.resolve({ achievements: [award], settled: true });
+    await f.tick(1000);
+    assert.ok(f.document.querySelector('.achievement-art-viewer[open]'));
+    assert.equal(f.dialog(), null, 'a late pending response cannot steal focus or mark the manually viewed item as read');
+    assert.deepEqual(calls, []);
+    f.fire('click');
+    await f.tick(279);
+    assert.equal(f.dialog(), null, 'the viewer retains control throughout its exit animation');
+    await f.tick(171);
+    assert.equal(f.document.querySelector('.achievement-art-viewer'), null);
+    assert.ok(f.dialog());
+    await f.tick(700);
+    f.tap(); await f.tick(360); await task;
+    assert.deepEqual(calls, [[award.id]]);
+    assert.equal(f.document.body.style.overflow, '', 'the two layers restore scroll locks in their own turn');
+    viewer.dispose(); player.dispose(); f.dom.window.close();
+});
+
 it('uses full original artwork for every image in a grouped celebration', async () => {
     const f = fixture({ awards: [
         { ...award, imageUrl: '/original-1.png', thumbnailUrl: '/thumb-1.webp' },

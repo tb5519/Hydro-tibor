@@ -5,12 +5,12 @@
     <p class="achievement-wall__intro">每个系列，展示已获得的最高成就</p>
     <div class="achievement-wall__grid" data-achievement-grid-empty>
     {% for item in achievementWall.items %}
-      <button type="button" class="achievement-wall__item" data-achievement-tile data-achievement-pending{% if not item.thumbnailUrl %} hidden{% endif %} data-name="{{ item.name }}" data-description="{{ item.description }}" data-unlocked-at="{{ item.unlockedAtText or '' }}" aria-label="{{ item.name }}，{{ item.description }}，本系列最高成就" title="{{ item.name }} · {{ item.description }}" aria-describedby="achievement-wall-tooltip">
+      <button type="button" class="achievement-wall__item" data-achievement-tile data-achievement-pending{% if not item.thumbnailUrl %} hidden{% endif %} data-image-url="{{ item.imageUrl or '' }}" data-name="{{ item.name }}" data-description="{{ item.description }}" data-unlocked-at="{{ item.unlockedAtText or '' }}" aria-label="{{ item.name }}，{{ item.description }}，本系列最高成就{% if item.imageUrl %}，点击查看高清图{% endif %}"{% if item.imageUrl %} aria-haspopup="dialog"{% endif %} title="{{ item.name }} · {{ item.description }}" aria-describedby="achievement-wall-tooltip">
         {% if item.thumbnailUrl %}<img src="{{ item.thumbnailUrl }}" alt="" width="72" height="72" loading="eager" decoding="async" fetchpriority="high">{% endif %}
       </button>
     {% endfor %}
     </div>
-    <p class="achievement-wall__hint" data-achievement-hint hidden>悬停或点按图片，查看成就故事</p>
+    <p class="achievement-wall__hint" data-achievement-hint hidden>悬停查看介绍 · 点击查看高清图</p>
     <div class="achievement-wall__tooltip" id="achievement-wall-tooltip" data-achievement-tooltip role="tooltip" hidden><span class="achievement-wall__tooltip-eyebrow">本系列最高成就</span><strong data-achievement-tooltip-name></strong><p data-achievement-tooltip-description></p><small data-achievement-tooltip-date hidden></small></div>
   {% else %}
     <div class="achievement-wall__empty"><span aria-hidden="true">✧</span><strong>成长的第一束光，即将点亮</strong><p>首次通过一道难度题，<br>开启属于{{ '你' if isSelfProfile or achievementWallIsSelf else 'TA' }}的成就之旅。</p></div>

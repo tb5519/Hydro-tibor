@@ -553,6 +553,7 @@ export function createAchievementClient(context: AchievementContext, request: {
     lockName: context.achievementScope ? `hydro:achievements:${context.achievementScope}`
       : context.achievementPendingUrl ? `hydro:achievements:${context.achievementPendingUrl}` : undefined,
     canPresent: () => {
+      if (document.querySelector('.achievement-art-viewer[open]')) return false;
       const lottery = document.querySelector<HTMLElement>('[data-point-lottery]');
       if (!lottery || lottery.hidden) return true;
       const result = lottery.querySelector<HTMLElement>('[data-point-lottery-result]');

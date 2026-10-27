@@ -45,6 +45,7 @@ function fixture({ wall = false, readyWall = true, overrides = {}, onReload } = 
     const dom = new JSDOM(html, { url: 'https://school.test/achievement_manage', runScripts: 'outside-only', pretendToBeVisual: true });
     const requests = [];
     const audio = [];
+    const viewers = [];
     let rejectAudio = false;
     dom.window.Audio = class {
         constructor(url) { this.src = url; this.paused = true; audio.push(this); }
@@ -72,6 +73,17 @@ function fixture({ wall = false, readyWall = true, overrides = {}, onReload } = 
     dom.window.require = (name) => {
         if (name === 'jquery') return { default: jquery };
         if (name === 'vj/components/achievement_wall') return wallExports;
+        if (name === 'vj/components/achievement_art_viewer') return {
+            createAchievementArtworkViewer: () => {
+                const viewer = { preloads: [], opened: [], disposed: false,
+                    preload(url) { this.preloads.push(url); },
+                    open(artwork, trigger) { this.opened.push({ artwork, trigger }); },
+                    dispose() { this.disposed = true; },
+                };
+                viewers.push(viewer);
+                return viewer;
+            },
+        };
         if (name === 'vj/misc/Page') return { NamedPage: class { constructor(names, callback) { this.names = names; this.callback = callback; } } };
         throw new Error(`Unexpected module: ${name}`);
     };
@@ -79,7 +91,7 @@ function fixture({ wall = false, readyWall = true, overrides = {}, onReload } = 
     if (onReload) dom.window.exports.bindAchievementManage(onReload);
     else dom.window.exports.default.callback();
     return {
-        dom, document: dom.window.document, requests, audio, exports: dom.window.exports, jquery,
+        dom, document: dom.window.document, requests, audio, viewers, exports: dom.window.exports, jquery,
         rejectAudio: () => { rejectAudio = true; },
         setResponse: (fn) => { respond = fn; },
         flush: () => new Promise((resolve) => setImmediate(resolve)),
@@ -272,25 +284,60 @@ describe('achievement management and profile wall', () => {
         assert.equal(h.document.querySelectorAll('[data-achievement-card]').length, 3);
     });
 
-    it('makes earned thumbnail explanations available to keyboard and touch and dismisses with Escape', (t) => {
+    it('shows explanations on focus and opens the original artwork on click without playing or acknowledging a reward', (t) => {
         const h = fixture({ wall: true }); t.after(h.close);
-        const tile = h.document.querySelector('[data-achievement-tile]');
+        const tile = h.document.querySelectorAll('[data-achievement-tile]')[1];
         const tooltip = h.document.querySelector('[data-achievement-tooltip]');
         assert.equal(tooltip.hidden, true);
         tile.focus();
         assert.equal(tooltip.hidden, false);
-        assert.equal(tooltip.querySelector('strong').textContent, '初战告捷');
+        assert.equal(tooltip.querySelector('strong').textContent, '十题斩');
         assert.equal(tile.getAttribute('aria-describedby'), tooltip.id);
         h.document.dispatchEvent(new h.dom.window.KeyboardEvent('keydown', { key: 'Escape' }));
         assert.equal(tooltip.hidden, true);
         tile.click();
-        assert.equal(tooltip.hidden, false);
-        assert.match(tooltip.textContent, /首次AC难度1/);
+        assert.equal(tooltip.hidden, true, 'a tooltip must not overlap the image viewer');
+        assert.equal(h.viewers[0].opened.length, 1);
+        assert.deepEqual(JSON.parse(JSON.stringify(h.viewers[0].opened[0].artwork)), {
+            imageUrl: items[1].imageUrl, name: '十题斩', description: '题库累计AC10道题', unlockedAt: '',
+        });
+        assert.strictEqual(h.viewers[0].opened[0].trigger, tile);
+        assert.equal(tile.getAttribute('aria-haspopup'), 'dialog');
+        assert.match(tile.getAttribute('aria-label'), /点击查看高清图/);
+        assert.deepEqual(h.viewers[0].preloads, [items[1].imageUrl]);
+        assert.equal(h.requests.length, 0);
+        assert.equal(h.audio.length, 0);
         assert.equal(tooltip.querySelector('.achievement-wall__tooltip-eyebrow').textContent, '本系列最高成就');
         assert.equal(h.document.querySelectorAll('img')[1].src, items[1].thumbnailUrl);
         assert.equal(h.document.querySelectorAll('[data-achievement-tile]').length, 3);
         assert.equal(h.document.querySelector('[data-achievement-count]').textContent, '3');
         assert.equal(h.document.querySelector('[data-achievement-pending]'), null);
+    });
+
+    it('prewarms only the deliberately hovered original and cancels fleeting hover or removed content', async (t) => {
+        const h = fixture({ wall: true }); t.after(h.close);
+        const wall = h.document.querySelector('[data-achievement-wall]');
+        const tile = wall.querySelectorAll('[data-achievement-tile]')[1];
+        const pointer = (name, type = 'mouse') => {
+            const event = new h.dom.window.Event(name);
+            Object.defineProperty(event, 'pointerType', { value: type });
+            tile.dispatchEvent(event);
+        };
+        assert.deepEqual(h.viewers[0].preloads, [], 'initial page load retains thumbnails only');
+        pointer('pointerenter'); pointer('pointerleave');
+        await new Promise((resolve) => setTimeout(resolve, 160));
+        assert.deepEqual(h.viewers[0].preloads, []);
+        pointer('pointerenter', 'touch');
+        assert.equal(wall.querySelector('[data-achievement-tooltip]').hidden, true);
+        pointer('pointerenter');
+        assert.equal(wall.querySelector('[data-achievement-tooltip]').hidden, false);
+        await new Promise((resolve) => setTimeout(resolve, 160));
+        assert.deepEqual(h.viewers[0].preloads, [items[1].imageUrl]);
+        assert.equal(h.viewers[0].opened.length, 0, 'hover only explains and prewarms');
+        pointer('pointerenter'); h.exports.disposeAchievementWall(wall);
+        await new Promise((resolve) => setTimeout(resolve, 160));
+        assert.deepEqual(h.viewers[0].preloads, [items[1].imageUrl]);
+        assert.equal(h.viewers[0].disposed, true);
     });
 
     it('keeps failed thumbnails hidden without stars while preserving the heading and a friendly empty wall', (t) => {
@@ -325,31 +372,38 @@ describe('achievement management and profile wall', () => {
         assert.equal(h.document.querySelectorAll('[data-achievement-tile][hidden][data-achievement-pending]').length, 2);
         assert.equal(h.document.querySelector('[data-achievement-tile]:not([hidden])').hasAttribute('data-achievement-pending'), false);
         assert.equal(h.document.querySelector('.is-entering'), null);
-        assert.doesNotMatch(h.document.documentElement.innerHTML, /https:\/\/images\.test\/full\.png/);
+        assert.equal(h.document.querySelector('img[src="https://images.test/full.png"]'), null);
+        assert.deepEqual(h.viewers[0].preloads, []);
+        assert.equal(h.viewers[0].opened.length, 0);
     });
 
     it('binds homepage walls and restores bindings after content replacement without duplicate tooltips', (t) => {
         const h = fixture({ wall: true }); t.after(h.close);
         assert.ok(h.exports.default.names.includes('homepage'));
         const wall = h.document.querySelector('[data-achievement-wall]');
-        const tile = wall.querySelector('[data-achievement-tile]');
+        const tile = wall.querySelectorAll('[data-achievement-tile]')[1];
         const tooltip = wall.querySelector('[data-achievement-tooltip]');
-        tile.click();
+        tile.focus();
         assert.equal(tooltip.hidden, false);
         h.jquery(wall).trigger('vjContentRemove');
         assert.equal(tooltip.hidden, true);
         assert.equal(wall.dataset.bound, undefined);
+        assert.equal(h.viewers[0].disposed, true);
         tile.click();
         assert.equal(tooltip.hidden, true);
+        assert.equal(h.viewers[0].opened.length, 0);
         h.jquery(wall).trigger('vjContentNew');
         h.jquery(wall).trigger('vjContentNew');
         tile.click();
-        assert.equal(tooltip.hidden, false);
+        assert.equal(tooltip.hidden, true);
+        assert.equal(h.viewers.length, 2);
+        assert.equal(h.viewers[1].opened.length, 1, 'rebinding never duplicates the click handler');
         assert.equal(wall.dataset.bound, 'true');
     });
 
     it('compiles responsive styles with dark-theme, reduced-motion and aspect-preserving artwork rules', () => {
-        const css = stylus.render(fs.readFileSync(path.join(root, 'packages/ui-default/pages/achievement_manage.page.styl'), 'utf8'));
+        const filename = path.join(root, 'packages/ui-default/pages/achievement_manage.page.styl');
+        const css = stylus.render(fs.readFileSync(filename, 'utf8'), { filename });
         assert.match(css, /\.theme--dark \.achievement-wall/);
         assert.match(css, /prefers-reduced-motion/);
         assert.match(css, /object-fit: contain/);

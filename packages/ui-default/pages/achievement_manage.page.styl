@@ -1,3 +1,5 @@
+@import '../components/achievement_art_viewer.styl'
+
 .achievement-manage, .achievement-wall, .achievement-preview
   --achievement-ink: #29364d
   --achievement-muted: #69798e
@@ -623,6 +625,11 @@
     padding: 3px
     background: transparent
     transition: transform .2s, background .2s, border-color .2s
+    &[data-image-url]:not([data-image-url=""])
+      cursor: zoom-in
+    &:focus-visible
+      outline: 2px solid #8ea9d8
+      outline-offset: 2px
     &.is-entering
       animation: achievement-wall-item-enter .18s cubic-bezier(.2, .75, .3, 1) both
     img

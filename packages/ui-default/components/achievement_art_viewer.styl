@@ -1,0 +1,329 @@
+// A quiet, full-resolution inspection layer. The automatic achievement reveal
+// keeps its own animation, sound and acknowledgement lifecycle.
+.achievement-art-viewer
+  --achievement-viewer-height: 100vh
+  position: fixed
+  inset: 0
+  z-index: 100030
+  display: grid
+  place-items: center
+  box-sizing: border-box
+  width: 100%
+  height: var(--achievement-viewer-height)
+  max-width: none
+  max-height: none
+  margin: 0
+  border: 0
+  padding: 28px 24px
+  padding-top: unquote('max(28px, env(safe-area-inset-top))')
+  padding-bottom: unquote('max(24px, env(safe-area-inset-bottom))')
+  overflow: hidden
+  isolation: isolate
+  color: #f8f3e8
+  background: rgba(7, 16, 32, .91)
+  backdrop-filter: blur(12px)
+  -webkit-backdrop-filter: blur(12px)
+  font-family: inherit
+  text-align: center
+  color-scheme: dark
+  opacity: 0
+  outline: none
+  cursor: zoom-out
+  transition: opacity .2s ease
+  -webkit-tap-highlight-color: transparent
+
+  *, *::before, *::after
+    box-sizing: border-box
+
+  &:not([open])
+    display: none
+
+  &::backdrop
+    background: transparent
+
+  [hidden]
+    display: none !important
+
+  &::before
+    content: ''
+    position: absolute
+    inset: 0
+    z-index: -1
+    pointer-events: none
+    background: radial-gradient(ellipse at 50% 36%, rgba(186, 148, 76, .13), transparent 48%), radial-gradient(ellipse at 18% 100%, rgba(57, 92, 153, .18), transparent 62%)
+
+  &.is-visible
+    opacity: 1
+
+  &.is-leaving
+    opacity: 0
+    pointer-events: auto
+    transition-duration: .18s
+
+  &__ambient
+    position: absolute
+    inset: 0
+    z-index: -1
+    pointer-events: none
+
+  &__content
+    position: relative
+    display: flex
+    flex-direction: column
+    align-items: center
+    width: unquote('min(820px, 100%)')
+    max-height: calc(var(--achievement-viewer-height) - 56px)
+    min-height: 0
+    transform: translateY(8px) scale(.985)
+    opacity: 0
+    transition: opacity .24s ease, transform .3s cubic-bezier(.2, .75, .25, 1)
+
+  &.is-visible &__content
+    transform: translateY(0) scale(1)
+    opacity: 1
+
+  &.is-leaving &__content
+    transform: translateY(-5px) scale(.985)
+    opacity: 0
+    transition-duration: .18s
+
+  &__art
+    position: relative
+    display: grid
+    place-items: center
+    flex: 0 1 auto
+    width: unquote('min(680px, 100%)')
+    height: unquote('min(560px, calc(var(--achievement-viewer-height) * .58))')
+    min-height: 0
+    margin: 0 0 22px
+    user-select: none
+
+    img
+      position: absolute
+      inset: 0
+      display: block
+      min-width: 0
+      min-height: 0
+      width: 100%
+      height: 100%
+      max-width: 100%
+      max-height: 100%
+      object-fit: contain
+      object-position: center
+      opacity: 0
+      transform: translateY(5px) scale(.96)
+      filter: drop-shadow(0 14px 26px rgba(0, 0, 0, .23))
+      transition: opacity .26s ease, transform .38s cubic-bezier(.2, .75, .25, 1)
+      -webkit-user-drag: none
+
+  &.is-ready &__art img
+    opacity: 1
+    transform: translateY(0) scale(1)
+
+  &.is-leaving &__art img
+    opacity: 0
+    transform: scale(.98)
+    transition-duration: .16s
+
+  &__copy
+    flex: 0 0 auto
+    width: unquote('min(620px, 100%)')
+    min-width: 0
+
+  &__eyebrow
+    margin: 0 0 8px
+    color: #cbb47e
+    font-size: 10px
+    font-weight: 500
+    line-height: 1.6
+    letter-spacing: .25em
+
+  &__title
+    margin: 0 0 12px
+    color: #faf5e9
+    font-size: unquote('clamp(23px, 3.4vw, 34px)')
+    font-weight: 650
+    line-height: 1.3
+    letter-spacing: .08em
+    overflow-wrap: anywhere
+    text-shadow: 0 2px 18px rgba(212, 180, 110, .1)
+
+  &__description
+    max-width: 520px
+    margin: 0 auto
+    color: #bdc9d9
+    font-size: 13px
+    line-height: 1.8
+    overflow-wrap: anywhere
+
+  &__date
+    display: block
+    margin: 10px 0 0
+    color: #9aaac0
+    font-size: 11px
+    line-height: 1.6
+    font-variant-numeric: tabular-nums
+
+  &__hint
+    flex: 0 0 auto
+    margin: 25px 0 0
+    color: #aab8ca
+    font-size: 11px
+    line-height: 1.7
+    letter-spacing: .06em
+    user-select: none
+
+    &::before
+      content: ''
+      display: block
+      width: 42px
+      height: 1px
+      margin: 0 auto 14px
+      background: linear-gradient(90deg, transparent, rgba(204, 177, 118, .6), transparent)
+
+  &__status
+    position: absolute
+    inset: 0
+    display: flex
+    flex-direction: column
+    align-items: center
+    justify-content: center
+    gap: 16px
+    max-width: 350px
+    margin: 0 auto
+    padding: 24px
+    color: #c0cbdb
+    font-size: 13px
+    line-height: 1.8
+    text-align: center
+
+  &.is-loading &__status::before
+    content: ''
+    flex-shrink: 0
+    width: 27px
+    height: 27px
+    border: 1px solid rgba(205, 180, 125, .2)
+    border-top-color: #d0b883
+    border-right-color: rgba(208, 184, 131, .65)
+    border-radius: 50%
+    animation: achievement-art-viewer-loading .8s linear infinite
+
+  &.is-error &__status
+    color: #dfcda9
+
+    &::before
+      content: '✧'
+      color: #baa479
+      font-size: 36px
+      line-height: 1
+
+@supports (height: 100dvh)
+  .achievement-art-viewer
+    --achievement-viewer-height: 100dvh
+
+@keyframes achievement-art-viewer-loading
+  to
+    transform: rotate(360deg)
+
+@media (max-width: 640px)
+  .achievement-art-viewer
+    padding-left: 20px
+    padding-right: 20px
+
+    &__art
+      height: unquote('min(500px, calc(var(--achievement-viewer-height) * .52))')
+      margin-bottom: 22px
+
+    &__title
+      margin-bottom: 10px
+      font-size: 26px
+      letter-spacing: .05em
+
+    &__description
+      max-width: 340px
+      font-size: 12px
+      line-height: 1.75
+
+    &__hint
+      margin-top: 22px
+      font-size: 10px
+
+// Fit a phone held sideways without shrinking the explanation to unreadable text.
+@media (max-height: 520px) and (min-width: 560px)
+  .achievement-art-viewer
+    padding: 18px 28px
+    padding-left: unquote('max(28px, env(safe-area-inset-left))')
+    padding-right: unquote('max(28px, env(safe-area-inset-right))')
+
+    &__content
+      display: grid
+      grid-template-columns: minmax(0, 1fr) minmax(0, .9fr)
+      grid-template-rows: minmax(0, 1fr) auto
+      gap: 0 24px
+      max-height: calc(var(--achievement-viewer-height) - 36px)
+      width: unquote('min(900px, 100%)')
+
+    &__art
+      width: 100%
+      height: calc(var(--achievement-viewer-height) - 92px)
+      margin: 0
+      grid-row: 1 / 3
+
+    &__copy
+      align-self: center
+      padding-top: 10px
+
+    &__title
+      font-size: 25px
+
+    &__description
+      font-size: 12px
+      line-height: 1.7
+
+    &__hint
+      margin: 10px 0 0
+      padding-bottom: 7px
+      font-size: 10px
+
+      &::before
+        margin-bottom: 9px
+
+@media (max-height: 570px) and (max-width: 559px)
+  .achievement-art-viewer
+    padding-top: 15px
+    padding-bottom: 15px
+
+    &__art
+      height: calc(var(--achievement-viewer-height) * .42)
+      margin-bottom: 15px
+
+    &__eyebrow
+      margin-bottom: 5px
+
+    &__title
+      margin-bottom: 7px
+      font-size: 23px
+
+    &__description
+      font-size: 11px
+      line-height: 1.6
+
+    &__date
+      margin-top: 6px
+      font-size: 10px
+
+    &__hint
+      margin-top: 15px
+
+      &::before
+        margin-bottom: 8px
+
+@media (prefers-reduced-motion: reduce)
+  .achievement-art-viewer,
+  .achievement-art-viewer__content,
+  .achievement-art-viewer__art img
+    transition: none !important
+    transform: none !important
+
+  .achievement-art-viewer__status::before
+    animation: none !important

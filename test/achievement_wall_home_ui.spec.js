@@ -45,6 +45,9 @@ describe('homepage achievement wall', () => {
         assert.equal(wall.hasAttribute('data-achievement-wall-loading'), false);
         assert.ok(wall.querySelector('[data-achievement-grid-empty]'));
         assert.equal(document.querySelector('[src*="original-"]'), null);
+        assert.equal(wall.querySelector('[data-achievement-tile]').dataset.imageUrl, 'https://objects.test/original-0.png');
+        assert.equal(wall.querySelector('[data-achievement-tile]').getAttribute('aria-haspopup'), 'dialog');
+        assert.match(wall.querySelector('[data-achievement-hint]').textContent, /悬停查看介绍.*点击查看高清图/);
     });
 
     it('addresses the homepage owner directly and never substitutes stars for missing achievement artwork', (t) => {
