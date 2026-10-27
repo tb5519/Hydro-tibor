@@ -21,8 +21,7 @@ const load = (name, dependencies = {}) => {
         { module, exports: module.exports, Buffer, URL, Date, process, require: (id) => dependencies[id] ?? require(id) });
     return module.exports;
 };
-const PERM = { PERM_VIEW: 1n, PERM_EDIT_DOMAIN: 2n };
-const PRIV = { PRIV_USER_PROFILE: 2, PRIV_EDIT_SYSTEM: 1, PRIV_JUDGE: 4 };
+const { PERM, PRIV } = load('packages/common/permission.ts');
 const now = new Date('2026-10-27T12:00:00+08:00');
 const payload = (updates = {}) => ({ externalId: 'school-lesson-123', domainId: 'python', uid: 20,
     startAt: '2026-10-26T10:00:00+08:00', durationHours: 1.5, title: 'Python 课堂', ...updates });
@@ -87,11 +86,11 @@ beforeEach(async () => {
         { _id: 'system', workspaceId: 'tang', owner: 12, domainType: 'oj' },
     ]);
     await database.collection('user').insertMany([
-        { _id: 10, priv: 2, editDomains: ['python', 'cpp', 'scratch'], assigned: ['school-a'] },
-        { _id: 11, priv: 2, editDomains: ['other'], assigned: ['school-b'] },
-        { _id: 12, priv: 2, editDomains: ['system'], assigned: [] },
-        { _id: 20, priv: 2, editDomains: [], assigned: ['school-a'] },
-        { _id: 21, priv: 2, editDomains: [], assigned: ['school-b'] },
+        { _id: 10, priv: PRIV.PRIV_USER_PROFILE, editDomains: ['python', 'cpp', 'scratch'], assigned: ['school-a'] },
+        { _id: 11, priv: PRIV.PRIV_USER_PROFILE, editDomains: ['other'], assigned: ['school-b'] },
+        { _id: 12, priv: PRIV.PRIV_USER_PROFILE, editDomains: ['system'], assigned: [] },
+        { _id: 20, priv: PRIV.PRIV_USER_PROFILE, editDomains: [], assigned: ['school-a'] },
+        { _id: 21, priv: PRIV.PRIV_USER_PROFILE, editDomains: [], assigned: ['school-b'] },
     ]);
     await database.collection('workspace.member').insertMany([
         { workspaceId: 'school-a', uid: 10, status: 'active' }, { workspaceId: 'school-b', uid: 11, status: 'active' },
@@ -106,6 +105,47 @@ const issue = (selected = scope) => model.issueToken(selected, 10, now);
 const write = (secret, updates = {}, requestDomain) => model.ingest(secret, payload(updates), requestDomain, now);
 
 describe('class-time scoped tokens and durable idempotent imports', () => {
+    it('lets a full-privilege administrator generate a token for both legacy classrooms and import class time', async () => {
+        await database.collection('user').updateOne({ _id: 12 }, { $set: { priv: PRIV.PRIV_ALL, editDomains: [] } });
+        await database.collection('domain').insertOne({ _id: 'C0001', workspaceId: 'tang', owner: 12, domainType: 'oj' });
+        await database.collection('user').insertOne({ _id: 22, priv: PRIV.PRIV_USER_PROFILE, editDomains: [], assigned: [] });
+        await domainModel.collUser.insertOne({ domainId: 'system', uid: 22, join: true });
+        const teacher = await userModel.getById('system', 12);
+        assert.equal(teacher.hasPriv(PRIV.PRIV_JUDGE), true);
+        assert.equal(teacher.hasPriv(PRIV.PRIV_EDIT_SYSTEM), true);
+        const allowed = await scopeModel.trainingDashboardScope({
+            domain: await domainModel.get('system'), user: teacher, session: {},
+        });
+        assert.deepEqual(Array.from(allowed.domains, (item) => item.id).sort(), ['C0001', 'system']);
+        const issued = await model.issueToken(allowed, 12, now);
+        assert.equal(issued.status.active, true);
+        const result = await write(issued.token, { uid: 22, domainId: 'system' });
+        assert.equal(result.accepted, true);
+        assert.equal(await model.classes.countDocuments({ uid: 22 }), 1);
+    });
+    it('keeps administrator tokens inside their selected classrooms and assigned active workspace', async () => {
+        for (const priv of [PRIV.PRIV_ALL, PRIV.PRIV_USER_PROFILE | PRIV.PRIV_EDIT_SYSTEM | PRIV.PRIV_JUDGE]) {
+            await database.collection('user').updateOne({ _id: 10 }, { $set: { priv } });
+            const issued = await issue({ workspaceId: 'school-a', domains: [{ id: 'python' }] });
+            assert.equal((await write(issued.token)).accepted, true);
+            await assert.rejects(() => write(issued.token, { domainId: 'cpp' }), model.ClassTimeScopeError);
+            await assert.rejects(() => issue({ workspaceId: 'school-b', domains: [{ id: 'other' }] }), model.ClassTimeScopeError);
+            await database.collection('workspace').updateOne({ _id: 'school-a' }, { $set: { status: 'disabled' } });
+            await assert.rejects(() => issue(), model.ClassTimeScopeError);
+            await assert.rejects(() => write(issued.token), model.ClassTimeScopeError);
+            await database.collection('workspace').updateOne({ _id: 'school-a' }, { $set: { status: 'active' } });
+        }
+    });
+    it('continues to reject judge service accounts without administrator privilege on issue and ingestion', async () => {
+        const issued = await issue();
+        await database.collection('user').updateOne({ _id: 10 }, { $set: {
+            priv: PRIV.PRIV_USER_PROFILE | PRIV.PRIV_JUDGE | PRIV.PRIV_VIEW_ALL_DOMAIN
+                | PRIV.PRIV_READ_PROBLEM_DATA | PRIV.PRIV_UNLIMITED_ACCESS,
+        } });
+        await assert.rejects(() => issue(), model.ClassTimeScopeError);
+        await assert.rejects(() => write(issued.token), model.ClassTimeScopeError);
+        assert.equal(await model.classes.countDocuments(), 0);
+    });
     it('stores only the hash, returns public token metadata, and writes completed lessons separately', async () => {
         const issued = await issue();
         assert.match(issued.token, /^ct_[a-f0-9]{64}$/);
@@ -164,7 +204,7 @@ describe('class-time scoped tokens and durable idempotent imports', () => {
         for (const change of [{ editDomains: [] }, { priv: 0 }, { assigned: ['school-b'] }]) {
             await database.collection('user').updateOne({ _id: 10 }, { $set: change });
             await assert.rejects(() => write(token), model.ClassTimeScopeError);
-            await database.collection('user').updateOne({ _id: 10 }, { $set: { editDomains: ['python', 'cpp'], priv: 2, assigned: ['school-a'] } });
+            await database.collection('user').updateOne({ _id: 10 }, { $set: { editDomains: ['python', 'cpp'], priv: PRIV.PRIV_USER_PROFILE, assigned: ['school-a'] } });
         }
         await database.collection('domain').updateOne({ _id: 'python' }, { $set: { workspaceId: 'school-b' } });
         await assert.rejects(() => write(token), model.ClassTimeScopeError);
@@ -177,10 +217,11 @@ describe('class-time scoped tokens and durable idempotent imports', () => {
             await assert.rejects(() => write(token), model.ClassTimeScopeError);
             await domainModel.collUser.updateOne({ domainId: 'python', uid: 20 }, { $set: { join: true, blockedByStudentManagement: false } });
         }
-        for (const change of [{ priv: 3 }, { priv: 6 }, { priv: 0 }, { editDomains: ['python'] }, { denyView: true }]) {
+        for (const change of [{ priv: PRIV.PRIV_ALL }, { priv: PRIV.PRIV_USER_PROFILE | PRIV.PRIV_EDIT_SYSTEM },
+            { priv: PRIV.PRIV_USER_PROFILE | PRIV.PRIV_JUDGE }, { priv: 0 }, { editDomains: ['python'] }, { denyView: true }]) {
             await database.collection('user').updateOne({ _id: 20 }, { $set: change });
             await assert.rejects(() => write(token), model.ClassTimeScopeError);
-            await database.collection('user').updateOne({ _id: 20 }, { $set: { priv: 2, editDomains: [], denyView: false } });
+            await database.collection('user').updateOne({ _id: 20 }, { $set: { priv: PRIV.PRIV_USER_PROFILE, editDomains: [], denyView: false } });
         }
     });
     it('excludes other workspace teachers and modern students from the legacy classroom', async () => {

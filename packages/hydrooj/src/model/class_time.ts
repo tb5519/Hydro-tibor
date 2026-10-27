@@ -66,8 +66,9 @@ async function currentScope(teacherUid: number, workspaceId: string, targetDomai
         }
     }
     const teacher = await user.getById(targetDomain._id, teacherUid);
+    // Full administrators also have the judge bit; exclude dedicated judge accounts only.
     if (!teacher || teacher._id !== teacherUid || !teacher.hasPriv(PRIV.PRIV_USER_PROFILE)
-        || teacher.hasPriv(PRIV.PRIV_JUDGE)) throw new ClassTimeScopeError();
+        || (teacher.hasPriv(PRIV.PRIV_JUDGE) && !teacher.hasPriv(PRIV.PRIV_EDIT_SYSTEM))) throw new ClassTimeScopeError();
     // Load lazily: the dashboard imports this independent class-time ledger.
     const { trainingDashboardScope } = require('./training_dashboard') as typeof import('./training_dashboard');
     try {
