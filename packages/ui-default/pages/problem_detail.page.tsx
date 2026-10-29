@@ -689,9 +689,8 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
       import('../components/scratchpad'),
       import('../components/scratchpad/reducers'),
     ]).then(async ([socketModule, scratchpadModule, reducerModule]) => {
-      // Review pages show their authorized read-only code immediately, while
-      // Monaco and the verified theme prepare independently. Other editors
-      // retain their complete theme before the first mount.
+      // Open the original review workspace while its verified theme prepares
+      // independently. Other editors retain their complete theme at first mount.
       if (!(UiContext.homeworkReview && UiContext.isMistakeSupported)) await themePreparation;
       return {
         WebSocket: socketModule.default,
@@ -750,18 +749,6 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
 
   let progress = false;
 
-  function hideReviewPreviewWhenReady() {
-    if ($('#scratchpad').css('opacity') === '1'
-      && $('#scratchpad .ScratchpadMonacoEditor[data-editor-ready="true"]').length) {
-      $('#homework-review-preview').remove();
-    }
-  }
-  function showReviewPreviewError() {
-    $('#homework-review-preview .homework-review-preview__status').text('编辑器加载失败，请刷新页面重试；您仍可以查看代码。');
-  }
-  $('.scratchpad-container').on('homework-review-editor-ready', hideReviewPreviewWhenReady);
-  $('.scratchpad-container').on('homework-review-editor-failed', showReviewPreviewError);
-
   async function enterScratchpadMode() {
     if (progress) return;
     progress = true;
@@ -771,10 +758,8 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
       renderReact();
       setTimeout(updateMistakePromptPosition, 0);
       await scratchpadFadeIn();
-      hideReviewPreviewWhenReady();
     } catch (err) {
       console.error('Failed to open scratchpad:', err);
-      showReviewPreviewError();
       Notification.error('在线编辑器加载失败，请刷新页面后重试。');
       if (extender.isExtended) {
         try {

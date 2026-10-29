@@ -58,23 +58,6 @@
   {% endif %}
 {% endif %}
 </script>
-{% if homeworkReview and isMistakeSupported %}
-<style>
-  .homework-review-preview { position: fixed; inset: 0; z-index: 10000; display: flex; flex-direction: column; background: #f4f7fa; color: #20354a; }
-  .homework-review-preview__header { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 14px 20px; background: #fff; border-bottom: 1px solid #dce6ed; }
-  .homework-review-preview__header a { margin-left: auto; }
-  .homework-review-preview__status { color: #657d8f; font-size: 13px; }
-  .homework-review-preview__code { flex: 1; min-height: 0; overflow: auto; margin: 16px; padding: 20px; border: 1px solid #dce6ed; border-radius: 8px; background: #fff; color: #20354a; font: 14px/1.6 monospace; tab-size: 4; white-space: pre; }
-</style>
-<section class="homework-review-preview" id="homework-review-preview" aria-label="学员代码只读预览">
-  <div class="homework-review-preview__header">
-    <strong>{{ homeworkReview.name|escape }}的代码（只读）</strong>
-    <span class="homework-review-preview__status" role="status">编辑器正在加载，您可以先查看代码</span>
-    <a href="{{ homeworkReview.returnUrl|escape }}">返回学员作业</a>
-  </div>
-  <pre class="homework-review-preview__code" tabindex="0"><code>{% if homeworkReview.rid %}{{ homeworkReview.code|escape }}{% else %}该学员尚未提交这道题。{% endif %}</code></pre>
-</section>
-{% endif %}
 {% if badgeAcFirstEligible %}{% include 'partials/badge_ac_preload.html' %}{% endif %}
 <style>
   .dialog--contest-submit-result .dialog__content {
