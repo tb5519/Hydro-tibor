@@ -32,6 +32,20 @@ export function trainingDuration(seconds = 0) {
     return minutes >= 60 ? `${Math.floor(minutes / 60)} 小时${minutes % 60 ? ` ${minutes % 60} 分钟` : ''}` : `${minutes} 分钟`;
 }
 
+/** Round uncertain historical bounds outwards; never present a guessed exact duration. */
+export function trainingDurationRange(lower = 0, upper = lower) {
+    const minimum = Number.isFinite(lower) ? Math.max(0, lower) : 0;
+    const maximum = Number.isFinite(upper) ? Math.max(minimum, upper) : minimum;
+    if (maximum - minimum < 0.001) return trainingDuration(minimum);
+    const lowMinutes = Math.floor(minimum / 60);
+    const highMinutes = Math.ceil(maximum / 60);
+    if (highMinutes < 60) return `${lowMinutes}～${highMinutes} 分钟`;
+    if (Math.floor(lowMinutes / 60) === Math.floor(highMinutes / 60)) {
+        return `${Math.floor(lowMinutes / 60)} 小时 ${lowMinutes % 60}～${highMinutes % 60} 分钟`;
+    }
+    return `${trainingDuration(lowMinutes * 60)}～${trainingDuration(highMinutes * 60)}`;
+}
+
 export function trainingDomainSelection(raw: unknown, available: string[]) {
     const values = raw === undefined ? ['all'] : (Array.isArray(raw) ? raw : [raw]);
     if (values.some((value) => typeof value !== 'string')) throw new Error('domains');

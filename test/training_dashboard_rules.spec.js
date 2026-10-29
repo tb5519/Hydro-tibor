@@ -47,6 +47,13 @@ test('duration format does not round away small training or add fictitious minut
     assert.equal(rules.trainingDuration(3660), '1 小时 1 分钟');
     assert.equal(rules.trainingDuration(0), '0 分钟');
 });
+test('uncertain durations show outward-rounded bounds without implying an exact split', () => {
+    assert.equal(rules.trainingDurationRange(181.882, 446.173), '3～8 分钟');
+    assert.equal(rules.trainingDurationRange(7381.882, 7646.173), '2 小时 3～8 分钟');
+    assert.equal(rules.trainingDurationRange(3599, 3601), '59 分钟～1 小时 1 分钟');
+    assert.equal(rules.trainingDurationRange(59, 59), '不足 1 分钟');
+    assert.equal(rules.trainingDurationRange(0, 600), '0～10 分钟');
+});
 test('attention requires both meaningful time and attempts, never no AC alone', () => {
     assert.equal(rules.trainingAttention(1800, 3, 0).kind, 'stuck');
     assert.equal(rules.trainingAttention(1800, 3, 1).kind, 'normal');

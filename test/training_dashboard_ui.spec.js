@@ -215,12 +215,13 @@ test('token generation requires a selected classroom and clearing the error allo
 test('historical daily-only caveat appears with imported classes and untrusted course content is escaped', (t) => {
     const data = fixture();
     data.summary.legacySeconds = 60;
+    data.summary.uncertainSeconds = 60;
     data.detail = studentDetail();
     data.detail.lessons[0].title = '<img src=x onerror=alert(1)>';
     const dom = new JSDOM(render(data));
     t.after(() => dom.window.close());
     const { document } = dom.window;
-    assert.match(document.querySelector('.tdash-legacy-note').textContent, /历史训练.*无法精确.*新记录/s);
+    assert.match(document.querySelector('.tdash-legacy-note').textContent, /历史训练.*无法精确.*范围.*新记录/s);
     assert.equal(document.querySelectorAll('[onerror]').length, 0);
     assert.match(document.querySelector('.tdash-lessons strong').textContent, /<img src=x onerror=alert\(1\)>/);
     const noClass = fixture();
@@ -228,4 +229,22 @@ test('historical daily-only caveat appears with imported classes and untrusted c
     const clean = new JSDOM(render(noClass));
     t.after(() => clean.window.close());
     assert.equal(clean.window.document.querySelector('.tdash-legacy-note'), null);
+});
+
+test('uncertain historical durations remain visible as ranges in the original dashboard', (t) => {
+    const data = fixture();
+    Object.assign(data.summary, { timeLabel: '2 小时 3～8 分钟', trainingLabel: '3～8 分钟', uncertainSeconds: 264 });
+    data.detail = studentDetail();
+    Object.assign(data.detail.timeBreakdown, { timeLabel: '2 小时 3～8 分钟', trainingLabel: '3～8 分钟', uncertainSeconds: 264 });
+    Object.assign(data.detail.problems[0], { timeLabel: '0～8 分钟', uncertainSeconds: 480 });
+    Object.assign(data.rows[0], { seconds: 0, secondsUpper: 600, timeLabel: '0～10 分钟', trainingLabel: '0～10 分钟' });
+    const dom = new JSDOM(render(data));
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    assert.match(document.querySelector('.tdash-stat--time').textContent, /2 小时 3～8 分钟/);
+    assert.match(document.querySelector('.tdash-stat--training').textContent, /3～8 分钟/);
+    assert.match(document.querySelector('.tdash-time-breakdown').textContent, /历史时段无法精确拆分/);
+    assert.match(document.querySelector('.tdash-problem-table').textContent, /0～8 分钟.*历史时段不完整/s);
+    assert.match(document.querySelector('.tdash-table--roster tbody tr').textContent, /0～10 分钟/);
+    assert.match(document.querySelector('.tdash-method').textContent, /无论属于 Python 还是 C\+\+ 课堂/);
 });

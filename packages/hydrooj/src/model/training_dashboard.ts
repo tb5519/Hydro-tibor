@@ -4,7 +4,7 @@ import { isScratchDomain } from '../lib/domain_type';
 import { mergeLearningTime } from '../lib/learning_time';
 import {
     TRAINING_PERIODS, TRAINING_TIME_ZONE, trainingAttention, trainingAverageWindow, trainingDailyBars,
-    trainingDomainSelection, trainingDuration, trainingRange,
+    trainingDomainSelection, trainingDuration, trainingDurationRange, trainingRange,
 } from '../lib/training_dashboard';
 import type { Handler } from '../service/server';
 import { Time } from '../utils';
@@ -28,11 +28,16 @@ const activityLabel = (value: number) => (value ? moment(value).tz(TRAINING_TIME
 function presentTime(value: any = {}) {
     const seconds = value.seconds || 0;
     const trainingSeconds = value.trainingSeconds || 0;
+    const trainingUpperSeconds = Math.max(trainingSeconds, value.trainingUpperSeconds ?? trainingSeconds);
     const classSeconds = value.classSeconds || 0;
     const overlapSeconds = value.overlapSeconds || 0;
-    return { ...value, seconds, trainingSeconds, classSeconds, overlapSeconds, legacySeconds: value.legacySeconds || 0,
-        timeLabel: trainingDuration(seconds), trainingLabel: trainingDuration(trainingSeconds),
-        classLabel: trainingDuration(classSeconds), overlapLabel: trainingDuration(overlapSeconds) };
+    const overlapUpperSeconds = Math.max(overlapSeconds, value.overlapUpperSeconds ?? overlapSeconds);
+    const uncertainSeconds = trainingUpperSeconds - trainingSeconds;
+    const secondsUpper = seconds + uncertainSeconds;
+    return { ...value, seconds, secondsUpper, trainingSeconds, trainingUpperSeconds, uncertainSeconds,
+        classSeconds, overlapSeconds, overlapUpperSeconds, legacySeconds: value.legacySeconds || 0,
+        timeLabel: trainingDurationRange(seconds, secondsUpper), trainingLabel: trainingDurationRange(trainingSeconds, trainingUpperSeconds),
+        classLabel: trainingDuration(classSeconds), overlapLabel: trainingDurationRange(overlapSeconds, overlapUpperSeconds) };
 }
 
 function dailyBars(start: moment.Moment, end: moment.Moment, stats: any[]) {
@@ -109,7 +114,12 @@ export async function loadTrainingDashboard(handler: Handler) {
     const dailyMatch = { domainId: { $in: ids }, uid: { $in: uids }, day: { $gte: dayString(start), $lte: dayString(end) } };
     const rangeStart = +start;
     const rangeEnd = +end.clone().add(1, 'day');
-    const classMatch = { workspaceId: scope.workspaceId, domainId: { $in: ids }, uid: { $in: uids } };
+    // Every authorized classroom can mask teacher-led practice, even when the
+    // teacher filters the visible statistics to another language/classroom.
+    const classMatch = { workspaceId: scope.workspaceId, domainId: { $in: scope.domains.map((item) => item.id) }, uid: { $in: uids } };
+    const mergeTimes = (trainingRows: any[], classRows: any[], from: number, to: number) => (
+        mergeLearningTime(trainingRows, classRows, from, to, { classDomainIds: ids })
+    );
     const [timeRows, lessonRows, recordRows] = uids.length && ids.length ? await Promise.all([
         training.daily.find(dailyMatch).toArray(),
         classes.find({ ...classMatch, startAt: { $lt: new Date(rangeEnd) }, endAt: { $gt: new Date(rangeStart) } }).toArray(),
@@ -120,21 +130,22 @@ export async function loadTrainingDashboard(handler: Handler) {
             { $group: { _id: '$_id.uid', submits: { $sum: '$submits' }, accepted: { $sum: '$accepted' }, last: { $max: '$last' } } },
         ]).toArray(),
     ]) : [[], [], []];
-    const times = mergeLearningTime(timeRows, lessonRows, rangeStart, rangeEnd);
+    const times = mergeTimes(timeRows, lessonRows, rangeStart, rangeEnd);
     const timeMap = new Map(times.students.map((item) => [item._id, item]));
     const recordMap = new Map(recordRows.map((item) => [item._id, item]));
     const rows = students.map((item) => {
         const time: any = timeMap.get(item._id) || {};
         const records: any = recordMap.get(item._id) || {};
         const timeView = presentTime(time);
-        const seconds = timeView.seconds;
         const submits = records.submits || 0;
         const acceptedProblems = records.accepted || 0;
         const lastActive = Math.max(timestamp(time.last), timestamp(records.last));
         const observation = trainingAttention(timeView.trainingSeconds, submits, acceptedProblems);
         if (timeView.classSeconds && observation.kind === 'quiet') Object.assign(observation, { kind: 'normal', label: '有上课记录' });
+        else if (timeView.overlapSeconds && observation.kind === 'quiet') Object.assign(observation, { kind: 'normal', label: '有课堂练习' });
+        else if (timeView.uncertainSeconds && observation.kind === 'quiet') Object.assign(observation, { kind: 'normal', label: '历史训练时段待核对' });
         return { uid: item._id, name: item.displayName || item.uname, uname: item.uname, ...timeView,
-            timeLabel: seconds ? timeView.timeLabel : '暂无记录',
+            timeLabel: timeView.secondsUpper || timeView.overlapUpperSeconds ? timeView.timeLabel : '暂无记录',
             submits, acceptedProblems, lastActive, lastActiveLabel: activityLabel(lastActive),
             attentionKind: observation.kind, attentionLabel: observation.label,
             detailUrl: url({ student: item._id }, '#training-student') };
@@ -151,8 +162,9 @@ export async function loadTrainingDashboard(handler: Handler) {
         selectedDomainIds: ids, queryDomains: selection.all ? ['all'] : ids, currentQuery,
         domains: domainBreakdown(scope.domains, ids, times.domains),
         summary: { ...presentTime({ seconds: sum(rows), trainingSeconds: sum(rows, 'trainingSeconds'),
-            classSeconds: sum(rows, 'classSeconds'), overlapSeconds: sum(rows, 'overlapSeconds'), legacySeconds: sum(rows, 'legacySeconds') }),
-        activeStudents: rows.filter((item) => item.seconds || item.submits).length,
+            trainingUpperSeconds: sum(rows, 'trainingUpperSeconds'), classSeconds: sum(rows, 'classSeconds'),
+            overlapSeconds: sum(rows, 'overlapSeconds'), overlapUpperSeconds: sum(rows, 'overlapUpperSeconds'), legacySeconds: sum(rows, 'legacySeconds') }),
+        activeStudents: rows.filter((item) => item.secondsUpper || item.overlapUpperSeconds || item.submits).length,
             studentCount: rows.length, acceptedProblems: sum(rows, 'acceptedProblems'), submits: sum(rows, 'submits') },
         daily: dailyBars(start, end, times.days),
         rows: filtered.slice((page - 1) * 25, page * 25),
@@ -189,15 +201,17 @@ export async function loadTrainingDashboard(handler: Handler) {
         ]).toArray(),
     ]);
     const studentRow = rows.find((item) => item.uid === student);
-    const selectedTimes = mergeLearningTime(history, lessonHistory, rangeStart, rangeEnd);
+    const selectedTimes = mergeTimes(history, lessonHistory, rangeStart, rangeEnd);
     const problems = new Map<string, any>();
     for (const source of selectedTimes.sources) {
         // Daily quizzes are grouped per classroom; problem ids are a separate namespace.
         const key = JSON.stringify([source.domainId, source.kind, source.kind === 'problem' ? source.pid : 0]);
         const entry = problems.get(key) || { domainId: source.domainId, kind: source.kind, pid: source.kind === 'problem' ? source.pid : null,
-            seconds: 0, classTrainingSeconds: 0, submits: 0, accepted: false };
+            seconds: 0, trainingUpperSeconds: 0, classTrainingSeconds: 0, classTrainingUpperSeconds: 0, submits: 0, accepted: false };
         entry.seconds += source.seconds;
+        entry.trainingUpperSeconds += source.trainingUpperSeconds ?? source.seconds;
         entry.classTrainingSeconds += source.classTrainingSeconds || 0;
+        entry.classTrainingUpperSeconds += source.classTrainingUpperSeconds ?? source.classTrainingSeconds ?? 0;
         problems.set(key, entry);
     }
     for (const item of problemRecords) {
@@ -206,7 +220,8 @@ export async function loadTrainingDashboard(handler: Handler) {
         Object.assign(entry, { submits: item.submits, accepted: !!item.accepted, lastActiveLabel: activityLabel(timestamp(item.last)) });
         problems.set(key, entry);
     }
-    const orderedProblems = [...problems.values()].sort((a, b) => b.seconds - a.seconds || b.submits - a.submits).slice(0, 50);
+    const orderedProblems = [...problems.values()].sort((a, b) => (b.trainingUpperSeconds ?? b.seconds) - (a.trainingUpperSeconds ?? a.seconds)
+        || b.submits - a.submits).slice(0, 50);
     const domainViewers = new Map(await Promise.all(ids.map(async (id) => [id, await user.getById(id, handler.user._id)] as const)));
     const problemRows = await Promise.all(orderedProblems.map(async (item) => {
         const found = item.kind === 'problem'
@@ -215,13 +230,17 @@ export async function loadTrainingDashboard(handler: Handler) {
         return { ...item, domainName: scope.domains.find((d) => d.id === item.domainId)?.name,
             pid: pdoc?.pid || item.pid, title: pdoc?.title || (item.kind === 'daily' ? '每日一练' : item.kind === 'ide' ? '在线编程'
                 : found ? '暂不可查看的题目' : '题目已移除'),
-            url: pdoc ? handler.url('problem_detail', { domainId: item.domainId, pid: pdoc.pid || pdoc.docId }) : '', timeLabel: trainingDuration(item.seconds),
-            classTrainingLabel: item.classTrainingSeconds ? trainingDuration(item.classTrainingSeconds) : '' };
+            url: pdoc ? handler.url('problem_detail', { domainId: item.domainId, pid: pdoc.pid || pdoc.docId }) : '',
+            timeLabel: trainingDurationRange(item.seconds, item.trainingUpperSeconds ?? item.seconds),
+            uncertainSeconds: Math.max(0, (item.trainingUpperSeconds ?? item.seconds) - item.seconds),
+            classTrainingLabel: item.classTrainingUpperSeconds ? trainingDurationRange(item.classTrainingSeconds, item.classTrainingUpperSeconds) : '' };
     }));
-    const averageSeconds = sum(mergeLearningTime(history, lessonHistory, +average.start, +average.end).students, 'trainingSeconds');
-    const recentSeconds = sum(mergeLearningTime(history, lessonHistory, +recentStart, +now.clone().add(1, 'day').startOf('day')).students);
-    const monthSeconds = sum(mergeLearningTime(history, lessonHistory, +monthStart, +now.clone().add(1, 'day').startOf('day')).students);
-    const selectedLessons = lessonHistory.filter((item) => +item.startAt < rangeEnd && +item.endAt > rangeStart)
+    const averageTimes = mergeTimes(history, lessonHistory, +average.start, +average.end).students;
+    const recentTime = presentTime(mergeTimes(history, lessonHistory, +recentStart, +now.clone().add(1, 'day').startOf('day')).students[0]);
+    const monthTime = presentTime(mergeTimes(history, lessonHistory, +monthStart, +now.clone().add(1, 'day').startOf('day')).students[0]);
+    const averageLabel = average.weeks
+        ? trainingDurationRange(sum(averageTimes, 'trainingSeconds') / average.weeks, sum(averageTimes, 'trainingUpperSeconds') / average.weeks) : '—';
+    const selectedLessons = lessonHistory.filter((item) => ids.includes(item.domainId) && +item.startAt < rangeEnd && +item.endAt > rangeStart)
         .sort((a, b) => +b.startAt - +a.startAt || a.externalId.localeCompare(b.externalId));
     dashboard.detail = {
         uid: student, name: studentRow.name,
@@ -234,9 +253,9 @@ export async function loadTrainingDashboard(handler: Handler) {
         lessonLimit: selectedLessons.length > 100,
         overview: [
             { label: range.label, value: studentRow.timeLabel, helper: '自主训练与上课合并后的学习总时长' },
-            { label: '最近 7 天', value: trainingDuration(recentSeconds), helper: `${dayString(recentStart)} 至今 · 学习总时长` },
-            { label: '本月已记录', value: trainingDuration(monthSeconds), helper: `${now.format('M')} 月 · 学习总时长` },
-            { label: '平均周自主训练', value: average.weeks ? trainingDuration(averageSeconds / average.weeks) : '—',
+            { label: '最近 7 天', value: recentTime.timeLabel, helper: `${dayString(recentStart)} 至今 · 学习总时长` },
+            { label: '本月已记录', value: monthTime.timeLabel, helper: `${now.format('M')} 月 · 学习总时长` },
+            { label: '平均周自主训练', value: averageLabel,
                 helper: average.weeks ? `最近 ${average.weeks} 个完整自然周（${average.start.format('M/D')}—${average.end.clone().subtract(1, 'day').format('M/D')}）` : '统计满一个完整自然周后显示' },
         ],
         daily: dailyBars(start, end, selectedTimes.days),
