@@ -804,7 +804,7 @@ export function subscribeScratchpadTheme(listener: () => void): () => void {
     pollTimer = window.setInterval(onRefresh, 60000);
     // initializeScratchpadTheme already verified this page's account and
     // prepared its selection before mounting React. Keep later checks live.
-    if (!hasFreshInitialCatalog()) void refreshScratchpadThemes();
+    if (!hasFreshInitialCatalog() && !initializations.has(storageKey())) void refreshScratchpadThemes();
   }
   return () => {
     window.removeEventListener(themeEvent, listener);

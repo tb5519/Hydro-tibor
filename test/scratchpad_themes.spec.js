@@ -864,6 +864,29 @@ describe('scratchpad workspace themes', () => {
         } finally { assets.resolve(false); release?.(); h.dom.window.close(); }
     });
 
+    it('keeps the verified fallback while a review editor mounts during theme preparation', async () => {
+        const assets = deferred();
+        const started = deferred();
+        const h = harness({
+            workspace: true,
+            ui: { codeEditorThemeCatalog: { ...catalog(), accountId: 11, scope: '/d/class-a/code-editor/themes' } },
+            get: () => catalog(),
+            prepare: () => { started.resolve(); return assets.promise; },
+        });
+        let release;
+        try {
+            const preparing = h.themes.initializeScratchpadTheme();
+            await started.promise;
+            assert.equal(h.themes.currentScratchpadTheme().id, 'cloud');
+            release = h.themes.subscribeScratchpadTheme(() => {});
+            await Promise.resolve();
+            assert.equal(h.gets.length, 0, 'subscribing during bootstrap must not start another catalog request');
+            assets.resolve(true);
+            assert.equal(await preparing, true);
+            assert.equal(h.themes.currentScratchpadTheme().id, 'badge:7');
+        } finally { assets.resolve(false); release?.(); h.dom.window.close(); }
+    });
+
     it('rejects page bootstrap catalogs belonging to another account or domain and verifies the active context instead', async () => {
         for (const mismatch of [
             { accountId: 22, scope: '/d/class-a/code-editor/themes' },

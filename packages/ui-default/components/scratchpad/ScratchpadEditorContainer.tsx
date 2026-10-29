@@ -58,6 +58,16 @@ export default connect((state: any) => ({
   };
 
   async componentDidMount() {
+    try {
+      await this.initializeEditor();
+    } catch (err) {
+      if (!UiContext.homeworkReview) throw err;
+      console.error('Failed to initialize homework review editor:', err);
+      if (!this.unmounted) this.containerElement?.dispatchEvent(new Event('homework-review-editor-failed', { bubbles: true }));
+    }
+  }
+
+  async initializeEditor() {
     const value = this.props.value || '';
     const { language } = this.props;
     const { monaco, registerAction, customOptions } = await load([language]);
@@ -101,6 +111,9 @@ export default connect((state: any) => ({
       // The loader is an opaque fallback while Monaco initializes. A skin's
       // transparent editor must never reveal it beneath the finished editor.
       this.containerElement.setAttribute?.('data-editor-ready', 'true');
+      if (UiContext.homeworkReview) {
+        this.containerElement.dispatchEvent(new Event('homework-review-editor-ready', { bubbles: true }));
+      }
     }
   }
 
