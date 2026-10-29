@@ -5,7 +5,7 @@ import {
 import { homedir } from 'os';
 import { dirname, isAbsolute, join, resolve } from 'path';
 import type { Readable } from 'stream';
-import { HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { CopyObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 
 interface AssetConfig {
     enabled: boolean;
@@ -36,8 +36,8 @@ export interface AssetSource {
     /** Include the transformation revision and dimensions for generated previews. */
     variant?: string;
     contentDisposition?: string;
-    /** Only handler-selected decorative images; never request-controlled. */
-    decoration?: 'home-poster' | 'badge';
+    /** Only handler-selected decorative media; never request-controlled. */
+    decoration?: 'home-poster' | 'home-video' | 'badge';
 }
 
 interface Mirror { key: string; size: number; sha256: string }
@@ -67,6 +67,22 @@ const MEDIA_TYPES: Record<string, string> = {
     'video/mp4': '.mp4', 'video/webm': '.webm',
     'audio/wave': '.wav', 'audio/x-wav': '.wav', 'audio/mp4': '.m4a', 'audio/x-m4a': '.m4a',
 };
+const PUBLIC_HOME_VIDEO_CACHE = 'public, max-age=31536000, immutable';
+const HOME_VIDEO_STAMP = '[0-9]+-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
+
+function publicHomeVideo(source: AssetSource, config: AssetConfig, type: string) {
+    const remote = source?.meta?.remoteAsset;
+    const video = new RegExp(`^domain/[^/%]+/home-video-${HOME_VIDEO_STAMP}\\.(mp4|webm)$`).exec(source?.path || '');
+    const poster = new RegExp(`^domain/[^/%]+/home-video-poster-${HOME_VIDEO_STAMP}\\.jpg$`).test(source?.path || '');
+    const expectedType = video ? `video/${video[1]}` : poster ? 'image/jpeg' : '';
+    const limit = poster ? 8 * 1024 * 1024 : 40 * 1024 * 1024;
+    return !!expectedType && type === expectedType && source.meta['Content-Type'] === expectedType
+        && !source.variant && !source.contentDisposition && !!remote
+        && remote.bucket === config?.bucket && remote.region === config?.region
+        && remote.size === source.meta.size && remote.size <= limit && remote.contentType === expectedType
+        && /^[a-f0-9]{64}$/.test(remote.sha256)
+        && new RegExp(`^media/v1/[a-f0-9]{64}\\${MEDIA_TYPES[expectedType]}$`).test(remote.key);
+}
 
 function safePath(value: string) {
     return typeof value === 'string' && value && !value.startsWith('/') && !/[\\\u0000-\u001f?#]/.test(value)
@@ -192,14 +208,16 @@ export class AssetDelivery {
         const scratchProject = /^scratch\/[^/]+\/[a-f0-9]{24}\.(sb3|sprite3)$/.exec(source?.path || '');
         const scratchArchive = scratchProject && ['application/octet-stream', `application/x.scratch.${scratchProject[1]}`].includes(type)
             && source.meta.size <= 20 * 1024 * 1024;
-        if (type.startsWith('video/') && (!source?.meta?.remoteAsset || requireUpload || source.variant)) return null;
+        const homeVideo = source?.decoration === 'home-video';
+        if (homeVideo && !publicHomeVideo(source, config, type)) return null;
+        if (type.startsWith('video/') && (!source?.meta?.remoteAsset || (requireUpload && !homeVideo) || source.variant)) return null;
         const extension = scratchArchive ? `.${scratchProject[1]}` : MEDIA_TYPES[type];
-        if (source?.decoration && (!['home-poster', 'badge'].includes(source.decoration)
+        if (source?.decoration && !homeVideo && (!['home-poster', 'badge'].includes(source.decoration)
             || !/^image\/(png|jpeg|gif|webp|avif)$/.test(type) || source.meta.size > 8 * 1024 * 1024
             || (source.decoration === 'home-poster'
                 ? !/^domain\/[^/]+\/home-poster-[\w-]+\.(png|jpe?g|gif|webp|avif)$/i.test(source.path)
                 : !/^(?:domain\/[^/]+\/)?badge\/\d+\/(?:profile-background|ac-effect|badge-icon)-[\w-]+\.(png|jpe?g|gif|webp)$/i.test(source.path)))) return null;
-        const maxBytes = !requireUpload && source?.meta?.remoteAsset && !source.variant
+        const maxBytes = homeVideo ? 40 * 1024 * 1024 : !requireUpload && source?.meta?.remoteAsset && !source.variant
             ? 512 * 1024 * 1024 : (this.options.maxBytes ?? 32 * 1024 * 1024);
         if (!config || !base || base.pathname !== '/'
             || typeof config.mediaSigningKey !== 'string' || !/^[a-zA-Z0-9]{16,128}$/.test(config.mediaSigningKey)
@@ -217,10 +235,11 @@ export class AssetDelivery {
         const scope = sha256(JSON.stringify([config.bucket, config.region, config.endpoint]));
         const identityParts = [source.path, etag, source.meta.size, modified || 0, source.variant || '', type, source.contentDisposition || ''];
         if (source.decoration) identityParts.push(source.decoration);
+        if (homeVideo) identityParts.push(source.meta.remoteAsset.key, source.meta.remoteAsset.sha256);
         const identity = sha256(JSON.stringify(identityParts));
-        const prefix = source.decoration === 'home-poster' ? 'static/home-posters/v1'
+        const prefix = homeVideo ? 'static/home-videos/v1' : source.decoration === 'home-poster' ? 'static/home-posters/v1'
             : source.decoration === 'badge' ? 'media/decorations/v1' : 'media/v1';
-        return { id: `${scope}:${identity}`, key: `${prefix}/${identity}${extension}`, scope, config, source };
+        return { id: `${scope}:${identity}`, key: `${prefix}/${homeVideo ? source.meta.remoteAsset.sha256 : identity}${extension}`, scope, config, source };
     }
 
     private readIndex() {
@@ -232,7 +251,7 @@ export class AssetDelivery {
             if (index.version !== 1) return;
             for (const [id, item] of Object.entries(index.entries || {}) as [string, Mirror][]) {
                 if (/^[a-f0-9]{64}:[a-f0-9]{64}$/.test(id) && item
-                    && /^(?:media\/(?:decorations\/)?v1|static\/home-posters\/v1)\/[a-f0-9]{64}\.[a-z0-9]+$/.test(item.key)
+                    && /^(?:media\/(?:decorations\/)?v1|static\/(?:home-posters|home-videos)\/v1)\/[a-f0-9]{64}\.[a-z0-9]+$/.test(item.key)
                     && /^[a-f0-9]{64}$/.test(item.sha256) && Number.isSafeInteger(item.size) && item.size > 0) {
                     this.mirrors.set(id, item);
                 }
@@ -295,10 +314,11 @@ export class AssetDelivery {
     }
 
     private redirect(handler: any, config: AssetConfig, key: string, decoration?: AssetSource['decoration']) {
+        const publicDecoration = decoration === 'home-poster' || decoration === 'home-video';
         handler.response.status = 302;
-        handler.response.redirect = decoration === 'home-poster' ? new URL(key, config.mediaBaseUrl).toString()
+        handler.response.redirect = publicDecoration ? new URL(key, config.mediaBaseUrl).toString()
             : signMediaUrl(config.mediaBaseUrl, key, config.mediaSigningKey, this.now());
-        handler.response.addHeader('Cache-Control', decoration === 'home-poster' ? 'public, max-age=300'
+        handler.response.addHeader('Cache-Control', publicDecoration ? 'public, max-age=300'
             : decoration === 'badge' ? 'private, max-age=300' : 'private, no-store');
         if (decoration === 'badge') handler.response.addHeader('Vary', 'Cookie, Authorization');
         handler.response.addHeader('Referrer-Policy', 'no-referrer');
@@ -321,6 +341,45 @@ export class AssetDelivery {
         return this.clients.get(id);
     }
 
+    private async copyPublicHomeVideo(job: Job, signal: AbortSignal) {
+        const remote = job.source.meta.remoteAsset;
+        const client = this.client(job.config);
+        const source = await client.send(new HeadObjectCommand({ Bucket: remote.bucket, Key: remote.key }), { abortSignal: signal });
+        signal.throwIfAborted();
+        if (source.ContentLength !== remote.size || source.ContentType !== remote.contentType
+            || source.Metadata?.sha256 !== remote.sha256 || typeof source.ETag !== 'string'
+            || !source.ETag || source.ETag.length > 1024 || /[\r\n]/.test(source.ETag)) {
+            throw new Error('Public homepage media source verification failed');
+        }
+        const targetMatches = (head: any) => head?.ContentLength === remote.size
+            && head.ContentType === remote.contentType && head.Metadata?.sha256 === remote.sha256
+            && head.CacheControl === PUBLIC_HOME_VIDEO_CACHE && !head.ContentDisposition;
+        let existing;
+        try {
+            existing = await client.send(new HeadObjectCommand({ Bucket: job.config.bucket, Key: job.key }), { abortSignal: signal });
+        } catch (error) {
+            if (error.$metadata?.httpStatusCode !== 404 && error.name !== 'NotFound' && error.name !== 'NoSuchKey') throw error;
+        }
+        signal.throwIfAborted();
+        if (existing && !targetMatches(existing)) throw new Error('Public homepage media target is already occupied');
+        if (!existing) {
+            // Copy entirely inside OSS: never download the original video to
+            // Hydro or put large media bytes onto the application's uplink.
+            await client.send(new CopyObjectCommand({
+                Bucket: job.config.bucket, Key: job.key,
+                CopySource: `${remote.bucket}/${remote.key.split('/').map(encodeURIComponent).join('/')}`,
+                CopySourceIfMatch: source.ETag,
+                MetadataDirective: 'REPLACE', ContentType: remote.contentType,
+                CacheControl: PUBLIC_HOME_VIDEO_CACHE, Metadata: { sha256: remote.sha256 },
+            }), { abortSignal: signal });
+            signal.throwIfAborted();
+            const copied = await client.send(new HeadObjectCommand({ Bucket: job.config.bucket, Key: job.key }), { abortSignal: signal });
+            signal.throwIfAborted();
+            if (!targetMatches(copied)) throw new Error('Public homepage media copy verification failed');
+        }
+        this.remember(job.id, { key: job.key, size: remote.size, sha256: remote.sha256 });
+    }
+
     private async upload(job: Job) {
         const controller = new AbortController();
         let body: Buffer | Readable;
@@ -329,6 +388,10 @@ export class AssetDelivery {
         const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener('abort', () => reject(new Error('Asset mirror timeout')), { once: true }));
         const check = () => { if (controller.signal.aborted) throw new Error('Asset mirror timeout'); };
         const operation = (async () => {
+            if (job.source.decoration === 'home-video') {
+                await this.copyPublicHomeVideo(job, controller.signal);
+                return;
+            }
             const load = job.source.load || (() => this.options.load
                 ? this.options.load(job.source.path) : require('../model/storage').default.get(job.source.path));
             body = await load();

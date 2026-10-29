@@ -418,12 +418,15 @@ export class EditorThemeAssetHandler extends Handler {
         this.response.type = 'application/json';
         this.response.addHeader('X-Content-Type-Options', 'nosniff');
         this.response.addHeader('Referrer-Policy', 'no-referrer');
-        this.response.addHeader('Vary', 'Cookie, Authorization');
-        this.response.addHeader('Cache-Control', 'private, max-age=300');
         if (!tryRedirectAsset(this, { path: asset.path, meta })) {
             this.response.redirect = await assetStorage.signDownloadLink(meta.remoteAsset);
             this.response.status = 302;
         }
+        // The generic signed-media redirect is no-store. Apply this bounded,
+        // account-varying cache only after this handler has authorized the exact
+        // immutable theme version and successfully resolved its signed URL.
+        this.response.addHeader('Vary', 'Cookie, Authorization');
+        this.response.addHeader('Cache-Control', 'private, max-age=300');
     }
 }
 

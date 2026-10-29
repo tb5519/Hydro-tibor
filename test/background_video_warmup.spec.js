@@ -86,6 +86,61 @@ test('an existing background player is reused, never paused, loaded or duplicate
     } finally { h.close(); }
 });
 
+test('a recently ready video is not downloaded by another hidden warmup, while new versions still warm', () => {
+    const h = harness();
+    try {
+        const first = h.start(); h.idle();
+        const video = h.doc.querySelector('video');
+        h.ready(video);
+        first.dispose();
+        const loads = h.counters.load;
+        const second = h.start(); h.idle();
+        assert.equal(h.doc.querySelector('video'), null);
+        assert.equal(h.counters.load, loads, 'the readiness hint suppresses only another hidden preload');
+        second.dispose();
+        h.start({ ...h.config, items: [{ url: '/d/python/home/video?v=8' }] }); h.idle();
+        assert.equal(h.doc.querySelector('video').src, 'https://onebyone.test/d/python/home/video?v=8');
+        assert.equal(h.counters.load, loads + 1);
+    } finally { h.close(); }
+});
+
+test('expired or other account/domain readiness never suppresses a new hidden warmup', () => {
+    for (const kind of ['expired', 'account', 'domain']) {
+        const h = harness();
+        try {
+            const scope = kind === 'account' ? '99:python' : kind === 'domain' ? '42:other' : h.config.scope;
+            h.api.rememberBackgroundVideoReady(h.config.items[0].url, h.win, scope);
+            if (kind === 'expired') {
+                h.win.sessionStorage.setItem('onebyone-background-video-ready:v1:42:python', JSON.stringify({
+                    'https://onebyone.test/d/python/home/video?v=7': Date.now() - 301_000,
+                }));
+            }
+            h.start(); h.idle();
+            assert.equal(h.doc.querySelectorAll('video').length, 1, kind);
+            assert.equal(h.counters.load, 1, kind);
+        } finally { h.close(); }
+    }
+});
+
+test('a readiness hint never bypasses the visible player or its current readiness observation', () => {
+    const h = harness({ html: '<div data-loop-background data-background-video-src="/d/python/home/video?v=7"><video></video></div>' });
+    try {
+        h.api.rememberBackgroundVideoReady(h.config.items[0].url, h.win);
+        const video = h.doc.querySelector('video');
+        const key = 'onebyone-background-video-ready:v1:42:python';
+        const source = 'https://onebyone.test/d/python/home/video?v=7';
+        const original = JSON.parse(h.win.sessionStorage.getItem(key));
+        original[source] -= 60_000;
+        h.win.sessionStorage.setItem(key, JSON.stringify(original));
+        h.start(); h.idle();
+        assert.equal(h.doc.querySelectorAll('video').length, 1);
+        assert.equal(h.counters.load, 0); assert.equal(h.counters.pause, 0);
+        assert.equal(h.win.sessionStorage.getItem(key), JSON.stringify(original));
+        h.ready(video);
+        assert.ok(JSON.parse(h.win.sessionStorage.getItem(key))[source] > original[source]);
+    } finally { h.close(); }
+});
+
 test('a reserved visible wrapper is left for its player; hidden loading is capped at two videos and a duplicate start is idempotent', () => {
     const h = harness({ html: '<div data-loop-background data-background-video-src="/d/python/home/video?v=7"></div>' });
     try {

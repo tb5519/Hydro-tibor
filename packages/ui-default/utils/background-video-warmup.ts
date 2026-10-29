@@ -126,6 +126,11 @@ export function startBackgroundVideoWarmup(config: BackgroundVideoWarmupConfig, 
       // A visible background is initialized by its player. Do not race it with a duplicate download.
       if ([...doc.querySelectorAll<HTMLElement>('[data-loop-background]')]
         .some((root) => stableUrl(root.dataset.backgroundVideoSrc, win) === item.url)) continue;
+      // A recent first frame is enough for this optional warmup. Recreating a
+      // hidden video on every navigation can download the entire file again,
+      // especially when its authorized response intentionally uses no-store.
+      // This hint never replaces a visible player's load or permission checks.
+      if (hasBackgroundVideoReadyHint(item.url, win, config.scope)) continue;
       const preload = doc.createElement('video');
       preload.dataset.backgroundVideoWarmup = '';
       preload.muted = true;

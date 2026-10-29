@@ -68,6 +68,12 @@ function fixture(t, options = {}) {
         './asset_storage': { __esModule: true, default: assetStorage },
         './asset_delivery': { tryRedirectAsset: (handler, source) => {
             calls.delivery.push(source);
+            if (source.decoration === 'home-video') {
+                if (!options.publicCopy) return false;
+                handler.response.redirect = `https://static.example/static/home-videos/v1/${'b'.repeat(64)}.mp4`;
+                handler.response.status = 302;
+                return true;
+            }
             if (!options.cdn) return false;
             handler.response.redirect = 'https://static.example/media.mp4?auth_key=fixture';
             handler.response.status = 302;
@@ -174,6 +180,37 @@ describe('object-storage-only background upload', () => {
 });
 
 describe('background remote delivery', () => {
+    it('long-caches only a verified public homepage copy with the exact current version', async (t) => {
+        const f = fixture(t, { publicCopy: true, queryVersion: 'current' });
+        await f.helper.redirectBackgroundVideo(f.handler, videoPath, 'current', true);
+        assert.equal(f.handler.response.headers['Cache-Control'], 'public, max-age=31536000, immutable');
+        assert.equal(f.handler.response.headers.Vary, undefined);
+        assert.match(f.handler.response.redirect, /\/static\/home-videos\/v1\//);
+        assert.equal(f.calls.delivery.length, 1);
+        assert.equal(f.calls.get.length, 0);
+        assert.equal(f.calls.signed.length, 0);
+        for (const queryVersion of [undefined, 'old']) {
+            const mismatch = fixture(t, { publicCopy: true, queryVersion });
+            await mismatch.helper.redirectBackgroundVideo(mismatch.handler, videoPath, 'current', true);
+            assert.equal(mismatch.handler.response.headers['Cache-Control'], 'private, no-store');
+        }
+    });
+    it('keeps signed fallback short-lived until a public copy is ready and never promotes private backgrounds', async (t) => {
+        for (const cdn of [true, false]) {
+            const f = fixture(t, { cdn, queryVersion: 'current' });
+            await f.helper.redirectBackgroundVideo(f.handler, videoPath, 'current', true);
+            assert.equal(f.handler.response.headers['Cache-Control'], 'private, max-age=300');
+            assert.equal(f.handler.response.headers.Vary, 'Cookie, Authorization');
+            assert.equal(f.calls.delivery[0].decoration, 'home-video');
+            assert.equal(f.calls.delivery[1].decoration, undefined);
+            assert.equal(f.calls.get.length, 0);
+        }
+        const privateMedia = fixture(t, { cdn: true, publicCopy: true, queryVersion: 'current' });
+        await privateMedia.helper.redirectBackgroundVideo(privateMedia.handler, videoPath, 'current');
+        assert.equal(privateMedia.calls.delivery.length, 1);
+        assert.equal(privateMedia.calls.delivery[0].decoration, undefined);
+        assert.equal(privateMedia.handler.response.headers['Cache-Control'], 'private, max-age=300');
+    });
     it('privately caches only the exact authorized version below signed URL validity and isolates credentials', async (t) => {
         for (const cdn of [true, false]) {
             for (const method of ['GET', 'HEAD']) {

@@ -236,14 +236,16 @@ it('extends primary object storage only for exact editor-theme passive-media pat
 let retired = [];
 let retireFailure;
 let galleryForUser = async () => ({ badgeCards: [] });
+let redirectThemeAsset = () => false;
+let signThemeAsset = async () => 'https://objects.example/theme.png';
 const storageMeta = new Map();
 const workspace = { LEGACY_WORKSPACE_ID: 'tang', resolveDomainWorkspaceId: (domain) => domain.workspaceId || 'tang',
     isPlatformAdmin: (uid) => uid === 100,
     getLegacyWorkspace: async () => ({ ownerUid: 2 }) };
 const handlerModule = load('packages/hydrooj/src/handler/editor_theme.ts', {
     '../error': { NotFoundError: Error, PermissionError: Error, ValidationError: Error },
-    '../lib/asset_delivery': { tryRedirectAsset: () => false },
-    '../lib/asset_storage': { signDownloadLink: async () => 'https://objects.example/theme.png' },
+    '../lib/asset_delivery': { tryRedirectAsset: (...args) => redirectThemeAsset(...args) },
+    '../lib/asset_storage': { signDownloadLink: (...args) => signThemeAsset(...args) },
     '../lib/editor_image_theme': lib, '../lib/user_badge_gallery': { getUserBadgeGallery: (...args) => galleryForUser(...args) },
     '../model/builtin': { PERM: { PERM_EDIT_DOMAIN: 1n }, PRIV: { PRIV_USER_PROFILE: 1, PRIV_EDIT_SYSTEM: 2, PRIV_MANAGE_ALL_DOMAIN: 4 } },
     '../model/storage': { getMeta: async (target) => storageMeta.get(target), del: async (paths) => {
@@ -593,6 +595,69 @@ it('allows non-manager platform administrators only current scoped published med
     privileged = false;
     await assert.rejects(read());
     storageMeta.clear();
+});
+
+it('reuses an authorized theme redirect privately for five minutes with either CDN or OSS delivery', async (t) => {
+    const version = 'a'.repeat(32), assetId = 'd'.repeat(24);
+    const asset = { id: assetId, path: 'cached-theme.png', type: 'image/png', size: 10 };
+    storageMeta.set(asset.path, { size: 10, 'Content-Type': 'image/png', remoteAsset: { size: 10, contentType: 'image/png' } });
+    const fixtures = {
+        'editor.theme': [{ _id: 'domain:A:7', scope: 'domain:A', badgeId: 7, version }],
+        'editor.themeVersion': [{ _id: version, scope: 'domain:A', badgeId: 7, assets: [asset] }],
+    };
+    let held = true;
+    let redirects = 0;
+    galleryForUser = async () => ({ badgeCards: held ? [{ id: 7 }] : [] });
+    t.after(() => {
+        galleryForUser = async () => ({ badgeCards: [] });
+        redirectThemeAsset = () => false;
+        signThemeAsset = async () => 'https://objects.example/theme.png';
+        storageMeta.delete(asset.path);
+    });
+    const headers = new Map();
+    const handler = {
+        ctx: { db: draftDatabase(fixtures) }, domain: { _id: 'A', workspaceId: 'school' },
+        user: { _id: 11, hasPriv: () => false, hasPerm: () => false },
+        checkPriv() {}, response: {},
+    };
+    const reset = () => {
+        headers.clear();
+        handler.response = { addHeader: (key, value) => headers.set(key, value) };
+    };
+    const read = () => handlerModule.EditorThemeAssetHandler.prototype.get.call(handler, 'A', version, assetId);
+    for (const cdn of [true, false]) {
+        reset();
+        redirectThemeAsset = (target) => {
+            redirects += 1;
+            if (!cdn) return false;
+            target.response.redirect = 'https://cdn.example/theme.png?auth_key=fixture';
+            target.response.status = 302;
+            target.response.addHeader('Cache-Control', 'private, no-store');
+            return true;
+        };
+        await read();
+        assert.equal(handler.response.status, 302);
+        assert.equal(handler.response.redirect, cdn ? 'https://cdn.example/theme.png?auth_key=fixture' : 'https://objects.example/theme.png');
+        assert.equal(headers.get('Cache-Control'), 'private, max-age=300');
+        assert.equal(headers.get('Vary'), 'Cookie, Authorization');
+    }
+    assert.equal(redirects, 2);
+    held = false;
+    reset();
+    await assert.rejects(read());
+    assert.equal(redirects, 2, 'Revoked ownership must be rejected before resolving a signed URL');
+    assert.equal(handler.response.redirect, undefined);
+    assert.equal(headers.has('Cache-Control'), false, 'Denied responses must not receive a cacheable redirect policy');
+    held = true;
+    handler.domain = { _id: 'B', workspaceId: 'school' };
+    reset();
+    await assert.rejects(read());
+    assert.equal(redirects, 2, 'The same theme version must not cross classroom boundaries');
+    handler.domain = { _id: 'A', workspaceId: 'school' };
+    reset();
+    signThemeAsset = async () => { throw new Error('Object signing unavailable'); };
+    await assert.rejects(read(), /Object signing unavailable/);
+    assert.equal(headers.has('Cache-Control'), false, 'A failed signed-URL lookup must not receive a cacheable response policy');
 });
 
 it('retires only abandoned draft objects, preserving published versions and uploads that are still being published', async () => {

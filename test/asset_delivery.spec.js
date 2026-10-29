@@ -59,6 +59,44 @@ function handler() {
     return { response: { headers: {}, addHeader(name, value) { this.headers[name] = value; } } };
 }
 
+function homeVideoFixture(t, options = {}) {
+    const f = fixture(t);
+    const objects = new Map();
+    const client = { async send(command) {
+        f.calls.push(command);
+        const input = command.input;
+        if (command.constructor.name === 'HeadObjectCommand') {
+            const head = objects.get(input.Key);
+            if (!head) throw Object.assign(new Error('Missing'), { name: 'NotFound', $metadata: { httpStatusCode: 404 } });
+            return { ...head, Metadata: { ...head.Metadata } };
+        }
+        assert.equal(command.constructor.name, 'CopyObjectCommand', 'Public media must never stream GET/PUT bytes through Hydro');
+        const key = input.CopySource.slice(f.config.bucket.length + 1);
+        const original = objects.get(key);
+        if (options.failCopy || original.ETag !== input.CopySourceIfMatch) {
+            throw Object.assign(new Error('Changed source'), { $metadata: { httpStatusCode: 412 } });
+        }
+        objects.set(input.Key, { ...original, ETag: 'copied-etag', ContentType: input.ContentType,
+            CacheControl: input.CacheControl, ContentDisposition: undefined,
+            Metadata: options.badCopy ? { sha256: '0'.repeat(64) } : input.Metadata });
+        return {};
+    } };
+    const make = (extra) => f.make({ client: () => client, ...extra });
+    const media = (extension = 'mp4', content = 'public homepage video', stamp = '1') => {
+        const type = extension === 'jpg' ? 'image/jpeg' : `video/${extension}`;
+        const sha256 = createHash('sha256').update(content).digest('hex');
+        const key = `media/v1/${createHash('sha256').update(`private-${content}`).digest('hex')}.${extension}`;
+        const etag = `"${sha256}"`;
+        const item = { path: `domain/class-a/home-video${extension === 'jpg' ? '-poster' : ''}-${stamp}-12345678-1234-1234-1234-123456789abc.${extension}`,
+            decoration: 'home-video', meta: { size: content.length, etag, 'Content-Type': type,
+                remoteAsset: { key, sha256, size: content.length, contentType: type, bucket: f.config.bucket, region: f.config.region } },
+            load() { assert.fail('Public homepage videos must remain inside OSS'); } };
+        objects.set(key, { ContentLength: content.length, ContentType: type, ETag: etag, Metadata: { sha256 }, CacheControl: 'private, max-age=0' });
+        return item;
+    };
+    return { ...f, objects, media, make, delivery: make() };
+}
+
 it('does nothing with missing, disabled, malformed or relative configuration', (t) => {
     const f = fixture(t, { enabled: false });
     let calls = 0;
@@ -470,6 +508,109 @@ it('keeps decorative badge copies signed with short session-varying browser cach
     const privateResponse = handler();
     assert.equal(f.delivery.tryRedirectAsset(privateResponse, ordinary), true);
     assert.equal(privateResponse.response.headers['Cache-Control'], 'private, no-store');
+});
+
+it('publishes verified public homepage video copies inside OSS without delaying a cold request or reading media bytes', async (t) => {
+    const f = homeVideoFixture(t);
+    for (const extension of ['mp4', 'webm', 'jpg']) {
+        const video = f.media(extension, `public ${extension}`);
+        const before = f.calls.length;
+        assert.equal(f.delivery.tryRedirectAsset(handler(), video), false);
+        assert.equal(f.delivery.tryRedirectAsset(handler(), video), false);
+        assert.equal(f.calls.length, before, 'The request falls back before background OSS work begins');
+        await f.delivery.waitForAssetMirrors();
+        const h = handler();
+        assert.equal(f.delivery.tryRedirectAsset(h, video), true);
+        assert.equal(h.response.redirect, `https://static.example.com/static/home-videos/v1/${video.meta.remoteAsset.sha256}.${extension}`);
+        assert.equal(h.response.headers['Cache-Control'], 'public, max-age=300');
+        const copy = f.calls.slice(before).find((call) => call.constructor.name === 'CopyObjectCommand').input;
+        assert.equal(copy.CopySource, `${f.config.bucket}/${video.meta.remoteAsset.key}`);
+        assert.equal(copy.CopySourceIfMatch, video.meta.etag);
+        assert.equal(copy.MetadataDirective, 'REPLACE');
+        assert.equal(copy.ContentType, video.meta['Content-Type']);
+        assert.equal(copy.CacheControl, 'public, max-age=31536000, immutable');
+        assert.equal(copy.Metadata.sha256, video.meta.remoteAsset.sha256);
+        assert.deepEqual(Object.keys(copy.Metadata), ['sha256']);
+        assert.equal(copy.ACL, undefined, 'The OSS bucket/object ACL stays private; public delivery uses only the existing static CDN prefix');
+        const restarted = handler();
+        assert.equal(f.make().tryRedirectAsset(restarted, video), true);
+        assert.equal(restarted.response.redirect, h.response.redirect);
+    }
+    assert.equal(f.calls.filter((call) => call.constructor.name === 'CopyObjectCommand').length, 3);
+    assert.equal(f.calls.every((call) => ['HeadObjectCommand', 'CopyObjectCommand'].includes(call.constructor.name)), true);
+});
+
+it('never publishes private badge/editor media or mismatched descriptors as public homepage copies', (t) => {
+    const f = homeVideoFixture(t);
+    const video = f.media();
+    const remote = video.meta.remoteAsset;
+    const invalid = [
+        { ...video, path: video.path.replace('domain/class-a/home-video', 'badge/7/profile-video') },
+        { ...video, path: video.path.replace('domain/class-a/home-video', 'domain/class-a/badge/7/profile-video') },
+        { ...video, path: `editor-theme/${'a'.repeat(24)}/${'b'.repeat(32)}/${'c'.repeat(24)}.mp4` },
+        { ...video, path: video.path.replace('class-a', '%2f') },
+        { ...video, path: video.path.replace('.mp4', '.png') },
+        { ...video, variant: 'preview' }, { ...video, contentDisposition: 'attachment' },
+        { ...video, meta: { ...video.meta, remoteAsset: undefined } },
+        { ...video, meta: { ...video.meta, 'Content-Type': 'video/mp4; charset=utf8' } },
+        ...[{ bucket: 'other' }, { region: 'other' }, { key: `static/${'a'.repeat(64)}.mp4` },
+            { key: remote.key.replace('.mp4', '.webm') }, { sha256: 'bad' }, { size: remote.size + 1 }, { contentType: 'image/png' }]
+            .map((change) => ({ ...video, meta: { ...video.meta, remoteAsset: { ...remote, ...change } } })),
+        { ...video, meta: { ...video.meta, size: 40 * 1024 * 1024 + 1, remoteAsset: { ...remote, size: 40 * 1024 * 1024 + 1 } } },
+    ];
+    const poster = f.media('jpg');
+    invalid.push({ ...poster, meta: { ...poster.meta, size: 8 * 1024 * 1024 + 1,
+        remoteAsset: { ...poster.meta.remoteAsset, size: 8 * 1024 * 1024 + 1 } } });
+    for (const item of invalid) {
+        assert.equal(f.delivery.queueAssetMirror(item), false);
+        assert.equal(f.delivery.tryRedirectAsset(handler(), item), false);
+    }
+    assert.equal(f.calls.length, 0);
+});
+
+it('reuses identical homepage content under one immutable URL and changes the URL for new bytes', async (t) => {
+    const f = homeVideoFixture(t);
+    const first = f.media();
+    f.delivery.queueAssetMirror(first);
+    await f.delivery.waitForAssetMirrors();
+    const same = f.media('mp4', 'public homepage video', '2');
+    f.delivery.queueAssetMirror(same);
+    await f.delivery.waitForAssetMirrors();
+    assert.equal(f.calls.filter((call) => call.constructor.name === 'CopyObjectCommand').length, 1);
+    const newer = f.media('mp4', 'replacement video', '3');
+    f.delivery.queueAssetMirror(newer);
+    await f.delivery.waitForAssetMirrors();
+    const urls = [first, same, newer].map((item) => {
+        const h = handler();
+        assert.equal(f.delivery.tryRedirectAsset(h, item), true);
+        return h.response.redirect;
+    });
+    assert.equal(urls[0], urls[1]);
+    assert.notEqual(urls[0], urls[2]);
+    const original = f.objects.get(first.meta.remoteAsset.key);
+    assert.equal(original.CacheControl, 'private, max-age=0', 'Publishing must not change the private original');
+});
+
+it('keeps homepage media on the original delivery path when source, conditional copy, target or readback verification fails', async (t) => {
+    for (const failure of ['source-size', 'source-type', 'source-hash', 'source-etag', 'target-conflict', 'copy-changed', 'copy-corrupt']) {
+        const f = homeVideoFixture(t, { failCopy: failure === 'copy-changed', badCopy: failure === 'copy-corrupt' });
+        const video = f.media();
+        const remote = video.meta.remoteAsset;
+        const original = f.objects.get(remote.key);
+        if (failure === 'source-size') original.ContentLength += 1;
+        if (failure === 'source-type') original.ContentType = 'image/png';
+        if (failure === 'source-hash') original.Metadata.sha256 = '0'.repeat(64);
+        if (failure === 'source-etag') delete original.ETag;
+        if (failure === 'target-conflict') f.objects.set(`static/home-videos/v1/${remote.sha256}.mp4`, { ContentLength: 1 });
+        assert.equal(f.delivery.tryRedirectAsset(handler(), video), false);
+        await f.delivery.waitForAssetMirrors();
+        const h = handler();
+        assert.equal(f.delivery.tryRedirectAsset(h, video), false, failure);
+        assert.equal(h.response.redirect, undefined);
+        assert.equal(f.delivery.status().ready, 0);
+        assert.equal(f.delivery.status().failed, 1);
+        assert.equal(f.calls.some((call) => ['GetObjectCommand', 'PutObjectCommand'].includes(call.constructor.name)), false);
+    }
 });
 
 it('mirrors and signs validated sprite3 archives without making other archive paths eligible', async (t) => {

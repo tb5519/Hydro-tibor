@@ -97,10 +97,12 @@ function admin(options = {}) {
 function serving(value = oldConfig, options = {}) {
     class Handler {}
     const calls = [];
+    const publications = [];
     const classes = load(`${homeSource.slice(homeSource.indexOf('class HomeBackgroundVideoHandler'), homeSource.indexOf('class ServiceWorkerConfigHandler'))}\nexport { HomeBackgroundVideoHandler, HomeBackgroundVideoPosterHandler };`, {
         Handler, NotFoundError, getHomePosterConfig, isBackgroundVideoPath,
-        redirectBackgroundVideo: async (h, target) => {
+        redirectBackgroundVideo: async (h, target, version, publicHomepage) => {
             calls.push(target);
+            publications.push({ version, publicHomepage });
             if (options.unavailable) throw new Error('Object storage unavailable');
             h.response.redirect = `https://media.example.test/${target}`;
         },
@@ -108,7 +110,7 @@ function serving(value = oldConfig, options = {}) {
     const make = (Type) => Object.assign(new Type(), {
         domain: { _id: 'class-a', homePoster: value }, response: { addHeader: () => {} },
     });
-    return { video: make(classes.HomeBackgroundVideoHandler), poster: make(classes.HomeBackgroundVideoPosterHandler), calls };
+    return { video: make(classes.HomeBackgroundVideoHandler), poster: make(classes.HomeBackgroundVideoPosterHandler), calls, publications };
 }
 
 describe('homepage image and video compatibility', () => {
@@ -233,6 +235,10 @@ describe('homepage background video delivery', () => {
         await f.video.get();
         await f.poster.head();
         assert.deepEqual(f.calls, [oldConfig.videoPath, oldConfig.videoPosterPath]);
+        assert.deepEqual(f.publications, [
+            { version: oldConfig.videoUpdatedAt, publicHomepage: true },
+            { version: oldConfig.videoUpdatedAt, publicHomepage: true },
+        ]);
         assert.match(f.video.response.redirect, /^https:\/\/media\.example\.test\//);
         assert.equal(f.video.response.body, undefined);
     });

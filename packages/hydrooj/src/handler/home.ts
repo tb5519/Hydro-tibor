@@ -701,7 +701,7 @@ class HomeBackgroundVideoHandler extends Handler {
     async get() {
         const config = getHomePosterConfig(this.domain);
         if (!isBackgroundVideoPath(`domain/${this.domain._id}/home-video`, config.videoPath)) throw new NotFoundError('home-video');
-        await redirectBackgroundVideo(this, config.videoPath, config.videoUpdatedAt || '');
+        await redirectBackgroundVideo(this, config.videoPath, config.videoUpdatedAt || '', true);
     }
 
     async head() { await this.get(); }
@@ -721,7 +721,7 @@ class HomeBackgroundVideoPosterHandler extends HomeBackgroundVideoHandler {
         if (!isBackgroundVideoPath(`domain/${this.domain._id}/home-video`, config.videoPosterPath, true)) {
             throw new NotFoundError('home-video-poster');
         }
-        await redirectBackgroundVideo(this, config.videoPosterPath, config.videoUpdatedAt || '');
+        await redirectBackgroundVideo(this, config.videoPosterPath, config.videoUpdatedAt || '', true);
     }
 }
 

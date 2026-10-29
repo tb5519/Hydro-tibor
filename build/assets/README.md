@@ -30,6 +30,16 @@ The Scratch iframe entry stays on the application origin. Its public bundle, laz
 
 Media routes first perform their existing login, workspace, object and permission checks. They only redirect after a matching remote object has been verified. Redirect responses use `302` and `Cache-Control: private, no-store`; the target URL uses CDN Type A signing with a 30-minute validity configured at the CDN. Origin URLs remain the API presented to clients, so each new request still checks access.
 
+### Browser reuse and updates
+
+Public UI release assets and mirrored homepage poster images already use a one-year immutable cache. Public homepage videos and their generated covers now receive verified, content-addressed copies below `static/home-videos/v1/`. The mirror queue uses OSS `CopyObject` internally, checking source metadata, source ETag and the completed copy; Hydro never downloads or uploads the video bytes. The first request continues through its existing signed URL while the copy prepares, and failures retain that fallback.
+
+Only the homepage's existing public video handlers can request this publication. A ready public copy uses `public, max-age=31536000, immutable`; the homepage redirect receives the same lifetime only when its `v` parameter exactly matches the current saved version. Uploading replacement media changes the versioned application URL, and different bytes produce a different public content hash, so the browser loads the new material without clearing its old cache. Keep old public copies available for already-open pages; long-cached public material cannot be recalled from browser disks immediately.
+
+Badge videos, editor themes, student files and other protected media are not published to this public prefix. The editor-theme handler retains its five-minute, credential-varying authorized redirect cache after resolving the signed target. This cache does not change the CDN's policy for the signed file itself or grant access to a different theme version. Authorization catalogs and account data retain their existing fresh checks.
+
+Optional hidden video warmups reuse a successful first-frame hint for five minutes within the same account, classroom and media version, avoiding a new background download on every page. Visible players continue their normal initialization. Browser eviction, private browsing or clearing site data can still remove cached bytes earlier than their configured lifetime. No CDN authentication changes, bucket ACL changes or separate media migration are required for this upgrade.
+
 Legacy local objects can be copied by the bounded background mirror queue. The first request keeps its existing response while the copy runs. A failed, disabled, oversized or not-yet-ready mirror also falls back to the existing response. Mirroring does not delete the source. Keys include the logical path, source version, size, content type, disposition and optional transformation version, preventing overwrites from returning stale media.
 
 AC previews include `badge-ac-png-area-v1-384` or `badge-ac-png-area-v1-768` in their identity. Their upload source is the generated PNG, with its actual byte length. They deliberately omit the original image's remote descriptor so a ready full-size image cannot be mistaken for a thumbnail.
