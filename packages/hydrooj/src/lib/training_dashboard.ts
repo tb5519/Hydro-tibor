@@ -32,6 +32,13 @@ export function trainingDuration(seconds = 0) {
     return minutes >= 60 ? `${Math.floor(minutes / 60)} 小时${minutes % 60 ? ` ${minutes % 60} 分钟` : ''}` : `${minutes} 分钟`;
 }
 
+/** Historical point estimates are deliberately rounded and marked, unlike measured intervals. */
+export function trainingDurationEstimate(seconds = 0, estimated = false) {
+    if (!estimated || !Number.isFinite(seconds) || seconds <= 0) return trainingDuration(seconds);
+    if (seconds < 60) return '约不足 1 分钟';
+    return `约 ${trainingDuration(Math.round(seconds / 60) * 60)}`;
+}
+
 /** Round uncertain historical bounds outwards; never present a guessed exact duration. */
 export function trainingDurationRange(lower = 0, upper = lower) {
     const minimum = Number.isFinite(lower) ? Math.max(0, lower) : 0;

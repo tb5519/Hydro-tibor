@@ -54,6 +54,13 @@ test('uncertain durations show outward-rounded bounds without implying an exact 
     assert.equal(rules.trainingDurationRange(59, 59), '不足 1 分钟');
     assert.equal(rules.trainingDurationRange(0, 600), '0～10 分钟');
 });
+test('historical point estimates have an approximation marker while measured values keep their precision policy', () => {
+    assert.equal(rules.trainingDurationEstimate(348.892, true), '约 6 分钟');
+    assert.equal(rules.trainingDurationEstimate(7548.892, true), '约 2 小时 6 分钟');
+    assert.equal(rules.trainingDurationEstimate(348.892, false), '5 分钟');
+    assert.equal(rules.trainingDurationEstimate(30, true), '约不足 1 分钟');
+    assert.equal(rules.trainingDurationEstimate(0, true), '0 分钟');
+});
 test('attention requires both meaningful time and attempts, never no AC alone', () => {
     assert.equal(rules.trainingAttention(1800, 3, 0).kind, 'stuck');
     assert.equal(rules.trainingAttention(1800, 3, 1).kind, 'normal');

@@ -32,16 +32,26 @@ interface TimeStats {
     seconds: number;
     trainingSeconds: number;
     trainingUpperSeconds: number;
+    trainingEstimatedSeconds: number;
+    estimatedSeconds: number;
+    hasEstimate: boolean;
+    estimationMethod?: EstimationMethod;
     uncertainSeconds: number;
     classSeconds: number;
     overlapSeconds: number;
     overlapUpperSeconds: number;
+    overlapEstimatedSeconds: number;
+    unattributedEstimatedSeconds: number;
+    unattributedClassTrainingEstimatedSeconds: number;
     legacySeconds: number;
     last: number;
 }
 
-const emptyStats = (): TimeStats => ({ seconds: 0, trainingSeconds: 0, trainingUpperSeconds: 0, uncertainSeconds: 0,
-    classSeconds: 0, overlapSeconds: 0, overlapUpperSeconds: 0, legacySeconds: 0, last: 0 });
+type EstimationMethod = 'activity-window' | 'bounds-midpoint' | 'mixed';
+const emptyStats = (): TimeStats => ({ seconds: 0, trainingSeconds: 0, trainingUpperSeconds: 0, trainingEstimatedSeconds: 0,
+    estimatedSeconds: 0, hasEstimate: false, uncertainSeconds: 0, classSeconds: 0,
+    overlapSeconds: 0, overlapUpperSeconds: 0, overlapEstimatedSeconds: 0,
+    unattributedEstimatedSeconds: 0, unattributedClassTrainingEstimatedSeconds: 0, legacySeconds: 0, last: 0 });
 const duration = (value: number) => (Number.isFinite(value) ? Math.max(0, value) : 0);
 const spanKey = (span: Span) => JSON.stringify([span.domainId, span.kind || '', span.pid ?? 0]);
 
@@ -115,6 +125,21 @@ function counterBounds(seconds: number, capacity: number, targetCapacity: number
     };
 }
 
+/** Estimate missing timestamps, never missing active seconds. With a credible
+ * activity window, use its available time as a uniform-activity assumption.
+ * Without that window, the feasible midpoint avoids pretending the learner
+ * was uniformly active over an entire day. Neither is a measured interval. */
+function counterEstimate(bounds: { lower: number, upper: number }, seconds: number, capacity: number,
+    targetCapacity: number, hasEnvelope: boolean) {
+    const estimate = hasEnvelope && capacity > 0 ? seconds * targetCapacity / capacity : (bounds.lower + bounds.upper) / 2;
+    return Math.max(bounds.lower, Math.min(bounds.upper, estimate));
+}
+
+function mergeMethod(previous?: EstimationMethod, next?: EstimationMethod): EstimationMethod | undefined {
+    if (!next) return previous;
+    return !previous || previous === next ? next : 'mixed';
+}
+
 interface MergeOptions {
     /** All lessons mask training, but only these classrooms contribute class
      * totals. This preserves cross-classroom de-duplication under a filter. */
@@ -123,15 +148,16 @@ interface MergeOptions {
 
 /** Merge server-measured training with imported class windows. Query bounds
  * are inclusive/exclusive. Dashboard requests use whole Shanghai days;
- * daily-only historical counters use their recorded activity envelope to
- * report provable bounds. Their timestamps are never reconstructed. */
+ * daily-only historical counters retain provable bounds and a separately
+ * marked point estimate. Their timestamps are never reconstructed. */
 export function mergeLearningTime(rows: DailyTime[], lessons: LearningLesson[], fromMs: number, toMs: number, options: MergeOptions = {}) {
     const students = new Map<number, TimeStats & { _id: number }>();
     const domains = new Map<string, TimeStats & { _id: string }>();
     const days = new Map<string, TimeStats & { _id: string }>();
     const sources = new Map<string, { uid: number, domainId: string, kind: TrainingSource['kind'], pid: number,
-        seconds: number, trainingUpperSeconds: number, uncertainSeconds: number,
-        classTrainingSeconds: number, classTrainingUpperSeconds: number }>();
+        seconds: number, trainingUpperSeconds: number, estimatedSeconds: number, hasEstimate: boolean,
+        estimationMethod?: EstimationMethod, uncertainSeconds: number,
+        classTrainingSeconds: number, classTrainingUpperSeconds: number, classTrainingEstimatedSeconds: number }>();
     const precise = new Map<number, Span[]>();
     const captured = new Map<number, Span[]>();
     const classes = new Map<number, Span[]>();
@@ -148,25 +174,38 @@ export function mergeLearningTime(rows: DailyTime[], lessons: LearningLesson[], 
         for (const target of targets) {
             target.trainingSeconds += values.trainingSeconds || 0;
             target.trainingUpperSeconds += values.trainingUpperSeconds ?? values.trainingSeconds ?? 0;
+            target.trainingEstimatedSeconds += values.trainingEstimatedSeconds ?? values.trainingSeconds ?? 0;
             target.uncertainSeconds = Math.max(0, target.trainingUpperSeconds - target.trainingSeconds);
+            target.hasEstimate ||= values.hasEstimate || false;
+            target.estimationMethod = mergeMethod(target.estimationMethod, values.estimationMethod);
             target.classSeconds += values.classSeconds || 0;
             target.overlapSeconds += values.overlapSeconds || 0;
             target.overlapUpperSeconds += values.overlapUpperSeconds ?? values.overlapSeconds ?? 0;
+            target.overlapEstimatedSeconds += values.overlapEstimatedSeconds ?? values.overlapSeconds ?? 0;
+            target.unattributedEstimatedSeconds += values.unattributedEstimatedSeconds || 0;
+            target.unattributedClassTrainingEstimatedSeconds += values.unattributedClassTrainingEstimatedSeconds || 0;
             target.legacySeconds += values.legacySeconds || 0;
             target.last = Math.max(target.last, values.last || 0);
             target.seconds = target.trainingSeconds + target.classSeconds;
+            target.estimatedSeconds = target.trainingEstimatedSeconds + target.classSeconds;
         }
     };
     const addSource = (uid: number, domainId: string, source: TrainingSource, seconds: number, overlap = 0,
-        upper = seconds, overlapUpper = overlap) => {
+        upper = seconds, overlapUpper = overlap, estimate = seconds, overlapEstimate = overlap, method?: EstimationMethod,
+        normalized = false) => {
         const key = JSON.stringify([uid, domainId, source.kind, source.pid]);
-        const entry = sources.get(key) || { uid, domainId, ...source, seconds: 0, trainingUpperSeconds: 0, uncertainSeconds: 0,
-            classTrainingSeconds: 0, classTrainingUpperSeconds: 0 };
+        const entry = sources.get(key) || { uid, domainId, ...source, seconds: 0, trainingUpperSeconds: 0,
+            estimatedSeconds: 0, hasEstimate: false, estimationMethod: undefined, uncertainSeconds: 0,
+            classTrainingSeconds: 0, classTrainingUpperSeconds: 0, classTrainingEstimatedSeconds: 0 };
         entry.seconds += seconds;
         entry.trainingUpperSeconds += upper;
+        entry.estimatedSeconds += estimate;
         entry.uncertainSeconds = Math.max(0, entry.trainingUpperSeconds - entry.seconds);
+        entry.hasEstimate ||= upper - seconds > 0.000001 || normalized;
+        entry.estimationMethod = mergeMethod(entry.estimationMethod, method);
         entry.classTrainingSeconds += overlap;
         entry.classTrainingUpperSeconds += overlapUpper;
+        entry.classTrainingEstimatedSeconds += overlapEstimate;
         sources.set(key, entry);
     };
     if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs >= toMs) {
@@ -230,28 +269,50 @@ export function mergeLearningTime(rows: DailyTime[], lessons: LearningLesson[], 
             end: useEnvelope ? Math.min(dayEnd, end) : dayEnd,
             domainId: row.domainId,
         }], captured.get(row.uid) || []);
-        let available = support(hasEnvelope);
+        let reliableEnvelope = hasEnvelope;
+        let available = support(reliableEnvelope);
         // Inconsistent timestamps cannot prove that all old time was in class.
-        if (spanSeconds(available) + 0.000001 < seconds) available = support(false);
+        if (spanSeconds(available) + 0.000001 < seconds) {
+            reliableEnvelope = false;
+            available = support(false);
+        }
         const capacity = Math.max(seconds, spanSeconds(available));
         const inQuery = spanSeconds(available, fromMs, toMs);
         const autonomousCapacity = spanSeconds(subtractSpans(available, classes.get(row.uid) || []), fromMs, toMs);
         const classCapacity = Math.max(0, inQuery - autonomousCapacity);
         const autonomous = counterBounds(seconds, capacity, autonomousCapacity);
         const overlap = counterBounds(seconds, capacity, classCapacity);
+        const autonomousEstimate = counterEstimate(autonomous, seconds, capacity, autonomousCapacity, reliableEnvelope);
+        const overlapEstimate = counterEstimate(overlap, seconds, capacity, classCapacity, reliableEnvelope);
+        const needsEstimate = autonomous.upper - autonomous.lower > 0.000001;
+        const method: EstimationMethod = reliableEnvelope ? 'activity-window' : 'bounds-midpoint';
+        const sourceSeconds = oldSources.reduce((total, source) => total + source.seconds, 0);
+        const sourceScale = sourceSeconds - seconds > 0.000001 ? seconds / sourceSeconds : 1;
+        const unreportedSeconds = Math.max(0, seconds - sourceSeconds * sourceScale);
+        const unreportedShare = unreportedSeconds > 0.000001 ? unreportedSeconds / seconds : 0;
         add(row.uid, row.domainId, row.day, {
             trainingSeconds: autonomous.lower, trainingUpperSeconds: autonomous.upper,
+            trainingEstimatedSeconds: autonomousEstimate, hasEstimate: needsEstimate,
+            estimationMethod: needsEstimate ? method : undefined,
             overlapSeconds: overlap.lower, overlapUpperSeconds: overlap.upper,
+            overlapEstimatedSeconds: overlapEstimate,
+            unattributedEstimatedSeconds: autonomousEstimate * unreportedShare,
+            unattributedClassTrainingEstimatedSeconds: overlapEstimate * unreportedShare,
             legacySeconds: Math.min(seconds, inQuery),
             last: inQuery > 0 ? (Number.isFinite(end) ? Math.min(end, toMs) : dayStart) : 0,
         });
         for (const source of oldSources) {
-            // Each source has its own provable bounds. Do not spread the day's
-            // total proportionally across questions whose timing is unknown.
-            const trainingBounds = counterBounds(source.seconds, capacity, autonomousCapacity);
-            const classBounds = counterBounds(source.seconds, capacity, classCapacity);
+            // Timing is absent at question level. Reuse the day's estimated
+            // activity proportions so source estimates conserve the counter;
+            // normalize inconsistent source totals rather than invent time.
+            const normalizedSeconds = source.seconds * sourceScale;
+            const trainingBounds = counterBounds(normalizedSeconds, capacity, autonomousCapacity);
+            const classBounds = counterBounds(normalizedSeconds, capacity, classCapacity);
+            const share = normalizedSeconds / seconds;
             addSource(row.uid, row.domainId, source, trainingBounds.lower, classBounds.lower,
-                trainingBounds.upper, classBounds.upper);
+                trainingBounds.upper, classBounds.upper, autonomousEstimate * share, overlapEstimate * share,
+                trainingBounds.upper - trainingBounds.lower > 0.000001 || sourceScale !== 1 ? method : undefined,
+                sourceScale !== 1);
         }
     }
     for (const [uid, spans] of countedClasses) {

@@ -137,12 +137,76 @@ test('the historical 25 October case reports only provable post-class bounds, no
     assert.ok(Math.abs(student.uncertainSeconds - 264.291) < 0.000001);
     assert.equal(student.classSeconds, 7200);
     assert.ok(Math.abs(student.seconds - 7381.882) < 0.000001);
+    assert.ok(Math.abs(student.trainingEstimatedSeconds - 348.8920370670723) < 0.000001);
+    assert.ok(Math.abs(student.estimatedSeconds - 7548.892037067072) < 0.000001);
+    assert.equal(student.hasEstimate, true);
+    assert.equal(student.estimationMethod, 'activity-window');
     assert.equal(result.sources.find((item) => item.pid === 1).seconds, 0);
     assert.equal(result.sources.find((item) => item.pid === 1).classTrainingSeconds, 2780.026);
     const source = result.sources.find((item) => item.pid === 2);
     assert.ok(Math.abs(source.seconds - 181.882) < 0.000001);
     assert.ok(Math.abs(source.trainingUpperSeconds - 446.173) < 0.000001);
     assert.ok(source.classTrainingUpperSeconds > source.classTrainingSeconds);
+    assert.ok(Math.abs(source.estimatedSeconds - student.trainingEstimatedSeconds) < 0.000001);
+    assert.ok(Math.abs(source.classTrainingEstimatedSeconds - 598.9709629329277) < 0.000001);
+});
+
+test('point estimates reuse the counter proportions across sources and preserve exact measured activity', () => {
+    const result = merged([row([span(9, 9.5, 'problem', 1)], {
+        seconds: 5400, startedAt: new Date(at(9)), updatedAt: new Date(at(11)),
+        sources: [{ kind: 'problem', pid: 1, seconds: 3000 }, { kind: 'problem', pid: 2, seconds: 2400 }],
+    })], [lesson(9.5, 10.5)]);
+    const student = result.students[0];
+    assert.equal(student.trainingEstimatedSeconds, 3000);
+    assert.equal(student.overlapEstimatedSeconds, 2400);
+    assert.equal(student.estimatedSeconds, 6600);
+    assert.equal(student.unattributedEstimatedSeconds, 0);
+    assert.equal(result.sources.find((source) => source.pid === 1).estimatedSeconds, 2200);
+    assert.equal(result.sources.find((source) => source.pid === 2).estimatedSeconds, 800);
+    assert.equal(result.sources.reduce((total, source) => total + source.estimatedSeconds, 0), student.trainingEstimatedSeconds);
+    assert.equal(result.sources.reduce((total, source) => total + source.classTrainingEstimatedSeconds, 0), student.overlapEstimatedSeconds);
+    assert.equal(result.domains.reduce((total, domain) => total + domain.estimatedSeconds, 0), student.estimatedSeconds);
+    assert.equal(result.days.reduce((total, day) => total + day.estimatedSeconds, 0), student.estimatedSeconds);
+    const precise = merged([row([span(9, 11)])], [lesson(10, 11)]).students[0];
+    assert.equal(precise.trainingEstimatedSeconds, precise.trainingSeconds);
+    assert.equal(precise.overlapEstimatedSeconds, precise.overlapSeconds);
+    assert.equal(precise.estimatedSeconds, precise.seconds);
+    assert.equal(precise.hasEstimate, false);
+    assert.equal(precise.estimationMethod, undefined);
+});
+
+test('missing or inconsistent activity windows use a feasible midpoint rather than an all-day activity assumption', () => {
+    for (const input of [row([], { seconds: 600 }), row([], { seconds: 600,
+        startedAt: new Date(at(10)), updatedAt: new Date(at(10) + 1000) })]) {
+        const student = merged([input], [lesson(10, 11)]).students[0];
+        assert.equal(student.trainingEstimatedSeconds, 300);
+        assert.equal(student.overlapEstimatedSeconds, 300);
+        assert.equal(student.hasEstimate, true);
+        assert.equal(student.estimationMethod, 'bounds-midpoint');
+        assert.ok(student.trainingEstimatedSeconds >= student.trainingSeconds);
+        assert.ok(student.trainingEstimatedSeconds <= student.trainingUpperSeconds);
+    }
+    const inside = merged([row([], { seconds: 600, startedAt: new Date(at(10)), updatedAt: new Date(at(11)) })], [lesson(10, 11)]).students[0];
+    assert.equal(inside.trainingEstimatedSeconds, 0);
+    assert.equal(inside.overlapEstimatedSeconds, 600);
+    assert.equal(inside.hasEstimate, false);
+});
+
+test('incomplete source attribution is explicit and inconsistent source counters cannot inflate estimated totals', () => {
+    const partial = merged([row([], { seconds: 3600, startedAt: new Date(at(9)), updatedAt: new Date(at(11)),
+        sources: [{ kind: 'problem', pid: 1, seconds: 1800 }] })], [lesson(9, 10)]);
+    const student = partial.students[0];
+    assert.equal(student.trainingEstimatedSeconds, 1800);
+    assert.equal(student.unattributedEstimatedSeconds, 900);
+    assert.equal(student.unattributedClassTrainingEstimatedSeconds, 900);
+    assert.equal(partial.sources[0].estimatedSeconds + student.unattributedEstimatedSeconds, student.trainingEstimatedSeconds);
+    assert.equal(partial.sources[0].classTrainingEstimatedSeconds + student.unattributedClassTrainingEstimatedSeconds,
+        student.overlapEstimatedSeconds);
+    const inflated = merged([row([], { seconds: 3600, startedAt: new Date(at(9)), updatedAt: new Date(at(11)),
+        sources: [{ kind: 'problem', pid: 1, seconds: 3600 }, { kind: 'problem', pid: 2, seconds: 3600 }] })], []);
+    assert.equal(inflated.students[0].trainingEstimatedSeconds, 3600);
+    assert.equal(inflated.sources.reduce((total, source) => total + source.estimatedSeconds, 0), 3600);
+    assert.ok(inflated.sources.every((source) => source.estimatedSeconds === 1800 && source.hasEstimate));
 });
 
 test('known precise activity cannot be reused as capacity for unrecorded historical time', () => {
@@ -243,7 +307,7 @@ test('union and overlap match a discrete independent oracle across randomized sc
     }
 });
 
-test('historical bounds match every feasible placement of an unknown counter without proportional estimates', () => {
+test('historical bounds and uniform-window estimates match an independent enumeration of feasible activity placements', () => {
     const units = 6;
     const popcount = (value) => value.toString(2).replaceAll('0', '').length;
     for (let run = 0; run < 64; run++) {
@@ -268,6 +332,8 @@ test('historical bounds match every feasible placement of an unknown counter wit
         const result = merged(rows, classes, 9 + begin / units, 9 + end / units).students[0];
         assert.equal(Math.round(result.trainingSeconds), Math.min(...possibilities));
         assert.equal(Math.round(result.trainingUpperSeconds), Math.max(...possibilities));
+        const mean = possibilities.reduce((total, value) => total + value, 0) / possibilities.length;
+        assert.ok(Math.abs(result.trainingEstimatedSeconds - mean) < 0.000001);
     }
 });
 

@@ -327,7 +327,7 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         assert.equal(restricted.summary.trainingSeconds, 1200, 'An unauthorized classroom must not become a hidden data source');
         assert.equal(restricted.summary.overlapSeconds, 0);
     });
-    it('corrects fully classroom-bound legacy counters and shows a range for a historical lesson crossing', async () => {
+    it('corrects classroom-bound legacy counters and displays one marked estimate for a historical lesson crossing', async () => {
         await daily.deleteMany({ uid: 101, day: '2026-10-25' });
         await daily.insertMany([
             { ...timer(101, 'cpp', '2026-10-25', 2780.026),
@@ -342,17 +342,25 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         assert.equal(time.classSeconds, 7200);
         assert.ok(Math.abs(time.trainingSeconds - 181.882) < 0.001);
         assert.ok(Math.abs(time.trainingUpperSeconds - 446.173) < 0.001);
-        assert.equal(time.trainingLabel, '3～8 分钟');
-        assert.equal(time.timeLabel, '2 小时 3～8 分钟');
+        assert.ok(Math.abs(time.trainingEstimatedSeconds - 348.8920370982614) < 0.001);
+        assert.ok(Math.abs(time.estimatedSeconds - 7548.8920370982614) < 0.001);
+        assert.equal(time.hasEstimate, true);
+        assert.equal(time.trainingLabel, '约 6 分钟');
+        assert.equal(time.timeLabel, '约 2 小时 6 分钟');
         assert.equal(result.detail.daily[0].trainingLabel, time.trainingLabel);
+        assert.ok(Math.abs(result.detail.daily[0].estimatedSeconds - time.estimatedSeconds) < 0.001);
         assert.equal(result.rows.find((item) => item.uid === 101).trainingLabel, time.trainingLabel);
         const cpp = result.detail.problems.find((item) => item.domainId === 'cpp');
         assert.equal(cpp.timeLabel, '0 分钟');
         assert.equal(cpp.classTrainingLabel, '46 分钟');
         const pythonOnly = await model.loadTrainingDashboard(handler({ period: 'today', domains: 'python', student: '101' }));
-        assert.equal(pythonOnly.detail.timeBreakdown.trainingLabel, '3～8 分钟');
+        assert.equal(pythonOnly.detail.timeBreakdown.trainingLabel, '约 6 分钟');
         assert.equal(pythonOnly.detail.timeBreakdown.classSeconds, 0);
         assert.equal(pythonOnly.detail.lessons.length, 0);
+        assert.ok(Math.abs(result.detail.problems.reduce((total, item) => total + (item.estimatedSeconds || 0), 0)
+            - time.trainingEstimatedSeconds) < 0.001);
+        assert.ok(Math.abs(result.detail.domains.reduce((total, item) => total + item.estimatedSeconds, 0)
+            - time.estimatedSeconds) < 0.001);
     });
     it('does not label uncertain legacy practice with no submissions as inactive', async () => {
         await daily.updateOne({ uid: 101, domainId: 'python', day: '2026-10-25' }, {
@@ -365,8 +373,42 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         const result = await model.loadTrainingDashboard(handler({ period: 'today', domains: 'python', student: '101' }));
         assert.equal(result.summary.activeStudents, 1);
         assert.equal(result.rows.find((item) => item.uid === 101).attentionKind, 'normal');
-        assert.equal(result.detail.timeBreakdown.trainingLabel, '0～10 分钟');
-        assert.equal(result.detail.problems[0].timeLabel, '0～10 分钟');
+        assert.equal(result.detail.timeBreakdown.trainingLabel, '约 5 分钟');
+        assert.equal(result.detail.timeBreakdown.trainingEstimatedSeconds, 300);
+        assert.equal(result.detail.timeBreakdown.estimationMethod, 'bounds-midpoint');
+        assert.equal(result.detail.problems[0].timeLabel, '约 5 分钟');
+    });
+    it('preserves missing question attribution separately while conserving the historical estimate', async () => {
+        await daily.updateOne({ uid: 101, domainId: 'python', day: '2026-10-25' }, { $set: {
+            seconds: 900, sources: [{ key: 'problem:1', kind: 'problem', pid: 1, seconds: 300 }],
+        } });
+        await classes.insertOne({ workspaceId: 'school', domainId: 'python', uid: 101, externalId: 'partial-sources',
+            startAt: new Date('2026-10-25T11:30:00+08:00'), endAt: new Date('2026-10-25T12:00:00+08:00') });
+        const result = await model.loadTrainingDashboard(handler({ period: 'today', domains: 'python', student: '101' }));
+        assert.equal(result.detail.timeBreakdown.trainingEstimatedSeconds, 450);
+        assert.equal(result.detail.problems[0].estimatedSeconds, 150);
+        assert.equal(result.detail.unattributedTrainingLabel, '约 5 分钟');
+        assert.equal(result.detail.unattributedClassTrainingLabel, '约 5 分钟');
+        const domainTime = result.detail.domains.find((item) => item.id === 'python');
+        assert.equal(result.detail.problems[0].estimatedSeconds + domainTime.unattributedEstimatedSeconds, 450);
+        assert.equal(result.detail.timeBreakdown.classSeconds, 1800, 'Estimated practice is not added to the lesson again');
+    });
+    it('uses point estimates consistently for ordering and chart heights', async () => {
+        await domains.insertOne({ uid: 102, domainId: 'python', join: true });
+        await daily.updateOne({ uid: 101, domainId: 'python', day: '2026-10-25' }, { $set: {
+            seconds: 3000, sources: [{ key: 'problem:1', kind: 'problem', pid: 1, seconds: 3000 }],
+        } });
+        await daily.insertOne(timer(102, 'python', '2026-10-25', 1300));
+        await classes.insertOne({ workspaceId: 'school', domainId: 'cpp', uid: 101, externalId: 'point-sort',
+            startAt: new Date('2026-10-25T11:00:00+08:00'), endAt: new Date('2026-10-25T11:30:00+08:00') });
+        const result = await model.loadTrainingDashboard(handler({ period: 'today', domains: 'python', student: '101' }));
+        assert.equal(result.rows[0].uid, 101);
+        assert.equal(result.rows[0].seconds, 1200);
+        assert.equal(result.rows[0].estimatedSeconds, 1500);
+        assert.equal(result.detail.daily[0].estimatedSeconds, 1500);
+        assert.equal(result.detail.daily[0].barPercent, 100);
+        assert.equal(result.detail.daily[0].timeLabel, '约 25 分钟');
+        assert.equal(result.summary.estimatedSeconds, 2800);
     });
     it('clips midnight classes to the selected days and keeps nonoverlapping historical practice unchanged', async () => {
         await classes.insertOne({ workspaceId: 'school', domainId: 'python', uid: 101, externalId: 'overnight', title: '跨日课堂',
