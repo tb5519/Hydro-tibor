@@ -94,10 +94,10 @@ const streak = (rows, target = 100) => rows.find((item) => item.id === `streak-$
 const weekly = (rows, target = 50) => rows.find((item) => item.id === `weekly-ac-${target}`);
 
 describe('achievement catalog', () => {
-    it('retains existing names and adds twenty-three milestones with no duplicate identifier', () => {
-        assert.equal(ACHIEVEMENT_CATALOG.length, 87);
-        assert.equal(new Set(ACHIEVEMENT_CATALOG.map((item) => item.id)).size, 87);
-        assert.equal(ACHIEVEMENT_EXPANSION_IDS.size, 23);
+    it('retains existing names and adds twenty-eight milestones with no duplicate identifier', () => {
+        assert.equal(ACHIEVEMENT_CATALOG.length, 92);
+        assert.equal(new Set(ACHIEVEMENT_CATALOG.map((item) => item.id)).size, 92);
+        assert.equal(ACHIEVEMENT_EXPANSION_IDS.size, 28);
         assert.deepEqual(ACHIEVEMENT_CATALOG.slice(0, 10).map((item) => item.name),
             ['初战告捷', '渐入佳境', '锋芒初露', '势如破竹', '强者进阶', '烈火淬锋', '破境而上', '登峰造极', '傲视群雄', '巅峰封神']);
         assert.equal(ACHIEVEMENT_CATALOG.find((item) => item.id === 'mastery-10-100').name, '神域之主');
@@ -111,6 +111,7 @@ describe('achievement catalog', () => {
         assert.deepEqual(ACHIEVEMENT_CATALOG.filter((item) => item.category === 'weekly_ac').map((item) => [item.target, item.name]), [
             [5, '七日新锐'], [10, '七日疾锋'], [15, '七日破阵'], [20, '七日狂刃'], [25, '七日战魂'],
             [30, '七日统帅'], [40, '七日霸主'], [50, '七日封神'],
+            [60, '七日战神'], [70, '七日至尊'], [80, '七日无双'], [90, '七日神话'], [100, '七日创世神'],
         ]);
     });
     it('awards each threshold exactly at its boundary', () => {
@@ -133,7 +134,7 @@ describe('achievement catalog', () => {
         const selected = selectHighestAchievements(ACHIEVEMENT_CATALOG);
         assert.deepEqual(selected.map((item) => item.id), [
             'difficulty-10', 'solved-1000', 'contest-ak-100', 'contest-ac-500', 'points-100000',
-            ...[4, 5, 6, 7, 8, 9, 10].map((difficulty) => `mastery-${difficulty}-100`), 'streak-100', 'weekly-ac-50',
+            ...[4, 5, 6, 7, 8, 9, 10].map((difficulty) => `mastery-${difficulty}-100`), 'streak-100', 'weekly-ac-100',
         ]);
         assert.equal(getAchievementTier(selected[0]), 10, 'All first-difficulty targets are 1; difficulty determines their rank');
         assert.equal(getAchievementSeriesId(selected[5]), 'mastery-4');
@@ -690,7 +691,7 @@ describe('highest earned achievement announcements', () => {
         const next = await pending();
         assert.equal(next.length, 4);
         assert.ok(next.every((item) => !first.some((seen) => seen.seriesId === item.seriesId)));
-        assert.equal(await database.collection('achievement.unlock').countDocuments({ uid: 11 }), 87);
+        assert.equal(await database.collection('achievement.unlock').countDocuments({ uid: 11 }), 92);
     });
 
     it('acknowledgements cannot use unearned high IDs or another scope to silence a real pending reward', async () => {

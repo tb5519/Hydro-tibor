@@ -62,9 +62,10 @@ export const ACHIEVEMENT_CATALOG: readonly AchievementDefinition[] = [
             '百炼成钢', '永恒之刃', '不灭战魂', '传奇征途', '超凡入圣', '九十日神话', '百日封神'][index],
         description: `连续${target}天AC题目`, category: 'streak' as const, target,
     })),
-    ...[5, 10, 15, 20, 25, 30, 40, 50].map((target, index) => ({
+    ...[5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100].map((target, index) => ({
         id: `weekly-ac-${target}`,
-        name: ['七日新锐', '七日疾锋', '七日破阵', '七日狂刃', '七日战魂', '七日统帅', '七日霸主', '七日封神'][index],
+        name: ['七日新锐', '七日疾锋', '七日破阵', '七日狂刃', '七日战魂', '七日统帅', '七日霸主', '七日封神',
+            '七日战神', '七日至尊', '七日无双', '七日神话', '七日创世神'][index],
         description: `连续7天内累计AC${target}道不同题目`, category: 'weekly_ac' as const, target,
     })),
 ];
@@ -73,7 +74,7 @@ export const ACHIEVEMENT_CATALOG: readonly AchievementDefinition[] = [
 export const ACHIEVEMENT_EXPANSION_IDS = new Set([
     ...[30, 60, 150, 200, 250, 300, 350, 400, 450].map((target) => `solved-${target}`),
     ...[5, 20, 30, 40, 80, 300].map((target) => `contest-ac-${target}`),
-    ...[5, 10, 15, 20, 25, 30, 40, 50].map((target) => `weekly-ac-${target}`),
+    ...[5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100].map((target) => `weekly-ac-${target}`),
 ]);
 
 export function getAchievementSeriesId(achievement: Pick<AchievementDefinition, 'category' | 'difficulty'>): string {

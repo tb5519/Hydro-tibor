@@ -139,16 +139,16 @@ describe('achievement management and profile wall', () => {
         assert.equal(h.document.querySelector('[data-achievement-search]'), h.document.activeElement);
     });
 
-    it('offers all fourteen continuous-AC achievements among the 87 cards with category, search and upload controls', async (t) => {
+    it('offers all fourteen continuous-AC achievements among the 92 cards with category, search and upload controls', async (t) => {
         const catalogue = catalogueExports.ACHIEVEMENT_CATALOG.map((item) => ({
             ...item, categoryLabel: item.category === 'streak' ? '连续 AC' : item.category, imageUrl: '', thumbnailUrl: '',
         }));
         const streaks = catalogue.filter((item) => item.category === 'streak');
         const h = fixture({ overrides: { achievements: catalogue } }); t.after(h.close);
-        assert.equal(catalogue.length, 87);
+        assert.equal(catalogue.length, 92);
         assert.equal(streaks.length, 14);
-        assert.equal(h.document.querySelector('h1 span').textContent, '87');
-        assert.equal(h.document.querySelectorAll('[data-achievement-card]').length, 87);
+        assert.equal(h.document.querySelector('h1 span').textContent, '92');
+        assert.equal(h.document.querySelectorAll('[data-achievement-card]').length, 92);
         const category = h.document.querySelector('[data-achievement-category="streak"]');
         assert.match(category.textContent, /连续 AC\s+14/);
         assert.match(h.document.querySelector('[data-achievement-group="streak"] h2').textContent, /连续 AC.*14 项/);
@@ -170,14 +170,14 @@ describe('achievement management and profile wall', () => {
         assert.equal(h.requests[0].body.get('id'), selected.id);
         assert.equal(h.requests[0].body.get('operation'), 'upload');
         assert.equal(h.document.querySelector(`[data-id="${selected.id}"] img`).src, 'https://images.test/streak-thumb.webp');
-        assert.match(h.document.querySelector('[data-achievement-ready-count]').textContent, /1 \/ 87/);
+        assert.match(h.document.querySelector('[data-achievement-ready-count]').textContent, /1 \/ 92/);
         h.input('[data-achievement-search]', '');
         h.input('[data-achievement-image-filter]', 'missing', 'change');
         assert.equal(h.document.querySelectorAll('[data-achievement-card]:not([hidden])').length, 13);
         h.input('[data-achievement-image-filter]', 'ready', 'change');
         assert.deepEqual(Array.from(h.document.querySelectorAll('[data-achievement-card]:not([hidden])'), (card) => card.dataset.id), [selected.id]);
         h.document.querySelector('[data-achievement-reset]').click();
-        assert.equal(h.document.querySelectorAll('[data-achievement-card]:not([hidden])').length, 87);
+        assert.equal(h.document.querySelectorAll('[data-achievement-card]:not([hidden])').length, 92);
     });
 
     it('gives the new seven-day series its own group, search and upload flow without hiding the expanded milestones', async (t) => {
@@ -185,19 +185,19 @@ describe('achievement management and profile wall', () => {
             ...item, categoryLabel: catalogueExports.ACHIEVEMENT_CATEGORIES[item.category], imageUrl: '', thumbnailUrl: '',
         }));
         const weekly = catalogue.filter((item) => item.category === 'weekly_ac');
-        assert.equal(catalogue.length, 87);
-        assert.equal(weekly.length, 8);
+        assert.equal(catalogue.length, 92);
+        assert.equal(weekly.length, 13);
         assert.equal(catalogue.filter((item) => item.category === 'solved').length, 13);
         assert.equal(catalogue.filter((item) => item.category === 'contest_ac').length, 11);
         const h = fixture({ overrides: { achievements: catalogue } }); t.after(h.close);
         const category = h.document.querySelector('[data-achievement-category="weekly_ac"]');
         assert.ok(category);
         assert.ok(category.textContent.includes(catalogueExports.ACHIEVEMENT_CATEGORIES.weekly_ac));
-        assert.match(category.textContent, /8/);
+        assert.match(category.textContent, /13/);
         assert.ok(h.document.querySelector('[data-achievement-group="weekly_ac"] h2').textContent
             .includes(catalogueExports.ACHIEVEMENT_CATEGORIES.weekly_ac));
         category.click();
-        assert.equal(h.document.querySelectorAll('[data-achievement-card]:not([hidden])').length, 8);
+        assert.equal(h.document.querySelectorAll('[data-achievement-card]:not([hidden])').length, 13);
         for (const item of weekly) {
             const card = h.document.querySelector(`[data-id="${item.id}"]`);
             assert.equal(card.querySelector('h3').textContent, item.name);
@@ -216,10 +216,10 @@ describe('achievement management and profile wall', () => {
         assert.equal(h.requests[0].body.get('id'), selected.id);
         assert.equal(h.requests[0].body.get('operation'), 'upload');
         assert.equal(h.document.querySelector(`[data-id="${selected.id}"] img`).src, 'https://images.test/weekly-thumb.webp');
-        assert.match(h.document.querySelector('[data-achievement-ready-count]').textContent, /1 \/ 87/);
+        assert.match(h.document.querySelector('[data-achievement-ready-count]').textContent, /1 \/ 92/);
         h.document.querySelector('[data-achievement-reset]').click();
-        assert.equal(h.document.querySelectorAll('[data-achievement-card]:not([hidden])').length, 87);
-        assert.equal(h.document.querySelector('h1 span').textContent, '87');
+        assert.equal(h.document.querySelectorAll('[data-achievement-card]:not([hidden])').length, 92);
+        assert.equal(h.document.querySelector('h1 span').textContent, '92');
     });
 
     it('uploads the selected PNG to its scoped form and updates art only after success', async (t) => {
