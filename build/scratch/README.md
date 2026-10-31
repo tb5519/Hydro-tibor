@@ -42,6 +42,8 @@ Serve JavaScript, SVG, PNG, WAV and font files with their correct content types 
 
 ## Integration and boundaries
 
+New works use the classic Scratch Cat, with its two original vector costumes and Meow sound embedded in the bundle. `default-project/` replaces the built-in empty-project template at build time and keeps the upstream localized stage, sprite and variable names. Saved and imported projects retain their own characters.
+
 `scratch_editor.page.ts` loads the editor only on the editor page. The iframe uses `sandbox="allow-scripts allow-downloads"`, intentionally without `allow-same-origin`. Public editor resources need `Access-Control-Allow-Origin: *` so fonts and WebGL resources work from its opaque origin; private project APIs must retain ordinary authentication and origin checks.
 
 The parent receives authenticated route configuration via `UiContext.scratchEditor`, fetches the current .sb3, and transfers its ArrayBuffer into the iframe. A random per-frame channel plus exact `message.source` verification identifies the bridge. No message can supply a URL, user ID, role or destination API. Only an outstanding parent-initiated export can cause a project upload. The save endpoint rechecks domain membership, owner permission and revision. The iframe never receives account cookies, credentials, signed file URLs or save URLs.

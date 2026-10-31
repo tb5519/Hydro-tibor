@@ -67,6 +67,8 @@ for (const [source, dest] of [
     ['storage.js', 'src/lib/tw-persistent-storage.js'],
     ['extensions.jsx', 'src/lib/libraries/extensions/onebyone.jsx']
 ]) fs.copyFileSync(path.join(here, source), path.join(workspace, dest));
+// Only the built-in empty-project template changes; imported and saved works keep their own targets.
+fs.cpSync(path.join(here, 'default-project'), path.join(workspace, 'src/lib/default-project'), {recursive: true});
 for (const source of ['src/lib/storage.js', 'src/containers/library-item.jsx', 'src/components/library/library.jsx',
     ...['costume', 'sprite', 'backdrop', 'sound'].map(kind => `src/containers/${kind}-library.jsx`)]) {
     const original = execFileSync('git', ['show', `${upstream.commit}:${source}`], {cwd: workspace, encoding: 'utf8'});

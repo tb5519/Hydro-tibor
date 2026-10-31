@@ -23,6 +23,7 @@ function runBuild(assetBase) {
         'src/containers/extension-library.jsx': 'const fetchLibrary = async () => {\n}\ncomponentDidMount () {\n}',
         'src/reducers/mode.js': '    switch (action.type) {\n}',
         'src/lib/detect-locale.js': localeDetector,
+        'src/containers/monitor.jsx': 'mock monitor source',
         'src/components/menu-bar/menu-bar.jsx': [
             '<MenuItem isRtl={this.props.isRtl} onClick={this.handleClickNew}>New</MenuItem>',
             '<ChangeUsername>Username</ChangeUsername>',
@@ -60,6 +61,7 @@ function runBuild(assetBase) {
     };
     const run = () => vm.runInNewContext(buildSource, {
         require: (name) => name === './patch-libraries.cjs' ? (_file, source) => source
+            : name === './patch-monitor.cjs' ? (source) => source
             : name === './patch-locale.cjs' ? require('../build/scratch/patch-locale.cjs')
                 : name === 'node:fs' ? fakeFs
             : name === 'node:child_process' ? { execFileSync } : require(name),
