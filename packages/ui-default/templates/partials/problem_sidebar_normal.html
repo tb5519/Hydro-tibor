@@ -104,30 +104,3 @@
   {% include "partials/problem-sidebar-information.html" %}
 </div>
 {% endif %}
-{% if page_name == 'problem_detail' and (tdocs.length or ctdocs.length or htdocs.length) %}
-<div class="section side">
-  <div class="section__header">
-    <h1 class="section__title">{{ _('Related') }}</h1>
-  </div>
-  <div class="section__body typo">
-  {% if tdocs.length %}
-    <p>{{ _('In following training plans') }}: </p>
-    {%- for tdoc in tdocs -%}
-      <p><a href="{{ url('training_detail', tid=tdoc.docId) }}">{{ tdoc.title }}</a></p>
-    {%- endfor -%}
-  {% endif %}
-  {% if ctdocs.length %}
-    <p>{{ _('In following contests') }}: </p>
-    {%- for tdoc in ctdocs -%}
-      <p><a href="{{ url('contest_detail', tid=tdoc.docId) }}">{{ tdoc.title }}</a></p>
-    {%- endfor -%}
-  {% endif %}
-  {% if htdocs.length %}
-    <p>{{ _('In following homework') }}: </p>
-    {%- for tdoc in htdocs -%}
-      <p><a href="{{ url('homework_detail', tid=tdoc.docId) }}">{{ tdoc.title }}</a></p>
-    {%- endfor -%}
-  {% endif %}
-  </div>
-</div>
-{% endif %}

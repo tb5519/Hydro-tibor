@@ -233,6 +233,7 @@ function editorHarness(readOnly = false, editorVersion = 'a'.repeat(64), withPre
         '[data-scratch-save]': save, '[data-scratch-submit]': submit, '[data-scratch-back]': element() };
     const page = load('../../ui-default/pages/scratch_editor.page.ts', {
         'vj/misc/Page': { NamedPage: class { constructor(_, callback) { this.run = callback; } } },
+        '../components/daily_quiz_gate': { redirectToDailyQuiz: () => { throw new Error('Unexpected daily quiz redirect in editor fixture'); } },
         '../utils/scratch-preset-picker': { createScratchPresetPicker: (options) => {
             assert(withPresets, 'No preset library configured in this save-bridge fixture');
             presetOptions = options;

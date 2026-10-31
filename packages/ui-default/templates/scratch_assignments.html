@@ -1,7 +1,8 @@
 {% extends "scratch_base.html" %}
 {% block scratch_content %}
-<div class="sc-heading">
-  <div><div class="sc-eyebrow">{{ '课堂教学' if isTeacher else '一步一步，试试新本领' }}</div><h1>{{ '作业管理' if isTeacher else '我的作业' }}</h1><p class="sc-muted">{{ '把创作和知识练习灵活组合，了解每个孩子的进步。' if isTeacher else '搭积木，练知识，一起解锁新本领。' }}</p></div>
+{% include "partials/scratch_assignment_style.html" %}
+<div class="sc-heading sct-heading">
+  <div><div class="sc-eyebrow">{{ '课堂教学 / 作业' if isTeacher else '我的学习 / 作业' }}</div><h1>{{ '作业管理' if isTeacher else '我的作业' }}</h1><p class="sc-muted">{{ '谁还没完成、哪些需要批改，在这里一目了然。' if isTeacher else '看看还有什么要完成，也别错过老师给你的反馈。' }}</p></div>
   {% if isTeacher %}<a class="sc-button sc-button-primary" href="{{ url('scratch_assignment_create') }}">＋ 发布作业</a>{% endif %}
 </div>
 {% if isTeacher %}
@@ -10,7 +11,26 @@
 <p class="sc-assignment-action-status" data-assignment-action-status role="status" aria-live="polite"></p>
 {% endif %}
 {% set showAssignmentActions = true %}
-<section class="sc-panel"><div class="sc-panel-body">{% include "partials/scratch_assignment_list.html" %}</div></section>
-{% if numPages > 1 %}<div class="sc-pagination">{{ paginator.render(page, numPages, add_qs=utils.buildQueryString(status='deleted' if showDeleted else '')) }}</div>{% endif %}
+{% if not showDeleted %}
+<div class="sct-overview" aria-label="{{ '课堂作业概况' if isTeacher else '我的作业概况' }}">
+  {% if isTeacher %}
+  <a class="sct-overview-item" href="{{ url('scratch_assignments') }}"><span class="sct-metric-icon" aria-hidden="true">▤</span><div><span>当前作业</span><strong>{{ assignmentSummary.total or 0 }}<small>份</small></strong></div></a>
+  <a class="sct-overview-item sct-overview-warm" href="{{ url('scratch_assignments', query={filter:'pending'}) }}"><span class="sct-metric-icon" aria-hidden="true">◷</span><div><span>待批改作品</span><strong>{{ assignmentSummary.pendingReview or 0 }}<small>份</small></strong></div><span class="sct-metric-arrow" aria-hidden="true">↗</span></a>
+  <a class="sct-overview-item" href="{{ url('scratch_assignments', query={filter:'incomplete'}) }}"><span class="sct-metric-icon" aria-hidden="true">◐</span><div><span>尚未全员完成</span><strong>{{ assignmentSummary.incomplete or 0 }}<small>份作业</small></strong></div></a>
+  {% else %}
+  <a class="sct-overview-item" href="{{ url('scratch_assignments', query={filter:'todo'}) }}"><span class="sct-metric-icon" aria-hidden="true">◐</span><div><span>待完成</span><strong>{{ assignmentSummary.todo or 0 }}<small>份</small></strong></div><span class="sct-metric-arrow" aria-hidden="true">↗</span></a>
+  <a class="sct-overview-item sct-overview-green" href="{{ url('scratch_assignments', query={filter:'completed'}) }}"><span class="sct-metric-icon" aria-hidden="true">✓</span><div><span>已完成</span><strong>{{ assignmentSummary.completed or 0 }}<small>份</small></strong></div></a>
+  <a class="sct-overview-item sct-overview-feedback" href="{{ url('scratch_assignments', query={filter:'feedback'}) }}"><span class="sct-metric-icon" aria-hidden="true">✎</span><div><span>老师已批改</span><strong>{{ assignmentSummary.feedback or 0 }}<small>份</small></strong></div><span class="sct-metric-arrow" aria-hidden="true">↗</span></a>
+  {% endif %}
+</div>
+<nav class="sct-filter-bar" aria-label="筛选作业">
+  <div class="sct-filter-links"><a href="{{ url('scratch_assignments') }}" {% if not filter %}aria-current="page"{% endif %}>全部作业 <span>{{ assignmentSummary.total or 0 }}</span></a>
+  {% if isTeacher %}<a href="{{ url('scratch_assignments', query={filter:'pending'}) }}" {% if filter == 'pending' %}aria-current="page"{% endif %}>有待批改</a><a href="{{ url('scratch_assignments', query={filter:'incomplete'}) }}" {% if filter == 'incomplete' %}aria-current="page"{% endif %}>未全员完成</a>
+  {% else %}<a href="{{ url('scratch_assignments', query={filter:'todo'}) }}" {% if filter == 'todo' %}aria-current="page"{% endif %}>待完成 <span>{{ assignmentSummary.todo or 0 }}</span></a><a href="{{ url('scratch_assignments', query={filter:'completed'}) }}" {% if filter == 'completed' %}aria-current="page"{% endif %}>已完成 <span>{{ assignmentSummary.completed or 0 }}</span></a><a href="{{ url('scratch_assignments', query={filter:'feedback'}) }}" {% if filter == 'feedback' %}aria-current="page"{% endif %}>老师反馈 <span>{{ assignmentSummary.feedback or 0 }}</span></a>{% endif %}</div>
+  <span class="sct-list-count">{{ count or 0 }} 份作业{% if numPages > 1 %} · 第 {{ page }} 页{% endif %}</span>
+</nav>
+{% endif %}
+{% include "partials/scratch_assignment_list.html" %}
+{% if numPages > 1 %}<div class="sc-pagination">{{ paginator.render(page, numPages, add_qs=utils.buildQueryString(status='deleted' if showDeleted else '', filter=filter or '')) }}</div>{% endif %}
 {% include "partials/scratch_assignment_delete_dialog.html" %}
 {% endblock %}

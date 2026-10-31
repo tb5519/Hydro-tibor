@@ -1,5 +1,7 @@
 {% extends "scratch_base.html" %}
 {% block scratch_content %}
+{% include "partials/scratch_assignment_style.html" %}
+{% from "partials/scratch_assignment_status.html" import badge %}
 {% set hasProject = assignment.projectRequired != false %}
 {% set hasQuestions = assignment.objectiveQuiz.total > 0 %}
 <div class="sc-heading">
@@ -10,6 +12,16 @@
 <div class="sc-assignment-detail-audience"><span class="sc-badge">{{ ('指定 ' ~ (assignment.recipientIds|length) ~ ' 位学员') if assignment.audience == 'selected' else '全体学员' }}</span><span class="sc-muted">{{ '恢复后仍使用这个发送范围' if assignment.deletedAt else '仅本课堂符合范围的学员可见' }}</span></div>
 {% if assignment.deletedAt %}<p class="sc-note sc-assignment-archive-note">这份作业已删除，学员无法访问。以下内容和记录仅供查看，恢复后可以继续编辑与批改。</p>{% endif %}
 <p class="sc-assignment-action-status" data-assignment-action-status role="status" aria-live="polite"></p>
+{% endif %}
+{% if isTeacher %}{% include "partials/scratch_assignment_roster.html" %}
+{% else %}
+<section class="sct-student-progress" aria-label="我的完成情况">
+  <div><div class="sct-section-kicker">我的进度</div><h2>{{ '这份作业已完成，做得真棒！' if assignmentProgress.completed else '一步一步，把这次任务完成吧' }}</h2><p>{{ ('所有任务已完成，可以查看结果或继续完善作品。' if hasProject else '知识练习已完成，可以回顾答案和解析。') if assignmentProgress.completed else ('作品已提交，还需要完成知识练习。' if assignmentProgress.projectSubmitted else ('作品已保存，完成后记得在编辑器里提交作业。' if assignmentProgress.hasSavedWork else '完成下方的任务清单，就能记录这次进步。')) }}</p></div>{{ badge(assignmentProgress) }}
+</section>
+{% if assignmentProgress.deadlinePassed %}<p class="sct-deadline-note">这份作业已截止，可以查看已有记录。{% if hasQuestions %}答题已关闭。{% endif %}{% if hasProject %}仍可编辑并保存作品，作品提交已关闭。{% endif %}</p>{% endif %}
+{% if assignmentProgress.hasFeedback %}
+<section class="sct-feedback-panel" aria-labelledby="teacher-feedback-title"><div class="sct-feedback-heading"><div><div class="sct-section-kicker">老师批改{% if not assignmentProgress.reviewed %} · 上一次提交{% endif %}</div><h2 id="teacher-feedback-title">{{ assignmentProgress.grade or '老师看过你的作品啦' }}</h2></div><a class="sc-button" href="{{ url('scratch_submission', submissionId=assignmentProgress.feedbackSubmissionId) }}">查看完整批改 →</a></div><p class="sct-feedback-body">{{ assignmentProgress.feedback or '老师已查看你的作品，继续加油！' }}</p><p class="sct-feedback-date">批改于 {{ datetimeSpan(assignmentProgress.reviewedAt)|safe }}{% if not assignmentProgress.reviewed %} · 新提交的版本正在等待老师批改{% endif %}</p></section>
+{% elif assignmentProgress.projectSubmitted %}<div class="sct-submitted-note"><span aria-hidden="true">✓</span><div><strong>作品已送达，等待老师批改</strong><p>提交于 {{ datetimeSpan(assignmentProgress.submittedAt)|safe }}。老师的评价会显示在这里。</p></div><a href="{{ url('scratch_submission', submissionId=assignmentProgress.submissionId) }}">查看提交 →</a></div>{% endif %}
 {% endif %}
 <div class="sc-columns">
   <div><section class="sc-panel">
@@ -43,8 +55,9 @@
         <p>已有 <strong>{{ works|length }}</strong> 份作品、<strong>{{ submissions|length }}</strong> 次提交。</p>
         <p class="sc-muted sc-spaced">在下方查看学生作品和提交记录。</p>
         {% else %}
-        <p class="sc-muted">{{ '你的作品还在这里，接着做吧。' if work else '打开积木小天地，把你的想法做出来。' }}</p>
-        <form method="post"><button class="sc-button {% if not hasQuestions %}sc-button-primary{% endif %}" type="submit">{{ '继续创作' if work else '开始创作' }}</button></form>
+        <div class="sct-project-state {{ 'is-done' if assignmentProgress.projectSubmitted and not assignmentProgress.hasUnsubmittedChanges }}">{{ '◐ 有新的修改还未提交' if assignmentProgress.hasUnsubmittedChanges else ('✓ 作品已提交' if assignmentProgress.projectSubmitted else ('◐ 已保存 · 还未提交' if assignmentProgress.hasSavedWork else '○ 还未提交作品')) }}</div>
+        <p class="sc-muted">{{ '作业已截止，可以继续保存作品，但不能再次提交。' if assignmentProgress.deadlinePassed else ('有新的修改还未提交，老师目前看到的是上一次提交的版本。' if assignmentProgress.hasUnsubmittedChanges else ('继续修改后，需要再次提交，老师才会收到新版本。' if assignmentProgress.projectSubmitted else ('保存作品后，还要点击“提交作业”才算完成。' if work else '打开积木小天地，把你的想法做出来。'))) }}</p>
+        <form method="post"><button class="sc-button {% if not hasQuestions %}sc-button-primary{% endif %}" type="submit">{{ '继续修改作品' if assignmentProgress.projectSubmitted else ('继续创作' if work else '开始创作') }}</button></form>
         {% if work %}<a class="sc-button sc-button-soft" href="{{ url('scratch_work', workId=work._id) }}">查看我的作品</a>{% endif %}
         {% endif %}
       </div>
@@ -66,6 +79,7 @@
 </section>
 {% endif %}
 {% if isTeacher and hasQuestions %}
+<details class="sct-secondary-details"><summary>客观题详细成绩 <span>{{ objectiveResults|length }} 位学员</span></summary>
 <section class="sc-panel sc-assignment-results">
   <div class="sc-panel-head"><div><h2>客观题答题情况</h2><p class="sc-muted sc-assignment-caption">查看每位学员的进度，以及具体答对、答错的题目。</p></div><span class="sc-badge">{{ assignment.objectiveQuiz.total }} 道题</span></div>
   {% if objectiveResults|length %}
@@ -74,9 +88,11 @@
   </tbody></table></div>
   {% else %}<div class="sc-empty"><strong>等孩子们来试一试</strong><p>学员开始答题后，完成情况和每道题的作答会显示在这里。</p></div>{% endif %}
 </section>
+</details>
 {% endif %}
 {% if hasProject %}
-{% if isTeacher and works|length %}<section class="sc-panel"><div class="sc-panel-head"><h2>学生作品</h2></div><div class="sc-panel-body">{% include "partials/scratch_work_cards.html" %}</div></section>{% endif %}
+{% if isTeacher and works|length %}<details class="sct-secondary-details"><summary>当前创作中的作品 <span>{{ works|length }} 份 · 可查看未提交内容</span></summary><section class="sc-panel"><div class="sc-panel-head"><h2>学生作品</h2></div><div class="sc-panel-body">{% include "partials/scratch_work_cards.html" %}</div></section></details>{% endif %}
+<details class="sct-secondary-details"><summary>{{ '所有历史提交与批改' if isTeacher else '我的提交记录' }} <span>{{ submissions|length }} 次提交</span></summary>
 <section class="sc-panel">
   <div class="sc-panel-head"><h2>{{ '提交与批改' if isTeacher else '交给老师的作品' }}</h2></div>
   {% if submissions|length %}
@@ -89,6 +105,7 @@
     <div class="sc-empty"><strong>{{ '还没有提交记录' if isTeacher else '完成后，给老师看看吧' }}</strong><p>{{ '学生在编辑器中提交作业后，会显示在这里。' if isTeacher else '在编辑器里点击“提交作业”，作品就会出现在这里。' }}</p></div>
   {% endif %}
 </section>
+</details>
 {% endif %}
 {% include "partials/scratch_assignment_delete_dialog.html" %}
 {% endblock %}

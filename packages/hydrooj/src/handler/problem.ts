@@ -27,7 +27,6 @@ import {
 import { tryRedirectAsset } from '../lib/asset_delivery';
 import avatar from '../lib/avatar';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
-import { canViewContestLevel } from '../lib/contest_access';
 import { getContestPracticeWindow } from '../lib/contest_practice';
 import { isScratchDomain } from '../lib/domain_type';
 import {
@@ -1018,13 +1017,6 @@ export class ProblemDetailHandler extends ContestDetailBaseHandler {
             if (this.psdoc?.rid) {
                 this.response.body.rdoc = await record.get(this.args.domainId, this.psdoc.rid);
             }
-            [this.response.body.ctdocs, this.response.body.htdocs] = (await Promise.all([
-                contest.getRelated(this.args.domainId, this.pdoc.docId),
-                contest.getRelated(this.args.domainId, this.pdoc.docId, 'homework'),
-            ])).map((tdocs) => tdocs.filter((tdoc) =>
-                canViewContestLevel(this.user, tdoc) && (this.user.hasPerm(PERM.PERM_VIEW_HIDDEN_CONTEST) || !tdoc.assign?.length
-                    || new Set(tdoc.assign).intersection(new Set(this.user.group)).size),
-            ));
         }
         if (!this.UiContext.homeworkReview && !this.UiContext.recordReplay && !this.UiContext.objectiveMergedReview && !args[2]
             && typeof this.pdoc.config === 'object' && this.pdoc.config?.type === 'objective') {

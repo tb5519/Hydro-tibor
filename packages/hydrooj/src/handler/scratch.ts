@@ -6,9 +6,10 @@ import { Context } from '../context';
 import { CsrfTokenError, NotFoundError, PermissionError, ValidationError } from '../error';
 import { tryRedirectAsset } from '../lib/asset_delivery';
 import { isScratchDomain } from '../lib/domain_type';
+import { learnerAssignmentState, sortAssignmentLearners, teacherAssignmentSummary } from '../lib/scratch_assignment_progress';
 import { getScratchEditorVersion } from '../lib/scratch_editor_assets';
 import { SCRATCH_MAX_FILE_SIZE } from '../lib/scratch_files';
-import { PERM, PRIV } from '../model/builtin';
+import { BUILTIN_ROLES, PERM, PRIV } from '../model/builtin';
 import domain from '../model/domain';
 import * as scratch from '../model/scratch';
 import * as scratchObjective from '../model/scratch_objective';
@@ -83,6 +84,81 @@ export class ScratchHandler extends Handler {
             ...publicBody, isTeacher: this.actor.isTeacher, domainId: this.actor.domainId,
             udict: await user.getListForRender(this.actor.domainId, [...uids], this.user.hasPerm(PERM.PERM_VIEW_USER_PRIVATE_INFO)),
         };
+    }
+
+    async assignmentProgress(assignments: scratch.ScratchAssignment[], includeRows = true) {
+        if (!assignments.length) return { assignmentStates: {}, learnerRows: {} };
+        const ids = assignments.map((assignment) => assignment._id);
+        const scope = { domainId: this.actor.domainId, assignmentId: { $in: ids },
+            ...(!this.actor.isTeacher ? { owner: this.actor.uid } : {}) };
+        // Only the latest submission and latest reviewed snapshot are needed, regardless of how many versions exist.
+        const [works, latest, feedback, results, members] = await Promise.all([
+            scratch.works.find(scope).project<scratch.ScratchWork>({ _id: 1, owner: 1, assignmentId: 1, currentFileId: 1, revision: 1 }).toArray(),
+            scratch.submissions.aggregate<{ _id: { assignmentId: ObjectId, owner: number }, doc: scratch.ScratchSubmission }>([
+                { $match: scope }, { $sort: { createdAt: -1, _id: -1 } },
+                { $project: { _id: 1, assignmentId: 1, owner: 1, reviewedAt: 1, createdAt: 1, revision: 1 } },
+                { $group: { _id: { assignmentId: '$assignmentId', owner: '$owner' }, doc: { $first: '$$ROOT' } } },
+            ]).toArray(),
+            !this.actor.isTeacher || includeRows ? scratch.submissions.aggregate<{ _id: { assignmentId: ObjectId, owner: number }, doc: scratch.ScratchSubmission }>([
+                { $match: { ...scope, reviewedAt: { $type: 'date' } } }, { $sort: { createdAt: -1, _id: -1 } },
+                { $project: { _id: 1, assignmentId: 1, owner: 1, reviewedAt: 1, createdAt: 1, revision: 1, grade: 1, feedback: 1 } },
+                { $group: { _id: { assignmentId: '$assignmentId', owner: '$owner' }, doc: { $first: '$$ROOT' } } },
+            ]).toArray() : [],
+            scratchObjective.results.aggregate<{ assignmentId: ObjectId, owner: number, revision: string, updatedAt: Date, answers: Record<string, { correct: boolean }> }>([
+                { $match: scope },
+                { $project: { _id: 0, assignmentId: 1, owner: 1, revision: 1, updatedAt: 1, answers: { $arrayToObject: { $map: {
+                    input: { $objectToArray: { $ifNull: ['$answers', {}] } }, as: 'answer',
+                    in: { k: '$$answer.k', v: { correct: '$$answer.v.correct' } },
+                } } } } },
+            ]).toArray(),
+            this.actor.isTeacher ? domain.collUser.find({ domainId: this.actor.domainId })
+                .project<{ uid: number, join?: boolean, blockedByStudentManagement?: boolean, role?: string }>({ uid: 1, join: 1, blockedByStudentManagement: 1, role: 1 }).toArray() : [],
+        ]);
+        const memberMap = new Map(members.map((member) => [member.uid, member]));
+        const historicalIds = [...works.map((work) => work.owner), ...latest.map((item) => item._id.owner), ...results.map((item) => item.owner)];
+        const accountIds = [...new Set([...members.map((member) => member.uid), ...historicalIds])];
+        const accounts = this.actor.isTeacher && accountIds.length ? await user.coll.find({ _id: { $in: accountIds } })
+            .project<{ _id: number, priv: number }>({ _id: 1, priv: 1 }).toArray() : [];
+        const learners = new Set(accounts.filter((account) => {
+            if (!(account.priv & PRIV.PRIV_USER_PROFILE) || (account.priv & PRIV.PRIV_MANAGE_ALL_DOMAIN)) return false;
+            const role = memberMap.get(account._id)?.role || 'default';
+            const permission = BigInt(this.domain.roles?.[role] ?? BUILTIN_ROLES?.[role] ?? 0);
+            return (permission & PERM.PERM_EDIT_DOMAIN) !== PERM.PERM_EDIT_DOMAIN;
+        }).map((account) => account._id));
+        const currentLearners = [...learners].filter((uid) => {
+            const member = memberMap.get(uid);
+            return member?.join && !member.blockedByStudentManagement;
+        });
+        const key = (assignmentId: unknown, uid: number) => `${assignmentId}:${uid}`;
+        const workMap = new Map(works.map((work) => [key(work.assignmentId, work.owner), work]));
+        const latestMap = new Map(latest.map((item) => [key(item._id.assignmentId, item._id.owner), item.doc]));
+        const feedbackMap = new Map(feedback.map((item) => [key(item._id.assignmentId, item._id.owner), item.doc]));
+        const resultMap = new Map(results.map((result) => [`${key(result.assignmentId, result.owner)}:${result.revision}`, result]));
+        const historicalByAssignment = new Map<string, Set<number>>();
+        for (const entry of [...works, ...latest.map((item) => item.doc), ...results]) {
+            const id = `${entry.assignmentId}`;
+            if (!historicalByAssignment.has(id)) historicalByAssignment.set(id, new Set());
+            historicalByAssignment.get(id).add(entry.owner);
+        }
+        const learnerRows: Record<string, ReturnType<typeof learnerAssignmentState>[]> = {};
+        const assignmentStates: Record<string, ReturnType<typeof learnerAssignmentState> | ReturnType<typeof teacherAssignmentSummary>> = {};
+        for (const assignment of assignments) {
+            const id = assignment._id.toHexString();
+            const assigned = (uid: number) => assignment.audience !== 'selected' || assignment.recipientIds?.includes(uid);
+            const current = new Set(currentLearners.filter(assigned));
+            const historical = this.actor.isTeacher ? [...(historicalByAssignment.get(id) || [])].filter((uid) => learners.has(uid)
+                && (workMap.has(key(id, uid)) || latestMap.has(key(id, uid)) || resultMap.has(`${key(id, uid)}:${assignment.objectiveQuiz?.revision}`))) : [];
+            const uids = this.actor.isTeacher ? [...new Set([...current, ...historical])] : [this.actor.uid];
+            const rows = uids.map((uid) => {
+                const entry = key(id, uid);
+                const state = learnerAssignmentState(assignment, uid, workMap.get(entry), latestMap.get(entry), feedbackMap.get(entry), resultMap.get(`${entry}:${assignment.objectiveQuiz?.revision}`));
+                if (this.actor.isTeacher && !current.has(uid)) state.historical = true;
+                return state;
+            });
+            if (includeRows) learnerRows[id] = sortAssignmentLearners(rows);
+            assignmentStates[id] = this.actor.isTeacher ? teacherAssignmentSummary(rows) : rows[0];
+        }
+        return { assignmentStates, learnerRows };
     }
 
     upload(name = 'file', required = true) {
@@ -251,8 +327,40 @@ export class ScratchAssignmentsHandler extends ScratchHandler {
         const page = Math.max(1, Math.floor(+this.request.query.page || 1));
         const showDeleted = this.request.query.status === 'deleted';
         if (showDeleted) scratch.requireTeacher(this.actor);
-        const [assignments, numPages, count] = await this.paginate(scratch.listAssignments(this.actor, showDeleted), page, 30);
-        await this.renderScratch('scratch_assignments.html', { assignments, page, numPages, count, showDeleted });
+        const filter = (this.actor.isTeacher ? ['pending', 'incomplete'] : ['todo', 'completed', 'feedback'])
+            .includes(`${this.request.query.filter || ''}`) ? `${this.request.query.filter}` : '';
+        const allAssignments = await scratch.listAssignments(this.actor, showDeleted).project<scratch.ScratchAssignment>({
+            _id: 1, domainId: 1, owner: 1, title: 1, deadline: 1, createdAt: 1, updatedAt: 1, audience: 1, recipientIds: 1,
+            deletedAt: 1, projectRequired: 1, 'objectiveQuiz.revision': 1, 'objectiveQuiz.paperIds': 1,
+            'objectiveQuiz.items.id': 1, 'objectiveQuiz.items.score': 1,
+        }).toArray();
+        const { assignmentStates: allStates } = await this.assignmentProgress(allAssignments, false);
+        const states = Object.values(allStates);
+        const assignmentSummary = this.actor.isTeacher ? {
+            total: allAssignments.length,
+            pendingReview: states.reduce((sum, state: any) => sum + state.pendingReview, 0),
+            incomplete: states.filter((state: any) => state.completed < state.total).length,
+            completed: states.filter((state: any) => state.total > 0 && state.completed === state.total).length,
+        } : {
+            total: allAssignments.length,
+            todo: states.filter((state: any) => !state.completed).length,
+            completed: states.filter((state: any) => state.completed).length,
+            feedback: states.filter((state: any) => state.hasFeedback).length,
+        };
+        const filtered = allAssignments.filter((assignment) => {
+            const state: any = allStates[assignment._id.toHexString()];
+            if (filter === 'pending') return state.pendingReview > 0;
+            if (filter === 'incomplete') return state.completed < state.total;
+            if (filter === 'todo') return !state.completed;
+            if (filter === 'completed') return state.completed;
+            if (filter === 'feedback') return state.hasFeedback;
+            return true;
+        });
+        const count = filtered.length;
+        const numPages = Math.max(1, Math.ceil(count / 30));
+        const assignments = filtered.slice((page - 1) * 30, page * 30);
+        const assignmentStates = Object.fromEntries(assignments.map((assignment) => [assignment._id.toHexString(), allStates[assignment._id.toHexString()]]));
+        await this.renderScratch('scratch_assignments.html', { assignments, assignmentStates, assignmentSummary, filter, page, numPages, count, showDeleted });
     }
 }
 
@@ -570,14 +678,21 @@ export class ScratchAssignmentHandler extends ScratchHandler {
             total: quizState.total, answered: quizState.answered, correct: quizState.correct, score: quizState.score,
             totalScore: quizState.totalScore, completed: quizState.completed, url: quizUrl(),
         } : null;
-        const objectiveResults = this.actor.isTeacher ? (await scratchObjective.getResults(this.actor, assignment))
-            .map((item) => ({ ...item, url: quizUrl(item.uid) })) : [];
+        const { assignmentStates, learnerRows } = await this.assignmentProgress([assignment]);
+        const assignmentProgress = assignmentStates[assignment._id.toHexString()];
+        const studentProgress = this.actor.isTeacher ? learnerRows[assignment._id.toHexString()]
+            .map((item) => ({ ...item, objectiveUrl: assignment.objectiveQuiz ? quizUrl(item.uid) : null })) : [];
+        const objectiveResults = this.actor.isTeacher && assignment.objectiveQuiz ? studentProgress.map((item) => ({
+            uid: item.uid, owner: item.uid, total: item.objectiveTotal, answered: item.objectiveAnswered, correct: item.objectiveCorrect,
+            score: item.objectiveScore, totalScore: item.objectiveTotalScore, completed: item.objectiveCompleted, updatedAt: item.objectiveUpdatedAt, url: quizUrl(item.uid),
+        })).sort((a, b) => b.answered - a.answered || a.uid - b.uid) : [];
         // Assignment JSON is a public page contract; never expose stored answer keys in the snapshot.
         const publicAssignment = { ...assignment, objectiveQuiz: assignment.objectiveQuiz ? {
             paperIds: assignment.objectiveQuiz.paperIds, total: assignment.objectiveQuiz.items.length,
         } : null };
         await this.renderScratch('scratch_assignment.html', {
             assignment: publicAssignment, work, works, submissions, materials, objectiveQuiz, objectiveResults,
+            assignmentProgress, assignmentStates, studentProgress,
         });
     }
 
@@ -683,7 +798,9 @@ export class ScratchSubmissionHandler extends ScratchHandler {
         const [work, assignment] = await Promise.all([
             scratch.getWork(this.actor, submission.workId), scratch.getAssignment(this.actor, submission.assignmentId),
         ]);
-        await this.renderScratch('scratch_submission.html', { submission, work, assignment });
+        await this.renderScratch('scratch_submission.html', {
+            submission, work, assignment, deadlinePassed: !!assignment.deadline && assignment.deadline.getTime() < Date.now(),
+        });
     }
 
     async post() {

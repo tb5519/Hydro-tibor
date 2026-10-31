@@ -1,0 +1,3 @@
+{% macro badge(state) %}
+<span class="sct-status sct-status-{{ state.status or 'new' }}">{% if state.status == 'reviewed' %}<span aria-hidden="true">✓</span> 已批改{% elif state.status == 'completed' %}<span aria-hidden="true">✓</span> 已完成{% elif state.status == 'submitted' %}<span aria-hidden="true">◷</span> 已提交 · 待批改{% elif state.status == 'draft' %}<span aria-hidden="true">◐</span> 进行中{% else %}<span aria-hidden="true">○</span> 未开始{% endif %}</span>
+{% endmacro %}

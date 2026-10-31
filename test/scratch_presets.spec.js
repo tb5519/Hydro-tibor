@@ -74,16 +74,17 @@ before(async () => {
     model = load('packages/hydrooj/src/model/scratch.ts', {
         '../error': errors, '../lib/scratch_files': files, '../lib/asset_delivery': delivery,
         '../lib/scratch_state': {},
-        '../logger': { Logger: class { warn() {} } }, './storage': storage,
+        '../logger': { Logger: class { warn() {} } }, './storage': storage, './scratch_objective': {},
         '../service/db': { collection: (name) => db.collection(name), ensureIndexes: (coll, ...indexes) => coll.createIndexes(indexes) },
     });
     await model.apply({ on: (event, callback) => { if (event === 'domain/delete') deleteDomain = callback; } });
     const builtin = { PERM: { PERM_EDIT_DOMAIN: 1n, PERM_VIEW_USER_PRIVATE_INFO: 2n }, PRIV: { PRIV_USER_PROFILE: 1 } };
     const domainType = { isScratchDomain: (domain) => domain?.domainType === 'scratch' };
     handlers = load('packages/hydrooj/src/handler/scratch.ts', {
+        '../lib/scratch_assignment_progress': load('packages/hydrooj/src/lib/scratch_assignment_progress.ts', {}),
         '../error': errors, '../lib/scratch_files': files, '../model/builtin': builtin,
         '../model/domain': { collUser: db.collection('domain.user') }, '../model/scratch': model,
-        '../model/storage': storage, '../model/user': { getListForRender: async () => ({}) },
+        '../model/storage': storage, '../model/user': { getListForRender: async () => ({}) }, '../model/scratch_objective': {},
         '../lib/asset_delivery': delivery, '../lib/domain_type': domainType,
         '../lib/scratch_editor_assets': { getScratchEditorVersion: () => 'v1' }, '../service/server': { Handler: class {} },
     });

@@ -1,10 +1,33 @@
+{% from "partials/scratch_assignment_status.html" import badge %}
 {% if assignments|length %}
-<ul class="sc-list">
+<ul class="sc-list sct-assignment-list">
   {% for item in assignments %}
-  <li class="sc-list-item">
-    <div class="sc-assignment-title"><span class="sc-assignment-mark icon icon-flag" aria-hidden="true"></span><div><h3><a href="{{ url('scratch_assignment', assignmentId=item._id) }}">{{ item.title }}</a></h3>{% if item.objectiveQuiz.total %}<div class="sc-assignment-type"><span class="sc-badge">{{ item.objectiveQuiz.total }} 道客观题{% if item.projectRequired != false %} + 作品创作{% endif %}</span></div>{% endif %}<p>{% if item.deadline %}请在 {{ datetimeSpan(item.deadline)|safe }} 前完成{% else %}{{ '未设置截止时间' if isTeacher else '准备好了，就来试一试！' }}{% endif %}</p></div></div>
-    <div class="sc-assignment-list-actions">{% if isTeacher %}<span class="sc-assignment-audience-label">{{ ('指定 ' ~ (item.recipientIds|length) ~ ' 位学员') if item.audience == 'selected' else '全体学员' }}</span>{% endif %}<div class="sc-actions"><a class="sc-button" href="{{ url('scratch_assignment', assignmentId=item._id) }}">{{ ('查看记录' if item.deletedAt else '查看进度') if isTeacher else '看看任务' }}<span class="icon icon-chevron_right" aria-hidden="true"></span></a>{% if isTeacher and showAssignmentActions %}<button class="sc-assignment-text-button {{ 'sc-assignment-delete-button' if not item.deletedAt }}" type="button" data-assignment-action="{{ 'restore' if item.deletedAt else 'delete' }}" data-assignment-url="{{ url('scratch_assignment', assignmentId=item._id) }}" data-assignment-title="{{ item.title }}">{{ '恢复作业' if item.deletedAt else '删除' }}</button>{% endif %}</div></div>
+  {% set state = assignmentStates[item._id] %}
+  <li class="sc-list-item sct-assignment-card">
+    <div class="sct-card-main">
+      <div class="sct-card-top">
+        <span class="sct-task-icon {{ 'sct-task-icon-done' if state.completed and not isTeacher }}" aria-hidden="true">{{ '✓' if state.completed and not isTeacher else '⚑' }}</span>
+        <div class="sct-card-title"><h3><a href="{{ url('scratch_assignment', assignmentId=item._id) }}">{{ item.title }}</a></h3><div class="sct-card-meta"><span>{{ '知识练习 + 作品创作' if item.objectiveQuiz.total and item.projectRequired != false else ('知识练习' if item.projectRequired == false else '作品创作') }}</span>{% if item.deadline %}<span class="{{ 'sct-overdue' if state.overdue }}">{{ '已截止' if state.overdue else '截止' }} {{ datetimeSpan(item.deadline)|safe }}</span>{% else %}<span>无截止时间</span>{% endif %}{% if isTeacher %}<span class="sc-assignment-audience-label">{{ ('指定 ' ~ (item.recipientIds|length) ~ ' 位学员') if item.audience == 'selected' else '全体学员' }}</span>{% endif %}</div></div>
+        {% if not isTeacher %}{{ badge(state) }}{% elif item.deletedAt %}<span class="sct-status">已删除</span>{% elif state.pendingReview %}<span class="sct-status sct-status-submitted">{{ state.pendingReview }} 份待批改</span>{% elif state.total and state.completed == state.total %}<span class="sct-status sct-status-completed">✓ 全员完成</span>{% else %}<span class="sct-status sct-status-draft">进行中</span>{% endif %}
+      </div>
+      <div class="sct-card-bottom">
+        {% if isTeacher %}
+        <div class="sct-teacher-metrics"><div><strong>{{ state.completed or 0 }}<small> / {{ state.total or 0 }}</small></strong><span>学员已完成</span></div><div><strong class="{{ 'sct-warm-ink' if state.pendingReview }}">{{ state.pendingReview or 0 }}</strong><span>待批改</span></div><div><strong>{{ state.notStarted or 0 }}</strong><span>未开始</span></div><div class="sct-card-meter"><progress value="{{ state.completed or 0 }}" max="{{ state.total or 1 }}" aria-label="{{ item.title }}学员完成进度"></progress><span>{{ state.completionPercent or 0 }}% 完成</span></div></div>
+        {% else %}
+        <div class="sct-requirements">
+          {% if item.objectiveQuiz.total %}<span class="{{ 'is-done' if state.objectiveCompleted }}"><i aria-hidden="true">{{ '✓' if state.objectiveCompleted else '○' }}</i> 知识练习 <strong>{{ state.objectiveAnswered or 0 }} / {{ item.objectiveQuiz.total }}</strong></span>{% endif %}
+          {% if item.projectRequired != false %}<span class="{{ 'is-done' if state.projectSubmitted and not state.hasUnsubmittedChanges }}"><i aria-hidden="true">{{ '✓' if state.projectSubmitted and not state.hasUnsubmittedChanges else '○' }}</i> 作品 <strong>{{ '有新修改未提交' if state.hasUnsubmittedChanges else ('已提交' if state.projectSubmitted else ('已保存 · 未提交' if state.hasSavedWork else '未提交')) }}</strong></span>{% endif %}
+        </div>
+        {% endif %}
+        <div class="sc-actions sct-card-actions">
+          {% if not isTeacher and state.hasFeedback %}<a class="sc-button {{ 'sc-button-primary' if state.completed and state.reviewed and not state.hasUnsubmittedChanges }}" href="{{ url('scratch_submission', submissionId=state.feedbackSubmissionId) }}">查看批改 <span aria-hidden="true">→</span></a>{% endif %}
+          {% if isTeacher or not (state.hasFeedback and state.completed and state.reviewed and not state.hasUnsubmittedChanges) %}<a class="sc-button {{ 'sc-button-primary' if not isTeacher or state.pendingReview }}" href="{{ url('scratch_assignment', assignmentId=item._id) }}{{ '#student-progress' if isTeacher and not item.deletedAt }}">{% if isTeacher %}{{ '查看记录' if item.deletedAt else ('去批改' if state.pendingReview else '查看进度') }}{% else %}{{ '继续修改' if state.hasUnsubmittedChanges else ('查看结果' if state.completed else ('继续完成' if state.status == 'draft' else '开始作业')) }}{% endif %}<span aria-hidden="true">→</span></a>{% endif %}
+          {% if isTeacher and showAssignmentActions %}<button class="sc-assignment-text-button {{ 'sc-assignment-delete-button' if not item.deletedAt }}" type="button" data-assignment-action="{{ 'restore' if item.deletedAt else 'delete' }}" data-assignment-url="{{ url('scratch_assignment', assignmentId=item._id) }}" data-assignment-title="{{ item.title }}">{{ '恢复作业' if item.deletedAt else '删除' }}</button>{% endif %}
+        </div>
+      </div>
+      {% if not isTeacher and state.hasFeedback %}<a class="sct-feedback-preview" href="{{ url('scratch_submission', submissionId=state.feedbackSubmissionId) }}"><span class="sct-feedback-label">老师批改{% if state.grade %}<strong>{{ state.grade }}</strong>{% endif %}</span><span class="sct-feedback-text">{{ state.feedback or '老师已经看过你的作品，点击查看批改。' }}</span><span class="sct-feedback-open" aria-hidden="true">→</span></a>{% if not state.reviewed and state.submissionId %}<p class="sct-version-note">以上为上一次批改{% if state.feedbackRevision %}（v{{ state.feedbackRevision }}）{% endif %}，新提交的版本正在等待老师查看。</p>{% endif %}{% endif %}
+    </div>
   </li>
   {% endfor %}
 </ul>
-{% else %}<div class="sc-empty"><strong>{{ '没有已删除的作业' if showDeleted else '还没有课堂作业' }}</strong><p>{{ '删除的作业会保留在这里，需要时可以恢复。' if showDeleted else ('发布一份作业，让孩子动手创作或完成知识练习。' if isTeacher else '老师发布的新任务会显示在这里。') }}</p></div>{% endif %}
+{% else %}<div class="sc-empty sct-empty"><strong>{{ '没有已删除的作业' if showDeleted else ('这个分类下暂无作业' if filter else '还没有课堂作业') }}</strong><p>{{ '删除的作业会保留在这里，需要时可以恢复。' if showDeleted else ('可以切换到全部作业，看看其他任务。' if filter else ('发布一份作业，让孩子动手创作或完成知识练习。' if isTeacher else '老师发布的新任务会显示在这里。')) }}</p>{% if filter %}<a class="sc-button sc-spaced" href="{{ url('scratch_assignments') }}">查看全部作业</a>{% endif %}</div>{% endif %}

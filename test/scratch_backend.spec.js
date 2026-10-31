@@ -149,13 +149,14 @@ before(async () => {
     });
     await model.apply({ on: (event, callback) => { if (event === 'domain/delete') deleteDomainData = callback; } });
     handlers = load('packages/hydrooj/src/handler/scratch.ts', {
+        '../lib/scratch_assignment_progress': load('packages/hydrooj/src/lib/scratch_assignment_progress.ts', {}),
         '../context': {}, '../error': errors,
         '../lib/scratch_editor_assets': { getScratchEditorVersion: () => 'a'.repeat(64) },
         '../lib/asset_delivery': assetDelivery,
         '../lib/domain_type': { isScratchDomain: (domain) => domain?.domainType === 'scratch' },
-        '../lib/scratch_files': scratchFiles, '../model/builtin': { PERM: { PERM_EDIT_DOMAIN: 1n, PERM_VIEW_USER_PRIVATE_INFO: 2n }, PRIV: { PRIV_USER_PROFILE: 1 } },
+        '../lib/scratch_files': scratchFiles, '../model/builtin': { PERM: { PERM_EDIT_DOMAIN: 1n, PERM_VIEW_USER_PRIVATE_INFO: 2n }, PRIV: { PRIV_USER_PROFILE: 1, PRIV_MANAGE_ALL_DOMAIN: 2 }, BUILTIN_ROLES: { default: 0n, root: 3n } },
         '../model/domain': { collUser: database.collection('domain.user') }, '../model/scratch': model,
-        '../model/scratch_objective': {},
+        '../model/scratch_objective': { results: database.collection('scratch.objective.result') },
         '../model/storage': storage,
         '../model/user': {
             coll: database.collection('user'),
@@ -2550,4 +2551,122 @@ describe('Scratch community favorites and saved collection', () => {
         assert.equal(admin.response.body.manualFavorites, 4);
         assert.equal(admin.response.body.favorites, 5);
     });
+});
+
+
+describe('Scratch assignment progress batch queries and privacy', () => {
+    let fixture = 0;
+    async function setup() {
+        const domainId = `progress-${++fixture}`;
+        const baseUid = 50000 + fixture * 10;
+        const [learner, untouched, coach, blocked, admin, departed, outsider] = Array.from({ length: 7 }, (_, i) => baseUid + i);
+        await database.collection('user').insertMany([learner, untouched, coach, blocked, admin, departed, outsider].map((uid) => ({ _id: uid, priv: uid === admin ? 3 : 1 })));
+        await database.collection('domain.user').insertMany([learner, untouched, coach, blocked, admin, departed].map((uid) => ({ domainId, uid,
+            join: uid !== departed, role: uid === coach ? 'coach' : 'default', blockedByStudentManagement: uid === blocked })));
+        const task = { _id: new ObjectId(), domainId, owner: teacher.uid, title: '进度作业', createdAt: new Date(), updatedAt: new Date(),
+            audience: 'all', projectRequired: true, deadline: null };
+        await model.assignments.insertOne(task);
+        const handler = (uid, isTeacher = false) => Object.assign(new handlers.ScratchAssignmentsHandler(), {
+            actor: { domainId, uid, isTeacher }, domain: { _id: domainId, roles: { coach: '1' } }, request: { query: {} },
+            renderScratch: async (template, body) => body,
+        });
+        const old = { _id: new ObjectId(), domainId, owner: learner, assignmentId: task._id, workId: new ObjectId(), fileId: new ObjectId(),
+            createdAt: new Date(100), reviewedAt: new Date(150), revision: 1, feedback: '上次反馈', grade: '优秀' };
+        const latest = { ...old, _id: new ObjectId(), createdAt: new Date(200), reviewedAt: null, revision: 2, feedback: '', grade: null };
+        await model.submissions.insertMany([old, latest]);
+        return { domainId, task, handler, learner, untouched, coach, blocked, admin, departed, outsider, old, latest };
+    }
+    it('counts each learner latest version once and excludes privileged, blocked and departed members from current totals', async () => {
+        const f = await setup();
+        await model.submissions.insertMany([f.coach, f.blocked, f.admin, f.departed].map((uid) => ({ ...f.latest, _id: new ObjectId(), owner: uid, workId: new ObjectId() })));
+        const progress = await f.handler(teacher.uid, true).assignmentProgress([f.task]);
+        const totals = progress.assignmentStates[String(f.task._id)];
+        assert.equal(totals.total, 2);
+        assert.equal(totals.pendingReview, 1);
+        assert.equal(totals.completed, 1);
+        const rows = progress.learnerRows[String(f.task._id)];
+        assert.equal(rows[0].uid, f.learner);
+        assert.equal(rows[0].submissionId.toString(), f.latest._id.toString());
+        assert.equal(rows[0].feedbackSubmissionId.toString(), f.old._id.toString());
+        assert(rows.some((row) => row.uid === f.untouched && row.status === 'new'));
+        assert(!rows.some((row) => row.uid === f.coach || row.uid === f.admin));
+        assert(rows.find((row) => row.uid === f.departed).historical);
+        assert(rows.find((row) => row.uid === f.blocked).historical);
+    });
+    it('honors selected assignment recipients while retaining historical rows outside current audience', async () => {
+        const f = await setup();
+        f.task.audience = 'selected';
+        f.task.recipientIds = [f.untouched];
+        const progress = await f.handler(teacher.uid, true).assignmentProgress([f.task]);
+        const totals = progress.assignmentStates[String(f.task._id)];
+        assert.equal(totals.total, 1);
+        assert.equal(totals.pendingReview, 0);
+        assert.equal(totals.completed, 0);
+        const rows = progress.learnerRows[String(f.task._id)];
+        assert(rows.find((row) => row.uid === f.learner).historical);
+        assert.equal(rows.find((row) => row.uid === f.untouched).historical, undefined);
+    });
+    it('student list only exposes own state from visible classroom assignments and filters before pagination', async () => {
+        const f = await setup();
+        await model.assignments.insertMany([
+            { ...f.task, _id: new ObjectId(), title: '未分配', audience: 'selected', recipientIds: [f.untouched] },
+            { ...f.task, _id: new ObjectId(), title: '另一课堂', domainId: 'elsewhere' },
+            { ...f.task, _id: new ObjectId(), title: '已删除', deletedAt: new Date() },
+            ...Array.from({ length: 31 }, (_, i) => ({ ...f.task, _id: new ObjectId(), title: `未完成${i}`, createdAt: new Date(1000 + i) })),
+        ]);
+        const handler = f.handler(f.learner);
+        let body;
+        handler.renderScratch = async (_, value) => { body = value; };
+        handler.request.query = { filter: 'completed' };
+        await handler.get();
+        assert.equal(body.assignmentSummary.total, 32);
+        assert.equal(body.assignmentSummary.todo, 31);
+        assert.equal(body.assignmentSummary.completed, 1);
+        assert.equal(body.assignmentSummary.feedback, 1);
+        assert.equal(body.count, 1);
+        assert.equal(Object.keys(body.assignmentStates).length, 1);
+        assert.equal(body.assignments[0].title, '进度作业');
+        assert(Object.values(body.assignmentStates).every((row) => row.uid === f.learner));
+        assert(!JSON.stringify(body).includes('answers'));
+        handler.request.query = { filter: 'todo', page: '2' };
+        await handler.get();
+        assert.equal(body.count, 31);
+        assert.equal(body.numPages, 2);
+        assert.equal(body.assignments.length, 1);
+        handler.request.query = { status: 'deleted' };
+        await assert.rejects(handler.get(), PermissionError);
+    });
+    it('keeps the newest reviewed submission feedback when an older review is edited later', async () => {
+        const f = await setup();
+        await model.submissions.updateOne({ _id: f.latest._id }, { $set: { reviewedAt: new Date(250), grade: '最新版', feedback: '新版反馈' } });
+        await model.submissions.updateOne({ _id: f.old._id }, { $set: { reviewedAt: new Date(999), grade: '旧版', feedback: '旧版补充' } });
+        const progress = await f.handler(f.learner).assignmentProgress([f.task]);
+        const state = progress.assignmentStates[String(f.task._id)];
+        assert.equal(state.reviewed, true);
+        assert.equal(state.grade, '最新版');
+        assert.equal(state.feedback, '新版反馈');
+        assert.equal(state.latestRevision, 2);
+        assert.equal(state.feedbackRevision, 2);
+        assert.equal(state.feedbackSubmissionId.toString(), f.latest._id.toString());
+    });
+    it('chooses current quiz revision and retains answer time without exposing answer selections', async () => {
+        const f = await setup();
+        f.task.objectiveQuiz = { revision: 'current', items: [{ id: 1, score: 100, objective: { answers: ['SECRET'] } }] };
+        const updatedAt = new Date(250);
+        await database.collection('scratch.objective.result').insertMany([
+            { domainId: f.domainId, assignmentId: f.task._id, owner: f.learner, revision: 'current', updatedAt, answers: { 1: { selected: ['SECRET'], correct: true } } },
+            { domainId: f.domainId, assignmentId: f.task._id, owner: f.learner, revision: 'obsolete', updatedAt: new Date(300), answers: {} },
+            { domainId: 'foreign', assignmentId: f.task._id, owner: f.learner, revision: 'current', answers: {} },
+        ]);
+        const progress = await f.handler(f.learner).assignmentProgress([f.task]);
+        const state = progress.assignmentStates[String(f.task._id)];
+        assert.equal(state.completed, true);
+        assert.equal(state.objectiveAnswered, 1);
+        assert.equal(state.objectiveCorrect, 1);
+        assert.equal(state.objectiveUpdatedAt.getTime(), updatedAt.getTime());
+        assert(!JSON.stringify(progress).includes('SECRET'));
+        assert(!JSON.stringify(progress).includes('selected'));
+        assert(!JSON.stringify(progress).includes('answers'));
+    });
+
 });
