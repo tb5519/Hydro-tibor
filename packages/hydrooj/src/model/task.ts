@@ -38,10 +38,23 @@ export class Consumer {
     running?: any;
     notify: (res?: any) => void;
 
-    constructor(public filter: any, public func: (t: Task) => Promise<void>, public destroyOnError = true, private concurrency = 1) {
+    constructor(
+        public filter: any, public func: (t: Task) => Promise<void>, public destroyOnError = true,
+        private concurrency = 1, private options: ConsumerOptions = {},
+    ) {
         this.consuming = true;
         this.consume();
         bus.on('app/exit', this.destroy);
+    }
+
+    private admissionQuery() {
+        const field = this.options.concurrencyKey;
+        if (!field) return this.filter;
+        // Exclude active keys in Mongo rather than taking blocked tasks out of the
+        // queue. Missing legacy keys remain eligible and do not block each other.
+        const active = [...new Set([...this.processing].map((task) => task[field]).filter((value) =>
+            (typeof value === 'number' && Number.isFinite(value)) || (typeof value === 'string' && value.length)))];
+        return active.length ? { $and: [this.filter, { [field]: { $nin: active } }] } : this.filter;
     }
 
     async consume() {
@@ -54,7 +67,7 @@ export class Consumer {
                     });
                     continue;
                 }
-                const res = await getFirst(this.filter); // eslint-disable-line no-await-in-loop
+                const res = await getFirst(this.admissionQuery()); // eslint-disable-line no-await-in-loop
                 if (!res) {
                     // eslint-disable-next-line no-await-in-loop
                     await Promise.race([
@@ -64,7 +77,7 @@ export class Consumer {
                     continue;
                 }
                 this.processing.add(res);
-                this.func(res)
+                Promise.resolve().then(() => this.func(res))
                     .catch((err) => {
                         logger.error(err);
                         if (this.destroyOnError) this.destroy();
@@ -94,6 +107,11 @@ export class Consumer {
         this.filter = query;
         this.notify?.();
     }
+}
+
+export interface ConsumerOptions {
+    /** At most one active task per scalar key, within this consumer. */
+    concurrencyKey?: string;
 }
 
 class TaskModel {
@@ -132,8 +150,8 @@ class TaskModel {
 
     static getFirst = getFirst;
 
-    static consume(query: any, cb: (t: Task) => Promise<void>, destroyOnError = true, concurrency = 1) {
-        return new Consumer(query, cb, destroyOnError, concurrency);
+    static consume(query: any, cb: (t: Task) => Promise<void>, destroyOnError = true, concurrency = 1, options: ConsumerOptions = {}) {
+        return new Consumer(query, cb, destroyOnError, concurrency, options);
     }
 }
 

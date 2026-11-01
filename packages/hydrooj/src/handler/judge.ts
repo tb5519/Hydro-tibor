@@ -359,7 +359,7 @@ export class JudgeConnectionHandler extends ConnectionHandler {
             }
         } else if (msg.key === 'start') {
             if (this.consumer) throw new BadRequestError('Judge daemon already started');
-            this.consumer = task.consume(this.query, this.newTask.bind(this), true, this.concurrency);
+            this.consumer = task.consume(this.query, this.newTask.bind(this), true, this.concurrency, { concurrencyKey: 'uid' });
             logger.info('Judge daemon started');
         }
     }
