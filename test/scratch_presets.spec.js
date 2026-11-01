@@ -19,7 +19,8 @@ function load(relative, dependencies = {}) {
     const module = { exports: {} };
     vm.runInNewContext(transformSync(fs.readFileSync(path.join(root, relative), 'utf8'), { loader: 'ts', format: 'cjs' }).code,
         { module, exports: module.exports, Buffer, URL, Date, setTimeout,
-            require: (name) => Object.hasOwn(dependencies, name) ? dependencies[name] : require(name) });
+            require: (name) => Object.hasOwn(dependencies, name) ? dependencies[name]
+                : name.endsWith('/scratch_review') ? load('packages/hydrooj/src/lib/scratch_review.ts', {}) : require(name) });
     return module.exports;
 }
 const teacher = { domainId: 'presets-a', uid: 10, isTeacher: true };

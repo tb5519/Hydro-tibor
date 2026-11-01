@@ -55,6 +55,12 @@ describe('Scratch submission feedback experience', () => {
         assert.equal(inspection.rel, 'noopener');
         assert.equal(doc.querySelector('[name=grade]').maxLength, 40);
         assert.equal(doc.querySelector('[name=feedback]').maxLength, 20000);
+        const result = doc.querySelector('[name=reviewStatus]');
+        assert.equal(result.required, true);
+        assert.equal(result.value, '');
+        assert.equal(doc.querySelector('form').checkValidity(), false);
+        result.value = 'changes_requested';
+        assert.equal(doc.querySelector('form').checkValidity(), true);
         assert.match(doc.querySelector('button[type=submit]').textContent, /完成批改/);
         assert.equal(doc.querySelector('a[href*="workId="]'), null);
     });
@@ -62,6 +68,7 @@ describe('Scratch submission feedback experience', () => {
     it('preserves saved feedback when updating and renders student comments as text', (t) => {
         const submission = { ...base.submission, grade: '0', feedback: '<script>alert(1)</script>\n继续尝试', reviewedAt: '2026-11-01' };
         const teacher = render(t, { isTeacher: true, submission });
+        assert.equal(teacher.querySelector('[name=reviewStatus]').value, 'completed');
         assert.equal(teacher.querySelector('[name=grade]').value, '0');
         assert.equal(teacher.querySelector('[name=feedback]').value, submission.feedback);
         assert.match(teacher.querySelector('button[type=submit]').textContent, /更新批改/);
@@ -85,5 +92,48 @@ describe('Scratch submission feedback experience', () => {
         const doc = render(t, { deadlinePassed: true, submission: { ...base.submission, reviewedAt: '2026-11-01', grade: '完成' } });
         assert.match(doc.querySelector('.sc-submission-resubmit-note').textContent, /已截止[\s\S]*不能再次提交/);
         assert(doc.querySelector('a[href="/scratch_editor?workId=w1"]'));
+    });
+    it('shows a requested revision as unfinished and preselects the teacher review outcome', (t) => {
+        const submission = { ...base.submission, grade: '未完成', feedback: '按照这次要求重新做一下', reviewedAt: '2026-11-01' };
+        const teacher = render(t, { isTeacher: true, reviewStatus: 'changes_requested', submission });
+        assert.equal(teacher.querySelector('[name=reviewStatus]').value, 'changes_requested');
+        assert.equal(teacher.querySelector('[name=grade]').value, '未完成');
+        assert.match(teacher.querySelector('.sc-submission-review-result small').textContent, /待完成[\s\S]*重新提交/);
+        const student = render(t, { reviewStatus: 'changes_requested', submission });
+        assert.match(student.querySelector('.sc-submission-status').textContent, /需修改[\s\S]*重新提交/);
+        assert.equal(student.querySelector('.sc-submission-status').classList.contains('is-reviewed'), false);
+        assert.equal(student.querySelector('.sc-submission-feedback').classList.contains('needs-changes'), true);
+        assert.equal(student.querySelector('.sc-submission-feedback .sc-badge-success'), null);
+        assert.match(student.querySelector('.sc-submission-request-note').textContent, /还未完成[\s\S]*重新提交/);
+        assert.match(student.querySelector('.sc-submission-continue').textContent, /按建议修改作品/);
+        assert.equal(student.querySelector('.sc-submission-continue').getAttribute('href'), '/scratch_editor?workId=w1');
+    });
+    it('honors an explicit accepted outcome and preserves revision requests in archived records', (t) => {
+        const submission = { ...base.submission, reviewStatus: 'accepted', grade: '未完成', reviewedAt: '2026-11-01' };
+        const accepted = render(t, { isTeacher: true, reviewStatus: 'accepted', submission });
+        assert.equal(accepted.querySelector('[name=reviewStatus]').value, 'accepted');
+        assert.match(accepted.querySelector('.sc-submission-status').textContent, /AC通过[\s\S]*完全正确/);
+        assert.match(accepted.querySelector('option[value=accepted]').textContent, /完全正确[\s\S]*AC通过/);
+        assert.equal(accepted.querySelector('.sc-submission-status').classList.contains('is-reviewed'), true);
+        assert.equal(accepted.querySelector('.sc-submission-request-note'), null);
+        const archived = render(t, { isTeacher: true, assignment: { ...base.assignment, deletedAt: '2026-11-01' },
+            reviewStatus: 'changes_requested', submission: { ...submission, reviewStatus: 'changes_requested' } });
+        assert.equal(archived.querySelector('form'), null);
+        assert.equal(archived.querySelector('a[href*="workId="]'), null);
+        assert.match(archived.querySelector('.sc-submission-status').textContent, /需修改/);
+    });
+    it('explains that an expired revision request needs a deadline adjustment before resubmission', (t) => {
+        const doc = render(t, { deadlinePassed: true, reviewStatus: 'changes_requested',
+            submission: { ...base.submission, reviewedAt: '2026-11-01', grade: '未完成' } });
+        assert.match(doc.querySelector('.sc-submission-resubmit-note').textContent, /不能再次提交[\s\S]*联系老师调整截止时间/);
+    });
+    it('keeps ordinary completion distinct from a fully correct AC outcome', (t) => {
+        const submission = { ...base.submission, grade: '95分', reviewStatus: 'completed', reviewedAt: '2026-11-01' };
+        const teacher = render(t, { isTeacher: true, reviewStatus: 'completed', submission });
+        assert.equal(teacher.querySelector('[name=reviewStatus]').value, 'completed');
+        assert.doesNotMatch(teacher.querySelector('.sc-submission-status').textContent, /AC通过/);
+        const student = render(t, { reviewStatus: 'completed', submission });
+        assert.match(student.querySelector('.sc-submission-status').textContent, /已完成/);
+        assert.doesNotMatch(student.querySelector('.sc-submission-status').textContent, /AC通过/);
     });
 });

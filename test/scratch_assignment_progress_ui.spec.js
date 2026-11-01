@@ -32,8 +32,10 @@ describe('Scratch assignment progress experience', () => {
         const states = [
             ['new', '未开始', '开始作业', {}],
             ['draft', '进行中', '继续完成', { hasSavedWork: true }],
-            ['submitted', '已提交 · 待批改', '查看结果', { completed: true, projectSubmitted: true }],
+            ['submitted', '已提交 · 待批改', '查看提交', { completed: false, projectSubmitted: true }],
             ['reviewed', '已批改', '查看批改', { completed: true, projectSubmitted: true, reviewed: true, hasFeedback: true, feedbackSubmissionId: 'feedback' }],
+            ['changes_requested', '需修改', '按建议修改', { changesRequested: true, projectSubmitted: true, reviewed: true,
+                hasFeedback: true, grade: '未完成', feedbackReviewStatus: 'changes_requested', feedbackSubmissionId: 'feedback' }],
         ];
         for (const [status, label, action, extra] of states) {
             const dom = render('scratch_assignments.html', { assignmentStates: { task: progress({ status, ...extra }) } });
@@ -43,6 +45,40 @@ describe('Scratch assignment progress experience', () => {
             assert.match(card.querySelector('.sct-card-actions').textContent, new RegExp(action));
             if (status === 'draft') assert.match(card.textContent, /已保存 · 未提交/);
         }
+    });
+    it('keeps requested changes out of completion styling on student and teacher pages', (t) => {
+        const state = progress({ status: 'changes_requested', changesRequested: true, projectSubmitted: true, reviewed: true,
+            hasFeedback: true, grade: '未完成', feedback: '请按本次要求重新完成。', feedbackReviewStatus: 'changes_requested',
+            feedbackSubmissionId: 'redo', submissionId: 'redo' });
+        const student = render('scratch_assignment.html', { assignmentProgress: state, work: { _id: 'work' } });
+        const list = render('scratch_assignments.html', { assignmentStates: { task: state } });
+        const teacher = render('scratch_assignment.html', { isTeacher: true, studentProgress: [state], assignmentProgress: { total: 1, completed: 0, changesRequested: 1 } });
+        t.after(() => { student.window.close(); list.window.close(); teacher.window.close(); });
+        assert.match(student.window.document.querySelector('.sct-student-progress').textContent, /还未完成/);
+        assert(student.window.document.querySelector('.sct-feedback-needs-changes'));
+        assert.match(student.window.document.querySelector('form').textContent, /按建议修改作品/);
+        assert.equal(list.window.document.querySelector('.sct-task-icon-done'), null);
+        assert.equal(list.window.document.querySelector('.sct-requirements .is-done'), null);
+        assert(list.window.document.querySelector('.sct-feedback-preview.sct-feedback-needs-changes'));
+        const row = teacher.window.document.querySelector('[data-progress-row]');
+        assert.equal(row.dataset.completed, 'false');
+        assert.equal(row.dataset.changesRequested, 'true');
+        assert.equal(row.querySelector('.sct-status-reviewed'), null);
+        assert.match(row.querySelector('.sct-status-changes_requested').textContent, /需修改/);
+        assert(teacher.window.document.querySelector('[data-progress-filter=changes]'));
+    });
+    it('keeps a resubmission waiting for teacher confirmation out of completed styling', (t) => {
+        const state = progress({ status: 'submitted', projectSubmitted: true, completed: false, reviewed: false,
+            submissionId: 'pending', objectiveCompleted: true });
+        const list = render('scratch_assignments.html', { assignmentStates: { task: state } });
+        const detail = render('scratch_assignment.html', { assignmentProgress: state });
+        t.after(() => { list.window.close(); detail.window.close(); });
+        assert.equal(list.window.document.querySelector('.sct-task-icon-done'), null);
+        assert.equal(list.window.document.querySelector('.sct-requirements .is-done'), null);
+        assert.match(list.window.document.querySelector('.sct-card-actions').textContent, /查看提交/);
+        assert.equal(list.window.document.querySelector('.sct-card-actions a').getAttribute('href'), '/scratch_submission/pending');
+        assert.match(detail.window.document.querySelector('.sct-student-progress h2').textContent, /等待老师批改/);
+        assert.doesNotMatch(detail.window.document.querySelector('.sct-student-progress h2').textContent, /已完成/);
     });
     it('keeps older feedback visible and escaped while a resubmission waits for a new review', (t) => {
         const state = progress({ status: 'submitted', projectSubmitted: true, completed: true, hasFeedback: true,
@@ -80,12 +116,12 @@ describe('Scratch assignment progress experience', () => {
         assert.match(doc.querySelector('form[method=post]').textContent, /继续修改作品/);
     });
     it('filters latest-version teacher rows, combines name/UID search and exposes empty state accessibly', (t) => {
-        const rows = [progress({ status: 'new', uid: 42 }), progress({ uid: 51, status: 'submitted', completed: true,
+        const rows = [progress({ status: 'new', uid: 42 }), progress({ uid: 51, status: 'submitted', completed: false,
             projectSubmitted: true, submissionId: 'pending' }), progress({ uid: 65, status: 'reviewed', completed: true,
             projectSubmitted: true, reviewed: true, submissionId: 'reviewed', grade: '优秀' }),
             progress({ uid: 99, historical: true, projectSubmitted: true, submissionId: 'historical' })];
         const dom = render('scratch_assignment.html', { isTeacher: true, studentProgress: rows,
-            assignmentProgress: { total: 3, completed: 2, pendingReview: 1 }, udict: { 42: { uname: 'alice', displayName: '小雨' }, 51: { uname: 'star' } } });
+            assignmentProgress: { total: 3, completed: 1, pendingReview: 1 }, udict: { 42: { uname: 'alice', displayName: '小雨' }, 51: { uname: 'star' } } });
         t.after(() => dom.window.close());
         const doc = dom.window.document;
         const mod = { exports: {} };
@@ -105,7 +141,7 @@ describe('Scratch assignment progress experience', () => {
         assert.equal(doc.querySelector('[data-progress-empty]').hidden, false);
         doc.querySelector('[data-progress-quick=incomplete]').click();
         assert.equal(input.value, '');
-        assert.equal(visible().length, 1);
+        assert.equal(visible().length, 2);
         assert.match(visible()[0].textContent, /小雨/);
         assert.match(visible()[0].textContent, /未开始/);
         doc.querySelector('[data-progress-filter=all]').click();

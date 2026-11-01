@@ -7,6 +7,7 @@ import type { RemoteAsset } from '../interface';
 import { queueAssetMirror } from '../lib/asset_delivery';
 import { SCRATCH_PRESET_KINDS, ScratchPresetKind, validateScratchArchive, validateScratchMaterial, validateScratchPreset, validateScratchThumbnail } from '../lib/scratch_files';
 import { mergeScratchState, ScratchStateValue, validateScratchStateChanges } from '../lib/scratch_state';
+import { ScratchReviewStatus, submissionReviewStatus } from '../lib/scratch_review';
 import { Logger } from '../logger';
 import db from '../service/db';
 import * as scratchObjective from './scratch_objective';
@@ -46,6 +47,8 @@ export interface ScratchWork extends ScratchDoc {
 export interface ScratchVersion extends ScratchDoc { workId: ObjectId, fileId: ObjectId, revision: number }
 export interface ScratchSubmission extends ScratchVersion {
     assignmentId: ObjectId; grade: string | null; feedback: string; reviewer: number | null; reviewedAt: Date | null;
+    reviewStatus?: ScratchReviewStatus;
+    sourceProblemId?: ObjectId | null;
 }
 export interface ScratchFile extends ScratchDoc {
     path: string; filename: string; size: number; mime: string;
@@ -829,6 +832,7 @@ export async function saveWork(
     const version: ScratchVersion = { ...base(actor), workId, fileId: null, revision: revision + 1 };
     const submission: ScratchSubmission = submit ? {
         ...version, _id: new ObjectId(), assignmentId: assignment._id, grade: null, feedback: '', reviewer: null, reviewedAt: null,
+        sourceProblemId: assignment.sourceProblemId || null,
     } : null;
     try {
         file = await putFile(actor, upload, { workId }, true);
@@ -839,6 +843,12 @@ export async function saveWork(
         if (submission) await submissions.insertOne(submission);
         const result = await withAssignmentMutation(actor, workAssignmentId(work), async (latest) => {
             if (submit && latest?.deadline && latest.deadline.getTime() < Date.now()) throw new ValidationError('submit', null, '作业已截止。');
+            if (submission) {
+                // Bind the submission to the source held by this publication lease,
+                // including an explicit null when it is not a library assignment.
+                submission.sourceProblemId = latest?.sourceProblemId || null;
+                await submissions.updateOne({ domainId: actor.domainId, _id: submission._id }, { $set: { sourceProblemId: submission.sourceProblemId } });
+            }
             return works.updateOne({ domainId: actor.domainId, _id: workId, savingToken: token, revision }, {
                 $set: { currentFileId: file._id, revision: revision + 1, title: cleanTitle, updatedAt: new Date(),
                     ...(thumbnail ? { thumbnailFileId: thumbnail._id } : {}) },
@@ -894,13 +904,17 @@ export async function cacheWorkThumbnail(actor: ScratchActor, workId: ObjectId, 
         await works.updateOne({ domainId: actor.domainId, _id: workId, savingToken: token }, { $unset: { savingToken: '', savingUntil: '' } });
     }
 }
-export async function reviewSubmission(actor: ScratchActor, submissionId: ObjectId, grade: string | null, feedback: string) {
+export async function reviewSubmission(actor: ScratchActor, submissionId: ObjectId, grade: string | null, feedback: string, reviewStatus?: unknown) {
     requireTeacher(actor);
     const submission = await getSubmission(actor, submissionId);
     if (grade !== null && (typeof grade !== 'string' || grade.length > 40)) throw new ValidationError('grade');
     if (feedback.length > 20000) throw new ValidationError('feedback');
-    await withAssignmentMutation(actor, submission.assignmentId, () => submissions.updateOne({ domainId: actor.domainId, _id: submissionId }, {
-        $set: { grade, feedback: feedback.trim(), reviewer: actor.uid, reviewedAt: new Date(), updatedAt: new Date() },
+    if (reviewStatus !== undefined && reviewStatus !== 'completed' && reviewStatus !== 'accepted' && reviewStatus !== 'changes_requested') throw new ValidationError('reviewStatus');
+    const now = new Date();
+    const outcome = reviewStatus === undefined ? submissionReviewStatus({ grade, reviewedAt: now }) : reviewStatus as ScratchReviewStatus;
+    await withAssignmentMutation(actor, submission.assignmentId, (assignment) => submissions.updateOne({ domainId: actor.domainId, _id: submissionId }, {
+        $set: { grade, feedback: feedback.trim(), reviewStatus: outcome, reviewer: actor.uid, reviewedAt: now, updatedAt: now,
+            ...(!Object.hasOwn(submission, 'sourceProblemId') && reviewStatus === 'accepted' ? { sourceProblemId: assignment?.sourceProblemId || null } : {}) },
     }));
 }
 

@@ -23,7 +23,8 @@ function load(relative, dependencies) {
         loader: 'ts', format: 'cjs',
     }).code, {
         module, exports: module.exports, Buffer, Blob, URL, Date: dependencies.__Date || Date, setTimeout,
-        require: (name) => Object.hasOwn(dependencies, name) ? dependencies[name] : require(name),
+        require: (name) => Object.hasOwn(dependencies, name) ? dependencies[name]
+            : name.endsWith('/scratch_review') ? load('packages/hydrooj/src/lib/scratch_review.ts', {}) : require(name),
     });
     return module.exports;
 }
@@ -156,7 +157,7 @@ before(async () => {
         '../lib/domain_type': { isScratchDomain: (domain) => domain?.domainType === 'scratch' },
         '../lib/scratch_files': scratchFiles, '../model/builtin': { PERM: { PERM_EDIT_DOMAIN: 1n, PERM_VIEW_USER_PRIVATE_INFO: 2n }, PRIV: { PRIV_USER_PROFILE: 1, PRIV_MANAGE_ALL_DOMAIN: 2 }, BUILTIN_ROLES: { default: 0n, root: 3n } },
         '../model/domain': { collUser: database.collection('domain.user') }, '../model/scratch': model,
-        '../model/scratch_objective': { results: database.collection('scratch.objective.result') },
+        '../model/scratch_objective': { results: database.collection('scratch.objective.result'), listPublicPapers: async () => [] },
         '../model/storage': storage,
         '../model/user': {
             coll: database.collection('user'),
@@ -831,6 +832,26 @@ describe('Scratch native backend isolation and immutable submissions', () => {
         assert.equal((await database.collection('user').findOne({ _id: bob.uid })).scratchEditorLocale, 'pt-br');
     });
 
+    it('persists an explicit review outcome and validates it without widening teacher permissions', async () => {
+        const assignment = await model.writeAssignment(teacher, { title: 'review outcome', description: '', deadline: null });
+        const work = await model.createWork(alice, 'first', assignment._id);
+        const saved = await model.saveWork(alice, work._id, 0, upload(), true);
+        await model.reviewSubmission(teacher, saved.submission._id, '未完成', '请重新完成任务');
+        assert.equal((await model.getSubmission(alice, saved.submission._id)).reviewStatus, 'changes_requested');
+        await model.reviewSubmission(teacher, saved.submission._id, '85', '可以完成得更好', 'changes_requested');
+        assert.equal((await model.getSubmission(alice, saved.submission._id)).reviewStatus, 'changes_requested');
+        for (const invalid of ['pending', '', null, ['accepted'], { accepted: true }]) {
+            await assert.rejects(model.reviewSubmission(teacher, saved.submission._id, '100', 'invalid', invalid), ValidationError);
+        }
+        assert.equal((await model.getSubmission(alice, saved.submission._id)).grade, '85');
+        await assert.rejects(model.reviewSubmission(alice, saved.submission._id, '100', 'cheat', 'accepted'), PermissionError);
+        await assert.rejects(model.reviewSubmission(foreign, saved.submission._id, '100', 'foreign', 'accepted'), NotFoundError);
+        await model.reviewSubmission(teacher, saved.submission._id, '优秀', '这次符合任务要求', 'accepted');
+        assert.equal((await model.getSubmission(alice, saved.submission._id)).reviewStatus, 'accepted');
+        const next = await model.saveWork(alice, work._id, 1, upload(), true);
+        assert.equal(next.submission.reviewedAt, null);
+        assert.equal(next.submission.reviewStatus, undefined);
+    });
     it('resolves duplicate assignment starts to one student work and enforces teacher-only assignment writes', async () => {
         await assert.rejects(model.writeAssignment(alice, { title: 'forbidden', description: '', deadline: null }), PermissionError);
         const assignment = await model.writeAssignment(teacher, { title: 'lesson', description: 'Create a cat', deadline: null }, null, upload());
@@ -2583,7 +2604,7 @@ describe('Scratch assignment progress batch queries and privacy', () => {
         const totals = progress.assignmentStates[String(f.task._id)];
         assert.equal(totals.total, 2);
         assert.equal(totals.pendingReview, 1);
-        assert.equal(totals.completed, 1);
+        assert.equal(totals.completed, 0);
         const rows = progress.learnerRows[String(f.task._id)];
         assert.equal(rows[0].uid, f.learner);
         assert.equal(rows[0].submissionId.toString(), f.latest._id.toString());
@@ -2608,6 +2629,7 @@ describe('Scratch assignment progress batch queries and privacy', () => {
     });
     it('student list only exposes own state from visible classroom assignments and filters before pagination', async () => {
         const f = await setup();
+        await model.submissions.updateOne({ _id: f.latest._id }, { $set: { reviewedAt: new Date(250), reviewStatus: 'completed' } });
         await model.assignments.insertMany([
             { ...f.task, _id: new ObjectId(), title: '未分配', audience: 'selected', recipientIds: [f.untouched] },
             { ...f.task, _id: new ObjectId(), title: '另一课堂', domainId: 'elsewhere' },
@@ -2649,8 +2671,141 @@ describe('Scratch assignment progress batch queries and privacy', () => {
         assert.equal(state.feedbackRevision, 2);
         assert.equal(state.feedbackSubmissionId.toString(), f.latest._id.toString());
     });
+    it('includes legacy and explicit requested changes in unfinished filters and teacher counters', async () => {
+        const f = await setup();
+        await model.submissions.updateOne({ _id: f.latest._id }, { $set: { reviewedAt: new Date(250), grade: '未完成' } });
+        const handler = f.handler(f.learner);
+        let body;
+        handler.renderScratch = async (_, value) => { body = value; };
+        handler.request.query = { filter: 'todo' };
+        await handler.get();
+        assert.equal(body.count, 1);
+        assert.equal(body.assignmentSummary.completed, 0);
+        assert.equal(body.assignmentStates[String(f.task._id)].status, 'changes_requested');
+        const teacherHandler = f.handler(teacher.uid, true);
+        teacherHandler.renderScratch = handler.renderScratch;
+        teacherHandler.request.query = { filter: 'changes_requested' };
+        await teacherHandler.get();
+        assert.equal(body.count, 1);
+        assert.equal(body.assignmentSummary.changesRequested, 1);
+        assert.equal(body.assignmentStates[String(f.task._id)].completed, 0);
+        await model.submissions.updateOne({ _id: f.latest._id }, { $set: { grade: '85', reviewStatus: 'changes_requested' } });
+        const progress = await f.handler(f.learner).assignmentProgress([f.task]);
+        assert.equal(progress.assignmentStates[String(f.task._id)].changesRequested, true);
+    });
+    it('normalizes legacy outcomes in every rendered submission collection without exposing quiz keys', async () => {
+        const f = await setup();
+        const handler = f.handler(f.learner);
+        handler.response = {};
+        handler.user = { hasPerm: () => false };
+        await handlers.ScratchHandler.prototype.renderScratch.call(handler, 'scratch_work.html', {
+            submissions: [{ ...f.old, grade: '未完成' }, { ...f.latest, reviewStatus: 'changes_requested' }],
+            assignment: { ...f.task, objectiveQuiz: { paperIds: [1], items: [{ objective: { answers: ['PRIVATE_KEY'] } }] } },
+        });
+        assert.equal(handler.response.body.submissions[0].reviewStatus, 'changes_requested');
+        assert.equal(handler.response.body.submissions[1].reviewStatus, null);
+        assert(!JSON.stringify(handler.response.body).includes('PRIVATE_KEY'));
+    });
+    it('maps authorized classroom AC into its source problem and retains bank AC beside latest requested changes', async () => {
+        const f = await setup();
+        const problem = { ...f.task, _id: new ObjectId(), kind: 'problem', title: '题库创作题', tags: [] };
+        await model.assignments.insertOne(problem);
+        await model.assignments.updateOne({ _id: f.task._id }, { $set: { sourceProblemId: problem._id } });
+        await model.submissions.updateMany({ assignmentId: f.task._id }, { $set: { sourceProblemId: problem._id } });
+        const bank = Object.assign(new handlers.ScratchProblemMainHandler(), f.handler(f.learner), {
+            url: (name, value) => `/${name}/${value.problemId || value.submissionId || value.assignmentId || value.paperId}`,
+        });
+        let body;
+        bank.renderScratch = async (_, value) => { body = value; };
+        await bank.get();
+        const item = () => body.problems.find((entry) => entry.id === `${problem._id}`);
+        assert.equal(item().passed, false, 'ordinary old 优秀 reviews do not imply full correctness');
+        assert.equal(item().latestStatus, 'submitted');
+        assert.equal(item().latestUrl, `/scratch_assignment/${f.task._id}`);
+        await model.submissions.updateOne({ _id: f.old._id }, { $set: { grade: '100分' } });
+        await bank.get();
+        assert.equal(item().status, 'ac');
+        assert.equal(item().acceptedUrl, `/scratch_submission/${f.old._id}`);
+        assert.equal(item().latestStatus, 'submitted');
+        await model.assignments.updateOne({ _id: f.task._id }, { $set: { audience: 'selected', recipientIds: [f.untouched] } });
+        await bank.get();
+        assert.equal(item().status, 'new', 'a removed recipient cannot retain a live link to classroom evidence');
+        await model.assignments.updateOne({ _id: f.task._id }, { $set: { audience: 'all', deletedAt: new Date() } });
+        await bank.get();
+        assert.equal(item().status, 'new', 'deleted classroom submissions do not award visible source AC');
+        const direct = { ...f.old, _id: new ObjectId(), workId: new ObjectId(), assignmentId: problem._id, reviewStatus: 'accepted', createdAt: new Date(400) };
+        const latest = { ...direct, _id: new ObjectId(), reviewedAt: new Date(700), createdAt: new Date(600), revision: 9, reviewStatus: 'changes_requested' };
+        await model.submissions.insertMany([direct, latest]);
+        await bank.get();
+        assert.equal(item().status, 'ac');
+        assert.equal(item().passed, true);
+        assert.equal(item().latestStatus, 'changes_requested');
+        assert.equal(item().acceptedUrl, `/scratch_submission/${direct._id}`);
+        const progress = await f.handler(f.learner).assignmentProgress([problem]);
+        assert.equal(progress.assignmentStates[String(problem._id)].completed, false, 'assignment-style latest progress never borrows historical AC');
+    });
+    it('keeps accepted classroom snapshots attached to their original source across actual teacher source edits', async () => {
+        const f = await setup();
+        const actor = { ...teacher, domainId: f.domainId };
+        const learner = { domainId: f.domainId, uid: f.learner, isTeacher: false };
+        const sourceA = await model.writeProblem(actor, { title: '甲题', description: '完成甲任务' });
+        const sourceB = await model.writeProblem(actor, { title: '乙题', description: '完成乙任务' });
+        const assignment = await model.writeAssignment(actor, { title: '课堂任务', description: '', deadline: null, projectProblemId: `${sourceA._id}` });
+        const work = await model.createWork(learner, assignment.title, assignment._id);
+        const first = await model.saveWork(learner, work._id, 0, upload(), true);
+        assert.equal(`${first.submission.sourceProblemId}`, `${sourceA._id}`);
+        await model.reviewSubmission(actor, first.submission._id, '100', '甲任务正确', 'accepted');
+        let body;
+        const bank = Object.assign(new handlers.ScratchProblemMainHandler(), f.handler(f.learner), {
+            url: (name, value) => `/${name}/${value.problemId || value.submissionId || value.assignmentId || value.paperId}`,
+            renderScratch: async (_, value) => { body = value; },
+        });
+        const item = (id) => body.problems.find((entry) => entry.id === `${id}`);
+        await model.writeAssignment(actor, { title: '改为乙任务', description: '', deadline: null, projectProblemId: `${sourceB._id}` }, assignment._id);
+        await bank.get();
+        assert.equal(item(sourceA._id).status, 'ac');
+        assert.equal(item(sourceB._id).status, 'new');
+        assert.equal(`${(await model.getSubmission(learner, first.submission._id)).sourceProblemId}`, `${sourceA._id}`);
+        const second = await model.saveWork(learner, work._id, 1, upload(), true);
+        assert.equal(`${second.submission.sourceProblemId}`, `${sourceB._id}`);
+        await bank.get();
+        assert.equal(item(sourceB._id).status, 'submitted');
+        assert.equal(item(sourceB._id).latestUrl, `/scratch_assignment/${assignment._id}`);
+        assert.equal(item(sourceB._id).passed, false);
+        await model.reviewSubmission(actor, second.submission._id, '100', '乙任务正确', 'accepted');
+        await model.writeAssignment(actor, { title: '独立任务', description: '', deadline: null, projectProblemId: '' }, assignment._id);
+        await bank.get();
+        assert.equal(item(sourceA._id).status, 'ac');
+        assert.equal(item(sourceB._id).status, 'ac');
+        assert.equal(item(sourceB._id).acceptedUrl, `/scratch_submission/${second.submission._id}`);
+    });
+    it('requires unchanged timestamps for unsnapshotted legacy evidence and backfills only a deliberate AC re-review', async () => {
+        const f = await setup();
+        const sourceA = { ...f.task, _id: new ObjectId(), kind: 'problem', title: '历史甲题', tags: [] };
+        const sourceB = { ...sourceA, _id: new ObjectId(), title: '历史乙题' };
+        await model.assignments.insertMany([sourceA, sourceB]);
+        await model.assignments.updateOne({ _id: f.task._id }, { $set: { sourceProblemId: sourceA._id, updatedAt: new Date(50) } });
+        await model.submissions.updateOne({ _id: f.old._id }, { $set: { grade: '100' } });
+        let body;
+        const bank = Object.assign(new handlers.ScratchProblemMainHandler(), f.handler(f.learner), {
+            url: (name, value) => `/${name}/${value.problemId || value.submissionId || value.assignmentId || value.paperId}`,
+            renderScratch: async (_, value) => { body = value; },
+        });
+        const item = (id) => body.problems.find((entry) => entry.id === `${id}`);
+        await bank.get();
+        assert.equal(item(sourceA._id).status, 'ac');
+        await model.assignments.updateOne({ _id: f.task._id }, { $set: { sourceProblemId: sourceB._id, updatedAt: new Date(300) } });
+        await bank.get();
+        assert.equal(item(sourceA._id).passed, false);
+        assert.equal(item(sourceB._id).passed, false, 'editing the current source cannot transfer ambiguous historical AC');
+        await model.reviewSubmission({ ...teacher, domainId: f.domainId }, f.old._id, '100', '按当前乙任务重新批改', 'accepted');
+        assert.equal(`${(await model.getSubmission({ domainId: f.domainId, uid: f.learner, isTeacher: false }, f.old._id)).sourceProblemId}`, `${sourceB._id}`);
+        await bank.get();
+        assert.equal(item(sourceB._id).status, 'ac');
+    });
     it('chooses current quiz revision and retains answer time without exposing answer selections', async () => {
         const f = await setup();
+        await model.submissions.updateOne({ _id: f.latest._id }, { $set: { reviewedAt: new Date(250), reviewStatus: 'completed' } });
         f.task.objectiveQuiz = { revision: 'current', items: [{ id: 1, score: 100, objective: { answers: ['SECRET'] } }] };
         const updatedAt = new Date(250);
         await database.collection('scratch.objective.result').insertMany([

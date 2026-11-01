@@ -218,6 +218,58 @@ async function run() {
         denied(await post(teacher, `${prefix}/scratch/assignment/${second._id}/edit`, { ...input('selected', [bobId]), assignmentMode: 'project' }));
         await domains.collUser.updateOne({ domainId, uid: bobId }, { $set: { join: true } });
     });
+    await check('Requested changes stay unfinished until resubmitted, and only a fully correct review earns AC', async () => {
+        const submissionUrl = (id) => `${prefix}/scratch/submission/${id}`;
+        const currentState = async () => {
+            const page = await get(alice, `${prefix}/scratch/assignments`); status(page, 200);
+            return page.body.assignmentStates[`${assignment._id}`];
+        };
+        status(await post(teacher, submissionUrl(submission._id), { grade: '未完成', feedback: '请按本次作业要求修改，再提交给老师。' }), 200);
+        let state = await currentState();
+        assert.equal(state.status, 'changes_requested'); assert.equal(state.completed, false);
+        const teacherPage = await get(teacher, details()); status(teacherPage, 200);
+        assert.equal(teacherPage.body.assignmentProgress.changesRequested, 1);
+        const latestWork = await scratch.works.findOne({ _id: aliceWork._id });
+        status(await form(alice, `${prefix}/scratch/work/${aliceWork._id}/save`, { revision: latestWork.revision, submit: false })
+            .attach('file', original, 'project.sb3'), 200);
+        assert.equal((await currentState()).changesRequested, true);
+        status(await form(alice, `${prefix}/scratch/work/${aliceWork._id}/save`, { revision: latestWork.revision + 1, submit: true })
+            .attach('file', original, 'project.sb3'), 200);
+        state = await currentState();
+        assert.equal(state.reviewed, false); assert.equal(state.changesRequested, false); assert.equal(state.completed, false);
+        assert.equal(state.feedbackReviewStatus, 'changes_requested');
+        status(await post(teacher, submissionUrl(state.submissionId), { reviewStatus: 'completed', grade: '85', feedback: '已完成任务。' }), 200);
+        assert.equal((await currentState()).completed, true);
+        assert.equal((await currentState()).fullyCorrect, false);
+        status(await post(teacher, submissionUrl(state.submissionId), { reviewStatus: 'accepted', grade: '100', feedback: '完全正确！' }), 200);
+        assert.equal((await currentState()).fullyCorrect, true);
+        denied(await post(alice, submissionUrl(state.submissionId), { reviewStatus: 'accepted', grade: '100' }));
+        denied(await post(teacher, submissionUrl(state.submissionId), { reviewStatus: 'invalid', grade: '100' }));
+        status(await post(teacher, submissionUrl(state.submissionId), { reviewStatus: 'changes_requested', grade: '未完成', feedback: '请按本次作业要求修改，再提交给老师。' }), 200);
+    });
+    await check('A fully correct homework snapshot lights its bank problem AC only for an authorized learner', async () => {
+        const source = await scratch.assignments.findOne({ domainId, kind: 'problem', title: '公开创作题' });
+        const linked = await scratch.assignments.findOne({ domainId, title: '仅小雨的创作作业' });
+        const linkedUrl = `${prefix}/scratch/assignment/${linked._id}`;
+        status(await post(alice, linkedUrl, {}), 200);
+        const work = await scratch.works.findOne({ domainId, owner: aliceId, assignmentId: linked._id });
+        status(await form(alice, `${prefix}/scratch/work/${work._id}/save`, { revision: 0, submit: true }).attach('file', original, 'project.sb3'), 200);
+        const snapshot = await scratch.submissions.findOne({ workId: work._id });
+        status(await post(teacher, `${prefix}/scratch/submission/${snapshot._id}`, { reviewStatus: 'accepted', grade: '完全正确', feedback: '完全正确！' }), 200);
+        const bankState = async (agent) => {
+            const page = await get(agent, `${prefix}/scratch/problems`); status(page, 200);
+            return page.body.problems.find((item) => item.id === `${source._id}`);
+        };
+        assert.equal((await bankState(alice)).status, 'ac');
+        assert((await bankState(alice)).acceptedUrl.includes(`${snapshot._id}`));
+        assert.notEqual((await bankState(bob)).status, 'ac');
+        const fields = { title: linked.title, description: linked.description, assignmentMode: 'project', audience: 'selected',
+            projectProblemId: `${source._id}` };
+        status(await post(teacher, `${linkedUrl}/edit`, { ...fields, recipientIds: JSON.stringify([bobId]) }), 200);
+        assert.notEqual((await bankState(alice)).status, 'ac');
+        status(await post(teacher, `${linkedUrl}/edit`, { ...fields, recipientIds: JSON.stringify([aliceId]) }), 200);
+        assert.equal((await bankState(alice)).status, 'ac');
+    });
     console.log(`RESULT ${checks.filter(Boolean).length}/${checks.length} Scratch assignment audience checks passed`);
     clearTimeout(timeout);
     if (process.env.KEEP_QA === '1' && checks.every(Boolean)) {

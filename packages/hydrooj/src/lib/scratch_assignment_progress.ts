@@ -1,12 +1,14 @@
 import type { ScratchAssignment, ScratchSubmission, ScratchWork } from '../model/scratch';
+import { ScratchReviewStatus, submissionFullyCorrect, submissionReviewStatus } from './scratch_review';
 
 interface QuizResult {
     assignmentId: unknown; owner: number; revision: string; updatedAt?: Date;
     answers?: Record<string, { correct?: boolean }>;
 }
 export interface AssignmentLearnerState {
-    owner: number; uid: number; status: 'new' | 'draft' | 'submitted' | 'reviewed' | 'completed';
+    owner: number; uid: number; status: 'new' | 'draft' | 'submitted' | 'reviewed' | 'completed' | 'changes_requested';
     completed: boolean; hasFeedback: boolean; workId: unknown; hasSavedWork: boolean;
+    changesRequested: boolean; fullyCorrect: boolean; reviewStatus: ScratchReviewStatus | null; feedbackReviewStatus: ScratchReviewStatus | null;
     submissionId: unknown; reviewed: boolean; grade: string | null; feedback: string;
     feedbackSubmissionId: unknown; submittedAt: Date | null; reviewedAt: Date | null; latestRevision: number | null; feedbackRevision: number | null;
     objectiveAnswered: number; objectiveTotal: number; objectiveCorrect: number; objectiveCompleted: boolean;
@@ -23,11 +25,16 @@ export function learnerAssignmentState(
     const correct = answered.filter((item) => answers[item.id].correct);
     const projectRequired = assignment.projectRequired !== false;
     const objectiveCompleted = answered.length === items.length;
-    const completed = objectiveCompleted && (!projectRequired || !!latest);
-    const status = completed ? (projectRequired ? (latest.reviewedAt ? 'reviewed' : 'submitted') : 'completed')
-        : work?.currentFileId || latest || answered.length ? 'draft' : 'new';
+    const reviewStatus = submissionReviewStatus(latest);
+    const changesRequested = projectRequired && reviewStatus === 'changes_requested';
+    const projectCompleted = reviewStatus === 'completed' || reviewStatus === 'accepted';
+    const completed = objectiveCompleted && (!projectRequired || projectCompleted);
+    const status = changesRequested ? 'changes_requested'
+        : projectRequired && latest && objectiveCompleted ? (latest.reviewedAt ? 'reviewed' : 'submitted')
+            : completed ? 'completed' : work?.currentFileId || latest || answered.length ? 'draft' : 'new';
     return {
         owner: uid, uid, status, completed, hasFeedback: !!feedback?.reviewedAt,
+        changesRequested, fullyCorrect: projectRequired && submissionFullyCorrect(latest), reviewStatus, feedbackReviewStatus: submissionReviewStatus(feedback),
         workId: work?._id || null, hasSavedWork: !!work?.currentFileId,
         submissionId: latest?._id || null, reviewed: !!latest?.reviewedAt,
         grade: feedback?.grade ?? null, feedback: feedback?.feedback || '', feedbackSubmissionId: feedback?._id || null,
@@ -51,13 +58,14 @@ export function teacherAssignmentSummary(rows: AssignmentLearnerState[]) {
         notStarted: current.filter((row) => row.status === 'new').length,
         inProgress: current.filter((row) => !row.completed && row.status !== 'new').length,
         pendingReview: current.filter((row) => row.projectSubmitted && !row.reviewed).length,
+        changesRequested: current.filter((row) => row.changesRequested).length,
         reviewed: current.filter((row) => row.reviewed).length,
         submitted: current.filter((row) => row.projectSubmitted).length,
         completionPercent: current.length ? Math.round(completed / current.length * 100) : 0,
     };
 }
 export function sortAssignmentLearners(rows: AssignmentLearnerState[]) {
-    const priority = (row: AssignmentLearnerState) => row.projectSubmitted && !row.reviewed ? 0 : !row.completed ? 1 : 2;
+    const priority = (row: AssignmentLearnerState) => row.projectSubmitted && !row.reviewed ? 0 : row.changesRequested ? 1 : !row.completed ? 2 : 3;
     return rows.sort((a, b) => Number(!!a.historical) - Number(!!b.historical) || priority(a) - priority(b)
         || (a.submittedAt?.getTime() || 0) - (b.submittedAt?.getTime() || 0) || a.uid - b.uid);
 }

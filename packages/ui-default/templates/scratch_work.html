@@ -12,7 +12,7 @@
   <div class="sc-panel-body"><ul class="sc-list">
     {% for item in submissions %}
     <li class="sc-list-item">
-      <div><h3>{{ '已批改' if item.reviewedAt else '等待老师批改' }}</h3><p>{{ datetimeSpan(item.createdAt)|safe }}</p>{% if item.grade != null %}<span class="sc-badge sc-badge-success">{{ item.grade }}</span>{% endif %}</div>
+      <div><h3>{{ '需修改 · 还未完成' if item.reviewStatus == 'changes_requested' else ('已批改' if item.reviewedAt else '等待老师批改') }}</h3><p>{{ datetimeSpan(item.createdAt)|safe }}</p>{% if item.grade != null %}<span class="sc-badge {{ 'sc-badge-warm' if item.reviewStatus == 'changes_requested' else 'sc-badge-success' }}">{{ item.grade }}</span>{% endif %}</div>
       <a class="sc-button {{ 'sc-button-primary' if item.reviewedAt else '' }}" href="{{ url('scratch_submission', submissionId=item._id) }}">{{ '查看提交与反馈' if isTeacher else ('查看老师反馈' if item.reviewedAt else '查看提交作品') }}</a>
     </li>
     {% endfor %}

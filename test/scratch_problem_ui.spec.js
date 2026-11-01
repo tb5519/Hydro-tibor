@@ -28,6 +28,26 @@ function render(name, data = {}) {
         { ...base, ...data }), { url: 'https://class.test/scratch/problems' });
     return dom;
 }
+test('fully correct Scratch challenges receive a flag AC badge, while ordinary reviews and requested changes do not', () => {
+    const problems = [
+        { ...base.problems[0], id: 'ac-project', status: 'ac' },
+        { ...base.problems[1], id: 'ac-quiz', status: 'ac' },
+        { ...base.problems[0], id: 'ordinary', status: 'reviewed' },
+        { ...base.problems[0], id: 'redo', status: 'changes_requested' },
+    ];
+    const dom = render('scratch_problem_main.html', { problems, count: 4 });
+    const rows = dom.window.document.querySelectorAll('.scb-problem-row');
+    assert.equal(dom.window.document.querySelectorAll('.scb-status-ac').length, 2);
+    assert(rows[0].querySelector('.scb-status-ac svg'));
+    assert.match(rows[0].querySelector('.scb-status-ac').textContent, /AC.*通过/);
+    assert.match(rows[1].textContent, /全部答对/);
+    assert.match(rows[0].querySelector('.scb-row-open').textContent, /查看结果/);
+    assert.equal(rows[2].querySelector('.scb-status-ac'), null);
+    assert.match(rows[2].textContent, /已批改/);
+    assert.equal(rows[3].querySelector('.scb-status-ac'), null);
+    assert.match(rows[3].textContent, /需修改[\s\S]*按建议修改/);
+    dom.window.close();
+});
 test('students receive clear progress and next actions, without authoring or review controls', () => {
     const dom = render('scratch_problem_main.html');
     const doc = dom.window.document;

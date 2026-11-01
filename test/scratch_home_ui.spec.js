@@ -14,7 +14,8 @@ function load(relative, dependencies) {
         loader: 'ts', format: 'cjs',
     }).code, {
         module, exports: module.exports, Date,
-        require: (name) => Object.hasOwn(dependencies, name) ? dependencies[name] : require(name),
+        require: (name) => Object.hasOwn(dependencies, name) ? dependencies[name]
+            : name.endsWith('/scratch_review') ? load('packages/hydrooj/src/lib/scratch_review.ts', {}) : require(name),
     });
     return module.exports;
 }
@@ -134,11 +135,13 @@ describe('Scratch junior homepage data', () => {
         const beforeRead = await Promise.all([model.assignments, model.works, model.submissions].map((collection) => collection.find().toArray()));
         const result = await home();
         const states = assignments.map((assignment) => plain(result.assignmentStates[assignment._id.toHexString()]));
-        assert.deepEqual(states[0], { workId: null, hasSavedWork: false, submitted: false, reviewed: false, submissionId: null });
-        assert.deepEqual(states[1], { workId: `${works[0]._id}`, hasSavedWork: false, submitted: false, reviewed: false, submissionId: null });
-        assert.deepEqual(states[2], { workId: `${works[1]._id}`, hasSavedWork: true, submitted: false, reviewed: false, submissionId: null });
-        assert.deepEqual(states[3], { workId: `${works[2]._id}`, hasSavedWork: true, submitted: true, reviewed: false, submissionId: `${submitted._id}` });
-        assert.deepEqual(states[4], { workId: `${works[3]._id}`, hasSavedWork: true, submitted: true, reviewed: true, submissionId: `${reviewed._id}` });
+        const unreviewed = { changesRequested: false, reviewStatus: null, fullyCorrect: false };
+        assert.deepEqual(states[0], { workId: null, hasSavedWork: false, submitted: false, reviewed: false, submissionId: null, ...unreviewed });
+        assert.deepEqual(states[1], { workId: `${works[0]._id}`, hasSavedWork: false, submitted: false, reviewed: false, submissionId: null, ...unreviewed });
+        assert.deepEqual(states[2], { workId: `${works[1]._id}`, hasSavedWork: true, submitted: false, reviewed: false, submissionId: null, ...unreviewed });
+        assert.deepEqual(states[3], { workId: `${works[2]._id}`, hasSavedWork: true, submitted: true, reviewed: false, submissionId: `${submitted._id}`, ...unreviewed });
+        assert.deepEqual(states[4], { workId: `${works[3]._id}`, hasSavedWork: true, submitted: true, reviewed: true, submissionId: `${reviewed._id}`,
+            changesRequested: false, reviewStatus: 'completed', fullyCorrect: false });
         const afterRead = await Promise.all([model.assignments, model.works, model.submissions].map((collection) => collection.find().toArray()));
         assert.deepEqual(plain(afterRead), plain(beforeRead), 'loading the homepage must never mutate classroom data');
         const teacherStates = (await home(teacher)).assignmentStates;

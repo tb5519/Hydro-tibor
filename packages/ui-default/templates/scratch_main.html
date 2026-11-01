@@ -33,6 +33,7 @@
           <div class="sc-task-meta"><span class="sc-task-kind">{% if task.objectiveQuiz.total %}{{ task.objectiveQuiz.total }} 道小练习{% if task.projectRequired != false %} · 作品创作{% endif %}{% else %}作品创作{% endif %}</span>{% if task.deadline %}<span class="sc-task-deadline">截止 {{ datetimeSpan(task.deadline)|safe }}</span>{% endif %}</div>
           <div class="sc-actions">
             {% if isTeacher %}<a class="sc-button sc-button-primary" href="{{ url('scratch_assignment', assignmentId=task._id) }}">查看进度<span class="icon icon-chevron_right" aria-hidden="true"></span></a>
+            {% elif state.changesRequested %}<span class="sc-badge sc-badge-warm">需修改 · 还未完成</span><a class="sc-button sc-button-primary" href="{{ url('scratch_assignment', assignmentId=task._id) }}">按建议修改</a>
             {% elif task.objectiveQuiz.total %}<a class="sc-button sc-button-primary" href="{{ url('scratch_assignment', assignmentId=task._id) }}">看看任务<span class="icon icon-chevron_right" aria-hidden="true"></span></a>
             {% elif state.reviewed %}<span class="sc-badge sc-badge-success">老师有反馈啦</span><a class="sc-button sc-button-primary" href="{{ url('scratch_submission', submissionId=state.submissionId) }}">看看老师怎么说</a>
             {% elif state.submitted %}<span class="sc-badge sc-badge-success">已交给老师</span><a class="sc-button" href="{{ url('scratch_submission', submissionId=state.submissionId) }}">查看我的提交</a>
@@ -59,7 +60,7 @@
 </section>
 {% if submissions|length %}
 <section class="sc-panel"><div class="sc-panel-head"><h2>{{ '最近的提交' if isTeacher else '我交给老师的作品' }}</h2></div><div class="sc-panel-body"><ul class="sc-list">
-  {% for item in submissions %}<li class="sc-list-item"><div><span class="sc-badge {{ 'sc-badge-success' if item.reviewedAt else 'sc-badge-warm' }}">{{ '老师有反馈啦' if item.reviewedAt else '等待老师查看' }}</span> {% if isTeacher and udict[item.owner] %}{{ udict[item.owner].uname }} · {% endif %}<span class="sc-muted">{{ datetimeSpan(item.createdAt)|safe }} 提交</span></div><a class="sc-button" href="{{ url('scratch_submission', submissionId=item._id) }}">{{ '查看提交' if isTeacher else ('查看老师反馈' if item.reviewedAt else '看看我的提交') }}</a></li>{% endfor %}
+  {% for item in submissions %}<li class="sc-list-item"><div><span class="sc-badge {{ 'sc-badge-success' if item.reviewedAt and item.reviewStatus != 'changes_requested' else 'sc-badge-warm' }}">{{ '需修改 · 还未完成' if item.reviewStatus == 'changes_requested' else ('老师有反馈啦' if item.reviewedAt else '等待老师查看') }}</span> {% if isTeacher and udict[item.owner] %}{{ udict[item.owner].uname }} · {% endif %}<span class="sc-muted">{{ datetimeSpan(item.createdAt)|safe }} 提交</span></div><a class="sc-button" href="{{ url('scratch_submission', submissionId=item._id) }}">{{ '查看提交' if isTeacher else ('查看老师反馈' if item.reviewedAt else '看看我的提交') }}</a></li>{% endfor %}
 </ul></div></section>
 {% endif %}
 <p class="sc-home-footnote">一步一步，发现自己的可能。</p>

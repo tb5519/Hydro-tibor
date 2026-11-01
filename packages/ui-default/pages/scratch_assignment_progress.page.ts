@@ -15,6 +15,7 @@ export default new NamedPage('scratch_assignment', () => {
     for (const row of rows) {
       const historical = row.dataset.historical === 'true';
       const matches = filter === 'history' ? historical : !historical && (filter === 'all' || (filter === 'pending' && row.dataset.pending === 'true')
+        || (filter === 'changes' && row.dataset.changesRequested === 'true')
         || (filter === 'completed' && row.dataset.completed === 'true')
         || (filter === 'incomplete' && row.dataset.completed !== 'true'));
       row.hidden = !matches || !(row.dataset.name || '').toLocaleLowerCase().includes(query);
