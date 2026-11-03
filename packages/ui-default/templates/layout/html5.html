@@ -52,6 +52,12 @@
     <link rel="preload" as="image" href="{{ badgeIconUrl }}" fetchpriority="high">
   {% endfor %}
   {% if not isIE(handler.request.headers['user-agent']) and not handler.session.legacy %}
+    {# Let the browser start the first two predicted illustrations while the editor scripts load. #}
+    {% if UiContext.achievementImagePreload %}
+      {% for artworkUrl in UiContext.achievementImagePreload.slice(0, 2) %}
+        <link rel="preload" as="image" href="{{ artworkUrl }}" fetchpriority="low">
+      {% endfor %}
+    {% endif %}
     <script>
       var _htmlNode = document.documentElement;
       _htmlNode.className = _htmlNode.className.replace(' nojs', ' hasjs');

@@ -1,3 +1,5 @@
+import { getWarmedAchievementImage } from './achievement_assets';
+
 export interface EarnedAchievement {
   id: string;
   name: string;
@@ -35,7 +37,8 @@ export interface AchievementContext {
   achievementSound?: AchievementSoundSettings;
 }
 
-const IMAGE_WAIT_MS = 3000;
+const THUMBNAIL_DELAY_MS = 3000;
+const IMAGE_WAIT_MS = 30_000;
 const INPUT_GUARD_MS = 700;
 const EXIT_MS = 360;
 const POLL_DELAYS = [0, 700, 1400, 2400, 4000, 6000];
@@ -178,21 +181,23 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
     document.addEventListener('keydown', primeAudio, true);
   }
 
-  function wait(ms: number) {
+  function wait(ms: number, signal?: AbortSignal) {
     return new Promise<void>((resolve) => {
       const cancel = () => {
         window.clearTimeout(timer);
         cancellations.delete(cancel);
+        signal?.removeEventListener('abort', cancel);
         resolve();
       };
       const timer = window.setTimeout(cancel, ms);
       cancellations.add(cancel);
+      signal?.addEventListener('abort', cancel, { once: true });
     });
   }
 
-  function readyImage(value?: string) {
-    const src = assetUrl(value);
-    if (!src) return Promise.resolve<HTMLImageElement | null>(null);
+  function readyImage(src: string, signal?: AbortSignal, timeout = IMAGE_WAIT_MS) {
+    const warmed = getWarmedAchievementImage(src);
+    if (warmed) return Promise.resolve(warmed);
     return new Promise<HTMLImageElement | null>((resolve) => {
       const image = new Image();
       let finished = false;
@@ -202,23 +207,26 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
         finished = true;
         window.clearTimeout(timer);
         cancellations.delete(cancel);
+        signal?.removeEventListener('abort', cancel);
         image.onload = null;
         image.onerror = null;
         if (!ready) image.removeAttribute('src');
         resolve(ready ? image : null);
       };
       const cancel = () => finish(false);
-      const timer = window.setTimeout(() => finish(usable()), IMAGE_WAIT_MS);
+      const timer = window.setTimeout(cancel, timeout);
       cancellations.add(cancel);
+      signal?.addEventListener('abort', cancel, { once: true });
       image.alt = '';
       image.decoding = 'async';
       image.fetchPriority = 'high';
       image.onload = () => {
+        image.onload = null;
         if (!usable()) { finish(false); return; }
         try {
-          if (image.decode) void image.decode().then(() => finish(usable()), () => finish(usable()));
+          if (image.decode) void image.decode().then(() => finish(usable()), () => finish(false));
           else finish(true);
-        } catch { finish(usable()); }
+        } catch { finish(false); }
       };
       image.onerror = () => finish(false);
       image.src = src;
@@ -233,13 +241,9 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
     return result;
   }
 
-  function fallbackArt() {
-    const fallback = element('span', 'fallback', '✦');
-    fallback.setAttribute('aria-hidden', 'true');
-    return fallback;
-  }
+  type IllustratedAward = EarnedAchievement & { image: HTMLImageElement };
 
-  function display(awards: EarnedAchievement[], image: HTMLImageElement | null) {
+  function display(awards: IllustratedAward[], hero: HTMLImageElement | null) {
     if (disposed || suspended || !awards.length) return Promise.resolve(false);
     presenting = true;
     const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -264,15 +268,15 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
     const panel = element('div', 'panel');
     const eyebrow = element('div', 'eyebrow', 'ACHIEVEMENT UNLOCKED');
     panel.appendChild(eyebrow);
-    const artwork = element('div', 'artwork');
-    const orbit = element('div', 'orbit');
-    orbit.setAttribute('aria-hidden', 'true');
-    artwork.appendChild(orbit);
-    if (image) {
-      image.className = 'achievement-reveal__image';
-      artwork.appendChild(image);
-    } else artwork.appendChild(fallbackArt());
-    panel.appendChild(artwork);
+    if (hero) {
+      const artwork = element('div', 'artwork');
+      const orbit = element('div', 'orbit');
+      orbit.setAttribute('aria-hidden', 'true');
+      artwork.appendChild(orbit);
+      hero.className = 'achievement-reveal__image';
+      artwork.appendChild(hero);
+      panel.appendChild(artwork);
+    }
     panel.appendChild(element('h2', 'title', awards.length === 1 ? awards[0].name : `${awards.length} 项成就，一起点亮`));
     if (awards.length === 1) panel.appendChild(element('p', 'description', awards[0].description));
     else {
@@ -282,16 +286,7 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
         const tile = element('li', 'tile');
         tile.title = `${award.name}：${award.description}`;
         const icon = element('span', 'thumbnail');
-        const src = assetUrl(award.imageUrl);
-        if (src) {
-          const thumbnail = new Image();
-          thumbnail.alt = '';
-          thumbnail.loading = 'lazy';
-          thumbnail.decoding = 'async';
-          thumbnail.onerror = () => { thumbnail.remove(); icon.appendChild(fallbackArt()); };
-          thumbnail.src = src;
-          icon.appendChild(thumbnail);
-        } else icon.appendChild(fallbackArt());
+        icon.appendChild(award.image);
         tile.appendChild(icon);
         const text = element('span', 'tile-text');
         text.appendChild(element('strong', 'tile-name', award.name));
@@ -427,9 +422,48 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
     });
   }
 
-  async function prepareArtwork(awards: EarnedAchievement[]) {
-    const hero = unseenAwards(awards)[0];
-    return { id: hero?.id, url: assetUrl(hero?.imageUrl), image: await readyImage(hero?.imageUrl) };
+  function artworkKey(awards: EarnedAchievement[]) {
+    return JSON.stringify(awards.map(({ id, imageUrl, thumbnailUrl }) => [id, imageUrl, thumbnailUrl]));
+  }
+
+  async function readyAwardImage(award: EarnedAchievement, version: number) {
+    const active = () => !disposed && !suspended && version === generation;
+    const original = assetUrl(award.imageUrl);
+    const thumbnail = assetUrl(award.thumbnailUrl);
+    if (!active() || (!original && !thumbnail)) return null;
+    if (!original) return readyImage(thumbnail);
+    const controller = new window.AbortController();
+    const { signal } = controller;
+    try {
+      const full = readyImage(original, signal);
+      if (!thumbnail || thumbnail === original) {
+        const image = await full;
+        return image || (active() ? await readyImage(original, signal) : null);
+      }
+      // Start the alternate only on failure or a slow original. A slow
+      // download stays eligible while the smaller version is being decoded.
+      const quick = await Promise.race([full, wait(THUMBNAIL_DELAY_MS, signal).then(() => null)]);
+      if (quick || !active()) return quick;
+      const small = readyImage(thumbnail, signal);
+      return await Promise.race([full, small]) || await full || await small;
+    } finally {
+      // Release the delay and any unfinished losing request, never the winner.
+      controller.abort();
+    }
+  }
+
+  async function prepareArtwork(awards: EarnedAchievement[], version: number) {
+    const candidates = unseenAwards(awards);
+    const prepared = await Promise.all(candidates.map(async (award) => {
+      const image = await readyAwardImage(award, version);
+      return image ? { ...award, image } : null;
+    }));
+    const illustrated = prepared.filter((item): item is IllustratedAward => item !== null);
+    let hero: HTMLImageElement | null = illustrated[0]?.image ?? null;
+    // A group needs an additional image node for its large illustration.
+    // Keep the decoded tile nodes even if that duplicate cannot be loaded.
+    if (hero && illustrated.length > 1 && !disposed && !suspended && version === generation) hero = await readyImage(hero.src, undefined, THUMBNAIL_DELAY_MS);
+    return { key: artworkKey(candidates), illustrated, hero };
   }
 
   async function waitForTurn(version: number) {
@@ -446,13 +480,12 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
       // Start the small result request while AC is playing, but do not mount or
       // focus the achievement until that effect's exit animation has finished.
       const loaded = pending(rid, version);
-      const prepared = loaded.then(prepareArtwork);
+      const prepared = loaded.then((awards) => prepareArtwork(awards, version));
       await acFinished.catch(() => undefined);
       let awards = await loaded;
       let artwork = await prepared;
       await waitForTurn(version);
       if (disposed || suspended || generation !== version) return;
-      let unique = unseenAwards(awards);
       if (awards.some(seriesOf)) {
         // The prefetched level may have been superseded (or read in another
         // tab) during AC, image loading or a lottery result. Confirm immediately
@@ -461,31 +494,32 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
         for (let attempt = 0; attempt < 3; attempt++) {
           awards = await pending(rid, version, true);
           if (disposed || suspended || generation !== version) return;
-          unique = unseenAwards(awards);
+          const unique = unseenAwards(awards);
           if (!unique.length) return;
-          const artworkMatches = artwork.id === unique[0].id && artwork.url === assetUrl(unique[0].imageUrl);
+          const artworkMatches = artwork.key === artworkKey(unique);
           if (artworkMatches && options.canPresent?.() !== false) {
             confirmed = true;
             break;
           }
-          if (!artworkMatches) artwork = await prepareArtwork(awards);
+          if (!artworkMatches) artwork = await prepareArtwork(awards, version);
           await waitForTurn(version);
         }
         // Rapid successive upgrades remain pending for a later event/visit,
         // rather than displaying a level that has not been confirmed again.
         if (!confirmed || disposed || suspended || generation !== version) return;
       }
-      if (!unique.length) return;
-      unique.forEach((award) => {
+      const { illustrated, hero } = artwork;
+      if (!illustrated.length) return;
+      illustrated.forEach((award) => {
         shown.add(award.id);
         const series = seriesOf(award);
         if (series) shownSeries.set(series.id, series.rank);
       });
-      const dismissed = await display(unique, artwork.id === unique[0].id ? artwork.image : null);
+      const dismissed = await display(illustrated, hero);
       if (!dismissed || disposed || generation !== version) return;
       // A failed acknowledgement remains pending on the server. Never claim
       // success locally in persistent storage or acknowledge on pagehide.
-      try { await options.acknowledge(unique.map((award) => award.id)); } catch { /* Retry on the next explicit presentation. */ }
+      try { await options.acknowledge(illustrated.map((award) => award.id)); } catch { /* Retry on the next explicit presentation. */ }
     };
     const task = queue.then(() => {
       const locks = window.navigator?.locks;
@@ -496,9 +530,15 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
       }
       return present();
     });
-    queue = task.catch(() => undefined);
-    records.set(key, queue);
-    return queue;
+    const finished = task.catch(() => undefined);
+    queue = finished;
+    records.set(key, finished);
+    // Coalesce in-flight triggers, but allow a later trigger on this same
+    // record to fetch artwork that was unavailable on the first attempt.
+    void finished.then(() => {
+      if (records.get(key) === finished) records.delete(key);
+    });
+    return finished;
   }
 
   function cancelPending() {
@@ -531,16 +571,7 @@ export function createAchievementCelebration(options: AchievementCelebrationOpti
   function onPageShow() { suspended = false; }
   window.addEventListener('pagehide', onPageHide);
   window.addEventListener('pageshow', onPageShow);
-  function showPending() {
-    const task = enqueue();
-    // Quiz answers and lottery draws can each cross a new points threshold in
-    // one visit. Deduplicate concurrent triggers, not all future live events.
-    void task.finally(() => {
-      if (records.get('@profile') === task) records.delete('@profile');
-    });
-    return task;
-  }
-  return { afterResult: enqueue, showPending, dispose };
+  return { afterResult: enqueue, showPending: () => enqueue(), dispose };
 }
 
 /** Use Hydro's request helper so acknowledgements retain its CSRF handling. */

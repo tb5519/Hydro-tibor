@@ -3,7 +3,7 @@ import type { Context } from '../context';
 import { NotFoundError, PermissionError, ValidationError } from '../error';
 import {
     acknowledgeAchievements, applyAchievementHooks, getAchievementRecord, getAchievementScope,
-    getPendingAchievements, isAchievementContestSubmission, isAchievementRecordReady, syncUserAchievements,
+    getPendingAchievements, getStoredAchievementArtProgress, isAchievementContestSubmission, isAchievementRecordReady, syncUserAchievements,
 } from '../lib/achievement';
 import {
     ACHIEVEMENT_CATALOG, ACHIEVEMENT_SERIES_COUNT, getAchievementSeriesId,
@@ -191,31 +191,62 @@ function canCelebrate(handler: Handler) {
 
 type AchievementProgress = Awaited<ReturnType<typeof syncUserAchievements>>;
 
-/** Prewarming is a read-only prediction; only the ordinary AC pipeline grants achievements. */
-async function nextAchievementImages(handler: Handler, progress: AchievementProgress, artwork: any[]) {
-    const earnedTiers = new Map(selectHighestAchievements(progress.filter((item) => item.unlocked))
-        .map((item) => [getAchievementSeriesId(item), getAchievementTier(item)]));
+type ArtProgress = Omit<AchievementProgress[number], 'historical'>[];
+type Artwork = Awaited<ReturnType<typeof presentAchievements>>[number];
+
+// One typical programming problem is worth 100 points. Prefer actual configured
+// rewards on pages that know the question weight, possible quiz points or prizes.
+function reachablePointGain(handler: Handler) {
+    const { dailyQuiz, pointLottery, tdoc, pdoc, rdoc } = handler.response.body;
+    if (dailyQuiz?.state) {
+        const quiz = dailyQuiz.state;
+        return quiz.completed ? 0 : Math.max(0, quiz.possiblePoints - quiz.earnedPoints);
+    }
+    let gain = Math.max(100, Number(tdoc?.score?.[pdoc?.docId]) || 0, Number(rdoc?.scorePointAward?.points) || 0);
+    if (pointLottery?.enabled && pointLottery.canDraw && pointLottery.points >= pointLottery.cost) {
+        for (const prize of pointLottery.prizes || []) {
+            if (prize.available !== false && prize.probability > 0) gain = Math.max(gain, Number(prize.pointDelta) || 0);
+        }
+    }
+    return gain;
+}
+
+/** Predict within the current scope; a cold prediction is never a prerequisite for presentation. */
+async function nextAchievementImages(handler: Handler, progress: ArtProgress, artwork: Artwork[]) {
+    const earned = selectHighestAchievements(progress.filter((item) => item.unlocked));
+    const earnedTiers = new Map(earned.map((item) => [getAchievementSeriesId(item), getAchievementTier(item)]));
+    const pending = earned.filter((item) => item.pending).sort((a, b) => Number(a.unlockedAt) - Number(b.unlockedAt));
+    const pointGain = reachablePointGain(handler);
+    const points = progress.filter((item) => item.category === 'points' && !item.unlocked
+        && item.target > (earnedTiers.get('points') || 0) && item.target - item.progress <= pointGain);
+    // Small and large rewards on this page may unlock different top tiers.
+    const nearestPoint = points.filter((item) => item.progress >= item.target).pop() || points[0];
+    const highestPoint = points[points.length - 1];
+    const byId = new Map(artwork.filter((item) => item.imageUrl).map((item) => [item.id, item]));
+    const shortlist = (next: ArtProgress = []) => [...new Set([
+        ...pending, ...(nearestPoint ? [nearestPoint, highestPoint] : []), ...selectHighestAchievements(next),
+    ].map((item) => byId.get(item.id)).filter((item): item is Artwork => !!item))].slice(0, 6);
     const close = progress.filter((item) => {
         if (item.unlocked || getAchievementTier(item) <= (earnedTiers.get(getAchievementSeriesId(item)) ?? 0)) return false;
         if (item.category === 'streak') return Number.isFinite(item.nextAcProgress) && item.nextAcProgress >= item.target;
         const value = item.category === 'weekly_ac' ? item.currentWindowProgress : item.progress;
         return Number.isFinite(value) && item.target - value === 1;
     });
-    if (!close.length) return [];
-    let candidates: AchievementProgress;
+    let candidates: ArtProgress;
     if (handler.response.template === 'main.html') {
         // Do not fetch all ten first-difficulty originals for a new account.
         candidates = close.filter((item) => ['streak', 'weekly_ac'].includes(item.category)
-            || (item.progress > 0 && ['solved', 'mastery'].includes(item.category)));
-    } else {
+            || (item.progress > 0 && ['solved', 'mastery', 'contest_ac', 'contest_ak'].includes(item.category)));
+    } else if (handler.response.template === 'problem_detail.html') {
         const { pdoc, tdoc, mode } = handler.response.body;
-        if (!pdoc || pdoc.objectiveKind || !Number.isInteger(pdoc.docId) || pdoc.docId <= 0
+        if (!pdoc || !Number.isInteger(pdoc.docId) || pdoc.docId <= 0
             || ['review', 'view', 'none'].includes(mode)) return [];
         const scope = getAchievementScope(handler.domain);
         const uid = handler.user._id;
         const domainId = pdoc.domainId || handler.domain._id;
         // Cross-domain linked questions cannot change this independent domain's progress.
         if (scope !== 'legacy' && domainId !== handler.domain._id) return [];
+        if (pdoc.objectiveKind || !close.length) return shortlist();
         const now = new Date();
         const today = Math.floor((now.getTime() + 8 * 3600_000) / 86_400_000);
         const solved = handler.ctx.db.collection('achievement.solved');
@@ -244,10 +275,8 @@ async function nextAchievementImages(handler: Handler, progress: AchievementProg
                     || (item.category === 'contest_ak' && tdoc.pids.every((pid) => pid === pdoc.docId || accepted.has(pid)))));
             }
         }
-    }
-    const byId = new Map(artwork.map((item) => [item.id, item.imageUrl]));
-    return [...new Set(selectHighestAchievements(candidates).map((item) => byId.get(item.id))
-        .filter((url): url is string => !!url))].slice(0, 6);
+    } else return shortlist();
+    return shortlist(candidates);
 }
 
 export class AchievementPendingHandler extends Handler {
@@ -301,7 +330,7 @@ export async function injectAchievementContext(handler: Handler) {
         || handler.request.websocket || isScratchDomain(handler.domain)) return;
     const template = handler.response.template;
     let ownProgress: AchievementProgress;
-    let preloadArtwork: any[] = [];
+    let wallThumbnails: string[] = [];
     const homeWall = template === 'main.html' && handler.user._id > 1 && handler.user.hasPriv(PRIV.PRIV_USER_PROFILE);
     const wallUid = homeWall ? handler.user._id : template === 'user_detail.html' ? handler.response.body.udoc?._id : undefined;
     if (wallUid !== undefined) {
@@ -310,24 +339,15 @@ export async function injectAchievementContext(handler: Handler) {
             const progress = await syncUserAchievements(handler.ctx, handler.domain, wallUid);
             if (wallUid === handler.user._id) ownProgress = progress;
             const earned = selectHighestAchievements(progress.filter((entry) => entry.unlocked));
+            const items = await presentAchievements(handler.ctx, handler.domain, earned);
+            wallThumbnails = items.map((item) => item.thumbnailUrl).filter(Boolean);
+            handler.UiContext.achievementThumbnailPreload = wallThumbnails;
             handler.response.body.achievementWall = {
-                items: await presentAchievements(handler.ctx, handler.domain, earned),
+                items,
                 total: ACHIEVEMENT_SERIES_COUNT, unlocked: earned.length,
             };
         } catch (error) {
             logger.warn('Unable to load achievement wall: %o', error);
-        }
-    }
-    if (handler.user._id > 1 && handler.user.hasPriv(PRIV.PRIV_USER_PROFILE)
-        && ['main.html', 'user_detail.html', 'problem_detail.html', 'record_detail.html'].includes(template)) {
-        privateResponse(handler);
-        try {
-            preloadArtwork = await presentAchievements(handler.ctx, handler.domain, ACHIEVEMENT_CATALOG);
-            // Artwork belongs to the domain/scope, never to the profile being viewed.
-            handler.UiContext.achievementThumbnailPreload = [...new Set(preloadArtwork.map((item) => item.thumbnailUrl).filter(Boolean))];
-        } catch (error) {
-            handler.UiContext.achievementThumbnailPreload = [];
-            logger.warn('Unable to preload achievement thumbnails: %o', error);
         }
     }
     if (!canCelebrate(handler)) return;
@@ -337,15 +357,6 @@ export async function injectAchievementContext(handler: Handler) {
     handler.UiContext.achievementAckUrl = handler.url('achievement_ack');
     handler.UiContext.achievementScope = `${getAchievementScope(handler.domain)}/${handler.user._id}`;
     handler.UiContext.achievementAutoShow = selfProfile || template === 'main.html';
-    if (['main.html', 'problem_detail.html'].includes(template)) {
-        try {
-            ownProgress ??= await syncUserAchievements(handler.ctx, handler.domain, handler.user._id);
-            handler.UiContext.achievementImagePreload = await nextAchievementImages(handler, ownProgress, preloadArtwork);
-        } catch (error) {
-            handler.UiContext.achievementImagePreload = [];
-            logger.warn('Unable to predict achievement images: %o', error);
-        }
-    }
     try {
         handler.UiContext.achievementSound = await presentAchievementSound(handler.ctx, handler.domain);
     } catch (error) {
@@ -359,6 +370,23 @@ export async function injectAchievementContext(handler: Handler) {
         handler.UiContext.achievementLive = rdoc?.uid === handler.user._id && !handler.response.body.isPretestRecord
             && !rdoc?.contest?.toString().startsWith('0'.repeat(23)) && !handler.request.query.rev
             && timestamp <= Date.now() && Date.now() - timestamp < 30 * 60_000;
+    }
+    if (template !== 'record_detail.html' || handler.UiContext.achievementLive) {
+        try {
+            // Problem/home rendering already needs full progress for predictions.
+            // On quiz and record pages read only the stored grants and lifetime points.
+            const progress = ownProgress ?? (template === 'problem_detail.html'
+                ? await syncUserAchievements(handler.ctx, handler.domain, handler.user._id)
+                : await getStoredAchievementArtProgress(handler.ctx, handler.domain, handler.user._id));
+            const artwork = await presentAchievements(handler.ctx, handler.domain, ACHIEVEMENT_CATALOG);
+            const candidates = await nextAchievementImages(handler, progress, artwork);
+            handler.UiContext.achievementImagePreload = candidates.map((item) => item.imageUrl);
+            handler.UiContext.achievementThumbnailPreload = [...new Set([
+                ...wallThumbnails, ...candidates.map((item) => item.thumbnailUrl).filter(Boolean),
+            ])];
+        } catch (error) {
+            logger.warn('Unable to predict achievement images: %o', error);
+        }
     }
     privateResponse(handler);
 }

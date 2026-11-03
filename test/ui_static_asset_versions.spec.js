@@ -82,7 +82,7 @@ env.addGlobal('assetUrl', (value, fallback = value) => fallback);
 env.addFilter('json', JSON.stringify);
 env.addFilter('jsesc', (value) => jsesc(value, { isScriptContext: true }));
 
-function pageAssets({ dev = false, cdnPrefix = '/', assets = manifest() } = {}) {
+function pageAssets({ dev = false, cdnPrefix = '/', assets = manifest(), achievementImagePreload } = {}) {
     const html = env.render('layout/html5.html', {
         page_name: 'main', layout_name: 'basic',
         process: { env: { DEV: dev } },
@@ -96,7 +96,8 @@ function pageAssets({ dev = false, cdnPrefix = '/', assets = manifest() } = {}) 
             renderTitle: () => 'OneByOne',
         },
         model: { system: { get: (key) => (key === 'server.url' ? 'http://localhost/' : 'OneByOne') } },
-        UiContext: { cdn_prefix: cdnPrefix, constantVersion: 'entry-version', ...getStaticAssetVersions(assets, uiVersion) },
+        UiContext: { cdn_prefix: cdnPrefix, constantVersion: 'entry-version', achievementImagePreload,
+            ...getStaticAssetVersions(assets, uiVersion) },
         UserContext: { viewLang: 'zh', fontFamily: 'sans-serif', codeFontFamily: 'monospace' },
     });
     const dom = new JSDOM(html);
@@ -104,6 +105,7 @@ function pageAssets({ dev = false, cdnPrefix = '/', assets = manifest() } = {}) 
         const { document } = dom.window;
         return {
             html,
+            earlyImages: [...document.head.querySelectorAll('link[rel="preload"][as="image"]')].map((node) => node.getAttribute('href')),
             css: document.querySelector('link[rel="stylesheet"]').getAttribute('href'),
             runtime: [...document.querySelectorAll('script[src]')]
                 .find((node) => node.getAttribute('src').includes(runtimeKey)).getAttribute('src'),
@@ -113,6 +115,11 @@ function pageAssets({ dev = false, cdnPrefix = '/', assets = manifest() } = {}) 
 }
 
 describe('page layout cache-busting URLs', () => {
+    it('lets the browser request only the first two predicted originals before application scripts start', () => {
+        const urls = ['points-3000', 'contest-ak-1', 'solved-30'].map((id) => `/d/system/achievement/${id}/image?v=new`);
+        assert.deepEqual(pageAssets({ achievementImagePreload: urls }).earlyImages, urls.slice(0, 2));
+        assert.deepEqual(pageAssets().earlyImages, []);
+    });
     for (const dev of [true, false]) {
         const mode = dev ? 'development' : 'production';
 

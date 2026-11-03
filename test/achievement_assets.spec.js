@@ -36,6 +36,7 @@ function fixture({ loading = false, html = '' } = {}) {
         Object.defineProperties(image, {
             complete: { get: () => state.complete },
             naturalWidth: { get: () => state.width },
+            naturalHeight: { get: () => state.width },
         });
         image.decode = () => { state.decodeCalls++; return decode.promise; };
         images.push({
@@ -51,6 +52,7 @@ function fixture({ loading = false, html = '' } = {}) {
     return {
         win, images, timers,
         start: (config) => module.exports.startAchievementAssetWarmup(config, win),
+        take: (url) => module.exports.getWarmedAchievementImage(url, win),
         history: () => JSON.parse(win.localStorage.getItem('hydro:achievement-wall:ready:v1') || '[]'),
         ready() {
             Object.defineProperty(win.document, 'readyState', { value: 'interactive', configurable: true });
@@ -87,6 +89,17 @@ describe('achievement asset preloading', () => {
         assert.ok(h.images.every(({ image }) => image.loading === 'eager' && image.decoding === 'async'));
         h.images.forEach((entry) => entry.ready()); await flush();
         assert.deepEqual(h.history(), [absolute(good)], 'only thumbnails become wall readiness hints');
+    });
+
+    it('hands the exact versioned decoded original to the popup only once', async (t) => {
+        const h = fixture(); t.after(h.close);
+        h.start({ achievementImagePreload: [original('points-3000')] });
+        h.images[0].load(); await flush();
+        assert.equal(h.take(original('points-3000')), undefined, 'decode still pending');
+        h.images[0].decode.resolve(); await flush();
+        assert.equal(h.take(original('points-3000', 'replacement')), undefined);
+        assert.equal(h.take(original('points-3000')), h.images[0].image);
+        assert.equal(h.take(original('points-3000')), undefined);
     });
 
     it('prioritizes the current visible wall and holds thumbnail concurrency at six through decode', async (t) => {

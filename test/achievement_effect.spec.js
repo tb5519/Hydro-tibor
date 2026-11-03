@@ -8,7 +8,7 @@ const { JSDOM } = require('jsdom');
 
 const source = fs.readFileSync(path.resolve(__dirname, '../packages/ui-default/components/achievement_effect.ts'), 'utf8');
 const compiled = transformSync(source, { loader: 'ts', format: 'cjs' }).code;
-const award = { id: 'first-difficulty-1', name: '初战告捷', description: '首次 AC 难度 1 的题目' };
+const award = { imageUrl: '/fixture-ready.png', id: 'first-difficulty-1', name: '初战告捷', description: '首次 AC 难度 1 的题目' };
 const deferred = () => {
     let resolve;
     const promise = new Promise((done) => { resolve = done; });
@@ -51,6 +51,14 @@ function fixture(options = {}) {
         image.decode = () => decoded.promise;
         image.load = () => { loaded = true; image.onload?.(new window.Event('load')); };
         image.ready = () => { image.load(); decoded.resolve(); };
+        const src = Object.getOwnPropertyDescriptor(window.HTMLImageElement.prototype, 'src');
+        Object.defineProperty(image, 'src', {
+            get: () => src.get.call(image),
+            set: (url) => {
+                src.set.call(image, url);
+                if (new URL(url).pathname === '/fixture-ready.png') Promise.resolve().then(image.ready);
+            },
+        });
         images.push(image);
         return image;
     }
@@ -74,6 +82,10 @@ function fixture(options = {}) {
     const mod = { exports: {} };
     vm.runInNewContext(compiled, {
         module: mod, exports: mod.exports, window, document, Image, Audio,
+        require: (id) => {
+            assert.equal(id, './achievement_assets');
+            return { getWarmedAchievementImage: options.getWarmedAchievementImage || (() => undefined) };
+        },
         Event: window.Event, URL: window.URL,
     });
     const create = (overrides = {}) => mod.exports.createAchievementCelebration({
@@ -133,6 +145,7 @@ it('prepares artwork during AC, waits for its full exit, and remains visible unt
     assert.equal(f.images[0].src, 'https://oj.example/achievement/1/original?v=2');
     f.images[0].ready();
     await f.tick(5000);
+    assert.equal(f.images.length, 1, 'a fast original must not start the thumbnail');
     assert.equal(f.dialog(), null, 'the achievement cannot overlap the AC effect or its exit');
     ac.resolve();
     await settle();
@@ -259,24 +272,122 @@ it('also dismisses on a right mouse click without leaving a browser context menu
     f.dom.window.close();
 });
 
-it('uses the text and emblem fallback for absent, failed, slow or unsafe artwork', async () => {
-    for (const imageUrl of ['', '/unavailable.png', '/slow.png', 'javascript:alert(1)']) {
-        const f = fixture({ awards: [{ ...award, imageUrl }] });
+it('mounts the already decoded preload node without starting another original request', async () => {
+    let warmed;
+    const f = fixture({ getWarmedAchievementImage: (src) => src === warmed.src ? warmed : undefined });
+    warmed = f.document.createElement('img');
+    warmed.src = award.imageUrl;
+    const player = f.create();
+    const task = player.showPending();
+    await settle();
+    assert.equal(f.dialog().querySelector('img'), warmed);
+    assert.equal(f.images.length, 0);
+    player.dispose(); await task; f.dom.window.close();
+});
+
+it('waits beyond the old three-second cutoff and starts the animation only after decode', async () => {
+    const f = fixture({ awards: [{ ...award, id: 'points-3000', imageUrl: '/slow-original.png' }] });
+    const player = f.create();
+    const task = player.afterResult('record');
+    await f.tick(8000);
+    assert.equal(f.dialog(), null);
+    assert.equal(f.images.length, 1);
+    f.images[0].load();
+    await f.tick(1000);
+    assert.equal(f.dialog(), null, 'downloaded bytes are insufficient before decode');
+    f.images[0].ready();
+    await settle();
+    assert.equal(f.dialog().querySelector('img'), f.images[0]);
+    player.dispose();
+    await task;
+    assert.deepEqual(f.acknowledgements, []);
+    f.dom.window.close();
+});
+
+it('races a slow original with its own thumbnail and mounts the first successfully decoded image', async () => {
+    for (const thumbnailSucceeds of [true, false]) {
+        const f = fixture({ awards: [{ ...award, imageUrl: '/slow.png', thumbnailUrl: '/small.png' }] });
         const player = f.create();
-        const task = player.showPending();
-        await settle();
-        if (imageUrl === '/unavailable.png') f.images[0].onerror();
-        if (imageUrl === '/slow.png') await f.tick(3000);
-        await settle();
-        assert.ok(f.dialog().textContent.includes(award.name));
-        assert.equal(f.dialog().querySelectorAll('img').length, 0);
-        assert.ok(f.dialog().querySelector('.achievement-reveal__fallback'));
-        player.dispose();
+        const task = player.afterResult('record');
+        await f.tick(2999);
+        assert.equal(f.images.length, 1);
+        await f.tick(1);
+        assert.equal(f.images.length, 2);
+        assert.equal(f.images[1].src, 'https://oj.example/small.png');
+        if (thumbnailSucceeds) f.images[1].ready();
+        else {
+            f.images[1].onerror();
+            await f.tick(5000);
+            assert.equal(f.dialog(), null);
+            assert.equal(f.images[0].src, 'https://oj.example/slow.png');
+            f.images[0].ready();
+        }
+        await f.tick(700);
+        assert.equal(f.dialog().querySelector('img'), f.images[thumbnailSucceeds ? 1 : 0]);
+        assert.deepEqual(f.acknowledgements, []);
+        f.tap(); await f.tick(360); await task;
+        assert.deepEqual(f.acknowledgements, [[award.id]]);
+        assert.equal(f.timers.size, 0);
+        player.dispose(); f.dom.window.close();
+    }
+});
+
+it('keeps missing, invalid and unavailable artwork pending and retries on the same record', async () => {
+    for (const imageUrl of ['', '/unavailable.png', 'javascript:alert(1)']) {
+        let current = { ...award, imageUrl };
+        const f = fixture({ fetchPending: async () => ({ achievements: [current], settled: true }) });
+        const player = f.create();
+        const task = player.afterResult('record');
+        await f.tick(60000);
         await task;
+        assert.equal(f.dialog(), null);
         assert.deepEqual(f.acknowledgements, []);
         assert.equal(f.timers.size, 0);
-        f.dom.window.close();
+        current = award;
+        const retry = player.afterResult('record');
+        await f.tick(700);
+        assert.ok(f.dialog().querySelector('img'));
+        f.tap(); await f.tick(360); await retry;
+        assert.deepEqual(f.acknowledgements, [[award.id]]);
+        player.dispose(); f.dom.window.close();
     }
+});
+
+it('plays and acknowledges only awards with decoded pictures, accepting the matching thumbnail on failure', async () => {
+    const good = { ...award, imageUrl: '/first.png', thumbnailUrl: '/first-thumb.png' };
+    const bad = { ...award, id: 'bad', imageUrl: '/bad.png', thumbnailUrl: '/bad-thumb.png' };
+    const f = fixture({ awards: [good, bad] });
+    const player = f.create();
+    const task = player.showPending();
+    await settle();
+    assert.equal(f.images.length, 2, 'all originals start together during preparation');
+    f.images.forEach((image) => image.onerror());
+    await settle();
+    const thumb = f.images.find((image) => image.src.endsWith('/first-thumb.png'));
+    thumb.ready();
+    f.images.find((image) => image.src.endsWith('/bad-thumb.png')).onerror();
+    await f.tick(700);
+    assert.equal(f.dialog().querySelector('img'), thumb);
+    assert.equal(f.dialog().querySelectorAll('li').length, 0);
+    f.tap(); await f.tick(360); await task;
+    assert.deepEqual(f.acknowledgements, [[good.id]]);
+    player.dispose(); f.dom.window.close();
+});
+
+it('cancels an in-flight artwork decode when leaving the page without retrying or consuming the award', async () => {
+    const f = fixture({ awards: [{ ...award, imageUrl: '/late.png', thumbnailUrl: '/late-thumb.png' }] });
+    const player = f.create();
+    const task = player.afterResult('record');
+    await settle();
+    f.images[0].load();
+    f.window.dispatchEvent(new f.window.PageTransitionEvent('pagehide', { persisted: true }));
+    f.images[0].ready();
+    await task;
+    assert.equal(f.timers.size, 0);
+    assert.equal(f.images.length, 1);
+    assert.equal(f.dialog(), null);
+    assert.deepEqual(f.acknowledgements, []);
+    player.dispose(); f.dom.window.close();
 });
 
 it('never acknowledges navigation and can resume new results after back-forward-cache restoration', async () => {
@@ -681,6 +792,11 @@ it('uses full original artwork for every image in a grouped celebration', async 
     const task = player.showPending();
     await settle();
     f.images[0].ready();
+    await settle();
+    assert.equal(f.dialog(), null, 'the second award cannot appear as an empty tile');
+    f.images[1].ready();
+    await settle();
+    f.images[2].ready();
     await settle();
     const sources = [...f.dialog().querySelectorAll('img')].map((image) => image.src);
     assert.equal(sources.length, 3);

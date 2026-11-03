@@ -97,6 +97,10 @@ try {
                     calls.push(['record', domain._id, uid, rid.toString()]);
                     return (fixtures.records || []).find((record) => record.uid === uid && record._id.equals(rid) && record.allowed !== false) || null;
                 },
+                getStoredAchievementArtProgress: async (ctx, domain, uid) => {
+                    calls.push(['artProgress', domain._id, uid]);
+                    return fixtures.rows || [];
+                },
                 syncUserAchievements: async (ctx, domain, uid, options) => {
                     calls.push(['sync', domain._id, uid, options]);
                     if (fixtures.wallReadError) throw new Error('achievement database unavailable');
@@ -548,20 +552,48 @@ describe('homepage, profile and live-record integration', () => {
         assert.deepEqual(await make(), [], 'a covered lower weekly milestone is never prewarmed');
     });
 
-    it('preloads the same configured thumbnail URLs across home, problems, records and different profiles', async () => {
-        fixtures.preloadArt = { 'difficulty-2': art('difficulty-2'), 'solved-100': art('solved-100') };
-        for (const [template, viewedUid] of [
-            ['main.html', 11], ['problem_detail.html'], ['record_detail.html'], ['user_detail.html', 12], ['user_detail.html', 32],
+    it('limits thumbnails to the wall being displayed and the current account’s short list', async () => {
+        fixtures.preloadArt = Object.fromEntries(['difficulty-2', 'solved-100', 'points-3000'].map((id) => [id, art(id)]));
+        fixtures.rows = [progress('difficulty-2', 1, true), progress('solved-100', 34), progress('points-3000', 2960)];
+        for (const [template, uid, ids] of [
+            ['main.html', 11, ['difficulty-2', 'points-3000']],
+            ['user_detail.html', 11, ['difficulty-2', 'points-3000']],
+            ['user_detail.html', 12, ['difficulty-2']],
+            ['problem_detail.html', 11, ['points-3000']],
+            ['record_detail.html', 11, ['points-3000']],
         ]) {
-            const handler = new Handler({ args: { uid: 999, domainId: 'elsewhere' } });
+            const handler = new Handler();
             handler.response.template = template;
-            if (viewedUid) handler.response.body.udoc = { _id: viewedUid };
+            handler.response.body = { udoc: { _id: uid }, pdoc: { docId: 100 }, rdoc: { _id: new ObjectId(), uid: 11 } };
             await handlers.injectAchievementContext(handler);
-            assert.deepEqual(handler.UiContext.achievementThumbnailPreload,
-                [art('difficulty-2').thumbnailUrl, art('solved-100').thumbnailUrl]);
-            if (template === 'user_detail.html') assert.equal(handler.UiContext.achievementImagePreload, undefined);
+            assert.deepEqual(handler.UiContext.achievementThumbnailPreload, ids.map((id) => art(id).thumbnailUrl));
+            if (uid === 12) assert.equal(handler.UiContext.achievementImagePreload, undefined);
         }
-        assert.equal(calls.some((call) => call[0] === 'ack'), false);
+    });
+
+    it('warms crossed point thresholds including quiz, lottery and objective awards while excluding distant tiers', async () => {
+        const ids = ['solved-10', 'points-1000', 'points-3000', 'points-5000', 'points-100000'];
+        fixtures.preloadArt = Object.fromEntries(ids.map((id) => [id, art(id)]));
+        fixtures.rows = [{ ...progress('solved-10', 10, true), pending: true },
+            progress('points-1000', 1000, true), ...ids.slice(2).map((id) => progress(id, 2750))];
+        const make = async (template, body) => {
+            const handler = new Handler(); handler.response.template = template; handler.response.body = body;
+            await handlers.injectAchievementContext(handler);
+            return handler.UiContext.achievementImagePreload;
+        };
+        const urls = (...keys) => keys.map((id) => art(id).imageUrl);
+        assert.deepEqual(await make('daily_quiz.html', { dailyQuiz: { state: { possiblePoints: 270, earnedPoints: 15 } } }),
+            urls('solved-10', 'points-3000'));
+        assert.deepEqual(await make('record_detail.html', { rdoc: { _id: new ObjectId(), uid: 11 } }), urls('solved-10'));
+        assert.deepEqual(await make('record_detail.html', { rdoc: { _id: new ObjectId(), uid: 12 } }), undefined);
+        assert.equal(calls.filter((call) => call[0] === 'sync').length, 0, 'passive pages perform no settlement');
+        assert.deepEqual(await make('problem_detail.html', {
+            pdoc: { docId: 42, objectiveKind: 'single' }, tdoc: { score: { 42: 300 } },
+        }), urls('solved-10', 'points-3000'));
+        const lottery = { enabled: true, canDraw: true, cost: 10, points: 20, prizes: [
+            { available: false, probability: 100, pointDelta: 100000 }, { probability: 5, pointDelta: 2500 },
+        ] };
+        assert.deepEqual(await make('main.html', { pointLottery: lottery }), urls('solved-10', 'points-3000', 'points-5000'));
     });
 
     it('prewarms only the current account’s next reachable original at 99 solves and the current difficulty', async () => {
@@ -600,9 +632,9 @@ describe('homepage, profile and live-record integration', () => {
         const home = new Handler(); home.response.template = 'main.html';
         await handlers.injectAchievementContext(home);
         assert.equal(home.UiContext.achievementImagePreload.length, 6);
-        assert.equal(home.UiContext.achievementImagePreload[0], art('solved-100').imageUrl);
+        assert.equal(home.UiContext.achievementImagePreload[0], art('points-1000').imageUrl);
         assert.ok(!home.UiContext.achievementImagePreload.includes(art('difficulty-1').imageUrl));
-        assert.ok(!home.UiContext.achievementImagePreload.includes(art('points-1000').imageUrl));
+        assert.ok(home.UiContext.achievementImagePreload.includes(art('solved-100').imageUrl));
         assert.equal(calls.filter((call) => call[0] === 'sync').length, 1);
     });
 
@@ -840,4 +872,45 @@ describe('homepage, profile and live-record integration', () => {
         assert.equal(registered.find((route) => route[0] === 'achievement_ack')[3], PRIV.PRIV_USER_PROFILE);
         assert.ok(calls.some((call) => call[0] === 'event' && call[1] === 'handler/after'));
     });
+});
+
+it('can warm every catalog reward before a qualifying submission, without warming the whole catalog', async () => {
+    const { evaluateAchievementProgress } = require('../packages/hydrooj/src/lib/achievement_catalog');
+    const now = Date.now();
+    const tdoc = {
+        docId: new ObjectId(), domainId: 'system', rule: 'acm', pids: [11, 12],
+        beginAt: new Date(now - 3600000), endAt: new Date(now + 3600000),
+    };
+    fixtures.preloadArt = Object.fromEntries(ACHIEVEMENT_CATALOG.map(({ id }) => [id, art(id)]));
+    fixtures.collections = {
+        'document.status': [{ docType: 30, domainId: 'system', uid: 11, docId: tdoc.docId, attend: 1 }],
+        'achievement.solved': [{
+            scope: 'legacy', uid: 11, domainId: 'system', contestId: String(tdoc.docId),
+            pid: 11, submittedAt: new Date(now - 2000), acceptedAt: new Date(now - 1000),
+        }],
+    };
+    for (const reward of ACHIEVEMENT_CATALOG) {
+        const { id, category, difficulty, target } = reward;
+        const before = target - 1;
+        const metrics = {
+            solved: category === 'solved' ? before : 0,
+            difficulties: category === 'mastery' ? { [difficulty]: before } : {},
+            contestAc: category === 'contest_ac' ? before : 0,
+            contestAk: category === 'contest_ak' ? before : 0,
+            points: category === 'points' ? before : 0,
+            streakBest: category === 'streak' ? before : 0,
+            streakNextAc: category === 'streak' ? target : 1,
+            weeklyAcBest: category === 'weekly_ac' ? before : 0,
+            weeklyAcCurrent: category === 'weekly_ac' ? before : 0,
+        };
+        fixtures.rows = evaluateAchievementProgress(metrics).map((row) => ({ ...row, unlocked: row.achieved, pending: false }));
+        const page = new Handler();
+        page.response.template = 'problem_detail.html';
+        page.response.body = { pdoc: { docId: 12, domainId: 'system', difficulty: difficulty || 1 },
+            ...(['contest_ac', 'contest_ak'].includes(category) ? { tdoc } : {}) };
+        await handlers.injectAchievementContext(page);
+        const selected = page.UiContext.achievementImagePreload;
+        assert.ok(selected.includes(art(id).imageUrl), `reachable award omitted: ${id}`);
+        assert.ok(selected.length <= 6, `unbounded warmup for ${id}`);
+    }
 });

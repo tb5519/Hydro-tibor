@@ -94,6 +94,26 @@ const streak = (rows, target = 100) => rows.find((item) => item.id === `streak-$
 const weekly = (rows, target = 50) => rows.find((item) => item.id === `weekly-ac-${target}`);
 
 describe('achievement catalog', () => {
+    it('reads pending artwork and lifetime points for passive pages without granting or acknowledging awards', async () => {
+        await database.collection('achievement.unlock').insertMany([
+            { uid: 11, scope: 'legacy', achievementId: 'solved-10', pending: true, unlockedAt: now },
+            { uid: 11, scope: 'domain:class', achievementId: 'solved-100', pending: true, unlockedAt: now },
+        ]);
+        await database.collection('domain.user').insertMany([
+            { uid: 11, join: true, domainId: 'system', lotteryTotalPoints: 1900 },
+            { uid: 11, join: true, domainId: 'python', lotteryTotalPoints: 1050 },
+        ]);
+        const rows = await engine.getStoredAchievementArtProgress(ctx, legacy, 11);
+        assert.deepEqual(rows.filter((row) => row.pending).map((row) => row.id), ['solved-10']);
+        assert.equal(rows.find((row) => row.id === 'points-3000').progress, 2950);
+        await database.collection('user').insertOne({ _id: 11, lotteryPoints: 500, lotteryTotalPoints: 3070 });
+        const account = await engine.getStoredAchievementArtProgress(ctx, legacy, 11);
+        assert.equal(account.find((row) => row.id === 'points-3000').progress, 3070);
+        assert.equal(await database.collection('achievement.unlock').countDocuments(), 2);
+        assigned.set(11, 'another-workspace');
+        assert.deepEqual(await engine.getStoredAchievementArtProgress(ctx, legacy, 11), []);
+    });
+
     it('retains existing names and adds twenty-eight milestones with no duplicate identifier', () => {
         assert.equal(ACHIEVEMENT_CATALOG.length, 92);
         assert.equal(new Set(ACHIEVEMENT_CATALOG.map((item) => item.id)).size, 92);

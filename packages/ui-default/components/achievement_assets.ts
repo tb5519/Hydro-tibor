@@ -17,6 +17,7 @@ interface AssetEntry {
 }
 interface AssetPool {
   enqueue: (config: AchievementAssetPreloads) => void;
+  takeOriginal: (url: string) => HTMLImageElement | undefined;
   dispose: () => void;
 }
 
@@ -41,6 +42,11 @@ function assetUrl(value: unknown, kind: AssetKind, win: AssetWindow) {
   } catch { return ''; }
 }
 
+/** Hand the already decoded, version-matched element to the celebration. */
+export function getWarmedAchievementImage(value: string, win: AssetWindow = window) {
+  return pools.get(win)?.takeOriginal(assetUrl(value, 'image', win));
+}
+
 /** Warm normal HTTP image cache by versioned URL; profile switches reuse the same assets. */
 export function startAchievementAssetWarmup(config: AchievementAssetPreloads, win: AssetWindow = window) {
   if (!config || !win.document || !win.Image) return;
@@ -48,6 +54,7 @@ export function startAchievementAssetWarmup(config: AchievementAssetPreloads, wi
   if (existing) { existing.enqueue(config); return existing; }
   const doc = win.document;
   const entries = new Map<string, AssetEntry>();
+  const originals = new Map<string, HTMLImageElement>();
   const queues: Record<AssetKind, AssetEntry[]> = { thumbnail: [], image: [] };
   const active: Record<AssetKind, number> = { thumbnail: 0, image: 0 };
   let domReady = doc.readyState !== 'loading';
@@ -102,6 +109,10 @@ export function startAchievementAssetWarmup(config: AchievementAssetPreloads, wi
         active[kind]--;
         entry.state = success ? 'ready' : 'failed';
         if (success && kind === 'thumbnail') markAchievementThumbnailReady(entry.url, win);
+        if (success && kind === 'image') {
+          originals.set(entry.url, image);
+          if (originals.size > IMAGE_LIMIT) originals.delete(originals.keys().next().value!);
+        }
         if (!success) entry.failedAt = win.Date.now();
         prune();
         drain(kind);
@@ -146,11 +157,17 @@ export function startAchievementAssetWarmup(config: AchievementAssetPreloads, wi
     doc.removeEventListener('DOMContentLoaded', onReady);
     win.removeEventListener('pagehide', onPageHide);
     entries.forEach((entry) => entry.cleanup?.());
-    entries.clear(); queues.thumbnail.length = 0; queues.image.length = 0;
+    entries.clear(); originals.clear(); queues.thumbnail.length = 0; queues.image.length = 0;
     pools.delete(win);
   };
   const onPageHide = (event: PageTransitionEvent) => { if (!event.persisted) dispose(); };
-  const pool = { enqueue, dispose };
+  const takeOriginal = (url: string) => {
+    const image = originals.get(url);
+    originals.delete(url);
+    if (image && !image.isConnected && image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) return image;
+    return undefined;
+  };
+  const pool = { enqueue, takeOriginal, dispose };
   pools.set(win, pool);
   if (!domReady) doc.addEventListener('DOMContentLoaded', onReady, { once: true });
   win.addEventListener('pagehide', onPageHide);

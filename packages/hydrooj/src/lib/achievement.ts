@@ -444,7 +444,7 @@ function metricsFromSolves(
     return { solved: unique.size, difficulties, contestAc, contestAk, points };
 }
 
-async function pointMetrics(ctx: Context, uid: number, data: Awaited<ReturnType<typeof getScopeData>>, activatedAt: Date) {
+async function lifetimePoints(ctx: Context, uid: number) {
     const account: any = await ctx.db.collection('user').findOne({ _id: uid }, { projection: {
         lotteryTotalPoints: 1,
     } });
@@ -456,6 +456,11 @@ async function pointMetrics(ctx: Context, uid: number, data: Awaited<ReturnType<
     }, { projection: { lotteryTotalPoints: 1 } }).toArray() : [];
     const points = source === 'account' ? nonnegative(account?.lotteryTotalPoints)
         : legacyStates.reduce((sum, state) => sum + nonnegative(state.lotteryTotalPoints), 0);
+    return { points, source };
+}
+
+async function pointMetrics(ctx: Context, uid: number, data: Awaited<ReturnType<typeof getScopeData>>, activatedAt: Date) {
+    const { points, source } = await lifetimePoints(ctx, uid);
     // Credited points count immediately, regardless of contest visibility.
     const recentRecords = await (ctx.db.collection('record') as Collection<any>).find({
         uid, ...data.recordScope, judgeAt: { $gt: activatedAt }, 'scorePointAward.points': { $gt: 0 },
@@ -575,9 +580,26 @@ export async function syncUserAchievements(ctx: Context, domain: AchievementDoma
         return progress.map(({ achieved, ...achievement }) => ({
             ...achievement, progress: unlocked.has(achievement.id) ? achievement.target : achievement.progress,
             unlocked: unlocked.has(achievement.id), unlockedAt: unlocked.get(achievement.id)?.unlockedAt,
+            pending: unlocked.get(achievement.id)?.pending || false,
             historical: unlocked.get(achievement.id)?.historical || false,
         }));
     });
+}
+
+/** Quiz and live record pages need pending artwork and point thresholds without importing results during rendering. */
+export async function getStoredAchievementArtProgress(ctx: Context, domain: AchievementDomain, uid: number) {
+    if (!await canViewUserAchievements(ctx, domain, uid)) return [];
+    const [grants, { points }] = await Promise.all([
+        ctx.db.collection('achievement.unlock').find({ scope: getAchievementScope(domain), uid }, {
+            projection: { achievementId: 1, pending: 1, unlockedAt: 1 },
+        }).toArray(),
+        lifetimePoints(ctx, uid),
+    ]);
+    const byId = new Map(grants.map((item) => [item.achievementId, item]));
+    return ACHIEVEMENT_CATALOG.filter((item) => item.category === 'points' || byId.has(item.id)).map((item) => ({
+        ...item, unlocked: byId.has(item.id), pending: byId.get(item.id)?.pending || false,
+        unlockedAt: byId.get(item.id)?.unlockedAt, progress: item.category === 'points' ? points : item.target,
+    }));
 }
 
 /** The route must take uid from its authenticated session, never from a posted field. */
