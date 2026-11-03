@@ -16,11 +16,22 @@ export const ACHIEVEMENT_CATEGORIES: Record<AchievementCategory, string> = {
 
 const firstNames = ['初战告捷', '渐入佳境', '锋芒初露', '势如破竹', '强者进阶',
     '烈火淬锋', '破境而上', '登峰造极', '傲视群雄', '巅峰封神'];
+const masteryTargets = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 const masteryNames = [
-    ['破竹先锋', '破竹战将', '破竹统帅'], ['进阶猎手', '进阶斗魂', '进阶宗师'],
-    ['烈焰行者', '赤焰战王', '炼狱之主'], ['破境游侠', '破境裁决者', '破境天尊'],
-    ['云巅挑战者', '云巅征服者', '天穹霸主'], ['无双斗士', '群雄克星', '天下无双'],
-    ['神域开拓者', '神域裁决者', '神域之主'],
+    ['破竹先锋', '破竹新锐', '破竹锐士', '破竹铁骑', '破竹战将',
+        '破竹猛将', '破竹战侯', '破竹统领', '破竹大将', '破竹统帅'],
+    ['进阶猎手', '进阶锐士', '进阶勇者', '进阶战锋', '进阶斗魂',
+        '进阶战魄', '进阶狂锋', '进阶贤者', '进阶大师', '进阶宗师'],
+    ['烈焰行者', '烈焰先锋', '烈焰斗士', '烈焰狂战士', '赤焰战王',
+        '赤焰统领', '焚天战神', '炼狱裁决者', '炼狱君王', '炼狱之主'],
+    ['破境游侠', '破境行者', '破境先锋', '破境斗士', '破境裁决者',
+        '破境审判者', '破境尊者', '破境圣者', '破境圣君', '破境天尊'],
+    ['云巅挑战者', '云巅行者', '云巅猎鹰', '云巅战将', '云巅征服者',
+        '云巅凌霄者', '云巅掌控者', '云巅君王', '天穹征服者', '天穹霸主'],
+    ['无双斗士', '无双先锋', '无双猎手', '无双破阵者', '群雄克星',
+        '群雄征服者', '无双霸者', '无双裁决者', '无双君临者', '天下无双'],
+    ['神域开拓者', '神域征战者', '神域破阵者', '神域圣骑士', '神域裁决者',
+        '神域执行官', '神域统领', '神域战皇', '神域至尊', '神域之主'],
 ];
 
 export const ACHIEVEMENT_CATALOG: readonly AchievementDefinition[] = [
@@ -51,7 +62,7 @@ export const ACHIEVEMENT_CATALOG: readonly AchievementDefinition[] = [
         id: `points-${target}`, name: ['星火觉醒', '星芒使者', '星耀骑士', '星河领主', '星穹至尊'][index],
         description: `累计获得${target}积分`, category: 'points' as const, target,
     })),
-    ...masteryNames.flatMap((names, index) => [10, 50, 100].map((target, tier) => ({
+    ...masteryNames.flatMap((names, index) => masteryTargets.map((target, tier) => ({
         id: `mastery-${index + 4}-${target}`, name: names[tier],
         description: `累计AC难度${index + 4}题目${target}道`,
         category: 'mastery' as const, target, difficulty: index + 4,
@@ -76,6 +87,9 @@ export const ACHIEVEMENT_EXPANSION_IDS = new Set([
     ...[5, 20, 30, 40, 80, 300].map((target) => `contest-ac-${target}`),
     ...[5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100].map((target) => `weekly-ac-${target}`),
 ]);
+
+export const ACHIEVEMENT_MASTERY_EXPANSION_IDS = new Set([4, 5, 6, 7, 8, 9, 10].flatMap((difficulty) =>
+    [20, 30, 40, 60, 70, 80, 90].map((target) => `mastery-${difficulty}-${target}`)));
 
 export function getAchievementSeriesId(achievement: Pick<AchievementDefinition, 'category' | 'difficulty'>): string {
     return achievement.category === 'mastery' ? `mastery-${achievement.difficulty}` : achievement.category;

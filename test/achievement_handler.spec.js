@@ -173,12 +173,12 @@ describe('achievement management and image handlers', () => {
         ]) await assert.rejects(handlers.checkAchievementManageAccess(handler), PermissionError);
     });
 
-    it('keeps all 92 achievement levels editable with the correct menu context and private cache headers', async () => {
+    it('keeps every catalog level editable with the correct menu context and private cache headers', async () => {
         const handler = new handlers.AchievementManageHandler({ domain: modern, path: '/domain/achievement', uid: 90, canManage: true });
         await handler.prepare();
         await handler.get();
         assert.equal(handler.response.template, 'achievement_manage.html');
-        assert.equal(handler.response.body.achievements.length, 92);
+        assert.deepEqual(handler.response.body.achievements.map(({ id }) => id), ACHIEVEMENT_CATALOG.map(({ id }) => id));
         assert.equal(handler.response.body.achievementBaseTemplate, 'domain_base.html');
         assert.equal(handler.response.body.badgeManageRoute, 'domain_badge_manage');
         assert.deepEqual(handler.response.body.achievementSound, { soundUrl: '', volume: 70, enabled: true, filename: '' });

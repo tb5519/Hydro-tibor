@@ -6,7 +6,7 @@ const { MongoClient, ObjectId } = require('mongodb');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { STATUS } = require('@hydrooj/common');
 const {
-    ACHIEVEMENT_CATALOG, ACHIEVEMENT_SERIES_COUNT, ACHIEVEMENT_EXPANSION_IDS, evaluateAchievementProgress,
+    ACHIEVEMENT_CATALOG, ACHIEVEMENT_SERIES_COUNT, ACHIEVEMENT_EXPANSION_IDS, ACHIEVEMENT_MASTERY_EXPANSION_IDS, evaluateAchievementProgress,
     getAchievementSeriesId, getAchievementTier, selectHighestAchievements,
 } = require('../packages/hydrooj/src/lib/achievement_catalog');
 
@@ -50,6 +50,7 @@ beforeEach(async () => {
     await database.collection('achievement.state').insertOne({ _id: 'activation', activatedAt: activation });
     await database.collection('achievement.state').insertOne({ _id: 'streak-activation', activatedAt: activation });
     await database.collection('achievement.state').insertOne({ _id: 'catalog-expansion-activation', activatedAt: activation });
+    await database.collection('achievement.state').insertOne({ _id: 'mastery-expansion-activation', activatedAt: activation });
 });
 
 function rid(time) {
@@ -114,10 +115,14 @@ describe('achievement catalog', () => {
         assert.deepEqual(await engine.getStoredAchievementArtProgress(ctx, legacy, 11), []);
     });
 
-    it('retains existing names and adds twenty-eight milestones with no duplicate identifier', () => {
-        assert.equal(ACHIEVEMENT_CATALOG.length, 92);
-        assert.equal(new Set(ACHIEVEMENT_CATALOG.map((item) => item.id)).size, 92);
+    it('retains existing names and uses distinct rollout groups and unique identifiers', () => {
+        assert.equal(ACHIEVEMENT_CATALOG.length, 141);
+        assert.equal(new Set(ACHIEVEMENT_CATALOG.map((item) => item.id)).size, ACHIEVEMENT_CATALOG.length);
         assert.equal(ACHIEVEMENT_EXPANSION_IDS.size, 28);
+        assert.deepEqual(ACHIEVEMENT_MASTERY_EXPANSION_IDS, new Set([4, 5, 6, 7, 8, 9, 10].flatMap((difficulty) => (
+            [20, 30, 40, 60, 70, 80, 90].map((target) => `mastery-${difficulty}-${target}`)
+        ))));
+        assert.ok([...ACHIEVEMENT_MASTERY_EXPANSION_IDS].every((id) => !ACHIEVEMENT_EXPANSION_IDS.has(id)));
         assert.deepEqual(ACHIEVEMENT_CATALOG.slice(0, 10).map((item) => item.name),
             ['初战告捷', '渐入佳境', '锋芒初露', '势如破竹', '强者进阶', '烈火淬锋', '破境而上', '登峰造极', '傲视群雄', '巅峰封神']);
         assert.equal(ACHIEVEMENT_CATALOG.find((item) => item.id === 'mastery-10-100').name, '神域之主');
@@ -175,6 +180,40 @@ describe('achievement catalog', () => {
 });
 
 describe('achievement ledger with actual MongoDB', () => {
+    it('backfills the new mastery tiers silently and announces the next live upgrade once', async () => {
+        const unlocks = database.collection('achievement.unlock');
+        const rollout = new Date('2026-10-26T00:00:00Z');
+        await database.collection('achievement.state').updateOne({ _id: 'mastery-expansion-activation' }, { $set: { activatedAt: rollout } });
+        for (let pid = 1; pid <= 59; pid++) await acceptance(11, pid, 4);
+        await sync();
+        await engine.acknowledgeAchievements(ctx, legacy, 11, ['mastery-4-50']);
+        const oldAward = await unlocks.findOne({ uid: 11, achievementId: 'mastery-4-50' });
+        assert.equal(oldAward.historical, false, 'the older 50 tier retains its original rollout date');
+        // An upgraded V4 installation already imported these solves and recorded its 10/50 awards.
+        await unlocks.deleteMany({ achievementId: { $in: [...ACHIEVEMENT_MASTERY_EXPANSION_IDS] } });
+        let rows = await sync(11, legacy, { now: rollout });
+        for (const tier of [20, 30, 40]) {
+            const award = rows.find((row) => row.id === `mastery-4-${tier}`);
+            assert.ok(award.unlocked && award.historical && !award.pending);
+        }
+        assert.deepEqual(await unlocks.findOne({ uid: 11, achievementId: 'mastery-4-50' }), oldAward);
+        assert.ok(!(await pending()).some((award) => award.category === 'mastery'));
+        const liveAt = new Date(+rollout + 1000);
+        await acceptance(11, 1, 4, { at: liveAt }); // A repeat cannot make 60 distinct solves.
+        await acceptance(11, 101, 5, { at: liveAt });
+        rows = await sync(11, legacy, { now: liveAt });
+        assert.equal(rows.find((award) => award.id === 'mastery-4-60').progress, 59);
+        for (let pid = 60; pid <= 70; pid++) await acceptance(11, pid, 4, { at: liveAt });
+        await Promise.all([sync(11, legacy, { now: liveAt }), sync(11, legacy, { now: liveAt })]);
+        assert.deepEqual((await pending()).filter((award) => award.category === 'mastery').map((award) => award.id), ['mastery-4-70']);
+        const live = await unlocks.find({ uid: 11, achievementId: { $in: ['mastery-4-60', 'mastery-4-70'] } }).toArray();
+        assert.equal(live.length, 2);
+        assert.ok(live.every((award) => !award.historical));
+        await engine.acknowledgeAchievements(ctx, legacy, 11, ['mastery-4-70']);
+        await sync(11, legacy, { now: liveAt });
+        assert.ok(!(await pending()).some((award) => award.category === 'mastery'));
+    });
+
     it('silently imports historical ACs and cumulative points, without using the spendable balance', async () => {
         await acceptance(11, 1, 2, { at: '2026-10-24T02:00:00Z' });
         await database.collection('user').insertOne({ _id: 11, lotteryTotalPoints: 3100, lotteryPoints: 12 });
@@ -711,7 +750,7 @@ describe('highest earned achievement announcements', () => {
         const next = await pending();
         assert.equal(next.length, 4);
         assert.ok(next.every((item) => !first.some((seen) => seen.seriesId === item.seriesId)));
-        assert.equal(await database.collection('achievement.unlock').countDocuments({ uid: 11 }), 92);
+        assert.equal(await database.collection('achievement.unlock').countDocuments({ uid: 11 }), ACHIEVEMENT_CATALOG.length);
     });
 
     it('acknowledgements cannot use unearned high IDs or another scope to silence a real pending reward', async () => {

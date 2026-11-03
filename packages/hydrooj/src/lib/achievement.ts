@@ -8,7 +8,7 @@ import type { DomainDoc, ProblemDoc, RecordDoc } from '../interface';
 import type { DailyQuizSession } from '../model/daily_quiz';
 import workspace from '../model/workspace';
 import {
-    ACHIEVEMENT_CATALOG, ACHIEVEMENT_EXPANSION_IDS, AchievementMetrics, evaluateAchievementProgress,
+    ACHIEVEMENT_CATALOG, ACHIEVEMENT_EXPANSION_IDS, ACHIEVEMENT_MASTERY_EXPANSION_IDS, AchievementMetrics, evaluateAchievementProgress,
     getAchievementSeriesId, getAchievementTier, selectHighestAchievements,
 } from './achievement_catalog';
 
@@ -149,6 +149,14 @@ export function initializeAchievementSystem(ctx: Context) { return initializeAch
 /** New streak milestones have their own rollout baseline; the original fifty keep theirs. */
 export function initializeStreakAchievements(ctx: Context) { return initializeAchievementClock(ctx, 'streak-activation'); }
 export function initializeAchievementExpansion(ctx: Context) { return initializeAchievementClock(ctx, 'catalog-expansion-activation'); }
+
+function initializeMasteryExpansion(ctx: Context) { return initializeAchievementClock(ctx, 'mastery-expansion-activation'); }
+
+function initializeAchievementClocks(ctx: Context) {
+    return Promise.all([
+        initializeAchievementSystem(ctx), initializeStreakAchievements(ctx), initializeAchievementExpansion(ctx), initializeMasteryExpansion(ctx),
+    ]);
+}
 
 async function withUserLock<T>(ctx: Context, scope: string, uid: number, callback: () => Promise<T>) {
     const coll = ctx.db.collection('achievement.state');
@@ -410,8 +418,8 @@ async function weeklyMetrics(
 }
 
 function metricsFromSolves(
-    solves: SolvedAchievement[], data: Awaited<ReturnType<typeof getScopeData>>, now: Date, points: number,
-): AchievementMetrics {
+    solves: SolvedAchievement[], data: Awaited<ReturnType<typeof getScopeData>>, now: Date, points: number, masteryActivatedAt?: Date,
+): AchievementMetrics & { masteryBaseline: Record<number, number> } {
     const unique = new Map<string, SolvedAchievement>();
     const competition = new Map<string, Set<number>>();
     const domainIds = new Set(data.domainIds);
@@ -434,14 +442,18 @@ function metricsFromSolves(
         }
     }
     const difficulties: Record<number, number> = {};
-    for (const solved of unique.values()) difficulties[solved.difficulty] = (difficulties[solved.difficulty] || 0) + 1;
+    const masteryBaseline: Record<number, number> = {};
+    for (const { difficulty, acceptedAt } of unique.values()) {
+        difficulties[difficulty] = (difficulties[difficulty] || 0) + 1;
+        if (masteryActivatedAt && acceptedAt <= masteryActivatedAt) masteryBaseline[difficulty] = (masteryBaseline[difficulty] || 0) + 1;
+    }
     let contestAc = 0;
     let contestAk = 0;
     for (const [key, accepted] of competition) {
         contestAc += accepted.size;
         if (data.contestsById.get(key).pids.every((pid: number) => accepted.has(pid))) contestAk++;
     }
-    return { solved: unique.size, difficulties, contestAc, contestAk, points };
+    return { solved: unique.size, difficulties, contestAc, contestAk, points, masteryBaseline };
 }
 
 async function lifetimePoints(ctx: Context, uid: number) {
@@ -509,9 +521,7 @@ export async function isAchievementRecordReady(ctx: Context, record: RecordDoc) 
 
 export async function syncUserAchievements(ctx: Context, domain: AchievementDomain, uid: number, options: SyncAchievementOptions = {}) {
     if (!await canViewUserAchievements(ctx, domain, uid)) return [];
-    const [activatedAt, streakActivatedAt, expansionActivatedAt] = await Promise.all([
-        initializeAchievementSystem(ctx), initializeStreakAchievements(ctx), initializeAchievementExpansion(ctx),
-    ]);
+    const [activatedAt, streakActivatedAt, expansionActivatedAt, masteryActivatedAt] = await initializeAchievementClocks(ctx);
     const scope = getAchievementScope(domain);
     return withUserLock(ctx, scope, uid, async () => {
         const now = options.now || new Date();
@@ -551,8 +561,9 @@ export async function syncUserAchievements(ctx: Context, domain: AchievementDoma
         const refreshBaseline = !state?.version || state.version < 2 || (state?.pointSource === 'legacy' && pointSource === 'account');
         const baselinePoints = refreshBaseline
             ? Math.max(state?.baselinePoints || 0, historicalPoints) : (state?.baselinePoints ?? historicalPoints);
+        const current = metricsFromSolves(solves, data, now, points, masteryActivatedAt);
         const progress = evaluateAchievementProgress({
-            ...metricsFromSolves(solves, data, now, points), ...streakMetrics(days, data, now),
+            ...current, ...streakMetrics(days, data, now),
             weeklyAcBest: weeklyBest, weeklyAcCurrent: weekly.weeklyAcCurrent,
         });
         const historical = new Set(evaluateAchievementProgress({
@@ -564,13 +575,19 @@ export async function syncUserAchievements(ctx: Context, domain: AchievementDoma
         })) {
             if (item.achieved && ACHIEVEMENT_EXPANSION_IDS.has(item.id)) historical.add(item.id);
         }
-        for (const achievement of progress.filter((item) => item.achieved)) {
-            const old = historical.has(achievement.id);
-            await ctx.db.collection('achievement.unlock').updateOne({ _id: hash(['unlock', scope, uid, achievement.id]) }, { $setOnInsert: {
-                scope, uid, achievementId: achievement.id, unlockedAt: now,
-                historical: old, pending: !old && options.notify !== false,
-            } }, { upsert: true });
-        }
+        const unlocks = progress.filter((item) => item.achieved).map((achievement) => {
+            const old = ACHIEVEMENT_MASTERY_EXPANSION_IDS.has(achievement.id)
+                ? (current.masteryBaseline[achievement.difficulty!] || 0) >= achievement.target : historical.has(achievement.id);
+            return { updateOne: {
+                filter: { _id: hash(['unlock', scope, uid, achievement.id]) },
+                update: { $setOnInsert: {
+                    scope, uid, achievementId: achievement.id, unlockedAt: now,
+                    historical: old, pending: !old && options.notify !== false,
+                } },
+                upsert: true,
+            } };
+        });
+        if (unlocks.length) await ctx.db.collection('achievement.unlock').bulkWrite(unlocks);
         await ctx.db.collection('achievement.state').updateOne({ _id: stateId }, {
             $set: { baselinePoints, pointSource, importedAt: now, version: STATE_VERSION, weeklyBest, baselineWeeklyBest },
         });
@@ -671,7 +688,7 @@ export async function recordAchievementAcceptance(ctx: Context, record: RecordDo
 }
 
 export async function applyAchievementHooks(ctx: Context) {
-    await Promise.all([initializeAchievementSystem(ctx), initializeStreakAchievements(ctx), initializeAchievementExpansion(ctx)]);
+    await initializeAchievementClocks(ctx);
     await Promise.all([
         ctx.db.ensureIndexes(ctx.db.collection('achievement.solved'), {
             key: { scope: 1, uid: 1, domainId: 1, pid: 1 }, name: 'achievement_user_solves',
