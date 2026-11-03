@@ -233,7 +233,7 @@ describe('achievement management and image handlers', () => {
         assert.equal(handler.response.redirect, undefined);
         assert.equal(handler.response.type, 'image/png');
         assert.deepEqual(handler.response.body, Buffer.from('png'));
-        assert.equal(handler.response.headers['Cache-Control'], 'private, max-age=604800, immutable');
+        assert.equal(handler.response.headers['Cache-Control'], 'private, max-age=31536000, immutable');
         assert.equal(handler.response.headers.Vary, 'Accept, Cookie, Authorization');
         assert.equal(handler.response.headers['X-Content-Type-Options'], 'nosniff');
         assert.equal(handler.response.headers.ETag, '"revision1-384"');
@@ -251,7 +251,7 @@ describe('achievement management and image handlers', () => {
         assert.equal(handler.response.status, 304);
         assert.equal(handler.context.status, 304);
         assert.equal(handler.response.body, '');
-        assert.equal(handler.response.headers['Cache-Control'], 'private, max-age=604800, immutable');
+        assert.equal(handler.response.headers['Cache-Control'], 'private, max-age=31536000, immutable');
         assert.equal(handler.response.headers.Vary, 'Accept, Cookie, Authorization');
         fixtures.meta = null;
         const missing = new handlers.AchievementImageHandler({
@@ -269,7 +269,7 @@ describe('achievement management and image handlers', () => {
         await original.get('system', 'difficulty-1');
         assert.deepEqual(calls, [['art', 'system', 'difficulty-1'], ['meta', 'original.png'], ['download', 'original.png']]);
         assert.equal(original.response.redirect, undefined);
-        assert.equal(original.response.headers['Cache-Control'], 'private, max-age=604800, immutable');
+        assert.equal(original.response.headers['Cache-Control'], 'private, max-age=31536000, immutable');
         assert.equal(original.response.headers.ETag, '"revision1-original"');
         assert.equal(original.response.headers.Vary, 'Accept, Cookie, Authorization');
         calls = [];

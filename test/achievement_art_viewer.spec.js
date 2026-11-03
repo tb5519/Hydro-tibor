@@ -80,11 +80,13 @@ it('opens a native welcome layer without visible loading copy and reveals only t
     assert.equal(f.dialog().hasAttribute('open'), true);
     assert.equal(f.dialog().querySelector('button'), null);
     assert.equal(f.dialog().querySelector('img'), null);
-    assert.equal(f.dialog().querySelector('[role=status]').hidden, false, 'the pending status remains available to screen readers');
+    assert.equal(f.dialog().querySelector('.achievement-art-viewer__welcome'), null);
+    assert.equal(f.dialog().querySelector('[role=status]').hidden, true);
+    await f.tick(180);
+    assert.equal(f.dialog().querySelector('[role=status]').hidden, false, 'the slow-loading status remains available to screen readers');
     assert.equal(f.dialog().querySelector('.achievement-art-viewer__welcome').getAttribute('aria-hidden'), 'true');
     assert.equal(f.dialog().querySelectorAll('.achievement-art-viewer__spark').length, 6);
     assert.equal(f.images[0].node.src, 'https://school.test/d/source/achievement/weekly-ac-50/image?v=17');
-    await f.tick(180);
     assert.equal(f.dialog().querySelector('[role=status]').textContent, '正在迎接成就…');
     assert.equal(f.dialog().textContent.includes('正在载入高清原图'), false);
     f.images[0].load(); await settle();
@@ -113,8 +115,11 @@ it('requests originals only on open, reuses clicked versions and bounds the deco
     assert.equal(f.images.length, 1);
     f.images[0].ready(); await f.tick(32);
     f.fire('click'); await f.tick(280);
-    viewer.open(art); await f.tick(32);
-    assert.ok(f.dialog().classList.contains('is-ready'));
+    viewer.open(art);
+    assert.ok(f.dialog().classList.contains('is-ready'), 'a decoded original is ready in the same call');
+    assert.equal(f.dialog().querySelector('.achievement-art-viewer__image'), f.images[0].node);
+    assert.equal(f.dialog().querySelector('.achievement-art-viewer__welcome'), null);
+    await f.tick(32);
     assert.equal(f.dialog().querySelector('[role=status]').hidden, true);
     assert.equal(f.images.length, 1);
     f.fire('click'); await f.tick(280);
@@ -126,9 +131,25 @@ it('requests originals only on open, reuses clicked versions and bounds the deco
     viewer.dispose(); assert.equal(f.timers.size, 0); f.close();
 });
 
+it('shows fast asynchronous decodes without a welcome flash, status announcement or thumbnail request', async () => {
+    const f = fixture(); const viewer = f.create();
+    viewer.open({ ...art, thumbnailUrl: '/thumb.webp' });
+    await f.tick(170);
+    assert.equal(f.dialog().querySelector('.achievement-art-viewer__welcome'), null);
+    assert.equal(f.dialog().querySelector('[role=status]').hidden, true);
+    f.images[0].ready(); await settle();
+    assert.ok(f.dialog().classList.contains('is-ready'));
+    assert.equal(f.dialog().querySelector('.achievement-art-viewer__image'), f.images[0].node);
+    await f.tick(1000);
+    assert.equal(f.images.length, 1);
+    assert.equal(f.dialog().querySelector('.achievement-art-viewer__welcome'), null);
+    assert.equal(f.timers.size, 0);
+    viewer.dispose(); f.close();
+});
+
 it('uses a decoded thumbnail only as a welcome silhouette and reveals HD without waiting for the welcome loop', async () => {
     const f = fixture(); const viewer = f.create();
-    viewer.open({ ...art, thumbnailUrl: '/thumb.webp?v=17' });
+    viewer.open({ ...art, thumbnailUrl: '/thumb.webp?v=17' }); await f.tick(180);
     assert.equal(f.images.length, 2);
     assert.equal(f.images[1].node.src, 'https://school.test/thumb.webp?v=17');
     f.images[1].load(); await settle();
@@ -155,21 +176,23 @@ it('uses a decoded thumbnail only as a welcome silhouette and reveals HD without
 it('never lets a late thumbnail revive a completed original and skips thumbnail work for decoded HD cache hits', async () => {
     const f = fixture(); const viewer = f.create();
     const selected = { ...art, thumbnailUrl: '/thumb.webp?v=17' };
-    viewer.open(selected); f.images[1].load();
+    viewer.open(selected); await f.tick(180); f.images[1].load();
     f.images[0].ready(); await f.tick(32);
     assert.ok(f.dialog().classList.contains('is-ready'));
     f.images[1].decode(); await settle();
     assert.equal(f.dialog().querySelector('.achievement-art-viewer__silhouette'), null);
     assert.equal(f.images[1].node.hasAttribute('src'), false);
-    f.fire('click'); await f.tick(280);
-    viewer.open(selected); await f.tick(32);
-    assert.equal(f.images.length, 2, 'a decoded original immediately reopens without even starting another thumbnail');
-    assert.ok(f.dialog().classList.contains('is-ready'));
     const welcome = f.dialog().querySelector('.achievement-art-viewer__welcome');
     const ended = new f.win.Event('transitionend', { bubbles: true });
     Object.defineProperty(ended, 'propertyName', { value: 'opacity' });
     welcome.dispatchEvent(ended);
     assert.equal(welcome.isConnected, false, 'a real transition end cleans up before the fallback timer');
+    f.fire('click'); await f.tick(280);
+    viewer.open(selected);
+    assert.ok(f.dialog().classList.contains('is-ready'));
+    assert.equal(f.dialog().querySelector('.achievement-art-viewer__welcome'), null);
+    await f.tick(500);
+    assert.equal(f.images.length, 2, 'reopening does not request a thumbnail');
     assert.equal(f.timers.size, 0);
     viewer.dispose(); f.close();
 });
@@ -177,7 +200,7 @@ it('never lets a late thumbnail revive a completed original and skips thumbnail 
 it('keeps the atmosphere when the thumbnail fails, but ends it on HD failure and rejects late thumbnail callbacks', async () => {
     for (const failure of ['thumbnail', 'original']) {
         const f = fixture(); const viewer = f.create();
-        viewer.open({ ...art, thumbnailUrl: '/thumb.webp' });
+        viewer.open({ ...art, thumbnailUrl: '/thumb.webp' }); await f.tick(180);
         if (failure === 'thumbnail') {
             f.images[1].fail(); await settle();
             assert.ok(f.dialog().querySelector('.achievement-art-viewer__welcome'));
@@ -201,15 +224,15 @@ it('keeps the atmosphere when the thumbnail fails, but ends it on HD failure and
 
 it('can close a welcoming layer immediately and cancels its thumbnail through replacement, navigation and reduced motion', async () => {
     const f = fixture({ reducedMotion: true }); const viewer = f.create();
-    viewer.open({ ...art, thumbnailUrl: '/thumb.webp' }); f.images[1].load(); await settle();
+    viewer.open({ ...art, thumbnailUrl: '/thumb.webp' }); await f.tick(180); f.images[1].load(); await settle();
     const closed = f.dialog();
     f.fire('keydown', { key: 'Escape' }); await f.tick(60);
     f.images[1].decode(); await settle();
     assert.equal(closed.querySelector('.achievement-art-viewer__welcome'), null);
     assert.equal(f.dialog(), null);
-    viewer.open({ ...art, imageUrl: '/next', thumbnailUrl: '/next-thumb' });
+    viewer.open({ ...art, imageUrl: '/next', thumbnailUrl: '/next-thumb' }); await f.tick(180);
     f.images[3].load();
-    viewer.open({ ...art, imageUrl: '/last', thumbnailUrl: '/last-thumb' });
+    viewer.open({ ...art, imageUrl: '/last', thumbnailUrl: '/last-thumb' }); await f.tick(180);
     f.images[3].decode(); await settle();
     assert.equal(f.dialog().querySelector('.achievement-art-viewer__silhouette'), null);
     f.images[4].ready(); await f.tick(32);
@@ -316,20 +339,20 @@ it('cleans navigation and late loads, reopens after bfcache, and stays closed af
 
 it('cancels queued artwork entrance frames on dismissal and replacement', async () => {
     const f = fixture(); const viewer = f.create();
-    viewer.open(art); f.images[0].ready(); await settle();
+    viewer.open(art); await f.tick(180); f.images[0].ready(); await settle();
     const closing = f.dialog();
     f.fire('click'); await f.tick(32);
     assert.ok(closing.classList.contains('is-leaving'));
     assert.equal(closing.classList.contains('is-ready'), false, 'dismissal before the first frame never starts an entrance');
     await f.tick(248);
-    viewer.open(art); await f.tick(16);
+    viewer.open({ ...art, imageUrl: '/next?v=1' }); await f.tick(180); f.images[1].ready(); await f.tick(16);
     const replaced = f.dialog();
     viewer.open({ ...art, imageUrl: '/replacement?v=2' });
     await f.tick(32);
     assert.equal(replaced.isConnected, false);
     assert.equal(replaced.classList.contains('is-ready'), false, 'replacement cancels the second entrance frame');
     assert.equal(f.dialog().classList.contains('is-ready'), false);
-    f.images[1].ready(); await f.tick(16);
+    await f.tick(180); f.images[2].ready(); await f.tick(16);
     const disposed = f.dialog();
     viewer.dispose(); await f.tick(32);
     assert.equal(disposed.classList.contains('is-ready'), false);

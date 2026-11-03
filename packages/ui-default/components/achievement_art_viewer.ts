@@ -15,6 +15,7 @@ interface ArtworkEntry {
 const activeViewers = new WeakMap<Document, (restoreFocus: boolean) => void>();
 const CACHE_LIMIT = 6;
 const LOAD_TIMEOUT_MS = 20_000;
+const WELCOME_DELAY_MS = 180;
 const WELCOME_EXIT_MS = 480;
 const EXIT_MS = 280;
 let nextId = 0;
@@ -79,7 +80,7 @@ export function createAchievementArtworkViewer(doc: Document = document) {
     if (existing) {
       cache.delete(url);
       cache.set(url, existing);
-      return existing.promise;
+      return existing;
     }
     const entry = decodedImage(url, 'achievement-art-viewer__image');
     cache.set(url, entry);
@@ -93,7 +94,7 @@ export function createAchievementArtworkViewer(doc: Document = document) {
       cache.delete(oldest);
       removed.cancel();
     }
-    return entry.promise;
+    return entry;
   }
 
   function open(artwork: AchievementArtwork, trigger?: HTMLElement) {
@@ -138,10 +139,11 @@ export function createAchievementArtworkViewer(doc: Document = document) {
     for (let index = 0; index < 3; index++) dots.append(element('span', 'welcome-dot', '.'));
     welcomeMessage.append(dots);
     welcome.append(welcomeMessage);
-    const status = element('span', 'status', '正在迎接成就…');
+    const status = element('span', 'status');
+    status.hidden = true;
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
-    art.append(welcome, status);
+    art.append(status);
     const copy = element('div', 'copy');
     const title = element('h2', 'title', artwork.name);
     title.id = `${id}-title`;
@@ -165,6 +167,7 @@ export function createAchievementArtworkViewer(doc: Document = document) {
     let armed = false;
     let exitTimer: number | undefined;
     let artworkFrame: number | undefined;
+    let welcomeDelay: number | undefined;
     let welcomeTimer: number | undefined;
     let thumbnail: ArtworkEntry | undefined;
     let thumbnailVisible = false;
@@ -197,6 +200,7 @@ export function createAchievementArtworkViewer(doc: Document = document) {
     });
     const finishWelcome = () => {
       welcomeDone = true;
+      win.clearTimeout(welcomeDelay);
       win.clearTimeout(welcomeTimer);
       thumbnail?.cancel();
       welcome.removeEventListener('transitionend', onWelcomeTransitionEnd);
@@ -242,6 +246,7 @@ export function createAchievementArtworkViewer(doc: Document = document) {
     const dismiss = () => {
       if (!armed || finished || leaving) return;
       leaving = true;
+      win.clearTimeout(welcomeDelay);
       if (!thumbnailVisible) thumbnail?.cancel();
       if (artworkFrame !== undefined) win.cancelAnimationFrame(artworkFrame);
       dialog.classList.add('is-leaving');
@@ -272,9 +277,58 @@ export function createAchievementArtworkViewer(doc: Document = document) {
     // Ignore the event that opened the layer, even if open() was called from
     // an ancestor's capture listener. Subsequent input can close while loading.
     void Promise.resolve().then(() => { armed = true; });
-    const original = url ? load(url) : Promise.resolve(null);
-    const outlineUrl = artwork.thumbnailUrl && imageUrl(artwork.thumbnailUrl);
-    if (outlineUrl && !cache.get(url)?.ready) {
+    const markReady = () => {
+      dialog.classList.remove('is-loading');
+      dialog.classList.add('is-ready');
+      dialog.setAttribute('aria-busy', 'false');
+    };
+    const reveal = (image: HTMLImageElement | null) => {
+      if (finished || leaving) return;
+      hdDecoded = true;
+      win.clearTimeout(welcomeDelay);
+      if (!image) {
+        finishWelcome();
+        dialog.classList.remove('is-loading');
+        dialog.setAttribute('aria-busy', 'false');
+        dialog.classList.add('is-error');
+        status.textContent = '高清图片暂时无法加载';
+        status.hidden = false;
+        hint.textContent = '点击或按键收起，重新点开即可重试';
+        return;
+      }
+      if (!thumbnailVisible) thumbnail?.cancel();
+      image.alt = artwork.name;
+      status.hidden = true;
+      art.append(image);
+      if (!welcome.isConnected) {
+        markReady();
+        return;
+      }
+      // Only an already visible welcome needs to cross-fade into the original.
+      artworkFrame = win.requestAnimationFrame(() => {
+        if (finished || leaving) return;
+        artworkFrame = win.requestAnimationFrame(() => {
+          artworkFrame = undefined;
+          if (finished || leaving) return;
+          markReady();
+          welcomeTimer = win.setTimeout(finishWelcome, reducedMotion ? 60 : WELCOME_EXIT_MS);
+        });
+      });
+    };
+    const original = url ? load(url) : undefined;
+    if (!original || original.ready) {
+      reveal(original?.ready ?? null);
+      return;
+    }
+    // Disk-cached originals still decode asynchronously. Give them a moment
+    // to paint before requesting a silhouette or announcing a loading state.
+    welcomeDelay = win.setTimeout(() => {
+      if (finished || leaving || hdDecoded) return;
+      art.prepend(welcome);
+      status.textContent = '正在迎接成就…';
+      status.hidden = false;
+      const outlineUrl = artwork.thumbnailUrl && imageUrl(artwork.thumbnailUrl);
+      if (!outlineUrl) return;
       thumbnail = decodedImage(outlineUrl, 'achievement-art-viewer__silhouette');
       void thumbnail.promise.then((image) => {
         if (!image || finished || leaving || hdDecoded || welcomeDone) return;
@@ -283,38 +337,8 @@ export function createAchievementArtworkViewer(doc: Document = document) {
         welcome.append(image);
         thumbnailVisible = true;
       });
-    }
-    void original.then((image) => {
-      if (finished || leaving) return;
-      hdDecoded = true;
-      if (!thumbnailVisible) thumbnail?.cancel();
-      if (image) {
-        image.alt = artwork.name;
-        status.hidden = true;
-        art.append(image);
-        // Let the inserted image paint in its initial state before transitioning
-        // to ready. Cached artwork follows the same two frames without a spinner.
-        artworkFrame = win.requestAnimationFrame(() => {
-          if (finished || leaving) return;
-          artworkFrame = win.requestAnimationFrame(() => {
-            artworkFrame = undefined;
-            if (finished || leaving) return;
-            dialog.classList.remove('is-loading');
-            dialog.setAttribute('aria-busy', 'false');
-            dialog.classList.add('is-ready');
-            welcomeTimer = win.setTimeout(finishWelcome, reducedMotion ? 60 : WELCOME_EXIT_MS);
-          });
-        });
-      } else {
-        finishWelcome();
-        dialog.classList.remove('is-loading');
-        dialog.setAttribute('aria-busy', 'false');
-        dialog.classList.add('is-error');
-        status.textContent = '高清图片暂时无法加载';
-        status.hidden = false;
-        hint.textContent = '点击或按键收起，重新点开即可重试';
-      }
-    });
+    }, WELCOME_DELAY_MS);
+    void original.promise.then(reveal);
   }
 
   function onPageHide() {

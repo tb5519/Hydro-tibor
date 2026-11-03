@@ -149,7 +149,7 @@ export class AchievementImageHandler extends Handler {
             // Failed object reads must keep no-store instead of caching an error page.
             if (!notModified) this.response.body = await storage.get(imagePath);
             this.response.type = 'image/png';
-            this.response.addHeader('Cache-Control', 'private, max-age=604800, immutable');
+            this.response.addHeader('Cache-Control', 'private, max-age=31536000, immutable');
             this.response.addHeader('ETag', etag);
             if (notModified) {
                 this.response.status = 304;
