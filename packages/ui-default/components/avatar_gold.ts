@@ -1,13 +1,33 @@
-import { drawElectricAvatarArc } from './avatar_electric_drawing';
+import { drawGoldAvatarBorder, GOLD_AVATAR_PADDING } from './avatar_gold_drawing';
+import type { GoldAvatarOptions } from './avatar_gold_drawing';
 
 interface AvatarEligibility {
   uid: number;
   badgeCount: number;
+  // Keep the existing server eligibility identifier compatible with already-open pages.
   effect: 'electric-arc' | null;
 }
 
 const SELECTOR = 'img[data-badge-avatar-uid], img[src*="#badge-avatar-uid="]';
 const CACHE_MS = 60_000;
+
+function avatarBorderRadii(image: HTMLImageElement, style: CSSStyleDeclaration, width: number, height: number) {
+  const layoutWidth = image.offsetWidth || width;
+  const layoutHeight = image.offsetHeight || height;
+  const length = (value: string, size: number) => Math.max(0, (Number.parseFloat(value) || 0)
+    * (value.endsWith('%') ? size / 100 : 1));
+  const radii = [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius]
+    .map((value) => {
+      const [x, y = x] = value.split(/\s+/);
+      const rx = length(x, layoutWidth) * width / layoutWidth;
+      const ry = length(y, layoutHeight) * height / layoutHeight;
+      return rx && ry ? { x: rx, y: ry } : { x: 0, y: 0 };
+    });
+  // CSS scales all corner radii together when adjacent corners exceed an edge.
+  const scale = Math.min(1, width / (radii[0].x + radii[1].x || 1), width / (radii[3].x + radii[2].x || 1),
+    height / (radii[0].y + radii[3].y || 1), height / (radii[1].y + radii[2].y || 1));
+  return radii.map(({ x, y }) => ({ x: x * scale, y: y * scale })) as GoldAvatarOptions['radii'];
+}
 
 export function avatarEffectUid(image: HTMLImageElement): number | null {
   const raw = image.dataset.badgeAvatarUid || image.getAttribute('src')?.match(/#badge-avatar-uid=(\d+)$/)?.[1];
@@ -17,9 +37,9 @@ export function avatarEffectUid(image: HTMLImageElement): number | null {
 }
 
 /** One decoration layer escapes clipping and stacking contexts without changing layout or click targets. */
-export function installAvatarElectricEffects(endpoint: string) {
+export function installAvatarGoldEffects(endpoint: string) {
   const layer = document.createElement('div');
-  layer.className = 'avatar-electric-layer';
+  layer.className = 'avatar-gold-layer';
   layer.setAttribute('aria-hidden', 'true');
   layer.style.cssText = 'position:fixed;inset:0;margin:0;padding:0;border:0;max-width:none;max-height:none;'
     + 'width:100%;height:100%;background:transparent;overflow:visible;pointer-events:none;z-index:2147483647;';
@@ -30,7 +50,7 @@ export function installAvatarElectricEffects(endpoint: string) {
   if (!ctx) return () => {};
 
   const style = document.createElement('style');
-  style.textContent = '.avatar-electric-layer::backdrop{background:transparent;pointer-events:none}';
+  style.textContent = '.avatar-gold-layer::backdrop{background:transparent;pointer-events:none}';
   document.head.append(style);
   const topLayerSupported = typeof layer.showPopover === 'function';
   if (topLayerSupported) layer.setAttribute('popover', 'manual');
@@ -52,7 +72,7 @@ export function installAvatarElectricEffects(endpoint: string) {
   const cache = new Map<number, { eligible: boolean; until: number }>();
   const pending = new Set<number>();
   const requests = new Set<AbortController>();
-  const sprites = new Map<number, { canvas: HTMLCanvasElement; stamp: number }>();
+  const sprites = new Map<string, { canvas: HTMLCanvasElement; stamp: number }>();
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   let destroyed = false;
   let scanTimer: ReturnType<typeof setTimeout>;
@@ -173,30 +193,32 @@ export function installAvatarElectricEffects(endpoint: string) {
       // Do not let a background avatar shine through an unrelated modal or offscreen scroll clip.
       const top = document.elementFromPoint(Math.max(0, Math.min(width - 1, x)), Math.max(0, Math.min(height - 1, y)));
       if (top !== image && !(top?.contains(image) && top !== document.body && top !== document.documentElement)) continue;
-      const bucket = Math.ceil(Math.max(rect.width, rect.height) / 8) * 8;
-      let sprite = sprites.get(bucket);
+      const radii = avatarBorderRadii(image, computed, rect.width, rect.height);
+      const key = [rect.width, rect.height, dpr, ...radii.flatMap(({ x: rx, y: ry }) => [rx, ry])].join(',');
+      let sprite = sprites.get(key);
       if (!sprite) {
         sprite = { canvas: document.createElement('canvas'), stamp: -1 };
-        sprites.set(bucket, sprite);
+        sprites.set(key, sprite);
       }
-      const resolution = Math.min(768, Math.ceil(bucket * 2.1 * dpr));
-      if (sprite.stamp !== time || sprite.canvas.width !== resolution) {
-        if (sprite.canvas.width !== resolution) {
-          sprite.canvas.width = resolution;
-          sprite.canvas.height = resolution;
+      const spriteWidth = rect.width + GOLD_AVATAR_PADDING * 2;
+      const spriteHeight = rect.height + GOLD_AVATAR_PADDING * 2;
+      const pixelWidth = Math.ceil(spriteWidth * dpr);
+      const pixelHeight = Math.ceil(spriteHeight * dpr);
+      if (sprite.stamp !== time || sprite.canvas.width !== pixelWidth || sprite.canvas.height !== pixelHeight) {
+        if (sprite.canvas.width !== pixelWidth || sprite.canvas.height !== pixelHeight) {
+          sprite.canvas.width = pixelWidth;
+          sprite.canvas.height = pixelHeight;
         }
         const drawing = sprite.canvas.getContext('2d');
         drawing.setTransform(1, 0, 0, 1, 0, 0);
-        drawing.clearRect(0, 0, resolution, resolution);
-        drawing.translate(resolution / 2, resolution / 2);
-        drawing.scale(resolution / 210, resolution / 210);
-        drawElectricAvatarArc(drawing, time, {
-          size: bucket, power: 1, sparks: !reducedMotion.matches,
-        });
+        drawing.clearRect(0, 0, pixelWidth, pixelHeight);
+        drawing.scale(dpr, dpr);
+        drawing.translate(GOLD_AVATAR_PADDING, GOLD_AVATAR_PADDING);
+        drawGoldAvatarBorder(drawing, time, { width: rect.width, height: rect.height, radii });
         sprite.stamp = time;
       }
       ctx.globalAlpha = opacity;
-      ctx.drawImage(sprite.canvas, x - rect.width * 1.05, y - rect.height * 1.05, rect.width * 2.1, rect.height * 2.1);
+      ctx.drawImage(sprite.canvas, rect.left - GOLD_AVATAR_PADDING, rect.top - GOLD_AVATAR_PADDING, spriteWidth, spriteHeight);
       drawn++;
     }
     if (sprites.size > 32) sprites.clear();
