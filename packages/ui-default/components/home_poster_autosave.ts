@@ -41,6 +41,7 @@ export function bindHomePosterAutosave(root: HTMLElement | null, env: any = wind
   };
   const save = async (form: HTMLFormElement) => {
     if (busy) return;
+    root.querySelectorAll<HTMLElement>('.domain-poster__success').forEach((notice) => { notice.hidden = true; });
     const fileInput = form.querySelector<HTMLInputElement>('input[type="file"]');
     if (fileInput) {
       const file = fileInput.files?.[0];
@@ -84,7 +85,7 @@ export function bindHomePosterAutosave(root: HTMLElement | null, env: any = wind
       busy = false;
       controls.forEach((control, index) => { control.disabled = disabled[index]; });
       form.removeAttribute('aria-busy');
-      setStatus(form, '未确认保存成功，请重试。当前预览保留原素材。', 'error');
+      setStatus(form, '本次修改尚未确认保存成功，请重试。当前预览保留原素材。', 'error');
       retry(form, true);
     } finally { env.clearTimeout(timeout); }
   };

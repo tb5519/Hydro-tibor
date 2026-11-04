@@ -4,7 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { randomUUID } = require('node:crypto');
 const { describe, it } = require('node:test');
-const { transformSync } = require('esbuild');
+const { buildSync, transformSync } = require('esbuild');
 const { JSDOM } = require('jsdom');
 const nunjucks = require('nunjucks');
 const { MongoClient } = require('mongodb');
@@ -14,12 +14,19 @@ const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 const domainSource = read('packages/hydrooj/src/handler/domain.ts');
 const homeSource = read('packages/hydrooj/src/handler/home.ts');
-function load(source, globals = {}, dependencies = {}) {
+function load(source, globals = {}, dependencies = {}, bundle = false) {
     const module = { exports: {} };
-    vm.runInNewContext(transformSync(source, {
-        loader: 'ts', format: 'cjs', tsconfigRaw: { compilerOptions: { experimentalDecorators: true } },
-    }).code, { module, exports: module.exports, Date, Buffer, ...globals,
-        require: (id) => { if (id in dependencies) return dependencies[id]; throw Error(`Unexpected import ${id}`); },
+    const tsconfigRaw = { compilerOptions: { experimentalDecorators: true } };
+    const code = bundle ? buildSync({
+        stdin: { contents: source, loader: 'ts', resolveDir: root },
+        bundle: true, packages: 'external', platform: 'node', format: 'cjs', write: false, tsconfigRaw,
+    }).outputFiles[0].text : transformSync(source, { loader: 'ts', format: 'cjs', tsconfigRaw }).code;
+    vm.runInNewContext(code, { module, exports: module.exports, Date, Buffer, ...globals,
+        require: (id) => {
+            if (id in dependencies) return dependencies[id];
+            if (bundle) return require(id);
+            throw Error(`Unexpected import ${id}`);
+        },
     });
     return module.exports;
 }
@@ -50,7 +57,14 @@ function admin(options = {}) {
     const current = { _id: 'class-a', homePoster: Object.hasOwn(options, 'config') ? options.config : { ...oldConfig } };
     const readConfig = config(options.globalPoster).getHomePosterConfig;
     class Handler {}
-    const { DomainHomePosterHandler } = load(`${domainSource.slice(domainSource.indexOf('class ManageHandler'), domainSource.indexOf('class DomainNavigationSettingHandler'))}\nexport { DomainHomePosterHandler };`, {
+    // Compile the real decorators, validators and handler in one realm so their
+    // Array-based type definitions behave exactly as they do in the application.
+    const decorators = options.actualDecorators ? `
+        import { param } from './framework/framework/decorators';
+        import { Types } from './framework/framework/validator';
+        import { ValidationError } from './framework/framework/error';
+    ` : '';
+    const { DomainHomePosterHandler } = load(`${decorators}\n${domainSource.slice(domainSource.indexOf('class ManageHandler'), domainSource.indexOf('class DomainNavigationSettingHandler'))}\nexport { DomainHomePosterHandler };`, {
         Handler, ValidationError, path, randomUUID, getHomePosterConfig: readConfig, isBackgroundVideoPath, isPublicHomePosterPath,
         BACKGROUND_VIDEO_MAX_SIZE: 40 * 1024 * 1024,
         param: () => () => {}, Types: { Range: () => {}, Int: {}, String: {} }, PERM: { PERM_EDIT_DOMAIN: 128n },
@@ -83,7 +97,7 @@ function admin(options = {}) {
             },
         },
         storage: { put: async (...args) => calls.put.push(args), del: async (...args) => calls.del.push(args) },
-    });
+    }, {}, options.actualDecorators);
     const h = new DomainHomePosterHandler();
     h.user = { _id: 9 };
     h.domain = { _id: 'class-a', homePoster: structuredClone(current.homePoster) };
@@ -212,6 +226,55 @@ describe('homepage image and video compatibility', () => {
         assert.equal(calls.saved[0].videoPath, oldConfig.videoPath);
         await assert.rejects(h.postSaveLayout('class-a', 'anything'), ValidationError);
         assert.equal(calls.edit.length, 1);
+    });
+
+    it('saves banner and popout through real framework parameter injection using request args', async () => {
+        for (const json of [true, false]) {
+            const media = { ...oldConfig, mobileImage: '/retired-mobile.webp' };
+            const { h, calls, current } = admin({ actualDecorators: true, json, config: media });
+            const args = { domainId: 'class-a', operation: 'save_layout' };
+            await h.prepare(args);
+            for (const layout of ['popout', 'banner']) {
+                // WebService.handleHttp invokes postSaveLayout(args), not the
+                // positional convenience call that bypasses the decorators.
+                await h.postSaveLayout({ ...args, layout });
+                assert.equal(current.homePoster.layout, layout);
+                assert.deepEqual(calls.edit.at(-1)[0], 'class-a');
+                assert.deepEqual(Object.keys(calls.edit.at(-1)[1]), ['homePoster.layout']);
+                for (const [key, value] of Object.entries(media)) assert.equal(current.homePoster[key], value);
+                if (json) assert.equal(h.response.body.success, true);
+                else assert.match(h.response.redirect, /domain_home_poster\?saved=1/);
+                await h.prepare(args);
+                await h.get({ domainId: 'class-a', saved: '1' });
+                assert.equal(h.response.body.config.layout, layout, 'the next page load must read the saved mode');
+                assert.equal(h.response.body.saved, 1);
+            }
+            assert.deepEqual(calls.permission, [128n, 128n, 128n]);
+            assert.equal(calls.put.length, 0);
+            assert.equal(calls.del.length, 0);
+            assert.equal(calls.storeVideo.length, 0);
+            assert.equal(calls.deleteVideo.length, 0);
+        }
+    });
+
+    it('rejects invalid layout request args and denied administration before any write', async () => {
+        const { h, calls } = admin({ actualDecorators: true });
+        await h.prepare({ domainId: 'class-a' });
+        for (const layout of ['anything', '', undefined, null]) {
+            await assert.rejects(async () => h.postSaveLayout({ domainId: 'class-a', operation: 'save_layout', layout }),
+                (error) => error.name === 'ValidationError' && error.params[0] === 'layout');
+        }
+        assert.equal(calls.edit.length, 0);
+        assert.equal(calls.migrate.length, 0);
+        const denied = admin({ actualDecorators: true, denied: true });
+        const args = { domainId: 'class-a', operation: 'save_layout', layout: 'popout' };
+        await assert.rejects(async () => {
+            await denied.h.prepare(args);
+            await denied.h.postSaveLayout(args);
+        }, /Permission denied/);
+        assert.deepEqual(denied.calls.permission, [128n]);
+        assert.equal(denied.calls.get.length, 0);
+        assert.equal(denied.calls.edit.length, 0);
     });
 
     it('ignores retired mobile settings without deleting historical files or exposing mobile operations', async () => {

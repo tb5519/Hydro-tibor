@@ -15,7 +15,7 @@ vm.runInNewContext(transformSync(fs.readFileSync(path.join(root, 'packages/ui-de
 const { bindHomePosterAutosave } = moduleUnderTest.exports;
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 function fixture(fetcher = async () => ({ ok: true, headers: new Headers({ 'Content-Type': 'application/json' }), json: async () => ({ success: true, url: '/domain/home-poster?saved=1' }) })) {
-    const dom = new JSDOM(templates.renderString(template, { config: { image: '/old.png', layout: 'banner' }, videoMaxSizeMb: 40, _: (text) => text }), { url: 'https://onebyone.test/domain/home-poster' });
+    const dom = new JSDOM(templates.renderString(template, { config: { image: '/old.png', layout: 'banner' }, saved: 1, videoMaxSizeMb: 40, _: (text) => text }), { url: 'https://onebyone.test/domain/home-poster' });
     const doc = dom.window.document;
     const calls = []; const navigations = [];
     const env = { location: { href: dom.window.location.href, origin: dom.window.location.origin, assign: (url) => navigations.push(url) },
@@ -145,4 +145,20 @@ it('successful saves remember the edited card and restore its viewport position 
     assert.equal(scrolled, 400);
     assert.equal(stored.has(key), false, 'restore marker is single-use');
     f.dom.window.close(); next.dom.window.close();
+});
+
+it('starting a new save hides a previous success banner so failed changes are not shown as saved', async () => {
+    const f = fixture(async () => { throw new Error('save failed'); });
+    const previous = f.doc.querySelector('.domain-poster__success');
+    assert(previous);
+    assert.equal(previous.hidden, false);
+    const input = f.doc.querySelector('input[value="popout"]');
+    input.checked = true; input.dispatchEvent(new f.dom.window.Event('change', { bubbles: true }));
+    assert.equal(previous.hidden, true, 'previous success must disappear as soon as a new save starts');
+    await settle();
+    assert.equal(previous.hidden, true);
+    assert.match(f.doc.querySelector('[data-poster-autosave="layout"] [data-poster-status]').textContent, /本次修改尚未确认保存成功/);
+    assert.equal(input.checked, true, 'keep the requested mode ready for retry');
+    assert(f.doc.querySelector('[data-poster-autosave="layout"] [data-poster-submit]').hasAttribute('data-retry'));
+    f.dom.window.close();
 });

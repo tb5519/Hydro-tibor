@@ -268,7 +268,6 @@ class DomainHomePosterHandler extends ManageHandler {
         };
     }
 
-    @param('operation', Types.String)
     @param('layout', Types.Range(['banner', 'popout']))
     async postSaveLayout(domainId: string, layout: 'banner' | 'popout') {
         // Validate here as well so direct/internal calls cannot persist an unknown mode.
