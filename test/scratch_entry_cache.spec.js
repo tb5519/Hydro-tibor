@@ -1,13 +1,13 @@
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { test } = require('node:test');
-const { transformSync } = require('esbuild');
+const { buildSync } = require('esbuild');
 
-const code = transformSync(fs.readFileSync(path.join(__dirname, '../packages/ui-default/service-worker.ts'), 'utf8'), {
-    loader: 'ts', format: 'cjs', define: { 'process.env.NODE_ENV': '"production"' },
-}).code;
+const code = buildSync({
+    entryPoints: [path.join(__dirname, '../packages/ui-default/service-worker.ts')],
+    bundle: true, write: false, format: 'cjs', define: { 'process.env.NODE_ENV': '"production"' },
+}).outputFiles[0].text;
 
 function setup() {
     const stores = new Map();
@@ -103,4 +103,41 @@ test('activation removes obsolete editor entries in both owned caches but keeps 
     assert(sw.stores.get('another-app').has(oldEntry));
     assert.equal(await (await sw.fetch(editorJs)).text(), 'hashed bundle');
     assert.equal(sw.requests.length, 0, 'Existing hashed JS still loads without another network download');
+});
+
+test('legacy cached media cannot hide the current version selected by its HTTP redirect', async () => {
+    const sw = setup();
+    const urls = [
+        'https://classroom.test/scratch-editor/static/assets/backdrop.png',
+        'https://classroom.test/scratch-editor/library-assets/cat.svg',
+        'https://classroom.test/scratch-editor/blocks-media/click.mp3',
+        'https://classroom.test/components/profile/backgrounds/1.jpg',
+        'https://cdn.test/static/release/movie.mp4?version=first',
+    ];
+    const cache = await sw.caches.open('ui-resources-cache');
+    for (const url of urls) {
+        await cache.put(url, new Response('obsolete media from old redirect'));
+        assert.equal(await (await sw.fetch(url)).text(), 'current editor');
+        assert.equal(sw.requests.at(-1), url);
+        assert.equal(await (await sw.caches.match(url)).text(), 'obsolete media from old redirect',
+            'HTTP response is not stored under its original mutable URL');
+    }
+});
+
+test('activation deletes old public media only from owned generic caches', async () => {
+    const sw = setup();
+    const media = 'https://classroom.test/scratch-editor/library-assets/cat.svg';
+    const chunk = 'https://classroom.test/scratch-editor/js/editor.aabbcc.js';
+    for (const name of ['ui-resources-cache', 'assets', 'another-app', 'onebyone-media-v1']) {
+        const cache = await sw.caches.open(name);
+        await cache.put(media, new Response('image'));
+        await cache.put(chunk, new Response('code'));
+    }
+    await sw.activate();
+    for (const name of ['ui-resources-cache', 'assets']) {
+        assert(!sw.stores.get(name).has(media));
+        assert(sw.stores.get(name).has(chunk));
+    }
+    assert(sw.stores.get('another-app').has(media));
+    assert(sw.stores.get('onebyone-media-v1').has(media));
 });

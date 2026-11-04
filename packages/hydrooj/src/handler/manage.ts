@@ -13,10 +13,12 @@ import {
     VerifyPasswordError,
 } from '../error';
 import type { CppEditorMode } from '../interface';
+import { tryRedirectAsset } from '../lib/asset_delivery';
 import avatar from '../lib/avatar';
 import { beijingDay, defaultPolicy, parsePolicy } from '../lib/daily_quiz';
 import { withDomainMembershipRemoval } from '../lib/domain_membership';
 import { isScratchDomain } from '../lib/domain_type';
+import { isMediaCacheRequest, setMediaCacheHeaders } from '../lib/media_cache';
 import { trainingDomainSelection } from '../lib/training_dashboard';
 import { presentOpeningMessage, updateOpeningMessage } from '../lib/opening_message';
 import {
@@ -1242,12 +1244,17 @@ class SystemDailyQuizPreviewFileHandler extends SystemHandler {
         const student = (await getManagedDailyQuizRoster(await getManagedDomains(), uid))[0];
         if (!student) throw new UserNotFoundError(uid);
         const target = await dailyQuiz.getAdminUpcomingFile(uid, day, sourceDomain, sourceId, questionId, filename);
-        this.response.body = await storage.get(target);
+        const meta = await storage.getMeta(target);
+        const inline = /\.(?:png|jpe?g|gif|webp|avif)$/i.test(filename);
+        const source = { path: target, meta,
+            ...(inline ? {} : { contentDisposition: `attachment; filename="${encodeURIComponent(filename)}"` }) };
+        if (meta && (inline || isMediaCacheRequest(this) || this.request.query?.__media_version)
+            && tryRedirectAsset(this, source)) return;
+        this.response.body = await storage.get(target, undefined, meta);
         this.response.type = lookup(filename) || 'application/octet-stream';
         this.response.addHeader('X-Content-Type-Options', 'nosniff');
-        if (!/\.(?:png|jpe?g|gif|webp|avif)$/i.test(filename)) {
-            this.response.disposition = `attachment; filename="${encodeURIComponent(filename)}"`;
-        }
+        if (!inline) this.response.disposition = source.contentDisposition;
+        if (meta) setMediaCacheHeaders(this, source);
     }
 }
 
@@ -1266,13 +1273,18 @@ class SystemDailyQuizFileHandler extends SystemHandler {
         const student = (await getManagedDailyQuizRoster(await getManagedDomains(), uid))[0];
         if (!student) throw new UserNotFoundError(uid);
         const target = await dailyQuiz.getAdminLearningFile(uid, day, questionId, filename, student.eligibleDomainIds);
-        this.response.body = await storage.get(target);
+        const meta = await storage.getMeta(target);
+        const inline = /\.(?:png|jpe?g|gif|webp|avif)$/i.test(filename);
+        const source = { path: target, meta,
+            ...(inline ? {} : { contentDisposition: `attachment; filename="${encodeURIComponent(filename)}"` }) };
+        if (meta && (inline || isMediaCacheRequest(this) || this.request.query?.__media_version)
+            && tryRedirectAsset(this, source)) return;
+        this.response.body = await storage.get(target, undefined, meta);
         this.response.type = lookup(filename) || 'application/octet-stream';
         this.response.addHeader('Cache-Control', 'private, no-store');
         this.response.addHeader('X-Content-Type-Options', 'nosniff');
-        if (!/\.(?:png|jpe?g|gif|webp|avif)$/i.test(filename)) {
-            this.response.disposition = `attachment; filename="${encodeURIComponent(filename)}"`;
-        }
+        if (!inline) this.response.disposition = source.contentDisposition;
+        if (meta) setMediaCacheHeaders(this, source);
     }
 }
 

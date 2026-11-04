@@ -43,6 +43,8 @@ async function fixture({ teacherView = false, json = false, required = true, spo
         'mime-types': { lookup: () => 'image/png' },
         '../error': { ForbiddenError },
         '../lib/daily_quiz': helpers,
+        '../lib/asset_delivery': { tryRedirectAsset: () => false },
+        '../lib/media_cache': { isMediaCacheRequest: () => false, setMediaCacheHeaders: () => {} },
         '../model/builtin': { PRIV },
         '../model/daily_quiz': quiz,
         '../model/storage': {},

@@ -6,6 +6,7 @@ import { homedir } from 'os';
 import { dirname, isAbsolute, join, resolve } from 'path';
 import type { Readable } from 'stream';
 import { CopyObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { respondMediaCache, validateMediaCacheRequest } from './media_cache';
 
 interface AssetConfig {
     enabled: boolean;
@@ -47,7 +48,7 @@ interface Options {
     publicRoot?: string;
     now?: () => number;
     client?: (config: AssetConfig) => Pick<S3Client, 'send'>;
-    load?: (path: string) => Promise<Buffer | Readable>;
+    load?: (path: string, expectedMetadata?: AssetSource['meta']) => Promise<Buffer | Readable>;
     queueLimit?: number;
     timeoutMs?: number;
     retryMs?: number;
@@ -292,35 +293,38 @@ export class AssetDelivery {
     }
 
     tryRedirectAsset(handler: any, source: AssetSource) {
+        if (validateMediaCacheRequest(handler, source)) return true;
         const job = this.sourceJob(source, false);
-        if (!job) return false;
+        if (!job) return respondMediaCache(handler, source);
         const remote = source.meta.remoteAsset;
         if (remote && !source.variant && !source.decoration) {
             if (remote.bucket !== job.config.bucket || remote.region !== job.config.region
                 || remote.size !== source.meta.size || remote.contentType !== source.meta['Content-Type']
                 || !/^[a-f0-9]{64}$/.test(remote.sha256)
                 || !/^media\/v1\/[a-f0-9]{64}\.(png|jpg|jpeg|gif|webp|avif|svg|ico|mp3|ogg|wav|m4a|mp4|webm|sb3|sprite3)$/.test(remote.key)) return false;
-            this.redirect(handler, job.config, remote.key);
+            this.redirect(handler, source, job.config, remote.key);
             return true;
         }
         this.readIndex();
         const mirror = this.mirrors.get(job.id);
         if (!mirror || mirror.key !== job.key || mirror.size !== source.meta.size) {
             this.queueAssetMirror(source);
-            return false;
+            return respondMediaCache(handler, source);
         }
-        this.redirect(handler, job.config, mirror.key, source.decoration);
+        this.redirect(handler, source, job.config, mirror.key, source.decoration);
         return true;
     }
 
-    private redirect(handler: any, config: AssetConfig, key: string, decoration?: AssetSource['decoration']) {
+    private redirect(handler: any, source: AssetSource, config: AssetConfig, key: string, decoration?: AssetSource['decoration']) {
         const publicDecoration = decoration === 'home-poster' || decoration === 'home-video';
-        handler.response.status = 302;
-        handler.response.redirect = publicDecoration ? new URL(key, config.mediaBaseUrl).toString()
+        const target = publicDecoration ? new URL(key, config.mediaBaseUrl).toString()
             : signMediaUrl(config.mediaBaseUrl, key, config.mediaSigningKey, this.now());
+        if (respondMediaCache(handler, source, target)) return;
+        handler.response.status = 302;
+        handler.response.redirect = target;
         handler.response.addHeader('Cache-Control', publicDecoration ? 'public, max-age=300'
             : decoration === 'badge' ? 'private, max-age=300' : 'private, no-store');
-        if (decoration === 'badge') handler.response.addHeader('Vary', 'Cookie, Authorization');
+        handler.response.addHeader('Vary', 'Cookie, Authorization, X-Hydro-Media-Cache');
         handler.response.addHeader('Referrer-Policy', 'no-referrer');
     }
 
@@ -393,7 +397,8 @@ export class AssetDelivery {
                 return;
             }
             const load = job.source.load || (() => this.options.load
-                ? this.options.load(job.source.path) : require('../model/storage').default.get(job.source.path));
+                ? this.options.load(job.source.path, job.source.meta)
+                : require('../model/storage').default.get(job.source.path, undefined, job.source.meta));
             body = await load();
             if (controller.signal.aborted && !Buffer.isBuffer(body)) body.destroy();
             check();

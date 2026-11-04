@@ -7,6 +7,7 @@ const { it } = require('node:test');
 const { PNG } = require('pngjs');
 const { BadgeAcImageCache } = require('../addons/badge-for-hydrooj/ac_image_cache');
 const badgeImage = require('../packages/hydrooj/src/lib/badge_image');
+const mediaCache = require('../packages/hydrooj/src/lib/media_cache');
 
 let fixtures = {};
 let cache;
@@ -53,6 +54,7 @@ try {
             }
             if (request === 'hydrooj/src/model/storage') return storageStub;
             if (request === 'hydrooj/src/lib/badge_image') return badgeImage;
+            if (request === 'hydrooj/src/lib/media_cache') return mediaCache;
             if (request === 'hydrooj/src/model/workspace') {
                 return { LEGACY_WORKSPACE_ID: 'tang', resolveDomainWorkspaceId: (domain) => domain?.workspaceId || 'tang' };
             }

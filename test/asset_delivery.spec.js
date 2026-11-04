@@ -14,9 +14,14 @@ const { transformSync } = require('esbuild');
 const root = path.resolve(__dirname, '..');
 const filename = path.join(root, 'packages/hydrooj/src/lib/asset_delivery.ts');
 const appRequire = createRequire(path.join(root, 'packages/hydrooj/package.json'));
+const cacheModule = { exports: {} };
+vm.runInNewContext(transformSync(fs.readFileSync(path.join(path.dirname(filename), 'media_cache.ts'), 'utf8'), {
+    loader: 'ts', format: 'cjs',
+}).code, { module: cacheModule, exports: cacheModule.exports, require: appRequire, URL, Buffer });
 const moduleFixture = { exports: {} };
 vm.runInNewContext(transformSync(fs.readFileSync(filename, 'utf8'), { loader: 'ts', format: 'cjs' }).code, {
-    module: moduleFixture, exports: moduleFixture.exports, require: appRequire, __dirname: path.dirname(filename),
+    module: moduleFixture, exports: moduleFixture.exports,
+    require: (name) => name === './media_cache' ? cacheModule.exports : appRequire(name), __dirname: path.dirname(filename),
     process, Buffer, URL, AbortController, setImmediate, setTimeout, clearTimeout,
 });
 const { AssetDelivery, signMediaUrl } = moduleFixture.exports;
@@ -211,6 +216,69 @@ it('directly signs a trusted primary object without copying it or creating a mir
     assert.equal(f.delivery.status().pending, 0);
     assert.equal(fs.existsSync(path.join(f.temporary, 'asset-mirror-index.json')), false);
     assert.equal(f.calls.length, 0);
+});
+
+function mediaResolver() {
+    return { ...handler(), user: { _id: 8 }, session: { _id: 'test-session' },
+        request: { method: 'get', headers: { 'x-hydro-media-cache': 'resolve-v1' },
+            originalPath: '/d/class-a/badge/2/icon-image', querystring: 'v=current', query: { v: 'current' } } };
+}
+
+it('resolves a trusted original without reading bytes, retaining its fresh short-lived signature', (t) => {
+    const f = fixture(t);
+    const image = source();
+    image.meta.remoteAsset = { key: `media/v1/${'a'.repeat(64)}.png`, sha256: 'b'.repeat(64), size: image.meta.size,
+        contentType: 'image/png', bucket: f.config.bucket, region: f.config.region };
+    const h = mediaResolver();
+    assert(f.delivery.tryRedirectAsset(h, image));
+    assert.equal(h.response.status, 200);
+    assert.equal(h.response.redirect, null);
+    assert.equal(h.response.headers['Cache-Control'], 'private, no-store');
+    assert.match(h.response.body.mediaCache.version, /^[a-f0-9]{64}$/);
+    assert.match(h.response.body.mediaCache.url, /\/media\/v1\/[a-f0-9]{64}\.png\?auth_key=/);
+    assert.equal(f.calls.length, 0);
+});
+
+it('resolves uncopied and disabled-CDN media through a version-checked same-origin fallback', (t) => {
+    const f = fixture(t, { enabled: false });
+    const image = source();
+    const h = mediaResolver();
+    assert(f.delivery.tryRedirectAsset(h, image));
+    const descriptor = h.response.body.mediaCache;
+    const target = new URL(descriptor.url, 'https://onebyone.test');
+    assert.equal(target.pathname, h.request.originalPath);
+    assert.equal(target.searchParams.get('__media_version'), descriptor.version);
+    assert.equal(target.searchParams.get('__media_scope'), descriptor.scope);
+    assert.equal(f.calls.length, 0);
+    h.request.headers = {};
+    h.request.query = Object.fromEntries(target.searchParams);
+    assert.equal(f.delivery.tryRedirectAsset(h, image), false, 'Current local bytes remain in the original handler');
+    assert.equal(f.delivery.tryRedirectAsset(h, { ...image, meta: { ...image.meta, etag: 'replacement' } }), true);
+    assert.equal(h.response.status, 409);
+    assert.equal(h.response.headers['Cache-Control'], 'private, no-store');
+});
+
+it('does not negotiate caching for executable SVG or Scratch project archives', (t) => {
+    const f = fixture(t, { enabled: false });
+    for (const [path, type] of [['user/8/file.svg', 'image/svg+xml'], ['scratch/a/aaaaaaaaaaaaaaaaaaaaaaaa.sb3', 'application/octet-stream']]) {
+        assert.equal(f.delivery.tryRedirectAsset(mediaResolver(), source('ignored', Buffer.from('bytes'), {
+            path, meta: { etag: 'revision', size: 5, 'Content-Type': type },
+        })), false);
+    }
+});
+
+it('passes the captured metadata to default mirror reads and never publishes a changed logical file', async (t) => {
+    let expected;
+    const f = fixture(t, {}, { load: async (_path, metadata) => {
+        expected = metadata;
+        throw new Error('Media version changed before download');
+    } });
+    const image = source('replace-race', Buffer.from('first'), { load: undefined });
+    assert(f.delivery.queueAssetMirror(image));
+    await f.delivery.waitForAssetMirrors();
+    assert.equal(expected, image.meta);
+    assert.equal(f.calls.length, 0, 'A replaced source never reaches an immutable mirror object');
+    assert.equal(f.delivery.status().ready, 0);
 });
 
 it('does not sign a mismatched primary bucket and does not mistake a preview for its original', async (t) => {
@@ -500,7 +568,7 @@ it('keeps decorative badge copies signed with short session-varying browser cach
     assert.equal(f.delivery.tryRedirectAsset(h, image), true);
     assert.match(h.response.redirect, /\/media\/decorations\/v1\/[a-f0-9]{64}\.png\?auth_key=/);
     assert.equal(h.response.headers['Cache-Control'], 'private, max-age=300');
-    assert.equal(h.response.headers.Vary, 'Cookie, Authorization');
+    assert.equal(h.response.headers.Vary, 'Cookie, Authorization, X-Hydro-Media-Cache');
     assert.equal(f.calls[0].input.CacheControl, 'private, max-age=300');
     const ordinary = { ...image, decoration: undefined };
     assert.equal(f.delivery.tryRedirectAsset(handler(), ordinary), false, 'ordinary requests cannot reuse decorative cache entries');

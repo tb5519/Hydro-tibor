@@ -72,6 +72,13 @@ export function eligibleAsset(path: string, contentType: string) {
     if (/^editor-theme\/[a-f0-9]{24}\/[a-f0-9]{32}\/[a-f0-9]{24}\.(?:png|jpe?g|gif|webp|avif|mp4|webm)$/.test(path)) {
         return ({ ...TYPES, '.mp4': ['video/mp4'], '.webm': ['video/webm'] })[ext]?.includes(contentType) || false;
     }
+    if (ext === '.mp4' || ext === '.webm') {
+        return contentType === `video/${ext.slice(1)}`
+            && (/^user\/\d+\/[^/]+$/.test(path)
+                || /^training\/[^/]+\/[^/]+\/[^/]+$/.test(path)
+                || /^problem\/[^/]+\/[^/]+\/additional_file\/[^/]+$/.test(path)
+                || /^contest\/[^/]+\/[^/]+\/public\/[^/]+$/.test(path));
+    }
     if (['.sb3', '.sprite3'].includes(ext)) return /^scratch\/[^/]+\/[a-f0-9]{24}\.(?:sb3|sprite3)$/.test(path)
         && ['application/octet-stream', `application/x.scratch${ext}`].includes(contentType);
     if (!TYPES[ext]?.includes(contentType)) return false;

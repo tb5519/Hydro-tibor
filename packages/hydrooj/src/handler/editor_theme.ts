@@ -422,6 +422,7 @@ export class EditorThemeAssetHandler extends Handler {
             this.response.redirect = await assetStorage.signDownloadLink(meta.remoteAsset);
             this.response.status = 302;
         }
+        if (this.response.body?.mediaCache || this.response.status >= 400) return;
         // The generic signed-media redirect is no-store. Apply this bounded,
         // account-varying cache only after this handler has authorized the exact
         // immutable theme version and successfully resolved its signed URL.

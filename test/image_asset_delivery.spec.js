@@ -21,12 +21,13 @@ function load(source, globals = {}, dependencies = {}) {
 }
 const read = (file) => fs.readFileSync(path.join(hydro, file), 'utf8');
 const { isInlineRasterImage } = load(read('lib/inline_image.ts'));
+const mediaCache = load(read('lib/media_cache.ts'));
 const { isPublicHomePosterPath } = load(read('lib/decorative_image_access.ts'));
 class NotFoundError extends Error {}
 class Handler {
     constructor() {
         this.domain = { _id: 'class-a' };
-        this.request = { method: 'get' };
+        this.request = { method: 'get', headers: {}, query: {}, path: '/file/42/image.png', querystring: '' };
         this.context = {};
         this.response = { headers: {}, addHeader(key, value) { this.headers[key] = value; } };
     }
@@ -38,16 +39,19 @@ function handlers(options = {}) {
     const storage = {
         async getMeta(target) {
             calls.metadata.push(target);
-            return options.missing ? null : { size: bytes.length, etag: 'image-v1', 'Content-Type': options.type || 'image/png' };
+            return options.missing ? null : { size: bytes.length, etag: options.version || 'image-v1', 'Content-Type': options.type || 'image/png' };
         },
         async get(target) { calls.read.push(target); return bytes; },
         async signDownloadLink(...args) { calls.signed.push(args); return '/storage?existing-signature'; },
     };
     const shared = {
         Handler, NotFoundError, storage, isPublicHomePosterPath, param: () => () => {}, Types: { Range: () => [] }, isInlineRasterImage,
+        ...mediaCache,
         lookup: () => 'image/png',
         tryRedirectAsset(handler, source) {
             calls.delivery.push(source);
+            if (options.delivery) return options.delivery.tryRedirectAsset(handler, source);
+            if (mediaCache.validateMediaCacheRequest(handler, source) || mediaCache.respondMediaCache(handler, source)) return true;
             if (!options.ready) return false;
             handler.response.status = 302;
             handler.response.redirect = 'https://media.example.test/image.png?auth_key=short-lived';
@@ -65,6 +69,10 @@ function handlers(options = {}) {
     const misc = read('handler/misc.ts');
     const fileHandlers = load(misc.slice(misc.indexOf('export class FSDownloadHandler'), misc.indexOf('export class StorageHandler')), {
         ...shared, oplog: { log: async (...args) => { calls.log.push(args); } },
+    });
+    const signedHandlers = load(misc.slice(misc.indexOf('export class StorageHandler'), misc.indexOf('export class SwitchAccountHandler')), {
+        ...shared, AccessDeniedError: class extends Error {}, lookup: require('mime-types').lookup,
+        encodeRFC5987ValueChars: encodeURIComponent,
     });
     const problemSource = read('handler/problem.ts');
     class ProblemDetailHandler extends Handler {
@@ -84,7 +92,7 @@ function handlers(options = {}) {
         problem: { get: async () => ({ domainId: 'library', docId: 30 }) },
         ProblemIsReferencedError: class extends Error {}, ProblemNotFoundError: NotFoundError,
     });
-    return { ...homeHandlers, ...fileHandlers, ...problemHandlers, calls, bytes };
+    return { ...homeHandlers, ...fileHandlers, ...signedHandlers, ...problemHandlers, calls, bytes };
 }
 
 describe('authorized image handler delivery', () => {
@@ -151,7 +159,8 @@ describe('authorized image handler delivery', () => {
         assert.equal(disguised.calls.signed.length, 1);
         const cold = handlers();
         await new cold.FSDownloadHandler().get('class-a', 42, '.avatar.jpg', true);
-        assert.deepEqual(cold.calls.signed[0], ['user/42/.avatar.jpg', undefined, false, 'user']);
+        assert.deepEqual(cold.calls.signed[0], ['user/42/.avatar.jpg', undefined, false, 'user',
+            { size: cold.bytes.length, etag: 'image-v1', 'Content-Type': 'image/png' }]);
     });
 
     it('delivers requested inline raster user images while keeping missing files and other content in the old flow', async () => {
@@ -181,7 +190,8 @@ describe('authorized image handler delivery', () => {
         assert.deepEqual(h.calls.signed, []);
         const cold = handlers();
         await new cold.ProblemFileDownloadHandler().get({}, 'additional_file', 'diagram.png', true);
-        assert.deepEqual(cold.calls.signed[0], ['problem/class-a/10/additional_file/diagram.png', undefined, false, 'user']);
+        assert.deepEqual(cold.calls.signed[0], ['problem/class-a/10/additional_file/diagram.png', undefined, false, 'user',
+            { size: cold.bytes.length, etag: 'image-v1', 'Content-Type': 'image/png' }]);
     });
 
     it('never delivers problem testdata, ordinary downloads, missing files or denied requests', async () => {
@@ -198,6 +208,93 @@ describe('authorized image handler delivery', () => {
         assert.deepEqual(denied.calls.metadata, []);
         assert.deepEqual(denied.calls.delivery, []);
         assert.deepEqual(denied.calls.signed, []);
+    });
+
+    it('resolves inline audio and video after authorization and changes cache identity when a filename is replaced', async () => {
+        for (const [filename, type] of [['lesson.mp4', 'video/mp4'], ['voice.mp3', 'audio/mpeg']]) {
+            const before = handlers({ type, version: 'before' });
+            const original = new before.ProblemFileDownloadHandler();
+            original.request.headers['x-hydro-media-cache'] = 'resolve-v1';
+            original.request.path = `/p/10/file/${filename}`;
+            original.request.querystring = 'noDisposition=1';
+            await original.get({}, 'additional_file', filename, true);
+            assert.equal(original.response.type, 'application/json');
+            assert.equal(original.response.headers['Cache-Control'], 'private, no-store');
+            assert.equal(original.response.body.mediaCache.type, type);
+            assert.equal(before.calls.read.length, 0);
+            assert.equal(before.calls.signed.length, 0);
+
+            const after = handlers({ type, version: 'after' });
+            const current = new after.ProblemFileDownloadHandler();
+            current.request.headers['x-hydro-media-cache'] = 'resolve-v1';
+            await current.get({}, 'additional_file', filename, true);
+            assert.notEqual(current.response.body.mediaCache.version, original.response.body.mediaCache.version);
+            const stale = new after.ProblemFileDownloadHandler();
+            stale.request.query = Object.fromEntries(new URL(original.response.body.mediaCache.url, 'https://oj.test').searchParams);
+            await stale.get({}, 'additional_file', filename, true);
+            assert.equal(stale.response.status, 409);
+            assert.equal(after.calls.signed.length, 0);
+        }
+    });
+
+    it('keeps media resolution behind problem access and preserves SVG and attachment delivery', async () => {
+        const denied = handlers({ type: 'video/mp4', denied: true });
+        const request = new denied.ProblemFileDownloadHandler();
+        request.request.headers['x-hydro-media-cache'] = 'resolve-v1';
+        await assert.rejects(request.get({}, 'additional_file', 'lesson.mp4', true), /Permission denied/);
+        assert.equal(denied.calls.delivery.length, 0);
+        const svg = handlers({ type: 'image/svg+xml' });
+        const image = new svg.FSDownloadHandler();
+        image.request.headers['x-hydro-media-cache'] = 'resolve-v1';
+        await image.get('class-a', 42, 'drawing.svg', true);
+        assert.equal(image.response.body, undefined);
+        assert.equal(svg.calls.signed.length, 1);
+        const download = new svg.FSDownloadHandler();
+        download.request.headers['x-hydro-media-cache'] = 'resolve-v1';
+        await download.get('class-a', 42, 'drawing.svg', false);
+        assert.equal(svg.calls.signed[1][1], 'drawing.svg');
+    });
+
+    it('reads signed local image bytes with the real delivery layer disabled', async (t) => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'hydro-local-image-'));
+        t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+        const { AssetDelivery } = load(read('lib/asset_delivery.ts'), { __dirname: path.join(hydro, 'lib') }, { './media_cache': mediaCache });
+        const h = handlers({ delivery: new AssetDelivery({ configPath: path.join(directory, 'absent.json') }) });
+        const request = new h.StorageHandler();
+        request.ctx = { get: () => ({
+            isLinkValid: async () => true,
+            getMeta: async () => ({ size: h.bytes.length, etag: 'physical-image-v1' }),
+        }) };
+        await request.get({}, 'ab/poster.png', '', Date.now() + 10000, 'valid');
+        assert.strictEqual(request.response.body, h.bytes);
+        assert.equal(request.response.type, 'image/png');
+        assert.equal(request.response.redirect, undefined);
+        assert.equal(request.response.headers['Cache-Control'], 'private, max-age=31536000, immutable');
+        assert.deepEqual(h.calls.read, ['ab/poster.png']);
+    });
+
+    it('serves byte ranges from signed local media only after signature and expiry validation', async () => {
+        const h = handlers();
+        const make = (valid = true) => {
+            const request = new h.StorageHandler();
+            request.ctx = { get: () => ({
+                isLinkValid: async () => valid,
+                getMeta: async () => ({ size: h.bytes.length, etag: 'physical-file-v1' }),
+            }) };
+            request.request.headers.range = 'bytes=2-5';
+            return request;
+        };
+        const good = make();
+        await good.get({}, 'ab/movie.mp4', '', Date.now() + 10000, 'valid');
+        assert.equal(good.response.status, 206);
+        assert.equal(good.response.headers['Content-Range'], `bytes 2-5/${h.bytes.length}`);
+        assert.equal(good.response.headers['Content-Length'], '4');
+        assert.equal(good.response.headers['Cache-Control'], 'private, max-age=31536000, immutable');
+        assert.deepEqual(good.response.body, h.bytes.subarray(2, 6));
+        const reads = h.calls.read.length;
+        await assert.rejects(make(false).get({}, 'ab/movie.mp4', '', Date.now() + 10000, 'invalid'));
+        await assert.rejects(make().get({}, 'ab/movie.mp4', '', Date.now() - 1, 'expired'));
+        assert.equal(h.calls.read.length, reads);
     });
 });
 
@@ -241,7 +338,7 @@ it('maps only allowlisted static images and preserves disabled, external and pro
     fs.writeFileSync(path.join(directory, 'manifest.json'), JSON.stringify({
         background: '/components/profile/backgrounds/1.jpg?v=hash',
     }));
-    const { AssetDelivery } = load(read('lib/asset_delivery.ts'), { __dirname: path.join(hydro, 'lib') });
+    const { AssetDelivery } = load(read('lib/asset_delivery.ts'), { __dirname: path.join(hydro, 'lib') }, { './media_cache': mediaCache });
     const config = path.join(directory, 'assets.json');
     const disabled = new AssetDelivery({ configPath: config, publicRoot: directory });
     const helpers = (delivery) => load(fs.readFileSync(path.join(root, 'packages/ui-default/backendlib/asset_url.ts'), 'utf8'), {}, {

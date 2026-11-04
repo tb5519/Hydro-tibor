@@ -24,6 +24,7 @@ function load(relative, dependencies) {
     }).code, {
         module, exports: module.exports, Buffer, Blob, URL, Date: dependencies.__Date || Date, setTimeout,
         require: (name) => Object.hasOwn(dependencies, name) ? dependencies[name]
+            : name.endsWith('/media_cache') ? load('packages/hydrooj/src/lib/media_cache.ts', {})
             : name.endsWith('/scratch_review') ? load('packages/hydrooj/src/lib/scratch_review.ts', {}) : require(name),
     });
     return module.exports;

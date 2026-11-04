@@ -16,6 +16,7 @@ import {
 } from '../error';
 import { DomainDoc, Setting } from '../interface';
 import { tryRedirectAsset } from '../lib/asset_delivery';
+import { setMediaCacheHeaders } from '../lib/media_cache';
 import avatar, { validate } from '../lib/avatar';
 import { isBackgroundVideoPath, redirectBackgroundVideo } from '../lib/background_video';
 import { getBadgeHonorWall } from '../lib/badge_honor_wall';
@@ -679,8 +680,11 @@ class HomePosterImageHandler extends Handler {
             this.context.status = 200;
             this.context.type = this.response.type;
             this.context.body = '';
-        } else this.response.body = await storage.get(config.storagePath);
+        } else {
+            this.response.body = await storage.get(config.storagePath, undefined, meta);
+        }
         this.response.addHeader('Content-Length', `${meta.size}`);
+        setMediaCacheHeaders(this, { path: config.storagePath, meta, decoration: 'home-poster' });
     }
 
     async head() { await this.get(); }
@@ -745,9 +749,10 @@ class PointLotteryPrizeImageHandler extends Handler {
         const meta = await storage.getMeta(target);
         if (!meta) throw new NotFoundError(filename);
         if (await tryRedirectAsset(this, { path: target, meta })) return;
-        this.response.body = await storage.get(target);
+        this.response.body = await storage.get(target, undefined, meta);
         this.response.type = meta['Content-Type'] || lookup(target) || 'application/octet-stream';
         this.response.addHeader('Cache-Control', 'public, max-age=604800, immutable');
+        setMediaCacheHeaders(this, { path: target, meta });
     }
 }
 

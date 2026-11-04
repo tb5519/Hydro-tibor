@@ -1,7 +1,9 @@
 import { lookup } from 'mime-types';
 import type { Context } from '../context';
 import { ForbiddenError } from '../error';
+import { tryRedirectAsset } from '../lib/asset_delivery';
 import { safeReturnUrl } from '../lib/daily_quiz';
+import { isMediaCacheRequest, setMediaCacheHeaders } from '../lib/media_cache';
 import { PRIV } from '../model/builtin';
 import * as quiz from '../model/daily_quiz';
 import storage from '../model/storage';
@@ -81,11 +83,18 @@ export class DailyQuizFileHandler extends Handler {
     async get(domainId: string, sessionId: string, questionId: number, filename: string) {
         if (isTeacherView(this)) throw new ForbiddenError('老师查看学员账号时不进行每日问答');
         const target = await quiz.getSessionFile(this.user._id, sessionId, questionId, filename);
-        this.response.body = await storage.get(target);
+        const meta = await storage.getMeta(target);
+        const inline = /\.(?:png|jpe?g|gif|webp|avif)$/i.test(filename);
+        const source = { path: target, meta,
+            ...(inline ? {} : { contentDisposition: `attachment; filename="${encodeURIComponent(filename)}"` }) };
+        if (meta && (inline || isMediaCacheRequest(this) || this.request.query?.__media_version)
+            && tryRedirectAsset(this, source)) return;
+        this.response.body = await storage.get(target, undefined, meta);
         this.response.type = lookup(filename) || 'application/octet-stream';
         this.response.addHeader('Cache-Control', 'private, no-store');
         this.response.addHeader('X-Content-Type-Options', 'nosniff');
-        if (!/\.(?:png|jpe?g|gif|webp|avif)$/i.test(filename)) this.response.disposition = `attachment; filename="${encodeURIComponent(filename)}"`;
+        if (!inline) this.response.disposition = source.contentDisposition;
+        if (meta) setMediaCacheHeaders(this, source);
     }
 }
 

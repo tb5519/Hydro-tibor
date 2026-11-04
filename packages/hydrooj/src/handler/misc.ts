@@ -8,6 +8,7 @@ import {
 } from '../error';
 import { tryRedirectAsset } from '../lib/asset_delivery';
 import { isInlineRasterImage } from '../lib/inline_image';
+import { isMediaCacheRequest, setMediaCacheHeaders } from '../lib/media_cache';
 import { PRIV } from '../model/builtin';
 import * as oplog from '../model/oplog';
 import storage from '../model/storage';
@@ -104,11 +105,11 @@ export class FSDownloadHandler extends Handler {
         // Download attachments retain their original disposition. Inline raster
         // images and account avatars use the same authenticated delivery path.
         if ((noDisposition || /^\.avatar\.(?:jpg|jpeg|png)$/.test(filename)) && file
-            && isInlineRasterImage(filename, file)
+            && (isInlineRasterImage(filename, file) || isMediaCacheRequest(this) || this.request.query?.__media_version)
             && await tryRedirectAsset(this, { path: target, meta: file })) return;
         try {
             this.response.redirect = await storage.signDownloadLink(
-                target, noDisposition ? undefined : filename, false, 'user',
+                target, noDisposition ? undefined : filename, false, 'user', file || undefined,
             );
             this.response.addHeader('Cache-Control', 'public');
         } catch (e) {
@@ -128,11 +129,19 @@ export class StorageHandler extends Handler {
     @param('secret', Types.String)
     async get({ }, target: string, filename = '', expire: number, secret: string) {
         if (expire < Date.now()) throw new AccessDeniedError();
-        if (!(await this.ctx.get('storage')?.isLinkValid?.(`${target}/${expire}/${secret}`))) throw new AccessDeniedError();
+        const provider = this.ctx.get('storage');
+        if (!(await provider?.isLinkValid?.(`${target}/${expire}/${secret}`))) throw new AccessDeniedError();
+        const type = (target.endsWith('.out') || target.endsWith('.ans'))
+            ? 'text/plain' : lookup(target) || 'application/octet-stream';
+        const metadata = !filename && /^(?:image|audio|video)\//.test(type) ? await provider.getMeta(target) : null;
+        const source = metadata ? {
+            path: target,
+            meta: { size: metadata.size, etag: metadata.etag, lastModified: metadata.lastModified, 'Content-Type': type },
+        } : null;
+        if (source && await tryRedirectAsset(this, source)) return;
         this.response.body = await storage.get(target);
-        this.response.type = (target.endsWith('.out') || target.endsWith('.ans'))
-            ? 'text/plain'
-            : lookup(target) || 'application/octet-stream';
+        this.response.type = type;
+        if (source) setMediaCacheHeaders(this, source, { authorizedSignedSource: true });
         if (filename) this.response.disposition = `attachment; filename="${encodeRFC5987ValueChars(filename)}"`;
     }
 }

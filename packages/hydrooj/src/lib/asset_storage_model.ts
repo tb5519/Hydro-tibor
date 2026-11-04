@@ -28,6 +28,28 @@ const remoteQuery = (asset: RemoteAsset) => ({
 });
 const localQuery = (physicalId: string) => ({ remoteAsset: { $exists: false }, $or: [{ _id: physicalId }, { link: physicalId }] });
 
+interface ExpectedAssetMetadata {
+    size: number;
+    etag?: string;
+    lastModified?: Date | string;
+    'Content-Type'?: string;
+    remoteAsset?: RemoteAsset;
+}
+
+function checkAssetSnapshot(file: FileNode, expected?: ExpectedAssetMetadata) {
+    if (!expected) return;
+    const modified = (value: Date | string) => value ? new Date(value).getTime() : 0;
+    const remote = (value?: RemoteAsset) => value
+        ? [value.key, value.bucket, value.region, value.sha256, value.size, value.contentType] : null;
+    const type = file && (typeof file.meta?.['Content-Type'] === 'string' ? file.meta['Content-Type'] : mime(file.path));
+    if (!file || file.size !== expected.size || (file.etag || '') !== (expected.etag || '')
+        || modified(file.lastModified) !== modified(expected.lastModified)
+        || (expected['Content-Type'] !== undefined && type !== expected['Content-Type'])
+        || JSON.stringify(remote(file.remoteAsset)) !== JSON.stringify(remote(expected.remoteAsset))) {
+        throw new Error('Media version changed before download; resolve the current resource again');
+    }
+}
+
 /** Shared by the live model and the standalone migration tool; never boots Hydro. */
 export function createAssetStorageModel(dependencies: {
     coll: Collection<FileNode>;
@@ -179,12 +201,13 @@ export function createAssetStorageModel(dependencies: {
             return path;
         }
 
-        static async get(path: string, savePath?: string) {
+        static async get(path: string, savePath?: string, expectedMetadata?: ExpectedAssetMetadata) {
             const value = await StorageModel.coll.findOneAndUpdate(
                 { path, autoDelete: null },
                 { $set: { lastUsage: new Date() } },
                 { returnDocument: 'after' },
             );
+            checkAssetSnapshot(value, expectedMetadata);
             if (value?.remoteAsset) return assetStorage.get(value.remoteAsset, savePath);
             return await storage.get(value?.link || value?._id || path, savePath);
         }
@@ -232,11 +255,15 @@ export function createAssetStorageModel(dependencies: {
             };
         }
 
-        static async signDownloadLink(target: string, filename?: string, noExpire = false, useAlternativeEndpointFor?: 'user' | 'judge') {
+        static async signDownloadLink(
+            target: string, filename?: string, noExpire = false,
+            useAlternativeEndpointFor?: 'user' | 'judge', expectedMetadata?: ExpectedAssetMetadata,
+        ) {
             const res = await StorageModel.coll.findOneAndUpdate(
                 { path: target, autoDelete: null },
                 { $set: { lastUsage: new Date() } },
             );
+            checkAssetSnapshot(res, expectedMetadata);
             if (res?.remoteAsset) return assetStorage.signDownloadLink(res.remoteAsset, filename);
             return await storage.signDownloadLink(res?.link || res?._id || target, filename, noExpire, useAlternativeEndpointFor);
         }

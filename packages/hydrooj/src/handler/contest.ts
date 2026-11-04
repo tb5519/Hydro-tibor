@@ -17,6 +17,8 @@ import {
 import {
     DomainDoc, FileInfo, ScoreboardConfig, Tdoc,
 } from '../interface';
+import { tryRedirectAsset } from '../lib/asset_delivery';
+import { isMediaCacheRequest } from '../lib/media_cache';
 import { canManageContestAudience, canViewContestLevel } from '../lib/contest_access';
 import { applyContestLively } from '../lib/contest_lively';
 import { canManageHomeworkReview } from '../lib/homework_review';
@@ -878,8 +880,10 @@ export class ContestFileDownloadHandler extends ContestDetailBaseHandler {
             target,
             size: file?.size || 0,
         });
+        if (file && noDisposition && (isMediaCacheRequest(this) || this.request.query?.__media_version)
+            && tryRedirectAsset(this, { path: target, meta: file })) return;
         this.response.redirect = await storage.signDownloadLink(
-            target, noDisposition ? undefined : filename, false, 'user',
+            target, noDisposition ? undefined : filename, false, 'user', file || undefined,
         );
     }
 }

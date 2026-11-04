@@ -15,6 +15,7 @@ import {
     deleteBackgroundVideo, isBackgroundVideoPath, redirectBackgroundVideo, storeBackgroundVideo,
 } from 'hydrooj/src/lib/background_video';
 import { getBadgeAcCelebrationUrl, getBadgeIconUrl } from 'hydrooj/src/lib/badge_image';
+import { setMediaCacheHeaders } from 'hydrooj/src/lib/media_cache';
 import { getSharedRankingSnapshot } from 'hydrooj/src/lib/shared_ranking';
 import { getUserBadgeGallery } from 'hydrooj/src/lib/user_badge_gallery';
 import DomainModel from 'hydrooj/src/model/domain';
@@ -630,11 +631,12 @@ abstract class BadgeAssetHandler extends Handler {
         if (await assetDelivery.tryRedirectAsset(this, { path: assetPath, meta,
             ...(['backgroundImagePath', 'acImagePath', 'iconImagePath'].includes(this.assetField) ? { decoration: 'badge' as const } : {}),
         })) return;
-        this.response.body = await storage.get(assetPath);
+        this.response.body = await storage.get(assetPath, undefined, meta);
         this.response.type = meta['Content-Type'] || lookup(assetPath) || 'application/octet-stream';
         this.response.addHeader('Cache-Control', 'private, max-age=300');
         this.response.addHeader('Vary', 'Cookie, Authorization');
         this.response.addHeader('X-Content-Type-Options', 'nosniff');
+        setMediaCacheHeaders(this, { path: assetPath, meta });
     }
 }
 
@@ -690,18 +692,23 @@ export class BadgeAcImageHandler extends BadgeAssetHandler {
             path: badge.acImagePath,
             version: `${badge.acImageUpdatedAt || ''}:${meta.etag || ''}`,
             size: meta.size,
-            load: () => storage.get(badge.acImagePath!),
+            load: () => storage.get(badge.acImagePath!, undefined, meta),
         }, size) : null;
         if (await assetDelivery.tryRedirectAsset(this, {
             path: badge.acImagePath, decoration: 'badge',
             meta: preview ? { ...meta, size: preview.byteLength, 'Content-Type': 'image/png', remoteAsset: undefined } : meta,
             ...(preview ? { load: () => preview, variant: `badge-ac-png-area-v1-${size}` } : {}),
         })) return;
-        this.response.body = preview || await storage.get(badge.acImagePath);
+        this.response.body = preview || await storage.get(badge.acImagePath, undefined, meta);
         this.response.type = preview ? 'image/png' : meta['Content-Type'] || lookup(badge.acImagePath) || 'application/octet-stream';
         this.response.addHeader('Cache-Control', 'private, max-age=300');
         this.response.addHeader('Vary', 'Cookie, Authorization');
         this.response.addHeader('X-Content-Type-Options', 'nosniff');
+        setMediaCacheHeaders(this, {
+            path: badge.acImagePath,
+            meta: preview ? { ...meta, size: preview.byteLength, 'Content-Type': 'image/png', remoteAsset: undefined } : meta,
+            ...(preview ? { variant: `badge-ac-png-area-v1-${size}` } : {}),
+        });
     }
 }
 

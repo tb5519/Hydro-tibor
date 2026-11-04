@@ -291,6 +291,9 @@ describe('background remote delivery', () => {
 
 it('the real CDN signer accepts verified MP4/WebM objects and never mirrors local video', async (t) => {
     const dependencies = Object.fromEntries(['crypto', 'fs', 'os', 'path', '@aws-sdk/client-s3'].map((name) => [name, appRequire(name)]));
+    dependencies['./media_cache'] = load('packages/hydrooj/src/lib/media_cache.ts', {
+        crypto: require('crypto'), path: require('path'), stream: require('stream'),
+    });
     const { AssetDelivery } = load('packages/hydrooj/src/lib/asset_delivery.ts', dependencies);
     const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'hydro-background-cdn-'));
     t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));

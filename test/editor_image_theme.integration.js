@@ -253,12 +253,29 @@ async function run() {
     });
     await check('Media is private to eligible students and a new publication invalidates the old student asset version', async () => {
         const asset = published.assets[0];
+        const resolve = (agent, url) => get(agent, url).set('X-Hydro-Media-Cache', 'resolve-v1');
         denied(await get(other, asset.url));
         status(await get(student, asset.url), 302);
+        denied(await resolve(other, asset.url));
+        const original = await resolve(student, asset.url);
+        status(original, 200);
+        assert.match(original.body.mediaCache.version, /^[a-f0-9]{64}$/);
+        assert.match(original.body.mediaCache.scope, /^[a-f0-9]{64}$/);
+        assert.equal(original.body.mediaCache.type, asset.type);
+        assert.equal(original.headers['cache-control'], 'private, no-store');
+        assert.match(original.headers.vary, /X-Hydro-Media-Cache/);
+        assert.equal(original.headers.location, undefined, 'Authorization returns metadata without redirecting to the full image');
+        assert.equal((await resolve(student, asset.url)).body.mediaCache.version, original.body.mediaCache.version);
+        assert.notEqual((await resolve(teacher, asset.url)).body.mediaCache.scope, original.body.mediaCache.scope);
         status(await publish(701, { name: '疾风剑客' }), 200);
         const updated = (await get(student, catalogUrl)).body.themes.find((theme) => theme.badgeId === 701);
         assert.notEqual(updated.version, published.version);
         denied(await get(student, asset.url));
+        denied(await resolve(student, asset.url));
+        const replacement = await resolve(student, updated.assets[0].url);
+        status(replacement, 200);
+        assert.equal(replacement.body.mediaCache.version, original.body.mediaCache.version,
+            'Publishing a new theme that reuses the same image keeps its cached bytes');
         status(await get(teacher, asset.url), 302);
         published = updated;
     });

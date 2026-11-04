@@ -20,6 +20,7 @@ function load(relative, dependencies = {}) {
     vm.runInNewContext(transformSync(fs.readFileSync(path.join(root, relative), 'utf8'), { loader: 'ts', format: 'cjs' }).code,
         { module, exports: module.exports, Buffer, URL, Date, setTimeout,
             require: (name) => Object.hasOwn(dependencies, name) ? dependencies[name]
+                : name.endsWith('/media_cache') ? load('packages/hydrooj/src/lib/media_cache.ts', {})
                 : name.endsWith('/scratch_review') ? load('packages/hydrooj/src/lib/scratch_review.ts', {}) : require(name) });
     return module.exports;
 }

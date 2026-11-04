@@ -190,6 +190,63 @@ it('rejects incorrect bucket/region and never falls back to a stale local file',
     await assert.rejects(model.get(projectPath), /bucket and region/);
 });
 
+it('rejects same-name replacements before reading or signing them under a captured media version', async () => {
+    for (const storageEnabled of [true, false]) {
+        writeConfig({ storageEnabled });
+        await model.put(imagePath, Buffer.from('first'));
+        const snapshot = await model.getMeta(imagePath);
+        assert.equal((await bytes(await model.get(imagePath, undefined, snapshot))).toString(), 'first');
+        assert(await model.signDownloadLink(imagePath, undefined, false, 'user', snapshot));
+        await model.put(imagePath, Buffer.from('other'));
+        const downloads = calls.filter((call) => call.kind === 'GetObjectCommand').length;
+        const signatures = signed.length;
+        await assert.rejects(model.get(imagePath, undefined, snapshot), /Media version changed/);
+        await assert.rejects(model.signDownloadLink(imagePath, undefined, false, 'user', snapshot), /Media version changed/);
+        assert.equal(calls.filter((call) => call.kind === 'GetObjectCommand').length, downloads);
+        assert.equal(signed.length, signatures);
+        assert.equal((await bytes(await model.get(imagePath))).toString(), 'other', 'Legacy callers still read the current file');
+    }
+});
+
+it('captured metadata is checked against the same physical record used for reading and signing', async () => {
+    await model.put(imagePath, Buffer.from('first'));
+    const snapshot = await model.getMeta(imagePath);
+    const current = model.coll.findOneAndUpdate.bind(model.coll);
+    let changed = false;
+    model.coll.findOneAndUpdate = async (...args) => {
+        const captured = await current(...args);
+        if (!changed && args[0].path === imagePath) {
+            changed = true;
+            await model.put(imagePath, Buffer.from('other'));
+        }
+        return captured;
+    };
+    assert.equal((await bytes(await model.get(imagePath, undefined, snapshot))).toString(), 'first');
+    model.coll.findOneAndUpdate = current;
+    const nextSnapshot = await model.getMeta(imagePath);
+    changed = false;
+    model.coll.findOneAndUpdate = async (...args) => {
+        const captured = await current(...args);
+        if (!changed && args[0].path === imagePath) {
+            changed = true;
+            await model.put(imagePath, Buffer.from('third'));
+        }
+        return captured;
+    };
+    const url = await model.signDownloadLink(imagePath, undefined, false, 'user', nextSnapshot);
+    assert(url.includes(nextSnapshot.remoteAsset.key));
+    model.coll.findOneAndUpdate = current;
+});
+
+it('snapshot validation rejects removal and type-only changes even when size and etag stay equal', async () => {
+    await model.put(imagePath, Buffer.from('first'));
+    const snapshot = await model.getMeta(imagePath);
+    await model.coll.updateOne({ path: imagePath, autoDelete: null }, { $set: { 'meta.Content-Type': 'text/html' } });
+    await assert.rejects(model.get(imagePath, undefined, snapshot), /Media version changed/);
+    await model.del([imagePath]);
+    await assert.rejects(model.signDownloadLink(imagePath, undefined, false, 'user', snapshot), /Media version changed/);
+});
+
 it('upload failure preserves the active previous version and does not silently grow local storage', async () => {
     await model.put(imagePath, Buffer.from('before'));
     const original = await model.coll.findOne({ path: imagePath });
@@ -585,7 +642,7 @@ it('stores preset sprite3 archives only in immutable Scratch paths with private 
 const backgroundStamp = '1791763200000-12345678-1234-4234-8234-123456789abc';
 const backgroundVideoPath = `domain/class-a/home-video-${backgroundStamp}.mp4`;
 const backgroundPosterPath = `domain/class-a/home-video-poster-${backgroundStamp}.jpg`;
-it('accepts background video only in exact generated homepage and badge paths with matching MIME types', () => {
+it('accepts generated backgrounds and classroom video media only with matching MIME types', () => {
     for (const prefix of ['domain/class-a/home-video', 'badge/12/profile-video', 'domain/class-a/badge/12/profile-video']) {
         assert.equal(eligibleAsset(`${prefix}-${backgroundStamp}.mp4`, 'video/mp4'), true);
         assert.equal(eligibleAsset(`${prefix}-${backgroundStamp}.webm`, 'video/webm'), true);
@@ -596,7 +653,14 @@ it('accepts background video only in exact generated homepage and badge paths wi
     }
     for (const filename of [
         'user/1/video.mp4', 'training/course/1/video.webm', 'problem/main/1/additional_file/video.mp4',
-        'contest/main/1/public/video.mp4', 'domain/class-a/home-video-old.mp4',
+        'contest/main/1/public/video.mp4',
+    ]) {
+        assert.equal(eligibleAsset(filename, filename.endsWith('.webm') ? 'video/webm' : 'video/mp4'), true, filename);
+        assert.equal(eligibleAsset(filename, 'image/png'), false, filename);
+    }
+    for (const filename of [
+        'problem/main/1/testdata/video.mp4', 'submission/1/video.mp4', 'contest/main/1/private/video.mp4',
+        'domain/class-a/home-video-old.mp4',
         `domain/class-a/home-poster-${backgroundStamp}.mp4`, `badge/name/profile-video-${backgroundStamp}.mp4`,
         `badge/12/ac-effect-${backgroundStamp}.mp4`, `domain/class-a/home-video-poster-${backgroundStamp}.mp4`,
         `domain/class-a/home-video-${backgroundStamp}.mp4/extra`, `domain/class-a/home-video-${backgroundStamp}.mp4?key=x`,
@@ -633,7 +697,7 @@ it('remote-only requests reject disabled or absent object storage instead of wri
 });
 
 it('remote-only rejects ineligible paths and upload failures without entering local storage', async () => {
-    await assert.rejects(model.put('user/20/video.mp4', Buffer.from('media'), 20, { remoteOnly: true }));
+    await assert.rejects(model.put('submission/20/video.mp4', Buffer.from('media'), 20, { remoteOnly: true }));
     assert.equal(calls.length, 0);
     fault = async (kind) => { if (kind === 'PutObjectCommand') throw new Error('Video upload offline'); };
     await assert.rejects(model.put(backgroundVideoPath, Buffer.from('media'), 20, { remoteOnly: true }), /Video upload offline/);

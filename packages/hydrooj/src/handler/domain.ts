@@ -12,6 +12,7 @@ import {
 } from '../error';
 import type { DomainDoc } from '../interface';
 import { tryRedirectAsset } from '../lib/asset_delivery';
+import { setMediaCacheHeaders } from '../lib/media_cache';
 import avatar from '../lib/avatar';
 import {
     BACKGROUND_VIDEO_MAX_SIZE, deleteBackgroundVideo, isBackgroundVideoPath, storeBackgroundVideo,
@@ -450,10 +451,11 @@ class DomainAvatarImageHandler extends Handler {
         const meta = await storage.getMeta(target);
         if (!meta) throw new NotFoundError('avatar');
         if (await tryRedirectAsset(this, { path: target, meta: { ...meta, 'Content-Type': 'image/png' } })) return;
-        this.response.body = await storage.get(target);
+        this.response.body = await storage.get(target, undefined, meta);
         this.response.type = 'image/png';
         this.response.addHeader('Cache-Control', 'public, max-age=604800, immutable');
         this.response.addHeader('X-Content-Type-Options', 'nosniff');
+        setMediaCacheHeaders(this, { path: target, meta: { ...meta, 'Content-Type': 'image/png' } });
     }
 }
 

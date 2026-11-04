@@ -5,6 +5,7 @@ import { ObjectId } from 'mongodb';
 import { Context } from '../context';
 import { CsrfTokenError, NotFoundError, PermissionError, ValidationError } from '../error';
 import { tryRedirectAsset } from '../lib/asset_delivery';
+import { isMediaCacheRequest, setMediaCacheHeaders } from '../lib/media_cache';
 import { isScratchDomain } from '../lib/domain_type';
 import { learnerAssignmentState, sortAssignmentLearners, teacherAssignmentSummary } from '../lib/scratch_assignment_progress';
 import { submissionFullyCorrect, submissionReviewStatus } from '../lib/scratch_review';
@@ -808,10 +809,16 @@ export class ScratchObjectiveFileHandler extends ScratchHandler {
         const assignment = await scratch.getAssignment(this.actor, this.routeId('assignmentId'));
         const filename = this.request.params.filename;
         const target = await scratchObjective.getFile(this.actor, assignment, filename);
-        this.response.body = await storage.get(target);
+        const meta = await storage.getMeta(target);
+        const inline = /\.(?:png|jpe?g|gif|webp|avif)$/i.test(filename);
+        if (meta && (inline || isMediaCacheRequest(this) || this.request.query?.__media_version)
+            && tryRedirectAsset(this, { path: target, meta,
+                ...(inline ? {} : { contentDisposition: `attachment; filename="${encodeURIComponent(filename)}"` }) })) return;
+        this.response.body = await storage.get(target, undefined, meta);
         this.response.type = lookup(filename) || 'application/octet-stream';
         this.response.addHeader('X-Content-Type-Options', 'nosniff');
-        if (!/\.(?:png|jpe?g|gif|webp|avif)$/i.test(filename)) this.response.disposition = `attachment; filename="${encodeURIComponent(filename)}"`;
+        if (!inline) this.response.disposition = `attachment; filename="${encodeURIComponent(filename)}"`;
+        if (meta) setMediaCacheHeaders(this, { path: target, meta });
     }
 }
 export class ScratchMaterialsHandler extends ScratchHandler {
@@ -1194,7 +1201,10 @@ export class ScratchCommunityProjectHandler extends ScratchCommunityAccessHandle
         const source = scratch.fileAssetSource(file, meta?.remoteAsset);
         if (source && tryRedirectAsset(this, source)) return;
         this.response.addHeader('Content-Length', file.size.toString());
-        if (this.thumbnail) this.response.body = await storage.get(file.path);
+        if (this.thumbnail) {
+            this.response.body = await storage.get(file.path, undefined, meta);
+            if (source) setMediaCacheHeaders(this, source);
+        }
         else this.response.attachment('project.sb3', await storage.get(file.path));
     }
 
@@ -1323,16 +1333,18 @@ export class ScratchFileHandler extends ScratchHandler {
         const source = scratch.fileAssetSource(file, meta?.remoteAsset);
         if (source && tryRedirectAsset(this, source)) return;
         if (file.purpose === 'thumbnail') {
-            this.response.body = await storage.get(file.path);
+            this.response.body = await storage.get(file.path, undefined, meta);
             this.response.type = 'image/png';
             this.response.addHeader('X-Content-Type-Options', 'nosniff');
+            if (source) setMediaCacheHeaders(this, source);
             return;
         }
-        this.response.attachment(file.filename, await storage.get(file.path));
+        this.response.attachment(file.filename, await storage.get(file.path, undefined, meta));
         // Even a mislabeled user upload cannot become active same-origin content.
         this.response.type = 'application/octet-stream';
         this.response.addHeader('X-Content-Type-Options', 'nosniff');
         this.response.addHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+        if (source) setMediaCacheHeaders(this, source);
     }
 }
 

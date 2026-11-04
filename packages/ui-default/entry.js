@@ -54,7 +54,7 @@ if ('serviceWorker' in navigator) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(UiContext.SWConfig),
   });
-  navigator.serviceWorker.register('/service-worker.js').then((registration) => {
+  navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' }).then((registration) => {
     console.log('SW registered: ', registration);
     const sw = registration.active || registration.waiting || registration.installing;
     if (sw.state === 'activated') sendConfig();

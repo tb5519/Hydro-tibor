@@ -20,6 +20,7 @@ import {
 import { tryRedirectAsset } from '../lib/asset_delivery';
 import assetStorage from '../lib/asset_storage';
 import { isScratchDomain } from '../lib/domain_type';
+import { isMediaCacheRequest, setMediaCacheHeaders } from '../lib/media_cache';
 import { Logger } from '../logger';
 import { PERM, PRIV, STATUS } from '../model/builtin';
 import storage from '../model/storage';
@@ -136,6 +137,8 @@ export class AchievementImageHandler extends Handler {
         if (version && !versionedImage) throw new NotFoundError('成就图片版本已更新。');
         const meta = await storage.getMeta(imagePath);
         if (!meta) throw new NotFoundError('成就图片暂不可用。');
+        if ((isMediaCacheRequest(this) || this.request.query.__media_version)
+            && tryRedirectAsset(this, { path: imagePath, meta })) return;
         if (versionedImage) {
             // Keep the versioned image URL stable: caching a redirect would
             // eventually point to an expired CDN/OSS signature. storage.get streams
@@ -147,7 +150,7 @@ export class AchievementImageHandler extends Handler {
                 return tag === etag || tag === '*';
             });
             // Failed object reads must keep no-store instead of caching an error page.
-            if (!notModified) this.response.body = await storage.get(imagePath);
+            if (!notModified) this.response.body = await storage.get(imagePath, undefined, meta);
             this.response.type = 'image/png';
             this.response.addHeader('Cache-Control', 'private, max-age=31536000, immutable');
             this.response.addHeader('ETag', etag);
@@ -155,7 +158,7 @@ export class AchievementImageHandler extends Handler {
                 this.response.status = 304;
                 this.response.body = '';
                 this.context.status = 304;
-            }
+            } else setMediaCacheHeaders(this, { path: imagePath, meta });
             return;
         }
         if (tryRedirectAsset(this, { path: imagePath, meta })) return;
@@ -164,7 +167,8 @@ export class AchievementImageHandler extends Handler {
             return;
         }
         this.response.type = 'image/png';
-        this.response.body = await storage.get(imagePath);
+        this.response.body = await storage.get(imagePath, undefined, meta);
+        setMediaCacheHeaders(this, { path: imagePath, meta });
     }
 }
 
@@ -181,7 +185,8 @@ export class AchievementSoundHandler extends Handler {
             return;
         }
         this.response.type = sound.contentType || 'application/octet-stream';
-        this.response.body = await storage.get(sound.soundPath);
+        this.response.body = await storage.get(sound.soundPath, undefined, meta);
+        setMediaCacheHeaders(this, { path: sound.soundPath, meta });
     }
 }
 

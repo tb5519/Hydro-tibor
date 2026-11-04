@@ -7,6 +7,8 @@ import {
     TrainingNotFoundError, TrainingSelfEnrollDisabledError, ValidationError,
 } from '../error';
 import { Tdoc, TrainingDoc } from '../interface';
+import { tryRedirectAsset } from '../lib/asset_delivery';
+import { isMediaCacheRequest } from '../lib/media_cache';
 import { canManageTrainingPlans } from '../lib/training_access';
 import { PERM, PRIV, STATUS } from '../model/builtin';
 import domain from '../model/domain';
@@ -376,8 +378,10 @@ export class TrainingFileDownloadHandler extends Handler {
             target,
             size: file?.size || 0,
         });
+        if (file && noDisposition && (isMediaCacheRequest(this) || this.request.query?.__media_version)
+            && tryRedirectAsset(this, { path: target, meta: file })) return;
         this.response.redirect = await storage.signDownloadLink(
-            target, noDisposition ? undefined : filename, false, 'user',
+            target, noDisposition ? undefined : filename, false, 'user', file || undefined,
         );
     }
 }

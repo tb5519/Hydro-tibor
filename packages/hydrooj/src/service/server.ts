@@ -16,6 +16,7 @@ import type { ContestEntryContext } from '../lib/contest_entry';
 import { isHomePosterImageRequest } from '../lib/decorative_image_access';
 import { isDomainAvatarImageRequest } from '../lib/domain_avatar_access';
 import { isOjDomainPath, isScratchDomain, scratchObjectiveRoute } from '../lib/domain_type';
+import { publicMediaCache } from '../lib/public_media_cache';
 import { isScratchShareRequest } from '../lib/scratch_share_access';
 import { Logger } from '../logger';
 import { PERM, PRIV } from '../model/builtin';
@@ -163,8 +164,13 @@ export async function apply(ctx: Context) {
         for (const addon of [...Object.values(global.addons)].reverse()) {
             const dir = resolve(addon, 'public');
             if (!fs.existsSync(dir)) continue;
+            // Deployed containers also run the debug launcher with prepared UI assets.
+            if (!argv.options.public) {
+                server.addServerLayer(`${addon}_public_media`, publicMediaCache(dir));
+            }
             server.addServerLayer(`${addon}_public`, cache(dir, {
-                maxAge: argv.options.public ? 0 : 24 * 3600 * 1000,
+                // koa-static-cache expects seconds; versioned media above uses its own one-year policy.
+                maxAge: argv.options.public ? 0 : 24 * 3600,
                 // Local rebuilds create new hashed chunks after this cache is initialized.
                 dynamic: process.env.NODE_ENV === 'development',
             }));

@@ -73,6 +73,8 @@ function fixture(permissions = PERM.PERM_DEFAULT, privileges = PRIV.PRIV_USER_PR
         '@hydrooj/utils/lib/utils': { sortFiles: (files) => files },
         '../error': { PermissionError, ValidationError, ProblemNotFoundError, TrainingNotFoundError, TrainingAlreadyEnrollError: class extends Error {} },
         '../lib/training_access': access,
+        '../lib/asset_delivery': { tryRedirectAsset: () => false },
+        '../lib/media_cache': load('packages/hydrooj/src/lib/media_cache.ts'),
         '../model/builtin': { PERM, PRIV, STATUS: { STATUS_ACCEPTED: 1 } },
         '../model/domain': { getMultiUserInDomain: () => cursor([{ uid: 24 }]) },
         '../model/oplog': { log: async (...args) => { downloads.push(['log', ...args.slice(1)]); } },

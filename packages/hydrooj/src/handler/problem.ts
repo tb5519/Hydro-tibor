@@ -33,6 +33,7 @@ import {
     authorizeHomeworkReview, loadHomeworkReviewRecord, loadHomeworkReviewRecords, publicHomeworkReviewRecord, rejectHomeworkReviewMutation,
 } from '../lib/homework_review';
 import { isInlineRasterImage } from '../lib/inline_image';
+import { isMediaCacheRequest } from '../lib/media_cache';
 import { canAccessHomeworkProblem, loadMistakeHomework } from '../lib/mistake_access';
 import { getMistakePromptState } from '../lib/mistake_prompt';
 import {
@@ -1583,10 +1584,11 @@ export class ProblemFileDownloadHandler extends ProblemDetailHandler {
             target,
             size: file?.size || 0,
         });
-        if (type === 'additional_file' && noDisposition && file && isInlineRasterImage(filename, file)
+        if (type === 'additional_file' && noDisposition && file
+            && (isInlineRasterImage(filename, file) || isMediaCacheRequest(this) || this.request.query?.__media_version)
             && await tryRedirectAsset(this, { path: target, meta: file })) return;
         this.response.redirect = await storage.signDownloadLink(
-            target, noDisposition ? undefined : filename, false, 'user',
+            target, noDisposition ? undefined : filename, false, 'user', file || undefined,
         );
     }
 }

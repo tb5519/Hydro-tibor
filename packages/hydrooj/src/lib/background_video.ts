@@ -76,6 +76,8 @@ export async function redirectBackgroundVideo(handler: any, path: string, versio
         handler.response.redirect = await assetStorage.signDownloadLink(meta.remoteAsset);
         handler.response.status = 302;
     }
+    // Cache resolution and stale-version errors are private metadata responses.
+    if (handler.response.body?.mediaCache || handler.response.status >= 400) return;
     // Only an exact version may be cached. Public content-addressed copies can
     // last a year; signed fallbacks and protected backgrounds stay below their
     // signature validity and are isolated by the viewer's credentials.

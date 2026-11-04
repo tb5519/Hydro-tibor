@@ -1,5 +1,7 @@
 /// <reference no-default-lib="true" />
 /// <reference lib="webworker" />
+import { fetchCachedMedia, isMediaCacheRequest } from './utils/media-cache';
+
 export { }; // make it a module so that declare self works
 declare const self: ServiceWorkerGlobalScope;
 
@@ -94,10 +96,18 @@ function isScratchEntry(path: string) {
   return /\/scratch-editor\/[^/]+\.html$/.test(new URL(path, self.location.origin).pathname);
 }
 
+function isMediaFile(path: string) {
+  return /\.(?:png|jpe?g|gif|webp|avif|svg|ico|bmp|mp3|wav|ogg|m4a|aac|flac|mp4|webm|ogv|mov)$/i
+    .test(new URL(path, self.location.origin).pathname);
+}
+
 function shouldCachePath(path: string) {
   // The HTML entry selects a build. Cache only its versioned JS/assets, so
   // deployments cannot leave students running an old editor indefinitely.
   if (isScratchEntry(path)) return false;
+  // Public media follows versioned HTTP caching. Saving a followed redirect
+  // under a mutable image URL here would hide later replacements indefinitely.
+  if (isMediaFile(path)) return false;
   // Signed private media must obey HTTP expiry and account changes; never persist it in CacheStorage.
   const parsed = new URL(path, self.location.origin);
   if (/^\/media\/(?:decorations\/)?v1\//.test(parsed.pathname)
@@ -159,7 +169,7 @@ self.addEventListener('activate', (event) => {
       else if (name === PRECACHE || name === 'assets') {
         const cache = await caches.open(name);
         const entries = await cache.keys();
-        await Promise.all(entries.filter((entry) => isScratchEntry(entry.url))
+        await Promise.all(entries.filter((entry) => isScratchEntry(entry.url) || isMediaFile(entry.url))
           .map((entry) => cache.delete(entry)));
       }
     }));
@@ -256,6 +266,14 @@ self.addEventListener('fetch', (event: FetchEvent) => {
   }
   if (map.get(event.request.url)) {
     streamsaver(event);
+    return;
+  }
+  // Resolve the current authorized version even after the worker is restarted
+  // and before a page has supplied its optional static-resource configuration.
+  if (isMediaCacheRequest(event.request, self.location.origin)) {
+    event.respondWith(fetchCachedMedia(event.request, {
+      fetch: self.fetch.bind(self), caches: self.caches, origin: self.location.origin,
+    }));
     return;
   }
   if (!['get', 'post', 'head'].includes(event.request.method.toLowerCase())) return;
