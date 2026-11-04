@@ -86,7 +86,6 @@ export function eligibleAsset(path: string, contentType: string) {
         || /^user\/\d+\/[^/]+$/.test(path)
         || /^domain\/[^/]+\/avatar-[a-f0-9-]{36}\.png$/.test(path)
         || /^domain\/[^/]+\/home-poster-\d+\.[a-z0-9]+$/.test(path)
-        || /^domain\/[^/]+\/home-poster-mobile-\d+-[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}\.(png|jpe?g|webp)$/.test(path)
         || /^(?:domain\/[^/]+\/)?badge\/[^/]+\/(profile-background|ac-effect|theme-sound)-\d+\.[a-z0-9]+$/.test(path)
         || /^(?:domain\/[^/]+\/)?badge\/\d+\/badge-icon-\d+-[a-f0-9]{16}\.(?:png|jpe?g|gif|webp)$/.test(path)
         || /^achievement\/[a-f0-9]{32}\/[a-z0-9-]+\/[a-f0-9]{32}(?:-384)?\.png$/.test(path)

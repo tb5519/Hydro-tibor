@@ -6,7 +6,7 @@ import { isBackgroundVideoPath } from './background_video_path';
 import { getHomePosterConfig } from './home_poster';
 import { resolveBadgeLifetimes } from './user_badge_gallery';
 
-interface WarmVideo { url: string; poster: string }
+interface WarmVideo { url: string; poster: string; desktopOnly?: boolean }
 type RouteUrl = (routeName: string, args?: any) => string;
 
 /** The current domain's public homepage video needs no extra database reads. */
@@ -22,6 +22,7 @@ export function getHomeBackgroundVideoWarmup(
     const usesPopoutImage = home.layout === 'popout' && !!home.image;
     if (!usesPopoutImage && home.videoUpdatedAt && isBackgroundVideoPath(homePrefix, home.videoPath)) {
         items.push({
+            desktopOnly: true,
             url: routeUrl('home_background_video', { query: { v: home.videoUpdatedAt } }),
             poster: isBackgroundVideoPath(homePrefix, home.videoPosterPath, true)
                 ? routeUrl('home_background_video_poster', { query: { v: home.videoUpdatedAt } }) : '',

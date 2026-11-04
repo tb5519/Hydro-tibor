@@ -22,7 +22,9 @@ function harness(options = {}) {
     Object.defineProperty(doc, 'readyState', { value: options.loading ? 'loading' : 'complete', configurable: true });
     Object.defineProperty(doc, 'hidden', { value: !!options.hidden, configurable: true });
     win.UiContext = { backgroundVideoWarmup: { scope: options.scope || '42:python' } };
-    win.matchMedia = () => ({ matches: !!options.reduced });
+    const narrow = { matches: !!options.mobile, listener: null,
+        addEventListener(_, fn) { this.listener = fn; }, removeEventListener() { this.listener = null; } };
+    win.matchMedia = (query) => query === '(max-width: 767px)' ? narrow : { matches: !!options.reduced };
     const callbacks = new Map(); let next = 1;
     win.requestIdleCallback = (callback) => { const id = next++; callbacks.set(id, callback); return id; };
     win.cancelIdleCallback = (id) => callbacks.delete(id);
@@ -36,7 +38,7 @@ function harness(options = {}) {
     vm.runInNewContext(code, { module: mod, exports: mod.exports, URL, Date });
     const config = { scope: '42:python', items: [{ url: '/d/python/home/video?v=7', poster: '/d/python/home/video-poster?v=7' }] };
     return {
-        dom, win, doc, api: mod.exports, config, counters, callbacks,
+        dom, win, doc, narrow, api: mod.exports, config, counters, callbacks,
         idle() { const pending = [...callbacks.values()]; callbacks.clear(); for (const callback of pending) callback(); },
         start(value = config) { return mod.exports.startBackgroundVideoWarmup(value, win); },
         ready(video) { video._ready = 2; video.dispatchEvent(new win.Event('loadeddata')); },
@@ -68,6 +70,29 @@ test('background video warming waits for page load and idle; decodes without pla
         assert.deepEqual(Object.keys(JSON.parse(h.win.sessionStorage.getItem(key))), [video.src]);
         h.win.UiContext.backgroundVideoWarmup.scope = '99:python';
         assert.equal(h.api.hasBackgroundVideoReadyHint(h.config.items[0].url, h.win), false, 'readiness hints do not leak between accounts');
+    } finally { h.close(); }
+});
+
+test('mobile skips homepage video and cover warming but keeps badge videos, including deferred catalogs and resize recovery', async () => {
+    const h = harness({ mobile: true }); let requests = 0;
+    try {
+        h.win.fetch = async () => { requests++; return catalogResponse({ scope: '42:python', items: [
+            { ...h.config.items[0], desktopOnly: true }, { url: '/badge/8/background-video?v=10', poster: '/badge/8/background-video-poster?v=10' },
+        ] }); };
+        const binding = h.start({ ...h.config, catalog: '/background-video-warmup' }); h.idle(); await flush();
+        assert.equal(requests, 1);
+        assert.equal(h.doc.querySelectorAll('video').length, 1);
+        assert.match(h.doc.querySelector('video').src, /\/badge\/8\//);
+        assert.equal(h.doc.querySelector('video[src*="/home/video"]'), null);
+        assert.equal(h.doc.querySelector('video[poster*="/home/video-poster"]'), null);
+        h.narrow.matches = false; h.narrow.listener(); h.idle(); await flush();
+        assert.equal(h.doc.querySelectorAll('video').length, 2);
+        assert(h.doc.querySelector('video[src*="/home/video"]'));
+        assert.equal(requests, 1, 'resize reuses the validated catalog');
+        h.narrow.matches = true; h.narrow.listener(); h.idle(); await flush();
+        assert.equal(h.doc.querySelectorAll('video').length, 1);
+        assert.match(h.doc.querySelector('video').src, /\/badge\/8\//);
+        binding.dispose(); assert.equal(h.narrow.listener, null);
     } finally { h.close(); }
 });
 

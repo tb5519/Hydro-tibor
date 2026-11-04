@@ -5,9 +5,6 @@ export interface HomePosterConfig {
     layout: 'banner' | 'popout';
     storagePath?: string;
     updatedAt?: string;
-    mobileImage?: string;
-    mobileStoragePath?: string;
-    mobileUpdatedAt?: string;
     video?: string;
     videoPath?: string;
     videoPoster?: string;
@@ -29,9 +26,6 @@ export function getHomePosterConfig(domain: { _id?: string, homePoster?: unknown
         layout: raw.layout === 'popout' ? 'popout' : 'banner',
         storagePath: raw.storagePath ? `${raw.storagePath}` : undefined,
         updatedAt: raw.updatedAt ? `${raw.updatedAt}` : undefined,
-        mobileImage: raw.mobileImage ? `${raw.mobileImage}` : undefined,
-        mobileStoragePath: raw.mobileStoragePath ? `${raw.mobileStoragePath}` : undefined,
-        mobileUpdatedAt: raw.mobileUpdatedAt ? `${raw.mobileUpdatedAt}` : undefined,
         video: raw.video ? `${raw.video}` : undefined,
         videoPath: raw.videoPath ? `${raw.videoPath}` : undefined,
         videoPoster: raw.videoPoster ? `${raw.videoPoster}` : undefined,

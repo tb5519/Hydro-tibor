@@ -227,20 +227,13 @@ export function apply(ctx: Context, config: ReturnType<typeof Config>) {
     // Reuse the domain cache; no image/catalog queries on the page-render path. Only selected posters are public.
     if (that.response.template && !that.response.redirect && !that.request.json && !(that.response.status >= 400)) {
       const systemDomain = that.domain._id === 'system' ? that.domain : await DomainModel.get('system').catch(() => null);
-      const responsivePosters: { desktop: string; mobile: string }[] = [];
       const posters = [systemDomain, that.domain].filter(Boolean).flatMap((domain) => {
         const poster = getHomePosterConfig(domain);
         if (!isPublicHomePosterPath(domain._id, poster.storagePath)) return [];
-        const desktop = that.url('home_poster_image', { domainId: domain._id, query: { v: poster.updatedAt || '' } });
-        if (poster.layout !== 'popout' || !poster.image) return [desktop];
-        const mobile = isPublicHomePosterPath(domain._id, poster.mobileStoragePath)
-          ? that.url('home_poster_mobile_image', { domainId: domain._id, query: { v: poster.mobileUpdatedAt || '' } }) : '';
-        responsivePosters.push({ desktop, mobile });
-        return [];
+        return [that.url('home_poster_image', { domainId: domain._id, query: { v: poster.updatedAt || '' } })];
       });
       that.UiContext.imageWarmup = {
         posters: Array.from(new Set(posters)),
-        responsivePosters: Array.from(new Map(responsivePosters.map((poster) => [poster.desktop, poster])).values()),
         catalog: that.user._id > 1 ? that.url('image_warmup') : '',
         scope: `${that.user._id}:${that.domain._id}`,
         backgrounds: Array.from({ length: 21 }, (_, index) => staticAssetUrl(`/components/profile/backgrounds/${index + 1}.jpg`)),

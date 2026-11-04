@@ -1,6 +1,6 @@
 export interface BackgroundVideoWarmupConfig {
   scope?: string;
-  items?: { url: string; poster?: string }[];
+  items?: { url: string; poster?: string; desktopOnly?: boolean }[];
   catalog?: string;
 }
 
@@ -69,10 +69,13 @@ export function startBackgroundVideoWarmup(config: BackgroundVideoWarmupConfig, 
   if (existing) return existing;
   const connection = win.navigator?.connection;
   const motion = win.matchMedia?.('(prefers-reduced-motion: reduce)');
+  const narrow = win.matchMedia?.('(max-width: 767px)');
+  const isDesktopOnly = (item: { url: string; desktopOnly?: boolean }) => item.desktopOnly === true
+    || /\/home\/video$/.test(new URL(item.url, win.location.href).pathname);
   if (connection?.saveData || /^(slow-2g|2g|3g)$/.test(connection?.effectiveType || '') || motion?.matches) return noop;
   const sources = [...new Map((config.items || []).slice(0, 2).map((item) => {
     const url = stableUrl(item?.url, win);
-    return [url, { url, poster: stableUrl(item?.poster, win) }];
+    return [url, { url, poster: stableUrl(item?.poster, win), desktopOnly: item?.desktopOnly }];
   })).values()].filter((item) => item.url);
   const catalog = sameOriginUrl(config.catalog, win);
   if (!sources.length && !catalog) return noop;
@@ -82,6 +85,8 @@ export function startBackgroundVideoWarmup(config: BackgroundVideoWarmupConfig, 
   let stopped = false;
   let scheduled = false;
   let running = false;
+  let catalogLoaded = false;
+  let catalogItems: BackgroundVideoWarmupConfig['items'] = [];
   let idleHandle: number | null = null;
   let timerHandle: number | null = null;
   let catalogTimer: number | null = null;
@@ -109,11 +114,12 @@ export function startBackgroundVideoWarmup(config: BackgroundVideoWarmupConfig, 
     });
     ready();
   };
-  const warmItems = (items: { url: string; poster?: string }[]) => {
+  const warmItems = (items: NonNullable<BackgroundVideoWarmupConfig['items']>) => {
     for (const value of items.slice(0, 2)) {
       if (!allowed() || warmedUrls.size >= 2) break;
-      const item = { url: stableUrl(value?.url, win), poster: stableUrl(value?.poster, win) };
+      const item = { url: stableUrl(value?.url, win), poster: stableUrl(value?.poster, win), desktopOnly: value?.desktopOnly };
       if (!item.url || warmedUrls.has(item.url)) continue;
+      if (narrow?.matches && isDesktopOnly(item)) continue;
       warmedUrls.add(item.url);
       const video = [...doc.querySelectorAll<HTMLVideoElement>('video')].find((candidate) => (
         stableUrl(candidate.getAttribute('src') || candidate.currentSrc || candidate.querySelector('source')?.getAttribute('src'), win) === item.url
@@ -133,6 +139,7 @@ export function startBackgroundVideoWarmup(config: BackgroundVideoWarmupConfig, 
       if (hasBackgroundVideoReadyHint(item.url, win, config.scope)) continue;
       const preload = doc.createElement('video');
       preload.dataset.backgroundVideoWarmup = '';
+      if (isDesktopOnly(item)) preload.dataset.homeDesktopMedia = '';
       preload.muted = true;
       preload.defaultMuted = true;
       preload.playsInline = true;
@@ -159,13 +166,16 @@ export function startBackgroundVideoWarmup(config: BackgroundVideoWarmupConfig, 
     timerHandle = null;
     if (!allowed() || running) return;
     running = true;
-    // The public homepage source does not wait for the authenticated theme catalog.
-    warmItems(sources);
-    if (!catalog || !win.fetch || !win.AbortController || typeof config.scope !== 'string'
-      || !allowed() || warmedUrls.size >= 2) return;
-    controller = new win.AbortController();
-    catalogTimer = win.setTimeout(() => controller?.abort(), 15_000);
     try {
+      // Keep skipped desktop items available when a phone rotates/resizes wide.
+      // Badge preload is independent and remains available on narrow screens.
+      warmItems(sources);
+      warmItems(catalogItems);
+      if (catalogLoaded || !catalog || !win.fetch || !win.AbortController || typeof config.scope !== 'string'
+        || !allowed() || warmedUrls.size >= 2) return;
+      catalogLoaded = true;
+      controller = new win.AbortController();
+      catalogTimer = win.setTimeout(() => controller?.abort(), 15_000);
       const response = await win.fetch(catalog, {
         credentials: 'same-origin', priority: 'low', cache: 'no-store',
         headers: { Accept: 'application/json' }, signal: controller.signal,
@@ -175,11 +185,13 @@ export function startBackgroundVideoWarmup(config: BackgroundVideoWarmupConfig, 
       const data = await response.json();
       if (!allowed() || controller.signal.aborted || data?.scope !== config.scope || !Array.isArray(data.items)
         || (win.UiContext?.backgroundVideoWarmup?.scope && win.UiContext.backgroundVideoWarmup.scope !== config.scope)) return;
-      warmItems(data.items);
+      catalogItems = data.items.slice(0, 2);
+      warmItems(catalogItems);
     } catch { /* A failed or expired-login catalog never affects the page or the homepage preload. */ }
     finally {
       if (catalogTimer !== null) win.clearTimeout(catalogTimer);
       catalogTimer = null;
+      running = false;
     }
   };
   const runQuietly = () => { run().catch(() => {}); };
@@ -188,6 +200,16 @@ export function startBackgroundVideoWarmup(config: BackgroundVideoWarmupConfig, 
     scheduled = true;
     if (win.requestIdleCallback) idleHandle = win.requestIdleCallback(runQuietly, { timeout: 2000 });
     else timerHandle = win.setTimeout(runQuietly, 350);
+  };
+  const viewportChanged = () => {
+    if (narrow?.matches) {
+      for (const video of hiddenVideos) {
+        if (!video.hasAttribute('data-home-desktop-media')) continue;
+        warmedUrls.delete(stableUrl(video.getAttribute('src'), win));
+        cleanupVideo(video);
+      }
+    }
+    schedule();
   };
   const binding: BackgroundVideoWarmupBinding = {
     dispose() {
@@ -200,6 +222,7 @@ export function startBackgroundVideoWarmup(config: BackgroundVideoWarmupConfig, 
       win.removeEventListener('load', schedule);
       win.removeEventListener('pagehide', binding.dispose);
       doc.removeEventListener('visibilitychange', schedule);
+      narrow?.removeEventListener?.('change', viewportChanged);
       for (const remove of cleanupListeners) remove();
       for (const video of hiddenVideos) cleanupVideo(video);
       bindings.delete(doc);
@@ -209,6 +232,7 @@ export function startBackgroundVideoWarmup(config: BackgroundVideoWarmupConfig, 
   win.addEventListener('load', schedule, { once: true });
   win.addEventListener('pagehide', binding.dispose, { once: true });
   doc.addEventListener('visibilitychange', schedule);
+  narrow?.addEventListener?.('change', viewportChanged);
   schedule();
   return binding;
 }

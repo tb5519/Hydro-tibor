@@ -1,7 +1,6 @@
 interface WarmupConfig {
   poster?: string;
   posters?: string[];
-  responsivePosters?: { desktop: string; mobile?: string }[];
   backgrounds?: string[];
   catalog?: string;
   scope?: string;
@@ -14,6 +13,7 @@ export function startImageWarmup(config: WarmupConfig, env: any = window) {
   const connection = env.navigator?.connection;
   if (connection?.saveData || /(^|-)2g$/.test(connection?.effectiveType || '')) return;
   const doc = env.document;
+  const narrow = env.matchMedia?.('(max-width: 767px)');
   const mobile = connection?.effectiveType === '3g';
   const limit = mobile ? 8 * 1024 * 1024 : 20 * 1024 * 1024;
   const deadline = Date.now() + 90_000;
@@ -21,7 +21,11 @@ export function startImageWarmup(config: WarmupConfig, env: any = window) {
   let spent = 0;
   let count = 0;
   let stopped = false;
-  env.addEventListener('pagehide', () => { stopped = true; controller.abort(); }, { once: true });
+  env.addEventListener('pagehide', () => {
+    stopped = true;
+    controller.abort();
+    narrow?.removeEventListener?.('change', onViewportChange);
+  }, { once: true });
   const key = `onebyone-image-warmup:v1:${config.scope || 'guest'}`;
   let remembered: Record<string, number> = {};
   try { remembered = JSON.parse(env.sessionStorage.getItem(key) || '{}'); } catch { /* Optional. */ }
@@ -65,17 +69,28 @@ export function startImageWarmup(config: WarmupConfig, env: any = window) {
       return true;
     } catch { return false; } finally { env.clearTimeout(timeout); }
   };
-  const run = async () => {
-    // Start the public poster on every page, including login, without waiting for authentication or main UI startup.
-    await idle();
-    // Match the homepage <picture> breakpoint; warm only the variant this viewport displays.
-    const narrow = env.matchMedia?.('(max-width: 767px)').matches;
-    const responsive = (config.responsivePosters || []).map((poster) => (narrow && poster.mobile) || poster.desktop);
-    const posters = [...new Set([...responsive, ...(config.posters || (config.poster ? [config.poster] : []))])];
+  let posterTask: Promise<void> | null = null;
+  const warmPosters = async () => {
+    const posters = [...new Set(config.posters || (config.poster ? [config.poster] : []))];
     for (const url of posters.slice(0, 2)) {
-      if (!canContinue() || controller.signal.aborted) return;
+      // Phone homepages use their default illustration, never image/video art.
+      if (narrow?.matches || !canContinue() || controller.signal.aborted) return;
       await warm({ url, size: 8 * 1024 * 1024 });
     }
+  };
+  const preloadPosters = () => {
+    if (!posterTask) posterTask = warmPosters().finally(() => { posterTask = null; });
+    return posterTask;
+  };
+  function onViewportChange() {
+    if (!narrow?.matches) preloadPosters().catch(() => {});
+  }
+  narrow?.addEventListener?.('change', onViewportChange);
+  const run = async () => {
+    // Public desktop posters may warm before login/main UI startup. Badge and
+    // profile imagery below keeps its existing independent mobile behavior.
+    await idle();
+    await preloadPosters();
     if (mobile || controller.signal.aborted || !canContinue()) return;
     if (doc.readyState !== 'complete') await new Promise<void>((done) => env.addEventListener('load', () => done(), { once: true }));
     for (const url of (config.backgrounds || []).slice(0, 21)) {

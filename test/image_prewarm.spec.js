@@ -126,32 +126,30 @@ it('warms all three image variants for an eight-badge catalog page without dropp
     assert.equal(f.requests.at(-1), 'https://onebyone.test/badge/8/image-23?v=1');
 });
 
-it('warms only the responsive poster matching the homepage viewport and falls back to desktop without mobile artwork', async () => {
-    const variants = [{ desktop: '/home/poster?v=desktop-2', mobile: '/home/poster-mobile?v=mobile-3' }];
-    for (const narrow of [true, false]) {
-        const f = environment();
-        f.env.matchMedia = (query) => { assert.equal(query, '(max-width: 767px)'); return { matches: narrow }; };
-        startImageWarmup({ responsivePosters: variants }, f.env);
-        await settle();
-        assert.deepEqual(f.requests, [`https://onebyone.test${narrow ? variants[0].mobile : variants[0].desktop}`]);
-    }
-    const f = environment(); f.env.matchMedia = () => ({ matches: true });
-    startImageWarmup({ responsivePosters: [{ desktop: variants[0].desktop }] }, f.env);
-    await settle();
-    assert.deepEqual(f.requests, [`https://onebyone.test${variants[0].desktop}`]);
+it('skips all homepage posters on phones while keeping profile imagery, then warms posters after widening', async () => {
+    const f = environment();
+    const viewport = { matches: true, listener: null, addEventListener(_, fn) { this.listener = fn; }, removeEventListener() { this.listener = null; } };
+    f.env.matchMedia = () => viewport;
+    const config = { posters: ['/home/poster?v=1', '/d/other/home/poster?v=2'], backgrounds: ['/components/profile/backgrounds/1.jpg'] };
+    startImageWarmup(config, f.env); await settle();
+    assert.deepEqual(f.requests, ['https://onebyone.test/components/profile/backgrounds/1.jpg']);
+    viewport.matches = false; viewport.listener(); await settle();
+    assert.deepEqual(f.requests.slice(1), ['https://onebyone.test/home/poster?v=1', 'https://onebyone.test/d/other/home/poster?v=2']);
+    viewport.matches = true; viewport.listener(); await settle();
+    assert.equal(f.requests.length, 3);
+    f.listeners.pagehide(); assert.equal(viewport.listener, null);
 });
 
-it('keeps legacy poster lists compatible while deduplicating responsive candidates within the existing limit', async () => {
+it('keeps desktop poster lists compatible, deduplicated and capped at two', async () => {
     const f = environment();
-    startImageWarmup({ responsivePosters: [{ desktop: '/home/poster?v=1' }, { desktop: '/home/poster?v=1' }],
-        posters: ['/home/poster?v=1', '/d/other/home/poster?v=2', '/d/third/home/poster?v=3'] }, f.env);
+    startImageWarmup({ posters: ['/home/poster?v=1', '/home/poster?v=1', '/d/other/home/poster?v=2', '/d/third/home/poster?v=3'] }, f.env);
     await settle();
     assert.deepEqual(f.requests, ['https://onebyone.test/home/poster?v=1', 'https://onebyone.test/d/other/home/poster?v=2']);
 });
 
-it('page context exposes mobile candidates only for active popout images and valid current-domain storage paths', () => {
+it('page context publishes only desktop poster candidates and ignores retired mobile settings', () => {
     const source = fs.readFileSync(path.join(root, 'packages/ui-default/index.ts'), 'utf8');
-    const begin = source.indexOf('      const responsivePosters:');
+    const begin = source.indexOf('      const posters = [systemDomain');
     const end = source.indexOf('      that.UiContext.backgroundVideoWarmup', begin);
     assert(begin > 0 && end > begin);
     const module = { exports: {} };
@@ -168,13 +166,9 @@ it('page context exposes mobile candidates only for active popout images and val
     const build = (homePoster, systemDomain = null) => module.exports.build({ domain: { _id: 'class-a', homePoster },
         UiContext: {}, user: { _id: 1 }, url }, systemDomain);
     const result = build(poster, { _id: 'class-a', homePoster: poster });
-    assert.equal(result.posters.length, 0);
-    assert.equal(result.responsivePosters.length, 1);
-    assert.equal(result.responsivePosters[0].desktop, 'home_poster_image:class-a:desktop');
-    assert.equal(result.responsivePosters[0].mobile, 'home_poster_mobile_image:class-a:mobile');
-    assert.equal(build({ ...poster, mobileStoragePath: 'domain/other/home-poster-mobile-456.webp' }).responsivePosters[0].mobile, '');
-    for (const config of [{ ...poster, layout: 'banner' }, { ...poster, image: '' }]) {
-        assert.equal(build(config).responsivePosters.length, 0);
-        assert.equal(build(config).posters.length, 1);
-    }
+    assert.equal(result.posters.length, 1);
+    assert.equal(result.posters[0], 'home_poster_image:class-a:desktop');
+    assert.equal('responsivePosters' in result, false);
+    assert.equal(JSON.stringify(result).includes('mobile'), false);
+    assert.equal(build({ ...poster, storagePath: 'domain/other/home-poster-123.webp' }).posters.length, 0);
 });

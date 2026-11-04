@@ -1,5 +1,4 @@
 import { readFile } from 'fs/promises';
-import { randomUUID } from 'crypto';
 import path from 'path';
 import { load } from 'js-yaml';
 import type { Dictionary } from 'lodash';
@@ -255,9 +254,6 @@ class DomainHomePosterHandler extends ManageHandler {
                 query: { v: config.updatedAt || '' },
             });
         }
-        if (config.mobileStoragePath) {
-            config.mobileImage = this.url('home_poster_mobile_image', { query: { v: config.mobileUpdatedAt || '' } });
-        }
         if (config.videoPath) config.video = this.url('home_background_video', { query: { v: config.videoUpdatedAt || '' } });
         if (config.videoPosterPath) config.videoPoster = this.url('home_background_video_poster', { query: { v: config.videoUpdatedAt || '' } });
         this.response.template = 'domain_home_poster.html';
@@ -316,43 +312,6 @@ class DomainHomePosterHandler extends ManageHandler {
         await this.savePosterFields({ image: '', storagePath: '', updatedAt: '' });
         if (isPublicHomePosterPath(this.domain._id, oldConfig.storagePath)) {
             storage.del([oldConfig.storagePath], this.user._id).catch(() => undefined);
-        }
-        this.response.redirect = this.url('domain_home_poster', { query: { cleared: 1 } });
-    }
-
-    @param('operation', Types.String)
-    async postUploadMobile() {
-        const domainId = this.domain._id;
-        const file = this.request.files?.file;
-        if (!file || file.size > DOMAIN_POSTER_MAX_SIZE) throw new ValidationError('poster');
-        const ext = path.extname(file.originalFilename || '').toLowerCase();
-        if (!DOMAIN_POSTER_EXTS.includes(ext)) throw new ValidationError('poster');
-        const oldConfig = getHomePosterConfig(this.domain);
-        const storagePath = `domain/${domainId}/home-poster-mobile-${Date.now()}-${randomUUID()}${ext}`;
-        await storage.put(storagePath, file.filepath, this.user._id);
-        const mobileUpdatedAt = new Date().toISOString();
-        try {
-            await this.savePosterFields({
-                mobileImage: this.url('home_poster_mobile_image', { query: { v: mobileUpdatedAt } }),
-                mobileStoragePath: storagePath,
-                mobileUpdatedAt,
-            });
-        } catch (error) {
-            await storage.del([storagePath], this.user._id).catch(() => undefined);
-            throw error;
-        }
-        if (isPublicHomePosterPath(domainId, oldConfig.mobileStoragePath) && oldConfig.mobileStoragePath !== storagePath) {
-            storage.del([oldConfig.mobileStoragePath], this.user._id).catch(() => undefined);
-        }
-        this.posterSaved();
-    }
-
-    @param('operation', Types.String)
-    async postClearMobile() {
-        const oldConfig = getHomePosterConfig(this.domain);
-        await this.savePosterFields({ mobileImage: '', mobileStoragePath: '', mobileUpdatedAt: '' });
-        if (isPublicHomePosterPath(this.domain._id, oldConfig.mobileStoragePath)) {
-            storage.del([oldConfig.mobileStoragePath], this.user._id).catch(() => undefined);
         }
         this.response.redirect = this.url('domain_home_poster', { query: { cleared: 1 } });
     }

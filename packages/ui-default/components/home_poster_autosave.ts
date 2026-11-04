@@ -12,7 +12,7 @@ export function bindHomePosterAutosave(root: HTMLElement | null, env: any = wind
   try {
     const saved = JSON.parse(env.sessionStorage?.getItem(scrollKey) || 'null');
     env.sessionStorage?.removeItem(scrollKey);
-    if (saved && Date.now() - saved.at < 60_000 && ['layout', 'image', 'mobile'].includes(saved.kind)
+    if (saved && Date.now() - saved.at < 60_000 && ['layout', 'image'].includes(saved.kind)
       && Number.isFinite(saved.top) && env.scrollTo) {
       const anchor = root.querySelector<HTMLElement>(`[data-poster-autosave="${saved.kind}"]`);
       const restore = () => {

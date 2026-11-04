@@ -389,9 +389,6 @@ export interface DomainDoc extends Record<string, any> {
         layout?: 'banner' | 'popout';
         storagePath?: string;
         updatedAt?: string;
-        mobileImage?: string;
-        mobileStoragePath?: string;
-        mobileUpdatedAt?: string;
         video?: string;
         videoPath?: string;
         videoPoster?: string;

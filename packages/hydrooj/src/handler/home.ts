@@ -570,9 +570,6 @@ export class HomeHandler extends Handler {
                 query: { v: homePoster.updatedAt || '' },
             });
         }
-        if (homePoster.mobileStoragePath) {
-            homePoster.mobileImage = this.url('home_poster_mobile_image', { query: { v: homePoster.mobileUpdatedAt || '' } });
-        }
         if (homePoster.videoPath) homePoster.video = this.url('home_background_video', { query: { v: homePoster.videoUpdatedAt || '' } });
         if (homePoster.videoPosterPath) {
             homePoster.videoPoster = this.url('home_background_video_poster', { query: { v: homePoster.videoUpdatedAt || '' } });
@@ -702,10 +699,6 @@ class HomePosterImageHandler extends Handler {
         this.response.addHeader('Cache-Control', 'no-store');
         this.response.addHeader('X-Content-Type-Options', 'nosniff');
     }
-}
-
-class HomePosterMobileImageHandler extends HomePosterImageHandler {
-    protected getStoragePath() { return getHomePosterConfig(this.domain).mobileStoragePath; }
 }
 
 class HomeBackgroundVideoHandler extends Handler {
@@ -1417,7 +1410,6 @@ export async function apply(ctx: Context) {
     ctx.Route('image_warmup', '/image-warmup', ImageWarmupHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('background_video_warmup', '/background-video-warmup', BackgroundVideoWarmupHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_poster_image', '/home/poster', HomePosterImageHandler);
-    ctx.Route('home_poster_mobile_image', '/home/poster-mobile', HomePosterMobileImageHandler);
     ctx.Route('home_background_video', '/home/video', HomeBackgroundVideoHandler);
     ctx.Route('home_background_video_poster', '/home/video-poster', HomeBackgroundVideoPosterHandler);
     ctx.Route('service_worker_config', '/service-worker-config', ServiceWorkerConfigHandler);

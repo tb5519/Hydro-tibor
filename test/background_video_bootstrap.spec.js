@@ -5,13 +5,14 @@ const nunjucks = require('nunjucks');
 const { JSDOM } = require('jsdom');
 const templateRoot = path.resolve(__dirname, '../packages/ui-default/templates');
 const env = new nunjucks.Environment(new nunjucks.FileSystemLoader(templateRoot), { autoescape: true });
-function fixture(reduced = false, source = '/home/video?v=version', warm = false) {
+function fixture(reduced = false, source = '/home/video?v=version', warm = false, desktopOnly = false, mobile = false) {
     const html = '<div data-loop-background><img src="/picture.jpg">'
-        + env.render('partials/background_video.html', { backgroundVideoSource: source, backgroundVideoPoster: '/home/video-poster?v=version' }) + '</div>';
+        + env.render('partials/background_video.html', { backgroundVideoSource: source, backgroundVideoPoster: '/home/video-poster?v=version', backgroundVideoDesktopOnly: desktopOnly }) + '</div>';
     const frames = new Map(); let count = 0;
+    const narrow = { matches: mobile, listener: null, addEventListener(_, fn) { this.listener = fn; }, removeEventListener() { this.listener = null; } };
     const dom = new JSDOM(html, { url: 'https://site.test/', runScripts: 'dangerously', pretendToBeVisual: true,
         beforeParse(win) {
-            win.matchMedia = () => ({ matches: reduced });
+            win.matchMedia = (query) => query === '(max-width: 767px)' ? narrow : { matches: reduced };
             win.UiContext = JSON.stringify({ backgroundVideoWarmup: { scope: '9:system' } });
             if (warm) win.sessionStorage.setItem('onebyone-background-video-ready:v1:9:system', JSON.stringify({ 'https://site.test/home/video?v=version': Date.now() }));
             const prototype = win.HTMLMediaElement.prototype;
@@ -22,9 +23,36 @@ function fixture(reduced = false, source = '/home/video?v=version', warm = false
             win.HTMLVideoElement.prototype.requestVideoFrameCallback = (callback) => { frames.set(++count, callback); return count; };
             win.HTMLVideoElement.prototype.cancelVideoFrameCallback = (id) => frames.delete(id);
         } });
-    return { dom, root: dom.window.document.querySelector('[data-loop-background]'), video: dom.window.document.querySelector('video'),
+    return { dom, narrow, root: dom.window.document.querySelector('[data-loop-background]'), video: dom.window.document.querySelector('video'),
         frame() { const pending = [...frames.values()]; frames.clear(); for (const callback of pending) callback(); } };
 }
+test('homepage SSR exposes no downloadable media on phones; early bootstrap restores desktop on rotation without the application bundle', () => {
+    const html = env.render('partials/background_video.html', { backgroundVideoSource: '/home/video?v=version',
+        backgroundVideoPoster: '/home/video-poster?v=version', backgroundVideoDesktopOnly: true });
+    const parser = new JSDOM(html);
+    try {
+        const video = parser.window.document.querySelector('video');
+        assert.equal(video.getAttribute('src'), null);
+        assert.equal(video.getAttribute('poster'), null);
+        assert.equal(video.getAttribute('preload'), 'none');
+        assert.equal(video.hasAttribute('autoplay'), false);
+    } finally { parser.window.close(); }
+    const f = fixture(false, '/home/video?v=version', true, true, true);
+    try {
+        assert.equal(f.video.getAttribute('src'), null); assert.equal(f.video.getAttribute('poster'), null);
+        assert(!f.root.classList.contains('is-video-restoring'));
+        f.narrow.matches = false; f.narrow.listener();
+        assert.equal(f.video.src, 'https://site.test/home/video?v=version');
+        assert.equal(f.video.poster, 'https://site.test/home/video-poster?v=version');
+        f.video._ready = 2; f.video._paused = false; f.video.dispatchEvent(new f.dom.window.Event('playing')); f.frame();
+        assert(f.root.classList.contains('is-video-playing'));
+        f.narrow.matches = true; f.narrow.listener();
+        assert.equal(f.video.getAttribute('src'), null); assert.equal(f.video.getAttribute('poster'), null);
+        assert(!f.root.classList.contains('is-video-playing'));
+        f.video.dispatchEvent(new f.dom.window.Event('hydro-background-managed'));
+        assert.equal(f.narrow.listener, null);
+    } finally { f.dom.window.close(); }
+});
 test('HTML declares early muted preload and reveals a decoded frame before any application bundle is loaded', () => {
     const f = fixture(); const win = f.dom.window;
     try {

@@ -14,8 +14,7 @@
   .domain-poster__preview { position: relative; overflow: hidden; margin-top: 18px; border: 1px solid #dbe7f3; border-radius: 13px; background: #f8fafc; aspect-ratio: 18 / 5; }
   .domain-poster__preview img { display: block; width: 100%; height: 100%; object-fit: fill; }
   .domain-poster__preview--popout { aspect-ratio: 10 / 3; border: 0; border-radius: 0; background: #edf0f2; }
-  .domain-poster__preview--popout img, .domain-poster__preview--mobile img { object-fit: contain; }
-  .domain-poster__preview--mobile { width: min(100%, 280px); aspect-ratio: 4 / 5; background: #edf0f2; }
+  .domain-poster__preview--popout img { object-fit: contain; }
   .domain-poster__modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .domain-poster__form .domain-poster__mode { position: relative; display: block; cursor: pointer; }
   .domain-poster__mode input { position: absolute; top: 18px; left: 16px; width: 16px; height: 16px; margin: 0; accent-color: #2563eb; }
@@ -47,7 +46,7 @@
 <div class="domain-poster" data-poster-settings>
   <section class="domain-poster__hero">
     <h1>{{ _('首页海报') }}</h1>
-    <p>{{ _('让课堂有自己的首页。选择横幅或出框立体图，首页标题和按钮仍可正常使用。') }}</p>
+    <p>{{ _('设置电脑端首页的横幅或出框立体图。手机端保持默认首页，不显示海报或背景视频。') }}</p>
     <p class="domain-poster__notice">{{ _('当前展示方式') }}：<strong>{% if popoutLayout %}{{ _('出框立体图') }}{% else %}{{ _('普通横幅') }}{% endif %}</strong></p>
     {% if popoutLayout and not config.image %}<p class="domain-poster__notice">{{ _('请上传桌面出框图片以启用立体展示；上传前仍使用原横幅或默认背景。') }}</p>{% endif %}
     {% if popoutLayout and config.image %}
@@ -107,22 +106,6 @@
       </div>
     </form>
     {% if config.image %}<form method="post" class="domain-poster__secondary"><input type="hidden" name="operation" value="clear"><button class="rounded button" type="submit">{{ _('移除图片') }}</button></form>{% endif %}
-  </section>
-  <section class="domain-poster__card">
-    <h2>{{ _('手机出框图片') }} <span class="domain-poster__notice">{{ _('选填') }}</span></h2>
-    <p>{{ _('用于出框模式的手机页面，建议单独构图：文字按钮在上，人物和突出元素在下。未上传时会使用桌面图的兼容布局。') }}</p>
-    <div class="domain-poster__spec">{{ _('完整画布') }} <strong>1200 × 1500 px</strong>（4:5） · {{ _('推荐透明 PNG 或 WebP') }}<br>{{ _('中央画面') }} <strong>1080 × 1260 px</strong>，{{ _('左上角') }} <strong>(60, 120)</strong><br>{{ _('文字按钮安全区') }} <strong>960 × 500 px</strong>，{{ _('左上角') }} <strong>(120, 200)</strong></div>
-    {% if config.mobileImage %}
-      <div class="domain-poster__preview domain-poster__preview--mobile"><img src="{{ config.mobileImage }}" alt="{{ _('当前手机出框图片') }}" loading="lazy"></div>
-    {% endif %}
-    <form method="post" enctype="multipart/form-data" class="domain-poster__form" data-poster-autosave="mobile">
-      <input type="hidden" name="operation" value="upload_mobile">
-      <label>{{ _('选择手机图片') }}<input class="textbox domain-poster__file" type="file" name="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required></label>
-      <p class="domain-poster__notice domain-poster__autosave">{{ _('选择后自动上传并保存。') }}</p>
-      <div class="domain-poster__status" data-poster-status role="status" aria-live="polite"></div>
-      <div class="domain-poster__actions"><button class="rounded primary button" type="submit" data-poster-submit>{{ _('保存手机图片') }}</button><span class="domain-poster__notice">{{ _('JPG、PNG、WEBP · 最大 8MB') }}</span></div>
-    </form>
-    {% if config.mobileImage %}<form method="post" class="domain-poster__secondary"><input type="hidden" name="operation" value="clear_mobile"><button class="rounded button" type="submit">{{ _('移除手机图片') }}</button></form>{% endif %}
   </section>
   <section class="domain-poster__card">
     <h2>{{ _('循环视频') }}</h2>

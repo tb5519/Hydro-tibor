@@ -15,7 +15,7 @@ vm.runInNewContext(transformSync(fs.readFileSync(path.join(root, 'packages/ui-de
 const { bindHomePosterAutosave } = moduleUnderTest.exports;
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 function fixture(fetcher = async () => ({ ok: true, headers: new Headers({ 'Content-Type': 'application/json' }), json: async () => ({ success: true, url: '/domain/home-poster?saved=1' }) })) {
-    const dom = new JSDOM(templates.renderString(template, { config: { image: '/old.png', mobileImage: '/old-mobile.png', layout: 'banner' }, videoMaxSizeMb: 40, _: (text) => text }), { url: 'https://onebyone.test/domain/home-poster' });
+    const dom = new JSDOM(templates.renderString(template, { config: { image: '/old.png', layout: 'banner' }, videoMaxSizeMb: 40, _: (text) => text }), { url: 'https://onebyone.test/domain/home-poster' });
     const doc = dom.window.document;
     const calls = []; const navigations = [];
     const env = { location: { href: dom.window.location.href, origin: dom.window.location.origin, assign: (url) => navigations.push(url) },
@@ -53,13 +53,13 @@ it('one mode selection saves immediately with the chosen layout and refreshes th
     f.dom.window.close();
 });
 
-it('selecting desktop or mobile artwork uploads immediately without a second button click', async () => {
-    for (const kind of ['image', 'mobile']) {
+it('selecting desktop artwork uploads immediately without a second button click', async () => {
+    for (const kind of ['image']) {
         const f = fixture();
         f.choose(kind, 'new-poster.webp', 128, 'image/webp');
         assert.equal(f.calls.length, 1);
         const body = f.calls[0][1].body;
-        assert.equal(body.get('operation'), kind === 'image' ? 'upload' : 'upload_mobile');
+        assert.equal(body.get('operation'), 'upload');
         assert.equal(body.get('file').name, 'new-poster.webp');
         assert.equal(body.get('file').size, 128);
         await settle(); assert.equal(f.navigations.length, 1); f.dom.window.close();
@@ -99,9 +99,9 @@ it('HTML login redirects or foreign success destinations are not treated as succ
         { ok: true, headers: new Headers({ 'Content-Type': 'text/html' }) },
         { ok: true, headers: new Headers({ 'Content-Type': 'application/json' }), json: async () => ({ success: true, url: 'https://other.test/' }) },
     ]) {
-        const f = fixture(async () => result); f.choose('mobile', 'phone.png'); await settle();
+        const f = fixture(async () => result); f.choose('image', 'phone.png'); await settle();
         assert.equal(f.navigations.length, 0);
-        assert.equal(f.doc.querySelector('[data-poster-autosave="mobile"] [data-poster-status]').dataset.state, 'error');
+        assert.equal(f.doc.querySelector('[data-poster-autosave="image"] [data-poster-status]').dataset.state, 'error');
         f.dom.window.close();
     }
 });
@@ -110,25 +110,28 @@ it('ordinary forms and save buttons stay available without enhancement; binding 
     const f = fixture();
     bindHomePosterAutosave(f.panel, f.env);
     f.choose('image', 'once.png'); await settle(); assert.equal(f.calls.length, 1);
-    for (const kind of ['layout', 'image', 'mobile']) {
+    for (const kind of ['layout', 'image']) {
         const form = f.doc.querySelector(`[data-poster-autosave="${kind}"]`);
         assert.equal(form.method, 'post'); assert(form.querySelector('[data-poster-submit]'));
     }
     const doc = new JSDOM(templates.renderString(template, { config: {}, videoMaxSizeMb: 40, _: (text) => text })).window.document;
     const panel = doc.querySelector('[data-poster-settings]'); bindHomePosterAutosave(panel, {});
     assert.equal(panel.classList.contains('is-enhanced'), false);
-    assert.equal(doc.querySelectorAll('[data-poster-submit]').length, 3);
+    assert.equal(doc.querySelectorAll('[data-poster-submit]').length, 2);
+    assert.equal(doc.querySelector('[data-poster-autosave="mobile"]'), null);
+    assert.equal(doc.querySelector('input[name="operation"][value="upload_mobile"]'), null);
+    assert.equal(doc.querySelector('input[name="operation"][value="clear_mobile"]'), null);
     f.dom.window.close();
 });
 
 it('successful saves remember the edited card and restore its viewport position once after refresh', async () => {
     const f = fixture(); const stored = new Map();
     f.env.sessionStorage = { getItem: (key) => stored.get(key), setItem: (key, value) => stored.set(key, value), removeItem: (key) => stored.delete(key) };
-    const form = f.doc.querySelector('[data-poster-autosave="mobile"]');
+    const form = f.doc.querySelector('[data-poster-autosave="image"]');
     form.getBoundingClientRect = () => ({ top: 240 });
-    f.choose('mobile', 'phone.png'); await settle();
+    f.choose('image', 'phone.png'); await settle();
     const key = 'onebyone-home-poster-scroll:/domain/home-poster';
-    assert.equal(JSON.parse(stored.get(key)).kind, 'mobile');
+    assert.equal(JSON.parse(stored.get(key)).kind, 'image');
     assert.equal(JSON.parse(stored.get(key)).top, 240);
     const next = fixture();
     delete next.panel.dataset.posterBound;
@@ -137,7 +140,7 @@ it('successful saves remember the edited card and restore its viewport position 
     let scrolled;
     next.env.scrollTo = (value) => { scrolled = value.top; };
     next.env.requestAnimationFrame = (callback) => callback();
-    next.doc.querySelector('[data-poster-autosave="mobile"]').getBoundingClientRect = () => ({ top: 540 });
+    next.doc.querySelector('[data-poster-autosave="image"]').getBoundingClientRect = () => ({ top: 540 });
     bindHomePosterAutosave(next.panel, next.env);
     assert.equal(scrolled, 400);
     assert.equal(stored.has(key), false, 'restore marker is single-use');

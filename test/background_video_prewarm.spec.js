@@ -62,10 +62,12 @@ it('warms only current homepage and own selected theme, using stable versioned r
     assert.match(result.items[0].url, /^\/d\/class-a\/home\/video\?v=/);
     assert.match(result.items[1].url, /^\/d\/class-a\/badge\/7\/background-video\?v=/);
     for (const item of result.items) {
-        assert.deepEqual(Object.keys(item).sort(), ['poster', 'url']);
+        assert.deepEqual(Object.keys(item).sort(), item === result.items[0] ? ['desktopOnly', 'poster', 'url'] : ['poster', 'url']);
         assert.equal(new URL(item.url, 'https://onebyone.test').searchParams.get('v'), version);
         assert.equal(new URL(item.poster, 'https://onebyone.test').searchParams.get('v'), version);
     }
+    assert.equal(result.items[0].desktopOnly, true);
+    assert.equal(result.items[1].desktopOnly, undefined, 'badge videos remain available on mobile');
     for (const call of f.calls.filter((call) => call.name !== 'user')) {
         assert.equal(call.query.domainId, 'class-a');
         if (call.name === 'userBadge') assert.equal(call.query.owner, 42);

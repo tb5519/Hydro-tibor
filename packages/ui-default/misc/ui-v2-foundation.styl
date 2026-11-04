@@ -158,13 +158,10 @@ html.page--homepage
     padding: rem(20px 18px 22px)
     min-height: rem(260px)
 
-.page--homepage .ui-v2-home__hero--poster
-  aspect-ratio: 18 / 5
-  min-height: rem(320px)
-
-  @media screen and (max-width: 640px)
-    aspect-ratio: auto
-    min-height: rem(260px)
+@media (min-width: 768px)
+  .page--homepage .ui-v2-home__hero--poster
+    aspect-ratio: 18 / 5
+    min-height: rem(320px)
 
 .page--homepage .ui-v2-home__hero-poster
   position: absolute
@@ -178,9 +175,10 @@ html.page--homepage
   visibility: hidden
   display: block
 
-.page--homepage .ui-v2-home__hero--poster-ready .ui-v2-home__hero-poster
-  opacity: 1
-  visibility: visible
+@media (min-width: 768px)
+  .page--homepage .ui-v2-home__hero--poster-ready .ui-v2-home__hero-poster
+    opacity: 1
+    visibility: visible
 
 .page--homepage .ui-v2-home__hero-inner
   position: relative
@@ -233,12 +231,10 @@ html.page--homepage
   +below(rupture.desktop-cutoff)
     min-height: rem(180px)
 
-.page--homepage .ui-v2-home__hero--poster-ready .ui-v2-home__hero-visual
-  opacity: 0
-  pointer-events: none
-
-  @media screen and (max-width: 640px)
-    display: none
+@media (min-width: 768px)
+  .page--homepage .ui-v2-home__hero--poster-ready .ui-v2-home__hero-visual
+    opacity: 0
+    pointer-events: none
 
 .page--homepage .ui-v2-home__hero-panel
   position: relative

@@ -11,11 +11,12 @@ const code = buildSync({
 }).outputFiles[0].text;
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
-function harness(html = '<div data-loop-background data-background-video-src="https://cdn.example.test/loop.mp4"><img src="/poster.jpg"></div>', reduced = false) {
+function harness(html = '<div data-loop-background data-background-video-src="https://cdn.example.test/loop.mp4"><img src="/poster.jpg"></div>', reduced = false, mobile = false) {
     const dom = new JSDOM(html, { url: 'https://example.test/manage', pretendToBeVisual: true });
     const win = dom.window; const doc = win.document;
     const motion = { matches: reduced, listener: null, addEventListener(_, listener) { this.listener = listener; }, removeEventListener() { this.listener = null; } };
-    win.matchMedia = () => motion;
+    const narrow = { matches: mobile, listener: null, addEventListener(_, listener) { this.listener = listener; }, removeEventListener() { this.listener = null; } };
+    win.matchMedia = (query) => query === '(max-width: 767px)' ? narrow : motion;
     let observer;
     win.IntersectionObserver = class {
         constructor(callback) { this.callback = callback; observer = this; }
@@ -42,7 +43,7 @@ function harness(html = '<div data-loop-background data-background-video-src="ht
     win.URL.revokeObjectURL = (url) => counters.revoked.push(url);
     const mod = { exports: {} };
     vm.runInNewContext(code, { module: mod, exports: mod.exports, URL, console });
-    return { dom, win, doc, motion, counters, api: mod.exports,
+    return { dom, win, doc, motion, narrow, counters, api: mod.exports,
         get observer() { return observer; },
         ready(video) { video._ready = 4; video.dispatchEvent(new win.Event('canplay')); },
         playing(video) { video.dispatchEvent(new win.Event('playing')); video._frame?.(); },
@@ -58,6 +59,41 @@ test('image-only backgrounds remain unchanged; invalid media addresses never loa
         assert.equal(h.doc.querySelectorAll('img').length, 2);
         assert.equal(h.counters.load, 0);
     } finally { h.close(); }
+});
+
+test('phone homepage video never loads or plays, widening restores it and narrowing releases both decoders', async () => {
+    const h = harness('<header class="ui-v2-home__hero"><div data-home-desktop-media data-loop-background data-background-video-src="https://cdn.example.test/loop.mp4"><video class="loop-background__video" data-desktop-poster="https://cdn.example.test/poster.jpg"></video></div></header>', false, true);
+    try {
+        const root = h.doc.querySelector('[data-loop-background]');
+        const binding = h.api.bindLoopBackground(root, h.win);
+        h.observer.show(true);
+        const video = root.querySelector('video');
+        assert.equal(video.getAttribute('src'), null);
+        assert.equal(video.getAttribute('poster'), null);
+        assert.equal(h.counters.load, 0); assert.equal(h.counters.play, 0);
+        h.narrow.matches = false; h.narrow.listener(); h.ready(video); await flush(); h.playing(video);
+        assert.equal(video.src, 'https://cdn.example.test/loop.mp4');
+        assert.equal(video.poster, 'https://cdn.example.test/poster.jpg');
+        assert.equal(root.classList.contains('is-video-playing'), true);
+        h.narrow.matches = true; h.narrow.listener();
+        assert.equal(root.classList.contains('is-video-playing'), false);
+        assert.equal(root.querySelector('video[src]'), null);
+        assert.equal(root.querySelector('video[poster]'), null);
+        assert.equal(video.paused, true);
+        h.narrow.matches = false; h.narrow.listener(); h.ready(video); await flush(); h.playing(video);
+        assert.equal(video.paused, false);
+        assert.equal(root.classList.contains('is-video-playing'), true);
+        binding.dispose(); assert.equal(h.narrow.listener, null);
+    } finally { h.close(); }
+    const badge = harness(undefined, false, true);
+    try {
+        const root = badge.doc.querySelector('[data-loop-background]');
+        const binding = badge.api.bindLoopBackground(root, badge.win);
+        badge.observer.show(true); const video = root.querySelector('video'); badge.ready(video); await flush(); badge.playing(video);
+        assert.equal(badge.counters.load, 1, 'badge and other non-home videos retain mobile playback');
+        assert.equal(video.paused, false);
+        binding.dispose();
+    } finally { badge.close(); }
 });
 
 test('visible video starts from a playable frame without waiting for canplaythrough; native fallback preserves the current frame', async () => {

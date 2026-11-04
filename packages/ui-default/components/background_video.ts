@@ -44,6 +44,9 @@ export function bindLoopBackground(root: HTMLElement, win = root.ownerDocument.d
   video.setAttribute('disableremoteplayback', '');
   if (video.parentElement !== root) root.append(video);
   const motion = win.matchMedia?.('(prefers-reduced-motion: reduce)');
+  const desktopOnly = root.hasAttribute('data-home-desktop-media') || !!root.closest('.ui-v2-home__hero');
+  const narrow = desktopOnly ? win.matchMedia?.('(max-width: 767px)') : null;
+  const desktopPoster = video.dataset.desktopPoster || video.getAttribute('poster') || '';
   const bounds = root.getBoundingClientRect();
   let visible = !win.IntersectionObserver || (bounds.bottom > 0 && bounds.top < win.innerHeight + 100);
   let disposed = false;
@@ -53,7 +56,8 @@ export function bindLoopBackground(root: HTMLElement, win = root.ownerDocument.d
   let frameCallback = 0;
   let animationFrame = 0;
   let frameVideo: HTMLVideoElement | null = null;
-  const active = () => !disposed && !failed && visible && doc.visibilityState !== 'hidden' && !motion?.matches;
+  let viewportSuspended = false;
+  const active = () => !disposed && !failed && visible && doc.visibilityState !== 'hidden' && !motion?.matches && !narrow?.matches;
   const cancelReveal = () => {
     if (frameCallback && frameVideo?.cancelVideoFrameCallback) frameVideo.cancelVideoFrameCallback(frameCallback);
     if (animationFrame) win.cancelAnimationFrame(animationFrame);
@@ -83,7 +87,7 @@ export function bindLoopBackground(root: HTMLElement, win = root.ownerDocument.d
     if (target.requestVideoFrameCallback) frameCallback = target.requestVideoFrameCallback(() => show(target));
     else animationFrame = win.requestAnimationFrame(() => { animationFrame = win.requestAnimationFrame(() => show(target)); });
   };
-  const loop = createSeamlessVideoLoop(video, win, {
+  const createLoop = () => createSeamlessVideoLoop(video, win, {
     isActive: active,
     onSwitch(next) {
       cancelReveal();
@@ -95,7 +99,35 @@ export function bindLoopBackground(root: HTMLElement, win = root.ownerDocument.d
       show(video);
     },
   });
+  let loop = createLoop();
   const update = () => {
+    if (narrow?.matches) {
+      if (!viewportSuspended) {
+        viewportSuspended = true;
+        loop.dispose();
+        // Cancel both decoders so a hidden homepage cannot keep downloading on
+        // phones. Badge/profile players never enter this homepage-only branch.
+        for (const target of root.querySelectorAll<HTMLVideoElement>('video.loop-background__video')) {
+          target.pause();
+          target.removeAttribute('poster');
+          target.removeAttribute('autoplay');
+          target.preload = 'none';
+          if (target.getAttribute('src')) { target.removeAttribute('src'); target.load(); }
+          if (target !== video) target.remove();
+        }
+        loaded = false;
+        starting = false;
+      }
+      hide();
+      return;
+    }
+    if (viewportSuspended) {
+      viewportSuspended = false;
+      if (video.parentElement !== root) root.append(video);
+      video.preload = 'auto';
+      if (desktopPoster) video.poster = desktopPoster;
+      loop = createLoop();
+    }
     if (!active()) {
       loop.pause();
       video.pause();
@@ -144,6 +176,7 @@ export function bindLoopBackground(root: HTMLElement, win = root.ownerDocument.d
   doc.addEventListener('keydown', update);
   win.addEventListener('pageshow', update);
   motion?.addEventListener?.('change', update);
+  narrow?.addEventListener?.('change', update);
   const observer = win.IntersectionObserver && new win.IntersectionObserver((entries) => {
     const entry = entries.find((item) => item.target === root);
     if (entry) { visible = entry.isIntersecting; update(); }
@@ -160,6 +193,7 @@ export function bindLoopBackground(root: HTMLElement, win = root.ownerDocument.d
       doc.removeEventListener('keydown', update);
       win.removeEventListener('pageshow', update);
       motion?.removeEventListener?.('change', update);
+      narrow?.removeEventListener?.('change', update);
       detach(video);
       hide();
       loop.dispose();

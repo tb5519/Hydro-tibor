@@ -7,19 +7,19 @@
 {% set homeBackgroundStill = homePoster.image or homePoster.videoPoster %}
 {% set homePopout = homePoster.layout == 'popout' and homePoster.image %}
 <div class="ui-v2-home{% if homePopout %} ui-v2-home--popout{% endif %}">
-  <header class="ui-v2-home__hero{% if homeBackgroundStill or homePoster.video %} ui-v2-home__hero--poster{% endif %}{% if homePopout %} ui-v2-home__hero--popout{% if homePoster.mobileImage %} ui-v2-home__hero--mobile-art{% endif %}{% endif %}">
+  <header class="ui-v2-home__hero{% if homeBackgroundStill or homePoster.video %} ui-v2-home__hero--poster{% endif %}{% if homePopout %} ui-v2-home__hero--popout{% endif %}">
     {% if homePopout %}
       <picture class="ui-v2-home__hero-art" aria-hidden="true">
-        {% if homePoster.mobileImage %}<source media="(max-width: 767px)" srcset="{{ homePoster.mobileImage }}">{% endif %}
-        <img class="ui-v2-home__hero-poster" src="{{ homePoster.image }}" width="3600" height="1080" alt="" loading="eager" decoding="async" fetchpriority="high">
+        <source media="(min-width: 768px)" srcset="{{ homePoster.image }}">
+        <img class="ui-v2-home__hero-poster" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" width="3600" height="1080" alt="" loading="eager" decoding="async" fetchpriority="high">
       </picture>
     {% elif homePoster.video %}
-      <div class="ui-v2-home__hero-media" data-loop-background data-background-video-src="{{ homePoster.video }}" aria-hidden="true">
-        {% if homeBackgroundStill %}<img class="ui-v2-home__hero-poster" src="{{ homeBackgroundStill }}" alt="" loading="eager" decoding="async" fetchpriority="high">{% endif %}
-        {% set backgroundVideoSource = homePoster.video %}{% set backgroundVideoPoster = homePoster.videoPoster %}{% include "partials/background_video.html" %}
+      <div class="ui-v2-home__hero-media" data-loop-background data-home-desktop-media data-background-video-src="{{ homePoster.video }}" aria-hidden="true">
+        {% if homeBackgroundStill %}<picture class="ui-v2-home__hero-art"><source media="(min-width: 768px)" srcset="{{ homeBackgroundStill }}"><img class="ui-v2-home__hero-poster" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" alt="" loading="eager" decoding="async" fetchpriority="high"></picture>{% endif %}
+        {% set backgroundVideoSource = homePoster.video %}{% set backgroundVideoPoster = homePoster.videoPoster %}{% set backgroundVideoDesktopOnly = true %}{% include "partials/background_video.html" %}{% set backgroundVideoDesktopOnly = false %}
       </div>
     {% elif homeBackgroundStill %}
-      <img class="ui-v2-home__hero-poster" src="{{ homeBackgroundStill }}" alt="" aria-hidden="true" loading="eager" decoding="async" fetchpriority="high">
+      <picture class="ui-v2-home__hero-art" aria-hidden="true"><source media="(min-width: 768px)" srcset="{{ homeBackgroundStill }}"><img class="ui-v2-home__hero-poster" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" alt="" loading="eager" decoding="async" fetchpriority="high"></picture>
     {% endif %}
     <div class="ui-v2-home__hero-inner">
       <div class="ui-v2-home__hero-text">
@@ -149,10 +149,13 @@
     width: 100%;
     max-width: 100%;
   }
-  .ui-v2-home__hero--poster {
-    aspect-ratio: 18 / 5;
-    min-height: 320px;
+  @media (min-width: 768px) {
+    .ui-v2-home__hero--poster {
+      aspect-ratio: 18 / 5;
+      min-height: 320px;
+    }
   }
+  .ui-v2-home__hero .ui-v2-home__hero-art,
   .ui-v2-home__hero .ui-v2-home__hero-media {
     position: absolute;
     inset: 0;
@@ -160,6 +163,10 @@
     pointer-events: none;
   }
   .ui-v2-home__hero-media > .loop-background__video { object-fit: fill; }
+  @media (max-width: 767px) {
+    .ui-v2-home__hero .ui-v2-home__hero-art,
+    .ui-v2-home__hero .ui-v2-home__hero-media { display: none; }
+  }
   .ui-v2-home__hero-poster {
     position: absolute;
     inset: 0;
@@ -172,17 +179,21 @@
     visibility: hidden;
     display: block;
   }
-  .ui-v2-home__hero--poster-ready .ui-v2-home__hero-poster {
-    opacity: 1;
-    visibility: visible;
+  @media (min-width: 768px) {
+    .ui-v2-home__hero--poster-ready .ui-v2-home__hero-poster {
+      opacity: 1;
+      visibility: visible;
+    }
   }
   .ui-v2-home__hero-inner {
     position: relative;
     z-index: 1;
   }
-  .ui-v2-home__hero--poster-ready .ui-v2-home__hero-visual {
-    opacity: 0;
-    pointer-events: none;
+  @media (min-width: 768px) {
+    .ui-v2-home__hero--poster-ready .ui-v2-home__hero-visual {
+      opacity: 0;
+      pointer-events: none;
+    }
   }
   .ui-v2-home__lottery-trigger {
     border: 0 !important;
@@ -894,13 +905,6 @@
       max-width: 100%;
       overflow-x: hidden;
     }
-    .ui-v2-home__hero--poster {
-      aspect-ratio: auto;
-      min-height: 260px;
-    }
-    .ui-v2-home__hero--poster-ready .ui-v2-home__hero-visual {
-      display: none;
-    }
     .point-lottery {
       padding: 2vh .55rem;
     }
@@ -942,11 +946,10 @@
   if (!hero) return;
   var poster = hero.querySelector('.ui-v2-home__hero-poster');
   if (!poster) return;
-  var done = false;
+  var desktop = window.matchMedia('(min-width: 768px)');
   var isPopout = hero.classList.contains('ui-v2-home__hero--popout');
   function reveal() {
-    if (!poster.naturalWidth || (done && !isPopout)) return;
-    done = true;
+    if (!desktop.matches || !poster.naturalWidth || /^data:/.test(poster.currentSrc || poster.src)) return;
     hero.classList.remove('ui-v2-home__hero--art-error');
     hero.classList.add('ui-v2-home__hero--poster-ready');
   }
@@ -955,20 +958,24 @@
     else reveal();
   }
   function failed() {
+    if (!desktop.matches) return;
     if (isPopout) {
-      // A broken mobile variant falls back to the desktop artwork and stacked copy.
-      var source = hero.querySelector('source');
-      if (source && window.matchMedia(source.media).matches) {
-        source.remove();
-        hero.classList.remove('ui-v2-home__hero--mobile-art');
-        return;
-      }
       hero.classList.remove('ui-v2-home__hero--poster-ready');
       hero.classList.add('ui-v2-home__hero--art-error');
     } else if (!hero.querySelector('video.loop-background__video')) {
       hero.classList.remove('ui-v2-home__hero--poster');
     }
   }
+  function viewportChanged() {
+    if (!desktop.matches) {
+      hero.classList.remove('ui-v2-home__hero--poster-ready', 'ui-v2-home__hero--art-error');
+    } else if (poster.complete) {
+      if (poster.naturalWidth) revealAfterDecode();
+      else failed();
+    }
+  }
+  if (desktop.addEventListener) desktop.addEventListener('change', viewportChanged);
+  else desktop.addListener(viewportChanged);
   poster.addEventListener('load', revealAfterDecode);
   poster.addEventListener('error', failed);
   if (poster.complete) {

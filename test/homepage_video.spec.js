@@ -214,43 +214,34 @@ describe('homepage image and video compatibility', () => {
         assert.equal(calls.edit.length, 1);
     });
 
-    it('uploads and clears mobile artwork independently and scopes its storage path to the current domain', async () => {
+    it('ignores retired mobile settings without deleting historical files or exposing mobile operations', async () => {
         const mobile = { mobileImage: '/old-mobile', mobileStoragePath: 'domain/class-a/home-poster-mobile-old.webp', mobileUpdatedAt: 'old' };
         const { h, calls } = admin({ image: true, config: { ...oldConfig, ...mobile, layout: 'popout' } });
-        await h.postUploadMobile('attacker-domain');
-        assert.match(calls.put[0][0], /^domain\/class-a\/home-poster-mobile-[\w-]+\.png$/);
-        assert.equal(calls.edit[0][0], 'class-a');
-        assert.equal(calls.saved[0].image, oldConfig.image);
-        assert.equal(calls.saved[0].videoPath, oldConfig.videoPath);
-        assert.equal(calls.saved[0].layout, 'popout');
-        assert.match(calls.saved[0].mobileImage, /^\/home_poster_mobile_image\?v=/);
-        assert.deepEqual(Array.from(calls.del[0][0]), [mobile.mobileStoragePath]);
-        h.domain.homePoster = calls.saved[0];
         await h.get('class-a');
-        assert.equal(h.response.body.config.mobileImage, `/home_poster_mobile_image?v=${encodeURIComponent(calls.saved[0].mobileUpdatedAt)}`);
-        await h.postClearMobile('attacker-domain');
-        assert.equal(calls.saved[1].mobileImage, '');
-        assert.equal(calls.saved[1].mobileStoragePath, '');
-        assert.equal(calls.saved[1].image, oldConfig.image);
-        assert.equal(calls.saved[1].videoPath, oldConfig.videoPath);
+        for (const field of Object.keys(mobile)) assert.equal(h.response.body.config[field], undefined);
+        assert.equal(h.postUploadMobile, undefined);
+        assert.equal(h.postClearMobile, undefined);
+        await h.postSaveLayout('class-a', 'banner');
+        for (const [field, value] of Object.entries(mobile)) assert.equal(calls.saved[0][field], value);
+        assert.equal(calls.del.length, 0, 'retiring mobile settings never deletes historical files');
     });
 
-    it('validates mobile files before writing and cleans only the new upload after a failed save', async () => {
+    it('validates desktop files before writing and cleans only the new upload after a failed save', async () => {
         for (const file of [undefined, { size: 9 * 1024 * 1024, originalFilename: 'x.png' }, { size: 10, originalFilename: 'x.svg' }]) {
             const { h, calls } = admin({ image: true });
             h.request.files.file = file;
-            await assert.rejects(h.postUploadMobile(), ValidationError);
+            await assert.rejects(h.postUpload(), ValidationError);
             assert.equal(calls.put.length, 0);
             assert.equal(calls.edit.length, 0);
         }
         const { h, calls } = admin({ image: true, editFails: true });
-        await assert.rejects(h.postUploadMobile(), /Database unavailable/);
+        await assert.rejects(h.postUpload(), /Database unavailable/);
         assert.deepEqual(Array.from(calls.del[0][0]), [calls.put[0][0]]);
         assert.equal(calls.del.length, 1);
     });
 
-    it('never deletes another domain or private file when replacing or clearing either poster', async () => {
-        for (const operation of ['postUpload', 'postClear', 'postUploadMobile', 'postClearMobile']) {
+    it('never deletes another domain or private file when replacing or clearing the desktop poster', async () => {
+        for (const operation of ['postUpload', 'postClear']) {
             const { h, calls } = admin({ image: true, config: { ...oldConfig,
                 storagePath: 'domain/other/home-poster-old.png', mobileStoragePath: 'user/9/private.png',
             } });
@@ -260,9 +251,9 @@ describe('homepage image and video compatibility', () => {
         }
     });
 
-    it('concurrent mobile and layout edits retain newly saved desktop and video media', async () => {
+    it('concurrent layout edits retain newly saved desktop and video media', async () => {
         const concurrentFields = { image: '/fresh-desktop', videoPath: 'domain/class-a/home-video-fresh.mp4' };
-        for (const operation of ['postUploadMobile', 'postClearMobile', 'postSaveLayout']) {
+        for (const operation of ['postSaveLayout']) {
             const { h, calls } = admin({ image: true, concurrentFields });
             await h[operation]('class-a', 'popout');
             for (const [field, value] of Object.entries(concurrentFields)) assert.equal(calls.saved[0][field], value);
@@ -338,7 +329,8 @@ describe('homepage background video delivery', () => {
 
     it('only bypasses domain-page admission for exact GET/HEAD decorative routes', () => {
         const { isHomePosterImageRequest } = load(read('packages/hydrooj/src/lib/decorative_image_access.ts'));
-        for (const route of ['/home/poster', '/home/poster-mobile', '/home/video', '/home/video-poster']) {
+        for (const method of ['GET', 'HEAD', 'POST']) assert.equal(isHomePosterImageRequest('/home/poster-mobile', method), false);
+        for (const route of ['/home/poster', '/home/video', '/home/video-poster']) {
             assert.equal(isHomePosterImageRequest(route, 'GET'), true);
             assert.equal(isHomePosterImageRequest(route, 'HEAD'), true);
             assert.equal(isHomePosterImageRequest(route, 'POST'), false);
@@ -399,7 +391,7 @@ it('the real Mongo migration and independent field updates preserve legacy image
 
 it('layout and image autosave return JSON success while ordinary forms retain their redirects', async () => {
     for (const json of [true, false]) {
-        for (const operation of ['postSaveLayout', 'postUpload', 'postUploadMobile']) {
+        for (const operation of ['postSaveLayout', 'postUpload']) {
             const { h } = admin({ json, image: true });
             await h[operation]('class-a', 'popout');
             if (json) {

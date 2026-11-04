@@ -38,13 +38,14 @@ async function fixture({ width = 1440, mobile = true, layout = 'popout', broken 
     page.on('pageerror', (error) => errors.push(error.message));
     await page.route('https://hero.test/**', (route) => {
         const pathname = new URL(route.request().url()).pathname;
-        if (pathname === '/desktop.svg' || pathname === '/mobile.svg') {
+        if (pathname === '/video.mp4') { requests.push(pathname); return route.fulfill({ contentType: 'video/mp4', body: '' }); }
+        if (pathname === '/desktop.svg' || pathname === '/mobile.svg' || pathname === '/cover.svg') {
             requests.push(pathname);
             if (broken === 'all' || (broken === 'mobile' && pathname === '/mobile.svg')) return route.fulfill({ status: 404, body: '' });
             return route.fulfill({ contentType: 'image/svg+xml', body: artwork(pathname === '/mobile.svg') });
         }
         const body = env.renderString(template, {
-            homePoster: { layout, image: image ? '/desktop.svg' : '', mobileImage: mobile ? '/mobile.svg' : '', video: video ? '/video.mp4' : '' },
+            homePoster: { layout, image: image ? '/desktop.svg' : '', mobileImage: mobile ? '/mobile.svg' : '', video: video ? '/video.mp4' : '', videoPoster: video ? '/cover.svg' : '' },
             pointLottery: { enabled: true, points: 100, cost: 50, prizes: [] }, contents: [], _: (text) => text, url: (name) => `/#${name}`,
         });
         return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html class="layout--basic page--homepage theme--default hasjs"><head><meta charset="utf-8">
@@ -52,13 +53,13 @@ async function fixture({ width = 1440, mobile = true, layout = 'popout', broken 
             <div id="panel" class="slideout-panel"><div class="main">${body}<section id="next-card" style="height:100px;background:white">置顶比赛</section></div></div></body></html>` });
     });
     await page.goto('https://hero.test/');
-    await page.waitForFunction(() => document.querySelector('.ui-v2-home__hero--poster-ready, .ui-v2-home__hero--art-error')
+    await page.waitForFunction(() => innerWidth < 768 || document.querySelector('.ui-v2-home__hero--poster-ready, .ui-v2-home__hero--art-error')
         || !document.querySelector('.ui-v2-home__hero--poster'));
     return { page, requests, errors };
 }
 
 test('popout artwork preserves its ratio, aligns the core and leaves buttons clickable across screen sizes', async () => {
-    for (const width of [1920, 1440, 1280, 1024, 768, 767, 640, 390, 375, 320]) {
+    for (const width of [1920, 1440, 1280, 1024, 768]) {
         const { page, requests, errors } = await fixture({ width });
         try {
             const geometry = await page.evaluate(() => {
@@ -90,21 +91,64 @@ test('popout artwork preserves its ratio, aligns the core and leaves buttons cli
     }
 });
 
-test('missing or broken mobile artwork falls back without stretching and total failure keeps navigation usable', async () => {
-    for (const options of [{ mobile: false }, { broken: 'mobile' }, { broken: 'all' }]) {
-        const { page, errors } = await fixture({ width: 375, ...options });
-        try {
-            if (options.broken !== 'all') {
-                await page.waitForFunction(() => document.querySelector('img.ui-v2-home__hero-poster').naturalWidth === 3600);
-                const boxes = await page.evaluate(() => ['.ui-v2-home__hero-text', '.ui-v2-home__hero-art'].map(s => document.querySelector(s).getBoundingClientRect().toJSON()));
-                assert(boxes[0].bottom <= boxes[1].y + 1, 'fallback copy remains above the desktop art');
-                assert(Math.abs(boxes[1].width / boxes[1].height - 10 / 3) < 0.01);
-            } else assert.equal(await page.locator('.ui-v2-home__hero-art').isVisible(), false);
-            await page.getByRole('link', { name: '开始刷题', exact: true }).click();
-            assert(page.url().endsWith('#problem_main'));
-            assert.deepEqual(errors, []);
-        } finally { await page.close(); }
+test('mobile homepage matches the default with no poster downloads in every configured mode', async () => {
+    const snapshot = (page) => page.evaluate(() => {
+        const hero = document.querySelector('.ui-v2-home__hero');
+        const properties = ['backgroundImage', 'borderRadius', 'padding', 'minHeight', 'display', 'aspectRatio'];
+        const style = getComputedStyle(hero);
+        return { width: hero.getBoundingClientRect().width, height: hero.getBoundingClientRect().height,
+            style: properties.map(key => style[key]),
+            visual: ['display', 'opacity'].map(key => getComputedStyle(hero.querySelector('.ui-v2-home__hero-visual'))[key]),
+            copy: hero.querySelector('.ui-v2-home__hero-text').getBoundingClientRect().height };
+    });
+    for (const width of [767, 640, 390, 375, 320]) {
+        const baseline = await fixture({ width, layout: 'banner', image: false });
+        const expected = await snapshot(baseline.page);
+        await baseline.page.close();
+        for (const options of [{ layout: 'popout' }, { layout: 'banner' }, { layout: 'banner', video: true }, { layout: 'banner', image: false, video: true }]) {
+            const { page, requests, errors } = await fixture({ width, ...options });
+            try {
+                await page.waitForLoadState('networkidle');
+                assert.deepEqual(await snapshot(page), expected, `${width}: same presentation as the unconfigured homepage`);
+                assert.deepEqual(requests, [], 'neither desktop/mobile artwork nor homepage video is requested');
+                assert.equal(await page.locator('.ui-v2-home__hero-art').isVisible(), false);
+                assert.equal(await page.locator('.ui-v2-home__hero-media').isVisible(), false);
+                assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+                await page.getByRole('button', { name: '积分抽奖', exact: true }).click();
+                assert.equal(await page.locator('[data-point-lottery]').evaluate(e => e.hidden), false);
+                await page.locator('[data-point-lottery-close][aria-label="关闭"]').click();
+                await page.getByRole('link', { name: '开始刷题', exact: true }).click();
+                assert(page.url().endsWith('#problem_main'));
+                assert.deepEqual(errors, []);
+                if (width === 375 && options.layout === 'popout') await page.screenshot({ path: path.join(os.tmpdir(), 'onebyone-home-mobile-default-375.png') });
+            } finally { await page.close(); }
+        }
     }
+});
+
+test('resizing a mobile homepage loads desktop artwork only when needed and returns to the default', async () => {
+    const { page, requests } = await fixture({ width: 375 });
+    try {
+        assert.deepEqual(requests, []);
+        await page.setViewportSize({ width: 1440, height: 1050 });
+        await page.waitForFunction(() => document.querySelector('img.ui-v2-home__hero-poster').naturalWidth === 3600);
+        assert.deepEqual(requests, ['/desktop.svg']);
+        assert.equal(await page.locator('.ui-v2-home__hero-art').isVisible(), true);
+        await page.setViewportSize({ width: 375, height: 1050 });
+        assert.equal(await page.locator('.ui-v2-home__hero-art').isVisible(), false);
+        assert.equal(await page.locator('.ui-v2-home__hero-visual').evaluate(e => getComputedStyle(e).opacity), '1');
+        assert.deepEqual(requests, ['/desktop.svg']);
+    } finally { await page.close(); }
+});
+
+test('failed desktop artwork still keeps navigation usable', async () => {
+    const { page, errors } = await fixture({ broken: 'all' });
+    try {
+        assert.equal(await page.locator('.ui-v2-home__hero-art').isVisible(), false);
+        await page.getByRole('link', { name: '开始刷题', exact: true }).click();
+        assert(page.url().endsWith('#problem_main'));
+        assert.deepEqual(errors, []);
+    } finally { await page.close(); }
 });
 
 test('legacy banners and videos retain their presentation, and popout uses only static art', async () => {
