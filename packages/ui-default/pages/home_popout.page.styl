@@ -8,8 +8,11 @@
     width: 125%
     max-width: none
     margin-left: -12.5%
-    // The artwork already includes its lower breakout clearance.
-    margin-bottom: 0
+    // Halve the visible gap between the 45px navigation and the central frame:
+    // half of (48px - 45px + 140 / 2880 * content width).
+    // Only the reserved transparent perimeter overlaps adjacent layout space.
+    margin-top: calc(-2.4305556% - 1.5px)
+    margin-bottom: -1%
     padding: 0
     min-height: 0
     aspect-ratio: 10 / 3
@@ -75,6 +78,7 @@
     &.ui-v2-home__hero--art-error
       width: 100%
       margin-left: 0
+      margin-top: 0
       margin-bottom: 22px
       aspect-ratio: auto
       min-height: 260px
@@ -98,7 +102,7 @@
   .page--homepage #panel > .main:has(.ui-v2-home--popout)
     overflow-x: clip
 
-  // Keep the complete canvas below the 45px fixed navigation. Its own 140px
-  // transparent top reserve provides the visual gap above the central frame.
+  // Keep the standard navigation offset; the hero consumes part of its own
+  // transparent perimeter instead of adding a second band of empty space.
   .page--homepage #panel > .main:has(.ui-v2-home__hero--popout:not(.ui-v2-home__hero--art-error))
     padding-top: 48px

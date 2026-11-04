@@ -77,12 +77,19 @@ test('popout artwork preserves its ratio, aligns the core and leaves buttons cli
             assert.equal(geometry.background, 'rgba(0, 0, 0, 0)');
             assert.equal(geometry.fit, 'contain');
             assert(geometry.scroll <= geometry.viewport, `${width}: horizontal overflow`);
-            assert(geometry.nav.bottom <= geometry.hero.y && geometry.hero.y <= geometry.nav.bottom + 12,
-                `${width}: artwork starts just below the fixed navigation without an excessive blank gap`);
+            const centralFrameTop = geometry.hero.y + geometry.art.height * 140 / 1080;
+            const previousTopGap = 3 + geometry.art.height * 140 / 1080;
+            assert(Math.abs(centralFrameTop - geometry.nav.bottom - previousTopGap / 2) <= 1,
+                `${width}: visible space above the central frame is halved`);
+            assert(geometry.hero.y + geometry.art.height * 80 / 1080 >= geometry.nav.bottom,
+                `${width}: the top artwork safe area remains below the fixed navigation`);
             assert(Math.abs(geometry.art.y - geometry.hero.y) <= 1 && Math.abs(geometry.art.bottom - geometry.hero.bottom) <= 1,
                 `${width}: the complete artwork remains inside the hero height`);
-            assert(geometry.hero.bottom <= geometry.next.y, `${width}: artwork overlaps next section`);
-            assert(geometry.bottomMargin >= 0 && geometry.bottomMargin <= 8, `${width}: no extra blank band below the artwork`);
+            assert(geometry.art.bottom - geometry.art.height * 40 / 1080 <= geometry.next.y,
+                `${width}: the next section does not cover the bottom artwork safe area`);
+            const coreWidth = geometry.art.width * 0.8;
+            assert(Math.abs(geometry.bottomMargin + coreWidth * 0.01) <= 1,
+                `${width}: bottom clearance is reduced by about one percent of the central frame width`);
             assert(geometry.title.y >= geometry.copy.y - 1 && geometry.actions.bottom <= geometry.copy.bottom + 1, `${width}: copy exceeds design safe area`);
             if (width >= 768) assert(Math.abs(geometry.hero.x + geometry.hero.width * 0.1 - geometry.core.x - parseFloat(await page.locator('.ui-v2-home').evaluate(e => getComputedStyle(e).paddingLeft))) < 1);
             assert.deepEqual(requests, [width < 768 ? '/mobile.svg' : '/desktop.svg'], 'only the selected responsive image is downloaded');
@@ -100,7 +107,7 @@ test('popout artwork preserves its ratio, aligns the core and leaves buttons cli
 test('mobile homepage matches the default with no poster downloads in every configured mode', async () => {
     const snapshot = (page) => page.evaluate(() => {
         const hero = document.querySelector('.ui-v2-home__hero');
-        const properties = ['backgroundImage', 'borderRadius', 'padding', 'minHeight', 'display', 'aspectRatio'];
+        const properties = ['backgroundImage', 'borderRadius', 'padding', 'minHeight', 'display', 'aspectRatio', 'marginTop', 'marginBottom'];
         const style = getComputedStyle(hero);
         return { width: hero.getBoundingClientRect().width, height: hero.getBoundingClientRect().height,
             style: properties.map(key => style[key]),
@@ -151,6 +158,11 @@ test('failed desktop artwork still keeps navigation usable', async () => {
     const { page, errors } = await fixture({ broken: 'all' });
     try {
         assert.equal(await page.locator('.ui-v2-home__hero-art').isVisible(), false);
+        const fallbackSpacing = await page.locator('.ui-v2-home__hero').evaluate((hero) => {
+            const style = getComputedStyle(hero);
+            return { top: parseFloat(style.marginTop), bottom: parseFloat(style.marginBottom) };
+        });
+        assert.deepEqual(fallbackSpacing, { top: 0, bottom: 22 }, 'failed images retain ordinary card spacing');
         await page.getByRole('link', { name: '开始刷题', exact: true }).click();
         assert(page.url().endsWith('#problem_main'));
         assert.deepEqual(errors, []);
