@@ -586,12 +586,22 @@ describe('Scratch domain navigation, footer and creation templates', () => {
                 domains: [], canCreateDomain: true, showWorkspaceTools: false,
             });
             const dom = new JSDOM(html);
-            const select = dom.window.document.querySelector('select[name="domainType"]');
-            assert(select, filename);
-            assert.equal(select.value, 'oj', filename);
-            assert.deepEqual([...select.options].map((option) => option.value), ['oj', 'scratch']);
-            select.value = 'scratch';
-            assert.equal(new dom.window.FormData(select.form).get('domainType'), 'scratch');
+            const form = dom.window.document.querySelector('[name="domainType"]').form;
+            assert.equal(new dom.window.FormData(form).get('domainType'), 'oj', filename);
+            const select = form.querySelector('select[name="domainType"]');
+            if (select) {
+                assert.deepEqual([...select.options].map((option) => option.value), ['oj', 'scratch']);
+                select.value = 'scratch';
+            } else {
+                const options = [...form.querySelectorAll('input[type="radio"][name="domainType"]')];
+                assert.deepEqual(options.map((option) => option.value), ['oj', 'scratch']);
+                options[1].checked = true;
+                assert(form.querySelector('[name="bulletin"][data-markdown][required]'), 'Markdown announcement remains required');
+                assert(form.querySelector('[name="id"][required]'));
+                assert(form.querySelector('[name="name"][required]'));
+                assert(form.querySelector('[name="avatar"]'));
+            }
+            assert.equal(new dom.window.FormData(form).get('domainType'), 'scratch');
             dom.window.close();
         }
     });

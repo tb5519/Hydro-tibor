@@ -1,64 +1,71 @@
 {% extends "layout/basic.html" %}
 {% block content %}
-<div class="row">
-  <div class="medium-9 columns">
-    <div class="section">
-      <div class="section__header">
-        <h1 class="section__title" id="create" data-heading>{{ _('Create Domain') }}</h1>
+<div class="domain-create">
+  <a class="domain-create__back" href="{{ url('home_domain') }}"><span class="icon icon-chevron_left" aria-hidden="true"></span>返回我的域</a>
+  <header class="domain-create__header">
+    <p class="domain-create__eyebrow">教学空间</p>
+    <h1 id="create" data-heading>创建域</h1>
+    <p>选择学习方式，为学员准备一个新的学习空间。</p>
+  </header>
+
+  <form method="post" class="domain-create__form">
+    <fieldset class="domain-create__section domain-create__types">
+      <legend>选择域类型</legend>
+      <p class="domain-create__section-hint" id="domain-create-type-hint">创建后类型固定，请选择适合的学习方式。</p>
+      <div class="domain-create__type-options">
+        <label class="domain-create__type">
+          <input type="radio" name="domainType" value="oj" checked aria-describedby="domain-create-type-hint">
+          <span class="domain-create__type-card">
+            <span class="domain-create__type-heading"><span class="domain-create__type-icon"><span class="icon icon-code" aria-hidden="true"></span></span><strong>OJ 编程域</strong><span class="domain-create__type-check" aria-hidden="true"></span></span>
+            <span class="domain-create__type-description">编写代码、自动评测，适合 Python 和 C++ 学习。</span>
+            <span class="domain-create__type-meta">题库 · 训练 · 作业 · 比赛</span>
+          </span>
+        </label>
+        <label class="domain-create__type domain-create__type--scratch">
+          <input type="radio" name="domainType" value="scratch" aria-describedby="domain-create-type-hint">
+          <span class="domain-create__type-card">
+            <span class="domain-create__type-heading"><span class="domain-create__type-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h5V4h6v3h5v6h-3v4h-4v3H7v-3H4V7Z"/></svg></span><strong>Scratch 创作域</strong><span class="domain-create__type-check" aria-hidden="true"></span></span>
+            <span class="domain-create__type-description">用积木创作作品，集中管理作业和素材。</span>
+            <span class="domain-create__type-meta">不参与全域排行榜</span>
+          </span>
+        </label>
       </div>
-      <div class="section__body">
-        <blockquote class="note typo">
-          <p>{{ _('A domain ID cannot be changed after creation. It is supposed to be:') }}</p>
-          <ul>
-            <li>{{ _('Unique') }}</li>
-            <li>{{ _('At least 4 characters') }}</li>
-            <li>{{ _('Not wrapped with space') }}</li>
-            <li>{{ _('Not started with a number') }}</li>
-            <li>{{ _('Only A-Z, a-z, 0-9 and _ are accepted') }}</li>
-          </ul>
-        </blockquote>
-        <form method="post">
-          <div class="row"><div class="columns">
-            <label>域类型
-              <select name="domainType">
-                <option value="oj">OJ 编程域</option>
-                <option value="scratch">Scratch 创作域</option>
-              </select>
-            </label>
-            <p class="help-text">Scratch 域提供作品、作业和素材，不参与全域排行榜。创建后域类型固定。</p>
-          </div></div>
-            {{ form.form_text({
-                label:'ID',
-                name:'id',
-                autofocus:true,
-                required:true
-            }) }}
-            {{ form.form_text({
-                label:'Name',
-                name:'name',
-                required:true
-            }) }}
-            {{ form.form_textarea({
-                label:'Bulletin',
-                name:'bulletin',
-                markdown:true,
-                required:true
-            }) }}
-            {{ form.form_text({
-                label:'Avatar',
-                name:'avatar'
-            }) }}
-          <div class="row"><div class="columns">
-            <button type="submit" class="rounded primary button">
-              {{ _('Create') }}
-            </button>
-            <button type="button" class="rounded button" onclick="window.history.go(-1)">
-              {{ _('Cancel') }}
-            </button>
-          </div></div>
-        </form>
+    </fieldset>
+
+    <section class="domain-create__section" aria-labelledby="domain-create-info-heading">
+      <div class="domain-create__section-heading"><h2 id="domain-create-info-heading">基本信息</h2><span>以下信息均为必填</span></div>
+      <div class="domain-create__fields">
+        <div class="domain-create__field">
+          <label for="domain-create-name">域名称</label>
+          <input class="textbox" id="domain-create-name" name="name" type="text" placeholder="例如：C++ 提升班" required aria-describedby="domain-create-name-hint">
+          <p class="domain-create__hint" id="domain-create-name-hint">显示给学员的名称，创建后可以修改。</p>
+        </div>
+        <div class="domain-create__field">
+          <label for="domain-create-id">域 ID</label>
+          <input class="textbox" id="domain-create-id" name="id" type="text" placeholder="例如：cpp_class" required minlength="4" maxlength="32" pattern="[A-Za-z][A-Za-z0-9_]{3,31}" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="domain-create-id-hint" title="请输入4–32位字符，以字母开头，仅支持字母、数字和下划线。">
+          <p class="domain-create__hint" id="domain-create-id-hint">4–32 位，以字母开头，仅支持字母、数字和下划线。<strong>需全站唯一，创建后不可修改。</strong></p>
+        </div>
       </div>
-    </div>
-  </div>
+      <div class="domain-create__field domain-create__bulletin">
+        <label for="domain-create-bulletin">公告</label>
+        <p class="domain-create__hint" id="domain-create-bulletin-hint">写下课堂介绍或学习安排，支持 Markdown。</p>
+        <div class="textarea-container" name="form_item_bulletin"><textarea class="textbox" id="domain-create-bulletin" name="bulletin" data-markdown required aria-describedby="domain-create-bulletin-hint" placeholder="欢迎来到我们的学习空间！"></textarea></div>
+      </div>
+    </section>
+
+    <details class="domain-create__advanced">
+      <summary><span>域头像 <small>选填</small></span><span class="icon icon-expand_more" aria-hidden="true"></span></summary>
+      <div class="domain-create__field">
+        <label for="domain-create-avatar">头像设置</label>
+        <input class="textbox" id="domain-create-avatar" name="avatar" type="text" placeholder="例如：gravatar:teacher@example.com" aria-describedby="domain-create-avatar-hint">
+        <p class="domain-create__hint" id="domain-create-avatar-hint">留空时使用你的头像，创建后也可以在域设置中更换。</p>
+      </div>
+    </details>
+
+    <footer class="domain-create__actions">
+      <p>创建后即可添加学员，安排学习内容。</p>
+      <div><a class="domain-create__cancel" href="{{ url('home_domain') }}">取消</a><button type="submit" class="rounded primary button">创建域<span class="icon icon-chevron_right" aria-hidden="true"></span></button></div>
+    </footer>
+  </form>
 </div>
 {% endblock %}
