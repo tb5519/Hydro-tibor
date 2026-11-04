@@ -386,8 +386,12 @@ export interface DomainDoc extends Record<string, any> {
     /** Optional banner displayed on this domain's home page. */
     homePoster?: {
         image: string;
+        layout?: 'banner' | 'popout';
         storagePath?: string;
         updatedAt?: string;
+        mobileImage?: string;
+        mobileStoragePath?: string;
+        mobileUpdatedAt?: string;
         video?: string;
         videoPath?: string;
         videoPoster?: string;

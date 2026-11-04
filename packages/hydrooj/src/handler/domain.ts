@@ -1,4 +1,5 @@
 import { readFile } from 'fs/promises';
+import { randomUUID } from 'crypto';
 import path from 'path';
 import { load } from 'js-yaml';
 import type { Dictionary } from 'lodash';
@@ -23,6 +24,7 @@ import {
 import { withDomainMembershipRemoval } from '../lib/domain_membership';
 import { getDomainRankingMode } from '../lib/domain_ranking';
 import { isScratchDomain } from '../lib/domain_type';
+import { isPublicHomePosterPath } from '../lib/decorative_image_access';
 import { getHomePosterConfig } from '../lib/home_poster';
 import { getSharedRankingSnapshot, SharedRankingRow } from '../lib/shared_ranking';
 import { PERM, PERMS_BY_FAMILY, PRIV } from '../model/builtin';
@@ -236,6 +238,14 @@ class DomainHomePosterHandler extends ManageHandler {
         return domain.edit(domainId, Object.fromEntries(Object.entries(fields).map(([key, value]) => [`homePoster.${key}`, value])));
     }
 
+    private posterSaved() {
+        const url = this.url('domain_home_poster', { query: { saved: 1 } });
+        if (this.request.json || `${this.request.headers?.accept || ''}`.includes('application/json')) {
+            this.response.type = 'application/json';
+            this.response.body = { success: true, url };
+        } else this.response.redirect = url;
+    }
+
     @param('saved', Types.Int, true)
     @param('cleared', Types.Int, true)
     async get(domainId: string, saved = 0, cleared = 0) {
@@ -244,6 +254,9 @@ class DomainHomePosterHandler extends ManageHandler {
             config.image = this.url('home_poster_image', {
                 query: { v: config.updatedAt || '' },
             });
+        }
+        if (config.mobileStoragePath) {
+            config.mobileImage = this.url('home_poster_mobile_image', { query: { v: config.mobileUpdatedAt || '' } });
         }
         if (config.videoPath) config.video = this.url('home_background_video', { query: { v: config.videoUpdatedAt || '' } });
         if (config.videoPosterPath) config.videoPoster = this.url('home_background_video_poster', { query: { v: config.videoUpdatedAt || '' } });
@@ -260,7 +273,17 @@ class DomainHomePosterHandler extends ManageHandler {
     }
 
     @param('operation', Types.String)
-    async postUpload(domainId: string) {
+    @param('layout', Types.Range(['banner', 'popout']))
+    async postSaveLayout(domainId: string, layout: 'banner' | 'popout') {
+        // Validate here as well so direct/internal calls cannot persist an unknown mode.
+        if (!['banner', 'popout'].includes(layout)) throw new ValidationError('layout');
+        await this.savePosterFields({ layout });
+        this.posterSaved();
+    }
+
+    @param('operation', Types.String)
+    async postUpload() {
+        const domainId = this.domain._id;
         const file = this.request.files?.file;
         if (!file || file.size > DOMAIN_POSTER_MAX_SIZE) throw new ValidationError('poster');
         const ext = path.extname(file.originalFilename || '').toLowerCase();
@@ -281,17 +304,56 @@ class DomainHomePosterHandler extends ManageHandler {
             await storage.del([storagePath], this.user._id).catch(() => undefined);
             throw error;
         }
-        if (oldConfig.storagePath && oldConfig.storagePath !== storagePath) {
+        if (isPublicHomePosterPath(domainId, oldConfig.storagePath) && oldConfig.storagePath !== storagePath) {
             storage.del([oldConfig.storagePath], this.user._id).catch(() => undefined);
         }
-        this.response.redirect = this.url('domain_home_poster', { query: { saved: 1 } });
+        this.posterSaved();
     }
 
     @param('operation', Types.String)
-    async postClear(domainId: string) {
+    async postClear() {
         const oldConfig = getHomePosterConfig(this.domain);
         await this.savePosterFields({ image: '', storagePath: '', updatedAt: '' });
-        if (oldConfig.storagePath) storage.del([oldConfig.storagePath], this.user._id).catch(() => undefined);
+        if (isPublicHomePosterPath(this.domain._id, oldConfig.storagePath)) {
+            storage.del([oldConfig.storagePath], this.user._id).catch(() => undefined);
+        }
+        this.response.redirect = this.url('domain_home_poster', { query: { cleared: 1 } });
+    }
+
+    @param('operation', Types.String)
+    async postUploadMobile() {
+        const domainId = this.domain._id;
+        const file = this.request.files?.file;
+        if (!file || file.size > DOMAIN_POSTER_MAX_SIZE) throw new ValidationError('poster');
+        const ext = path.extname(file.originalFilename || '').toLowerCase();
+        if (!DOMAIN_POSTER_EXTS.includes(ext)) throw new ValidationError('poster');
+        const oldConfig = getHomePosterConfig(this.domain);
+        const storagePath = `domain/${domainId}/home-poster-mobile-${Date.now()}-${randomUUID()}${ext}`;
+        await storage.put(storagePath, file.filepath, this.user._id);
+        const mobileUpdatedAt = new Date().toISOString();
+        try {
+            await this.savePosterFields({
+                mobileImage: this.url('home_poster_mobile_image', { query: { v: mobileUpdatedAt } }),
+                mobileStoragePath: storagePath,
+                mobileUpdatedAt,
+            });
+        } catch (error) {
+            await storage.del([storagePath], this.user._id).catch(() => undefined);
+            throw error;
+        }
+        if (isPublicHomePosterPath(domainId, oldConfig.mobileStoragePath) && oldConfig.mobileStoragePath !== storagePath) {
+            storage.del([oldConfig.mobileStoragePath], this.user._id).catch(() => undefined);
+        }
+        this.posterSaved();
+    }
+
+    @param('operation', Types.String)
+    async postClearMobile() {
+        const oldConfig = getHomePosterConfig(this.domain);
+        await this.savePosterFields({ mobileImage: '', mobileStoragePath: '', mobileUpdatedAt: '' });
+        if (isPublicHomePosterPath(this.domain._id, oldConfig.mobileStoragePath)) {
+            storage.del([oldConfig.mobileStoragePath], this.user._id).catch(() => undefined);
+        }
         this.response.redirect = this.url('domain_home_poster', { query: { cleared: 1 } });
     }
 

@@ -28,8 +28,9 @@ after(async () => { await browser?.close(); });
 const test = (title, run) => it(title, { skip: !available && 'Install Playwright/Chromium or set AVATAR_PLAYWRIGHT_MODULE and AVATAR_CHROMIUM_PATH' }, run);
 const avatar = fs.readFileSync(path.join(root, 'packages/ui-default/public/img/avatar.png')).toString('base64');
 
-async function harness(reducedMotion = 'no-preference') {
-    const page = await browser.newPage({ viewport: { width: 720, height: 500 }, reducedMotion });
+async function harness(reducedMotion = 'no-preference', options = {}) {
+    const { productionCss, ...contextOptions } = options;
+    const page = await browser.newPage({ viewport: { width: 720, height: 500 }, reducedMotion, ...contextOptions });
     const requests = [];
     let badgeCount = 5;
     await page.route('https://avatar.test/**', async (route) => {
@@ -39,7 +40,8 @@ async function harness(reducedMotion = 'no-preference') {
             return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ users: url.searchParams.get('uids').split(',').map(Number)
                 .map((uid) => ({ uid, badgeCount: uid === 2 ? 4 : badgeCount, effect: uid === 2 || badgeCount < 5 ? null : 'electric-arc' })) }) });
         }
-        return route.fulfill({ contentType: 'text/html', body: `<!doctype html><body style="margin:40px;background:#f4f7fb;font-family:sans-serif">
+        const css = productionCss ? fs.readFileSync(path.join(root, 'packages/ui-default/public/theme-4.58.0-beta.21.css'), 'utf8') : '';
+        return route.fulfill({ contentType: 'text/html', body: `<!doctype html><head><style>${css}</style></head><body style="margin:40px;background:#f4f7fb;font-family:sans-serif">
             <div style="display:flex;align-items:center;gap:50px"><a href="#clicked" id="link"><img id="square" data-badge-avatar-uid="1" style="width:80px;height:80px;border-radius:14px"></a>
             <img id="circle" data-badge-avatar-uid="1" style="width:80px;height:80px;border-radius:50%">
             <img id="small" data-badge-avatar-uid="1" style="width:32px;height:32px;border-radius:50%">
@@ -61,7 +63,10 @@ async function regionAlpha(page, id, dx, dy, size = 3) {
     return page.evaluate(({ id, dx, dy, size }) => {
         const box = document.getElementById(id).getBoundingClientRect();
         const canvas = document.querySelector('.avatar-gold-layer canvas');
-        const pixels = canvas.getContext('2d').getImageData(Math.floor(box.left + dx), Math.floor(box.top + dy), size, size).data;
+        const rect = canvas.getBoundingClientRect();
+        const sx = canvas.width / rect.width; const sy = canvas.height / rect.height;
+        const pixels = canvas.getContext('2d').getImageData(Math.floor((box.left + dx - rect.left) * sx),
+            Math.floor((box.top + dy - rect.top) * sy), Math.ceil(size * sx), Math.ceil(size * sy)).data;
         return [...pixels].reduce((sum, n, i) => sum + (i % 4 === 3 ? n : 0), 0);
     }, { id, dx, dy, size });
 }
@@ -110,6 +115,86 @@ test('dynamic avatars and dialogs retain decoration; reduced motion is static an
         await page.waitForTimeout(250);
         assert.equal(await regionAlpha(page, 'square', 38, -3), 0);
         await page.evaluate(() => cleanupGold());
+        assert.equal(await page.locator('.avatar-gold-layer').count(), 0);
+    } finally { await page.close(); }
+});
+
+test('window and nested scrolling move the gold before the next screen paint, including reduced motion', async () => {
+    for (const motion of ['no-preference', 'reduce']) {
+        const { page } = await harness(motion, { productionCss: true });
+        try {
+            await page.evaluate(() => {
+                document.body.style.minHeight = '1800px';
+                document.querySelector('#link').parentElement.style.marginTop = '280px';
+                window.sampleGoldAt = (x, y) => {
+                    const canvas = document.querySelector('.avatar-gold-layer canvas');
+                    const rect = canvas.getBoundingClientRect();
+                    const sx = canvas.width / rect.width; const sy = canvas.height / rect.height;
+                    const pixels = canvas.getContext('2d').getImageData(Math.floor((x - rect.left) * sx),
+                        Math.floor((y - rect.top) * sy), Math.ceil(3 * sx), Math.ceil(3 * sy)).data;
+                    return [...pixels].some((n, i) => i % 4 === 3 && n > 0);
+                };
+                window.sampleGoldEdge = (id) => {
+                    const box = document.getElementById(id).getBoundingClientRect();
+                    return sampleGoldAt(box.left + box.width / 2 - 1, box.top - 3);
+                };
+            });
+            await page.waitForFunction(() => sampleGoldEdge('square'));
+            for (const top of [120, 45, 180]) {
+                const aligned = await page.evaluate((top) => new Promise((resolve) => {
+                    const before = document.querySelector('#square').getBoundingClientRect();
+                    window.addEventListener('scroll', () => resolve({ current: sampleGoldEdge('square'),
+                        stale: sampleGoldAt(before.left + before.width / 2 - 1, before.top - 3) }), { once: true });
+                    window.scrollTo(0, top);
+                }), top);
+                assert.deepEqual(aligned, { current: true, stale: false }, `window scroll ${top} must update without ghost borders (${motion})`);
+            }
+            await page.evaluate(() => {
+                const scroller = document.createElement('div');
+                scroller.id = 'gold-scroll-test';
+                scroller.style.cssText = 'position:fixed;left:520px;top:200px;width:120px;height:180px;overflow:auto;background:white;padding:12px';
+                const content = document.createElement('div'); content.style.cssText = 'padding-top:70px;height:500px';
+                const img = document.querySelector('#circle').cloneNode(); img.id = 'scroll-avatar';
+                content.append(img); scroller.append(content); document.body.append(scroller);
+            });
+            await page.waitForFunction(() => sampleGoldEdge('scroll-avatar'));
+            for (const top of [35, 5, 55]) {
+                const aligned = await page.evaluate((top) => new Promise((resolve) => {
+                    const scroller = document.querySelector('#gold-scroll-test');
+                    const before = document.querySelector('#scroll-avatar').getBoundingClientRect();
+                    scroller.addEventListener('scroll', () => resolve({ current: sampleGoldEdge('scroll-avatar'),
+                        stale: sampleGoldAt(before.left + before.width / 2 - 1, before.top - 3) }), { once: true });
+                    scroller.scrollTop = top;
+                }), top);
+                assert.deepEqual(aligned, { current: true, stale: false }, `nested scroll ${top} must update without ghost borders (${motion})`);
+            }
+            await page.screenshot({ path: path.join(os.tmpdir(), `onebyone-avatar-gold-scroll-${motion}.png`) });
+        } finally { await page.close(); }
+    }
+});
+
+test('canvas pixels match its displayed box after viewport resize, scrollbar offsets and high DPI', async () => {
+    const { page } = await harness('reduce', { deviceScaleFactor: 2, productionCss: true });
+    try {
+        await page.evaluate(() => {
+            const layer = document.querySelector('.avatar-gold-layer');
+            // Emulate the smaller fixed containing block produced by scrollbars,
+            // and an offset visual viewport/fullscreen host.
+            layer.style.cssText += 'left:9px;top:13px;width:calc(100% - 17px);height:calc(100% - 29px)';
+            window.dispatchEvent(new Event('resize'));
+        });
+        assert(await regionAlpha(page, 'square', 38, -3) > 0);
+        assert(await regionAlpha(page, 'circle', 38, -3) > 0);
+        assert.equal(await regionAlpha(page, 'square', 30, 30, 20), 0);
+        await page.setViewportSize({ width: 860, height: 620 });
+        await page.waitForFunction(() => {
+            const canvas = document.querySelector('.avatar-gold-layer canvas'); const rect = canvas.getBoundingClientRect();
+            return canvas.width === Math.ceil(rect.width * 2) && canvas.height === Math.ceil(rect.height * 2);
+        });
+        assert(await regionAlpha(page, 'square', 38, -3) > 0);
+        assert(await regionAlpha(page, 'small', 15, -3) > 0);
+        await page.evaluate(() => cleanupGold());
+        await page.setViewportSize({ width: 720, height: 500 });
         assert.equal(await page.locator('.avatar-gold-layer').count(), 0);
     } finally { await page.close(); }
 });

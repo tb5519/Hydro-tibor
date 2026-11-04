@@ -570,6 +570,9 @@ export class HomeHandler extends Handler {
                 query: { v: homePoster.updatedAt || '' },
             });
         }
+        if (homePoster.mobileStoragePath) {
+            homePoster.mobileImage = this.url('home_poster_mobile_image', { query: { v: homePoster.mobileUpdatedAt || '' } });
+        }
         if (homePoster.videoPath) homePoster.video = this.url('home_background_video', { query: { v: homePoster.videoUpdatedAt || '' } });
         if (homePoster.videoPosterPath) {
             homePoster.videoPoster = this.url('home_background_video_poster', { query: { v: homePoster.videoUpdatedAt || '' } });
@@ -661,17 +664,19 @@ class ImageWarmupHandler extends Handler {
 class HomePosterImageHandler extends Handler {
     noCheckPermView = true;
 
+    protected getStoragePath() { return getHomePosterConfig(this.domain).storagePath; }
+
     async get() {
-        const config = getHomePosterConfig(this.domain);
-        if (!isPublicHomePosterPath(this.domain._id, config.storagePath)) throw new NotFoundError('home-poster');
-        const meta = await storage.getMeta(config.storagePath);
+        const storagePath = this.getStoragePath();
+        if (!isPublicHomePosterPath(this.domain._id, storagePath)) throw new NotFoundError('home-poster');
+        const meta = await storage.getMeta(storagePath);
         if (!meta || meta.size > 8 * 1024 * 1024
             || !/^image\/(png|jpeg|gif|webp|avif)$/.test(`${meta['Content-Type'] || ''}`)) throw new NotFoundError('home-poster');
         this.response.addHeader('X-Content-Type-Options', 'nosniff');
         this.response.addHeader('Referrer-Policy', 'no-referrer');
         // Skip framework context injection even when Accept: application/json requests a redirect.
         this.response.type = 'application/json';
-        if (await tryRedirectAsset(this, { path: config.storagePath, meta, decoration: 'home-poster' })) return;
+        if (await tryRedirectAsset(this, { path: storagePath, meta, decoration: 'home-poster' })) return;
         this.response.type = meta['Content-Type'];
         this.response.addHeader('Cache-Control', 'public, max-age=300');
         if (this.request.method.toLowerCase() === 'head') {
@@ -681,10 +686,10 @@ class HomePosterImageHandler extends Handler {
             this.context.type = this.response.type;
             this.context.body = '';
         } else {
-            this.response.body = await storage.get(config.storagePath, undefined, meta);
+            this.response.body = await storage.get(storagePath, undefined, meta);
         }
         this.response.addHeader('Content-Length', `${meta.size}`);
-        setMediaCacheHeaders(this, { path: config.storagePath, meta, decoration: 'home-poster' });
+        setMediaCacheHeaders(this, { path: storagePath, meta, decoration: 'home-poster' });
     }
 
     async head() { await this.get(); }
@@ -697,6 +702,10 @@ class HomePosterImageHandler extends Handler {
         this.response.addHeader('Cache-Control', 'no-store');
         this.response.addHeader('X-Content-Type-Options', 'nosniff');
     }
+}
+
+class HomePosterMobileImageHandler extends HomePosterImageHandler {
+    protected getStoragePath() { return getHomePosterConfig(this.domain).mobileStoragePath; }
 }
 
 class HomeBackgroundVideoHandler extends Handler {
@@ -1408,6 +1417,7 @@ export async function apply(ctx: Context) {
     ctx.Route('image_warmup', '/image-warmup', ImageWarmupHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('background_video_warmup', '/background-video-warmup', BackgroundVideoWarmupHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_poster_image', '/home/poster', HomePosterImageHandler);
+    ctx.Route('home_poster_mobile_image', '/home/poster-mobile', HomePosterMobileImageHandler);
     ctx.Route('home_background_video', '/home/video', HomeBackgroundVideoHandler);
     ctx.Route('home_background_video_poster', '/home/video-poster', HomeBackgroundVideoPosterHandler);
     ctx.Route('service_worker_config', '/service-worker-config', ServiceWorkerConfigHandler);

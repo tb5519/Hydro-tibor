@@ -19,7 +19,8 @@ export function getHomeBackgroundVideoWarmup(
     const result = { scope: `${currentUser._id}:${currentDomain._id}`, items };
     const home = getHomePosterConfig(currentDomain);
     const homePrefix = `domain/${currentDomain._id}/home-video`;
-    if (home.videoUpdatedAt && isBackgroundVideoPath(homePrefix, home.videoPath)) {
+    const usesPopoutImage = home.layout === 'popout' && !!home.image;
+    if (!usesPopoutImage && home.videoUpdatedAt && isBackgroundVideoPath(homePrefix, home.videoPath)) {
         items.push({
             url: routeUrl('home_background_video', { query: { v: home.videoUpdatedAt } }),
             poster: isBackgroundVideoPath(homePrefix, home.videoPosterPath, true)

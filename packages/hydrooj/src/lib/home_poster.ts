@@ -2,8 +2,12 @@ import system from '../model/system';
 
 export interface HomePosterConfig {
     image: string;
+    layout: 'banner' | 'popout';
     storagePath?: string;
     updatedAt?: string;
+    mobileImage?: string;
+    mobileStoragePath?: string;
+    mobileUpdatedAt?: string;
     video?: string;
     videoPath?: string;
     videoPoster?: string;
@@ -17,13 +21,17 @@ export function getHomePosterConfig(domain: { _id?: string, homePoster?: unknown
     // inherit it, so their visual identity remains independent.
     const raw = (domain?.homePoster
         ?? (domain?._id === 'system' ? system.get('ui.homePoster') : undefined)) as any;
-    if (!raw) return { image: '' };
-    if (typeof raw === 'string') return { image: raw };
-    if (typeof raw !== 'object') return { image: '' };
+    if (!raw) return { image: '', layout: 'banner' };
+    if (typeof raw === 'string') return { image: raw, layout: 'banner' };
+    if (typeof raw !== 'object') return { image: '', layout: 'banner' };
     return {
         image: `${raw.image || ''}`,
+        layout: raw.layout === 'popout' ? 'popout' : 'banner',
         storagePath: raw.storagePath ? `${raw.storagePath}` : undefined,
         updatedAt: raw.updatedAt ? `${raw.updatedAt}` : undefined,
+        mobileImage: raw.mobileImage ? `${raw.mobileImage}` : undefined,
+        mobileStoragePath: raw.mobileStoragePath ? `${raw.mobileStoragePath}` : undefined,
+        mobileUpdatedAt: raw.mobileUpdatedAt ? `${raw.mobileUpdatedAt}` : undefined,
         video: raw.video ? `${raw.video}` : undefined,
         videoPath: raw.videoPath ? `${raw.videoPath}` : undefined,
         videoPoster: raw.videoPoster ? `${raw.videoPoster}` : undefined,

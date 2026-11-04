@@ -1,0 +1,157 @@
+// Artwork coordinates follow the 3600 × 1080 design canvas. The central
+// 2880 × 800 frame stays aligned with the rest of the homepage cards.
+.page--homepage .ui-v2-home.ui-v2-home--popout
+  overflow: visible
+
+.page--homepage .ui-v2-home__hero.ui-v2-home__hero--popout
+  width: 125%
+  max-width: none
+  margin-left: -12.5%
+  padding: 0
+  min-height: 0
+  aspect-ratio: 10 / 3
+  border: 0
+  border-radius: 0
+  background: transparent
+  box-shadow: none
+  overflow: visible
+  isolation: isolate
+  display: block
+
+  .ui-v2-home__hero-art
+    position: absolute
+    inset: 0
+    display: block
+    pointer-events: none
+
+  .ui-v2-home__hero-poster
+    object-fit: contain
+    pointer-events: none
+
+  .ui-v2-home__hero-inner
+    position: absolute
+    inset: 0
+    display: block
+    width: 100%
+    pointer-events: none
+
+  .ui-v2-home__hero-text
+    position: absolute
+    left: 12.222222%
+    top: 22.222222%
+    width: 36.666667%
+    height: 55.555556%
+    display: flex
+    flex-direction: column
+    justify-content: center
+    pointer-events: auto
+    color: #0c1429
+
+  .ui-v2-home__hero-visual
+    display: none
+
+  .ui-v2-home__title
+    font-size: clamp(24px, 2.5vw, 36px)
+    margin-bottom: 10px
+
+  .ui-v2-home__subtitle
+    font-size: clamp(13px, 1.15vw, 17px)
+
+  .ui-v2-home__hero-actions
+    margin-top: clamp(12px, 1.5vw, 22px)
+    gap: 8px
+
+  .ui-v2-home__hero-actions .button.rounded
+    font-size: clamp(12px, 1.1vw, 16px)
+    padding: 0 18px
+    min-height: 36px
+    line-height: 36px
+    margin: 0
+
+  @media (max-width: 767px)
+    width: 100%
+    margin-left: 0
+    aspect-ratio: auto
+    display: flex
+    flex-direction: column
+
+    // Without a mobile image, copy sits above the full desktop artwork.
+    .ui-v2-home__hero-art
+      position: relative
+      order: 2
+      aspect-ratio: 10 / 3
+
+    .ui-v2-home__hero-inner
+      position: relative
+      order: 1
+
+    .ui-v2-home__hero-text
+      position: relative
+      left: auto
+      top: auto
+      width: auto
+      height: auto
+      padding: 24px 16px
+
+    .ui-v2-home__title
+      font-size: clamp(22px, 4.5vw, 32px)
+
+    .ui-v2-home__subtitle
+      font-size: 13px
+
+    .ui-v2-home__hero-actions .button.rounded
+      padding: 0 12px
+
+    &.ui-v2-home__hero--mobile-art
+      aspect-ratio: 4 / 5
+      display: block
+
+      .ui-v2-home__hero-art, .ui-v2-home__hero-inner
+        position: absolute
+        inset: 0
+        aspect-ratio: auto
+
+      .ui-v2-home__hero-text
+        position: absolute
+        left: 10%
+        top: 13.333333%
+        width: 80%
+        height: 33.333333%
+        padding: 0
+
+      .ui-v2-home__eyebrow
+        display: none
+
+  // Failed images must leave a readable, usable homepage with no broken icon.
+  &.ui-v2-home__hero--art-error
+    width: 100%
+    margin-left: 0
+    aspect-ratio: auto
+    min-height: 260px
+    padding: 28px
+    border-radius: 14px
+    background: linear-gradient(135deg, #fff, #e0f2fe)
+    display: flex
+
+    .ui-v2-home__hero-art
+      display: none
+
+    .ui-v2-home__hero-inner, .ui-v2-home__hero-text
+      position: relative
+      inset: auto
+      width: 100%
+      height: auto
+      padding: 0
+
+// Clip only at the viewport edge, not at the central card. Unlike hidden,
+// clip does not create a horizontal scroll container or a new scroll target.
+.page--homepage #panel > .main:has(.ui-v2-home--popout)
+  overflow-x: clip
+
+@media (max-width: 767px)
+  .theme--dark.page--homepage .ui-v2-home__hero--popout:not(.ui-v2-home__hero--mobile-art):not(.ui-v2-home__hero--art-error)
+    .ui-v2-home__title
+      color: #f8fafc
+
+    .ui-v2-home__subtitle, .ui-v2-home__eyebrow
+      color: #cbd5e1

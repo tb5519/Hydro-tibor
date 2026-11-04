@@ -125,3 +125,56 @@ it('warms all three image variants for an eight-badge catalog page without dropp
     assert.equal(f.requests.length, 25);
     assert.equal(f.requests.at(-1), 'https://onebyone.test/badge/8/image-23?v=1');
 });
+
+it('warms only the responsive poster matching the homepage viewport and falls back to desktop without mobile artwork', async () => {
+    const variants = [{ desktop: '/home/poster?v=desktop-2', mobile: '/home/poster-mobile?v=mobile-3' }];
+    for (const narrow of [true, false]) {
+        const f = environment();
+        f.env.matchMedia = (query) => { assert.equal(query, '(max-width: 767px)'); return { matches: narrow }; };
+        startImageWarmup({ responsivePosters: variants }, f.env);
+        await settle();
+        assert.deepEqual(f.requests, [`https://onebyone.test${narrow ? variants[0].mobile : variants[0].desktop}`]);
+    }
+    const f = environment(); f.env.matchMedia = () => ({ matches: true });
+    startImageWarmup({ responsivePosters: [{ desktop: variants[0].desktop }] }, f.env);
+    await settle();
+    assert.deepEqual(f.requests, [`https://onebyone.test${variants[0].desktop}`]);
+});
+
+it('keeps legacy poster lists compatible while deduplicating responsive candidates within the existing limit', async () => {
+    const f = environment();
+    startImageWarmup({ responsivePosters: [{ desktop: '/home/poster?v=1' }, { desktop: '/home/poster?v=1' }],
+        posters: ['/home/poster?v=1', '/d/other/home/poster?v=2', '/d/third/home/poster?v=3'] }, f.env);
+    await settle();
+    assert.deepEqual(f.requests, ['https://onebyone.test/home/poster?v=1', 'https://onebyone.test/d/other/home/poster?v=2']);
+});
+
+it('page context exposes mobile candidates only for active popout images and valid current-domain storage paths', () => {
+    const source = fs.readFileSync(path.join(root, 'packages/ui-default/index.ts'), 'utf8');
+    const begin = source.indexOf('      const responsivePosters:');
+    const end = source.indexOf('      that.UiContext.backgroundVideoWarmup', begin);
+    assert(begin > 0 && end > begin);
+    const module = { exports: {} };
+    const transformed = transformSync(`export function build(that, systemDomain) { ${source.slice(begin, end)} return that.UiContext.imageWarmup; }`, {
+        loader: 'ts', format: 'cjs',
+    }).code;
+    vm.runInNewContext(transformed, { module, exports: module.exports,
+        getHomePosterConfig: (domain) => domain.homePoster || {}, isPublicHomePosterPath: access.isPublicHomePosterPath,
+        staticAssetUrl: (url) => url,
+    });
+    const poster = { image: '/home/poster?v=desktop', layout: 'popout', updatedAt: 'desktop', storagePath: 'domain/class-a/home-poster-123.png',
+        mobileStoragePath: 'domain/class-a/home-poster-mobile-456.webp', mobileUpdatedAt: 'mobile' };
+    const url = (name, args) => `${name}:${args?.domainId || ''}:${args?.query?.v || ''}`;
+    const build = (homePoster, systemDomain = null) => module.exports.build({ domain: { _id: 'class-a', homePoster },
+        UiContext: {}, user: { _id: 1 }, url }, systemDomain);
+    const result = build(poster, { _id: 'class-a', homePoster: poster });
+    assert.equal(result.posters.length, 0);
+    assert.equal(result.responsivePosters.length, 1);
+    assert.equal(result.responsivePosters[0].desktop, 'home_poster_image:class-a:desktop');
+    assert.equal(result.responsivePosters[0].mobile, 'home_poster_mobile_image:class-a:mobile');
+    assert.equal(build({ ...poster, mobileStoragePath: 'domain/other/home-poster-mobile-456.webp' }).responsivePosters[0].mobile, '');
+    for (const config of [{ ...poster, layout: 'banner' }, { ...poster, image: '' }]) {
+        assert.equal(build(config).responsivePosters.length, 0);
+        assert.equal(build(config).posters.length, 1);
+    }
+});

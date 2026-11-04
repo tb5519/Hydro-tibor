@@ -46,6 +46,7 @@ let factoryDeps;
 let s3Client;
 const projectPath = `scratch/lesson/${'a'.repeat(24)}.sb3`;
 const imagePath = 'training/course/123/cat.png';
+const mobilePosterPath = 'domain/main/home-poster-mobile-1793750400000-12345678-1234-4234-8234-123456789abc.png';
 async function bytes(stream) {
     const chunks = [];
     for await (const chunk of stream) chunks.push(Buffer.from(chunk));
@@ -124,7 +125,7 @@ after(async () => {
 it('requires an exact media business path and matching MIME/extension, excluding Judge and arbitrary attachments', () => {
     for (const filename of [imagePath, 'problem/main/1/additional_file/cat.png', 'contest/main/1/public/cat.png',
         'user/12/.avatar.png', 'user/12/lesson.png', 'domain/main/avatar-12345678-1234-1234-1234-123456789abc.png',
-        'domain/main/home-poster-1234.png', 'badge/12/profile-background-123.png',
+        'domain/main/home-poster-1234.png', mobilePosterPath, 'badge/12/profile-background-123.png',
         'domain/main/badge/12/ac-effect-123.png', 'badge/12/badge-icon-123-0123456789abcdef.png',
         'domain/main/badge/12/badge-icon-123-0123456789abcdef.png', 'system/point-lottery/lottery-prize-123-1-abc.png']) {
         assert.equal(eligibleAsset(filename, 'image/png'), true, filename);
@@ -137,6 +138,22 @@ it('requires an exact media business path and matching MIME/extension, excluding
         assert.equal(eligibleAsset(filename, filename.endsWith('.sb3') ? 'application/octet-stream' : 'image/png'), false, filename);
     }
     assert.equal(eligibleAsset(imagePath, 'text/html'), false);
+});
+
+it('stores mobile homepage artwork in OSS without admitting arbitrary domain files', async () => {
+    for (const filename of [mobilePosterPath.replace('12345678-1234-4234-8234-123456789abc', 'arbitrary'),
+        mobilePosterPath.replace('.png', '.svg'), mobilePosterPath.replace('/main/', '/main/other/'),
+        'domain/main/home-poster-mobile-cat.png']) {
+        assert.equal(eligibleAsset(filename, filename.endsWith('.svg') ? 'image/svg+xml' : 'image/png'), false, filename);
+    }
+    assert.equal(eligibleAsset(mobilePosterPath, 'text/html'), false);
+    await model.put(mobilePosterPath, Buffer.from('mobile artwork'), 20);
+    const meta = await model.getMeta(mobilePosterPath);
+    assert.equal(local.size, 0);
+    assert.equal(objects.size, 1);
+    assert.equal(meta.remoteAsset.contentType, 'image/png');
+    assert.match(meta.remoteAsset.key, /^media\/v1\/[a-f0-9]{64}\.png$/);
+    assert.equal((await bytes(await model.get(mobilePosterPath))).toString(), 'mobile artwork');
 });
 
 it('writes only selected files to verified OSS and exposes the descriptor without local duplicate bytes', async () => {

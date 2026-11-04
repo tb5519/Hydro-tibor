@@ -1,6 +1,7 @@
 /** Only the currently selected homepage poster is public, never a storage directory. */
 export function isHomePosterImageRequest(path: string, method: string) {
-    return ['GET', 'HEAD'].includes(method.toUpperCase()) && ['/home/poster', '/home/video', '/home/video-poster'].includes(path);
+    return ['GET', 'HEAD'].includes(method.toUpperCase())
+        && ['/home/poster', '/home/poster-mobile', '/home/video', '/home/video-poster'].includes(path);
 }
 
 export function isPublicHomePosterPath(domainId: string, path: unknown): path is string {

@@ -5,9 +5,15 @@
 {% import "components/user.html" as user with context %}
 {% block content %}
 {% set homeBackgroundStill = homePoster.image or homePoster.videoPoster %}
-<div class="ui-v2-home">
-  <header class="ui-v2-home__hero{% if homeBackgroundStill or homePoster.video %} ui-v2-home__hero--poster{% endif %}">
-    {% if homePoster.video %}
+{% set homePopout = homePoster.layout == 'popout' and homePoster.image %}
+<div class="ui-v2-home{% if homePopout %} ui-v2-home--popout{% endif %}">
+  <header class="ui-v2-home__hero{% if homeBackgroundStill or homePoster.video %} ui-v2-home__hero--poster{% endif %}{% if homePopout %} ui-v2-home__hero--popout{% if homePoster.mobileImage %} ui-v2-home__hero--mobile-art{% endif %}{% endif %}">
+    {% if homePopout %}
+      <picture class="ui-v2-home__hero-art" aria-hidden="true">
+        {% if homePoster.mobileImage %}<source media="(max-width: 767px)" srcset="{{ homePoster.mobileImage }}">{% endif %}
+        <img class="ui-v2-home__hero-poster" src="{{ homePoster.image }}" width="3600" height="1080" alt="" loading="eager" decoding="async" fetchpriority="high">
+      </picture>
+    {% elif homePoster.video %}
       <div class="ui-v2-home__hero-media" data-loop-background data-background-video-src="{{ homePoster.video }}" aria-hidden="true">
         {% if homeBackgroundStill %}<img class="ui-v2-home__hero-poster" src="{{ homeBackgroundStill }}" alt="" loading="eager" decoding="async" fetchpriority="high">{% endif %}
         {% set backgroundVideoSource = homePoster.video %}{% set backgroundVideoPoster = homePoster.videoPoster %}{% include "partials/background_video.html" %}
@@ -937,21 +943,37 @@
   var poster = hero.querySelector('.ui-v2-home__hero-poster');
   if (!poster) return;
   var done = false;
+  var isPopout = hero.classList.contains('ui-v2-home__hero--popout');
   function reveal() {
-    if (done) return;
+    if (!poster.naturalWidth || (done && !isPopout)) return;
     done = true;
+    hero.classList.remove('ui-v2-home__hero--art-error');
     hero.classList.add('ui-v2-home__hero--poster-ready');
   }
   function revealAfterDecode() {
     if (poster.decode) poster.decode().then(reveal).catch(reveal);
     else reveal();
   }
-  if (poster.complete && poster.naturalWidth) revealAfterDecode();
-  else {
-    poster.addEventListener('load', revealAfterDecode, { once: true });
-    poster.addEventListener('error', function () {
-      if (!hero.querySelector('video.loop-background__video')) hero.classList.remove('ui-v2-home__hero--poster');
-    }, { once: true });
+  function failed() {
+    if (isPopout) {
+      // A broken mobile variant falls back to the desktop artwork and stacked copy.
+      var source = hero.querySelector('source');
+      if (source && window.matchMedia(source.media).matches) {
+        source.remove();
+        hero.classList.remove('ui-v2-home__hero--mobile-art');
+        return;
+      }
+      hero.classList.remove('ui-v2-home__hero--poster-ready');
+      hero.classList.add('ui-v2-home__hero--art-error');
+    } else if (!hero.querySelector('video.loop-background__video')) {
+      hero.classList.remove('ui-v2-home__hero--poster');
+    }
+  }
+  poster.addEventListener('load', revealAfterDecode);
+  poster.addEventListener('error', failed);
+  if (poster.complete) {
+    if (poster.naturalWidth) revealAfterDecode();
+    else failed();
   }
 })();
 

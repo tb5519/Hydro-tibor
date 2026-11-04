@@ -178,3 +178,22 @@ it('the idle catalog endpoint enforces authentication/domain view and ignores re
     assert.equal(handler.response.headers.Vary, 'Cookie, Authorization');
     assert.match(source, /ctx\.Route\('background_video_warmup', '\/background-video-warmup', BackgroundVideoWarmupHandler, PRIV\.PRIV_USER_PROFILE\)/);
 });
+
+it('popout artwork skips hidden homepage video warmup while keeping the selected badge video', async () => {
+    const f = fixture({ home: { layout: 'popout', image: '/home/poster?v=art', ...media('domain/class-a/home-video') } });
+    const result = await f.run();
+    assert.equal(result.items.length, 1);
+    assert.match(result.items[0].url, /badge\/7\/background-video/);
+    const guest = fixture({ uid: 0, home: { layout: 'popout', image: '/home/poster?v=art', ...media('domain/class-a/home-video') } });
+    assert.equal((await guest.run()).items.length, 0);
+    assert.equal(guest.calls.length, 0);
+});
+
+it('retains homepage video warmup for banner mode and popout mode awaiting its desktop image', async () => {
+    for (const home of [{ layout: 'banner', image: '/photo.jpg' }, { layout: 'popout', image: '' }]) {
+        const f = fixture({ uid: 0, home: { ...home, ...media('domain/class-a/home-video') } });
+        const result = await f.run();
+        assert.equal(result.items.length, 1);
+        assert.match(result.items[0].url, /home\/video\?v=/);
+    }
+});

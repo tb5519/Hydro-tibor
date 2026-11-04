@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { randomUUID } = require('node:crypto');
 const { describe, it } = require('node:test');
 const { transformSync } = require('esbuild');
 const { JSDOM } = require('jsdom');
@@ -26,6 +27,7 @@ const config = (globalValue) => load(read('packages/hydrooj/src/lib/home_poster.
     '../model/system': { __esModule: true, default: { get: () => globalValue } },
 });
 const { getHomePosterConfig } = config();
+const { isPublicHomePosterPath } = load(read('packages/hydrooj/src/lib/decorative_image_access.ts'));
 const isBackgroundVideoPath = (prefix, value, poster = false) => typeof value === 'string'
     && value.startsWith(`${prefix}${poster ? '-poster-' : '-'}`)
     && !value.slice(prefix.length).includes('/')
@@ -49,7 +51,7 @@ function admin(options = {}) {
     const readConfig = config(options.globalPoster).getHomePosterConfig;
     class Handler {}
     const { DomainHomePosterHandler } = load(`${domainSource.slice(domainSource.indexOf('class ManageHandler'), domainSource.indexOf('class DomainNavigationSettingHandler'))}\nexport { DomainHomePosterHandler };`, {
-        Handler, ValidationError, path, getHomePosterConfig: readConfig, isBackgroundVideoPath,
+        Handler, ValidationError, path, randomUUID, getHomePosterConfig: readConfig, isBackgroundVideoPath, isPublicHomePosterPath,
         BACKGROUND_VIDEO_MAX_SIZE: 40 * 1024 * 1024,
         param: () => () => {}, Types: { Range: () => {}, Int: {}, String: {} }, PERM: { PERM_EDIT_DOMAIN: 128n },
         storeBackgroundVideo: async (...args) => {
@@ -121,6 +123,9 @@ describe('homepage image and video compatibility', () => {
         assert.equal(readConfig({ _id: 'system', homePoster: { image: '' } }).image, '');
         assert.equal(readConfig({ _id: 'other', homePoster: 'https://example.test/class.jpg' }).image, 'https://example.test/class.jpg');
         assert.equal(getHomePosterConfig({ homePoster: oldConfig }).videoPath, oldConfig.videoPath);
+        assert.equal(readConfig({ _id: 'system' }).layout, 'banner');
+        assert.equal(readConfig({ homePoster: { image: '/desktop', layout: 'invalid' } }).layout, 'banner');
+        assert.equal(readConfig({ homePoster: { image: '/desktop', layout: 'popout' } }).layout, 'popout');
     });
 
     it('requires existing domain administration permission before reads and mutations', async () => {
@@ -197,6 +202,73 @@ describe('homepage image and video compatibility', () => {
         assert.equal(h.response.body.videoMaxSizeMb, 40);
     });
 
+    it('saves only a validated layout on the current domain and preserves all media', async () => {
+        const { h, calls } = admin({ config: { ...oldConfig, mobileImage: '/mobile.webp' } });
+        await h.postSaveLayout('attacker-domain', 'popout');
+        assert.equal(calls.edit[0][0], 'class-a');
+        assert.deepEqual(Object.keys(calls.edit[0][1]), ['homePoster.layout']);
+        assert.equal(calls.saved[0].image, oldConfig.image);
+        assert.equal(calls.saved[0].mobileImage, '/mobile.webp');
+        assert.equal(calls.saved[0].videoPath, oldConfig.videoPath);
+        await assert.rejects(h.postSaveLayout('class-a', 'anything'), ValidationError);
+        assert.equal(calls.edit.length, 1);
+    });
+
+    it('uploads and clears mobile artwork independently and scopes its storage path to the current domain', async () => {
+        const mobile = { mobileImage: '/old-mobile', mobileStoragePath: 'domain/class-a/home-poster-mobile-old.webp', mobileUpdatedAt: 'old' };
+        const { h, calls } = admin({ image: true, config: { ...oldConfig, ...mobile, layout: 'popout' } });
+        await h.postUploadMobile('attacker-domain');
+        assert.match(calls.put[0][0], /^domain\/class-a\/home-poster-mobile-[\w-]+\.png$/);
+        assert.equal(calls.edit[0][0], 'class-a');
+        assert.equal(calls.saved[0].image, oldConfig.image);
+        assert.equal(calls.saved[0].videoPath, oldConfig.videoPath);
+        assert.equal(calls.saved[0].layout, 'popout');
+        assert.match(calls.saved[0].mobileImage, /^\/home_poster_mobile_image\?v=/);
+        assert.deepEqual(Array.from(calls.del[0][0]), [mobile.mobileStoragePath]);
+        h.domain.homePoster = calls.saved[0];
+        await h.get('class-a');
+        assert.equal(h.response.body.config.mobileImage, `/home_poster_mobile_image?v=${encodeURIComponent(calls.saved[0].mobileUpdatedAt)}`);
+        await h.postClearMobile('attacker-domain');
+        assert.equal(calls.saved[1].mobileImage, '');
+        assert.equal(calls.saved[1].mobileStoragePath, '');
+        assert.equal(calls.saved[1].image, oldConfig.image);
+        assert.equal(calls.saved[1].videoPath, oldConfig.videoPath);
+    });
+
+    it('validates mobile files before writing and cleans only the new upload after a failed save', async () => {
+        for (const file of [undefined, { size: 9 * 1024 * 1024, originalFilename: 'x.png' }, { size: 10, originalFilename: 'x.svg' }]) {
+            const { h, calls } = admin({ image: true });
+            h.request.files.file = file;
+            await assert.rejects(h.postUploadMobile(), ValidationError);
+            assert.equal(calls.put.length, 0);
+            assert.equal(calls.edit.length, 0);
+        }
+        const { h, calls } = admin({ image: true, editFails: true });
+        await assert.rejects(h.postUploadMobile(), /Database unavailable/);
+        assert.deepEqual(Array.from(calls.del[0][0]), [calls.put[0][0]]);
+        assert.equal(calls.del.length, 1);
+    });
+
+    it('never deletes another domain or private file when replacing or clearing either poster', async () => {
+        for (const operation of ['postUpload', 'postClear', 'postUploadMobile', 'postClearMobile']) {
+            const { h, calls } = admin({ image: true, config: { ...oldConfig,
+                storagePath: 'domain/other/home-poster-old.png', mobileStoragePath: 'user/9/private.png',
+            } });
+            await h[operation]('attacker-domain');
+            assert.equal(calls.del.length, 0);
+            if (calls.put.length) assert.match(calls.put[0][0], /^domain\/class-a\/home-poster-/);
+        }
+    });
+
+    it('concurrent mobile and layout edits retain newly saved desktop and video media', async () => {
+        const concurrentFields = { image: '/fresh-desktop', videoPath: 'domain/class-a/home-video-fresh.mp4' };
+        for (const operation of ['postUploadMobile', 'postClearMobile', 'postSaveLayout']) {
+            const { h, calls } = admin({ image: true, concurrentFields });
+            await h[operation]('class-a', 'popout');
+            for (const [field, value] of Object.entries(concurrentFields)) assert.equal(calls.saved[0][field], value);
+        }
+    });
+
     it('concurrent image and video edits preserve the other tab\'s newly saved medium for upload and clear', async () => {
         for (const operation of ['postUploadVideo', 'postClearVideo', 'postUpload', 'postClear']) {
             const editsVideo = operation.endsWith('Video');
@@ -266,7 +338,7 @@ describe('homepage background video delivery', () => {
 
     it('only bypasses domain-page admission for exact GET/HEAD decorative routes', () => {
         const { isHomePosterImageRequest } = load(read('packages/hydrooj/src/lib/decorative_image_access.ts'));
-        for (const route of ['/home/poster', '/home/video', '/home/video-poster']) {
+        for (const route of ['/home/poster', '/home/poster-mobile', '/home/video', '/home/video-poster']) {
             assert.equal(isHomePosterImageRequest(route, 'GET'), true);
             assert.equal(isHomePosterImageRequest(route, 'HEAD'), true);
             assert.equal(isHomePosterImageRequest(route, 'POST'), false);
@@ -323,4 +395,19 @@ it('the real Mongo migration and independent field updates preserve legacy image
     await writer('modern').savePosterFields({ videoPath: '/replacement-video.mp4' });
     assert.equal((await collection.findOne({ _id: 'modern' })).homePoster.image, '/already-saved.jpg');
     assert.equal(modelEdits, 4, 'all saves still go through the domain model hooks/cache invalidation path');
+});
+
+it('layout and image autosave return JSON success while ordinary forms retain their redirects', async () => {
+    for (const json of [true, false]) {
+        for (const operation of ['postSaveLayout', 'postUpload', 'postUploadMobile']) {
+            const { h } = admin({ json, image: true });
+            await h[operation]('class-a', 'popout');
+            if (json) {
+                assert.equal(h.response.type, 'application/json');
+                assert.equal(h.response.body.success, true);
+                assert.match(h.response.body.url, /domain_home_poster\?saved=1/);
+                assert.equal(h.response.redirect, undefined);
+            } else assert.match(h.response.redirect, /domain_home_poster\?saved=1/);
+        }
+    }
 });

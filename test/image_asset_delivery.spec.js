@@ -61,9 +61,12 @@ function handlers(options = {}) {
     };
     const home = read('handler/home.ts');
     const homeHandlers = load(`${home.slice(home.indexOf('class HomePosterImageHandler'), home.indexOf('class PointLotteryDrawHandler'))}
-        export { HomePosterImageHandler, PointLotteryPrizeImageHandler };`, {
+        export { HomePosterImageHandler, HomePosterMobileImageHandler, PointLotteryPrizeImageHandler };`, {
         ...shared,
-        getHomePosterConfig: (domain) => ({ storagePath: options.noPoster ? '' : options.posterPath || `domain/${domain._id}/home-poster-123.png` }),
+        getHomePosterConfig: (domain) => ({
+            storagePath: options.noPoster ? '' : options.posterPath || `domain/${domain._id}/home-poster-123.png`,
+            mobileStoragePath: options.mobilePosterPath,
+        }),
         getPointLotteryStoragePrefix: (domain) => `domain/${domain._id}/point-lottery`,
     });
     const misc = read('handler/misc.ts');
@@ -96,6 +99,32 @@ function handlers(options = {}) {
 }
 
 describe('authorized image handler delivery', () => {
+    it('serves only the selected current-domain mobile image with the same versioned delivery and HEAD handling', async () => {
+        const mobilePath = 'domain/class-a/home-poster-mobile-123.png';
+        const f = handlers({ mobilePosterPath: mobilePath });
+        const mobile = new f.HomePosterMobileImageHandler();
+        await mobile.get();
+        assert.strictEqual(mobile.response.body, f.bytes);
+        assert.equal(f.calls.delivery[0].path, mobilePath);
+        assert.equal(f.calls.delivery[0].decoration, 'home-poster');
+        const head = new f.HomePosterMobileImageHandler();
+        head.request.method = 'HEAD';
+        await head.head();
+        assert.equal(head.response.body, '');
+        assert.equal(head.response.headers['Content-Length'], `${f.bytes.length}`);
+        assert.equal(f.calls.read.length, 1);
+        const mirrored = handlers({ ready: true, mobilePosterPath: mobilePath });
+        const remote = new mirrored.HomePosterMobileImageHandler();
+        await remote.get();
+        assert.equal(remote.response.status, 302);
+        assert.equal(mirrored.calls.read.length, 0);
+        for (const mobilePosterPath of [undefined, 'domain/other/home-poster-mobile-123.png', 'user/42/private.png']) {
+            const denied = handlers({ mobilePosterPath });
+            await assert.rejects(new denied.HomePosterMobileImageHandler().get(), NotFoundError);
+            assert.equal(denied.calls.metadata.length, 0);
+        }
+    });
+
     it('keeps original image responses when delivery is disabled or the mirror is not ready', async () => {
         const h = handlers();
         const poster = new h.HomePosterImageHandler();

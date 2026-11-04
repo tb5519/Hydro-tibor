@@ -1,4 +1,11 @@
-interface WarmupConfig { poster?: string; posters?: string[]; backgrounds?: string[]; catalog?: string; scope?: string }
+interface WarmupConfig {
+  poster?: string;
+  posters?: string[];
+  responsivePosters?: { desktop: string; mobile?: string }[];
+  backgrounds?: string[];
+  catalog?: string;
+  scope?: string;
+}
 interface WarmupImage { url: string; size?: number }
 
 /** HTTP-cache warming only: no image bytes or private signed URLs go into a service worker. */
@@ -61,7 +68,10 @@ export function startImageWarmup(config: WarmupConfig, env: any = window) {
   const run = async () => {
     // Start the public poster on every page, including login, without waiting for authentication or main UI startup.
     await idle();
-    const posters = config.posters || (config.poster ? [config.poster] : []);
+    // Match the homepage <picture> breakpoint; warm only the variant this viewport displays.
+    const narrow = env.matchMedia?.('(max-width: 767px)').matches;
+    const responsive = (config.responsivePosters || []).map((poster) => (narrow && poster.mobile) || poster.desktop);
+    const posters = [...new Set([...responsive, ...(config.posters || (config.poster ? [config.poster] : []))])];
     for (const url of posters.slice(0, 2)) {
       if (!canContinue() || controller.signal.aborted) return;
       await warm({ url, size: 8 * 1024 * 1024 });

@@ -148,27 +148,38 @@ export function installAvatarGoldEffects(endpoint: string) {
     childList: true, subtree: true, attributes: true, attributeFilter: ['data-badge-avatar-uid', 'src'],
   });
 
-  function paint(now: number) {
+  function paint(now: number, positionChanged = false) {
     frame = 0;
     if (destroyed || document.hidden) return;
     const hasEligible = [...avatars.values()].some((uid) => cache.get(uid)?.eligible);
     if (!hasEligible) {
-      if (wasPainted) ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (wasPainted) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
       wasPainted = false;
       return;
     }
     frame = requestAnimationFrame(paint);
-    if (now - lastFrame < 32) return;
+    if (!positionChanged && now - lastFrame < 32) return;
     lastFrame = now;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const width = window.innerWidth;
     const height = window.innerHeight;
-    if (canvas.width !== Math.ceil(width * dpr) || canvas.height !== Math.ceil(height * dpr)) {
-      canvas.width = Math.ceil(width * dpr);
-      canvas.height = Math.ceil(height * dpr);
+    // The fixed layer can be narrower than innerWidth (scrollbar), or offset by
+    // the visual viewport/fullscreen host. Use its actual CSS box, not a second
+    // assumed viewport coordinate system that scales the gold away from images.
+    const canvasRect = canvas.getBoundingClientRect();
+    if (canvas.width !== Math.ceil(canvasRect.width * dpr) || canvas.height !== Math.ceil(canvasRect.height * dpr)) {
+      canvas.width = Math.ceil(canvasRect.width * dpr);
+      canvas.height = Math.ceil(canvasRect.height * dpr);
     }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Draw in viewport CSS pixels, just like getBoundingClientRect below.
+    const scaleX = canvas.width / canvasRect.width || dpr;
+    const scaleY = canvas.height / canvasRect.height || dpr;
+    ctx.setTransform(scaleX, 0, 0, scaleY, -canvasRect.left * scaleX, -canvasRect.top * scaleY);
     wasPainted = true;
     // Render each size once per frame, then reuse the transparent sprite for all matching avatars.
     const time = reducedMotion.matches ? 2.8 : now / 1000;
@@ -234,6 +245,16 @@ export function installAvatarGoldEffects(endpoint: string) {
     if (!destroyed && !document.hidden && !frame) frame = requestAnimationFrame(paint);
   }
 
+  function positionChanged() {
+    // Scroll is already coalesced by the browser and delivered before paint.
+    // Waiting for the throttled gold animation leaves the old border on screen
+    // while the compositor has moved the avatar (especially on fast scrolling).
+    clearTimeout(idleTimer);
+    cancelAnimationFrame(frame);
+    frame = 0;
+    paint(performance.now(), true);
+  }
+
   function visibilityChanged() {
     if (document.hidden) { cancelAnimationFrame(frame); frame = 0; }
     else { void refreshEligibility(); startAnimation(); }
@@ -244,9 +265,11 @@ export function installAvatarGoldEffects(endpoint: string) {
   document.addEventListener('visibilitychange', visibilityChanged);
   document.addEventListener('toggle', onToggle, true);
   document.addEventListener('fullscreenchange', raiseLayer);
-  document.addEventListener('scroll', startAnimation, { capture: true, passive: true });
+  document.addEventListener('scroll', positionChanged, { capture: true, passive: true });
   document.addEventListener('load', startAnimation, true);
-  window.addEventListener('resize', startAnimation);
+  window.addEventListener('resize', positionChanged);
+  window.visualViewport?.addEventListener('scroll', positionChanged, { passive: true });
+  window.visualViewport?.addEventListener('resize', positionChanged);
   const refreshTimer = setInterval(() => { void refreshEligibility(); }, 15_000);
   scan();
   return () => {
@@ -260,9 +283,11 @@ export function installAvatarGoldEffects(endpoint: string) {
     document.removeEventListener('visibilitychange', visibilityChanged);
     document.removeEventListener('toggle', onToggle, true);
     document.removeEventListener('fullscreenchange', raiseLayer);
-    document.removeEventListener('scroll', startAnimation, true);
+    document.removeEventListener('scroll', positionChanged, true);
     document.removeEventListener('load', startAnimation, true);
-    window.removeEventListener('resize', startAnimation);
+    window.removeEventListener('resize', positionChanged);
+    window.visualViewport?.removeEventListener('scroll', positionChanged);
+    window.visualViewport?.removeEventListener('resize', positionChanged);
     layer.remove();
     style.remove();
   };
