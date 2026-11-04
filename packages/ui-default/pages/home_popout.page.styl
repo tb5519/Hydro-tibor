@@ -8,6 +8,8 @@
     width: 125%
     max-width: none
     margin-left: -12.5%
+    // The artwork already includes its lower breakout clearance.
+    margin-bottom: 0
     padding: 0
     min-height: 0
     aspect-ratio: 10 / 3
@@ -73,6 +75,7 @@
     &.ui-v2-home__hero--art-error
       width: 100%
       margin-left: 0
+      margin-bottom: 22px
       aspect-ratio: auto
       min-height: 260px
       padding: 28px
@@ -94,3 +97,8 @@
   // clip does not create a horizontal scroll container or a new scroll target.
   .page--homepage #panel > .main:has(.ui-v2-home--popout)
     overflow-x: clip
+
+  // Keep the complete canvas below the 45px fixed navigation. Its own 140px
+  // transparent top reserve provides the visual gap above the central frame.
+  .page--homepage #panel > .main:has(.ui-v2-home__hero--popout:not(.ui-v2-home__hero--art-error))
+    padding-top: 48px

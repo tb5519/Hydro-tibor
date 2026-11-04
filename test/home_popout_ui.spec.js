@@ -49,7 +49,7 @@ async function fixture({ width = 1440, mobile = true, layout = 'popout', broken 
             pointLottery: { enabled: true, points: 100, cost: 50, prizes: [] }, contents: [], _: (text) => text, url: (name) => `/#${name}`,
         });
         return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html class="layout--basic page--homepage theme--default hasjs"><head><meta charset="utf-8">
-            <style>${theme}</style><style>${css}</style></head><body><nav style="height:60px;background:white">OneByOne</nav>
+            <style>${theme}</style><style>${css}</style></head><body><nav style="position:fixed;top:0;left:0;right:0;height:45px;z-index:100;background:white">OneByOne</nav>
             <div id="panel" class="slideout-panel"><div class="main">${body}<section id="next-card" style="height:100px;background:white">置顶比赛</section></div></div></body></html>` });
     });
     await page.goto('https://hero.test/');
@@ -66,17 +66,23 @@ test('popout artwork preserves its ratio, aligns the core and leaves buttons cli
                 const hero = document.querySelector('.ui-v2-home__hero');
                 const art = hero.querySelector('img');
                 const box = (e) => e.getBoundingClientRect().toJSON();
-                return { hero: box(hero), art: box(art), copy: box(hero.querySelector('.ui-v2-home__hero-text')),
+                return { nav: box(document.querySelector('nav')), hero: box(hero), art: box(art), copy: box(hero.querySelector('.ui-v2-home__hero-text')),
                     title: box(hero.querySelector('h1')), actions: box(hero.querySelector('.ui-v2-home__hero-actions')),
                     core: box(document.querySelector('.ui-v2-home')), next: box(document.querySelector('#next-card')),
                     scroll: document.documentElement.scrollWidth, viewport: innerWidth,
-                    background: getComputedStyle(hero).backgroundColor, fit: getComputedStyle(art).objectFit };
+                    background: getComputedStyle(hero).backgroundColor, fit: getComputedStyle(art).objectFit,
+                    bottomMargin: parseFloat(getComputedStyle(hero).marginBottom) };
             });
             assert(Math.abs(geometry.art.width / geometry.art.height - (width < 768 ? 0.8 : 10 / 3)) < 0.01, `${width}: aspect ratio`);
             assert.equal(geometry.background, 'rgba(0, 0, 0, 0)');
             assert.equal(geometry.fit, 'contain');
             assert(geometry.scroll <= geometry.viewport, `${width}: horizontal overflow`);
+            assert(geometry.nav.bottom <= geometry.hero.y && geometry.hero.y <= geometry.nav.bottom + 12,
+                `${width}: artwork starts just below the fixed navigation without an excessive blank gap`);
+            assert(Math.abs(geometry.art.y - geometry.hero.y) <= 1 && Math.abs(geometry.art.bottom - geometry.hero.bottom) <= 1,
+                `${width}: the complete artwork remains inside the hero height`);
             assert(geometry.hero.bottom <= geometry.next.y, `${width}: artwork overlaps next section`);
+            assert(geometry.bottomMargin >= 0 && geometry.bottomMargin <= 8, `${width}: no extra blank band below the artwork`);
             assert(geometry.title.y >= geometry.copy.y - 1 && geometry.actions.bottom <= geometry.copy.bottom + 1, `${width}: copy exceeds design safe area`);
             if (width >= 768) assert(Math.abs(geometry.hero.x + geometry.hero.width * 0.1 - geometry.core.x - parseFloat(await page.locator('.ui-v2-home').evaluate(e => getComputedStyle(e).paddingLeft))) < 1);
             assert.deepEqual(requests, [width < 768 ? '/mobile.svg' : '/desktop.svg'], 'only the selected responsive image is downloaded');
