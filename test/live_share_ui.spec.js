@@ -150,6 +150,10 @@ it('connects one student, mirrors typing/navigation, edits jointly, and restores
         assert.equal(await other.locator('#code').inputValue(), 'print("student")');
         assert.equal(await other.locator('.live-share-notice').count(), 0);
         assert.equal(await student.locator('.live-share-notice button').count(), 0, 'student has status only, no mode or reclaim button');
+        const notice = await student.locator('.live-share-notice').boundingBox();
+        assert(notice.y > 800 && notice.y + notice.height <= 890, 'assistance notice stays at the bottom, clear of the menu');
+        assert.equal(await student.locator('.live-share-notice').evaluate((node) => getComputedStyle(node).pointerEvents), 'none');
+        await student.screenshot({ path: '/tmp/onebyone-live-share-student-notice.png' });
         const frame = teacher.frameLocator('.live-share-mirror iframe');
         await frame.locator('#run').click();
         await student.waitForFunction(() => window.runs === 1);

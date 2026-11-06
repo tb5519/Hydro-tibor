@@ -13,6 +13,8 @@ const MAX_EVENT_BYTES = 8 * 1024 * 1024;
 const MAX_QUEUED_BYTES = 12 * 1024 * 1024;
 const MAX_CHUNKS = 768;
 const CHUNK_CHARS = 16 * 1024;
+const EDITOR_MARKER = 'data-live-share-editor';
+const validEditorId = (id: unknown): id is string => typeof id === 'string' && /^[\w-]{1,128}$/.test(id);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -290,6 +292,89 @@ export function attachSourceMirror(options: SourceOptions) {
   let pumping = false;
   let hasSnapshot = false;
   const commands = new Map<string, MirrorAck>();
+  const editorPlaceholders = new Map<number, string>();
+  const newlyBlockedEditors = new WeakSet<Element>();
+  const editorGeometry = (node: Element) => {
+    const rect = node.getBoundingClientRect();
+    const computed = getComputedStyle(node);
+    const layout: Record<string, string> = { width: `${rect.width}px`, height: `${rect.height}px`, 'box-sizing': 'border-box' };
+    // A blocked textarea can be positioned entirely by inline styles. Keep its
+    // layout, but never copy arbitrary styles, background URLs or editor text.
+    if (/^(static|relative|absolute|fixed|sticky)$/.test(computed.position)) layout.position = computed.position;
+    if (/^(none|block|inline|inline-block|flex|inline-flex|grid|inline-grid)$/.test(computed.display)) layout.display = computed.display;
+    for (const property of ['top', 'right', 'bottom', 'left', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left']) {
+      const value = computed.getPropertyValue(property);
+      if (/^(auto|0|-?\d+(?:\.\d+)?(?:px|%))$/.test(value)) layout[property] = value;
+    }
+    return layout;
+  };
+  const placeholderSignature = (marker: string, layout: Record<string, string>) => JSON.stringify([marker, layout]);
+  function preserveEditorMarkers(event: RREvent) {
+    // rrweb intentionally strips all attributes except class and dimensions on
+    // blocked nodes. Retain only our opaque ID so the separate editor can track
+    // its empty placeholder while the teacher scrolls, without exposing code.
+    if (event.type === 2) editorPlaceholders.clear();
+    const stack = event.type === 2 ? [event.data.node] : event.type === 3 && event.data.source === 0
+      ? (event.data.adds || []).map((entry) => entry.node) : [];
+    while (stack.length) {
+      const serialized = stack.pop();
+      if (!serialized) continue;
+      if (serialized.attributes?.rr_width !== undefined) {
+        const node = (record as any).mirror?.getNode(serialized.id) as Element;
+        const marker = node?.getAttribute?.(EDITOR_MARKER);
+        if (validEditorId(marker) && node.ownerDocument === document) {
+          const layout = editorGeometry(node);
+          serialized.attributes[EDITOR_MARKER] = marker;
+          serialized.attributes.style = Object.entries(layout).map(([property, value]) => `${property}:${value}`).join(';');
+          editorPlaceholders.set(serialized.id, placeholderSignature(marker, layout));
+        }
+      }
+      if (Array.isArray(serialized.childNodes)) stack.push(...serialized.childNodes);
+    }
+  }
+  // A new target extends the current motion instead of restarting native smooth
+  // scrolling. This gives the student animation frames between network packets.
+  const scrolling = new Map<Element, { x: number; y: number; positionX: number; positionY: number;
+    appliedX: number; appliedY: number; at: number; frame: number }>();
+  const stopScrolling = () => {
+    for (const motion of scrolling.values()) cancelAnimationFrame(motion.frame);
+    scrolling.clear();
+  };
+  const localScrollInput = (event: Event) => { if (event.isTrusted) stopScrolling(); };
+  window.addEventListener('wheel', localScrollInput, { capture: true, passive: true });
+  window.addEventListener('touchstart', localScrollInput, { capture: true, passive: true });
+  window.addEventListener('pointerdown', localScrollInput, true);
+  window.addEventListener('keydown', localScrollInput, true);
+  function scrollTo(target: Element, x: number, y: number) {
+    const next = { x: Math.max(0, Math.min(x, target.scrollWidth - target.clientWidth)),
+      y: Math.max(0, Math.min(y, target.scrollHeight - target.clientHeight)) };
+    const current = scrolling.get(target);
+    if (current) { Object.assign(current, next); return; }
+    const motion = { ...next, positionX: target.scrollLeft, positionY: target.scrollTop, appliedX: target.scrollLeft,
+      appliedY: target.scrollTop, at: performance.now(), frame: 0 };
+    scrolling.set(target, motion);
+    const step = (now: number) => {
+      if (disposed || !connected || document.hidden || !target.isConnected
+        || Math.abs(target.scrollLeft - motion.appliedX) > 0.5 || Math.abs(target.scrollTop - motion.appliedY) > 0.5) {
+        // Native student scrolling or a page-driven jump takes over immediately.
+        scrolling.delete(target); return;
+      }
+      const fraction = 1 - Math.exp(-Math.min(40, now - motion.at) / 35);
+      motion.at = now;
+      const dx = motion.x - motion.positionX;
+      const dy = motion.y - motion.positionY;
+      const settled = Math.abs(dx) <= 0.25 && Math.abs(dy) <= 0.25;
+      // Keep subpixel progress in memory: reading the rounded DOM offset on
+      // every frame can otherwise stall one or two pixels short at high DPR.
+      motion.positionX = settled ? motion.x : motion.positionX + dx * fraction;
+      motion.positionY = settled ? motion.y : motion.positionY + dy * fraction;
+      target.scrollTo({ left: motion.positionX, top: motion.positionY, behavior: 'instant' as ScrollBehavior });
+      motion.appliedX = target.scrollLeft; motion.appliedY = target.scrollTop;
+      if (settled) scrolling.delete(target);
+      else motion.frame = requestAnimationFrame(step);
+    };
+    motion.frame = requestAnimationFrame(step);
+  }
   const message = (text: string) => options.onStatus?.(text);
   const emit = (event: RREvent) => {
     if (!connected || disposed) return;
@@ -311,6 +396,7 @@ export function attachSourceMirror(options: SourceOptions) {
     }
     if (event.type === 2) hasSnapshot = true;
     if (!hasSnapshot && event.type !== 4) return;
+    preserveEditorMarkers(event);
     const safe = sanitizeMirrorEvent(event);
     if (!safe) return;
     const size = encoder.encode(JSON.stringify(safe)).length;
@@ -378,6 +464,40 @@ export function attachSourceMirror(options: SourceOptions) {
   }
   queueMicrotask(start);
   const sourceMirror = () => (record as any).mirror;
+  // Editors may attach after the full snapshot. Mutations within blocked nodes
+  // are deliberately ignored by rrweb; send only their marker and box size.
+  const editorGeometryTimer = setInterval(() => {
+    if (disposed || !connected || !hasSnapshot) return;
+    const attributes = [];
+    const found = new Set<number>();
+    for (const node of document.querySelectorAll(`[${EDITOR_MARKER}]`)) {
+      const marker = node.getAttribute(EDITOR_MARKER);
+      const id = sourceMirror()?.getId(node);
+      if (!validEditorId(marker) || !(id > 0)) continue;
+      if (sourceMirror()?.getMeta(node)?.attributes?.rr_width === undefined) {
+        // A previously hidden textarea can become an editor after recording
+        // begins. Rebuild once so its formerly masked node is now a blocked box.
+        if (!newlyBlockedEditors.has(node)) {
+          newlyBlockedEditors.add(node);
+          (record as any).takeFullSnapshot(true);
+          return;
+        }
+        continue;
+      }
+      found.add(id);
+      const dimensions = editorGeometry(node);
+      const signature = placeholderSignature(marker, dimensions);
+      if (editorPlaceholders.get(id) === signature) continue;
+      editorPlaceholders.set(id, signature);
+      attributes.push({ id, attributes: { [EDITOR_MARKER]: marker, style: dimensions } });
+    }
+    for (const id of editorPlaceholders.keys()) {
+      if (found.has(id)) continue;
+      editorPlaceholders.delete(id);
+      if (sourceMirror()?.getNode(id)?.isConnected) attributes.push({ id, attributes: { [EDITOR_MARKER]: null } });
+    }
+    if (attributes.length) emit({ type: 3, timestamp: Date.now(), data: { source: 0, adds: [], removes: [], texts: [], attributes } });
+  }, 100);
   function acknowledge(ack: MirrorAck) {
     commands.set(ack.id, ack);
     if (commands.size > 256) commands.delete(commands.keys().next().value);
@@ -396,7 +516,7 @@ export function attachSourceMirror(options: SourceOptions) {
       if (![command.x, command.y].every((value) => Number.isFinite(value) && Math.abs(value) < 1000000)) return deny('位置无效');
       const target = raw === document ? document.scrollingElement : closestElement(raw);
       if (!target?.isConnected || blocked(target)) return deny('目标不可操作');
-      target.scrollTo({ left: Math.max(0, command.x), top: Math.max(0, command.y), behavior: 'instant' as ScrollBehavior });
+      scrollTo(target, command.x, command.y);
       return acknowledge({ id: command.id, pageId: options.pageId, ok: true });
     }
     const element = interactive(raw);
@@ -447,12 +567,20 @@ export function attachSourceMirror(options: SourceOptions) {
       if (disposed) return;
       if (connected === value) { if (value && stop) (record as any).takeFullSnapshot(true); return; }
       connected = value;
+      stopScrolling();
       generation++;
       stop?.(); stop = undefined;
       queue = []; queuedBytes = 0;
       if (value) start();
     },
-    dispose() { disposed = true; generation++; stop?.(); stop = undefined; queue = []; queuedBytes = 0; commands.clear(); },
+    dispose() {
+      disposed = true; generation++; stop?.(); stop = undefined; queue = []; queuedBytes = 0; commands.clear(); stopScrolling();
+      clearInterval(editorGeometryTimer); editorPlaceholders.clear();
+      window.removeEventListener('wheel', localScrollInput, true);
+      window.removeEventListener('touchstart', localScrollInput, true);
+      window.removeEventListener('pointerdown', localScrollInput, true);
+      window.removeEventListener('keydown', localScrollInput, true);
+    },
   };
 }
 
@@ -468,6 +596,23 @@ export function attachViewerMirror(options: ViewerOptions) {
   let cleanupDocument = () => {};
   let installTimer: ReturnType<typeof setTimeout>;
   let wheelTimer: ReturnType<typeof setTimeout>;
+  type LocalScroll = { node: Element; commandNode: Node; x: number; y: number; touched: number; dirty: boolean;
+    confirmed: boolean; release: ReturnType<typeof setTimeout>; echoed?: { x: number; y: number } };
+  const localScrolls = new Map<number, LocalScroll>();
+  const resetScrolls = () => {
+    clearTimeout(wheelTimer); wheelTimer = undefined;
+    for (const scroll of localScrolls.values()) clearTimeout(scroll.release);
+    localScrolls.clear();
+  };
+  function flushScrolls() {
+    wheelTimer = undefined;
+    if (!connected || !ready || disposed) return;
+    for (const scroll of localScrolls.values()) {
+      if (!scroll.dirty || !scroll.node.isConnected) continue;
+      scroll.dirty = false;
+      command(scroll.commandNode, 'scroll', { x: scroll.x, y: scroll.y });
+    }
+  }
   const host = document.createElement('div');
   host.className = 'live-share-mirror';
   host.style.cssText = 'position:absolute;inset:0;overflow:hidden';
@@ -492,7 +637,9 @@ export function attachViewerMirror(options: ViewerOptions) {
     frame.style.border = '0';
     if (connected) player.enableInteract(); else player.disableInteract();
     const style = doc.createElement('style');
-    style.textContent = '[data-live-share-unavailable]::after{content:"此区域暂不支持实时共享";display:block;padding:32px;color:#64748b;font:14px system-ui;text-align:center} [data-teacher-assistant],[data-live-share-ui]{visibility:hidden!important}';
+    // rrweb captures the outer box of a blocked editor. Its empty placeholder
+    // must not add the textarea's padding and border to those dimensions again.
+    style.textContent = '[data-live-share-editor]{box-sizing:border-box!important} [data-live-share-unavailable]::after{content:"此区域暂不支持实时共享";display:block;padding:32px;color:#64748b;font:14px system-ui;text-align:center} [data-teacher-assistant],[data-live-share-ui]{visibility:hidden!important}';
     doc.head?.appendChild(style);
     const click = (event: MouseEvent) => {
       const target = interactive(event.target);
@@ -515,19 +662,45 @@ export function attachViewerMirror(options: ViewerOptions) {
       if (element && allowedSearch(element)) command(element, 'search', { value: element.value });
     };
     const wheel = (event: WheelEvent) => {
-      if (!connected || disposed) { event.preventDefault(); return; }
+      if (!connected || !ready || disposed) { event.preventDefault(); return; }
       let element = closestElement(event.target);
-      while (element && element !== doc.body && element !== doc.documentElement
-        && element.scrollHeight <= element.clientHeight + 1 && element.scrollWidth <= element.clientWidth + 1) element = element.parentElement;
-      const scrollTarget = element === doc.body || element === doc.documentElement || !element ? doc.scrollingElement : element;
-      if (!scrollTarget || blocked(scrollTarget)) return;
-      event.preventDefault();
-      const multiplier = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? frame.clientHeight : 1;
-      scrollTarget.scrollBy(event.deltaX * multiplier, event.deltaY * multiplier);
-      clearTimeout(wheelTimer);
-      wheelTimer = setTimeout(() => command(scrollTarget === doc.scrollingElement ? doc : scrollTarget, 'scroll', {
-        x: scrollTarget.scrollLeft, y: scrollTarget.scrollTop,
-      }), 80);
+      while (element && element !== doc.body && element !== doc.documentElement) {
+        const style = doc.defaultView.getComputedStyle(element);
+        const vertical = event.deltaY && element.scrollHeight > element.clientHeight + 1 && /(auto|scroll|overlay)/.test(style.overflowY);
+        const horizontal = event.deltaX && element.scrollWidth > element.clientWidth + 1 && /(auto|scroll|overlay)/.test(style.overflowX);
+        if (vertical || horizontal) break;
+        element = element.parentElement;
+      }
+      const target = element === doc.body || element === doc.documentElement || !element ? doc.scrollingElement : element;
+      if (!target || blocked(target)) return;
+      event.preventDefault(); event.stopPropagation();
+      const node = target === doc.scrollingElement ? doc : target;
+      const id = player.getMirror().getId(node);
+      if (id <= 0) return;
+      const multiplier = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? target.clientHeight : 1;
+      let scroll = localScrolls.get(id);
+      if (!scroll) {
+        scroll = { node: target, commandNode: node, x: target.scrollLeft, y: target.scrollTop,
+          touched: 0, dirty: false, confirmed: false, release: undefined };
+        localScrolls.set(id, scroll);
+      }
+      // Accumulate against the intended position, never a delayed source echo.
+      scroll.x = Math.max(0, Math.min(target.scrollWidth - target.clientWidth, scroll.x + event.deltaX * multiplier));
+      scroll.y = Math.max(0, Math.min(target.scrollHeight - target.clientHeight, scroll.y + event.deltaY * multiplier));
+      scroll.touched = Date.now(); scroll.dirty = true; scroll.confirmed = false;
+      target.scrollTo({ left: scroll.x, top: scroll.y, behavior: 'instant' as ScrollBehavior });
+      clearTimeout(scroll.release);
+      scroll.release = setTimeout(() => {
+        if (localScrolls.get(id) !== scroll) return;
+        localScrolls.delete(id);
+        // Reconcile a clamped/resized source after the gesture, without allowing
+        // an old echo to pull the viewport backwards while the teacher scrolls.
+        if (!scroll.confirmed && scroll.echoed && target.isConnected) {
+          target.scrollTo({ left: scroll.echoed.x, top: scroll.echoed.y, behavior: 'instant' as ScrollBehavior });
+        }
+      }, 900);
+      // Throttle rather than debounce: trackpad momentum can last seconds.
+      wheelTimer ||= setTimeout(flushScrolls, 32);
     };
     doc.addEventListener('click', click, true);
     doc.addEventListener('submit', submit, true);
@@ -535,6 +708,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     doc.addEventListener('keydown', keydown, true);
     doc.addEventListener('wheel', wheel, { capture: true, passive: false });
     cleanupDocument = () => {
+      resetScrolls();
       doc.removeEventListener('click', click, true);
       doc.removeEventListener('submit', submit, true);
       doc.removeEventListener('change', change, true);
@@ -577,15 +751,36 @@ export function attachViewerMirror(options: ViewerOptions) {
       return;
     }
     if (!player) return;
+    if (event.type === 3 && event.data.source === 3) {
+      const scroll = localScrolls.get(event.data.id);
+      if (scroll) {
+        const idle = Date.now() - scroll.touched;
+        if (scroll.confirmed && !scroll.dirty && idle >= 100) {
+          clearTimeout(scroll.release); localScrolls.delete(event.data.id);
+        } else {
+          scroll.echoed = { x: event.data.x, y: event.data.y };
+          scroll.confirmed = Math.abs(scroll.x - event.data.x) <= 1 && Math.abs(scroll.y - event.data.y) <= 1;
+          return;
+        }
+      }
+    }
     if (event.type === 3 && event.data.source === 4) viewport(event.data);
     player.addEvent(event);
   }, (message) => { connected = false; options.onStatus?.(message); });
   return {
     receive(data: any) { if (!disposed && connected) assembler.receive(data); },
+    getEditorRect(id: string) {
+      if (disposed || !connected || !ready || !validEditorId(id)) return null;
+      const node = player?.iframe?.contentDocument?.querySelector(`[${EDITOR_MARKER}="${id}"]`);
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    },
     setConnected(value: boolean) {
       if (connected === value) return;
       connected = value;
       ready = false;
+      resetScrolls();
       assembler.reset();
       // Reconnection requires a fresh snapshot; stale node IDs must never control the source.
       player?.disableInteract();

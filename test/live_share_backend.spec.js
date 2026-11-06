@@ -150,6 +150,33 @@ describe('live share protocol boundaries', () => {
         assert.throws(() => limit.accept({ type: 'list' }, 0), errorCode('RATE_LIMIT'));
         limit.accept({ type: 'list' }, 1000);
     });
+    it('relays editor scrolling and source appearance while rejecting invalid options and directions', () => {
+        const scroll = { type: 'edit:scroll', pageId: 'page-testing', editorId: 'editor-testing', scrollTop: 172.5, scrollLeft: 0, scrollSeq: 3 };
+        protocol.validateRelayData('teacher', 'editor', scroll, 'page-testing');
+        for (const change of [{ scrollTop: -1 }, { scrollTop: Infinity }, { scrollLeft: '0' }, { scrollSeq: 0 }, { scrollSeq: 0.5 }, { scrollSeq: undefined }]) {
+            assert.throws(() => protocol.validateRelayData('teacher', 'editor', { ...scroll, ...change }, 'page-testing'), errorCode('INVALID_RELAY'));
+        }
+        assert.throws(() => protocol.validateRelayData('student', 'editor', scroll, 'page-testing'), errorCode('INVALID_RELAY'));
+        const layout = { type: 'edit:layout', pageId: 'page-testing', editorId: 'editor-testing', scrollSeq: 3,
+            view: { wordWrap: 'bounded', wordWrapColumn: 80, tabSize: 4, insertSpaces: true, glyphMargin: true,
+                lineNumbers: 'on', lineNumbersMinChars: 5, lineDecorationsWidth: '2ch', scrollBeyondLastLine: false,
+                letterSpacing: 0.5, fontWeight: '500', padding: { top: 4, bottom: 8 },
+                minimap: { enabled: true, side: 'right', size: 'proportional', showSlider: 'mouseover', renderCharacters: false, maxColumn: 120, scale: 1 } },
+            theme: { base: 'vs-dark', inherit: true, colors: { 'editor.background': '#101020', 'editor.lineHighlightBackground': '#FFFFFF08' },
+                rules: [{ token: 'comment', foreground: '808080', fontStyle: 'italic' }, { token: 'text', fontStyle: 'normal' }],
+                encodedTokensColors: ['#101020', '#808080'] } };
+        protocol.validateRelayData('student', 'editor', layout, 'page-testing');
+        protocol.validateRelayData('student', 'editor', { ...layout, view: { tabSize: 64, lineNumbersMinChars: 300, wordWrapColumn: 1073741824 } }, 'page-testing');
+        for (const change of [{ view: { tabSize: 0 } }, { view: { wordWrap: 'eval' } }, { view: { minimap: { enabled: 'true' } } },
+            { view: { padding: { top: Infinity } } }, { view: { arbitraryCallback: 'run()' } }, { view: { lineDecorationsWidth: 'url(https://invalid)' } },
+            { theme: { ...layout.theme, colors: { 'editor.background': 'url(https://invalid)' } } },
+            { theme: { ...layout.theme, rules: [{ token: 'comment', fontStyle: 'position:absolute' }] } },
+            { theme: { ...layout.theme, rules: Array(4097).fill({ token: 'comment' }) } }]) {
+            assert.throws(() => protocol.validateRelayData('student', 'editor', { ...layout, ...change }, 'page-testing'), errorCode('INVALID_RELAY'));
+        }
+        assert.throws(() => protocol.validateRelayData('teacher', 'editor', { ...scroll, view: layout.view }, 'page-testing'), errorCode('INVALID_RELAY'));
+        assert.throws(() => protocol.validateRelayData('student', 'editor', { ...layout, type: 'edit:cursor' }, 'page-testing'), errorCode('INVALID_RELAY'));
+    });
     it('enforces the connection byte budget before JSON parsing while preserving unrestricted routes', async () => {
         const source = fs.readFileSync(path.join(root, 'framework/framework/server.ts'), 'utf8');
         const start = source.indexOf('conn.onmessage = async (e) => {');

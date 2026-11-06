@@ -77,7 +77,7 @@
   position: absolute
   z-index: 5
   left: 50%
-  top: 16px
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px))
   transform: translateX(-50%)
   max-width: calc(100% - 32px)
   padding: 10px 18px
@@ -90,6 +90,7 @@
   pointer-events: none
   &.is-blocking
     top: 45%
+    bottom: auto
     padding: 20px 28px
     font-size: 15px
 
@@ -268,7 +269,7 @@
 
 .live-share-notice
   position: fixed
-  top: 12px
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px))
   left: 50%
   transform: translateX(-50%)
   z-index: 1002

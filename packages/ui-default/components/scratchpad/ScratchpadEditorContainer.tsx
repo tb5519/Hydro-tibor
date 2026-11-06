@@ -42,6 +42,7 @@ export default connect((state: any) => ({
   disposable: monaco.IDisposable[] = [];
   __prevent_trigger_change_event = false;
   model: monaco.editor.ITextModel;
+  modelLanguage?: string;
   editor: monaco.editor.IStandaloneCodeEditor;
   containerElement: HTMLElement;
   releaseTheme?: () => void;
@@ -65,6 +66,7 @@ export default connect((state: any) => ({
     this.releaseTheme = attachScratchpadMonacoTheme(monaco, () => customOptions.theme || 'vs-light');
     const uri = getModelUri(monaco, language);
     this.model = monaco.editor.getModel(uri) || monaco.editor.createModel(value, language, uri);
+    this.modelLanguage = language;
     if (this.containerElement) {
       const config: monaco.editor.IStandaloneEditorConstructionOptions = {
         fontFamily: UserContext.codeFontFamily,
@@ -104,12 +106,15 @@ export default connect((state: any) => ({
     }
   }
 
-  async componentDidUpdate(prevProps) {
+  async componentDidUpdate() {
+    const props = this.props;
     const {
       value, language,
-    } = this.props;
+    } = props;
     const { monaco } = await load([language]);
-    if (this.unmounted) return;
+    // A newer render owns the model now. Replaying an older whole-document
+    // value here would also overwrite the other participant's shared edits.
+    if (this.unmounted || this.props !== props) return;
     const { editor, model } = this;
     const { LF } = monaco.editor.EndOfLinePreference;
     if (model && editor && this.props.value != null && this.props.value !== model.getValue(LF, false)) {
@@ -128,11 +133,12 @@ export default connect((state: any) => ({
       editor.pushUndoStop();
       this.__prevent_trigger_change_event = false;
     }
-    if (model && editor && prevProps.language !== language) {
+    if (model && editor && this.modelLanguage !== language) {
       const val = model.getValue(LF, false);
       model.dispose();
       this.model = monaco.editor.createModel(val, language, getModelUri(monaco, language));
       editor.setModel(this.model);
+      this.modelLanguage = language;
     }
     if (editor && this.props.settings) {
       editor.updateOptions({

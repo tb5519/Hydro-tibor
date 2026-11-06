@@ -1,8 +1,21 @@
 import { Y, MonacoBinding } from './vendor';
 
 export interface EditorRect { x: number; y: number; width: number; height: number }
+export interface SharedEditorView {
+  wordWrap?: 'off' | 'on' | 'wordWrapColumn' | 'bounded'; wordWrapColumn?: number;
+  tabSize?: number; insertSpaces?: boolean; glyphMargin?: boolean;
+  lineNumbers?: 'on' | 'off' | 'relative' | 'interval'; lineNumbersMinChars?: number;
+  lineDecorationsWidth?: number | string; scrollBeyondLastLine?: boolean; letterSpacing?: number; fontWeight?: string;
+  minimap?: { enabled?: boolean; side?: string; size?: string; showSlider?: string; renderCharacters?: boolean; maxColumn?: number; scale?: number };
+  padding?: { top?: number; bottom?: number };
+}
+export interface SharedEditorTheme {
+  base: 'vs' | 'vs-dark' | 'hc-black' | 'hc-light'; inherit: boolean;
+  colors: Record<string, string>; rules: Array<{ token: string; foreground?: string; background?: string; fontStyle?: string }>;
+  encodedTokensColors?: string[];
+}
 export interface EditorMessage {
-  type: 'edit:init' | 'edit:update' | 'edit:ack' | 'edit:cursor' | 'edit:layout' | 'edit:remove' | 'edit:sync';
+  type: 'edit:init' | 'edit:update' | 'edit:ack' | 'edit:cursor' | 'edit:layout' | 'edit:remove' | 'edit:sync' | 'edit:scroll';
   pageId: string;
   editorId: string;
   update?: string;
@@ -17,6 +30,9 @@ export interface EditorMessage {
   lineHeight?: number;
   scrollTop?: number;
   scrollLeft?: number;
+  scrollSeq?: number;
+  view?: SharedEditorView;
+  theme?: SharedEditorTheme;
   anchor?: string;
   head?: string;
 }
@@ -89,7 +105,7 @@ export class CollaborativeText {
       if (origin === REMOTE) return;
       if (options.role === 'source' && !this.connected) return;
       this.queuedUpdates.push(update);
-      this.outgoingTimer ||= setTimeout(() => this.flushOutgoing(), 100);
+      this.outgoingTimer ||= setTimeout(() => this.flushOutgoing(), 40);
       this.status();
     };
     this.doc.on('update', this.listener);
@@ -113,7 +129,7 @@ export class CollaborativeText {
   }
   flushOutgoing() {
     clearTimeout(this.outgoingTimer); this.outgoingTimer = undefined;
-    if (this.disposed || !this.queuedUpdates.length) return;
+    if (this.disposed || this.incomingPaused || !this.queuedUpdates.length) return;
     const update = encodeUpdate(Y.mergeUpdates(this.queuedUpdates));
     this.queuedUpdates = [];
     if (update.length > MAX_UPDATE) {
@@ -192,6 +208,7 @@ export class CollaborativeText {
     if (!paused) {
       const queue = this.incoming.splice(0);
       for (const message of queue) this.receive(message);
+      this.flushOutgoing();
     }
   }
   setConnected(connected: boolean) {
@@ -242,6 +259,39 @@ function localUndo(model: any, shared: CollaborativeText, sourceEditor?: any) {
       if (view) sourceEditor.restoreViewState(view);
     }
   };
+}
+function compositionGuard(editor: any, shared: CollaborativeText) {
+  // Monaco's IME owns a temporary range while the user chooses a character.
+  // Moving that range with a remote edit can commit text at a stale offset.
+  const start = editor.onDidCompositionStart?.(() => shared.pauseIncoming(true));
+  const end = editor.onDidCompositionEnd?.(() => shared.pauseIncoming(false));
+  return () => { start?.dispose(); end?.dispose(); };
+}
+function editorTheme(editor: any): SharedEditorTheme | undefined {
+  const data = editor?._themeService?.getColorTheme?.()?.themeData;
+  if (!data || !['vs', 'vs-dark', 'hc-black', 'hc-light'].includes(data.base)) return undefined;
+  return { base: data.base, inherit: data.inherit !== false, colors: { ...data.colors }, rules: (data.rules || []).map((rule: any) => ({ ...rule })),
+    ...(data.encodedTokensColors ? { encodedTokensColors: [...data.encodedTokensColors] } : {}) };
+}
+function editorView(editor: any, model: any): SharedEditorView | undefined {
+  if (!editor) return undefined;
+  const raw = editor.getRawOptions?.() || {};
+  const ids = (window as any).monaco?.editor?.EditorOptions;
+  const option = (name: string) => ids?.[name] ? editor.getOption(ids[name].id) : raw[name];
+  const view: SharedEditorView = { tabSize: model.getOptions().tabSize, insertSpaces: model.getOptions().insertSpaces };
+  for (const name of ['wordWrap', 'wordWrapColumn', 'glyphMargin', 'lineNumbersMinChars', 'lineDecorationsWidth',
+    'scrollBeyondLastLine', 'letterSpacing', 'fontWeight'] as const) {
+    const value = option(name);
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') (view as any)[name] = value;
+  }
+  const numbers = option('lineNumbers');
+  view.lineNumbers = typeof numbers === 'string' ? numbers : ['off', 'on', 'relative', 'interval'][numbers?.renderType] as SharedEditorView['lineNumbers'];
+  const minimap = option('minimap');
+  if (minimap) view.minimap = Object.fromEntries(['enabled', 'side', 'size', 'showSlider', 'renderCharacters', 'maxColumn', 'scale']
+    .filter((key) => minimap[key] !== undefined).map((key) => [key, minimap[key]]));
+  const padding = option('padding');
+  if (padding) view.padding = { top: padding.top, bottom: padding.bottom };
+  return view;
 }
 function bindTextarea(node: HTMLTextAreaElement, shared: CollaborativeText, notifyInput: boolean) {
   let applying = false;
@@ -356,6 +406,9 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
   const create = (node: HTMLElement, editor?: any): SourceBinding => {
     const id = uniqueId();
     const model = editor?.getModel();
+    // A single-line Windows model can be CRLF without that being visible in its
+    // initial text. Y.Text and both Monaco models must use the same offsets.
+    if (model && model.getEOL() !== '\n') model.setEOL(0);
     const textarea = node as HTMLTextAreaElement;
     const localWritable = () => editor ? !editor.getRawOptions?.().readOnly : !textarea.readOnly && !textarea.disabled;
     const writable = () => !document.hidden && localWritable();
@@ -368,22 +421,29 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
     let remoteCursor: EditorMessage | undefined;
     let lastLayout = '';
     let lastLayoutAt = 0;
+    let lastTheme = '';
+    let scrollSeq = 0;
+    let layoutTimer: ReturnType<typeof setTimeout> | undefined;
     if (editor) {
       const binding = new MonacoBinding(shared.text, model, new Set([editor]));
       shared.trackOrigin(binding);
       cleanups.push(localUndo(model, shared, editor), () => binding.destroy());
       cleanups.push(observeCursor(editor, shared, options, id, () => connected));
+      cleanups.push(compositionGuard(editor, shared));
     } else cleanups.push(bindTextarea(textarea, shared, true));
     const metadata = () => {
       const style = getComputedStyle(node);
       const raw = editor?.getRawOptions?.() || {};
+      const fontId = (window as any).monaco?.editor?.EditorOptions?.fontInfo?.id;
+      const font = editor && fontId !== undefined ? editor.getOption(fontId) : raw;
       return {
         kind: editor ? 'monaco' as const : 'textarea' as const, language: model?.getLanguageId?.() || 'plaintext',
-        rect: rectangle(node), readOnly: !writable(), fontSize: Number(raw.fontSize) || parseFloat(style.fontSize) || 14,
-        fontFamily: typeof raw.fontFamily === 'string' ? raw.fontFamily : style.fontFamily,
-        lineHeight: Number(raw.lineHeight) || parseFloat(style.lineHeight) || 20,
+        rect: rectangle(node), readOnly: !writable(), fontSize: Number(font.fontSize) || parseFloat(style.fontSize) || 14,
+        fontFamily: typeof font.fontFamily === 'string' ? font.fontFamily : style.fontFamily,
+        lineHeight: Number(font.lineHeight) || parseFloat(style.lineHeight) || 20,
         scrollTop: editor ? editor.getScrollTop() : node.scrollTop,
         scrollLeft: editor ? editor.getScrollLeft() : node.scrollLeft,
+        scrollSeq, view: editorView(editor, model), theme: editorTheme(editor),
       };
     };
     const announce = () => {
@@ -393,20 +453,42 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
         if (connected) safeSend(options, { type: 'edit:remove', pageId: options.pageId, editorId: id });
         return;
       }
-      if (connected) safeSend(options, { type: 'edit:init', pageId: options.pageId, editorId: id, state, ...metadata() });
+      if (connected) {
+        const data = metadata(); lastTheme = JSON.stringify(data.theme);
+        safeSend(options, { type: 'edit:init', pageId: options.pageId, editorId: id, state, ...data });
+      }
     };
-    const layout = () => {
+    const layout = (force = false) => {
       const data = metadata();
       const serialized = JSON.stringify(data);
-      if (serialized === lastLayout || !connected || Date.now() - lastLayoutAt < 200) return;
+      if ((!force && serialized === lastLayout) || !connected || !force && Date.now() - lastLayoutAt < 40) return;
       lastLayout = serialized;
       lastLayoutAt = Date.now();
+      const theme = JSON.stringify(data.theme);
+      if (theme === lastTheme) delete data.theme;
+      else lastTheme = theme;
       safeSend(options, { type: 'edit:layout', pageId: options.pageId, editorId: id, ...data });
     };
+    const scheduleLayout = () => { layoutTimer ||= setTimeout(() => { layoutTimer = undefined; layout(true); }, 40); };
+    if (editor) {
+      const listener = editor.onDidScrollChange(scheduleLayout);
+      cleanups.push(() => listener.dispose());
+    } else {
+      node.addEventListener('scroll', scheduleLayout, { passive: true });
+      cleanups.push(() => node.removeEventListener('scroll', scheduleLayout));
+    }
+    cleanups.push(() => clearTimeout(layoutTimer));
     return {
       id, node, editor, model, shared, announce, layout,
       receive(message) {
         if (message.type === 'edit:sync') { announce(); return; }
+        if (message.type === 'edit:scroll') {
+          if (document.hidden || !Number.isSafeInteger(message.scrollSeq) || message.scrollSeq! <= scrollSeq) return;
+          scrollSeq = message.scrollSeq!;
+          if (editor) editor.setScrollPosition({ scrollTop: message.scrollTop, scrollLeft: message.scrollLeft }, 1);
+          else { node.scrollTop = message.scrollTop || 0; node.scrollLeft = message.scrollLeft || 0; }
+          scheduleLayout(); return;
+        }
         if (message.type === 'edit:cursor' && editor) remoteCursor = message;
         else shared.receive(message);
         if (remoteCursor && editor) decorations = cursorDecoration(shared, editor, remoteCursor, decorations, true);
@@ -429,10 +511,15 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
     const editors = new Set<any>(scope.monaco?.editor?.getEditors?.() || []);
     if (scope.editor?.getModel) editors.add(scope.editor);
     const present = new Set<unknown>();
+    const models = new Set<unknown>();
     for (const editor of editors) {
       const node = editor.getDomNode?.();
       const model = editor.getModel?.();
       if (!node?.isConnected || !model || model.isDisposed?.() || node.closest('[data-live-share-viewer]')) continue;
+      // Two widgets can share one Monaco model; binding it twice would replay
+      // each edit into separate CRDTs and duplicate remote transactions.
+      if (models.has(model)) continue;
+      models.add(model);
       if (model.getValueLength() > MAX_TEXT) { reportOversized(model); continue; }
       present.add(editor);
       const previous = bindings.get(editor);
@@ -477,6 +564,7 @@ interface ViewerBinding {
   readOnly: boolean;
   update: (message: EditorMessage) => void;
   refresh: () => void;
+  layout: () => void;
   dispose: () => void;
 }
 export function attachViewerEditors(options: CommonOptions & { container: HTMLElement; getNodeRect?: (id: string) => EditorRect | undefined }): EditorController & {
@@ -488,6 +576,12 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
   let disposed = false;
   let connected = true;
   let monacoPromise: Promise<any> | undefined;
+  let monacoRuntime: any;
+  let themeService: any;
+  let originalTheme: string | undefined;
+  let appliedTheme = '';
+  let geometryFrame = 0;
+  const sharedThemeName = `live-share-${uniqueId()}`;
   options.container.setAttribute('data-live-share-viewer', 'true');
   const style = cursorStyles();
   const preserveDraft = (editorId: string, binding: ViewerBinding) => {
@@ -510,7 +604,7 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
       const node = document.createElement(initial.kind === 'textarea' ? 'textarea' : 'div');
       node.setAttribute('data-live-share-editor', initial.editorId);
       node.setAttribute('aria-label', initial.kind === 'textarea' ? '与学员共享的测试输入' : '与学员共同编辑代码');
-      Object.assign(node.style, { position: 'absolute', margin: '0', padding: '0', border: '0', boxSizing: 'border-box', pointerEvents: 'auto', overflow: 'hidden', background: '#fff' });
+      Object.assign(node.style, { position: 'absolute', margin: '0', padding: '0', border: '0', boxSizing: 'border-box', pointerEvents: 'auto', overflow: 'hidden', background: 'transparent' });
       options.container.appendChild(node);
       let readOnly = !!initial.readOnly;
       let refresh = () => {};
@@ -522,52 +616,138 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
       shared.receive(initial);
       let editor: any;
       let model: any;
+      let applyingScroll = false;
+      let scrollSeq = initial.scrollSeq || 0;
+      let confirmedScrollSeq = scrollSeq;
+      let scrollingUntil = 0;
+      let scrollAwaitUntil = 0;
+      let scrollTimer: ReturnType<typeof setTimeout> | undefined;
+      let scrollRecoveryTimer: ReturnType<typeof setTimeout> | undefined;
+      let scrollFollowTimer: ReturnType<typeof setTimeout> | undefined;
+      let sourceScroll: { top: number; left: number; authoritative: boolean } | undefined;
+      let appliedScroll: { top: number; left: number } | undefined;
+      let sourceRect = initial.rect;
+      let lastRect = '';
       let decorations: string[] = [];
       let remoteCursor: EditorMessage | undefined;
       const cleanups: Array<() => void> = [];
       if (monaco) {
         model = monaco.editor.createModel('', initial.language || 'plaintext', monaco.Uri.parse(`live-share://${uniqueId()}/${initial.editorId}`));
+        model.setEOL(monaco.editor.EndOfLineSequence.LF);
         editor = monaco.editor.create(node, {
-          model, automaticLayout: false, readOnly: !shared.editable, minimap: { enabled: false }, scrollBeyondLastLine: false,
+          model, automaticLayout: false, readOnly: !shared.editable,
           occurrencesHighlight: 'off',
           fontSize: initial.fontSize || 14, fontFamily: initial.fontFamily, lineHeight: initial.lineHeight || 20,
         });
+        monacoRuntime = monaco;
+        themeService = editor._themeService;
+        originalTheme ||= editor._themeService?.getColorTheme?.()?.themeName;
         const binding = new MonacoBinding(shared.text, model, new Set([editor]));
         shared.trackOrigin(binding);
         cleanups.push(localUndo(model, shared), () => binding.destroy());
         cleanups.push(observeCursor(editor, shared, options, initial.editorId, () => connected));
+        cleanups.push(compositionGuard(editor, shared));
       } else {
         const textarea = node as HTMLTextAreaElement;
         textarea.spellcheck = false; textarea.wrap = 'off';
         cleanups.push(bindTextarea(textarea, shared, false));
       }
+      const onScroll = () => {
+        if (applyingScroll || !connected) return;
+        const top = editor ? editor.getScrollTop() : node.scrollTop;
+        const left = editor ? editor.getScrollLeft() : node.scrollLeft;
+        if (appliedScroll?.top === top && appliedScroll.left === left) return;
+        appliedScroll = undefined;
+        if (sourceScroll) sourceScroll.authoritative = false;
+        scrollingUntil = Date.now() + 180;
+        scrollTimer ||= setTimeout(() => {
+          scrollTimer = undefined;
+          if (!connected) return;
+          scrollAwaitUntil = Date.now() + 750;
+          clearTimeout(scrollRecoveryTimer);
+          scrollRecoveryTimer = setTimeout(() => {
+            if (connected && confirmedScrollSeq < scrollSeq) safeSend(options, { type: 'edit:sync', pageId: options.pageId, editorId: initial.editorId });
+          }, 750);
+          safeSend(options, { type: 'edit:scroll', pageId: options.pageId, editorId: initial.editorId, scrollSeq: ++scrollSeq,
+            scrollTop: editor ? editor.getScrollTop() : node.scrollTop, scrollLeft: editor ? editor.getScrollLeft() : node.scrollLeft });
+        }, 40);
+      };
+      if (editor) {
+        const listener = editor.onDidScrollChange(onScroll);
+        cleanups.push(() => listener.dispose());
+      } else {
+        node.addEventListener('scroll', onScroll, { passive: true });
+        cleanups.push(() => node.removeEventListener('scroll', onScroll));
+      }
+      cleanups.push(() => { clearTimeout(scrollTimer); clearTimeout(scrollRecoveryTimer); clearTimeout(scrollFollowTimer); });
+      const followSourceScroll = () => {
+        clearTimeout(scrollFollowTimer); scrollFollowTimer = undefined;
+        if (!sourceScroll) return;
+        const now = Date.now();
+        const wait = Math.max(scrollingUntil - now, scrollTimer ? 40 : 0,
+          !sourceScroll.authoritative && confirmedScrollSeq < scrollSeq ? scrollAwaitUntil - now : 0);
+        if (wait > 0) { scrollFollowTimer = setTimeout(followSourceScroll, wait + 1); return; }
+        const previousApplying = applyingScroll; applyingScroll = true;
+        if (editor) editor.setScrollPosition({ scrollTop: sourceScroll.top, scrollLeft: sourceScroll.left }, 1);
+        else { node.scrollTop = sourceScroll.top; node.scrollLeft = sourceScroll.left; }
+        appliedScroll = { top: editor ? editor.getScrollTop() : node.scrollTop, left: editor ? editor.getScrollLeft() : node.scrollLeft };
+        applyingScroll = previousApplying;
+      };
+      const layout = () => {
+        const rect = options.getNodeRect?.(initial.editorId) || sourceRect;
+        if (!rect || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)) return;
+        const signature = JSON.stringify(rect);
+        if (signature === lastRect) return;
+        lastRect = signature;
+        const previousApplying = applyingScroll; applyingScroll = true;
+        Object.assign(node.style, { left: `${rect.x}px`, top: `${rect.y}px`, width: `${Math.max(0, rect.width)}px`, height: `${Math.max(0, rect.height)}px`, display: rect.width > 0 && rect.height > 0 ? '' : 'none' });
+        editor?.layout({ width: Math.max(0, rect.width), height: Math.max(0, rect.height) });
+        applyingScroll = previousApplying;
+      };
       refresh = () => { if (editor) editor.updateOptions({ readOnly: !shared.editable }); else (node as HTMLTextAreaElement).readOnly = !shared.editable; };
       const update = (message: EditorMessage) => {
+        applyingScroll = true;
         if (message.type === 'edit:cursor') remoteCursor = message;
         else shared.receive(message);
         if (message.type === 'edit:init' || message.type === 'edit:layout') {
           if (typeof message.readOnly === 'boolean') readOnly = message.readOnly;
-          const rect = message.rect || options.getNodeRect?.(initial.editorId);
-          if (rect && [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)) {
-            Object.assign(node.style, { left: `${rect.x}px`, top: `${rect.y}px`, width: `${Math.max(0, rect.width)}px`, height: `${Math.max(0, rect.height)}px`, display: rect.width > 0 && rect.height > 0 ? '' : 'none' });
-            editor?.layout({ width: Math.max(0, rect.width), height: Math.max(0, rect.height) });
-          }
+          if (message.rect) sourceRect = message.rect;
+          layout();
+          confirmedScrollSeq = Math.max(confirmedScrollSeq, message.scrollSeq || 0);
+          scrollSeq = Math.max(scrollSeq, confirmedScrollSeq);
+          if (confirmedScrollSeq >= scrollSeq) clearTimeout(scrollRecoveryTimer);
+          // A fresh snapshot recovers a rejected/lost gesture. Bound the wait
+          // as well, so subsequent student scrolling can never stay blocked.
+          sourceScroll = { top: message.scrollTop || 0, left: message.scrollLeft || 0, authoritative: message.type === 'edit:init' };
           if (editor) {
             if (message.language && message.language !== model.getLanguageId()) monaco.editor.setModelLanguage(model, message.language);
-            editor.updateOptions({ fontSize: message.fontSize || 14, fontFamily: message.fontFamily, lineHeight: message.lineHeight || 20 });
-            // Follow the student's viewport unless the teacher is actively typing or scrolling here.
-            if (!editor.hasTextFocus()) editor.setScrollPosition({ scrollTop: message.scrollTop || 0, scrollLeft: message.scrollLeft || 0 });
+            const view = message.view || {};
+            const { tabSize, insertSpaces, ...editorOptions } = view;
+            model.updateOptions({ ...(tabSize !== undefined ? { tabSize } : {}), ...(insertSpaces !== undefined ? { insertSpaces } : {}) });
+            applyingScroll = true;
+            editor.updateOptions({ ...editorOptions, fontSize: message.fontSize || 14, fontFamily: message.fontFamily, lineHeight: message.lineHeight || 20 });
+            if (message.theme) {
+              const signature = JSON.stringify(message.theme);
+              if (signature !== appliedTheme) {
+                monaco.editor.defineTheme(sharedThemeName, message.theme);
+                monaco.editor.setTheme(sharedThemeName); appliedTheme = signature;
+              }
+            }
+            applyingScroll = false;
           } else {
             node.style.fontSize = `${message.fontSize || 14}px`; node.style.fontFamily = message.fontFamily || 'monospace';
             node.style.lineHeight = `${message.lineHeight || 20}px`;
-            if (document.activeElement !== node) { node.scrollTop = message.scrollTop || 0; node.scrollLeft = message.scrollLeft || 0; }
           }
+          // Retain the newest student position during a teacher gesture and
+          // apply it after the gesture settles, even if no further event arrives.
+          followSourceScroll();
         }
         if (remoteCursor && editor) decorations = cursorDecoration(shared, editor, remoteCursor, decorations, false);
         refresh();
+        applyingScroll = false;
       };
       const result: ViewerBinding = {
-        shared, node, editor, readOnly, update, refresh,
+        shared, node, editor, readOnly, update, refresh, layout,
         dispose() {
           for (const cleanup of cleanups.reverse()) cleanup();
           shared.dispose(); editor?.dispose(); model?.dispose(); node.remove();
@@ -583,6 +763,12 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
       options.onStatus?.({ editorId: initial.editorId, pending: 0, connected, ready: false, error: '共享编辑器暂未打开，请重新连接' });
     }
   };
+  const refreshGeometry = () => {
+    if (disposed) return;
+    for (const binding of bindings.values()) binding.layout();
+    geometryFrame = window.requestAnimationFrame(refreshGeometry);
+  };
+  if (options.getNodeRect) geometryFrame = window.requestAnimationFrame(refreshGeometry);
   return {
     getPendingDrafts() {
       return [...detachedDrafts.values(), ...[...bindings].filter(([, binding]) => binding.shared.pendingCount > 0).map(([editorId, binding]) => ({
@@ -609,8 +795,11 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
     },
     dispose() {
       disposed = true; creating.clear();
+      if (geometryFrame) window.cancelAnimationFrame(geometryFrame);
+      const currentTheme = themeService?.getColorTheme?.()?.themeName;
       for (const [editorId, binding] of bindings) { preserveDraft(editorId, binding); binding.dispose(); }
       bindings.clear(); style.remove();
+      if (originalTheme && currentTheme === sharedThemeName) monacoRuntime?.editor.setTheme(originalTheme);
     },
   };
 }

@@ -1,6 +1,6 @@
 # 课堂共享模式
 
-老师打开悬浮助手，点「共享模式」，选择在线学员即可连接。没有观看、编辑、控制三个开关：不操作就是观看，直接操作即可协助。学员端只显示「老师正在协助」，不提供收回按钮。老师通过助手切换学员或断开。
+老师打开悬浮助手，点「共享模式」，选择在线学员即可连接。没有观看、编辑、控制三个开关：不操作就是观看，直接操作即可协助。学员端在页面底部显示「老师正在协助」，不遮挡顶部菜单，提示本身不拦截点击。老师通过助手切换学员或断开。
 
 ## 当前支持范围
 
@@ -19,13 +19,17 @@
 
 页面由 rrweb 采集结构变化，老师侧在禁止脚本执行的 iframe 重放；代码使用 Yjs 合并并发修改，通过独立编辑器覆盖镜像内原编辑区域。老师的原编辑器不复用，也不写入学员模型。
 
+共享期间将代码换行统一为 LF，避免 Windows 与其他系统的换行长度不同导致并发编辑错位；中文输入法组词期间暂存远端更新，提交组词后再合并。页面异步更新会丢弃过期结果，防止旧草稿覆盖刚同步的代码。同一个代码模型只建立一次协作绑定。
+
+老师侧编辑区域跟随学员的字号、行高、自动换行、缩进、行号、缩略图与配色，断开时恢复老师原主题。页面和代码区域均支持双向滚动；老师连续滚动时持续发送目标位置，避免等滚轮停下才同步，也避免旧位置回传造成跳动。
+
 失去连接时停止远程操作；恢复后先获得完整页面与编辑器状态，再继续操作。未确认的代码更新使用 CRDT 重试，不重复执行点击。双方各自撤销自己的修改。若共享期间代码发生改变，结束时保留学员代码和视图，重新建立本地普通撤销历史，避免旧撤销记录误删协作后的内容。
 
 连接状态和短期房间元数据保存在 MongoDB。页面与代码数据不写入 MongoDB 通用事件队列，通过当前进程或同一 PM2 集群转发。跨独立服务器实例暂不支持。登录状态和权限持续复核；退出登录或移出授权范围会结束共享。
 
 ## 资源与部署
 
-普通学习页只加载连接控制代码；页面采集、重放和协作编辑模块仅在连接双方按需加载。代码更新按 100ms 合批，光标/布局最多每 200ms 发送；页面快照分块传输。服务端设有包大小、频率和积压上限。超过支持范围的超大页面或代码会显示暂停提示，学员原页面仍可继续使用。
+普通学习页只加载连接控制代码；页面采集、重放和协作编辑模块仅在连接双方按需加载。代码更新按 40ms 合批，光标最多每 200ms 发送；老师页面滚动按 32ms、代码区域滚动按 40ms 合并发送。以上是发送间隔，实际到达时间还受网络影响。页面快照分块传输，服务端设有包大小、频率和积压上限。超过支持范围的超大页面或代码会显示暂停提示，学员原页面仍可继续使用。
 
 本地浏览器依赖固定在 `build/live-share/package-lock.json`。更新依赖时在本地运行：
 
@@ -42,7 +46,7 @@ yarn build:ui:production
 ## 验证
 
 ```sh
-node --test test/live_share_backend.spec.js test/live_share_editor.spec.js test/live_share_editor.browser.spec.js test/live_share_mirror.spec.js test/live_share_controller.spec.js test/live_share_ui.spec.js test/teacher_assistant.spec.js test/deploy_prebuilt.spec.js
+node --test test/live_share_backend.spec.js test/live_share_editor.spec.js test/live_share_editor.browser.spec.js test/live_share_mirror.spec.js test/live_share_controller.spec.js test/live_share_ui.spec.js test/scratchpad_editor_sync.spec.js test/teacher_assistant.spec.js test/deploy_prebuilt.spec.js
 ```
 
-后端测试使用真实临时 MongoDB 验证独占索引、并发、授权、设备和页面隔离；浏览器测试覆盖真实 Monaco 并发编辑、rrweb 镜像、重连、切换学员及老师原页面恢复。UI 联调使用真实 WebSocket 和受控测试页面，不连接线上学员。
+后端测试使用真实临时 MongoDB 验证独占索引、并发、授权、设备和页面隔离；浏览器测试覆盖真实 Monaco 并发编辑、跨系统换行、中文输入、编辑器显示设置、持续滚动、rrweb 镜像、重连、切换学员及老师原页面恢复。另有延迟加载回归验证旧代码不会覆盖新编辑。UI 联调使用真实 WebSocket 和受控测试页面，不连接线上学员。

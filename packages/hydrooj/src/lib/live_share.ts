@@ -49,6 +49,53 @@ export function relayAllowed(role: ShareRole, kind: unknown) {
     return role === 'teacher' ? kind === 'editor' || kind === 'command' : ['mirror', 'editor', 'ack'].includes(String(kind));
 }
 
+/** Only appearance data crosses the connection; Monaco callbacks/options are never accepted. */
+function validEditorAppearance(view: any) {
+    const object = (value: any) => value && typeof value === 'object' && !Array.isArray(value);
+    const integer = (value: any, min: number, max: number) => Number.isSafeInteger(value) && value >= min && value <= max;
+    const checks: Record<string, (value: any) => boolean> = {
+        wordWrap: (v) => ['off', 'on', 'wordWrapColumn', 'bounded'].includes(v),
+        wordWrapColumn: (v) => integer(v, 1, 1073741824),
+        tabSize: (v) => integer(v, 1, 2147483647),
+        insertSpaces: (v) => typeof v === 'boolean',
+        glyphMargin: (v) => typeof v === 'boolean',
+        lineNumbers: (v) => ['on', 'off', 'relative', 'interval'].includes(v),
+        lineNumbersMinChars: (v) => integer(v, 0, 300),
+        lineDecorationsWidth: (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1000)
+            || (typeof v === 'string' && /^\d{1,3}(?:\.\d{1,2})?ch$/.test(v)),
+        scrollBeyondLastLine: (v) => typeof v === 'boolean',
+        letterSpacing: (v) => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 100,
+        fontWeight: (v) => typeof v === 'string' && /^(?:normal|bold|[1-9]\d{0,2}|1000)$/.test(v),
+        padding: (v) => object(v) && Object.entries(v).every(([key, value]) => ['top', 'bottom'].includes(key) && integer(value, 0, 1000)),
+        minimap: (v) => {
+            const options: Record<string, (value: any) => boolean> = {
+                enabled: (x) => typeof x === 'boolean', renderCharacters: (x) => typeof x === 'boolean',
+                side: (x) => ['left', 'right'].includes(x), size: (x) => ['proportional', 'fill', 'fit'].includes(x),
+                showSlider: (x) => ['always', 'mouseover'].includes(x), maxColumn: (x) => integer(x, 1, 10000), scale: (x) => integer(x, 1, 10),
+            };
+            return object(v) && Object.entries(v).every(([key, value]) => Object.hasOwn(options, key) && options[key](value));
+        },
+    };
+    return object(view) && Object.entries(view).every(([key, value]) => Object.hasOwn(checks, key) && checks[key](value));
+}
+
+function validEditorTheme(theme: any) {
+    const object = (value: any) => value && typeof value === 'object' && !Array.isArray(value);
+    const color = (value: any) => typeof value === 'string' && /^#?(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i.test(value);
+    if (!object(theme) || Object.keys(theme).some((key) => !['base', 'inherit', 'colors', 'rules', 'encodedTokensColors'].includes(key))
+        || !['vs', 'vs-dark', 'hc-black', 'hc-light'].includes(theme.base) || typeof theme.inherit !== 'boolean'
+        || !object(theme.colors) || Object.keys(theme.colors).length > 1024
+        || !Object.entries(theme.colors).every(([key, value]) => /^[\w.\-]{1,128}$/.test(key) && color(value))
+        || !Array.isArray(theme.rules) || theme.rules.length > 4096) return false;
+    if (!theme.rules.every((rule: any) => object(rule) && typeof rule.token === 'string' && rule.token.length <= 256
+        && Object.keys(rule).every((key) => ['token', 'foreground', 'background', 'fontStyle'].includes(key))
+        && (rule.foreground === undefined || color(rule.foreground)) && (rule.background === undefined || color(rule.background))
+        && (rule.fontStyle === undefined || (typeof rule.fontStyle === 'string' && rule.fontStyle.length <= 64
+            && rule.fontStyle.split(' ').every((value: string) => ['', 'normal', 'italic', 'bold', 'underline', 'strikethrough'].includes(value)))))) return false;
+    return theme.encodedTokensColors === undefined || (Array.isArray(theme.encodedTokensColors)
+        && theme.encodedTokensColors.length <= 4096 && theme.encodedTokensColors.every(color));
+}
+
 export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: any, pageId: string) {
     const invalid = () => { throw new LiveShareError('INVALID_RELAY', '共享内容格式不正确。'); };
     const finite = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 10_000_000;
@@ -63,7 +110,7 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
         if (!shareId(data.id) || data.pageId !== pageId || typeof data.ok !== 'boolean'
             || (data.reason !== undefined && !short(data.reason, 512))) invalid();
     } else if (kind === 'editor') {
-        const allowed = role === 'teacher' ? ['edit:update', 'edit:cursor', 'edit:sync']
+        const allowed = role === 'teacher' ? ['edit:update', 'edit:cursor', 'edit:sync', 'edit:scroll']
             : ['edit:init', 'edit:layout', 'edit:remove', 'edit:update', 'edit:cursor', 'edit:ack'];
         if (!allowed.includes(data.type) || data.pageId !== pageId || !short(data.editorId, 128)
             || (!data.editorId && data.type !== 'edit:sync')) invalid();
@@ -73,6 +120,14 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
         if ((data.type === 'edit:update' && !data.update) || (data.type === 'edit:init' && !data.state)) invalid();
         if (data.kind !== undefined && !['monaco', 'textarea'].includes(data.kind)) invalid();
         for (const key of ['fontSize', 'lineHeight', 'scrollTop', 'scrollLeft']) if (data[key] !== undefined && !finite(data[key])) invalid();
+        if (data.scrollSeq !== undefined && (!Number.isSafeInteger(data.scrollSeq) || data.scrollSeq < 0)) invalid();
+        if (data.type === 'edit:scroll' && (!finite(data.scrollTop) || data.scrollTop < 0
+            || !finite(data.scrollLeft) || data.scrollLeft < 0 || !(data.scrollSeq > 0))) invalid();
+        if (data.view !== undefined || data.theme !== undefined) {
+            if (role !== 'student' || !['edit:init', 'edit:layout'].includes(data.type)
+                || (data.view !== undefined && !validEditorAppearance(data.view))
+                || (data.theme !== undefined && !validEditorTheme(data.theme))) invalid();
+        }
         if (data.rect && !['x', 'y', 'width', 'height'].every((key) => finite(data.rect[key]))) invalid();
     } else if (kind === 'mirror') {
         if (!['rrweb', 'rrweb-chunk', 'rrweb-batch'].includes(data.type) || !Number.isSafeInteger(data.sequence) || data.sequence < 0) invalid();

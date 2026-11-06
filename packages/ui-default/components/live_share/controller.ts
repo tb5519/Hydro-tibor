@@ -1,7 +1,11 @@
 export interface LiveShareConfig {
   enabled: boolean; uid: number; canTeach: boolean; socketUrl: string; pageGrant?: string;
 }
-type Controllers = { dispose(): void; setConnected(connected: boolean): void; snapshot?(): void; getPendingDrafts?(): any[]; receive?(data: any): void; receiveCommand?(data: any): any };
+type Controllers = {
+  dispose(): void; setConnected(connected: boolean): void; snapshot?(): void; getPendingDrafts?(): any[];
+  receive?(data: any): void; receiveCommand?(data: any): any;
+  getEditorRect?(id: string): { x: number; y: number; width: number; height: number } | null;
+};
 type Adapters = typeof import('./mirror') & typeof import('./editor');
 interface Student { uid: number; name: string; online: boolean; tabs?: { tabId: string; title: string; visible: boolean }[] }
 interface Session { sessionId: string; pageId: string; studentUid?: number; studentName?: string; teacherName?: string; tabId?: string }
@@ -278,6 +282,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
         },
       });
       viewerEditors = adapters.attachViewerEditors({ pageId: next.pageId, container: editorRoot,
+        getNodeRect: (id) => viewerMirror?.getEditorRect?.(id) || undefined,
         send: (data) => relay(next, 'editor', data),
         onStatus: (status: any) => {
           pendingEdits.set(status.editorId, status.pending || 0);
