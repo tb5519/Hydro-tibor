@@ -267,6 +267,7 @@ export class ConnectionHandler extends HandlerCommon {
     conn: WebSocket;
     compression: Shorty;
     counter = 0;
+    maxMessageBytes?: number;
 
     resetCompression() {
         this.counter = 0;
@@ -666,6 +667,11 @@ ${c.response.status} ${endTime - startTime}ms ${c.response.length}`);
                 });
                 conn.onmessage = async (e) => {
                     lastHeartbeat = Date.now();
+                    if (h.maxMessageBytes && Buffer.byteLength(e.data) > h.maxMessageBytes) {
+                        conn.close(1009, 'Message too large');
+                        await clean();
+                        return;
+                    }
                     if (e.data === 'pong') return;
                     if (e.data === 'ping') {
                         conn.send('pong');

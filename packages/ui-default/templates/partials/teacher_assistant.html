@@ -38,6 +38,13 @@
       <button type="button" class="teacher-assistant__close" data-assistant-close aria-label="收起老师助手"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button>
     </header>
     <nav class="teacher-assistant__links" aria-label="老师常用入口">
+      {% if UiContext.liveShare and UiContext.liveShare.canTeach %}
+      <button type="button" class="teacher-assistant__link teacher-assistant__share" data-live-share-open>
+        <span class="teacher-assistant__icon">{{ assistantIcon('people') }}</span>
+        <span class="teacher-assistant__copy"><strong>共享模式</strong><span>一起看页面，随手帮学员修改</span></span>
+        <span class="teacher-assistant__arrow" aria-hidden="true">↗</span>
+      </button>
+      {% endif %}
       {% if assistantPlatformAdmin and page_name.startsWith('platform_') %}
         {{ assistantLink(url('platform_dashboard'), 'chart', '平台概览', '查看工作区与学员情况') }}
         {{ assistantLink(url('platform_workspace'), 'grid', '老师工作区', '管理老师的教学空间') }}

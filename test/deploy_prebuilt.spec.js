@@ -79,6 +79,47 @@ function faviconGuard(options = {}) {
     });
 }
 
+function liveShareGuard(options = {}) {
+    const source = script.match(/<<'VERIFY_LIVE_SHARE_TOOL'\n([\s\S]*?)\nVERIFY_LIVE_SHARE_TOOL/)[1];
+    const files = ['build/live-share/package.json', 'build/live-share/package-lock.json'];
+    const toolPackage = options.toolPackage || JSON.parse(fs.readFileSync(path.join(root, files[0]), 'utf8'));
+    const rootPackage = options.rootPackage || { workspaces: ['packages/*', 'framework/*', 'plugins/*', 'modules/*'], scripts: { start: 'node app' } };
+    const lock = options.lock === undefined ? fs.readFileSync(path.join(root, files[1])) : Buffer.from(options.lock);
+    const changes = options.changes === undefined ? files.map((file) => `A\t${file}`).join('\n') : options.changes;
+    const manifestFile = 'packages/ui-default/public/manifest.json';
+    const artifacts = {
+        'packages/ui-default/components/live_share/vendor.js': '/* prebuilt vendor */',
+        'packages/ui-default/components/live_share/vendor.LICENSE.txt': 'Browser dependency licenses',
+        [manifestFile]: JSON.stringify({ 'live-share.js': '/live-share.123abc.chunk.js' }),
+        'packages/ui-default/public/live-share.123abc.chunk.js': '/* production shared browser code */',
+        ...options.artifacts,
+    };
+    return () => vm.runInNewContext(source, {
+        process: { argv: ['node', '-', expectedCommit] }, console: { log() {} },
+        require: (name) => {
+            if (name !== 'node:child_process') return require(name);
+            return { execFileSync(command, args, opts) {
+                assert.equal(command, 'git');
+                assert.equal(opts.cwd, '/workspace');
+                if (args[0] === 'diff') return Buffer.from(args[1] === '--name-status' ? changes : (options.manifestUnchanged ? '' : manifestFile));
+                if (args[0] === 'ls-tree') {
+                    assert.equal(args[1], expectedCommit);
+                    const file = args[3];
+                    if (artifacts[file] === null || artifacts[file] === undefined) return Buffer.from('');
+                    return Buffer.from(`${options.symlink === file ? '120000' : '100644'} blob ${'b'.repeat(40)}\t${file}\n`);
+                }
+                assert.equal(args[0], 'show');
+                if (args[1] === `${expectedCommit}:package.json`) return JSON.stringify(rootPackage);
+                if (args[1] === `${expectedCommit}:${files[0]}`) return JSON.stringify(toolPackage);
+                if (args[1] === `${expectedCommit}:${files[1]}`) return lock;
+                const file = args[1].slice(expectedCommit.length + 1);
+                assert.equal(typeof artifacts[file], 'string', `Unexpected git read: ${file}`);
+                return Buffer.from(artifacts[file]);
+            } };
+        },
+    });
+}
+
 function scratchAssetFixture(t, modify = () => {}) {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-deploy-assets-'));
     t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -160,7 +201,8 @@ describe('prebuilt production deployment script', () => {
         const filter = script.match(/dependency_changes="\$\(([\s\S]*?)\)"\n\[ -z "\$dependency_changes"/)[1];
         const names = [
             'package.json', 'packages/hydrooj/package.json', 'build/favicon/package.json', 'build/favicon/pnpm-lock.yaml',
-            'packages/ui-default/package.json', 'packages/example/pnpm-lock.yaml', 'build/unrelated/package.json',
+            'build/live-share/package.json', 'build/live-share/package-lock.json',
+            'packages/ui-default/package.json', 'packages/example/pnpm-lock.yaml', 'build/unrelated/package.json', 'build/unrelated/package-lock.json',
             'plugins/example/package.json', 'yarn.lock', 'package-lock.json', 'pnpm-lock.yaml',
             '.yarnrc.yml', '.npmrc', '.yarn/patches/a.patch',
         ];
@@ -168,7 +210,8 @@ describe('prebuilt production deployment script', () => {
             encoding: 'utf8', env: { ...process.env, EXPECTED_COMMIT: expectedCommit, TEST_CHANGED: names.join('\n') },
         });
         assert.equal(result.status, 0, result.stderr);
-        assert.deepEqual(result.stdout.trim().split('\n'), names.slice(4));
+        assert.deepEqual(result.stdout.trim().split('\n'), names.slice(6));
+        assert.match(filter, /':\(glob\)\*\*\/package-lock\.json'/);
     });
 });
 
@@ -201,6 +244,58 @@ describe('local-only favicon metadata deployment exception', () => {
         const workspaces = ['packages/*', 'framework/*', 'plugins/*', 'modules/*'];
         assert.throws(faviconGuard({ rootPackage: { workspaces: [...workspaces, 'build/*'] } }), /outside the runtime workspaces/);
         assert.throws(faviconGuard({ rootPackage: { workspaces, scripts: { start: 'pnpm --dir build/favicon run build' } } }), /must not invoke/);
+    });
+});
+
+describe('local-only browser sharing metadata deployment exception', () => {
+    it('allows the initial pinned tool only with committed vendor, licenses and a rebuilt hashed UI chunk', () => {
+        assert.doesNotThrow(liveShareGuard());
+        assert.doesNotThrow(liveShareGuard({ changes: '' }));
+        assert.ok(script.indexOf("<<'VERIFY_LIVE_SHARE_TOOL'") < script.indexOf('git -c core.hooksPath=/dev/null merge'));
+    });
+
+    it('rejects later metadata changes, removals and incomplete additions', () => {
+        for (const changes of [
+            'A\tbuild/live-share/package.json', 'A\tbuild/live-share/package-lock.json',
+            'M\tbuild/live-share/package.json\nM\tbuild/live-share/package-lock.json',
+            'D\tbuild/live-share/package.json\nD\tbuild/live-share/package-lock.json',
+            'A\tbuild/live-share/package.json\nM\tbuild/live-share/package-lock.json',
+        ]) assert.throws(liveShareGuard({ changes }), /first addition/);
+    });
+
+    it('blocks dependency drift, tool lifecycle hooks and runtime workspace or script references', () => {
+        const current = JSON.parse(fs.readFileSync(path.join(root, 'build/live-share/package.json'), 'utf8'));
+        for (const toolPackage of [
+            { ...current, private: false },
+            { ...current, scripts: { ...current.scripts, postinstall: 'node build.mjs' } },
+            { ...current, scripts: { build: 'node other.mjs' } },
+            { ...current, dependencies: { ...current.dependencies, rrweb: '^2.2.0' } },
+            { ...current, dependencies: { ...current.dependencies, yjs: '13.6.32' } },
+            { ...current, devDependencies: { other: '1.0.0' } },
+        ]) assert.throws(liveShareGuard({ toolPackage }), /audited private browser tool/);
+        assert.throws(liveShareGuard({ lock: 'different lock' }), /audited browser-only dependencies/);
+        const workspaces = ['packages/*', 'framework/*', 'plugins/*', 'modules/*'];
+        assert.throws(liveShareGuard({ rootPackage: { workspaces: [...workspaces, 'build/*'] } }), /outside the runtime workspaces/);
+        for (const command of ['npm --prefix build/live-share run build', 'node build\\live-share\\build.mjs', 'node -e "require(\'yjs\')"']) {
+            assert.throws(liveShareGuard({ rootPackage: { workspaces, scripts: { start: command } } }), /must not invoke/);
+        }
+    });
+
+    it('blocks missing, empty or symlinked release artifacts and stale or unsafe manifest entries', () => {
+        for (const file of [
+            'packages/ui-default/components/live_share/vendor.js',
+            'packages/ui-default/components/live_share/vendor.LICENSE.txt',
+            'packages/ui-default/public/manifest.json',
+            'packages/ui-default/public/live-share.123abc.chunk.js',
+        ]) {
+            assert.throws(liveShareGuard({ artifacts: { [file]: null } }), /committed regular file/);
+            assert.throws(liveShareGuard({ artifacts: { [file]: '' } }), /must not be empty/);
+            assert.throws(liveShareGuard({ symlink: file }), /committed regular file/);
+        }
+        assert.throws(liveShareGuard({ manifestUnchanged: true }), /locally rebuilt UI manifest/);
+        for (const value of [undefined, '/live-share.js', '/../../live-share.123abc.chunk.js', 'https://elsewhere/live-share.123abc.chunk.js']) {
+            assert.throws(liveShareGuard({ artifacts: { 'packages/ui-default/public/manifest.json': JSON.stringify({ 'live-share.js': value }) } }), /hashed live-share production chunk/);
+        }
     });
 });
 

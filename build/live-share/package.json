@@ -1,0 +1,14 @@
+{
+  "name": "onebyone-live-share-build",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "rrweb": "2.2.0",
+    "y-monaco": "0.1.6",
+    "y-protocols": "1.0.7",
+    "yjs": "13.6.33"
+  }
+}

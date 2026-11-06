@@ -55,6 +55,9 @@ function testElementHotkey(hotkey, $element, attr) {
 
 const hotkeyPage = new AutoloadPage('hotkeyPage', () => {
   $(document).on('keydown', (ev) => {
+    // The teacher's original page stays mounted underneath the shared view.
+    // Never let its F9/F10 shortcuts submit/run the teacher's own problem.
+    if (document.body.classList.contains('live-share-viewing')) return;
     const hotkey = ['alt', 'ctrl', 'shift'].filter((modifyKey) => ev[`${modifyKey}Key`]);
     if (ev.metaKey && !ev.ctrlKey) {
       hotkey.push('ctrl');

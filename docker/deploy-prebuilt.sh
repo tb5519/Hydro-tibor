@@ -72,8 +72,8 @@ git merge-base --is-ancestor HEAD "$EXPECTED_COMMIT" \
     || stop '服务器 master 无法快进到目标提交'
 
 dependency_changes="$(git diff --name-only HEAD "$EXPECTED_COMMIT" -- \
-    ':(glob)**/package.json' yarn.lock package-lock.json ':(glob)**/pnpm-lock.yaml' \
-    .yarnrc.yml .npmrc .yarn/patches | grep -Ev '^(package\.json|packages/hydrooj/package\.json|build/favicon/(package\.json|pnpm-lock\.yaml))$' || true)"
+    ':(glob)**/package.json' yarn.lock ':(glob)**/package-lock.json' ':(glob)**/pnpm-lock.yaml' \
+    .yarnrc.yml .npmrc .yarn/patches | grep -Ev '^(package\.json|packages/hydrooj/package\.json|build/favicon/(package\.json|pnpm-lock\.yaml)|build/live-share/(package\.json|package-lock\.json))$' || true)"
 [ -z "$dependency_changes" ] || stop "依赖元数据发生变化，不能直接重启：$dependency_changes"
 
 if ! docker exec -i "$HYDRO_CONTAINER" node - "$EXPECTED_COMMIT" <<'VERIFY_PACKAGE'
@@ -129,6 +129,58 @@ if (changed) {
 VERIFY_FAVICON_TOOL
 then
     stop 'favicon 构建工具元数据超出允许范围；未更新代码、未安装依赖'
+fi
+
+if ! docker exec -i "$HYDRO_CONTAINER" node - "$EXPECTED_COMMIT" <<'VERIFY_LIVE_SHARE_TOOL'
+const assert = require('node:assert/strict');
+const childProcess = require('node:child_process');
+const crypto = require('node:crypto');
+
+const expected = process.argv[2];
+const toolFiles = ['build/live-share/package.json', 'build/live-share/package-lock.json'];
+const git = (args) => childProcess.execFileSync('git', args, { cwd: '/workspace' });
+const changed = git(['diff', '--name-status', 'HEAD', expected, '--', ...toolFiles]).toString().trim();
+if (changed) {
+  assert.deepStrictEqual(changed.split('\n').sort(), toolFiles.map((file) => `A\t${file}`).sort(),
+    'Only the first addition of both audited live-share tool metadata files is allowed');
+  const rootPackage = JSON.parse(git(['show', `${expected}:package.json`]));
+  assert.deepStrictEqual(rootPackage.workspaces, ['packages/*', 'framework/*', 'plugins/*', 'modules/*'],
+    'The live-share build tool must remain outside the runtime workspaces');
+  for (const [name, command] of Object.entries(rootPackage.scripts || {})) {
+    if (name === 'test' || name.startsWith('test:')) continue;
+    assert(!/(?:build[/\\]live-share|onebyone-live-share-build|\b(?:rrweb|y-monaco|y-protocols|yjs)\b)/.test(command),
+      'Runtime or lifecycle scripts must not invoke the local live-share tool');
+  }
+  assert.deepStrictEqual(JSON.parse(git(['show', `${expected}:build/live-share/package.json`])), {
+    name: 'onebyone-live-share-build', private: true, type: 'module',
+    scripts: { build: 'node build.mjs' },
+    dependencies: { rrweb: '2.2.0', 'y-monaco': '0.1.6', 'y-protocols': '1.0.7', yjs: '13.6.33' },
+  }, 'Only the audited private browser tool and its manual build script are allowed');
+  const lockHash = crypto.createHash('sha256').update(git(['show', `${expected}:build/live-share/package-lock.json`])).digest('hex');
+  assert.equal(lockHash, 'b354a36177eb732407ba2b1c11228821a80c22db16d71a924e5e28c12b038183',
+    'The live-share lock must match the audited browser-only dependencies');
+  const committedFile = (file) => {
+    const entry = git(['ls-tree', expected, '--', file]).toString().trim();
+    assert(new RegExp(`^100644 blob [0-9a-f]{40}\\t${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`).test(entry),
+      `Prebuilt live-share file must be a committed regular file: ${file}`);
+    const bytes = git(['show', `${expected}:${file}`]);
+    assert(bytes.length > 0, `Prebuilt live-share file must not be empty: ${file}`);
+    return bytes;
+  };
+  committedFile('packages/ui-default/components/live_share/vendor.js');
+  committedFile('packages/ui-default/components/live_share/vendor.LICENSE.txt');
+  const manifestFile = 'packages/ui-default/public/manifest.json';
+  assert(git(['diff', '--name-only', 'HEAD', expected, '--', manifestFile]).toString().trim() === manifestFile,
+    'The live-share addition requires a locally rebuilt UI manifest');
+  const manifest = JSON.parse(committedFile(manifestFile));
+  assert(/^\/live-share\.[a-f0-9]{6,64}\.chunk\.js$/.test(manifest['live-share.js']),
+    'The UI manifest must contain a hashed live-share production chunk');
+  committedFile(`packages/ui-default/public${manifest['live-share.js']}`);
+  console.log('已确认共享模式依赖仅用于本地浏览器构建，且共享资源已提交；服务器不安装或运行构建工具。');
+}
+VERIFY_LIVE_SHARE_TOOL
+then
+    stop '共享模式构建工具元数据或预构建资源超出允许范围；未更新代码、未安装依赖'
 fi
 
 if ! docker exec -i "$HYDRO_CONTAINER" node - "$EXPECTED_COMMIT" <<'VERIFY_HYDRO_PACKAGE'
