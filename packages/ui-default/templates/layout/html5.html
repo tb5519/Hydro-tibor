@@ -76,6 +76,7 @@
   {% endif %}
   {% block body %}{% endblock %}
   {% include "partials/broadcast_dialog.html" %}
+  {% include "partials/teacher_assistant.html" %}
   {% block script %}{% endblock %}
   {% if not isIE(handler.request.headers['user-agent']) and not handler.session.legacy %}
     <script>

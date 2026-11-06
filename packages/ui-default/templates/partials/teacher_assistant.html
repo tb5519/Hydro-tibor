@@ -1,0 +1,76 @@
+{% set assistantUser = handler.user %}
+{% set assistantWorkspaceRole = (handler.workspaceMember or {}).role %}
+{% set assistantPlatformAdmin = assistantUser and model.workspace and model.workspace.isPlatformAdmin(assistantUser._id) %}
+{% set assistantLegacyOwner = assistantUser and model.workspace and model.workspace.isLegacyOwner(assistantUser._id) %}
+{% set assistantWorkspaceTeacher = assistantWorkspaceRole in ['owner', 'admin', 'teacher'] %}
+{% set assistantCanEditDomain = assistantUser and assistantUser.hasPerm(perm.PERM_EDIT_DOMAIN) %}
+{% set assistantSystemAdmin = assistantUser and assistantUser.hasPriv(PRIV.PRIV_EDIT_SYSTEM) %}
+{% set assistantCanManageStudents = assistantUser and assistantUser.hasPriv(PRIV.PRIV_ALL) %}
+{% set assistantProfile = assistantUser and assistantUser.hasPriv(PRIV.PRIV_USER_PROFILE) %}
+{% set assistantWorkspace = handler.workspaceDoc %}
+{% set assistantScratch = handler.domain.domainType == 'scratch' %}
+{% if assistantUser and assistantUser._id > 0 and not handler.session.sudoUid and (assistantCanEditDomain or assistantSystemAdmin or assistantPlatformAdmin or assistantWorkspaceTeacher or assistantLegacyOwner) %}
+{% macro assistantIcon(name) %}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  {% if name == 'chart' %}<path d="M4 4v16h16M8 15v-4m5 4V7m5 8v-6"/>
+  {% elif name == 'people' %}<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 4v2"/>
+  {% elif name == 'settings' %}<path d="M4 7h16M4 17h16M8 4v6m8 4v6"/>
+  {% elif name == 'book' %}<path d="M4 4h6a2 2 0 0 1 2 2v15a3 3 0 0 0-3-2H4V4Zm16 0h-6a2 2 0 0 0-2 2v15a3 3 0 0 1 3-2h5V4Z"/>
+  {% else %}<rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/>{% endif %}
+</svg>
+{% endmacro %}
+{% macro assistantLink(href, icon, title, description) %}
+<a class="teacher-assistant__link" href="{{ href }}">
+  <span class="teacher-assistant__icon">{{ assistantIcon(icon) }}</span>
+  <span class="teacher-assistant__copy"><strong>{{ title }}</strong><span>{{ description }}</span></span>
+  <span class="teacher-assistant__arrow" aria-hidden="true">↗</span>
+</a>
+{% endmacro %}
+<aside class="teacher-assistant" data-teacher-assistant data-user-id="{{ assistantUser._id }}" aria-label="老师助手" hidden>
+  <button type="button" class="teacher-assistant__toggle" data-assistant-toggle aria-expanded="false" aria-controls="teacher-assistant-panel" aria-haspopup="dialog" aria-describedby="teacher-assistant-help" aria-label="打开老师助手，可拖动调整位置" title="老师助手 · 拖动调整位置">
+    <span class="teacher-assistant__mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3.5 14.2 9.8 20.5 12l-6.3 2.2-2.2 6.3-2.2-6.3L3.5 12l6.3-2.2L12 3.5Z" fill="currentColor"/><path d="m19 3 .8 2.2L22 6l-2.2.8L19 9l-.8-2.2L16 6l2.2-.8L19 3Z" fill="currentColor" opacity=".45"/></svg></span>
+    <span class="teacher-assistant__label">助手</span>
+  </button>
+  <span id="teacher-assistant-help" class="teacher-assistant__sr">点击展开菜单，拖动调整位置；也可聚焦后按 Alt 加方向键移动。</span>
+  <section class="teacher-assistant__panel" data-assistant-panel id="teacher-assistant-panel" role="dialog" aria-label="老师助手" hidden>
+    <header class="teacher-assistant__header">
+      <div><span class="teacher-assistant__eyebrow">随手可达</span><h2 class="teacher-assistant__title">老师助手</h2></div>
+      <button type="button" class="teacher-assistant__close" data-assistant-close aria-label="收起老师助手"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button>
+    </header>
+    <nav class="teacher-assistant__links" aria-label="老师常用入口">
+      {% if assistantPlatformAdmin and page_name.startsWith('platform_') %}
+        {{ assistantLink(url('platform_dashboard'), 'chart', '平台概览', '查看工作区与学员情况') }}
+        {{ assistantLink(url('platform_workspace'), 'grid', '老师工作区', '管理老师的教学空间') }}
+        {{ assistantLink(url('platform_account_lookup'), 'people', '账号查询', '快速查找平台账号') }}
+      {% elif assistantWorkspace %}
+        {{ assistantLink(url('workspace_dashboard', { workspaceCode: assistantWorkspace.code }), 'grid', '工作区概览', '课堂与教学情况') }}
+        {% if not assistantWorkspace.legacy and (assistantPlatformAdmin or assistantWorkspaceTeacher) %}
+          {{ assistantLink(url('workspace_students', { workspaceCode: assistantWorkspace.code }), 'people', '学员管理', '查看与管理工作区学员') }}
+        {% elif assistantWorkspace.legacy and assistantCanManageStudents %}
+          {{ assistantLink(url('manage_user_management'), 'people', '学员管理', '查看与管理学员') }}
+        {% endif %}
+        {% if assistantProfile %}{{ assistantLink(url('home_domain'), 'book', '我的课堂', '切换已加入的教学空间') }}{% endif %}
+      {% else %}
+        {% if assistantProfile and (assistantSystemAdmin or (assistantCanEditDomain and not assistantScratch)) %}
+          {{ assistantLink(url('manage_training_dashboard'), 'chart', '学员看板', '了解学习投入与练习情况') }}
+        {% elif assistantScratch and assistantCanEditDomain and assistantProfile %}
+          {{ assistantLink(url('scratch_assignments'), 'book', '作业与批改', '查看任务和学员作品') }}
+        {% endif %}
+        {% if assistantCanManageStudents %}
+          {{ assistantLink(url('manage_user_management'), 'people', '学员管理', '查看学员与课堂安排') }}
+        {% elif assistantScratch and assistantCanEditDomain and assistantProfile %}
+          {{ assistantLink(url('scratch_works'), 'grid', '学员作品', '看看孩子们的新创意') }}
+        {% elif not assistantScratch and assistantUser.hasPerm(perm.PERM_VIEW_HOMEWORK) %}
+          {{ assistantLink(url('homework_main'), 'book', '作业与批改', '查看任务和提交进度') }}
+        {% endif %}
+        {% if assistantCanEditDomain %}
+          {{ assistantLink(url('domain_dashboard'), 'settings', '课堂设置', '管理当前课堂') }}
+        {% elif assistantProfile %}
+          {{ assistantLink(url('home_domain'), 'grid', '我的课堂', '切换已加入的教学空间') }}
+        {% endif %}
+      {% endif %}
+    </nav>
+    <footer class="teacher-assistant__footer"><span>拖动助手，放在顺手的位置</span><button type="button" class="teacher-assistant__reset" data-assistant-reset>恢复位置</button></footer>
+  </section>
+</aside>
+{% endif %}
