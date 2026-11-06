@@ -1011,7 +1011,6 @@ export async function apply(ctx: Context) {
     ctx.Route('domain_group', '/domain/group', DomainUserGroupHandler);
     ctx.Route('domain_join_applications', '/domain/join_applications', DomainJoinApplicationsHandler);
     ctx.Route('domain_add_student', '/domain/add-student', DomainAddStudentHandler);
-    ctx.injectUI('DomainManage', 'domain_add_student', { family: 'Properties', icon: 'add', before: 'domain_role' });
     ctx.Route('domain_join', '/domain/join', DomainJoinHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('domain_search', '/domain/search', DomainSearchHandler, PRIV.PRIV_USER_PROFILE);
     await ctx.inject(['api'], ({ api }) => {
