@@ -17,6 +17,7 @@ function load(file, dependencies = {}, globals = {}) {
     return module.exports;
 }
 const protocol = load('packages/hydrooj/src/lib/live_share.ts');
+const { Router } = load('framework/framework/router.ts');
 const errorCode = (code) => (error) => error.code === code;
 const PERM = { PERM_VIEW: 1n, PERM_EDIT_DOMAIN: 2n, PERM_ALL: 3n };
 const PRIV = { PRIV_USER_PROFILE: 2, PRIV_EDIT_SYSTEM: 1, PRIV_JUDGE: 4 };
@@ -272,18 +273,22 @@ describe('live share durable session broker', () => {
 
 describe('live share websocket integration', () => {
     it('injects a page-bound learner grant only after an authorized learning GET response', async () => {
+        const router = new Router();
+        handlers.apply({ Connection: (name, route) => router.ws(route, undefined, name), on() {} });
         const make = (uid, path = '/d/class-a/p/1000') => ({
             user: { _id: uid, hasPriv: () => true }, domain: rooms[0], session: {}, UiContext: {},
             request: { method: 'get', originalPath: path }, context: { request: { querystring: 'tid=contest' } },
             response: { status: 200, template: 'problem_detail.html' },
-            url: (_name, options) => `/d/${options.domainId}/live-share/conn`,
+            url: (name, options) => `/d/${options.domainId}${router.url(name)}`,
         });
         const student = make(10); await handlers.injectLiveShare(student);
         assert.equal(student.UiContext.liveShare.canTeach, false);
+        assert.equal(student.UiContext.liveShare.socketUrl, '/d/class-a/live-share/conn');
         assert.equal(await model.verifyPageGrant(10, 'class-a', student.UiContext.liveShare.pageGrant,
             '/d/class-a/p/1000?tid=contest'), true);
         const teacher = make(2, '/manage'); await handlers.injectLiveShare(teacher);
         assert.equal(teacher.UiContext.liveShare.canTeach, true); assert.equal(teacher.UiContext.liveShare.pageGrant, undefined);
+        assert.equal(teacher.UiContext.liveShare.socketUrl, '/d/class-a/live-share/conn');
         for (const path of ['/home/account', '/manage', '/scratch/editor', '/account/10']) {
             const privatePage = make(10, path); await handlers.injectLiveShare(privatePage);
             assert.equal(privatePage.UiContext.liveShare, undefined);

@@ -10,7 +10,7 @@ import { getRankingPage } from './domain';
 export interface RankingUpdate { uid?: number; domainIds: string[]; revision: string }
 
 export class RankingLiveHandler extends Handler {
-    async get(domainId: string) {
+    async get() {
         this.checkPerm(PERM.PERM_VIEW_RANKING);
         const view = this.request.query.view || 'ranking';
         if (!['ranking', 'homepage'].includes(view)) throw new ValidationError('view');
@@ -20,7 +20,7 @@ export class RankingLiveHandler extends Handler {
             || !Number.isSafeInteger(limit) || limit < 1 || (view === 'homepage' && limit > 100)) {
             throw new ValidationError('page');
         }
-        const data = await getRankingPage(this, domainId, view === 'homepage' ? 1 : page, limit);
+        const data = await getRankingPage(this, this.domain._id, view === 'homepage' ? 1 : page, limit);
         const body = view === 'homepage' ? {
             ...data, payload: data.udocs.map((udoc) => udoc._id),
             udict: Object.fromEntries(data.udocs.map((udoc) => [udoc._id, udoc])),

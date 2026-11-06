@@ -756,12 +756,15 @@ ${c.response.status} ${endTime - startTime}ms ${c.response.length}`);
         } else {
             const layer = router.ws(path, async (conn, _req, ctx) => {
                 await this.handleWS(ctx as any, HandlerClass, checker, conn, layer, savedContext);
-            });
+            }, routeName);
+            const disposeWS = router.disposeLastOp;
             if (this.config.enableSSE) {
                 router.get(routeName, path, async (ctx) => {
                     Object.assign(ctx.HydroContext.args, ctx.params);
                     await this.handleWS(ctx as any, HandlerClass, checker, null, null, savedContext);
                 });
+                const disposeHTTP = router.disposeLastOp;
+                router.disposeLastOp = () => { disposeHTTP(); disposeWS(); };
             }
         }
         const dispose = router.disposeLastOp;

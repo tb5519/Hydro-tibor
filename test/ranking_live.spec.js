@@ -89,10 +89,37 @@ it('push endpoint filters local-domain events and publishes only an invalidation
     assert.equal(invalidations, 1);
     conn.domain.rankingMode = 'all'; conn.onRankingUpdate({ domainIds: ['b'], revision: '3' }); assert.equal(sent.length, 2);
     const response = { headers: {}, addHeader(name, value) { this.headers[name] = value; } };
-    const handler = Object.assign(new RankingLiveHandler(), { request: { query: { view: 'homepage', limit: '10' } }, response,
+    const handler = Object.assign(new RankingLiveHandler(), { domain: { _id: 'a' }, request: { query: { view: 'homepage', limit: '10' } }, response,
         checkPerm() {}, renderHTML: async (template, data) => `${template}:${data.payload[0]}` });
-    await handler.get('a'); assert.equal(reads[0].limit, 10);
+    await handler.get({ domainId: 'a' }); assert.equal(reads[0].limit, 10);
+    assert.equal(reads[0].domain, 'a');
     assert.equal(response.body.view, 'homepage'); assert.equal(response.headers['Cache-Control'], 'private, no-store');
-    handler.request.query.limit = '-1'; await assert.rejects(handler.get('a'));
-    handler.request.query = { view: 'private' }; await assert.rejects(handler.get('a'));
+    handler.request.query.limit = '-1'; await assert.rejects(handler.get({ domainId: 'a' }));
+    handler.request.query = { view: 'private' }; await assert.rejects(handler.get({ domainId: 'a' }));
+});
+
+it('ranking refresh uses the resolved classroom with the framework argument object', async () => {
+    const reads = [];
+    class Handler {}
+    const { RankingLiveHandler } = load('packages/hydrooj/src/handler/ranking_live.ts', {
+        '../error': { ValidationError: Error }, '../lib/domain_ranking': { getDomainRankingMode: () => 'single' },
+        '../lib/shared_ranking': { invalidateSharedRankingSnapshot() {} },
+        '../model/builtin': { PERM: { PERM_VIEW_RANKING: 1n } }, '../model/system': { get: () => 50 },
+        '../service/server': { Handler, ConnectionHandler: Handler, subscribe: () => () => {} },
+        './domain': { getRankingPage: async (_handler, domainId, page, limit) => {
+            // The real model normalizes the ID; passing the framework args here
+            // previously crashed every refresh with toLowerCase is not a function.
+            reads.push({ domainId: domainId.toLowerCase(), page, limit });
+            return { udocs: [] };
+        } },
+    });
+    for (const domainId of ['system', 'class-a']) {
+        const handler = Object.assign(new RankingLiveHandler(), {
+            domain: { _id: domainId }, request: { query: { page: '2', domainId: 'another-class' } },
+            response: { addHeader() {} }, checkPerm() {}, renderHTML: async () => '<table></table>',
+        });
+        await handler.get({ domainId: 'another-class', page: '2' });
+        assert.deepEqual(reads.at(-1), { domainId, page: 2, limit: 50 });
+        assert.equal(handler.response.body.html, '<table></table>');
+    }
 });

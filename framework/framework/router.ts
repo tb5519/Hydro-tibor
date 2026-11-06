@@ -47,6 +47,16 @@ export class WebSocketLayer {
 export class Router extends KoaRouter {
     wsStack: WebSocketLayer[] = [];
     disposeLastOp = () => null;
+    private wsUrls = new Map<WebSocketLayer, { name: string; path: string }>();
+
+    url(...args: Parameters<RouterInstance['url']>) {
+        // WebSocket names must also resolve when the optional HTTP/SSE fallback
+        // is disabled. Keep this metadata out of the HTTP middleware stack.
+        if (super.route(args[0])) return super.url(...args);
+        const route = [...this.wsUrls.values()].find((item) => item.name === args[0]);
+        if (route) return KoaRouter.url(route.path, ...args.slice(1));
+        return super.url(...args);
+    }
 
     /**
      * hack into router methods to make sure that koa middlewares are disposable
@@ -57,12 +67,15 @@ export class Router extends KoaRouter {
         return layer;
     }
 
-    ws(path: Parameters<typeof pathToRegexp>[0], callback?: WebSocketCallback) {
+    ws(path: Parameters<typeof pathToRegexp>[0], callback?: WebSocketCallback, name?: string) {
+        if (name && typeof path !== 'string') throw new TypeError('Named WebSocket routes require a string path.');
         const layer = new WebSocketLayer(path, callback);
         this.wsStack.push(layer);
+        if (name) this.wsUrls.set(layer, { name, path: path as string });
         this.disposeLastOp = () => {
             layer.close();
             remove(this.wsStack, layer);
+            this.wsUrls.delete(layer);
         };
         return layer;
     }
