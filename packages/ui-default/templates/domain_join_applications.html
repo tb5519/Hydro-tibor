@@ -1,67 +1,34 @@
 {% extends "domain_base.html" %}
 {% block domain_content %}
-{% if joinSettings %}
-<div class="section">
-  <div class="section__header">
-    <h1 class="section__title">{{ _('Information') }}</h1>
-  </div>
-  <div class="section__body typo">
-    <p>{{ _('User can join this domain by visiting the following URL') }}:</p>
-    <pre><code class="language-data">{{ url_prefix|safe }}d/{{ handler.args.domainId }}/domain/join</code></pre>
-    {% if joinSettings['method'] == model.domain.JOIN_METHOD_CODE %}
-      <p>{{ _('Or, with automatically filled invitation code') }}:</p>
-      <pre><code class="language-data">{{ url_prefix|safe }}d/{{ handler.args.domainId }}/domain/join?code={{ joinSettings.code|urlencode }}</code></pre>
-    {% endif %}
-    {% if joinSettings.expire %}
-      <br/>
-      <blockquote class="note">
-        {{ (_('The link will be expired at {0}').format(datetimeSpan(joinSettings.expire, relative=false)))|safe }}
-      </blockquote>
-    {% endif %}
-  </div>
-</div>
-{% endif %}
-<div class="section">
-  <div class="section__header">
-    <h1 class="section__title">{{ _('Settings') }}</h1>
-  </div>
-  <div class="section__body">
-    <form method="POST">
-      {{ form.form_select({
-        options:model.domain.JOIN_METHOD_RANGE,
-        label:'Method',
-        name:'method',
-        value:joinSettings['method']|default(model.domain.JOIN_METHOD_NONE)
-      }) }}
-      {{ form.form_select({
-        options:rolesWithText,
-        label:'Role Assignment',
-        name:'role',
-        help_text:'The role to assign when user joining the domain.',
-        value:joinSettings['role']|default('')
-      }) }}
-      {{ form.form_text({
-        label:'Group Assignment (Optional)',
-        name:'group',
-        help_text:'The group to join when user joining the domain.',
-        value:joinSettings['group']|default('')
-      }) }}
-      {{ form.form_select({
-        options:expirations,
-        label:'Expire',
-        name:'expire',
-        help_text:'User will no longer be allowed to join the domain after expiration.'
-      }) }}
-      {{ form.form_text({
-        label:'Invitation Code',
-        name:'invitationCode',
-        help_text:'The invitation code to enter to successfully join the domain. You can only use letters and numbers in the code and it should not be longer than 64 characters.',
-        value:joinSettings['code']|default('')
-      }) }}
-      <button class="rounded primary button" role="submit">
-        {{ _('Update Settings') }}
-      </button>
-    </form>
-  </div>
+<div class="domain-join-settings">
+  <header class="domain-join-settings__header">
+    <span class="domain-join-settings__eyebrow">课堂管理</span>
+    <h1>加入设置</h1>
+    <p>决定学员如何加入「{{ domain.name }}」。</p>
+  </header>
+  <form method="post" class="domain-join-settings__card" data-domain-join-settings>
+    <div class="domain-join-settings__intro">
+      <span class="domain-join-settings__icon"><span class="icon icon-user" aria-hidden="true"></span></span>
+      <div><h2>学员加入方式</h2><p>设置一次，之后按你的方式加入。</p></div>
+      <span class="domain-join-settings__badge{% if enabled %} is-open{% endif %}" data-join-settings-badge>{% if enabled %}已开放{% else %}仅老师添加{% endif %}</span>
+    </div>
+    <label class="domain-join-settings__toggle">
+      <span><strong>允许学员主动加入</strong><span>开启后，学员可在“加入新域”中找到这个域。</span></span>
+      <input type="checkbox" name="enabled" value="on"{% if enabled %} checked{% endif %} aria-controls="domain-join-code-settings">
+      <span class="domain-join-settings__switch" aria-hidden="true"></span>
+    </label>
+    <div class="domain-join-settings__code" id="domain-join-code-settings"{% if not enabled %} hidden{% endif %}>
+      <label for="domain-join-invitation-code">加入指令 <span>选填</span></label>
+      <input class="textbox" id="domain-join-invitation-code" name="invitationCode" type="text" maxlength="64" value="{{ invitationCode }}" placeholder="留空即可直接加入" autocomplete="off" spellcheck="false">
+      <p>设置后，学员需要输入正确指令才能加入。支持中文、字母和数字。</p>
+    </div>
+    <div class="domain-join-settings__note" data-join-mode-note>
+      {% if enabled %}学员可主动加入；老师也可以在学员管理中直接添加。{% else %}学员看不到这个域的加入入口，由老师在“控制面板 → 学员管理”中添加。{% endif %}
+    </div>
+    <footer class="domain-join-settings__footer">
+      <p role="status" aria-live="polite" data-join-settings-status>{% if saved %}设置已保存。{% else %}关闭主动加入，不影响已经加入的学员。{% endif %}</p>
+      <button type="submit" class="primary rounded button" data-join-settings-save>保存设置</button>
+    </footer>
+  </form>
 </div>
 {% endblock %}

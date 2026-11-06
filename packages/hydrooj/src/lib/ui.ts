@@ -61,7 +61,6 @@ inject('Nav', 'ranking', { prefix: 'ranking' }, PERM.PERM_VIEW_RANKING);
 inject('Nav', 'domain_dashboard', { prefix: 'domain' }, PERM.PERM_EDIT_DOMAIN);
 inject('Nav', 'manage_dashboard', { prefix: 'manage' }, PRIV.PRIV_EDIT_SYSTEM);
 inject('ProblemAdd', 'problem_create', { icon: 'add', text: 'Create Problem' });
-inject('ControlPanel', 'manage_dashboard');
 // Keep hidden anchors so injected teacher tools retain their existing menu order.
 inject('ControlPanel', 'manage_script', {}, () => false);
 inject('ControlPanel', 'manage_user_priv', {}, () => false);

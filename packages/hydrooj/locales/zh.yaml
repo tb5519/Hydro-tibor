@@ -385,7 +385,7 @@ domain_edit: 编辑域资料
 domain_home_poster: 首页海报
 domain_file: 我的文件
 domain_group: 管理小组
-domain_join_applications: 加域申请
+domain_join_applications: 加入设置
 domain_join: 加入域
 domain_main: 首页
 domain_permission: 管理权限
@@ -911,8 +911,8 @@ Text: 文本
 The discussion is locked, you can not reply anymore.: 此讨论已经锁定，您不能再回复。
 The homework's deadline is due but in extension. You can still submit for this problem but your score will be penalized.: 作业已超过截止时间，但仍在延期时间内。您递交题目将无法获得全部分数。
 The invitation code to enter to successfully join the domain. You can only use letters and numbers in the code and it should not be longer than 64 characters.: 加入此域的邀请码。您只能使用字母和数字，并且不能长于 64 个字符。
-The invitation code you provided is invalid.: 您提供的邀请码无效。
-The link is either invalid or expired.: 加域链接无效或已过期。
+The invitation code you provided is invalid.: 加入指令不正确，请重新输入。
+The link is either invalid or expired.: 这个域暂未开放加入或加入设置已过期，请联系老师。
 The link will be expired at {0}: 链接将于 {0} 过期
 The role to assign when user joining the domain.: 用户加入此域时分配的角色。
 The uploaded file is too long.: 上传的文件太长。

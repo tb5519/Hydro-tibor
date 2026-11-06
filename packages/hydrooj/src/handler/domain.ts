@@ -2,7 +2,6 @@ import { readFile } from 'fs/promises';
 import path from 'path';
 import { load } from 'js-yaml';
 import type { Dictionary } from 'lodash';
-import moment from 'moment-timezone';
 import Schema from 'schemastery';
 import type { Context } from '../context';
 import {
@@ -38,7 +37,7 @@ import user from '../model/user';
 import workspace from '../model/workspace';
 import { getBadgeIconUrl } from '../lib/badge_image';
 import {
-    Handler, Mutation, param, post, Query, query, Types,
+    Handler, Mutation, param, Query, query, Types,
 } from '../service/server';
 import { log2 } from '../utils';
 
@@ -713,43 +712,54 @@ class DomainRoleHandler extends ManageHandler {
 }
 
 class DomainJoinApplicationsHandler extends ManageHandler {
-    async get() {
-        const r = await domain.getRoles(this.domain);
-        const roles = r.map((role) => role._id).sort();
-        this.response.body.rolesWithText = roles.filter((i) => i !== 'guest').map((role) => [role, role]);
-        this.response.body.joinSettings = domain.getJoinSettings(this.domain, roles);
-        this.response.body.expirations = { ...domain.JOIN_EXPIRATION_RANGE };
-        if (!this.response.body.joinSettings) {
-            delete this.response.body.expirations[domain.JOIN_EXPIRATION_KEEP_CURRENT];
+    async prepare(args) {
+        // Permission loading uses the URL domain; never save a body/query override.
+        if (args.domainId !== this.domain._id) throw new ValidationError('domainId');
+        await super.prepare(args);
+        this.response.addHeader('Cache-Control', 'private, no-store');
+        if (this.request.method.toLowerCase() === 'post') {
+            const source = this.request.headers.origin || this.request.headers.referer;
+            try {
+                if (typeof source !== 'string' || new URL(source).host !== this.request.host) throw new CsrfTokenError();
+            } catch {
+                throw new CsrfTokenError();
+            }
         }
-        this.response.body.url_prefix = (this.domain.host || [])[0] || system.get('server.url');
-        if (!this.response.body.url_prefix.endsWith('/')) this.response.body.url_prefix += '/';
-        this.response.template = 'domain_join_applications.html';
     }
 
-    @post('method', Types.Range([domain.JOIN_METHOD_NONE, domain.JOIN_METHOD_ALL, domain.JOIN_METHOD_CODE]))
-    @post('role', Types.Role, true)
-    @post('group', Types.Name, true)
-    @post('expire', Types.Int, true)
-    @post('invitationCode', Types.Content, true)
-    async post(domainId: string, method: number, role: string, group = '', expire: number, invitationCode = '') {
-        const r = await domain.getRoles(this.domain);
-        const roles = r.map((rl) => rl._id);
-        const current = domain.getJoinSettings(this.domain, roles);
-        let joinSettings;
-        if (method === domain.JOIN_METHOD_NONE) joinSettings = null;
-        else {
-            if (!roles.includes(role)) throw new ValidationError('role');
-            if (!current && expire === domain.JOIN_EXPIRATION_KEEP_CURRENT) throw new ValidationError('expire');
-            joinSettings = { method, role, group };
-            if (expire === domain.JOIN_EXPIRATION_KEEP_CURRENT) joinSettings.expire = current.expire;
-            else if (expire === domain.JOIN_EXPIRATION_UNLIMITED) joinSettings.expire = null;
-            else if (!domain.JOIN_EXPIRATION_RANGE[expire]) throw new ValidationError('expire');
-            else joinSettings.expire = moment().add(expire, 'hours').toDate();
-            if (method === domain.JOIN_METHOD_CODE) joinSettings.code = invitationCode;
+    async get() {
+        const roles = (await domain.getRoles(this.domain)).map((role) => role._id);
+        this.response.template = 'domain_join_applications.html';
+        this.response.body = {
+            domain: this.domain,
+            enabled: !!domain.getJoinSettings(this.domain, roles),
+            invitationCode: typeof this.domain._join?.code === 'string' ? this.domain._join.code : '',
+            saved: this.request.query.saved === '1',
+        };
+    }
+
+    async post() {
+        const { enabled, invitationCode = '' } = this.request.body;
+        if (![undefined, 'on', 'off', 'true', 'false', '1', '0', true, false, 1, 0].includes(enabled)) {
+            throw new ValidationError('enabled');
         }
-        await domain.edit(domainId, { _join: joinSettings });
-        this.back();
+        if (typeof invitationCode !== 'string' || invitationCode.trim().length > 64) {
+            throw new ValidationError('invitationCode');
+        }
+        const code = invitationCode.trim();
+        const allowJoin = ['on', 'true', '1', true, 1].includes(enabled);
+        await domain.edit(this.domain._id, {
+            _join: {
+                method: allowJoin ? (code ? domain.JOIN_METHOD_CODE : domain.JOIN_METHOD_ALL) : domain.JOIN_METHOD_NONE,
+                role: 'default',
+                expire: null,
+                code,
+            },
+        });
+        if (this.request.json || `${this.request.headers.accept || ''}`.includes('application/json')) {
+            this.response.type = 'application/json';
+            this.response.body = { saved: true, enabled: allowJoin, invitationCode: code };
+        } else this.response.redirect = this.url('domain_join_applications', { query: { saved: 1 } });
     }
 }
 
@@ -823,19 +833,29 @@ class DomainUserGroupHandler extends ManageHandler {
 
 class DomainJoinHandler extends Handler {
     joinSettings: any;
+    joiningDomain: DomainDoc;
+    joiningRole: string;
     noCheckPermView = true;
 
     @param('target', Types.DomainId, true)
     async prepare({ domainId }, target: string = domainId) {
-        const [ddoc, dudoc, assignedWorkspaceIds] = await Promise.all([
-            domain.get(target),
-            domain.collUser.findOne({ domainId: target, uid: this.user._id }),
+        this.response?.addHeader('Cache-Control', 'private, no-store');
+        if (this.request?.method?.toLowerCase() === 'post') {
+            const source = this.request.headers.origin || this.request.headers.referer;
+            try {
+                if (typeof source !== 'string' || new URL(source).host !== this.request.host) throw new CsrfTokenError();
+            } catch {
+                throw new CsrfTokenError();
+            }
+        }
+        const ddoc = await domain.get(target);
+        if (!ddoc) throw new NotFoundError(target);
+        // Domain IDs resolve case-insensitively; membership keys must use the canonical ID.
+        const [dudoc, assignedWorkspaceIds] = await Promise.all([
+            domain.collUser.findOne({ domainId: ddoc._id, uid: this.user._id }),
             workspace.getAssignedWorkspaceIds(this.user._id),
         ]);
-        if (!ddoc) throw new NotFoundError(target);
-        if (dudoc?.blockedByStudentManagement && !dudoc.join
-            && !this.user.hasPriv(PRIV.PRIV_MANAGE_ALL_DOMAIN)
-            && !workspace.isPlatformAdmin(this.user._id)) {
+        if (dudoc?.blockedByStudentManagement && !dudoc.join) {
             throw new DomainJoinForbiddenError(target, '请联系管理员重新加入该域。');
         }
         if (!workspace.isPlatformAdmin(this.user._id)) {
@@ -845,16 +865,14 @@ class DomainJoinHandler extends Handler {
                 : targetWorkspaceId === workspace.LEGACY_WORKSPACE_ID;
             if (!allowed) throw new NotFoundError(target);
         }
-        const assignedRole = this.user.hasPriv(PRIV.PRIV_MANAGE_ALL_DOMAIN)
-            ? 'root'
-            : dudoc?.role || 'default';
         if (dudoc?.join) throw new DomainJoinAlreadyMemberError(target, this.user._id);
+        if (dudoc?.role === 'guest') throw new DomainJoinForbiddenError(target, 'You are banned by the domain moderator.');
         const r = await domain.getRoles(ddoc);
         const roles = r.map((role) => role._id);
         this.joinSettings = domain.getJoinSettings(ddoc, roles);
-        if (assignedRole !== 'default') delete this.joinSettings;
-        else if (!this.joinSettings) throw new DomainJoinForbiddenError(target, 'The link is either invalid or expired.');
-        if (assignedRole === 'guest') throw new DomainJoinForbiddenError(target, 'You are banned by the domain moderator.');
+        if (!this.joinSettings) throw new DomainJoinForbiddenError(target, 'The link is either invalid or expired.');
+        this.joiningDomain = ddoc;
+        this.joiningRole = dudoc?.role && dudoc.role !== 'default' ? dudoc.role : this.joinSettings.role;
     }
 
     @param('code', Types.Content, true)
@@ -862,7 +880,7 @@ class DomainJoinHandler extends Handler {
     @param('redirect', Types.Content, true)
     async get({ domainId }, code: string, target: string = domainId, redirect: string = '') {
         this.response.template = 'domain_join.html';
-        const ddoc = await domain.get(target);
+        const ddoc = this.joiningDomain;
         const domainInfo = {
             name: ddoc.name,
             owner: await user.getById(domainId, ddoc.owner),
@@ -870,10 +888,11 @@ class DomainJoinHandler extends Handler {
             bulletin: ddoc.showBulletin ? ddoc.bulletin : '',
         };
         this.response.body = {
-            joinSettings: this.joinSettings,
+            // Only the need for an invitation code is public; never disclose the code itself.
+            joinSettings: { method: this.joinSettings.method },
             code,
             redirect,
-            target,
+            target: ddoc._id,
             domainInfo,
         };
     }
@@ -882,8 +901,9 @@ class DomainJoinHandler extends Handler {
     @param('target', Types.DomainId, true)
     @param('redirect', Types.Content, true)
     async post({ domainId }, code: string, target: string = domainId, redirect: string = '') {
+        target = this.joiningDomain._id;
         if (this.joinSettings?.method === domain.JOIN_METHOD_CODE) {
-            if (this.joinSettings.code !== code) {
+            if (this.joinSettings.code !== code?.trim()) {
                 throw new InvalidJoinInvitationCodeError(target);
             }
         }
@@ -896,17 +916,61 @@ class DomainJoinHandler extends Handler {
         await Promise.all([
             domain.setUserInDomain(target, this.user._id, {
                 join: true,
-                ...(this.joinSettings ? { role: this.joinSettings.role } : {}),
+                role: this.joiningRole,
             }),
             oplog.log(this, 'domain.join', {}),
         ]);
-        this.response.redirect = redirect || this.url('homepage', { domainId: target, query: { notification: 'Successfully joined domain.' } });
+        const fallback = this.url(isScratchDomain(this.joiningDomain) ? 'scratch_main' : 'homepage', {
+            domainId: target, query: { notification: 'Successfully joined domain.' },
+        });
+        // Only a local path may replace the post-join destination.
+        const destination = redirect.startsWith('/') && !redirect.startsWith('//') && !/[\\\x00-\x20]/.test(redirect)
+            ? redirect : fallback;
+        if (this.request.json || `${this.request.headers.accept || ''}`.includes('application/json')) {
+            this.response.type = 'application/json';
+            this.response.body = { success: true, url: destination };
+        } else this.response.redirect = destination;
     }
 }
 
 class DomainSearchHandler extends Handler {
     @param('q', Types.Content, true)
-    async get(domainId: string, q: string = '') {
+    @param('purpose', Types.Range(['join']), true)
+    async get(domainId: string, q: string = '', purpose?: 'join') {
+        this.response.addHeader('Cache-Control', 'private, no-store');
+        if (purpose === 'join') {
+            const workspaceIds = await workspace.getAssignedWorkspaceIds(this.user._id);
+            const scope = workspace.isPlatformAdmin(this.user._id)
+                ? workspace.getDomainQuery(workspace.resolveDomainWorkspaceId(this.domain))
+                : workspaceIds.length
+                    ? { workspaceId: { $in: workspaceIds } }
+                    : workspace.getDomainQuery(workspace.LEGACY_WORKSPACE_ID);
+            const candidates = await domain.getMulti({
+                $and: [scope, { '_join.method': { $in: [domain.JOIN_METHOD_ALL, domain.JOIN_METHOD_CODE] } }],
+            }).sort({ _id: 1 }).toArray();
+            const memberships = await domain.collUser.find({
+                uid: this.user._id, domainId: { $in: candidates.map((item) => item._id) },
+            }).project({ domainId: 1, join: 1, role: 1, blockedByStudentManagement: 1 }).toArray();
+            const excluded = new Set(memberships.filter((item) => item.join || item.role === 'guest' || item.blockedByStudentManagement)
+                .map((item) => item.domainId));
+            const search = q.trim().toLocaleLowerCase();
+            this.response.body = (await Promise.all(candidates.map(async (ddoc) => {
+                if (excluded.has(ddoc._id)) return null;
+                if (search && !`${ddoc._id} ${ddoc.name}`.toLocaleLowerCase().includes(search)) return null;
+                const roles = (await domain.getRoles(ddoc)).map((role) => role._id);
+                const settings = domain.getJoinSettings(ddoc, roles);
+                if (!settings) return null;
+                return {
+                    _id: ddoc._id,
+                    name: ddoc.name,
+                    avatarUrl: ddoc.avatar ? avatar(ddoc.avatar, 64) : '/img/team_avatar.png',
+                    domainType: ddoc.domainType || 'oj',
+                    requiresCode: settings.method === domain.JOIN_METHOD_CODE,
+                    joinUrl: this.url('domain_join', { query: { target: ddoc._id } }),
+                };
+            }))).filter(Boolean);
+            return;
+        }
         let ddocs: DomainDoc[] = [];
         const accessibleQuery = workspace.isPlatformAdmin(this.user._id)
             ? {}
@@ -927,10 +991,12 @@ class DomainSearchHandler extends Handler {
             const allowedIds = new Set(accessibleIds.map((item) => item._id));
             ddocs = prefixMatches.filter((item) => allowedIds.has(item._id));
         }
-        for (let i = 0; i < ddocs.length; i++) {
-            ddocs[i].avatarUrl = ddocs[i].avatar ? avatar(ddocs[i].avatar, 64) : '/img/team_avatar.png';
-        }
-        this.response.body = ddocs;
+        this.response.body = ddocs.map((ddoc) => ({
+            _id: ddoc._id,
+            name: ddoc.name,
+            avatarUrl: ddoc.avatar ? avatar(ddoc.avatar, 64) : '/img/team_avatar.png',
+            domainType: ddoc.domainType || 'oj',
+        }));
     }
 }
 

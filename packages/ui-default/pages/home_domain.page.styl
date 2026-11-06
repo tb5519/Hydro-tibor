@@ -1,30 +1,366 @@
 .page--home_domain
-  .domain-auto-star
-    display: inline-flex
-    align-items: center
-    gap: 4px
-    margin-left: 10px
-    padding: 3px 8px
-    border-radius: 6px
-    background: #edf4ff
-    color: #4473b8
-    font-size: 12px
-    white-space: nowrap
+  .home-domains
+    color: #263b53
+    [hidden]
+      display: none !important
+    &__header
+      display: flex
+      align-items: center
+      justify-content: space-between
+      gap: 24px
+      margin: 4px 0 34px
+      h1
+        margin: 8px 0 10px
+        font-size: 30px
+        font-weight: 700
+      p
+        color: #7c8fa5
+        font-size: 15px
+        margin: 0
+    &__eyebrow
+      font-size: 12px
+      font-weight: 700
+      letter-spacing: 2px
+      color: #4d82ba
+    &__actions
+      display: flex
+      align-items: center
+      gap: 10px
+      flex-shrink: 0
+      .button
+        margin: 0
+        padding: 13px 20px
+        border-radius: 11px
+        min-height: 46px
+      .primary
+        background: #316fdf
+      .home-domains__create
+        border: 1px solid #d7e2ef
+        background: #fff
+        color: #5a7596
+    &__label
+      display: flex
+      align-items: center
+      gap: 10px
+      margin: 0 0 16px
+      h2
+        margin: 0
+        font-size: 16px
+        font-weight: 600
+      > span
+        font-size: 12px
+        color: #7e93ac
+        background: #e6edf5
+        padding: 3px 8px
+        border-radius: 6px
+    &__grid
+      display: grid
+      grid-template-columns: repeat(2, minmax(0, 1fr))
+      gap: 18px
+    &__card
+      background: #fff
+      border: 1px solid #dce6f1
+      border-radius: 18px
+      padding: 25px 24px 20px
+      box-shadow: 0 7px 24px rgba(32,63,101,.035)
+      min-width: 0
+      transition: box-shadow .18s, border-color .18s
+      &:hover
+        border-color: #c2d5ee
+        box-shadow: 0 10px 26px rgba(32,63,101,.07)
+    &__card-heading
+      display: flex
+      align-items: center
+      gap: 16px
+      min-height: 70px
+    &__avatar
+      width: 56px
+      height: 56px
+      object-fit: contain
+      border-radius: 15px
+      flex-shrink: 0
+    &__card-title
+      min-width: 0
+      h3
+        margin: 0 0 10px
+        font-size: 20px
+        font-weight: 700
+        line-height: 1.4
+        overflow-wrap: anywhere
+      p
+        margin: 0
+        font-size: 12px
+        color: #8b9bb0
+        span
+          margin: 0 8px
+    &__card-footer
+      display: flex
+      align-items: center
+      justify-content: space-between
+      flex-wrap: wrap
+      gap: 14px
+      border-top: 1px solid #eef2f7
+      padding-top: 18px
+      margin-top: 22px
+    &__secondary-actions
+      display: flex
+      gap: 16px
+      align-items: center
+      a, button
+        color: #8a9bb0
+        background: none
+        border: 0
+        padding: 0
+        font-size: 12px
+        cursor: pointer
+        &:hover
+          color: #3d70b9
+      form
+        margin: 0
+    &__enter
+      margin-left: auto
+      display: inline-flex
+      align-items: center
+      gap: 18px
+      padding: 11px 16px
+      border-radius: 9px
+      color: #396bb8
+      background: #eff5ff
+      font-weight: 600
+      font-size: 14px
+      &:hover
+        color: #245bb1
+        background: #e3edff
+    &__card--scratch .home-domains__enter
+      color: #885fbe
+      background: #f4edfc
+    &__empty
+      grid-column: 1 / -1
+      border: 1px dashed #cbd9e9
+      border-radius: 18px
+      padding: 46px 20px
+      text-align: center
+      background: #f7f9fc
+      color: #7d92ad
+      h3
+        color: #506a89
+        font-size: 18px
+        margin: 12px 0
+      p
+        font-size: 13px
+        margin: 0
+      > .icon
+        font-size: 32px
+    @media (max-width: 1023px)
+      &__header
+        align-items: flex-start
+        flex-direction: column
+        gap: 20px
+    @media (max-width: 767px)
+      &__header
+        margin-bottom: 28px
+      &__grid
+        grid-template-columns: minmax(0, 1fr)
+      &__actions
+        width: 100%
+        flex-wrap: wrap
+        .primary
+          flex: 1
+      &__card
+        padding: 20px
+      &__card-title h3
+        font-size: 18px
 
-  .col--icon
-    width: 60px
-    line-height: 1
-
-    img
-      border-radius: 50%
-
-  .col--role
-    width: rem(160px)
-    border-left: 1px solid $table-border-color
-
-  .col--action
-    width: rem(200px)
-
-  +mobile()
-    .col--icon, .col--role
-      display: none
+  dialog.domain-join-picker
+    border: 1px solid #dce6f1
+    border-radius: 22px
+    background: #fff
+    color: #263b53
+    padding: 28px
+    width: 620px
+    max-width: calc(100vw - 32px)
+    max-height: unquote("min(760px, calc(100dvh - 48px))")
+    box-sizing: border-box
+    overflow-y: auto
+    box-shadow: 0 24px 90px rgba(20,42,70,.2)
+    &::backdrop
+      background: rgba(31,46,66,.38)
+      backdrop-filter: blur(3px)
+    [hidden]
+      display: none !important
+    .domain-join-picker
+      &__header
+        display: flex
+        align-items: center
+        justify-content: space-between
+        gap: 20px
+        h2
+          margin: 8px 0 0
+          font-weight: 700
+          font-size: 26px
+      &__close
+        display: grid
+        place-items: center
+        height: 36px
+        width: 36px
+        border: 0
+        border-radius: 50%
+        color: #8c9cb0
+        background: #f2f5f9
+        font-size: 24px
+        cursor: pointer
+        flex-shrink: 0
+      &__intro
+        margin: 16px 0 20px
+        color: #8394aa
+        font-size: 13px
+      &__search
+        display: flex
+        align-items: center
+        gap: 10px
+        padding: 0 13px
+        height: 46px
+        margin: 0 0 18px
+        border: 1px solid #dce6f1
+        border-radius: 10px
+        background: #f9fbfd
+        color: #92a3b7
+        input
+          width: 100%
+          height: 100%
+          min-width: 0
+          outline: none
+          border: 0
+          background: transparent
+          font-size: 14px
+          color: #304762
+      &__list
+        display: flex
+        flex-direction: column
+        gap: 10px
+      &__item
+        display: flex
+        align-items: center
+        gap: 12px
+        border: 1px solid #e4ebf3
+        border-radius: 12px
+        padding: 16px
+        > img
+          border-radius: 12px
+          object-fit: contain
+          flex-shrink: 0
+      &__item-info
+        min-width: 0
+        flex: 1
+        h3
+          font-size: 16px
+          font-weight: 600
+          margin: 0 0 7px
+          overflow-wrap: anywhere
+        p
+          color: #8799ae
+          margin: 0
+          font-size: 12px
+          line-height: 1.5
+      &__join
+        flex-shrink: 0
+        border: 0
+        background: #edf4ff
+        color: #366bb8
+        border-radius: 9px
+        padding: 10px 15px
+        font-size: 13px
+        font-weight: 600
+        cursor: pointer
+        &:hover
+          background: #dfeaff
+      &__status, &__empty
+        text-align: center
+        color: #8799af
+        padding: 32px 12px
+        line-height: 1.8
+        font-size: 13px
+        strong
+          display: block
+          color: #526b8b
+          font-size: 16px
+          font-weight: 600
+        p
+          margin: 8px 0 0
+      &__error
+        background: #fff3f1
+        border: 1px solid #f4d8d3
+        padding: 12px 14px
+        border-radius: 10px
+        color: #b55346
+        font-size: 13px
+        line-height: 1.6
+        margin: 18px 0 0
+      &__retry
+        margin: 14px 0 0
+      &__back
+        border: 0
+        color: #7290b4
+        background: none
+        font-size: 13px
+        padding: 0
+        margin: 20px 0
+        cursor: pointer
+      &__selected
+        display: flex
+        gap: 12px
+        align-items: center
+        padding: 16px
+        background: #f6f9fd
+        border-radius: 12px
+        margin-bottom: 24px
+        img
+          object-fit: contain
+          border-radius: 12px
+        h3
+          font-size: 17px
+          font-weight: 600
+          margin: 0 0 6px
+          overflow-wrap: anywhere
+        p
+          margin: 0
+          color: #8396ad
+          font-size: 12px
+      &__code-form
+        margin: 0
+        > label
+          display: block
+          color: #4d6785
+          font-size: 14px
+          font-weight: 600
+          margin: 0 0 10px
+        .textbox
+          width: 100%
+          height: 48px
+          border: 1px solid #d9e3ef
+          border-radius: 10px
+          margin: 0 0 18px
+          padding: 0 14px
+          &[aria-invalid="true"]
+            border-color: #d89186
+        > .button
+          width: 100%
+          border-radius: 10px
+          margin: 0
+          padding: 13px 20px
+      &__close, &__join, &__back
+        &[disabled]
+          opacity: .5
+          cursor: wait
+    @media (max-width: 767px)
+      padding: 22px 18px
+      border-radius: 18px
+      .domain-join-picker
+        &__item
+          padding: 14px 12px
+          gap: 10px
+          > img
+            width: 36px
+            height: 36px
+        &__join
+          padding: 10px 12px

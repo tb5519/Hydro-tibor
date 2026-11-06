@@ -126,7 +126,7 @@ class SystemHandler extends Handler {
 
 class SystemMainHandler extends SystemHandler {
     async get() {
-        this.response.redirect = '/manage/dashboard';
+        this.response.redirect = this.url('manage_training_dashboard');
     }
 }
 
@@ -152,7 +152,7 @@ class SystemCheckConnHandler extends ConnectionHandler {
 
 class SystemDashboardHandler extends SystemHandler {
     async get() {
-        this.response.template = 'manage_dashboard.html';
+        this.response.redirect = this.url('manage_training_dashboard');
     }
 
     async postRestart() {

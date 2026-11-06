@@ -1,66 +1,59 @@
 {% extends "layout/home_base.html" %}
 {% block home_content %}
-<div class="section">
-  <div class="section__header">
-    <h1 class="section__title">{{ _('My Domains') }}</h1>
-    <div class="section__tools">
-    {% if handler.user.hasPriv(model.builtin.PRIV.PRIV_CREATE_DOMAIN) %}
-      <a class="primary rounded button" href="{{ url('home_domain_create') }}"><span class="icon icon-add"></span> {{ _('Create Domain') }}</a>
-    {% endif %}
-    {% if handler.user.hasPriv(model.builtin.PRIV.PRIV_USER_PROFILE) %}
-      <button class="primary rounded button nojs--hide" id="join-domain-button"><span class="icon icon-add"></span> {{ _('Join Domain') }}</button>
-    {% endif %}
-      <a class="tool-button" href="{{ url('wiki_help', anchor='domain') }}"><span class="icon icon-help"></span> {{ _("What's domain?") }}</a>
+<div class="home-domains" data-home-domains data-domain-search-url="{{ url('domain_search') }}">
+  <header class="home-domains__header">
+    <div><span class="home-domains__eyebrow">我的学习空间</span><h1>我的域</h1><p>选择一个课堂，继续今天的学习。</p></div>
+    <div class="home-domains__actions">
+      {% if handler.user.hasPriv(model.builtin.PRIV.PRIV_CREATE_DOMAIN) %}
+      <a class="rounded button home-domains__create" href="{{ url('home_domain_create') }}">创建新域</a>
+      {% endif %}
+      {% if handler.user.hasPriv(model.builtin.PRIV.PRIV_USER_PROFILE) %}
+      <button type="button" class="primary rounded button nojs--hide" id="join-domain-button"><span class="icon icon-add" aria-hidden="true"></span> 加入新域</button>
+      {% endif %}
     </div>
-  </div>
-  <div class="section__body no-padding">
-    <table class="data-table">
-      <colgroup>
-        <col class="col--icon">
-        <col class="col--name">
-        <col class="col--role">
-        <col class="col--action">
-      </colgroup>
-      <thead>
-        <tr>
-          <th class="col--icon">&nbsp;</th>
-          <th class="col--name">{{ _('Name') }} ({{ _('ID') }})</th>
-          <th class="col--role">{{ _('My Role') }}</th>
-          <th class="col--action">{{ _('Action') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-      {%- for ddoc in ddocs -%}
-        <tr>
-          <td class="col--icon">
-            <img src="{{ avatarUrl(ddoc.avatar, 32) }}" width="32" height="32">
-          </td>
-          {% set _star = handler.user.pinnedDomains.includes(ddoc._id) %}
-          <td class="col--name">
-            {{ ddoc['name'] }} ({{ ddoc['_id'] }})
-            <span class="text-gray"> · {% if ddoc.domainType == 'scratch' %}Scratch{% else %}OJ{% endif %}</span>
-            {% if _star %}<span class="domain-auto-star" title="加入的课堂会自动显示在顶部切换菜单中"><span class="icon icon-star" aria-hidden="true"></span> 已自动收藏</span>{% endif %}
-          </td>
-          <td class="col--role">
-            {{ role[ddoc._id]|default('default') }}
-          </td>
-          <td class="col--action">
-            <a class="typo-a" href="{{ url('scratch_main' if ddoc.domainType == 'scratch' else 'homepage', domainId=ddoc['_id']) }}">{{ _('Visit') }}</a>
-          {% if canManage[ddoc['_id']] %}
-            · <a class="typo-a" href="{{ url('domain_dashboard', domainId=ddoc['_id']) }}">{{ _('Manage') }}</a>
+  </header>
+  <div class="home-domains__label"><h2>已加入的域</h2><span>{{ ddocs|length }} 个</span></div>
+  <div class="home-domains__grid">
+  {% for ddoc in ddocs %}
+    <article class="home-domains__card{% if ddoc.domainType == 'scratch' %} home-domains__card--scratch{% endif %}">
+      <div class="home-domains__card-heading">
+        <img class="home-domains__avatar" src="{{ avatarUrl(ddoc.avatar, 64) }}" width="56" height="56" alt="">
+        <div class="home-domains__card-title"><h3>{{ ddoc.name }}</h3><p>{% if ddoc.domainType == 'scratch' %}Scratch 创作{% else %}编程训练{% endif %}<span>·</span>{% if role[ddoc._id] == 'root' or ddoc.owner == handler.user._id %}老师{% elif role[ddoc._id] == 'default' or not role[ddoc._id] %}学员{% else %}{{ role[ddoc._id] }}{% endif %}</p></div>
+      </div>
+      <div class="home-domains__card-footer">
+        <div class="home-domains__secondary-actions">
+          {% if canManage[ddoc._id] %}<a href="{{ url('domain_dashboard', domainId=ddoc._id) }}">管理域</a>{% endif %}
+          {% if ddoc._id != 'system' and ddoc.owner != handler.user._id %}
+          <form class="form--inline" method="post" data-leave-domain data-domain-name="{{ ddoc.name }}">
+            <input type="hidden" name="operation" value="leave"><input type="hidden" name="id" value="{{ ddoc._id }}">
+            <button type="submit">退出域</button>
+          </form>
           {% endif %}
-          {% if ddoc['_id'] != 'system' and ddoc['owner'] != handler.user._id %}
-            · <form class="form--inline" method="post">
-              <input type="hidden" name="operation" value="leave">
-              <input type="hidden" name="id" value="{{ ddoc['_id'] }}">
-              <button class="typo-a" type="submit">{{ _('Leave') }}</button>
-            </form>
-          {% endif %}
-          </td>
-        </tr>
-      {%- endfor -%}
-      </tbody>
-    </table>
+        </div>
+        <a class="home-domains__enter" href="{{ url('scratch_main' if ddoc.domainType == 'scratch' else 'homepage', domainId=ddoc._id) }}">进入课堂 <span aria-hidden="true">→</span></a>
+      </div>
+    </article>
+  {% else %}
+    <div class="home-domains__empty"><span class="icon icon-team" aria-hidden="true"></span><h3>还没有加入课堂</h3><p>点击“加入新域”，看看老师开放了哪些课堂。</p></div>
+  {% endfor %}
   </div>
+  <dialog class="domain-join-picker" data-join-picker aria-labelledby="domain-join-picker-title">
+    <div class="domain-join-picker__header"><div><span class="home-domains__eyebrow">开启新的学习</span><h2 id="domain-join-picker-title">加入新域</h2></div><button type="button" class="domain-join-picker__close" data-join-close aria-label="关闭">×</button></div>
+    <div data-join-browse>
+      <p class="domain-join-picker__intro">这里是老师已开放加入的课堂。</p>
+      <label class="domain-join-picker__search"><span class="icon icon-search" aria-hidden="true"></span><input type="search" data-join-search aria-label="搜索课堂" placeholder="搜索课堂名称" autocomplete="off"></label>
+      <p class="domain-join-picker__status" data-join-loading role="status">正在查找可加入的课堂…</p>
+      <div class="domain-join-picker__list" data-join-list></div>
+      <div class="domain-join-picker__empty" data-join-empty hidden><strong data-join-empty-title>暂时没有可加入的课堂</strong><p data-join-empty-note>你已加入所有开放的课堂，或老师暂未开放主动加入。</p></div>
+    </div>
+    <form class="domain-join-picker__code-form" data-join-code-form hidden>
+      <button type="button" class="domain-join-picker__back" data-join-back>← 返回课堂列表</button>
+      <div class="domain-join-picker__selected"><img data-join-avatar width="48" height="48" alt=""><div><h3 data-join-name></h3><p>老师为这个课堂设置了加入指令</p></div></div>
+      <label for="domain-join-code">加入指令</label><input class="textbox" id="domain-join-code" data-join-code name="code" type="text" maxlength="64" required autocomplete="off" placeholder="输入老师告诉你的指令" aria-describedby="domain-join-picker-error">
+      <button type="submit" class="primary rounded button" data-join-confirm>确认加入</button>
+    </form>
+    <p class="domain-join-picker__error" id="domain-join-picker-error" data-join-error role="alert" hidden></p>
+    <button type="button" class="rounded button domain-join-picker__retry" data-join-retry hidden>重新加载</button>
+  </dialog>
 </div>
 {% endblock %}

@@ -1,0 +1,187 @@
+.page--domain_join_applications
+  .domain-join-settings
+    color: #25394f
+    [hidden]
+      display: none !important
+    &__header
+      margin: 4px 0 26px
+      h1
+        margin: 8px 0 10px
+        font-size: 30px
+        font-weight: 700
+      p
+        margin: 0
+        color: #7a8fa6
+        font-size: 15px
+    &__eyebrow
+      color: #4d82ba
+      font-size: 12px
+      font-weight: 700
+      letter-spacing: 2px
+    &__card
+      overflow: hidden
+      margin: 0
+      border: 1px solid #dce6f1
+      border-radius: 20px
+      background: #fff
+      box-shadow: 0 10px 30px rgba(32, 63, 101, .035)
+    &__intro
+      display: flex
+      align-items: center
+      gap: 14px
+      padding: 28px
+      border-bottom: 1px solid #edf1f6
+      h2
+        margin: 0 0 6px
+        font-size: 19px
+        font-weight: 700
+      p
+        margin: 0
+        color: #8294a8
+        font-size: 13px
+    &__icon
+      display: grid
+      width: 48px
+      height: 48px
+      place-items: center
+      border-radius: 14px
+      background: #edf4ff
+      color: #4c7fc6
+      font-size: 24px
+      flex-shrink: 0
+    &__badge
+      margin-left: auto
+      padding: 6px 10px
+      border-radius: 7px
+      background: #f2f5f8
+      color: #788a9d
+      font-size: 12px
+      white-space: nowrap
+      &.is-open
+        background: #eaf7f0
+        color: #338163
+    &__toggle
+      display: flex
+      align-items: center
+      gap: 16px
+      padding: 28px 28px 22px
+      cursor: pointer
+      > span:first-child
+        flex: 1
+        strong
+          display: block
+          font-size: 17px
+          margin-bottom: 9px
+        > span
+          color: #7a8fa6
+          font-size: 13px
+          line-height: 1.6
+      input
+        position: absolute
+        width: 1px
+        height: 1px
+        opacity: 0
+      input:checked + .domain-join-settings__switch
+        background: #397af0
+        &:after
+          transform: translateX(20px)
+      & input:focus-visible + .domain-join-settings__switch
+        outline: 3px solid #b8d4ff
+        outline-offset: 4px
+    &__switch
+      position: relative
+      width: 48px
+      height: 28px
+      flex-shrink: 0
+      border-radius: 20px
+      background: #c7d3df
+      transition: background .18s
+      &:after
+        content: ''
+        position: absolute
+        width: 22px
+        height: 22px
+        left: 3px
+        top: 3px
+        border-radius: 50%
+        background: #fff
+        box-shadow: 0 1px 4px rgba(20,40,70,.15)
+        transition: transform .18s
+    &__code
+      margin: 0 28px 22px
+      padding: 20px
+      background: #f8fafc
+      border: 1px solid #e8eef5
+      border-radius: 12px
+      label
+        display: block
+        margin-bottom: 10px
+        font-size: 14px
+        font-weight: 600
+        span
+          margin-left: 5px
+          color: #96a5b6
+          font-size: 12px
+          font-weight: 400
+      .textbox
+        width: 100%
+        height: 46px
+        padding: 0 13px
+        border: 1px solid #d7e2ee
+        border-radius: 9px
+        background: #fff
+      p
+        color: #7d90a6
+        font-size: 12px
+        line-height: 1.7
+        margin: 10px 0 0
+    &__note
+      margin: 0 28px 26px
+      color: #7d90a6
+      font-size: 13px
+      line-height: 1.8
+    &__footer
+      display: flex
+      align-items: center
+      gap: 18px
+      padding: 20px 28px
+      border-top: 1px solid #edf1f6
+      background: #fbfcfe
+      p
+        flex: 1
+        margin: 0
+        color: #8393a5
+        font-size: 12px
+        line-height: 1.6
+        &.is-unsaved
+          color: #b17b32
+        &.is-error
+          color: #b55346
+      .button
+        margin: 0
+        padding: 12px 24px
+        min-height: 44px
+        border-radius: 10px
+        white-space: nowrap
+        &[disabled]
+          opacity: .5
+          cursor: default
+    @media (max-width: 767px)
+      &__intro
+        padding: 20px
+        gap: 10px
+      &__icon
+        width: 40px
+        height: 40px
+      &__toggle
+        padding: 22px 20px
+      &__code, &__note
+        margin-left: 20px
+        margin-right: 20px
+      &__footer
+        padding: 18px 20px
+        flex-wrap: wrap
+        .button
+          width: 100%
+        p
+          flex-basis: 100%

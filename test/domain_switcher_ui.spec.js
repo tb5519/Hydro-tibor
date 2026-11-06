@@ -455,7 +455,7 @@ describe('joined-domain menu templates', () => {
         assert.equal(document.querySelectorAll('.domain-switcher__name img').length, 0);
     });
 
-    it('shows automatic favorite status without a manual star toggle and retains normal domain actions', () => {
+    it('renders joined classroom cards without redundant favorites controls and retains normal domain actions', () => {
         const Loader = nunjucks.Loader.extend({
             getSource(name) {
                 return { path: name, src: name === 'layout/home_base.html'
@@ -471,7 +471,9 @@ describe('joined-domain menu templates', () => {
             avatarUrl: () => '/avatar.png', _: (value) => value,
             url: (name, args = {}) => `/${name}/${args.domainId || ''}`,
         })).window.document;
-        assert.equal(document.querySelectorAll('.domain-auto-star').length, 2);
+        assert.equal(document.querySelectorAll('.home-domains__card').length, 2);
+        assert.equal(document.querySelectorAll('.domain-auto-star').length, 0);
+        assert.equal(document.querySelectorAll('.home-domains__enter').length, 2);
         assert.equal(document.querySelectorAll('[data-star-action], [data-star], input[value="star"]').length, 0);
         assert.equal(document.querySelectorAll('input[name="operation"][value="leave"]').length, 2);
         assert.ok(document.querySelector('a[href="/domain_dashboard/class-0"]'));

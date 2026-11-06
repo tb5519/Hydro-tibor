@@ -9,7 +9,7 @@
       {% set navActive = false %}
     {% endif %}
   {% endif %}
-  <a href="{{ url(item.name, item.args, query=navQuery) }}" class="nav__item{% if navActive %} nav--active{% endif %}">
+  <a href="{{ url('manage_training_dashboard' if item.name == 'manage_dashboard' else item.name, item.args, query=navQuery) }}" class="nav__item{% if navActive %} nav--active{% endif %}">
     {{ _(item.displayName or item.name) }}
   </a>
 </li>
