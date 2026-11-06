@@ -47,7 +47,7 @@
       <span><strong>修改密码</strong><small>单独保存，保护你的账号安全</small></span>
       <span class="profile-editor__password-chevron" aria-hidden="true">⌄</span>
     </summary>
-    <form class="profile-editor__password-form" action="{{ url('home_profile_password') }}" method="post" data-profile-password-form data-security-url="{{ url('home_security') }}" data-login-url="{{ url('user_login') }}">
+    <form class="profile-editor__password-form" action="{{ url('home_profile_password') }}" method="post" data-profile-password-form data-live-share-private data-security-url="{{ url('home_security') }}" data-login-url="{{ url('user_login') }}">
       <p class="profile-editor__password-note">修改成功后，所有设备将退出登录，请使用新密码重新登录。</p>
       <div class="profile-editor__password-fields">
         <label for="profile-current-password">{{ '老师当前密码' if sudoUid else '当前密码' }}

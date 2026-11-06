@@ -13,6 +13,10 @@ await build({ entryPoints: [path.join(here, 'entry.js')], outfile: path.join(tar
   bundle: true, format: 'esm', platform: 'browser', target: 'es2020', minify: true,
   external: ['monaco-editor'], legalComments: 'eof',
   banner: { js: '/* Generated locally by build/live-share/build.mjs. See vendor.LICENSE.txt. */' } });
+await build({ entryPoints: [path.join(here, 'capture-entry.js')], outfile: path.join(target, 'capture_vendor.js'),
+  bundle: true, format: 'esm', platform: 'browser', target: 'es2020', minify: true,
+  legalComments: 'eof',
+  banner: { js: '/* Generated locally by build/live-share/build.mjs. See vendor.LICENSE.txt. */' } });
 const licenses = [];
 const visit = (dir) => {
   for (const item of fs.readdirSync(dir, { withFileTypes: true })) {

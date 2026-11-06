@@ -41,6 +41,18 @@
 .live-share-viewport
   position: absolute
   inset: 0
+  overflow: auto
+  overscroll-behavior: contain
+  outline: 0
+  &.is-pan-ready
+    cursor: grab
+  &.is-panning
+    cursor: grabbing
+    user-select: none
+
+.live-share-surface
+  position: relative
+  // Contain the unscaled layout box; only the scaled surface should scroll.
   overflow: hidden
 
 .live-share-stage
@@ -49,6 +61,59 @@
   background: #fff
   overflow: hidden
   box-shadow: 0 0 40px #23394f15
+
+.live-share-zoom
+  position: absolute
+  z-index: 6
+  left: calc(16px + env(safe-area-inset-left, 0px))
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px))
+  display: flex
+  flex-direction: column-reverse
+  align-items: flex-start
+  gap: 7px
+  &__bar
+    display: flex
+    align-items: center
+    padding: 4px
+    border: 1px solid #d8e1ea
+    border-radius: 13px
+    background: #fffffff2
+    box-shadow: 0 3px 16px #23394f17
+    backdrop-filter: blur(12px)
+    button
+      height: 32px
+      border: 0
+      border-radius: 8px
+      background: transparent
+      color: #50677b
+      line-height: 1
+      &:hover
+        background: #edf2f6
+      &:disabled
+        opacity: .35
+        cursor: default
+  &__step
+    width: 32px
+    font-size: 21px !important
+  &__value
+    min-width: 54px
+    padding: 0 6px
+    font-size: 12px !important
+    font-variant-numeric: tabular-nums
+  &__fit
+    margin-left: 5px
+    padding: 0 10px
+    font-size: 12px !important
+    &[aria-pressed="true"]
+      color: #34765f
+      background: #edf7f1
+  &__hint
+    padding: 4px 9px
+    border-radius: 7px
+    color: #647a8e
+    background: #ffffffe6
+    font-size: 11px
+    pointer-events: none
 
 .live-share-mirror, .live-share-editors
   position: absolute

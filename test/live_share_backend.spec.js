@@ -113,10 +113,15 @@ async function hello(f, uid, overrides = {}) {
 const settle = async () => { await new Promise((resolve) => setTimeout(resolve, 20)); };
 
 describe('live share protocol boundaries', () => {
-    it('uses a positive learning-page allowlist and never shares private/admin routes', () => {
-        for (const value of ['/', '/ide', '/d/class-a/p/1000?tid=contest', '/homework/123/code', '/record/123']) assert.ok(protocol.sharePage(value), value);
-        for (const value of ['/manage', '/home/account', '/account/10', '/workspace/a', '/scratch/editor', '/p/1/edit',
-            'https://evil.test/p/1', '//evil.test/p/1', '/p/1?sid=secret', '/p/1?reviewUid=10', '/p/../account/10']) {
+    it('accepts platform page views while excluding external URLs and credential-bearing routes', () => {
+        for (const value of ['/', '/ide', '/d/class-a/p/1000?tid=contest', '/homework/123/code', '/record/123',
+            '/home', '/home/profile', '/home/domain', '/home/messages', '/user/10', '/manage', '/workspace/a',
+            '/scratch/editor', '/d/scratch/scratch/works', '/contest/abc/problems', '/contest/abc/scoreboard/html',
+            '/discussion?author=10']) assert.ok(protocol.sharePage(value), value);
+        for (const value of ['/login', '/logout', '/user/sudo', '/user/tfa', '/user/webauthn', '/register/code',
+            '/lostpass/code', '/oauth/test/callback?code=secret', '/d/class-a/home/changeMail/secret-code',
+            'https://evil.test/p/1', '//evil.test/p/1', '/p/1?sid=secret', '/p/1?reviewUid=10', '/home?access_token=secret',
+            '/home?password=secret', '/p/../account/10', '/p/%2e%2e/account/10', '/d/class-a/p/%5c/private']) {
             assert.equal(protocol.sharePage(value), null, value);
         }
         assert.throws(() => protocol.checkShareOrigin('https://evil.test', 'school.test'), errorCode('ORIGIN'));
@@ -177,6 +182,38 @@ describe('live share protocol boundaries', () => {
         assert.throws(() => protocol.validateRelayData('teacher', 'editor', { ...scroll, view: layout.view }, 'page-testing'), errorCode('INVALID_RELAY'));
         assert.throws(() => protocol.validateRelayData('student', 'editor', { ...layout, type: 'edit:cursor' }, 'page-testing'), errorCode('INVALID_RELAY'));
     });
+    it('allows bounded child-frame display packets only from the learner, without nesting or actions', () => {
+        const id = '0123456789abcdef0123456789abcdef';
+        const packets = [
+            { type: 'rrweb', sequence: 1, event: { type: 2, data: { node: {} } } },
+            { type: 'rrweb-batch', sequence: 2, events: [{ type: 3, data: {} }] },
+            { type: 'rrweb-chunk', sequence: 3, id: 'chunk-id', index: 0, total: 1, chunk: 'part', encoding: 'json' },
+        ];
+        for (const packet of packets) {
+            const data = { type: 'frame', id, packet };
+            protocol.validateRelayData('student', 'mirror', data, 'page-testing');
+            assert.throws(() => protocol.validateRelayData('teacher', 'mirror', data, 'page-testing'), errorCode('INVALID_RELAY'));
+        }
+        const removal = { type: 'frame-remove', id };
+        protocol.validateRelayData('student', 'mirror', removal, 'page-testing');
+        assert.throws(() => protocol.validateRelayData('teacher', 'mirror', removal, 'page-testing'), errorCode('INVALID_RELAY'));
+        for (const packet of [{ type: 'frame', id, packet: packets[0] }, removal, { type: 'edit:update', update: 'YQ==' },
+            { type: 'command', action: 'click' }, { ...packets[0], sequence: -1 }, { ...packets[1], events: Array(257).fill({}) },
+            { ...packets[2], total: 1025 }, { ...packets[2], index: 1 }, { ...packets[2], chunk: 'x'.repeat(128 * 1024 + 1) },
+            { ...packets[2], encoding: 'html' }, null, [], 'script']) {
+            assert.throws(() => protocol.validateRelayData('student', 'mirror', { type: 'frame', id, packet }, 'page-testing'), errorCode('INVALID_RELAY'));
+        }
+        for (const invalidId of ['', 'x'.repeat(129), 'frame[secret]', '../frame', 'frame with spaces']) {
+            assert.throws(() => protocol.validateRelayData('student', 'mirror', { type: 'frame', id: invalidId, packet: packets[0] },
+                'page-testing'), errorCode('INVALID_RELAY'));
+        }
+        assert.throws(() => protocol.validateRelayData('student', 'mirror', { ...removal, packet: packets[0] }, 'page-testing'), errorCode('INVALID_RELAY'));
+        assert.throws(() => protocol.validateRelayData('student', 'mirror', { type: 'frame', id, packet: packets[0], script: 'run()' },
+            'page-testing'), errorCode('INVALID_RELAY'));
+        assert.throws(() => protocol.validateShareMessage({ type: 'relay', sessionId: 'session-testing', pageId: 'page-testing',
+            kind: 'mirror', data: { type: 'frame', id, packet: { ...packets[0], event: { text: 'x'.repeat(384 * 1024) } } } }),
+        errorCode('MESSAGE_TOO_LARGE'));
+    });
     it('enforces the connection byte budget before JSON parsing while preserving unrestricted routes', async () => {
         const source = fs.readFileSync(path.join(root, 'framework/framework/server.ts'), 'utf8');
         const start = source.indexOf('conn.onmessage = async (e) => {');
@@ -216,6 +253,10 @@ describe('live share durable session broker', () => {
             assert.equal(await model.verifyPageGrant(args[0], args[1], token, args[2]), false);
         }
         assert.equal(await model.verifyPageGrant(10, 'class-a', token, '/d/class-a/p/1', Date.now() + protocol.LIVE_SHARE_GRANT_MS + 1), false);
+        const rootToken = await model.issuePageGrant(10, 'class-a', '/home/profile');
+        assert.equal(await model.verifyPageGrant(10, 'class-a', rootToken, '/home/profile'), true);
+        assert.equal(await model.verifyPageGrant(10, 'class-b', rootToken, '/home/profile'), false);
+        await assert.rejects(model.issuePageGrant(10, 'class-a', '/d/other'), errorCode('UNSUPPORTED_PAGE'));
     });
     it('starts one selected room, resumes idempotently, and switches without affecting another learner', async () => {
         const teacher = await peer(2); await peer(10); await peer(11);
@@ -296,10 +337,31 @@ describe('live share durable session broker', () => {
         await assert.rejects(model.followStudentTab(removedTab, emit), errorCode('FORBIDDEN'));
         assert.equal((await model.sessions.findOne({ _id: session._id })).studentTabId, second.tabId);
     });
+    it('lists and follows authorized Scratch and personal pages without leaving the selected workspace or device', async () => {
+        await memberships.insertMany([2, 10, 11].map((uid) => ({ uid, domainId: 'scratch', join: true,
+            role: uid === 2 ? 'teacher' : 'default' })));
+        const teacher = await peer(2);
+        const student = await peer(10, { domainId: 'scratch', url: '/d/scratch/scratch/works', title: '我的作品' });
+        assert.equal((await model.listStudents(2, 'class-a')).find((entry) => entry.uid === 10).online, true);
+        const session = await model.startSession(teacher, 10, undefined, () => {});
+        assert.equal(session.domainId, 'scratch');
+        const personal = await peer(10, { tabId: 'personal-tab-testing', pageId: 'personal-page-testing',
+            domainId: 'class-b', url: '/d/class-b/home/profile', title: '个人中心' });
+        const followed = await model.followStudentTab(personal, () => {});
+        assert.equal(followed._id, session._id);
+        assert.equal(followed.studentTabId, personal.tabId);
+        assert.equal(followed.domainId, 'class-b');
+        const otherDevice = await peer(10, { tabId: 'device-two-testing', deviceId: 'other-device-testing', url: '/user/10' });
+        assert.equal(await model.followStudentTab(otherDevice, () => {}), null);
+        const foreign = await peer(10, { tabId: 'foreign-tab-testing', domainId: 'other', workspaceId: 'b', url: '/d/other/home' });
+        await assert.rejects(model.followStudentTab(foreign, () => {}), errorCode('FORBIDDEN'));
+        assert.equal((await model.sessions.findOne({ _id: session._id })).studentTabId, personal.tabId);
+        assert.equal(student.deviceId, personal.deviceId);
+    });
 });
 
 describe('live share websocket integration', () => {
-    it('injects a page-bound learner grant only after an authorized learning GET response', async () => {
+    it('injects a page-bound learner grant only after an authorized rendered GET response', async () => {
         const router = new Router();
         handlers.apply({ Connection: (name, route) => router.ws(route, undefined, name), on() {} });
         const make = (uid, path = '/d/class-a/p/1000') => ({
@@ -316,10 +378,30 @@ describe('live share websocket integration', () => {
         const teacher = make(2, '/manage'); await handlers.injectLiveShare(teacher);
         assert.equal(teacher.UiContext.liveShare.canTeach, true); assert.equal(teacher.UiContext.liveShare.pageGrant, undefined);
         assert.equal(teacher.UiContext.liveShare.socketUrl, '/d/class-a/live-share/conn');
-        for (const path of ['/home/account', '/manage', '/scratch/editor', '/account/10']) {
+        for (const path of ['/home', '/home/profile', '/home/domain', '/home/messages', '/user/10',
+            '/contest/abc', '/contest/abc/problems', '/contest/abc/scoreboard/html']) {
+            const page = make(10, path); await handlers.injectLiveShare(page);
+            assert.ok(page.UiContext.liveShare?.pageGrant, path);
+            assert.equal(await model.verifyPageGrant(10, 'class-a', page.UiContext.liveShare.pageGrant,
+                `${path}?tid=contest`), true, path);
+        }
+        for (const path of ['/login', '/user/sudo', '/register/secret', '/home/changeMail/secret']) {
             const privatePage = make(10, path); await handlers.injectLiveShare(privatePage);
             assert.equal(privatePage.UiContext.liveShare, undefined);
         }
+        const secret = make(10, '/home/security'); secret.context.request.querystring = 'token=private';
+        await handlers.injectLiveShare(secret); assert.equal(secret.UiContext.liveShare, undefined);
+        const json = make(10, '/home'); delete json.response.template; await handlers.injectLiveShare(json);
+        assert.equal(json.UiContext.liveShare, undefined);
+        const post = make(10, '/home/profile'); post.request.method = 'post'; await handlers.injectLiveShare(post);
+        assert.equal(post.UiContext.liveShare, undefined);
+        await memberships.insertMany([2, 10].map((uid) => ({ uid, domainId: 'scratch', join: true,
+            role: uid === 2 ? 'teacher' : 'default' })));
+        const scratch = make(10, '/d/scratch/scratch/works'); scratch.domain = rooms.find((room) => room._id === 'scratch');
+        await handlers.injectLiveShare(scratch); assert.ok(scratch.UiContext.liveShare?.pageGrant);
+        assert.equal(scratch.UiContext.liveShare.socketUrl, '/d/scratch/live-share/conn');
+        const wrongDomain = make(10, '/d/other/home'); await handlers.injectLiveShare(wrongDomain);
+        assert.equal(wrongDomain.UiContext.liveShare, undefined);
         const failed = make(10); failed.response.status = 403; await handlers.injectLiveShare(failed);
         assert.equal(failed.UiContext.liveShare, undefined);
         const sudo = make(2); sudo.session.sudoUid = 2; await handlers.injectLiveShare(sudo);

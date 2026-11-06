@@ -107,7 +107,7 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
                 throw new LiveShareError('INVALID_HELLO', '页面已切换，请重新连接。');
             }
             if (!this.canTeach && !await share.verifyPageGrant(this.user._id, this.domain._id, payload.pageGrant, payload.url)) {
-                throw new LiveShareError('UNSUPPORTED_PAGE', '当前页面不支持共享，请返回学习页面。');
+                throw new LiveShareError('UNSUPPORTED_PAGE', '当前页面尚未获准共享，请刷新页面。');
             }
             const scope = this.canTeach ? await share.teacherScope(this.user._id, this.domain._id)
                 : await share.studentScope(this.user._id, this.domain._id);

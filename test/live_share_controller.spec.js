@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { before, after, it } = require('node:test');
 const { transformSync } = require('esbuild');
+const stylus = require('stylus');
 let playwright;
 for (const location of ['playwright', path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')]) {
     try { playwright = require(location); break; } catch { /* Use the available browser runtime. */ }
@@ -15,6 +16,7 @@ const root = path.resolve(__dirname, '..');
 const controller = transformSync(fs.readFileSync(path.join(root, 'packages/ui-default/components/live_share/controller.ts'), 'utf8'), {
     loader: 'ts', format: 'iife', globalName: 'LiveController',
 }).code;
+const sharingCss = stylus.render(fs.readFileSync(path.join(root, 'packages/ui-default/components/live_share.page.styl'), 'utf8'));
 let browser;
 before(async () => {
     assert(executablePath, 'Playwright and Chromium are required for sharing failure regressions');
@@ -22,8 +24,8 @@ before(async () => {
 });
 after(async () => browser?.close());
 
-async function fixture(t) {
-    const context = await browser.newContext({ viewport: { width: 1000, height: 700 } });
+async function fixture(t, settings = {}) {
+    const context = await browser.newContext({ viewport: { width: 1000, height: 700 }, ...settings.context });
     t.after(() => context.close());
     const page = await context.newPage();
     const clockStart = new Date('2026-11-06T00:00:00Z');
@@ -32,7 +34,7 @@ async function fixture(t) {
     await page.clock.pauseAt(new Date(clockStart.getTime() + 1000));
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
-    await page.route('https://share-controller.test/**', (route) => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0}#original{height:2400px}textarea{width:300px;height:80px}[data-teacher-assistant]{position:fixed;right:10px;top:10px;z-index:99}.live-share-overlay{position:fixed;inset:0}.live-share-picker{position:fixed;inset:0;z-index:100}</style></head><body><main id="original"><textarea id="teacher-code"># teacher draft</textarea><button id="teacher-run">老师自己的运行按钮</button></main><aside data-teacher-assistant><button data-live-share-open>共享模式</button><div data-assistant-panel><div class="teacher-assistant__footer"></div></div></aside><script>${controller}</script><script>
+    await page.route('https://share-controller.test/**', (route) => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0}#original{height:2400px}textarea{width:300px;height:80px}[data-teacher-assistant]{position:fixed;right:10px;top:10px;z-index:99}${sharingCss}</style></head><body><main id="original"><textarea id="teacher-code"># teacher draft</textarea><button id="teacher-run">老师自己的运行按钮</button></main><aside class="teacher-assistant" data-teacher-assistant><button data-live-share-open>共享模式</button><div data-assistant-panel><div class="teacher-assistant__footer"></div></div></aside><script>${controller}</script><script>
       window.BroadcastChannel=undefined;
       window.sockets=[];window.editorAdapters=[];window.mirrorAdapters=[];
       class FakeSocket extends EventTarget {
@@ -46,7 +48,7 @@ async function fixture(t) {
         const adapter={options,connected:true,disposed:false,received:[],drafts:[],dispose(){this.disposed=true},setConnected(value){this.connected=value},receive(message){this.received.push(message)},getPendingDrafts(){return this.drafts}};
         collection.push(adapter);return adapter;
       };
-      const adapters={attachViewerMirror(options){const result=makeAdapter(options,mirrorAdapters);options.onViewport({width:1000,height:700});return result},attachViewerEditors(options){return makeAdapter(options,editorAdapters)},attachSourceMirror(options){return makeAdapter(options,mirrorAdapters)},attachSourceEditors(options){return makeAdapter(options,editorAdapters)}};
+      const adapters={attachViewerMirror(options){const result=makeAdapter(options,mirrorAdapters);options.onViewport(${JSON.stringify(settings.studentViewport || { width: 1000, height: 700 })});return result},attachViewerEditors(options){return makeAdapter(options,editorAdapters)},attachSourceMirror(options){return makeAdapter(options,mirrorAdapters)},attachSourceEditors(options){return makeAdapter(options,editorAdapters)}};
       window.cleanup=LiveController.installLiveShare({enabled:true,uid:2,canTeach:true,socketUrl:'/live-share/conn'}, {socketFactory:(url)=>new FakeSocket(url),loadAdapters:()=>window.holdAdapters?new Promise(resolve=>{window.releaseAdapters=()=>resolve(adapters)}):Promise.resolve(adapters)});
       window.receive=(message)=>sockets.at(-1).deliver(message);
       window.pending=(value)=>{const editor=editorAdapters.at(-1);editor.drafts=value?[{editorId:'e-'+editor.options.pageId,language:'python',value:'# unsynced '+value}]:[];editor.options.onStatus({editorId:'e-'+editor.options.pageId,pending:value?1:0,connected:true,ready:true})};
@@ -155,6 +157,93 @@ async function chooseNextStudent(page) {
     await page.evaluate(() => receive({ type: 'students', students: [{ uid: 6, name: '学员6', online: true, tabs: [{ tabId: 'tab-6', title: 'C++作业', visible: true }] }] }));
     await page.locator('.live-share-student').click();
 }
+
+async function viewGeometry(page) {
+    return page.evaluate(() => {
+        const viewport = document.querySelector('.live-share-viewport');
+        const stage = document.querySelector('.live-share-stage');
+        const bounds = stage.getBoundingClientRect();
+        return { scale: new DOMMatrix(getComputedStyle(stage).transform).a,
+            width: bounds.width, height: bounds.height, x: bounds.x, y: bounds.y,
+            nativeWidth: stage.clientWidth, nativeHeight: stage.clientHeight,
+            scrollWidth: viewport.scrollWidth, scrollHeight: viewport.scrollHeight,
+            clientWidth: viewport.clientWidth, clientHeight: viewport.clientHeight,
+            scrollLeft: viewport.scrollLeft, scrollTop: viewport.scrollTop,
+            relays: sockets.flatMap((socket) => socket.sent).filter((message) => message.type === 'relay').length };
+    });
+}
+
+it('fit enlarges a smaller learner screen on a large teacher monitor without changing its native layout', async (t) => {
+    const { page, start, errors } = await fixture(t, { context: { viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 } });
+    await start();
+    const initial = await viewGeometry(page);
+    assert.ok(Math.abs(initial.scale - 1080 / 700) < 0.00001);
+    assert.ok(Math.abs(initial.width - 1000 * 1080 / 700) < 0.1);
+    assert.equal(initial.nativeWidth, 1000); assert.equal(initial.nativeHeight, 700);
+    assert.equal(initial.scrollWidth, initial.clientWidth); assert.equal(initial.scrollHeight, initial.clientHeight);
+    assert.equal(await page.locator('[data-share-zoom-value]').textContent(), '154%');
+    assert.equal(await page.locator('[data-share-zoom-fit]').getAttribute('aria-pressed'), 'true');
+    await page.locator('[data-share-zoom-in]').click();
+    assert.ok((await viewGeometry(page)).scale > initial.scale);
+    await page.locator('[data-share-zoom-fit]').click();
+    assert.equal(await page.locator('[data-share-pan-hint]').isVisible(), false);
+    assert.equal((await viewGeometry(page)).relays, initial.relays, 'zoom is teacher-local and sends no learner commands');
+    assert.deepEqual(errors, []);
+});
+
+it('a small high-DPI teacher can switch from full fit to readable 100%, pan, and reset without phantom overflow', async (t) => {
+    const { page, start, errors } = await fixture(t, { context: { viewport: { width: 800, height: 600 }, deviceScaleFactor: 2 }, studentViewport: { width: 1440, height: 900 } });
+    await start();
+    const initial = await viewGeometry(page);
+    assert.ok(Math.abs(initial.scale - 800 / 1440) < 0.00001);
+    assert.ok(Math.abs(initial.height - 500) < 0.1);
+    assert.equal(initial.scrollWidth, 800); assert.equal(initial.scrollHeight, 600);
+    await page.locator('[data-share-zoom-value]').click();
+    const readable = await viewGeometry(page);
+    assert.equal(readable.scale, 1); assert.equal(readable.width, 1440); assert.equal(readable.height, 900);
+    assert.equal(readable.scrollWidth, 1440); assert.equal(readable.scrollHeight, 900);
+    assert.equal(readable.scrollLeft, 0); assert.equal(readable.scrollTop, 0, '100% starts at the top-left so code line starts remain visible');
+    assert.equal(await page.locator('[data-share-pan-hint]').isVisible(), true);
+    await page.evaluate(() => mirrorAdapters.at(-1).options.onViewPan({ dx: 100, dy: 90 }));
+    const panned = await viewGeometry(page);
+    assert.equal(panned.scrollLeft, readable.scrollLeft + 100); assert.equal(panned.scrollTop, readable.scrollTop + 90);
+    await page.setViewportSize({ width: 900, height: 650 });
+    await page.clock.runFor(30);
+    assert.equal((await viewGeometry(page)).scale, 1, 'manual zoom survives a teacher window resize');
+    await page.locator('[data-share-zoom-fit]').click();
+    const fitted = await viewGeometry(page);
+    assert.equal(fitted.scrollLeft, 0); assert.equal(fitted.scrollTop, 0);
+    assert.equal(fitted.scrollWidth, 900); assert.equal(fitted.scrollHeight, 650);
+    assert.ok(Math.abs(fitted.scale - 900 / 1440) < 0.00001);
+    assert.equal(fitted.relays, initial.relays);
+    await page.getByRole('button', { name: '断开共享' }).click();
+    assert.equal(await page.locator('.live-share-zoom').count(), 0);
+    assert.equal(await page.locator('#teacher-code').inputValue(), '# teacher draft');
+    assert.deepEqual(errors, []);
+});
+
+it('Ctrl-wheel keeps the teacher cursor anchor stable and does not resize or scroll the learner', async (t) => {
+    const { page, start } = await fixture(t, { context: { viewport: { width: 800, height: 600 } }, studentViewport: { width: 1440, height: 900 } });
+    await start(); await page.locator('[data-share-zoom-value]').click();
+    const before = await viewGeometry(page);
+    const anchor = { clientX: 270, clientY: 230 };
+    const sourceX = (anchor.clientX - before.x) / before.scale;
+    const sourceY = (anchor.clientY - before.y) / before.scale;
+    await page.evaluate((point) => mirrorAdapters.at(-1).options.onViewZoom({ delta: -80, ...point }), anchor);
+    const after = await viewGeometry(page);
+    assert.ok(after.scale > 1);
+    assert.ok(Math.abs((anchor.clientX - after.x) / after.scale - sourceX) < 1);
+    assert.ok(Math.abs((anchor.clientY - after.y) / after.scale - sourceY) < 1);
+    assert.equal(after.nativeWidth, 1440); assert.equal(after.nativeHeight, 900);
+    assert.equal(after.relays, before.relays);
+    await page.evaluate(() => {
+        const input = document.createElement('textarea'); input.id = 'local-editor';
+        document.querySelector('.live-share-editors').append(input);
+        input.focus();
+    });
+    await page.keyboard.type('a b');
+    assert.equal(await page.locator('#local-editor').inputValue(), 'a b', 'the pan shortcut must not consume spaces while editing');
+});
 
 it('one learner-switch click waits for the last ACK and automatically starts only the selected learner', async (t) => {
     const { page, start } = await fixture(t);

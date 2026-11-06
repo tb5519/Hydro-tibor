@@ -70,7 +70,6 @@ export async function teacherScope(uid: number, domainId: string) {
 
 export async function studentScope(uid: number, domainId: string) {
     const scope = await accountAndDomain(uid, domainId);
-    if (scope.classroom.domainType === 'scratch') throw new LiveShareError('UNSUPPORTED_PAGE', 'Scratch 页面暂不支持共享。');
     const [member, staff, student, assigned] = await Promise.all([
         domain.getDomainUser(domainId, scope.account), workspace.getMember(scope.workspaceId, uid),
         workspace.collStudent.findOne({ workspaceId: scope.workspaceId, uid }), workspace.getAssignedWorkspaceIds(uid),
@@ -161,7 +160,7 @@ export async function startSession(teacher: SharePresence, studentUid: number, t
     const tabs = await presence.find({ uid: studentUid, canTeach: false, connected: true, workspaceId: teacher.workspaceId,
         expiresAt: { $gt: new Date(now) }, ...(tabId ? { tabId } : {}) }).sort({ visible: -1, expiresAt: -1 }).limit(1).toArray();
     const student = tabs[0];
-    if (!student) throw new LiveShareError('OFFLINE', '学员当前不在可共享的学习页面。');
+    if (!student) throw new LiveShareError('OFFLINE', '学员当前没有在线的平台页面。');
     if (student.serverId !== teacher.serverId) throw new LiveShareError('DIFFERENT_SERVER', '当前共享仅支持同一服务实例，请重新连接后再试。');
     const scope = await authorizePair(teacher.uid, studentUid, student.domainId);
     if (scope.teacher.workspaceId !== teacher.workspaceId) throw new LiveShareError('FORBIDDEN', '无法跨工作区共享。');
@@ -241,7 +240,7 @@ export async function followStudentTab(item: SharePresence, emit: Emit, now = Da
 export async function listStudents(teacherUid: number, domainId: string, now = Date.now()) {
     const scope = await teacherScope(teacherUid, domainId);
     const allDomains = await workspace.getDomains(scope.workspaceId);
-    const permitted = (await Promise.all(allDomains.filter((item) => item.domainType !== 'scratch').map(async (item) => {
+    const permitted = (await Promise.all(allDomains.map(async (item) => {
         try { await teacherScope(teacherUid, item._id); return item._id; } catch { return null; }
     }))).filter(Boolean);
     const memberships = await domain.collUser.find({ domainId: { $in: permitted }, uid: { $gt: 1 }, join: true,

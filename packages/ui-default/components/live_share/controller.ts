@@ -5,8 +5,9 @@ type Controllers = {
   dispose(): void; setConnected(connected: boolean): void; snapshot?(): void; getPendingDrafts?(): any[];
   receive?(data: any): void; receiveCommand?(data: any): any;
   getEditorRect?(id: string): { x: number; y: number; width: number; height: number } | null;
+  getFrameRect?(id: string): { x: number; y: number; width: number; height: number } | null;
 };
-type Adapters = typeof import('./mirror') & typeof import('./editor');
+type Adapters = typeof import('./mirror') & typeof import('./editor') & typeof import('./frames');
 interface Student { uid: number; name: string; online: boolean; tabs?: { tabId: string; title: string; visible: boolean }[] }
 interface Session { sessionId: string; pageId: string; studentUid?: number; studentName?: string; teacherName?: string; tabId?: string }
 let installed: (() => void) | undefined;
@@ -66,11 +67,19 @@ export function installLiveShare(config: LiveShareConfig, options: {
   let viewing: Session | null = null;
   let sourceMirror: Controllers | null = null;
   let sourceEditors: Controllers | null = null;
+  let sourceFrames: Controllers | null = null;
   let viewerMirror: Controllers | null = null;
   let viewerEditors: Controllers | null = null;
+  let viewerFrames: Controllers | null = null;
   let overlay: HTMLElement | null = null;
   let viewport: HTMLElement | null = null;
+  let surface: HTMLElement | null = null;
   let stage: HTMLElement | null = null;
+  let zoomControls: HTMLElement | null = null;
+  let manualScale: number | null = null;
+  let stageScale = 1;
+  let panReady = false;
+  let panGesture: { pointerId: number; x: number; y: number } | null = null;
   let pageStatus: HTMLElement | null = null;
   let statusMessage = '';
   let notice: HTMLElement | null = null;
@@ -103,8 +112,9 @@ export function installLiveShare(config: LiveShareConfig, options: {
     if (!adaptersPromise) {
       adaptersPromise = options.loadAdapters ? options.loadAdapters() : Promise.all([
         import(/* webpackChunkName: "live-share" */ './mirror'), import(/* webpackChunkName: "live-share" */ './editor'),
+        import(/* webpackChunkName: "live-share" */ './frames'),
       ])
-        .then(([mirror, editor]) => ({ ...mirror, ...editor }));
+        .then(([mirror, editor, frames]) => ({ ...mirror, ...editor, ...frames }));
       adaptersPromise.catch(() => { adaptersPromise = undefined; });
     }
     return adaptersPromise;
@@ -135,7 +145,9 @@ export function installLiveShare(config: LiveShareConfig, options: {
   }
   function connected(value: boolean) {
     sourceMirror?.setConnected(value); sourceEditors?.setConnected(value);
+    sourceFrames?.setConnected(value);
     viewerMirror?.setConnected(value); viewerEditors?.setConnected(value);
+    viewerFrames?.setConnected(value);
     overlay?.classList.toggle('is-disconnected', !value);
     if (!value && viewing) setStatus('连接中断，正在重新连接…', true);
     if (notice && source) notice.querySelector('span')!.textContent = value
@@ -143,16 +155,19 @@ export function installLiveShare(config: LiveShareConfig, options: {
   }
   function clearSource() {
     sourceMirror?.dispose(); sourceEditors?.dispose();
+    sourceFrames?.dispose(); sourceFrames = null;
     sourceMirror = null; sourceEditors = null; source = null;
     notice?.remove(); notice = null;
   }
   function clearViewAdapters() {
     viewerMirror?.dispose(); viewerEditors?.dispose(); viewerMirror = null; viewerEditors = null;
+    viewerFrames?.dispose(); viewerFrames = null;
     stage?.replaceChildren(); buffered.length = 0; bufferedBytes = 0; pendingEdits.clear();
   }
   function closeView() {
     generation++; clearViewAdapters(); viewing = null;
-    overlay?.remove(); overlay = null; viewport = null; stage = null; pageStatus = null;
+    endViewPan(); manualScale = null; stageScale = 1;
+    overlay?.remove(); overlay = null; viewport = null; surface = null; stage = null; zoomControls = null; pageStatus = null;
     assistantControls?.remove(); assistantControls = null;
     document.body.classList.remove('live-share-viewing');
     if (original) {
@@ -210,12 +225,84 @@ export function installLiveShare(config: LiveShareConfig, options: {
     if (!waitForEdits(finishEnding, '正在同步最后的修改，完成后自动返回…')) finishEnding();
   }
   function sizeStage() {
-    if (!stage || !viewport) return;
-    const scale = Math.min(viewport.clientWidth / studentWidth, viewport.clientHeight / studentHeight, 1);
+    if (!stage || !viewport || !surface) return;
+    // All mirrored layers retain the learner's CSS-pixel dimensions. Only the
+    // teacher's outer surface scales; changing it never resizes the learner.
+    viewport.style.overflow = manualScale === null ? 'hidden' : 'auto';
+    const scale = manualScale ?? Math.min(viewport.clientWidth / studentWidth, viewport.clientHeight / studentHeight);
+    if (!Number.isFinite(scale) || scale <= 0) return;
+    stageScale = scale;
     stage.style.width = `${studentWidth}px`; stage.style.height = `${studentHeight}px`;
     stage.style.transform = `scale(${scale})`;
-    stage.style.left = `${Math.max(0, (viewport.clientWidth - studentWidth * scale) / 2)}px`;
-    stage.style.top = `${Math.max(0, (viewport.clientHeight - studentHeight * scale) / 2)}px`;
+    // Scrollbars consume layout space on some platforms. Settle both axes so a
+    // newly visible scrollbar doesn't create a second, phantom scrolling axis.
+    for (let pass = 0; pass < 3; pass++) {
+      const width = Math.max(viewport.clientWidth, studentWidth * scale);
+      const height = Math.max(viewport.clientHeight, studentHeight * scale);
+      surface.style.width = `${width}px`; surface.style.height = `${height}px`;
+      stage.style.left = `${(width - studentWidth * scale) / 2}px`;
+      stage.style.top = `${(height - studentHeight * scale) / 2}px`;
+    }
+    if (manualScale === null) { viewport.scrollLeft = 0; viewport.scrollTop = 0; }
+    const percent = zoomControls?.querySelector<HTMLElement>('[data-share-zoom-value]');
+    if (percent) percent.textContent = `${Math.round(scale * 100)}%`;
+    zoomControls?.querySelector('[data-share-zoom-fit]')?.setAttribute('aria-pressed', String(manualScale === null));
+    const overflow = studentWidth * scale > viewport.clientWidth + 1 || studentHeight * scale > viewport.clientHeight + 1;
+    const hint = zoomControls?.querySelector<HTMLElement>('[data-share-pan-hint]');
+    if (hint) hint.hidden = !overflow;
+    zoomControls?.querySelector<HTMLButtonElement>('[data-share-zoom-out]')?.toggleAttribute('disabled', scale <= 0.1);
+    zoomControls?.querySelector<HTMLButtonElement>('[data-share-zoom-in]')?.toggleAttribute('disabled', scale >= 4);
+  }
+  function zoomView(scale: number | null, anchor?: { clientX: number; clientY: number }) {
+    if (!viewport || !stage) return;
+    const rect = viewport.getBoundingClientRect();
+    const x = anchor ? Math.max(0, Math.min(viewport.clientWidth, anchor.clientX - rect.left)) : viewport.clientWidth / 2;
+    const y = anchor ? Math.max(0, Math.min(viewport.clientHeight, anchor.clientY - rect.top)) : viewport.clientHeight / 2;
+    const sourceX = (viewport.scrollLeft + x - parseFloat(stage.style.left || '0')) / stageScale;
+    const sourceY = (viewport.scrollTop + y - parseFloat(stage.style.top || '0')) / stageScale;
+    manualScale = scale === null ? null : Math.max(0.1, Math.min(4, scale));
+    sizeStage();
+    // Preserve the point under the cursor (or the centre when using buttons).
+    if (manualScale !== null) {
+      viewport.scrollLeft = sourceX * stageScale + parseFloat(stage.style.left) - x;
+      viewport.scrollTop = sourceY * stageScale + parseFloat(stage.style.top) - y;
+    }
+  }
+  function wheelZoom({ delta, clientX, clientY }: { delta: number; clientX: number; clientY: number }) {
+    if (Number.isFinite(delta) && Number.isFinite(clientX) && Number.isFinite(clientY)) {
+      zoomView(stageScale * Math.exp(-Math.max(-100, Math.min(100, delta)) * 0.003), { clientX, clientY });
+    }
+  }
+  function panView({ dx, dy }: { dx: number; dy: number }) {
+    if (viewport && Number.isFinite(dx) && Number.isFinite(dy)) { viewport.scrollLeft += dx; viewport.scrollTop += dy; }
+  }
+  function endViewPan() {
+    if (panGesture && viewport?.hasPointerCapture(panGesture.pointerId)) viewport.releasePointerCapture(panGesture.pointerId);
+    panGesture = null; panReady = false;
+    viewport?.classList.remove('is-pan-ready', 'is-panning');
+  }
+  function editableTarget(target: EventTarget | null) {
+    return target instanceof Element && !!target.closest('input, textarea, select, button, a, [contenteditable], .monaco-editor, .live-share-editors');
+  }
+  function createZoomControls() {
+    const controls = el('div', 'live-share-zoom');
+    const bar = el('div', 'live-share-zoom__bar'); bar.setAttribute('role', 'toolbar'); bar.setAttribute('aria-label', '共享画面缩放');
+    const minus = button('−', 'live-share-zoom__step', () => zoomView(stageScale / 1.2)); minus.dataset.shareZoomOut = '';
+    minus.setAttribute('aria-label', '缩小画面'); minus.title = '缩小共享画面';
+    const value = button('100%', 'live-share-zoom__value', () => {
+      zoomView(1);
+      // Reading from 100% should start at the page's left edge, so code line
+      // starts aren't cropped. Incremental/pointer zoom retains its anchor.
+      if (viewport) { viewport.scrollLeft = 0; viewport.scrollTop = 0; }
+    }); value.dataset.shareZoomValue = '';
+    value.setAttribute('aria-label', '恢复原始大小（100%）'); value.title = '恢复 100% 并回到左上角，仅调整老师的显示';
+    const plus = button('+', 'live-share-zoom__step', () => zoomView(stageScale * 1.2)); plus.dataset.shareZoomIn = '';
+    plus.setAttribute('aria-label', '放大画面'); plus.title = '放大共享画面';
+    const fit = button('适合窗口', 'live-share-zoom__fit', () => zoomView(null)); fit.dataset.shareZoomFit = '';
+    fit.title = '完整显示学员画面';
+    bar.append(minus, value, plus, fit);
+    const hint = el('span', 'live-share-zoom__hint', '空格拖动画面'); hint.dataset.sharePanHint = ''; hint.hidden = true;
+    controls.append(bar, hint); return controls;
   }
   function createOverlay() {
     if (overlay) return;
@@ -230,9 +317,31 @@ export function installLiveShare(config: LiveShareConfig, options: {
     document.body.style.overflow = 'hidden'; document.body.classList.add('live-share-viewing');
     overlay = el('section', 'live-share-overlay'); overlay.dataset.liveSharePrivate = '';
     overlay.setAttribute('aria-label', '学员实时共享界面');
-    viewport = el('div', 'live-share-viewport'); stage = el('div', 'live-share-stage');
+    viewport = el('div', 'live-share-viewport'); viewport.tabIndex = -1;
+    surface = el('div', 'live-share-surface'); stage = el('div', 'live-share-stage');
     for (const name of ['keydown', 'keyup', 'keypress']) overlay.addEventListener(name, (event) => event.stopPropagation());
-    viewport.append(stage); overlay.append(viewport);
+    surface.append(stage); viewport.append(surface); overlay.append(viewport);
+    viewport.addEventListener('wheel', (event) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      wheelZoom({ delta: event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport!.clientHeight : 1), clientX: event.clientX, clientY: event.clientY });
+    }, { capture: true, passive: false });
+    viewport.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || editableTarget(event.target)) return;
+      viewport?.focus({ preventScroll: true });
+      if (!panReady) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      panGesture = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+      viewport?.setPointerCapture(event.pointerId); viewport?.classList.add('is-panning');
+    }, true);
+    viewport.addEventListener('pointermove', (event) => {
+      if (!panGesture || event.pointerId !== panGesture.pointerId) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      panView({ dx: panGesture.x - event.clientX, dy: panGesture.y - event.clientY });
+      panGesture.x = event.clientX; panGesture.y = event.clientY;
+    }, true);
+    for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) viewport.addEventListener(name, endViewPan);
+    zoomControls = createZoomControls(); overlay.append(zoomControls);
     pageStatus = el('div', 'live-share-status'); pageStatus.setAttribute('role', 'status');
     overlay.append(pageStatus); document.body.append(overlay);
     const assistant = document.querySelector<HTMLElement>('[data-teacher-assistant]');
@@ -268,9 +377,12 @@ export function installLiveShare(config: LiveShareConfig, options: {
       if (disposed || currentGeneration !== generation || viewing !== next || !stage) return;
       const mirrorRoot = el('div', 'live-share-mirror');
       const editorRoot = el('div', 'live-share-editors');
-      stage.append(mirrorRoot, editorRoot);
+      const frameRoot = el('div', 'live-share-frames');
+      frameRoot.style.cssText = 'position:absolute;inset:0;pointer-events:none;overflow:hidden';
+      stage.append(mirrorRoot, frameRoot, editorRoot);
       viewerMirror = adapters.attachViewerMirror({ pageId: next.pageId, container: mirrorRoot,
         sendCommand: (data) => relay(next, 'command', data),
+        onViewZoom: wheelZoom, onViewPan: panView,
         onViewport: (size: any) => {
           studentWidth = Math.max(320, Math.min(7680, size.width || 1440));
           studentHeight = Math.max(240, Math.min(4320, size.height || 900)); sizeStage();
@@ -281,6 +393,10 @@ export function installLiveShare(config: LiveShareConfig, options: {
           if (message.includes('同步中断')) { ready = false; connected(false); socket?.close(); }
         },
       });
+      viewerFrames = adapters.attachViewerFrames?.({ pageId: next.pageId, container: frameRoot,
+        getNodeRect: (id) => viewerMirror?.getFrameRect?.(id) || null,
+        onStatus: (message: string) => { if (message && viewing === next) setStatus(message); },
+      }) || null;
       viewerEditors = adapters.attachViewerEditors({ pageId: next.pageId, container: editorRoot,
         getNodeRect: (id) => viewerMirror?.getEditorRect?.(id) || undefined,
         send: (data) => relay(next, 'editor', data),
@@ -295,6 +411,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
       const waiting = buffered.splice(0); bufferedBytes = 0;
       waiting.forEach(receiveRelay);
       viewerMirror.setConnected(ready); viewerEditors.setConnected(ready);
+      viewerFrames?.setConnected(ready);
     } catch {
       if (viewing === next) setStatus('共享组件加载失败，请断开后重试。', true);
     }
@@ -321,12 +438,16 @@ export function installLiveShare(config: LiveShareConfig, options: {
         send: (data) => relay(next, 'editor', data),
         onStatus: (status: any) => { if (status.error) sourceStatus(status.error); },
       });
+      sourceFrames = adapters.attachSourceFrames?.({ pageId,
+        send: (data) => relay(next, 'mirror', data), onStatus: sourceStatus,
+      }) || null;
       sourceMirror = adapters.attachSourceMirror({ pageId,
         send: (data) => relay(next, 'mirror', data),
         sendAck: (data) => relay(next, 'ack', data),
         onStatus: sourceStatus,
       });
       sourceEditors.setConnected(ready); sourceMirror.setConnected(ready);
+      sourceFrames?.setConnected(ready);
     } catch {
       if (source === next) {
         relay(next, 'ack', { id: randomId(), pageId, ok: false, reason: '学员端共享组件加载失败，请重新连接。' });
@@ -344,7 +465,10 @@ export function installLiveShare(config: LiveShareConfig, options: {
       return;
     }
     if (viewing) {
-      if (message.kind === 'mirror') viewerMirror?.receive?.(message.data);
+      if (message.kind === 'mirror') {
+        if (['frame', 'frame-remove'].includes(message.data?.type)) viewerFrames?.receive?.(message.data);
+        else viewerMirror?.receive?.(message.data);
+      }
       if (message.kind === 'editor') viewerEditors?.receive?.(message.data);
       if (message.kind === 'ack' && message.data?.ok === false) {
         const reason = message.data.message || message.data.reason || '这项操作请由学员完成';
@@ -511,6 +635,12 @@ export function installLiveShare(config: LiveShareConfig, options: {
     if ((event.target as Element)?.closest?.('[data-live-share-open]')) { event.preventDefault(); openRoster(); }
   });
   on(window, 'resize', sizeStage);
+  on(window, 'keydown', (event: KeyboardEvent) => {
+    if (!viewport || event.code !== 'Space' || event.ctrlKey || event.metaKey || event.altKey || editableTarget(event.target)) return;
+    event.preventDefault(); panReady = true; viewport.classList.add('is-pan-ready');
+  }, { capture: true });
+  on(window, 'keyup', (event: KeyboardEvent) => { if (event.code === 'Space') endViewPan(); }, { capture: true });
+  on(window, 'blur', endViewPan);
   on(document, 'visibilitychange', () => { if (ready) send({ type: 'pulse', visible: !document.hidden }); });
   on(window, 'pagehide', () => {
     // Keep the server's short reconnect grace across a student's navigation.

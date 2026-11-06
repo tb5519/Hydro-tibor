@@ -1,4 +1,5 @@
 import path from 'path';
+import { execFileSync } from 'child_process';
 import { size } from '@hydrooj/utils/lib/utils';
 import cac from 'cac';
 import chalk from 'chalk';
@@ -14,6 +15,11 @@ const argv = cac().parse();
 async function runWebpack({
   watch, production, measure, dev, https,
 }) {
+  if (production && fs.existsSync(root('public/scratch-editor/build-manifest.json'))) {
+    // Both sides of the classroom view use the same sanitizer in this release.
+    // This runs only during the local production-asset build, never at startup.
+    execFileSync(process.execPath, [root('../../build/scratch/build-live-share-frame.mjs')], { stdio: 'inherit' });
+  }
   const compiler = webpack(await webpackConfig({ watch, production, measure }));
   if (dev) {
     const server = new WebpackDevServer({

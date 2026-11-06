@@ -11,7 +11,7 @@ import {
 async function changeMail() {
   const changeMailDialog = new ActionDialog({
     $body: tpl(
-      <div className="typo" id="change-mail-dialog">
+      <div className="typo" id="change-mail-dialog" data-live-share-private>
         <label>{i18n('Current Password')}
           <div className="textbox-container">
             <input className="textbox" type="password" name="password" data-autofocus required></input>
@@ -63,7 +63,7 @@ async function changeMail() {
 async function enableTfa() {
   const enableTFA = new ActionDialog({
     $body: tpl`
-      <div class="typo">
+      <div class="typo" data-live-share-private>
         <p>${i18n('Please use your two factor authentication app to scan the qrcode below:')}</p>
         <div style="text-align: center">
           <canvas id="qrcode"></canvas>

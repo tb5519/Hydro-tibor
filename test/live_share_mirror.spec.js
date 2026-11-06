@@ -30,9 +30,10 @@ before(async () => {
 });
 after(async () => { await browser?.close(); });
 
-async function fixture({ latency = 0, editorMarkup = '' } = {}) {
-    const studentContext = await browser.newContext({ viewport: { width: 1000, height: 700 } });
-    const teacherContext = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = false, showNonSensitiveInputs = false, videoData = null,
+    viewGestures = false, teacherDpr = 1, studentDpr = 1 } = {}) {
+    const studentContext = await browser.newContext({ viewport: { width: 1000, height: 700 }, deviceScaleFactor: studentDpr });
+    const teacherContext = await browser.newContext({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: teacherDpr });
     const student = await studentContext.newPage();
     const teacher = await teacherContext.newPage();
     student.setDefaultTimeout(7000); teacher.setDefaultTimeout(7000);
@@ -45,10 +46,20 @@ async function fixture({ latency = 0, editorMarkup = '' } = {}) {
     teacher.on('pageerror', (e) => errors.push(`teacher: ${e.message}`));
     for (const context of [studentContext, teacherContext]) {
         await context.route('https://sharing.test/**', async (route) => {
-            const teacherPage = new URL(route.request().url()).pathname === '/teacher';
+            const pathname = new URL(route.request().url()).pathname;
+            if (pathname === '/sample.webm' && videoData) {
+                const range = /bytes=(\d+)-(\d*)/.exec(route.request().headers().range || '');
+                const start = range ? Number(range[1]) : 0;
+                const end = range?.[2] ? Math.min(Number(range[2]), videoData.length - 1) : videoData.length - 1;
+                return route.fulfill({ status: range ? 206 : 200, contentType: 'video/webm', body: videoData.subarray(start, end + 1),
+                    headers: { 'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': `bytes ${start}-${end}/${videoData.length}` } : {}) } });
+            }
+            const teacherPage = pathname === '/teacher';
             const body = teacherPage ? '<textarea id="teacher-draft">teacher own code</textarea><main id="mirror" style="position:relative;width:1000px;height:700px"></main>' : `
                 ${editorMarkup}<header>OneByOne</header><h1 id="title">学生正在练习</h1>
                 <a id="next" href="/d/C0001/p/P2">下一道题</a>
+                <a id="profile" href="/user/28">个人主页</a><a id="personal-center" href="/home/profile">个人中心</a>
+                <a id="contest-detail" href="/d/C0001/contest/recent/clarification">比赛详情</a>
                 <a id="open-editor" href="javascript:;" name="problem-sidebar__open-scratchpad" onclick="window.opens++">进入在线编程</a>
                 <a id="evil-link" href="/d/C0001/manage">控制面板</a>
                 <button id="unknown" type="button" onclick="window.saves++">保存修改</button>
@@ -72,22 +83,28 @@ async function fixture({ latency = 0, editorMarkup = '' } = {}) {
         if (latency) await new Promise((resolve) => setTimeout(resolve, latency));
         if (studentReady) await student.evaluate((value) => window.source.receiveCommand(value), data);
     });
-    await teacher.evaluate(() => {
+    await teacher.evaluate((viewGestures) => {
         window.statuses = [];
+        window.viewZooms = []; window.viewPans = [];
         window.viewer = Mirror.attachViewerMirror({ pageId: 'page-1', container: document.querySelector('#mirror'),
+            ...(viewGestures ? {
+                onViewZoom: (data) => { window.viewZooms.push(data); window.onViewZoomHook?.(data); },
+                onViewPan: (data) => { window.viewPans.push(data); window.onViewPanHook?.(data); },
+            } : {}),
             sendCommand: (data) => window.sendCommand(data), onStatus: (message) => window.statuses.push(message) });
-    });
+    }, viewGestures);
     await student.exposeFunction('sendPacket', async (data) => {
         packets.push(data);
         if (latency) await new Promise((resolve) => setTimeout(resolve, latency));
         await teacher.evaluate((value) => window.viewer.receive(value), data);
     });
     await student.exposeFunction('sendAck', (data) => { acks.push(data); });
-    await student.evaluate(() => {
+    await student.evaluate(({ inlineLocalImages, showNonSensitiveInputs }) => {
         window.statuses = [];
-        window.source = Mirror.attachSourceMirror({ pageId: 'page-1', send: (data) => window.sendPacket(data),
+        window.source = Mirror.attachSourceMirror({ pageId: 'page-1', inlineLocalImages, showNonSensitiveInputs, send: (data) => window.sendPacket(data),
+            beforeRasterCapture: (canvas) => window.drawBeforeCapture?.(canvas),
             sendAck: (data) => window.sendAck(data), onStatus: (message) => window.statuses.push(message) });
-    });
+    }, { inlineLocalImages, showNonSensitiveInputs });
     studentReady = true;
     await teacher.frameLocator('#mirror iframe').locator('#title').waitFor();
     const close = async () => {
@@ -113,6 +130,181 @@ it('mirrors ordinary DOM changes, blocks private/editor content, and does not ru
         await f.student.evaluate(() => { document.querySelector('#title').textContent = '新的题目内容'; });
         await frame.locator('#title').getByText('新的题目内容', { exact: true }).waitFor();
         assert.equal(await f.teacher.locator('#teacher-draft').inputValue(), 'teacher own code');
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('shares bounded 2D canvas rasters without mutating the source and never captures private canvases or TOTP secrets', async () => {
+    const f = await fixture({ editorMarkup: '<canvas id="drawing" width="1600" height="1000" style="width:320px;height:200px"></canvas><div data-private><canvas id="private-drawing"></canvas></div><p id="secret">PRIVATE-TOTP-SECRET</p><canvas id="qrcode"></canvas>' });
+    try {
+        await f.teacher.waitForFunction(() => document.querySelector('#mirror iframe').contentDocument.querySelector('#drawing')?.style.backgroundImage.includes('data:image/'));
+        const initialRaster = await f.frame().locator('#drawing').evaluate((node) => node.style.backgroundImage);
+        const original = await f.student.evaluate(() => {
+            const canvas = document.querySelector('#drawing');
+            const context = canvas.getContext('2d');
+            context.fillStyle = '#1266cc'; context.fillRect(0, 0, canvas.width, canvas.height);
+            const privateCanvas = document.querySelector('#private-drawing');
+            privateCanvas.getContext('2d').fillRect(0, 0, 100, 100);
+            document.querySelector('#qrcode').getContext('2d').fillRect(0, 0, 100, 100);
+            return canvas.getAttribute('style');
+        });
+        await f.teacher.waitForFunction((initial) => document.querySelector('#mirror iframe').contentDocument.querySelector('#drawing')?.style.backgroundImage !== initial, initialRaster);
+        const image = await f.teacher.evaluate(async () => {
+            const background = document.querySelector('#mirror iframe').contentDocument.querySelector('#drawing').style.backgroundImage;
+            const src = background.slice(5, -2);
+            const image = new Image(); image.src = src; await image.decode();
+            const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+            const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+            return { width: image.width, height: image.height, length: src.length, pixel: [...context.getImageData(20, 20, 1, 1).data] };
+        });
+        assert(image.width <= 960 && image.height <= 720 && image.length <= 48 * 1024);
+        assert(image.pixel[2] > 180 && image.pixel[0] < 40, 'the replay receives the blue drawing pixels');
+        assert.equal(await f.student.locator('#drawing').getAttribute('style'), original, 'source styles are untouched');
+        const snapshotEvents = () => f.packets.flatMap((packet) => packet.events || (packet.event ? [packet.event] : []))
+            .flatMap((event) => event.data?.attributes || []).filter((entry) => entry.attributes?.style?.['background-image']);
+        const count = snapshotEvents().length;
+        await f.teacher.waitForTimeout(950);
+        assert.equal(snapshotEvents().length, count, 'unchanged drawing pixels are not retransmitted');
+        assert(!JSON.stringify(f.packets).includes('PRIVATE-TOTP-SECRET'));
+        assert.equal(await f.frame().locator('#private-drawing,#qrcode,#secret').count(), 0);
+        await f.student.evaluate(() => {
+            window.source.setConnected(false);
+            const canvas = document.querySelector('#drawing');
+            const context = canvas.getContext('2d'); context.fillStyle = '#ee2211'; context.fillRect(0, 0, canvas.width, canvas.height);
+        });
+        await f.teacher.waitForTimeout(500);
+        assert.equal(snapshotEvents().length, count, 'disconnected pages stop sending raster frames');
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+for (const mode of ['preserved', 'continuously rendered', 'redrawn before capture']) it(`captures ${mode} WebGL pixels without replaying WebGL commands`, async () => {
+    const f = await fixture({ editorMarkup: '<canvas id="webgl" width="160" height="100"></canvas>' });
+    try {
+        await f.teacher.waitForFunction(() => document.querySelector('#mirror iframe').contentDocument.querySelector('#webgl')?.style.backgroundImage.includes('data:image/'));
+        const initialRaster = await f.frame().locator('#webgl').evaluate((node) => node.style.backgroundImage);
+        assert(await f.student.evaluate((mode) => {
+            const canvas = document.querySelector('#webgl');
+            const gl = canvas.getContext('webgl', { preserveDrawingBuffer: mode === 'preserved' });
+            if (!gl) return false;
+            const draw = () => {
+                gl.clearColor(0.1, 0.8, 0.2, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+                if (mode === 'continuously rendered') requestAnimationFrame(draw);
+            };
+            if (mode === 'redrawn before capture') window.drawBeforeCapture = (target) => { if (target === canvas) draw(); };
+            draw(); return true;
+        }, mode), 'browser must provide WebGL for this regression');
+        await f.teacher.waitForFunction((initial) => document.querySelector('#mirror iframe').contentDocument.querySelector('#webgl')?.style.backgroundImage !== initial, initialRaster);
+        const pixel = await f.teacher.evaluate(async () => {
+            const source = document.querySelector('#mirror iframe').contentDocument.querySelector('#webgl').style.backgroundImage.slice(5, -2);
+            const image = new Image(); image.src = source; await image.decode();
+            const canvas = document.createElement('canvas'); canvas.width = 160; canvas.height = 100;
+            const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+            return [...context.getImageData(20, 20, 1, 1).data];
+        });
+        assert(pixel[1] > 180 && pixel[0] < 50);
+        assert(f.packets.flatMap((packet) => packet.events || [packet.event]).filter(Boolean).every((event) => event.data?.source !== 9));
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('optionally inlines blob thumbnails within the raster budget without exposing private images', async () => {
+    const f = await fixture({ inlineLocalImages: true, editorMarkup: '<img id="thumbnail" width="80" height="60"><div data-private><img id="private-thumbnail"></div>' });
+    try {
+        await f.student.evaluate(async () => {
+            const canvas = document.createElement('canvas'); canvas.width = 80; canvas.height = 60;
+            const context = canvas.getContext('2d'); context.fillStyle = '#dd3322'; context.fillRect(0, 0, 80, 60);
+            const url = URL.createObjectURL(await new Promise((resolve) => canvas.toBlob(resolve)));
+            document.querySelector('#thumbnail').src = url; document.querySelector('#private-thumbnail').src = url;
+        });
+        await f.teacher.waitForFunction(() => document.querySelector('#mirror iframe').contentDocument.querySelector('#thumbnail')?.src.startsWith('data:image/'));
+        assert((await f.student.locator('#thumbnail').getAttribute('src')).startsWith('blob:'), 'source blob URL is retained');
+        assert.equal(await f.frame().locator('#private-thumbnail').count(), 0);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('rasterizes controlled SVG icons and shows ordinary Scratch fields while masking private values', async () => {
+    const icon = encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect width="24" height="24" fill="#22aa44"/></svg>');
+    const f = await fixture({ inlineLocalImages: true, showNonSensitiveInputs: true,
+        editorMarkup: `<img id="svg-icon" width="24" height="24" src="data:image/svg+xml,${icon}"><input id="sprite-name" value="小猫角色"><input id="sprite-x" type="number" value="123"><input type="password" value="NEVER-SHARE-PASSWORD"><input name="tfa_code" value="NEVER-SHARE-TOTP"><div data-private><input value="NEVER-SHARE-PRIVATE"></div>` });
+    try {
+        await f.teacher.waitForFunction(() => document.querySelector('#mirror iframe').contentDocument.querySelector('#svg-icon')?.src.startsWith('data:image/webp'));
+        assert.equal(await f.frame().locator('#sprite-name').inputValue(), '小猫角色');
+        assert.equal(await f.frame().locator('#sprite-x').inputValue(), '123');
+        const recorded = JSON.stringify(f.packets);
+        for (const secret of ['NEVER-SHARE-PASSWORD', 'NEVER-SHARE-TOTP', 'NEVER-SHARE-PRIVATE']) assert(!recorded.includes(secret));
+        assert(!recorded.includes('data:image/svg+xml'));
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('validates media events and silently follows the source video play, pause, seek, rate and position', { timeout: 30000 }, async () => {
+    const generator = await browser.newPage();
+    let videoData;
+    try {
+        videoData = Buffer.from(await generator.evaluate(async () => {
+            const canvas = document.createElement('canvas'); canvas.width = 80; canvas.height = 60;
+            const context = canvas.getContext('2d');
+            const stream = canvas.captureStream(8);
+            const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8', videoBitsPerSecond: 20000 });
+            const chunks = [];
+            recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+            const completed = new Promise((resolve) => { recorder.onstop = resolve; });
+            let frame = 0;
+            const paint = () => { context.fillStyle = frame++ % 2 ? '#dd4411' : '#2266cc'; context.fillRect(0, 0, 80, 60); };
+            paint(); recorder.start();
+            const timer = setInterval(paint, 125);
+            await new Promise((resolve) => setTimeout(resolve, 4000));
+            recorder.stop(); clearInterval(timer); await completed; stream.getTracks().forEach((track) => track.stop());
+            const data = new Uint8Array(await new Blob(chunks).arrayBuffer());
+            return btoa(String.fromCharCode(...data));
+        }), 'base64');
+    } finally { await generator.close(); }
+    const f = await fixture({ videoData, editorMarkup: '<video id="lesson" src="/sample.webm" preload="auto" width="160" height="120"></video>' });
+    try {
+        await f.student.waitForFunction(() => document.querySelector('#lesson').readyState >= 2);
+        await f.teacher.waitForFunction(() => document.querySelector('#mirror iframe').contentDocument.querySelector('#lesson')?.readyState >= 2);
+        assert.equal(await f.frame().locator('#lesson').evaluate((node) => node.muted && node.volume === 0 && node.paused), true);
+        await f.student.evaluate(() => document.querySelector('#lesson').play());
+        await f.teacher.waitForFunction(() => !document.querySelector('#mirror iframe').contentDocument.querySelector('#lesson').paused);
+        await f.student.evaluate(() => document.querySelector('#lesson').pause());
+        await f.teacher.waitForFunction(() => document.querySelector('#mirror iframe').contentDocument.querySelector('#lesson').paused);
+        await f.student.evaluate(() => { const video = document.querySelector('#lesson'); video.currentTime = 1.25; video.playbackRate = 0.5; });
+        await f.teacher.waitForFunction(() => {
+            const video = document.querySelector('#mirror iframe').contentDocument.querySelector('#lesson');
+            return video.paused && Math.abs(video.currentTime - 1.25) < 0.12 && video.playbackRate === 0.5;
+        });
+        await f.student.evaluate(() => document.querySelector('#lesson').play());
+        await f.teacher.waitForFunction(() => !document.querySelector('#mirror iframe').contentDocument.querySelector('#lesson').paused);
+        await f.teacher.waitForTimeout(1300);
+        const sourceTime = await f.student.locator('#lesson').evaluate((node) => node.currentTime);
+        const replayTime = await f.frame().locator('#lesson').evaluate((node) => node.currentTime);
+        assert(Math.abs(sourceTime - replayTime) < 0.35, `video drift ${Math.abs(sourceTime - replayTime)}`);
+        await f.frame().locator('#lesson').evaluate((node) => { node.muted = false; node.volume = 1; });
+        await f.teacher.waitForFunction(() => {
+            const video = document.querySelector('#mirror iframe').contentDocument.querySelector('#lesson'); return video.muted && video.volume === 0;
+        });
+        const rejected = await f.teacher.evaluate(() => {
+            const base = { type: 3, timestamp: Date.now(), data: { source: 7, id: 1, type: 0, currentTime: 1, playbackRate: 1, volume: 1, muted: false, loop: false } };
+            return [ { id: -1 }, { type: 99 }, { currentTime: Infinity }, { currentTime: -1 }, { playbackRate: 100 }, { volume: 2 }, { loop: 'yes' } ]
+                .every((invalid) => Mirror.sanitizeMirrorEvent({ ...base, data: { ...base.data, ...invalid } }) === null);
+        });
+        assert(rejected);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('retains a safe blocked-frame anchor without replaying iframe contents, scripts or URLs', async () => {
+    const f = await fixture({ editorMarkup: '<iframe data-live-share-frame="scratch-one" style="position:absolute;left:12px;top:400px;width:500px;height:160px;border:0" srcdoc="<p>private frame payload</p>"></iframe>' });
+    try {
+        await f.teacher.waitForFunction(() => !!window.viewer.getFrameRect('scratch-one'));
+        assert.deepEqual(await f.teacher.evaluate(() => window.viewer.getFrameRect('scratch-one')), { x: 12, y: 400, width: 500, height: 160 });
+        assert.equal(await f.frame().locator('[data-live-share-frame="scratch-one"]').evaluate((node) => node.tagName), 'DIV');
+        assert.equal(await f.frame().locator('[data-live-share-frame="scratch-one"]').getAttribute('srcdoc'), null);
+        assert(!JSON.stringify(f.packets).includes('private frame payload'));
+        await f.student.evaluate(() => { document.querySelector('[data-live-share-frame]').style.top = '450px'; });
+        await f.teacher.waitForFunction(() => window.viewer.getFrameRect('scratch-one')?.y === 450);
         assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
 });
@@ -237,6 +429,19 @@ it('teacher navigation changes only the student and refuses management links', a
     } finally { await f.close(); }
 });
 
+it('teacher can follow ordinary personal-center and contest-page links without navigating their own page', async () => {
+    for (const [link, destination] of [['profile', '/user/28'], ['personal-center', '/home/profile'], ['contest-detail', '/d/C0001/contest/recent/clarification']]) {
+        const f = await fixture();
+        try {
+            await f.frame().locator(`#${link}`).click();
+            await f.student.waitForURL(`**${destination}`);
+            assert.equal(new URL(f.student.url()).pathname, destination);
+            assert.equal(f.teacher.url(), 'https://sharing.test/teacher');
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    }
+});
+
 it('opens the named online editor without replaying javascript links and supports safe GET problem searches', async () => {
     const f = await fixture();
     try {
@@ -250,6 +455,67 @@ it('opens the named online editor without replaying javascript links and support
         await f.student.waitForURL('**/d/C0001/p?q=*');
         assert.equal(new URL(f.student.url()).searchParams.get('q'), '二分 搜索');
         assert.equal(f.teacher.url(), 'https://sharing.test/teacher');
+    } finally { await f.close(); }
+});
+
+it('scaled replay clicks and local zoom use teacher CSS coordinates across different device densities', async () => {
+    const f = await fixture({ viewGestures: true, teacherDpr: 2, studentDpr: 1 });
+    try {
+        let count = 0;
+        for (const scale of [0.55, 1.4]) {
+            await f.teacher.evaluate((scale) => {
+                const root = document.querySelector('#mirror'); root.style.transformOrigin = '0 0'; root.style.transform = `scale(${scale})`;
+            }, scale);
+            await f.frame().locator('#run').click();
+            await f.student.waitForFunction((count) => window.runs === count, ++count);
+            const box = await f.frame().locator('#title').boundingBox();
+            const point = { x: box.x + 80, y: box.y + box.height / 2 };
+            await f.teacher.mouse.move(point.x, point.y);
+            await f.teacher.keyboard.down('Control');
+            await f.teacher.mouse.wheel(0, -120);
+            await f.teacher.keyboard.up('Control');
+            await f.teacher.waitForFunction((count) => window.viewZooms.length === count, count);
+            const zoom = await f.teacher.evaluate(() => window.viewZooms.at(-1));
+            assert.equal(zoom.delta, -120);
+            assert(Math.abs(zoom.clientX - point.x) < 2 && Math.abs(zoom.clientY - point.y) < 2,
+                `scale ${scale} zoom should anchor in teacher CSS pixels, independent of DPR`);
+        }
+        assert.equal(await f.student.evaluate(() => window.scrollY), 0);
+        assert.equal(f.commands.filter((entry) => entry.action === 'scroll').length, 0, 'local zoom never scrolls the student');
+        await f.teacher.mouse.wheel(0, 100);
+        await f.student.waitForFunction(() => window.scrollY >= 99);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('Space dragging pans only the teacher view, survives moving iframe coordinates, and leaves input spaces alone', async () => {
+    const f = await fixture({ viewGestures: true, teacherDpr: 1, studentDpr: 2 });
+    try {
+        await f.teacher.evaluate(() => {
+            const root = document.querySelector('#mirror');
+            root.style.transformOrigin = '0 0'; root.style.transform = 'scale(0.7)';
+            let x = 0; let y = 0;
+            window.onViewPanHook = (delta) => { x -= delta.dx; y -= delta.dy; root.style.transform = `translate(${x}px,${y}px) scale(0.7)`; };
+        });
+        const title = await f.frame().locator('#title').boundingBox();
+        const x = title.x + 80; const y = title.y + title.height / 2;
+        await f.teacher.mouse.click(x, y);
+        await f.teacher.keyboard.down('Space');
+        await f.teacher.mouse.move(x, y); await f.teacher.mouse.down();
+        await f.teacher.mouse.move(x + 70, y + 42, { steps: 10 });
+        await f.teacher.mouse.up(); await f.teacher.keyboard.up('Space');
+        const pan = await f.teacher.evaluate(() => window.viewPans.reduce((sum, delta) => ({ dx: sum.dx + delta.dx, dy: sum.dy + delta.dy }), { dx: 0, dy: 0 }));
+        assert(Math.abs(pan.dx + 70) < 2 && Math.abs(pan.dy + 42) < 2, `pan should scroll opposite physical teacher movement for natural grabbing: ${JSON.stringify(pan)}`);
+        assert.equal(f.commands.length, 0, 'pan never becomes a source click/scroll');
+        assert.equal(await f.student.evaluate(() => window.scrollY), 0);
+        await f.teacher.waitForTimeout(310);
+        await f.frame().locator('#search').fill('first');
+        await f.teacher.keyboard.press('Space');
+        await f.teacher.keyboard.type('second');
+        assert.equal(await f.frame().locator('#search').inputValue(), 'first second', 'typing Space remains ordinary text input');
+        await f.frame().locator('#run').click();
+        await f.student.waitForFunction(() => window.runs === 1);
+        assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
 });
 
@@ -377,18 +643,24 @@ it('large compressed Unicode snapshots reassemble and unsafe or missing sequence
     } finally { await page.close(); }
 });
 
-it('safe study URLs reject account navigation, dangerous queries and encoded paths', async () => {
+it('safe navigation covers ordinary platform pages while rejecting account actions, dangerous queries and encoded paths', async () => {
     const page = await browser.newPage();
     try {
         await page.goto('about:blank'); await page.addScriptTag({ content: script });
         const urls = await page.evaluate(() => {
             const base = 'https://sharing.test/d/C0001/p/P1';
-            return ['https://evil.test/p/P2', '/logout', '/d/C0001/p/P1/edit', '/d/C0001/contest/create',
-                '/p/P1?operation=delete', '/p/%252e%252e', 'javascript:alert(1)', '/home/account', '/p/P2?tid=abc', '/d/C0001/homework/abc']
-                .map((url) => Mirror.safeStudyUrl(url, base));
+            const rejected = ['https://evil.test/p/P2', '/logout', '/d/C0001/p/P1/edit', '/d/C0001/contest/create',
+                '/p/P1?operation=delete', '/p/%252e%252e', 'javascript:alert(1)', '/home/account',
+                '/home/profile/password', '/home/changeMail/secret', '/user/tfa', '/user/webauthn', '/oauth/vendor/callback',
+                '/language/en', '/lottery/draw', '/achievement/ack', '/p/P2?method=delete', '/p/P2?auth=secret', '/p//P2'];
+            const permitted = ['/p/P2?tid=abc', '/d/C0001/homework/abc', '/user/28', '/home/profile', '/home/domain', '/home/messages',
+                '/d/C0001/contest/abc/clarification', '/d/C0001/contest/abc/scoreboard/all', '/badge-honor-wall',
+                '/scratch/editor?workId=abc', '/scratch/assignment/abc/quiz', '/discuss/topic/123'];
+            return { rejected: rejected.map((url) => Mirror.safeStudyUrl(url, base)),
+                permitted: permitted.map((url) => Mirror.safeStudyUrl(url, base)) };
         });
-        assert(urls.slice(0, 8).every((url) => url === null));
-        assert.equal(urls[8], 'https://sharing.test/p/P2?tid=abc');
-        assert.equal(urls[9], 'https://sharing.test/d/C0001/homework/abc');
+        assert(urls.rejected.every((url) => url === null));
+        assert.equal(urls.permitted.length, 12);
+        assert(urls.permitted.every((url) => url?.startsWith('https://sharing.test/')));
     } finally { await page.close(); }
 });

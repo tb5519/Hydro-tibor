@@ -12,7 +12,7 @@ export function shareId(value: unknown): value is string {
     return typeof value === 'string' && /^[a-zA-Z0-9_-]{8,96}$/.test(value);
 }
 
-/** Positive allowlist: account, administration, payments and arbitrary URLs are never shared. */
+/** Viewing requires a grant from a successful rendered GET; this is not an action/navigation allowlist. */
 export function sharePage(value: unknown): { path: string; domainId?: string } | null {
     if (typeof value !== 'string' || value.length > 2048 || !value.startsWith('/') || value.startsWith('//')
         || /[\\\u0000-\u001f]/.test(value)) return null;
@@ -20,16 +20,22 @@ export function sharePage(value: unknown): { path: string; domainId?: string } |
     try { url = new URL(value, 'https://live-share.invalid'); } catch { return null; }
     if (url.origin !== 'https://live-share.invalid') return null;
     let pathname: string;
-    try { pathname = decodeURIComponent(url.pathname); } catch { return null; }
+    try {
+        if (/(?:^|\/)\.{1,2}(?:\/|$)/.test(decodeURIComponent(value.split(/[?#]/, 1)[0]))) return null;
+        pathname = decodeURIComponent(url.pathname);
+    } catch { return null; }
     if (/[\\\u0000-\u001f]/.test(pathname) || pathname.includes('//')) return null;
-    const match = /^\/d\/([^/]+)(\/.*)$/.exec(pathname);
-    const path = match ? match[2] : pathname;
-    const safe = path === '/' || /^\/(?:p|record|training|homework|contest|ranking|ide|mistakes|daily-quiz)\/?$/.test(path)
-        || /^\/p\/[^/]+(?:\/submit|\/solution(?:\/[^/]+)?)?\/?$/.test(path)
-        || /^\/(?:record|training|homework|contest)\/[a-zA-Z0-9_-]+(?:\/(?:scoreboard|code))?\/?$/.test(path);
-    if (!safe) return null;
+    const match = /^\/d\/([^/]+)(\/.*)?$/.exec(pathname);
+    const path = match ? match[2] || '/' : pathname;
+    // These URLs can themselves contain login challenges or one-use secrets.
+    // Ordinary personal/contest/Scratch pages remain viewable after their own
+    // HTTP authorization. Sensitive fields inside them are masked by capture.
+    if (/^\/(?:login|logout|register|lostpass|oauth)(?:\/|$)/i.test(path)
+        || /^\/user\/(?:sudo|tfa|webauthn)(?:\/|$)/i.test(path)
+        || /^\/home\/changeMail(?:\/|$)/i.test(path)) return null;
     for (const key of url.searchParams.keys()) {
-        if (/password|passwd|secret|token|credential|auth|sid|reviewUid|mergedUid/i.test(key)) return null;
+        if (/password|passwd|secret|token|credential|authorization|session|reviewUid|mergedUid/i.test(key)
+            || /^(?:auth|sid)$/i.test(key)) return null;
     }
     return { path: `${url.pathname}${url.search}`, domainId: match?.[1] };
 }
@@ -130,12 +136,22 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
         }
         if (data.rect && !['x', 'y', 'width', 'height'].every((key) => finite(data.rect[key]))) invalid();
     } else if (kind === 'mirror') {
-        if (!['rrweb', 'rrweb-chunk', 'rrweb-batch'].includes(data.type) || !Number.isSafeInteger(data.sequence) || data.sequence < 0) invalid();
-        if (data.type === 'rrweb' && (!data.event || typeof data.event !== 'object')) invalid();
-        if (data.type === 'rrweb-batch' && (!Array.isArray(data.events) || data.events.length > 256)) invalid();
-        if (data.type === 'rrweb-chunk' && (!short(data.id) || !data.id || !Number.isSafeInteger(data.index) || !Number.isSafeInteger(data.total)
-            || data.total < 1 || data.total > 1024 || data.index < 0 || data.index >= data.total
-            || !short(data.chunk, 128 * 1024) || (data.encoding !== undefined && !['gzip', 'json'].includes(data.encoding)))) invalid();
+        if (role !== 'student') invalid();
+        if (data.type === 'frame' || data.type === 'frame-remove') {
+            if (typeof data.id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(data.id)
+                || Object.keys(data).some((key) => !['type', 'id', ...(data.type === 'frame' ? ['packet'] : [])].includes(key))) invalid();
+            if (data.type === 'frame-remove') return;
+            if (!data.packet || typeof data.packet !== 'object' || Array.isArray(data.packet)) invalid();
+        }
+        // One child document layer only. It carries display packets, never
+        // executable actions, editor messages or recursively nested frames.
+        const packet = data.type === 'frame' ? data.packet : data;
+        if (!['rrweb', 'rrweb-chunk', 'rrweb-batch'].includes(packet.type) || !Number.isSafeInteger(packet.sequence) || packet.sequence < 0) invalid();
+        if (packet.type === 'rrweb' && (!packet.event || typeof packet.event !== 'object')) invalid();
+        if (packet.type === 'rrweb-batch' && (!Array.isArray(packet.events) || packet.events.length > 256)) invalid();
+        if (packet.type === 'rrweb-chunk' && (!short(packet.id) || !packet.id || !Number.isSafeInteger(packet.index) || !Number.isSafeInteger(packet.total)
+            || packet.total < 1 || packet.total > 1024 || packet.index < 0 || packet.index >= packet.total
+            || !short(packet.chunk, 128 * 1024) || (packet.encoding !== undefined && !['gzip', 'json'].includes(packet.encoding)))) invalid();
     }
 }
 

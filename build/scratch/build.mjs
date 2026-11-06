@@ -210,3 +210,6 @@ fs.writeFileSync(path.join(target, 'build-manifest.json'), `${JSON.stringify({
     files
 }, null, 2)}\n`);
 console.log(`Prepared ${Object.keys(files).length} editor assets in ${target}`);
+// Package the optional classroom-view bridge locally with its corresponding
+// source and checksums. It never changes the iframe sandbox permissions.
+run(process.execPath, [path.join(here, 'build-live-share-frame.mjs')], repo);

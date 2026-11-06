@@ -5,15 +5,18 @@ const BLOCK = [
   '.monaco-editor', '[data-live-share-editor]', '[data-live-share-ui]', '[data-live-share-private]', '[data-teacher-assistant]',
   '.live-share', '.live-share-shell', 'iframe', 'object', 'embed',
   'input[type="password"]', 'input[type="hidden"]', 'input[type="file"]',
-  '[autocomplete="current-password"]', '[autocomplete="new-password"]',
+  '[autocomplete="current-password"]', '[autocomplete="new-password"]', '[autocomplete="one-time-code"]',
   '[data-private]', '[data-sensitive]', '[name*="token" i]', '[name*="password" i]',
-  '[name*="secret" i]', '[name*="csrf" i]',
+  '[name*="secret" i]', '[name*="csrf" i]', '#secret', '#qrcode', '[name="tfa_code"]',
 ].join(',');
 const MAX_EVENT_BYTES = 8 * 1024 * 1024;
 const MAX_QUEUED_BYTES = 12 * 1024 * 1024;
 const MAX_CHUNKS = 768;
 const CHUNK_CHARS = 16 * 1024;
 const EDITOR_MARKER = 'data-live-share-editor';
+const FRAME_MARKER = 'data-live-share-frame';
+const CANVAS_FRAME_BYTES = 48 * 1024;
+const CANVAS_BYTES_PER_SECOND = 128 * 1024;
 const validEditorId = (id: unknown): id is string => typeof id === 'string' && /^[\w-]{1,128}$/.test(id);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -32,6 +35,9 @@ export interface MirrorCommand {
 export interface MirrorAck { id: string; pageId: string; ok: boolean; reason?: string }
 interface SourceOptions {
   pageId: string;
+  inlineLocalImages?: boolean;
+  showNonSensitiveInputs?: boolean;
+  beforeRasterCapture?: (canvas: HTMLCanvasElement) => void;
   send: (data: any) => void | boolean;
   sendAck?: (data: MirrorAck) => void;
   onStatus?: (message: string) => void;
@@ -41,23 +47,31 @@ interface ViewerOptions {
   container: HTMLElement;
   sendCommand: (data: MirrorCommand) => void;
   onViewport?: (size: { width: number; height: number }) => void;
+  /** Local viewing only. Coordinates/deltas are in the teacher viewport's CSS pixels. */
+  onViewZoom?: (gesture: { delta: number; clientX: number; clientY: number }) => void;
+  /** Scroll deltas (previous minus current pointer position) for natural grab panning. */
+  onViewPan?: (gesture: { dx: number; dy: number }) => void;
   onStatus?: (message: string) => void;
 }
 
-const dangerousSegments = /\/(?:manage|account|home|login|logout|register|sudo|switch|payment|pay|purchase|checkout|create|edit|config|delete|remove|save|rejudge|cancel|join|leave|attend|copy|publish|share|download|file|files|settings|security|token|api)(?:\/|$)/i;
+const dangerousSegments = /\/(?:manage|management|account|login|logout|register|lostpass|oauth|sudo|tfa|webauthn|switch|language|payment|pay|purchase|checkout|create|edit|config|delete|remove|save|rejudge|cancel|join|leave|attend|copy|publish|share|download|file|files|settings|security|password|changeMail|token|api|storage|restart|shutdown|reset|revoke|ack|draw|upload|import|export|bind|unbind|hack)(?:\/|$)/i;
 
 /** A remote click can navigate only an existing, safe study link on the student's page. */
 export function safeStudyUrl(raw: string, base: string): string | null {
   try {
+    if (typeof raw !== 'string' || raw.length > 2048) return null;
     const url = new URL(raw, base);
     const origin = new URL(base).origin;
     if (url.origin !== origin || !['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
     let path = decodeURIComponent(url.pathname);
-    if (/[\\%\u0000-\u0020]/.test(path)) return null;
+    if (/[\\%\u0000-\u0020]/.test(path) || path.includes('//')) return null;
     path = path.replace(/^\/d\/[^/]+(?=\/|$)/, '') || '/';
     if (dangerousSegments.test(path)) return null;
-    if ([...url.searchParams.keys()].some((key) => /(?:operation|action|token|secret|password|csrf|redirect|return|next)/i.test(key))) return null;
-    if (!/^(?:\/|\/(?:p(?:\/[^/]+(?:\/(?:submit|solution(?:\/[^/]+)?|stat|submission-records))?)?|contest(?:\/[^/]+(?:\/(?:problems|scoreboard))?)?|homework(?:\/[^/]+)?|training(?:\/[^/]+)?|record(?:\/[^/]+)?|ranking|ide|mistakes|daily-quiz|problem\/random|scratch(?:\/(?:problems|works|assignments|materials|community|editor|problem\/[^/]+|assignment\/[^/]+|material\/[^/]+|work\/[^/]+|submission\/[^/]+))?))\/?$/.test(path)) return null;
+    if ([...url.searchParams.keys()].some((key) => /(?:operation|action|method|token|secret|password|passwd|credential|auth|sid|reviewUid|mergedUid|csrf|redirect|return|next)/i.test(key))) return null;
+    // Viewing is not restricted to a hand-maintained list of study pages. The
+    // student's own server-rendered link and normal permissions determine what
+    // can open; sensitive routes and actions remain excluded above. Form posts
+    // and arbitrary buttons still never execute through the replay.
     return url.href;
   } catch { return null; }
 }
@@ -109,11 +123,35 @@ function disabled(element: HTMLElement) {
   return element.matches(':disabled,[aria-disabled="true"],.disabled') || !element.isConnected;
 }
 
+function safePlaceholderStyle(style: unknown) {
+  const result: string[] = [];
+  if (typeof style !== 'string') return '';
+  for (const declaration of style.split(';')) {
+    const [property, value] = declaration.split(':').map((part) => part.trim());
+    if (['width', 'height', 'top', 'right', 'bottom', 'left', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left'].includes(property)
+      && /^(auto|0|-?\d+(?:\.\d+)?(?:px|%))$/.test(value)
+      || property === 'box-sizing' && value === 'border-box'
+      || property === 'position' && /^(static|relative|absolute|fixed|sticky)$/.test(value)
+      || property === 'display' && /^(none|block|inline|inline-block|flex|inline-flex|grid|inline-grid)$/.test(value)) result.push(`${property}:${value}`);
+  }
+  return result.join(';');
+}
+
 /** Remove executable payloads even if a malformed peer bypassed the normal recorder. */
 export function sanitizeMirrorEvent(event: any): RREvent | null {
   if (!event || !Number.isInteger(event.type) || ![0, 1, 2, 3, 4].includes(event.type)
     || !Number.isFinite(event.timestamp) || !event.data || typeof event.data !== 'object') return null;
-  if (event.type === 3 && ![0, 1, 2, 3, 4, 5, 6, 8, 12, 13, 14].includes(event.data.source)) return null;
+  if (event.type === 3 && ![0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 13, 14].includes(event.data.source)) return null;
+  if (event.type === 3 && event.data.source === 7) {
+    const data = event.data;
+    if (!Number.isSafeInteger(data.id) || data.id <= 0 || ![0, 1, 2, 3, 4].includes(data.type)
+      || !Number.isFinite(data.currentTime) || data.currentTime < 0 || data.currentTime > 7 * 86400
+      || !Number.isFinite(data.playbackRate) || data.playbackRate < 0 || data.playbackRate > 16
+      || !Number.isFinite(data.volume) || data.volume < 0 || data.volume > 1
+      || typeof data.muted !== 'boolean' || typeof data.loop !== 'boolean') return null;
+    event.data = { source: 7, id: data.id, type: data.type, currentTime: data.currentTime,
+      playbackRate: data.playbackRate, loop: data.loop, muted: true, volume: 0 };
+  }
   // Canvas, plugin and custom-script events deliberately are not replayed.
   const cleanAttrs = (attributes: any, tagName = '') => {
     if (!attributes || typeof attributes !== 'object' || Array.isArray(attributes)) return {};
@@ -128,12 +166,24 @@ export function sanitizeMirrorEvent(event: any): RREvent | null {
       else if (['href', 'src', 'xlink:href'].includes(key)) {
         const value = attributes[key];
         if (typeof value === 'string' && /^\s*(?:javascript|vbscript|file):/i.test(value)) delete attributes[key];
+        else if (key === 'src' && typeof value === 'string' && /^blob:/i.test(value)) delete attributes[key];
         else if (typeof value === 'string' && /^\s*data:/i.test(value) && !/^data:image\/(?:png|jpeg|webp|gif|avif);/i.test(value)) delete attributes[key];
       }
     }
     if (['iframe', 'object', 'embed', 'script', 'base', 'meta'].includes(tagName)) {
+      const frameId = tagName === 'iframe' && attributes[FRAME_MARKER];
+      const frameStyle = validEditorId(frameId) ? safePlaceholderStyle(attributes.style) : '';
       for (const key of Object.keys(attributes)) delete attributes[key];
+      if (frameStyle) { attributes[FRAME_MARKER] = frameId; attributes.style = frameStyle; }
     }
+    if (['video', 'audio'].includes(tagName)) {
+      attributes.rr_mediaMuted = true; attributes.rr_mediaVolume = 0; attributes.muted = '';
+      if (!Number.isFinite(attributes.rr_mediaCurrentTime) || attributes.rr_mediaCurrentTime < 0 || attributes.rr_mediaCurrentTime > 7 * 86400) attributes.rr_mediaCurrentTime = 0;
+      if (!Number.isFinite(attributes.rr_mediaPlaybackRate) || attributes.rr_mediaPlaybackRate < 0 || attributes.rr_mediaPlaybackRate > 16) attributes.rr_mediaPlaybackRate = 1;
+    }
+    if (Object.hasOwn(attributes, 'muted')) attributes.muted = '';
+    if (Object.hasOwn(attributes, 'rr_mediaMuted')) attributes.rr_mediaMuted = true;
+    if (Object.hasOwn(attributes, 'rr_mediaVolume')) attributes.rr_mediaVolume = 0;
     return attributes;
   };
   const roots = event.type === 2 ? [event.data.node] : event.type === 3 && event.data.source === 0
@@ -149,7 +199,10 @@ export function sanitizeMirrorEvent(event: any): RREvent | null {
       node.tagName = 'div';
       node.childNodes = [];
       if (['iframe', 'object', 'embed'].includes(tagName)) {
-        node.attributes = { 'data-live-share-unavailable': 'true', style: 'min-height:96px;background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:12px' };
+        const frameId = node.attributes[FRAME_MARKER];
+        node.attributes = validEditorId(frameId)
+          ? { [FRAME_MARKER]: frameId, style: `background:#f1f5f9;${node.attributes.style}` }
+          : { 'data-live-share-unavailable': 'true', style: 'min-height:96px;background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:12px' };
       }
     }
     if (Array.isArray(node.childNodes)) stack.push(...node.childNodes);
@@ -291,6 +344,13 @@ export function attachSourceMirror(options: SourceOptions) {
   let queue: RREvent[] = [];
   let pumping = false;
   let hasSnapshot = false;
+  let canvasFrame = 0;
+  let canvasOffset = 0;
+  let canvasBudget = CANVAS_BYTES_PER_SECOND;
+  let canvasBudgetAt = performance.now();
+  let canvasImages = new WeakMap<Element, string>();
+  let mediaStates = new WeakMap<Element, string>();
+  let canvasCopy: HTMLCanvasElement | null = null;
   const commands = new Map<string, MirrorAck>();
   const editorPlaceholders = new Map<number, string>();
   const newlyBlockedEditors = new WeakSet<Element>();
@@ -321,10 +381,11 @@ export function attachSourceMirror(options: SourceOptions) {
       if (!serialized) continue;
       if (serialized.attributes?.rr_width !== undefined) {
         const node = (record as any).mirror?.getNode(serialized.id) as Element;
-        const marker = node?.getAttribute?.(EDITOR_MARKER);
+        const markerName = node?.tagName === 'IFRAME' ? FRAME_MARKER : EDITOR_MARKER;
+        const marker = node?.getAttribute?.(markerName);
         if (validEditorId(marker) && node.ownerDocument === document) {
           const layout = editorGeometry(node);
-          serialized.attributes[EDITOR_MARKER] = marker;
+          serialized.attributes[markerName] = marker;
           serialized.attributes.style = Object.entries(layout).map(([property, value]) => `${property}:${value}`).join(';');
           editorPlaceholders.set(serialized.id, placeholderSignature(marker, layout));
         }
@@ -394,7 +455,19 @@ export function attachSourceMirror(options: SourceOptions) {
         if (!['adds', 'removes', 'texts', 'attributes'].some((key) => event.data[key].length)) return;
       } else if (typeof event.data?.id === 'number' && !belongs(event.data.id)) return;
     }
-    if (event.type === 2) hasSnapshot = true;
+    if (event.type === 2) {
+      hasSnapshot = true;
+      canvasImages = new WeakMap();
+      mediaStates = new WeakMap();
+      scheduleCanvasCapture();
+    } else if (event.type === 3 && event.data.source === 0) {
+      // A source inline-style replacement can remove the replay's raster layer.
+      for (const entry of event.data.attributes || []) {
+        const node = (record as any).mirror?.getNode(entry.id);
+        if (['CANVAS', 'IMG'].includes(node?.tagName) && (entry.attributes?.style !== undefined || entry.attributes?.src !== undefined
+          || entry.attributes?.width !== undefined || entry.attributes?.height !== undefined)) canvasImages.delete(node);
+      }
+    }
     if (!hasSnapshot && event.type !== 4) return;
     preserveEditorMarkers(event);
     const safe = sanitizeMirrorEvent(event);
@@ -454,7 +527,8 @@ export function attachSourceMirror(options: SourceOptions) {
     if (disposed || !connected || stop) return;
     hasSnapshot = false;
     stop = record({ emit, blockSelector: BLOCK, maskAllInputs: true,
-      maskInputFn: (value: string, element: Element) => allowedSelect(element) || allowedSearch(element) ? value : '*'.repeat(Math.min(value.length, 100)),
+      maskInputFn: (value: string, element: Element) => !blocked(element)
+        && (options.showNonSensitiveInputs || allowedSelect(element) || allowedSearch(element)) ? value : '*'.repeat(Math.min(value.length, 100)),
       inlineStylesheet: false, inlineImages: false, recordCanvas: false, collectFonts: false, recordCrossOriginIframes: false,
       keepIframeSrcFn: () => false, slimDOMOptions: { script: true, comment: true, headMetaDescKeywords: true, headMetaSocial: true, headMetaRobots: true, headMetaHttpEquiv: true },
       sampling: { mousemove: false, mouseInteraction: false, scroll: 120, input: 'last', media: 1000 },
@@ -464,17 +538,93 @@ export function attachSourceMirror(options: SourceOptions) {
   }
   queueMicrotask(start);
   const sourceMirror = () => (record as any).mirror;
+  function captureCanvases() {
+    canvasFrame = 0;
+    if (disposed || !connected || !hasSnapshot || document.hidden) return;
+    const now = performance.now();
+    canvasBudget = Math.min(CANVAS_BYTES_PER_SECOND, canvasBudget + (now - canvasBudgetAt) * CANVAS_BYTES_PER_SECOND / 1000);
+    canvasBudgetAt = now;
+    const canvases = document.querySelectorAll<HTMLCanvasElement | HTMLImageElement>(options.inlineLocalImages
+      ? 'canvas,img[src^="blob:"],img[src^="data:image/svg+xml"]' : 'canvas');
+    const attributes = [];
+    const rendered: Array<{ node: Element; raster: string }> = [];
+    let attempted = 0;
+    // Round robin bounds work even on a page containing many canvas elements.
+    for (let count = 0; count < Math.min(canvases.length, 32) && attempted < 4; count++) {
+      const node = canvases[(canvasOffset++) % canvases.length];
+      const id = sourceMirror()?.getId(node);
+      const isImage = node.tagName === 'IMG';
+      const width = isImage ? (node as HTMLImageElement).naturalWidth : node.width;
+      const height = isImage ? (node as HTMLImageElement).naturalHeight : node.height;
+      if (!(id > 0) || blocked(node) || !width || !height) continue;
+      const rect = node.getBoundingClientRect();
+      if (!rect.width || !rect.height || rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth
+        || getComputedStyle(node).visibility === 'hidden') continue;
+      attempted++;
+      try {
+        canvasCopy ||= document.createElement('canvas');
+        if (!isImage) options.beforeRasterCapture?.(node as HTMLCanvasElement);
+        let scale = Math.min(1, 960 / width, 720 / height,
+          Math.max(1, rect.width * 1.5) / width, Math.max(1, rect.height * 1.5) / height);
+        let raster = '';
+        for (let retry = 0; retry < 3; retry++) {
+          // Resizing also resets origin-clean state after a tainted canvas was skipped.
+          canvasCopy.width = Math.max(1, Math.round(width * scale));
+          canvasCopy.height = Math.max(1, Math.round(height * scale));
+          canvasCopy.getContext('2d')!.drawImage(node, 0, 0, canvasCopy.width, canvasCopy.height);
+          raster = canvasCopy.toDataURL('image/webp', 0.72);
+          if (raster.length <= CANVAS_FRAME_BYTES) break;
+          scale *= 0.6;
+        }
+        if (raster.length > CANVAS_FRAME_BYTES || raster.length > canvasBudget || canvasImages.get(node) === raster
+          || !/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(raster)) continue;
+        canvasBudget -= raster.length;
+        canvasImages.set(node, raster);
+        rendered.push({ node, raster });
+        attributes.push({ id, attributes: isImage ? { src: raster } : { style: { 'background-image': `url("${raster}")`,
+          'background-size': '100% 100%', 'background-repeat': 'no-repeat' } } });
+      } catch { /* Cross-origin/unsupported drawing buffers remain private; never weaken browser isolation. */ }
+    }
+    if (attributes.length) {
+      // Only inert raster pixels are replayed. No canvas API calls, scripts or
+      // source mutations are needed, including for readable WebGL canvases.
+      const event = { type: 3, timestamp: Date.now(), data: { source: 0, adds: [], removes: [], texts: [], attributes } };
+      emit(event);
+      // emit invalidates style changes; these styles belong to the replay only.
+      for (const item of rendered) canvasImages.set(item.node, item.raster);
+    }
+  }
+  function scheduleCanvasCapture() {
+    if (!canvasFrame && connected && !disposed) canvasFrame = requestAnimationFrame(captureCanvases);
+  }
+  const canvasTimer = setInterval(scheduleCanvasCapture, 400);
+  const mediaTimer = setInterval(() => {
+    if (disposed || !connected || !hasSnapshot || document.hidden) return;
+    for (const node of [...document.querySelectorAll<HTMLMediaElement>('video,audio')].slice(0, 32)) {
+      const id = sourceMirror()?.getId(node);
+      if (!(id > 0) || blocked(node) || !Number.isFinite(node.currentTime)) continue;
+      const playing = !node.paused && !node.ended && node.readyState >= 3;
+      const data = { source: 7, id, type: playing ? 0 : 1, currentTime: node.currentTime,
+        playbackRate: node.playbackRate, muted: true, volume: 0, loop: node.loop };
+      const signature = JSON.stringify(data);
+      if (!playing && mediaStates.get(node) === signature) continue;
+      mediaStates.set(node, signature);
+      emit({ type: 3, timestamp: Date.now(), data });
+    }
+  }, 1000);
   // Editors may attach after the full snapshot. Mutations within blocked nodes
   // are deliberately ignored by rrweb; send only their marker and box size.
   const editorGeometryTimer = setInterval(() => {
     if (disposed || !connected || !hasSnapshot) return;
     const attributes = [];
     const found = new Set<number>();
-    for (const node of document.querySelectorAll(`[${EDITOR_MARKER}]`)) {
-      const marker = node.getAttribute(EDITOR_MARKER);
+    for (const node of document.querySelectorAll(`[${EDITOR_MARKER}],iframe[${FRAME_MARKER}]`)) {
+      const markerName = node.tagName === 'IFRAME' ? FRAME_MARKER : EDITOR_MARKER;
+      const marker = node.getAttribute(markerName);
       const id = sourceMirror()?.getId(node);
       if (!validEditorId(marker) || !(id > 0)) continue;
-      if (sourceMirror()?.getMeta(node)?.attributes?.rr_width === undefined) {
+      const metadata = sourceMirror()?.getMeta(node)?.attributes;
+      if (metadata?.rr_width === undefined && !(markerName === FRAME_MARKER && validEditorId(metadata?.[FRAME_MARKER]))) {
         // A previously hidden textarea can become an editor after recording
         // begins. Rebuild once so its formerly masked node is now a blocked box.
         if (!newlyBlockedEditors.has(node)) {
@@ -489,12 +639,12 @@ export function attachSourceMirror(options: SourceOptions) {
       const signature = placeholderSignature(marker, dimensions);
       if (editorPlaceholders.get(id) === signature) continue;
       editorPlaceholders.set(id, signature);
-      attributes.push({ id, attributes: { [EDITOR_MARKER]: marker, style: dimensions } });
+      attributes.push({ id, attributes: { [markerName]: marker, style: dimensions } });
     }
     for (const id of editorPlaceholders.keys()) {
       if (found.has(id)) continue;
       editorPlaceholders.delete(id);
-      if (sourceMirror()?.getNode(id)?.isConnected) attributes.push({ id, attributes: { [EDITOR_MARKER]: null } });
+      if (sourceMirror()?.getNode(id)?.isConnected) attributes.push({ id, attributes: { [EDITOR_MARKER]: null, [FRAME_MARKER]: null } });
     }
     if (attributes.length) emit({ type: 3, timestamp: Date.now(), data: { source: 0, adds: [], removes: [], texts: [], attributes } });
   }, 100);
@@ -568,6 +718,7 @@ export function attachSourceMirror(options: SourceOptions) {
       if (connected === value) { if (value && stop) (record as any).takeFullSnapshot(true); return; }
       connected = value;
       stopScrolling();
+      cancelAnimationFrame(canvasFrame); canvasFrame = 0;
       generation++;
       stop?.(); stop = undefined;
       queue = []; queuedBytes = 0;
@@ -576,6 +727,7 @@ export function attachSourceMirror(options: SourceOptions) {
     dispose() {
       disposed = true; generation++; stop?.(); stop = undefined; queue = []; queuedBytes = 0; commands.clear(); stopScrolling();
       clearInterval(editorGeometryTimer); editorPlaceholders.clear();
+      clearInterval(canvasTimer); clearInterval(mediaTimer); cancelAnimationFrame(canvasFrame); canvasCopy = null;
       window.removeEventListener('wheel', localScrollInput, true);
       window.removeEventListener('touchstart', localScrollInput, true);
       window.removeEventListener('pointerdown', localScrollInput, true);
@@ -641,7 +793,32 @@ export function attachViewerMirror(options: ViewerOptions) {
     // must not add the textarea's padding and border to those dimensions again.
     style.textContent = '[data-live-share-editor]{box-sizing:border-box!important} [data-live-share-unavailable]::after{content:"此区域暂不支持实时共享";display:block;padding:32px;color:#64748b;font:14px system-ui;text-align:center} [data-teacher-assistant],[data-live-share-ui]{visibility:hidden!important}';
     doc.head?.appendChild(style);
+    let holdingSpace = false;
+    let dragging: { id: number; x: number; y: number };
+    let suppressClickUntil = 0;
+    const textOrControl = (target: EventTarget | null) => !!closestElement(target)?.closest(
+      'input,textarea,select,button,a,summary,[contenteditable]:not([contenteditable="false"]),[role="button"],[role="tab"],[data-live-share-editor]',
+    );
+    const teacherPoint = (event: MouseEvent) => {
+      // Browser event coordinates inside an iframe use the student's unscaled
+      // CSS pixels. Never multiply by DPR: CSS transforms already describe the
+      // teacher's local view and the two devices may have different densities.
+      const rect = frame.getBoundingClientRect();
+      return { x: rect.left + event.clientX * rect.width / (frame.clientWidth || currentViewport.width),
+        y: rect.top + event.clientY * rect.height / (frame.clientHeight || currentViewport.height) };
+    };
+    const endPan = () => {
+      if (dragging) {
+        try { doc.documentElement.releasePointerCapture(dragging.id); } catch { /* Pointer may already be released. */ }
+      }
+      dragging = undefined;
+      doc.documentElement.style.removeProperty('cursor');
+    };
+    const resetPan = () => { holdingSpace = false; endPan(); };
     const click = (event: MouseEvent) => {
+      if (holdingSpace || Date.now() < suppressClickUntil) {
+        event.preventDefault(); event.stopImmediatePropagation(); return;
+      }
       const target = interactive(event.target);
       // Keep the browser's ordinary focus/select behaviour for these safe controls.
       if (target && (allowedSelect(target) || allowedSearch(target))) { event.stopImmediatePropagation(); return; }
@@ -656,12 +833,57 @@ export function attachViewerMirror(options: ViewerOptions) {
       if (element && allowedSelect(element)) command(element, 'select', { value: element.value });
     };
     const keydown = (event: KeyboardEvent) => {
+      if (options.onViewPan && (event.code === 'Space' || event.key === ' ') && !textOrControl(event.target)) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        holdingSpace = true;
+        doc.documentElement.style.cursor = dragging ? 'grabbing' : 'grab';
+        return;
+      }
       if (event.key !== 'Enter') return;
       event.preventDefault(); event.stopImmediatePropagation();
       const element = closestElement(event.target);
       if (element && allowedSearch(element)) command(element, 'search', { value: element.value });
     };
+    const keyup = (event: KeyboardEvent) => {
+      if (event.code === 'Space' || event.key === ' ') resetPan();
+    };
+    const pointerdown = (event: PointerEvent) => {
+      if (!holdingSpace || !options.onViewPan || event.button !== 0 || textOrControl(event.target)) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      const point = teacherPoint(event);
+      dragging = { id: event.pointerId, x: point.x, y: point.y };
+      doc.documentElement.style.cursor = 'grabbing';
+      try { doc.documentElement.setPointerCapture(event.pointerId); } catch { /* A synthetic test pointer has no capture. */ }
+    };
+    const pointermove = (event: PointerEvent) => {
+      if (!dragging || dragging.id !== event.pointerId) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      const point = teacherPoint(event);
+      const dx = dragging.x - point.x;
+      const dy = dragging.y - point.y;
+      dragging.x = point.x; dragging.y = point.y;
+      if (dx || dy) options.onViewPan?.({ dx, dy });
+    };
+    const pointerup = (event: PointerEvent) => {
+      if (!dragging || dragging.id !== event.pointerId) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      suppressClickUntil = Date.now() + 300;
+      endPan();
+    };
+    const silenceMedia = (event: Event) => {
+      const node = event.target as HTMLMediaElement;
+      if (!['AUDIO', 'VIDEO'].includes(node?.tagName)) return;
+      if (!node.muted) node.muted = true;
+      if (node.volume !== 0) node.volume = 0;
+    };
     const wheel = (event: WheelEvent) => {
+      if (options.onViewZoom && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        const point = teacherPoint(event);
+        const multiplier = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? frame.clientHeight : 1;
+        options.onViewZoom({ delta: event.deltaY * multiplier, clientX: point.x, clientY: point.y });
+        return;
+      }
       if (!connected || !ready || disposed) { event.preventDefault(); return; }
       let element = closestElement(event.target);
       while (element && element !== doc.body && element !== doc.documentElement) {
@@ -706,13 +928,32 @@ export function attachViewerMirror(options: ViewerOptions) {
     doc.addEventListener('submit', submit, true);
     doc.addEventListener('change', change, true);
     doc.addEventListener('keydown', keydown, true);
+    doc.addEventListener('keyup', keyup, true);
+    doc.addEventListener('pointerdown', pointerdown, true);
+    doc.addEventListener('pointermove', pointermove, true);
+    doc.addEventListener('pointerup', pointerup, true);
+    doc.addEventListener('pointercancel', pointerup, true);
+    doc.defaultView?.addEventListener('blur', resetPan);
+    window.addEventListener('keyup', keyup, true);
+    window.addEventListener('blur', resetPan);
+    doc.addEventListener('volumechange', silenceMedia, true);
     doc.addEventListener('wheel', wheel, { capture: true, passive: false });
     cleanupDocument = () => {
       resetScrolls();
+      resetPan();
       doc.removeEventListener('click', click, true);
       doc.removeEventListener('submit', submit, true);
       doc.removeEventListener('change', change, true);
       doc.removeEventListener('keydown', keydown, true);
+      doc.removeEventListener('keyup', keyup, true);
+      doc.removeEventListener('pointerdown', pointerdown, true);
+      doc.removeEventListener('pointermove', pointermove, true);
+      doc.removeEventListener('pointerup', pointerup, true);
+      doc.removeEventListener('pointercancel', pointerup, true);
+      doc.defaultView?.removeEventListener('blur', resetPan);
+      window.removeEventListener('keyup', keyup, true);
+      window.removeEventListener('blur', resetPan);
+      doc.removeEventListener('volumechange', silenceMedia, true);
       doc.removeEventListener('wheel', wheel, true);
       style.remove();
     };
@@ -772,6 +1013,13 @@ export function attachViewerMirror(options: ViewerOptions) {
     getEditorRect(id: string) {
       if (disposed || !connected || !ready || !validEditorId(id)) return null;
       const node = player?.iframe?.contentDocument?.querySelector(`[${EDITOR_MARKER}="${id}"]`);
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    },
+    getFrameRect(id: string) {
+      if (disposed || !connected || !ready || !validEditorId(id)) return null;
+      const node = player?.iframe?.contentDocument?.querySelector(`[${FRAME_MARKER}="${id}"]`);
       if (!node) return null;
       const rect = node.getBoundingClientRect();
       return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };

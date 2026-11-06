@@ -4,12 +4,13 @@
 
 ## 当前支持范围
 
-- Python / C++ 学习页面的实时页面、滚动、导航和代码。
+- 学员有权访问的站内页面，包括比赛详情和子页面、个人主页、个人中心、我的课堂、Python / C++ 学习页和 Scratch 页面。
 - 学员与老师共同修改 Monaco 或代码文本框；远端修改触发学员端原有草稿保存流程。
-- 同一浏览器内跟随学员当前学习标签页；不会跟随同账号的另一台设备。
+- 同一浏览器内跟随学员当前平台标签页，包括新打开的平台标签页；不会跟随同账号的另一台设备。
 - 允许进入题目、切换学习页、打开在线编程、切换语言、运行测试及查看相关面板。
 - 正式提交、保存作品、删除、账号设置、付款等操作仍由学员自己完成。浏览器文件选择框、摄像头权限等系统弹窗不在共享范围。
-- Scratch 的积木和舞台需要独立协作协议，当前不启用 Scratch 共享。嵌套 iframe、密码和令牌不进入页面镜像。
+- Scratch 的积木区、作品播放器和舞台通过专用显示通道同步，老师可以观看；积木拖动和作品保存仍由学员操作。它保留原来的隔离 iframe，老师端只重放经过清理的页面与图片，不运行学员脚本。
+- 图表 Canvas 以有流量和尺寸上限的画面更新同步。浏览器系统窗口、外部网站的嵌入内容、密码、登录验证及令牌不在显示范围内。
 
 老师原页面保留在内存中，连接期间不跳转网址、不更换账号；断开后恢复原代码草稿、滚动和焦点。若老师主动刷新浏览器，原网页仍遵循它本身的刷新/草稿恢复逻辑；共享目标可自动重连。尚未确认同步的老师修改会保留到当前标签页的 sessionStorage，并显示下载副本入口。
 
@@ -22,6 +23,10 @@
 共享期间将代码换行统一为 LF，避免 Windows 与其他系统的换行长度不同导致并发编辑错位；中文输入法组词期间暂存远端更新，提交组词后再合并。页面异步更新会丢弃过期结果，防止旧草稿覆盖刚同步的代码。同一个代码模型只建立一次协作绑定。
 
 老师侧编辑区域跟随学员的字号、行高、自动换行、缩进、行号、缩略图与配色，断开时恢复老师原主题。页面和代码区域均支持双向滚动；老师连续滚动时持续发送目标位置，避免等滚轮停下才同步，也避免旧位置回传造成跳动。
+
+不同分辨率下默认等比例适合老师窗口：老师屏幕较大时自动放大，较小时完整缩小，学员的页面布局和编辑器尺寸保持原样。左下角提供缩小、当前比例、放大与「适合窗口」；点当前比例恢复 100% 并回到画面左上角，方便直接阅读代码行首，也可按 Ctrl / Command 滚轮围绕鼠标位置缩放。放大后通过滚动条或按住空格拖动画面查看边缘；编辑代码时的空格仍正常输入。缩放和移动查看只改变老师侧视图，不滚动或缩放学员页面。普通滚轮仍同步操作学员页面。
+
+Canvas 和 Scratch 舞台画面以有上限的频率更新，优先保证学习页面与代码同步，不是高帧率屏幕视频。站内音视频按播放位置跟随；老师侧静音，避免双方已有通话时重复播放声音。
 
 失去连接时停止远程操作；恢复后先获得完整页面与编辑器状态，再继续操作。未确认的代码更新使用 CRDT 重试，不重复执行点击。双方各自撤销自己的修改。若共享期间代码发生改变，结束时保留学员代码和视图，重新建立本地普通撤销历史，避免旧撤销记录误删协作后的内容。
 
@@ -41,12 +46,14 @@ cd ../..
 yarn build:ui:production
 ```
 
-提交 vendor、许可证、UI manifest 和所有引用的 hashed chunks 后推送。部署脚本只允许经过校验的预构建产物；服务器不安装这份构建工具、不构建 UI、不构建 Docker 镜像。服务器拉取提交后先重启 Hydro，等待健康，再重启 Judge。
+生产 UI 本地构建会同时调用 `build/scratch/build-live-share-frame.mjs`，更新 Scratch 的共享采集脚本、HTML 引用、对应源码包和校验清单。新脚本使用内容哈希文件名及一年缓存，HTML 更新会加载新版本。
+
+提交 vendor、许可证、UI manifest 和所有引用的 hashed chunks，以及 Scratch 预构建变更后推送。部署脚本只允许经过校验的预构建产物；服务器不安装这份构建工具、不构建 UI、不构建 Docker 镜像。服务器拉取提交后先重启 Hydro，等待健康，再重启 Judge。
 
 ## 验证
 
 ```sh
-node --test test/live_share_backend.spec.js test/live_share_editor.spec.js test/live_share_editor.browser.spec.js test/live_share_mirror.spec.js test/live_share_controller.spec.js test/live_share_ui.spec.js test/scratchpad_editor_sync.spec.js test/teacher_assistant.spec.js test/deploy_prebuilt.spec.js
+node --test test/live_share_backend.spec.js test/live_share_editor.spec.js test/live_share_editor.browser.spec.js test/live_share_mirror.spec.js test/live_share_frames.browser.spec.js test/live_share_scratch_runtime.browser.spec.js test/live_share_sensitive_ui.spec.js test/live_share_controller.spec.js test/live_share_ui.spec.js test/live_share_resolution.browser.spec.js test/live_share_capture_build.spec.js test/scratchpad_editor_sync.spec.js test/teacher_assistant.spec.js test/deploy_prebuilt.spec.js
 ```
 
 后端测试使用真实临时 MongoDB 验证独占索引、并发、授权、设备和页面隔离；浏览器测试覆盖真实 Monaco 并发编辑、跨系统换行、中文输入、编辑器显示设置、持续滚动、rrweb 镜像、重连、切换学员及老师原页面恢复。另有延迟加载回归验证旧代码不会覆盖新编辑。UI 联调使用真实 WebSocket 和受控测试页面，不连接线上学员。

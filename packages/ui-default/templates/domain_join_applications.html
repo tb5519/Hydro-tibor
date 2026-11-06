@@ -17,7 +17,7 @@
       <input type="checkbox" name="enabled" value="on"{% if enabled %} checked{% endif %} aria-controls="domain-join-code-settings">
       <span class="domain-join-settings__switch" aria-hidden="true"></span>
     </label>
-    <div class="domain-join-settings__code" id="domain-join-code-settings"{% if not enabled %} hidden{% endif %}>
+    <div class="domain-join-settings__code" id="domain-join-code-settings" data-live-share-private{% if not enabled %} hidden{% endif %}>
       <label for="domain-join-invitation-code">加入指令 <span>选填</span></label>
       <input class="textbox" id="domain-join-invitation-code" name="invitationCode" type="text" maxlength="64" value="{{ invitationCode }}" placeholder="留空即可直接加入" autocomplete="off" spellcheck="false">
       <p>设置后，学员需要输入正确指令才能加入。支持中文、字母和数字。</p>
