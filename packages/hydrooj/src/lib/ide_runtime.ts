@@ -3,6 +3,7 @@ import { join } from 'path';
 import { StringDecoder } from 'string_decoder';
 import WebSocket from 'ws';
 import { IdeError, IDE_LANGUAGES, IDE_LIMITS, parseGraphicsLine } from './ide_protocol';
+import { IdeWatchdog } from './ide_watchdog';
 
 const MB = 1024 * 1024;
 const env = ['PATH=/usr/local/bin:/usr/bin:/bin', 'HOME=/w', 'LANG=C.UTF-8', 'PYTHONIOENCODING=utf-8', 'PYTHONDONTWRITEBYTECODE=1'];
@@ -70,6 +71,7 @@ export class IdeRuntime {
     private phase: 'compiling' | 'running';
     private binary: string;
     private cancelFallback: () => void;
+    private watchdog = new IdeWatchdog((reason) => this.stop(reason));
     /** False means a transport failed before sandbox confirmed process termination. Keep its quota until hard expiry. */
     safeToRelease = true;
     constructor(public readonly runId: string, private host: string, private emit: Emit, private onCompiled = async () => {}) { }
@@ -108,8 +110,14 @@ export class IdeRuntime {
                     if (++this.graphicsCount > IDE_LIMITS.graphicsCommands) throw new IdeError('GRAPHICS_LIMIT', '本次绘图步骤过多，请简化绘图后重试。');
                     const message = parseGraphicsLine(line);
                     if (message.type === 'input-request' || message.type === 'input-end') {
+                        this.watchdog.inputWaiting(message.type === 'input-request');
                         this.flush(); this.send(message);
                         this.send({ type: 'state', state: message.type === 'input-request' ? 'waiting-input' : 'running' });
+                    } else if (message.type === 'execution-wait') {
+                        this.watchdog.executionWaiting(message.waiting);
+                    } else if (message.type === 'interaction-wait' || message.type === 'interaction-end') {
+                        if (message.type === 'interaction-end' && message.temporary) this.watchdog.interactionCallback();
+                        else this.watchdog.interactionWaiting(message.type === 'interaction-wait' ? message.kind : null);
                     } else this.enqueue(message);
                 }
                 newline = this.graphicsBuffer.indexOf('\n');
@@ -129,7 +137,7 @@ export class IdeRuntime {
                 const frame = JSON.parse(line);
                 if (!this.ready && frame.ready === true && Object.keys(frame).length === 1) {
                     this.ready = true;
-                    if (this.phase === 'running') this.send({ type: 'state', state: 'running' });
+                    if (this.phase === 'running') { this.watchdog.start(); this.send({ type: 'state', state: 'running' }); }
                     newline = this.transportBuffer.indexOf('\n');
                     continue;
                 }
@@ -223,6 +231,7 @@ export class IdeRuntime {
                 reason: this.stopped ? this.stopReason : error instanceof IdeError ? error.message : '运行服务出现问题，请稍后重试。' });
         } finally {
             this.finished = true;
+            this.watchdog.dispose();
             clearTimeout(this.flushTimer);
             if (this.binary) {
                 await fetch(`${this.host}/file/${encodeURIComponent(this.binary)}`, { method: 'DELETE', signal: AbortSignal.timeout(5000) }).catch(() => {});
@@ -237,12 +246,20 @@ export class IdeRuntime {
             this.stop('输入内容过多，程序已停止。'); throw new IdeError('INPUT_LIMIT', '输入内容过多，程序已停止。');
         }
         this.clientSeq = seq; this.inputBytes += data.length;
+        if (!graphics) this.watchdog.inputActivity(text);
+        else if (JSON.parse(text).type === 'response') this.watchdog.inputActivity(text, false, true);
         const envelope = JSON.stringify({ fd: graphics ? 4 : 0, data: data.toString('base64') });
         this.socket.send(Buffer.concat([Buffer.from([3, 0]), Buffer.from(`${envelope}\n`)]));
+    }
+    inputDraft(seq: number, text: string) {
+        if (seq <= this.clientSeq || this.finished || this.stopped || !this.ready || this.phase !== 'running') return;
+        this.clientSeq = seq;
+        this.watchdog.inputActivity(text, true);
     }
     stop(reason = '程序已停止。') {
         if (this.finished || this.stopped) return;
         this.stopped = true; this.stopReason = reason;
+        this.watchdog.dispose();
         if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(Buffer.from([4]));
         this.cancelFallback?.();
     }

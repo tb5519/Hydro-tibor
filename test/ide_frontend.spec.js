@@ -28,7 +28,7 @@ before(async () => {
     plugins: [{ name: 'real-global-form-guard', setup(build) {
       build.onResolve({ filter: /^vj\/(misc\/Page|utils)$/ }, (args) => ({ path: args.path, namespace: 'guard-fixture' }));
       build.onLoad({ filter: /.*/, namespace: 'guard-fixture' }, (args) => ({ contents: args.path === 'vj/utils'
-        ? 'export const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));'
+        ? 'export const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms)); export const request = {get(){throw new Error("Unexpected capacity request")},post(){throw new Error("Unexpected capacity release")}};'
         : 'export class AutoloadPage { constructor(name, setup) { setup(); } }' }));
     } }],
   })).outputFiles[0].text;
@@ -232,7 +232,17 @@ it('shares one real runtime with a differently sized teacher viewport and reject
   const input = teacher.getByRole('textbox', { name: '终端输入' });
   await input.pressSequentially('teacher input', { delay: 60 });
   await teacher.waitForTimeout(300);
-  assert.equal(await input.inputValue(), 'teacher input', 'earlier shared acknowledgements cannot erase local typing');
+  assert.equal(await input.textContent(), 'teacher input', 'earlier shared acknowledgements cannot erase local typing');
+  await page.waitForFunction(() => document.querySelector('.ide-terminal__input').textContent === 'teacher input');
+  const inlinePosition = (el) => {
+    const input = el.querySelector('.ide-terminal__input'); const output = el.querySelector('.ide-terminal__output');
+    const inputRect = input.getClientRects()[0]; const outputRect = output.getClientRects()[0];
+    return { x: inputRect.left - outputRect.left, y: inputRect.top - outputRect.top };
+  };
+  const ownerInput = await page.locator('.ide-terminal__console').evaluate(inlinePosition);
+  const viewerInput = await teacher.locator('.ide-terminal__console').evaluate(inlinePosition);
+  assert(Math.abs(viewerInput.x / .7 - ownerInput.x) < 1 && Math.abs(viewerInput.y / .7 - ownerInput.y) < 1,
+    'teacher input remains at the same prompt position after viewport scaling');
   await input.press('Enter');
   await wait(() => received.filter((v) => v.ws === ws && v.data.type === 'input').length === 1);
   assert.equal(received.find((v) => v.ws === ws && v.data.type === 'input').data.text, 'teacher input\n');
@@ -245,6 +255,20 @@ it('shares one real runtime with a differently sized teacher viewport and reject
   await teacher.getByRole('img', { name: '海龟绘图画布，点击后可使用键盘控制' }).click({ position: { x: 280, y: 210 } });
   await teacher.keyboard.press('ArrowRight');
   await wait(() => received.some((v) => v.ws === ws && v.data.event?.key === 'ArrowRight'));
+  send(ws, { type: 'turtle', runId, seq: 4, commands: [{ op: 'request', id: 29, kind: 'text', title: '绘图标题', prompt: '写一句话' }] });
+  const dialogField = teacher.getByRole('textbox', { name: '写一句话' }); await dialogField.waitFor({ state: 'visible' });
+  await dialogField.pressSequentially('teacher label', { delay: 35 });
+  await page.waitForFunction(() => document.querySelector('.ide-graphics__dialog-input').value === 'teacher label');
+  assert.equal(await dialogField.inputValue(), 'teacher label', 'old shared acknowledgements do not overwrite a local dialog draft');
+  await dialogField.fill('一起学习');
+  await dialogField.evaluate((el) => el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })));
+  await dialogField.press('Enter');
+  assert.equal(received.filter((v) => v.ws === ws && v.data.event?.type === 'response').length, 0, 'IME candidate confirmation does not answer the turtle dialog');
+  await dialogField.evaluate((el) => el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })));
+  await page.waitForFunction(() => document.querySelector('.ide-graphics__dialog-input').value === '一起学习');
+  await dialogField.press('Enter');
+  await wait(() => received.some((v) => v.ws === ws && v.data.event?.type === 'response'));
+  assert.equal(received.find((v) => v.ws === ws && v.data.event?.type === 'response').data.event.value, '一起学习');
   await teacher.getByRole('button', { name: '停止学员的程序' }).click();
   await wait(() => received.some((v) => v.ws === ws && v.data.type === 'stop'));
   const stoppedCount = received.filter((v) => v.ws === ws && v.data.type === 'stop').length;
@@ -261,7 +285,7 @@ it('keeps a running process stoppable after nonfatal input errors and preserves 
   send(ws, { type: 'input-request', runId, seq: 1 });
   const input = page.getByRole('textbox', { name: '终端输入' }); await input.fill('汉'.repeat(5500)); await input.press('Enter');
   await page.waitForFunction(() => runtime.snapshot().inputErrorSeq === 1);
-  await page.waitForFunction(() => document.querySelector('.ide-terminal__input').value.length === 5500);
+  await page.waitForFunction(() => document.querySelector('.ide-terminal__input').textContent.length === 5500);
   assert.equal(received.filter((v) => v.ws === ws && v.data.type === 'input').length, 0);
   assert.equal(await page.evaluate(() => runtime.snapshot().state), 'waiting-input');
   send(ws, { type: 'error', runId, code: 'RATE_LIMIT', message: '操作过快', fatal: false });
@@ -359,5 +383,50 @@ it('bypasses the real global five-second form lock for consecutive terminal line
   }
   assert.deepEqual(received.filter((v) => v.ws === ws && v.data.type === 'input').map((v) => v.data.text), ['1\n', '2\n']);
   assert.deepEqual(received.filter((v) => v.ws === ws && v.data.event?.type === 'response').map((v) => v.data.event.value), ['答案1', '答案2']);
+  assert.deepEqual(errors, []); await page.close();
+});
+
+it('edits directly after the output prompt, wraps long Chinese lines and sends pasted multiline data as plain text', async () => {
+  const { page, ws, errors } = await owner(); const runId = await run(page, ws);
+  send(ws, { type: 'state', runId, seq: 0, state: 'running' });
+  send(ws, { type: 'output', runId, seq: 1, stream: 'stdout', text: '请输入你的名字：' });
+  send(ws, { type: 'input-request', runId, seq: 2 });
+  const input = page.getByRole('textbox', { name: '终端输入' }); await input.fill('小明');
+  const position = await page.evaluate(() => {
+    const output = document.querySelector('.ide-terminal__output'); const input = document.querySelector('.ide-terminal__input');
+    const a = output.getClientRects()[0]; const b = input.getClientRects()[0];
+    return { topDifference: b.top - a.top, gap: b.left - a.right, border: getComputedStyle(input.parentElement).borderTopWidth };
+  });
+  assert(Math.abs(position.topDifference) < 1 && Math.abs(position.gap) < 1, 'cursor and draft start immediately at the prompt end');
+  assert.equal(position.border, '0px', 'there is no separate input panel');
+  await page.screenshot({ path: '/tmp/ide-inline-terminal.png' });
+  await input.fill('x'); await input.press('Backspace');
+  assert.equal(await input.textContent(), ''); assert(await input.isVisible(), 'clearing the draft leaves a focusable caret target');
+  await input.fill('中文'.repeat(65));
+  const wrap = await input.evaluate((el) => {
+    const range = document.createRange(); range.selectNodeContents(el);
+    const rows = [...range.getClientRects()]; const console = el.closest('.ide-terminal__console');
+    return { lines: new Set(rows.map((r) => Math.round(r.top))).size, overflow: console.scrollWidth - console.clientWidth,
+      firstTop: rows[0].top, outputTop: document.querySelector('.ide-terminal__output').getClientRects()[0].top };
+  });
+  assert(wrap.lines >= 3 && wrap.overflow <= 1, 'long Chinese input wraps inside the terminal without horizontal overflow');
+  assert(Math.abs(wrap.firstTop - wrap.outputTop) < 1, 'long drafts still start beside the prompt');
+  await input.fill('');
+  await input.evaluate((el) => {
+    el.focus(); const selection = getSelection(); const range = document.createRange(); range.selectNodeContents(el); range.collapse(false);
+    selection.removeAllRanges(); selection.addRange(range);
+    const data = new DataTransfer(); data.setData('text/plain', '1\n2\n3'); data.setData('text/html', '<img src=x onerror="throw 1">');
+    el.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
+  });
+  assert.equal(await input.textContent(), '1\n2\n3');
+  assert.equal(await input.locator('img').count(), 0);
+  await input.press('Enter'); await wait(() => received.some((v) => v.ws === ws && v.data.type === 'input'));
+  assert.equal(received.find((v) => v.ws === ws && v.data.type === 'input').data.text, '1\n2\n3\n');
+  await page.waitForFunction(() => document.querySelector('.ide-terminal__output').textContent === '请输入你的名字：1\n2\n3\n');
+  send(ws, { type: 'output', runId, seq: 3, stream: 'stdout', text: '下一个：' });
+  send(ws, { type: 'input-request', runId, seq: 4 });
+  await input.fill('4'); await input.press('Enter');
+  await wait(() => received.filter((v) => v.ws === ws && v.data.type === 'input').length === 2);
+  assert.equal(received.filter((v) => v.ws === ws && v.data.type === 'input').at(-1).data.text, '4\n');
   assert.deepEqual(errors, []); await page.close();
 });

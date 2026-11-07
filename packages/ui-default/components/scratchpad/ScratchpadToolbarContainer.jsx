@@ -7,6 +7,8 @@ import { connect } from 'react-redux';
 import Icon from 'vj/components/react/IconComponent';
 import { getAvailableLangs, i18n, request } from 'vj/utils';
 import ScratchpadThemePicker from './ScratchpadThemePicker';
+import IdeFontSizeControl from '../ide/IdeFontSizeControl';
+import IdeCapacityBadge from '../ide/IdeCapacityBadge';
 import { ScratchpadLanguageArt } from './ScratchpadControlArt';
 import Toolbar, {
   ToolbarButtonComponent as ToolbarButton,
@@ -303,6 +305,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
             </ToolbarButton>
           )}
           <ScratchpadThemePicker />
+          {UiContext.ideMode && <><IdeFontSizeControl /><IdeCapacityBadge language={this.props.editorLang}/></>}
           {canUsePretest && !UiContext.ideMode && (
             <ToolbarButton
               controlArt="pretestTab"

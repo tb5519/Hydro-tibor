@@ -34,6 +34,9 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
   let outputTruncated = false;
   let drawingTruncated = false;
   let drawingBytes = 0;
+  let draftTimer: ReturnType<typeof setTimeout> | null = null;
+  let draftActivity: { text: string; requestId: number | null } | null = null;
+  let lastDraftSentAt = 0;
   const listeners = new Set<(snapshot: IdeSnapshot) => void>();
   const drawing = new Map<number, TurtleCommand>();
   const turtles = new Map<number, TurtleCommand>();
@@ -76,6 +79,25 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
     socket.send(JSON.stringify(message));
     return true;
   };
+  function clearDraftActivity() {
+    if (draftTimer !== null) clearTimeout(draftTimer);
+    draftTimer = null; draftActivity = null;
+  }
+  function flushDraftActivity() {
+    draftTimer = null;
+    const draft = draftActivity; draftActivity = null;
+    if (!draft || !state.ready || !isIdeRunning(state.state)
+      || (draft.requestId === null ? !state.inputPending : state.request?.id !== draft.requestId)) return;
+    if (new TextEncoder().encode(draft.text).length > 16384 || draft.text.includes('\0')) return;
+    if (send({ type: 'input-draft', runId: state.runId, seq: ++sequence, text: draft.text })) lastDraftSentAt = Date.now();
+  }
+  function noteDraftActivity(text: string, requestId: number | null) {
+    if (!state.ready || !isIdeRunning(state.state) || (requestId === null ? !state.inputPending : state.request?.id !== requestId)) return;
+    draftActivity = { text, requestId };
+    const delay = Math.max(0, 1000 - (Date.now() - lastDraftSentAt));
+    if (!delay) { clearTimeout(draftTimer); flushDraftActivity(); }
+    else if (draftTimer === null) draftTimer = setTimeout(flushDraftActivity, delay);
+  }
   const sendRun = () => {
     pendingRun = false;
     if (!state.ready || isIdeRunning(state.state)) return;
@@ -85,6 +107,7 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
       state.message = '代码过长，请控制在 128 KB 以内'; output(`${state.message}\n`, 'stderr'); emit(); return;
     }
     const windows = state.windows;
+    clearDraftActivity(); lastDraftSentAt = 0;
     state = { ...emptyIdeSnapshot(), windows, revision: state.revision, ready: true, state: 'starting',
       runId: `ide_${Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('')}` };
     state.windows.terminal.visible = false;
@@ -129,14 +152,18 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
           state.inputPending = true; state.state = 'waiting-input'; state.activeWindow = 'terminal';
           state.windows.terminal.visible = true; state.windows.terminal.minimized = false;
           break;
-        case 'input-end': state.inputPending = false; if (state.state === 'waiting-input') state.state = 'running'; break;
+        case 'input-end':
+          if (draftActivity?.requestId === null) clearDraftActivity();
+          state.inputPending = false; if (state.state === 'waiting-input') state.state = 'running'; break;
         case 'turtle':
           if (Array.isArray(message.commands)) for (const command of message.commands) applyDrawing(command);
           break;
         case 'exit':
+          clearDraftActivity();
           state.state = 'finished'; state.inputPending = false; state.request = null;
           state.message = message.reason || (message.exitCode ? `程序结束 · 退出码 ${message.exitCode}` : '运行结束');
           if (message.exitCode || message.status === 'error') output(`\n${state.message}\n`, 'stderr');
+          else if (message.status === 'stopped' && message.reason) output(`\n${state.message}\n`, 'notice');
           break;
         case 'error':
           // Input/rate validation can fail while the isolated program is still
@@ -152,6 +179,7 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
     };
     socket.onclose = () => {
       if (disposed) return;
+      clearDraftActivity();
       const running = isIdeRunning(state.state);
       state.ready = false; state.state = 'disconnected'; state.inputPending = false; state.request = null; pendingRun = false;
       state.message = '运行连接已断开，再次点击运行即可重新连接';
@@ -198,7 +226,8 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
       case 'shape':
         if (reserveDrawing(command.points, state.shapes[command.name])) state.shapes = { ...state.shapes, [command.name]: command.points };
         break;
-      case 'request': state.activeWindow = 'graphics'; state.request = command; state.windows.graphics.minimized = false; break;
+      case 'request':
+        clearDraftActivity(); state.activeWindow = 'graphics'; state.request = command; state.windows.graphics.minimized = false; break;
       case 'update': state.primitives = [...drawing.values()]; state.turtles = [...turtles.values()]; break;
       case 'close': state.windows.graphics.visible = false; break;
       default: break;
@@ -225,9 +254,21 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
         if (Number.isFinite(patch.height)) win.height = Math.max(160, Math.min(1200, patch.height));
         emit(); return;
       }
-      if (command.type === 'input-draft') { state.inputDraft = String(command.text).slice(0, 16000); emit(); return; }
+      if (command.type === 'input-draft') {
+        const text = String(command.text).slice(0, command.target === 'dialog' ? 4096 : 16000);
+        if (command.target === 'dialog') {
+          if (!state.request || state.request.id !== command.requestId || state.request.draft === text) return;
+          state.request = { ...state.request, draft: text };
+          noteDraftActivity(text, state.request.id);
+        } else {
+          if (state.inputDraft === text) return;
+          state.inputDraft = text; noteDraftActivity(text, null);
+        }
+        emit(); return;
+      }
       if (!isIdeRunning(state.state) || !state.runId || !state.ready) return;
       if (command.type === 'stop') {
+        clearDraftActivity();
         send({ type: 'stop', runId: state.runId }); state.state = 'stopping'; emit();
       } else if (command.type === 'input') {
         if (!['running', 'waiting-input'].includes(state.state)) return;
@@ -245,15 +286,17 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
         if (!send({ type: 'input', runId: state.runId, seq: ++sequence, text: `${text}\n` })) {
           rejectInput('输入尚未发送，连接恢复后可继续发送。'); return;
         }
+        clearDraftActivity();
         output(`${text}\n`, 'stdin'); state.inputDraft = ''; state.inputPending = false;
         if (state.state === 'waiting-input') state.state = 'running';
         emit();
       } else if (command.type === 'turtle-event') {
         send({ type: 'turtle-event', runId: state.runId, seq: ++sequence, event: command.event });
-        if (command.event.type === 'response') { state.request = null; emit(); }
+        if (command.event.type === 'response') { clearDraftActivity(); state.request = null; emit(); }
       }
     },
     dispose() {
+      clearDraftActivity();
       disposed = true; if (notifyFrame !== null) cancelAnimationFrame(notifyFrame);
       if (isIdeRunning(state.state)) send({ type: 'stop', runId: state.runId });
       socket?.close(); listeners.clear();

@@ -156,6 +156,95 @@ it('right-button ink and pinned labels follow actual Monaco content scroll on bo
     } finally { await f.close(); }
 });
 
+it('right-button ink includes the Monaco gutter but remains clipped to its own editor on both peers', { timeout: 30000 }, async () => {
+    const f = await peers({ teacherScaleFactor: 2, studentScaleFactor: 1 });
+    try {
+        await f.teacher.exposeFunction('relayInk', (packet) => f.student.evaluate((value) => window.ink.receive(value), packet));
+        await f.student.evaluate(() => {
+            const root = document.createElement('div'); root.style.cssText = 'position:fixed;inset:0;pointer-events:none';
+            document.body.append(root);
+            window.ink = LiveEditors.attachTemporaryDrawing({ container: root, teacher: false, pageId: 'gutter-ink-page' });
+        });
+        await f.teacher.evaluate(() => {
+            window.ink = LiveEditors.attachTemporaryDrawing({ container: document.querySelector('#viewer'), teacher: true,
+                pageId: 'gutter-ink-page', send: window.relayInk });
+        });
+        const bounds = await f.teacher.locator('.monaco-editor').boundingBox();
+        await f.teacher.mouse.move(bounds.x + 8, bounds.y + 78);
+        await f.teacher.mouse.down({ button: 'right' });
+        await f.teacher.mouse.move(bounds.x + 180, bounds.y + 84, { steps: 8 });
+        await f.teacher.mouse.up({ button: 'right' });
+        await f.student.locator('[data-share-drawing-stroke]').waitFor();
+        await f.teacher.keyboard.press('Shift+Enter');
+        await f.teacher.locator('[data-share-drawing-note-input]').fill('行号旁也完整');
+        await f.student.waitForFunction(() => document.querySelector('[data-share-drawing-note-input]')?.value === '行号旁也完整');
+        for (const page of [f.teacher, f.student]) {
+            const visible = await page.locator('[data-share-drawing-stroke]').evaluate((stroke) => {
+                const editor = document.querySelector('.monaco-editor').getBoundingClientRect();
+                const path = stroke.querySelector('path').getBoundingClientRect();
+                const clipId = stroke.parentElement.getAttribute('clip-path').match(/#([^)]*)/)[1];
+                const clip = document.getElementById(clipId).querySelector('rect');
+                const svg = stroke.ownerSVGElement;
+                const point = svg.createSVGPoint();
+                point.x = Number(clip.getAttribute('x')); point.y = Number(clip.getAttribute('y'));
+                const start = point.matrixTransform(svg.getScreenCTM());
+                point.x += Number(clip.getAttribute('width')); point.y += Number(clip.getAttribute('height'));
+                const end = point.matrixTransform(svg.getScreenCTM());
+                return { editor: { left: editor.left, right: editor.right, top: editor.top, bottom: editor.bottom },
+                    clip: { left: start.x, right: end.x, top: start.y, bottom: end.y }, startX: path.left };
+            });
+            assert(visible.startX > visible.clip.left + 2, 'the beginning of the stroke in the line-number gutter is visible');
+            for (const key of ['left', 'right', 'top', 'bottom']) assert(Math.abs(visible.clip[key] - visible.editor[key]) < 1,
+                `ink clips to this editor's ${key} edge, not its text column or an unrelated panel`);
+        }
+        await f.teacher.screenshot({ path: path.join(os.tmpdir(), 'live-share-monaco-gutter-ink-teacher.png') });
+        await f.student.screenshot({ path: path.join(os.tmpdir(), 'live-share-monaco-gutter-ink-student.png') });
+        await f.student.evaluate(() => editor.setScrollPosition({ scrollTop: 600 }, 1));
+        await f.flush();
+        await f.teacher.locator('[data-share-drawing-stroke]').waitFor({ state: 'hidden' });
+        await f.student.locator('[data-share-drawing-stroke]').waitFor({ state: 'hidden' });
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('first-row and partially scrolled code selections retain a complete visible outline at the editor edge', { timeout: 30000 }, async () => {
+    const f = await peers({ teacherScaleFactor: 2, studentScaleFactor: 1 });
+    try {
+        await f.teacher.evaluate(() => sharedEditor().setSelection(new monaco.Selection(1, 3, 1, 11)));
+        await f.flush();
+        await f.student.locator(`${boxSelector}:visible`).waitFor();
+        for (const scrollTop of [0, 14]) {
+            await f.student.evaluate((scrollTop) => editor.setScrollPosition({ scrollTop }, 1), scrollTop);
+            await f.flush();
+            await f.teacher.waitForFunction((scrollTop) => sharedEditor().getScrollTop() === scrollTop, scrollTop);
+            await f.flush(); // Deliver geometry measured after the remote scroll has rendered.
+            const paths = [];
+            for (const [page, scale] of [[f.teacher, .75], [f.student, 1]]) {
+                const geometry = await page.locator(`${boxSelector}:visible`).evaluate((outline) => {
+                    const box = outline.getBoundingClientRect();
+                    const layer = outline.closest('[data-share-code-focus]').getBoundingClientRect();
+                    return { path: outline.getAttribute('d'), top: box.top, bottom: box.bottom, left: box.left, right: box.right,
+                        layer: { top: layer.top, bottom: layer.bottom, left: layer.left, right: layer.right },
+                        stroke: Number.parseFloat(getComputedStyle(outline).strokeWidth) };
+                });
+                assert(geometry.top - geometry.stroke * scale / 2 >= geometry.layer.top - .1,
+                    'the entire top stroke stays inside the visible editor, including the first code row');
+                assert(geometry.bottom + geometry.stroke * scale / 2 <= geometry.layer.bottom + .1);
+                paths.push(geometry.path);
+            }
+            assert.equal(paths[0], paths[1], 'both peers use the same complete outline regardless of DPR and stage scale');
+        }
+        await f.student.screenshot({ path: path.join(os.tmpdir(), 'live-share-monaco-top-outline.png') });
+        await f.student.evaluate(() => editor.setScrollPosition({ scrollTop: 100 }, 1));
+        await f.flush();
+        await f.teacher.locator(`${boxSelector}:visible`).waitFor({ state: 'hidden' });
+        await f.student.locator(`${boxSelector}:visible`).waitFor({ state: 'hidden' });
+        assert.equal(await f.teacher.locator(`${boxSelector}:visible`).count(), 0, 'offscreen code does not leave an outline on the toolbar');
+        assert.equal(await f.student.locator(`${boxSelector}:visible`).count(), 0);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
 it('Monaco teacher selections show exact line frames on both peers without moving learner selection or capturing Enter', { timeout: 30000 }, async () => {
     const f = await peers();
     try {
@@ -364,15 +453,17 @@ it('multiple code notes retain independent anchors, drag and resize together, an
         const resized = await teacherBubble.boundingBox(); const sourceSize = await studentBubble.boundingBox();
         assert(resized.width > dragged.width + 5); assert(resized.height > dragged.height + 5);
         for (const key of ['x', 'y', 'width', 'height']) assert(Math.abs(sourceSize[key] * .75 - resized[key]) < 2, `note ${key} aligns after scale`);
-        const outline = `${firstRoot} [data-share-annotation-box]`;
-        const oldY = await f.student.locator(outline).evaluate((node) => node.getBoundingClientRect().y);
+        // The selected content moves exactly one line. Its outside stroke is
+        // inset at the first-row viewport edge, so measure the content anchor.
+        const selection = `${firstRoot} [data-share-annotation-selection]`;
+        const oldY = await f.student.locator(selection).evaluate((node) => node.getBoundingClientRect().y);
         await f.student.evaluate(() => editor.executeEdits('student', [{ range: new monaco.Range(1, 1, 1, 1), text: '# prefix\n' }]));
         await f.flush();
         await f.student.waitForFunction(({ selector, oldY }) => {
             const shape = document.querySelector(selector);
             return shape && Math.abs(shape.getBoundingClientRect().y - oldY - 30) < 2;
-        }, { selector: outline, oldY });
-        const newY = await f.student.locator(outline).evaluate((node) => node.getBoundingClientRect().y);
+        }, { selector: selection, oldY });
+        const newY = await f.student.locator(selection).evaluate((node) => node.getBoundingClientRect().y);
         assert(Math.abs(newY - oldY - 30) < 2, 'relative note anchor follows code inserted before the selected word');
         await Promise.all([f.teacher.evaluate(() => controller.setConnected(false)), f.student.evaluate(() => controller.setConnected(false))]);
         assert.equal(await f.teacher.locator(`${noteSelector}:visible`).count(), 0);

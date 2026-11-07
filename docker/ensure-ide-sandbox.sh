@@ -30,13 +30,23 @@ if docker inspect "$name" >/dev/null 2>&1; then
     [ "$(docker inspect -f '{{json .Config.Cmd}}' "$name")" = '["-http-addr","0.0.0.0:5050","-mount-conf","/config/mount.yaml","-parallelism","2","-file-timeout","5m"]' ] || fail '运行服务参数不符合预期'
     [ "$(docker inspect -f '{{.HostConfig.CgroupnsMode}}' "$name")" = private ] || fail '运行服务必须使用独立资源命名空间'
     [ "$(docker inspect -f '{{range $name, $network := .NetworkSettings.Networks}}{{$name}}{{end}}' "$name")" = "$network" ] || fail '运行服务未使用专用内网'
-    [ "$(docker inspect -f '{{.HostConfig.Memory}}|{{.HostConfig.MemorySwap}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.PidsLimit}}' "$name")" = '536870912|536870912|600000000|128' ] || fail '运行服务资源限制不符合预期'
+    resources="$(docker inspect -f '{{.HostConfig.Memory}}|{{.HostConfig.MemorySwap}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.PidsLimit}}' "$name")"
+    case "$resources" in
+        '536870912|536870912|600000000|128'|'805306368|805306368|600000000|128') ;;
+        *) fail '运行服务资源限制不符合预期' ;;
+    esac
     [ "$(docker inspect -f '{{len .HostConfig.PortBindings}}|{{len .Mounts}}|{{len .NetworkSettings.Networks}}' "$name")" = '0|1|1' ] || fail '运行服务存在额外端口、目录挂载或网络'
     [ "$(docker inspect -f '{{range .Mounts}}{{.Source}}|{{.Destination}}|{{.RW}}{{end}}' "$name")" = "$root/docker/ide/mount.yaml|/config/mount.yaml|false" ] || fail '运行服务挂载不符合预期'
+    # Validate the full old profile before changing anything. Raising memory in
+    # place preserves active runs and is idempotent; the CPU ceiling is unchanged.
+    if [ "$resources" = '536870912|536870912|600000000|128' ]; then
+        docker update --memory 768m --memory-swap 768m "$name" >/dev/null
+        [ "$(docker inspect -f '{{.HostConfig.Memory}}|{{.HostConfig.MemorySwap}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.PidsLimit}}' "$name")" = '805306368|805306368|600000000|128' ] || fail '运行服务内存升级未成功'
+    fi
     docker start "$name" >/dev/null
 else
     docker run -d --name "$name" --label onebyone.service=ide --restart unless-stopped \
-        --privileged --cgroupns private --cpus 0.6 --memory 512m --memory-swap 512m --pids-limit 128 \
+        --privileged --cgroupns private --cpus 0.6 --memory 768m --memory-swap 768m --pids-limit 128 \
         --network "$network" --network-alias ide-sandbox \
         --log-opt max-size=10m --log-opt max-file=2 \
         --mount "type=bind,source=$root/docker/ide/mount.yaml,target=/config/mount.yaml,readonly" \
@@ -45,7 +55,7 @@ else
 fi
 for _ in $(seq 1 20); do
     if docker exec "$hydro" node -e 'fetch("http://ide-sandbox:5050/version",{signal:AbortSignal.timeout(2000)}).then(r=>r.json()).then(v=>process.exit(v.stream?0:1)).catch(()=>process.exit(1))' >/dev/null 2>&1; then
-        echo '在线 IDE 独立运行服务已就绪：512 MB / 0.6 核，仅内网可达；未构建镜像。'
+        echo '在线 IDE 独立运行服务已就绪：768 MB / 0.6 核，默认最多 4 位同学运行；仅内网可达，未构建镜像。'
         exit 0
     fi
     sleep 1

@@ -36,7 +36,7 @@ export type IdeCommand =
   | { type: 'run' }
   | { type: 'stop' }
   | { type: 'input'; text: string }
-  | { type: 'input-draft'; text: string }
+  | { type: 'input-draft'; text: string; target?: 'dialog'; requestId?: number }
   | { type: 'turtle-event'; event: Record<string, any> }
   | { type: 'window'; window: IdeWindowName; patch: Partial<IdeWindow> };
 

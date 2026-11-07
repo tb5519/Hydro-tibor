@@ -33,6 +33,7 @@ function fixture() {
     vm.runInNewContext(source, {
         module: mod, exports: mod.exports, UiContext: { pdoc: { pid: 'P1000' } },
         require(id) {
+                if (id === '../ide/fontSize') return {}; // Standalone IDE preferences do not alter the problem editor.
             if (id === 'react-redux') return { connect: () => (component) => component };
             if (id === './themes') return { currentScratchpadTheme: () => ({}), scratchpadMonacoThemeName: () => 'cloud' };
             if (id === 'vj/context') return { ctx: {} };

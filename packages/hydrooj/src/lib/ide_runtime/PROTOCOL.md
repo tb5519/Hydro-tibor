@@ -35,6 +35,18 @@ Each fd 3 line is one of:
 - `{type:"input",prompt?:string}`: stdin is waiting; prompt is at most 4096
   characters, while its normal terminal rendering remains on stdout.
 - `{type:"input-end"}`: that input wait finished (including EOF/error).
+- `{type:"execution-wait",waiting:boolean}`: the Python adapter's actual
+  execution state, independent of the UI input prompt. Event callbacks serviced
+  while stdin is waiting resume execution charging; nested input inside those
+  callbacks pauses it again. The UI prompt's idle deadline remains unchanged.
+- `{type:"interaction-wait",kind:"events"|"input"}`: actual turtle event-loop
+  or text/number dialog wait. The backend pauses its active-execution clock;
+  `input` additionally starts the five-minute idle input deadline.
+- `{type:"interaction-end",temporary?:boolean}`: resume execution. Temporary
+  transitions wrap event/timer callbacks, so executing user code is charged
+  without resetting a pending input dialog's idle deadline. After a callback,
+  the adapter restores its previous interaction-wait kind. These controls are
+  server-side only, not drawing commands or browser state.
 - `{type:"draw",command:DrawingCommand}`.
 
 Drawing commands use x-right/y-up logical coordinates. Default world bounds

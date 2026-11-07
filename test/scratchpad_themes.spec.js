@@ -29,6 +29,7 @@ function harness(options = {}) {
     const mod = { exports: {} };
     const context = {
         require(id) {
+                if (id === '../ide/fontSize') return {}; // Standalone IDE preferences do not alter the problem editor.
             if (id === 'vj/components/notification') return { error: (...args) => errors.push(args) };
             if (id === './themeAssets') return { prepareScratchpadThemeAssets: (theme) => {
                 preparations.push(theme);
@@ -256,6 +257,7 @@ describe('scratchpad workspace themes', () => {
                 module: mod, exports: mod.exports, window: dom.window, UserContext: user,
                 UiContext: { pdoc: { pid: 'P1000' } },
                 require(id) {
+                if (id === '../ide/fontSize') return {}; // Standalone IDE preferences do not alter the problem editor.
                     if (id === 'react-redux') return { connect: () => (component) => component };
                     if (id === './themes') return themes;
                     if (id === 'vj/context') return { ctx: { scratchpad: { init() {} } } };

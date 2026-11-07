@@ -123,6 +123,63 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(run.finish(), '45\n{"type":"draw"}\n')
         self.assertEqual(run.messages, [])
 
+    def test_mainloop_wait_excludes_user_and_timer_callback_execution(self):
+        run = self.run_code('''
+            import turtle as t
+            def clicked(x, y):
+                print("clicked")
+                t.ontimer(lambda: (print("timer"), t.bye()), 30)
+            t.onscreenclick(clicked)
+            t.done()
+        ''')
+        run.wait(lambda: any(m.get("type") == "interaction-wait" for m in run.messages))
+        run.event({"type": "click", "x": 0, "y": 0, "button": 1})
+        self.assertEqual(run.finish(), "clicked\ntimer\n")
+        transitions = [m for m in run.messages if m["type"].startswith("interaction-")]
+        self.assertEqual(transitions[0], {"type": "interaction-wait", "kind": "events"})
+        self.assertGreaterEqual(sum(m.get("temporary") is True for m in transitions), 2)
+        self.assertEqual(transitions[-1], {"type": "interaction-end", "temporary": False})
+
+    def test_graphical_input_marks_real_wait_and_resumes_execution(self):
+        run = self.run_code('''
+            import turtle as t
+            print(t.textinput("问题", "你的名字"))
+        ''')
+        run.wait(lambda: any(m.get("kind") == "input" for m in run.messages))
+        request = run.commands("request")[0]
+        run.event({"type": "response", "id": request["id"], "value": "小明"})
+        self.assertEqual(run.finish(), "小明\n")
+        transitions = [m for m in run.messages if m["type"].startswith("interaction-")]
+        self.assertEqual(transitions, [{"type": "interaction-wait", "kind": "input"},
+                                      {"type": "interaction-end", "temporary": False}])
+
+    def test_drawing_animation_does_not_claim_to_be_waiting_for_human_input(self):
+        run = self.run_code('import turtle as t\nt.speed(1)\nt.fd(10)\nt.lt(90)')
+        run.finish()
+        self.assertFalse(any(m["type"].startswith("interaction-") for m in run.messages))
+
+    def test_stdin_callback_nested_stdin_and_dialog_restore_actual_execution_state(self):
+        run = self.run_code('''
+            import turtle as t
+            def callback():
+                print("callback", flush=True)
+                print("nested", input("inner:"), flush=True)
+                print("dialog", t.textinput("问题", "答案"), flush=True)
+            t.ontimer(callback, 30)
+            print("outer", input("outer:"))
+        ''')
+        run.wait(lambda: b"inner:" in run.stdout)
+        run.stdin("one\n")
+        run.wait(lambda: bool(run.commands("request")))
+        run.event({"type": "response", "id": run.commands("request")[0]["id"], "value": "two"})
+        run.wait(lambda: b"dialog two" in run.stdout)
+        run.stdin("three\n")
+        self.assertIn("outer three", run.finish())
+        states = [m["waiting"] for m in run.messages if m["type"] == "execution-wait"]
+        self.assertEqual(states, [True, False, True, False, True, False, True, False])
+        # The outer prompt keeps its original idle deadline through the callback.
+        self.assertEqual(sum(m["type"] == "input" for m in run.messages), 1)
+
     def test_alternating_print_input_and_unicode(self):
         run = self.run_code('''
             print("你好")
@@ -136,7 +193,8 @@ class RuntimeTests(unittest.TestCase):
         run.wait(lambda: sum(m.get("type") == "input" for m in run.messages) == 2)
         run.stdin("9\n")
         self.assertEqual(run.finish(), "你好\n名字：欢迎 小明\n年龄：10\n")
-        self.assertEqual([m["type"] for m in run.messages], ["input", "input-end", "input", "input-end"])
+        self.assertEqual([m["type"] for m in run.messages if m["type"] != "execution-wait"],
+                         ["input", "input-end", "input", "input-end"])
         self.assertEqual([m["prompt"] for m in run.messages if m["type"] == "input"], ["名字：", "年龄："])
 
     def test_stdin_readline_partial_unicode_and_eof(self):

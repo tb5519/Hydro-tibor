@@ -50,6 +50,7 @@ export function isValidIdeSnapshot(s: any): s is IdeSnapshot {
   const r = s.request;
   if (r !== null && (!object(r) || r.op !== 'request' || !id(r.id) || !['text', 'number'].includes(r.kind)
     || !string(r.title, 256) || !string(r.prompt, 4096)
+    || (r.draft !== undefined && !string(r.draft, 4096))
     || ['default', 'min', 'max'].some((key) => r[key] !== undefined && r[key] !== null && !number(r[key])))) return false;
   try { return JSON.stringify(s).length <= 4 * 1024 * 1024; } catch { return false; }
 }

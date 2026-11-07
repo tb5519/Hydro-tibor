@@ -405,6 +405,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
       frameRoot.style.cssText = 'position:absolute;inset:0;pointer-events:none;overflow:hidden';
       stage.append(mirrorRoot, frameRoot, editorRoot);
       viewerMirror = adapters.attachViewerMirror({ pageId: next.pageId, container: mirrorRoot,
+        onDocument: adapters.attachIdeCapacityMirror,
         sendCommand: (data) => relay(next, 'command', data),
         onViewZoom: wheelZoom, onViewPan: panView,
         onViewport: (size: any) => {

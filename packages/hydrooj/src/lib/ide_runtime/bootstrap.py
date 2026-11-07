@@ -31,6 +31,9 @@ class Bridge:
         self.request_id = 0
         self.responses = {}
         self.input_depth = 0
+        self.interaction_wait = None
+        self.execution_waiting = False
+        self.input_execution_states = []
         try:
             os.set_blocking(self.input_fd, False)
         except OSError:
@@ -49,6 +52,7 @@ class Bridge:
             raise SystemExit("运行连接已关闭。") from error
 
     def begin_input(self, prompt=""):
+        self.input_execution_states.append(self.execution_wait(True))
         if not self.input_depth:
             self.emit({"type": "input", "prompt": str(prompt)[:4096]})
         self.input_depth += 1
@@ -57,6 +61,34 @@ class Bridge:
         self.input_depth = max(0, self.input_depth - 1)
         if not self.input_depth:
             self.emit({"type": "input-end"})
+        self.execution_wait(self.input_execution_states.pop() if self.input_execution_states else False)
+
+    def execution_wait(self, waiting):
+        previous = self.execution_waiting
+        if waiting != previous:
+            self.execution_waiting = waiting
+            self.emit({"type": "execution-wait", "waiting": waiting})
+        return previous
+
+    def wait_for_interaction(self, kind, temporary=False):
+        previous = self.interaction_wait
+        if previous != kind:
+            self.interaction_wait = kind
+            self.emit({"type": "interaction-wait", "kind": kind} if kind else
+                      {"type": "interaction-end", "temporary": temporary})
+        self.execution_wait(kind is not None)
+        return previous
+
+    def callback(self, function, *args):
+        # Only actual event waits pause the execution budget. A user callback
+        # (including an ontimer callback) is executable code again.
+        previous_execution = self.execution_waiting
+        previous = self.wait_for_interaction(None, temporary=True)
+        try:
+            return function(*args)
+        finally:
+            self.wait_for_interaction(previous)
+            self.execution_wait(previous_execution)
 
     def pump(self, timeout=0):
         if self.tick and not self.dispatching:
@@ -112,7 +144,7 @@ class Bridge:
             count += 1
             self.dispatching = True
             try:
-                self.handler(event)
+                self.callback(self.handler, event)
             finally:
                 self.dispatching = False
 
@@ -126,11 +158,17 @@ class Bridge:
         identity = self.request_id
         self.emit({"type": "draw", "command": {"op": "request", "id": identity,
                    "kind": kind, "title": str(title)[:256], "prompt": str(prompt)[:4096], **kwargs}})
-        while identity not in self.responses:
-            if self.closed:
-                return None
-            self.pump(0.02)
-        return self.responses.pop(identity)
+        previous_execution = self.execution_waiting
+        previous = self.wait_for_interaction("input")
+        try:
+            while identity not in self.responses:
+                if self.closed:
+                    return None
+                self.pump(0.02)
+            return self.responses.pop(identity)
+        finally:
+            self.wait_for_interaction(previous)
+            self.execution_wait(previous_execution)
 
 
 bridge = Bridge()

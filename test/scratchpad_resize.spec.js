@@ -68,6 +68,8 @@ describe('scratchpad live resizing', () => {
         vm.runInNewContext(containerSource, {
             module: mod, exports: mod.exports, window: dom.window, document: dom.window.document, UiContext: {},
             require(id) {
+                if (id === '../ide/IdeRuntimeWindows') return () => null;
+                if (id === '../ide/fontSize') return {}; // Standalone IDE preferences do not alter the problem editor.
                 if (id === 'allotment') return { Allotment };
                 if (id === '../live_share/splitter') return splitter.exports;
                 if (id === 'react-redux') return {
@@ -155,6 +157,8 @@ describe('scratchpad live resizing', () => {
             module: mod, exports: mod.exports, window: dom.window,
             UserContext: {}, UiContext: { pdoc: { pid: 'P1000' } },
             require(id) {
+                if (id === '../ide/IdeRuntimeWindows') return () => null;
+                if (id === '../ide/fontSize') return {}; // Standalone IDE preferences do not alter the problem editor.
                 if (id === 'react-redux') return { connect: () => (component) => component };
                 if (id === './themes') return {
                     attachScratchpadMonacoTheme: () => () => {}, currentScratchpadTheme: () => ({}), scratchpadMonacoThemeName: () => 'cloud',

@@ -3,6 +3,7 @@ import React from 'react';
 import { connect } from 'react-redux';
 import { load } from 'vj/components/monaco/loader';
 import { ctx } from 'vj/context';
+import { attachIdeEditorFont, getIdeFontSize } from '../ide/fontSize';
 import { attachScratchpadMonacoTheme, currentScratchpadTheme, scratchpadMonacoThemeName } from './themes';
 
 interface ScratchpadOptions {
@@ -46,6 +47,7 @@ export default connect((state: any) => ({
   editor: monaco.editor.IStandaloneCodeEditor;
   containerElement: HTMLElement;
   releaseTheme?: () => void;
+  releaseIdeFont?: () => void;
   unmounted = false;
 
   flushDailyQuizDraft = (event: Event) => {
@@ -71,6 +73,7 @@ export default connect((state: any) => ({
       const config: monaco.editor.IStandaloneEditorConstructionOptions = {
         fontFamily: UserContext.codeFontFamily,
         ...customOptions,
+        ...(UiContext.ideMode ? { fontSize: getIdeFontSize() } : {}),
         // Monaco's ResizeObserver coalesces layout per animation frame. This
         // also follows toolbar wrapping and image loads, not only sash drags.
         automaticLayout: true,
@@ -89,6 +92,7 @@ export default connect((state: any) => ({
       // Keep the coding workspace on its own theme after that completes.
       monaco.editor.setTheme(scratchpadMonacoThemeName(currentScratchpadTheme()));
       if (UiContext.homeworkReview) this.editor.updateOptions({ readOnly: true });
+      if (UiContext.ideMode) this.releaseIdeFont = attachIdeEditorFont(this.editor);
       this.disposable.push(
         this.editor.onDidChangeModelContent((event) => {
           if (!UiContext.homeworkReview && !this.__prevent_trigger_change_event) {
@@ -143,6 +147,7 @@ export default connect((state: any) => ({
     if (editor && this.props.settings) {
       editor.updateOptions({
         ...this.props.settings,
+        ...(UiContext.ideMode ? { fontSize: getIdeFontSize() } : {}),
         automaticLayout: true,
         theme: scratchpadMonacoThemeName(currentScratchpadTheme()),
         readOnly: !!UiContext.homeworkReview,
@@ -162,6 +167,7 @@ export default connect((state: any) => ({
     if (this.model) this.model.dispose();
     this.disposable.map((i) => i.dispose());
     this.releaseTheme?.();
+    this.releaseIdeFont?.();
   }
 
   assignRef = (component) => {

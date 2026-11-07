@@ -160,8 +160,11 @@ function editorGeometry(node: HTMLElement, container: HTMLElement): DrawingGeome
   const left = (layout?.contentLeft ?? node.clientLeft) - (editor?.getScrollLeft?.() ?? node.scrollLeft);
   const top = node.clientTop - (editor?.getScrollTop?.() ?? node.scrollTop);
   const matrix = multiplyDrawingMatrix(geometry.matrix, [font, 0, 0, line, left, top]);
-  const viewClip = transformClip(geometry.matrix, { x: layout?.contentLeft ?? node.clientLeft, y: node.clientTop,
-    width: layout?.contentWidth ?? node.clientWidth, height: layout?.height ?? node.clientHeight });
+  // Freehand ink may circle a line number or extend left of the text. Its
+  // coordinates still follow code scrolling, but the text column is not its
+  // clipping boundary. Keep the whole editor viewport and its ancestor clips.
+  const viewClip = transformClip(geometry.matrix, { x: node.clientLeft, y: node.clientTop,
+    width: node.clientWidth, height: node.clientHeight });
   return { matrix, clip: intersectDrawingClip(geometry.clip, viewClip) };
 }
 

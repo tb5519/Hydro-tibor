@@ -21,9 +21,18 @@ let annotationLayer = 1003;
 let annotationAsset = 0;
 
 /** Trace only the outside of the selected visual rows, never their shared edges. */
-function selectionOutline(lines: Rect[]) {
-  const strips = lines.map((line) => ({ left: line.x - 4, top: line.y - 3,
-    right: line.x + line.width + 4, bottom: line.y + line.height + 3 }));
+function selectionOutline(lines: Rect[], viewport?: Rect) {
+  // The 3.5px stroke must fit inside the visible surface. Expanding a first
+  // row above y=0 makes overflow clipping erase the entire top edge; move that
+  // edge inward instead of letting the highlight escape into another panel.
+  const inset = 2;
+  const leftEdge = viewport ? viewport.x + inset : -Infinity; const topEdge = viewport ? viewport.y + inset : -Infinity;
+  const rightEdge = viewport ? Math.max(leftEdge, viewport.x + viewport.width - inset) : Infinity;
+  const bottomEdge = viewport ? Math.max(topEdge, viewport.y + viewport.height - inset) : Infinity;
+  const x = (value: number) => Math.max(leftEdge, Math.min(rightEdge, value));
+  const y = (value: number) => Math.max(topEdge, Math.min(bottomEdge, value));
+  const strips = lines.map((line) => ({ left: x(line.x - 4), top: y(line.y - 3),
+    right: x(line.x + line.width + 4), bottom: y(line.y + line.height + 3) }));
   if (!strips.length) return '';
   type Point = [number, number];
   const left: Point[] = []; const right: Point[] = [];
@@ -216,8 +225,9 @@ export function attachAnnotationSurface(options: {
     box.style.height = `${rect.height}px`;
     outlineSvg.style.width = `${rect.width}px`; outlineSvg.style.height = `${rect.height}px`;
     const relativeLines = lines.map((line) => ({ ...line, x: line.x - rect.x, y: line.y - rect.y }));
-    const geometry = JSON.stringify(relativeLines);
-    if (geometry !== outlineGeometry) { outlineGeometry = geometry; outline.setAttribute('d', selectionOutline(relativeLines)); }
+    const outlineViewport = { x: -rect.x, y: -rect.y, width, height };
+    const geometry = JSON.stringify([relativeLines, outlineViewport]);
+    if (geometry !== outlineGeometry) { outlineGeometry = geometry; outline.setAttribute('d', selectionOutline(relativeLines, outlineViewport)); }
     bubble.hidden = !annotation.noteOpen;
     svg.toggleAttribute('hidden', annotation.noteOpen);
     connector.toggleAttribute('hidden', !annotation.noteOpen);

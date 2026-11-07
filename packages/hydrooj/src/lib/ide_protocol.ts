@@ -1,6 +1,7 @@
 /** The interactive IDE has its own execution pool; these are never Judge jobs. */
 export const IDE_LIMITS = {
     codeBytes: 128 * 1024, inputBytes: 16 * 1024, wallSeconds: 1800, cpuSeconds: 30,
+    executionSeconds: 120, inputIdleSeconds: 300,
     memoryBytes: 128 * 1024 * 1024, outputBytes: 2 * 1024 * 1024,
     graphicsBytes: 8 * 1024 * 1024, graphicsCommands: 30000, frameBytes: 64 * 1024,
 };
@@ -46,7 +47,7 @@ export function validateIdeMessage(value: any) {
     }
     if (value.type === 'stop') return;
     if (!Number.isSafeInteger(value.seq) || value.seq < 0) invalid();
-    if (value.type === 'input' && string(value.text, IDE_LIMITS.inputBytes)
+    if (['input', 'input-draft'].includes(value.type) && string(value.text, IDE_LIMITS.inputBytes)
         && Buffer.byteLength(value.text) <= IDE_LIMITS.inputBytes && !value.text.includes('\0')) return;
     if (value.type === 'turtle-event') { validateTurtleEvent(value.event); return; }
     invalid();
@@ -105,5 +106,10 @@ export function parseGraphicsLine(line: string) {
         return { type: 'input-request', prompt: value.prompt || '' };
     }
     if (value.type === 'input-end') return { type: 'input-end' };
+    if (value.type === 'execution-wait' && typeof value.waiting === 'boolean') return { type: 'execution-wait', waiting: value.waiting };
+    if (value.type === 'interaction-wait' && ['input', 'events'].includes(value.kind)) return { type: 'interaction-wait', kind: value.kind };
+    if (value.type === 'interaction-end' && (value.temporary === undefined || typeof value.temporary === 'boolean')) {
+        return { type: 'interaction-end', temporary: value.temporary === true };
+    }
     return invalid();
 }

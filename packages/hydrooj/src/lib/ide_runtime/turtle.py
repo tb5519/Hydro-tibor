@@ -312,7 +312,7 @@ class _Screen:
             count += 1
             _bridge.dispatching = True
             try:
-                callback()
+                _bridge.callback(callback)
             finally:
                 _bridge.dispatching = False
 
@@ -351,8 +351,12 @@ class _Screen:
     def mainloop(self):
         self._show()
         self.update()
-        while not self._closed and not _bridge.closed:
-            _bridge.pump(0.02)
+        previous = _bridge.wait_for_interaction("events")
+        try:
+            while not self._closed and not _bridge.closed:
+                _bridge.pump(0.02)
+        finally:
+            _bridge.wait_for_interaction(previous)
 
     def exitonclick(self):
         self.onclick(lambda x, y: self.bye())

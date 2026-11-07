@@ -117,11 +117,14 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
                 || (data.runId && !/^[a-zA-Z0-9_-]{16,80}$/.test(data.runId))
                 || Object.keys(data).some((key) => !['id', 'pageId', 'nodeId', 'action', 'runId', 'command'].includes(key))) invalid();
             const c = data.command;
-            const fields = { run: ['type'], stop: ['type'], input: ['type', 'text'], 'input-draft': ['type', 'text'],
+            const fields = { run: ['type'], stop: ['type'], input: ['type', 'text'], 'input-draft': ['type', 'text', 'target', 'requestId'],
                 window: ['type', 'window', 'patch'], 'turtle-event': ['type', 'event'] };
             if (!c || typeof c !== 'object' || !Object.hasOwn(fields, c.type)
                 || Object.keys(c).some((key) => !fields[c.type].includes(key))) invalid();
             if (['input', 'input-draft'].includes(c.type) && (!short(c.text, 16000) || c.text.includes('\0'))) invalid();
+            if (c.type === 'input-draft' && ((c.target !== undefined && c.target !== 'dialog')
+                || (c.target === 'dialog' && (!Number.isSafeInteger(c.requestId) || c.requestId < 1 || c.text.length > 4096))
+                || (c.target === undefined && c.requestId !== undefined))) invalid();
             if (c.type === 'window') {
                 if (!['terminal', 'graphics'].includes(c.window) || !c.patch || typeof c.patch !== 'object' || Array.isArray(c.patch)
                     || Object.keys(c.patch).some((key) => !['visible', 'minimized', 'maximized', 'x', 'y', 'width', 'height'].includes(key))) invalid();

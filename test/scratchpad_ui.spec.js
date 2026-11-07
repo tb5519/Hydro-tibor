@@ -43,7 +43,7 @@ async function harness(name, options = {}) {
     const execute = (code) => {
         const mod = { exports: {} };
         vm.runInNewContext(code, {
-            module: mod, exports: mod.exports, React, window: dom.window, CustomEvent: dom.window.CustomEvent, setTimeout,
+            module: mod, exports: mod.exports, React, window: dom.window, document: dom.window.document, CustomEvent: dom.window.CustomEvent, setTimeout, clearTimeout,
             UiContext: { pdoc: { config: { type: 'default' } }, canViewRecord: true,
                 postSubmitUrl: '/submit', getSubmissionsUrl: '/submissions', ...options.context },
             require(id) {
@@ -57,7 +57,9 @@ async function harness(name, options = {}) {
                         i18n: options.i18n || ((value) => value), mongoId: () => ({ timestamp: 0 }),
                         request: {
                             post: async (...args) => { posts.push(args); return { rid: '6aa000000000000000000001' }; },
-                            get: async () => ({ rdocs: [] }),
+                            get: async (url) => url.endsWith('/ide/capacity')
+                                ? { capacity: 4, used: 0, available: 4, compilerBusy: false, ownRunning: false, canRelease: false, resetting: false }
+                                : { rdocs: [] },
                         },
                     };
                 }
@@ -114,11 +116,13 @@ describe('scratchpad controls and result presentation', () => {
         } finally { await h.close(); }
     });
 
-    it('keeps IDE mode run and pretest controls without formal submit or exit', async () => {
+    it('keeps IDE mode run and font controls without judge self-test, formal submit or exit', async () => {
         const h = await harness('ScratchpadToolbarContainer', { context: { ideMode: true } });
         try {
             assert.ok(h.document.querySelector('[data-global-hotkey="f9"]'));
-            assert.ok(h.document.querySelector('[data-global-hotkey="alt+p"]'));
+            assert.equal(h.document.querySelector('[data-global-hotkey="alt+p"]'), null);
+            assert.ok(h.document.querySelector('.ide-font-size'));
+            assert.equal(h.document.querySelector('[data-ide-capacity]').textContent, '可直接运行');
             assert.equal(h.document.querySelector('[data-global-hotkey="f10"]'), null);
             assert.equal(h.document.querySelector('[data-global-hotkey="alt+q"]'), null);
         } finally { await h.close(); }

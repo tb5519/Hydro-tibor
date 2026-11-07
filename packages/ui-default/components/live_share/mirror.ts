@@ -60,6 +60,8 @@ interface ViewerOptions {
   /** Scroll deltas (previous minus current pointer position) for natural grab panning. */
   onViewPan?: (gesture: { dx: number; dy: number }) => void;
   onStatus?: (message: string) => void;
+  /** Trusted teacher-owned controls; never infer authority from peer DOM attributes. */
+  onDocument?: (document: Document) => { dispose(): void; owns(target: EventTarget | null): boolean };
 }
 
 const dangerousSegments = /\/(?:manage|management|account|login|logout|register|lostpass|oauth|sudo|tfa|webauthn|switch|language|payment|pay|purchase|checkout|create|edit|config|delete|remove|save|rejudge|cancel|join|leave|attend|copy|publish|share|download|file|files|settings|security|password|changeMail|token|api|storage|restart|shutdown|reset|revoke|ack|draw|upload|import|export|bind|unbind|hack)(?:\/|$)/i;
@@ -1043,6 +1045,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     doc.head?.appendChild(style);
     const cleanupScratch = options.scratchControls
       ? attachViewerScratchControl({ document: doc, send: (node, input) => command(node, 'scratch', { input, target: scratchTargetFingerprint(node) }) }) : () => {};
+    const localControls = options.onDocument?.(doc);
     let holdingSpace = false;
     let dragging: { id: number; x: number; y: number };
     let resizing: { id: number; sash: HTMLElement; position: number; dirty: boolean } | null = null;
@@ -1112,6 +1115,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     };
     const resetPan = () => { finishResize(); holdingSpace = false; endPan(); };
     const click = (event: MouseEvent) => {
+      if (localControls?.owns(event.target)) return;
       if (holdingSpace || Date.now() < suppressClickUntil) {
         event.preventDefault(); event.stopImmediatePropagation(); return;
       }
@@ -1129,6 +1133,7 @@ export function attachViewerMirror(options: ViewerOptions) {
       if (element && allowedSelect(element)) command(element, 'select', { value: element.value });
     };
     const keydown = (event: KeyboardEvent) => {
+      if (localControls?.owns(event.target)) return;
       if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
         && !event.isComposing && selectingId && !textOrControl(event.target)) {
         const entry = annotations.get(selectingId);
@@ -1160,6 +1165,7 @@ export function attachViewerMirror(options: ViewerOptions) {
       if (!note) selectingId = null;
     };
     const pointerdown = (event: PointerEvent) => {
+      if (localControls?.owns(event.target)) return;
       outsidePointerdown(event);
       const sash = sharedSash(closestElement(event.target));
       if (event.button === 0 && sash && connected && ready && !holdingSpace) {
@@ -1296,6 +1302,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     doc.addEventListener('volumechange', silenceMedia, true);
     doc.addEventListener('wheel', wheel, { capture: true, passive: false });
     cleanupDocument = () => {
+      localControls?.dispose();
       cleanupScratch();
       resetScrolls();
       finishResize();

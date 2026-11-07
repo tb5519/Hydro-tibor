@@ -84,33 +84,80 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
     return { section, title, body, status, dockButton };
   }
   windows.terminal = makeWindow('terminal'); windows.graphics = makeWindow('graphics');
-  const output = element('pre', 'ide-terminal__output'); output.setAttribute('aria-label', '程序输出');
+  const consoleBody = element('div', 'ide-terminal__console');
+  const output = element('span', 'ide-terminal__output'); output.setAttribute('aria-label', '程序输出');
   const form = element('form', 'ide-terminal__input-form');
-  const prompt = element('span', 'ide-terminal__prompt', '›'); prompt.setAttribute('aria-hidden', 'true');
-  const input = element('input', 'ide-terminal__input'); input.type = 'text'; input.autocomplete = 'off'; input.spellcheck = false;
-  input.setAttribute('aria-label', '终端输入'); input.placeholder = '输入内容，按回车继续'; input.maxLength = 16000;
+  // A real inline editing range can wrap after a prompt, unlike an input/textarea
+  // rectangle which moves the whole response to a separate line.
+  const input = element('span', 'ide-terminal__input');
+  try { input.contentEditable = 'plaintext-only'; } catch { input.contentEditable = 'true'; }
+  input.spellcheck = false; input.tabIndex = 0;
+  input.setAttribute('role', 'textbox'); input.setAttribute('aria-label', '终端输入');
+  input.setAttribute('aria-multiline', 'true'); input.setAttribute('enterkeyhint', 'send');
   const submit = element('button', 'ide-terminal__send', '↵'); submit.type = 'submit'; submit.setAttribute('aria-label', '发送输入');
   // Interactive stdin is not a saved form: allow consecutive lines immediately,
-  // including Enter's implicit click, without the site's five-second submit lock.
+  // without the site's five-second delegated submit lock.
   submit.addEventListener('click', (event) => event.stopPropagation());
-  form.append(prompt, input, submit);
-  windows.terminal.body.append(output, form);
+  form.append(input, submit);
+  consoleBody.append(output, form); windows.terminal.body.append(consoleBody);
   let composing = false;
   let pendingDraft: string | null = null;
   let draftRunId = '';
   let inputErrorSeq = 0;
-  const sendDraft = () => { pendingDraft = input.value; command({ type: 'input-draft', text: input.value }); };
+  const draftText = () => (input.textContent || '').replace(/\r\n?/g, '\n');
+  const followInput = () => {
+    if (document.activeElement !== input) return;
+    const selection = window.getSelection();
+    const rect = selection?.rangeCount ? selection.getRangeAt(0).getBoundingClientRect() : null;
+    const bounds = consoleBody.getBoundingClientRect();
+    if (rect && rect.bottom > bounds.bottom - 12) {
+      const scale = consoleBody.clientHeight / Math.max(1, bounds.height);
+      consoleBody.scrollTop += (rect.bottom - bounds.bottom + 16) * scale;
+    }
+  };
+  const sendDraft = () => {
+    pendingDraft = draftText();
+    // Browsers leave a <br> after deleting the last character. Keep an empty
+    // editable target with the same visible caret size as a fresh prompt.
+    if (!composing && !pendingDraft && input.childNodes.length) input.textContent = '';
+    command({ type: 'input-draft', text: pendingDraft }); followInput();
+  };
   input.addEventListener('compositionstart', () => { composing = true; });
   input.addEventListener('compositionend', () => { composing = false; sendDraft(); });
   input.addEventListener('input', sendDraft);
+  input.addEventListener('beforeinput', (event: InputEvent) => { if (event.inputType.startsWith('format')) event.preventDefault(); });
   input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' && (composing || event.isComposing || event.keyCode === 229)) event.preventDefault();
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    // Enter confirms the IME candidate before it is allowed to send a line.
+    if (!composing && !event.isComposing && event.keyCode !== 229) form.requestSubmit();
+  });
+  input.addEventListener('paste', (event) => {
+    event.preventDefault();
+    const text = (event.clipboardData?.getData('text/plain') || '').replace(/\r\n?/g, '\n');
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    if (!input.contains(range.commonAncestorContainer)) return;
+    // Preserve literal newlines, never import the copied page's HTML or styles.
+    range.deleteContents();
+    const node = document.createTextNode(text); range.insertNode(node);
+    range.setStartAfter(node); range.collapse(true); selection.removeAllRanges(); selection.addRange(range);
+    sendDraft();
+  });
+  input.addEventListener('drop', (event) => event.preventDefault());
+  consoleBody.addEventListener('pointerup', (event) => {
+    const selection = window.getSelection();
+    if (event.target !== consoleBody || selection?.toString() || form.hidden) return;
+    input.focus({ preventScroll: true });
+    const range = document.createRange(); range.selectNodeContents(input); range.collapse(false);
+    selection?.removeAllRanges(); selection?.addRange(range);
   });
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     if (composing || !['running', 'waiting-input'].includes(state.state)) return;
-    const text = input.value;
-    pendingDraft = ''; input.value = '';
+    const text = draftText();
+    pendingDraft = ''; input.textContent = '';
     command({ type: 'input', text });
   });
   const canvasWrap = element('div', 'ide-graphics');
@@ -148,6 +195,19 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
   const dialogTitle = element('strong', 'ide-graphics__dialog-title');
   const dialogPrompt = element('label', 'ide-graphics__dialog-prompt');
   const dialogInput = element('input', 'ide-graphics__dialog-input'); dialogInput.maxLength = 4096;
+  let pendingDialogDraft: string | null = null;
+  let dialogComposing = false;
+  const sendDialogDraft = () => {
+    if (!state.request) return;
+    pendingDialogDraft = dialogInput.value;
+    command({ type: 'input-draft', target: 'dialog', requestId: state.request.id, text: pendingDialogDraft });
+  };
+  dialogInput.addEventListener('input', sendDialogDraft);
+  dialogInput.addEventListener('compositionstart', () => { dialogComposing = true; });
+  dialogInput.addEventListener('compositionend', () => { dialogComposing = false; sendDialogDraft(); });
+  dialogInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && (dialogComposing || event.isComposing || event.keyCode === 229)) event.preventDefault();
+  });
   const dialogButtons = element('div', 'ide-graphics__dialog-buttons');
   const cancel = button('取消输入', '取消', () => respond(null));
   const accept = element('button', 'ide-graphics__dialog-accept', '确定'); accept.type = 'submit';
@@ -159,7 +219,7 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
     command({ type: 'turtle-event', event: { type: 'response', id: state.request.id, value } });
   }
   dialog.addEventListener('submit', (event) => {
-    event.preventDefault(); if (!dialog.reportValidity()) return;
+    event.preventDefault(); if (dialogComposing || !dialog.reportValidity()) return;
     respond(state.request?.kind === 'number' ? Number(dialogInput.value) : dialogInput.value);
   });
   let requestId: number | null = null;
@@ -193,19 +253,23 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
     windows.graphics.title.textContent = state.screen.title || '海龟绘图';
     const key = state.runId + state.output.map((part) => `${part.stream}:${part.text}`).join('');
     if (key !== outputKey) {
-      const atBottom = output.scrollHeight - output.scrollTop - output.clientHeight < 64;
+      const atBottom = consoleBody.scrollHeight - consoleBody.scrollTop - consoleBody.clientHeight < 64;
       output.replaceChildren(...state.output.map((part) => element('span', `ide-terminal__${part.stream}`, part.text)));
       outputKey = key;
-      if (atBottom) output.scrollTop = output.scrollHeight;
+      if (atBottom) consoleBody.scrollTop = consoleBody.scrollHeight;
     }
     if (draftRunId !== state.runId || inputErrorSeq !== state.inputErrorSeq) {
       pendingDraft = null; draftRunId = state.runId; inputErrorSeq = state.inputErrorSeq;
     }
     if (pendingDraft === state.inputDraft) pendingDraft = null;
-    if (!composing && pendingDraft === null && input.value !== state.inputDraft) input.value = state.inputDraft;
+    if (!composing && pendingDraft === null && draftText() !== state.inputDraft) {
+      const atBottom = consoleBody.scrollHeight - consoleBody.scrollTop - consoleBody.clientHeight < 64;
+      input.textContent = state.inputDraft;
+      if (atBottom) consoleBody.scrollTop = consoleBody.scrollHeight;
+    }
     form.hidden = !['running', 'waiting-input'].includes(state.state);
     form.classList.toggle('is-waiting', state.inputPending);
-    input.placeholder = state.inputPending ? '程序正在等你输入，按回车继续' : '输入内容，按回车发送';
+    input.setAttribute('aria-description', state.inputPending ? '程序正在等你输入，按回车继续' : '按回车发送输入');
     // A newly awaited line can be answered immediately, without another click.
     // Never take focus away from the code editor while the user is typing there.
     if (state.inputPending && !wasWaiting && (document.activeElement === document.body || windows.terminal.section.contains(document.activeElement))) input.focus({ preventScroll: true });
@@ -217,18 +281,22 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
     if (dialog.parentElement !== dialogParent) dialogParent.append(dialog);
     dialog.classList.toggle('ide-graphics__dialog--standalone', standaloneRequest);
     if (state.request && state.request.id !== requestId) {
-      requestId = state.request.id;
+      requestId = state.request.id; pendingDialogDraft = null;
       dialogTitle.textContent = state.request.title || '请输入';
       dialogPrompt.replaceChildren(document.createTextNode(state.request.prompt || ''), dialogInput);
       dialogInput.type = state.request.kind === 'number' ? 'number' : 'text';
       dialogInput.step = 'any'; dialogInput.required = state.request.kind === 'number';
       dialogInput.min = state.request.min === undefined ? '' : String(state.request.min);
       dialogInput.max = state.request.max === undefined ? '' : String(state.request.max);
-      dialogInput.value = state.request.default === undefined ? '' : String(state.request.default);
+      dialogInput.value = typeof state.request.draft === 'string' ? state.request.draft : state.request.default === undefined ? '' : String(state.request.default);
       dialogInput.setAttribute('aria-label', state.request.prompt || '输入内容');
       dialogInput.focus({ preventScroll: true });
     }
-    if (!state.request) requestId = null;
+    if (state.request && typeof state.request.draft === 'string') {
+      if (pendingDialogDraft === state.request.draft) pendingDialogDraft = null;
+      if (!dialogComposing && pendingDialogDraft === null && dialogInput.value !== state.request.draft) dialogInput.value = state.request.draft;
+    }
+    if (!state.request) { requestId = null; pendingDialogDraft = null; }
   }
   render(state);
   return { render, getBounds: () => root.getBoundingClientRect(), element: root,

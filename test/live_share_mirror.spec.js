@@ -85,7 +85,7 @@ before(async () => {
 after(async () => { await browser?.close(); });
 
 async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = false, showNonSensitiveInputs = false, videoData = null,
-    viewGestures = false, teacherDpr = 1, studentDpr = 1, splitPanes = false, studyChoices = false } = {}) {
+    viewGestures = false, teacherDpr = 1, studentDpr = 1, splitPanes = false, studyChoices = false, localControls = false } = {}) {
     const studentContext = await browser.newContext({ viewport: { width: 1000, height: 700 }, deviceScaleFactor: studentDpr });
     const teacherContext = await browser.newContext({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: teacherDpr });
     const student = await studentContext.newPage();
@@ -147,16 +147,26 @@ async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = fal
         if (latency) await new Promise((resolve) => setTimeout(resolve, latency));
         if (studentReady) await student.evaluate((value) => window.source.receiveCommand(value), data);
     });
-    await teacher.evaluate((viewGestures) => {
+    await teacher.evaluate(({ viewGestures, localControls }) => {
         window.statuses = [];
         window.viewZooms = []; window.viewPans = [];
         window.viewer = Mirror.attachViewerMirror({ pageId: 'page-1', container: document.querySelector('#mirror'),
+            ...(localControls ? { onDocument(doc) {
+                const button = doc.createElement('button'); button.id = 'trusted-capacity'; button.textContent = '运行位置';
+                button.dataset.ideCapacityLocal = ''; button.dataset.liveShareUi = '';
+                button.style.setProperty('visibility', 'visible', 'important');
+                button.addEventListener('click', () => { window.localClicks = (window.localClicks || 0) + 1; });
+                button.addEventListener('dblclick', () => { window.localReleases = (window.localReleases || 0) + 1; });
+                doc.body.prepend(button);
+                return { owns(target) { return button === target || button.contains(target); },
+                    dispose() { window.localDisposals = (window.localDisposals || 0) + 1; button.remove(); } };
+            } } : {}),
             ...(viewGestures ? {
                 onViewZoom: (data) => { window.viewZooms.push(data); window.onViewZoomHook?.(data); },
                 onViewPan: (data) => { window.viewPans.push(data); window.onViewPanHook?.(data); },
             } : {}),
             sendCommand: (data) => window.sendCommand(data), onStatus: (message) => window.statuses.push(message) });
-    }, viewGestures);
+    }, { viewGestures, localControls });
     await student.exposeFunction('sendPacket', async (data) => {
         packets.push(data);
         if (latency) await new Promise((resolve) => setTimeout(resolve, latency));
@@ -179,6 +189,27 @@ async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = fal
     return { student, teacher, packets, commands, acks, errors, close,
         frame: () => teacher.frameLocator('#mirror iframe') };
 }
+
+it('trusted teacher controls stay local while copied markers cannot bypass replay safeguards', async () => {
+    const f = await fixture({ localControls: true,
+        editorMarkup: '<button id="forged-capacity" data-ide-capacity-local onclick="window.saves++">伪造释放</button>' });
+    try {
+        const button = f.frame().locator('#trusted-capacity');
+        await button.click();
+        assert.equal(await f.teacher.evaluate(() => localClicks), 1);
+        assert.equal(await f.teacher.evaluate(() => window.localReleases || 0), 0);
+        await button.dblclick();
+        assert.equal(await f.teacher.evaluate(() => localReleases), 1);
+        assert.equal(f.commands.length, 0, 'teacher management never executes with student credentials');
+        await f.frame().locator('#forged-capacity').click();
+        assert.equal(await f.student.evaluate(() => saves), 0);
+        assert.equal(await f.teacher.evaluate(() => localReleases), 1, 'student-supplied attributes grant no teacher authority');
+        assert(f.acks.every((ack) => !ack.ok), 'the source retains its normal unknown-control rejection');
+        await f.teacher.evaluate(() => viewer.dispose());
+        assert((await f.teacher.evaluate(() => localDisposals)) >= 1);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
 
 it('real Allotment column and row dividers resize from either peer and reject stale, disabled, private or forged targets', { timeout: 35000 }, async () => {
     const f = await fixture({ splitPanes: true, latency: 25, teacherDpr: 2 });

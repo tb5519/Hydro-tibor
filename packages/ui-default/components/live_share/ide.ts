@@ -3,6 +3,8 @@ import { createIdeView } from '../ide/view';
 import { isValidIdeSnapshot } from '../ide/validation';
 import { emptyIdeSnapshot, IdeSnapshot } from '../ide/types';
 
+export { attachIdeCapacityMirror } from '../ide/IdeCapacityBadge';
+
 const CHUNK = 24000;
 const MAX_STATE = 4 * 1024 * 1024;
 const bounds = () => {
