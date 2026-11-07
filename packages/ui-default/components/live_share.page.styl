@@ -175,6 +175,19 @@
   user-select: none
   &__status
     color: #698679
+  &__view
+    flex-shrink: 0
+    border: 1px solid #d8e1e8
+    border-radius: 7px
+    padding: 2px 8px
+    margin: 0
+    background: #fff
+    color: #617888
+    font: inherit
+    cursor: pointer
+    &:hover, &:focus-visible
+      border-color: #91adbd
+      background: #eef5f8
   &__pen:before
     content: "✎"
     margin-right: 6px
@@ -340,6 +353,19 @@
     display: block
   .replayer-mouse
     display: none
+
+.live-share-remote-pointer
+  width: 12px
+  height: 12px
+  border: 1.5px solid #ffffffed
+  border-radius: 50%
+  box-sizing: border-box
+  background: #4a91ebbb
+  box-shadow: 0 0 0 3px #77b5ff28, 0 1px 5px #15457632
+  transform: translate(-50%, -50%)
+  transition: left 65ms linear, top 65ms linear
+  pointer-events: none !important
+  user-select: none
 
 .live-share-overlay.is-disconnected
   .live-share-mirror, .live-share-editors

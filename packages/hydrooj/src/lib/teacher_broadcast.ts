@@ -28,6 +28,13 @@ export function validateBroadcastMessage(value: any) {
 /** A viewer can send ink only: no arbitrary command or CRDT write is ever forwarded. */
 export function validateBroadcastRelay(teacher: boolean, kind: BroadcastKind, data: any, pageId: string) {
     if (!teacher && kind !== 'drawing') throw new LiveShareError('FORBIDDEN', '观看分享时只能使用临时画笔。');
+    if (teacher && kind === 'mirror' && data?.type === 'broadcast-focus') {
+        if (Object.keys(data).some((key) => !['type', 'x', 'y', 'width', 'height'].includes(key))
+            || !['x', 'y', 'width', 'height'].every((key) => typeof data[key] === 'number'
+                && Number.isFinite(data[key]) && data[key] >= 0 && data[key] <= 16384)
+            || data.width <= 0 || data.height <= 0) throw new LiveShareError('INVALID_RELAY', '分享位置格式不正确。');
+        return;
+    }
     if (kind === 'mirror' || kind === 'editor') validateRelayData('student', kind, data, pageId);
     else if (kind === 'annotation') {
         if (data.action !== 'annotate') throw new LiveShareError('INVALID_RELAY', '分享标注格式不正确。');

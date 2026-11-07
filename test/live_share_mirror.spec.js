@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { before, after, it } = require('node:test');
 const esbuild = require('esbuild');
+const stylus = require('stylus');
 
 const root = path.resolve(__dirname, '..');
 const runtime = path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
@@ -85,7 +86,7 @@ before(async () => {
 after(async () => { await browser?.close(); });
 
 async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = false, showNonSensitiveInputs = false, videoData = null,
-    viewGestures = false, teacherDpr = 1, studentDpr = 1, splitPanes = false, studyChoices = false, localControls = false } = {}) {
+    viewGestures = false, teacherDpr = 1, studentDpr = 1, splitPanes = false, studyChoices = false, localControls = false, readOnly = false } = {}) {
     const studentContext = await browser.newContext({ viewport: { width: 1000, height: 700 }, deviceScaleFactor: studentDpr });
     const teacherContext = await browser.newContext({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: teacherDpr });
     const student = await studentContext.newPage();
@@ -147,10 +148,10 @@ async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = fal
         if (latency) await new Promise((resolve) => setTimeout(resolve, latency));
         if (studentReady) await student.evaluate((value) => window.source.receiveCommand(value), data);
     });
-    await teacher.evaluate(({ viewGestures, localControls }) => {
+    await teacher.evaluate(({ viewGestures, localControls, readOnly }) => {
         window.statuses = [];
         window.viewZooms = []; window.viewPans = [];
-        window.viewer = Mirror.attachViewerMirror({ pageId: 'page-1', container: document.querySelector('#mirror'),
+        window.viewer = Mirror.attachViewerMirror({ pageId: 'page-1', container: document.querySelector('#mirror'), readOnly,
             ...(localControls ? { onDocument(doc) {
                 const button = doc.createElement('button'); button.id = 'trusted-capacity'; button.textContent = '运行位置';
                 button.dataset.ideCapacityLocal = ''; button.dataset.liveShareUi = '';
@@ -166,7 +167,7 @@ async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = fal
                 onViewPan: (data) => { window.viewPans.push(data); window.onViewPanHook?.(data); },
             } : {}),
             sendCommand: (data) => window.sendCommand(data), onStatus: (message) => window.statuses.push(message) });
-    }, { viewGestures, localControls });
+    }, { viewGestures, localControls, readOnly });
     await student.exposeFunction('sendPacket', async (data) => {
         packets.push(data);
         if (latency) await new Promise((resolve) => setTimeout(resolve, latency));
@@ -189,6 +190,101 @@ async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = fal
     return { student, teacher, packets, commands, acks, errors, close,
         frame: () => teacher.frameLocator('#mirror iframe') };
 }
+
+for (const readOnly of [false, true]) it(`shows a small source-only pointer in ${readOnly ? 'readonly broadcasts' : 'teacher assistance'}, including blocked editors and scaled views`, async () => {
+    const f = await fixture({ readOnly });
+    try {
+        await f.teacher.addStyleTag({ content: stylus.render(fs.readFileSync(path.join(root, 'packages/ui-default/components/live_share.page.styl'), 'utf8')) });
+        await f.teacher.evaluate(() => {
+            document.querySelector('#mirror').style.cssText += ';transform:scale(.7);transform-origin:top left';
+            window.remoteMouseEvents = 0;
+            document.querySelector('#mirror iframe').contentDocument.addEventListener('pointermove', () => remoteMouseEvents++);
+        });
+        const dot = f.teacher.locator('#mirror > .live-share-remote-pointer');
+        assert.equal(await dot.isVisible(), false, 'no invented cursor before a real source move');
+        await f.student.mouse.move(320, 105);
+        await f.teacher.waitForFunction(() => document.querySelector('.live-share-remote-pointer').style.left === '320px'
+            && document.querySelector('.live-share-remote-pointer').style.display === 'block');
+        await f.teacher.waitForTimeout(90);
+        const layout = await dot.evaluate((node) => {
+            const box = node.getBoundingClientRect(); const host = node.parentElement.getBoundingClientRect();
+            return { x: (box.left + box.width / 2 - host.left) / .7, y: (box.top + box.height / 2 - host.top) / .7,
+                width: box.width, pointer: getComputedStyle(node).pointerEvents, background: getComputedStyle(node).backgroundColor };
+        });
+        assert(Math.abs(layout.x - 320) < 1 && Math.abs(layout.y - 105) < 1, 'light point follows the source logical coordinates under scaling');
+        assert(layout.width < 10 && layout.width > 7, 'the light point stays compact instead of covering text');
+        assert.equal(layout.pointer, 'none'); assert.notEqual(layout.background, 'rgba(0, 0, 0, 0)');
+        assert.equal(await f.teacher.evaluate(() => remoteMouseEvents), 0, 'remote pointer never simulates the viewer local mouse');
+        await f.teacher.mouse.move(700, 300);
+        await f.student.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 900, clientY: 600 })));
+        await f.teacher.waitForTimeout(180);
+        assert.equal(await dot.evaluate(node => node.style.left), '320px', 'viewer and synthetic events never impersonate the real source pointer');
+        assert.equal(await f.teacher.evaluate(() => {
+            const make = (positions) => ({ type: 3, timestamp: Date.now(), data: { source: 1, positions } });
+            return [[], [{ id: 1, x: NaN, y: 20, timeOffset: 0 }], [{ id: -1, x: 10, y: 20, timeOffset: 0 }],
+                [{ id: 1, x: 50000, y: 20, timeOffset: 0 }]].every(positions => Mirror.sanitizeMirrorEvent(make(positions)) === null)
+                && !!Mirror.sanitizeMirrorEvent(make([{ id: 1, x: -1, y: -1, timeOffset: 0 }]));
+        }), true, 'bad pointer packets are rejected while the explicit leave marker remains valid');
+        const editor = await f.student.locator('[data-live-share-editor]').boundingBox();
+        await f.student.mouse.move(editor.x + 80, editor.y + 40);
+        await f.teacher.waitForFunction((point) => Math.abs(parseFloat(document.querySelector('.live-share-remote-pointer').style.left) - point.x) < 1
+            && Math.abs(parseFloat(document.querySelector('.live-share-remote-pointer').style.top) - point.y) < 1, { x: editor.x + 80, y: editor.y + 40 });
+        assert.equal(await dot.isVisible(), true, 'Monaco blocking does not suppress a mouse-only display packet');
+        await f.student.mouse.move(1005, 705);
+        await dot.waitFor({ state: 'hidden' });
+        await f.student.mouse.move(200, 100); await dot.waitFor({ state: 'visible' });
+        await f.student.evaluate(() => window.dispatchEvent(new Event('blur')));
+        await dot.waitFor({ state: 'hidden' });
+        await f.student.mouse.move(220, 110); await dot.waitFor({ state: 'visible' });
+        await f.teacher.evaluate(() => viewer.setConnected(false));
+        await dot.waitFor({ state: 'hidden' });
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('hides source pointer coordinates over private controls while preserving relayed IDE and annotation surfaces', async () => {
+    const f = await fixture();
+    try {
+        await f.teacher.addStyleTag({ content: stylus.render(fs.readFileSync(path.join(root, 'packages/ui-default/components/live_share.page.styl'), 'utf8')) });
+        await f.student.evaluate(() => {
+            const probe = document.createElement('div'); probe.id = 'pointer-privacy-probe';
+            probe.style.cssText = 'position:fixed;left:760px;top:500px;width:200px;height:140px;background:white;z-index:100';
+            document.body.append(probe);
+        });
+        const dot = f.teacher.locator('#mirror > .live-share-remote-pointer');
+        const probe = async (markup) => {
+            await f.student.evaluate(markup => { document.getElementById('pointer-privacy-probe').innerHTML = markup;
+                const node = document.getElementById('probe-target'); node.style.cssText = 'display:block;margin:0;width:150px;height:80px'; }, markup);
+            await f.student.mouse.move(320, 105); await dot.waitFor({ state: 'visible' });
+            await f.student.mouse.move(780, 525);
+        };
+        for (const markup of [
+            '<div data-live-share-private><span id="probe-target">hidden</span></div>',
+            '<div data-live-share-ui><span id="probe-target">hidden</span></div>',
+            '<div class="voice-call-floating"><span id="probe-target">hidden</span></div>',
+            '<div data-voice-call-ui><span id="probe-target">hidden</span></div>',
+            '<input id="probe-target" type="password" value="secret">',
+            '<input id="probe-target" name="api_token" value="secret">',
+            '<input id="probe-target" autocomplete="one-time-code" value="123456">',
+            '<div data-private><div data-ide-runtime data-live-share-private><span id="probe-target">hidden</span></div></div>',
+            '<div class="live-share-code-focus-layer" data-live-share-private><input id="probe-target" name="csrf" value="secret"></div>',
+            '<div data-ide-runtime data-live-share-private data-live-share-ui><span id="probe-target">viewer runtime</span></div>',
+        ]) {
+            await probe(markup); await dot.waitFor({ state: 'hidden' });
+        }
+        for (const markup of [
+            '<div data-ide-runtime data-live-share-private><span id="probe-target">terminal output</span></div>',
+            '<div class="live-share-annotation-source" data-live-share-private><span id="probe-target">shared note</span></div>',
+            '<div class="live-share-code-focus-layer" data-live-share-private data-live-share-ui><span id="probe-target">code note</span></div>',
+            '<div data-live-share-private data-live-share-ui><div data-share-drawing-note data-live-share-private data-live-share-ui><span id="probe-target">drawing note</span></div></div>',
+        ]) {
+            await probe(markup);
+            await f.teacher.waitForFunction(() => document.querySelector('.live-share-remote-pointer').style.left === '780px'
+                && document.querySelector('.live-share-remote-pointer').style.display === 'block');
+        }
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
 
 it('trusted teacher controls stay local while copied markers cannot bypass replay safeguards', async () => {
     const f = await fixture({ localControls: true,

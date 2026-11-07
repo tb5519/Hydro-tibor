@@ -1,4 +1,5 @@
 import { createTurtleRenderer } from './graphics';
+import { IDE_FONT_DEFAULT } from './fontSize';
 import { emptyIdeSnapshot, IdeCommand, IdeSnapshot, IdeWindowName, isIdeRunning } from './types';
 
 export interface IdeViewOptions { onCommand: (command: IdeCommand) => void; shared?: boolean }
@@ -267,6 +268,10 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
   const observer = new ResizeObserver(layout); observer.observe(root); cleanup.push(() => observer.disconnect());
   function render(next: IdeSnapshot) {
     state = next;
+    const fontSize = `${state.fontSize ?? IDE_FONT_DEFAULT}px`;
+    const fontChanged = consoleBody.style.fontSize !== fontSize;
+    const followOutput = consoleBody.scrollHeight - consoleBody.scrollTop - consoleBody.clientHeight < 64;
+    consoleBody.style.fontSize = fontSize;
     root.dataset.ideState = state.state;
     sharedRun.textContent = isIdeRunning(state.state) ? '■ 停止' : '▷ 运行';
     sharedRun.title = isIdeRunning(state.state) ? '停止学员的程序' : '运行学员的代码';
@@ -320,6 +325,10 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
       if (!dialogComposing && pendingDialogDraft === null && dialogInput.value !== state.request.draft) dialogInput.value = state.request.draft;
     }
     if (!state.request) { requestId = null; pendingDialogDraft = null; }
+    if (fontChanged) {
+      if (followOutput) consoleBody.scrollTop = consoleBody.scrollHeight;
+      followInput();
+    }
   }
   render(state);
   return { render, getBounds: () => root.getBoundingClientRect(), element: root,

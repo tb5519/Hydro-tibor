@@ -44,7 +44,7 @@ try {
     execFileSync('tar', ['-xzf', path.join(output, 'source.tar.gz'), '-C', temp]);
     const source = path.join(temp, 'onebyone-live-share');
     fs.mkdirSync(source, { recursive: true });
-    for (const name of ['frame_capture.ts', 'mirror.ts', 'annotation.ts', 'annotation_arrow.ts', 'splitter.ts', 'scratch_control.ts', 'drawing.ts', 'drawing_anchor.ts', 'capture_vendor.js', 'vendor.LICENSE.txt']) {
+    for (const name of ['frame_capture.ts', 'mirror.ts', 'pointer.ts', 'annotation.ts', 'annotation_cache.ts', 'annotation_arrow.ts', 'splitter.ts', 'scratch_control.ts', 'drawing.ts', 'drawing_anchor.ts', 'capture_vendor.js', 'vendor.LICENSE.txt']) {
         fs.copyFileSync(path.join(components, name), path.join(source, name));
     }
     fs.writeFileSync(path.join(source, 'mirror.ts'), fs.readFileSync(path.join(source, 'mirror.ts'), 'utf8')

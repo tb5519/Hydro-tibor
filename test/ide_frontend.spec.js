@@ -370,7 +370,7 @@ it('rejects malformed shared snapshots without DOM errors or poisoning later val
     const host = document.querySelector('#app');
     const viewer = Ide.attachViewerIde({ pageId: 'malformed-page', container: host, sendCommand() {} });
     viewer.setConnected(true);
-    const state = Ide.emptyIdeSnapshot(); state.windows.terminal.visible = true;
+    const state = Ide.emptyIdeSnapshot(); state.windows.terminal.visible = true; state.fontSize = 26;
     state.output = [{ stream: 'stdout', text: 'safe output' }];
     const rect = { x: 0, y: 0, width: 1000, height: 700 };
     function receive(snapshot, sequence, rest = {}) {
@@ -385,19 +385,24 @@ it('rejects malformed shared snapshots without DOM errors or poisoning later val
       { primitives: [{ id: 1, turtle: 1, op: 'polygon', points: 'bad', fill: 'red', stroke: 'red', width: 1 }] },
       { turtles: [null] }, { output: [{ stream: 'html', text: '<img onerror="alert(1)">' }] },
       { shapes: { bad: 'not points' } }, { request: { op: 'request', id: 1, kind: 'eval' } },
+      { fontSize: 9 }, { fontSize: 41 }, { fontSize: '24' }, { fontSize: null },
     ];
     for (const patch of patches) receive({ ...state, ...patch }, 100);
     viewer.receive({ type: 'ide', sequence: 100, index: 0, total: 1, chunk: 'null' });
     receive({ revision: 1 }, 100, { reset: false, base: 0, upsert: [null], remove: [] });
     const after = document.querySelector('.ide-terminal__output').textContent;
+    const fontAfterRejected = getComputedStyle(document.querySelector('.ide-terminal__output')).fontSize;
     receive({ ...state, revision: 2, output: [{ stream: 'stdout', text: 'new valid output' }] }, 2);
     const valid = document.querySelector('.ide-terminal__output').textContent;
+    const legacy = { ...state, revision: 3 }; delete legacy.fontSize;
+    receive(legacy, 3);
+    const legacyFont = getComputedStyle(document.querySelector('.ide-terminal__input')).fontSize;
     viewer.setConnected(false); viewer.setConnected(true);
     receive({ ...state, revision: 3, output: [{ stream: 'stdout', text: 'reconnected output' }] }, 0);
     const reconnect = document.querySelector('.ide-terminal__output').textContent;
-    viewer.dispose(); return { before, after, valid, reconnect };
+    viewer.dispose(); return { before, after, valid, reconnect, fontAfterRejected, legacyFont };
   });
-  assert.deepEqual(result, { before: 'safe output', after: 'safe output', valid: 'new valid output', reconnect: 'reconnected output' });
+  assert.deepEqual(result, { before: 'safe output', after: 'safe output', valid: 'new valid output', reconnect: 'reconnected output', fontAfterRejected: '26px', legacyFont: '14px' });
   assert.deepEqual(errors, []); await teacher.close();
 });
 

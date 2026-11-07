@@ -1,4 +1,5 @@
 import { installBroadcastController } from './broadcast_controller';
+import { clearSessionAnnotations } from './annotation_cache';
 
 export interface LiveShareConfig {
   enabled: boolean; uid: number; canTeach: boolean; socketUrl: string; pageGrant?: string;
@@ -8,10 +9,11 @@ type Controllers = {
   receive?(data: any): void; receiveCommand?(data: any): any;
   getEditorRect?(id: string): { x: number; y: number; width: number; height: number } | null;
   getFrameRect?(id: string): { x: number; y: number; width: number; height: number } | null;
+  getDrawingDocument?(frameId?: string): Document | null;
 };
 type Adapters = typeof import('./mirror') & typeof import('./editor') & typeof import('./frames') & typeof import('./drawing') & typeof import('./ide');
 interface Student { uid: number; name: string; online: boolean; tabs?: { tabId: string; title: string; visible: boolean }[] }
-interface Session { sessionId: string; pageId: string; studentUid?: number; studentName?: string; teacherName?: string; tabId?: string }
+interface Session { sessionId: string; pageId: string; pageUrl?: string; studentUid?: number; studentName?: string; teacherName?: string; tabId?: string }
 let installed: (() => void) | undefined;
 
 export function installLiveShare(config: LiveShareConfig, options: {
@@ -35,7 +37,8 @@ export function installLiveShare(config: LiveShareConfig, options: {
   try { sessionStorage = window.sessionStorage; localStorage = window.localStorage; } catch { /* Private browser. */ }
   const tabKey = `onebyone.live-share.tab:${uid}`;
   let tabId = identity(sessionStorage, tabKey);
-  const deviceId = identity(localStorage, `onebyone.live-share.device:${uid}`);
+  const deviceKey = `onebyone.live-share.device:${uid}`;
+  let deviceId = identity(localStorage, deviceKey);
   let pageId = randomId();
   const resumeKey = `onebyone.live-share.resume:${uid}`;
   const backupKey = `onebyone.live-share.unsynced:${uid}`;
@@ -235,6 +238,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     if (current) { closedSessions.add(current.sessionId); send({ type: 'stop', sessionId: current.sessionId }); }
     saveResume(null); pendingStart = 0; deferredStart = null;
     closeView(); clearSource(); closeRoster();
+    if (current) clearSessionAnnotations(current.sessionId);
     showBackups();
   }
   function finishSync() {
@@ -410,7 +414,9 @@ export function installLiveShare(config: LiveShareConfig, options: {
       const frameRoot = el('div', 'live-share-frames');
       frameRoot.style.cssText = 'position:absolute;inset:0;pointer-events:none;overflow:hidden';
       stage.append(mirrorRoot, frameRoot, editorRoot);
+      const annotationScope = next.pageUrl ? { sessionId: next.sessionId, url: next.pageUrl } : undefined;
       viewerMirror = adapters.attachViewerMirror({ pageId: next.pageId, container: mirrorRoot,
+        annotationScope,
         onDocument: adapters.attachIdeCapacityMirror,
         sendCommand: (data) => relay(next, 'command', data),
         onViewZoom: wheelZoom, onViewPan: panView,
@@ -430,6 +436,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
         onStatus: (message: string) => { if (message && viewing === next) setStatus(message); },
       }) || null;
       viewerEditors = adapters.attachViewerEditors({ pageId: next.pageId, container: editorRoot,
+        annotationScope,
         getNodeRect: (id) => viewerMirror?.getEditorRect?.(id) || undefined,
         send: (data) => relay(next, 'editor', data),
         onStatus: (status: any) => {
@@ -441,6 +448,8 @@ export function installLiveShare(config: LiveShareConfig, options: {
         },
       });
       viewerDrawing = adapters.attachTemporaryDrawing?.({ pageId: next.pageId, container: stage, teacher: true,
+        annotationScope, annotationDocument: (frameId?: string) => (frameId
+          ? viewerFrames?.getDrawingDocument?.(frameId) || null : viewerMirror?.getDrawingDocument?.() || null),
         anchors: {
           identify: (node) => {
             const nodeId = viewerMirror?.getDrawingNodeId?.(node);
@@ -578,6 +587,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
         clearTimeout(endTimer); ending = false; afterSync = null;
         preservePending(); saveResume(null); closeView(); clearSource(); showBackups();
       }
+      if (!message.followed) clearSessionAnnotations(message.sessionId);
     }
     if (message.type === 'error' || message.error) {
       pendingStart = 0;
@@ -603,6 +613,12 @@ export function installLiveShare(config: LiveShareConfig, options: {
     ws.addEventListener('open', () => {
       if (socket !== ws || disposed) return;
       lastPong = Date.now();
+      // Simultaneously opened idle tabs can race on their first device ID write.
+      // Use the settled browser-wide identity when the actual connection starts.
+      try {
+        const currentDevice = localStorage?.getItem(deviceKey);
+        if (currentDevice && /^[a-zA-Z0-9_-]{8,96}$/.test(currentDevice)) deviceId = currentDevice;
+      } catch { /* Keep the stable in-memory identity if storage is unavailable. */ }
       send({ type: 'hello', tabId, pageId, pageGrant: config.pageGrant, deviceId,
         url: window.location.pathname + window.location.search, title: document.title.slice(0, 160), visible: !document.hidden });
       clearInterval(pulseTimer);

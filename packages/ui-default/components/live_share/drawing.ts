@@ -1,7 +1,8 @@
 import {
-  captureDrawingAnchor, drawingAnchorTransform, drawingPoint, inverseDrawingMatrix, resolveDrawingAnchor, validDrawingAnchor,
+  captureDrawingAnchor, drawingAnchorTransform, drawingEditorContent, drawingPoint, inverseDrawingMatrix, resolveDrawingAnchor, validDrawingAnchor,
 } from './drawing_anchor';
 import type { DrawingAnchor, DrawingAnchorBinding, DrawingAnchorResolvers, DrawingClip, DrawingMatrix } from './drawing_anchor';
+import { AnnotationScope, ElementBookmark, annotationFingerprint, bookmarkElement, resolveElementBookmark, readAnnotationCache, writeAnnotationCache } from './annotation_cache';
 
 /** Points retain the initial learner viewport coordinates; an optional content anchor follows scrolling. */
 export interface DrawingPacket {
@@ -12,6 +13,13 @@ export interface DrawingPacket {
   anchor?: DrawingAnchor;
   note?: { text: string; x: number; y: number; width: number; height: number };
 }
+
+/** Chosen from the authenticated sender, never from drawing payload fields. */
+export type DrawingRole = 'teacher' | 'student';
+const penColors: Record<DrawingRole, { ink: string; shadow: string }> = {
+  teacher: { ink: '#9272e5', shadow: '#8061cd35' },
+  student: { ink: '#1599b3', shadow: '#087e9835' },
+};
 
 const MAX_STROKES = 32;
 const MAX_POINTS = 2048;
@@ -24,7 +32,7 @@ type Point = [number, number];
 type Note = NonNullable<DrawingPacket['note']>;
 type Stroke = { node: SVGGElement; wrapper: SVGGElement; clipPath: SVGClipPathElement; clipRect: SVGRectElement;
   binding?: DrawingAnchorBinding; transform: DrawingMatrix; clip: DrawingClip; visible: boolean; geometryKey?: string; paths: SVGPathElement[]; points: Point[]; bounds: { left: number; top: number; right: number; bottom: number } | null; sequence: number;
-  ended: boolean; expiry: number; removal: number; expiresAt: number;
+  ended: boolean; expiry: number; removal: number; expiresAt: number; role: DrawingRole;
   note?: Note; bubble?: HTMLDivElement; input?: HTMLTextAreaElement; connector?: SVGLineElement; moved?: boolean };
 
 const noteFont = '15px/20px Arial,"Microsoft YaHei","PingFang SC",sans-serif';
@@ -72,9 +80,15 @@ export function attachTemporaryDrawing(options: {
   teacher: boolean;
   /** Broadcast viewers have a temporary left-button pen, never editable labels. */
   inputButton?: 0 | 2;
+  /** Local pen identity. Remote strokes receive their role separately from trusted room metadata. */
+  penRole?: DrawingRole;
   allowNotes?: boolean;
   onlyOwnNotes?: boolean;
   pageId: string;
+  annotationScope?: AnnotationScope;
+  annotationDocument?: (frameId?: string) => Document | null;
+  /** Controlled opaque Scratch frames delegate short-lived drafts to their teacher parent. */
+  annotationStore?: { read: () => unknown[]; write: (drafts: unknown[]) => void };
   /** Local teacher-only overlay can listen across its owner page rather than inside a mirrored stage. */
   scopeDocument?: boolean;
   anchors?: DrawingAnchorResolvers;
@@ -105,6 +119,82 @@ export function attachTemporaryDrawing(options: {
   const strokes = new Map<string, Stroke>();
   const seen = new Set<string>();
   const outgoing = new Map<string, DrawingPacket[]>();
+  type SavedStroke = { id: string; packets: DrawingPacket[]; bookmark?: ElementBookmark; frames?: ElementBookmark[]; frame?: ElementBookmark;
+    editor?: { index: number; fingerprint: string }; reference: DrawingMatrix; mode: DrawingAnchorBinding['mode'] };
+  const annotationScope = canAnnotate && options.penRole !== 'student' ? options.annotationScope : undefined;
+  const annotationStore = canAnnotate && options.penRole !== 'student' ? options.annotationStore : undefined;
+  const hasAnnotationCache = !!annotationScope || !!annotationStore;
+  const drafts = (annotationStore?.read() || readAnnotationCache<SavedStroke>(annotationScope, 'ink')) as SavedStroke[];
+  const saved = new Map(drafts.slice(0, 50).filter((item) => item && typeof item.id === 'string').map((item) => [item.id, item]));
+  const saveDrafts = () => { if (annotationStore) annotationStore.write([...saved.values()]);
+    else writeAnnotationCache(annotationScope, 'ink', [...saved.values()]); };
+  function persistStroke(id: string) {
+    if (!hasAnnotationCache) return;
+    const stroke = strokes.get(id); const packets = outgoing.get(id);
+    if (!stroke?.note || stroke.role !== 'teacher' || !packets?.length || !stroke.binding?.node) return;
+    const binding = stroke.binding; const node = binding.node!;
+    let item: SavedStroke | null = null;
+    if (binding.editor || binding.anchor?.kind === 'editor') {
+      const roots = [...(options.scopeDocument ? doc : options.container).querySelectorAll<HTMLElement>('[data-live-share-editor]')];
+      const index = roots.indexOf(node as HTMLElement); const content = drawingEditorContent(node as HTMLElement);
+      if (index >= 0 && content !== null) item = { id, packets, editor: { index, fingerprint: annotationFingerprint(content) }, reference: binding.reference, mode: binding.mode };
+    } else {
+      const frameId = binding.anchor?.kind === 'dom' ? binding.anchor.frameId : undefined;
+      const outer = frameId && options.annotationDocument?.();
+      const frameNode = outer && outer.querySelector(`[data-live-share-frame="${frameId}"]`);
+      const frame = frameNode && bookmarkElement(frameNode);
+      const base = options.annotationDocument?.(frameId) || (options.scopeDocument ? doc : null);
+      let current = node.ownerDocument; const frames: ElementBookmark[] = []; let valid = !!base;
+      while (base && current !== base && frames.length < 6) {
+        const frame = current.defaultView?.frameElement; const bookmark = frame && bookmarkElement(frame);
+        if (!bookmark || !frame) { valid = false; break; }
+        frames.unshift(bookmark); current = frame.ownerDocument;
+      }
+      const bookmark = bookmarkElement(node);
+      if (valid && current === base && bookmark && (!frameId || frame)) item = { id, packets, bookmark, frames, ...(frame ? { frame } : {}), reference: binding.reference, mode: binding.mode };
+    }
+    if (item) { saved.set(id, item); saveDrafts(); }
+  }
+  function restoreStrokes() {
+    if (!hasAnnotationCache || !connected || disposed) return;
+    for (const item of saved.values()) {
+      if (strokes.has(item.id) || !Array.isArray(item.packets) || !item.packets.length || item.packets.length > 70
+        || !item.packets.every(validDrawingPacket) || item.packets[0].phase !== 'start' || item.packets.at(-1)?.phase !== 'note'
+        || item.packets.some((packet) => packet.strokeId !== item.id)) continue;
+      let node: Element | null = null;
+      if (item.editor) {
+        const roots = [...(options.scopeDocument ? doc : options.container).querySelectorAll<HTMLElement>('[data-live-share-editor]')];
+        node = Number.isInteger(item.editor.index) ? roots[item.editor.index] || null : null;
+        const content = node && drawingEditorContent(node as HTMLElement);
+        if (content === null || content === undefined || annotationFingerprint(content) !== item.editor.fingerprint) continue;
+      } else if (item.bookmark) {
+        let current = options.annotationDocument?.() || (options.scopeDocument ? doc : null);
+        if (item.frame) {
+          const frame = current && resolveElementBookmark(current, item.frame, false);
+          const id = frame?.getAttribute('data-live-share-frame');
+          current = id ? options.annotationDocument?.(id) || null : null;
+        }
+        for (const frame of item.frames || []) {
+          const element = current && resolveElementBookmark(current, frame, false) as HTMLIFrameElement | null;
+          current = element?.tagName === 'IFRAME' ? element.contentDocument : null;
+        }
+        node = current && resolveElementBookmark(current, item.bookmark);
+      }
+      if (!node) continue;
+      const captured = captureDrawingAnchor(node, options.container, options.anchors);
+      if (!captured || !captured.anchor) continue;
+      const anchor = { ...captured.anchor, matrix: item.reference };
+      if (!validDrawingAnchor(anchor)) continue;
+      const packets = item.packets.map((packet, index) => index ? packet : { ...packet, anchor });
+      seen.delete(item.id);
+      for (const packet of packets) receive(packet, 'teacher');
+      const stroke = strokes.get(item.id);
+      if (!stroke?.note) continue;
+      stroke.binding = { ...captured, anchor, reference: item.reference, mode: item.mode };
+      outgoing.set(item.id, packets); refreshGeometry(item.id, stroke, true);
+      for (const packet of packets) options.send?.(packet);
+    }
+  }
   const bound = new Map<Window, { document: Document; root: Element | null; unbind: () => void }>();
   const watchedFrames = new Map<HTMLIFrameElement, () => void>();
   const localFrames = new Map<HTMLIFrameElement, { channel: string; href: string; lastSent: number; loaded: () => void }>();
@@ -187,7 +277,7 @@ export function attachTemporaryDrawing(options: {
       stroke.removal = win.setTimeout(() => remove(id), FADE_MS);
     }, delay);
   }
-  function receive(packet: DrawingPacket) {
+  function receive(packet: DrawingPacket, role: DrawingRole = 'teacher') {
     if (disposed || !connected || !validDrawingPacket(packet)) return;
     let stroke = strokes.get(packet.strokeId);
     if (packet.phase === 'start') {
@@ -207,18 +297,20 @@ export function attachTemporaryDrawing(options: {
       wrapper.setAttribute('clip-path', `url(#${clipPath.id})`);
       const node = doc.createElementNS(namespace, 'g');
       node.dataset.shareDrawingStroke = packet.strokeId;
+      node.dataset.shareDrawingRole = role;
+      const color = penColors[role];
       const paths = [6.5, 4].map((width, index) => {
         const path = doc.createElementNS(namespace, 'path');
         path.setAttribute('fill', 'none');
-        path.setAttribute('stroke', index ? '#9272e5' : '#ffffff');
+        path.setAttribute('stroke', index ? color.ink : '#ffffff');
         path.setAttribute('stroke-width', String(width));
         path.setAttribute('stroke-linecap', 'round'); path.setAttribute('stroke-linejoin', 'round');
         path.setAttribute('opacity', index ? '.96' : '.78');
         node.append(path); return path;
       });
-      node.style.filter = 'drop-shadow(0 1px 3px #8061cd35)';
+      node.style.filter = `drop-shadow(0 1px 3px ${color.shadow})`;
       wrapper.append(node); layer.append(wrapper);
-      stroke = { node, wrapper, clipPath, clipRect, paths, points: [], bounds: null, sequence: -1, ended: false, expiry: 0, removal: 0, expiresAt: Infinity,
+      stroke = { node, wrapper, clipPath, clipRect, paths, points: [], bounds: null, sequence: -1, ended: false, expiry: 0, removal: 0, expiresAt: Infinity, role,
         transform: [1, 0, 0, 1, 0, 0], clip: viewportClip(), visible: true,
         ...(packet.anchor ? { binding: { anchor: packet.anchor, mode: packet.anchor.mode, reference: packet.anchor.matrix } } : {}) };
       startGeometry();
@@ -226,6 +318,7 @@ export function attachTemporaryDrawing(options: {
     }
     if (!stroke || (packet.phase === 'note' ? packet.sequence <= stroke.sequence : packet.sequence !== stroke.sequence + 1)
       || stroke.points.length + packet.points.length > MAX_POINTS) return;
+    if (stroke.role === 'student' && ['note', 'delete'].includes(packet.phase)) return;
     if (packet.phase === 'note') {
       if (!stroke.ended) return;
       stroke.sequence = packet.sequence; stroke.note = { ...packet.note! };
@@ -257,6 +350,8 @@ export function attachTemporaryDrawing(options: {
         packets.push(packet);
       }
     }
+    if (packet.phase === 'note') persistStroke(packet.strokeId);
+    if (packet.phase === 'delete' && hasAnnotationCache) { saved.delete(packet.strokeId); saveDrafts(); }
     options.send?.(packet);
   }
   function noteDimensions(text: string) {
@@ -396,7 +491,7 @@ export function attachTemporaryDrawing(options: {
   }
   function pinLatest() {
     if (active) finish();
-    const entry = [...strokes].reverse().find(([id, value]) => (!options.onlyOwnNotes || outgoing.has(id)) && !value.note && value.ended && value.expiresAt > now()
+    const entry = [...strokes].reverse().find(([id, value]) => value.role === 'teacher' && (!options.onlyOwnNotes || outgoing.has(id)) && !value.note && value.ended && value.expiresAt > now()
       && value.visible && value.node.isConnected && Number(win.getComputedStyle(value.node).opacity) > .01);
     if (!entry) return false;
     const [id, stroke] = entry; const size = noteDimensions('');
@@ -466,7 +561,7 @@ export function attachTemporaryDrawing(options: {
       const id = Array.from(win.crypto.getRandomValues(new Uint8Array(12)), (value) => value.toString(16).padStart(2, '0')).join('');
       const binding = captureDrawingAnchor(event.target, options.container, options.anchors);
       const packet: DrawingPacket = { strokeId: id, phase: 'start', sequence: 0, points: [point], ...(binding?.anchor ? { anchor: binding.anchor } : {}) };
-      receive(packet);
+      receive(packet, options.penRole ?? 'teacher');
       if (!strokes.has(id)) return;
       if (binding) { strokes.get(id)!.binding = binding; refreshGeometry(id, strokes.get(id)!, true); }
       active = { id, pointer: event.pointerId, sequence: 0, pending: [], count: 1, last: point, started: now() };
@@ -557,9 +652,25 @@ export function attachTemporaryDrawing(options: {
     } });
   }
   function postLocalFrame(frame: HTMLIFrameElement, channel: string, enabled: boolean) {
-    try { frame.contentWindow?.postMessage({ type: 'live-share-local-drawing', channel, enabled }, '*'); }
+    const bookmark = enabled && annotationScope && bookmarkElement(frame);
+    const annotationDrafts = bookmark ? readAnnotationCache(annotationScope, `scratch-${annotationFingerprint(bookmark.path)}`) : undefined;
+    try { frame.contentWindow?.postMessage({ type: 'live-share-local-drawing', channel, enabled,
+      ...(annotationDrafts ? { annotationDrafts } : {}) }, '*'); }
     catch { /* A removed Scratch frame no longer needs its short-lived drawing lease. */ }
   }
+  const frameDrafts = (event: MessageEvent) => {
+    const value = event.data;
+    if (!annotationScope || disposed || !connected || value?.type !== 'live-share-local-drawing-cache' || event.origin !== 'null'
+      || !Array.isArray(value.drafts) || value.drafts.length > MAX_STROKES) return;
+    try { if (JSON.stringify(value.drafts).length > 256 * 1024) return; } catch { return; }
+    const entry = [...localFrames].find(([frame, binding]) => frame.contentWindow === event.source && binding.channel === value.channel
+      && localFrameInfo(frame)?.href === binding.href);
+    const bookmark = entry && bookmarkElement(entry[0]);
+    if (!bookmark || !value.drafts.every((item: SavedStroke) => item && typeof item.id === 'string' && Array.isArray(item.packets)
+      && item.packets.length <= 70 && item.packets.every(validDrawingPacket) && item.packets[0]?.phase === 'start'
+      && item.packets.at(-1)?.phase === 'note' && item.packets.every((packet) => packet.strokeId === item.id))) return;
+    writeAnnotationCache(annotationScope, `scratch-${annotationFingerprint(bookmark.path)}`, value.drafts);
+  };
   function localFrameInfo(frame: HTMLIFrameElement) {
     try {
       const url = new URL(frame.src, doc.URL);
@@ -642,16 +753,21 @@ export function attachTemporaryDrawing(options: {
     seen.clear();
   }
   const observer = new win.MutationObserver(() => { if (!disposed) scan(); });
+  const preserve = () => { flushNotes(); for (const id of outgoing.keys()) persistStroke(id); };
+  const restoreTimer = hasAnnotationCache ? win.setInterval(restoreStrokes, 600) : 0;
+  if (hasAnnotationCache) win.addEventListener('pagehide', preserve);
+  if (annotationScope && options.scopeDocument) win.addEventListener('message', frameDrafts);
   if (options.teacher) {
     scan(); observer.observe(options.scopeDocument ? doc.documentElement : options.container, { childList: true, subtree: true });
     scanTimer = win.setInterval(scan, 200);
   }
   return {
     receive,
-    snapshot() { if (connected && !disposed) for (const [id, packets] of outgoing) {
+    snapshot() { restoreStrokes(); if (connected && !disposed) for (const [id, packets] of outgoing) {
       if (strokes.get(id)?.note) for (const packet of packets) options.send?.(packet);
     } },
     setConnected(value: boolean) {
+      if (!value) preserve();
       connected = value;
       if (!value) {
         clear();
@@ -660,7 +776,7 @@ export function attachTemporaryDrawing(options: {
     },
     dispose() {
       if (disposed) return;
-      disposed = true; connected = false; clear(); observer.disconnect(); win.clearInterval(scanTimer);
+      preserve(); disposed = true; connected = false; clear(); observer.disconnect(); win.clearInterval(scanTimer); win.clearInterval(restoreTimer); win.removeEventListener('pagehide', preserve); win.removeEventListener('message', frameDrafts);
       for (const [frame, binding] of localFrames) { postLocalFrame(frame, binding.channel, false); frame.removeEventListener('load', binding.loaded); }
       localFrames.clear();
       for (const [frame, loaded] of watchedFrames) frame.removeEventListener('load', loaded);

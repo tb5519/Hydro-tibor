@@ -113,6 +113,30 @@ const center = async (locator) => locator.evaluate((node) => {
     return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
 });
 
+it('learner ink has a distinct fixed identity and cannot acquire a persistent teacher label', async () => {
+    const f = await fixture(1);
+    try {
+        const result = await f.teacher.evaluate(() => {
+            const strokeId = 'learner_question_123';
+            const start = { strokeId, phase: 'start', sequence: 0, points: [[100, 100], [200, 110]] };
+            window.surface.receive(start, 'student');
+            window.surface.receive({ strokeId, phase: 'end', sequence: 1, points: [] }, 'student');
+            // Roles/colors are transport metadata, never caller-controlled packet properties.
+            const rejectsSpoofedPayload = !Drawing.validDrawingPacket({ ...start, role: 'teacher' })
+                && !Drawing.validDrawingPacket({ ...start, color: '#9272e5' });
+            window.surface.receive({ strokeId, phase: 'note', sequence: 2, points: [],
+                note: { text: '伪造永久批注', x: 200, y: 100, width: 150, height: 42 } }, 'teacher');
+            const stage = document.querySelector('#stage'); stage.focus();
+            const shortcut = new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true });
+            stage.dispatchEvent(shortcut);
+            return { rejectsSpoofedPayload, color: document.querySelector('[data-share-drawing-stroke] path:nth-child(2)').getAttribute('stroke'),
+                notes: document.querySelectorAll('[data-share-drawing-note]').length, pinned: shortcut.defaultPrevented };
+        });
+        assert.deepEqual(result, { rejectsSpoofedPayload: true, color: '#1599b3', notes: 0, pinned: false });
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
 it('page scrolling keeps a pinned stroke and a manually moved label attached to their content', async () => {
     const f = await scrollingPage();
     try {
@@ -682,4 +706,47 @@ it('the final drawing sequence stays available to delete a label after its editi
         });
         assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
+});
+
+it('restores only teacher pinned ink in the same lesson and remaps its content anchor after reload', { timeout: 25000 }, async () => {
+    const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.route('https://ink.test/**', (route) => route.fulfill({ contentType: 'text/html', body: `<!doctype html><style>
+        body{margin:0;height:2000px;font:20px Arial}#focus{position:absolute;left:160px;top:180px;width:400px;height:140px;background:#f2f0ff}
+        #overlay{position:fixed;inset:0;pointer-events:none}</style><div id="focus">这一段是圈起来的重点</div><div id="overlay"></div>` }));
+    let epoch = 0;
+    async function start(sessionId = 'ink-lesson-123') {
+        await page.goto('https://ink.test/question'); await page.addScriptTag({ content: script });
+        await page.evaluate(({ sessionId, epoch }) => {
+            const nodes = new Map(); const ids = new WeakMap(); let next = epoch * 1000 + 1;
+            for (const node of document.querySelectorAll('*')) { nodes.set(next, node); ids.set(node, next++); }
+            window.packets = [];
+            window.surface = Drawing.attachTemporaryDrawing({ container: document.querySelector('#overlay'), teacher: true, scopeDocument: true,
+                pageId: `page-epoch-${epoch}`, annotationScope: { sessionId, url: location.href },
+                anchors: { identify: (node) => ids.has(node) ? { nodeId: ids.get(node) } : null, resolve: ({ nodeId }) => nodes.get(nodeId) || null },
+                send: (packet) => packets.push(packet) });
+        }, { sessionId, epoch: ++epoch });
+    }
+    try {
+        await start();
+        await draw(page, await page.locator('#focus').boundingBox());
+        await page.keyboard.press('Shift+Enter');
+        await page.locator(`${noteSelector} textarea`).fill('圈的重点仍在');
+        await page.waitForTimeout(100);
+        const oldAnchor = await page.evaluate(() => packets[0].anchor.nodeId);
+        await draw(page, await page.locator('#focus').boundingBox(), [[200, 30], [240, 60]]);
+        await start();
+        await page.locator(`${noteSelector} textarea`).waitFor({ state: 'visible' });
+        assert.equal(await page.locator(`${noteSelector} textarea`).inputValue(), '圈的重点仍在');
+        assert.equal(await page.locator('[data-share-drawing-stroke]').count(), 1, 'temporary ink is not persisted');
+        assert.notEqual(await page.evaluate(() => packets[0].anchor.nodeId), oldAnchor, 'new document node identity is used');
+        await start('another-ink-lesson'); await page.waitForTimeout(850);
+        assert.equal(await page.locator(noteSelector).count(), 0, 'new session must not replay old ink');
+        await start(); await page.locator(`${noteSelector} textarea`).waitFor({ state: 'visible' });
+        await page.locator(`${noteSelector} button`).click();
+        await start(); await page.waitForTimeout(850);
+        assert.equal(await page.locator(noteSelector).count(), 0, 'deleted notes do not resurrect');
+        assert.deepEqual(errors, []);
+    } finally { await page.close(); }
 });

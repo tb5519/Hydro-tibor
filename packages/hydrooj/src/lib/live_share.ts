@@ -394,6 +394,7 @@ export interface ShareSession {
     workspaceId: string;
     domainId: string;
     pageId: string;
+    pageUrl?: string;
     teacherName: string;
     studentName: string;
     active: boolean;

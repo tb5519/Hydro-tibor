@@ -1,9 +1,12 @@
 import type { LiveShareConfig } from './controller';
+import type { BroadcastFocus } from './broadcast_focus';
+import { clearSessionAnnotations } from './annotation_cache';
+import { createBroadcastPresence } from './broadcast_presence';
 
 interface Student { uid: number; name: string; online: boolean; tabs?: { title: string; visible: boolean }[] }
 interface Room { sessionId: string; pageId: string; teacherName: string; teacherUid: number; studentUids?: number[]; viewers?: Student[] }
 type Adapters = typeof import('./broadcast_adapters');
-type Adapter = { receive(kind: string, data: any): void; snapshot?(): void; setConnected(value: boolean): void; dispose(): void };
+type Adapter = { receive(kind: string, data: any, role?: 'teacher' | 'student'): void; snapshot?(): void; setConnected(value: boolean): void; dispose(): void };
 export interface BroadcastBridge {
   send(message: any): boolean;
   connect(): void;
@@ -53,6 +56,11 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   let viewport: HTMLElement | null = null;
   let stage: HTMLElement | null = null;
   let status: HTMLElement | null = null;
+  let viewToggle: HTMLButtonElement | null = null;
+  let viewMode: 'readable' | 'fit' = 'readable';
+  let focus: BroadcastFocus | null = null;
+  let viewLeft = 0; let viewTop = 0; let viewScale = 1;
+  let drawing = false; let manualUntil = 0; let followTimer = 0;
   let sourceWidth = 1440; let sourceHeight = 900;
   let original: { x: number; y: number; focus: HTMLElement | null; overflow: string; inert: Map<HTMLElement, boolean> } | null = null;
   let originalObserver: MutationObserver | null = null;
@@ -61,11 +69,14 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   const ended = new Set<string>();
   const buffered: any[] = [];
   let bufferedBytes = 0;
+  const presence = config.canTeach ? createBroadcastPresence(config.uid, () => {
+    if (!disposed && config.pageGrant && !bridge.sharing()) bridge.connect();
+  }) : null;
   function saveResume(active: boolean) {
     try { if (active) sessionStorage.setItem(resumeKey, '1'); else sessionStorage.removeItem(resumeKey); } catch { /* Optional storage. */ }
   }
   function wantsConnection() {
-    try { return !!room || !!picker || pending || (config.canTeach && sessionStorage.getItem(resumeKey) === '1'); } catch { return !!room || !!picker || pending; }
+    try { return !!room || !!picker || pending || !!presence?.active() || (config.canTeach && sessionStorage.getItem(resumeKey) === '1'); } catch { return !!room || !!picker || pending || !!presence?.active(); }
   }
   function loadAdapters() {
     loader ||= options.loadAdapters ? options.loadAdapters() : import(/* webpackChunkName: "teacher-broadcast" */ './broadcast_adapters');
@@ -87,14 +98,47 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     }
     overlay?.classList.toggle('is-disconnected', !connected);
   }
-  function fit() {
+  function fit(follow = true) {
     if (!stage || !viewport) return;
-    const scale = Math.min(viewport.clientWidth / sourceWidth, viewport.clientHeight / sourceHeight);
+    const width = viewport.clientWidth; const height = viewport.clientHeight;
+    const fullScale = Math.min(width / sourceWidth, height / sourceHeight);
+    // Preserve source layout and all annotation coordinates. Large teacher displays
+    // get a readable viewing window instead of shrinking 14px code to 5px text.
+    const scale = viewMode === 'fit' ? fullScale : Math.min(1.25, Math.max(fullScale, .85));
     if (!(scale > 0)) return;
+    const visibleWidth = width / scale; const visibleHeight = height / scale;
+    if (follow && !drawing && Date.now() >= manualUntil && focus) {
+      const adjust = (position: number, size: number, start: number, length: number) => {
+        const margin = Math.min(90, size * .12);
+        const end = start + Math.min(length, size - margin * 2);
+        if (start < position + margin) return start - margin;
+        if (end > position + size - margin) return end - size + margin;
+        return position;
+      };
+      viewLeft = adjust(viewLeft, visibleWidth, focus.x, focus.width);
+      viewTop = adjust(viewTop, visibleHeight, focus.y, focus.height);
+    }
+    viewLeft = Math.max(0, Math.min(Math.max(0, sourceWidth - visibleWidth), viewLeft));
+    viewTop = Math.max(0, Math.min(Math.max(0, sourceHeight - visibleHeight), viewTop));
+    viewScale = scale;
     stage.style.width = `${sourceWidth}px`; stage.style.height = `${sourceHeight}px`;
     stage.style.transform = `scale(${scale})`;
-    stage.style.left = `${(viewport.clientWidth - sourceWidth * scale) / 2}px`;
-    stage.style.top = `${(viewport.clientHeight - sourceHeight * scale) / 2}px`;
+    stage.style.left = `${sourceWidth * scale <= width ? (width - sourceWidth * scale) / 2 : -viewLeft * scale}px`;
+    stage.style.top = `${sourceHeight * scale <= height ? (height - sourceHeight * scale) / 2 : -viewTop * scale}px`;
+    if (viewToggle) {
+      viewToggle.hidden = fullScale >= .85 && viewMode === 'readable';
+      viewToggle.textContent = viewMode === 'readable' ? '完整画面' : '清晰跟随';
+      viewToggle.title = viewMode === 'readable' ? '查看老师的完整画面' : '放大并跟随老师正在讲解的位置';
+      viewToggle.setAttribute('aria-label', viewToggle.title);
+    }
+  }
+  function followLater() {
+    clearTimeout(followTimer);
+    followTimer = window.setTimeout(() => { followTimer = 0; fit(); }, Math.max(0, manualUntil - Date.now()) + 30);
+  }
+  function endDrawing() {
+    if (!drawing) return;
+    drawing = false; manualUntil = Date.now() + 2200; followLater();
   }
   function protectOriginal() {
     if (!original) return;
@@ -105,6 +149,13 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
       node.inert = true;
     }
   }
+  function viewWheel(event: Pick<WheelEvent, 'deltaX' | 'deltaY' | 'deltaMode' | 'shiftKey'>) {
+    if (!viewport || viewMode !== 'readable' || drawing) return;
+    const unit = event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? viewport.clientHeight : 1;
+    viewLeft += (event.deltaX || (event.shiftKey ? event.deltaY : 0)) * unit / viewScale;
+    viewTop += (event.shiftKey ? 0 : event.deltaY) * unit / viewScale;
+    manualUntil = Date.now() + 6000; fit(false); followLater();
+  }
   function createView() {
     if (overlay) return;
     original = { x: scrollX, y: scrollY, focus: document.activeElement as HTMLElement, overflow: document.body.style.overflow, inert: new Map() };
@@ -113,14 +164,24 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     viewport.append(stage); overlay.append(viewport);
     const footer = el('footer', 'teacher-broadcast-hint');
     status = el('span', 'teacher-broadcast-hint__status'); status.setAttribute('role', 'status');
-    footer.append(status, el('span', 'teacher-broadcast-hint__pen', '按住鼠标左键拖动，圈出你的问题'));
+    viewToggle = button('完整画面', 'teacher-broadcast-hint__view', () => {
+      viewMode = viewMode === 'readable' ? 'fit' : 'readable'; manualUntil = 0; fit();
+    });
+    viewToggle.dataset.broadcastViewControl = '';
+    footer.append(status, el('span', 'teacher-broadcast-hint__pen', '按住鼠标左键拖动，圈出你的问题'), viewToggle);
     overlay.append(footer); document.body.append(overlay);
     document.body.style.overflow = 'hidden'; document.body.classList.add('teacher-broadcast-viewing');
     protectOriginal(); originalObserver = new MutationObserver(protectOriginal); originalObserver.observe(document.body, { childList: true });
     for (const name of ['keydown', 'keyup', 'keypress', 'click', 'dblclick', 'contextmenu', 'submit', 'drop']) {
-      overlay.addEventListener(name, (event) => { event.preventDefault(); event.stopPropagation(); });
+      overlay.addEventListener(name, (event) => {
+        if ((event.target as Element)?.closest?.('[data-broadcast-view-control]')) return;
+        event.preventDefault(); event.stopPropagation();
+      });
     }
-    viewport.addEventListener('wheel', (event) => { event.preventDefault(); event.stopPropagation(); }, { passive: false });
+    viewport.addEventListener('wheel', (event) => {
+      event.preventDefault(); event.stopImmediatePropagation();
+      viewWheel(event);
+    }, { passive: false, capture: true });
     fit();
   }
   function createSourceBar() {
@@ -132,12 +193,14 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     bar.append(dot, copy, stop); document.body.append(bar);
   }
   function clearRoom() {
-    generation++; adapter?.dispose(); adapter = null; room = null;
+    presence?.pause(); generation++; adapter?.dispose(); adapter = null; room = null;
     buffered.length = 0; bufferedBytes = 0; wantsSnapshot = false;
     clearTimeout(disconnectTimer); disconnectTimer = 0; disconnectDeadline = 0;
     clearTimeout(snapshotTimer); snapshotTimer = 0; recovering = false;
     bar?.remove(); bar = null; originalObserver?.disconnect(); originalObserver = null;
-    overlay?.remove(); overlay = null; viewport = null; stage = null; status = null;
+    overlay?.remove(); overlay = null; viewport = null; stage = null; status = null; viewToggle = null;
+    focus = null; viewLeft = 0; viewTop = 0; viewScale = 1; drawing = false; manualUntil = 0;
+    clearTimeout(followTimer); followTimer = 0;
     document.body.classList.remove('teacher-broadcast-viewing');
     if (original) {
       const saved = original; original = null; document.body.style.overflow = saved.overflow;
@@ -148,8 +211,9 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   }
   function stopSharing() {
     if (!room || !source) return;
-    ended.add(room.sessionId); bridge.send({ type: 'broadcast:stop', sessionId: room.sessionId });
-    saveResume(false); clearRoom(); closePicker();
+    const sessionId = room.sessionId;
+    ended.add(sessionId); presence?.end(sessionId); bridge.send({ type: 'broadcast:stop', sessionId });
+    saveResume(false); clearRoom(); clearSessionAnnotations(sessionId); closePicker();
   }
   function queueSnapshot() {
     wantsSnapshot = true;
@@ -187,7 +251,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
       return;
     }
     clearRoom(); source = teacher; room = next; connected = true; bridge.onActiveChange();
-    if (teacher) { saveResume(true); createSourceBar(); closePicker(); document.querySelector<HTMLButtonElement>('[data-assistant-close]')?.click(); }
+    if (teacher) { presence?.start(next.sessionId); saveResume(true); createSourceBar(); closePicker(); document.querySelector<HTMLButtonElement>('[data-assistant-close]')?.click(); }
     else createView();
     updateState(teacher ? undefined : '正在同步老师画面…');
     const version = generation;
@@ -199,9 +263,18 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     try {
       const adapters = await loadAdapters();
       if (disposed || generation !== version || room !== next) return;
-      adapter = teacher ? adapters.attachBroadcastSource({ pageId: next.pageId, send, onStatus })
-        : adapters.attachBroadcastViewer({ pageId: next.pageId, container: stage!, sendDrawing: (packet) => send('drawing', packet),
-          onStatus, onViewport: (size) => {
+      adapter = teacher ? adapters.attachBroadcastSource({ pageId: next.pageId, send, onStatus, annotationScope: { sessionId: next.sessionId, url: location.href } })
+        : adapters.attachBroadcastViewer({ pageId: next.pageId, container: stage!, sendDrawing: (packet) => {
+            // The pen owns window-capture events, including nested frame gestures.
+            // Freeze from its actual lifecycle rather than an obscured DOM listener.
+            if (packet.phase === 'start') { drawing = true; clearTimeout(followTimer); }
+            else if (packet.phase === 'end') endDrawing();
+            send('drawing', packet);
+          },
+          onStatus, onViewWheel: viewWheel, onFocus: (nextFocus) => {
+            if (generation !== version || room !== next) return;
+            focus = nextFocus; fit();
+          }, onViewport: (size) => {
             if (generation !== version || room !== next) return;
             sourceWidth = Math.max(320, Math.min(7680, size.width || 1440)); sourceHeight = Math.max(240, Math.min(4320, size.height || 900));
             fit(); updateState();
@@ -226,7 +299,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
       else { buffered.length = 0; bufferedBytes = 0; wantsSnapshot = true; }
       return;
     }
-    adapter.receive(message.kind, message.data);
+    adapter.receive(message.kind, message.data, message.senderUid === room.teacherUid ? 'teacher' : 'student');
   }
   function setConnected(value: boolean) {
     const changed = connected !== value;
@@ -243,7 +316,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     if (!value) { pending = false; clearTimeout(pendingTimer); }
   }
   function authenticationLost() {
-    pending = false; clearTimeout(pendingTimer); ended.clear(); saveResume(false); clearRoom(); closePicker();
+    pending = false; clearTimeout(pendingTimer); ended.clear(); presence?.end(); saveResume(false); clearRoom(); closePicker();
     connected = false; showMessage('登录已失效，分享已结束，请重新登录。');
   }
   function renderStudents() {
@@ -347,13 +420,16 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     if (message.type === 'broadcast:paused' && room?.sessionId === message.sessionId) { setConnected(false); updateState(message.reason || '老师正在切换页面，稍候自动继续…'); }
     if (message.type === 'broadcast:ended') {
       ended.delete(message.sessionId);
+      if (!message.followed) presence?.end(message.sessionId);
       if (room?.sessionId === message.sessionId) { saveResume(false); clearRoom(); if (message.reason) showMessage(message.reason); }
+      // Adapter disposal flushes its cache; clear only after that final write.
+      if (!message.followed) clearSessionAnnotations(message.sessionId);
     }
     if (message.type === 'broadcast:error' || ((message.type === 'error' || message.error) && (pending || picker || room))) {
       pending = false; clearTimeout(pendingTimer); renderStudents();
       const text = message.message || '分享暂时不可用，请稍后重试。';
       if (room) updateState(text); else showMessage(text);
-      if (/^(?:FORBIDDEN|ENDED|LOGIN_REVOKED)$/.test(message.code || '')) { saveResume(false); clearRoom(); showMessage(text); }
+      if (/^(?:FORBIDDEN|ENDED|LOGIN_REVOKED)$/.test(message.code || '')) { presence?.end(room?.sessionId); saveResume(false); clearRoom(); showMessage(text); }
       else if (/^(?:STALE_PAGE|BACKPRESSURE|RATE_LIMIT)$/.test(message.code || '')) recover('画面正在重新同步…');
       else if (message.code === 'PAUSED' && room) { setConnected(false); updateState(text); }
     }
@@ -361,10 +437,11 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   const click = (event: MouseEvent) => {
     if ((event.target as Element)?.closest?.('[data-teacher-broadcast-open]')) { event.preventDefault(); open(); }
   };
-  document.addEventListener('click', click); window.addEventListener('resize', fit);
+  const resize = () => fit();
+  document.addEventListener('click', click); window.addEventListener('resize', resize);
   return {
     receive, setConnected, wantsConnection, open, showMessage, authenticationLost,
     get active() { return !!room || pending; },
-    dispose() { disposed = true; pending = false; clearTimeout(pendingTimer); clearTimeout(flashTimer); flash?.remove(); closePicker(); clearRoom(); document.removeEventListener('click', click); window.removeEventListener('resize', fit); },
+    dispose() { disposed = true; pending = false; clearTimeout(pendingTimer); clearTimeout(flashTimer); flash?.remove(); closePicker(); clearRoom(); presence?.dispose(); document.removeEventListener('click', click); window.removeEventListener('resize', resize); },
   };
 }

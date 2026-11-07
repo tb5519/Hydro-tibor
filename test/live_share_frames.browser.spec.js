@@ -6,6 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { before, after, it } = require('node:test');
 const { build, buildSync, transformSync } = require('esbuild');
+const stylus = require('stylus');
 
 const root = path.resolve(__dirname, '..');
 let playwright;
@@ -31,6 +32,7 @@ before(async () => {
         export * from './packages/ui-default/components/live_share/frames';
         export * from './packages/ui-default/components/live_share/mirror';
         export * from './packages/ui-default/components/live_share/drawing';
+        export * from './packages/ui-default/components/live_share/broadcast_focus';
     ` } }).outputFiles[0].text;
     const childBundle = (await build({ ...options, entryPoints: ['packages/ui-default/components/live_share/frame_capture.ts'],
         plugins: [{ name: 'capture-only', setup(build) {
@@ -46,7 +48,7 @@ before(async () => {
         response.setHeader('Content-Type', 'text/html; charset=utf-8');
         if (url.pathname === '/scratch-editor/editor.html') {
             response.end(`<!doctype html><html><head><style>html,body{margin:0;background:#eaf1fb}#workspace{display:flex;padding:24px;gap:20px;font:20px system-ui}svg{background:#fff;width:300px;height:250px}canvas{width:240px;height:180px;background:white}</style></head><body>
-                <div id="workspace"><svg xmlns="http://www.w3.org/2000/svg"><rect x="10" y="10" width="200" height="44" fill="#ffab19" rx="8"/><text id="block" x="20" y="40">重复执行 10 次</text></svg>
+                <div id="workspace"><svg xmlns="http://www.w3.org/2000/svg"><rect x="10" y="10" width="200" height="44" fill="#ffab19" rx="8"/><text id="block" x="20" y="40">${url.searchParams.has('changed') ? '新的积木内容' : '重复执行 10 次'}</text></svg>
                 <canvas id="stage" width="240" height="180"></canvas><img id="sprite" width="48" height="48"><img id="vector-icon" width="32" height="32"></div>
                 <input id="project-title" value="我的小猫作品"><input id="sprite-x" type="number" value="35">
                 <button id="save" onclick="window.saved=true">保存作品</button>
@@ -147,6 +149,31 @@ it('captures opaque Scratch SVG/DOM through the controlled bridge and replays it
     await source.evaluate(() => { document.getElementById('source').style.top = '180px'; });
     await flush();
     assert.equal((await viewer.locator('[data-live-share-frame-viewer]').boundingBox()).y, 180);
+});
+
+it('source cursor crosses the opaque Scratch iframe as a passive light point without duplicating the outer cursor', { timeout: 30000 }, async (t) => {
+    const { source, viewer, child, flush } = await pair(t);
+    await viewer.addStyleTag({ content: stylus.render(fs.readFileSync(path.join(root, 'packages/ui-default/components/live_share.page.styl'), 'utf8')) });
+    await viewer.frameLocator('[data-live-share-frame-viewer] iframe').locator('#block').waitFor();
+    const outer = viewer.locator('#viewer > .live-share-remote-pointer');
+    const inner = viewer.locator('[data-live-share-frame-viewer] .live-share-remote-pointer');
+    await source.mouse.move(20, 20); await flush(2);
+    assert.equal(await outer.isVisible(), true);
+    assert.equal(await inner.isVisible(), false);
+    const block = await child.locator('#block').boundingBox();
+    const frame = await source.locator('#source').boundingBox();
+    const position = { x: block.x + block.width / 2, y: block.y + block.height / 2 };
+    await source.mouse.move(position.x, position.y); await flush(3);
+    assert.equal(await outer.isVisible(), false, 'the outer document cursor yields to the frame capture');
+    assert.equal(await inner.isVisible(), true);
+    const dot = await inner.evaluate((node) => ({ x: parseFloat(node.style.left), y: parseFloat(node.style.top),
+        pointer: getComputedStyle(node).pointerEvents, width: node.getBoundingClientRect().width }));
+    assert(Math.abs(dot.x - (position.x - frame.x)) < 1 && Math.abs(dot.y - (position.y - frame.y)) < 1,
+        'frame cursor uses child CSS coordinates, not parent or device pixels');
+    assert.equal(dot.pointer, 'none'); assert.equal(dot.width, 12);
+    await source.mouse.move(20, 20); await flush(3);
+    assert.equal(await outer.isVisible(), true);
+    assert.equal(await inner.isVisible(), false, 'leaving the embedded editor clears its point');
 });
 
 it('rejects wrong source/channel capture messages, stops on disconnect, and removes stale iframe recordings', { timeout: 45000 }, async (t) => {
@@ -291,4 +318,101 @@ it('broadcasts teacher Scratch ink and pinned notes in parent coordinates throug
     await child.evaluate(() => parent.postMessage({ type: 'live-share-frame-drawing', channel: 'wrong-channel', id: 'forged-frame',
         packet: { strokeId: 'fake-stroke-123', phase: 'start', sequence: 0, points: [[1, 1]] } }, '*'));
     await source.waitForTimeout(100); assert.equal(await source.evaluate(() => drawingPackets.length), size);
+});
+
+it('teacher opaque Scratch drafts stay in the parent and restore after frame reload only for matching content', { timeout: 45000 }, async (t) => {
+    const { source, child, flush } = await pair(t);
+    await source.evaluate(() => {
+        window.parentInk = FrameAdapters.attachTemporaryDrawing({ pageId: 'teacher-scratch', container: document.querySelector('#viewer'),
+            teacher: true, scopeDocument: true, annotationScope: { sessionId: 'scratch-lesson-123', url: location.href } });
+    });
+    await child.locator('[data-share-drawing]').waitFor();
+    await source.mouse.move(130, 160); await source.mouse.down({ button: 'right' });
+    await source.mouse.move(230, 220, { steps: 8 }); await source.mouse.up({ button: 'right' });
+    await source.keyboard.press('Shift+Enter'); await source.keyboard.type('Scratch 继续讲');
+    await source.waitForFunction(() => Object.keys(localStorage).some((key) => key.startsWith('hydro:lesson-annotations:') && localStorage.getItem(key).includes('Scratch 继续讲')));
+    const cache = await source.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith('hydro:lesson-annotations:')).map(k => localStorage.getItem(k)).join(''));
+    await child.evaluate(() => parent.postMessage({ type: 'live-share-local-drawing-cache', channel: 'wrong-channel', drafts: [] }, '*'));
+    await source.evaluate(() => window.postMessage({ type: 'live-share-local-drawing-cache', channel: 'fixture-channel-123456', drafts: [] }, '*'));
+    await source.waitForTimeout(100);
+    assert.equal(await source.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith('hydro:lesson-annotations:')).map(k => localStorage.getItem(k)).join('')), cache,
+        'wrong channel or sender cannot erase a teacher frame draft');
+    assert.equal(await child.evaluate(() => { try { return !!localStorage.length; } catch { return false; } }), false, 'opaque frame has no local storage access');
+    await source.evaluate(() => { document.querySelector('#source').src = '/scratch-editor/editor.html?changed=1#channel=fixture-channel-new-123'; });
+    await child.waitForFunction(() => document.querySelector('#block')?.textContent === '新的积木内容');
+    await flush(4); await source.waitForTimeout(850);
+    assert.equal(await child.locator('[data-share-drawing-note]').count(), 0, 'different Scratch content does not acquire the old circle');
+    await source.evaluate(() => { document.querySelector('#source').src = '/scratch-editor/editor.html#channel=fixture-channel-return-123'; });
+    await child.waitForFunction(() => document.querySelector('#block')?.textContent === '重复执行 10 次');
+    await flush(4);
+    await child.waitForFunction(() => [...document.querySelectorAll('[data-share-drawing-note-input]')].some(n => n.value === 'Scratch 继续讲'), null, { timeout: 6000 });
+    await source.waitForFunction(() => drawingPackets.some(p => p.phase === 'note' && p.note.text === 'Scratch 继续讲'));
+});
+
+it('assisting teacher restores Scratch ink using the new frame and inner node identities', { timeout: 35000 }, async (t) => {
+    const { source, viewer, flush } = await pair(t);
+    await viewer.evaluate(() => {
+        window.startPersistentInk = () => { window.ink?.dispose(); window.inkPackets = [];
+            window.ink = FrameAdapters.attachTemporaryDrawing({ pageId: 'fixture-page', container: document.querySelector('#viewer'), teacher: true,
+                annotationScope: { sessionId: 'assistance-scratch-123', url: `${location.origin}/source` },
+                annotationDocument: (id) => id ? viewerFrames.getDrawingDocument(id) : viewerMirror.getDrawingDocument(),
+                anchors: { identify: node => viewerFrames.getDrawingNodeId(node), resolve: identity => viewerFrames.getDrawingNode(identity) },
+                send: p => inkPackets.push(p) }); }; startPersistentInk();
+    });
+    await viewer.frameLocator('[data-live-share-frame-viewer] iframe').locator('#block').waitFor();
+    await viewer.mouse.move(130, 160); await viewer.mouse.down({ button: 'right' });
+    await viewer.mouse.move(230, 220, { steps: 8 }); await viewer.mouse.up({ button: 'right' });
+    await viewer.keyboard.press('Shift+Enter'); await viewer.keyboard.type('返回这块积木');
+    await viewer.waitForFunction(() => inkPackets.some(p => p.phase === 'note' && p.note.text === '返回这块积木'));
+    const oldFrame = await viewer.evaluate(() => inkPackets[0].anchor.frameId);
+    await viewer.evaluate(() => ink.dispose());
+    await source.evaluate(() => { document.querySelector('#source').src = '/scratch-editor/editor.html?reloaded=1#channel=fixture-new-inner-frame'; });
+    await flush(7);
+    await viewer.evaluate(() => startPersistentInk());
+    await viewer.waitForFunction(() => [...document.querySelectorAll('[data-share-drawing-note-input]')].some(n => n.value === '返回这块积木'), null, { timeout: 6000 });
+    const nextFrame = await viewer.evaluate(() => inkPackets[0].anchor.frameId);
+    assert.notEqual(nextFrame, oldFrame, 'new iframe identity must replace the previous recording epoch');
+    assert.equal(nextFrame, await source.locator('#source').getAttribute('data-live-share-frame'));
+});
+
+
+it('broadcast focus follows trusted opaque Scratch pointer coordinates across frame scale and rejects unbound frames', { timeout: 20000 }, async (t) => {
+    const context = await browser.newContext({ viewport: { width: 3840, height: 2160 } }); t.after(() => context.close());
+    const page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${origin}/source`);
+    await page.waitForFunction(() => ready);
+    await page.evaluate(() => {
+        const frame = document.querySelector('#source');
+        frame.style.cssText = 'position:absolute;left:2400px;top:500px;width:1000px;height:600px;border:6px solid gray;transform:scale(.8);transform-origin:top left';
+        window.focusHints=[];
+        window.broadcastFocus = FrameAdapters.attachBroadcastFocus(point => focusHints.push(point));
+        window.broadcastFrames = FrameAdapters.attachSourceFrames({ pageId:'broadcast-scratch-page', send:data => {
+            broadcastFocus.captureFrame(data, (id,x,y) => broadcastFrames.getPointerPosition(id,x,y));
+        }});
+    });
+    const child = page.frameLocator('#source'); await child.locator('#block').waitFor();
+    await page.waitForFunction(() => document.querySelector('#source').hasAttribute('data-live-share-frame'));
+    await page.waitForTimeout(500);
+    const block = await child.locator('#block').boundingBox();
+    await child.locator('#block').hover();
+    await page.waitForFunction(() => focusHints.some(p=>p.x>2400));
+    const point = await page.evaluate(() => focusHints.at(-1));
+    assert(Math.abs(point.x+35-(block.x+block.width/2))<2,'Scratch pointer x uses the scaled frame border offset');
+    assert(Math.abs(point.y+25-(block.y+block.height/2))<2,'Scratch pointer y uses the scaled frame border offset');
+    const before = await page.evaluate(() => focusHints.length);
+    await page.evaluate(() => {
+        document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,clientX:30,clientY:30}));
+        broadcastFocus.captureFrame({type:'frame',id:'invented-frame-123',packet:{type:'rrweb',event:{type:3,data:{source:1,positions:[{x:10,y:10}]}}}},
+            (id,x,y)=>broadcastFrames.getPointerPosition(id,x,y));
+    });
+    await page.waitForTimeout(450); assert.equal(await page.evaluate(() => focusHints.length), before,'synthetic gestures and unbound frames cannot direct the viewing window');
+    const secret = await child.locator('#secret-password').evaluate(node => {
+        node.style.cssText='position:absolute;left:200px;top:400px;width:180px;height:30px';
+        document.addEventListener('pointermove', event => window.lastPointerId=event.target.id, true);
+        const rect=node.getBoundingClientRect(); return {x:rect.x+rect.width/2,y:rect.y+rect.height/2};
+    });
+    const secretPoint = await page.evaluate(({x,y})=>broadcastFrames.getPointerPosition(document.querySelector('#source').getAttribute('data-live-share-frame'),x,y),secret);
+    await page.mouse.move(secretPoint.x,secretPoint.y); await page.waitForTimeout(450);
+    assert.equal(await child.locator('body').evaluate(()=>window.lastPointerId),'secret-password');
+    assert.equal(await page.evaluate(() => focusHints.length), before,'private child controls cannot become a focus hint');
+    await page.evaluate(() => { broadcastFocus.dispose(); broadcastFrames.dispose(); });
 });

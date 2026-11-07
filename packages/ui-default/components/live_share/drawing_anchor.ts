@@ -21,6 +21,12 @@ export function registerDrawingEditor(node: HTMLElement, editor?: any): () => vo
   editors.set(node, editor || null);
   return () => { if (editors.get(node) === (editor || null)) editors.delete(node); };
 }
+/** Only used to fingerprint a pinned annotation's source; the text is never persisted. */
+export function drawingEditorContent(node: HTMLElement): string | null {
+  if (!editors.has(node)) return null;
+  const editor = editors.get(node);
+  return editor ? editor.getModel?.()?.getValue?.() ?? null : (node as HTMLTextAreaElement).value ?? null;
+}
 
 const identity: DrawingMatrix = [1, 0, 0, 1, 0, 0];
 const validId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{8,96}$/.test(value);

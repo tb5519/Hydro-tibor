@@ -44,7 +44,7 @@ before(async () => {
 after(async () => { await browser?.close(); });
 
 async function fixture({ scale = 1, latency = 20, studentViewport = { width: 1100, height: 780 },
-    teacherViewport = { width: 1400, height: 1000 }, studentDpr = 1, teacherDpr = 2 } = {}) {
+    teacherViewport = { width: 1400, height: 1000 }, studentDpr = 1, teacherDpr = 2, persistence = false } = {}) {
     const studentContext = await browser.newContext({ viewport: studentViewport, deviceScaleFactor: studentDpr });
     const teacherContext = await browser.newContext({ viewport: teacherViewport, deviceScaleFactor: teacherDpr });
     const student = await studentContext.newPage();
@@ -80,14 +80,15 @@ async function fixture({ scale = 1, latency = 20, studentViewport = { width: 110
         if (latency) await new Promise((resolve) => setTimeout(resolve, latency));
         if (active) await student.evaluate((value) => window.source.receiveCommand(value), data);
     });
-    await teacher.evaluate((pageId) => {
+    await teacher.evaluate(({ pageId, persistence }) => {
         window.viewerReady = false;
         window.viewer = Mirror.attachViewerMirror({ pageId, container: document.querySelector('#mirror'),
+            ...(persistence ? { annotationScope: { sessionId: 'persistent-lesson-123', url: 'https://annotation.test/p/P1000' } } : {}),
             sendCommand: (data) => window.sendCommand(data), onViewport: ({ width, height }) => {
                 Object.assign(document.querySelector('#mirror').style, { width: `${width}px`, height: `${height}px` });
                 window.viewerReady = true;
             } });
-    }, pageId);
+    }, { pageId, persistence });
     await student.exposeFunction('sendPacket', async (data) => {
         if (!active) return;
         packets.push(data);
@@ -108,7 +109,7 @@ async function fixture({ scale = 1, latency = 20, studentViewport = { width: 110
         await Promise.allSettled([student.evaluate(() => window.source?.dispose()), teacher.evaluate(() => window.viewer?.dispose())]);
         await studentContext.close(); await teacherContext.close();
     };
-    return { student, teacher, commands, acks, packets, errors, close, inputSession, frame: () => teacher.frameLocator('#mirror iframe') };
+    return { student, teacher, commands, acks, packets, errors, close, inputSession, setActive: (value) => { active = value; }, frame: () => teacher.frameLocator('#mirror iframe') };
 }
 
 async function selectionPoints(f, selector) {
@@ -770,6 +771,49 @@ it('stale or mismatched anchors are rejected, disappearing text hides the annota
         await Promise.all([f.teacher.evaluate(() => window.viewer.dispose()), f.student.evaluate(() => window.source.dispose())]);
         assert.equal(await f.student.locator(selectors.root).count(), 0);
         assert.equal(await f.teacher.locator(selectors.root).count(), 0);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('restores persistent notes after both pages reload with new rrweb nodes and keeps page/session boundaries', { timeout: 35000 }, async () => {
+    const f = await fixture({ persistence: true, latency: 0 });
+    async function restart({ sessionId = 'persistent-lesson-123', url = 'https://annotation.test/p/P1000', changed = false } = {}) {
+        f.setActive(false);
+        await Promise.all([f.teacher.evaluate(() => viewer.dispose()), f.student.evaluate(() => source.dispose())]);
+        await Promise.all([f.teacher.reload(), f.student.reload()]);
+        if (changed) await f.student.locator('#focus').evaluate((node) => { node.textContent = '这一段已经替换成另一道题'; });
+        await f.teacher.evaluate(({ pageId, sessionId, url }) => {
+            window.viewerReady = false;
+            window.viewer = Mirror.attachViewerMirror({ pageId, annotationScope: { sessionId, url }, container: document.querySelector('#mirror'),
+                sendCommand: (data) => window.sendCommand(data), onViewport: () => { window.viewerReady = true; } });
+        }, { pageId, sessionId, url });
+        f.setActive(true);
+        await f.student.evaluate((pageId) => {
+            window.source = Mirror.attachSourceMirror({ pageId, send: (data) => window.sendPacket(data), sendAck: (data) => window.sendAck(data) });
+        }, pageId);
+        await f.teacher.waitForFunction(() => viewerReady);
+        await f.teacher.waitForTimeout(900);
+    }
+    try {
+        await selectText(f); await f.teacher.keyboard.press('Shift+Enter');
+        await f.teacher.locator(selectors.input).fill('返回后继续讲这里');
+        await f.student.locator(selectors.bubble).getByText('返回后继续讲这里').waitFor();
+        assert.equal(await f.teacher.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith('hydro:lesson-annotations:')).length), 1);
+        await restart({ url: 'https://annotation.test/p/P2000' });
+        assert.equal(await f.teacher.locator(selectors.bubble).count(), 0, 'another question never receives old notes');
+        await restart({ changed: true });
+        assert.equal(await f.teacher.locator(selectors.bubble).count(), 0, 'changed source text must not get an incorrectly restored highlight');
+        await restart();
+        await f.teacher.locator(selectors.input).waitFor({ state: 'visible' });
+        assert.equal(await f.teacher.locator(selectors.input).inputValue(), '返回后继续讲这里');
+        await f.student.locator(selectors.bubble).getByText('返回后继续讲这里').waitFor();
+        await restart({ sessionId: 'different-lesson-456' });
+        assert.equal(await f.teacher.locator(selectors.bubble).count(), 0, 'a new lesson starts clean');
+        await restart();
+        await f.teacher.locator(selectors.bubble).hover();
+        await f.teacher.locator('[data-share-annotation-clear]').click();
+        await restart();
+        assert.equal(await f.teacher.locator(selectors.bubble).count(), 0, 'explicit deletion survives another reload');
         assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
 });

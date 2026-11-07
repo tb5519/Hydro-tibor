@@ -88,11 +88,12 @@ async function peers(options = {}) {
         document.querySelector('#test-input').value = 'first input line\nsecond input line\nthird input line';
         window.controller = LiveEditors.attachSourceEditors({ pageId, send: (message) => { outbox.push(message); if (message.type === 'edit:focus') window.lastFocus = message; } });
     }, pageId);
-    await teacher.evaluate((pageId) => {
+    await teacher.evaluate(({ pageId, persistence }) => {
         window.outbox = [];
-        window.controller = LiveEditors.attachViewerEditors({ pageId, container: document.querySelector('#viewer'), send: (message) => outbox.push(message) });
+        window.controller = LiveEditors.attachViewerEditors({ pageId, container: document.querySelector('#viewer'),
+            ...(persistence ? { annotationScope: { sessionId: 'code-lesson-123', url: `${location.origin}/student` } } : {}), send: (message) => outbox.push(message) });
         window.sharedEditor = () => monaco.editor.getEditors()[0];
-    }, pageId);
+    }, { pageId, persistence: !!options.persistence });
     async function flush() {
         await new Promise((resolve) => setTimeout(resolve, 100));
         for (let i = 0; i < 7; i++) {
@@ -668,6 +669,45 @@ it('queued focus batches discard geometry measured before a simultaneous resize 
             if (paths[0] === paths[1]) break;
         }
         assert.equal(paths[1], paths[0], 'a fresh measurement restores matching outlines after the resize/delete batch');
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('code notes return on the same lesson page with fresh editor and CRDT identities without storing code', { timeout: 35000 }, async () => {
+    const f = await peers({ persistence: true });
+    async function restart(sessionId = 'code-lesson-123') {
+        await f.teacher.evaluate(() => { controller.dispose(); outbox.length = 0; });
+        await f.student.evaluate((pageId) => {
+            controller.dispose(); outbox.length = 0;
+            window.controller = LiveEditors.attachSourceEditors({ pageId, send: (message) => outbox.push(message) });
+        }, pageId);
+        await f.teacher.evaluate(({ pageId, sessionId }) => {
+            window.controller = LiveEditors.attachViewerEditors({ pageId, container: document.querySelector('#viewer'),
+                annotationScope: { sessionId, url: `${location.origin}/student` }, send: (message) => outbox.push(message) });
+        }, { pageId, sessionId });
+        await f.flush(); await f.teacher.waitForTimeout(800); await f.flush();
+    }
+    try {
+        await f.teacher.evaluate(() => { sharedEditor().focus(); sharedEditor().setSelection(new monaco.Selection(1, 1, 1, 6)); });
+        await f.teacher.keyboard.press('Shift+Enter');
+        await f.teacher.locator('[data-share-code-annotation] [data-share-annotation-input]').fill('这个变量');
+        await f.flush();
+        const before = await f.teacher.evaluate(() => document.querySelector('[data-live-share-editor]').getAttribute('data-live-share-editor'));
+        const storage = await f.teacher.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith('hydro:lesson-annotations:')).map((key) => localStorage.getItem(key)).join(''));
+        assert(storage.includes('这个变量'));
+        assert(!storage.includes('alpha = 12345'), 'persisted draft contains only note text, indices and a fingerprint');
+        await restart();
+        await f.teacher.locator('[data-share-code-annotation] [data-share-annotation-input]').waitFor({ state: 'visible' });
+        assert.equal(await f.teacher.locator('[data-share-code-annotation] [data-share-annotation-input]').inputValue(), '这个变量');
+        assert.notEqual(await f.teacher.evaluate(() => document.querySelector('[data-live-share-editor]').getAttribute('data-live-share-editor')), before);
+        await f.student.locator('[data-share-code-annotation] [data-share-annotation-text]').getByText('这个变量').waitFor();
+        await restart('other-code-lesson');
+        assert.equal(await f.teacher.locator('[data-share-code-annotation]').count(), 0);
+        await restart();
+        await f.teacher.locator('[data-share-code-annotation] [data-share-annotation-note]').hover();
+        await f.teacher.locator('[data-share-code-annotation] [data-share-annotation-clear]').click();
+        await f.flush(); await restart();
+        assert.equal(await f.teacher.locator('[data-share-code-annotation]').count(), 0);
         assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
 });

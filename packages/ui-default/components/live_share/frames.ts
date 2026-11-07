@@ -1,6 +1,7 @@
 import { attachViewerMirror, MirrorCommand, MirrorAck } from './mirror';
 import { DrawingPacket, validDrawingPacket } from './drawing';
 import { validScratchInput } from './scratch_control';
+import { isSharedPointerPrivate } from './pointer';
 import { DrawingAnchor, DrawingAnchorMode, DrawingGeometry, DrawingNodeIdentity, DrawingMatrix, drawingPoint, multiplyDrawingMatrix, transformDrawingFrameGeometry } from './drawing_anchor';
 
 const MARKER = 'data-live-share-frame';
@@ -156,6 +157,15 @@ export function attachSourceFrames(options: SourceOptions) {
     for (const [id, entry] of pending) if (Date.now() - entry.at > 5000) pending.delete(id);
   }, 4000);
   return {
+    getPointerPosition(frameId: string, x: number, y: number) {
+      if (disposed || !connected || !validId(frameId) || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) return null;
+      const binding = [...bindings.values()].find((item) => item.id === frameId);
+      if (!binding?.started || !controlledFrame(binding.frame) || isSharedPointerPrivate(binding.frame)
+        || x >= binding.frame.clientWidth || y >= binding.frame.clientHeight) return null;
+      const frame = binding.frame; const rect = frame.getBoundingClientRect();
+      const sx = rect.width / (frame.offsetWidth || 1); const sy = rect.height / (frame.offsetHeight || 1);
+      return { x: rect.x + (frame.clientLeft + x) * sx, y: rect.y + (frame.clientTop + y) * sy };
+    },
     getDrawingGeometry(anchor: DrawingAnchor): DrawingGeometry | null {
       if (disposed || !connected || anchor?.kind !== 'dom' || !validId(anchor.frameId)
         || !Number.isSafeInteger(anchor.nodeId) || anchor.nodeId < 1 || !['element', 'scroll', 'svg'].includes(anchor.mode)) return null;
@@ -237,6 +247,10 @@ export function attachViewerFrames(options: ViewerOptions) {
   };
   frame = requestAnimationFrame(layout);
   return {
+    getDrawingDocument(frameId: string): Document | null {
+      if (disposed || !connected || !validId(frameId)) return null;
+      return bindings.get(frameId)?.mirror.getDrawingDocument() || null;
+    },
     getDrawingNodeId(node: Element): DrawingNodeIdentity | null {
       if (disposed || !connected) return null;
       for (const [frameId, binding] of bindings) {

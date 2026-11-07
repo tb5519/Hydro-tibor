@@ -119,7 +119,15 @@ async function hello(f, uid, overrides = {}) {
     await f.instance.message({ type: 'hello', tabId: `tab-${uid}-testing`, pageId: `page-${uid}-testing`, pageGrant, url,
         title: '题目', visible: true, deviceId: `device-${uid}-testing`, ...overrides });
 }
-const settle = async () => { await new Promise((resolve) => setTimeout(resolve, 20)); };
+// Wait for the actual delivery queues, not a fixed delay that flakes under browser-test load.
+const settle = async () => {
+    for (let attempt = 0; attempt < 20; attempt++) {
+        const deliveries = busListeners.map((listener) => listener.outgoing);
+        await Promise.all(deliveries);
+        if (busListeners.every((listener, index) => listener.outgoing === deliveries[index])) return;
+    }
+    assert.fail('Live-share delivery queues did not settle');
+};
 
 describe('teacher broadcast protocol and multi-learner isolation', () => {
     const stroke = { strokeId: 'learner-stroke-testing', phase: 'start', sequence: 0, points: [[40, 80]] };
@@ -140,6 +148,10 @@ describe('teacher broadcast protocol and multi-learner isolation', () => {
         }
         assert.throws(() => broadcastProtocol.validateBroadcastMessage({ type: 'broadcast:stop', sessionId: 'session-testing', url: '/manage' }));
         broadcastProtocol.validateBroadcastRelay(false, 'drawing', stroke, 'page-testing');
+        for (const extra of [{ role: 'teacher' }, { color: '#9272e5' }]) {
+            assert.throws(() => broadcastProtocol.validateBroadcastRelay(false, 'drawing', { ...stroke, ...extra }, 'page-testing'));
+        }
+        assert.throws(() => broadcastProtocol.validateBroadcastMessage({ ...draw('session-testing', 'page-testing'), senderUid: 2 }));
         for (const kind of ['editor', 'mirror', 'annotation', 'command']) {
             assert.throws(() => broadcastProtocol.validateBroadcastRelay(false, kind, stroke, 'page-testing'), errorCode('FORBIDDEN'));
         }
@@ -214,6 +226,37 @@ describe('teacher broadcast protocol and multi-learner isolation', () => {
         const moved = await broadcasts.rooms.findOne({ _id: started.sessionId });
         assert.equal(moved.viewers.find((v) => v.uid === 10).tabId, newTab.tabId);
         assert.equal(broadcasts.role(moved, first.instance.peer), null);
+    });
+    it('keeps one broadcast while the teacher opens a new tab and returns, without following private pages or another device', async () => {
+        const teacher = await peer(2);
+        await peer(10);
+        const messages = []; const emit = (event) => messages.push(event);
+        const room = await broadcasts.start(teacher, [10], emit);
+        await model.pulsePresence(teacher, false);
+        const next = await peer(2, { tabId: 'teacher-topic-new-tab', pageId: 'teacher-topic-new-page', url: '/d/class-a/p/1001' });
+        const moved = await broadcasts.follow(next, emit);
+        assert.equal(moved._id, room._id);
+        assert.equal(moved.teacherTabId, next.tabId);
+        assert(messages.some((event) => event.tabId === teacher.tabId && event.message.type === 'broadcast:ended' && event.message.followed));
+        const otherDevice = await peer(2, { tabId: 'other-teacher-device-tab', deviceId: 'another-teacher-device' });
+        assert.equal(await broadcasts.follow(otherDevice, emit), null);
+        const privateTab = await peer(2, { tabId: 'private-teacher-tab', url: '' });
+        assert.equal(await broadcasts.follow(privateTab, emit), null);
+        await model.pulsePresence(next, false);
+        await model.pulsePresence(teacher, true);
+        const returned = await broadcasts.follow(teacher, emit);
+        assert.equal(returned._id, room._id);
+        assert.equal(returned.pageId, teacher.pageId);
+        assert.deepEqual(returned.studentUids, [10]);
+        assert.equal(await broadcasts.rooms.countDocuments({ active: true }), 1);
+    });
+    it('accepts only bounded teacher reading focus, never viewer-controlled viewport commands', () => {
+        const focus = { type: 'broadcast-focus', x: 100, y: 300, width: 500, height: 40 };
+        broadcastProtocol.validateBroadcastRelay(true, 'mirror', focus, 'page-testing');
+        assert.throws(() => broadcastProtocol.validateBroadcastRelay(false, 'mirror', focus, 'page-testing'), errorCode('FORBIDDEN'));
+        for (const patch of [{ x: -1 }, { x: Infinity }, { y: '20' }, { width: 0 }, { height: 20000 }, { action: 'click' }]) {
+            assert.throws(() => broadcastProtocol.validateBroadcastRelay(true, 'mirror', { ...focus, ...patch }, 'page-testing'), errorCode('INVALID_RELAY'));
+        }
     });
     it('revokes removed learner access without stopping other learners and ends cleanly for everyone', async () => {
         const { teacher, first, second, started } = await lesson();

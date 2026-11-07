@@ -1,6 +1,7 @@
 import { Y, MonacoBinding } from './vendor';
 import { attachAnnotationSurface, ShareAnnotation } from './annotation';
 import { registerDrawingEditor } from './drawing_anchor';
+import { AnnotationScope, annotationFingerprint, readAnnotationCache, writeAnnotationCache } from './annotation_cache';
 
 export interface EditorRect { x: number; y: number; width: number; height: number }
 export interface SharedTextareaStyle {
@@ -60,6 +61,7 @@ export interface EditorMessage {
 export interface EditorStatus { editorId: string; pending: number; connected: boolean; ready: boolean; error?: string }
 interface CommonOptions {
   pageId: string;
+  annotationScope?: AnnotationScope;
   send: (message: EditorMessage) => void;
   onStatus?: (status: EditorStatus) => void;
   teacherSource?: boolean;
@@ -632,10 +634,15 @@ function attachCodeFocus(node: HTMLElement, shared: CollaborativeText, editor?: 
 /** Notes have their own CRDT document: annotating read-only code must never
  * change its model, dirty state, undo history or normal newline behaviour. */
 function attachCodeAnnotations(node: HTMLElement, code: CollaborativeText, notes: CollaborativeText,
-  options: CommonOptions & { editorId: string; teacher: boolean; connected: () => boolean; editor?: any; container?: HTMLElement; geometry?: CodeFocusGeometry }) {
+  options: CommonOptions & { editorId: string; annotationKey: string; teacher: boolean; connected: () => boolean; editor?: any; container?: HTMLElement; geometry?: CodeFocusGeometry }) {
   const values = notes.doc.getMap('notes');
   const surfaces = new Map<string, ReturnType<typeof attachCodeFocus>>();
   let disposed = false;
+  type Draft = { id: string; fingerprint: string; start: number; end: number; value: Omit<CodeNote, 'anchor' | 'head'> };
+  const scope = options.teacher ? options.annotationScope : undefined;
+  const kind = `code-${options.annotationKey}`;
+  const saved = new Map(readAnnotationCache<Draft>(scope, kind).map((item) => [item.id, item]));
+  let known = new Set<string>();
   const valid = (value: any): value is CodeNote => value && typeof value === 'object'
     && [value.anchor, value.head].every((part) => typeof part === 'string' && part.length > 0 && part.length <= 4096 && /^[A-Za-z0-9+/]*={0,2}$/.test(part))
     && typeof value.text === 'string' && value.text.length <= 1000
@@ -648,6 +655,33 @@ function attachCodeAnnotations(node: HTMLElement, code: CollaborativeText, notes
   };
   const cursor = (value: CodeNote): EditorMessage => ({ type: 'edit:cursor', pageId: options.pageId,
     editorId: options.editorId, anchor: value.anchor, head: value.head });
+  const persist = () => {
+    if (!scope) return;
+    const current = new Set<string>(); const fingerprint = annotationFingerprint(code.value);
+    for (const [id, value] of values) {
+      if (!valid(value)) continue;
+      current.add(id);
+      if (!value.text.trim()) { saved.delete(id); continue; }
+      const offsets = cursorOffsets(code, cursor(value));
+      if (!offsets || offsets.start === offsets.end) continue;
+      const { anchor, head, ...draft } = value;
+      saved.set(id, { id, fingerprint, start: offsets.start, end: offsets.end, value: draft });
+    }
+    for (const id of known) if (!current.has(id)) saved.delete(id);
+    known = current;
+    writeAnnotationCache(scope, kind, [...saved.values()]);
+  };
+  const restore = () => {
+    if (!scope || disposed || !options.connected() || !notes.editable) return;
+    const fingerprint = annotationFingerprint(code.value);
+    for (const item of saved.values()) {
+      if (values.has(item.id) || item.fingerprint !== fingerprint || typeof item.id !== 'string' || !/^[\w-]{1,128}$/.test(item.id)
+        || !Number.isInteger(item.start) || !Number.isInteger(item.end) || item.start < 0 || item.end <= item.start || item.end > code.value.length) continue;
+      const position = cursorFromOffsets(code, item.start, item.end, options.pageId, options.editorId);
+      const value = position && { ...item.value, anchor: position.anchor!, head: position.head! };
+      if (value && valid(value) && value.text.trim()) write(item.id, value);
+    }
+  };
   const render = () => {
     if (disposed) return;
     const present = new Set<string>();
@@ -680,13 +714,15 @@ function attachCodeAnnotations(node: HTMLElement, code: CollaborativeText, notes
     write(id, value);
     surfaces.get(id)?.set(message, value, true);
   };
-  values.observe(render); code.text.observe(render);
+  const changed = () => { render(); persist(); };
+  values.observe(changed); code.text.observe(changed);
+  const restoreTimer = scope ? setInterval(restore, 600) : undefined;
   if (options.teacher) node.addEventListener('keydown', keydown, true);
   render();
   return {
     refresh: render,
     dispose() {
-      disposed = true; values.unobserve(render); code.text.unobserve(render);
+      persist(); disposed = true; clearInterval(restoreTimer); values.unobserve(changed); code.text.unobserve(changed);
       node.removeEventListener('keydown', keydown, true);
       for (const surface of surfaces.values()) surface.dispose(); surfaces.clear();
     },
@@ -727,6 +763,7 @@ interface SourceBinding {
 
 export function attachSourceEditors(options: CommonOptions): EditorController {
   const bindings = new Map<unknown, SourceBinding>();
+  let annotationSerial = 0;
   const oversized = new WeakSet<object>();
   const style = cursorStyles();
   let disposed = false;
@@ -801,7 +838,7 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
     } };
     const focus = attachCodeFocus(node, shared, editor, undefined, undefined, geometry);
     cleanups.push(() => focus.dispose());
-    const annotations = attachCodeAnnotations(node, shared, notes, { ...options, editorId: id, teacher: !!options.teacherSource, connected: () => connected, editor, geometry });
+    const annotations = attachCodeAnnotations(node, shared, notes, { ...options, editorId: id, annotationKey: String(++annotationSerial), teacher: !!options.teacherSource, connected: () => connected, editor, geometry });
     cleanups.push(() => annotations.dispose());
     if (editor) {
       const binding = new MonacoBinding(shared.text, model, new Set([editor]));
@@ -983,6 +1020,7 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
   getPendingDrafts: () => Array<{ editorId: string; language?: string; value: string }>;
 } {
   const bindings = new Map<string, ViewerBinding>();
+  let annotationSerial = 0;
   const creating = new Map<string, EditorMessage[]>();
   const pendingNotes = new Map<string, EditorMessage[]>();
   const detachedDrafts = new Map<string, { editorId: string; language?: string; value: string }>();
@@ -1006,6 +1044,7 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
     if (!disposed && connected) safeSend(options, { type: 'edit:sync', pageId: options.pageId, editorId: '' });
   });
   const create = async (initial: EditorMessage) => {
+    const annotationKey = String(++annotationSerial);
     creating.set(initial.editorId, []);
     try {
       let monaco: any;
@@ -1083,7 +1122,7 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
       } };
       focus = attachCodeFocus(node, shared, editor, options.container, undefined, geometry);
       cleanups.push(() => focus.dispose());
-      const annotations = attachCodeAnnotations(node, shared, notes, { ...options, editorId: initial.editorId,
+      const annotations = attachCodeAnnotations(node, shared, notes, { ...options, editorId: initial.editorId, annotationKey,
         teacher: !options.readOnly, connected: () => connected, editor, geometry });
       cleanups.push(() => annotations.dispose());
       const onScroll = () => {

@@ -77,7 +77,7 @@ test('one teacher broadcasts to two selected learners, with read-only pen questi
         ${css}</style></head><body><main id="own-page"><h1>${teacher ? `老师示范 ${url.pathname}` : `学员${uid}自己的作业`}</h1>
         <button id="run" type="button">运行示范</button><span id="result">尚未运行</span><a id="next" href="/lesson-two?uid=${uid}">下一题</a>
         <p id="explanation">选中一段讲解，老师可以写批注，孩子只能用画笔圈出疑问。</p><div id="original"></div>
-        <textarea id="draft">学员${uid}未提交的草稿</textarea><div style="height:1500px"></div></main><aside id="already-inert" inert>原本不可操作</aside>
+        <button id="far-focus" style="position:fixed;right:40px;bottom:130px">右侧演示</button><textarea id="draft">学员${uid}未提交的草稿</textarea><div style="height:1500px"></div></main><aside id="already-inert" inert>原本不可操作</aside>
         ${teacher ? assistant : ''}<script src="/vs/loader.js"></script><script src="/share.js"></script><script>
         window.UiContext={};window.UserContext={_id:${uid}};window.runs=0;
         document.querySelector('#run').addEventListener('click',()=>{runs++;document.querySelector('#result').textContent='已运行 '+runs});
@@ -108,7 +108,7 @@ test('one teacher broadcasts to two selected learners, with read-only pen questi
                         } else if (message.type === 'broadcast:relay') {
                             assert(uid === 2 || room.studentUids.includes(uid));
                             protocolModule.exports.validateBroadcastRelay(uid === 2, message.kind, message.data, message.pageId);
-                            const payload = { ...message, data: message.kind === 'drawing' ? protocolModule.exports.broadcastDrawing(uid, message.data) : message.data };
+                            const payload = { ...message, senderUid: uid, data: message.kind === 'drawing' ? protocolModule.exports.broadcastDrawing(uid, message.data) : message.data };
                             [2, ...room.studentUids].filter((id) => id !== uid).forEach((id) => send(id, payload));
                         }
                     }
@@ -119,7 +119,7 @@ test('one teacher broadcasts to two selected learners, with read-only pen questi
     });
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); origin = `http://127.0.0.1:${server.address().port}`;
     const browser = await playwright.chromium.launch({ executablePath, headless: true }); const contexts = []; const pages = [];
-    for (const [uid, width, height, dpr] of [[2, 1440, 900, 1], [5, 1180, 760, 2], [6, 900, 700, 1], [7, 1280, 800, 1]]) {
+    for (const [uid, width, height, dpr] of [[2, 3840, 2160, 1], [5, 1180, 760, 2], [6, 900, 700, 1], [7, 1280, 800, 1]]) {
         const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: dpr }); contexts.push(context);
         const page = await context.newPage(); page.uid = uid; pages.push(page); page.setDefaultTimeout(15000); page.on('pageerror', (error) => errors.push(`${uid}: ${error.message}`));
     }
@@ -138,16 +138,66 @@ test('one teacher broadcasts to two selected learners, with read-only pen questi
         await Promise.all(viewers.map((page) => page.waitForFunction(() => sharedEditor()?.getValue() === '# teacher demonstration\nprint("hello")')));
         assert.deepEqual(events.find((event) => event.type === 'broadcast:start').studentUids, [5, 6]);
         for (const page of viewers) {
-            assert.equal(await page.locator('.teacher-broadcast-stage').evaluate((node) => node.style.width), '1440px');
+            await page.waitForFunction(() => document.querySelector('.teacher-broadcast-stage').style.width === '3840px');
+            assert.equal(await page.locator('.teacher-broadcast-stage').evaluate((node) => node.style.width), '3840px');
             assert.equal(await page.evaluate(() => sharedEditor().getOption(monaco.editor.EditorOption.readOnly)), true);
             assert.equal(await page.locator('#own-page').evaluate((node) => node.inert), true);
             assert.match(await page.locator('.teacher-broadcast-hint').textContent(), /左键.*圈出/);
             const stage = await page.locator('.teacher-broadcast-stage').boundingBox(); const viewport = await page.locator('.teacher-broadcast-viewport').boundingBox();
-            assert(stage.width <= viewport.width + 1 && stage.height <= viewport.height + 1, 'entire source fits inside every learner display');
+            assert(stage.width >= 3840 * .85 - 1, 'large teacher viewport never shrinks code below the readable scale');
+            if (await page.locator('.teacher-broadcast-hint__view').isVisible()) {
+                await page.getByRole('button', { name: '查看老师的完整画面' }).click();
+                const full = await page.locator('.teacher-broadcast-stage').boundingBox();
+                assert(full.width <= viewport.width + 1 && full.height <= viewport.height + 1, 'whole source remains one click away');
+                await page.getByRole('button', { name: '放大并跟随老师正在讲解的位置' }).click();
+            }
         }
         assert.equal(await unselected.locator('.teacher-broadcast-overlay').count(), 0);
+        const position = (page) => page.locator('.teacher-broadcast-stage').evaluate(node => ({left:node.style.left,top:node.style.top}));
+        const firstViewport = await first.locator('.teacher-broadcast-viewport').boundingBox();
+        await first.mouse.move(firstViewport.x + 180, firstViewport.y + 160); await first.mouse.down();
+        const frozen = await position(first);
+        // Separate physical computers do not blur the learner while the teacher
+        // clicks; dispatch the source pointer without changing the test browser's active tab.
+        const farBox = await teacher.locator('#far-focus').boundingBox();
+        const teacherInput = await teacher.context().newCDPSession(teacher);
+        await teacherInput.send('Input.dispatchMouseEvent', {type:'mousePressed',x:farBox.x+30,y:farBox.y+10,button:'left',clickCount:1});
+        await teacherInput.send('Input.dispatchMouseEvent', {type:'mouseReleased',x:farBox.x+30,y:farBox.y+10,button:'left',clickCount:1});
+        await teacherInput.detach();
+        await second.waitForFunction(() => parseFloat(document.querySelector('.teacher-broadcast-stage').style.left) < -1000);
+        assert.deepEqual(await position(first), frozen, 'teacher focus cannot move the canvas while a learner is drawing');
+        await first.mouse.up();
+        await first.waitForFunction(() => parseFloat(document.querySelector('.teacher-broadcast-stage').style.left) < -1000);
+        const beforeWheel = await position(first);
+        await first.mouse.wheel(-400, -200);
+        await first.waitForFunction(left => parseFloat(document.querySelector('.teacher-broadcast-stage').style.left) > left + 50, parseFloat(beforeWheel.left));
+        const panned = await position(first);
         await teacher.locator('#run').click();
-        for (const page of viewers) await page.frameLocator('.live-share-mirror iframe').locator('#result').filter({ hasText: '已运行 1' }).waitFor();
+        await second.waitForFunction(() => parseFloat(document.querySelector('.teacher-broadcast-stage').style.left) > -100);
+        await first.waitForTimeout(400);
+        assert.deepEqual(await position(first), panned, 'manual inspection has a short follow lock and never controls the source');
+        await first.getByRole('button', {name:'查看老师的完整画面'}).click();
+        await first.getByRole('button', {name:'放大并跟随老师正在讲解的位置'}).click();
+        await first.setViewportSize({width:1500,height:1000});
+        assert((await first.locator('.teacher-broadcast-stage').boundingBox()).width >= 3840*.85-1, 'resizing the learner window keeps text readable');
+        await first.setViewportSize({width:1180,height:760});
+        await teacher.waitForFunction(() => !document.querySelector('[data-share-drawing-stroke]'), null, {timeout:10000});
+        await teacher.evaluate(() => { editor.setValue(' '.repeat(240) + 'print("远处代码")'); editor.setPosition({lineNumber:1,column:241}); editor.focus(); });
+        await teacher.keyboard.press('ArrowRight');
+        await second.waitForFunction(() => parseFloat(document.querySelector('.teacher-broadcast-stage').style.left) < -500);
+        await teacher.evaluate(() => { editor.setValue('# teacher demonstration\nprint("hello")'); editor.setPosition({lineNumber:1,column:1}); editor.focus(); });
+        await teacher.keyboard.press('ArrowRight');
+        await second.waitForFunction(() => parseFloat(document.querySelector('.teacher-broadcast-stage').style.left) > -100);
+
+        await teacher.evaluate(() => {
+            const root = document.createElement('div'); root.id = 'test-runtime'; root.dataset.ideRuntime = 'true'; root.dataset.liveSharePrivate = '';
+            root.innerHTML = '<section class="ide-window is-front" style="position:fixed;right:30px;top:150px;width:600px;height:400px">运行终端</section>';
+            document.body.append(root);
+        });
+        await second.waitForFunction(() => parseFloat(document.querySelector('.teacher-broadcast-stage').style.left) < -1000);
+        await teacher.evaluate(() => document.querySelector('#test-runtime').remove());
+        await teacher.locator('#run').click();
+        for (const page of viewers) await page.frameLocator('.live-share-mirror iframe').locator('#result').filter({ hasText: '已运行 2' }).waitFor();
         await teacher.evaluate(() => editor.executeEdits('demonstration', [{ range: new monaco.Range(1, 1, 1, 1), text: '# live teacher edit\n' }]));
         await Promise.all(viewers.map((page) => page.waitForFunction(() => sharedEditor()?.getValue().includes('# live teacher edit'))));
         const editorValue = await teacher.evaluate(() => editor.getValue());
@@ -156,8 +206,8 @@ test('one teacher broadcasts to two selected learners, with read-only pen questi
         const mirrorButton = await first.frameLocator('.live-share-mirror iframe').locator('#run').boundingBox();
         await first.mouse.click(mirrorButton.x + mirrorButton.width / 2, mirrorButton.y + mirrorButton.height / 2);
         await first.keyboard.type('learner must not type'); await first.mouse.wheel(0, 400);
-        assert.equal(await teacher.evaluate(() => runs), 1); assert.equal(await teacher.evaluate(() => editor.getValue()), editorValue);
-        const stage = await first.locator('.teacher-broadcast-stage').boundingBox();
+        assert.equal(await teacher.evaluate(() => runs), 2); assert.equal(await teacher.evaluate(() => editor.getValue()), editorValue);
+        const stage = await first.locator('.teacher-broadcast-viewport').boundingBox();
         await first.mouse.move(stage.x + 130, stage.y + 130); await first.mouse.down({ button: 'left' });
         // Send native pen motion without Playwright's HTML drag-and-drop heuristic.
         // An rrweb iframe may be rebuilt during a gesture; waiting for its former
@@ -168,6 +218,18 @@ test('one teacher broadcasts to two selected learners, with read-only pen questi
         });
         await first.mouse.up({ button: 'left' }); await penInput.detach();
         await teacher.locator('[data-share-drawing-stroke]').last().waitFor(); await second.locator('[data-share-drawing-stroke]').last().waitFor();
+        const inkInSourceCoordinates = (page) => page.evaluate(() => {
+            const path = [...document.querySelectorAll('[data-share-drawing-stroke] path:last-child')].at(-1);
+            const rect = path.getBoundingClientRect(); const stage = document.querySelector('.teacher-broadcast-stage');
+            const box = stage?.getBoundingClientRect(); const scale = box ? box.width / stage.clientWidth : 1;
+            return {x:(rect.x-(box?.x||0))/scale,y:(rect.y-(box?.y||0))/scale,width:rect.width/scale,height:rect.height/scale};
+        });
+        const teacherInk = await inkInSourceCoordinates(teacher);
+        for (const page of viewers) {
+            const learnerInk = await inkInSourceCoordinates(page);
+            for (const key of ['x','y','width','height']) assert(Math.abs(learnerInk[key]-teacherInk[key]) < 2,
+                `question ink stays on the same source content after independent pan/scale (${key})`);
+        }
         await first.keyboard.press('Shift+Enter');
         assert.equal(await first.locator('[data-share-drawing-note]').count(), 0);
         assert(events.some((event) => event.uid === 5 && event.type === 'broadcast:relay' && event.kind === 'drawing'));

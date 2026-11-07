@@ -20,6 +20,8 @@ export interface IdeSnapshot {
   state: IdeState;
   ready: boolean;
   message: string;
+  /** Owner's IDE preference; older shared snapshots fall back to the default. */
+  fontSize?: number;
   output: { stream: string; text: string }[];
   inputPending: boolean;
   inputDraft: string;

@@ -43,6 +43,10 @@ export function installFrameCapture() {
         drawingRoot.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147482000';
         document.documentElement.append(drawingRoot);
         drawing = attachTemporaryDrawing({ container: drawingRoot, teacher: true, pageId: 'local-scratch-drawing', scopeDocument: true,
+          ...(Array.isArray(message.annotationDrafts) ? { annotationStore: {
+            read: () => message.annotationDrafts.slice(0, 32),
+            write: (drafts: unknown[]) => { if (Date.now() < drawingLease) parent.postMessage({ type: 'live-share-local-drawing-cache', channel, drafts }, parentOrigin); },
+          } } : {}),
           anchors: {
             identify: (node) => { const nodeId = capture?.getDrawingNodeId(node); return nodeId ? { nodeId } : null; },
             resolve: (identity) => capture?.getDrawingNode(identity.nodeId) || null,

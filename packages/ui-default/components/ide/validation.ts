@@ -1,4 +1,5 @@
 import { IdeSnapshot } from './types';
+import { IDE_FONT_MAX, IDE_FONT_MIN } from './fontSize';
 const object = (value: any) => value && typeof value === 'object' && !Array.isArray(value);
 const number = (value: any, max = 1000000) => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= max;
 const string = (value: any, max: number) => typeof value === 'string' && value.length <= max;
@@ -25,6 +26,7 @@ export function isValidIdeSnapshot(s: any): s is IdeSnapshot {
     || typeof s.ready !== 'boolean' || typeof s.inputPending !== 'boolean' || !string(s.inputDraft, 16000)
     || !Number.isSafeInteger(s.inputErrorSeq) || s.inputErrorSeq < 0 || !string(s.message, 4096)
     || !['terminal', 'graphics'].includes(s.activeWindow) || !object(s.windows)) return false;
+  if (s.fontSize !== undefined && (!Number.isInteger(s.fontSize) || s.fontSize < IDE_FONT_MIN || s.fontSize > IDE_FONT_MAX)) return false;
   for (const name of ['terminal', 'graphics']) {
     const w = s.windows[name];
     if (!object(w) || ['visible', 'minimized', 'maximized'].some((key) => typeof w[key] !== 'boolean')

@@ -1,4 +1,5 @@
 import { emptyIdeSnapshot, IdeCommand, IdeSnapshot, isIdeRunning, TurtleCommand } from './types';
+import { getIdeFontSize, subscribeIdeFontSize } from './fontSize';
 
 export interface IdeRuntimeOptions {
   url: string;
@@ -24,6 +25,7 @@ export function setActiveIdeRuntime(runtime: IdeRuntime | null) {
 /** One owner connection. A shared teacher view only forwards commands to this instance. */
 export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
   let state = emptyIdeSnapshot();
+  state.fontSize = getIdeFontSize();
   let socket: WebSocket | null = null;
   let sequence = 0;
   let lastServerSequence = -1;
@@ -49,6 +51,12 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
       for (const listener of listeners) listener(state);
     });
   };
+  const unsubscribeFont = subscribeIdeFontSize(() => {
+    const fontSize = getIdeFontSize();
+    if (state.fontSize === fontSize || disposed) return;
+    state.fontSize = fontSize;
+    emit();
+  });
   function output(text: string, stream = 'stdout') {
     if (!text) return;
     if (!state.windows.terminal.visible) state.activeWindow = 'terminal';
@@ -108,7 +116,7 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
     }
     const windows = state.windows;
     clearDraftActivity(); lastDraftSentAt = 0;
-    state = { ...emptyIdeSnapshot(), windows, revision: state.revision, ready: true, state: 'starting',
+    state = { ...emptyIdeSnapshot(), windows, fontSize: getIdeFontSize(), revision: state.revision, ready: true, state: 'starting',
       runId: `ide_${Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('')}` };
     state.windows.terminal.visible = false;
     state.windows.graphics.visible = false;
@@ -296,6 +304,7 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
       }
     },
     dispose() {
+      unsubscribeFont();
       clearDraftActivity();
       disposed = true; if (notifyFrame !== null) cancelAnimationFrame(notifyFrame);
       if (isIdeRunning(state.state)) send({ type: 'stop', runId: state.runId });

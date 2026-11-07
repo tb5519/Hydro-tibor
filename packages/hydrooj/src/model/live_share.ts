@@ -156,11 +156,11 @@ export async function livePresence(uid: number, tabId: string, now = Date.now())
 export function notifySession(session: ShareSession, emit: Emit) {
     emit({ uid: session.teacherUid, tabId: session.teacherTabId, message: {
         type: 'started', sessionId: session._id, studentUid: session.studentUid, studentName: session.studentName,
-        teacherName: session.teacherName, tabId: session.studentTabId, pageId: session.pageId,
+        teacherName: session.teacherName, tabId: session.studentTabId, pageId: session.pageId, pageUrl: session.pageUrl,
     } });
     emit({ uid: session.studentUid, tabId: session.studentTabId, message: {
         type: 'share-start', sessionId: session._id, teacherUid: session.teacherUid, teacherName: session.teacherName,
-        tabId: session.studentTabId, pageId: session.pageId,
+        tabId: session.studentTabId, pageId: session.pageId, pageUrl: session.pageUrl,
     } });
 }
 
@@ -202,7 +202,7 @@ export async function startSession(teacher: SharePresence, studentUid: number, t
     const session: ShareSession = {
         _id: opaqueShareId(), teacherUid: teacher.uid, teacherTabId: teacher.tabId, studentUid, studentTabId: student.tabId,
         studentDeviceId: student.deviceId,
-        workspaceId: teacher.workspaceId, domainId: student.domainId, pageId: student.pageId,
+        workspaceId: teacher.workspaceId, domainId: student.domainId, pageId: student.pageId, pageUrl: student.url,
         teacherName: scope.teacher.name, studentName: scope.student.name, active: true,
         createdAt: new Date(now), expiresAt: new Date(now + LIVE_SHARE_RECONNECT_MS),
     };
@@ -231,7 +231,7 @@ export async function refreshSession(session: ShareSession, emit: Emit, now = Da
         await claimParticipants('assist', session._id, [session.teacherUid, session.studentUid], now);
         const updated = await sessions.findOneAndUpdate({ _id: session._id, active: true, studentTabId: session.studentTabId,
             pageId: session.pageId, expiresAt: { $gt: new Date(now) } }, {
-            $set: { pageId: student.pageId, domainId: student.domainId, expiresAt: new Date(now + LIVE_SHARE_RECONNECT_MS) },
+            $set: { pageId: student.pageId, pageUrl: student.url, domainId: student.domainId, expiresAt: new Date(now + LIVE_SHARE_RECONNECT_MS) },
         }, { returnDocument: 'after' });
         const current = updated || await sessions.findOne({ _id: session._id, active: true, studentTabId: session.studentTabId,
             expiresAt: { $gt: new Date(now) } });
@@ -257,12 +257,12 @@ export async function followStudentTab(item: SharePresence, emit: Emit, now = Da
     }
     const updated = await sessions.findOneAndUpdate({ _id: session._id, active: true, studentTabId: session.studentTabId,
         pageId: session.pageId, studentDeviceId: item.deviceId, expiresAt: { $gt: new Date(now) } }, {
-        $set: { studentTabId: item.tabId, pageId: item.pageId, domainId: item.domainId, expiresAt: new Date(now + LIVE_SHARE_RECONNECT_MS) },
+        $set: { studentTabId: item.tabId, pageId: item.pageId, pageUrl: item.url, domainId: item.domainId, expiresAt: new Date(now + LIVE_SHARE_RECONNECT_MS) },
     }, { returnDocument: 'after' });
     if (!updated) return null;
     // End just the old tab's source adapters; the room itself remains active.
     emit({ uid: session.studentUid, tabId: session.studentTabId,
-        message: { type: 'ended', sessionId: session._id, reason: '已跟随到你的当前学习页面。' } });
+        message: { type: 'ended', sessionId: session._id, followed: true, reason: '已跟随到你的当前学习页面。' } });
     notifySession(updated, emit);
     return updated;
 }

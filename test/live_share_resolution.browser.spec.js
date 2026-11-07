@@ -160,6 +160,21 @@ test('different screen sizes and DPR preserve source editor geometry, concurrent
         const scale = stage.width / 1920;
         assert(Math.abs(mirrorBox.width - sourceBox.width * scale) < 2);
         assert(Math.abs(mirrorBox.x - (stage.x + sourceBox.x * scale)) < 2);
+        const mousePoint = { x: sourceBox.x + 180, y: sourceBox.y + 24 };
+        await student.mouse.move(mousePoint.x, mousePoint.y);
+        await teacher.waitForFunction((point) => {
+            const cursor = document.querySelector('.live-share-stage .live-share-remote-pointer');
+            return cursor?.style.display === 'block' && Math.abs(parseFloat(cursor.style.left) - point.x) < 1
+                && Math.abs(parseFloat(cursor.style.top) - point.y) < 1;
+        }, mousePoint);
+        await teacher.waitForTimeout(90);
+        const remoteDot = await teacher.locator('.live-share-stage .live-share-remote-pointer').boundingBox();
+        assert(Math.abs(remoteDot.x + remoteDot.width / 2 - stage.x - mousePoint.x * scale) < 1,
+            'actual Monaco mouse remains aligned through different DPR and viewer scale');
+        assert.equal(await teacher.locator('.live-share-remote-pointer').evaluate(node => getComputedStyle(node).pointerEvents), 'none');
+        await teacher.screenshot({ path: path.join(os.tmpdir(), 'onebyone-shared-cursor-lightpoint.png') });
+        await student.mouse.move(1930, 1090);
+        await teacher.locator('.live-share-remote-pointer').waitFor({ state: 'hidden' });
         if (process.env.LIVE_SHARE_SCREENSHOTS === '1') {
             const file = path.join(os.tmpdir(), 'live-share-resolution-fit.png');
             await teacher.screenshot({ path: file }); console.log(`Fit preview: ${file}`);

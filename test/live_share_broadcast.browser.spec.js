@@ -70,8 +70,8 @@ it('teacher broadcasts the real page to two readonly viewers with live code, not
         await page.exposeFunction('sendQuestion', (packet) => {
             questions.push(packet); const data = { ...packet, strokeId: `u${i + 1}-${packet.strokeId}` };
             delivery = delivery.then(async () => { if (!active) return;
-                await teacher.evaluate((p) => window.adapter.receive('drawing', p), data);
-                await (i ? first : second).evaluate((p) => window.adapter.receive('drawing', p), data);
+                await teacher.evaluate((p) => window.adapter.receive('drawing', p, 'student'), data);
+                await (i ? first : second).evaluate((p) => window.adapter.receive('drawing', p, 'student'), data);
             });
         });
         await page.evaluate(() => {
@@ -90,7 +90,8 @@ it('teacher broadcasts the real page to two readonly viewers with live code, not
     await teacher.evaluate(() => {
         document.querySelector('#language').value = 'py.py3';
         window.editor = monaco.editor.create(document.querySelector('#editor'), { value: 'print("hello")\nprint("world")', language: 'python', fontSize: 18 });
-        window.adapter = Broadcast.attachBroadcastSource({ pageId: 'broadcast-page-123', send: (kind, data) => { window.sendPacket(kind, data); } });
+        window.adapter = Broadcast.attachBroadcastSource({ pageId: 'broadcast-page-123', annotationScope: { sessionId: 'broadcast-lesson-123', url: location.href },
+            send: (kind, data) => { window.sendPacket(kind, data); } });
         window.adapter.setConnected(true);
     });
     await Promise.all([first, second].map((p) => p.waitForFunction(() => window.synced && monaco.editor.getEditors().some(e => e.getValue().includes('hello')))));
@@ -135,6 +136,10 @@ it('teacher broadcasts the real page to two readonly viewers with live code, not
     assert.equal(await teacher.evaluate(() => window.clicks), 1);
     await first.mouse.move(420, 110); await first.mouse.down(); await first.mouse.move(580, 140, { steps: 8 }); await first.mouse.up();
     await Promise.all([teacher, second].map((p) => p.waitForFunction(() => [...document.querySelectorAll('[data-share-drawing-stroke]')].some(n => n.getBoundingClientRect().width > 50 && getComputedStyle(n).visibility === 'visible'))));
+    for (const page of pages) {
+        const colors = await page.locator('[data-share-drawing-role="student"] path:nth-child(2)').evaluateAll(nodes => nodes.map(n => n.getAttribute('stroke')));
+        assert(colors.length && colors.every(color => color === '#1599b3'), 'learner question ink stays teal on its own view, the teacher and other learners');
+    }
     assert(questions.length > 2); assert(questions.every((p) => ['start', 'move', 'end'].includes(p.phase)));
     await first.keyboard.press('Shift+Enter'); assert(!questions.some((p) => p.phase === 'note'));
     assert.equal(await first.locator('#draft').inputValue(), '原本的学员草稿');
@@ -152,6 +157,10 @@ it('teacher broadcasts the real page to two readonly viewers with live code, not
     await teacher.mouse.move(editorBox.x + 250, editorBox.y + 100, { steps: 6 }); await teacher.mouse.up({ button: 'right' });
     await teacher.keyboard.press('Shift+Enter'); await teacher.keyboard.type('画笔重点');
     await Promise.all([first, second].map((p) => p.waitForFunction(() => [...document.querySelectorAll('[data-share-drawing-note-input]')].some(n => n.value === '画笔重点' && n.readOnly && getComputedStyle(n).visibility === 'visible'))));
+    for (const page of pages) {
+        const colors = await page.locator('[data-share-drawing-role="teacher"] path:nth-child(2)').evaluateAll(nodes => nodes.map(n => n.getAttribute('stroke')));
+        assert(colors.length && colors.every(color => color === '#9272e5'), 'teacher ink remains purple on all displays');
+    }
     assert(sourcePackets.filter(p => p.kind === 'drawing').some(p => p.data.anchor?.kind === 'editor'));
     // A reconnect/late audience full snapshot restores both note types and current code.
     await second.evaluate(() => { window.adapter.dispose(); window.adapter = Broadcast.attachBroadcastViewer({ pageId: 'broadcast-page-123',
@@ -160,6 +169,26 @@ it('teacher broadcasts the real page to two readonly viewers with live code, not
     await second.waitForFunction(() => [...document.querySelectorAll('[data-share-drawing-note-input]')].some(n => n.value === '画笔重点')
         && [...document.querySelectorAll('[data-share-annotation-text]')].some(n => n.textContent === '代码重点')
         && [...document.querySelectorAll('[data-share-annotation-text]')].some(n => n.textContent === '课堂重点'));
+
+    // A teacher can leave this question and return in the same lesson. Fresh DOM,
+    // editor and page IDs must rebuild all three durable annotation kinds.
+    active = false; await delivery;
+    await teacher.evaluate(() => adapter.dispose());
+    await teacher.reload(); await teacher.waitForFunction(() => window.ready);
+    for (const page of [first, second]) await page.evaluate(() => {
+        adapter.dispose(); window.adapter = Broadcast.attachBroadcastViewer({ pageId: 'broadcast-page-return',
+            container: document.querySelector('#stage'), sendDrawing: (p) => window.sendQuestion(p) });
+    });
+    active = true;
+    await teacher.evaluate(() => {
+        window.editor = monaco.editor.create(document.querySelector('#editor'), { value: 'print("直播修改")', language: 'python', fontSize: 18 });
+        window.adapter = Broadcast.attachBroadcastSource({ pageId: 'broadcast-page-return', annotationScope: { sessionId: 'broadcast-lesson-123', url: location.href },
+            send: (kind, data) => window.sendPacket(kind, data) });
+    });
+    for (const page of [first, second]) await page.waitForFunction(() => [...document.querySelectorAll('[data-share-drawing-note-input]')].some(n => n.value === '画笔重点')
+        && [...document.querySelectorAll('[data-share-annotation-text]')].some(n => n.textContent === '代码重点')
+        && [...document.querySelectorAll('[data-share-annotation-text]')].some(n => n.textContent === '课堂重点'));
+    assert.equal(await teacher.locator('[data-share-annotation-input]').count(), 2);
 
     assert.deepEqual(errors, []);
     await Promise.all(pages.map((p) => p.evaluate(() => window.adapter.dispose())));

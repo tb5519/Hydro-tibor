@@ -2,6 +2,8 @@ import { record, Replayer } from './vendor';
 import { attachAnnotationSurface, ShareAnnotation } from './annotation';
 import { sharedSash, resizeSharedSash, SHARED_SPLIT_SELECTOR } from './splitter';
 import { attachSourceScratchControl, attachViewerScratchControl, scratchTargetFingerprint, ScratchInput } from './scratch_control';
+import { AnnotationScope, TextBookmark, bookmarkText, resolveTextBookmark, readAnnotationCache, writeAnnotationCache } from './annotation_cache';
+import { attachRemotePointer, attachSourcePointer } from './pointer';
 
 /** The replay is a display surface. Its scripts, forms and links never run. */
 const BLOCK = [
@@ -41,6 +43,7 @@ export interface MirrorCommand {
 export interface MirrorAck { id: string; pageId: string; ok: boolean; reason?: string }
 interface SourceOptions {
   pageId: string;
+  annotationScope?: AnnotationScope;
   teacherAnnotations?: boolean;
   sendAnnotation?: (data: MirrorCommand) => void;
   inlineLocalImages?: boolean;
@@ -54,10 +57,13 @@ interface SourceOptions {
 interface ViewerOptions {
   readOnly?: boolean;
   pageId: string;
+  annotationScope?: AnnotationScope;
   container: HTMLElement;
   sendCommand: (data: MirrorCommand) => void;
   scratchControls?: boolean;
   onViewport?: (size: { width: number; height: number }) => void;
+  /** Read-only broadcast viewing pan; never forwarded as a source scroll command. */
+  onViewWheel?: (event: Pick<WheelEvent, 'deltaX' | 'deltaY' | 'deltaMode' | 'shiftKey'>) => void;
   /** Local viewing only. Coordinates/deltas are in the teacher viewport's CSS pixels. */
   onViewZoom?: (gesture: { delta: number; clientX: number; clientY: number }) => void;
   /** Scroll deltas (previous minus current pointer position) for natural grab panning. */
@@ -265,6 +271,13 @@ export function sanitizeMirrorEvent(event: any): RREvent | null {
   if (!event || !Number.isInteger(event.type) || ![0, 1, 2, 3, 4].includes(event.type)
     || !Number.isFinite(event.timestamp) || !event.data || typeof event.data !== 'object') return null;
   if (event.type === 3 && ![0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 13, 14].includes(event.data.source)) return null;
+  if (event.type === 3 && [1, 6, 12].includes(event.data.source)) {
+    const positions = event.data.positions;
+    if (!Array.isArray(positions) || !positions.length || positions.length > 256 || positions.some((point) => !point
+      || !Number.isSafeInteger(point.id) || point.id < 1
+      || !['x', 'y', 'timeOffset'].every((key) => Number.isFinite(point[key]) && Math.abs(point[key]) <= 32768))) return null;
+    event.data = { source: event.data.source, positions: positions.map(({ id, x, y, timeOffset }) => ({ id, x, y, timeOffset })) };
+  }
   if (event.type === 3 && event.data.source === 7) {
     const data = event.data;
     if (!Number.isSafeInteger(data.id) || data.id <= 0 || ![0, 1, 2, 3, 4].includes(data.type)
@@ -457,10 +470,32 @@ export class MirrorAssembler {
   dispose() { this.disposed = true; this.reset(); }
 }
 
+type SavedTextAnnotation = { id: string; value: ShareAnnotation; start: TextBookmark; end: TextBookmark };
+function textAnnotationDraft(id: string, value: ShareAnnotation, doc: Document, mirror: any): SavedTextAnnotation | null {
+  if (!value.noteOpen || !value.text.trim() || !annotationRange(doc, mirror, value)) return null;
+  const start = bookmarkText(mirror.getNode(value.startNodeId)); const end = bookmarkText(mirror.getNode(value.endNodeId));
+  return start && end ? { id, value: { ...value }, start, end } : null;
+}
+function restoreTextAnnotation(item: SavedTextAnnotation, doc: Document, mirror: any): ShareAnnotation | null {
+  if (!item || typeof item.id !== 'string' || !/^[\w-]{8,96}$/.test(item.id) || !item.value?.noteOpen || typeof item.value.text !== 'string' || !item.value.text.trim()) return null;
+  const start = resolveTextBookmark(doc, item.start); const end = resolveTextBookmark(doc, item.end);
+  if (!start || !end) return null;
+  const value = { ...item.value, startNodeId: mirror?.getId(start), endNodeId: mirror?.getId(end) };
+  return annotationRange(doc, mirror, value) ? value : null;
+}
+
 /** Teacher broadcast annotates the real page; ordinary clicks and code editing keep their native behavior. */
 function attachSourceAnnotations(options: { root: HTMLElement; pageId: string; mirror: () => any;
-  connected: () => boolean; send: (data: MirrorCommand) => void }) {
+  annotationScope?: AnnotationScope; connected: () => boolean; send: (data: MirrorCommand) => void }) {
   const marks = new Map<string, { value: ShareAnnotation; surface: ReturnType<typeof attachAnnotationSurface> }>();
+  const saved = new Map(readAnnotationCache<SavedTextAnnotation>(options.annotationScope, 'text').map((item) => [item.id, item]));
+  const persist = (id: string) => {
+    if (!options.annotationScope) return;
+    const value = marks.get(id)?.value;
+    if (!value || !value.noteOpen || !value.text.trim()) saved.delete(id);
+    else { const item = textAnnotationDraft(id, value, document, options.mirror()); if (item) saved.set(id, item); }
+    writeAnnotationCache(options.annotationScope, 'text', [...saved.values()]);
+  };
   let selected: string | null = null; let selecting = false; let disposed = false;
   let frame = 0; let timer: ReturnType<typeof setTimeout>; let serial = 0;
   const sync = (id: string) => {
@@ -474,14 +509,14 @@ function attachSourceAnnotations(options: { root: HTMLElement; pageId: string; m
       options.connected() ? annotationRect(annotationRange(document, options.mirror(), mark.value)) : null);
     if (marks.size && !disposed && options.connected()) frame = requestAnimationFrame(render);
   }
-  function remove(id: string) { marks.get(id)?.surface.dispose(); marks.delete(id); sync(id); }
+  function remove(id: string) { marks.get(id)?.surface.dispose(); marks.delete(id); persist(id); sync(id); }
   function clearTransient(except?: string) {
     for (const [id, mark] of marks) if (id !== except && (!mark.value.noteOpen || !mark.value.text.trim())) remove(id);
   }
   function create(id: string, value: ShareAnnotation) {
     const surface = attachAnnotationSurface({ container: options.root, teacher: true, id,
       onChange: (patch) => { const mark = marks.get(id); if (!mark || !options.connected()) return;
-        mark.value = { ...mark.value, ...patch }; render(); sync(id); }, onClear: () => remove(id) });
+        mark.value = { ...mark.value, ...patch }; persist(id); render(); sync(id); }, onClear: () => remove(id) });
     const mark = { value, surface }; marks.set(id, mark); return mark;
   }
   function capture() {
@@ -525,8 +560,18 @@ function attachSourceAnnotations(options: { root: HTMLElement; pageId: string; m
   };
   window.addEventListener('pointerdown', down, true); window.addEventListener('pointerup', up, true);
   document.addEventListener('selectionchange', change); window.addEventListener('keydown', key, true);
-  return { snapshot() { for (const id of marks.keys()) sync(id); }, refresh: render,
-    dispose() { disposed = true; clearTimeout(timer); cancelAnimationFrame(frame);
+  function restore() {
+    if (disposed || !options.connected()) return;
+    for (const item of saved.values()) {
+      if (marks.has(item.id)) continue;
+      const value = restoreTextAnnotation(item, document, options.mirror());
+      if (value) { create(item.id, value); sync(item.id); }
+    }
+    render();
+  }
+  const restoreTimer = options.annotationScope ? setInterval(restore, 600) : undefined;
+  return { snapshot() { restore(); for (const id of marks.keys()) sync(id); }, refresh: render,
+    dispose() { for (const id of marks.keys()) persist(id); disposed = true; clearInterval(restoreTimer); clearTimeout(timer); cancelAnimationFrame(frame);
       window.removeEventListener('pointerdown', down, true); window.removeEventListener('pointerup', up, true);
       document.removeEventListener('selectionchange', change); window.removeEventListener('keydown', key, true);
       for (const mark of marks.values()) mark.surface.dispose(); marks.clear(); } };
@@ -752,13 +797,15 @@ export function attachSourceMirror(options: SourceOptions) {
   }
   queueMicrotask(start);
   const sourceMirror = () => (record as any).mirror;
+  const pointer = attachSourcePointer({ enabled: () => connected && !disposed && hasSnapshot,
+    documentId: () => sourceMirror()?.getId(document), emit });
   const annotationRoot = document.createElement('div');
   annotationRoot.className = 'live-share-annotation-source';
   annotationRoot.dataset.liveSharePrivate = '';
   annotationRoot.style.cssText = `position:fixed;inset:0;z-index:${options.teacherAnnotations ? 2147481000 : 1000};pointer-events:none`;
   document.body.appendChild(annotationRoot);
   const localAnnotations = options.teacherAnnotations && options.sendAnnotation ? attachSourceAnnotations({ root: annotationRoot, pageId: options.pageId,
-    mirror: sourceMirror, connected: () => connected && !disposed, send: options.sendAnnotation }) : null;
+    annotationScope: options.annotationScope, mirror: sourceMirror, connected: () => connected && !disposed, send: options.sendAnnotation }) : null;
   const annotations = new Map<string, { value: ShareAnnotation; surface: ReturnType<typeof attachAnnotationSurface> }>();
   let annotationFrame = 0;
   function renderAnnotations() {
@@ -999,6 +1046,7 @@ export function attachSourceMirror(options: SourceOptions) {
     setConnected(value: boolean) {
       if (disposed) return;
       if (connected === value) { if (value && stop) (record as any).takeFullSnapshot(true); return; }
+      pointer.hide();
       connected = value;
       scratchControl?.reset();
       localAnnotations?.refresh();
@@ -1011,6 +1059,7 @@ export function attachSourceMirror(options: SourceOptions) {
       if (value) start();
     },
     dispose() {
+      pointer.dispose();
       disposed = true; generation++; stop?.(); stop = undefined; queue = []; queuedBytes = 0; commands.clear(); stopScrolling();
       clearAnnotations(); localAnnotations?.dispose(); annotationRoot.remove();
       scratchControl?.dispose();
@@ -1057,7 +1106,31 @@ export function attachViewerMirror(options: ViewerOptions) {
   host.className = 'live-share-mirror';
   host.style.cssText = 'position:absolute;inset:0;overflow:hidden';
   options.container.appendChild(host);
+  const pointer = attachRemotePointer(options.container);
   const annotations = new Map<string, { value: ShareAnnotation; editing: boolean; surface: ReturnType<typeof attachAnnotationSurface> }>();
+  const annotationScope = !options.readOnly ? options.annotationScope : undefined;
+  const savedAnnotations = new Map(readAnnotationCache<SavedTextAnnotation>(annotationScope, 'text').map((item) => [item.id, item]));
+  function persistAnnotation(id: string) {
+    if (!annotationScope) return;
+    const value = annotations.get(id)?.value; const doc = player?.iframe?.contentDocument;
+    if (!value || !value.noteOpen || !value.text.trim()) savedAnnotations.delete(id);
+    else if (doc) { const item = textAnnotationDraft(id, value, doc, player.getMirror()); if (item) savedAnnotations.set(id, item); }
+    writeAnnotationCache(annotationScope, 'text', [...savedAnnotations.values()]);
+  }
+  function restoreAnnotations() {
+    const doc = player?.iframe?.contentDocument;
+    if (!annotationScope || !connected || !ready || disposed || !doc) return;
+    for (const item of savedAnnotations.values()) {
+      const current = annotations.get(item.id);
+      if (current && annotationRange(doc, player.getMirror(), current.value)) continue;
+      const value = restoreTextAnnotation(item, doc, player.getMirror());
+      if (!value) continue;
+      const entry = current || createAnnotation(item.id, value); entry.value = value;
+      sendAnnotation(item.id);
+    }
+    renderAnnotations();
+  }
+  const restoreAnnotationsTimer = annotationScope ? setInterval(restoreAnnotations, 600) : undefined;
   const pendingAnnotations = new Set<string>();
   let annotationFrame = 0;
   let annotationSendTimer: ReturnType<typeof setTimeout>;
@@ -1067,6 +1140,7 @@ export function attachViewerMirror(options: ViewerOptions) {
         const entry = annotations.get(id);
         if (!entry || !connected || !ready || disposed) return;
         entry.value = { ...entry.value, ...patch };
+        persistAnnotation(id);
         renderAnnotations();
         // Throttle only the wire: the teacher's draft/caret stays immediate.
         pendingAnnotations.add(id);
@@ -1089,7 +1163,7 @@ export function attachViewerMirror(options: ViewerOptions) {
   }
   function clearAnnotation(id: string, sync = false) {
     annotations.get(id)?.surface.dispose(); annotations.delete(id); pendingAnnotations.delete(id);
-    if (sync) sendAnnotation(id);
+    if (sync) { persistAnnotation(id); sendAnnotation(id); }
   }
   function clearTransientAnnotations(exceptId?: string) {
     for (const [id, entry] of annotations) {
@@ -1097,6 +1171,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     }
   }
   function clearAnnotations() {
+    for (const id of annotations.keys()) persistAnnotation(id);
     clearTimeout(annotationSendTimer); annotationSendTimer = undefined;
     cancelAnimationFrame(annotationFrame); annotationFrame = 0;
     for (const entry of annotations.values()) entry.surface.dispose();
@@ -1138,7 +1213,10 @@ export function attachViewerMirror(options: ViewerOptions) {
     const cleanupScratch = options.scratchControls
       ? attachViewerScratchControl({ document: doc, send: (node, input) => command(node, 'scratch', { input, target: scratchTargetFingerprint(node) }) }) : () => {};
     if (options.readOnly) {
-      const prevent = (event: Event) => { event.preventDefault(); event.stopImmediatePropagation(); };
+      const prevent = (event: Event) => {
+        event.preventDefault(); event.stopImmediatePropagation();
+        if (event.type === 'wheel') options.onViewWheel?.(event as WheelEvent);
+      };
       const names = ['click', 'dblclick', 'auxclick', 'submit', 'change', 'input', 'keydown', 'keyup', 'mousedown', 'touchstart', 'wheel', 'contextmenu'];
       for (const name of names) doc.addEventListener(name, prevent, { capture: true, passive: false });
       cleanupDocument = () => { cleanupScratch(); for (const name of names) doc.removeEventListener(name, prevent, true); style.remove(); };
@@ -1428,6 +1506,7 @@ export function attachViewerMirror(options: ViewerOptions) {
       style.remove();
     };
     ready = connected;
+    restoreAnnotations();
     renderAnnotations();
     if (connected) options.onViewport?.(currentViewport);
   }
@@ -1445,6 +1524,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     event.timestamp = timestamp;
     if (event.type === 4) { meta = event; viewport(event.data); return; }
     if (event.type === 2) {
+      pointer.hide();
       ready = false;
       for (const entry of annotations.values()) entry.surface.render(null, null);
       cleanupDocument(); clearTimeout(installTimer);
@@ -1465,6 +1545,9 @@ export function attachViewerMirror(options: ViewerOptions) {
       return;
     }
     if (!player) return;
+    if (event.type === 3 && [1, 6, 12].includes(event.data.source)) {
+      pointer.receive(event.data.positions, currentViewport); return;
+    }
     if (event.type === 3 && event.data.source === 3) {
       const scroll = localScrolls.get(event.data.id);
       if (scroll) {
@@ -1480,7 +1563,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     }
     if (event.type === 3 && event.data.source === 4) viewport(event.data);
     player.addEvent(event);
-  }, (message) => { connected = false; options.onStatus?.(message); });
+  }, (message) => { connected = false; pointer.hide(); options.onStatus?.(message); });
   return {
     receive(data: any) { if (!disposed && connected) assembler.receive(data); },
     receiveAnnotation(data: MirrorCommand) {
@@ -1520,6 +1603,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     setConnected(value: boolean) {
       if (connected === value) return;
       connected = value;
+      pointer.hide();
       clearAnnotations();
       ready = false;
       resetScrolls();
@@ -1529,6 +1613,8 @@ export function attachViewerMirror(options: ViewerOptions) {
     },
     dispose() {
       disposed = true; connected = false; assembler.dispose();
+      clearInterval(restoreAnnotationsTimer);
+      pointer.dispose();
       clearAnnotations();
       clearTimeout(installTimer); clearTimeout(wheelTimer); cleanupDocument();
       player?.destroy(); player = undefined; host.remove();
