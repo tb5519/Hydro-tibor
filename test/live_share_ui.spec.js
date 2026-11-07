@@ -64,7 +64,11 @@ before(async () => {
         external: ['vj/*'], define: { 'process.env.NODE_ENV': '"production"' } });
     const assistantJs = transformSync(fs.readFileSync(path.join(root, 'packages/ui-default/components/teacher_assistant.ts'), 'utf8'),
         { loader: 'ts', format: 'iife', globalName: 'TeacherAssistant' }).code;
-    bundle = `${result.outputFiles[0].text}\n${assistantJs}`;
+    // The isolated fixture does not load Hydro's global request module. IDE capacity is
+    // not exercised here, but the real adapter imports it when the shared view opens.
+    bundle = `globalThis.require = (name) => { if (name === 'vj/utils') return { request: {
+      get: async () => { throw new Error('fixture request unavailable'); }, post: async () => { throw new Error('fixture request unavailable'); }
+    } }; throw new Error('Unexpected fixture module: ' + name); };\n${result.outputFiles[0].text}\n${assistantJs}`;
     css = ['teacher_assistant', 'live_share'].map((name) => stylus.render(fs.readFileSync(
         path.join(root, `packages/ui-default/components/${name}.page.styl`), 'utf8'))).join('\n');
     server = http.createServer((req, res) => {

@@ -30,6 +30,7 @@ before(async () => {
     const parentBundle = buildSync({ ...options, globalName: 'FrameAdapters', stdin: { resolveDir: root, contents: `
         export * from './packages/ui-default/components/live_share/frames';
         export * from './packages/ui-default/components/live_share/mirror';
+        export * from './packages/ui-default/components/live_share/drawing';
     ` } }).outputFiles[0].text;
     const childBundle = (await build({ ...options, entryPoints: ['packages/ui-default/components/live_share/frame_capture.ts'],
         plugins: [{ name: 'capture-only', setup(build) {
@@ -81,7 +82,7 @@ async function pair(t, control = false) {
     const child = source.frames().find((frame) => frame.url().includes('/scratch-editor/editor.html'));
     await child.waitForFunction(() => !!window.draw);
     await source.evaluate(() => {
-        window.acks = []; window.sourceFrames = FrameAdapters.attachSourceFrames({ pageId: 'fixture-page', send: (data) => outbox.push(data), sendAck: (ack) => acks.push(ack) });
+        window.drawingPackets = []; window.acks = []; window.sourceFrames = FrameAdapters.attachSourceFrames({ pageId: 'fixture-page', send: (data) => outbox.push(data), sendAck: (ack) => acks.push(ack), sendDrawing: (packet) => drawingPackets.push(packet) });
         window.sourceMirror = FrameAdapters.attachSourceMirror({ pageId: 'fixture-page', send: (data) => outbox.push(data) });
     });
     await viewer.evaluate((control) => {
@@ -252,4 +253,42 @@ it('allows local teacher drawing in opaque Scratch only through the authenticate
     await child.evaluate(() => { window.originalNow = Date.now; Date.now = () => originalNow() + 15000; });
     await child.locator('[data-share-drawing]').waitFor({ state: 'detached', timeout: 3000 });
     await child.evaluate(() => { Date.now = originalNow; });
+});
+
+
+it('broadcasts teacher Scratch ink and pinned notes in parent coordinates through the authenticated frame bridge', { timeout: 45000 }, async (t) => {
+    const { source, viewer, child, flush } = await pair(t);
+    await source.evaluate(() => document.querySelector('#source').contentWindow.postMessage({
+        type: 'live-share-local-drawing', channel: 'fixture-channel-123456', enabled: true,
+    }, '*'));
+    await child.locator('[data-share-drawing]').waitFor();
+    await viewer.evaluate(() => {
+        window.startInk = () => { window.ink?.dispose(); window.ink = FrameAdapters.attachTemporaryDrawing({
+            pageId: 'fixture-page', container: document.querySelector('#viewer'), teacher: false,
+            anchors: { identify: () => null, resolve: (identity) => viewerFrames.getDrawingNode(identity) },
+        }); }; startInk();
+    });
+    await source.mouse.move(130, 160); await source.mouse.down({ button: 'right' });
+    await source.mouse.move(230, 220, { steps: 8 }); await source.mouse.up({ button: 'right' });
+    await source.keyboard.press('Shift+Enter'); await source.keyboard.type('Scratch 重点');
+    await child.waitForFunction(() => [...document.querySelectorAll('[data-share-drawing-note-input]')].some(n => n.value === 'Scratch 重点'));
+    await source.waitForFunction(() => drawingPackets.some(p => p.phase === 'note' && p.note.text === 'Scratch 重点'));
+    const packets = await source.evaluate(() => drawingPackets.splice(0));
+    const start = packets.find(p => p.phase === 'start');
+    assert.deepEqual(start.points[0], [130, 160]);
+    assert.equal(start.anchor.frameId, await source.locator('#source').getAttribute('data-live-share-frame'));
+    for (const packet of packets) assert.equal(await viewer.evaluate((p) => FrameAdapters.validDrawingPacket(p), packet), true);
+    await viewer.evaluate((packets) => packets.forEach(p => ink.receive(p)), packets);
+    await viewer.waitForFunction(() => [...document.querySelectorAll('[data-share-drawing-note-input]')]
+        .some(n => n.value === 'Scratch 重点' && n.readOnly && getComputedStyle(n).visibility === 'visible'));
+    // A renewed full frame snapshot restores a fixed note for a newly joined audience.
+    await viewer.evaluate(() => startInk()); await source.evaluate(() => sourceFrames.snapshot()); await flush(1);
+    const repeated = await source.evaluate(() => drawingPackets.splice(0));
+    assert(repeated.some(p => p.phase === 'start')); assert(repeated.some(p => p.phase === 'note'));
+    await viewer.evaluate((packets) => packets.forEach(p => ink.receive(p)), repeated);
+    await viewer.waitForFunction(() => [...document.querySelectorAll('[data-share-drawing-note-input]')].some(n => n.value === 'Scratch 重点'));
+    const size = await source.evaluate(() => drawingPackets.length);
+    await child.evaluate(() => parent.postMessage({ type: 'live-share-frame-drawing', channel: 'wrong-channel', id: 'forged-frame',
+        packet: { strokeId: 'fake-stroke-123', phase: 'start', sequence: 0, points: [[1, 1]] } }, '*'));
+    await source.waitForTimeout(100); assert.equal(await source.evaluate(() => drawingPackets.length), size);
 });

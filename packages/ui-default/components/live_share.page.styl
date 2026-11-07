@@ -4,6 +4,211 @@
   border: 0
   background: transparent
 
+.teacher-broadcast-picker, .teacher-broadcast-bar, .teacher-broadcast-hint, .teacher-broadcast-flash
+  font-family: var(--font-family, "PingFang SC", "Microsoft YaHei", sans-serif)
+  &, *
+    box-sizing: border-box
+
+.teacher-broadcast-picker
+  input.live-share-picker__search
+    box-sizing: border-box !important
+    min-width: 0
+    max-width: 100%
+  &__tools
+    display: flex
+    align-items: center
+    gap: 14px
+    padding: 0 28px 12px
+    font-size: 12px
+    color: #7a8ca1
+    > span
+      margin-left: auto
+  &__footer
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 16px
+    padding: 18px 28px
+    border-top: 1px solid #eaf0f5
+    > span
+      font-size: 12px
+      color: #8493a5
+  &__error
+    margin: 0
+    padding: 8px 28px
+    color: #a44b45
+    font-size: 13px
+  [hidden]
+    display: none !important
+
+.teacher-broadcast-text-button
+  border: 0
+  padding: 4px 0
+  background: none
+  color: #4b7e76
+  font-size: 12px
+
+.teacher-broadcast-primary
+  border: 0
+  border-radius: 12px
+  padding: 11px 22px
+  color: #fff
+  background: #347f70
+  font-weight: 600
+  box-shadow: 0 3px 8px #27695916
+  &:hover
+    background: #2c7063
+  &:disabled
+    background: #e4ece9
+    box-shadow: none
+    color: #8fa19a
+    cursor: default
+
+.teacher-broadcast-picker label.teacher-broadcast-student
+  display: flex
+  flex-direction: row
+  align-items: center
+  gap: 13px
+  padding: 13px 16px
+  margin: 0 8px 4px
+  border: 1px solid transparent
+  border-radius: 13px
+  cursor: pointer
+  transition: background .15s
+  &:hover
+    background: #f4f9f7
+  &:has(input:checked)
+    background: #edf7f2
+    border-color: #cce5da
+  input
+    flex: 0 0 17px
+    width: 17px
+    height: 17px
+    margin: 0
+    accent-color: #347f70
+  .live-share-student__avatar
+    width: 40px
+    flex: 0 0 40px
+  .live-share-student__copy
+    flex: 1 1 auto
+    min-width: 0
+  &.is-offline
+    opacity: .55
+    cursor: default
+  .teacher-broadcast-student__state
+    font-size: 11px
+    color: #95a0ad
+    flex-shrink: 0
+    &.is-online
+      color: #4a8a72
+
+.teacher-broadcast-bar
+  position: fixed
+  z-index: 2147482100
+  left: 50%
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px))
+  transform: translateX(-50%)
+  max-width: calc(100vw - 32px)
+  display: flex
+  align-items: center
+  gap: 9px
+  padding: 8px 10px 8px 14px
+  border: 1px solid #cee2d9
+  border-radius: 99px
+  background: #fafffdf5
+  box-shadow: 0 4px 20px #304b3b13
+  color: #426c5b
+  font-size: 12px
+  &__status
+    overflow: hidden
+    white-space: nowrap
+    text-overflow: ellipsis
+  &__stop
+    flex-shrink: 0
+    padding: 5px 10px
+    border: 0
+    border-radius: 99px
+    background: #e8f2ed
+    color: #37634f
+    font: inherit
+    cursor: pointer
+    &:hover
+      background: #dbece3
+
+.teacher-broadcast-overlay
+  position: fixed
+  inset: 0
+  z-index: 2147481000
+  display: grid
+  grid-template-rows: minmax(0, 1fr) auto
+  overflow: hidden
+  isolation: isolate
+  background: #e9edf2
+  overscroll-behavior: none
+
+.teacher-broadcast-viewport
+  position: relative
+  min-width: 0
+  min-height: 0
+  overflow: hidden
+  touch-action: none
+
+.teacher-broadcast-stage
+  position: absolute
+  transform-origin: top left
+  overflow: hidden
+  background: #fff
+  box-shadow: 0 0 30px #273a4910
+
+.teacher-broadcast-hint
+  display: flex
+  justify-content: center
+  align-items: center
+  gap: 20px
+  min-height: 32px
+  padding: 7px 12px calc(7px + env(safe-area-inset-bottom, 0px))
+  border-top: 1px solid #dfe6ed
+  background: #f9fbfc
+  color: #7a8c9b
+  font-size: 11px
+  line-height: 18px
+  user-select: none
+  &__status
+    color: #698679
+  &__pen:before
+    content: "✎"
+    margin-right: 6px
+    color: #7799b0
+    font-size: 14px
+
+.teacher-broadcast-flash
+  position: fixed
+  z-index: 2147482200
+  bottom: 22px
+  left: 50%
+  transform: translateX(-50%)
+  max-width: calc(100vw - 32px)
+  padding: 10px 16px
+  border: 1px solid #dce7e2
+  border-radius: 12px
+  color: #536f64
+  background: #fcfffef5
+  box-shadow: 0 4px 18px #263f3514
+  font-size: 13px
+
+.teacher-broadcast-viewing
+  .voice-call-card, .voice-call-floating, .voice-call-toast
+    z-index: 2147482200
+
+@media (max-width: 600px)
+  .teacher-broadcast-hint
+    gap: 3px
+    flex-direction: column
+    padding-top: 3px
+    padding-bottom: calc(3px + env(safe-area-inset-bottom, 0px))
+  .teacher-broadcast-picker__footer > span
+    max-width: 44%
+
 .live-share-viewing .teacher-assistant
   z-index: 1001
   .teacher-assistant__links

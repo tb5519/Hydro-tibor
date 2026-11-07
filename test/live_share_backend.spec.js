@@ -17,11 +17,12 @@ function load(file, dependencies = {}, globals = {}) {
     return module.exports;
 }
 const protocol = load('packages/hydrooj/src/lib/live_share.ts');
+const broadcastProtocol = load('packages/hydrooj/src/lib/teacher_broadcast.ts', { './live_share': protocol });
 const { Router } = load('framework/framework/router.ts');
 const errorCode = (code) => (error) => error.code === code;
 const PERM = { PERM_VIEW: 1n, PERM_EDIT_DOMAIN: 2n, PERM_ALL: 3n };
 const PRIV = { PRIV_USER_PROFILE: 2, PRIV_EDIT_SYSTEM: 1, PRIV_JUDGE: 4 };
-let server; let client; let database; let model; let handlers; let busListeners; let logins;
+let server; let client; let database; let model; let broadcasts; let handlers; let busListeners; let logins;
 let memberships; let accounts; let workspaceStudents; let workspaceMembers;
 const rooms = [
     { _id: 'class-a', workspaceId: 'a', domainType: 'oj' },
@@ -60,8 +61,14 @@ before(async () => {
             } },
     });
     await model.apply();
+    broadcasts = load('packages/hydrooj/src/model/teacher_broadcast.ts', {
+        '../lib/live_share': protocol, '../lib/teacher_broadcast': broadcastProtocol,
+        '../service/db': db, './live_share': model,
+    });
+    await broadcasts.apply();
     handlers = load('packages/hydrooj/src/handler/live_share.ts', {
         '../lib/live_share': protocol, '../model/live_share': model, '../model/workspace': ws, '../model/builtin': { PERM, PRIV },
+        '../lib/teacher_broadcast': broadcastProtocol, '../model/teacher_broadcast': broadcasts,
         '../model/token': { TYPE_SESSION: 0, get: async (id) => logins.get(id) },
         '../service/bus': { parallel: async (name, event) => {
             await Promise.all(busListeners.map((listener) => listener.onShareEvent(event)));
@@ -72,7 +79,8 @@ before(async () => {
 beforeEach(async () => {
     busListeners = [];
     logins = new Map([2, 3, 10, 11, 12, 99].map((uid) => [`login-${uid}`, { uid, scope: '3', expireAt: new Date(Date.now() + 60000) }]));
-    await Promise.all(['live.share.presence', 'live.share.session', 'live.share.grant', 'domain.user', 'user', 'workspace.student', 'workspace.member']
+    await Promise.all(['live.share.presence', 'live.share.session', 'live.share.grant', 'live.share.occupancy', 'live.broadcast.room',
+        'domain.user', 'user', 'workspace.student', 'workspace.member']
         .map((name) => database.collection(name).deleteMany({})));
     await accounts.insertMany([2, 3, 10, 11, 12, 99].map((_id) => ({ _id, priv: 2, uname: `user-${_id}` })));
     await workspaceMembers.insertMany([
@@ -112,6 +120,176 @@ async function hello(f, uid, overrides = {}) {
         title: '题目', visible: true, deviceId: `device-${uid}-testing`, ...overrides });
 }
 const settle = async () => { await new Promise((resolve) => setTimeout(resolve, 20)); };
+
+describe('teacher broadcast protocol and multi-learner isolation', () => {
+    const stroke = { strokeId: 'learner-stroke-testing', phase: 'start', sequence: 0, points: [[40, 80]] };
+    const draw = (sessionId, pageId, drawing = stroke) => ({ type: 'broadcast:relay', sessionId, pageId, kind: 'drawing', data: drawing });
+    async function lesson() {
+        const teacher = connection(2); const first = connection(10); const second = connection(11); const outsider = connection(12, 'other');
+        for (const [item, uid] of [[teacher, 2], [first, 10], [second, 11], [outsider, 12]]) await hello(item, uid);
+        await teacher.instance.message({ type: 'broadcast:start', studentUids: [10, 11] });
+        await settle();
+        const started = teacher.sent.find((m) => m.type === 'broadcast:started');
+        assert.ok(started, JSON.stringify(teacher.sent));
+        return { teacher, first, second, outsider, started };
+    }
+    it('rejects executable learner data, persistent notes, unknown fields and oversized audiences', () => {
+        broadcastProtocol.validateBroadcastMessage({ type: 'broadcast:start', studentUids: [10, 11] });
+        for (const uids of [[], [10, 10], [1], Array.from({ length: 31 }, (_, i) => i + 10)]) {
+            assert.throws(() => broadcastProtocol.validateBroadcastMessage({ type: 'broadcast:start', studentUids: uids }));
+        }
+        assert.throws(() => broadcastProtocol.validateBroadcastMessage({ type: 'broadcast:stop', sessionId: 'session-testing', url: '/manage' }));
+        broadcastProtocol.validateBroadcastRelay(false, 'drawing', stroke, 'page-testing');
+        for (const kind of ['editor', 'mirror', 'annotation', 'command']) {
+            assert.throws(() => broadcastProtocol.validateBroadcastRelay(false, kind, stroke, 'page-testing'), errorCode('FORBIDDEN'));
+        }
+        for (const phase of ['note', 'delete']) {
+            assert.throws(() => broadcastProtocol.validateBroadcastRelay(false, 'drawing', { ...stroke, phase, points: [] }, 'page-testing'), errorCode('FORBIDDEN'));
+        }
+        assert.notEqual(broadcastProtocol.broadcastDrawing(2, stroke).strokeId, broadcastProtocol.broadcastDrawing(10, stroke).strokeId);
+        assert.ok(protocol.shareId(broadcastProtocol.broadcastDrawing(10, { ...stroke, strokeId: 'x'.repeat(96) }).strokeId));
+    });
+    it('shares a granted teacher page with selected learners only and accepts temporary learner ink only', async () => {
+        const { teacher, first, second, outsider, started } = await lesson();
+        assert.ok(first.sent.some((m) => m.type === 'broadcast:view'));
+        assert.ok(second.sent.some((m) => m.type === 'broadcast:view'));
+        assert.equal(outsider.sent.some((m) => m.type.startsWith('broadcast:')), false);
+        const mirror = { type: 'broadcast:relay', sessionId: started.sessionId, pageId: started.pageId, kind: 'mirror',
+            data: { type: 'rrweb', sequence: 0, event: { type: 4, timestamp: Date.now(), data: { width: 1440, height: 900 } } } };
+        await teacher.instance.message(mirror); await settle();
+        for (const viewer of [first, second]) assert.ok(viewer.sent.some((m) => m.type === 'broadcast:relay' && m.kind === 'mirror'));
+        const before = teacher.sent.length;
+        await first.instance.message(draw(started.sessionId, started.pageId)); await settle();
+        assert.ok(teacher.sent.slice(before).some((m) => m.type === 'broadcast:relay' && m.senderUid === 10 && m.data.strokeId.startsWith('broadcast-10-')));
+        assert.ok(second.sent.some((m) => m.type === 'broadcast:relay' && m.senderUid === 10));
+        assert.equal(first.sent.some((m) => m.type === 'broadcast:relay' && m.senderUid === 10), false);
+        assert.equal(outsider.sent.some((m) => m.type === 'broadcast:relay'), false);
+        for (const packet of [{ ...mirror, kind: 'editor', data: { type: 'edit:update' } },
+            draw(started.sessionId, started.pageId, { ...stroke, phase: 'note', points: [] }),
+            { type: 'broadcast:stop', sessionId: started.sessionId }]) await first.instance.message(packet);
+        assert.ok(first.sent.filter((m) => m.type === 'broadcast:error' && m.code === 'FORBIDDEN').length >= 3);
+        await outsider.instance.message(draw(started.sessionId, started.pageId));
+        assert.ok(outsider.sent.some((m) => m.type === 'broadcast:error' && m.code === 'ENDED'));
+    });
+    it('requires the teacher page grant and refuses a foreign workspace audience', async () => {
+        const teacher = connection(2); await hello(teacher, 2, { pageGrant: 'not-a-grant' });
+        await hello(connection(10), 10);
+        await teacher.instance.message({ type: 'broadcast:start', studentUids: [10] });
+        assert.ok(teacher.sent.some((m) => m.type === 'broadcast:error' && m.code === 'UNSUPPORTED_PAGE'));
+        assert.equal(await broadcasts.rooms.countDocuments({ active: true }), 0);
+        const valid = connection(3); await hello(valid, 3); await hello(connection(12, 'other'), 12);
+        await valid.instance.message({ type: 'broadcast:start', studentUids: [12] });
+        assert.ok(valid.sent.some((m) => m.type === 'broadcast:error'));
+        assert.equal(await broadcasts.rooms.countDocuments({ active: true }), 0);
+    });
+    it('keeps all audience membership atomic when assistance and broadcasting start concurrently', async () => {
+        const teacher = await peer(2); const other = await peer(3); await peer(10); await peer(11);
+        const outcomes = await Promise.allSettled([
+            broadcasts.start(teacher, [10, 11], () => {}), model.startSession(other, 10, undefined, () => {}),
+        ]);
+        assert.equal(outcomes.filter((v) => v.status === 'fulfilled').length, 1);
+        assert.equal(outcomes.find((v) => v.status === 'rejected').reason.code, 'BUSY');
+        const occupied = await model.occupancy.findOne({ _id: 10 });
+        const activeRooms = await broadcasts.rooms.find({ active: true }).toArray();
+        const activeAssistance = await model.sessions.find({ active: true }).toArray();
+        assert.equal(activeRooms.length + activeAssistance.length, 1);
+        assert.equal(occupied.roomId, activeRooms[0]?._id || activeAssistance[0]._id);
+        for (const room of activeRooms) await broadcasts.end(room, 'done', () => {});
+        for (const room of activeAssistance) await model.endSession(room, 'done', () => {});
+        assert.equal(await model.occupancy.countDocuments({}), 0);
+    });
+    it('follows the teacher page and selected learner browser, rejecting stale pages and unrelated devices', async () => {
+        const { teacher, first, started } = await lesson();
+        await teacher.instance.cleanup();
+        const refreshedTeacher = connection(2);
+        await hello(refreshedTeacher, 2, { pageId: 'teacher-new-page-testing' }); await settle();
+        const room = await broadcasts.rooms.findOne({ _id: started.sessionId });
+        assert.equal(room.pageId, 'teacher-new-page-testing');
+        await first.instance.message(draw(started.sessionId, started.pageId));
+        assert.ok(first.sent.some((m) => m.type === 'broadcast:error' && m.code === 'STALE_PAGE'));
+        const unrelated = await peer(10, { tabId: 'other-device-tab', deviceId: 'other-device-id' });
+        assert.equal(await broadcasts.follow(unrelated, () => {}), null);
+        const newTab = await peer(10, { tabId: 'selected-browser-new-tab', serverId: refreshedTeacher.instance.peer.serverId });
+        await broadcasts.follow(newTab, () => {});
+        const moved = await broadcasts.rooms.findOne({ _id: started.sessionId });
+        assert.equal(moved.viewers.find((v) => v.uid === 10).tabId, newTab.tabId);
+        assert.equal(broadcasts.role(moved, first.instance.peer), null);
+    });
+    it('revokes removed learner access without stopping other learners and ends cleanly for everyone', async () => {
+        const { teacher, first, second, started } = await lesson();
+        await workspaceStudents.updateOne({ workspaceId: 'a', uid: 10 }, { $set: { status: 'disabled' } });
+        teacher.instance.lastBroadcastAuthorization = 0;
+        await teacher.instance.checkBroadcast(); await settle();
+        const room = await broadcasts.rooms.findOne({ _id: started.sessionId });
+        assert.deepEqual([...room.studentUids], [11]);
+        assert.ok(first.sent.some((m) => m.type === 'broadcast:ended'));
+        assert.equal(await model.occupancy.findOne({ _id: 10 }), null);
+        await teacher.instance.message({ type: 'broadcast:stop', sessionId: started.sessionId }); await settle();
+        assert.ok(second.sent.some((m) => m.type === 'broadcast:ended'));
+        assert.equal((await broadcasts.rooms.findOne({ _id: started.sessionId })).active, false);
+        assert.equal(await model.occupancy.countDocuments({}), 0);
+    });
+    it('never resurrects participant locks when a stop races the refresh heartbeat', async () => {
+        const teacher = await peer(2); await peer(10); await peer(11);
+        const room = await broadcasts.start(teacher, [10, 11], () => {});
+        const original = model.occupancy.findOneAndUpdate.bind(model.occupancy);
+        let ended = false;
+        model.occupancy.findOneAndUpdate = async (...args) => {
+            const result = await original(...args);
+            if (!ended) { ended = true; await broadcasts.end(room, 'teacher stop', () => {}); }
+            return result;
+        };
+        try { assert.equal(await broadcasts.refresh(room, () => {}), null); }
+        finally { model.occupancy.findOneAndUpdate = original; }
+        assert.equal(await model.occupancy.countDocuments({}), 0);
+        assert.equal((await broadcasts.rooms.findOne({ _id: room._id })).active, false);
+    });
+    it('does not overwrite a newer learner tab with an earlier room snapshot', async () => {
+        const teacher = await peer(2); await peer(10);
+        const old = await broadcasts.start(teacher, [10], () => {});
+        const moved = await peer(10, { tabId: 'learner-new-tab-testing' });
+        await broadcasts.follow(moved, () => {});
+        const refreshed = await broadcasts.refresh(old, () => {});
+        assert.equal(refreshed.viewers[0].tabId, moved.tabId);
+        assert.equal((await broadcasts.rooms.findOne({ _id: old._id })).viewers[0].tabId, moved.tabId);
+    });
+    it('coalesces simultaneous viewer resync requests and ignores snapshots for old pages', async () => {
+        const teacher = await peer(2); await peer(10); await peer(11);
+        const room = await broadcasts.start(teacher, [10, 11], () => {});
+        const sent = []; const now = Date.now();
+        await Promise.all(Array.from({ length: 30 }, () => broadcasts.requestSnapshot(room, (event) => sent.push(event), now)));
+        assert.equal(sent.length, 1);
+        assert.equal(sent[0].uid, 2);
+        await broadcasts.requestSnapshot(room, (event) => sent.push(event), now + 999);
+        assert.equal(sent.length, 1);
+        await broadcasts.requestSnapshot(room, (event) => sent.push(event), now + 1000);
+        assert.equal(sent.length, 2);
+        await broadcasts.rooms.updateOne({ _id: room._id }, { $set: { pageId: 'new-broadcast-page' } });
+        await broadcasts.requestSnapshot(room, (event) => sent.push(event), now + 2000);
+        assert.equal(sent.length, 2);
+    });
+    it('delivers a trailing snapshot for a late-ready viewer instead of losing its resync', async () => {
+        const teacher = await peer(2); await peer(10);
+        const room = await broadcasts.start(teacher, [10], () => {});
+        const sent = [];
+        await broadcasts.requestSnapshot(room, (event) => sent.push(event));
+        await broadcasts.requestSnapshot(room, (event) => sent.push(event));
+        assert.equal(sent.length, 1);
+        await new Promise((resolve) => setTimeout(resolve, 1250));
+        assert.equal(sent.length, 2);
+        await broadcasts.end(room, 'done', () => {});
+    });
+    it('ends the broadcast after teacher logout and rejects a restricted teacher login', async () => {
+        const { teacher, first, second, started } = await lesson();
+        logins.delete('login-2'); teacher.instance.lastLoginCheck = 0;
+        await teacher.instance.message({ type: 'pulse', visible: true }); await settle();
+        assert.ok(teacher.closed.some((v) => v.code === 4003));
+        for (const viewer of [first, second]) assert.ok(viewer.sent.some((m) => m.type === 'broadcast:ended'));
+        assert.equal((await broadcasts.rooms.findOne({ _id: started.sessionId })).active, false);
+        logins.set('login-3', { uid: 3, scope: '1', expireAt: new Date(Date.now() + 60000) });
+        await assert.rejects(connection(3).instance.prepare(), errorCode('FORBIDDEN'));
+    });
+});
 
 describe('live share protocol boundaries', () => {
     it('limits IDE controls to the teacher, current page and scoped run identifiers', () => {
@@ -623,7 +801,8 @@ describe('live share websocket integration', () => {
         assert.equal(await model.verifyPageGrant(10, 'class-a', student.UiContext.liveShare.pageGrant,
             '/d/class-a/p/1000?tid=contest'), true);
         const teacher = make(2, '/manage'); await handlers.injectLiveShare(teacher);
-        assert.equal(teacher.UiContext.liveShare.canTeach, true); assert.equal(teacher.UiContext.liveShare.pageGrant, undefined);
+        assert.equal(teacher.UiContext.liveShare.canTeach, true);
+        assert.equal(await model.verifyPageGrant(2, 'class-a', teacher.UiContext.liveShare.pageGrant, '/manage?tid=contest'), true);
         assert.equal(teacher.UiContext.liveShare.socketUrl, '/d/class-a/live-share/conn');
         for (const path of ['/home', '/home/profile', '/home/domain', '/home/messages', '/user/10',
             '/contest/abc', '/contest/abc/problems', '/contest/abc/scoreboard/html']) {

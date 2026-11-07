@@ -374,7 +374,7 @@ export class ShareRateLimit {
         this.bytes = Math.min(2 * 1024 * 1024, this.bytes + elapsed * 1024 * 1024);
         this.controls = Math.min(12, this.controls + elapsed * 2);
         const bytes = Buffer.byteLength(JSON.stringify(payload), 'utf8');
-        const control = ['list', 'start', 'stop', 'hello'].includes(payload.type);
+        const control = ['list', 'start', 'stop', 'hello', 'broadcast:start', 'broadcast:stop', 'broadcast:sync'].includes(payload.type);
         if (this.events < 1 || this.bytes < bytes || (control && this.controls < 1)) {
             throw new LiveShareError('RATE_LIMIT', '共享操作过于频繁，请稍候。');
         }

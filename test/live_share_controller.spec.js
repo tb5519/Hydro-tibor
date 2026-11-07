@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { before, after, it } = require('node:test');
-const { transformSync } = require('esbuild');
+const { buildSync } = require('esbuild');
 const stylus = require('stylus');
 let playwright;
 for (const location of ['playwright', path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')]) {
@@ -13,9 +13,10 @@ const executablePath = [process.env.HERO_CHROMIUM_PATH, playwright?.chromium.exe
     path.join(os.homedir(), 'Library/Caches/ms-playwright/chromium-1140/chrome-mac/Chromium.app/Contents/MacOS/Chromium')]
     .find((entry) => entry && fs.existsSync(entry));
 const root = path.resolve(__dirname, '..');
-const controller = transformSync(fs.readFileSync(path.join(root, 'packages/ui-default/components/live_share/controller.ts'), 'utf8'), {
-    loader: 'ts', format: 'iife', globalName: 'LiveController',
-}).code;
+const controller = buildSync({
+    absWorkingDir: root, entryPoints: ['packages/ui-default/components/live_share/controller.ts'], bundle: true, write: false,
+    format: 'iife', globalName: 'LiveController', external: ['./mirror', './editor', './frames', './drawing', './ide', './broadcast_adapters'],
+}).outputFiles[0].text;
 const sharingCss = stylus.render(fs.readFileSync(path.join(root, 'packages/ui-default/components/live_share.page.styl'), 'utf8'));
 let browser;
 before(async () => {

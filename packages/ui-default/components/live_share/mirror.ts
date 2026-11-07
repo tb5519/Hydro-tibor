@@ -41,6 +41,8 @@ export interface MirrorCommand {
 export interface MirrorAck { id: string; pageId: string; ok: boolean; reason?: string }
 interface SourceOptions {
   pageId: string;
+  teacherAnnotations?: boolean;
+  sendAnnotation?: (data: MirrorCommand) => void;
   inlineLocalImages?: boolean;
   showNonSensitiveInputs?: boolean;
   scratchControls?: boolean;
@@ -50,6 +52,7 @@ interface SourceOptions {
   onStatus?: (message: string) => void;
 }
 interface ViewerOptions {
+  readOnly?: boolean;
   pageId: string;
   container: HTMLElement;
   sendCommand: (data: MirrorCommand) => void;
@@ -454,6 +457,81 @@ export class MirrorAssembler {
   dispose() { this.disposed = true; this.reset(); }
 }
 
+/** Teacher broadcast annotates the real page; ordinary clicks and code editing keep their native behavior. */
+function attachSourceAnnotations(options: { root: HTMLElement; pageId: string; mirror: () => any;
+  connected: () => boolean; send: (data: MirrorCommand) => void }) {
+  const marks = new Map<string, { value: ShareAnnotation; surface: ReturnType<typeof attachAnnotationSurface> }>();
+  let selected: string | null = null; let selecting = false; let disposed = false;
+  let frame = 0; let timer: ReturnType<typeof setTimeout>; let serial = 0;
+  const sync = (id: string) => {
+    const nodeId = options.mirror()?.getId(document);
+    if (options.connected() && nodeId > 0) options.send({ id: `broadcast-note-${Date.now().toString(36)}-${++serial}`,
+      pageId: options.pageId, nodeId, action: 'annotate', annotationId: id, annotation: marks.get(id)?.value || null });
+  };
+  function render() {
+    cancelAnimationFrame(frame); frame = 0;
+    for (const mark of marks.values()) mark.surface.render(mark.value,
+      options.connected() ? annotationRect(annotationRange(document, options.mirror(), mark.value)) : null);
+    if (marks.size && !disposed && options.connected()) frame = requestAnimationFrame(render);
+  }
+  function remove(id: string) { marks.get(id)?.surface.dispose(); marks.delete(id); sync(id); }
+  function clearTransient(except?: string) {
+    for (const [id, mark] of marks) if (id !== except && (!mark.value.noteOpen || !mark.value.text.trim())) remove(id);
+  }
+  function create(id: string, value: ShareAnnotation) {
+    const surface = attachAnnotationSurface({ container: options.root, teacher: true, id,
+      onChange: (patch) => { const mark = marks.get(id); if (!mark || !options.connected()) return;
+        mark.value = { ...mark.value, ...patch }; render(); sync(id); }, onClear: () => remove(id) });
+    const mark = { value, surface }; marks.set(id, mark); return mark;
+  }
+  function capture() {
+    clearTimeout(timer); timer = undefined;
+    if (disposed || !options.connected()) return;
+    const selection = document.getSelection();
+    if (!selection?.rangeCount || selection.isCollapsed) return;
+    const range = selection.getRangeAt(0);
+    if (!annotationText(range.startContainer, document) || !annotationText(range.endContainer, document)) return;
+    const value: ShareAnnotation = { startNodeId: options.mirror()?.getId(range.startContainer), endNodeId: options.mirror()?.getId(range.endContainer),
+      startOffset: range.startOffset, endOffset: range.endOffset, quote: range.toString(), text: '', noteOpen: false,
+      offsetX: 0, offsetY: range.getBoundingClientRect().height + 24 };
+    if (!annotationRange(document, options.mirror(), value)) return;
+    if (!selected) { if (marks.size >= 50) return; selected = `broadcast-mark-${Date.now().toString(36)}-${++serial}`; }
+    const mark = marks.get(selected) || create(selected, value);
+    const same = ['startNodeId', 'endNodeId', 'startOffset', 'endOffset', 'quote'].every((key) => mark.value[key] === value[key]);
+    if (!same) mark.value = value;
+    render(); sync(selected);
+  }
+  const down = (event: PointerEvent) => {
+    if (event.button === 2) { clearTransient(); selected = null; selecting = false; return; }
+    if (event.button !== 0) return;
+    const element = closestElement(event.target);
+    const note = element?.closest<HTMLElement>('[data-share-annotation-id]');
+    clearTransient(note?.dataset.shareAnnotationId);
+    if (note) return;
+    selected = null; selecting = !element?.closest(ANNOTATION_EXCLUDED);
+  };
+  const up = (event: PointerEvent) => {
+    if (!selecting || event.button !== 0) return;
+    selecting = false; capture(); timer = setTimeout(capture, 0);
+  };
+  const change = () => { if (selecting) timer ||= setTimeout(capture, 40); };
+  const key = (event: KeyboardEvent) => {
+    if (!selected || event.key !== 'Enter' || !event.shiftKey || event.ctrlKey || event.altKey || event.metaKey || event.isComposing
+      || closestElement(event.target)?.closest('input,textarea,select,[contenteditable="true"],[data-live-share-editor],[data-share-annotation-id],[data-live-share-ui],[data-live-share-private]')) return;
+    const mark = marks.get(selected);
+    if (!mark || !options.connected()) return;
+    event.preventDefault(); event.stopImmediatePropagation(); mark.value = { ...mark.value, noteOpen: true };
+    render(); sync(selected); mark.surface.focus();
+  };
+  window.addEventListener('pointerdown', down, true); window.addEventListener('pointerup', up, true);
+  document.addEventListener('selectionchange', change); window.addEventListener('keydown', key, true);
+  return { snapshot() { for (const id of marks.keys()) sync(id); }, refresh: render,
+    dispose() { disposed = true; clearTimeout(timer); cancelAnimationFrame(frame);
+      window.removeEventListener('pointerdown', down, true); window.removeEventListener('pointerup', up, true);
+      document.removeEventListener('selectionchange', change); window.removeEventListener('keydown', key, true);
+      for (const mark of marks.values()) mark.surface.dispose(); marks.clear(); } };
+}
+
 export function attachSourceMirror(options: SourceOptions) {
   let disposed = false;
   let connected = true;
@@ -502,6 +580,17 @@ export function attachSourceMirror(options: SourceOptions) {
     while (stack.length) {
       const serialized = stack.pop();
       if (!serialized) continue;
+      // maskAllInputs removes option.selected even when maskInputFn allows a
+      // language selector. Restore only that allowlisted control's actual state
+      // so the first replay does not fall back to its first option.
+      if (serialized.tagName === 'option') {
+        const option = (record as any).mirror?.getNode(serialized.id) as HTMLOptionElement;
+        const select = option?.closest?.('select');
+        if (select && allowedSelect(select) && !blocked(select) && select.ownerDocument === document) {
+          if (option.selected) serialized.attributes.selected = true;
+          else delete serialized.attributes.selected;
+        }
+      }
       if (serialized.attributes?.rr_width !== undefined) {
         const node = (record as any).mirror?.getNode(serialized.id) as Element;
         const markerName = node?.tagName === 'IFRAME' ? FRAME_MARKER : EDITOR_MARKER;
@@ -666,8 +755,10 @@ export function attachSourceMirror(options: SourceOptions) {
   const annotationRoot = document.createElement('div');
   annotationRoot.className = 'live-share-annotation-source';
   annotationRoot.dataset.liveSharePrivate = '';
-  annotationRoot.style.cssText = 'position:fixed;inset:0;z-index:1000;pointer-events:none';
+  annotationRoot.style.cssText = `position:fixed;inset:0;z-index:${options.teacherAnnotations ? 2147481000 : 1000};pointer-events:none`;
   document.body.appendChild(annotationRoot);
+  const localAnnotations = options.teacherAnnotations && options.sendAnnotation ? attachSourceAnnotations({ root: annotationRoot, pageId: options.pageId,
+    mirror: sourceMirror, connected: () => connected && !disposed, send: options.sendAnnotation }) : null;
   const annotations = new Map<string, { value: ShareAnnotation; surface: ReturnType<typeof attachAnnotationSurface> }>();
   let annotationFrame = 0;
   function renderAnnotations() {
@@ -904,12 +995,13 @@ export function attachSourceMirror(options: SourceOptions) {
       const id = sourceMirror()?.getId(node);
       return Number.isSafeInteger(id) && id > 0 ? id as number : null;
     },
-    snapshot() { if (connected && !disposed && stop) (record as any).takeFullSnapshot(true); },
+    snapshot() { if (connected && !disposed && stop) { (record as any).takeFullSnapshot(true); localAnnotations?.snapshot(); } },
     setConnected(value: boolean) {
       if (disposed) return;
       if (connected === value) { if (value && stop) (record as any).takeFullSnapshot(true); return; }
       connected = value;
       scratchControl?.reset();
+      localAnnotations?.refresh();
       clearAnnotations();
       stopScrolling();
       cancelAnimationFrame(canvasFrame); canvasFrame = 0;
@@ -920,7 +1012,7 @@ export function attachSourceMirror(options: SourceOptions) {
     },
     dispose() {
       disposed = true; generation++; stop?.(); stop = undefined; queue = []; queuedBytes = 0; commands.clear(); stopScrolling();
-      clearAnnotations(); annotationRoot.remove();
+      clearAnnotations(); localAnnotations?.dispose(); annotationRoot.remove();
       scratchControl?.dispose();
       clearInterval(editorGeometryTimer); editorPlaceholders.clear();
       clearInterval(canvasTimer); clearInterval(mediaTimer); cancelAnimationFrame(canvasFrame); canvasCopy = null;
@@ -970,7 +1062,7 @@ export function attachViewerMirror(options: ViewerOptions) {
   let annotationFrame = 0;
   let annotationSendTimer: ReturnType<typeof setTimeout>;
   function createAnnotation(id: string, value: ShareAnnotation) {
-    const surface = attachAnnotationSurface({ container: options.container, teacher: true, id,
+    const surface = attachAnnotationSurface({ container: options.container, teacher: !options.readOnly, id,
       onChange: (patch) => {
         const entry = annotations.get(id);
         if (!entry || !connected || !ready || disposed) return;
@@ -1021,7 +1113,7 @@ export function attachViewerMirror(options: ViewerOptions) {
   }
 
   function command(node: any, action: MirrorCommand['action'], extra: Partial<MirrorCommand> = {}) {
-    if (!connected || !ready || disposed || !player) return;
+    if (options.readOnly || !connected || !ready || disposed || !player) return;
     const nodeId = player.getMirror().getId(node);
     if (nodeId <= 0) return;
     options.sendCommand({ id: `cmd-${Date.now().toString(36)}-${++serial}`, pageId: options.pageId, nodeId, action,
@@ -1035,16 +1127,23 @@ export function attachViewerMirror(options: ViewerOptions) {
     cleanupDocument();
     // Never enable allow-scripts. A peer snapshot is untrusted display data.
     frame.setAttribute('sandbox', 'allow-same-origin');
-    frame.setAttribute('title', '学员共享画面');
+    frame.setAttribute('title', options.readOnly ? '老师分享画面' : '学员共享画面');
     frame.style.border = '0';
     if (connected) player.enableInteract(); else player.disableInteract();
     const style = doc.createElement('style');
     // rrweb captures the outer box of a blocked editor. Its empty placeholder
     // must not add the textarea's padding and border to those dimensions again.
-    style.textContent = '[data-live-share-editor]{box-sizing:border-box!important} [data-live-share-unavailable]::after{content:"此区域暂不支持实时共享";display:block;padding:32px;color:#64748b;font:14px system-ui;text-align:center} [data-teacher-assistant],[data-live-share-ui]{visibility:hidden!important} .live-share-annotation-source,.live-share-code-focus-layer{display:none!important}';
+    style.textContent = '[data-live-share-editor]{box-sizing:border-box!important} [data-live-share-unavailable]::after{content:"此区域暂不支持实时共享";display:block;padding:32px;color:#64748b;font:14px system-ui;text-align:center} [data-teacher-assistant],[data-live-share-ui]{visibility:hidden!important} .live-share-annotation-source,.live-share-code-focus-layer,.teacher-broadcast-bar,.teacher-broadcast-picker,.teacher-broadcast-flash,.teacher-assistant,.voice-call-toast,.voice-call-card,.voice-call-floating{display:none!important}';
     doc.head?.appendChild(style);
     const cleanupScratch = options.scratchControls
       ? attachViewerScratchControl({ document: doc, send: (node, input) => command(node, 'scratch', { input, target: scratchTargetFingerprint(node) }) }) : () => {};
+    if (options.readOnly) {
+      const prevent = (event: Event) => { event.preventDefault(); event.stopImmediatePropagation(); };
+      const names = ['click', 'dblclick', 'auxclick', 'submit', 'change', 'input', 'keydown', 'keyup', 'mousedown', 'touchstart', 'wheel', 'contextmenu'];
+      for (const name of names) doc.addEventListener(name, prevent, { capture: true, passive: false });
+      cleanupDocument = () => { cleanupScratch(); for (const name of names) doc.removeEventListener(name, prevent, true); style.remove(); };
+      ready = connected; renderAnnotations(); if (connected) options.onViewport?.(currentViewport); return;
+    }
     const localControls = options.onDocument?.(doc);
     let holdingSpace = false;
     let dragging: { id: number; x: number; y: number };
@@ -1356,7 +1455,7 @@ export function attachViewerMirror(options: ViewerOptions) {
         root: host, liveMode: true, mouseTail: false, showWarning: false, showDebug: false,
         UNSAFE_replayCanvas: false, loadTimeout: 0, skipInactive: false,
         insertStyleRules: ['iframe,object,embed{pointer-events:none!important}', 'a,button{cursor:pointer!important}',
-          '.live-share-annotation-source,.live-share-code-focus-layer{display:none!important}',
+          '.live-share-annotation-source,.live-share-code-focus-layer,.teacher-broadcast-bar,.teacher-broadcast-picker,.teacher-broadcast-flash,.teacher-assistant,.voice-call-toast,.voice-call-card,.voice-call-floating{display:none!important}',
           '.live-share-notice,[data-teacher-assistant],[data-live-share-private]{visibility:hidden!important;pointer-events:none!important}'],
       } as any);
       player.startLive(timestamp - 2);
@@ -1384,6 +1483,15 @@ export function attachViewerMirror(options: ViewerOptions) {
   }, (message) => { connected = false; options.onStatus?.(message); });
   return {
     receive(data: any) { if (!disposed && connected) assembler.receive(data); },
+    receiveAnnotation(data: MirrorCommand) {
+      if (!options.readOnly || disposed || !connected || data?.pageId !== options.pageId || data.action !== 'annotate'
+        || typeof data.annotationId !== 'string' || !/^[\w-]{8,96}$/.test(data.annotationId)) return;
+      if (data.annotation === null) { clearAnnotation(data.annotationId); return; }
+      if (!data.annotation || (!annotations.has(data.annotationId) && annotations.size >= 50)) return;
+      const entry = annotations.get(data.annotationId) || createAnnotation(data.annotationId, data.annotation);
+      entry.value = { ...data.annotation }; entry.editing = false; renderAnnotations();
+    },
+
     getDrawingDocument() { return !disposed && connected && ready ? player?.iframe?.contentDocument || null : null; },
     getDrawingNode(id: number) {
       if (disposed || !connected || !ready || !Number.isSafeInteger(id) || id < 1) return null;

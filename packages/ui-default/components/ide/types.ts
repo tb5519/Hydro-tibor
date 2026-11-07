@@ -52,8 +52,8 @@ export function emptyIdeSnapshot(): IdeSnapshot {
     primitives: [], turtles: [], shapes: {}, request: null,
     activeWindow: 'terminal',
     windows: {
-      terminal: { visible: false, minimized: false, maximized: false, x: 0.04, y: 0.88, width: 560, height: 280 },
-      graphics: { visible: false, minimized: false, maximized: false, x: 0.92, y: 0.06, width: 640, height: 520 },
+      terminal: { visible: false, minimized: false, maximized: false, x: 0.98, y: 0.88, width: 560, height: 280 },
+      graphics: { visible: false, minimized: false, maximized: false, x: 0.98, y: 0.06, width: 640, height: 520 },
     },
   };
 }

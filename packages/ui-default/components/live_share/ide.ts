@@ -89,23 +89,29 @@ export function attachSourceIde(options: {
   };
 }
 
-export function attachViewerIde(options: { pageId: string; container: HTMLElement; sendCommand: (data: any) => void }) {
+export function attachViewerIde(options: { pageId: string; container: HTMLElement; readOnly?: boolean; sendCommand: (data: any) => void }) {
   const host = document.createElement('div'); host.dataset.liveShareUi = '';
   host.style.cssText = 'position:absolute;pointer-events:none;display:none;z-index:12';
   options.container.append(host);
   let connected = false; let disposed = false; let sequence = -1; let assembly: { sequence: number; total: number; chunks: string[]; size: number } | null = null;
   let state: IdeSnapshot = emptyIdeSnapshot();
   const view = createIdeView(host, { shared: true, onCommand: (command) => {
-    if (!connected || disposed || host.style.display === 'none') return;
+    if (options.readOnly || !connected || disposed || host.style.display === 'none') return;
     options.sendCommand({ id: Array.from(crypto.getRandomValues(new Uint8Array(16)), (n) => n.toString(16).padStart(2, '0')).join(''), pageId: options.pageId, nodeId: 1,
       action: 'ide', runId: state.runId, command });
   } });
   const root = host.querySelector<HTMLElement>('[data-ide-runtime]')!;
   root.style.inset = '0';
+  if (options.readOnly) {
+    host.inert = true;
+    // This is an extra remote-control shortcut, not part of the source IDE.
+    // A broadcast audience must only see the teacher's actual runtime windows.
+    root.querySelector('.ide-runtime__shared-run')?.remove();
+  }
   return {
     setConnected(value: boolean) {
       if (connected !== value) { sequence = -1; assembly = null; }
-      connected = value; host.inert = !value;
+      connected = value; host.inert = !!options.readOnly || !value;
     },
     receive(data: any) {
       if (disposed || data?.type !== 'ide' || !Number.isSafeInteger(data.sequence) || data.sequence < 0 || data.sequence <= sequence || !Number.isInteger(data.total)

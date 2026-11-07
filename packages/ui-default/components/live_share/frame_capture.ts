@@ -42,7 +42,14 @@ export function installFrameCapture() {
         drawingRoot.dataset.liveShareUi = ''; drawingRoot.dataset.liveSharePrivate = '';
         drawingRoot.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147482000';
         document.documentElement.append(drawingRoot);
-        drawing = attachTemporaryDrawing({ container: drawingRoot, teacher: true, pageId: 'local-scratch-drawing', scopeDocument: true });
+        drawing = attachTemporaryDrawing({ container: drawingRoot, teacher: true, pageId: 'local-scratch-drawing', scopeDocument: true,
+          anchors: {
+            identify: (node) => { const nodeId = capture?.getDrawingNodeId(node); return nodeId ? { nodeId } : null; },
+            resolve: (identity) => capture?.getDrawingNode(identity.nodeId) || null,
+          },
+          send: (packet) => { if (capture && id && Date.now() < lease && Date.now() < drawingLease) {
+            parent.postMessage({ type: 'live-share-frame-drawing', channel, id, packet }, parentOrigin);
+          } } });
       }
       return;
     }
@@ -69,7 +76,7 @@ export function installFrameCapture() {
     }
     if (!['start', 'snapshot'].includes(message.action)) return;
     lease = Date.now() + 12000;
-    if (capture && id === message.id) { if (message.action === 'snapshot') capture.snapshot(); return; }
+    if (capture && id === message.id) { if (message.action === 'snapshot') { capture.snapshot(); drawing?.snapshot(); } return; }
     stop(); id = message.id;
     const capturedId = id;
     parent.postMessage({ type: 'live-share-frame-start', channel, id }, parentOrigin);

@@ -1,6 +1,7 @@
 import { attachViewerMirror, MirrorCommand, MirrorAck } from './mirror';
+import { DrawingPacket, validDrawingPacket } from './drawing';
 import { validScratchInput } from './scratch_control';
-import { DrawingAnchor, DrawingAnchorMode, DrawingGeometry, DrawingNodeIdentity, transformDrawingFrameGeometry } from './drawing_anchor';
+import { DrawingAnchor, DrawingAnchorMode, DrawingGeometry, DrawingNodeIdentity, DrawingMatrix, drawingPoint, multiplyDrawingMatrix, transformDrawingFrameGeometry } from './drawing_anchor';
 
 const MARKER = 'data-live-share-frame';
 const MAX_FRAMES = 4;
@@ -8,7 +9,7 @@ const validId = (id: unknown): id is string => typeof id === 'string' && /^[a-zA
 const randomId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) => value.toString(16).padStart(2, '0')).join('');
 type Rect = { x: number; y: number; width: number; height: number };
 export interface FrameCommand { id: string; pageId: string; nodeId: number; action: 'frame'; frameId: string; command: MirrorCommand }
-interface SourceOptions { pageId: string; send: (data: any) => void | boolean; sendAck?: (data: MirrorAck) => void; onStatus?: (message: string) => void }
+interface SourceOptions { pageId: string; send: (data: any) => void | boolean; sendAck?: (data: MirrorAck) => void; sendDrawing?: (data: DrawingPacket) => void; onStatus?: (message: string) => void }
 interface SourceFrame { id: string; frame: HTMLIFrameElement; channel: string; href: string; previousMarker: string | null; started?: boolean; loaded: () => void }
 
 /** Only our opaque-origin Scratch runtime implements this authenticated bridge. */
@@ -31,6 +32,7 @@ export function attachSourceFrames(options: SourceOptions) {
   const bindings = new Map<HTMLIFrameElement, SourceFrame>();
   const geometry = new Map<string, { frameId: string; nodeId: number; mode: DrawingAnchorMode; requested: number; received: number; value: DrawingGeometry | null }>();
   const pending = new Map<string, { outerId: string; frameId: string; at: number }>();
+  const inkFrames = new Map<string, { frameId: string; matrix: DrawingMatrix; expires: number }>();
   let connected = true;
   let disposed = false;
   const post = (binding: SourceFrame, action: 'start' | 'stop' | 'snapshot') => {
@@ -44,6 +46,7 @@ export function attachSourceFrames(options: SourceOptions) {
       else binding.frame.setAttribute(MARKER, binding.previousMarker);
     }
     bindings.delete(binding.frame);
+    for (const [strokeId, ink] of inkFrames) if (ink.frameId === binding.id) inkFrames.delete(strokeId);
     for (const [key, entry] of pending) if (entry.frameId === binding.id) pending.delete(key);
     for (const [key, entry] of geometry) if (entry.frameId === binding.id) geometry.delete(key);
     if (connected) options.send({ type: 'frame-remove', id: binding.id });
@@ -70,10 +73,38 @@ export function attachSourceFrames(options: SourceOptions) {
     }
   };
   const receive = (event: MessageEvent) => {
-    if (disposed || !connected || event.origin !== 'null' || !['live-share-frame', 'live-share-frame-start', 'live-share-frame-ack', 'live-share-frame-geometry'].includes(event.data?.type)) return;
+    if (disposed || !connected || event.origin !== 'null' || !['live-share-frame', 'live-share-frame-start', 'live-share-frame-ack', 'live-share-frame-geometry', 'live-share-frame-drawing'].includes(event.data?.type)) return;
     const binding = [...bindings.values()].find((item) => event.source === item.frame.contentWindow
       && event.data.channel === item.channel && event.data.id === item.id);
     if (!binding || !controlledFrame(binding.frame, true)) return;
+    if (event.data.type === 'live-share-frame-drawing') {
+      const packet = event.data.packet;
+      if (!options.sendDrawing || !validDrawingPacket(packet) || packet.anchor?.kind === 'editor') return;
+      if (packet.phase === 'start' && !inkFrames.has(packet.strokeId)) {
+        for (const [strokeId, state] of inkFrames) if (Date.now() > state.expires) inkFrames.delete(strokeId);
+        if (inkFrames.size >= 128) return;
+        const rect = binding.frame.getBoundingClientRect();
+        const sx = rect.width / (binding.frame.offsetWidth || 1); const sy = rect.height / (binding.frame.offsetHeight || 1);
+        inkFrames.set(packet.strokeId, { frameId: binding.id, expires: Date.now() + 60000, matrix: [sx, 0, 0, sy,
+          rect.x + binding.frame.clientLeft * sx, rect.y + binding.frame.clientTop * sy] });
+      }
+      const ink = inkFrames.get(packet.strokeId);
+      if (!ink || ink.frameId !== binding.id) return;
+      if (packet.phase === 'note') ink.expires = Infinity;
+      else if (packet.phase === 'end' && ink.expires !== Infinity) ink.expires = Date.now() + 12000;
+      const coordinate = (point: [number, number]) => drawingPoint(ink.matrix, point).map((n) => Math.max(0, Math.min(10000, n))) as [number, number];
+      const converted: DrawingPacket = { ...packet, points: packet.points.map(coordinate) };
+      if (packet.anchor?.kind === 'dom') converted.anchor = { ...packet.anchor, frameId: binding.id,
+        matrix: multiplyDrawingMatrix(ink.matrix, packet.anchor.matrix) };
+      if (packet.note) {
+        const [x, y] = coordinate([packet.note.x, packet.note.y]);
+        converted.note = { ...packet.note, x, y, width: Math.max(36, Math.min(960, packet.note.width * ink.matrix[0])),
+          height: Math.max(36, Math.min(800, packet.note.height * ink.matrix[3])) };
+      }
+      if (validDrawingPacket(converted)) options.sendDrawing(converted);
+      if (packet.phase === 'delete') inkFrames.delete(packet.strokeId);
+      return;
+    }
     if (event.data.type === 'live-share-frame-geometry') {
       const message = event.data;
       const entry = geometry.get(`${binding.id}:${message.nodeId}:${message.mode}`);
@@ -177,6 +208,7 @@ export function attachSourceFrames(options: SourceOptions) {
 }
 
 interface ViewerOptions {
+  readOnly?: boolean;
   pageId: string; container: HTMLElement; getNodeRect: (id: string) => Rect | null | undefined;
   sendCommand?: (data: FrameCommand) => void;
   onViewZoom?: (gesture: { delta: number; clientX: number; clientY: number }) => void;
@@ -229,14 +261,14 @@ export function attachViewerFrames(options: ViewerOptions) {
         const node = document.createElement('div');
         node.dataset.liveShareFrameViewer = data.id;
         node.setAttribute('aria-label', '学员的 Scratch 实时画面');
-        node.style.cssText = `position:absolute;overflow:hidden;pointer-events:${options.sendCommand ? 'auto' : 'none'};background:#eaf1fb`;
+        node.style.cssText = `position:absolute;overflow:hidden;pointer-events:${options.sendCommand || options.readOnly ? 'auto' : 'none'};background:#eaf1fb`;
         node.hidden = true;
         const stage = document.createElement('div');
-        stage.style.cssText = `position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:${options.sendCommand ? 'auto' : 'none'}`;
+        stage.style.cssText = `position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:${options.sendCommand || options.readOnly ? 'auto' : 'none'}`;
         node.append(stage); options.container.append(node);
         binding = { node, stage, mirror: undefined as any };
         bindings.set(data.id, binding);
-        binding.mirror = attachViewerMirror({ pageId: data.id, container: stage, scratchControls: !!options.sendCommand,
+        binding.mirror = attachViewerMirror({ pageId: data.id, container: stage, readOnly: options.readOnly, scratchControls: !!options.sendCommand && !options.readOnly,
           sendCommand: (command) => {
             if (disposed || !connected || !bindings.has(data.id) || command.action !== 'scratch') return;
             options.sendCommand?.({ id: command.id, pageId: options.pageId, nodeId: 1, action: 'frame', frameId: data.id, command });

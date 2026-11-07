@@ -70,12 +70,19 @@ function pathFor(points: Point[]) {
 export function attachTemporaryDrawing(options: {
   container: HTMLElement;
   teacher: boolean;
+  /** Broadcast viewers have a temporary left-button pen, never editable labels. */
+  inputButton?: 0 | 2;
+  allowNotes?: boolean;
+  onlyOwnNotes?: boolean;
   pageId: string;
   /** Local teacher-only overlay can listen across its owner page rather than inside a mirrored stage. */
   scopeDocument?: boolean;
   anchors?: DrawingAnchorResolvers;
   send?: (packet: DrawingPacket) => void;
 }) {
+  const canAnnotate = options.teacher && options.allowNotes !== false;
+  const inputButton = options.inputButton ?? 2;
+  const buttonMask = inputButton === 0 ? 1 : 2;
   const doc = options.container.ownerDocument;
   const win = doc.defaultView!;
   const originalTabIndex = options.container.getAttribute('tabindex');
@@ -97,6 +104,7 @@ export function attachTemporaryDrawing(options: {
   options.container.append(style);
   const strokes = new Map<string, Stroke>();
   const seen = new Set<string>();
+  const outgoing = new Map<string, DrawingPacket[]>();
   const bound = new Map<Window, { document: Document; root: Element | null; unbind: () => void }>();
   const watchedFrames = new Map<HTMLIFrameElement, () => void>();
   const localFrames = new Map<HTMLIFrameElement, { channel: string; href: string; lastSent: number; loaded: () => void }>();
@@ -165,7 +173,7 @@ export function attachTemporaryDrawing(options: {
     if (!stroke) return;
     win.clearTimeout(stroke.expiry); win.clearTimeout(stroke.removal);
     if (dragging?.id === id) endDrag();
-    stroke.wrapper.remove(); stroke.clipPath.remove(); stroke.bubble?.remove(); stroke.connector?.remove(); strokes.delete(id); pendingNotes.delete(id);
+    stroke.wrapper.remove(); stroke.clipPath.remove(); stroke.bubble?.remove(); stroke.connector?.remove(); strokes.delete(id); pendingNotes.delete(id); outgoing.delete(id);
     if (!strokes.size) { win.cancelAnimationFrame(geometryFrame); geometryFrame = 0; }
   }
   function fade(id: string, delay: number) {
@@ -216,7 +224,7 @@ export function attachTemporaryDrawing(options: {
       startGeometry();
       strokes.set(packet.strokeId, stroke);
     }
-    if (!stroke || packet.sequence !== stroke.sequence + 1
+    if (!stroke || (packet.phase === 'note' ? packet.sequence <= stroke.sequence : packet.sequence !== stroke.sequence + 1)
       || stroke.points.length + packet.points.length > MAX_POINTS) return;
     if (packet.phase === 'note') {
       if (!stroke.ended) return;
@@ -237,7 +245,20 @@ export function attachTemporaryDrawing(options: {
     refreshGeometry(packet.strokeId, stroke, true);
     fade(packet.strokeId, stroke.ended ? HOLD_MS : IDLE_MS);
   }
-  function send(packet: DrawingPacket) { options.send?.(packet); }
+  function send(packet: DrawingPacket) {
+    // Keep complete geometry plus the latest absolute note state for late viewers.
+    // Notes are replacement state, so intermediate keystrokes need not be retained.
+    if (packet.phase === 'start') outgoing.set(packet.strokeId, []);
+    const packets = outgoing.get(packet.strokeId);
+    if (packets) {
+      if (packet.phase === 'delete') outgoing.delete(packet.strokeId);
+      else {
+        if (packet.phase === 'note' && packets[packets.length - 1]?.phase === 'note') packets.pop();
+        packets.push(packet);
+      }
+    }
+    options.send?.(packet);
+  }
   function noteDimensions(text: string) {
     measure.textContent = `${text || '字'}\u200b`;
     measure.style.width = 'max-content'; measure.style.whiteSpace = 'pre';
@@ -294,7 +315,7 @@ export function attachTemporaryDrawing(options: {
       const grip = doc.createElement('span');
       grip.style.cssText = 'all:initial;width:18px;height:3px;border-radius:4px;background:#d8c9ed;pointer-events:none'; handle.append(grip);
       const input = doc.createElement('textarea'); input.dataset.shareDrawingNoteInput = '';
-      input.readOnly = !options.teacher; input.spellcheck = false; input.maxLength = 1000;
+      input.readOnly = !canAnnotate; input.spellcheck = false; input.maxLength = 1000;
       input.tabIndex = options.teacher ? 0 : -1;
       input.setAttribute('aria-label', '笔迹标签'); input.setAttribute('wrap', 'soft');
       input.style.cssText = `all:initial;display:block;box-sizing:border-box;width:100%;height:calc(100% - 12px);min-width:0;max-width:none;min-height:0;max-height:none;margin:0;padding:${notePadding};border:0;border-radius:0 0 10px 10px;background:transparent;box-shadow:none;outline:none;color:#4a4263;font:${noteFont};letter-spacing:normal;text-align:left;text-indent:0;text-transform:none;white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal;resize:none;overflow-x:hidden;overflow-y:auto;scrollbar-width:none;pointer-events:${options.teacher ? 'auto' : 'none'}`;
@@ -306,7 +327,7 @@ export function attachTemporaryDrawing(options: {
       stroke.bubble = bubble; stroke.input = input; stroke.connector = connector;
       input.addEventListener('keydown', (event) => event.stopPropagation());
       input.addEventListener('wheel', (event) => event.stopPropagation(), { passive: true });
-      if (options.teacher) {
+      if (canAnnotate) {
         const close = doc.createElement('button'); close.type = 'button'; close.textContent = '×'; close.dataset.shareDrawingNoteDelete = '';
         close.setAttribute('aria-label', '删除笔迹标签'); close.title = '删除';
         close.style.cssText = 'all:initial;position:absolute;right:-7px;top:-7px;display:flex;align-items:center;justify-content:center;box-sizing:border-box;width:17px;height:17px;min-width:0;min-height:0;margin:0;padding:0;border:1px solid #d9cdf1;border-radius:50%;background:#fff;color:#9a82c5;font:14px/1 Arial,sans-serif;cursor:pointer;box-shadow:0 1px 4px #66508a12';
@@ -361,7 +382,7 @@ export function attachTemporaryDrawing(options: {
     const clip = viewportClip();
     bubble!.style.clipPath = `inset(${Math.max(-8, clip.y - position[1])}px ${Math.max(-8, position[0] + note.width - clip.x - clip.width)}px ${Math.max(-8, position[1] + note.height - clip.y - clip.height)}px ${Math.max(-8, clip.x - position[0])}px)`;
     bubble!.style.width = `${note.width}px`; bubble!.style.height = `${note.height}px`;
-    input!.readOnly = !options.teacher || stroke.sequence >= 4095;
+    input!.readOnly = !canAnnotate || stroke.sequence >= 4095;
     if (input!.value !== note.text) input!.value = note.text;
     if (input!.scrollHeight <= input!.clientHeight) input!.scrollTop = 0;
     const cx = position[0] + note.width / 2; const cy = position[1] + note.height / 2;
@@ -375,7 +396,7 @@ export function attachTemporaryDrawing(options: {
   }
   function pinLatest() {
     if (active) finish();
-    const entry = [...strokes].reverse().find(([, value]) => !value.note && value.ended && value.expiresAt > now()
+    const entry = [...strokes].reverse().find(([id, value]) => (!options.onlyOwnNotes || outgoing.has(id)) && !value.note && value.ended && value.expiresAt > now()
       && value.visible && value.node.isConnected && Number(win.getComputedStyle(value.node).opacity) > .01);
     if (!entry) return false;
     const [id, stroke] = entry; const size = noteDimensions('');
@@ -437,7 +458,7 @@ export function attachTemporaryDrawing(options: {
   function cancelEvent(event: Event) { event.preventDefault(); event.stopImmediatePropagation(); }
   function bind(eventWindow: Window) {
     const down = (event: PointerEvent) => {
-      if (event.button !== 2 || !connected || !within(event, eventWindow)) return;
+      if (event.button !== inputButton || !connected || !within(event, eventWindow)) return;
       const point = pointFrom(event, eventWindow);
       if (!point) return;
       cancelEvent(event); finish();
@@ -456,7 +477,7 @@ export function attachTemporaryDrawing(options: {
     };
     const move = (event: PointerEvent) => {
       if (!active || event.pointerId !== active.pointer) return;
-      if (!(event.buttons & 2)) { finish(); return; }
+      if (!(event.buttons & buttonMask)) { finish(); return; }
       cancelEvent(event);
       const currentPoint = pointFrom(event, eventWindow);
       const drawing = strokes.get(active.id);
@@ -475,11 +496,11 @@ export function attachTemporaryDrawing(options: {
       else if (!flushTimer) flushTimer = win.setTimeout(flush, 32);
     };
     const up = (event: PointerEvent) => {
-      if (!active || event.pointerId !== active.pointer || (event.type === 'pointerup' && event.button !== 2)) return;
+      if (!active || event.pointerId !== active.pointer || (event.type === 'pointerup' && event.button !== inputButton)) return;
       cancelEvent(event); finish();
     };
     const suppressMenu = (event: MouseEvent) => {
-      if (connected && within(event, eventWindow) && (event.type === 'contextmenu' || event.button === 2)) cancelEvent(event);
+      if (connected && within(event, eventWindow) && (event.type === 'contextmenu' || event.button === inputButton)) cancelEvent(event);
     };
     const blur = () => {
       // Focus entering a child frame blurs its parent window. Only an actual
@@ -487,7 +508,7 @@ export function attachTemporaryDrawing(options: {
       win.setTimeout(() => { if (!doc.hasFocus()) finish(); }, 0);
     };
     const keydown = (event: KeyboardEvent) => {
-      if (!connected || event.key !== 'Enter' || !event.shiftKey || event.altKey || event.ctrlKey || event.metaKey
+      if (!canAnnotate || !connected || event.key !== 'Enter' || !event.shiftKey || event.altKey || event.ctrlKey || event.metaKey
         || event.isComposing || event.keyCode === 229 || composing.has(eventWindow) || !within(event, eventWindow)) return;
       const target = event.target as Element | null;
       // Existing text/code note inputs own their line breaks. A previous
@@ -506,6 +527,7 @@ export function attachTemporaryDrawing(options: {
     eventWindow.addEventListener('contextmenu', suppressMenu, true);
     eventWindow.addEventListener('mousedown', suppressMenu, true);
     eventWindow.addEventListener('auxclick', suppressMenu, true);
+    if (inputButton === 0) eventWindow.addEventListener('click', suppressMenu, true);
     eventWindow.addEventListener('blur', blur);
     eventWindow.addEventListener('keydown', keydown, true);
     eventWindow.addEventListener('compositionstart', compositionStart, true);
@@ -526,6 +548,7 @@ export function attachTemporaryDrawing(options: {
       eventWindow.removeEventListener('contextmenu', suppressMenu, true);
       eventWindow.removeEventListener('mousedown', suppressMenu, true);
       eventWindow.removeEventListener('auxclick', suppressMenu, true);
+      if (inputButton === 0) eventWindow.removeEventListener('click', suppressMenu, true);
       eventWindow.removeEventListener('blur', blur);
       eventWindow.removeEventListener('keydown', keydown, true);
       eventWindow.removeEventListener('compositionstart', compositionStart, true);
@@ -625,6 +648,9 @@ export function attachTemporaryDrawing(options: {
   }
   return {
     receive,
+    snapshot() { if (connected && !disposed) for (const [id, packets] of outgoing) {
+      if (strokes.get(id)?.note) for (const packet of packets) options.send?.(packet);
+    } },
     setConnected(value: boolean) {
       connected = value;
       if (!value) {

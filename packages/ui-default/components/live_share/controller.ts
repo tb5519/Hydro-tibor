@@ -1,3 +1,5 @@
+import { installBroadcastController } from './broadcast_controller';
+
 export interface LiveShareConfig {
   enabled: boolean; uid: number; canTeach: boolean; socketUrl: string; pageGrant?: string;
 }
@@ -14,6 +16,7 @@ let installed: (() => void) | undefined;
 
 export function installLiveShare(config: LiveShareConfig, options: {
   loadAdapters?: () => Promise<Adapters>; socketFactory?: (url: string) => WebSocket;
+  loadBroadcastAdapters?: () => Promise<typeof import('./broadcast_adapters')>;
 } = {}) {
   if (installed || !config?.enabled || !config.uid || window.top !== window) return installed;
   const uid = config.uid;
@@ -51,6 +54,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
   let ready = false;
   let disposed = false;
   let suspended = false;
+  let authenticationRevoked = false;
   let identityReady = false;
   let shouldConnect = false;
   let tabChannel: BroadcastChannel | null = null;
@@ -65,6 +69,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
   let adaptersPromise: Promise<Adapters> | undefined;
   let source: Session | null = null;
   let viewing: Session | null = null;
+  let broadcast: ReturnType<typeof installBroadcastController> | null = null;
   let sourceMirror: Controllers | null = null;
   let sourceEditors: Controllers | null = null;
   let sourceFrames: Controllers | null = null;
@@ -153,6 +158,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     if (assistantControls) assistantControls.querySelector('[data-share-status]')!.textContent = text || '已连接 · 可直接点击和编辑';
   }
   function connected(value: boolean) {
+    broadcast?.setConnected(value);
     sourceMirror?.setConnected(value); sourceEditors?.setConnected(value);
     sourceFrames?.setConnected(value); sourceDrawing?.setConnected(value); sourceIde?.setConnected(value);
     viewerMirror?.setConnected(value); viewerEditors?.setConnected(value);
@@ -169,7 +175,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     document.body.append(node);
     return node;
   }
-  function updateLocalDrawing() { localDrawing?.setConnected(!disposed && !suspended && !viewing && !source); }
+  function updateLocalDrawing() { localDrawing?.setConnected(!disposed && !suspended && !viewing && !source && !broadcast?.active); }
   function clearSource() {
     sourceMirror?.dispose(); sourceEditors?.dispose();
     sourceFrames?.dispose(); sourceFrames = null;
@@ -547,6 +553,8 @@ export function installLiveShare(config: LiveShareConfig, options: {
   }
   function onMessage(message: any) {
     if (!message || typeof message !== 'object') return;
+    broadcast?.receive(message);
+    if (String(message.type).startsWith('broadcast:')) return;
     if (message.type === 'ready') {
       ready = true; reconnectDelay = 750;
       for (const sessionId of closedSessions) send({ type: 'stop', sessionId });
@@ -586,7 +594,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
   }
   function connect() {
     if (!identityReady) { shouldConnect = true; return; }
-    if (disposed || suspended || socket && socket.readyState < WebSocket.CLOSING) return;
+    if (disposed || suspended || authenticationRevoked || socket && socket.readyState < WebSocket.CLOSING) return;
     const url = new URL(config.socketUrl, window.location.href);
     if (url.origin !== window.location.origin) return;
     url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -610,9 +618,14 @@ export function installLiveShare(config: LiveShareConfig, options: {
       if (event.data === 'ping') { ws.send('pong'); return; }
       try { onMessage(JSON.parse(event.data)); } catch (error) { console.warn('Invalid live sharing message', error); }
     });
-    ws.addEventListener('close', () => {
+    ws.addEventListener('close', (event: CloseEvent) => {
       if (socket !== ws || disposed) return;
       ready = false; socket = null; pendingStart = 0; clearInterval(pulseTimer); connected(false);
+      if (event.code === 4003) {
+        authenticationRevoked = true; clearTimeout(reconnectTimer); saveResume(null); deferredStart = null;
+        preservePending(); clearSource(); closeView(); closeRoster(); broadcast?.authenticationLost();
+        return;
+      }
       if (rosterList) rosterList.replaceChildren(el('p', 'live-share-empty', '正在重新连接…'));
       if (!suspended) reconnectTimer = window.setTimeout(connect, reconnectDelay);
       reconnectDelay = Math.min(10000, reconnectDelay * 1.5);
@@ -620,6 +633,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     ws.addEventListener('error', () => { /* close drives reconnection and visible state. */ });
   }
   async function chooseStudent(studentUid: number, selectedTabId?: string, skipWait = false) {
+    if (broadcast?.active) { broadcast.showMessage('请先结束分享，再协助学员。'); return; }
     if (!ready) {
       if (skipWait) { deferredStart = { studentUid, tabId: selectedTabId }; setStatus('等待恢复连接后自动切换学员…', true); }
       return;
@@ -664,6 +678,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     clearInterval(rosterTimer);
   }
   function openRoster() {
+    if (broadcast?.active) { broadcast.showMessage('请先结束分享，再协助学员。'); return; }
     if (!config.canTeach || roster || ending) return;
     document.querySelector<HTMLButtonElement>('[data-assistant-close]')?.click();
     roster = el('div', 'live-share-picker'); roster.dataset.liveSharePrivate = '';
@@ -716,13 +731,14 @@ export function installLiveShare(config: LiveShareConfig, options: {
   on(window, 'pageshow', (event: PageTransitionEvent) => {
     if (!event.persisted) return;
     suspended = false; pageId = randomId(); clearSource();
-    if (!config.canTeach || viewing || roster || resume) connect();
+    if (!config.canTeach || viewing || roster || resume || broadcast?.wantsConnection()) connect();
   });
   const cleanup = () => {
     preservePending();
     disposed = true; generation++; clearTimeout(reconnectTimer); clearTimeout(endTimer); clearInterval(pulseTimer); clearInterval(rosterTimer);
     tabChannel?.close(); socket?.close(); clearSource(); closeRoster(); closeView(); disposers.forEach((dispose) => dispose()); installed = undefined;
     localDrawing?.dispose(); localDrawing = null; localDrawingRoot?.remove(); localDrawingRoot = null;
+    broadcast?.dispose(); broadcast = null;
   };
   installed = cleanup;
   // Duplicating/opening a tab copies sessionStorage. Claim a fresh identity if
@@ -742,7 +758,13 @@ export function installLiveShare(config: LiveShareConfig, options: {
   } catch { /* A single-tab browser can work without BroadcastChannel. */ }
   const identityTimer = window.setTimeout(() => { identityReady = true; if (shouldConnect) connect(); }, tabChannel ? 80 : 0);
   disposers.push(() => clearTimeout(identityTimer));
-  if (!config.canTeach || resume) connect();
+  broadcast = installBroadcastController(config, { send, connect, reconnect: () => {
+    ready = false; connected(false);
+    if (socket) socket.close(); else connect();
+  }, pageId: () => pageId, ready: () => ready,
+    sharing: () => !!viewing || !!source || !!pendingStart || ending, onActiveChange: updateLocalDrawing },
+  { loadAdapters: options.loadBroadcastAdapters });
+  if (!config.canTeach || resume || broadcast.wantsConnection()) connect();
   if (config.canTeach) showBackups();
   // A small independent chunk enables the local teacher pen without loading
   // rrweb, collaboration editors or opening a room on every teacher page.

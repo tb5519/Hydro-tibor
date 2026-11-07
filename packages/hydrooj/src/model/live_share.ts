@@ -16,12 +16,14 @@ export interface SharePresence {
 }
 interface ShareGrant { _id: string; uid: number; domainId: string; url: string; expiresAt: Date }
 export interface ShareEvent { uid: number; tabId: string; message: Record<string, any> }
+interface ShareOccupancy { _id: number; roomId: string; kind: 'assist' | 'broadcast'; expiresAt: Date }
 
 declare module '../service/db' {
     interface Collections {
         'live.share.presence': SharePresence;
         'live.share.session': ShareSession;
         'live.share.grant': ShareGrant;
+        'live.share.occupancy': ShareOccupancy;
     }
 }
 declare module '../service/bus' {
@@ -31,12 +33,34 @@ declare module '../service/bus' {
 export const presence = db.collection('live.share.presence');
 export const sessions = db.collection('live.share.session');
 export const grants = db.collection('live.share.grant');
+export const occupancy = db.collection('live.share.occupancy');
 export const opaqueShareId = () => randomBytes(24).toString('hex');
 export const presenceKey = (uid: number, tabId: string) => `${uid}:${tabId}`;
 const profile = (account: any) => account?._id > 1 && (account.priv & PRIV.PRIV_USER_PROFILE) === PRIV.PRIV_USER_PROFILE;
 const systemAdmin = (account: any) => (account.priv & PRIV.PRIV_EDIT_SYSTEM) === PRIV.PRIV_EDIT_SYSTEM;
 const nameOf = (account: any) => String(account.displayName || account.uname || account._id).slice(0, 80);
 type Emit = (event: ShareEvent) => void;
+
+/** A single atomic slot per account prevents assistance and a broadcast racing each other. */
+export async function claimParticipants(kind: ShareOccupancy['kind'], roomId: string, uids: number[], now = Date.now()) {
+    const claimed: number[] = [];
+    try {
+        for (const uid of [...new Set(uids)].sort((a, b) => a - b)) {
+            // eslint-disable-next-line no-await-in-loop
+            await occupancy.findOneAndUpdate({ _id: uid, $or: [{ roomId }, { expiresAt: { $lte: new Date(now) } }] },
+                { $set: { roomId, kind, expiresAt: new Date(now + LIVE_SHARE_RECONNECT_MS) } }, { upsert: true });
+            claimed.push(uid);
+        }
+    } catch (error) {
+        await occupancy.deleteMany({ _id: { $in: claimed }, roomId });
+        if (error.code === 11000) throw new LiveShareError('BUSY', '老师或学员正在共享／分享中，请先结束当前连接。');
+        throw error;
+    }
+}
+
+export async function releaseParticipants(roomId: string, uids?: number[]) {
+    await occupancy.deleteMany({ roomId, ...(uids ? { _id: { $in: uids } } : {}) });
+}
 
 async function accountAndDomain(uid: number, domainId: string) {
     const [account, classroom] = await Promise.all([
@@ -144,6 +168,7 @@ export async function endSession(session: ShareSession, reason: string, emit: Em
     const result = await sessions.updateOne({ _id: session._id, active: true },
         { $set: { active: false, expiresAt: new Date(Date.now() + LIVE_SHARE_RECONNECT_MS) } });
     if (!result.modifiedCount) return;
+    await releaseParticipants(session._id);
     for (const [uid, tabId] of [[session.teacherUid, session.teacherTabId], [session.studentUid, session.studentTabId]] as [number, string][]) {
         emit({ uid, tabId, message: { type: 'ended', sessionId: session._id, reason } });
     }
@@ -181,7 +206,9 @@ export async function startSession(teacher: SharePresence, studentUid: number, t
         teacherName: scope.teacher.name, studentName: scope.student.name, active: true,
         createdAt: new Date(now), expiresAt: new Date(now + LIVE_SHARE_RECONNECT_MS),
     };
+    await claimParticipants('assist', session._id, [teacher.uid, studentUid], now);
     try { await sessions.insertOne(session); } catch (error) {
+        await releaseParticipants(session._id);
         if (error.code === 11000) throw new LiveShareError('BUSY', '该学员已经在共享中，请稍后再试。');
         throw error;
     }
@@ -201,12 +228,15 @@ export async function refreshSession(session: ShareSession, emit: Emit, now = Da
         const teacher = await livePresence(session.teacherUid, session.teacherTabId, now);
         if (!teacher) return null;
         if (teacher.serverId !== student.serverId) throw new LiveShareError('DIFFERENT_SERVER', '共享双方连接到了不同服务实例，请重新连接。');
+        await claimParticipants('assist', session._id, [session.teacherUid, session.studentUid], now);
         const updated = await sessions.findOneAndUpdate({ _id: session._id, active: true, studentTabId: session.studentTabId,
             pageId: session.pageId, expiresAt: { $gt: new Date(now) } }, {
             $set: { pageId: student.pageId, domainId: student.domainId, expiresAt: new Date(now + LIVE_SHARE_RECONNECT_MS) },
         }, { returnDocument: 'after' });
-        return updated || sessions.findOne({ _id: session._id, active: true, studentTabId: session.studentTabId,
+        const current = updated || await sessions.findOne({ _id: session._id, active: true, studentTabId: session.studentTabId,
             expiresAt: { $gt: new Date(now) } });
+        if (!current && !await sessions.findOne({ _id: session._id, active: true })) await releaseParticipants(session._id);
+        return current;
     } catch (error) {
         if (error instanceof LiveShareError) await endSession(session, error.message, emit);
         throw error;
@@ -276,6 +306,7 @@ export function apply() {
         db.ensureIndexes(presence, { key: { expiresAt: 1 }, name: 'live_share_presence_expiry', expireAfterSeconds: 0 },
             { key: { workspaceId: 1, uid: 1 }, name: 'live_share_presence_workspace' }),
         db.ensureIndexes(grants, { key: { expiresAt: 1 }, name: 'live_share_grant_expiry', expireAfterSeconds: 0 }),
+        db.ensureIndexes(occupancy, { key: { expiresAt: 1 }, name: 'live_share_occupancy_expiry', expireAfterSeconds: 0 }),
         // Room exclusivity is a correctness boundary: fail closed if these
         // indexes cannot be installed, rather than relying on a logged warning.
         sessions.createIndexes([{ key: { expiresAt: 1 }, name: 'live_share_session_expiry', expireAfterSeconds: 0 },

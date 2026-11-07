@@ -31,8 +31,10 @@ test('different screen sizes and DPR preserve source editor geometry, concurrent
         plugins: [{ name: 'actual-browser-monaco', setup(builder) {
             builder.onResolve({ filter: /^monaco-editor\// }, () => ({ path: 'monaco', namespace: 'runtime' }));
             builder.onResolve({ filter: /^vj\/components\/monaco\/loader$/ }, () => ({ path: 'loader', namespace: 'runtime' }));
+            builder.onResolve({ filter: /^vj\/utils$/ }, () => ({ path: 'utils', namespace: 'runtime' }));
             builder.onLoad({ filter: /.*/, namespace: 'runtime' }, ({ path: name }) => ({ contents: name === 'monaco'
-                ? 'module.exports=window.monaco;' : 'export const load = async () => ({monaco:window.monaco});' }));
+                ? 'module.exports=window.monaco;' : name === 'utils' ? 'export const request={get:async()=>({capacity:4,active:0})};'
+                    : 'export const load = async () => ({monaco:window.monaco});' }));
         } }],
     })).outputFiles[0].text;
     const capture = (await build({ ...options, entryPoints: ['packages/ui-default/components/live_share/frame_capture.ts'],

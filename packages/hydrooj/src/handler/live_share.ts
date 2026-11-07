@@ -5,8 +5,10 @@ import {
     authorizeRelay, checkShareOrigin, LIVE_SHARE_MAX_BYTES, LiveShareError, ShareRateLimit, ShareSession,
     sessionRole, sharePage, validateRelayData, validateShareMessage,
 } from '../lib/live_share';
+import { broadcastDrawing, validateBroadcastMessage, validateBroadcastRelay } from '../lib/teacher_broadcast';
 import { PERM, PRIV } from '../model/builtin';
 import * as share from '../model/live_share';
+import * as broadcast from '../model/teacher_broadcast';
 import token from '../model/token';
 import workspace from '../model/workspace';
 import bus from '../service/bus';
@@ -43,6 +45,11 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
     private outgoing = Promise.resolve();
     private outgoingBytes = 0;
     private currentSession: ShareSession;
+    private currentBroadcast: broadcast.BroadcastRoom;
+    private lastBroadcastAuthorization = 0;
+    private lastBroadcastDiscovery = 0;
+    private checkingBroadcast = false;
+    private broadcastPaused = false;
     private lastAuthorization = 0;
     private lastPeerCheck = 0;
     private lastLoginCheck = 0;
@@ -67,20 +74,21 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
     async message(payload: any) {
         if (this.disposed) return;
         try {
-            validateShareMessage(payload);
+            if (typeof payload?.type === 'string' && payload.type.startsWith('broadcast:')) validateBroadcastMessage(payload);
+            else validateShareMessage(payload);
             this.limiter.accept(payload);
             if (this.pending >= 16) throw new LiveShareError('BACKPRESSURE', '共享正在重新同步，请稍候。');
-        } catch (error) { this.report(error); return; }
+        } catch (error) { this.report(error, payload?.type?.startsWith?.('broadcast:')); return; }
         this.pending++;
         this.queue = this.queue.then(async () => { if (!this.disposed) await this.processMessage(payload); })
-            .catch((error) => this.report(error)).finally(() => { this.pending--; });
+            .catch((error) => this.report(error, payload?.type?.startsWith?.('broadcast:'))).finally(() => { this.pending--; });
         await this.queue;
     }
 
-    private report(error: any) {
+    private report(error: any, isBroadcast = false) {
         if (this.disposed) return;
         const known = error instanceof LiveShareError;
-        this.send({ type: 'error', code: known ? error.code : 'UNAVAILABLE', message: known ? error.message : '共享暂时不可用，请稍后重新连接。' });
+        this.send({ type: isBroadcast ? 'broadcast:error' : 'error', code: known ? error.code : 'UNAVAILABLE', message: known ? error.message : '共享暂时不可用，请稍后重新连接。' });
     }
 
     private async checkLogin() {
@@ -94,6 +102,9 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         } catch { /* Invalid or revoked session scope is never trusted. */ }
         if (!allowed) {
             if (this.currentSession) await share.endSession(this.currentSession, '账号登录已失效，共享已结束。', emitLiveShare);
+            if (this.currentBroadcast && broadcast.role(this.currentBroadcast, this.peer) === 'teacher') {
+                await broadcast.end(this.currentBroadcast, '老师登录已失效，分享已结束。', emitLiveShare);
+            }
             this.close(4003, 'Login revoked');
             throw new LiveShareError('FORBIDDEN', '登录已失效或权限已改变，请重新登录。');
         }
@@ -106,25 +117,28 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
             if (this.peer && (this.peer.tabId !== payload.tabId || this.peer.pageId !== payload.pageId)) {
                 throw new LiveShareError('INVALID_HELLO', '页面已切换，请重新连接。');
             }
-            if (!this.canTeach && !await share.verifyPageGrant(this.user._id, this.domain._id, payload.pageGrant, payload.url)) {
+            const pageAllowed = await share.verifyPageGrant(this.user._id, this.domain._id, payload.pageGrant, payload.url);
+            if (!this.canTeach && !pageAllowed) {
                 throw new LiveShareError('UNSUPPORTED_PAGE', '当前页面尚未获准共享，请刷新页面。');
             }
             const scope = this.canTeach ? await share.teacherScope(this.user._id, this.domain._id)
                 : await share.studentScope(this.user._id, this.domain._id);
             this.peer = await share.connectPresence({ uid: this.user._id, tabId: payload.tabId, pageId: payload.pageId,
                 connectionId: this.connectionId, deviceId: payload.deviceId, domainId: this.domain._id, workspaceId: scope.workspaceId,
-                url: this.canTeach ? '' : payload.url, title: payload.title, visible: payload.visible, canTeach: this.canTeach, serverId });
+                url: pageAllowed ? payload.url : '', title: payload.title, visible: payload.visible, canTeach: this.canTeach, serverId });
             emitLiveShare({ uid: this.peer.uid, tabId: this.peer.tabId,
                 message: { type: 'peer-connected', connectionId: this.connectionId } });
             this.lastPeerCheck = Date.now();
             this.send({ type: 'ready', uid: this.user._id, canTeach: this.canTeach });
             await share.followStudentTab(this.peer, emitLiveShare);
+            await broadcast.follow(this.peer, emitLiveShare);
             this.currentSession = await share.sessionFor(this.peer);
+            this.currentBroadcast = await broadcast.roomFor(this.peer);
             await this.checkSession(true);
             return;
         }
         if (!this.peer) throw new LiveShareError('NOT_READY', '共享连接正在准备，请稍候。');
-        if (Date.now() - this.lastPeerCheck > 3000 || payload.type !== 'relay') {
+        if (Date.now() - this.lastPeerCheck > 3000 || !['relay', 'broadcast:relay'].includes(payload.type)) {
             const connected = await share.livePresence(this.peer.uid, this.peer.tabId);
             if (!connected || connected.connectionId !== this.connectionId) {
                 this.close(1013, 'Presence expired, reconnect');
@@ -134,6 +148,8 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         }
         if (payload.type === 'pulse') {
             await share.pulsePresence(this.peer, payload.visible);
+            const followed = await broadcast.follow(this.peer, emitLiveShare);
+            if (followed) this.currentBroadcast = followed;
             if (!this.canTeach && !payload.visible && this.currentSession) {
                 for (const [uid, tabId] of [[this.currentSession.teacherUid, this.currentSession.teacherTabId],
                     [this.currentSession.studentUid, this.currentSession.studentTabId]] as [number, string][]) {
@@ -145,7 +161,8 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
                 this.currentSession = await share.followStudentTab(this.peer, emitLiveShare) || this.currentSession;
             }
             await this.checkSession();
-        } else if (payload.type === 'list') {
+        } else if (payload.type.startsWith('broadcast:')) await this.processBroadcast(payload);
+        else if (payload.type === 'list') {
             if (!this.canTeach) throw new LiveShareError('FORBIDDEN', '只有老师可以选择共享学员。');
             this.send({ type: 'students', students: await share.listStudents(this.peer.uid, this.domain._id) });
         } else if (payload.type === 'start') {
@@ -183,9 +200,97 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         } });
     }
 
+    private async authorizeBroadcast(sessionId: string) {
+        let room = this.currentBroadcast?._id === sessionId ? this.currentBroadcast : null;
+        if (!room || Date.now() - this.lastBroadcastAuthorization > 3000) {
+            room = await broadcast.rooms.findOne({ _id: sessionId, active: true });
+            if (!room || +room.expiresAt <= Date.now() || !broadcast.role(room, this.peer)) {
+                throw new LiveShareError('ENDED', '分享已结束。');
+            }
+            const teacher = await share.livePresence(room.teacherUid, room.teacherTabId);
+            if (!teacher || !teacher.visible || !teacher.url || teacher.pageId !== room.pageId) {
+                throw new LiveShareError('PAUSED', '老师正在切换页面，稍后自动恢复。');
+            }
+            if (teacher.serverId !== this.peer.serverId || teacher.workspaceId !== room.workspaceId
+                || this.peer.workspaceId !== room.workspaceId) throw new LiveShareError('FORBIDDEN', '分享范围已改变。');
+            const scope = await share.teacherScope(room.teacherUid, teacher.domainId);
+            if (scope.workspaceId !== room.workspaceId) throw new LiveShareError('FORBIDDEN', '分享范围已改变。');
+            if (broadcast.role(room, this.peer) === 'student') {
+                const viewer = room.viewers.find((v) => v.uid === this.peer.uid);
+                await share.authorizePair(room.teacherUid, this.peer.uid, viewer.domainId);
+            }
+            this.currentBroadcast = room; this.lastBroadcastAuthorization = Date.now();
+        }
+        if (!room || +room.expiresAt <= Date.now() || !broadcast.role(room, this.peer)) throw new LiveShareError('ENDED', '分享已结束。');
+        return room;
+    }
+
+    private async processBroadcast(payload: any) {
+        if (payload.type === 'broadcast:start') {
+            if (!this.canTeach) throw new LiveShareError('FORBIDDEN', '只有老师可以发起分享。');
+            this.currentBroadcast = await broadcast.start(this.peer, payload.studentUids, emitLiveShare);
+            this.lastBroadcastAuthorization = 0;
+            return;
+        }
+        if (payload.type === 'broadcast:stop') {
+            const room = await broadcast.rooms.findOne({ _id: payload.sessionId });
+            if (!room || broadcast.role(room, this.peer) !== 'teacher') throw new LiveShareError('FORBIDDEN', '只有当前老师可以结束分享。');
+            if (room.active) await broadcast.end(room, '老师已结束分享。', emitLiveShare);
+            else this.send({ type: 'broadcast:ended', sessionId: room._id, reason: '分享已结束。' });
+            return;
+        }
+        const room = await this.authorizeBroadcast(payload.sessionId);
+        if (payload.pageId !== room.pageId) throw new LiveShareError('STALE_PAGE', '老师已切换页面，正在重新同步。');
+        if (payload.type === 'broadcast:sync') {
+            await broadcast.requestSnapshot(room, emitLiveShare);
+            return;
+        }
+        const isTeacher = broadcast.role(room, this.peer) === 'teacher';
+        if (isTeacher && (this.peer.pageId !== room.pageId || !this.peer.visible || !this.peer.url)) {
+            throw new LiveShareError('STALE_PAGE', '请在当前分享的教学页面继续操作。');
+        }
+        validateBroadcastRelay(isTeacher, payload.kind, payload.data, room.pageId);
+        const message = { type: 'broadcast:relay', sessionId: room._id, pageId: room.pageId, kind: payload.kind,
+            data: payload.kind === 'drawing' ? broadcastDrawing(this.peer.uid, payload.data) : payload.data,
+            senderUid: this.peer.uid, senderName: isTeacher ? room.teacherName : room.viewers.find((v) => v.uid === this.peer.uid)?.name };
+        if (!isTeacher) emitLiveShare({ uid: room.teacherUid, tabId: room.teacherTabId, message });
+        for (const viewer of room.viewers) {
+            if (viewer.uid !== this.peer.uid) emitLiveShare({ uid: viewer.uid, tabId: viewer.tabId, message });
+        }
+    }
+
+    private async checkBroadcast(announce = false) {
+        if (this.checkingBroadcast || (!this.currentBroadcast && !announce && Date.now() - this.lastBroadcastDiscovery < 10000)) return;
+        this.checkingBroadcast = true;
+        try {
+            this.lastBroadcastDiscovery = Date.now();
+            const stored = this.currentBroadcast ? await broadcast.rooms.findOne({ _id: this.currentBroadcast._id, active: true })
+                : await broadcast.roomFor(this.peer);
+            if (!stored || !broadcast.role(stored, this.peer)) {
+                if (this.currentBroadcast) this.send({ type: 'broadcast:ended', sessionId: this.currentBroadcast._id, reason: '分享已结束。' });
+                this.currentBroadcast = null; return;
+            }
+            if (+stored.expiresAt <= Date.now()) { await broadcast.end(stored, '分享连接已超时。', emitLiveShare); this.currentBroadcast = null; return; }
+            this.currentBroadcast = stored;
+            const refreshed = broadcast.role(stored, this.peer) === 'teacher' ? await broadcast.refresh(stored, emitLiveShare) : stored;
+            const teacher = refreshed && await share.livePresence(refreshed.teacherUid, refreshed.teacherTabId);
+            if (!refreshed || !teacher || !teacher.visible || !teacher.url) {
+                if (!this.broadcastPaused) this.send({ type: 'broadcast:paused', sessionId: stored._id, reason: '老师正在切换页面或暂时离线，等待重新连接。' });
+                this.broadcastPaused = true; return;
+            }
+            this.lastBroadcastAuthorization = 0;
+            await this.authorizeBroadcast(refreshed._id);
+            if (announce || this.broadcastPaused || stored.pageId !== refreshed.pageId
+                || stored.viewers.length !== refreshed.viewers.length) await broadcast.notify(refreshed, emitLiveShare);
+            this.currentBroadcast = refreshed; this.broadcastPaused = false;
+        } catch (error) { this.report(error, true); }
+        finally { this.checkingBroadcast = false; }
+    }
+
     private async checkSession(announce = false) {
         if (!this.peer || this.checking || this.disposed) return;
         await this.checkLogin();
+        await this.checkBroadcast(announce);
         if (!this.currentSession && !announce && Date.now() - this.lastDiscovery < 30000) return;
         this.checking = true;
         try {
@@ -219,7 +324,7 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         const bytes = Buffer.byteLength(JSON.stringify(event));
         if (this.outgoingBytes + bytes > 2 * 1024 * 1024) { this.close(1013, 'Shared view needs resynchronization'); return; }
         this.outgoingBytes += bytes;
-        this.outgoing = this.outgoing.then(() => this.deliver(event)).catch((error) => this.report(error))
+        this.outgoing = this.outgoing.then(() => this.deliver(event)).catch((error) => this.report(error, event.message.type?.startsWith('broadcast:')))
             .finally(() => { this.outgoingBytes -= bytes; });
         await this.outgoing;
     }
@@ -233,6 +338,22 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         if (this.conn.bufferedAmount > 2 * 1024 * 1024) {
             this.close(1013, 'Shared view is too far behind');
             return;
+        }
+        if (event.message.type.startsWith('broadcast:')) {
+            const message = event.message;
+            if (message.type === 'broadcast:ended') {
+                if (this.currentBroadcast?._id === message.sessionId) this.currentBroadcast = null;
+                this.lastBroadcastAuthorization = 0; this.lastBroadcastDiscovery = 0;
+            } else if (message.type === 'broadcast:paused') {
+                const room = await broadcast.rooms.findOne({ _id: message.sessionId, active: true });
+                if (!room || !broadcast.role(room, this.peer)) return;
+                this.broadcastPaused = true; this.lastBroadcastAuthorization = 0;
+            } else {
+                if (['broadcast:started', 'broadcast:view', 'broadcast:resync'].includes(message.type)) this.lastBroadcastAuthorization = 0;
+                const room = await this.authorizeBroadcast(message.sessionId);
+                if (message.pageId && room.pageId !== message.pageId) return;
+            }
+            this.send(message); return;
         }
         if (['ended', 'paused'].includes(event.message.type)) {
             this.currentSession = null; this.lastAuthorization = 0; this.lastDiscovery = 0;
@@ -250,15 +371,21 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
     }
 
     @subscribe('user/delcache')
-    onUserPermissionsChanged() { this.lastAuthorization = 0; }
+    onUserPermissionsChanged() { this.lastAuthorization = 0; this.lastBroadcastAuthorization = 0; }
 
     @subscribe('domain/delete-cache')
-    onDomainPermissionsChanged() { this.lastAuthorization = 0; }
+    onDomainPermissionsChanged() { this.lastAuthorization = 0; this.lastBroadcastAuthorization = 0; }
 
     async cleanup() {
         this.disposed = true;
         if (this.peer) {
             if (!await share.disconnectPresence(this.peer)) return;
+            const room = await broadcast.roomFor(this.peer);
+            if (room && broadcast.role(room, this.peer) === 'teacher') {
+                for (const viewer of room.viewers) emitLiveShare({ uid: viewer.uid, tabId: viewer.tabId, message: {
+                    type: 'broadcast:paused', sessionId: room._id, reason: '老师正在切换页面，稍后自动恢复。',
+                } });
+            }
             const session = await share.sessionFor(this.peer);
             if (session) {
                 const teacher = session.teacherUid === this.peer.uid;
@@ -320,6 +447,11 @@ export async function injectLiveShare(handler: Handler) {
             if (!found) return;
         }
         try { pageGrant = await share.issuePageGrant(handler.user._id, domainId, path); } catch { return; }
+    } else {
+        const path = `${handler.request.originalPath}${handler.context.request.querystring ? `?${handler.context.request.querystring}` : ''}`;
+        // Teachers may still assist from a private page, but cannot broadcast it
+        // without the same rendered-GET, exact-path grant used by learners.
+        try { pageGrant = await share.issuePageGrant(handler.user._id, domainId, path); } catch { /* Assistance remains available. */ }
     }
     handler.UiContext.liveShare = {
         enabled: true, uid: handler.user._id, canTeach, pageGrant, socketUrl: handler.url('live_share_conn', { domainId }),

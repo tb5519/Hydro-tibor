@@ -2,6 +2,20 @@
 
 老师打开悬浮助手，点「共享模式」，选择在线学员即可连接。没有观看、编辑、控制三个开关：不操作就是观看，直接操作即可协助。学员端在页面底部显示「老师正在协助」，不遮挡顶部菜单，提示本身不拦截点击。老师通过助手切换学员或断开。
 
+## 分享老师的画面
+
+助手的「分享模式」用于老师示范：选择一名或多名在线学员，点击「开始分享」。可搜索姓名或 UID，也可一键选择在线学员，单次最多 30 位。老师继续在自己的真实页面操作，所选学员看到等比例适配后的实时画面，未选学员保持原页面。老师的选区、箭头、Shift＋回车批注、右键画笔、代码与运行窗口同步显示。
+
+学员观看时不能点击老师画面中的按钮、输入代码或操作自己被覆盖的页面；唯一可发送的操作是按住鼠标左键拖动画临时笔迹，老师和其他观看学员都能看到。笔迹松手后停留 5 秒，再用 1 秒淡出，学员不能添加标签或固定笔迹。画面外的底部细提示栏显示「按住鼠标左键拖动，圈出你的问题」，不遮挡教学内容。
+
+老师底部浮条显示在线人数，可随时结束分享；结束后学员回到原页面，保留原草稿、滚动位置和焦点。老师切换站内获准页面或短暂断线时暂停互动并自动同步新页面，不把旧点击或画笔重放到新页面。分享模式与一对一共享模式互斥，避免同一人同时处于两种控制关系。
+
+分享复用已有登录 WebSocket，并为房间、老师页面和选中学员绑定独立权限。服务器只接受老师的画面、代码和标注；学员通道只接受临时笔迹，拒绝点击、编辑、标签和删除消息。各人的笔迹 ID 在服务器隔离，学员无法覆盖老师或其他学员的标记。仅房间与成员状态落库，画面、代码、批注内容不持久化；私密区域和凭证沿用既有排除规则。断线重新同步的请求合并限频，避免多人重连同时触发大量完整快照。
+
+分享 Scratch 时，积木编辑器仍运行在原有隔离 iframe 内。站内受控桥接把老师的右键笔迹及 Shift＋回车标签转换为老师页面坐标，随积木画布的位置和缩放同步给学员；重新同步会补发老师固定的标记，不会把学员临时笔迹变成老师标记。桥接同时校验父窗口、频道、iframe 身份和有效租约，暂停或断开后失效。此能力只覆盖平台自带的 Scratch 编辑器，不覆盖任意第三方 iframe 或浏览器系统弹窗。
+
+在线 IDE 的终端和海龟窗口默认靠右；两者同时出现且尚未手动移动时上下排列。老师或学员手动拖动后保留其位置，重新运行不重置窗口布局。
+
 ## 当前支持范围
 
 - 学员有权访问的站内页面，包括比赛详情和子页面、个人主页、个人中心、我的课堂、Python / C++ 学习页和 Scratch 页面。
@@ -72,7 +86,7 @@ yarn build:ui:production
 ## 验证
 
 ```sh
-node --test test/live_share_backend.spec.js test/live_share_editor.spec.js test/live_share_editor.browser.spec.js test/live_share_mirror.spec.js test/live_share_annotations.browser.spec.js test/live_share_frames.browser.spec.js test/live_share_scratch_runtime.browser.spec.js test/live_share_drawing.browser.spec.js test/live_share_sensitive_ui.spec.js test/live_share_controller.spec.js test/live_share_ui.spec.js test/live_share_resolution.browser.spec.js test/live_share_capture_build.spec.js test/scratchpad_editor_sync.spec.js test/teacher_assistant.spec.js test/deploy_prebuilt.spec.js
+node --test test/live_share_backend.spec.js test/live_share_editor.spec.js test/live_share_editor.browser.spec.js test/live_share_mirror.spec.js test/live_share_annotations.browser.spec.js test/live_share_frames.browser.spec.js test/live_share_scratch_runtime.browser.spec.js test/live_share_drawing.browser.spec.js test/live_share_sensitive_ui.spec.js test/live_share_controller.spec.js test/live_share_ui.spec.js test/live_share_resolution.browser.spec.js test/live_share_broadcast.browser.spec.js test/live_broadcast_controller.browser.spec.js test/live_broadcast_recovery.browser.spec.js test/live_share_capture_build.spec.js test/scratchpad_editor_sync.spec.js test/teacher_assistant.spec.js test/deploy_prebuilt.spec.js
 ```
 
 后端测试使用真实临时 MongoDB 验证独占索引、并发、授权、设备和页面隔离；浏览器测试覆盖真实 Monaco 并发编辑、跨系统换行、中文输入、编辑器显示设置、持续滚动、rrweb 镜像、重连、切换学员及老师原页面恢复。另有延迟加载回归验证旧代码不会覆盖新编辑。UI 联调使用真实 WebSocket 和受控测试页面，不连接线上学员。Scratch 回归使用实际预构建编辑器，验证标签切换、字段修改、滚轮、积木拖动、绿旗与停止及舞台像素同步；画笔回归覆盖不同分辨率、重放页面重建、其他学员隔离和断开后清理。

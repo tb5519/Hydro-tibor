@@ -25,6 +25,7 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
   root.dataset.liveShareCustom = 'ide-runtime';
   container.append(root);
   let state = emptyIdeSnapshot();
+  const defaultWindows = emptyIdeSnapshot().windows;
   let disposed = false;
   const cleanup: (() => void)[] = [];
   const dock = element('div', 'ide-runtime__dock');
@@ -35,6 +36,13 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
   dock.append(sharedRun);
   const windows = {} as Record<IdeWindowName, ReturnType<typeof makeWindow>>;
   function command(value: IdeCommand) { options.onCommand(value); }
+  function stackDefaultWindows() {
+    return root.clientHeight >= 500 && (['terminal', 'graphics'] as const).every((name) => {
+      const config = state.windows[name]; const initial = defaultWindows[name];
+      return config.visible && !config.minimized && !config.maximized
+        && (['x', 'y', 'width', 'height'] as const).every((key) => config[key] === initial[key]);
+    });
+  }
   function makeWindow(name: IdeWindowName) {
     const section = element('section', `ide-window ide-window--${name}`);
     section.dataset.ideWindow = name;
@@ -66,7 +74,19 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
       const dx = event.clientX; const dy = event.clientY;
       const scaleX = root.clientWidth / (bounds.width || 1);
       const scaleY = root.clientHeight / (bounds.height || 1);
+      // A manual move takes over the current arrangement, including the fitted
+      // heights. Freeze both windows before dragging so neither jumps in size.
+      const placements = stackDefaultWindows()
+        ? (['terminal', 'graphics'] as const).map((window) => {
+          const rect = windows[window].section.getBoundingClientRect();
+          const width = rect.width * scaleX; const height = rect.height * scaleY;
+          return { type: 'window', window, patch: { width, height,
+            x: (rect.left - bounds.left) * scaleX / Math.max(1, root.clientWidth - width),
+            y: (rect.top - bounds.top) * scaleY / Math.max(1, root.clientHeight - height) } } as IdeCommand;
+        }) : [];
+      let arranged = !placements.length;
       const move = (e: PointerEvent) => {
+        if (!arranged) { arranged = true; placements.forEach(command); }
         const left = (initial.left - bounds.left + e.clientX - dx) * scaleX;
         const top = (initial.top - bounds.top + e.clientY - dy) * scaleY;
         command({ type: 'window', window: name, patch: resize
@@ -228,15 +248,18 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
   function layout() {
     if (disposed) return;
     const width = root.clientWidth; const height = root.clientHeight;
+    const stacked = stackDefaultWindows();
+    const fit = Math.min(1, Math.max(0, height - 28)
+      / (defaultWindows.terminal.height + defaultWindows.graphics.height));
     for (const name of ['terminal', 'graphics'] as const) {
       const config = state.windows[name]; const win = windows[name];
       win.section.hidden = !config.visible || config.minimized;
       win.dockButton.hidden = !config.visible || !config.minimized;
       const w = config.maximized ? width : Math.min(config.width, width);
-      const h = config.maximized ? height : Math.min(config.height, height);
+      const h = config.maximized ? height : Math.min(config.height * (stacked ? fit : 1), height);
       win.section.style.width = `${Math.max(1, w)}px`; win.section.style.height = `${Math.max(1, h)}px`;
       win.section.style.left = `${config.maximized ? 0 : config.x * Math.max(0, width - w)}px`;
-      win.section.style.top = `${config.maximized ? 0 : config.y * Math.max(0, height - h)}px`;
+      win.section.style.top = `${config.maximized ? 0 : (stacked ? (name === 'graphics' ? 0 : 0.98) : config.y) * Math.max(0, height - h)}px`;
       win.section.classList.toggle('is-maximized', config.maximized);
       win.section.classList.toggle('is-front', state.activeWindow === name);
     }

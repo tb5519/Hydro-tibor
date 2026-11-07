@@ -69,6 +69,41 @@ async function run(page, ws) {
   await wait(() => received.some((v) => v.ws === ws && v.data.type === 'run'));
   return received.filter((v) => v.ws === ws && v.data.type === 'run').at(-1).data.runId;
 }
+it('opens runtime windows on the right, fits both without overlap and preserves a manually arranged position', async () => {
+  const { page, ws, errors } = await owner(); const runId = await run(page, ws);
+  send(ws, { type: 'state', runId, seq: 1, state: 'running' });
+  send(ws, { type: 'output', runId, seq: 2, stream: 'stdout', text: '右侧终端' });
+  const terminal = page.locator('.ide-window--terminal'); const graphics = page.locator('.ide-window--graphics');
+  await terminal.waitFor({ state: 'visible' });
+  assert((await terminal.boundingBox()).x > 1280 / 2, 'output leaves the left code area visible');
+  send(ws, { type: 'turtle', runId, seq: 3, commands: [{ op: 'screen', width: 640, height: 480 }] });
+  await graphics.waitFor({ state: 'visible' });
+  for (const height of [800, 650]) {
+    await page.setViewportSize({ width: 1280, height });
+    await page.waitForTimeout(50);
+    const a = await terminal.boundingBox(); const b = await graphics.boundingBox();
+    assert(a.x > 1280 * .4 && b.x > 1280 * .4, 'both windows stay on the right');
+    assert(b.y + b.height + 10 <= a.y, 'drawing and terminal remain separated');
+    assert(a.y + a.height <= height - 15 && b.y >= 64, 'windows remain inside the available viewport');
+  }
+  const before = await graphics.boundingBox(); const terminalBefore = await terminal.boundingBox();
+  const title = await page.locator('[data-ide-drag="graphics"]').boundingBox();
+  await page.mouse.move(title.x + 100, title.y + 20); await page.mouse.down();
+  await page.mouse.move(title.x - 20, title.y + 40, { steps: 5 }); await page.mouse.up();
+  const moved = await graphics.boundingBox(); const terminalAfter = await terminal.boundingBox();
+  assert(moved.x < before.x - 100, 'the teacher or learner can move the window away from the default');
+  assert(Math.abs(moved.height - before.height) < 1 && Math.abs(terminalAfter.height - terminalBefore.height) < 1,
+    'taking over a fitted layout does not jump either window size');
+  assert(Math.abs(terminalAfter.y - terminalBefore.y) < 1, 'the other window stays in place during dragging');
+  const placement = await page.evaluate(() => ({ ...runtime.snapshot().windows.graphics }));
+  send(ws, { type: 'exit', runId, seq: 4, exitCode: 0, status: 'Accepted' });
+  await page.waitForFunction(() => runtime.snapshot().state === 'finished');
+  await run(page, ws);
+  const next = await page.evaluate(() => runtime.snapshot().windows.graphics);
+  for (const key of ['x', 'y', 'width', 'height']) assert.equal(next[key], placement[key], `${key} survives the next run`);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
 it('opens terminal only for real output, streams Chinese and accepts repeated input without IME double send', async () => {
   const { page, ws, errors } = await owner();
   assert.equal(await page.locator('.ide-window:visible').count(), 0);
@@ -146,8 +181,8 @@ it('drags, resizes, minimizes and restores windows; renders runtime requests saf
   const title = page.locator('[data-ide-drag="terminal"]'); await title.waitFor({ state: 'visible' });
   const before = await page.locator('.ide-window--terminal').boundingBox();
   const box = await title.boundingBox(); await page.mouse.move(box.x + 150, box.y + 20); await page.mouse.down();
-  await page.mouse.move(box.x + 260, box.y - 60, { steps: 5 }); await page.mouse.up();
-  const moved = await page.locator('.ide-window--terminal').boundingBox(); assert(moved.x > before.x + 50); assert(moved.y < before.y);
+  await page.mouse.move(box.x + 40, box.y - 60, { steps: 5 }); await page.mouse.up();
+  const moved = await page.locator('.ide-window--terminal').boundingBox(); assert(moved.x < before.x - 50); assert(moved.y < before.y);
   const grip = await page.locator('[data-ide-resize="terminal"]').boundingBox();
   await page.mouse.move(grip.x + 8, grip.y + 8); await page.mouse.down(); await page.mouse.move(grip.x + 108, grip.y + 68, { steps: 5 }); await page.mouse.up();
   const sized = await page.locator('.ide-window--terminal').boundingBox(); assert(sized.width > before.width + 50);
@@ -295,6 +330,38 @@ it('keeps a running process stoppable after nonfatal input errors and preserves 
   await wait(() => received.some((v) => v.ws === ws && v.data.type === 'stop'));
   await page.close();
 });
+it('readonly broadcasts show only source runtime windows and never an extra run shortcut', async () => {
+  const page = await browser.newPage();
+  try {
+    await page.goto(`${origin}?teacher`);
+    await page.evaluate(() => {
+      view.dispose(); window.viewerCommands = [];
+      window.viewer = Ide.attachViewerIde({ pageId: 'readonly-page', container: document.querySelector('#app'), readOnly: true,
+        sendCommand(command) { viewerCommands.push(command); } });
+      viewer.setConnected(true);
+      window.sequence = 0;
+      window.receiveState = (snapshot) => viewer.receive({ type: 'ide', sequence: ++sequence, index: 0, total: 1,
+        chunk: JSON.stringify({ reset: true, snapshot, rect: { x: 0, y: 0, width: 1000, height: 700 } }) });
+    });
+    assert.equal(await page.locator('.ide-runtime__shared-run').count(), 0);
+    assert.equal(await page.locator('[data-ide-runtime]:visible').count(), 0);
+    await page.evaluate(() => receiveState(null));
+    assert.equal(await page.locator('[data-ide-runtime]:visible').count(), 0);
+    await page.evaluate(() => receiveState(Ide.emptyIdeSnapshot()));
+    assert.equal(await page.locator('.ide-window:visible, .ide-runtime__dock-button:visible').count(), 0, 'idle source produces no controls or windows');
+    await page.evaluate(() => {
+      const state = Ide.emptyIdeSnapshot(); state.windows.terminal.visible = true;
+      state.output = [{ stream: 'stdout', text: '老师运行中的输出' }]; receiveState(state);
+    });
+    await page.locator('.ide-window--terminal').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('.ide-terminal__output').textContent(), '老师运行中的输出');
+    await page.evaluate(() => document.querySelector('[aria-label="收起窗口"]').click());
+    assert.deepEqual(await page.evaluate(() => viewerCommands), [], 'readonly runtime cannot forward commands');
+    await page.evaluate(() => receiveState(null));
+    assert.equal(await page.locator('[data-ide-runtime]:visible').count(), 0, 'source removal hides all runtime UI');
+  } finally { await page.close(); }
+});
+
 it('rejects malformed shared snapshots without DOM errors or poisoning later valid sequence numbers', async () => {
   const teacher = await browser.newPage(); const errors = []; teacher.on('pageerror', (e) => errors.push(e.message));
   await teacher.goto(`${origin}?teacher`);

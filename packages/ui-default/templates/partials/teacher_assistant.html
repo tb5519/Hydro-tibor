@@ -47,6 +47,11 @@
       </button>
       {% endif %}
       {% if UiContext.liveShare and UiContext.liveShare.canTeach %}
+      <button type="button" class="teacher-assistant__link teacher-assistant__share" data-teacher-broadcast-open>
+        <span class="teacher-assistant__icon">{{ assistantIcon('book') }}</span>
+        <span class="teacher-assistant__copy"><strong>分享模式</strong><span>展示我的画面，一起看示范</span></span>
+        <span class="teacher-assistant__arrow" aria-hidden="true">↗</span>
+      </button>
       <button type="button" class="teacher-assistant__link teacher-assistant__share" data-live-share-open>
         <span class="teacher-assistant__icon">{{ assistantIcon('people') }}</span>
         <span class="teacher-assistant__copy"><strong>共享模式</strong><span>一起看页面，随手帮学员修改</span></span>

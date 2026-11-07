@@ -62,11 +62,14 @@ interface CommonOptions {
   pageId: string;
   send: (message: EditorMessage) => void;
   onStatus?: (status: EditorStatus) => void;
+  teacherSource?: boolean;
+  readOnly?: boolean;
 }
 export interface EditorController {
   receive: (message: EditorMessage) => void;
   setConnected: (connected: boolean) => void;
   dispose: () => void;
+  snapshot?: () => void;
   getPendingDrafts?: () => Array<{ editorId: string; language?: string; value: string }>;
 }
 
@@ -798,15 +801,15 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
     } };
     const focus = attachCodeFocus(node, shared, editor, undefined, undefined, geometry);
     cleanups.push(() => focus.dispose());
-    const annotations = attachCodeAnnotations(node, shared, notes, { ...options, editorId: id, teacher: false, connected: () => connected, editor, geometry });
+    const annotations = attachCodeAnnotations(node, shared, notes, { ...options, editorId: id, teacher: !!options.teacherSource, connected: () => connected, editor, geometry });
     cleanups.push(() => annotations.dispose());
     if (editor) {
       const binding = new MonacoBinding(shared.text, model, new Set([editor]));
       shared.trackOrigin(binding);
       cleanups.push(localUndo(model, shared, editor), () => binding.destroy());
-      cleanups.push(observeCursor(editor, shared, options, id, () => connected));
+      cleanups.push(observeCursor(editor, shared, options, id, () => connected, options.teacherSource ? (message) => focus.set(message) : undefined));
       cleanups.push(compositionGuard(editor, shared));
-    } else cleanups.push(bindTextarea(textarea, shared, true), observeTextareaCursor(textarea, shared, options, id, () => connected));
+    } else cleanups.push(bindTextarea(textarea, shared, true), observeTextareaCursor(textarea, shared, options, id, () => connected, options.teacherSource ? (message) => focus.set(message) : undefined));
     const metadata = () => {
       const style = getComputedStyle(node);
       const raw = editor?.getRawOptions?.() || {};
@@ -846,6 +849,11 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
         const data = metadata(); lastTheme = JSON.stringify(data.theme);
         safeSend(options, { type: 'edit:init', pageId: options.pageId, editorId: id, state, ...data });
         safeSend(options, { type: 'edit:init', pageId: options.pageId, editorId: id, state: notes.snapshot, document: 'annotations' });
+        if (options.teacherSource) {
+          const cursor = editor ? cursorMessage(shared, editor, options.pageId, id)
+            : cursorFromOffsets(shared, textarea.selectionStart, textarea.selectionEnd, options.pageId, id);
+          focus.set(cursor); if (cursor) safeSend(options, cursor);
+        }
       }
     };
     const layout = (force = false) => {
@@ -913,7 +921,7 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
     for (const editor of editors) {
       const node = editor.getDomNode?.();
       const model = editor.getModel?.();
-      if (!node?.isConnected || !model || model.isDisposed?.() || node.closest('[data-live-share-viewer]')) continue;
+      if (!node?.isConnected || !model || model.isDisposed?.() || node.closest('[data-live-share-viewer],[data-private],[data-sensitive],[data-live-share-private],[data-live-share-ui],[data-teacher-assistant]')) continue;
       // Two widgets can share one Monaco model; binding it twice would replay
       // each edit into separate CRDTs and duplicate remote transactions.
       if (models.has(model)) continue;
@@ -925,7 +933,7 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
       if (!bindings.has(editor)) { const binding = create(node, editor); bindings.set(editor, binding); binding.announce(); }
     }
     for (const node of document.querySelectorAll<HTMLTextAreaElement>('textarea[name="code"], textarea.scratchpad__data-input')) {
-      if (!node.isConnected || node.closest('[data-live-share-viewer]') || !node.getClientRects().length) continue;
+      if (!node.isConnected || node.closest('[data-live-share-viewer],[data-private],[data-sensitive],[data-live-share-private],[data-live-share-ui],[data-teacher-assistant]') || !node.getClientRects().length) continue;
       if (node.value.length > MAX_TEXT) { reportOversized(node); continue; }
       present.add(node);
       if (!bindings.has(node)) { const binding = create(node); bindings.set(node, binding); binding.announce(); }
@@ -938,6 +946,7 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
   scan();
   const timer = window.setInterval(scan, 100);
   return {
+    snapshot() { if (connected && !disposed) for (const binding of bindings.values()) binding.announce(); },
     receive(message) {
       if (disposed || !connected || !message || message.pageId !== options.pageId) return;
       if (message.type === 'edit:sync' && !message.editorId) { for (const binding of bindings.values()) binding.announce(); return; }
@@ -1010,7 +1019,8 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
       node.setAttribute('aria-label', initial.kind === 'textarea' ? '与学员共享的测试输入' : '与学员共同编辑代码');
       Object.assign(node.style, { position: 'absolute', margin: '0', padding: '0', border: '0', boxSizing: 'border-box', pointerEvents: 'auto', overflow: 'hidden', background: 'transparent' });
       options.container.appendChild(node);
-      let readOnly = !!initial.readOnly;
+      if (options.readOnly) { node.tabIndex = -1; node.setAttribute('aria-readonly', 'true'); }
+      let readOnly = !!options.readOnly || !!initial.readOnly;
       let refresh = () => {};
       const shared = new CollaborativeText({
         ...options, editorId: initial.editorId, role: 'viewer', canWrite: () => !readOnly,
@@ -1074,10 +1084,10 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
       focus = attachCodeFocus(node, shared, editor, options.container, undefined, geometry);
       cleanups.push(() => focus.dispose());
       const annotations = attachCodeAnnotations(node, shared, notes, { ...options, editorId: initial.editorId,
-        teacher: true, connected: () => connected, editor, geometry });
+        teacher: !options.readOnly, connected: () => connected, editor, geometry });
       cleanups.push(() => annotations.dispose());
       const onScroll = () => {
-        if (applyingScroll || !connected) return;
+        if (options.readOnly || applyingScroll || !connected) return;
         const top = editor ? editor.getScrollTop() : node.scrollTop;
         const left = editor ? editor.getScrollLeft() : node.scrollLeft;
         if (appliedScroll?.top === top && appliedScroll.left === left) return;
@@ -1133,10 +1143,10 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
         if (message.document === 'annotations') { notes.receive(message); annotations.refresh(); return; }
         if (message.type === 'edit:focus') { sourceFocus = message.focus; return; }
         applyingScroll = true;
-        if (message.type === 'edit:cursor') remoteCursor = message;
+        if (message.type === 'edit:cursor') { remoteCursor = message; if (options.readOnly) focus.set(message); }
         else shared.receive(message);
         if (message.type === 'edit:init' || message.type === 'edit:layout') {
-          if (typeof message.readOnly === 'boolean') readOnly = message.readOnly;
+          if (typeof message.readOnly === 'boolean') readOnly = !!options.readOnly || message.readOnly;
           if (message.rect) sourceRect = message.rect;
           layout();
           confirmedScrollSeq = Math.max(confirmedScrollSeq, message.scrollSeq || 0);
