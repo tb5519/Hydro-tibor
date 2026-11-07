@@ -1,4 +1,4 @@
-(()=>{(function(){try{var ua=typeof window<"u"?window:typeof global<"u"?global:typeof globalThis<"u"?globalThis:typeof self<"u"?self:{};ua.SENTRY_RELEASE={id:"6298f4a69b0e7bbc40c9838c38c21fb40e3f03e9"};var Cl=new ua.Error().stack;Cl&&(ua._sentryDebugIds=ua._sentryDebugIds||{},ua._sentryDebugIds[Cl]="77154999-d1c3-4ebe-9472-4584f1935d5c",ua._sentryDebugIdIdentifier="sentry-dbid-77154999-d1c3-4ebe-9472-4584f1935d5c")}catch{}})();(self.webpackChunk_hydrooj_ui_default=self.webpackChunk_hydrooj_ui_default||[]).push([[163],{91157(ua,Cl,vt){/**
+(()=>{(function(){try{var ua=typeof window<"u"?window:typeof global<"u"?global:typeof globalThis<"u"?globalThis:typeof self<"u"?self:{};ua.SENTRY_RELEASE={id:"5413cb4f82589c2b1845b905b89aef16eea384cb"};var Cl=new ua.Error().stack;Cl&&(ua._sentryDebugIds=ua._sentryDebugIds||{},ua._sentryDebugIds[Cl]="77154999-d1c3-4ebe-9472-4584f1935d5c",ua._sentryDebugIdIdentifier="sentry-dbid-77154999-d1c3-4ebe-9472-4584f1935d5c")}catch{}})();(self.webpackChunk_hydrooj_ui_default=self.webpackChunk_hydrooj_ui_default||[]).push([[163],{91157(ua,Cl,vt){/**
  * @license React
  * react-dom-client.production.js
  *

@@ -1,0 +1,551 @@
+.teacher-assistant__voice
+  width: 100%
+  text-align: left
+  border: 0
+  background: transparent
+  .teacher-assistant__icon
+    color: #7a67bc
+    background: #f2effa
+
+.voice-call-picker, .voice-call-card, .voice-call-floating, .voice-call-toast
+  font-family: var(--font-family, "PingFang SC", "Microsoft YaHei", sans-serif)
+  color: #293d57
+  &, *
+    box-sizing: border-box
+  [hidden], &[hidden]
+    display: none !important
+  button, input
+    font: inherit
+  button
+    cursor: pointer
+  button:disabled
+    cursor: default
+  button:focus-visible, input:focus-visible
+    outline: 3px solid #b7b3ef
+    outline-offset: 3px
+  svg
+    display: block
+    width: 20px
+    height: 20px
+    flex-shrink: 0
+
+.voice-call-picker
+  width: unquote('min(480px, calc(100vw - 32px))')
+  max-width: none
+  max-height: calc(100dvh - 40px)
+  margin: auto
+  padding: 27px
+  border: 1px solid #edeaf6
+  border-radius: 25px
+  background: #fff
+  box-shadow: 0 24px 90px #27385832
+  overflow-y: auto
+  &::backdrop
+    background: #27394c55
+    backdrop-filter: blur(4px)
+  &__header
+    display: flex
+    align-items: flex-start
+    justify-content: space-between
+    gap: 16px
+    h2
+      margin: 7px 0 0
+      font-size: 24px
+      line-height: 1.4
+      font-weight: 750
+      color: #293c54
+  &__eyebrow
+    font-size: 11px
+    font-weight: 600
+    color: #9686b5
+    letter-spacing: .08em
+  &__close
+    display: grid
+    place-items: center
+    width: 32px
+    height: 32px
+    margin: -4px -5px 0 0
+    border: 0
+    border-radius: 10px
+    background: #f5f5fa
+    color: #8d96ab
+    &:hover
+      background: #ecebf5
+      color: #4b4a72
+  &__intro
+    margin: 12px 0 23px
+    color: #8c99ac
+    font-size: 13px
+    line-height: 1.8
+  &__search
+    display: flex
+    align-items: center
+    gap: 10px
+    height: 45px
+    padding: 0 13px
+    border: 1px solid #e5e6ee
+    border-radius: 12px
+    background: #fafafd
+    color: #a6abc0
+    &:focus-within
+      border-color: #b7a9de
+      box-shadow: 0 0 0 3px #eeebf8
+    input
+      min-width: 0
+      width: 100%
+      height: 100%
+      margin: 0
+      padding: 0
+      border: 0
+      outline: 0 !important
+      background: none
+      color: #384d64
+      font-size: 13px
+      box-shadow: none
+      &::placeholder
+        color: #a7afbf
+  &__status
+    margin: 19px 0 8px
+    color: #9aa6b7
+    font-size: 11px
+    line-height: 1.6
+  &__list
+    max-height: unquote('min(45dvh, 360px)')
+    overflow-y: auto
+    overscroll-behavior: contain
+    padding: 2px
+  &__empty
+    padding: 45px 12px
+    text-align: center
+    color: #98a6b9
+    font-size: 13px
+    line-height: 1.8
+  &__foot
+    margin: 16px 0 0
+    padding-top: 15px
+    border-top: 1px solid #f0eff5
+    color: #a4a8b8
+    font-size: 11px
+    line-height: 1.8
+  &__error
+    margin: 12px 0 0
+    padding: 10px 12px
+    border-radius: 9px
+    background: #fff4f0
+    color: #b36753
+    font-size: 12px
+    line-height: 1.7
+
+.voice-call-student
+  display: flex
+  align-items: center
+  width: 100%
+  gap: 12px
+  margin: 0
+  padding: 13px 9px
+  border: 0
+  border-radius: 13px
+  background: none
+  text-align: left
+  transition: background .15s
+  &:enabled:hover
+    background: #f6f3fd
+  &:disabled
+    .voice-call-student__avatar
+      background: #f4f5f8
+      color: #a8afbe
+    .voice-call-student__action
+      opacity: .35
+  &__avatar
+    display: grid
+    place-items: center
+    flex-shrink: 0
+    width: 42px
+    height: 42px
+    border: 1px solid #e7e1f4
+    border-radius: 14px
+    background: linear-gradient(145deg, #f2ebff, #eaf1ff)
+    color: #8873b6
+    font-size: 17px
+    font-weight: 600
+  &__copy
+    display: flex
+    flex: 1
+    min-width: 0
+    flex-direction: column
+    gap: 5px
+    strong
+      overflow: hidden
+      color: #40516b
+      font-size: 14px
+      font-weight: 650
+      text-overflow: ellipsis
+      white-space: nowrap
+    small
+      color: #a4adba
+      font-size: 11px
+      &.is-online
+        color: #6e9c8a
+  &__action
+    display: flex
+    align-items: center
+    gap: 6px
+    padding: 8px 10px
+    border-radius: 10px
+    background: #f0ecfa
+    color: #8068b8
+    font-size: 12px
+    font-weight: 600
+    svg
+      width: 15px
+      height: 15px
+
+// Base form styles target label:not(...), so the search layout needs this scope.
+.voice-call-picker label.voice-call-picker__search
+  display: flex
+  line-height: normal
+  margin: 0
+
+.voice-call-card, .voice-call-floating
+  position: fixed
+  z-index: 1100
+  right: calc(22px + env(safe-area-inset-right, 0px))
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px))
+  width: 310px
+  max-width: calc(100vw - 32px)
+  border: 1px solid #e5e0f0
+  border-radius: 20px
+  background: #fffffffa
+  box-shadow: 0 12px 42px #34405f24, 0 2px 8px #34405f0b
+  animation: voice-call-arrive .22s ease-out
+
+.voice-call-card
+  padding: 20px
+  &__top
+    display: flex
+    align-items: center
+    gap: 13px
+  &__icon
+    display: grid
+    place-items: center
+    width: 45px
+    height: 45px
+    flex-shrink: 0
+    border-radius: 15px
+    background: #f0ebfb
+    color: #8769c2
+  &.is-incoming &__icon
+    animation: voice-call-ring 2s ease-in-out infinite
+  &__copy
+    display: flex
+    min-width: 0
+    flex-direction: column
+    gap: 7px
+  &__name
+    display: block
+    overflow: hidden
+    font-size: 16px
+    font-weight: 700
+    white-space: nowrap
+    text-overflow: ellipsis
+  &__status
+    font-size: 12px
+    color: #9b91af
+    line-height: 1.6
+  &__actions
+    display: flex
+    gap: 9px
+    margin-top: 19px
+  &__button
+    flex: 1
+    min-height: 39px
+    padding: 7px 12px
+    border: 1px solid #e8e7ef
+    border-radius: 11px
+    background: #f9f9fc
+    color: #94a0b1
+    font-size: 13px !important
+    font-weight: 600 !important
+    &:enabled:hover
+      background: #f0edf7
+    &.is-accept
+      border-color: #8a72c6
+      background: #8870c5
+      color: #fff
+      box-shadow: 0 3px 9px #8067bc24
+      &:enabled:hover
+        background: #7860b4
+    &.is-hangup
+      color: #b4717c
+      border-color: #f1dfe3
+      background: #fff6f7
+    &:disabled
+      opacity: .6
+  &__error
+    color: #b37468
+    font-size: 12px
+    line-height: 1.6
+    margin: 12px 0 0
+
+.voice-call-floating
+  overflow: hidden
+  max-height: calc(100dvh - 120px)
+  overflow-y: auto
+  &__header
+    display: flex
+    align-items: center
+    gap: 9px
+    padding: 11px 15px
+    border-bottom: 1px solid #eeeaf5
+    background: #fbfaff
+  &__label
+    flex: 1
+    min-width: 0
+    overflow: hidden
+    color: #8c80a5
+    font-size: 11px
+    text-overflow: ellipsis
+    white-space: nowrap
+  &__collapse, &__hangup, &__mute
+    flex-shrink: 0
+    padding: 3px 5px
+    border: 0
+    border-radius: 5px
+    background: transparent
+    color: #a49ab8
+    font-size: 11px !important
+  &__hangup
+    display: none
+    color: #bd7583
+  &__mute
+    display: none
+    color: #8e78b1
+    &[aria-pressed="true"]
+      background: #f0e8fb
+      color: #7b5db1
+  &.is-compact
+    .voice-call-floating__header
+      border-bottom: 0
+    .voice-call-window
+      display: none
+    .voice-call-floating__hangup, .voice-call-floating__mute
+      display: block
+
+.voice-call-window
+  padding: 22px 22px 18px
+  text-align: center
+  color: #384b65
+  &__body
+    position: relative
+  &__eyebrow
+    display: block
+    color: #a69aba
+    font-size: 10px
+    letter-spacing: .1em
+    margin-bottom: 15px
+  &__avatar
+    display: grid
+    place-items: center
+    width: 64px
+    height: 64px
+    margin: 0 auto 13px
+    border: 1px solid #e5ddf5
+    border-radius: 23px
+    background: linear-gradient(140deg, #f3ebff, #e9f1ff)
+    color: #8a73ba
+    font-size: 27px
+    font-weight: 600
+    box-shadow: 0 4px 16px #8667bb0d
+    svg
+      width: 28px
+      height: 28px
+  &__name
+    margin: 0 0 7px
+    display: block
+    font-size: 20px
+    line-height: 1.5
+    font-weight: 700
+    color: #394c65
+    overflow-wrap: anywhere
+  &__status, &__connection
+    display: block
+    margin: 0
+    color: #9d91b1
+    font-size: 12px
+    line-height: 1.6
+  &__timer
+    display: block
+    min-height: 20px
+    margin-top: 7px
+    color: #8c7caa
+    font-size: 15px
+    font-variant-numeric: tabular-nums
+    letter-spacing: .08em
+  &__meter
+    display: flex
+    justify-content: center
+    align-items: center
+    gap: 4px
+    height: 25px
+    margin: 11px 0
+    color: #b0a1d0
+    i
+      display: block
+      width: 4px
+      height: 14px
+      border-radius: 3px
+      background: #b5a3d7
+      transform: scaleY(var(--voice-level, .25))
+      transition: transform .08s
+    i:nth-child(2), i:nth-child(4)
+      height: 22px
+    i:nth-child(3)
+      height: 28px
+  &__actions
+    display: flex
+    justify-content: center
+    align-items: flex-start
+    gap: 28px
+    margin-top: 18px
+  &__button
+    display: flex
+    flex-direction: column
+    align-items: center
+    justify-content: center
+    gap: 8px
+    min-width: 70px
+    padding: 12px 10px
+    border: 1px solid #e6e4ee
+    border-radius: 16px
+    background: #f8f7fc
+    color: #9685b0
+    font-size: 11px !important
+    font-weight: 600 !important
+    svg
+      width: 23px
+      height: 23px
+    &:enabled:hover
+      background: #f0ecf7
+    &.is-muted
+      border-color: #d9ccec
+      color: #8262b5
+      background: #eee6f9
+    &.is-danger
+      border-color: #dd8495
+      color: #fff
+      background: #d98798
+      box-shadow: 0 3px 11px #d9879826
+      &:enabled:hover
+        background: #cc7386
+    &:disabled
+      opacity: .5
+  &__error
+    margin: 14px 0 0
+    padding: 9px 12px
+    border: 1px solid #f4e0d9
+    border-radius: 10px
+    color: #b37562
+    background: #fff7f1
+    text-align: left
+    font-size: 12px
+    line-height: 1.7
+  &__retry, &__close
+    min-height: 35px
+    margin-top: 12px
+    padding: 6px 14px
+    border: 1px solid #e3daef
+    border-radius: 10px
+    color: #9276b8
+    background: #f8f3fd
+    font-size: 12px !important
+  &__help
+    margin: 17px 0 0
+    color: #aeb4c1
+    font-size: 10px
+    line-height: 1.7
+
+  &.is-active
+    display: grid
+    grid-template-columns: minmax(0, 1fr) auto
+    align-items: center
+    gap: 10px
+    padding: 13px 15px
+    text-align: left
+    .voice-call-window__body
+      min-width: 0
+    .voice-call-window__avatar, .voice-call-window__eyebrow, .voice-call-window__meter
+      display: none
+    .voice-call-window__name
+      overflow: hidden
+      margin-bottom: 4px
+      font-size: 15px
+      white-space: nowrap
+      text-overflow: ellipsis
+    .voice-call-window__status
+      font-size: 10px
+    .voice-call-window__timer
+      min-height: 0
+      margin-top: 4px
+      font-size: 11px
+      line-height: 1.4
+    .voice-call-window__actions
+      gap: 7px
+      margin: 0
+    .voice-call-window__button
+      gap: 5px
+      min-width: 46px
+      padding: 10px 7px
+      border-radius: 12px
+      font-size: 10px !important
+      svg
+        width: 19px
+        height: 19px
+    .voice-call-window__error, .voice-call-window__retry
+      grid-column: 1 / -1
+      margin: 0
+
+.voice-call-toast
+  position: fixed
+  z-index: 1200
+  left: 50%
+  bottom: 24px
+  transform: translateX(-50%)
+  max-width: calc(100vw - 32px)
+  padding: 11px 18px
+  border: 1px solid #e2dfeb
+  border-radius: 12px
+  background: #fffffffa
+  color: #91839e
+  box-shadow: 0 5px 25px #34405f21
+  text-align: center
+  font-size: 13px
+  line-height: 1.6
+
+@keyframes voice-call-arrive
+  from
+    opacity: 0
+    transform: translateY(8px)
+  to
+    opacity: 1
+    transform: translateY(0)
+
+@keyframes voice-call-ring
+  0%, 100%
+    box-shadow: 0 0 0 0 #b19ad61c
+  50%
+    box-shadow: 0 0 0 7px #b19ad61c
+
+@media (max-width: 480px)
+  .voice-call-picker
+    padding: 22px
+  .voice-call-card, .voice-call-floating
+    right: 16px
+    bottom: 16px
+  .voice-call-floating
+    max-height: calc(100dvh - 100px)
+
+@media (prefers-reduced-motion: reduce)
+  .voice-call-card, .voice-call-floating, .voice-call-card__icon
+    animation: none !important
+  .voice-call-window__meter i
+    transition: none

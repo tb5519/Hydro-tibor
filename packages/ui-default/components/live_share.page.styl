@@ -6,7 +6,9 @@
 
 .live-share-viewing .teacher-assistant
   z-index: 1001
-  .teacher-assistant__links, .teacher-assistant__footer
+  .teacher-assistant__links
+    display: grid
+  .teacher-assistant__links > :not(.teacher-assistant__voice), .teacher-assistant__footer
     display: none
   .teacher-assistant__toggle
     border-color: #8cbaa9
