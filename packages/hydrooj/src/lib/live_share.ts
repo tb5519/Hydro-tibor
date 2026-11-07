@@ -117,7 +117,7 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
                 || Object.keys(data).some((key) => !['id', 'pageId', 'nodeId', 'action', 'drawing'].includes(key))) invalid();
             const stroke = data.drawing;
             if (!stroke || typeof stroke !== 'object' || Array.isArray(stroke)
-                || Object.keys(stroke).some((key) => !['strokeId', 'phase', 'sequence', 'points', 'note'].includes(key))
+                || Object.keys(stroke).some((key) => !['strokeId', 'phase', 'sequence', 'points', 'note', 'anchor'].includes(key))
                 || !shareId(stroke.strokeId) || !['start', 'move', 'end', 'note', 'delete'].includes(stroke.phase)
                 || !Number.isSafeInteger(stroke.sequence) || stroke.sequence < 0 || stroke.sequence > 4096
                 || (stroke.phase === 'start' && stroke.sequence !== 0)
@@ -126,6 +126,21 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
                 || (['note', 'delete'].includes(stroke.phase) && stroke.points.length)
                 || stroke.points.some((point) => !Array.isArray(point) || point.length !== 2
                     || point.some((value) => !finite(value) || value < 0 || value > 10000))) invalid();
+            if (Object.hasOwn(stroke, 'anchor')) {
+                const anchor = stroke.anchor;
+                if (stroke.phase !== 'start' || !anchor || typeof anchor !== 'object' || Array.isArray(anchor)
+                    || !['dom', 'editor'].includes(anchor.kind)
+                    || Object.keys(anchor).some((key) => !['kind', 'mode', 'nodeId', 'editorId', 'frameId', 'matrix'].includes(key))
+                    || !Array.isArray(anchor.matrix) || anchor.matrix.length !== 6
+                    || anchor.matrix.some((value, index) => !finite(value) || (index < 4 && Math.abs(value) > 100))
+                    || Math.abs(anchor.matrix[0] * anchor.matrix[3] - anchor.matrix[1] * anchor.matrix[2]) < 0.000001) invalid();
+                if (anchor.kind === 'dom') {
+                    if (!['element', 'scroll', 'svg'].includes(anchor.mode)
+                        || !Number.isSafeInteger(anchor.nodeId) || anchor.nodeId < 1 || Object.hasOwn(anchor, 'editorId')
+                        || (Object.hasOwn(anchor, 'frameId') && !shareId(anchor.frameId))) invalid();
+                } else if (anchor.mode !== 'scroll' || !shareId(anchor.editorId)
+                    || Object.hasOwn(anchor, 'nodeId') || Object.hasOwn(anchor, 'frameId')) invalid();
+            }
             if (stroke.phase === 'note') {
                 const note = stroke.note;
                 if (!note || typeof note !== 'object' || Array.isArray(note)

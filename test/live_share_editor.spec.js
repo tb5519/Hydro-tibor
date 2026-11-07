@@ -9,6 +9,10 @@ const Y = require('../build/live-share/node_modules/yjs');
 
 const file = path.join(__dirname, '../packages/ui-default/components/live_share/editor.ts');
 const source = transformSync(fs.readFileSync(file, 'utf8'), { loader: 'ts', format: 'cjs', target: 'es2022' }).code;
+const anchorModule = { exports: {} };
+vm.runInNewContext(transformSync(fs.readFileSync(path.join(path.dirname(file), 'drawing_anchor.ts'), 'utf8'), {
+    loader: 'ts', format: 'cjs', target: 'es2022',
+}).code, { module: anchorModule, exports: anchorModule.exports });
 function load(extra = {}) {
     const module = { exports: {} };
     vm.runInNewContext(source, {
@@ -17,6 +21,7 @@ function load(extra = {}) {
             if (name === './vendor') return { Y, MonacoBinding: class { constructor() { throw Error('Unexpected Monaco in textarea test'); } } };
             // Selection geometry is exercised with the actual surface in live_share_code_focus.browser.spec.js.
             if (name === './annotation') return { attachAnnotationSurface: () => ({ render() {}, dispose() {} }) };
+            if (name === './drawing_anchor') return anchorModule.exports;
             return require(name);
         },
         ...extra,

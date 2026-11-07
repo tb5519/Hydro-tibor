@@ -26,7 +26,7 @@ test('the prepared opaque-frame bridge uses a content-hashed cache-safe script a
         assert.equal(manifest.files[name], sha256(fs.readFileSync(path.join(assets, name))));
     }
     const archive = path.join(assets, 'source.tar.gz');
-    for (const name of ['frame_capture.ts', 'mirror.ts', 'annotation.ts', 'annotation_arrow.ts', 'splitter.ts', 'scratch_control.ts', 'drawing.ts', 'capture_vendor.js', 'vendor.LICENSE.txt']) {
+    for (const name of ['frame_capture.ts', 'mirror.ts', 'annotation.ts', 'annotation_arrow.ts', 'splitter.ts', 'scratch_control.ts', 'drawing.ts', 'drawing_anchor.ts', 'capture_vendor.js', 'vendor.LICENSE.txt']) {
         let source = fs.readFileSync(path.join(root, 'packages/ui-default/components/live_share', name), 'utf8');
         if (name === 'mirror.ts') source = source.replace("from './vendor'", "from './capture_vendor'");
         assert.equal(execFileSync('tar', ['-xOf', archive, `onebyone-live-share/${name}`], { encoding: 'utf8' }), source);

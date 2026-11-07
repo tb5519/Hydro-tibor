@@ -17,13 +17,14 @@ let browser;
 let script;
 before(async () => {
     assert(executablePath, 'Chromium is required for temporary drawing tests');
-    script = buildSync({ entryPoints: [path.join(root, 'packages/ui-default/components/live_share/drawing.ts')],
+    script = buildSync({ stdin: { contents: `export * from './packages/ui-default/components/live_share/drawing';
+            export { registerDrawingEditor } from './packages/ui-default/components/live_share/drawing_anchor';`, resolveDir:root },
         bundle: true, format: 'iife', globalName: 'Drawing', write: false }).outputFiles[0].text;
     browser = await playwright.chromium.launch({ executablePath, headless: true });
 });
 after(async () => { await browser?.close(); });
 
-async function fixture(scale = 1.35) {
+async function fixture(scale = 1.35, { anchors = false } = {}) {
     const teacher = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 2 });
     const student = await browser.newPage({ viewport: { width: 900, height: 650 }, deviceScaleFactor: 1 });
     const errors = [];
@@ -52,11 +53,28 @@ async function fixture(scale = 1.35) {
     await teacher.exposeFunction('relayDrawing', (packet) => student.evaluate((value) => {
         window.packets.push(value); window.surface.receive(value);
     }, packet));
-    for (const page of [teacher, student]) await page.evaluate((teacher) => {
+    for (const page of [teacher, student]) await page.evaluate(({ teacher, anchors }) => {
         window.packets = [];
+        window.mapDrawingAnchors = () => {
+            window.drawingNodes = new Map(); window.drawingNodeIds = new WeakMap();
+            let nodeId = 1;
+            const visit = (doc) => {
+                for (const node of doc.querySelectorAll('*')) {
+                    if (node.closest('[data-live-share-ui]')) continue;
+                    window.drawingNodes.set(nodeId, node); window.drawingNodeIds.set(node, nodeId++);
+                    if (node.tagName === 'IFRAME' && node.contentDocument) visit(node.contentDocument);
+                }
+            };
+            visit(document);
+        };
+        window.mapDrawingAnchors();
         window.surface = Drawing.attachTemporaryDrawing({ container: document.querySelector('#stage'), teacher,
+            ...(anchors ? { anchors: {
+                identify: (node) => window.drawingNodeIds.has(node) ? { nodeId:window.drawingNodeIds.get(node) } : null,
+                resolve: ({ nodeId }) => window.drawingNodes.get(nodeId) || null,
+            } } : {}),
             pageId: 'test_page_1234', send: (packet) => { window.packets.push(packet); window.relayDrawing(packet); } });
-    }, page === teacher);
+    }, { teacher: page === teacher, anchors });
     return { teacher, student, errors, close: () => Promise.all([teacher.close(), student.close()]) };
 }
 
@@ -69,6 +87,268 @@ async function draw(page, box, offsets = [[15, 20], [30, 35], [65, 45], [80, 70]
     for (const [x, y] of offsets.slice(1)) await page.mouse.move(box.x + x, box.y + y, { steps: 3 });
     await page.mouse.up({ button: 'right' });
 }
+
+async function scrollingPage() {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 720 }, deviceScaleFactor: 2 });
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.setContent(`<style>
+        body{margin:0;background:#eef0f4;font:18px Arial;height:2400px}
+        #lesson{position:absolute;left:100px;top:290px;width:620px;height:260px;background:white}
+        #focus{margin:40px;width:340px;height:90px;line-height:30px;background:#f6f4fb}
+        #overlay{position:fixed;inset:0;pointer-events:none;z-index:10}
+        </style><article id="lesson"><div id="focus">这是需要重点讲解的内容。<br>滚动页面时，笔迹仍应跟着这一段。</div></article><div id="overlay"></div>`);
+    await page.addScriptTag({ content: script });
+    await page.evaluate(() => {
+        window.surface = Drawing.attachTemporaryDrawing({ container: document.querySelector('#overlay'), teacher: true,
+            pageId: 'scrolling_page', scopeDocument: true });
+    });
+    return { page, errors, close: () => page.close() };
+}
+
+const strokeSelector = '[data-share-drawing-stroke] path:nth-child(2)';
+const noteSelector = '[data-share-drawing-note]';
+const center = async (locator) => locator.evaluate((node) => {
+    const box = node.getBoundingClientRect();
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+});
+
+it('page scrolling keeps a pinned stroke and a manually moved label attached to their content', async () => {
+    const f = await scrollingPage();
+    try {
+        await draw(f.page, await f.page.locator('#focus').boundingBox());
+        await f.page.keyboard.press('Shift+Enter');
+        await f.page.locator('[data-share-drawing-note-input]').fill('重点');
+        const grip = await f.page.locator('[data-share-drawing-note-drag]').boundingBox();
+        await f.page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+        await f.page.mouse.down();
+        await f.page.mouse.move(grip.x + grip.width / 2 + 65, grip.y + grip.height / 2 + 35, { steps: 6 });
+        await f.page.mouse.up();
+        const before = { stroke: await center(f.page.locator(strokeSelector)), note: await center(f.page.locator(noteSelector)),
+            content: await center(f.page.locator('#focus')) };
+        await f.page.evaluate(() => window.scrollTo(0, 170));
+        await f.page.waitForFunction(({ strokeY }) => {
+            const box = document.querySelector('[data-share-drawing-stroke] path:nth-child(2)').getBoundingClientRect();
+            return Math.abs(box.top + box.height / 2 - (strokeY - 170)) < 1;
+        }, { strokeY: before.stroke.y });
+        const after = { stroke: await center(f.page.locator(strokeSelector)), note: await center(f.page.locator(noteSelector)),
+            content: await center(f.page.locator('#focus')) };
+        for (const key of ['stroke', 'note']) {
+            assert(Math.abs((after[key].y - after.content.y) - (before[key].y - before.content.y)) < 1, `${key} follows the content vertically`);
+            assert(Math.abs(after[key].x - before[key].x) < 1, `${key} has no unrelated horizontal movement`);
+        }
+        await f.page.locator('[data-share-drawing-note-delete]').click();
+        assert.equal(await f.page.locator(strokeSelector).count(), 0);
+        assert.equal(await f.page.locator(noteSelector).count(), 0);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('scrolling follows temporary ink without restarting its fade timer', { timeout: 10000 }, async () => {
+    const f = await scrollingPage();
+    try {
+        await draw(f.page, await f.page.locator('#focus').boundingBox());
+        const started = Date.now();
+        const before = await center(f.page.locator(strokeSelector));
+        await f.page.waitForTimeout(1800);
+        await f.page.evaluate(() => window.scrollTo(0, 90));
+        await f.page.waitForFunction((oldY) => {
+            const box = document.querySelector('[data-share-drawing-stroke] path:nth-child(2)').getBoundingClientRect();
+            return Math.abs(box.top + box.height / 2 - (oldY - 90)) < 1;
+        }, before.y);
+        await f.page.waitForTimeout(1800);
+        await f.page.evaluate(() => window.scrollTo(0, 140));
+        await f.page.locator(strokeSelector).waitFor({ state: 'detached', timeout: 3300 });
+        assert(Date.now() - started < 7000, 'scroll redraw must not extend the original five-second hold plus fade');
+        assert.equal(await f.page.locator('#focus').textContent(), '这是需要重点讲解的内容。滚动页面时，笔迹仍应跟着这一段。');
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('nested iframe and panel scrolling preserve mirrored ink and dragged-label offsets across DPR and zoom', async () => {
+    const f = await fixture(1.35, { anchors: true });
+    const pointInStage = (page, selector) => page.locator(selector).evaluate((node) => {
+        const box = node.getBoundingClientRect(); const stage = document.querySelector('#stage');
+        const bounds = stage.getBoundingClientRect();
+        return { x: (box.left + box.width / 2 - bounds.left) * stage.clientWidth / bounds.width,
+            y: (box.top + box.height / 2 - bounds.top) * stage.clientHeight / bounds.height };
+    });
+    const near = (actual, expected, message) => {
+        assert(Math.abs(actual.x - expected.x) < 1 && Math.abs(actual.y - expected.y) < 1,
+            `${message}: ${JSON.stringify({ actual, expected })}`);
+    };
+    try {
+        for (const page of [f.teacher, f.student]) await page.evaluate(() => {
+            const outer = document.querySelector('#outer').contentDocument;
+            outer.body.style.height = '900px';
+            const nested = outer.querySelector('#nested').contentDocument;
+            nested.body.innerHTML = `<section id="scroll-pane" style="position:absolute;left:15px;top:15px;width:235px;height:150px;overflow:auto;background:#f3f1fa">
+                <div id="scroll-content" style="position:relative;width:700px;height:700px">
+                    <div id="scroll-focus" style="position:absolute;left:50px;top:40px;width:160px;height:75px;background:white">需要跟随滚动的内容</div>
+                </div></section>`;
+            window.mapDrawingAnchors();
+        });
+        const target = f.teacher.frameLocator('#outer').frameLocator('#nested').locator('#scroll-focus');
+        await draw(f.teacher, await target.boundingBox(), [[12, 12], [35, 25], [70, 40], [100, 45]]);
+        await f.teacher.keyboard.press('Shift+Enter');
+        await f.teacher.locator('[data-share-drawing-note-input]').fill('跟着这一处');
+        await f.student.waitForFunction(() => document.querySelector('[data-share-drawing-note-input]')?.value === '跟着这一处');
+        assert(await f.student.evaluate(() => window.packets.some((packet) => packet.phase === 'start' && packet.anchor)),
+            'the wire carries a stable content anchor instead of only viewport points');
+        const grip = await f.teacher.locator('[data-share-drawing-note-drag]').boundingBox();
+        await f.teacher.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+        await f.teacher.mouse.down();
+        await f.teacher.mouse.move(grip.x + grip.width / 2 + 54, grip.y + grip.height / 2 + 27, { steps: 5 });
+        await f.teacher.mouse.up();
+        await f.student.waitForFunction(() => window.packets.filter((packet) => packet.phase === 'note').length >= 3);
+        const before = { stroke: await pointInStage(f.teacher, strokeSelector), note: await pointInStage(f.teacher, noteSelector) };
+        for (const page of [f.teacher, f.student]) await page.evaluate(() => {
+            const pane = document.querySelector('#outer').contentDocument.querySelector('#nested').contentDocument.querySelector('#scroll-pane');
+            pane.scrollTo(30, 35);
+        });
+        await f.teacher.waitForFunction((before) => {
+            const box = document.querySelector('[data-share-drawing-stroke] path:nth-child(2)').getBoundingClientRect();
+            const stage = document.querySelector('#stage'); const bounds = stage.getBoundingClientRect();
+            const y = (box.top + box.height / 2 - bounds.top) * stage.clientHeight / bounds.height;
+            return Math.abs(y - (before - 35)) < 1;
+        }, before.stroke.y);
+        for (const key of ['stroke', 'note']) {
+            const selector = key === 'stroke' ? strokeSelector : noteSelector;
+            const expected = { x: before[key].x - 30, y: before[key].y - 35 };
+            near(await pointInStage(f.teacher, selector), expected, `${key} follows the inner panel`);
+            near(await pointInStage(f.student, selector), expected, `${key} agrees on the other DPR`);
+        }
+        for (const page of [f.teacher, f.student]) await page.evaluate(() => {
+            document.querySelector('#outer').contentWindow.scrollTo(0, 25);
+        });
+        await f.teacher.evaluate(() => { document.querySelector('#stage').style.transform = 'scale(.72)'; });
+        await f.teacher.waitForTimeout(100);
+        for (const key of ['stroke', 'note']) {
+            const selector = key === 'stroke' ? strokeSelector : noteSelector;
+            const expected = { x: before[key].x - 30, y: before[key].y - 60 };
+            near(await pointInStage(f.teacher, selector), expected, `${key} follows its parent iframe after teacher zoom`);
+            near(await pointInStage(f.student, selector), expected, `${key} stays aligned on the student screen`);
+        }
+        const count = await f.teacher.evaluate(() => window.packets.length);
+        await f.teacher.waitForTimeout(100);
+        assert.equal(await f.teacher.evaluate(() => window.packets.length), count, 'scrolling redraws geometry without sending duplicate note edits');
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('editor content scrolling carries the pinned ink and label with the code, independently of virtualized line nodes', async () => {
+    const f = await fixture(1.3, { anchors:true });
+    try {
+        for (const page of [f.teacher, f.student]) await page.evaluate(() => {
+            const editor = document.createElement('div');
+            editor.className = 'monaco-editor'; editor.setAttribute('data-live-share-editor', 'scroll_editor_123');
+            editor.style.cssText = 'position:absolute;left:500px;top:160px;width:220px;height:160px;background:white;overflow:hidden';
+            editor.innerHTML = '<div class="view-lines" style="font:14px/20px monospace;margin-left:32px;height:500px">first line<br>second line<br>third line<br>fourth line</div>';
+            document.querySelector('textarea').replaceWith(editor);
+            window.editorScroll = { top:0, left:0 };
+            window.removeEditor = Drawing.registerDrawingEditor(editor, {
+                getScrollTop:() => window.editorScroll.top,
+                getScrollLeft:() => window.editorScroll.left,
+                getLayoutInfo:() => ({ contentLeft:32, contentWidth:188, height:160 }),
+            });
+            window.mapDrawingAnchors();
+        });
+        await draw(f.teacher, await f.teacher.locator('.monaco-editor').boundingBox(), [[70, 70], [100, 75], [140, 100]]);
+        await f.teacher.keyboard.press('Shift+Enter');
+        await f.teacher.locator('[data-share-drawing-note-input]').fill('循环');
+        await f.student.waitForFunction(() => document.querySelector('[data-share-drawing-note-input]')?.value === '循环');
+        assert(await f.student.evaluate(() => window.packets.some((packet) => packet.phase === 'start'
+            && packet.anchor?.kind === 'editor' && packet.anchor.editorId === 'scroll_editor_123')));
+        const grip = await f.teacher.locator('[data-share-drawing-note-drag]').boundingBox();
+        await f.teacher.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+        await f.teacher.mouse.down();
+        await f.teacher.mouse.move(grip.x + grip.width / 2 - 260, grip.y + grip.height / 2, { steps:5 });
+        await f.teacher.mouse.up();
+        const left = await f.teacher.locator(noteSelector).evaluate((node) => node.style.left);
+        await f.student.waitForFunction((left) => document.querySelector('[data-share-drawing-note]')?.style.left === left, left);
+        assert(await f.teacher.locator('[data-share-drawing-note-drag]').evaluate((handle) => {
+            const rect = handle.getBoundingClientRect();
+            return handle.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+        }), 'a label dragged beside the editor remains visible and can still be dragged');
+        const before = {};
+        for (const [role, page] of [['teacher', f.teacher], ['student', f.student]]) {
+            before[role] = { stroke:await center(page.locator(strokeSelector)), note:await center(page.locator(noteSelector)) };
+            await page.evaluate(() => {
+                window.editorScroll = { top:40, left:14 };
+                // Monaco recycles rendered lines while its editor root survives.
+                const prior = document.querySelector('.view-lines'); const next = prior.cloneNode(true);
+                prior.replaceWith(next); next.style.transform = 'translate(-14px, -40px)';
+            });
+        }
+        await f.teacher.waitForTimeout(100);
+        for (const [role, page, scale] of [['teacher', f.teacher, 1.3], ['student', f.student, 1]]) {
+            for (const key of ['stroke', 'note']) {
+                const after = await center(page.locator(key === 'stroke' ? strokeSelector : noteSelector));
+                assert(Math.abs(after.x - before[role][key].x + 14 * scale) < 1, `${role} ${key} follows code horizontal scroll`);
+                assert(Math.abs(after.y - before[role][key].y + 40 * scale) < 1, `${role} ${key} follows code vertical scroll`);
+            }
+        }
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('rejects malformed content anchors instead of treating them as viewport-only ink', async () => {
+    const f = await fixture(1, { anchors: true });
+    try {
+        assert.deepEqual(await f.student.evaluate(() => {
+            const anchor = { kind:'dom', mode:'element', nodeId:7, matrix:[1, 0, 0, 1, 0, 0] };
+            const start = { strokeId:'anchor_validation', phase:'start', sequence:0, points:[[20, 30]], anchor };
+            const invalid = [
+                { ...start, anchor:null }, { ...start, anchor:{ ...anchor, html:'<script>' } },
+                { ...start, anchor:{ ...anchor, nodeId:0 } }, { ...start, anchor:{ ...anchor, frameId:'../outside' } },
+                { ...start, anchor:{ ...anchor, mode:'execute' } }, { ...start, anchor:{ ...anchor, editorId:'wrong_kind' } },
+                { ...start, anchor:{ ...anchor, matrix:[1, 0, 0, 1] } }, { ...start, anchor:{ ...anchor, matrix:[1, 0, 0, NaN, 0, 0] } },
+                { ...start, anchor:{ ...anchor, matrix:[0, 0, 0, 0, 0, 0] } },
+                { ...start, anchor:{ ...anchor, matrix:[101, 0, 0, 1, 0, 0] } },
+                { ...start, anchor:{ ...anchor, matrix:[1, 0, 0, 1, 10000001, 0] } },
+                { ...start, anchor:{ kind:'editor', mode:'scroll', editorId:'editor_current', frameId:'frame_current', matrix:anchor.matrix } },
+                { ...start, phase:'move', sequence:1 },
+            ];
+            for (const packet of invalid) window.surface.receive(packet);
+            return { accepted:invalid.filter((packet) => Drawing.validDrawingPacket(packet)).length,
+                strokes:document.querySelectorAll('[data-share-drawing-stroke]').length };
+        }), { accepted:0, strokes:0 });
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('private, inert and removed content anchors hide both ink and labels without falling back to a floating viewport mark', async () => {
+    const f = await fixture(1, { anchors: true });
+    try {
+        for (const page of [f.teacher, f.student]) await page.evaluate(() => {
+            const target = document.createElement('div'); target.id = 'anchor-target';
+            target.style.cssText = 'position:absolute;left:500px;top:370px;width:220px;height:100px;background:white';
+            target.textContent = '老师圈中的这一块内容'; document.querySelector('#stage').append(target);
+            window.anchorTarget = target; window.mapDrawingAnchors();
+        });
+        await draw(f.teacher, await f.teacher.locator('#anchor-target').boundingBox());
+        await f.teacher.keyboard.press('Shift+Enter');
+        await f.teacher.locator('[data-share-drawing-note-input]').fill('看这里');
+        await f.student.waitForFunction(() => document.querySelector('[data-share-drawing-note-input]')?.value === '看这里');
+        const stroke = f.student.locator(strokeSelector); const note = f.student.locator(noteSelector);
+        for (const attribute of ['data-private', 'inert']) {
+            await f.student.evaluate((name) => window.anchorTarget.setAttribute(name, ''), attribute);
+            await stroke.waitFor({ state:'hidden' }); await note.waitFor({ state:'hidden' });
+            await f.student.evaluate((name) => window.anchorTarget.removeAttribute(name), attribute);
+            await stroke.waitFor({ state:'visible' }); await note.waitFor({ state:'visible' });
+        }
+        await f.student.evaluate(() => {
+            const replacement = window.anchorTarget.cloneNode(true);
+            window.anchorTarget.replaceWith(replacement);
+        });
+        await stroke.waitFor({ state:'hidden' }); await note.waitFor({ state:'hidden' });
+        assert.equal(await f.student.locator('#anchor-target').count(), 1, 'an unrelated replacement with the same HTML id is not a matching mirror node');
+        await f.student.evaluate(() => document.querySelector('#anchor-target').replaceWith(window.anchorTarget));
+        await stroke.waitFor({ state:'visible' }); await note.waitFor({ state:'visible' });
+        assert.equal(await note.locator('textarea').inputValue(), '看这里', 'temporary clipping does not delete a pinned label');
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
 
 it('right-button drawing in nested Scratch replay and code uses learner coordinates across different resolution and DPR', async () => {
     const f = await fixture();

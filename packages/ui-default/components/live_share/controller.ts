@@ -429,6 +429,14 @@ export function installLiveShare(config: LiveShareConfig, options: {
         },
       });
       viewerDrawing = adapters.attachTemporaryDrawing?.({ pageId: next.pageId, container: stage, teacher: true,
+        anchors: {
+          identify: (node) => {
+            const nodeId = viewerMirror?.getDrawingNodeId?.(node);
+            return nodeId ? { nodeId } : viewerFrames?.getDrawingNodeId?.(node) || null;
+          },
+          resolve: (identity) => identity.frameId ? viewerFrames?.getDrawingNode?.(identity) || null
+            : viewerMirror?.getDrawingNode?.(identity.nodeId) || null,
+        },
         send: (drawing) => relay(next, 'command', { id: randomId(), pageId: next.pageId, nodeId: 1, action: 'draw', drawing }),
       }) || null;
       const waiting = buffered.splice(0); bufferedBytes = 0;
@@ -467,7 +475,16 @@ export function installLiveShare(config: LiveShareConfig, options: {
       }) || null;
       if (adapters.attachTemporaryDrawing) {
         sourceDrawingRoot = drawingRoot();
-        sourceDrawing = adapters.attachTemporaryDrawing({ pageId, container: sourceDrawingRoot, teacher: false });
+        sourceDrawing = adapters.attachTemporaryDrawing({ pageId, container: sourceDrawingRoot, teacher: false,
+          anchors: {
+            identify: (node) => {
+              const nodeId = sourceMirror?.getDrawingNodeId?.(node);
+              return nodeId ? { nodeId } : null;
+            },
+            resolve: (identity) => identity.frameId ? null : sourceMirror?.getDrawingNode?.(identity.nodeId) || null,
+            frameGeometry: (anchor) => sourceFrames?.getDrawingGeometry?.(anchor) || null,
+          },
+        });
       }
       sourceMirror = adapters.attachSourceMirror({ pageId,
         send: (data) => relay(next, 'mirror', data),

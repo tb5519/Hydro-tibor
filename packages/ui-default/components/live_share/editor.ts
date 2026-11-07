@@ -1,5 +1,6 @@
 import { Y, MonacoBinding } from './vendor';
 import { attachAnnotationSurface, ShareAnnotation } from './annotation';
+import { registerDrawingEditor } from './drawing_anchor';
 
 export interface EditorRect { x: number; y: number; width: number; height: number }
 export interface SharedTextareaStyle {
@@ -750,7 +751,7 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
     notes.setConnected(connected);
     const previousMarker = node.getAttribute('data-live-share-editor');
     node.setAttribute('data-live-share-editor', id);
-    const cleanups: Array<() => void> = [];
+    const cleanups: Array<() => void> = [registerDrawingEditor(node, editor)];
     let decorations: string[] = [];
     let remoteCursor: EditorMessage | undefined;
     let lastLayout = '';
@@ -1061,6 +1062,7 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
         cleanups.push(bindTextarea(textarea, shared, false));
         cleanups.push(observeTextareaCursor(textarea, shared, options, initial.editorId, () => connected, (message) => focus?.set(message)));
       }
+      cleanups.push(registerDrawingEditor(node, editor));
       const geometry: CodeFocusGeometry = { get(message, noteId) {
         if (!sourceFocus || sourceFocus.width !== node.offsetWidth || sourceFocus.height !== node.offsetHeight
           || sourceFocus.revision !== shared.revision

@@ -42,7 +42,8 @@ async function assertCodeOutline(page) {
 }
 before(async () => {
     assert(executablePath, 'Chromium is required for code focus tests');
-    const bundle = await build({ entryPoints: [path.join(root, 'packages/ui-default/components/live_share/editor.ts')],
+    const bundle = await build({ stdin: { contents: 'export * from "./packages/ui-default/components/live_share/editor"; export * from "./packages/ui-default/components/live_share/drawing";',
+        resolveDir: root, loader: 'ts' },
         bundle: true, write: false, format: 'iife', globalName: 'LiveEditors', plugins: [{ name: 'monaco-runtime', setup(builder) {
             builder.onResolve({ filter: /^monaco-editor\// }, () => ({ path: 'monaco', namespace: 'test' }));
             builder.onResolve({ filter: /^vj\/components\/monaco\/loader$/ }, () => ({ path: 'loader', namespace: 'test' }));
@@ -104,6 +105,56 @@ async function peers(options = {}) {
     await flush(); await teacher.waitForFunction(() => !!sharedEditor());
     return { teacher, student, errors, flush, close: () => Promise.all([context.close(), teacherContext.close()]) };
 }
+
+it('right-button ink and pinned labels follow actual Monaco content scroll on both peers', { timeout: 40000 }, async () => {
+    const f = await peers({ teacherScaleFactor: 2, studentScaleFactor: 1 });
+    try {
+        await f.teacher.exposeFunction('relayInk', (packet) => f.student.evaluate((value) => window.ink.receive(value), packet));
+        await f.student.evaluate(() => {
+            const root = document.createElement('div'); root.style.cssText = 'position:fixed;inset:0;pointer-events:none';
+            document.body.append(root);
+            window.ink = LiveEditors.attachTemporaryDrawing({ container: root, teacher: false, pageId: 'test-ink-page' });
+        });
+        await f.teacher.evaluate(() => {
+            window.inkPackets = [];
+            window.ink = LiveEditors.attachTemporaryDrawing({ container: document.querySelector('#viewer'), teacher: true, pageId: 'test-ink-page',
+                send: (value) => { window.inkPackets.push(value); window.relayInk(value); } });
+        });
+        const target = await f.teacher.evaluate(() => {
+            const editor = sharedEditor(); const node = editor.getDomNode(); const box = node.getBoundingClientRect();
+            const position = editor.getScrolledVisiblePosition({ lineNumber: 4, column: 1 });
+            const scale = box.width / node.offsetWidth;
+            return { x: box.x + (position.left + 4) * scale, y: box.y + (position.top + 10) * scale };
+        });
+        await f.teacher.mouse.move(target.x, target.y); await f.teacher.mouse.down({ button: 'right' });
+        await f.teacher.mouse.move(target.x + 65, target.y + 4, { steps: 6 }); await f.teacher.mouse.up({ button: 'right' });
+        await f.teacher.keyboard.press('Shift+Enter');
+        const note = '[data-share-drawing-note]'; const stroke = '[data-share-drawing-stroke]';
+        await f.teacher.locator(`${note} textarea`).fill('这行');
+        await f.student.waitForFunction(() => document.querySelector('[data-share-drawing-note] textarea')?.value === '这行');
+        assert.equal(await f.teacher.evaluate(() => inkPackets[0].anchor?.kind), 'editor');
+        const bounds = async () => Promise.all([f.teacher, f.student].map(async (page) => ({
+            stroke: await page.locator(stroke).boundingBox(), note: await page.locator(note).boundingBox(),
+        })));
+        const before = await bounds();
+        await f.student.evaluate(() => editor.setScrollPosition({ scrollTop: 60 }, 1));
+        await f.flush(); await f.teacher.waitForFunction(() => sharedEditor().getScrollTop() === 60);
+        await f.teacher.waitForTimeout(100);
+        const after = await bounds();
+        for (const [i, scale] of [[0, .75], [1, 1]]) {
+            assert(Math.abs(after[i].stroke.y - before[i].stroke.y + 60 * scale) < 1.5, 'ink follows real editor scroll');
+            assert(Math.abs(after[i].note.y - before[i].note.y + 60 * scale) < 1.5, 'label follows real editor scroll');
+        }
+        await f.teacher.evaluate(() => sharedEditor().setScrollPosition({ scrollTop: 700 }, 1));
+        await f.flush();
+        await f.teacher.locator(note).waitFor({ state: 'hidden' }); await f.student.locator(note).waitFor({ state: 'hidden' });
+        await f.teacher.evaluate(() => sharedEditor().setScrollPosition({ scrollTop: 0 }, 1)); await f.flush();
+        await f.teacher.locator(note).waitFor(); await f.student.locator(note).waitFor();
+        await f.teacher.locator('[data-share-drawing-note-delete]').click();
+        await f.student.locator(stroke).waitFor({ state: 'detached' });
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
 
 it('Monaco teacher selections show exact line frames on both peers without moving learner selection or capturing Enter', { timeout: 30000 }, async () => {
     const f = await peers();

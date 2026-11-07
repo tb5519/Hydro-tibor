@@ -891,6 +891,17 @@ export function attachSourceMirror(options: SourceOptions) {
   }
   return {
     receiveCommand,
+    getDrawingDocument() { return !disposed && connected ? document : null; },
+    getDrawingNode(id: number) {
+      if (disposed || !connected || !Number.isSafeInteger(id) || id < 1) return null;
+      const node = sourceMirror()?.getNode(id);
+      return node?.nodeType === 1 && node.ownerDocument === document && node.isConnected && !blocked(node) ? node as Element : null;
+    },
+    getDrawingNodeId(node: Element) {
+      if (disposed || !connected || node.ownerDocument !== document || !node.isConnected || blocked(node)) return null;
+      const id = sourceMirror()?.getId(node);
+      return Number.isSafeInteger(id) && id > 0 ? id as number : null;
+    },
     snapshot() { if (connected && !disposed && stop) (record as any).takeFullSnapshot(true); },
     setConnected(value: boolean) {
       if (disposed) return;
@@ -1366,6 +1377,17 @@ export function attachViewerMirror(options: ViewerOptions) {
   }, (message) => { connected = false; options.onStatus?.(message); });
   return {
     receive(data: any) { if (!disposed && connected) assembler.receive(data); },
+    getDrawingDocument() { return !disposed && connected && ready ? player?.iframe?.contentDocument || null : null; },
+    getDrawingNode(id: number) {
+      if (disposed || !connected || !ready || !Number.isSafeInteger(id) || id < 1) return null;
+      const node = player?.getMirror()?.getNode(id);
+      return node?.nodeType === 1 && node.ownerDocument === player?.iframe?.contentDocument && node.isConnected && !blocked(node) ? node as Element : null;
+    },
+    getDrawingNodeId(node: Element) {
+      if (disposed || !connected || !ready || node.ownerDocument !== player?.iframe?.contentDocument || !node.isConnected || blocked(node)) return null;
+      const id = player?.getMirror()?.getId(node);
+      return Number.isSafeInteger(id) && id > 0 ? id as number : null;
+    },
     getEditorRect(id: string) {
       if (disposed || !connected || !ready || !validEditorId(id)) return null;
       const node = player?.iframe?.contentDocument?.querySelector(`[${EDITOR_MARKER}="${id}"]`);

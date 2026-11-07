@@ -1,5 +1,6 @@
 import { attachViewerMirror, MirrorCommand, MirrorAck } from './mirror';
 import { validScratchInput } from './scratch_control';
+import { DrawingAnchor, DrawingAnchorMode, DrawingGeometry, DrawingNodeIdentity, transformDrawingFrameGeometry } from './drawing_anchor';
 
 const MARKER = 'data-live-share-frame';
 const MAX_FRAMES = 4;
@@ -11,7 +12,7 @@ interface SourceOptions { pageId: string; send: (data: any) => void | boolean; s
 interface SourceFrame { id: string; frame: HTMLIFrameElement; channel: string; href: string; previousMarker: string | null; started?: boolean; loaded: () => void }
 
 /** Only our opaque-origin Scratch runtime implements this authenticated bridge. */
-function controlledFrame(frame: HTMLIFrameElement) {
+function controlledFrame(frame: HTMLIFrameElement, allowOffscreen = false) {
   if (!frame.isConnected || frame.closest('[data-live-share-viewer],.live-share-overlay')) return null;
   try {
     const url = new URL(frame.src, location.href);
@@ -21,13 +22,14 @@ function controlledFrame(frame: HTMLIFrameElement) {
     const rect = frame.getBoundingClientRect();
     const style = getComputedStyle(frame);
     if (!frame.getClientRects().length || rect.width <= 0 || rect.height <= 0 || style.visibility === 'hidden'
-      || rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth) return null;
+      || (!allowOffscreen && (rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth))) return null;
     return { href: url.href, channel };
   } catch { return null; }
 }
 
 export function attachSourceFrames(options: SourceOptions) {
   const bindings = new Map<HTMLIFrameElement, SourceFrame>();
+  const geometry = new Map<string, { frameId: string; nodeId: number; mode: DrawingAnchorMode; requested: number; received: number; value: DrawingGeometry | null }>();
   const pending = new Map<string, { outerId: string; frameId: string; at: number }>();
   let connected = true;
   let disposed = false;
@@ -43,12 +45,15 @@ export function attachSourceFrames(options: SourceOptions) {
     }
     bindings.delete(binding.frame);
     for (const [key, entry] of pending) if (entry.frameId === binding.id) pending.delete(key);
+    for (const [key, entry] of geometry) if (entry.frameId === binding.id) geometry.delete(key);
     if (connected) options.send({ type: 'frame-remove', id: binding.id });
   };
   const scan = () => {
     if (disposed || !connected) return;
     for (const binding of bindings.values()) {
-      const current = controlledFrame(binding.frame);
+      // Moving the parent page offscreen must not rotate this recorder epoch:
+      // pinned marks need the same node IDs when the teacher scrolls back.
+      const current = controlledFrame(binding.frame, true);
       if (!current || current.href !== binding.href) remove(binding);
     }
     for (const frame of document.querySelectorAll<HTMLIFrameElement>('iframe[src]')) {
@@ -65,10 +70,26 @@ export function attachSourceFrames(options: SourceOptions) {
     }
   };
   const receive = (event: MessageEvent) => {
-    if (disposed || !connected || event.origin !== 'null' || !['live-share-frame', 'live-share-frame-start', 'live-share-frame-ack'].includes(event.data?.type)) return;
+    if (disposed || !connected || event.origin !== 'null' || !['live-share-frame', 'live-share-frame-start', 'live-share-frame-ack', 'live-share-frame-geometry'].includes(event.data?.type)) return;
     const binding = [...bindings.values()].find((item) => event.source === item.frame.contentWindow
       && event.data.channel === item.channel && event.data.id === item.id);
-    if (!binding || !controlledFrame(binding.frame)) return;
+    if (!binding || !controlledFrame(binding.frame, true)) return;
+    if (event.data.type === 'live-share-frame-geometry') {
+      const message = event.data;
+      const entry = geometry.get(`${binding.id}:${message.nodeId}:${message.mode}`);
+      if (!entry || Date.now() - entry.requested > 4000) return;
+      const value = message.geometry;
+      if (value !== null && (!value || !Array.isArray(value.matrix) || value.matrix.length !== 6
+        || !value.matrix.every((n: any, index: number) => typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= (index < 4 ? 100 : 10000000))
+        || Math.abs(value.matrix[0] * value.matrix[3] - value.matrix[1] * value.matrix[2]) < 1e-6
+        || !value.clip || !['x', 'y', 'width', 'height'].every((key) => typeof value.clip[key] === 'number'
+          && Number.isFinite(value.clip[key]) && Math.abs(value.clip[key]) <= 10000000)
+        || value.clip.width < 0 || value.clip.height < 0)) return;
+      entry.received = Date.now();
+      entry.value = value === null ? null : { matrix: [...value.matrix] as DrawingGeometry['matrix'],
+        clip: { x: value.clip.x, y: value.clip.y, width: value.clip.width, height: value.clip.height } };
+      return;
+    }
     if (event.data.type === 'live-share-frame-ack') {
       const ack = event.data.ack; const entry = pending.get(ack?.id);
       if (!entry || entry.frameId !== binding.id || ack.pageId !== binding.id || typeof ack.ok !== 'boolean') return;
@@ -104,6 +125,28 @@ export function attachSourceFrames(options: SourceOptions) {
     for (const [id, entry] of pending) if (Date.now() - entry.at > 5000) pending.delete(id);
   }, 4000);
   return {
+    getDrawingGeometry(anchor: DrawingAnchor): DrawingGeometry | null {
+      if (disposed || !connected || anchor?.kind !== 'dom' || !validId(anchor.frameId)
+        || !Number.isSafeInteger(anchor.nodeId) || anchor.nodeId < 1 || !['element', 'scroll', 'svg'].includes(anchor.mode)) return null;
+      const binding = [...bindings.values()].find((item) => item.id === anchor.frameId);
+      if (!binding?.started || !controlledFrame(binding.frame, true)) return null;
+      const key = `${binding.id}:${anchor.nodeId}:${anchor.mode}`;
+      let entry = geometry.get(key);
+      if (!entry) {
+        if (geometry.size >= 32) geometry.delete(geometry.keys().next().value);
+        entry = { frameId: binding.id, nodeId: anchor.nodeId, mode: anchor.mode, requested: 0, received: 0, value: null };
+        geometry.set(key, entry);
+      }
+      if (Date.now() - entry.requested >= 1000) {
+        entry.requested = Date.now();
+        binding.frame.contentWindow?.postMessage({ type: 'live-share-capture', action: 'geometry', channel: binding.channel,
+          id: binding.id, nodeId: anchor.nodeId, mode: anchor.mode }, '*');
+      }
+      // Geometry is read in the opaque child, never guessed from the mirror.
+      // An expired lease or removed node hides the mark until it resolves again.
+      if (!entry.value || Date.now() - entry.received > 1500) return null;
+      return transformDrawingFrameGeometry(binding.frame, entry.value);
+    },
     receiveCommand(envelope: FrameCommand) {
       const deny = () => options.sendAck?.({ id: envelope?.id || '', pageId: options.pageId, ok: false, reason: 'Scratch 页面已变化，请等待同步' });
       const command = envelope?.command;
@@ -120,13 +163,13 @@ export function attachSourceFrames(options: SourceOptions) {
     setConnected(value: boolean) {
       if (connected === value) return;
       connected = value;
-      if (!value) { for (const binding of [...bindings.values()]) remove(binding); pending.clear(); }
+      if (!value) { for (const binding of [...bindings.values()]) remove(binding); pending.clear(); geometry.clear(); }
       if (value) { scan(); for (const binding of bindings.values()) post(binding, 'start'); }
     },
     dispose() {
       if (disposed) return;
       disposed = true; connected = false;
-      pending.clear();
+      pending.clear(); geometry.clear();
       clearInterval(scanTimer); clearInterval(keepaliveTimer); window.removeEventListener('message', receive);
       for (const binding of [...bindings.values()]) remove(binding);
     },
@@ -162,6 +205,18 @@ export function attachViewerFrames(options: ViewerOptions) {
   };
   frame = requestAnimationFrame(layout);
   return {
+    getDrawingNodeId(node: Element): DrawingNodeIdentity | null {
+      if (disposed || !connected) return null;
+      for (const [frameId, binding] of bindings) {
+        const nodeId = binding.mirror.getDrawingNodeId(node);
+        if (nodeId !== null) return { nodeId, frameId };
+      }
+      return null;
+    },
+    getDrawingNode(identity: DrawingNodeIdentity): Element | null {
+      if (disposed || !connected || !validId(identity?.frameId)) return null;
+      return bindings.get(identity.frameId)?.mirror.getDrawingNode(identity.nodeId) || null;
+    },
     receive(data: any) {
       if (disposed || !connected || !validId(data?.id)) return;
       if (data.type === 'frame-remove') {

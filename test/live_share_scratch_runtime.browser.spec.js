@@ -34,6 +34,7 @@ test('the prepared Scratch runtime renders its real default project through the 
     const parentBundle = buildSync({ ...options, globalName: 'FrameAdapters', stdin: { resolveDir: root, contents: `
         export * from './packages/ui-default/components/live_share/frames';
         export * from './packages/ui-default/components/live_share/mirror';
+        export * from './packages/ui-default/components/live_share/drawing';
     ` } }).outputFiles[0].text;
     const captureBundle = prebuiltCapture ? '' : (await build({ ...options, entryPoints: ['packages/ui-default/components/live_share/frame_capture.ts'],
         plugins: [{ name: 'capture-only', setup(build) {
@@ -72,7 +73,7 @@ test('the prepared Scratch runtime renders its real default project through the 
         response.setHeader('Content-Type', 'text/html; charset=utf-8');
         response.end(`<!doctype html><html><head><style>html,body{margin:0;width:100%;height:100%}#source{position:absolute;left:0;top:0;width:1280px;height:720px;border:0}#viewer{position:absolute;inset:0;pointer-events:none}</style></head><body>
             ${url.pathname === '/source' ? '<iframe id="source" sandbox="allow-scripts" src="/scratch-editor/editor.html?lang=zh-cn#channel=real-scratch-channel-1234"></iframe>' : '<p id="teacher-draft">teacher own page</p>'}
-            <div id="viewer"></div><script src="/test-parent.js"></script><script>
+            <div id="viewer" data-live-share-private></div><script src="/test-parent.js"></script><script>
             window.outbox=[];window.childLoaded=false;window.projectEvents=[];
             window.addEventListener('message', e=>{if(e.source!==document.querySelector('#source')?.contentWindow||e.origin!=='null'||e.data?.channel!=='real-scratch-channel-1234')return;
                 if(e.data.type==='dirty'||e.data.type==='runState')window.projectEvents.push(e.data.type);
@@ -82,8 +83,9 @@ test('the prepared Scratch runtime renders its real default project through the 
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${server.address().port}`;
     const browser = await playwright.chromium.launch({ executablePath, headless: true });
-    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-    const source = await context.newPage(); const viewer = await context.newPage();
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
+    const viewerContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+    const source = await context.newPage(); const viewer = await viewerContext.newPage();
     const errors = []; const badResponses = [];
     for (const page of [source, viewer]) {
         page.on('pageerror', (error) => errors.push(error.message));
@@ -116,6 +118,14 @@ test('the prepared Scratch runtime renders its real default project through the 
             const container = document.getElementById('viewer');
             window.viewerMirror = FrameAdapters.attachViewerMirror({ pageId: 'runtime-page', container, sendCommand: () => {} });
             window.commands = []; window.viewerFrames = FrameAdapters.attachViewerFrames({ pageId: 'runtime-page', container, getNodeRect: (id) => viewerMirror.getFrameRect(id), sendCommand: (command) => commands.push(command) });
+            window.drawingPackets = [];
+            window.viewerDrawing = FrameAdapters.attachTemporaryDrawing({ pageId: 'runtime-page', container, teacher: true,
+                anchors: {
+                    identify: (node) => viewerFrames.getDrawingNodeId(node) || (() => { const nodeId = viewerMirror.getDrawingNodeId(node); return nodeId ? { nodeId } : null; })(),
+                    resolve: (ref) => ref.frameId ? viewerFrames.getDrawingNode(ref) : viewerMirror.getDrawingNode(ref.nodeId),
+                },
+                send: (drawing) => { drawingPackets.push(drawing); commands.push({ id: crypto.randomUUID().replaceAll('-', ''), pageId: 'runtime-page', nodeId: 1, action: 'draw', drawing }); },
+            });
             window.receive = (data) => (data.type === 'frame' || data.type === 'frame-remove' ? viewerFrames : viewerMirror).receive(data);
         });
         const limiter = new protocolModule.exports.ShareRateLimit();
@@ -133,12 +143,20 @@ test('the prepared Scratch runtime renders its real default project through the 
                 await viewer.evaluate((batch) => batch.forEach(receive), batch);
                 const commands = await viewer.evaluate(() => window.commands.splice(0));
                 for (const command of commands) protocolModule.exports.validateRelayData('teacher', 'command', command, 'runtime-page');
-                await source.evaluate((commands) => commands.forEach((command) => sourceFrames.receiveCommand(command)), commands);
+                await source.evaluate((commands) => commands.forEach((command) => command.action === 'draw'
+                    ? sourceDrawing.receive(command.drawing) : sourceFrames.receiveCommand(command)), commands);
             } catch (error) { pumpError = error; } finally { busy = false; }
         }, 80);
         await source.evaluate(() => {
             window.acks = []; window.sourceFrames = FrameAdapters.attachSourceFrames({ pageId: 'runtime-page', send: (data) => outbox.push(data), sendAck: (ack) => acks.push(ack) });
             window.sourceMirror = FrameAdapters.attachSourceMirror({ pageId: 'runtime-page', send: (data) => outbox.push(data) });
+            const root = document.createElement('div'); root.dataset.liveShareUi = ''; root.dataset.liveSharePrivate = '';
+            root.style.cssText = 'position:fixed;inset:0;pointer-events:none'; document.documentElement.append(root);
+            window.sourceDrawing = FrameAdapters.attachTemporaryDrawing({ pageId: 'runtime-page', container: root, teacher: false,
+                anchors: { identify: (node) => { const nodeId = sourceMirror.getDrawingNodeId(node); return nodeId ? { nodeId } : null; },
+                    resolve: (ref) => ref.frameId ? null : sourceMirror.getDrawingNode(ref.nodeId),
+                    frameGeometry: (anchor) => sourceFrames.getDrawingGeometry(anchor) },
+            });
         });
         const replay = viewer.frameLocator('[data-live-share-frame-viewer] iframe');
         await replay.locator('[data-test-real-stage]').waitFor({ timeout: 30000 });
@@ -194,10 +212,88 @@ test('the prepared Scratch runtime renders its real default project through the 
         await viewer.mouse.move(workspace.x + workspace.width * .6, block.y + 90, { steps: 16 });
         await viewer.mouse.up();
         await child.waitForFunction((before) => ScratchBlocks.getMainWorkspace().getTopBlocks().length > before, blockCount);
+        // Pin a real right-button mark to a real Scratch block. Scratch scrolls
+        // this workspace via SVG transforms, so window-scroll offsets alone
+        // cannot keep either the mark or its label attached.
+        await child.waitForFunction((before) => ReduxStore.getState().scratchGui.vm.editingTarget.blocks.getScripts().length > before, blockCount);
+        const markedBlockId = await child.evaluate(() => ReduxStore.getState().scratchGui.vm.editingTarget.blocks.getScripts().at(-1));
+        const markedBlockSelector = `.blocklyBlockCanvas [data-id="${markedBlockId}"]`;
+        const markedBlock = replay.locator(markedBlockSelector).first();
+        await markedBlock.waitFor({ state: 'visible' });
+        const markedBounds = await markedBlock.boundingBox();
+        await viewer.mouse.move(markedBounds.x + 8, markedBounds.y + 8);
+        await viewer.mouse.down({ button: 'right' });
+        await viewer.mouse.move(markedBounds.x + Math.min(65, markedBounds.width - 8), markedBounds.y + 13, { steps: 8 });
+        await viewer.mouse.up({ button: 'right' });
+        const teacherStroke = viewer.locator('[data-share-drawing-stroke]');
+        await teacherStroke.waitFor();
+        const strokeId = await teacherStroke.getAttribute('data-share-drawing-stroke');
+        const strokeSelector = `[data-share-drawing-stroke="${strokeId}"]`;
+        const noteSelector = `[data-share-drawing-note="${strokeId}"]`;
+        await viewer.keyboard.press('Shift+Enter');
+        await viewer.locator(`${noteSelector} [data-share-drawing-note-input]`).fill('看这里');
+        await source.locator(strokeSelector).waitFor({ state: 'visible' });
+        await source.waitForFunction((selector) => document.querySelector(`${selector} textarea`)?.value === '看这里', noteSelector);
+        const anchor = await viewer.evaluate(() => drawingPackets.find(packet => packet.phase === 'start')?.anchor);
+        assert.equal(anchor?.kind, 'dom'); assert.equal(anchor?.mode, 'svg');
+        assert.equal(typeof anchor?.frameId, 'string', 'the anchor retains its controlled Scratch recorder epoch');
+        const relativeBounds = async (page, target, selector) => {
+            const [blockBounds, mark, note] = await Promise.all([target.boundingBox(), page.locator(selector).boundingBox(), page.locator(noteSelector).boundingBox()]);
+            assert(blockBounds && mark && note, 'block, anchored mark and pinned label must remain visible');
+            return { markX: mark.x - blockBounds.x, markY: mark.y - blockBounds.y,
+                noteX: note.x - blockBounds.x, noteY: note.y - blockBounds.y };
+        };
+        const sourceBlock = child.locator(markedBlockSelector).first();
+        const beforeMark = await relativeBounds(source, sourceBlock, strokeSelector);
+        const beforeViewerMark = await relativeBounds(viewer, markedBlock, strokeSelector);
         const scrollBefore = await child.evaluate(() => ({ x: ScratchBlocks.getMainWorkspace().scrollX, y: ScratchBlocks.getMainWorkspace().scrollY }));
         await replay.locator('.blocklySvg').hover({ position: { x: 500, y: 350 } });
-        await viewer.mouse.wheel(0, 220);
+        await viewer.mouse.wheel(0, 75);
         await child.waitForFunction((before) => Math.abs(ScratchBlocks.getMainWorkspace().scrollY - before.y) > 20, scrollBefore);
+        await viewer.waitForTimeout(450);
+        const afterMark = await relativeBounds(source, sourceBlock, strokeSelector);
+        const afterViewerMark = await relativeBounds(viewer, markedBlock, strokeSelector);
+        for (const key of Object.keys(beforeMark)) {
+            assert(Math.abs(afterMark[key] - beforeMark[key]) < 3, `learner ${key} follows transformed workspace content`);
+            assert(Math.abs(afterViewerMark[key] - beforeViewerMark[key]) < 3, `teacher ${key} follows the same block at another DPR`);
+            assert(Math.abs(afterMark[key] - afterViewerMark[key]) < 3, `both peers agree on ${key} in CSS pixels`);
+        }
+        await source.evaluate(() => { document.body.style.minHeight = '1800px'; window.scrollTo(0, 900); });
+        await source.waitForTimeout(350);
+        await source.locator(noteSelector).waitFor({ state: 'hidden' });
+        await source.locator(strokeSelector).waitFor({ state: 'hidden' });
+        assert.equal(await source.locator('#source').getAttribute('data-live-share-frame'), anchor.frameId,
+            'scrolling an opaque frame offscreen must not invalidate pinned anchors');
+        await source.evaluate(() => window.scrollTo(0, 0));
+        await source.locator(noteSelector).waitFor({ state: 'visible' });
+        await viewer.waitForTimeout(350);
+        const returnedMark = await relativeBounds(source, sourceBlock, strokeSelector);
+        for (const key of Object.keys(beforeMark)) assert(Math.abs(returnedMark[key] - beforeMark[key]) < 3,
+            `returning to the iframe restores anchored ${key}`);
+        // Removed identities and old frame epochs cannot resolve to unrelated
+        // content, and a peer cannot request arbitrary DOM selectors.
+        assert.equal(await source.evaluate((reference) => sourceFrames.getDrawingGeometry({ ...reference, frameId: 'expired-frame-1234' }), anchor), null);
+        await source.evaluate((frameId) => {
+            window.geometryProbe = [];
+            window.addEventListener('message', (event) => {
+                if (event.source === document.querySelector('#source').contentWindow && event.origin === 'null'
+                    && event.data?.type === 'live-share-frame-geometry' && event.data.nodeId === 2147483000) geometryProbe.push(event.data);
+            });
+            const target = document.querySelector('#source').contentWindow;
+            const request = { type: 'live-share-capture', action: 'geometry', channel: 'real-scratch-channel-1234', id: frameId, nodeId: 2147483000, mode: 'svg' };
+            target.postMessage({ ...request, channel: 'wrong-channel-1234' }, '*');
+            target.postMessage({ ...request, id: 'expired-frame-1234' }, '*');
+            target.postMessage({ ...request, mode: 'selector' }, '*');
+        }, anchor.frameId);
+        await source.waitForTimeout(120);
+        assert.equal(await source.evaluate(() => geometryProbe.length), 0, 'invalid channels, epochs and geometry modes are ignored in the opaque child');
+        await source.evaluate((frameId) => document.querySelector('#source').contentWindow.postMessage({
+            type: 'live-share-capture', action: 'geometry', channel: 'real-scratch-channel-1234', id: frameId, nodeId: 2147483000, mode: 'svg',
+        }, '*'), anchor.frameId);
+        await source.waitForFunction(() => geometryProbe.length > 0);
+        assert.equal(await source.evaluate(() => geometryProbe[0].geometry), null, 'unrecorded nodes produce no geometry');
+        await viewer.locator(`${noteSelector} [data-share-drawing-note-delete]`).click();
+        await source.locator(strokeSelector).waitFor({ state: 'detached' });
         // Set up a small deterministic learner project, then start/stop it only
         // through the teacher's real green-flag and stop buttons.
         await child.evaluate(() => {
@@ -236,7 +332,7 @@ test('the prepared Scratch runtime renders its real default project through the 
         }
     } finally {
         clearInterval(pump);
-        await context.close(); await browser.close();
+        await context.close(); await viewerContext.close(); await browser.close();
         await new Promise((resolve) => server.close(resolve));
     }
 });

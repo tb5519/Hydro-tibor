@@ -114,6 +114,26 @@ async function hello(f, uid, overrides = {}) {
 const settle = async () => { await new Promise((resolve) => setTimeout(resolve, 20)); };
 
 describe('live share protocol boundaries', () => {
+    it('binds ink content anchors to the initial stroke and bounds all geometry', () => {
+        const anchor = { kind: 'dom', mode: 'scroll', nodeId: 42, matrix: [1, 0, 0, 1, -80, -400] };
+        const drawing = { strokeId: 'stroke-testing', phase: 'start', sequence: 0, points: [[30, 50]], anchor };
+        const base = { id: 'command-testing', pageId: 'page-testing', nodeId: 1, action: 'draw', drawing };
+        const validate = (value) => protocol.validateRelayData('teacher', 'command', value, base.pageId);
+        for (const valid of [anchor, { ...anchor, mode: 'element' }, { ...anchor, mode: 'svg', frameId: 'frame-testing' },
+            { kind: 'editor', mode: 'scroll', editorId: 'editor-testing', matrix: anchor.matrix }]) {
+            validate({ ...base, drawing: { ...drawing, anchor: valid } });
+        }
+        for (const patch of [{ nodeId: 0 }, { nodeId: 1.5 }, { kind: 'code' }, { mode: 'eval' }, { editorId: 'editor-testing' },
+            { frameId: '../other' }, { selector: '#secret' }, { matrix: [1, 0, 0, 0, 0, 0] },
+            { matrix: [101, 0, 0, 1, 0, 0] }, { matrix: [1, 0, 0, 1, Infinity, 0] }, { matrix: [1, 0, 1] },
+            { matrix: [1, 0, 0, 1, 10000001, 0] }]) {
+            assert.throws(() => validate({ ...base, drawing: { ...drawing, anchor: { ...anchor, ...patch } } }), errorCode('INVALID_RELAY'));
+        }
+        for (const phase of ['move', 'end', 'note', 'delete']) {
+            assert.throws(() => validate({ ...base, drawing: { ...drawing, phase, sequence: 1 } }), errorCode('INVALID_RELAY'));
+        }
+        assert.throws(() => protocol.validateRelayData('student', 'command', base, base.pageId), errorCode('INVALID_RELAY'));
+    });
     it('accepts platform page views while excluding external URLs and credential-bearing routes', () => {
         for (const value of ['/', '/ide', '/d/class-a/p/1000?tid=contest', '/homework/123/code', '/record/123',
             '/home', '/home/profile', '/home/domain', '/home/messages', '/user/10', '/manage', '/workspace/a',

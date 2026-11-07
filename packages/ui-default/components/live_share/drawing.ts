@@ -1,9 +1,15 @@
-/** Temporary teacher marks use only learner viewport CSS pixels and plain points. */
+import {
+  captureDrawingAnchor, drawingAnchorTransform, drawingPoint, inverseDrawingMatrix, resolveDrawingAnchor, validDrawingAnchor,
+} from './drawing_anchor';
+import type { DrawingAnchor, DrawingAnchorBinding, DrawingAnchorResolvers, DrawingClip, DrawingMatrix } from './drawing_anchor';
+
+/** Points retain the initial learner viewport coordinates; an optional content anchor follows scrolling. */
 export interface DrawingPacket {
   strokeId: string;
   phase: 'start' | 'move' | 'end' | 'note' | 'delete';
   sequence: number;
   points: [number, number][];
+  anchor?: DrawingAnchor;
   note?: { text: string; x: number; y: number; width: number; height: number };
 }
 
@@ -16,7 +22,8 @@ const IDLE_MS = 12000;
 const namespace = 'http://www.w3.org/2000/svg';
 type Point = [number, number];
 type Note = NonNullable<DrawingPacket['note']>;
-type Stroke = { node: SVGGElement; paths: SVGPathElement[]; points: Point[]; sequence: number;
+type Stroke = { node: SVGGElement; wrapper: SVGGElement; clipPath: SVGClipPathElement; clipRect: SVGRectElement;
+  binding?: DrawingAnchorBinding; transform: DrawingMatrix; clip: DrawingClip; visible: boolean; geometryKey?: string; paths: SVGPathElement[]; points: Point[]; bounds: { left: number; top: number; right: number; bottom: number } | null; sequence: number;
   ended: boolean; expiry: number; removal: number; expiresAt: number;
   note?: Note; bubble?: HTMLDivElement; input?: HTMLTextAreaElement; connector?: SVGLineElement; moved?: boolean };
 
@@ -26,7 +33,8 @@ const clamp = (value: number, min: number, max: number) => Math.min(Math.max(min
 
 export function validDrawingPacket(value: any): value is DrawingPacket {
   return !!value && typeof value === 'object' && !Array.isArray(value)
-    && Object.keys(value).every((key) => ['strokeId', 'phase', 'sequence', 'points', 'note'].includes(key))
+    && Object.keys(value).every((key) => ['strokeId', 'phase', 'sequence', 'points', 'note', 'anchor'].includes(key))
+    && (Object.prototype.hasOwnProperty.call(value, 'anchor') ? value.phase === 'start' && validDrawingAnchor(value.anchor) : true)
     && typeof value.strokeId === 'string' && /^[a-zA-Z0-9_-]{8,96}$/.test(value.strokeId)
     && ['start', 'move', 'end', 'note', 'delete'].includes(value.phase)
     && Number.isSafeInteger(value.sequence) && value.sequence >= 0 && value.sequence <= 4096
@@ -65,6 +73,7 @@ export function attachTemporaryDrawing(options: {
   pageId: string;
   /** Local teacher-only overlay can listen across its owner page rather than inside a mirrored stage. */
   scopeDocument?: boolean;
+  anchors?: DrawingAnchorResolvers;
   send?: (packet: DrawingPacket) => void;
 }) {
   const doc = options.container.ownerDocument;
@@ -78,6 +87,7 @@ export function attachTemporaryDrawing(options: {
   layer.setAttribute('aria-hidden', 'true');
   layer.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;overflow:hidden;pointer-events:none;z-index:2147482000';
   options.container.append(layer);
+  const definitions = doc.createElementNS(namespace, 'defs'); layer.append(definitions);
   const measure = doc.createElement('div');
   measure.dataset.liveShareUi = ''; measure.dataset.liveSharePrivate = '';
   measure.style.cssText = `all:initial;position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;box-sizing:border-box;min-width:0;max-width:none;padding:${notePadding};font:${noteFont};letter-spacing:normal;white-space:pre;overflow-wrap:anywhere;word-break:normal`;
@@ -94,6 +104,7 @@ export function attachTemporaryDrawing(options: {
   let disposed = false;
   let flushTimer = 0;
   let scanTimer = 0;
+  let geometryFrame = 0;
   let dragging: { id: string; pointer: number; start: Point; x: number; y: number; handle: HTMLElement } | null = null;
   let noteTimer = 0;
   const pendingNotes = new Set<string>();
@@ -101,12 +112,61 @@ export function attachTemporaryDrawing(options: {
   let active: { id: string; pointer: number; sequence: number; pending: Point[]; count: number; last: Point; started: number } | null = null;
   const now = () => win.performance.now();
 
+  function viewportClip(): DrawingClip { return { x: 0, y: 0, width: options.container.clientWidth, height: options.container.clientHeight }; }
+  function referencePoint(stroke: Stroke, point: Point): Point {
+    const inverse = inverseDrawingMatrix(stroke.transform);
+    const result = inverse ? drawingPoint(inverse, point) : point;
+    return [clamp(result[0], 0, 10000), clamp(result[1], 0, 10000)];
+  }
+  function appendPoint(stroke: Stroke, point: Point) {
+    stroke.points.push(point);
+    if (!stroke.bounds) stroke.bounds = { left: point[0], top: point[1], right: point[0], bottom: point[1] };
+    else {
+      stroke.bounds.left = Math.min(stroke.bounds.left, point[0]); stroke.bounds.right = Math.max(stroke.bounds.right, point[0]);
+      stroke.bounds.top = Math.min(stroke.bounds.top, point[1]); stroke.bounds.bottom = Math.max(stroke.bounds.bottom, point[1]);
+    }
+  }
+  function transformedBounds(stroke: Stroke, transform = stroke.transform) {
+    const bounds = stroke.bounds;
+    if (!bounds) return { left: 0, top: 0, right: 0, bottom: 0 };
+    const points = [[bounds.left, bounds.top], [bounds.right, bounds.top], [bounds.right, bounds.bottom], [bounds.left, bounds.bottom]]
+      .map((point) => drawingPoint(transform, point as Point));
+    return { left: Math.min(...points.map((point) => point[0])), right: Math.max(...points.map((point) => point[0])),
+      top: Math.min(...points.map((point) => point[1])), bottom: Math.max(...points.map((point) => point[1])) };
+  }
+  function refreshGeometry(id: string, stroke: Stroke, force = false) {
+    const geometry = stroke.binding ? resolveDrawingAnchor(stroke.binding, options.container, options.anchors)
+      : { matrix: [1, 0, 0, 1, 0, 0] as DrawingMatrix, clip: viewportClip() };
+    const transform = geometry && stroke.binding ? drawingAnchorTransform(stroke.binding.reference, geometry.matrix)
+      : [1, 0, 0, 1, 0, 0] as DrawingMatrix;
+    const clip = geometry?.clip || { x: 0, y: 0, width: 0, height: 0 };
+    const bounds = transformedBounds(stroke, transform);
+    const visible = !!geometry && clip.width > 0 && clip.height > 0 && !!stroke.points.length
+      && bounds.right + 4 >= clip.x && bounds.left - 4 <= clip.x + clip.width
+      && bounds.bottom + 4 >= clip.y && bounds.top - 4 <= clip.y + clip.height;
+    const key = [...transform, clip.x, clip.y, clip.width, clip.height, Number(visible)].join(',');
+    if (!force && stroke.geometryKey === key) return;
+    stroke.geometryKey = key; stroke.transform = transform; stroke.clip = clip; stroke.visible = visible;
+    stroke.node.setAttribute('transform', `matrix(${transform.join(' ')})`);
+    stroke.wrapper.style.visibility = visible ? 'visible' : 'hidden';
+    for (const [name, value] of Object.entries(clip)) stroke.clipRect.setAttribute(name, String(value));
+    if (stroke.note) renderNote(id, stroke);
+  }
+  function startGeometry() {
+    if (geometryFrame || disposed || !connected) return;
+    geometryFrame = win.requestAnimationFrame(() => {
+      geometryFrame = 0;
+      for (const [id, stroke] of strokes) refreshGeometry(id, stroke);
+      if (strokes.size) startGeometry();
+    });
+  }
   function remove(id: string) {
     const stroke = strokes.get(id);
     if (!stroke) return;
     win.clearTimeout(stroke.expiry); win.clearTimeout(stroke.removal);
     if (dragging?.id === id) endDrag();
-    stroke.node.remove(); stroke.bubble?.remove(); stroke.connector?.remove(); strokes.delete(id); pendingNotes.delete(id);
+    stroke.wrapper.remove(); stroke.clipPath.remove(); stroke.bubble?.remove(); stroke.connector?.remove(); strokes.delete(id); pendingNotes.delete(id);
+    if (!strokes.size) { win.cancelAnimationFrame(geometryFrame); geometryFrame = 0; }
   }
   function fade(id: string, delay: number) {
     const stroke = strokes.get(id);
@@ -131,6 +191,12 @@ export function attachTemporaryDrawing(options: {
         if (!temporary) return;
         remove(temporary[0]);
       }
+      const wrapper = doc.createElementNS(namespace, 'g');
+      const clipPath = doc.createElementNS(namespace, 'clipPath');
+      const clipRect = doc.createElementNS(namespace, 'rect');
+      clipPath.id = `drawing-${packet.strokeId}-${Math.random().toString(36).slice(2)}`;
+      clipPath.setAttribute('clipPathUnits', 'userSpaceOnUse'); clipPath.append(clipRect); definitions.append(clipPath);
+      wrapper.setAttribute('clip-path', `url(#${clipPath.id})`);
       const node = doc.createElementNS(namespace, 'g');
       node.dataset.shareDrawingStroke = packet.strokeId;
       const paths = [6.5, 4].map((width, index) => {
@@ -143,8 +209,11 @@ export function attachTemporaryDrawing(options: {
         node.append(path); return path;
       });
       node.style.filter = 'drop-shadow(0 1px 3px #8061cd35)';
-      layer.append(node);
-      stroke = { node, paths, points: [], sequence: -1, ended: false, expiry: 0, removal: 0, expiresAt: Infinity };
+      wrapper.append(node); layer.append(wrapper);
+      stroke = { node, wrapper, clipPath, clipRect, paths, points: [], bounds: null, sequence: -1, ended: false, expiry: 0, removal: 0, expiresAt: Infinity,
+        transform: [1, 0, 0, 1, 0, 0], clip: viewportClip(), visible: true,
+        ...(packet.anchor ? { binding: { anchor: packet.anchor, mode: packet.anchor.mode, reference: packet.anchor.matrix } } : {}) };
+      startGeometry();
       strokes.set(packet.strokeId, stroke);
     }
     if (!stroke || packet.sequence !== stroke.sequence + 1
@@ -161,31 +230,34 @@ export function attachTemporaryDrawing(options: {
     if (packet.phase === 'delete') { if (stroke.note) remove(packet.strokeId); return; }
     if (stroke.ended) return;
     stroke.sequence = packet.sequence;
-    for (const point of packet.points) stroke.points.push([point[0], point[1]]);
+    for (const point of packet.points) appendPoint(stroke, [point[0], point[1]]);
     const path = pathFor(stroke.points);
     for (const shape of stroke.paths) shape.setAttribute('d', path);
     stroke.ended = packet.phase === 'end';
+    refreshGeometry(packet.strokeId, stroke, true);
     fade(packet.strokeId, stroke.ended ? HOLD_MS : IDLE_MS);
   }
   function send(packet: DrawingPacket) { options.send?.(packet); }
   function noteDimensions(text: string) {
     measure.textContent = `${text || '字'}\u200b`;
     measure.style.width = 'max-content'; measure.style.whiteSpace = 'pre';
-    const availableWidth = Math.max(36, Math.min(400, options.container.clientWidth - 24));
+    const bounds = viewportClip();
+    const availableWidth = Math.max(36, Math.min(400, bounds.width - 24));
     const width = clamp(Math.ceil(parseFloat(win.getComputedStyle(measure).width)) + 4, 36, availableWidth);
     measure.style.width = `${width - 2}px`; measure.style.whiteSpace = 'pre-wrap';
-    return { width, height: clamp(Math.ceil(measure.scrollHeight) + 14, 36, Math.min(800, options.container.clientHeight - 24)) };
+    return { width, height: clamp(Math.ceil(measure.scrollHeight) + 14, 36, Math.min(800, bounds.height - 24)) };
   }
   function placeNote(stroke: Stroke, size: { width: number; height: number }) {
-    const xs = stroke.points.map((point) => point[0]); const ys = stroke.points.map((point) => point[1]);
-    const left = Math.min(...xs); const right = Math.max(...xs); const top = Math.min(...ys); const bottom = Math.max(...ys);
+    const { left, right, top, bottom } = transformedBounds(stroke);
+    const bounds = viewportClip();
     let x = right + 16; let y = top;
-    if (x + size.width > options.container.clientWidth - 10) {
+    if (x + size.width > bounds.x + bounds.width - 10) {
       x = left; y = bottom + 16;
-      if (y + size.height > options.container.clientHeight - 10) y = top - size.height - 16;
+      if (y + size.height > bounds.y + bounds.height - 10) y = top - size.height - 16;
     }
-    return { x: clamp(x, 8, options.container.clientWidth - size.width - 8),
-      y: clamp(y, 8, options.container.clientHeight - size.height - 8) };
+    const point = referencePoint(stroke, [clamp(x, bounds.x + 8, bounds.x + bounds.width - size.width - 8),
+      clamp(y, bounds.y + 8, bounds.y + bounds.height - size.height - 8)]);
+    return { x: point[0], y: point[1] };
   }
   function publishNote(id: string) {
     pendingNotes.delete(id);
@@ -230,7 +302,7 @@ export function attachTemporaryDrawing(options: {
       const connector = doc.createElementNS(namespace, 'line');
       connector.setAttribute('stroke', '#ad99d9'); connector.setAttribute('stroke-width', '1.5');
       connector.setAttribute('stroke-linecap', 'round'); connector.setAttribute('opacity', '.8');
-      layer.prepend(connector);
+      stroke.wrapper.prepend(connector);
       stroke.bubble = bubble; stroke.input = input; stroke.connector = connector;
       input.addEventListener('keydown', (event) => event.stopPropagation());
       input.addEventListener('wheel', (event) => event.stopPropagation(), { passive: true });
@@ -251,10 +323,10 @@ export function attachTemporaryDrawing(options: {
           const current = strokes.get(id);
           if (!connected || !current?.note || current.sequence >= 4095) return;
           const text = input.value.slice(0, 1000); const size = noteDimensions(text);
-          const position = current.moved ? {
-            x: clamp(current.note.x, 8, options.container.clientWidth - size.width - 8),
-            y: clamp(current.note.y, 8, options.container.clientHeight - size.height - 8),
-          } : placeNote(current, size);
+          const visual = drawingPoint(current.transform, [current.note.x, current.note.y]);
+          const fitted = referencePoint(current, [clamp(visual[0], 8, options.container.clientWidth - size.width - 8),
+            clamp(visual[1], 8, options.container.clientHeight - size.height - 8)]);
+          const position = current.moved ? { x: fitted[0], y: fitted[1] } : placeNote(current, size);
           current.note = { text, ...size, ...position }; renderNote(id, current); queueNote(id);
         });
         input.addEventListener('blur', flushNotes);
@@ -263,7 +335,8 @@ export function attachTemporaryDrawing(options: {
           if (event.button !== 0 || !connected || !current?.note || current.sequence >= 4095) return;
           const point = pointFrom(event, win); if (!point) return;
           cancelEvent(event); endDrag(); current.moved = true;
-          dragging = { id, pointer: event.pointerId, start: point, x: current.note.x, y: current.note.y, handle };
+          const position = drawingPoint(current.transform, [current.note.x, current.note.y]);
+          dragging = { id, pointer: event.pointerId, start: point, x: position[0], y: position[1], handle };
           handle.style.cursor = 'grabbing';
           try { handle.setPointerCapture(event.pointerId); } catch { /* Synthetic tests do not own a pointer. */ }
         });
@@ -272,23 +345,29 @@ export function attachTemporaryDrawing(options: {
           const current = strokes.get(id); const point = pointFrom(event, win);
           if (!current?.note || !point || current.sequence >= 4095) return;
           cancelEvent(event);
-          current.note = { ...current.note,
-            x: clamp(dragging.x + point[0] - dragging.start[0], 8, options.container.clientWidth - current.note.width - 8),
-            y: clamp(dragging.y + point[1] - dragging.start[1], 8, options.container.clientHeight - current.note.height - 8) };
+          const position = referencePoint(current, [
+            clamp(dragging.x + point[0] - dragging.start[0], 8, options.container.clientWidth - current.note.width - 8),
+            clamp(dragging.y + point[1] - dragging.start[1], 8, options.container.clientHeight - current.note.height - 8)]);
+          current.note = { ...current.note, x: position[0], y: position[1] };
           renderNote(id, current); queueNote(id);
         });
         for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) handle.addEventListener(name, endDrag);
       }
     }
     const { bubble, input, connector } = stroke;
-    bubble!.style.left = `${note.x}px`; bubble!.style.top = `${note.y}px`;
+    const position = drawingPoint(stroke.transform, [note.x, note.y]);
+    bubble!.style.left = `${position[0]}px`; bubble!.style.top = `${position[1]}px`;
+    bubble!.style.visibility = stroke.visible ? 'visible' : 'hidden';
+    const clip = viewportClip();
+    bubble!.style.clipPath = `inset(${Math.max(-8, clip.y - position[1])}px ${Math.max(-8, position[0] + note.width - clip.x - clip.width)}px ${Math.max(-8, position[1] + note.height - clip.y - clip.height)}px ${Math.max(-8, clip.x - position[0])}px)`;
     bubble!.style.width = `${note.width}px`; bubble!.style.height = `${note.height}px`;
     input!.readOnly = !options.teacher || stroke.sequence >= 4095;
     if (input!.value !== note.text) input!.value = note.text;
     if (input!.scrollHeight <= input!.clientHeight) input!.scrollTop = 0;
-    const cx = note.x + note.width / 2; const cy = note.y + note.height / 2;
-    let end = stroke.points[0];
-    for (const point of stroke.points) if (Math.hypot(point[0] - cx, point[1] - cy) < Math.hypot(end[0] - cx, end[1] - cy)) end = point;
+    const cx = position[0] + note.width / 2; const cy = position[1] + note.height / 2;
+    const points = stroke.points.map((point) => drawingPoint(stroke.transform, point));
+    let end = points[0];
+    for (const point of points) if (Math.hypot(point[0] - cx, point[1] - cy) < Math.hypot(end[0] - cx, end[1] - cy)) end = point;
     const dx = end[0] - cx; const dy = end[1] - cy;
     const fraction = Math.min(1, note.width / 2 / Math.max(.001, Math.abs(dx)), note.height / 2 / Math.max(.001, Math.abs(dy)));
     connector!.setAttribute('x1', String(cx + dx * fraction)); connector!.setAttribute('y1', String(cy + dy * fraction));
@@ -297,7 +376,7 @@ export function attachTemporaryDrawing(options: {
   function pinLatest() {
     if (active) finish();
     const entry = [...strokes].reverse().find(([, value]) => !value.note && value.ended && value.expiresAt > now()
-      && value.node.isConnected && Number(win.getComputedStyle(value.node).opacity) > .01);
+      && value.visible && value.node.isConnected && Number(win.getComputedStyle(value.node).opacity) > .01);
     if (!entry) return false;
     const [id, stroke] = entry; const size = noteDimensions('');
     const packet: DrawingPacket = { strokeId: id, phase: 'note', sequence: stroke.sequence + 1, points: [],
@@ -364,9 +443,11 @@ export function attachTemporaryDrawing(options: {
       cancelEvent(event); finish();
       if (strokes.size >= MAX_STROKES && [...strokes.values()].every((stroke) => stroke.note)) return;
       const id = Array.from(win.crypto.getRandomValues(new Uint8Array(12)), (value) => value.toString(16).padStart(2, '0')).join('');
-      const packet: DrawingPacket = { strokeId: id, phase: 'start', sequence: 0, points: [point] };
+      const binding = captureDrawingAnchor(event.target, options.container, options.anchors);
+      const packet: DrawingPacket = { strokeId: id, phase: 'start', sequence: 0, points: [point], ...(binding?.anchor ? { anchor: binding.anchor } : {}) };
       receive(packet);
       if (!strokes.has(id)) return;
+      if (binding) { strokes.get(id)!.binding = binding; refreshGeometry(id, strokes.get(id)!, true); }
       active = { id, pointer: event.pointerId, sequence: 0, pending: [], count: 1, last: point, started: now() };
       // Right drawing is an explicit new gesture, including when a previous
       // label still had focus. Keep its shortcut within this drawing surface.
@@ -377,13 +458,15 @@ export function attachTemporaryDrawing(options: {
       if (!active || event.pointerId !== active.pointer) return;
       if (!(event.buttons & 2)) { finish(); return; }
       cancelEvent(event);
-      const point = pointFrom(event, eventWindow);
+      const currentPoint = pointFrom(event, eventWindow);
+      const drawing = strokes.get(active.id);
+      const point = currentPoint && drawing ? referencePoint(drawing, currentPoint) : currentPoint;
       if (!point || Math.hypot(point[0] - active.last[0], point[1] - active.last[1]) < 1.25) return;
       if (active.count >= MAX_POINTS || now() - active.started > 30000) { finish(); return; }
       active.last = point; active.count++; active.pending.push(point);
       const stroke = strokes.get(active.id);
       if (stroke) {
-        stroke.points.push(point);
+        appendPoint(stroke, point);
         const path = pathFor(stroke.points); for (const shape of stroke.paths) shape.setAttribute('d', path);
         fade(active.id, IDLE_MS);
       }
@@ -530,6 +613,7 @@ export function attachTemporaryDrawing(options: {
   }
   function clear() {
     active = null; win.clearTimeout(flushTimer); flushTimer = 0;
+    win.cancelAnimationFrame(geometryFrame); geometryFrame = 0;
     endDrag(); win.clearTimeout(noteTimer); noteTimer = 0; pendingNotes.clear(); composing.clear();
     for (const id of [...strokes.keys()]) remove(id);
     seen.clear();

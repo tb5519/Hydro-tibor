@@ -1,5 +1,6 @@
 import { attachSourceMirror } from './mirror';
 import { attachTemporaryDrawing } from './drawing';
+import { DrawingAnchorMode, drawingNodeGeometry } from './drawing_anchor';
 
 /** Loaded only by our controlled Scratch HTML; it never grants parent access to the sandbox. */
 export function installFrameCapture() {
@@ -13,8 +14,23 @@ export function installFrameCapture() {
   let drawing: ReturnType<typeof attachTemporaryDrawing> | undefined;
   let drawingRoot: HTMLElement | undefined;
   let drawingLease = 0;
+  const geometry = new Map<string, { nodeId: number; mode: DrawingAnchorMode; expires: number; sent: number; signature: string }>();
   const stopDrawing = () => { drawing?.dispose(); drawing = undefined; drawingRoot?.remove(); drawingRoot = undefined; drawingLease = 0; };
-  const stop = () => { capture?.dispose(); capture = undefined; id = ''; };
+  const stop = () => { capture?.dispose(); capture = undefined; geometry.clear(); id = ''; };
+  const publishGeometry = () => {
+    if (!capture || !id || Date.now() >= lease) return;
+    const now = Date.now();
+    for (const [key, entry] of geometry) {
+      if (now >= entry.expires) { geometry.delete(key); continue; }
+      const node = capture.getDrawingNode(entry.nodeId);
+      const value = node ? drawingNodeGeometry(node, entry.mode) : null;
+      const signature = JSON.stringify(value);
+      if (signature === entry.signature && now - entry.sent < 500) continue;
+      entry.signature = signature; entry.sent = now;
+      parent.postMessage({ type: 'live-share-frame-geometry', channel, id,
+        nodeId: entry.nodeId, mode: entry.mode, geometry: value }, parentOrigin);
+    }
+  };
   const receive = (event: MessageEvent) => {
     const message = event.data;
     if (event.source === parent && event.origin === parentOrigin && message?.channel === channel && message.type === 'live-share-local-drawing') {
@@ -35,6 +51,20 @@ export function installFrameCapture() {
     if (message.action === 'stop') { if (id === message.id) stop(); return; }
     if (message.action === 'command') {
       if (capture && id === message.id && Date.now() < lease) capture.receiveCommand(message.command);
+      return;
+    }
+    if (message.action === 'geometry') {
+      if (!capture || id !== message.id || Date.now() >= lease || !Number.isSafeInteger(message.nodeId) || message.nodeId < 1
+        || !['element', 'scroll', 'svg'].includes(message.mode)) return;
+      const key = `${message.nodeId}:${message.mode}`;
+      let entry = geometry.get(key);
+      if (!entry) {
+        if (geometry.size >= 32) geometry.delete(geometry.keys().next().value);
+        entry = { nodeId: message.nodeId, mode: message.mode, expires: 0, sent: 0, signature: '' };
+        geometry.set(key, entry);
+      }
+      entry.expires = Date.now() + 4000;
+      publishGeometry();
       return;
     }
     if (!['start', 'snapshot'].includes(message.action)) return;
@@ -65,9 +95,10 @@ export function installFrameCapture() {
       } });
   };
   window.addEventListener('message', receive);
+  const geometryTimer = window.setInterval(publishGeometry, 32);
   const timer = window.setInterval(() => { if (capture && Date.now() >= lease) stop(); if (drawing && Date.now() >= drawingLease) stopDrawing(); }, 1000);
   const hidden = (event: PageTransitionEvent) => { if (event.persisted) { stop(); stopDrawing(); } else dispose(); };
-  const dispose = () => { stop(); stopDrawing(); clearInterval(timer); window.removeEventListener('message', receive); window.removeEventListener('pagehide', hidden); };
+  const dispose = () => { stop(); stopDrawing(); clearInterval(timer); clearInterval(geometryTimer); window.removeEventListener('message', receive); window.removeEventListener('pagehide', hidden); };
   window.addEventListener('pagehide', hidden);
   return dispose;
 }

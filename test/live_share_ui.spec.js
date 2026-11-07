@@ -444,6 +444,31 @@ it('pins a right-button mark with a live label across different DPRs while prese
             return node && ['width', 'height', 'left', 'top'].every((key) => node.style[key] === dimensions[key]);
         }, { selector: note, dimensions: teacherGeometry });
         assert.equal(await other.locator('[data-share-drawing-note],[data-share-drawing-stroke]').count(), 0);
+        // Real relay anchors use recorder node IDs, not replay iframe positions.
+        const inkStart = drawingPackets().slice(packetStart).find((entry) => entry.message.data.drawing.phase === 'start');
+        assert.equal(inkStart.message.data.drawing.anchor.kind, 'dom');
+        const relative = async (page, target, overlay) => {
+            const [content, mark, bubble] = await Promise.all([target.boundingBox(), page.locator(overlay).boundingBox(), page.locator(note).boundingBox()]);
+            return { mark: mark.y - content.y, note: bubble.y - content.y };
+        };
+        const studentBefore = await relative(student, student.locator('h1'), stroke);
+        const teacherBefore = await relative(teacher, heading, stroke);
+        await student.evaluate(() => window.scrollTo(0, 80));
+        await teacher.waitForFunction(() => document.querySelector('.live-share-mirror iframe')?.contentWindow?.scrollY === 80);
+        await teacher.waitForTimeout(100);
+        const studentAfter = await relative(student, student.locator('h1'), stroke);
+        const teacherAfter = await relative(teacher, heading, stroke);
+        for (const key of ['mark', 'note']) {
+            assert(Math.abs(studentAfter[key] - studentBefore[key]) < 1.5, `student ${key} follows page content`);
+            assert(Math.abs(teacherAfter[key] - teacherBefore[key]) < 1.5, `teacher ${key} follows page content`);
+        }
+        await student.evaluate(() => window.scrollTo(0, 700));
+        await teacher.waitForFunction(() => document.querySelector('.live-share-mirror iframe')?.contentWindow?.scrollY === 700);
+        await student.locator(note).waitFor({ state: 'hidden' });
+        await teacher.locator(note).waitFor({ state: 'hidden' });
+        await student.evaluate(() => window.scrollTo(0, 0));
+        await teacher.waitForFunction(() => document.querySelector('.live-share-mirror iframe')?.contentWindow?.scrollY === 0);
+        await student.locator(note).waitFor(); await teacher.locator(note).waitFor();
         // Temporary strokes normally disappear after five seconds plus the fade.
         // A labeled mark must remain readable until the teacher explicitly deletes it.
         await teacher.waitForTimeout(6500);
