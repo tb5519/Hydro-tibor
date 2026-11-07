@@ -255,3 +255,151 @@ it('local teacher drawing leases only controlled opaque Scratch frames and revok
         await page.waitForFunction(() => window.messages.at(-1)?.enabled === false);
     } finally { await page.close(); await new Promise((resolve) => server.close(resolve)); }
 });
+
+it('Shift+Enter fixes a stroke with a compact live label, preserves empty labels, shares wrapping and dragging, and deletes both with ×', { timeout: 20000 }, async () => {
+    const f = await fixture(1.35);
+    try {
+        await draw(f.teacher, await f.teacher.locator('textarea').boundingBox());
+        await f.teacher.keyboard.press('Shift+Enter');
+        const note = f.teacher.locator('[data-share-drawing-note]');
+        const input = note.locator('[data-share-drawing-note-input]');
+        await f.student.locator('[data-share-drawing-note]').waitFor();
+        assert(await input.evaluate((node) => node === document.activeElement), 'the new label is ready to type immediately');
+        assert.equal(await input.inputValue(), '');
+        assert.equal(await note.evaluate((node) => node.offsetWidth), 36, 'an empty/one-character label stays compact');
+        await f.teacher.waitForTimeout(6300);
+        assert.equal(await f.teacher.locator('[data-share-drawing-stroke]').count(), 1, 'an empty pinned label never fades');
+        assert.equal(await f.student.locator('[data-share-drawing-stroke]').count(), 1);
+        await input.fill('好');
+        await f.student.waitForFunction(() => document.querySelector('[data-share-drawing-note-input]')?.value === '好');
+        assert.equal(await note.evaluate((node) => node.offsetWidth), 36);
+        await input.press('End'); await input.press('Enter'); await input.pressSequentially('Next line');
+        await f.student.waitForFunction(() => document.querySelector('[data-share-drawing-note-input]')?.value === '好\nNext line');
+        const copy = f.student.locator('[data-share-drawing-note]');
+        const dimensions = async (locator) => locator.evaluate((node) => ({ width: node.offsetWidth, height: node.offsetHeight,
+            inputHeight: node.querySelector('textarea').scrollHeight, x: node.style.left, y: node.style.top }));
+        assert.deepEqual(await dimensions(note), await dimensions(copy));
+        assert.equal(await copy.locator('textarea').evaluate((node) => node.readOnly), true);
+        assert.equal(await copy.locator('button').count(), 0, 'the learner cannot accidentally remove a teacher label');
+        const before = await dimensions(note);
+        const grip = await note.locator('[data-share-drawing-note-drag]').boundingBox();
+        await f.teacher.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+        await f.teacher.mouse.down();
+        await f.teacher.mouse.move(grip.x + grip.width / 2 - 81, grip.y + grip.height / 2 + 54, { steps: 6 });
+        await f.teacher.mouse.up();
+        const after = await dimensions(note);
+        assert(Math.abs(parseFloat(after.x) - parseFloat(before.x) + 60) < .2, 'drag motion is mapped back to learner CSS pixels');
+        assert(Math.abs(parseFloat(after.y) - parseFloat(before.y) - 40) < .2);
+        await f.student.waitForFunction((value) => document.querySelector('[data-share-drawing-note]')?.style.left === value, after.x);
+        assert.deepEqual(await dimensions(note), await dimensions(copy));
+        const long = '这是一段需要自动换行的课堂提示。'.repeat(14);
+        await input.fill(long);
+        await f.student.waitForFunction((value) => document.querySelector('[data-share-drawing-note-input]')?.value === value, long);
+        assert.deepEqual(await dimensions(note), await dimensions(copy), 'both peers render the same measured width and wrapped height');
+        assert.equal(await input.evaluate((node) => node.scrollHeight <= node.clientHeight), true, 'normal-size labels have room for all lines');
+        await note.locator('[data-share-drawing-note-delete]').click();
+        await f.student.locator('[data-share-drawing-note]').waitFor({ state: 'detached' });
+        assert.equal(await f.teacher.locator('[data-share-drawing-stroke]').count(), 0);
+        assert.equal(await f.student.locator('[data-share-drawing-stroke]').count(), 0);
+        assert.equal(await f.teacher.locator('textarea').first().inputValue(), "print('Hello')");
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('multiple pinned strokes survive later marks and never steal note typing, IME, expired-stroke shortcuts or controls outside the shared surface', { timeout: 20000 }, async () => {
+    const f = await fixture(1);
+    try {
+        const box = await f.teacher.locator('textarea').boundingBox();
+        await draw(f.teacher, box); await f.teacher.keyboard.press('Shift+Enter');
+        await f.teacher.locator('[data-share-drawing-note-input]').fill('第一处');
+        await draw(f.teacher, box, [[20, 80], [40, 90], [100, 100]]);
+        await f.teacher.keyboard.press('Shift+Enter');
+        assert.equal(await f.teacher.locator('[data-share-drawing-note]').count(), 2, 'a new right stroke leaves the previous note input and can be pinned');
+        await f.student.waitForFunction(() => document.querySelectorAll('[data-share-drawing-note]').length === 2);
+        await f.teacher.locator('[data-share-drawing-note-input]').last().fill('第二处');
+        await draw(f.teacher, box, [[20, 120], [40, 125], [100, 130]]);
+        const firstInput = f.teacher.locator('[data-share-drawing-note-input]').first();
+        await firstInput.focus(); await firstInput.press('End'); await firstInput.press('Shift+Enter');
+        assert.equal(await firstInput.inputValue(), '第一处\n', 'Shift+Enter inside an existing note remains a line break');
+        assert.equal(await f.teacher.locator('[data-share-drawing-note]').count(), 2);
+        const events = await f.teacher.evaluate(() => {
+            const stage = document.querySelector('#stage'); stage.focus();
+            stage.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+            const composing = new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true });
+            stage.dispatchEvent(composing);
+            stage.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+            const imeKey = new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, keyCode: 229, bubbles: true, cancelable: true });
+            stage.dispatchEvent(imeKey);
+            const outside = document.createElement('input'); outside.id = 'outside'; document.body.append(outside); outside.focus();
+            const external = new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true });
+            outside.dispatchEvent(external);
+            return [composing.defaultPrevented, imeKey.defaultPrevented, external.defaultPrevented];
+        });
+        assert.deepEqual(events, [false, false, false]);
+        assert.equal(await f.teacher.locator('[data-share-drawing-note]').count(), 2);
+        await f.teacher.waitForFunction(() => document.querySelectorAll('[data-share-drawing-stroke]').length === 2, null, { timeout: 7500 });
+        const allowed = await f.teacher.evaluate(() => {
+            const stage = document.querySelector('#stage'); stage.focus();
+            const event = new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true });
+            stage.dispatchEvent(event); return !event.defaultPrevented;
+        });
+        assert(allowed, 'expired strokes cannot be pinned and leave the existing annotation shortcut available');
+        assert.equal(await f.teacher.locator('[data-share-drawing-note]').count(), 2);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('pinned marks are never evicted by the stroke limit and malformed or reordered label commands are rejected', async () => {
+    const f = await fixture(1);
+    try {
+        const result = await f.student.evaluate(() => {
+            const note = { text: '<img src=x onerror=alert(1)>', x: 20, y: 20, width: 200, height: 54 };
+            const start = { strokeId: 'pinned_0000', phase: 'start', sequence: 0, points: [[5, 6]] };
+            const label = { strokeId: start.strokeId, phase: 'note', sequence: 2, points: [], note };
+            for (const packet of [{ ...label, note: { ...note, width: 1 } }, { ...label, note: { ...note, html: 'x' } },
+                { ...label, points: [[5, 6]] }, { ...start, note }, { ...label, note: { ...note, text: 'x'.repeat(1001) } },
+                { ...label, note: { ...note, x: NaN } }]) if (Drawing.validDrawingPacket(packet)) throw new Error('accepted invalid label');
+            for (let index = 0; index < 32; index++) {
+                const strokeId = `pinned_${String(index).padStart(4, '0')}`;
+                window.surface.receive({ ...start, strokeId });
+                window.surface.receive({ strokeId, phase: 'end', sequence: 1, points: [] });
+                window.surface.receive({ ...label, strokeId });
+            }
+            window.surface.receive({ ...start, strokeId: 'overflow_stroke' });
+            window.surface.receive({ strokeId: start.strokeId, phase: 'delete', sequence: 4, points: [] });
+            window.surface.receive({ ...label, sequence: 1, note: { ...note, text: 'reordered' } });
+            return { strokes: document.querySelectorAll('[data-share-drawing-stroke]').length,
+                notes: document.querySelectorAll('[data-share-drawing-note]').length,
+                text: document.querySelector('[data-share-drawing-note-input]').value,
+                injected: document.querySelectorAll('[data-share-drawing-note] img').length };
+        });
+        assert.deepEqual(result, { strokes: 32, notes: 32, text: '<img src=x onerror=alert(1)>', injected: 0 });
+        await f.student.evaluate(() => window.surface.receive({ strokeId: 'pinned_0000', phase: 'delete', sequence: 3, points: [] }));
+        assert.equal(await f.student.locator('[data-share-drawing-note]').count(), 31);
+        await f.student.evaluate(() => window.surface.setConnected(false));
+        assert.equal(await f.student.locator('[data-share-drawing-note]').count(), 0);
+        assert.equal(await f.student.locator('[data-share-drawing-stroke]').count(), 0);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('the final drawing sequence stays available to delete a label after its editing budget is exhausted', async () => {
+    const f = await fixture(1);
+    try {
+        await f.teacher.evaluate(() => {
+            const strokeId = 'sequence_limit_note';
+            window.surface.receive({ strokeId, phase: 'start', sequence: 0, points: [[100, 100], [180, 110]] });
+            window.surface.receive({ strokeId, phase: 'end', sequence: 1, points: [] });
+            for (let sequence = 2; sequence <= 4095; sequence++) window.surface.receive({ strokeId, phase: 'note', sequence, points: [],
+                note: { text: '仍能删除', x: 200, y: 100, width: 90, height: 42 } });
+        });
+        assert.equal(await f.teacher.locator('[data-share-drawing-note-input]').evaluate((node) => node.readOnly), true);
+        await f.teacher.locator('[data-share-drawing-note-delete]').click();
+        assert.equal(await f.teacher.locator('[data-share-drawing-note]').count(), 0);
+        assert.equal(await f.teacher.locator('[data-share-drawing-stroke]').count(), 0);
+        assert.deepEqual(await f.teacher.evaluate(() => window.packets.at(-1)), {
+            strokeId: 'sequence_limit_note', phase: 'delete', sequence: 4096, points: [],
+        });
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});

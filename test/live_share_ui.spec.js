@@ -390,3 +390,98 @@ it('keeps local teacher drawing private, shares identical strokes across resolut
         assert.deepEqual(errors, []);
     } finally { await Promise.all(contexts.map((context) => context.close())); }
 });
+
+it('pins a right-button mark with a live label across different DPRs while preserving code annotation shortcuts', { timeout: 60000 }, async () => {
+    const contexts = await Promise.all([
+        browser.newContext({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 2 }),
+        browser.newContext({ viewport: { width: 1000, height: 760 }, deviceScaleFactor: 1 }),
+        browser.newContext({ viewport: { width: 1100, height: 800 }, deviceScaleFactor: 1 }),
+    ]);
+    const [teacher, student, other] = await Promise.all(contexts.map((context) => context.newPage()));
+    const errors = [];
+    [teacher, student, other].forEach((page) => page.on('pageerror', (error) => errors.push(error.message)));
+    const drawingPackets = () => sent.filter((entry) => entry.uid === 2 && entry.message.kind === 'command'
+        && entry.message.data?.action === 'draw');
+    try {
+        await Promise.all([teacher.goto(`${origin}/teacher?uid=2`), student.goto(`${origin}/p/1?uid=51`), other.goto(`${origin}/p/1?uid=52`)]);
+        await teacher.locator('[data-assistant-toggle]').click();
+        await teacher.locator('[data-live-share-open]').click();
+        await teacher.getByRole('button', { name: /学员51/ }).click();
+        await teacher.locator('.live-share-editors textarea').waitFor();
+        const heading = teacher.frameLocator('.live-share-mirror iframe').locator('h1');
+        await heading.waitFor();
+        const box = await heading.boundingBox();
+        const packetStart = drawingPackets().length;
+        await teacher.mouse.move(box.x + 15, box.y + box.height / 2);
+        await teacher.mouse.down({ button: 'right' });
+        await teacher.mouse.move(box.x + 145, box.y + box.height / 2 + 4, { steps: 12 });
+        await teacher.mouse.up({ button: 'right' });
+        const teacherStroke = teacher.locator('.live-share-stage [data-share-drawing-stroke]');
+        await teacherStroke.waitFor({ state: 'attached' });
+        const strokeId = await teacherStroke.getAttribute('data-share-drawing-stroke');
+        const stroke = `[data-share-drawing-stroke="${strokeId}"]`;
+        const note = `[data-share-drawing-note="${strokeId}"]`;
+        const input = `${note} [data-share-drawing-note-input]`;
+        await student.locator(stroke).waitFor({ state: 'attached' });
+        await teacher.keyboard.press('Shift+Enter');
+        await teacher.locator(input).waitFor();
+        await teacher.waitForFunction((selector) => document.activeElement?.matches(selector), input);
+        await student.locator(note).waitFor();
+        assert.equal(await teacher.locator(input).inputValue(), '', 'the shortcut opens and focuses an empty label immediately');
+        assert.equal(await student.locator(input).inputValue(), '', 'the learner sees the label as soon as it opens');
+        await teacher.locator(input).fill('先看这里');
+        await student.waitForFunction((selector) => document.querySelector(selector)?.value === '先看这里', input);
+        await teacher.locator(input).press('Enter');
+        await teacher.locator(input).pressSequentially('再看输出');
+        const expectedText = '先看这里\n再看输出';
+        await student.waitForFunction(({ selector, text }) => document.querySelector(selector)?.value === text, { selector: input, text: expectedText });
+        assert.equal(await teacher.locator(input).inputValue(), expectedText, 'ordinary Enter adds a newline inside the label');
+        const geometry = (node) => ({ width: node.style.width, height: node.style.height,
+            left: node.style.left, top: node.style.top });
+        const teacherGeometry = await teacher.locator(note).evaluate(geometry);
+        await student.waitForFunction(({ selector, dimensions }) => {
+            const node = document.querySelector(selector);
+            return node && ['width', 'height', 'left', 'top'].every((key) => node.style[key] === dimensions[key]);
+        }, { selector: note, dimensions: teacherGeometry });
+        assert.equal(await other.locator('[data-share-drawing-note],[data-share-drawing-stroke]').count(), 0);
+        // Temporary strokes normally disappear after five seconds plus the fade.
+        // A labeled mark must remain readable until the teacher explicitly deletes it.
+        await teacher.waitForTimeout(6500);
+        assert.equal(await teacher.locator(stroke).count(), 1);
+        assert.equal(await student.locator(stroke).count(), 1);
+        assert.equal(await teacher.locator(note).isVisible(), true);
+        assert.equal(await student.locator(note).isVisible(), true);
+        assert.equal(await student.locator(input).inputValue(), expectedText);
+        assert.equal(await student.locator('#code').inputValue(), 'print("student")', 'label typing does not modify learner code');
+        assert(drawingPackets().slice(packetStart).some((entry) => entry.message.data.drawing.phase === 'note'),
+            'label content travels through the validated WebSocket protocol');
+        await teacher.locator(`${note} [data-share-drawing-note-delete]`).click();
+        await teacher.locator(note).waitFor({ state: 'detached' });
+        await student.locator(note).waitFor({ state: 'detached' });
+        await teacher.locator(stroke).waitFor({ state: 'detached' });
+        await student.locator(stroke).waitFor({ state: 'detached' });
+        assert(drawingPackets().slice(packetStart).some((entry) => entry.message.data.drawing.phase === 'delete'));
+
+        const code = teacher.locator('.live-share-editors textarea');
+        await code.fill('print("still code")');
+        await student.waitForFunction(() => document.querySelector('#code').value === 'print("still code")');
+        const packetsBeforeCodeNote = drawingPackets().length;
+        await code.evaluate((node) => { node.focus(); node.setSelectionRange(0, 5); node.dispatchEvent(new Event('select', { bubbles: true })); });
+        await code.press('Shift+Enter');
+        const codeNote = teacher.locator('[data-share-code-annotation] [data-share-annotation-input]');
+        await codeNote.waitFor();
+        await teacher.waitForFunction(() => document.activeElement?.matches('[data-share-code-annotation] [data-share-annotation-input]'));
+        await codeNote.fill('这是原有代码批注');
+        await student.waitForFunction(() => [...document.querySelectorAll('[data-share-code-annotation] [data-share-annotation-note]')]
+            .some((node) => node.textContent.includes('这是原有代码批注')));
+        assert.equal(drawingPackets().length, packetsBeforeCodeNote, 'without a fresh mark, Shift+Enter stays with code annotations');
+        assert.equal(await teacher.locator('[data-share-drawing-stroke],[data-share-drawing-note]').count(), 0,
+            'ordinary code typing must not create pen marks or pen labels');
+        assert.equal(await student.locator('#code').inputValue(), 'print("still code")');
+        assert.equal(await other.locator('[data-share-code-annotation],[data-share-drawing-note]').count(), 0);
+        await teacher.locator('[data-assistant-toggle]').click();
+        await teacher.getByRole('button', { name: '断开共享', exact: true }).click();
+        await teacher.waitForFunction(() => !document.querySelector('.live-share-overlay'));
+        assert.deepEqual(errors, []);
+    } finally { await Promise.all(contexts.map((context) => context.close())); }
+});

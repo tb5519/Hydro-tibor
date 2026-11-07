@@ -117,14 +117,24 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
                 || Object.keys(data).some((key) => !['id', 'pageId', 'nodeId', 'action', 'drawing'].includes(key))) invalid();
             const stroke = data.drawing;
             if (!stroke || typeof stroke !== 'object' || Array.isArray(stroke)
-                || Object.keys(stroke).some((key) => !['strokeId', 'phase', 'sequence', 'points'].includes(key))
-                || !shareId(stroke.strokeId) || !['start', 'move', 'end'].includes(stroke.phase)
+                || Object.keys(stroke).some((key) => !['strokeId', 'phase', 'sequence', 'points', 'note'].includes(key))
+                || !shareId(stroke.strokeId) || !['start', 'move', 'end', 'note', 'delete'].includes(stroke.phase)
                 || !Number.isSafeInteger(stroke.sequence) || stroke.sequence < 0 || stroke.sequence > 4096
                 || (stroke.phase === 'start' && stroke.sequence !== 0)
                 || !Array.isArray(stroke.points) || stroke.points.length > 32
-                || (stroke.phase !== 'end' && !stroke.points.length)
+                || (['start', 'move'].includes(stroke.phase) && !stroke.points.length)
+                || (['note', 'delete'].includes(stroke.phase) && stroke.points.length)
                 || stroke.points.some((point) => !Array.isArray(point) || point.length !== 2
                     || point.some((value) => !finite(value) || value < 0 || value > 10000))) invalid();
+            if (stroke.phase === 'note') {
+                const note = stroke.note;
+                if (!note || typeof note !== 'object' || Array.isArray(note)
+                    || Object.keys(note).some((key) => !['text', 'x', 'y', 'width', 'height'].includes(key))
+                    || !short(note.text, 1000)
+                    || ![note.x, note.y].every((value) => finite(value) && value >= 0 && value <= 10000)
+                    || !finite(note.width) || note.width < 36 || note.width > 960
+                    || !finite(note.height) || note.height < 36 || note.height > 800) invalid();
+            } else if (Object.hasOwn(stroke, 'note')) invalid();
         }
         if (data.action === 'frame') {
             if (role !== 'teacher' || data.nodeId !== 1 || !shareId(data.frameId)

@@ -146,6 +146,21 @@ describe('live share protocol boundaries', () => {
         const ink = { ...base, action: 'draw', drawing };
         protocol.validateRelayData('teacher', 'command', ink, base.pageId);
         protocol.validateRelayData('teacher', 'command', { ...ink, drawing: { ...drawing, phase: 'end', sequence: 1, points: [] } }, base.pageId);
+        const note = { text: '先读入\n再求和', x: 150, y: 220, width: 96, height: 72 };
+        const pinned = { ...ink, drawing: { ...drawing, phase: 'note', sequence: 2, points: [], note } };
+        protocol.validateRelayData('teacher', 'command', pinned, base.pageId);
+        protocol.validateRelayData('teacher', 'command', { ...ink, drawing: { ...drawing, phase: 'delete', sequence: 3, points: [] } }, base.pageId);
+        for (const patch of [{ text: 'x'.repeat(1001) }, { text: {} }, { x: -1 }, { y: 10001 }, { width: 35 },
+            { width: 961 }, { height: 35 }, { height: 801 }, { x: Infinity }, { html: '<script>run()</script>' }]) {
+            assert.throws(() => protocol.validateRelayData('teacher', 'command',
+                { ...pinned, drawing: { ...pinned.drawing, note: { ...note, ...patch } } }, base.pageId), errorCode('INVALID_RELAY'));
+        }
+        for (const patch of [{ note: undefined }, { note: null }, { note: [] }, { points: [[1, 2]] }, { phase: 'delete' }, { phase: 'end' }]) {
+            assert.throws(() => protocol.validateRelayData('teacher', 'command',
+                { ...pinned, drawing: { ...pinned.drawing, ...patch } }, base.pageId), errorCode('INVALID_RELAY'));
+        }
+        assert.throws(() => protocol.validateRelayData('student', 'command', pinned, base.pageId), errorCode('INVALID_RELAY'));
+        assert.throws(() => protocol.validateRelayData('teacher', 'command', pinned, 'stale-page'), errorCode('INVALID_RELAY'));
         for (const patch of [{ points: [[NaN, 1]] }, { points: [[10001, 0]] }, { points: Array(33).fill([1, 1]) },
             { points: [[1, 2, 3]] }, { points: [] }, { sequence: 1 }, { sequence: 4097 }, { phase: 'eval' },
             { strokeId: '../invalid' }, { html: '<script>run()</script>' }]) {
