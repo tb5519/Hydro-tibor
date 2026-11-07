@@ -1,4 +1,5 @@
 import { record, Replayer } from './vendor';
+import { attachAnnotationSurface, ShareAnnotation } from './annotation';
 
 /** The replay is a display surface. Its scripts, forms and links never run. */
 const BLOCK = [
@@ -26,7 +27,9 @@ export interface MirrorCommand {
   id: string;
   pageId: string;
   nodeId: number;
-  action: 'click' | 'scroll' | 'select' | 'search';
+  action: 'click' | 'scroll' | 'select' | 'search' | 'annotate';
+  annotationId?: string;
+  annotation?: ShareAnnotation | null;
   target?: string;
   value?: string;
   x?: number;
@@ -84,6 +87,52 @@ function interactive(node: any): HTMLElement | null {
 }
 function blocked(element: Element | null): boolean {
   return !element || !!element.closest(BLOCK) || !!element.closest('[inert]');
+}
+
+const ANNOTATION_EXCLUDED = `${BLOCK},input,textarea,select,button,script,style,noscript,[contenteditable]:not([contenteditable="false"])`;
+function annotationText(node: Node | null, doc: Document): node is Text {
+  return !!node && node.nodeType === 3 && node.ownerDocument === doc && node.isConnected
+    && !blocked(node.parentElement) && !node.parentElement?.closest(ANNOTATION_EXCLUDED);
+}
+
+/** Text-node identities and the selected text anchor a mark to content, not a screen resolution. */
+function annotationRange(doc: Document, mirror: any, value: ShareAnnotation | null): Range | null {
+  if (!value || typeof value.quote !== 'string' || !value.quote.trim() || value.quote.length > 4000
+    || typeof value.text !== 'string' || value.text.length > 1000
+    || typeof value.noteOpen !== 'boolean'
+    || ![value.startNodeId, value.endNodeId].every((id) => Number.isSafeInteger(id) && id > 0)
+    || ![value.startOffset, value.endOffset].every((offset) => Number.isSafeInteger(offset) && offset >= 0)
+    || ![value.offsetX, value.offsetY].every((offset) => Number.isFinite(offset) && Math.abs(offset) <= 10000)) return null;
+  const start = mirror?.getNode(value.startNodeId);
+  const end = mirror?.getNode(value.endNodeId);
+  if (!annotationText(start, doc) || !annotationText(end, doc)
+    || value.startOffset > start.length || value.endOffset > end.length) return null;
+  try {
+    const range = doc.createRange();
+    range.setStart(start, value.startOffset); range.setEnd(end, value.endOffset);
+    if (range.collapsed || range.toString() !== value.quote) return null;
+    const ancestor = closestElement(range.commonAncestorContainer);
+    // A forged range must not cross a private field, even with public endpoints.
+    if (!ancestor || [...ancestor.querySelectorAll(ANNOTATION_EXCLUDED)].some((node) => range.intersectsNode(node))) return null;
+    return range;
+  } catch { return null; }
+}
+
+function annotationRect(range: Range | null) {
+  if (!range) return null;
+  const rect = range.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  let left = rect.left; let top = rect.top; let right = rect.right; let bottom = rect.bottom;
+  const doc = range.startContainer.ownerDocument;
+  for (let element = closestElement(range.commonAncestorContainer); element && element !== doc.body && element !== doc.documentElement;
+    element = element.parentElement) {
+    const style = doc.defaultView.getComputedStyle(element);
+    if (style.visibility === 'hidden' || style.display === 'none') return null;
+    const clip = element.getBoundingClientRect();
+    if (/(auto|scroll|hidden|clip|overlay)/.test(style.overflowX)) { left = Math.max(left, clip.left); right = Math.min(right, clip.right); }
+    if (/(auto|scroll|hidden|clip|overlay)/.test(style.overflowY)) { top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom); }
+  }
+  return right > left && bottom > top ? { x: left, y: top, width: right - left, height: bottom - top } : null;
 }
 function allowedSelect(element: Element): element is HTMLSelectElement {
   return element.tagName === 'SELECT'
@@ -538,6 +587,26 @@ export function attachSourceMirror(options: SourceOptions) {
   }
   queueMicrotask(start);
   const sourceMirror = () => (record as any).mirror;
+  const annotationRoot = document.createElement('div');
+  annotationRoot.className = 'live-share-annotation-source';
+  annotationRoot.dataset.liveSharePrivate = '';
+  annotationRoot.style.cssText = 'position:fixed;inset:0;z-index:1000;pointer-events:none';
+  document.body.appendChild(annotationRoot);
+  const annotations = new Map<string, { value: ShareAnnotation; surface: ReturnType<typeof attachAnnotationSurface> }>();
+  let annotationFrame = 0;
+  function renderAnnotations() {
+    cancelAnimationFrame(annotationFrame); annotationFrame = 0;
+    for (const entry of annotations.values()) {
+      const range = connected && !disposed ? annotationRange(document, sourceMirror(), entry.value) : null;
+      entry.surface.render(entry.value, annotationRect(range));
+    }
+    if (annotations.size && connected && !disposed) annotationFrame = requestAnimationFrame(renderAnnotations);
+  }
+  function clearAnnotations() {
+    cancelAnimationFrame(annotationFrame); annotationFrame = 0;
+    for (const entry of annotations.values()) entry.surface.dispose();
+    annotations.clear();
+  }
   function captureCanvases() {
     canvasFrame = 0;
     if (disposed || !connected || !hasSnapshot || document.hidden) return;
@@ -662,6 +731,21 @@ export function attachSourceMirror(options: SourceOptions) {
     if (document.hidden) return deny('学员已切换页面，请等待同步');
     if (!Number.isSafeInteger(command.nodeId) || command.nodeId <= 0) return deny('目标已变化');
     const raw = sourceMirror()?.getNode(command.nodeId);
+    if (command.action === 'annotate') {
+      if (raw !== document || typeof command.annotationId !== 'string' || !/^[\w-]{8,96}$/.test(command.annotationId)) return deny('标注目标已变化');
+      const entry = annotations.get(command.annotationId);
+      if (command.annotation === null) {
+        entry?.surface.dispose(); annotations.delete(command.annotationId);
+      }
+      else {
+        if (!annotationRange(document, sourceMirror(), command.annotation ?? null)) return deny('所选文字已变化，请重新选择');
+        if (!entry && annotations.size >= 50) return deny('本页重点较多，请先关闭暂时不用的标注');
+        const surface = entry?.surface || attachAnnotationSurface({ container: annotationRoot, teacher: false, id: command.annotationId });
+        annotations.set(command.annotationId, { value: { ...command.annotation }, surface });
+      }
+      renderAnnotations();
+      return acknowledge({ id: command.id, pageId: options.pageId, ok: true });
+    }
     if (command.action === 'scroll') {
       if (![command.x, command.y].every((value) => Number.isFinite(value) && Math.abs(value) < 1000000)) return deny('位置无效');
       const target = raw === document ? document.scrollingElement : closestElement(raw);
@@ -717,6 +801,7 @@ export function attachSourceMirror(options: SourceOptions) {
       if (disposed) return;
       if (connected === value) { if (value && stop) (record as any).takeFullSnapshot(true); return; }
       connected = value;
+      clearAnnotations();
       stopScrolling();
       cancelAnimationFrame(canvasFrame); canvasFrame = 0;
       generation++;
@@ -726,6 +811,7 @@ export function attachSourceMirror(options: SourceOptions) {
     },
     dispose() {
       disposed = true; generation++; stop?.(); stop = undefined; queue = []; queuedBytes = 0; commands.clear(); stopScrolling();
+      clearAnnotations(); annotationRoot.remove();
       clearInterval(editorGeometryTimer); editorPlaceholders.clear();
       clearInterval(canvasTimer); clearInterval(mediaTimer); cancelAnimationFrame(canvasFrame); canvasCopy = null;
       window.removeEventListener('wheel', localScrollInput, true);
@@ -769,13 +855,62 @@ export function attachViewerMirror(options: ViewerOptions) {
   host.className = 'live-share-mirror';
   host.style.cssText = 'position:absolute;inset:0;overflow:hidden';
   options.container.appendChild(host);
+  const annotations = new Map<string, { value: ShareAnnotation; editing: boolean; surface: ReturnType<typeof attachAnnotationSurface> }>();
+  const pendingAnnotations = new Set<string>();
+  let annotationFrame = 0;
+  let annotationSendTimer: ReturnType<typeof setTimeout>;
+  function createAnnotation(id: string, value: ShareAnnotation) {
+    const surface = attachAnnotationSurface({ container: options.container, teacher: true, id,
+      onChange: (patch) => {
+        const entry = annotations.get(id);
+        if (!entry || !connected || !ready || disposed) return;
+        entry.value = { ...entry.value, ...patch };
+        renderAnnotations();
+        // Throttle only the wire: the teacher's draft/caret stays immediate.
+        pendingAnnotations.add(id);
+        annotationSendTimer ||= setTimeout(flushAnnotations, 40);
+      },
+      onClear: () => clearAnnotation(id, true),
+    });
+    const entry = { value, surface, editing: false };
+    annotations.set(id, entry);
+    return entry;
+  }
+  function sendAnnotation(id: string) {
+    pendingAnnotations.delete(id);
+    const doc = player?.iframe?.contentDocument;
+    if (doc) command(doc, 'annotate', { annotationId: id, annotation: annotations.get(id)?.value || null });
+  }
+  function flushAnnotations() {
+    clearTimeout(annotationSendTimer); annotationSendTimer = undefined;
+    for (const id of pendingAnnotations) sendAnnotation(id);
+  }
+  function clearAnnotation(id: string, sync = false) {
+    annotations.get(id)?.surface.dispose(); annotations.delete(id); pendingAnnotations.delete(id);
+    if (sync) sendAnnotation(id);
+  }
+  function clearAnnotations() {
+    clearTimeout(annotationSendTimer); annotationSendTimer = undefined;
+    cancelAnimationFrame(annotationFrame); annotationFrame = 0;
+    for (const entry of annotations.values()) entry.surface.dispose();
+    annotations.clear(); pendingAnnotations.clear();
+  }
+  function renderAnnotations() {
+    cancelAnimationFrame(annotationFrame); annotationFrame = 0;
+    const doc = player?.iframe?.contentDocument;
+    for (const entry of annotations.values()) {
+      const range = ready && doc && connected && !disposed ? annotationRange(doc, player.getMirror(), entry.value) : null;
+      entry.surface.render(entry.value, annotationRect(range), entry.editing);
+    }
+    if (annotations.size && connected && !disposed) annotationFrame = requestAnimationFrame(renderAnnotations);
+  }
 
   function command(node: any, action: MirrorCommand['action'], extra: Partial<MirrorCommand> = {}) {
     if (!connected || !ready || disposed || !player) return;
     const nodeId = player.getMirror().getId(node);
     if (nodeId <= 0) return;
     options.sendCommand({ id: `cmd-${Date.now().toString(36)}-${++serial}`, pageId: options.pageId, nodeId, action,
-      ...(action === 'scroll' ? {} : { target: targetFingerprint(node) }), ...extra });
+      ...(['scroll', 'annotate'].includes(action) ? {} : { target: targetFingerprint(node) }), ...extra });
   }
   function installInteractions() {
     if (!player || disposed) return;
@@ -791,11 +926,41 @@ export function attachViewerMirror(options: ViewerOptions) {
     const style = doc.createElement('style');
     // rrweb captures the outer box of a blocked editor. Its empty placeholder
     // must not add the textarea's padding and border to those dimensions again.
-    style.textContent = '[data-live-share-editor]{box-sizing:border-box!important} [data-live-share-unavailable]::after{content:"此区域暂不支持实时共享";display:block;padding:32px;color:#64748b;font:14px system-ui;text-align:center} [data-teacher-assistant],[data-live-share-ui]{visibility:hidden!important}';
+    style.textContent = '[data-live-share-editor]{box-sizing:border-box!important} [data-live-share-unavailable]::after{content:"此区域暂不支持实时共享";display:block;padding:32px;color:#64748b;font:14px system-ui;text-align:center} [data-teacher-assistant],[data-live-share-ui]{visibility:hidden!important} .live-share-annotation-source{display:none!important}';
     doc.head?.appendChild(style);
     let holdingSpace = false;
     let dragging: { id: number; x: number; y: number };
     let suppressClickUntil = 0;
+    let selecting = false;
+    let selectingId: string | null = null;
+    let selectionTimer: ReturnType<typeof setTimeout>;
+    let finishSelectionTimer: ReturnType<typeof setTimeout>;
+    function captureSelection() {
+      clearTimeout(selectionTimer); selectionTimer = undefined;
+      if (!connected || !ready || disposed || holdingSpace || dragging) return false;
+      const selection = doc.getSelection();
+      if (!selection?.rangeCount || selection.isCollapsed) return false;
+      const range = selection.getRangeAt(0);
+      if (!annotationText(range.startContainer, doc) || !annotationText(range.endContainer, doc)) return false;
+      const next: ShareAnnotation = { startNodeId: player.getMirror().getId(range.startContainer),
+        endNodeId: player.getMirror().getId(range.endContainer), startOffset: range.startOffset, endOffset: range.endOffset,
+        quote: range.toString(), text: '', noteOpen: false, offsetX: 0, offsetY: range.getBoundingClientRect().height + 24 };
+      if (!annotationRange(doc, player.getMirror(), next)) return false;
+      if (!selectingId) {
+        if (annotations.size >= 50) { options.onStatus?.('本页重点较多，请先关闭暂时不用的标注'); return false; }
+        selectingId = `note-${Date.now().toString(36)}-${++serial}`;
+      }
+      const entry = annotations.get(selectingId) || createAnnotation(selectingId, next);
+      const sameRange = ['startNodeId', 'endNodeId', 'startOffset', 'endOffset', 'quote'].every((key) => entry.value[key] === next[key]);
+      if (!sameRange) entry.value = next;
+      entry.editing = entry.value.noteOpen;
+      renderAnnotations(); sendAnnotation(selectingId);
+      suppressClickUntil = Date.now() + 300;
+      return true;
+    }
+    const selectionchange = () => {
+      if (selecting && !holdingSpace && !dragging) selectionTimer ||= setTimeout(() => captureSelection(), 40);
+    };
     const textOrControl = (target: EventTarget | null) => !!closestElement(target)?.closest(
       'input,textarea,select,button,a,summary,[contenteditable]:not([contenteditable="false"]),[role="button"],[role="tab"],[data-live-share-editor]',
     );
@@ -833,6 +998,15 @@ export function attachViewerMirror(options: ViewerOptions) {
       if (element && allowedSelect(element)) command(element, 'select', { value: element.value });
     };
     const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Enter' && !event.isComposing && selectingId && !textOrControl(event.target)) {
+        const entry = annotations.get(selectingId);
+        if (entry && connected && ready && annotationRange(doc, player.getMirror(), entry.value)) {
+          event.preventDefault(); event.stopImmediatePropagation();
+          entry.value = { ...entry.value, noteOpen: true }; entry.editing = true;
+          renderAnnotations(); sendAnnotation(selectingId); entry.surface.focus();
+          return;
+        }
+      }
       if (options.onViewPan && (event.code === 'Space' || event.key === ' ') && !textOrControl(event.target)) {
         event.preventDefault(); event.stopImmediatePropagation();
         holdingSpace = true;
@@ -848,6 +1022,10 @@ export function attachViewerMirror(options: ViewerOptions) {
       if (event.code === 'Space' || event.key === ' ') resetPan();
     };
     const pointerdown = (event: PointerEvent) => {
+      if (event.button === 0 && !holdingSpace && !closestElement(event.target)?.closest(ANNOTATION_EXCLUDED)) {
+        selecting = true; selectingId = null;
+        clearTimeout(finishSelectionTimer);
+      }
       if (!holdingSpace || !options.onViewPan || event.button !== 0 || textOrControl(event.target)) return;
       event.preventDefault(); event.stopImmediatePropagation();
       const point = teacherPoint(event);
@@ -865,6 +1043,16 @@ export function attachViewerMirror(options: ViewerOptions) {
       if (dx || dy) options.onViewPan?.({ dx, dy });
     };
     const pointerup = (event: PointerEvent) => {
+      if (selecting) {
+        selecting = false;
+        clearTimeout(selectionTimer); selectionTimer = undefined;
+        if (event.type !== 'pointercancel') {
+          // Suppress the click synchronously, before a selected link can navigate.
+          captureSelection();
+          // Capture the browser's completed range after the pointer event.
+          finishSelectionTimer = setTimeout(captureSelection, 0);
+        }
+      }
       if (!dragging || dragging.id !== event.pointerId) return;
       event.preventDefault(); event.stopImmediatePropagation();
       suppressClickUntil = Date.now() + 300;
@@ -933,6 +1121,9 @@ export function attachViewerMirror(options: ViewerOptions) {
     doc.addEventListener('pointermove', pointermove, true);
     doc.addEventListener('pointerup', pointerup, true);
     doc.addEventListener('pointercancel', pointerup, true);
+    doc.addEventListener('selectionchange', selectionchange);
+    // Also finish a selection when the pointer is released outside the iframe.
+    window.addEventListener('pointerup', pointerup, true);
     doc.defaultView?.addEventListener('blur', resetPan);
     window.addEventListener('keyup', keyup, true);
     window.addEventListener('blur', resetPan);
@@ -941,6 +1132,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     cleanupDocument = () => {
       resetScrolls();
       resetPan();
+      selecting = false; clearTimeout(selectionTimer); clearTimeout(finishSelectionTimer);
       doc.removeEventListener('click', click, true);
       doc.removeEventListener('submit', submit, true);
       doc.removeEventListener('change', change, true);
@@ -950,6 +1142,8 @@ export function attachViewerMirror(options: ViewerOptions) {
       doc.removeEventListener('pointermove', pointermove, true);
       doc.removeEventListener('pointerup', pointerup, true);
       doc.removeEventListener('pointercancel', pointerup, true);
+      doc.removeEventListener('selectionchange', selectionchange);
+      window.removeEventListener('pointerup', pointerup, true);
       doc.defaultView?.removeEventListener('blur', resetPan);
       window.removeEventListener('keyup', keyup, true);
       window.removeEventListener('blur', resetPan);
@@ -958,6 +1152,7 @@ export function attachViewerMirror(options: ViewerOptions) {
       style.remove();
     };
     ready = connected;
+    renderAnnotations();
     if (connected) options.onViewport?.(currentViewport);
   }
   function viewport(data: any) {
@@ -975,6 +1170,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     if (event.type === 4) { meta = event; viewport(event.data); return; }
     if (event.type === 2) {
       ready = false;
+      for (const entry of annotations.values()) entry.surface.render(null, null);
       cleanupDocument(); clearTimeout(installTimer);
       player?.destroy(); host.replaceChildren();
       const initialMeta = meta || { type: 4, timestamp: timestamp - 1, data: { width: 1280, height: 800, href: location.origin } };
@@ -983,6 +1179,7 @@ export function attachViewerMirror(options: ViewerOptions) {
         root: host, liveMode: true, mouseTail: false, showWarning: false, showDebug: false,
         UNSAFE_replayCanvas: false, loadTimeout: 0, skipInactive: false,
         insertStyleRules: ['iframe,object,embed{pointer-events:none!important}', 'a,button{cursor:pointer!important}',
+          '.live-share-annotation-source{display:none!important}',
           '.live-share-notice,[data-teacher-assistant],[data-live-share-private]{visibility:hidden!important;pointer-events:none!important}'],
       } as any);
       player.startLive(timestamp - 2);
@@ -1027,6 +1224,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     setConnected(value: boolean) {
       if (connected === value) return;
       connected = value;
+      clearAnnotations();
       ready = false;
       resetScrolls();
       assembler.reset();
@@ -1035,6 +1233,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     },
     dispose() {
       disposed = true; connected = false; assembler.dispose();
+      clearAnnotations();
       clearTimeout(installTimer); clearTimeout(wheelTimer); cleanupDocument();
       player?.destroy(); player = undefined; host.remove();
     },

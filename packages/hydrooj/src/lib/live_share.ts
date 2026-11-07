@@ -108,10 +108,27 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
     const short = (value: unknown, limit = 96) => typeof value === 'string' && value.length <= limit;
     if (kind === 'command') {
         if (!shareId(data.id) || data.pageId !== pageId || !Number.isSafeInteger(data.nodeId) || data.nodeId < 1
-            || !['click', 'scroll', 'select', 'search'].includes(data.action)
+            || !['click', 'scroll', 'select', 'search', 'annotate'].includes(data.action)
             || (data.target !== undefined && !short(data.target, 32))
             || (data.value !== undefined && !short(data.value, 4096))
             || (data.x !== undefined && !finite(data.x)) || (data.y !== undefined && !finite(data.y))) invalid();
+        if (data.action === 'annotate') {
+            // Annotation messages carry a text range and plain note text only.
+            // They must never become arbitrary DOM, style, navigation or editor operations.
+            if (role !== 'teacher' || !shareId(data.annotationId)
+                || Object.keys(data).some((key) => !['id', 'pageId', 'nodeId', 'action', 'annotationId', 'annotation'].includes(key))) invalid();
+            const note = data.annotation;
+            if (note !== null) {
+                if (!note || typeof note !== 'object' || Array.isArray(note)
+                    || Object.keys(note).some((key) => !['startNodeId', 'endNodeId', 'startOffset', 'endOffset', 'quote', 'text', 'noteOpen', 'offsetX', 'offsetY'].includes(key))
+                    || ![note.startNodeId, note.endNodeId].every((id) => Number.isSafeInteger(id) && id > 0)
+                    || ![note.startOffset, note.endOffset].every((offset) => Number.isSafeInteger(offset) && offset >= 0 && offset <= 1_000_000)
+                    || (note.startNodeId === note.endNodeId && note.startOffset >= note.endOffset)
+                    || !short(note.quote, 4000) || !note.quote.trim() || !short(note.text, 1000)
+                    || typeof note.noteOpen !== 'boolean'
+                    || ![note.offsetX, note.offsetY].every((offset) => finite(offset) && Math.abs(offset) <= 10000)) invalid();
+            }
+        }
     } else if (kind === 'ack') {
         if (!shareId(data.id) || data.pageId !== pageId || typeof data.ok !== 'boolean'
             || (data.reason !== undefined && !short(data.reason, 512))) invalid();

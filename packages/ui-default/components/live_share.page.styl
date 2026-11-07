@@ -358,6 +358,162 @@
   border-radius: 50%
   background: #61a98b
 
+.live-share-annotation
+  position: absolute
+  inset: 0
+  z-index: 1003
+  overflow: hidden
+  pointer-events: none
+  color: #364460
+  font: 14px/1.6 var(--font-family, "PingFang SC", "Microsoft YaHei", sans-serif)
+  &, *
+    box-sizing: border-box
+  &[hidden], [hidden]
+    display: none !important
+  &__box
+    position: absolute
+    border: 2px solid #7367dc
+    border-radius: 7px
+    background: #8b7be90a
+    box-shadow: 0 0 0 3px #c6bcff38
+    pointer-events: none
+  &__arrow, &__connector
+    position: absolute
+    top: 0
+    left: 0
+    overflow: visible
+    stroke: #7367dc
+    stroke-width: 2.5px
+    stroke-linecap: round
+    stroke-linejoin: round
+    filter: drop-shadow(0 1px 1px #ffffffcc)
+    pointer-events: none
+  &__connector
+    stroke: #a39bc9
+    stroke-width: 1.5px
+    filter: none
+  &__bubble
+    position: absolute
+    padding: 0
+    margin: 0
+    border: 1px solid #dcd8f4
+    border-top: 3px solid #8172e6
+    border-radius: 14px
+    background: #ffffff
+    box-shadow: 0 7px 28px #35305a1f, 0 2px 5px #35305a08
+    overflow: hidden
+    pointer-events: none
+  &__header
+    display: flex
+    align-items: center
+    gap: 7px
+    min-height: 38px
+    padding: 8px 13px 5px
+    color: #70659e
+    user-select: none
+  &__mark
+    color: #8b7ad9
+    font-size: 15px
+    line-height: 1
+  &__title
+    font-size: 11px
+    font-weight: 600
+    letter-spacing: .04em
+  &__grip
+    margin-left: auto
+    color: #bcb6d1
+    font-size: 17px
+    line-height: 1
+  &__close
+    display: grid
+    place-items: center
+    flex: 0 0 24px
+    width: 24px
+    height: 24px
+    margin: -3px -5px -3px 1px
+    padding: 0
+    border: 0
+    border-radius: 7px
+    background: transparent
+    color: #a39ab8
+    font: 20px/1 sans-serif !important
+    cursor: pointer
+    &:hover
+      background: #f1edf9
+      color: #6f5e98
+    &:focus-visible
+      outline: 2px solid #a99ae9
+      outline-offset: 1px
+    &.is-on-box
+      position: absolute
+      margin: 0
+      border: 1px solid #ded8f5
+      border-radius: 50%
+      background: #ffffff
+      color: #9182bb
+      box-shadow: 0 2px 8px #35305a10
+      pointer-events: auto
+      &:hover
+        background: #f4f0ff
+        color: #7057aa
+  &__input, &__text
+    display: block
+    width: 100%
+    margin: 0
+    padding: 4px 15px 13px
+    color: #364460
+    font: 14px/24px var(--font-family, "PingFang SC", "Microsoft YaHei", sans-serif)
+    text-align: left
+    overflow-wrap: anywhere
+    white-space: pre-wrap
+  &__input
+    min-height: 52px
+    max-height: 190px
+    border: 0 !important
+    border-radius: 0
+    outline: none !important
+    background: transparent
+    box-shadow: none !important
+    resize: none
+    overflow-y: auto
+    overscroll-behavior: contain
+    &::placeholder
+      color: #a49db5
+      font-size: 12px
+  &__text
+    max-height: 220px
+    overflow-x: hidden
+    overflow-y: auto
+    overscroll-behavior: contain
+    pointer-events: auto
+    touch-action: pan-y
+    cursor: text
+    user-select: text
+    &.is-placeholder
+      color: #a49db5
+      font-size: 12px
+    &:focus-visible
+      outline: 2px solid #b8aaeb
+      outline-offset: -3px
+  &__hint
+    padding: 6px 14px 8px
+    border-top: 1px solid #f0edf8
+    background: #fcfbff
+    color: #a49db6
+    font-size: 10px
+    line-height: 1.5
+    user-select: none
+  &.is-teacher &__bubble
+    pointer-events: auto
+  &.is-teacher &__header
+    cursor: grab
+    touch-action: none
+  &.is-dragging &__header
+    cursor: grabbing
+
+.live-share-overlay.is-disconnected .live-share-annotation
+  display: none
+
 .live-share-backup
   position: fixed
   z-index: 1012

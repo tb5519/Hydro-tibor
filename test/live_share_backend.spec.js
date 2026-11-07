@@ -182,6 +182,41 @@ describe('live share protocol boundaries', () => {
         assert.throws(() => protocol.validateRelayData('teacher', 'editor', { ...scroll, view: layout.view }, 'page-testing'), errorCode('INVALID_RELAY'));
         assert.throws(() => protocol.validateRelayData('student', 'editor', { ...layout, type: 'edit:cursor' }, 'page-testing'), errorCode('INVALID_RELAY'));
     });
+    it('allows bounded teacher text annotations and clearing, rejecting malformed anchors and executable options', () => {
+        const annotation = { startNodeId: 12, endNodeId: 14, startOffset: 2, endOffset: 9,
+            quote: '从输出固定内容开始', text: '先看这里', noteOpen: true, offsetX: 18.5, offsetY: -72 };
+        const command = { id: 'annotation-command', pageId: 'page-testing', nodeId: 1, action: 'annotate', annotationId: 'note-testing-1', annotation };
+        protocol.validateRelayData('teacher', 'command', command, 'page-testing');
+        protocol.validateRelayData('teacher', 'command', { ...command, annotation: null }, 'page-testing');
+        protocol.validateRelayData('teacher', 'command', { ...command, annotation: { ...annotation, text: '' } }, 'page-testing');
+        protocol.validateRelayData('teacher', 'command', { ...command, annotation: { ...annotation, noteOpen: false, text: '' } }, 'page-testing');
+        // HTML-looking content is permitted as inert note text; no HTML/style fields are accepted.
+        protocol.validateRelayData('teacher', 'command', { ...command, annotation: { ...annotation, text: '<img onerror="alert(1)">' } }, 'page-testing');
+        for (const change of [
+            { startNodeId: 0 }, { endNodeId: -1 }, { startNodeId: '12' }, { endNodeId: 1.5 },
+            { startOffset: -1 }, { endOffset: 1_000_001 }, { startOffset: 0.5 },
+            { endNodeId: 12, endOffset: 2 }, { endNodeId: 12, endOffset: 1 },
+            { quote: '' }, { quote: ' \n ' }, { quote: 'x'.repeat(4001) }, { text: 'x'.repeat(1001) },
+            { text: null }, { noteOpen: undefined }, { noteOpen: null }, { noteOpen: 'true' }, { noteOpen: 1 },
+            { offsetX: Infinity }, { offsetY: NaN }, { offsetX: '5' }, { offsetY: 10001 },
+            { html: '<script>alert(1)</script>' }, { style: 'position:fixed' }, { onclick: 'run()' },
+        ]) {
+            assert.throws(() => protocol.validateRelayData('teacher', 'command', {
+                ...command, annotation: { ...annotation, ...change },
+            }, 'page-testing'), errorCode('INVALID_RELAY'));
+        }
+        for (const invalidAnnotation of [undefined, [], 'text', 5]) {
+            assert.throws(() => protocol.validateRelayData('teacher', 'command', { ...command, annotation: invalidAnnotation }, 'page-testing'), errorCode('INVALID_RELAY'));
+        }
+        for (const change of [{ target: 'node' }, { value: 'text' }, { x: 1 }, { script: 'run()' }, { pageId: 'old-page' },
+            { annotationId: undefined }, { annotationId: '' }, { annotationId: 'short' }, { annotationId: 1 },
+            { annotationId: 'note<script>' }, { annotationId: 'x'.repeat(97) }]) {
+            assert.throws(() => protocol.validateRelayData('teacher', 'command', { ...command, ...change }, 'page-testing'), errorCode('INVALID_RELAY'));
+        }
+        for (const value of [annotation, null]) {
+            assert.throws(() => protocol.validateRelayData('student', 'command', { ...command, annotation: value }, 'page-testing'), errorCode('INVALID_RELAY'));
+        }
+    });
     it('allows bounded child-frame display packets only from the learner, without nesting or actions', () => {
         const id = '0123456789abcdef0123456789abcdef';
         const packets = [
@@ -434,6 +469,39 @@ describe('live share websocket integration', () => {
         await student.instance.message({ type: 'stop', sessionId: started.sessionId }); assert.equal(student.sent.at(-1).code, 'FORBIDDEN');
         await teacher.instance.message({ type: 'stop', sessionId: started.sessionId }); await settle();
         assert.equal(teacher.sent.at(-1).type, 'ended'); assert.equal(student.sent.at(-1).type, 'ended');
+    });
+    it('routes live annotations only to the selected learner and rejects stale pages and learner-authored notes', async () => {
+        const teacher = connection(2); const student = connection(10); const other = connection(11);
+        await hello(teacher, 2); await hello(student, 10); await hello(other, 11);
+        await teacher.instance.message({ type: 'start', studentUid: 10 }); await settle();
+        const started = teacher.sent.find((message) => message.type === 'started'); assert.ok(started);
+        const relay = { type: 'relay', sessionId: started.sessionId, pageId: started.pageId, kind: 'command',
+            data: { id: 'annotation-command', pageId: started.pageId, nodeId: 1, action: 'annotate', annotationId: 'note-testing-1', annotation: {
+                startNodeId: 2, endNodeId: 2, startOffset: 0, endOffset: 4,
+                quote: '重点内容', text: '仔细读这一句', noteOpen: true, offsetX: 24, offsetY: -80,
+            } } };
+        await teacher.instance.message(relay); await settle();
+        assert.equal(student.sent.filter((message) => message.type === 'relay' && message.data?.action === 'annotate').length, 1);
+        assert.equal(other.sent.filter((message) => message.type === 'relay').length, 0);
+        await teacher.instance.message({ ...relay, data: { ...relay.data, id: 'annotation-command-2', annotationId: 'note-testing-2',
+            annotation: { ...relay.data.annotation, text: '第二处重点' } } }); await settle();
+        const firstNotes = student.sent.filter((message) => message.type === 'relay' && message.data?.action === 'annotate');
+        assert.deepEqual(firstNotes.map((message) => message.data.annotationId), ['note-testing-1', 'note-testing-2']);
+        await student.instance.message(relay);
+        assert.equal(student.sent.at(-1).code, 'FORBIDDEN');
+        await teacher.instance.message({ ...relay, pageId: 'old-page', data: { ...relay.data, pageId: 'old-page' } });
+        assert.equal(teacher.sent.at(-1).code, 'STALE_PAGE');
+        await teacher.instance.message({ ...relay, data: { ...relay.data, id: 'annotation-cleared', annotation: null } }); await settle();
+        const received = student.sent.filter((message) => message.type === 'relay' && message.data?.action === 'annotate');
+        assert.equal(received.length, 3); assert.equal(received.at(-1).data.annotation, null);
+        assert.equal(received.at(-1).data.annotationId, 'note-testing-1');
+        const notes = new Map();
+        for (const message of received) {
+            if (message.data.annotation === null) notes.delete(message.data.annotationId);
+            else notes.set(message.data.annotationId, message.data.annotation);
+        }
+        assert.deepEqual([...notes.keys()], ['note-testing-2'], 'clearing one annotation leaves the second independently addressed');
+        assert.equal(other.sent.filter((message) => message.type === 'relay').length, 0);
     });
     it('does not query Mongo for every relay and resumes a reconnected teacher room', async () => {
         const teacher = connection(2); const student = connection(10);

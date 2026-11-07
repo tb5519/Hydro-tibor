@@ -8,6 +8,7 @@
 - 学员与老师共同修改 Monaco 或代码文本框；远端修改触发学员端原有草稿保存流程。
 - 同一浏览器内跟随学员当前平台标签页，包括新打开的平台标签页；不会跟随同账号的另一台设备。
 - 允许进入题目、切换学习页、打开在线编程、切换语言、运行测试及查看相关面板。
+- 老师在共享页面上拖选题面等普通文字，双方立即看到重点框和指向箭头；按回车后，双方同时出现批注气泡，老师的输入光标进入气泡。独立箭头此时改为气泡与重点之间的细连接线，拖动气泡仍关联原选区。文字边写边同步，包括中文输入过程；气泡里的回车用于换行。可同时保留多处重点，每处独立编辑、移动、关闭，新选区不会替换已有标注。
 - 正式提交、保存作品、删除、账号设置、付款等操作仍由学员自己完成。浏览器文件选择框、摄像头权限等系统弹窗不在共享范围。
 - Scratch 的积木区、作品播放器和舞台通过专用显示通道同步，老师可以观看；积木拖动和作品保存仍由学员操作。它保留原来的隔离 iframe，老师端只重放经过清理的页面与图片，不运行学员脚本。
 - 图表 Canvas 以有流量和尺寸上限的画面更新同步。浏览器系统窗口、外部网站的嵌入内容、密码、登录验证及令牌不在显示范围内。
@@ -25,6 +26,8 @@
 老师侧编辑区域跟随学员的字号、行高、自动换行、缩进、行号、缩略图与配色，断开时恢复老师原主题。页面和代码区域均支持双向滚动；老师连续滚动时持续发送目标位置，避免等滚轮停下才同步，也避免旧位置回传造成跳动。
 
 不同分辨率下默认等比例适合老师窗口：老师屏幕较大时自动放大，较小时完整缩小，学员的页面布局和编辑器尺寸保持原样。左下角提供缩小、当前比例、放大与「适合窗口」；点当前比例恢复 100% 并回到画面左上角，方便直接阅读代码行首，也可按 Ctrl / Command 滚轮围绕鼠标位置缩放。放大后通过滚动条或按住空格拖动画面查看边缘；编辑代码时的空格仍正常输入。缩放和移动查看只改变老师侧视图，不滚动或缩放学员页面。普通滚轮仍同步操作学员页面。
+
+重点标注绑定当前共享页面的文字节点和原文范围，滚动、缩放及页面排版变化后按文字的新位置绘制，不使用老师屏幕的绝对坐标。每页最多保留 50 处重点，每条批注最多 1000 字，长批注可在气泡内滚动阅读。批注只是本次共享的临时提示，不修改题目、答案或学员的文字选择；切换页面、学员或结束连接会清除。私密内容、表单和代码编辑器保留原来的交互方式，不把选字操作转换成题面标注。
 
 Canvas 和 Scratch 舞台画面以有上限的频率更新，优先保证学习页面与代码同步，不是高帧率屏幕视频。站内音视频按播放位置跟随；老师侧静音，避免双方已有通话时重复播放声音。
 
@@ -53,7 +56,7 @@ yarn build:ui:production
 ## 验证
 
 ```sh
-node --test test/live_share_backend.spec.js test/live_share_editor.spec.js test/live_share_editor.browser.spec.js test/live_share_mirror.spec.js test/live_share_frames.browser.spec.js test/live_share_scratch_runtime.browser.spec.js test/live_share_sensitive_ui.spec.js test/live_share_controller.spec.js test/live_share_ui.spec.js test/live_share_resolution.browser.spec.js test/live_share_capture_build.spec.js test/scratchpad_editor_sync.spec.js test/teacher_assistant.spec.js test/deploy_prebuilt.spec.js
+node --test test/live_share_backend.spec.js test/live_share_editor.spec.js test/live_share_editor.browser.spec.js test/live_share_mirror.spec.js test/live_share_annotations.browser.spec.js test/live_share_frames.browser.spec.js test/live_share_scratch_runtime.browser.spec.js test/live_share_sensitive_ui.spec.js test/live_share_controller.spec.js test/live_share_ui.spec.js test/live_share_resolution.browser.spec.js test/live_share_capture_build.spec.js test/scratchpad_editor_sync.spec.js test/teacher_assistant.spec.js test/deploy_prebuilt.spec.js
 ```
 
 后端测试使用真实临时 MongoDB 验证独占索引、并发、授权、设备和页面隔离；浏览器测试覆盖真实 Monaco 并发编辑、跨系统换行、中文输入、编辑器显示设置、持续滚动、rrweb 镜像、重连、切换学员及老师原页面恢复。另有延迟加载回归验证旧代码不会覆盖新编辑。UI 联调使用真实 WebSocket 和受控测试页面，不连接线上学员。
