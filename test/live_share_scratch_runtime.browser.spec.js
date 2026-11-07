@@ -102,6 +102,8 @@ test('the prepared Scratch runtime renders its real default project through the 
             if (!stage) return false;
             const icon = [...document.querySelectorAll('img')].find((node) => node.src.startsWith('data:image/svg+xml') && node.getBoundingClientRect().width > 10);
             if (icon) icon.dataset.testRealIcon = 'true';
+            const title = [...document.querySelectorAll('input')].find(input => input.value === '真实课堂作品');
+            if (title) title.dataset.testRealTitle = 'true';
             stage.dataset.testRealStage = 'true'; return { width: stage.width, height: stage.height, draw: typeof renderer?.draw, icon: !!icon };
         });
         assert(realStage, 'Scratch has initialized its real stage renderer');
@@ -113,7 +115,7 @@ test('the prepared Scratch runtime renders its real default project through the 
         await viewer.evaluate(() => {
             const container = document.getElementById('viewer');
             window.viewerMirror = FrameAdapters.attachViewerMirror({ pageId: 'runtime-page', container, sendCommand: () => {} });
-            window.viewerFrames = FrameAdapters.attachViewerFrames({ pageId: 'runtime-page', container, getNodeRect: (id) => viewerMirror.getFrameRect(id) });
+            window.commands = []; window.viewerFrames = FrameAdapters.attachViewerFrames({ pageId: 'runtime-page', container, getNodeRect: (id) => viewerMirror.getFrameRect(id), sendCommand: (command) => commands.push(command) });
             window.receive = (data) => (data.type === 'frame' || data.type === 'frame-remove' ? viewerFrames : viewerMirror).receive(data);
         });
         const limiter = new protocolModule.exports.ShareRateLimit();
@@ -129,10 +131,13 @@ test('the prepared Scratch runtime renders its real default project through the 
                     packets.push(data);
                 }
                 await viewer.evaluate((batch) => batch.forEach(receive), batch);
+                const commands = await viewer.evaluate(() => window.commands.splice(0));
+                for (const command of commands) protocolModule.exports.validateRelayData('teacher', 'command', command, 'runtime-page');
+                await source.evaluate((commands) => commands.forEach((command) => sourceFrames.receiveCommand(command)), commands);
             } catch (error) { pumpError = error; } finally { busy = false; }
         }, 80);
         await source.evaluate(() => {
-            window.sourceFrames = FrameAdapters.attachSourceFrames({ pageId: 'runtime-page', send: (data) => outbox.push(data) });
+            window.acks = []; window.sourceFrames = FrameAdapters.attachSourceFrames({ pageId: 'runtime-page', send: (data) => outbox.push(data), sendAck: (ack) => acks.push(ack) });
             window.sourceMirror = FrameAdapters.attachSourceMirror({ pageId: 'runtime-page', send: (data) => outbox.push(data) });
         });
         const replay = viewer.frameLocator('[data-live-share-frame-viewer] iframe');
@@ -164,6 +169,58 @@ test('the prepared Scratch runtime renders its real default project through the 
             'redrawing the existing stage must not edit or run the learner project');
         assert.deepEqual(await source.evaluate(() => projectEvents), projectEventsBefore,
             'capture never emits project-dirty or run-state events');
+        const titleField = replay.locator('[data-test-real-title]');
+        await titleField.click(); await titleField.fill('老师和学员一起创作'); await titleField.press('Enter');
+        await child.waitForFunction(() => document.querySelector('[data-test-real-title]')?.value === '老师和学员一起创作');
+        // Exercise the actual inert teacher replay, never source-side test clicks.
+        await replay.getByRole('tab', { name: '造型', exact: true }).click();
+        await child.waitForFunction(() => [...document.querySelectorAll('[role=tab]')].some(node => node.textContent === '造型' && node.getAttribute('aria-selected') === 'true'));
+        await replay.getByRole('tab', { name: '造型', exact: true }).and(replay.locator('[aria-selected=true]')).waitFor();
+        await replay.getByRole('tab', { name: '代码', exact: true }).click();
+        await child.waitForFunction(() => [...document.querySelectorAll('[role=tab]')].some(node => node.textContent === '代码' && node.getAttribute('aria-selected') === 'true'));
+        await replay.getByRole('tab', { name: '代码', exact: true }).and(replay.locator('[aria-selected=true]')).waitFor();
+        const flyoutBefore = await child.evaluate(() => ScratchBlocks.getMainWorkspace().getFlyout().getWorkspace().scrollY);
+        await replay.locator('.blocklyFlyout').hover({ position: { x: 160, y: 210 } });
+        await viewer.mouse.wheel(0, 270);
+        await child.waitForFunction((before) => Math.abs(ScratchBlocks.getMainWorkspace().getFlyout().getWorkspace().scrollY - before) > 20, flyoutBefore);
+        await viewer.mouse.wheel(0, -1200);
+        await child.waitForFunction((before) => Math.abs(ScratchBlocks.getMainWorkspace().getFlyout().getWorkspace().scrollY - before) < 5, flyoutBefore);
+        await replay.locator('.blocklyFlyout [data-id="motion_movesteps"]').waitFor({ state: 'visible' });
+        await viewer.waitForTimeout(300);
+        const block = await replay.locator('.blocklyFlyout [data-id="motion_movesteps"]').boundingBox();
+        const workspace = await replay.locator('.blocklySvg').boundingBox();
+        const blockCount = await child.evaluate(() => ScratchBlocks.getMainWorkspace().getTopBlocks().length);
+        await viewer.mouse.move(block.x + 40, block.y + 20); await viewer.mouse.down();
+        await viewer.mouse.move(workspace.x + workspace.width * .6, block.y + 90, { steps: 16 });
+        await viewer.mouse.up();
+        await child.waitForFunction((before) => ScratchBlocks.getMainWorkspace().getTopBlocks().length > before, blockCount);
+        const scrollBefore = await child.evaluate(() => ({ x: ScratchBlocks.getMainWorkspace().scrollX, y: ScratchBlocks.getMainWorkspace().scrollY }));
+        await replay.locator('.blocklySvg').hover({ position: { x: 500, y: 350 } });
+        await viewer.mouse.wheel(0, 220);
+        await child.waitForFunction((before) => Math.abs(ScratchBlocks.getMainWorkspace().scrollY - before.y) > 20, scrollBefore);
+        // Set up a small deterministic learner project, then start/stop it only
+        // through the teacher's real green-flag and stop buttons.
+        await child.evaluate(() => {
+            const vm = ReduxStore.getState().scratchGui.vm; const blocks = vm.editingTarget.blocks;
+            blocks.createBlock({ id: 'remote-flag', opcode: 'event_whenflagclicked', next: 'remote-loop', parent: null, topLevel: true, shadow: false, inputs: {}, fields: {}, x: 120, y: 120 });
+            blocks.createBlock({ id: 'remote-loop', opcode: 'control_forever', next: null, parent: 'remote-flag', topLevel: false, shadow: false, inputs: { SUBSTACK: { name: 'SUBSTACK', block: 'remote-move', shadow: null } }, fields: {} });
+            blocks.createBlock({ id: 'remote-move', opcode: 'motion_movesteps', next: null, parent: 'remote-loop', topLevel: false, shadow: false, inputs: { STEPS: { name: 'STEPS', block: 'remote-num', shadow: 'remote-num' } }, fields: {} });
+            blocks.createBlock({ id: 'remote-num', opcode: 'math_number', next: null, parent: 'remote-move', topLevel: false, shadow: true, inputs: {}, fields: { NUM: { name: 'NUM', value: '5' } } });
+            vm.emitWorkspaceUpdate();
+        });
+        const xBefore = await child.evaluate(() => ReduxStore.getState().scratchGui.vm.editingTarget.x);
+        const rasterBeforeRun = await replay.locator('[data-test-real-stage]').evaluate(node => node.style.backgroundImage);
+        await replay.locator('img[title="运行"]').click();
+        await child.waitForFunction((before) => Math.abs(ReduxStore.getState().scratchGui.vm.editingTarget.x - before) > 50, xBefore);
+        await viewer.waitForFunction((before) => {
+            const node = document.querySelector('[data-live-share-frame-viewer] iframe')?.contentDocument?.querySelector('[data-test-real-stage]');
+            return node?.style.backgroundImage.includes('data:image/') && node.style.backgroundImage !== before;
+        }, rasterBeforeRun);
+        assert(await child.evaluate(() => ReduxStore.getState().scratchGui.vm.runtime.threads.length > 0), 'the real project is still running');
+        await replay.locator('img[title="停止"]').click();
+        await child.waitForFunction(() => ReduxStore.getState().scratchGui.vm.runtime.threads.length === 0);
+        await source.waitForFunction(() => acks.length > 10);
+        assert.equal(await source.evaluate(() => acks.some(ack => !ack.ok)), false, 'real Scratch gestures are accepted by the current source');
         assert.equal(await replay.locator('script').count(), 0);
         assert.equal(await viewer.locator('[data-live-share-frame-viewer] iframe').getAttribute('sandbox'), 'allow-same-origin');
         assert.equal(await viewer.locator('#teacher-draft').textContent(), 'teacher own page');

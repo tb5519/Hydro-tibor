@@ -1,6 +1,7 @@
 import { record, Replayer } from './vendor';
 import { attachAnnotationSurface, ShareAnnotation } from './annotation';
 import { sharedSash, resizeSharedSash, SHARED_SPLIT_SELECTOR } from './splitter';
+import { attachSourceScratchControl, attachViewerScratchControl, scratchTargetFingerprint, ScratchInput } from './scratch_control';
 
 /** The replay is a display surface. Its scripts, forms and links never run. */
 const BLOCK = [
@@ -28,7 +29,8 @@ export interface MirrorCommand {
   id: string;
   pageId: string;
   nodeId: number;
-  action: 'click' | 'scroll' | 'select' | 'search' | 'annotate' | 'resize';
+  action: 'click' | 'scroll' | 'select' | 'search' | 'annotate' | 'resize' | 'scratch';
+  input?: ScratchInput;
   annotationId?: string;
   annotation?: ShareAnnotation | null;
   target?: string;
@@ -41,6 +43,7 @@ interface SourceOptions {
   pageId: string;
   inlineLocalImages?: boolean;
   showNonSensitiveInputs?: boolean;
+  scratchControls?: boolean;
   beforeRasterCapture?: (canvas: HTMLCanvasElement) => void;
   send: (data: any) => void | boolean;
   sendAck?: (data: MirrorAck) => void;
@@ -50,6 +53,7 @@ interface ViewerOptions {
   pageId: string;
   container: HTMLElement;
   sendCommand: (data: MirrorCommand) => void;
+  scratchControls?: boolean;
   onViewport?: (size: { width: number; height: number }) => void;
   /** Local viewing only. Coordinates/deltas are in the teacher viewport's CSS pixels. */
   onViewZoom?: (gesture: { delta: number; clientX: number; clientY: number }) => void;
@@ -83,8 +87,36 @@ export function safeStudyUrl(raw: string, base: string): string | null {
 function closestElement(node: any): Element | null {
   return node?.nodeType === 1 ? node : node?.parentElement || null;
 }
+const STUDY_UI_CONTROLS = [
+  '[name="problem-sidebar__open-scratchpad"]', '[name="problem-sidebar__quit-scratchpad"]',
+  '#scratchpad .scratchpad__toolbar__pretest',
+  '#scratchpad [data-control-art="pretestTab"]', '#scratchpad [data-control-art="recordsTab"]',
+  '#scratchpad .scratchpad__tablist > button', '#scratchpad .scratchpad__tabicon-problem',
+  '.domain-switcher__trigger', '[data-training-description-toggle]', 'details > summary',
+  '[name="show_tags"]', '[name="problem-sidebar__show-category"]',
+  '[data-mistake-prompt-open]', '[data-mistake-prompt-close]', '.contest-practice-result__continue',
+  '.problem-record-picker__close', '.problem-record-picker__filters button',
+  '.problem-record-picker__retry', '.problem-record-picker__more',
+  '.widget--category-filter__tag', '.search-tag__item', '[data-category-container] [data-category]', '.toggle-tag',
+  '[data-student-unac-filter]', '[data-student-unac-clear]',
+  ...['view', 'tag-review', 'clear-tag', 'more', 'session', 'retry-session'].map((action) => `[data-learning-action="${action}"]`),
+].join(',');
+const STUDY_CHOICE = [
+  '[data-daily-quiz-form] input[name="daily-quiz-answer"]',
+  '.sc-quiz__card input[name="scratch-quiz-answer"]',
+].join(',');
+function allowedStudyChoice(element: Element): element is HTMLInputElement {
+  return element.matches(STUDY_CHOICE) && ['radio', 'checkbox'].includes((element as HTMLInputElement).type);
+}
 function interactive(node: any): HTMLElement | null {
-  return closestElement(node)?.closest<HTMLElement>('a,button,input,select,summary,[role="tab"],[data-training-description-toggle]') || null;
+  const element = closestElement(node)?.closest<HTMLElement>(`a,button,input,select,summary,label,[role="tab"],${STUDY_UI_CONTROLS}`);
+  if (element?.tagName === 'LABEL') {
+    // Quiz choices put the visible text outside the radio/checkbox. Resolve
+    // that label to its actual control, including when its icon was clicked.
+    const choice = (element as HTMLLabelElement).control;
+    return choice && element.contains(choice) && allowedStudyChoice(choice) ? choice : null;
+  }
+  return element || null;
 }
 function blocked(element: Element | null): boolean {
   return !element || !!element.closest(BLOCK) || !!element.closest('[inert]');
@@ -183,14 +215,12 @@ function allowedSearch(element: Element): element is HTMLInputElement {
 }
 function allowedButton(element: Element) {
   if (element.tagName === 'BUTTON' && (element as HTMLButtonElement).type !== 'button') return false;
+  // These existing links intentionally open a read-only record picker. Native
+  // source click preserves that UI; location.assign would bypass its handler.
+  if (element.matches('a[data-problem-record-picker]')) return !element.hasAttribute('download')
+    && !!safeStudyUrl((element as HTMLAnchorElement).href, location.href);
   if (element.tagName === 'A' && !['javascript:;', '#'].includes(element.getAttribute('href') || '')) return false;
-  return element.matches([
-    '[name="problem-sidebar__open-scratchpad"]', '[name="problem-sidebar__quit-scratchpad"]',
-    '#scratchpad .scratchpad__toolbar__pretest',
-    '#scratchpad [data-control-art="pretestTab"]', '#scratchpad [data-control-art="recordsTab"]',
-    '#scratchpad .scratchpad__tabicon-problem',
-    '[data-training-description-toggle]', 'details > summary',
-  ].join(','));
+  return element.matches(STUDY_UI_CONTROLS);
 }
 function targetFingerprint(element: Element) {
   // Stable across snapshot rebuilding, but changes when a recycled DOM node points to another item.
@@ -198,7 +228,10 @@ function targetFingerprint(element: Element) {
   const rawHref = element.getAttribute('href') || '';
   const href = element.tagName === 'A' && rawHref && !['javascript:;', '#'].includes(rawHref)
     ? (element as HTMLAnchorElement).href : '';
-  const text = [element.tagName, element.id, element.getAttribute('name') || '',
+  const text = [element.tagName, element.id, element.getAttribute('name') || '', element.getAttribute('type') || '',
+    element.getAttribute('aria-describedby') || '',
+    ...['data-learning-action', 'data-learning-session', 'data-learning-view', 'data-category', 'data-student-unac-filter', 'data-problem-record-picker']
+      .map((key) => element.getAttribute(key) || ''),
     href, element.textContent?.trim().slice(0, 160) || ''].join('|');
   let hash = 2166136261;
   for (let at = 0; at < text.length; at++) hash = Math.imul(hash ^ text.charCodeAt(at), 16777619);
@@ -434,9 +467,12 @@ export function attachSourceMirror(options: SourceOptions) {
   let canvasBudget = CANVAS_BYTES_PER_SECOND;
   let canvasBudgetAt = performance.now();
   let canvasImages = new WeakMap<Element, string>();
+  let canvasSentAt = new WeakMap<Element, number>();
+  let initialImageRefresh = new WeakSet<Element>();
   let mediaStates = new WeakMap<Element, string>();
   let canvasCopy: HTMLCanvasElement | null = null;
   const commands = new Map<string, MirrorAck>();
+  const scratchControl = options.scratchControls ? attachSourceScratchControl() : null;
   const editorPlaceholders = new Map<number, string>();
   const newlyBlockedEditors = new WeakSet<Element>();
   const editorGeometry = (node: Element) => {
@@ -543,6 +579,8 @@ export function attachSourceMirror(options: SourceOptions) {
     if (event.type === 2) {
       hasSnapshot = true;
       canvasImages = new WeakMap();
+      canvasSentAt = new WeakMap();
+      initialImageRefresh = new WeakSet();
       mediaStates = new WeakMap();
       scheduleCanvasCapture();
     } else if (event.type === 3 && event.data.source === 0) {
@@ -681,10 +719,17 @@ export function attachSourceMirror(options: SourceOptions) {
           if (raster.length <= CANVAS_FRAME_BYTES) break;
           scale *= 0.6;
         }
-        if (raster.length > CANVAS_FRAME_BYTES || raster.length > canvasBudget || canvasImages.get(node) === raster
+        // Periodically refresh a stationary stage within the existing budget.
+        // A first frame can arrive while the replay is still rebuilding.
+        const unchanged = canvasImages.get(node) === raster;
+        if (raster.length > CANVAS_FRAME_BYTES || raster.length > canvasBudget
+          || (unchanged && ((isImage && !initialImageRefresh.has(node)) || now - (canvasSentAt.get(node) || 0) < 2000))
           || !/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(raster)) continue;
         canvasBudget -= raster.length;
+        // Inline icons get one initialization retry, not a periodic stream.
+        if (isImage) { if (unchanged) initialImageRefresh.delete(node); else initialImageRefresh.add(node); }
         canvasImages.set(node, raster);
+        canvasSentAt.set(node, now);
         rendered.push({ node, raster });
         attributes.push({ id, attributes: isImage ? { src: raster } : { style: { 'background-image': `url("${raster}")`,
           'background-size': '100% 100%', 'background-repeat': 'no-repeat' } } });
@@ -767,6 +812,14 @@ export function attachSourceMirror(options: SourceOptions) {
     if (document.hidden) return deny('学员已切换页面，请等待同步');
     if (!Number.isSafeInteger(command.nodeId) || command.nodeId <= 0) return deny('目标已变化');
     const raw = sourceMirror()?.getNode(command.nodeId);
+    if (command.action === 'scratch') {
+      // Gesture continuation remains bound to its verified initial target even
+      // when Blockly replaces a palette block during a drag.
+      const continuing = command.input?.type === 'pointer' && command.input.phase !== 'down';
+      if (!scratchControl || (!continuing && (!closestElement(raw) || command.target !== scratchTargetFingerprint(closestElement(raw))))
+        || !scratchControl.receive(raw, command.input)) return deny('Scratch 操作目标已变化，请重试');
+      return acknowledge({ id: command.id, pageId: options.pageId, ok: true });
+    }
     if (command.action === 'annotate') {
       if (raw !== document || typeof command.annotationId !== 'string' || !/^[\w-]{8,96}$/.test(command.annotationId)) return deny('标注目标已变化');
       const entry = annotations.get(command.annotationId);
@@ -820,7 +873,7 @@ export function attachSourceMirror(options: SourceOptions) {
       return ack;
     }
     if (command.action !== 'click') return deny('操作无效');
-    if (allowedButton(element)) {
+    if (allowedButton(element) || allowedStudyChoice(element)) {
       // Mark before invoking handlers: re-entrant or retried commands cannot run the action twice.
       const ack = acknowledge({ id: command.id, pageId: options.pageId, ok: true });
       element.click();
@@ -843,6 +896,7 @@ export function attachSourceMirror(options: SourceOptions) {
       if (disposed) return;
       if (connected === value) { if (value && stop) (record as any).takeFullSnapshot(true); return; }
       connected = value;
+      scratchControl?.reset();
       clearAnnotations();
       stopScrolling();
       cancelAnimationFrame(canvasFrame); canvasFrame = 0;
@@ -854,6 +908,7 @@ export function attachSourceMirror(options: SourceOptions) {
     dispose() {
       disposed = true; generation++; stop?.(); stop = undefined; queue = []; queuedBytes = 0; commands.clear(); stopScrolling();
       clearAnnotations(); annotationRoot.remove();
+      scratchControl?.dispose();
       clearInterval(editorGeometryTimer); editorPlaceholders.clear();
       clearInterval(canvasTimer); clearInterval(mediaTimer); cancelAnimationFrame(canvasFrame); canvasCopy = null;
       window.removeEventListener('wheel', localScrollInput, true);
@@ -975,6 +1030,8 @@ export function attachViewerMirror(options: ViewerOptions) {
     // must not add the textarea's padding and border to those dimensions again.
     style.textContent = '[data-live-share-editor]{box-sizing:border-box!important} [data-live-share-unavailable]::after{content:"此区域暂不支持实时共享";display:block;padding:32px;color:#64748b;font:14px system-ui;text-align:center} [data-teacher-assistant],[data-live-share-ui]{visibility:hidden!important} .live-share-annotation-source,.live-share-code-focus-layer{display:none!important}';
     doc.head?.appendChild(style);
+    const cleanupScratch = options.scratchControls
+      ? attachViewerScratchControl({ document: doc, send: (node, input) => command(node, 'scratch', { input, target: scratchTargetFingerprint(node) }) }) : () => {};
     let holdingSpace = false;
     let dragging: { id: number; x: number; y: number };
     let resizing: { id: number; sash: HTMLElement; position: number; dirty: boolean } | null = null;
@@ -1228,6 +1285,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     doc.addEventListener('volumechange', silenceMedia, true);
     doc.addEventListener('wheel', wheel, { capture: true, passive: false });
     cleanupDocument = () => {
+      cleanupScratch();
       resetScrolls();
       finishResize();
       resetPan();

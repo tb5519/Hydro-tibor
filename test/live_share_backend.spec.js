@@ -140,6 +140,38 @@ describe('live share protocol boundaries', () => {
         assert.throws(() => protocol.authorizeRelay(session, 2, 'teacher-tab', 'old-page', 'command'), errorCode('STALE_PAGE'));
         assert.throws(() => protocol.authorizeRelay({ ...session, expiresAt: new Date(0) }, 2, 'teacher-tab', 'current-page', 'editor'), errorCode('FORBIDDEN'));
     });
+    it('validates bounded temporary ink and binds Scratch commands to the current child frame', () => {
+        const base = { id: 'command-testing', pageId: 'page-testing', nodeId: 1 };
+        const drawing = { strokeId: 'stroke-testing', phase: 'start', sequence: 0, points: [[30, 50], [60, 80]] };
+        const ink = { ...base, action: 'draw', drawing };
+        protocol.validateRelayData('teacher', 'command', ink, base.pageId);
+        protocol.validateRelayData('teacher', 'command', { ...ink, drawing: { ...drawing, phase: 'end', sequence: 1, points: [] } }, base.pageId);
+        for (const patch of [{ points: [[NaN, 1]] }, { points: [[10001, 0]] }, { points: Array(33).fill([1, 1]) },
+            { points: [[1, 2, 3]] }, { points: [] }, { sequence: 1 }, { sequence: 4097 }, { phase: 'eval' },
+            { strokeId: '../invalid' }, { html: '<script>run()</script>' }]) {
+            assert.throws(() => protocol.validateRelayData('teacher', 'command', { ...ink, drawing: { ...drawing, ...patch } }, base.pageId), errorCode('INVALID_RELAY'));
+        }
+        assert.throws(() => protocol.validateRelayData('student', 'command', ink, base.pageId), errorCode('INVALID_RELAY'));
+        assert.throws(() => protocol.validateRelayData('teacher', 'command', { ...ink, target: 'other-node' }, base.pageId), errorCode('INVALID_RELAY'));
+        const child = { id: 'child-command', pageId: 'frame-testing', nodeId: 12, action: 'scratch', target: 'node-fingerprint',
+            input: { type: 'pointer', phase: 'down', gesture: 'gesture-testing', x: 100, y: 200 } };
+        const frame = { ...base, action: 'frame', frameId: 'frame-testing', command: child };
+        for (const input of [child.input, { ...child.input, phase: 'move' }, { ...child.input, phase: 'up' },
+            { type: 'wheel', x: 100, y: 200, dx: 0, dy: 300 }, { type: 'text', value: '100 步' }, { type: 'key', key: 'Enter' }]) {
+            protocol.validateRelayData('teacher', 'command', { ...frame, command: { ...child, input } }, base.pageId);
+        }
+        for (const patch of [{ pageId: 'other-frame' }, { action: 'frame', command: child }, { action: 'click' }, { nodeId: 0 },
+            { target: '' }, { script: 'run()' }, { input: { ...child.input, button: 2 } }, { input: { ...child.input, phase: 'click' } },
+            { input: { ...child.input, x: -1 } }, { input: { ...child.input, y: 16385 } },
+            { input: { type: 'wheel', x: 1, y: 1, dx: 3001, dy: 0 } }, { input: { type: 'text', value: 'x'.repeat(1001) } },
+            { input: { type: 'text', value: 'a', key: 'Enter' } }, { input: { type: 'key', key: 'F12' } }, { input: { type: 'eval' } }]) {
+            assert.throws(() => protocol.validateRelayData('teacher', 'command', { ...frame, command: { ...child, ...patch } }, base.pageId), errorCode('INVALID_RELAY'));
+        }
+        assert.throws(() => protocol.validateRelayData('student', 'command', frame, base.pageId), errorCode('INVALID_RELAY'));
+        assert.throws(() => protocol.validateRelayData('teacher', 'command', frame, 'old-page'), errorCode('INVALID_RELAY'));
+        assert.throws(() => protocol.validateRelayData('teacher', 'command', { ...frame, frameId: 'other-frame' }, base.pageId), errorCode('INVALID_RELAY'));
+        assert.throws(() => protocol.validateRelayData('teacher', 'command', { ...frame, action: 'scratch' }, base.pageId), errorCode('INVALID_RELAY'));
+    });
     it('rejects destructive commands, editor initialization by teachers and excessive data', () => {
         const command = { id: 'command-testing', pageId: 'page-testing', nodeId: 12, action: 'click' };
         protocol.validateRelayData('teacher', 'command', command, 'page-testing');

@@ -108,10 +108,47 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
     const short = (value: unknown, limit = 96) => typeof value === 'string' && value.length <= limit;
     if (kind === 'command') {
         if (!shareId(data.id) || data.pageId !== pageId || !Number.isSafeInteger(data.nodeId) || data.nodeId < 1
-            || !['click', 'scroll', 'select', 'search', 'annotate', 'resize'].includes(data.action)
+            || !['click', 'scroll', 'select', 'search', 'annotate', 'resize', 'frame', 'draw'].includes(data.action)
             || (data.target !== undefined && !short(data.target, 32))
             || (data.value !== undefined && !short(data.value, 4096))
             || (data.x !== undefined && !finite(data.x)) || (data.y !== undefined && !finite(data.y))) invalid();
+        if (data.action === 'draw') {
+            if (role !== 'teacher' || data.nodeId !== 1
+                || Object.keys(data).some((key) => !['id', 'pageId', 'nodeId', 'action', 'drawing'].includes(key))) invalid();
+            const stroke = data.drawing;
+            if (!stroke || typeof stroke !== 'object' || Array.isArray(stroke)
+                || Object.keys(stroke).some((key) => !['strokeId', 'phase', 'sequence', 'points'].includes(key))
+                || !shareId(stroke.strokeId) || !['start', 'move', 'end'].includes(stroke.phase)
+                || !Number.isSafeInteger(stroke.sequence) || stroke.sequence < 0 || stroke.sequence > 4096
+                || (stroke.phase === 'start' && stroke.sequence !== 0)
+                || !Array.isArray(stroke.points) || stroke.points.length > 32
+                || (stroke.phase !== 'end' && !stroke.points.length)
+                || stroke.points.some((point) => !Array.isArray(point) || point.length !== 2
+                    || point.some((value) => !finite(value) || value < 0 || value > 10000))) invalid();
+        }
+        if (data.action === 'frame') {
+            if (role !== 'teacher' || data.nodeId !== 1 || !shareId(data.frameId)
+                || Object.keys(data).some((key) => !['id', 'pageId', 'nodeId', 'action', 'frameId', 'command'].includes(key))) invalid();
+            const command = data.command;
+            if (!command || typeof command !== 'object' || Array.isArray(command)
+                || Object.keys(command).some((key) => !['id', 'pageId', 'nodeId', 'action', 'target', 'input'].includes(key))
+                || !shareId(command.id) || command.pageId !== data.frameId || command.action !== 'scratch'
+                || !Number.isSafeInteger(command.nodeId) || command.nodeId < 1
+                || !short(command.target, 32) || !command.target) invalid();
+            const input = command.input;
+            if (!input || typeof input !== 'object' || Array.isArray(input)) invalid();
+            const fields = {
+                pointer: ['type', 'phase', 'gesture', 'x', 'y'], wheel: ['type', 'x', 'y', 'dx', 'dy'],
+                text: ['type', 'value'], key: ['type', 'key'],
+            };
+            if (!Object.hasOwn(fields, input.type) || Object.keys(input).some((key) => !fields[input.type].includes(key))) invalid();
+            if (['pointer', 'wheel'].includes(input.type)
+                && ![input.x, input.y].every((value) => finite(value) && value >= 0 && value <= 16384)) invalid();
+            if (input.type === 'pointer' && (!['down', 'move', 'up', 'cancel'].includes(input.phase) || !shareId(input.gesture))) invalid();
+            if (input.type === 'wheel' && ![input.dx, input.dy].every((value) => finite(value) && Math.abs(value) <= 3000)) invalid();
+            if (input.type === 'text' && !short(input.value, 1000)) invalid();
+            if (input.type === 'key' && !['Enter', 'Escape', 'Tab', 'Backspace', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(input.key)) invalid();
+        }
         if (data.action === 'resize' && (role !== 'teacher' || !short(data.target, 32) || !data.target
             || !finite(data.x) || data.x < 0 || data.x > 1
             || Object.keys(data).some((key) => !['id', 'pageId', 'nodeId', 'action', 'target', 'x'].includes(key)))) invalid();

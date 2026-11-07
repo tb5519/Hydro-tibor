@@ -311,3 +311,82 @@ it('follows student navigation through contest and personal pages, foreground ta
         assert.deepEqual(errors, []);
     } finally { await Promise.all(contexts.map((context) => context.close())); }
 });
+
+it('keeps local teacher drawing private, shares identical strokes across resolutions, and clears them when sharing ends', { timeout: 60000 }, async () => {
+    const contexts = await Promise.all([
+        browser.newContext({ viewport: { width: 1400, height: 1000 }, deviceScaleFactor: 2 }),
+        browser.newContext({ viewport: { width: 1000, height: 760 }, deviceScaleFactor: 1 }),
+        browser.newContext({ viewport: { width: 1100, height: 800 }, deviceScaleFactor: 1 }),
+    ]);
+    const [teacher, student, other] = await Promise.all(contexts.map((context) => context.newPage()));
+    const errors = [];
+    [teacher, student, other].forEach((page) => page.on('pageerror', (error) => errors.push(error.message)));
+    const drawingPackets = () => sent.filter((entry) => entry.uid === 2 && entry.message.kind === 'command'
+        && entry.message.data?.action === 'draw');
+    const rightStroke = async (locator) => {
+        const box = await locator.boundingBox();
+        assert(box && box.width > 100 && box.height > 15);
+        await teacher.mouse.move(box.x + 20, box.y + box.height / 2);
+        await teacher.mouse.down({ button: 'right' });
+        await teacher.mouse.move(box.x + 90, box.y + box.height / 2 + 6, { steps: 8 });
+        await teacher.mouse.move(box.x + 150, box.y + box.height / 2 - 4, { steps: 7 });
+        await teacher.mouse.up({ button: 'right' });
+    };
+    const sourceSelector = '.live-share-drawing-root [data-share-drawing-stroke]';
+    const viewerSelector = '.live-share-stage [data-share-drawing-stroke]';
+    const identicalStrokes = async (count) => {
+        const expected = await teacher.locator(`${viewerSelector} path:last-child`).evaluateAll((nodes) => nodes.map((node) => node.getAttribute('d')));
+        assert.equal(expected.length, count);
+        await student.waitForFunction(({ selector, paths }) => JSON.stringify([...document.querySelectorAll(`${selector} path:last-child`)]
+            .map((node) => node.getAttribute('d'))) === JSON.stringify(paths), { selector: sourceSelector, paths: expected });
+        assert.equal(await other.locator('[data-share-drawing-stroke]').count(), 0, 'another learner must never receive the marks');
+    };
+    try {
+        await Promise.all([teacher.goto(`${origin}/teacher?uid=2`), student.goto(`${origin}/p/1?uid=41`), other.goto(`${origin}/p/1?uid=42`)]);
+        await teacher.locator('.live-share-drawing-root [data-share-drawing]').waitFor({ state: 'attached' });
+        const initialPackets = drawingPackets().length;
+        await rightStroke(teacher.locator('h1'));
+        assert.equal(await teacher.locator(sourceSelector).count(), 1);
+        assert.equal(drawingPackets().length, initialPackets, 'drawing on the teacher\'s own page stays local');
+        assert.equal(await student.locator('[data-share-drawing-stroke]').count(), 0);
+
+        await teacher.locator('[data-assistant-toggle]').click();
+        await teacher.locator('[data-live-share-open]').click();
+        await teacher.getByRole('button', { name: /学员41/ }).click();
+        await teacher.locator('.live-share-editors textarea').waitFor();
+        await teacher.locator('.live-share-stage [data-share-drawing]').waitFor({ state: 'attached' });
+        await student.locator('.live-share-drawing-root [data-share-drawing]').waitFor({ state: 'attached' });
+        assert.equal(await teacher.locator(sourceSelector).count(), 0, 'the teacher\'s local pen is cleared and paused during sharing');
+        const rootBounds = await student.locator('.live-share-drawing-root').boundingBox();
+        assert.deepEqual(rootBounds, { x: 0, y: 0, width: 1000, height: 760 }, 'the source overlay uses the same viewport coordinates as embedded Scratch');
+        await teacher.frameLocator('.live-share-mirror iframe').locator('h1').waitFor();
+        await rightStroke(teacher.frameLocator('.live-share-mirror iframe').locator('h1'));
+        await identicalStrokes(1);
+        await rightStroke(teacher.locator('.live-share-editors textarea'));
+        await identicalStrokes(2);
+        assert.equal(await student.locator('#code').inputValue(), 'print("student")', 'the right-button pen must not edit code');
+        assert.equal(await teacher.locator('.live-share-editors textarea').inputValue(), 'print("student")');
+        const completed = drawingPackets().slice(initialPackets);
+        assert.equal(completed.filter((entry) => entry.message.data.drawing.phase === 'start').length, 2);
+        assert.equal(completed.filter((entry) => entry.message.data.drawing.phase === 'end').length, 2);
+        const staleStroke = completed.find((entry) => entry.message.data.drawing.phase === 'start').message;
+
+        await teacher.locator('[data-assistant-toggle]').click();
+        await teacher.getByRole('button', { name: '断开共享', exact: true }).click();
+        await teacher.waitForFunction(() => !document.querySelector('.live-share-overlay'));
+        await student.waitForFunction(() => !document.querySelector('.live-share-drawing-root'));
+        assert.equal(await teacher.locator(viewerSelector).count(), 0);
+        const stoppedPackets = drawingPackets().length;
+        await rightStroke(teacher.locator('#code'));
+        assert.equal(await teacher.locator(sourceSelector).count(), 1, 'the teacher\'s local pen resumes after disconnect');
+        assert.equal(drawingPackets().length, stoppedPackets);
+
+        // A packet already in flight cannot recreate a drawing after the room ends.
+        const studentPeer = [...peers.values()].find((peer) => peer.uid === 41);
+        send(studentPeer, staleStroke);
+        await student.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)));
+        assert.equal(await student.locator('[data-share-drawing-stroke]').count(), 0);
+        assert.equal(await other.locator('[data-share-drawing-stroke]').count(), 0);
+        assert.deepEqual(errors, []);
+    } finally { await Promise.all(contexts.map((context) => context.close())); }
+});

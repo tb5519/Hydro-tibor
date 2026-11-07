@@ -15,6 +15,7 @@ let browser;
 let script;
 let splitterScript;
 let splitterCss;
+let studyChoicesScript;
 before(async () => {
     assert(executablePath, 'Chromium is required for live sharing interaction tests');
     const result = await esbuild.build({ entryPoints: [path.join(root, 'packages/ui-default/components/live_share/mirror.ts')],
@@ -50,12 +51,41 @@ before(async () => {
         window.disposeSplit = () => { stop(); app.unmount(); };
     ` }, bundle: true, format: 'iife', write: false, define: { 'process.env.NODE_ENV': '"production"' } })).outputFiles[0].text;
     splitterCss = fs.readFileSync(require.resolve('allotment/dist/style.css'), 'utf8');
+    studyChoicesScript = (await esbuild.build({ stdin: { resolveDir: root, contents: `
+        import React, { useState } from 'react';
+        import { createRoot } from 'react-dom/client';
+        const h = React.createElement;
+        window.studyChanges = [];
+        function Choices() {
+            const [question, setQuestion] = useState('question-1');
+            const [locked, setLocked] = useState(false);
+            const [radio, setRadio] = useState('');
+            const [checked, setChecked] = useState(false);
+            window.setStudyQuestion = setQuestion;
+            window.lockStudyChoices = setLocked;
+            return h('div', null,
+                h('form', { 'data-daily-quiz-form':true }, h('fieldset', { disabled:locked },
+                    ['A', 'B'].map(value => h('label', { key:value, 'data-daily-quiz-option':value },
+                        h('input', { type:'radio', name:'daily-quiz-answer', value, checked:radio===value,
+                            'aria-describedby':'daily-quiz-option-'+question+'-'+value,
+                            onChange:() => { window.studyChanges.push('daily:'+value); setRadio(value); } }),
+                        h('span', { id:'daily-quiz-option-'+question+'-'+value }, '答案 '+value)))),
+                    h('button', { type:'submit', onClick:e => { e.preventDefault(); window.studyChanges.push('submit'); } }, '提交答案')),
+                h('form', { className:'sc-quiz__card' }, h('fieldset', { disabled:locked },
+                    h('label', null, h('input', { type:'checkbox', name:'scratch-quiz-answer', value:'A', checked,
+                        'aria-describedby':'sc-quiz-option-'+question+'-A',
+                        onChange:() => { window.studyChanges.push('scratch:A'); setChecked(!checked); } }),
+                        h('span', { id:'scratch-choice-label' }, 'Scratch 选项')))),
+                h('input', { id:'unrelated-checkbox', type:'checkbox', onChange:() => window.studyChanges.push('unrelated') }));
+        }
+        createRoot(document.querySelector('#study-choices')).render(h(Choices));
+    ` }, bundle: true, format: 'iife', write: false, define: { 'process.env.NODE_ENV': '"production"' } })).outputFiles[0].text;
     browser = await playwright.chromium.launch({ executablePath, headless: true });
 });
 after(async () => { await browser?.close(); });
 
 async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = false, showNonSensitiveInputs = false, videoData = null,
-    viewGestures = false, teacherDpr = 1, studentDpr = 1, splitPanes = false } = {}) {
+    viewGestures = false, teacherDpr = 1, studentDpr = 1, splitPanes = false, studyChoices = false } = {}) {
     const studentContext = await browser.newContext({ viewport: { width: 1000, height: 700 }, deviceScaleFactor: studentDpr });
     const teacherContext = await browser.newContext({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: teacherDpr });
     const student = await studentContext.newPage();
@@ -80,7 +110,7 @@ async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = fal
             }
             const teacherPage = pathname === '/teacher';
             const body = teacherPage ? '<textarea id="teacher-draft">teacher own code</textarea><main id="mirror" style="position:relative;width:1000px;height:700px"></main>' : `
-                ${editorMarkup}<header>OneByOne</header><h1 id="title">学生正在练习</h1>
+                ${editorMarkup}${studyChoices ? '<div id="study-choices"></div>' : ''}<header>OneByOne</header><h1 id="title">学生正在练习</h1>
                 <a id="next" href="/d/C0001/p/P2">下一道题</a>
                 <a id="profile" href="/user/28">个人主页</a><a id="personal-center" href="/home/profile">个人中心</a>
                 <a id="contest-detail" href="/d/C0001/contest/recent/clarification">比赛详情</a>
@@ -102,6 +132,10 @@ async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = fal
     }
     await teacher.goto('https://sharing.test/teacher');
     await student.goto('https://sharing.test/d/C0001/p/P1');
+    if (studyChoices) {
+        await student.addScriptTag({ content: studyChoicesScript });
+        await student.locator('#scratch-choice-label').waitFor();
+    }
     if (splitPanes) {
         await student.addStyleTag({ content: splitterCss });
         await student.addScriptTag({ content: splitterScript });
@@ -484,6 +518,97 @@ it('executes allowed teacher clicks once, synchronizes language changes, and ref
         await f.teacher.waitForTimeout(120);
         assert.deepEqual(await f.student.evaluate(() => [window.submits, window.saves]), [0, 0]);
         assert(f.acks.some((ack) => !ack.ok && ack.reason.includes('提交')));
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('teacher quiz labels trigger the student React change handlers and refuse locked or recycled questions', async () => {
+    const f = await fixture({ studyChoices: true });
+    try {
+        await f.frame().locator('[data-daily-quiz-option="B"] span').click();
+        await f.student.waitForFunction(() => window.studyChanges.includes('daily:B'));
+        assert.equal(await f.student.locator('[name="daily-quiz-answer"][value="B"]').isChecked(), true);
+        const radioCommand = f.commands.find((entry) => entry.action === 'click');
+        await f.frame().locator('#scratch-choice-label').click();
+        await f.student.waitForFunction(() => window.studyChanges.includes('scratch:A'));
+        assert.equal(await f.student.locator('[name="scratch-quiz-answer"]').isChecked(), true);
+        await f.student.evaluate((command) => window.source.receiveCommand(command), radioCommand);
+        assert.deepEqual(await f.student.evaluate(() => window.studyChanges), ['daily:B', 'scratch:A'], 'retry does not fire a second callback');
+
+        await f.frame().locator('[data-daily-quiz-form] button').click();
+        await f.frame().locator('#unrelated-checkbox').click();
+        await f.teacher.waitForTimeout(100);
+        assert.deepEqual(await f.student.evaluate(() => window.studyChanges), ['daily:B', 'scratch:A'], 'submit and unrelated form inputs stay protected');
+
+        await f.student.evaluate(() => window.lockStudyChoices(true));
+        await f.student.waitForFunction(() => document.querySelector('[name="daily-quiz-answer"]').matches(':disabled'));
+        const locked = await f.student.evaluate((command) => window.source.receiveCommand({ ...command, id:'quiz-locked' }), radioCommand);
+        assert.equal(locked.ok, false, 'the source rejects a click even if the teacher still sees an unlocked choice');
+        await f.student.evaluate(() => {
+            window.previousStudyInput = document.querySelector('[name="daily-quiz-answer"][value="B"]');
+            window.lockStudyChoices(false);
+            window.setStudyQuestion('question-2');
+        });
+        await f.student.locator('#daily-quiz-option-question-2-B').waitFor();
+        assert.equal(await f.student.evaluate(() => window.previousStudyInput === document.querySelector('[name="daily-quiz-answer"][value="B"]')), true,
+            'React reused the old input; only its question identity changed');
+        const stale = await f.student.evaluate((command) => window.source.receiveCommand({ ...command, id:'quiz-old-question' }), radioCommand);
+        assert.equal(stale.ok, false, 'a delayed answer click cannot select an option in the next question');
+        assert.deepEqual(await f.student.evaluate(() => window.studyChanges), ['daily:B', 'scratch:A']);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('teacher study menus and record filters invoke the original source callbacks without navigation or writes', async () => {
+    const f = await fixture({ editorMarkup: `
+        <div id="study-controls">
+            <button id="domain-menu" type="button" class="domain-switcher__trigger"><span>课堂菜单</span></button>
+            <span id="show-tags" name="show_tags"><i>展开标签</i></span>
+            <span id="category" data-category-container><span data-category="算法"><i>算法分类</i></span></span>
+            <button id="review-view" type="button" data-learning-action="view" data-learning-view="recent"><span>学习记录</span></button>
+            <a id="record-picker" href="/record?pid=1" data-problem-record-picker="1"><span>提交记录</span></a>
+            <div id="record-dialog" hidden>
+                <div class="problem-record-picker__filters"><button id="record-filter" type="button"><span>已通过</span></button></div>
+                <button id="record-more" class="problem-record-picker__more" type="button">更多</button>
+                <button id="record-import" class="problem-record-picker__record" type="button">导入作答</button>
+                <button id="record-close" class="problem-record-picker__close" type="button">关闭</button>
+            </div>
+            <button id="write-learning" type="button" data-learning-action="mark-explained">修改学习状态</button>
+        </div>
+        <script>
+            window.studyClicks = [];
+            document.querySelector('#study-controls').addEventListener('click',event=>{
+                const target=event.target.closest('button,a,[name="show_tags"],[data-category]');
+                if(!target) return;
+                event.preventDefault(); window.studyClicks.push(target.id || target.dataset.category);
+                if(target.id==='record-picker') document.querySelector('#record-dialog').hidden=false;
+                if(target.id==='record-close') document.querySelector('#record-dialog').hidden=true;
+            });
+        </script>` });
+    try {
+        await f.student.evaluate(() => {
+            const tabs = document.createElement('div');
+            tabs.className = 'scratchpad__tablist';
+            tabs.innerHTML = '<button type="button" id="editor-settings"><span>编辑器设置</span></button>';
+            tabs.addEventListener('click', () => window.studyClicks.push('editor-settings'));
+            document.querySelector('#scratchpad').prepend(tabs);
+        });
+        for (const [selector, result] of [['#domain-menu span','domain-menu'], ['#show-tags i','show-tags'], ['[data-category] i','算法'],
+            ['#review-view span','review-view'], ['#editor-settings span','editor-settings'], ['#record-picker span','record-picker']]) {
+            await f.frame().locator(selector).click();
+            await f.student.waitForFunction((result) => window.studyClicks.includes(result), result);
+        }
+        assert.equal(new URL(f.student.url()).pathname, '/d/C0001/p/P1', 'the record link opens its dialog instead of navigating');
+        await f.frame().locator('#record-filter span').click();
+        await f.frame().locator('#record-more').click();
+        await f.student.waitForFunction(() => window.studyClicks.includes('record-more'));
+        await f.frame().locator('#record-import').click();
+        await f.frame().locator('#write-learning').click();
+        await f.frame().locator('#record-close').click();
+        await f.student.waitForFunction(() => window.studyClicks.includes('record-close'));
+        assert.deepEqual(await f.student.evaluate(() => window.studyClicks), [
+            'domain-menu', 'show-tags', '算法', 'review-view', 'editor-settings', 'record-picker', 'record-filter', 'record-more', 'record-close',
+        ]);
         assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
 });

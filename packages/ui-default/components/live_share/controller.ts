@@ -7,7 +7,7 @@ type Controllers = {
   getEditorRect?(id: string): { x: number; y: number; width: number; height: number } | null;
   getFrameRect?(id: string): { x: number; y: number; width: number; height: number } | null;
 };
-type Adapters = typeof import('./mirror') & typeof import('./editor') & typeof import('./frames');
+type Adapters = typeof import('./mirror') & typeof import('./editor') & typeof import('./frames') & typeof import('./drawing');
 interface Student { uid: number; name: string; online: boolean; tabs?: { tabId: string; title: string; visible: boolean }[] }
 interface Session { sessionId: string; pageId: string; studentUid?: number; studentName?: string; teacherName?: string; tabId?: string }
 let installed: (() => void) | undefined;
@@ -68,9 +68,14 @@ export function installLiveShare(config: LiveShareConfig, options: {
   let sourceMirror: Controllers | null = null;
   let sourceEditors: Controllers | null = null;
   let sourceFrames: Controllers | null = null;
+  let sourceDrawing: Controllers | null = null;
+  let sourceDrawingRoot: HTMLElement | null = null;
   let viewerMirror: Controllers | null = null;
   let viewerEditors: Controllers | null = null;
   let viewerFrames: Controllers | null = null;
+  let viewerDrawing: Controllers | null = null;
+  let localDrawing: Controllers | null = null;
+  let localDrawingRoot: HTMLElement | null = null;
   let overlay: HTMLElement | null = null;
   let viewport: HTMLElement | null = null;
   let surface: HTMLElement | null = null;
@@ -113,8 +118,9 @@ export function installLiveShare(config: LiveShareConfig, options: {
       adaptersPromise = options.loadAdapters ? options.loadAdapters() : Promise.all([
         import(/* webpackChunkName: "live-share" */ './mirror'), import(/* webpackChunkName: "live-share" */ './editor'),
         import(/* webpackChunkName: "live-share" */ './frames'),
+        import(/* webpackChunkName: "live-share-drawing" */ './drawing'),
       ])
-        .then(([mirror, editor, frames]) => ({ ...mirror, ...editor, ...frames }));
+        .then(([mirror, editor, frames, drawing]) => ({ ...mirror, ...editor, ...frames, ...drawing }));
       adaptersPromise.catch(() => { adaptersPromise = undefined; });
     }
     return adaptersPromise;
@@ -145,27 +151,40 @@ export function installLiveShare(config: LiveShareConfig, options: {
   }
   function connected(value: boolean) {
     sourceMirror?.setConnected(value); sourceEditors?.setConnected(value);
-    sourceFrames?.setConnected(value);
+    sourceFrames?.setConnected(value); sourceDrawing?.setConnected(value);
     viewerMirror?.setConnected(value); viewerEditors?.setConnected(value);
-    viewerFrames?.setConnected(value);
+    viewerFrames?.setConnected(value); viewerDrawing?.setConnected(value);
     overlay?.classList.toggle('is-disconnected', !value);
     if (!value && viewing) setStatus('连接中断，正在重新连接…', true);
     if (notice && source) notice.querySelector('span')!.textContent = value
       ? `${source.teacherName || '老师'}正在协助` : '共享连接中断，正在重新连接…';
   }
+  function drawingRoot() {
+    const node = el('div', 'live-share-drawing-root');
+    node.dataset.liveSharePrivate = ''; node.dataset.liveShareUi = '';
+    node.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147482000';
+    document.body.append(node);
+    return node;
+  }
+  function updateLocalDrawing() { localDrawing?.setConnected(!disposed && !suspended && !viewing && !source); }
   function clearSource() {
     sourceMirror?.dispose(); sourceEditors?.dispose();
     sourceFrames?.dispose(); sourceFrames = null;
+    sourceDrawing?.dispose(); sourceDrawing = null;
+    sourceDrawingRoot?.remove(); sourceDrawingRoot = null;
     sourceMirror = null; sourceEditors = null; source = null;
     notice?.remove(); notice = null;
+    updateLocalDrawing();
   }
   function clearViewAdapters() {
     viewerMirror?.dispose(); viewerEditors?.dispose(); viewerMirror = null; viewerEditors = null;
     viewerFrames?.dispose(); viewerFrames = null;
+    viewerDrawing?.dispose(); viewerDrawing = null;
     stage?.replaceChildren(); buffered.length = 0; bufferedBytes = 0; pendingEdits.clear();
   }
   function closeView() {
     generation++; clearViewAdapters(); viewing = null;
+    updateLocalDrawing();
     endViewPan(); manualScale = null; stageScale = 1;
     overlay?.remove(); overlay = null; viewport = null; surface = null; stage = null; zoomControls = null; pageStatus = null;
     assistantControls?.remove(); assistantControls = null;
@@ -365,7 +384,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     }
     if (viewing?.sessionId !== next.sessionId) { clearTimeout(endTimer); ending = false; afterSync = null; }
     const currentGeneration = ++generation;
-    preservePending(); clearViewAdapters(); viewing = next;
+    preservePending(); clearViewAdapters(); viewing = next; updateLocalDrawing();
     createOverlay();
     assistantControls?.querySelector('.live-share-controls__name')?.replaceChildren(document.createTextNode(next.studentName || '学员'));
     setStatus('正在同步学员画面…', true);
@@ -395,6 +414,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
       });
       viewerFrames = adapters.attachViewerFrames?.({ pageId: next.pageId, container: frameRoot,
         getNodeRect: (id) => viewerMirror?.getFrameRect?.(id) || null,
+        sendCommand: (data) => relay(next, 'command', data), onViewZoom: wheelZoom, onViewPan: panView,
         onStatus: (message: string) => { if (message && viewing === next) setStatus(message); },
       }) || null;
       viewerEditors = adapters.attachViewerEditors({ pageId: next.pageId, container: editorRoot,
@@ -408,10 +428,14 @@ export function installLiveShare(config: LiveShareConfig, options: {
           else if (status.connected && status.ready && !overlay?.classList.contains('is-disconnected')) setStatus('');
         },
       });
+      viewerDrawing = adapters.attachTemporaryDrawing?.({ pageId: next.pageId, container: stage, teacher: true,
+        send: (drawing) => relay(next, 'command', { id: randomId(), pageId: next.pageId, nodeId: 1, action: 'draw', drawing }),
+      }) || null;
       const waiting = buffered.splice(0); bufferedBytes = 0;
       waiting.forEach(receiveRelay);
       viewerMirror.setConnected(ready); viewerEditors.setConnected(ready);
       viewerFrames?.setConnected(ready);
+      viewerDrawing?.setConnected(ready);
     } catch {
       if (viewing === next) setStatus('共享组件加载失败，请断开后重试。', true);
     }
@@ -421,7 +445,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     if (source?.sessionId === next.sessionId && source.pageId === next.pageId && sourceMirror && sourceEditors) {
       connected(true); return;
     }
-    clearSource(); source = next;
+    clearSource(); source = next; updateLocalDrawing();
     notice = el('div', 'live-share-notice'); notice.dataset.liveSharePrivate = '';
     notice.setAttribute('role', 'status'); notice.append(el('i', 'live-share-dot'), el('span', '', `${next.teacherName || '老师'}正在协助`));
     document.body.append(notice);
@@ -439,8 +463,12 @@ export function installLiveShare(config: LiveShareConfig, options: {
         onStatus: (status: any) => { if (status.error) sourceStatus(status.error); },
       });
       sourceFrames = adapters.attachSourceFrames?.({ pageId,
-        send: (data) => relay(next, 'mirror', data), onStatus: sourceStatus,
+        send: (data) => relay(next, 'mirror', data), sendAck: (data) => relay(next, 'ack', data), onStatus: sourceStatus,
       }) || null;
+      if (adapters.attachTemporaryDrawing) {
+        sourceDrawingRoot = drawingRoot();
+        sourceDrawing = adapters.attachTemporaryDrawing({ pageId, container: sourceDrawingRoot, teacher: false });
+      }
       sourceMirror = adapters.attachSourceMirror({ pageId,
         send: (data) => relay(next, 'mirror', data),
         sendAck: (data) => relay(next, 'ack', data),
@@ -448,6 +476,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
       });
       sourceEditors.setConnected(ready); sourceMirror.setConnected(ready);
       sourceFrames?.setConnected(ready);
+      sourceDrawing?.setConnected(ready);
     } catch {
       if (source === next) {
         relay(next, 'ack', { id: randomId(), pageId, ok: false, reason: '学员端共享组件加载失败，请重新连接。' });
@@ -476,7 +505,11 @@ export function installLiveShare(config: LiveShareConfig, options: {
         setStatus(reason, reason.includes('已暂停'));
       }
     } else {
-      if (message.kind === 'command') sourceMirror?.receiveCommand?.(message.data);
+      if (message.kind === 'command') {
+        if (message.data?.action === 'frame') sourceFrames?.receiveCommand?.(message.data);
+        else if (message.data?.action === 'draw') sourceDrawing?.receive?.(message.data.drawing);
+        else sourceMirror?.receiveCommand?.(message.data);
+      }
       if (message.kind === 'editor') sourceEditors?.receive?.(message.data);
     }
   }
@@ -646,6 +679,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     // Keep the server's short reconnect grace across a student's navigation.
     preservePending();
     suspended = true; clearTimeout(reconnectTimer); ready = false; connected(false); socket?.close();
+    updateLocalDrawing();
   });
   on(window, 'pageshow', (event: PageTransitionEvent) => {
     if (!event.persisted) return;
@@ -656,6 +690,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     preservePending();
     disposed = true; generation++; clearTimeout(reconnectTimer); clearTimeout(endTimer); clearInterval(pulseTimer); clearInterval(rosterTimer);
     tabChannel?.close(); socket?.close(); clearSource(); closeRoster(); closeView(); disposers.forEach((dispose) => dispose()); installed = undefined;
+    localDrawing?.dispose(); localDrawing = null; localDrawingRoot?.remove(); localDrawingRoot = null;
   };
   installed = cleanup;
   // Duplicating/opening a tab copies sessionStorage. Claim a fresh identity if
@@ -677,5 +712,16 @@ export function installLiveShare(config: LiveShareConfig, options: {
   disposers.push(() => clearTimeout(identityTimer));
   if (!config.canTeach || resume) connect();
   if (config.canTeach) showBackups();
+  // A small independent chunk enables the local teacher pen without loading
+  // rrweb, collaboration editors or opening a room on every teacher page.
+  if (config.canTeach) {
+    const drawing = options.loadAdapters ? options.loadAdapters() : import(/* webpackChunkName: "live-share-drawing" */ './drawing');
+    drawing.then((adapter) => {
+      if (disposed || !adapter.attachTemporaryDrawing) return;
+      localDrawingRoot = drawingRoot();
+      localDrawing = adapter.attachTemporaryDrawing({ pageId, container: localDrawingRoot, teacher: true, scopeDocument: true });
+      updateLocalDrawing();
+    }).catch(() => { /* Local drawing must never interrupt the teacher's page. */ });
+  }
   return cleanup;
 }

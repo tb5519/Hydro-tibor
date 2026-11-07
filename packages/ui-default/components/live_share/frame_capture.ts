@@ -1,4 +1,5 @@
 import { attachSourceMirror } from './mirror';
+import { attachTemporaryDrawing } from './drawing';
 
 /** Loaded only by our controlled Scratch HTML; it never grants parent access to the sandbox. */
 export function installFrameCapture() {
@@ -9,19 +10,43 @@ export function installFrameCapture() {
   let id = '';
   let lease = 0;
   let capture: ReturnType<typeof attachSourceMirror> | undefined;
+  let drawing: ReturnType<typeof attachTemporaryDrawing> | undefined;
+  let drawingRoot: HTMLElement | undefined;
+  let drawingLease = 0;
+  const stopDrawing = () => { drawing?.dispose(); drawing = undefined; drawingRoot?.remove(); drawingRoot = undefined; drawingLease = 0; };
   const stop = () => { capture?.dispose(); capture = undefined; id = ''; };
   const receive = (event: MessageEvent) => {
     const message = event.data;
+    if (event.source === parent && event.origin === parentOrigin && message?.channel === channel && message.type === 'live-share-local-drawing') {
+      if (message.enabled === false) { stopDrawing(); return; }
+      if (message.enabled !== true) return;
+      drawingLease = Date.now() + 12000;
+      if (!drawing) {
+        drawingRoot = document.createElement('div');
+        drawingRoot.dataset.liveShareUi = ''; drawingRoot.dataset.liveSharePrivate = '';
+        drawingRoot.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147482000';
+        document.documentElement.append(drawingRoot);
+        drawing = attachTemporaryDrawing({ container: drawingRoot, teacher: true, pageId: 'local-scratch-drawing', scopeDocument: true });
+      }
+      return;
+    }
     if (event.source !== parent || event.origin !== parentOrigin || message?.channel !== channel
       || message.type !== 'live-share-capture' || !/^[a-zA-Z0-9_-]{8,96}$/.test(message.id || '')) return;
     if (message.action === 'stop') { if (id === message.id) stop(); return; }
+    if (message.action === 'command') {
+      if (capture && id === message.id && Date.now() < lease) capture.receiveCommand(message.command);
+      return;
+    }
     if (!['start', 'snapshot'].includes(message.action)) return;
     lease = Date.now() + 12000;
     if (capture && id === message.id) { if (message.action === 'snapshot') capture.snapshot(); return; }
     stop(); id = message.id;
     const capturedId = id;
     parent.postMessage({ type: 'live-share-frame-start', channel, id }, parentOrigin);
-    capture = attachSourceMirror({ pageId: id, inlineLocalImages: true, showNonSensitiveInputs: true,
+    capture = attachSourceMirror({ pageId: id, inlineLocalImages: true, showNonSensitiveInputs: true, scratchControls: true,
+      sendAck: (ack) => {
+        if (id === capturedId && Date.now() < lease) parent.postMessage({ type: 'live-share-frame-ack', channel, id, ack }, parentOrigin);
+      },
       beforeRasterCapture: (canvas) => {
         // Scratch's WebGL buffer is discarded after presentation. Redraw only
         // its existing scene immediately before sampling; never advance the VM.
@@ -40,9 +65,9 @@ export function installFrameCapture() {
       } });
   };
   window.addEventListener('message', receive);
-  const timer = window.setInterval(() => { if (capture && Date.now() >= lease) stop(); }, 1000);
-  const hidden = (event: PageTransitionEvent) => { if (event.persisted) stop(); else dispose(); };
-  const dispose = () => { stop(); clearInterval(timer); window.removeEventListener('message', receive); window.removeEventListener('pagehide', hidden); };
+  const timer = window.setInterval(() => { if (capture && Date.now() >= lease) stop(); if (drawing && Date.now() >= drawingLease) stopDrawing(); }, 1000);
+  const hidden = (event: PageTransitionEvent) => { if (event.persisted) { stop(); stopDrawing(); } else dispose(); };
+  const dispose = () => { stop(); stopDrawing(); clearInterval(timer); window.removeEventListener('message', receive); window.removeEventListener('pagehide', hidden); };
   window.addEventListener('pagehide', hidden);
   return dispose;
 }

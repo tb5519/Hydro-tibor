@@ -1,14 +1,16 @@
-import { attachViewerMirror } from './mirror';
+import { attachViewerMirror, MirrorCommand, MirrorAck } from './mirror';
+import { validScratchInput } from './scratch_control';
 
 const MARKER = 'data-live-share-frame';
 const MAX_FRAMES = 4;
 const validId = (id: unknown): id is string => typeof id === 'string' && /^[a-zA-Z0-9_-]{8,96}$/.test(id);
 const randomId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) => value.toString(16).padStart(2, '0')).join('');
 type Rect = { x: number; y: number; width: number; height: number };
-interface SourceOptions { pageId: string; send: (data: any) => void | boolean; onStatus?: (message: string) => void }
-interface SourceFrame { id: string; frame: HTMLIFrameElement; channel: string; href: string; previousMarker: string | null; loaded: () => void }
+export interface FrameCommand { id: string; pageId: string; nodeId: number; action: 'frame'; frameId: string; command: MirrorCommand }
+interface SourceOptions { pageId: string; send: (data: any) => void | boolean; sendAck?: (data: MirrorAck) => void; onStatus?: (message: string) => void }
+interface SourceFrame { id: string; frame: HTMLIFrameElement; channel: string; href: string; previousMarker: string | null; started?: boolean; loaded: () => void }
 
-/** Only our opaque-origin Scratch runtime implements this display-only bridge. */
+/** Only our opaque-origin Scratch runtime implements this authenticated bridge. */
 function controlledFrame(frame: HTMLIFrameElement) {
   if (!frame.isConnected || frame.closest('[data-live-share-viewer],.live-share-overlay')) return null;
   try {
@@ -26,6 +28,7 @@ function controlledFrame(frame: HTMLIFrameElement) {
 
 export function attachSourceFrames(options: SourceOptions) {
   const bindings = new Map<HTMLIFrameElement, SourceFrame>();
+  const pending = new Map<string, { outerId: string; frameId: string; at: number }>();
   let connected = true;
   let disposed = false;
   const post = (binding: SourceFrame, action: 'start' | 'stop' | 'snapshot') => {
@@ -39,6 +42,7 @@ export function attachSourceFrames(options: SourceOptions) {
       else binding.frame.setAttribute(MARKER, binding.previousMarker);
     }
     bindings.delete(binding.frame);
+    for (const [key, entry] of pending) if (entry.frameId === binding.id) pending.delete(key);
     if (connected) options.send({ type: 'frame-remove', id: binding.id });
   };
   const scan = () => {
@@ -61,13 +65,27 @@ export function attachSourceFrames(options: SourceOptions) {
     }
   };
   const receive = (event: MessageEvent) => {
-    if (disposed || !connected || event.origin !== 'null' || !['live-share-frame', 'live-share-frame-start'].includes(event.data?.type)) return;
+    if (disposed || !connected || event.origin !== 'null' || !['live-share-frame', 'live-share-frame-start', 'live-share-frame-ack'].includes(event.data?.type)) return;
     const binding = [...bindings.values()].find((item) => event.source === item.frame.contentWindow
       && event.data.channel === item.channel && event.data.id === item.id);
     if (!binding || !controlledFrame(binding.frame)) return;
+    if (event.data.type === 'live-share-frame-ack') {
+      const ack = event.data.ack; const entry = pending.get(ack?.id);
+      if (!entry || entry.frameId !== binding.id || ack.pageId !== binding.id || typeof ack.ok !== 'boolean') return;
+      pending.delete(ack.id);
+      options.sendAck?.({ id: entry.outerId, pageId: options.pageId, ok: ack.ok,
+        ...(typeof ack.reason === 'string' ? { reason: ack.reason.slice(0, 512) } : {}) });
+      return;
+    }
     // A child can renew after its lease expired without its iframe reloading.
     // Its new recorder starts at sequence 1, so discard the old replay epoch.
-    if (event.data.type === 'live-share-frame-start') { options.send({ type: 'frame-remove', id: binding.id }); return; }
+    if (event.data.type === 'live-share-frame-start') {
+      // A new recorder must also get a new command epoch. Otherwise queued
+      // commands could target reused node IDs after a child lease expires.
+      if (binding.started) { remove(binding); scan(); }
+      else { binding.started = true; options.send({ type: 'frame-remove', id: binding.id }); }
+      return;
+    }
     const packet = event.data.packet;
     if (!packet || !['rrweb', 'rrweb-chunk', 'rrweb-batch'].includes(packet.type)
       || !Number.isSafeInteger(packet.sequence) || packet.sequence < 0) return;
@@ -83,18 +101,32 @@ export function attachSourceFrames(options: SourceOptions) {
   const scanTimer = window.setInterval(scan, 200);
   const keepaliveTimer = window.setInterval(() => {
     if (connected) for (const binding of bindings.values()) post(binding, 'start');
+    for (const [id, entry] of pending) if (Date.now() - entry.at > 5000) pending.delete(id);
   }, 4000);
   return {
+    receiveCommand(envelope: FrameCommand) {
+      const deny = () => options.sendAck?.({ id: envelope?.id || '', pageId: options.pageId, ok: false, reason: 'Scratch 页面已变化，请等待同步' });
+      const command = envelope?.command;
+      const binding = [...bindings.values()].find((item) => item.id === envelope?.frameId);
+      if (disposed || !connected || envelope?.action !== 'frame' || envelope.pageId !== options.pageId || !validId(envelope.id)
+        || !binding || !controlledFrame(binding.frame) || command?.pageId !== binding.id || command.action !== 'scratch'
+        || !validId(command.id) || !Number.isSafeInteger(command.nodeId) || command.nodeId < 1
+        || typeof command.target !== 'string' || command.target.length > 32 || !validScratchInput(command.input)) { deny(); return; }
+      if (pending.size >= 256) pending.delete(pending.keys().next().value);
+      pending.set(command.id, { outerId: envelope.id, frameId: binding.id, at: Date.now() });
+      binding.frame.contentWindow?.postMessage({ type: 'live-share-capture', action: 'command', channel: binding.channel, id: binding.id, command }, '*');
+    },
     snapshot() { if (connected) for (const binding of bindings.values()) post(binding, 'snapshot'); },
     setConnected(value: boolean) {
       if (connected === value) return;
-      if (!value) for (const binding of bindings.values()) post(binding, 'stop');
       connected = value;
+      if (!value) { for (const binding of [...bindings.values()]) remove(binding); pending.clear(); }
       if (value) { scan(); for (const binding of bindings.values()) post(binding, 'start'); }
     },
     dispose() {
       if (disposed) return;
       disposed = true; connected = false;
+      pending.clear();
       clearInterval(scanTimer); clearInterval(keepaliveTimer); window.removeEventListener('message', receive);
       for (const binding of [...bindings.values()]) remove(binding);
     },
@@ -103,6 +135,9 @@ export function attachSourceFrames(options: SourceOptions) {
 
 interface ViewerOptions {
   pageId: string; container: HTMLElement; getNodeRect: (id: string) => Rect | null | undefined;
+  sendCommand?: (data: FrameCommand) => void;
+  onViewZoom?: (gesture: { delta: number; clientX: number; clientY: number }) => void;
+  onViewPan?: (gesture: { dx: number; dy: number }) => void;
   onStatus?: (message: string) => void;
 }
 export function attachViewerFrames(options: ViewerOptions) {
@@ -139,21 +174,30 @@ export function attachViewerFrames(options: ViewerOptions) {
         const node = document.createElement('div');
         node.dataset.liveShareFrameViewer = data.id;
         node.setAttribute('aria-label', '学员的 Scratch 实时画面');
-        node.style.cssText = 'position:absolute;overflow:hidden;pointer-events:none;background:#eaf1fb';
+        node.style.cssText = `position:absolute;overflow:hidden;pointer-events:${options.sendCommand ? 'auto' : 'none'};background:#eaf1fb`;
         node.hidden = true;
         const stage = document.createElement('div');
-        stage.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none';
+        stage.style.cssText = `position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:${options.sendCommand ? 'auto' : 'none'}`;
         node.append(stage); options.container.append(node);
         binding = { node, stage, mirror: undefined as any };
         bindings.set(data.id, binding);
-        binding.mirror = attachViewerMirror({ pageId: data.id, container: stage, sendCommand: () => {},
+        binding.mirror = attachViewerMirror({ pageId: data.id, container: stage, scratchControls: !!options.sendCommand,
+          sendCommand: (command) => {
+            if (disposed || !connected || !bindings.has(data.id) || command.action !== 'scratch') return;
+            options.sendCommand?.({ id: command.id, pageId: options.pageId, nodeId: 1, action: 'frame', frameId: data.id, command });
+          }, onViewZoom: options.onViewZoom, onViewPan: options.onViewPan,
           onViewport: (size) => { if (binding) binding.viewport = size; }, onStatus: options.onStatus });
       }
       binding.mirror.receive(data.packet);
     },
     setConnected(value: boolean) {
       connected = value;
-      for (const binding of bindings.values()) { binding.mirror.setConnected(value); if (!value) binding.node.hidden = true; }
+      if (!value) {
+        // Source frame IDs rotate on reconnect; discard the old inert documents
+        // and their interactions instead of leaving hidden stale frames around.
+        for (const binding of bindings.values()) { binding.mirror.dispose(); binding.node.remove(); }
+        bindings.clear();
+      }
     },
     dispose() {
       disposed = true; cancelAnimationFrame(frame);
