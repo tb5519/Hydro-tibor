@@ -182,6 +182,16 @@ describe('live share protocol boundaries', () => {
         assert.throws(() => protocol.validateRelayData('teacher', 'editor', { ...scroll, view: layout.view }, 'page-testing'), errorCode('INVALID_RELAY'));
         assert.throws(() => protocol.validateRelayData('student', 'editor', { ...layout, type: 'edit:cursor' }, 'page-testing'), errorCode('INVALID_RELAY'));
     });
+    it('allows only bounded teacher splitter resizing with an exact command shape', () => {
+        const command = { id: 'resize-command-testing', pageId: 'page-testing', nodeId: 42, action: 'resize', target: 'safe-sash-hash', x: 0.5 };
+        for (const x of [0, 0.125, 0.5, 1]) protocol.validateRelayData('teacher', 'command', { ...command, x }, 'page-testing');
+        assert.throws(() => protocol.validateRelayData('student', 'command', command, 'page-testing'), errorCode('INVALID_RELAY'));
+        for (const change of [{ x: -0.01 }, { x: 1.01 }, { x: Infinity }, { x: NaN }, { x: '0.5' }, { x: null }, { x: undefined },
+            { target: '' }, { target: undefined }, { target: 'x'.repeat(33) }, { target: 42 }, { y: 0 }, { value: 'script' },
+            { html: '<script>run()</script>' }, { onclick: 'run()' }, { action: 'eval' }, { action: 'delete' }, { pageId: 'old-page' }]) {
+            assert.throws(() => protocol.validateRelayData('teacher', 'command', { ...command, ...change }, 'page-testing'), errorCode('INVALID_RELAY'));
+        }
+    });
     it('allows bounded teacher text annotations and clearing, rejecting malformed anchors and executable options', () => {
         const annotation = { startNodeId: 12, endNodeId: 14, startOffset: 2, endOffset: 9,
             quote: '从输出固定内容开始', text: '先看这里', noteOpen: true, offsetX: 18.5, offsetY: -72 };
@@ -190,6 +200,10 @@ describe('live share protocol boundaries', () => {
         protocol.validateRelayData('teacher', 'command', { ...command, annotation: null }, 'page-testing');
         protocol.validateRelayData('teacher', 'command', { ...command, annotation: { ...annotation, text: '' } }, 'page-testing');
         protocol.validateRelayData('teacher', 'command', { ...command, annotation: { ...annotation, noteOpen: false, text: '' } }, 'page-testing');
+        // Existing notes remain valid without dimensions; resized notes use bounded CSS pixels.
+        for (const dimensions of [{ width: 160 }, { height: 100 }, { width: 960, height: 800 }, { width: 320.5, height: 180.25 }]) {
+            protocol.validateRelayData('teacher', 'command', { ...command, annotation: { ...annotation, ...dimensions } }, 'page-testing');
+        }
         // HTML-looking content is permitted as inert note text; no HTML/style fields are accepted.
         protocol.validateRelayData('teacher', 'command', { ...command, annotation: { ...annotation, text: '<img onerror="alert(1)">' } }, 'page-testing');
         for (const change of [
@@ -199,6 +213,8 @@ describe('live share protocol boundaries', () => {
             { quote: '' }, { quote: ' \n ' }, { quote: 'x'.repeat(4001) }, { text: 'x'.repeat(1001) },
             { text: null }, { noteOpen: undefined }, { noteOpen: null }, { noteOpen: 'true' }, { noteOpen: 1 },
             { offsetX: Infinity }, { offsetY: NaN }, { offsetX: '5' }, { offsetY: 10001 },
+            { width: 159.99 }, { width: 960.01 }, { height: 99.99 }, { height: 800.01 },
+            { width: Infinity }, { width: NaN }, { width: '300' }, { width: null }, { height: -Infinity }, { height: '180' }, { height: false },
             { html: '<script>alert(1)</script>' }, { style: 'position:fixed' }, { onclick: 'run()' },
         ]) {
             assert.throws(() => protocol.validateRelayData('teacher', 'command', {

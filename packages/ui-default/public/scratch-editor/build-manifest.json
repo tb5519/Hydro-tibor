@@ -14,7 +14,7 @@
     "UPSTREAM-LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
     "UPSTREAM-README.md": "fb1223e366726d6d4b47105d53bd7892fe344e09dee67a2ed06252ea6fcae0c1",
     "UPSTREAM-TRADEMARK": "58f77df7ffd07cd1a15da59459218b2ad296353657b9303456b2028a31168bae",
-    "editor.html": "e45760593a3b8ed24c3812c08f022fdb94436980cc66126b7844f7e01ef19024",
+    "editor.html": "c4930731d7130430fe946ea01aaae6d4af813a01eb259f63420e8ad9f4dbfb2b",
     "embedtest.html": "51cb9ecf8c6be79c0ae0daeb1be3b04aa3376368390ec2a06047df0873cd6c2c",
     "embedtestbad.html": "6a7435d2a1365c2e46c1813f31268fa8635cf57385136b7161956ac43097f656",
     "favicon.ico": "63b5022e76661543b853b33a6bf6c650f173af55e080b359678d3b2cc5010473",
@@ -1369,7 +1369,7 @@
     "manifest.webmanifest": "fb231548858c8d8712ea28c4ac1fb59409bebea75c95515b3781aa29986dbe13",
     "privacy.html": "8f940d321911c20e15abaf0746186091ddda54b0dab70d0b6dfb8e02b0042934",
     "robots.txt": "54fbc2a97e81aafcb3acec3f1b01b05b91e921f0e86e2e2a3f44fbd208d215a4",
-    "source.tar.gz": "4017ab156b82be9e0639ab44a10d98e1fa15d71bb89a933e00a5d12dd0a8a9c6",
+    "source.tar.gz": "007433f85f88ba2926b99905d2c93b7c8a470a2dc87fb34cafc2c33cb45c2f1e",
     "static/assets/00aa0c4320b93631ab3c223604ead431.svg": "5bc8dfa91edcedb36efccc65373d8446ca1f25907e28fccc3b4bdcb44bbb164d",
     "static/assets/048d12d9e01a42ab48fb6ce57100f6f8.mp3": "8371c4c3d83c264def21f9d5302d59f3939777c647fe7596089b16aaf8e52014",
     "static/assets/06fd0604a4bf62a2b706edc23e49a086.mp3": "f0553cac8b27c10405887502f9583b9e391c8c34a2fddac96a755bc67a25e400",
@@ -1657,6 +1657,7 @@
     "static/blocks-media/high-contrast/zoom-reset.svg": "cc39fd971a09d664605ee6f10772c622851f902b2fc6861f2d27775da745ebbb",
     "static/extensions/example-extension.js": "f4d431b7b70571ed497cc35866c6d8cc6fdba6168d60c3626f6d2656194b50f8",
     "js/live-share-frame.acb4964639abe5287dc1.js": "acb4964639abe5287dc151f3348be10e82344fbd0d64cb6b8481f9b3b7bc51d9",
-    "js/live-share-frame.2cd5c67719f62ce6ee56.js": "2cd5c67719f62ce6ee56b098d0b6ee09eafc31b26fbf2dcf3d470f3180a17224"
+    "js/live-share-frame.2cd5c67719f62ce6ee56.js": "2cd5c67719f62ce6ee56b098d0b6ee09eafc31b26fbf2dcf3d470f3180a17224",
+    "js/live-share-frame.9269dcccfbeccc2919eb.js": "9269dcccfbeccc2919ebf5e1630b11a1697b4da47b0c964601c3392088602a2b"
   }
 }

@@ -13,6 +13,8 @@ const executablePath = [process.env.HERO_CHROMIUM_PATH, playwright.chromium.exec
     .find((candidate) => candidate && fs.existsSync(candidate));
 let browser;
 let script;
+let splitterScript;
+let splitterCss;
 before(async () => {
     assert(executablePath, 'Chromium is required for live sharing interaction tests');
     const result = await esbuild.build({ entryPoints: [path.join(root, 'packages/ui-default/components/live_share/mirror.ts')],
@@ -26,12 +28,34 @@ before(async () => {
         } }],
     });
     script = result.outputFiles[0].text;
+    // Render the installed Allotment implementation: sash ancestry and its
+    // imperative resize behavior must not be substituted with a test DOM stub.
+    splitterScript = (await esbuild.build({ stdin: { resolveDir: root, contents: `
+        import React from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { Allotment } from 'allotment';
+        import { attachSharedSplitter } from './packages/ui-default/components/live_share/splitter';
+        const columns = React.createRef(), rows = React.createRef();
+        const root = document.querySelector('#scratchpad');
+        root.style.cssText = 'position:fixed;inset:80px 40px 40px;z-index:2;background:white';
+        const app = createRoot(root), h = React.createElement;
+        app.render(h(Allotment, { ref: columns, className:'live-share-split-columns', defaultSizes:[50,350,520] },
+            h(Allotment.Pane, { minSize:50,maxSize:50 }, '菜单'),
+            h(Allotment.Pane, { minSize:100 }, '题目正文'),
+            h(Allotment.Pane, { minSize:150 }, h(Allotment, { ref:rows, className:'live-share-split-rows', vertical:true, defaultSizes:[300,140,140] },
+                h(Allotment.Pane, { minSize:80 }, '编辑器'),
+                h(Allotment.Pane, { minSize:60 }, '测试输入'),
+                h(Allotment.Pane, { minSize:60 }, '运行结果')))));
+        const stop = attachSharedSplitter(root, (axis, sizes) => (axis==='columns'?columns:rows).current?.resize(sizes));
+        window.disposeSplit = () => { stop(); app.unmount(); };
+    ` }, bundle: true, format: 'iife', write: false, define: { 'process.env.NODE_ENV': '"production"' } })).outputFiles[0].text;
+    splitterCss = fs.readFileSync(require.resolve('allotment/dist/style.css'), 'utf8');
     browser = await playwright.chromium.launch({ executablePath, headless: true });
 });
 after(async () => { await browser?.close(); });
 
 async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = false, showNonSensitiveInputs = false, videoData = null,
-    viewGestures = false, teacherDpr = 1, studentDpr = 1 } = {}) {
+    viewGestures = false, teacherDpr = 1, studentDpr = 1, splitPanes = false } = {}) {
     const studentContext = await browser.newContext({ viewport: { width: 1000, height: 700 }, deviceScaleFactor: studentDpr });
     const teacherContext = await browser.newContext({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: teacherDpr });
     const student = await studentContext.newPage();
@@ -78,6 +102,12 @@ async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = fal
     }
     await teacher.goto('https://sharing.test/teacher');
     await student.goto('https://sharing.test/d/C0001/p/P1');
+    if (splitPanes) {
+        await student.addStyleTag({ content: splitterCss });
+        await student.addScriptTag({ content: splitterScript });
+        await student.waitForFunction(() => document.querySelectorAll('#scratchpad .sash').length === 4
+            && document.querySelector('.live-share-split-rows').getBoundingClientRect().height > 500);
+    }
     await teacher.exposeFunction('sendCommand', async (data) => {
         commands.push(data);
         if (latency) await new Promise((resolve) => setTimeout(resolve, latency));
@@ -109,12 +139,77 @@ async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = fal
     await teacher.frameLocator('#mirror iframe').locator('#title').waitFor();
     const close = async () => {
         studentReady = false;
-        await Promise.allSettled([student.evaluate(() => window.source?.dispose()), teacher.evaluate(() => window.viewer?.dispose())]);
+        await Promise.allSettled([student.evaluate(() => { window.source?.dispose(); window.disposeSplit?.(); }), teacher.evaluate(() => window.viewer?.dispose())]);
         await studentContext.close(); await teacherContext.close();
     };
     return { student, teacher, packets, commands, acks, errors, close,
         frame: () => teacher.frameLocator('#mirror iframe') };
 }
+
+it('real Allotment column and row dividers resize from either peer and reject stale, disabled, private or forged targets', { timeout: 35000 }, async () => {
+    const f = await fixture({ splitPanes: true, latency: 25, teacherDpr: 2 });
+    const columnSash = '.live-share-split-columns > .sash-container > .sash:nth-child(2)';
+    const rowSash = '.live-share-split-rows > .sash-container > .sash:nth-child(1)';
+    const columnPane = '.live-share-split-columns > .split-view-container > .split-view-view:nth-child(2)';
+    const rowPane = '.live-share-split-rows > .split-view-container > .split-view-view:nth-child(1)';
+    const dimension = async (page, selector, vertical = false) => page.locator(selector).evaluate((node, vertical) => {
+        const rect = node.getBoundingClientRect(); return vertical ? rect.height : rect.width;
+    }, vertical);
+    try {
+        await f.frame().locator(columnSash).waitFor();
+        const input = await f.teacher.context().newCDPSession(f.teacher);
+        async function teacherDrag(selector, dx, dy, duringDrag) {
+            const box = await f.frame().locator(selector).boundingBox();
+            const start = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+            await f.teacher.mouse.move(start.x, start.y); await f.teacher.mouse.down();
+            // A sandbox replay cannot run Playwright's injected drag-detection
+            // timer, so send the same trusted native mouse movement via CDP.
+            for (let step = 1; step <= 8; step++) await input.send('Input.dispatchMouseEvent', {
+                type: 'mouseMoved', button: 'left', buttons: 1, x: start.x + dx * step / 8, y: start.y + dy * step / 8,
+            });
+            if (duringDrag) await duringDrag();
+            await f.teacher.mouse.up();
+        }
+        for (const [sash, pane, vertical, delta] of [[columnSash, columnPane, false, 85], [rowSash, rowPane, true, 65]]) {
+            const before = await dimension(f.student, pane, vertical);
+            await teacherDrag(sash, vertical ? 0 : delta, vertical ? delta : 0, async () => {
+                await f.student.waitForFunction(({ pane, vertical, before }) => {
+                    const box = document.querySelector(pane).getBoundingClientRect();
+                    return (vertical ? box.height : box.width) > before + 40;
+                }, { pane, vertical, before });
+            });
+            await f.teacher.waitForFunction(({ pane, vertical, expected }) => {
+                const box = document.querySelector('#mirror iframe').contentDocument.querySelector(pane).getBoundingClientRect();
+                return Math.abs((vertical ? box.height : box.width) - expected) < 3;
+            }, { pane, vertical, expected: before + delta });
+            assert(Math.abs(await dimension(f.student, pane, vertical) - before - delta) < 3,
+                `${vertical ? 'row' : 'column'} dragging reaches the intended position before release`);
+        }
+        const oldWidth = await dimension(f.student, columnPane);
+        const sourceSash = await f.student.locator(columnSash).boundingBox();
+        await f.student.mouse.move(sourceSash.x + sourceSash.width / 2, sourceSash.y + sourceSash.height / 2);
+        await f.student.mouse.down();
+        await f.student.mouse.move(sourceSash.x + sourceSash.width / 2 - 60, sourceSash.y + sourceSash.height / 2, { steps: 8 });
+        await f.student.mouse.up();
+        await f.teacher.waitForFunction(({ pane, expected }) => Math.abs(document.querySelector('#mirror iframe').contentDocument.querySelector(pane)
+            .getBoundingClientRect().width - expected) < 3, { pane: columnPane, expected: oldWidth - 60 });
+        assert(Math.abs(await dimension(f.student, columnPane) - oldWidth + 60) < 3, 'student native Allotment dragging remains unchanged');
+        const valid = f.commands.filter((command) => command.action === 'resize').find((command) => command.x > 0.45);
+        assert(valid, 'teacher sends a bounded resize command');
+        for (const [id, patch] of [['forged-sash', { target: 'forged-target' }], ['stale-sash', { pageId: 'old-page' }], ['outside-ratio', { x: 1.5 }]]) {
+            const ack = await f.student.evaluate(({ valid, id, patch }) => window.source.receiveCommand({ ...valid, id, ...patch }), { valid, id, patch });
+            assert.equal(ack.ok, false, id);
+        }
+        await f.student.locator(columnSash).evaluate((sash) => sash.classList.add('sash-disabled'));
+        const disabled = await f.student.evaluate((valid) => window.source.receiveCommand({ ...valid, id: 'disabled-sash' }), valid);
+        assert.equal(disabled.ok, false);
+        await f.student.locator(columnSash).evaluate((sash) => { sash.classList.remove('sash-disabled'); sash.parentElement.setAttribute('data-private', ''); });
+        const privateAck = await f.student.evaluate((valid) => window.source.receiveCommand({ ...valid, id: 'private-sash' }), valid);
+        assert.equal(privateAck.ok, false);
+        assert.equal(await f.student.evaluate(() => window.saves), 0, 'resizing never invokes unrelated page actions');
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
 
 it('mirrors ordinary DOM changes, blocks private/editor content, and does not run student scripts in the replay', async () => {
     const f = await fixture();

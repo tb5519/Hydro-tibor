@@ -14,6 +14,9 @@ const compile = (file) => esbuild.transformSync(fs.readFileSync(path.join(direct
 }).code;
 const containerSource = compile('index.tsx');
 const editorSource = compile('ScratchpadEditorContainer.tsx');
+const splitterSource = esbuild.transformSync(fs.readFileSync(path.join(directory, '../live_share/splitter.ts'), 'utf8'), {
+    loader: 'ts', format: 'cjs',
+}).code;
 // Exercise the installed Monaco observer that automaticLayout delegates to.
 const observerSource = esbuild.buildSync({
     entryPoints: [require.resolve('monaco-editor/esm/vs/editor/browser/config/elementSizeObserver.js')],
@@ -52,17 +55,21 @@ describe('scratchpad live resizing', () => {
         let renders = 0;
         let manualLayouts = 0;
         const ctx = {};
-        const Allotment = (props) => {
+        const Allotment = React.forwardRef((props, ref) => {
             renders++;
             panes.push(props);
-            return React.createElement('div', null, props.children);
-        };
+            React.useImperativeHandle(ref, () => ({ resize() {} }), []);
+            return React.createElement('div', { className: props.className }, props.children);
+        });
         Allotment.Pane = ({ children }) => children;
+        const splitter = { exports: {} };
+        vm.runInNewContext(splitterSource, { module: splitter, exports: splitter.exports, CustomEvent: dom.window.CustomEvent });
         const mod = { exports: {} };
         vm.runInNewContext(containerSource, {
-            module: mod, exports: mod.exports, window: dom.window, UiContext: {},
+            module: mod, exports: mod.exports, window: dom.window, document: dom.window.document, UiContext: {},
             require(id) {
                 if (id === 'allotment') return { Allotment };
+                if (id === '../live_share/splitter') return splitter.exports;
                 if (id === 'react-redux') return {
                     useStore: () => ({}), useDispatch: () => () => {},
                     useSelector: (select) => select({ ui: { activePage: 'problem', pretest: { visible: true }, records: { visible: true } } }),
@@ -90,6 +97,8 @@ describe('scratchpad live resizing', () => {
             ctx.scratchpad.editor = { layout: () => manualLayouts++ };
             const initialRenders = renders;
             assert.equal(panes.length, 2);
+            assert.equal(dom.window.document.querySelectorAll('.live-share-split-columns,.live-share-split-rows').length, 2,
+                'both real scratchpad layouts expose the stable sharing hooks');
             await React.act(async () => {
                 for (let n = 0; n < 30; n++) panes[n % 2].onChange([400 + n, 800 - n]);
             });

@@ -1,5 +1,6 @@
 import { record, Replayer } from './vendor';
 import { attachAnnotationSurface, ShareAnnotation } from './annotation';
+import { sharedSash, resizeSharedSash, SHARED_SPLIT_SELECTOR } from './splitter';
 
 /** The replay is a display surface. Its scripts, forms and links never run. */
 const BLOCK = [
@@ -27,7 +28,7 @@ export interface MirrorCommand {
   id: string;
   pageId: string;
   nodeId: number;
-  action: 'click' | 'scroll' | 'select' | 'search' | 'annotate';
+  action: 'click' | 'scroll' | 'select' | 'search' | 'annotate' | 'resize';
   annotationId?: string;
   annotation?: ShareAnnotation | null;
   target?: string;
@@ -100,6 +101,8 @@ function annotationRange(doc: Document, mirror: any, value: ShareAnnotation | nu
   if (!value || typeof value.quote !== 'string' || !value.quote.trim() || value.quote.length > 4000
     || typeof value.text !== 'string' || value.text.length > 1000
     || typeof value.noteOpen !== 'boolean'
+    || (value.width !== undefined && (!Number.isFinite(value.width) || value.width < 160 || value.width > 960))
+    || (value.height !== undefined && (!Number.isFinite(value.height) || value.height < 100 || value.height > 800))
     || ![value.startNodeId, value.endNodeId].every((id) => Number.isSafeInteger(id) && id > 0)
     || ![value.startOffset, value.endOffset].every((offset) => Number.isSafeInteger(offset) && offset >= 0)
     || ![value.offsetX, value.offsetY].every((offset) => Number.isFinite(offset) && Math.abs(offset) <= 10000)) return null;
@@ -120,19 +123,52 @@ function annotationRange(doc: Document, mirror: any, value: ShareAnnotation | nu
 
 function annotationRect(range: Range | null) {
   if (!range) return null;
-  const rect = range.getBoundingClientRect();
-  if (!rect.width || !rect.height) return null;
-  let left = rect.left; let top = rect.top; let right = rect.right; let bottom = rect.bottom;
   const doc = range.startContainer.ownerDocument;
-  for (let element = closestElement(range.commonAncestorContainer); element && element !== doc.body && element !== doc.documentElement;
-    element = element.parentElement) {
+  type Clip = { left: number; top: number; right: number; bottom: number };
+  const clips = new Map<Element, Clip | null>();
+  const textClip = (element: Element): Clip | null => {
+    if (!element || element === doc.body || element === doc.documentElement) {
+      return { left: -Infinity, top: -Infinity, right: Infinity, bottom: Infinity };
+    }
+    if (clips.has(element)) return clips.get(element);
+    const parent = textClip(element.parentElement);
     const style = doc.defaultView.getComputedStyle(element);
-    if (style.visibility === 'hidden' || style.display === 'none') return null;
-    const clip = element.getBoundingClientRect();
-    if (/(auto|scroll|hidden|clip|overlay)/.test(style.overflowX)) { left = Math.max(left, clip.left); right = Math.min(right, clip.right); }
-    if (/(auto|scroll|hidden|clip|overlay)/.test(style.overflowY)) { top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom); }
+    if (!parent || style.visibility === 'hidden' || style.display === 'none') { clips.set(element, null); return null; }
+    const clip = { ...parent };
+    const bounds = element.getBoundingClientRect();
+    if (/(auto|scroll|hidden|clip|overlay)/.test(style.overflowX)) { clip.left = Math.max(clip.left, bounds.left); clip.right = Math.min(clip.right, bounds.right); }
+    if (/(auto|scroll|hidden|clip|overlay)/.test(style.overflowY)) { clip.top = Math.max(clip.top, bounds.top); clip.bottom = Math.min(clip.bottom, bounds.bottom); }
+    clips.set(element, clip);
+    return clip;
+  };
+  // Element ranges include whole block boxes. Measure only selected text runs,
+  // so wrapped lines and selections spanning paragraphs never frame the gaps.
+  const texts: Node[] = [];
+  if (range.commonAncestorContainer.nodeType === 3) texts.push(range.commonAncestorContainer);
+  else {
+    const walker = doc.createTreeWalker(range.commonAncestorContainer, 4);
+    let node: Node;
+    while ((node = walker.nextNode())) if (range.intersectsNode(node)) texts.push(node);
   }
-  return right > left && bottom > top ? { x: left, y: top, width: right - left, height: bottom - top } : null;
+  const rects: { x: number; y: number; width: number; height: number }[] = [];
+  for (const text of texts) {
+    const clip = textClip(text.parentElement);
+    if (!clip) continue;
+    const part = doc.createRange();
+    part.selectNodeContents(text);
+    if (text === range.startContainer) part.setStart(text, range.startOffset);
+    if (text === range.endContainer) part.setEnd(text, range.endOffset);
+    if (part.collapsed) continue;
+    for (const bounds of Array.from(part.getClientRects())) {
+      const left = Math.max(bounds.left, clip.left); const right = Math.min(bounds.right, clip.right);
+      const top = Math.max(bounds.top, clip.top); const bottom = Math.min(bounds.bottom, clip.bottom);
+      if (right > left && bottom > top) rects.push({ x: left, y: top, width: right - left, height: bottom - top });
+    }
+  }
+  if (!rects.length) return null;
+  const x = Math.min(...rects.map((r) => r.x)); const y = Math.min(...rects.map((r) => r.y));
+  return { x, y, width: Math.max(...rects.map((r) => r.x + r.width)) - x,
+    height: Math.max(...rects.map((r) => r.y + r.height)) - y, rects };
 }
 function allowedSelect(element: Element): element is HTMLSelectElement {
   return element.tagName === 'SELECT'
@@ -753,6 +789,12 @@ export function attachSourceMirror(options: SourceOptions) {
       scrollTo(target, command.x, command.y);
       return acknowledge({ id: command.id, pageId: options.pageId, ok: true });
     }
+    if (command.action === 'resize') {
+      const sash = sharedSash(closestElement(raw));
+      if (!sash || blocked(sash) || command.target !== targetFingerprint(sash)
+        || !resizeSharedSash(sash, command.x)) return deny('分隔条已变化，请重新拖动');
+      return acknowledge({ id: command.id, pageId: options.pageId, ok: true });
+    }
     const element = interactive(raw);
     if (blocked(element) || disabled(element)) return deny('此处不能远程操作');
     if (command.target !== targetFingerprint(element)) return deny('页面内容已变化，请等待同步后重试');
@@ -889,6 +931,11 @@ export function attachViewerMirror(options: ViewerOptions) {
     annotations.get(id)?.surface.dispose(); annotations.delete(id); pendingAnnotations.delete(id);
     if (sync) sendAnnotation(id);
   }
+  function clearTransientAnnotations(exceptId?: string) {
+    for (const [id, entry] of annotations) {
+      if (id !== exceptId && (!entry.value.noteOpen || !entry.value.text.trim())) clearAnnotation(id, true);
+    }
+  }
   function clearAnnotations() {
     clearTimeout(annotationSendTimer); annotationSendTimer = undefined;
     cancelAnimationFrame(annotationFrame); annotationFrame = 0;
@@ -926,10 +973,26 @@ export function attachViewerMirror(options: ViewerOptions) {
     const style = doc.createElement('style');
     // rrweb captures the outer box of a blocked editor. Its empty placeholder
     // must not add the textarea's padding and border to those dimensions again.
-    style.textContent = '[data-live-share-editor]{box-sizing:border-box!important} [data-live-share-unavailable]::after{content:"此区域暂不支持实时共享";display:block;padding:32px;color:#64748b;font:14px system-ui;text-align:center} [data-teacher-assistant],[data-live-share-ui]{visibility:hidden!important} .live-share-annotation-source{display:none!important}';
+    style.textContent = '[data-live-share-editor]{box-sizing:border-box!important} [data-live-share-unavailable]::after{content:"此区域暂不支持实时共享";display:block;padding:32px;color:#64748b;font:14px system-ui;text-align:center} [data-teacher-assistant],[data-live-share-ui]{visibility:hidden!important} .live-share-annotation-source,.live-share-code-focus-layer{display:none!important}';
     doc.head?.appendChild(style);
     let holdingSpace = false;
     let dragging: { id: number; x: number; y: number };
+    let resizing: { id: number; sash: HTMLElement; position: number; dirty: boolean } | null = null;
+    let resizeTimer: ReturnType<typeof setTimeout>;
+    const flushResize = () => {
+      clearTimeout(resizeTimer); resizeTimer = undefined;
+      if (!resizing?.dirty) return;
+      resizing.dirty = false;
+      command(resizing.sash, 'resize', { x: resizing.position });
+    };
+    const finishResize = () => {
+      flushResize();
+      const finished = resizing; resizing = null;
+      if (finished) {
+        try { doc.documentElement.releasePointerCapture(finished.id); } catch { /* The pointer can have left the replay. */ }
+        finished.sash.classList.remove('sash-active');
+      }
+    };
     let suppressClickUntil = 0;
     let selecting = false;
     let selectingId: string | null = null;
@@ -937,7 +1000,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     let finishSelectionTimer: ReturnType<typeof setTimeout>;
     function captureSelection() {
       clearTimeout(selectionTimer); selectionTimer = undefined;
-      if (!connected || !ready || disposed || holdingSpace || dragging) return false;
+      if (!connected || !ready || disposed || holdingSpace || dragging || resizing) return false;
       const selection = doc.getSelection();
       if (!selection?.rangeCount || selection.isCollapsed) return false;
       const range = selection.getRangeAt(0);
@@ -979,7 +1042,7 @@ export function attachViewerMirror(options: ViewerOptions) {
       dragging = undefined;
       doc.documentElement.style.removeProperty('cursor');
     };
-    const resetPan = () => { holdingSpace = false; endPan(); };
+    const resetPan = () => { finishResize(); holdingSpace = false; endPan(); };
     const click = (event: MouseEvent) => {
       if (holdingSpace || Date.now() < suppressClickUntil) {
         event.preventDefault(); event.stopImmediatePropagation(); return;
@@ -1021,7 +1084,23 @@ export function attachViewerMirror(options: ViewerOptions) {
     const keyup = (event: KeyboardEvent) => {
       if (event.code === 'Space' || event.key === ' ') resetPan();
     };
+    const outsidePointerdown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      const note = closestElement(event.target)?.closest<HTMLElement>('[data-share-annotation-id]');
+      clearTransientAnnotations(note?.dataset.shareAnnotationId);
+      if (!note) selectingId = null;
+    };
     const pointerdown = (event: PointerEvent) => {
+      outsidePointerdown(event);
+      const sash = sharedSash(closestElement(event.target));
+      if (event.button === 0 && sash && connected && ready && !holdingSpace) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        selecting = false; clearTimeout(selectionTimer); clearTimeout(finishSelectionTimer);
+        resizing = { id: event.pointerId, sash, position: 0, dirty: false };
+        sash.classList.add('sash-active');
+        try { doc.documentElement.setPointerCapture(event.pointerId); } catch { /* Test pointers need no capture. */ }
+        return;
+      }
       if (event.button === 0 && !holdingSpace && !closestElement(event.target)?.closest(ANNOTATION_EXCLUDED)) {
         selecting = true; selectingId = null;
         clearTimeout(finishSelectionTimer);
@@ -1034,6 +1113,17 @@ export function attachViewerMirror(options: ViewerOptions) {
       try { doc.documentElement.setPointerCapture(event.pointerId); } catch { /* A synthetic test pointer has no capture. */ }
     };
     const pointermove = (event: PointerEvent) => {
+      if (resizing?.id === event.pointerId) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        const split = resizing.sash.closest<HTMLElement>(SHARED_SPLIT_SELECTOR);
+        const bounds = split?.getBoundingClientRect();
+        if (!bounds || !bounds.width || !bounds.height) return;
+        const vertical = split.classList.contains('live-share-split-rows');
+        resizing.position = Math.max(0, Math.min(1, vertical ? (event.clientY - bounds.top) / bounds.height : (event.clientX - bounds.left) / bounds.width));
+        resizing.dirty = true;
+        resizeTimer ||= setTimeout(flushResize, 32);
+        return;
+      }
       if (!dragging || dragging.id !== event.pointerId) return;
       event.preventDefault(); event.stopImmediatePropagation();
       const point = teacherPoint(event);
@@ -1043,6 +1133,11 @@ export function attachViewerMirror(options: ViewerOptions) {
       if (dx || dy) options.onViewPan?.({ dx, dy });
     };
     const pointerup = (event: PointerEvent) => {
+      if (resizing?.id === event.pointerId) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        finishResize(); suppressClickUntil = Date.now() + 300;
+        return;
+      }
       if (selecting) {
         selecting = false;
         clearTimeout(selectionTimer); selectionTimer = undefined;
@@ -1117,10 +1212,12 @@ export function attachViewerMirror(options: ViewerOptions) {
     doc.addEventListener('change', change, true);
     doc.addEventListener('keydown', keydown, true);
     doc.addEventListener('keyup', keyup, true);
+    window.addEventListener('pointerdown', outsidePointerdown, true);
     doc.addEventListener('pointerdown', pointerdown, true);
     doc.addEventListener('pointermove', pointermove, true);
     doc.addEventListener('pointerup', pointerup, true);
     doc.addEventListener('pointercancel', pointerup, true);
+    doc.addEventListener('lostpointercapture', pointerup, true);
     doc.addEventListener('selectionchange', selectionchange);
     // Also finish a selection when the pointer is released outside the iframe.
     window.addEventListener('pointerup', pointerup, true);
@@ -1131,6 +1228,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     doc.addEventListener('wheel', wheel, { capture: true, passive: false });
     cleanupDocument = () => {
       resetScrolls();
+      finishResize();
       resetPan();
       selecting = false; clearTimeout(selectionTimer); clearTimeout(finishSelectionTimer);
       doc.removeEventListener('click', click, true);
@@ -1138,10 +1236,12 @@ export function attachViewerMirror(options: ViewerOptions) {
       doc.removeEventListener('change', change, true);
       doc.removeEventListener('keydown', keydown, true);
       doc.removeEventListener('keyup', keyup, true);
+      window.removeEventListener('pointerdown', outsidePointerdown, true);
       doc.removeEventListener('pointerdown', pointerdown, true);
       doc.removeEventListener('pointermove', pointermove, true);
       doc.removeEventListener('pointerup', pointerup, true);
       doc.removeEventListener('pointercancel', pointerup, true);
+      doc.removeEventListener('lostpointercapture', pointerup, true);
       doc.removeEventListener('selectionchange', selectionchange);
       window.removeEventListener('pointerup', pointerup, true);
       doc.defaultView?.removeEventListener('blur', resetPan);
@@ -1179,7 +1279,7 @@ export function attachViewerMirror(options: ViewerOptions) {
         root: host, liveMode: true, mouseTail: false, showWarning: false, showDebug: false,
         UNSAFE_replayCanvas: false, loadTimeout: 0, skipInactive: false,
         insertStyleRules: ['iframe,object,embed{pointer-events:none!important}', 'a,button{cursor:pointer!important}',
-          '.live-share-annotation-source{display:none!important}',
+          '.live-share-annotation-source,.live-share-code-focus-layer{display:none!important}',
           '.live-share-notice,[data-teacher-assistant],[data-live-share-private]{visibility:hidden!important;pointer-events:none!important}'],
       } as any);
       player.startLive(timestamp - 2);

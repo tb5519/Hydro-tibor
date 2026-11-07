@@ -1,6 +1,7 @@
 import ProblemIcon from '@vscode/codicons/src/icons/file.svg?react';
 import SettingsIcon from '@vscode/codicons/src/icons/settings-gear.svg?react';
-import { Allotment } from 'allotment';
+import { Allotment, AllotmentHandle } from 'allotment';
+import { attachSharedSplitter } from '../live_share/splitter';
 import $ from 'jquery';
 import _ from 'lodash';
 import type * as monaco from 'monaco-editor';
@@ -78,6 +79,13 @@ export default function ScratchpadContainer() {
   const dispatch = useDispatch();
   const ui = useSelector<any, any>((state) => state.ui, _.isEqual);
 
+  const columns = React.useRef<AllotmentHandle>(null);
+  const rows = React.useRef<AllotmentHandle>(null);
+  React.useEffect(() => {
+    const root = document.getElementById('scratchpad');
+    if (!root) return undefined;
+    return attachSharedSplitter(root, (axis, sizes) => (axis === 'columns' ? columns : rows).current?.resize(sizes));
+  }, []);
   const relayoutFrame = React.useRef<number | null>(null);
   const handleChangeSize = React.useCallback(() => {
     if (relayoutFrame.current !== null) return;
@@ -102,7 +110,7 @@ export default function ScratchpadContainer() {
 
   return (
     <ScratchpadArtThemeContext.Provider value={theme}>
-      <Allotment onChange={handleChangeSize}>
+      <Allotment ref={columns} className="live-share-split-columns" onChange={handleChangeSize}>
         <Allotment.Pane visible={!ideMode && Object.keys(pages).length > 1} minSize={50} maxSize={50}>
           <div className="scratchpad__tablist">
             {Object.keys(pages).map((key) => {
@@ -143,7 +151,7 @@ export default function ScratchpadContainer() {
           style={scratchpadThemeVariables(theme) as React.CSSProperties}
         >
           <ScratchpadSkin theme={theme} />
-          <Allotment vertical defaultSizes={UiContext.homeworkReview ? [730, 0, 270] : [450, 280, 270]} onChange={handleChangeSize}>
+          <Allotment ref={rows} className="live-share-split-rows" vertical defaultSizes={UiContext.homeworkReview ? [730, 0, 270] : [450, 280, 270]} onChange={handleChangeSize}>
             <div key="editor" className="scratchpad__workspace flex-col splitpane-fill">
               <ScratchpadToolbar />
               <RecordReplaySource />

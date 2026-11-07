@@ -15,6 +15,8 @@ function load(extra = {}) {
         module, exports: module.exports, btoa, atob, Uint8Array, setTimeout, clearTimeout, queueMicrotask,
         require(name) {
             if (name === './vendor') return { Y, MonacoBinding: class { constructor() { throw Error('Unexpected Monaco in textarea test'); } } };
+            // Selection geometry is exercised with the actual surface in live_share_code_focus.browser.spec.js.
+            if (name === './annotation') return { attachAnnotationSurface: () => ({ render() {}, dispose() {} }) };
             return require(name);
         },
         ...extra,

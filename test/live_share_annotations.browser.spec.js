@@ -128,6 +128,10 @@ async function selectionPoints(f, selector) {
 
 async function selectText(f, selector = '#focus', whileDragging) {
     const { start, end } = await selectionPoints(f, selector);
+    await dragSelection(f, start, end, whileDragging);
+}
+
+async function dragSelection(f, start, end, whileDragging) {
     await f.teacher.mouse.move(start.x, start.y); await f.teacher.mouse.down();
     // Playwright's drag detector waits on an iframe timer, but replay deliberately
     // forbids scripts. Native protocol input still exercises real text selection.
@@ -144,7 +148,125 @@ const selectors = {
     root: '[data-share-annotation]', box: '[data-share-annotation-box]', arrow: '[data-share-annotation-arrow]',
     bubble: '[data-share-annotation-note]', input: '[data-share-annotation-input]', handle: '[data-share-annotation-drag]',
     connector: '[data-share-annotation-connector]', text: '[data-share-annotation-text]',
+    selection: '[data-share-annotation-selection]', resize: '[data-share-annotation-resize]',
+    outline: '[data-share-annotation-outline]',
 };
+
+it('temporary focus forms one closed text-shaped contour with a solid rounded arrow and clears on outside click', { timeout: 25000 }, async () => {
+    const f = await fixture();
+    try {
+        await selectText(f, '#multiline');
+        await f.student.locator(`${selectors.box}:visible`).first().waitFor();
+        assert.equal(await f.teacher.locator(`${selectors.root} button:visible`).count(), 0,
+            'temporary emphasis has no distracting delete control');
+        const geometry = await f.student.locator('#multiline').evaluate((paragraph) => {
+            const range = document.createRange(); range.selectNodeContents(paragraph);
+            const bounds = range.getBoundingClientRect();
+            const outline = document.querySelector('[data-share-annotation-box]');
+            const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
+            const pieces = []; let text;
+            while ((text = walker.nextNode())) {
+                range.selectNodeContents(text);
+                for (const rect of range.getClientRects()) pieces.push({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+            }
+            const lines = [];
+            for (const piece of pieces) {
+                const line = lines.find((line) => Math.abs(line.y - piece.y) < 2);
+                if (line) { line.left = Math.min(line.left, piece.x); line.right = Math.max(line.right, piece.x + piece.width); }
+                else lines.push({ y: piece.y, height: piece.height, left: piece.x, right: piece.x + piece.width });
+            }
+            const inverse = outline.getScreenCTM().inverse();
+            const contains = (x, y) => {
+                const point = outline.ownerSVGElement.createSVGPoint(); point.x = x; point.y = y;
+                return outline.isPointInFill(point.matrixTransform(inverse));
+            };
+            return { count: document.querySelectorAll('[data-share-annotation-box]').length, d: outline.getAttribute('d'),
+                lines: lines.map((line) => ({ width: line.right - line.left,
+                    inside: contains((line.left + line.right) / 2, line.y + line.height / 2),
+                    includesEmptyTail: contains(line.right + 18, line.y + line.height / 2) })),
+                width: bounds.width, height: bounds.height };
+        });
+        assert.equal(geometry.count, 1, 'all selected lines share one outline, not independent boxes');
+        assert.equal((geometry.d.match(/m/gi) || []).length, 1, 'one connected contour starts once');
+        assert.equal((geometry.d.match(/z/gi) || []).length, 1, 'the contour is explicitly closed');
+        assert(geometry.lines.length >= 2 && Math.abs(geometry.lines[0].width - geometry.lines.at(-1).width) > 40,
+            'the fixture includes wrapped first and last lines of distinct lengths');
+        assert(geometry.lines.every((line) => line.inside), 'the closed contour encloses all selected line centers');
+        assert(geometry.lines.every((line) => !line.includesEmptyTail), 'the contour steps around each line instead of including empty line tails');
+        const arrow = await f.student.locator(selectors.arrow).evaluate((svg) => {
+            const paths = [...svg.querySelectorAll('path')].filter((path) => path.getAttribute('d') && getComputedStyle(path).display !== 'none');
+            const path = paths[0]; const box = path.getBBox();
+            return { count: paths.length, fill: getComputedStyle(path).fill, d: path.getAttribute('d'), width: box.width, height: box.height };
+        });
+        assert.equal(arrow.count, 1, 'the arrow is one solid silhouette');
+        assert(arrow.fill !== 'none' && !arrow.fill.endsWith(', 0)'), 'the arrow body has a visible solid fill');
+        assert(/[QC]/i.test(arrow.d) && /Z/i.test(arrow.d), 'curved corners form a closed rounded arrow');
+        assert(arrow.width >= 40 && arrow.height >= 40, 'the chunky arrow remains clearly visible');
+        assert.equal(await f.student.locator(`${selectors.box}:visible`).count(), await f.teacher.locator(`${selectors.box}:visible`).count());
+        if (process.env.LIVE_SHARE_SCREENSHOTS === '1') {
+            await f.student.screenshot({ path: path.join(os.tmpdir(), 'live-share-annotation-multiline.png'), caret: 'initial' });
+        }
+        await f.frame().locator('h2').click();
+        await f.student.locator(selectors.root).waitFor({ state: 'detached' });
+        assert.equal(await f.teacher.locator(selectors.root).count(), 0, 'clicking other page content removes temporary emphasis');
+        await selectText(f);
+        await f.student.locator(selectors.box).waitFor();
+        await f.teacher.locator('#teacher-draft').click();
+        await f.student.locator(selectors.root).waitFor({ state: 'detached' });
+        assert.equal(await f.teacher.locator(selectors.root).count(), 0, 'clicking outside the mirrored page also removes it');
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('a selection spanning outside paragraphs and a scroller clips each text fragment to its own overflow bounds', { timeout: 25000 }, async () => {
+    const f = await fixture();
+    try {
+        await f.student.evaluate(() => {
+            const nested = document.querySelector('#nested');
+            const content = document.createElement('p'); content.id = 'clip-lines';
+            content.style.cssText = 'width:1400px;white-space:nowrap;margin:20px 0;line-height:36px';
+            for (let index = 0; index < 9; index++) {
+                content.append(document.createTextNode(`第${index + 1}行：滚动区内部文字只有可见部分应被框住。`.repeat(3)), document.createElement('br'));
+            }
+            nested.replaceChildren(content);
+            nested.scrollLeft = 240; nested.scrollTop = 20;
+            document.querySelector('#link-line').textContent = '滚动区域后面的外部文字';
+        });
+        await f.frame().locator('#clip-lines').waitFor();
+        await f.teacher.waitForFunction(() => document.querySelector('#mirror iframe').contentDocument.querySelector('#nested').scrollLeft === 240);
+        const { start } = await selectionPoints(f, '#multiline');
+        const { end } = await selectionPoints(f, '#link-line');
+        await dragSelection(f, start, end);
+        await f.student.locator(selectors.box).waitFor();
+        // Reassert the scroll position after native selection autoscroll, then
+        // check the production range renderer updates without a new selection.
+        await f.student.evaluate(() => { const node = document.querySelector('#nested'); node.scrollLeft = 240; node.scrollTop = 20; });
+        const geometry = await f.student.locator(selectors.box).evaluate((path) => {
+            const scroll = document.querySelector('#nested').getBoundingClientRect();
+            const range = document.createRange(); range.selectNodeContents(document.querySelector('#clip-lines'));
+            const visible = [...range.getClientRects()].find((rect) => rect.height > 0 && rect.top >= scroll.top && rect.bottom <= scroll.bottom);
+            const inverse = path.getScreenCTM().inverse();
+            const contains = (x, y) => {
+                const point = path.ownerSVGElement.createSVGPoint(); point.x = x; point.y = y;
+                return path.isPointInFill(point.matrixTransform(inverse));
+            };
+            const bounds = path.getBoundingClientRect();
+            const after = document.querySelector('#link-line').getBoundingClientRect();
+            return { visible: !!visible, outside: visible && contains(scroll.left - 25, visible.top + visible.height / 2),
+                inside: visible && contains(scroll.left + 25, visible.top + visible.height / 2),
+                bottom: bounds.bottom, afterBottom: after.bottom,
+                left: bounds.left, outsideLeft: document.querySelector('#multiline').getBoundingClientRect().left };
+        });
+        assert(geometry.visible && geometry.inside, 'visible scroller text remains inside the shared outline');
+        assert.equal(geometry.outside, false, 'horizontally clipped scroller text is never outlined in the outside margin');
+        assert(geometry.left >= geometry.outsideLeft - 6, 'clipped text does not extend the overall contour into the page margin');
+        assert(geometry.bottom <= geometry.afterBottom + 6, 'offscreen lower lines inside the scroller cannot extend the outline below its last outside anchor');
+        if (process.env.LIVE_SHARE_SCREENSHOTS === '1') {
+            await f.student.screenshot({ path: path.join(os.tmpdir(), 'live-share-annotation-overflow.png'), caret: 'initial' });
+        }
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
 
 it('drag selection shows only focus boxes and arrows; Enter opens notes on both sides and writing streams immediately', { timeout: 30000 }, async () => {
     const f = await fixture();
@@ -190,9 +312,9 @@ it('drag selection shows only focus boxes and arrows; Enter opens notes on both 
         await f.student.locator(selectors.bubble).getByText('老师正在输入…', { exact: true }).waitFor();
         assert(await f.student.locator(selectors.bubble).isVisible(), 'an opened note stays visible while its text is being replaced');
         assert(await f.student.locator(selectors.box).isVisible(), 'clearing note text retains the focus box');
-        await f.teacher.getByRole('button', { name: '清除标注', exact: true }).click();
+        await f.teacher.locator('#teacher-draft').click();
         await f.student.locator(selectors.box).waitFor({ state: 'hidden' });
-        assert.equal(await f.teacher.locator(selectors.box).isVisible(), false);
+        assert.equal(await f.teacher.locator(selectors.root).count(), 0, 'leaving a cleared note removes it without another delete action');
         await selectText(f, '#ordinary-button');
         assert.equal(await f.teacher.locator(selectors.box).isVisible(), false, 'selecting control labels does not create a lesson annotation');
         assert.equal(await f.student.locator(selectors.box).isVisible(), false);
@@ -220,7 +342,7 @@ it('a fast drag over a study link selects its text without navigating the studen
     } finally { await f.close(); }
 });
 
-it('scaled teacher note dragging remains aligned with the student and anchors follow document/nested scrolling and reflow', { timeout: 35000 }, async () => {
+it('scaled note dragging and resizing synchronize dimensions, and anchors follow scrolling and reflow', { timeout: 35000 }, async () => {
     const f = await fixture({ scale: 0.5 });
     try {
         await selectText(f);
@@ -239,6 +361,26 @@ it('scaled teacher note dragging remains aligned with the student and anchors fo
         assert(Math.abs((movedTeacher.x - teacherBubble.x) * 2 - (movedStudent.x - studentBubble.x)) < 3,
             'teacher pointer coordinates map through the 0.5 scale without using DPR');
         assert(Math.abs((movedTeacher.y - teacherBubble.y) * 2 - (movedStudent.y - studentBubble.y)) < 3);
+        const resizeHandle = await f.teacher.locator(selectors.resize).boundingBox();
+        await f.teacher.mouse.move(resizeHandle.x + resizeHandle.width / 2, resizeHandle.y + resizeHandle.height / 2);
+        await f.teacher.mouse.down();
+        await f.teacher.mouse.move(resizeHandle.x + resizeHandle.width / 2 + 65, resizeHandle.y + resizeHandle.height / 2 + 45, { steps: 10 });
+        await f.teacher.mouse.up();
+        await f.student.waitForFunction(({ selector, width }) => document.querySelector(selector).getBoundingClientRect().width > width + 100,
+            { selector: selectors.bubble, width: movedStudent.width });
+        const resizedTeacher = await f.teacher.locator(selectors.bubble).boundingBox();
+        const resizedStudent = await f.student.locator(selectors.bubble).boundingBox();
+        assert(Math.abs(resizedTeacher.width * 2 - resizedStudent.width) < 3 && Math.abs(resizedTeacher.height * 2 - resizedStudent.height) < 3,
+            'both peers show the same manually resized bubble in learner CSS pixels');
+        assert(Math.abs(resizedStudent.width - movedStudent.width - 130) < 3);
+        assert(Math.abs((resizedTeacher.height - movedTeacher.height) * 2 - 90) < 3,
+            'vertical resize uses the mirror scale rather than teacher DPR');
+        const dimensions = f.commands.filter((command) => command.action === 'annotate' && command.annotation?.width).at(-1).annotation;
+        assert(Math.abs(dimensions.width - resizedStudent.width) < 3 && Math.abs(dimensions.height - resizedStudent.height) < 3);
+        await f.teacher.locator(selectors.input).fill('手动调好的大小不应在继续写字时跳回默认值。\n下一行继续实时显示。');
+        await f.student.locator(selectors.bubble).getByText('手动调好的大小不应在继续写字时跳回默认值。\n下一行继续实时显示。', { exact: true }).waitFor();
+        const afterWriting = await f.student.locator(selectors.bubble).boundingBox();
+        assert(Math.abs(afterWriting.width - resizedStudent.width) < 1 && Math.abs(afterWriting.height - resizedStudent.height) < 1);
         const before = await f.student.locator(selectors.box).boundingBox();
         await f.student.evaluate(() => window.scrollTo(0, 80));
         await f.student.waitForFunction(({ selector, y }) => Math.abs(document.querySelector(selector).getBoundingClientRect().y - (y - 80)) < 3,
@@ -251,7 +393,7 @@ it('scaled teacher note dragging remains aligned with the student and anchors fo
         await f.student.waitForFunction(({ selector, x }) => document.querySelector(selector).getBoundingClientRect().x > x + 50,
             { selector: selectors.box, x: sourceBox.x });
         await f.teacher.waitForFunction(() => document.querySelector('#mirror iframe').contentDocument.querySelector('#lesson').style.paddingLeft === '100px');
-        await f.teacher.getByRole('button', { name: '清除标注', exact: true }).click();
+        await f.teacher.getByRole('button', { name: '删除批注', exact: true }).click();
         await selectText(f, '#nested-focus');
         await f.teacher.keyboard.press('Enter');
         await f.teacher.locator(selectors.input).fill('独立区域也要跟随。');
@@ -276,6 +418,13 @@ it('multiple annotations keep their own text and position, one can close indepen
         const firstId = await first.getAttribute('data-share-annotation-id');
         const firstSelector = `[data-share-annotation-id="${firstId}"]`;
         await f.student.locator(firstSelector).getByText('第一处：注意输出内容。', { exact: true }).waitFor();
+        await f.frame().locator('h2').click();
+        assert(await f.teacher.locator(firstSelector).locator(selectors.bubble).isVisible(), 'written notes survive clicks outside them');
+        await selectText(f, '#title');
+        const temporaryId = await f.teacher.locator(selectors.root).last().getAttribute('data-share-annotation-id');
+        await f.frame().locator('h2').click();
+        await f.student.locator(`[data-share-annotation-id="${temporaryId}"]`).waitFor({ state: 'detached' });
+        assert(await f.student.locator(firstSelector).locator(selectors.bubble).isVisible(), 'discarding a new temporary focus does not delete a written note');
         await selectText(f, '#title'); await f.teacher.keyboard.press('Enter');
         const second = f.teacher.locator(selectors.root).last();
         const secondId = await second.getAttribute('data-share-annotation-id');
@@ -300,7 +449,7 @@ it('multiple annotations keep their own text and position, one can close indepen
             { selector: `${secondSelector} ${selectors.bubble}`, x: secondHandle.x - 60 });
         const unchangedFirst = await f.student.locator(firstSelector).locator(selectors.bubble).boundingBox();
         assert(Math.abs(unchangedFirst.x - firstPosition.x) < 2 && Math.abs(unchangedFirst.y - firstPosition.y) < 2);
-        await second.getByRole('button', { name: '清除标注', exact: true }).click();
+        await second.getByRole('button', { name: '删除批注', exact: true }).click();
         await f.student.locator(secondSelector).waitFor({ state: 'detached' });
         assert(await f.student.locator(firstSelector).locator(selectors.box).isVisible());
         const longText = Array.from({ length: 30 }, (_, i) => `第 ${i + 1} 行：一步一步检查答案。`).join('\n');
@@ -337,7 +486,7 @@ it('stale or mismatched anchors are rejected, disappearing text hides the annota
         await selectText(f, '#multiline');
         await f.teacher.keyboard.press('Enter');
         await f.teacher.locator(`${selectors.root}:visible ${selectors.input}`).fill('第二段提示');
-        await f.student.locator(`${selectors.root}:visible ${selectors.box}`).waitFor({ state: 'visible' });
+        await f.student.locator(`${selectors.root}:visible ${selectors.box}`).first().waitFor({ state: 'visible' });
         await Promise.all([f.teacher.evaluate(() => window.viewer.setConnected(false)), f.student.evaluate(() => window.source.setConnected(false))]);
         await f.student.waitForFunction(() => ![...document.querySelectorAll('[data-share-annotation]')].some((node) => !node.hidden));
         await f.teacher.waitForFunction(() => ![...document.querySelectorAll('[data-share-annotation]')].some((node) => !node.hidden));

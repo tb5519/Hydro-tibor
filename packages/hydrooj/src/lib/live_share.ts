@@ -108,10 +108,13 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
     const short = (value: unknown, limit = 96) => typeof value === 'string' && value.length <= limit;
     if (kind === 'command') {
         if (!shareId(data.id) || data.pageId !== pageId || !Number.isSafeInteger(data.nodeId) || data.nodeId < 1
-            || !['click', 'scroll', 'select', 'search', 'annotate'].includes(data.action)
+            || !['click', 'scroll', 'select', 'search', 'annotate', 'resize'].includes(data.action)
             || (data.target !== undefined && !short(data.target, 32))
             || (data.value !== undefined && !short(data.value, 4096))
             || (data.x !== undefined && !finite(data.x)) || (data.y !== undefined && !finite(data.y))) invalid();
+        if (data.action === 'resize' && (role !== 'teacher' || !short(data.target, 32) || !data.target
+            || !finite(data.x) || data.x < 0 || data.x > 1
+            || Object.keys(data).some((key) => !['id', 'pageId', 'nodeId', 'action', 'target', 'x'].includes(key)))) invalid();
         if (data.action === 'annotate') {
             // Annotation messages carry a text range and plain note text only.
             // They must never become arbitrary DOM, style, navigation or editor operations.
@@ -120,12 +123,14 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
             const note = data.annotation;
             if (note !== null) {
                 if (!note || typeof note !== 'object' || Array.isArray(note)
-                    || Object.keys(note).some((key) => !['startNodeId', 'endNodeId', 'startOffset', 'endOffset', 'quote', 'text', 'noteOpen', 'offsetX', 'offsetY'].includes(key))
+                    || Object.keys(note).some((key) => !['startNodeId', 'endNodeId', 'startOffset', 'endOffset', 'quote', 'text', 'noteOpen', 'offsetX', 'offsetY', 'width', 'height'].includes(key))
                     || ![note.startNodeId, note.endNodeId].every((id) => Number.isSafeInteger(id) && id > 0)
                     || ![note.startOffset, note.endOffset].every((offset) => Number.isSafeInteger(offset) && offset >= 0 && offset <= 1_000_000)
                     || (note.startNodeId === note.endNodeId && note.startOffset >= note.endOffset)
                     || !short(note.quote, 4000) || !note.quote.trim() || !short(note.text, 1000)
                     || typeof note.noteOpen !== 'boolean'
+                    || (note.width !== undefined && (!finite(note.width) || note.width < 160 || note.width > 960))
+                    || (note.height !== undefined && (!finite(note.height) || note.height < 100 || note.height > 800))
                     || ![note.offsetX, note.offsetY].every((offset) => finite(offset) && Math.abs(offset) <= 10000)) invalid();
             }
         }
