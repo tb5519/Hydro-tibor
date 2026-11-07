@@ -291,11 +291,35 @@ export async function injectLiveShare(handler: Handler) {
     let pageGrant: string;
     if (!canTeach) {
         const path = `${handler.request.originalPath}${handler.context.request.querystring ? `?${handler.context.request.querystring}` : ''}`;
-        if (!sharePage(path)) return;
+        const page = sharePage(path);
+        if (!page) return;
         try {
             await share.studentScope(handler.user._id, domainId);
-            pageGrant = await share.issuePageGrant(handler.user._id, domainId, path);
-        } catch { return; }
+        } catch {
+            // Site-wide pages such as /daily-quiz resolve to the system domain,
+            // which is not necessarily one of this learner's joined classrooms.
+            // The HTTP page has already passed its own authorization. Bind only
+            // unqualified pages to a currently permitted classroom; an explicit
+            // /d/... page must never fall back to a different domain.
+            if (page.domainId) return;
+            const workspaceDoc = (handler as Handler & { workspaceDoc?: { _id: string } }).workspaceDoc;
+            const spaces = [...new Set([workspaceDoc?._id, workspace.resolveDomainWorkspaceId(handler.domain),
+                ...await workspace.getAssignedWorkspaceIds(handler.user._id)].filter(Boolean))];
+            let found = false;
+            for (const space of spaces) {
+                // eslint-disable-next-line no-await-in-loop
+                for (const item of await workspace.getDomains(space)) {
+                    try {
+                        // eslint-disable-next-line no-await-in-loop
+                        await share.studentScope(handler.user._id, item._id);
+                        domainId = item._id; found = true; break;
+                    } catch { /* Only an actually joined, active classroom may provide the grant. */ }
+                }
+                if (found) break;
+            }
+            if (!found) return;
+        }
+        try { pageGrant = await share.issuePageGrant(handler.user._id, domainId, path); } catch { return; }
     }
     handler.UiContext.liveShare = {
         enabled: true, uid: handler.user._id, canTeach, pageGrant, socketUrl: handler.url('live_share_conn', { domainId }),

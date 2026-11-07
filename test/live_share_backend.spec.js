@@ -28,6 +28,7 @@ const rooms = [
     { _id: 'class-b', workspaceId: 'a', domainType: 'oj' },
     { _id: 'other', workspaceId: 'b', domainType: 'oj' },
     { _id: 'scratch', workspaceId: 'a', domainType: 'scratch' },
+    { _id: 'system', workspaceId: 'tang', domainType: 'oj' },
 ];
 const ws = {
     LEGACY_WORKSPACE_ID: 'tang', isPlatformAdmin: (uid) => uid === 99,
@@ -412,6 +413,39 @@ describe('live share durable session broker', () => {
 });
 
 describe('live share websocket integration', () => {
+    it('binds global daily quiz pages to an actually joined classroom without granting foreign-domain access', async () => {
+        const make = (path = '/daily-quiz', uid = 10) => ({
+            user: { _id: uid, hasPriv: () => true }, domain: rooms.find((room) => room._id === 'system'),
+            session: {}, UiContext: {}, request: { method: 'GET', originalPath: path },
+            context: { request: { querystring: 'return=%2Fd%2Fclass-a%2Fp' } },
+            response: { status: 200, template: 'daily_quiz.html' },
+            url: (_name, options) => `/d/${options.domainId}/live-share/conn`,
+        });
+        const quiz = make(); await handlers.injectLiveShare(quiz);
+        assert.equal(quiz.UiContext.liveShare.canTeach, false);
+        assert.equal(quiz.UiContext.liveShare.socketUrl, '/d/class-a/live-share/conn');
+        const url = '/daily-quiz?return=%2Fd%2Fclass-a%2Fp';
+        assert.equal(await model.verifyPageGrant(10, 'class-a', quiz.UiContext.liveShare.pageGrant, url), true);
+        assert.equal(await model.verifyPageGrant(11, 'class-a', quiz.UiContext.liveShare.pageGrant, url), false);
+        assert.equal(await model.verifyPageGrant(10, 'class-b', quiz.UiContext.liveShare.pageGrant, url), false);
+        assert.equal(await model.verifyPageGrant(10, 'class-a', quiz.UiContext.liveShare.pageGrant, '/p'), false);
+        const quizSocket = connection(10); await quizSocket.instance.prepare();
+        await quizSocket.instance.message({ type: 'hello', tabId: 'quiz-tab-testing', pageId: 'quiz-page-testing',
+            deviceId: 'quiz-device-testing', pageGrant: quiz.UiContext.liveShare.pageGrant, url, title: '每日问答', visible: true });
+        assert.equal(quizSocket.sent.find((message) => message.type === 'ready')?.canTeach, false);
+        const teacher = connection(2); await hello(teacher, 2);
+        await teacher.instance.message({ type: 'start', studentUid: 10, tabId: 'quiz-tab-testing' });
+        await settle();
+        assert.ok(teacher.sent.some((message) => message.type === 'started'), 'a teacher can start sharing the quiz tab');
+        const explicit = make('/d/system/daily-quiz'); await handlers.injectLiveShare(explicit);
+        assert.equal(explicit.UiContext.liveShare, undefined, 'an explicit unjoined domain never falls back');
+        const denied = make(); denied.response.status = 403; await handlers.injectLiveShare(denied);
+        assert.equal(denied.UiContext.liveShare, undefined, 'an unauthorized HTTP response never gets a page grant');
+        await workspaceStudents.updateOne({ uid: 10 }, { $set: { status: 'disabled' } });
+        const removed = make(); await handlers.injectLiveShare(removed);
+        assert.equal(removed.UiContext.liveShare, undefined, 'disabled students cannot use global-page fallback');
+    });
+
     it('injects a page-bound learner grant only after an authorized rendered GET response', async () => {
         const router = new Router();
         handlers.apply({ Connection: (name, route) => router.ws(route, undefined, name), on() {} });

@@ -137,6 +137,32 @@ describe('daily quiz entry is isolated from teacher account inspection', () => {
         assert.deepEqual(reads, [24]);
     });
 
+    it('keeps authenticated classroom sharing and voice reachable during an unfinished quiz without bypassing study gates', async () => {
+        for (const path of ['/live-share/conn', '/voice-call/conn', '/live-share/conn/', '/voice-call/conn/',
+            '/d/python/live-share/conn', '/d/scratch/voice-call/conn']) {
+            const f = await fixture({ json: true });
+            Object.assign(f.handler.request, { path, originalPath: `/d/python${path}`, method: 'GET', websocket: true });
+            assert.equal(await f.events.get('handler/before-prepare')(f.handler), undefined, path);
+            await f.events.get('handler/create/ws')(f.handler);
+            assert.equal(f.reads.length, 0, 'connecting assistance must not create or advance practice');
+            assert.equal(f.handler.response.status, undefined);
+        }
+        for (const path of ['/live-share/conn/anything', '/voice-call/conn/anything', '/live-share', '/voice-call',
+            '/record/1', '/p/1/submit', '/contest/abc/problems']) {
+            const f = await fixture({ json: true });
+            Object.assign(f.handler.request, { path, websocket: true });
+            assert.equal(await f.events.get('handler/before-prepare')(f.handler), 'cleanup', path);
+            assert.equal(f.handler.response.status, 403);
+            await assert.rejects(f.events.get('handler/create/ws')(f.handler), ForbiddenError, path);
+        }
+        for (const path of ['/live-share/conn', '/voice-call/conn']) {
+            const f = await fixture({ json: true });
+            Object.assign(f.handler.request, { path, method: 'POST' });
+            assert.equal(await f.events.get('handler/before-prepare')(f.handler), 'cleanup');
+            assert.equal(f.handler.response.status, 403, 'the exception never authorizes POST actions');
+        }
+    });
+
     it('permits completed genuine learners through both entry paths without teacher-view markers', async () => {
         const { events, handler, reads } = await fixture({ required: false });
         assert.equal(await events.get('handler/before-prepare')(handler), undefined);

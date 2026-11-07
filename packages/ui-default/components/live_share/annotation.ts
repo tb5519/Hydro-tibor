@@ -18,9 +18,19 @@ interface AnnotationPatch { text?: string; offsetX?: number; offsetY?: number; w
 let annotationLayer = 1003;
 let annotationAsset = 0;
 
-/** Trace the union of text strips and narrow bridges as one stepped outline. */
+/** Follow visual rows, joining paragraph gaps with a broad, direct silhouette. */
 function selectionOutline(lines: Rect[]) {
   const strips = lines.map((line) => ({ left: line.x - 4, top: line.y - 3, right: line.x + line.width + 4, bottom: line.y + line.height + 3 }));
+  if (strips.every((strip, index) => !index || strip.top >= strips[index - 1].bottom)) {
+    // Keep each row's actual width. Only the space between rows is bridged:
+    // the two outer edges slope directly to the next row instead of doubling
+    // back through a thin corridor (especially around inline formulas).
+    const right = strips.flatMap((strip) => [[strip.right, strip.top], [strip.right, strip.bottom]]);
+    const left = strips.slice().reverse().flatMap((strip) => [[strip.left, strip.bottom], [strip.left, strip.top]]);
+    return strips.length ? `M ${[...right, ...left].map(([x, y]) => `${x} ${y}`).join(' L ')} Z` : '';
+  }
+  // Preserve separate horizontal runs in tables/columns and overlapping rows.
+  // They cannot use a single left/right envelope without enclosing unrelated text.
   const regions = [...strips];
   for (let index = 1; index < strips.length; index++) {
     const a = strips[index - 1]; const b = strips[index];
@@ -168,7 +178,7 @@ export function attachAnnotationSurface(options: {
   const outlineSvg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
   outlineSvg.classList.add('live-share-annotation__outline');
   outlineSvg.dataset.shareAnnotationOutline = '';
-  const outline = doc.createElementNS(outlineSvg.namespaceURI, 'path');
+  const outline = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
   outline.classList.add('live-share-annotation__box');
   outline.dataset.shareAnnotationBox = '';
   outlineSvg.append(outline); box.append(outlineSvg);
@@ -176,7 +186,7 @@ export function attachAnnotationSurface(options: {
   svg.classList.add('live-share-annotation__arrow');
   svg.dataset.shareAnnotationArrow = '';
   svg.setAttribute('aria-hidden', 'true');
-  const arrowShape = doc.createElementNS(svg.namespaceURI, 'path');
+  const arrowShape = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
   arrowShape.dataset.shareAnnotationArrowShape = '';
   const defs = doc.createElementNS(svg.namespaceURI, 'defs');
   const gradient = doc.createElementNS(svg.namespaceURI, 'linearGradient');
@@ -256,18 +266,41 @@ export function attachAnnotationSurface(options: {
     const visible = source.filter((line) => ['x', 'y', 'width', 'height'].every((key) => Number.isFinite(line[key]))
       && line.width > 0 && line.height > 0 && line.x < width && line.y < height && line.x + line.width > 0 && line.y + line.height > 0)
       .map(({ x, y, width: w, height: h }) => ({ x, y, width: w, height: h })).sort((a, b) => a.y - b.y || a.x - b.x);
-    const lines: Rect[] = [];
-    for (const line of visible) {
-      const previous = lines.at(-1);
-      // Join touching pieces of the same text line, never the unselected gap
-      // between columns or the empty space at the end of a wrapped line.
-      if (previous && Math.abs(previous.y - line.y) < 1 && Math.abs(previous.height - line.height) < 2
-        && line.x <= previous.x + previous.width + 1 && line.x >= previous.x) {
-        previous.width = Math.max(previous.width, line.x + line.width - previous.x);
-        previous.height = Math.max(previous.height, line.height);
-      } else lines.push(line);
+    const rows: { anchor: Rect; pieces: Rect[] }[] = [];
+    // Start with the largest glyphs so a superscript or a differently sized
+    // formula cannot split a sentence into several rows. Compare to a fixed
+    // anchor, rather than an expanding union that could absorb the next line.
+    for (const piece of visible.sort((a, b) => b.height - a.height || a.y - b.y || a.x - b.x)) {
+      let closest: typeof rows[number] | undefined; let distance = Infinity;
+      for (const row of rows) {
+        const a = row.anchor;
+        const overlap = Math.min(a.y + a.height, piece.y + piece.height) - Math.max(a.y, piece.y);
+        const centerDistance = Math.abs(a.y + a.height / 2 - piece.y - piece.height / 2);
+        if (overlap >= Math.min(a.height, piece.height) * .5
+          && centerDistance <= Math.max(a.height, piece.height) * .5 && centerDistance < distance) {
+          closest = row; distance = centerDistance;
+        }
+      }
+      if (closest) closest.pieces.push(piece);
+      else rows.push({ anchor: piece, pieces: [piece] });
     }
-    return lines;
+    const lines: Rect[] = [];
+    for (const { pieces } of rows) {
+      const top = Math.min(...pieces.map((piece) => piece.y));
+      const bottom = Math.max(...pieces.map((piece) => piece.y + piece.height));
+      let run: Rect | undefined;
+      for (const piece of pieces.sort((a, b) => a.x - b.x)) {
+        // Small inline gaps belong to the selected sentence; distant columns
+        // remain separate. Overflow-clipped text is never remeasured here.
+        if (run && piece.x <= run.x + run.width + Math.max(1, piece.height * .25)) {
+          run.width = Math.max(run.width, piece.x + piece.width - run.x);
+        } else {
+          run = { x: piece.x, y: top, width: piece.width, height: bottom - top };
+          lines.push(run);
+        }
+      }
+    }
+    return lines.sort((a, b) => a.y - b.y || a.x - b.x);
   }
 
   function draw() {

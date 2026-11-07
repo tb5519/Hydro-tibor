@@ -64,9 +64,9 @@ async function run() {
         return { agent, cookie: response.headers['set-cookie'].map((item) => item.split(';')[0]).join('; ') };
     };
     const teacher = await login('voice_teacher'); const student = await login('voice_student'); const other = await login('voice_other');
-    const connect = async (account, tabId) => {
+    const connect = async (account, tabId, { kind = 'voice-call', hello = {} } = {}) => {
         const messages = [];
-        const ws = new WebSocket(`${origin.replace('http:', 'ws:')}/d/${domainId}/voice-call/conn`, {
+        const ws = new WebSocket(`${origin.replace('http:', 'ws:')}/d/${domainId}/${kind}/conn`, {
             headers: { Cookie: account.cookie, Origin: origin },
         });
         sockets.push(ws);
@@ -86,7 +86,7 @@ async function run() {
             }
             throw new Error(`No expected voice event: ${JSON.stringify(messages)}`);
         };
-        send({ type: 'hello', tabId, deviceId: `device-${tabId}`, mediaOwner: true, visible: true });
+        send({ type: 'hello', tabId, deviceId: `device-${tabId}`, mediaOwner: true, visible: true, ...hello });
         await wait((message) => message.type === 'ready');
         return { ws, messages, send, wait };
     };
@@ -144,6 +144,50 @@ async function run() {
         const records = await db.collection('voice.call.session').find({}).toArray();
         assert.equal(records.length, 1); assert.equal(records[0].active, false);
         assert.equal(JSON.stringify(records).includes(frame), false);
+    });
+    await check('An unfinished daily quiz supports authorized sharing and voice while ordinary study remains gated', async () => {
+        const quiz = require('../packages/hydrooj/src/model/daily_quiz');
+        const { beijingDay } = require('../packages/hydrooj/src/lib/daily_quiz');
+        const day = beijingDay(new Date());
+        await quiz.savePolicy(studentUid, { version: 1, enabled: true, cooldownRounds: 3,
+            domains: [{ domainId, enabled: true, count: 1, tags: [], points: [1] }] }, teacherUid);
+        await quiz.sessionColl.insertOne({ _id: `${studentUid}-${day}`, uid: studentUid, day, round: 0, cooldownRounds: 3,
+            cursor: 0, requested: 1, createdAt: new Date(), items: [{ id: 1, domainId, domainName: '语音测试课堂', sourceId: 1,
+                title: '协助期间的每日问答', tags: [], points: 1, files: {}, statementFiles: [],
+                objective: { kind: 'single', stem: '请选择 A', options: ['A', 'B'], answers: ['A'], analysis: 'A 是正确选项' } }] });
+        const status = await student.agent.get('/daily-quiz/status').set('Accept', 'application/json');
+        assert.equal(status.body.state.required, true, 'fixture must genuinely trigger the quiz gate');
+        const quizPath = '/daily-quiz?return=%2Fd%2Fvoice-class%2Fp';
+        const page = await student.agent.get(quizPath);
+        assert.equal(page.status, 200, page.text.slice(0, 300));
+        const rawContext = page.text.match(/window\.UiContext = ('(?:\\.|[^'\\])*');/);
+        assert.ok(rawContext, 'quiz simple layout includes the global bootstrap');
+        const ui = JSON.parse(require('node:vm').runInNewContext(rawContext[1]));
+        assert.ok(ui.liveShare.pageGrant, 'quiz without system membership binds to the actual classroom');
+        assert.equal(ui.liveShare.socketUrl, `/d/${domainId}/live-share/conn`);
+        const learner = await connect(student, 'quiz-share-learner', { kind: 'live-share', hello: {
+            pageId: 'quiz-page-testing', url: quizPath, title: '每日问答', pageGrant: ui.liveShare.pageGrant,
+        } });
+        const tutor = await connect(teacher, 'quiz-share-teacher', { kind: 'live-share', hello: {
+            pageId: 'teacher-quiz-page', url: `/d/${domainId}/`, title: '老师页面',
+        } });
+        tutor.send({ type: 'start', studentUid, tabId: 'quiz-share-learner' });
+        const started = await tutor.wait((message) => message.type === 'started');
+        await learner.wait((message) => message.type === 'share-start' && message.sessionId === started.sessionId);
+        const voiceDuringQuiz = await connect(student, 'quiz-voice-learner');
+        assert.ok(voiceDuringQuiz.messages.some((message) => message.type === 'ready'));
+        const stillBlocked = await student.agent.get(`/d/${domainId}/p`).set('Accept', 'application/json');
+        assert.equal(stillBlocked.status, 403);
+        assert.equal(stillBlocked.body.code, 'daily_quiz_required');
+        const blockedPost = await student.agent.post(`/d/${domainId}/p/1/submit`).set('Accept', 'application/json').send({ lang: 'cpp', code: '' });
+        assert.equal(blockedPost.status, 403);
+        assert.equal(blockedPost.body.code, 'daily_quiz_required');
+        const untouched = await quiz.sessionColl.findOne({ _id: `${studentUid}-${day}` });
+        assert.equal(untouched.cursor, 0); assert.equal(untouched.items[0].answer, undefined);
+        tutor.send({ type: 'stop', sessionId: started.sessionId });
+        await learner.wait((message) => message.type === 'ended' && message.sessionId === started.sessionId);
+        // The optional browser fixture reuses these accounts for normal pages.
+        await quiz.savePolicy(studentUid, { version: 1, enabled: false, cooldownRounds: 3, domains: [] }, teacherUid);
     });
     for (const socket of sockets) socket.close();
     console.log(`RESULT ${results.filter(Boolean).length}/${results.length} voice integration checks passed`);

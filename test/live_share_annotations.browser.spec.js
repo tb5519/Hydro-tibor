@@ -218,6 +218,89 @@ it('temporary focus forms one closed text-shaped contour with a solid rounded ar
     } finally { await f.close(); }
 });
 
+it('mixed inline math and separate paragraphs form a solid smooth focus block instead of folded corridors', { timeout: 25000 }, async () => {
+    const f = await fixture();
+    try {
+        await f.student.evaluate(() => {
+            document.querySelector('#lesson').innerHTML = `<h2>题目描述</h2>
+                <p id="math-paragraph" style="font-size:19px;white-space:nowrap">给定两个整数 <i id="math-start" style="font:italic 25px Georgia;position:relative;top:-2px">A</i> 和 <i style="font:italic 24px Georgia;position:relative;top:-1px">B</i>，输出 <i style="font:italic 26px Georgia;position:relative;top:-3px">A + B</i> 的值。保证 <i style="font:italic 25px Georgia;position:relative;top:-2px">A, B</i> 及结果均在 <strong style="font-size:22px">32</strong> 位整型范围内。</p>
+                <p id="math-next" style="font-size:19px">现在请你解决这一问题。</p>
+                <h2 id="math-heading" style="font-size:27px">输入格式</h2>
+                <p>一行，包含两个整数 A, B，中间用单个空格隔开。</p><div style="height:1000px"></div>`;
+        });
+        await f.frame().locator('#math-heading').waitFor();
+        const { start } = await selectionPoints(f, '#math-start');
+        const { end } = await selectionPoints(f, '#math-heading');
+        await dragSelection(f, start, end);
+        // A box can already exist for an intermediate mouse-move selection.
+        // Wait for the learner to acknowledge the final heading-inclusive range
+        // before asserting geometry, rather than measuring an earlier packet.
+        await f.teacher.exposeFunction('finalMathSelectionReceived', () => f.commands.some((command) =>
+            command.action === 'annotate' && command.annotation?.quote.trim().endsWith('输入格式')
+            && f.acks.some((ack) => ack.id === command.id && ack.ok)));
+        await f.teacher.waitForFunction(() => window.finalMathSelectionReceived());
+        const finalTeacherPath = await f.teacher.locator(selectors.box).getAttribute('d');
+        await f.student.waitForFunction(({ selector, d }) => document.querySelector(selector)?.getAttribute('d') === d,
+            { selector: selectors.box, d: finalTeacherPath });
+        await f.student.locator(selectors.box).waitFor();
+        const geometry = await f.student.locator(selectors.box).evaluate((outline) => {
+            const range = document.createRange();
+            const start = document.querySelector('#math-start').firstChild;
+            const firstParagraph = document.querySelector('#math-paragraph');
+            range.setStart(start, 0); range.setEnd(firstParagraph, firstParagraph.childNodes.length);
+            const first = range.getBoundingClientRect();
+            range.selectNodeContents(document.querySelector('#math-next'));
+            const second = range.getBoundingClientRect();
+            range.selectNodeContents(document.querySelector('#math-heading'));
+            const last = range.getBoundingClientRect();
+            const inverse = outline.getScreenCTM().inverse();
+            const contains = (x, y) => {
+                const point = outline.ownerSVGElement.createSVGPoint(); point.x = x; point.y = y;
+                return outline.isPointInFill(point.matrixTransform(inverse));
+            };
+            const gapY = (first.bottom + second.top) / 2;
+            // The new contour fills the obvious connection towards the next
+            // paragraph's left edge, not only their narrow horizontal overlap.
+            const diagonalLeft = (first.left + second.left) / 2;
+            const sharedRight = Math.min(first.right, second.right);
+            const bridgeX = diagonalLeft + (sharedRight - diagonalLeft) / 3;
+            const walker = document.createTreeWalker(firstParagraph, NodeFilter.SHOW_TEXT);
+            const glyphs = []; let text; let selected = false;
+            while ((text = walker.nextNode())) {
+                selected ||= text === start;
+                if (!selected || !text.textContent.trim()) continue;
+                range.selectNodeContents(text);
+                for (const rect of range.getClientRects()) if (rect.width && rect.height) glyphs.push(rect);
+            }
+            const samples = glyphs.map((rect) => ({
+                inside: contains(rect.left + rect.width / 2, rect.top + rect.height / 2),
+                smoothTop: contains(rect.left + rect.width / 2, first.top - 1),
+                smoothBottom: contains(rect.left + rect.width / 2, first.bottom + 1),
+            }));
+            return { d: outline.getAttribute('d'), samples, bridge: contains(bridgeX, gapY),
+                gap: second.top - first.bottom, leftOffset: first.left - second.left,
+                shortTailOutside: !contains(second.right + 25, second.top + second.height / 2),
+                headingInside: contains(last.left + last.width / 2, last.top + last.height / 2) };
+        });
+        if (process.env.LIVE_SHARE_SCREENSHOTS === '1') {
+            await f.student.screenshot({ path: path.join(os.tmpdir(), 'live-share-annotation-math-block.png'), caret: 'initial' });
+            await f.teacher.screenshot({ path: path.join(os.tmpdir(), 'live-share-annotation-math-block-teacher.png'), caret: 'initial' });
+        }
+        assert(geometry.gap > 10 && geometry.leftOffset > 80, 'the fixture has a visible paragraph gap and a partially selected first line');
+        assert.equal((geometry.d.match(/m/gi) || []).length, 1, 'all selected blocks have a single contour');
+        assert.equal((geometry.d.match(/z/gi) || []).length, 1, 'the contour closes once');
+        assert(geometry.samples.every((sample) => sample.inside), 'all inline formula and prose fragments remain enclosed');
+        assert(geometry.samples.every((sample) => sample.smoothTop && sample.smoothBottom),
+            'inline formula baselines and font sizes share smooth row edges rather than tiny bumps');
+        assert(geometry.bridge, 'the paragraph gap is filled towards the direct diagonal edge, without a thin folded connector');
+        assert(geometry.shortTailOutside, 'a short paragraph keeps its text-shaped edge instead of a full rectangular selection');
+        assert(geometry.headingInside, 'the selected heading belongs to the same connected block');
+        assert.equal(await f.teacher.locator(selectors.box).getAttribute('d'), geometry.d,
+            'teacher and learner render identical focus geometry');
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
 it('a selection spanning outside paragraphs and a scroller clips each text fragment to its own overflow bounds', { timeout: 25000 }, async () => {
     const f = await fixture();
     try {

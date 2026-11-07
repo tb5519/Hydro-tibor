@@ -102,6 +102,17 @@ export class DailyQuizFileHandler extends Handler {
 // eslint-disable-next-line max-len
 const exemptPath = /^\/(?:daily-quiz|student-message\/ack|training-time\/(?:session|heartbeat)|login|logout|oauth|lostpass|user\/(?:sudo|tfa|avatar-effects)|home\/security|language|fs|asset|lazy|resource|service-worker-config)(?:\/|$)/;
 
+/** Teacher assistance remains available while the learner answers practice.
+ * These exact connection routes still enforce login, origin, classroom scope,
+ * page grants and peer authorization in their own handlers. */
+function isQuizAssistanceConnection(handler: Pick<Handler, 'request'>) {
+    // WebSocket contexts retain the /d/:domainId prefix captured before the
+    // domain layer; ordinary HTTP handlers usually receive the relative path.
+    const path = handler.request.path.replace(/^\/d\/[^/]+(?=\/|$)/, '');
+    return handler.request.method.toUpperCase() === 'GET'
+        && /^\/(?:live-share|voice-call)\/conn\/?$/.test(path);
+}
+
 /** Decorative reads keep their own authentication/ownership checks. Never
  * exempt page navigation, theme selection, uploads or other mutations. */
 export function isDailyQuizMediaRead(path: string, method: string) {
@@ -153,6 +164,7 @@ export async function apply(ctx: Context) {
     // The serial preparation phase follows authentication and workspace checks.
     ctx.on('handler/before-prepare', async (handler: Handler) => {
         if (isExemptAccount(handler) || exemptPath.test(handler.request.path)
+            || isQuizAssistanceConnection(handler)
             || isDailyQuizMediaRead(handler.request.path, handler.request.method)
             || isDailyQuizAchievementRequest(handler.request.path, handler.request.method)) return undefined;
         const { policy, session } = await quiz.getSession(handler.user._id);
@@ -172,7 +184,7 @@ export async function apply(ctx: Context) {
         return 'cleanup';
     });
     ctx.on('handler/create/ws', async (handler) => {
-        if (isExemptAccount(handler)) return;
+        if (isExemptAccount(handler) || isQuizAssistanceConnection(handler)) return;
         const { policy, session } = await quiz.getSession(handler.user._id);
         if (quiz.presentSession(policy, session).required) throw new ForbiddenError('请先完成今天的每日问答');
     });
