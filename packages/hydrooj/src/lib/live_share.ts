@@ -108,10 +108,42 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
     const short = (value: unknown, limit = 96) => typeof value === 'string' && value.length <= limit;
     if (kind === 'command') {
         if (!shareId(data.id) || data.pageId !== pageId || !Number.isSafeInteger(data.nodeId) || data.nodeId < 1
-            || !['click', 'scroll', 'select', 'search', 'annotate', 'resize', 'frame', 'draw'].includes(data.action)
+            || !['click', 'scroll', 'select', 'search', 'annotate', 'resize', 'frame', 'draw', 'ide'].includes(data.action)
             || (data.target !== undefined && !short(data.target, 32))
             || (data.value !== undefined && !short(data.value, 4096))
             || (data.x !== undefined && !finite(data.x)) || (data.y !== undefined && !finite(data.y))) invalid();
+        if (data.action === 'ide') {
+            if (role !== 'teacher' || data.nodeId !== 1 || !short(data.runId, 80)
+                || (data.runId && !/^[a-zA-Z0-9_-]{16,80}$/.test(data.runId))
+                || Object.keys(data).some((key) => !['id', 'pageId', 'nodeId', 'action', 'runId', 'command'].includes(key))) invalid();
+            const c = data.command;
+            const fields = { run: ['type'], stop: ['type'], input: ['type', 'text'], 'input-draft': ['type', 'text'],
+                window: ['type', 'window', 'patch'], 'turtle-event': ['type', 'event'] };
+            if (!c || typeof c !== 'object' || !Object.hasOwn(fields, c.type)
+                || Object.keys(c).some((key) => !fields[c.type].includes(key))) invalid();
+            if (['input', 'input-draft'].includes(c.type) && (!short(c.text, 16000) || c.text.includes('\0'))) invalid();
+            if (c.type === 'window') {
+                if (!['terminal', 'graphics'].includes(c.window) || !c.patch || typeof c.patch !== 'object' || Array.isArray(c.patch)
+                    || Object.keys(c.patch).some((key) => !['visible', 'minimized', 'maximized', 'x', 'y', 'width', 'height'].includes(key))) invalid();
+                for (const [key, value] of Object.entries(c.patch)) {
+                    if (['visible', 'minimized', 'maximized'].includes(key)) { if (typeof value !== 'boolean') invalid(); }
+                    else if (!finite(value) || (value as number) < 0 || (value as number) > (['x', 'y'].includes(key) ? 1 : 8192)) invalid();
+                }
+            }
+            if (c.type === 'turtle-event') {
+                const e = c.event;
+                const allowed = { close: ['type'], click: ['type', 'x', 'y', 'button', 'target', 'action'],
+                    key: ['type', 'key', 'action'], response: ['type', 'id', 'value'] };
+                if (!e || typeof e !== 'object' || !Object.hasOwn(allowed, e.type)
+                    || Object.keys(e).some((key) => !allowed[e.type].includes(key))) invalid();
+                if (e.type === 'click' && (!finite(e.x) || !finite(e.y) || ![1, 2, 3].includes(e.button)
+                    || (e.target !== undefined && (!Number.isSafeInteger(e.target) || e.target < 1))
+                    || (e.action !== undefined && !['click', 'release', 'drag'].includes(e.action)))) invalid();
+                if (e.type === 'key' && (!short(e.key, 64) || !['down', 'up'].includes(e.action))) invalid();
+                if (e.type === 'response' && (!Number.isSafeInteger(e.id) || e.id < 1
+                    || !(e.value === null || short(e.value, 4096) || finite(e.value)))) invalid();
+            }
+        }
         if (data.action === 'draw') {
             if (role !== 'teacher' || data.nodeId !== 1
                 || Object.keys(data).some((key) => !['id', 'pageId', 'nodeId', 'action', 'drawing'].includes(key))) invalid();
@@ -266,6 +298,14 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
         if (data.rect && !['x', 'y', 'width', 'height'].every((key) => finite(data.rect[key]))) invalid();
     } else if (kind === 'mirror') {
         if (role !== 'student') invalid();
+        if (data.type === 'ide') {
+            if (Object.keys(data).some((key) => !['type', 'sequence', 'index', 'total', 'chunk'].includes(key))
+                || !Number.isSafeInteger(data.sequence) || data.sequence < 0
+                || !Number.isSafeInteger(data.total) || data.total < 1 || data.total > 180
+                || !Number.isSafeInteger(data.index) || data.index < 0 || data.index >= data.total
+                || !short(data.chunk, 24000)) invalid();
+            return;
+        }
         if (data.type === 'frame' || data.type === 'frame-remove') {
             if (typeof data.id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(data.id)
                 || Object.keys(data).some((key) => !['type', 'id', ...(data.type === 'frame' ? ['packet'] : [])].includes(key))) invalid();

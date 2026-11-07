@@ -330,6 +330,8 @@ then
     stop '独立 Scratch 预构建产物不完整或未提交；未重启 Hydro 或 Judge'
 fi
 
+bash docker/ensure-ide-sandbox.sh "$HYDRO_CONTAINER" "$judge_container"
+
 docker restart "$HYDRO_CONTAINER" >/dev/null
 hydro_ready=0
 for _ in $(seq 1 60); do

@@ -114,6 +114,52 @@ async function hello(f, uid, overrides = {}) {
 const settle = async () => { await new Promise((resolve) => setTimeout(resolve, 20)); };
 
 describe('live share protocol boundaries', () => {
+    it('limits IDE controls to the teacher, current page and scoped run identifiers', () => {
+        const base = { id: 'ide-command-testing', pageId: 'ide-page-testing', nodeId: 1, action: 'ide', runId: 'ide_run_testing_1234' };
+        const validate = (command, patch = {}) => protocol.validateRelayData('teacher', 'command', { ...base, command, ...patch }, base.pageId);
+        for (const command of [{ type: 'run' }, { type: 'stop' }, { type: 'input', text: '小明' }, { type: 'input-draft', text: '草稿' },
+            { type: 'window', window: 'terminal', patch: { x: 0.4, y: 0.6, width: 640, height: 300, minimized: false } }]) {
+            validate(command);
+            assert.throws(() => protocol.validateRelayData('student', 'command', { ...base, command }, base.pageId), errorCode('INVALID_RELAY'));
+            assert.throws(() => protocol.validateRelayData('teacher', 'command', { ...base, command }, 'other-page'), errorCode('INVALID_RELAY'));
+        }
+        validate({ type: 'run' }, { runId: '' });
+        for (const patch of [{ runId: '../other' }, { runId: 'x'.repeat(81) }, { runId: null }, { nodeId: 2 }, { target: 'other' }]) {
+            assert.throws(() => validate({ type: 'run' }, patch), errorCode('INVALID_RELAY'));
+        }
+        for (const command of [{ type: 'eval', code: 'alert(1)' }, { type: 'run', code: 'secret' },
+            { type: 'input', text: 'x'.repeat(16001) }, { type: 'input', text: 'a\0b' }, { type: 'input-draft', text: 7 }]) {
+            assert.throws(() => validate(command), errorCode('INVALID_RELAY'));
+        }
+    });
+    it('rejects unsafe IDE window geometry and executable turtle event fields', () => {
+        const base = { id: 'ide-command-testing', pageId: 'ide-page-testing', nodeId: 1, action: 'ide', runId: 'ide_run_testing_1234' };
+        const validate = (command) => protocol.validateRelayData('teacher', 'command', { ...base, command }, base.pageId);
+        for (const patch of [{ x: -1 }, { y: 1.1 }, { x: Infinity }, { width: NaN }, { height: 8193 }, { minimized: 'true' },
+            { position: 'fixed' }, { style: 'background:url(javascript:alert(1))' }, { __proto__: null, script: 'alert(1)' }]) {
+            assert.throws(() => validate({ type: 'window', window: 'graphics', patch }), errorCode('INVALID_RELAY'));
+        }
+        assert.throws(() => validate({ type: 'window', window: 'other', patch: {} }), errorCode('INVALID_RELAY'));
+        assert.throws(() => validate({ type: 'window', window: 'terminal', patch: [] }), errorCode('INVALID_RELAY'));
+        for (const event of [{ type: 'click', x: 0, y: 1, button: 1, action: 'drag', target: 2 },
+            { type: 'key', key: 'ArrowRight', action: 'down' }, { type: 'close' },
+            { type: 'response', id: 2, value: '<img onerror="alert(1)">' }]) validate({ type: 'turtle-event', event });
+        for (const event of [{ type: 'eval', code: 'alert(1)' }, { type: 'click', x: 0, y: 1, button: 0 },
+            { type: 'click', x: Infinity, y: 1, button: 1 }, { type: 'click', x: 0, y: 1, button: 1, target: -1 },
+            { type: 'key', key: 'Enter', action: 'eval' }, { type: 'key', key: 'a'.repeat(65), action: 'down' },
+            { type: 'response', id: 1, value: 'a'.repeat(4097) }, { type: 'response', id: 1, value: { script: 'alert(1)' } },
+            { type: 'close', onerror: 'alert(1)' }]) assert.throws(() => validate({ type: 'turtle-event', event }), errorCode('INVALID_RELAY'));
+    });
+    it('bounds chunked IDE display transport and forbids teacher-origin display injection', () => {
+        const base = { type: 'ide', sequence: 0, index: 0, total: 1, chunk: 'display-data' };
+        protocol.validateRelayData('student', 'mirror', base, 'ide-page-testing');
+        protocol.validateRelayData('student', 'mirror', { ...base, chunk: 'a'.repeat(24000), total: 180 }, 'ide-page-testing');
+        assert.throws(() => protocol.validateRelayData('teacher', 'mirror', base, 'ide-page-testing'), errorCode('INVALID_RELAY'));
+        for (const patch of [{ sequence: -1 }, { sequence: 1.1 }, { total: 181 }, { total: 0 }, { index: 1 }, { index: -1 },
+            { chunk: 'a'.repeat(24001) }, { chunk: {} }, { script: 'alert(1)' }]) {
+            assert.throws(() => protocol.validateRelayData('student', 'mirror', { ...base, ...patch }, 'ide-page-testing'), errorCode('INVALID_RELAY'));
+        }
+    });
     it('binds ink content anchors to the initial stroke and bounds all geometry', () => {
         const anchor = { kind: 'dom', mode: 'scroll', nodeId: 42, matrix: [1, 0, 0, 1, -80, -400] };
         const drawing = { strokeId: 'stroke-testing', phase: 'start', sequence: 0, points: [[30, 50]], anchor };

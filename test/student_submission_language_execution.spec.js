@@ -60,6 +60,7 @@ function harness(options = {}) {
     }
     const classes = compile(handlerSections, {
         ...require('lodash'), ...policyLib, ObjectId, Handler: Base, ContestDetailBaseHandler: Base,
+        IDE_LANGUAGES: { cc: {}, 'cc.cc17': {}, 'py.py3': {} },
         route: () => () => {}, param: () => () => {}, query: () => () => {},
         Types: new Proxy({}, { get: () => () => {} }),
         PERM: {}, PRIV: {}, STATUS: { STATUS_ACCEPTED: 1 }, Time: { minute: 60000 },
@@ -180,14 +181,15 @@ test('teacher homework history and record replay stay viewable when the old lang
     assert.equal(own.handler.UiContext.recordReplay.lang, 'cc.cc17');
 });
 
-test('online IDE language selection uses the candidate actual domain and keeps answer types exempt', () => {
+test('standalone IDE respects domain/student language policy independently of judge problems', () => {
     const h = harness({ policy: domainPolicy({ 'class-a': ['py.py3'], 'class-b': ['cc'] }) });
     const ide = new h.classes.OnlineIdeHandler();
     const doc = { domainId: 'class-a', config: { type: 'default' } };
     assert.deepEqual(Array.from(ide.getAllowedLangs(doc, { _id: 'class-a' })), ['py.py3']);
     assert.deepEqual(Array.from(ide.getAllowedLangs(doc, { _id: 'class-b' })), ['cc']);
-    assert.deepEqual(Array.from(ide.getAllowedLangs({ ...doc, config: { type: 'default', langs: ['cc.cc17'] } }, { _id: 'class-a' })), []);
-    assert.deepEqual(Array.from(ide.getAllowedLangs({ ...doc, config: { type: 'objective' } }, { _id: 'class-a' })), ['_']);
+    assert.deepEqual(Array.from(ide.getAllowedLangs({ ...doc, config: { type: 'default', langs: ['cc.cc17'] } }, { _id: 'class-a' })), ['py.py3']);
+    assert.deepEqual(Array.from(ide.getAllowedLangs(null, { _id: 'class-a' })), ['py.py3']);
+    assert.deepEqual(Array.from(ide.getAllowedLangs(null, { _id: 'class-a', langs: 'cc' })), []);
 });
 
 test('a forbidden cached draft keeps its code, chooses an allowed language, and never rewrites history', () => {

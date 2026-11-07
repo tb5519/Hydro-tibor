@@ -10,6 +10,7 @@
   cppEditorMode: cppEditorMode,
   cppStarterTemplate: cppStarterTemplate,
   ideMode: true,
+  ideRuntimeConnUrl: url('ide_conn'),
   canViewRecord: false,
   pdoc: {
     domainId: handler.args.domainId,
@@ -18,21 +19,21 @@
     title: '在线IDE',
     config: hostPdoc.config
   },
-  postSubmitUrl: url('problem_submit', pid=hostPdoc.docId),
+  postSubmitUrl: '',
   getSubmissionsUrl: '',
   getRecordDetailUrl: '',
-  pretestConnUrl: "record-conn?pretest=1&uidOrName=" + handler.user._id + "&pid=" + hostPdoc.docId + "&domainId=" + handler.args.domainId
+  pretestConnUrl: ''
 }) }}
 document.body.classList.add('online-ide-mode');
-localStorage.setItem('scratchpad/pretest', 'true');
+localStorage.setItem('scratchpad/pretest', 'false');
 localStorage.setItem('scratchpad/records', 'false');
 (function () {
   var allowedLangs = {{ ideAllowedLangs|json|safe }};
-  var cacheKey = {{ handler.user._id|json|safe }} + '/' + UiContext.pdoc.domainId + '/' + UiContext.pdoc.docId;
+  var cacheKey = {{ handler.user._id|json|safe }} + '/' + {{ handler.args.domainId|json|safe }} + '/-1';
   var langKey = cacheKey + '#lang';
   var cachedLang = localStorage.getItem(langKey);
   if (allowedLangs.length && cachedLang && allowedLangs.indexOf(cachedLang) < 0) {
-    localStorage.setItem(langKey, UiContext.codeLang);
+    localStorage.setItem(langKey, {{ ideCodeLang|json|safe }});
   }
 })();
 </script>
@@ -70,8 +71,7 @@ body.online-ide-mode .scratchpad-container [class*="splitViewView"]:has(.scratch
   left: 0 !important;
   width: 100% !important;
 }
-/* The outer navigation panes are hidden in IDE mode, but the editor's
- * horizontal sash must stay available so the self-test panel can be resized. */
+/* The standalone IDE uses floating terminal/graphics windows. */
 body.online-ide-mode .scratchpad-container [class*="sash-module_vertical"] {
   display: none !important;
 }

@@ -7,7 +7,7 @@ type Controllers = {
   getEditorRect?(id: string): { x: number; y: number; width: number; height: number } | null;
   getFrameRect?(id: string): { x: number; y: number; width: number; height: number } | null;
 };
-type Adapters = typeof import('./mirror') & typeof import('./editor') & typeof import('./frames') & typeof import('./drawing');
+type Adapters = typeof import('./mirror') & typeof import('./editor') & typeof import('./frames') & typeof import('./drawing') & typeof import('./ide');
 interface Student { uid: number; name: string; online: boolean; tabs?: { tabId: string; title: string; visible: boolean }[] }
 interface Session { sessionId: string; pageId: string; studentUid?: number; studentName?: string; teacherName?: string; tabId?: string }
 let installed: (() => void) | undefined;
@@ -69,6 +69,8 @@ export function installLiveShare(config: LiveShareConfig, options: {
   let sourceEditors: Controllers | null = null;
   let sourceFrames: Controllers | null = null;
   let sourceDrawing: Controllers | null = null;
+  let sourceIde: Controllers | null = null;
+  let viewerIde: Controllers | null = null;
   let sourceDrawingRoot: HTMLElement | null = null;
   let viewerMirror: Controllers | null = null;
   let viewerEditors: Controllers | null = null;
@@ -119,8 +121,9 @@ export function installLiveShare(config: LiveShareConfig, options: {
         import(/* webpackChunkName: "live-share" */ './mirror'), import(/* webpackChunkName: "live-share" */ './editor'),
         import(/* webpackChunkName: "live-share" */ './frames'),
         import(/* webpackChunkName: "live-share-drawing" */ './drawing'),
+        import(/* webpackChunkName: "live-share-ide" */ './ide'),
       ])
-        .then(([mirror, editor, frames, drawing]) => ({ ...mirror, ...editor, ...frames, ...drawing }));
+        .then(([mirror, editor, frames, drawing, ide]) => ({ ...mirror, ...editor, ...frames, ...drawing, ...ide }));
       adaptersPromise.catch(() => { adaptersPromise = undefined; });
     }
     return adaptersPromise;
@@ -151,9 +154,9 @@ export function installLiveShare(config: LiveShareConfig, options: {
   }
   function connected(value: boolean) {
     sourceMirror?.setConnected(value); sourceEditors?.setConnected(value);
-    sourceFrames?.setConnected(value); sourceDrawing?.setConnected(value);
+    sourceFrames?.setConnected(value); sourceDrawing?.setConnected(value); sourceIde?.setConnected(value);
     viewerMirror?.setConnected(value); viewerEditors?.setConnected(value);
-    viewerFrames?.setConnected(value); viewerDrawing?.setConnected(value);
+    viewerFrames?.setConnected(value); viewerDrawing?.setConnected(value); viewerIde?.setConnected(value);
     overlay?.classList.toggle('is-disconnected', !value);
     if (!value && viewing) setStatus('连接中断，正在重新连接…', true);
     if (notice && source) notice.querySelector('span')!.textContent = value
@@ -171,6 +174,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     sourceMirror?.dispose(); sourceEditors?.dispose();
     sourceFrames?.dispose(); sourceFrames = null;
     sourceDrawing?.dispose(); sourceDrawing = null;
+    sourceIde?.dispose(); sourceIde = null;
     sourceDrawingRoot?.remove(); sourceDrawingRoot = null;
     sourceMirror = null; sourceEditors = null; source = null;
     notice?.remove(); notice = null;
@@ -180,6 +184,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     viewerMirror?.dispose(); viewerEditors?.dispose(); viewerMirror = null; viewerEditors = null;
     viewerFrames?.dispose(); viewerFrames = null;
     viewerDrawing?.dispose(); viewerDrawing = null;
+    viewerIde?.dispose(); viewerIde = null;
     stage?.replaceChildren(); buffered.length = 0; bufferedBytes = 0; pendingEdits.clear();
   }
   function closeView() {
@@ -439,11 +444,14 @@ export function installLiveShare(config: LiveShareConfig, options: {
         },
         send: (drawing) => relay(next, 'command', { id: randomId(), pageId: next.pageId, nodeId: 1, action: 'draw', drawing }),
       }) || null;
+      viewerIde = adapters.attachViewerIde?.({ pageId: next.pageId, container: stage,
+        sendCommand: (data) => relay(next, 'command', data),
+      }) || null;
       const waiting = buffered.splice(0); bufferedBytes = 0;
       waiting.forEach(receiveRelay);
       viewerMirror.setConnected(ready); viewerEditors.setConnected(ready);
       viewerFrames?.setConnected(ready);
-      viewerDrawing?.setConnected(ready);
+      viewerDrawing?.setConnected(ready); viewerIde?.setConnected(ready);
     } catch {
       if (viewing === next) setStatus('共享组件加载失败，请断开后重试。', true);
     }
@@ -491,7 +499,11 @@ export function installLiveShare(config: LiveShareConfig, options: {
         sendAck: (data) => relay(next, 'ack', data),
         onStatus: sourceStatus,
       });
+      sourceIde = adapters.attachSourceIde?.({ pageId, send: (data) => relay(next, 'mirror', data),
+        sendAck: (data) => relay(next, 'ack', data),
+      }) || null;
       sourceEditors.setConnected(ready); sourceMirror.setConnected(ready);
+      sourceIde?.setConnected(ready);
       sourceFrames?.setConnected(ready);
       sourceDrawing?.setConnected(ready);
     } catch {
@@ -512,7 +524,8 @@ export function installLiveShare(config: LiveShareConfig, options: {
     }
     if (viewing) {
       if (message.kind === 'mirror') {
-        if (['frame', 'frame-remove'].includes(message.data?.type)) viewerFrames?.receive?.(message.data);
+        if (message.data?.type === 'ide') viewerIde?.receive?.(message.data);
+        else if (['frame', 'frame-remove'].includes(message.data?.type)) viewerFrames?.receive?.(message.data);
         else viewerMirror?.receive?.(message.data);
       }
       if (message.kind === 'editor') viewerEditors?.receive?.(message.data);
@@ -523,7 +536,8 @@ export function installLiveShare(config: LiveShareConfig, options: {
       }
     } else {
       if (message.kind === 'command') {
-        if (message.data?.action === 'frame') sourceFrames?.receiveCommand?.(message.data);
+        if (message.data?.action === 'ide') sourceIde?.receiveCommand?.(message.data);
+        else if (message.data?.action === 'frame') sourceFrames?.receiveCommand?.(message.data);
         else if (message.data?.action === 'draw') sourceDrawing?.receive?.(message.data.drawing);
         else sourceMirror?.receiveCommand?.(message.data);
       }

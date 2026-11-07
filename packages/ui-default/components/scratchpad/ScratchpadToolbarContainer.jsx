@@ -1,3 +1,5 @@
+import { getActiveIdeRuntime } from '../ide/runtime';
+import { isIdeRunning } from '../ide/types';
 import _ from 'lodash';
 import PropTypes from 'prop-types';
 import React from 'react';
@@ -76,6 +78,11 @@ const mapDispatchToProps = (dispatch) => ({
   },
   postPretest(props) {
     if (UiContext.homeworkReview || !availableLangs[props.editorLang]) return;
+    if (UiContext.ideMode) {
+      const runtime = getActiveIdeRuntime();
+      runtime?.command({ type: isIdeRunning(runtime.snapshot().state) ? 'stop' : 'run' });
+      return;
+    }
     const req = request.post(UiContext.postSubmitUrl, {
       lang: props.editorLang,
       code: props.editorCode,
@@ -138,6 +145,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
 
   constructor(props) {
     super(props);
+    this.state = { ideState: 'idle', ideMessage: '' };
     if (keys.length && !UiContext.homeworkReview && !UiContext.recordReplay && !availableLangs[this.props.editorLang]) {
       // preference not allowed
       const key = this.props.editorLang ? keys.filter((i) => typeof availableLangs[i].pretest === 'string')
@@ -147,7 +155,20 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
   }
 
   componentDidMount() {
+    if (UiContext.ideMode) {
+      this.bindIde = () => {
+        this.ideUnsubscribe?.();
+        this.ideUnsubscribe = getActiveIdeRuntime()?.subscribe((value) => this.setState({ ideState: value.state, ideMessage: value.message }));
+      };
+      window.addEventListener('hydro:ide-runtime-ready', this.bindIde);
+      this.bindIde();
+    }
     if (this.props.recordsVisible) this.props.loadSubmissions();
+  }
+
+  componentWillUnmount() {
+    this.ideUnsubscribe?.();
+    if (this.bindIde) window.removeEventListener('hydro:ide-runtime-ready', this.bindIde);
   }
 
   componentDidUpdate(prevProps) {
@@ -164,6 +185,8 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
 
   render() {
     const review = UiContext.homeworkReview;
+    const ideRunning = UiContext.ideMode && isIdeRunning(this.state.ideState);
+    const ideRunLabel = ideRunning ? '停止运行' : '运行代码';
     const unavailableReplayLanguage = isUnavailableReplayLanguage(this.props.editorLang);
     const unavailableLanguage = !availableLangs[this.props.editorLang];
     const noAvailableLanguages = !review && !keys.length;
@@ -174,6 +197,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
       if (langInfo.validAs && !langInfo.hidden) canUsePretest = true;
     }
     if (langInfo?.pretest === false) canUsePretest = false;
+    if (UiContext.ideMode) canUsePretest = true;
     if (review) canUsePretest = false;
     const copyReviewTitle = !review?.ownAnswerUrl
       ? '当前账号没有这道题的独立作答权限'
@@ -208,18 +232,18 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
           </ToolbarItem>
           {canUsePretest && (
             <ToolbarButton
-              disabled={unavailableLanguage || this.props.isPosting || this.props.isRunning || !!this.props.pretestWaitSec}
+              disabled={UiContext.ideMode ? unavailableLanguage || this.state.ideState === 'stopping' : unavailableLanguage || this.props.isPosting || this.props.isRunning || !!this.props.pretestWaitSec}
               className="scratchpad__toolbar__pretest"
-              controlArt="run"
-              artLabel={UiContext.ideMode ? '运行代码' : i18n('Run Pretest')}
-              artStatus={this.props.isRunning ? '运行中…' : this.props.isPosting ? '提交中…' : this.props.pretestWaitSec ? `${this.props.pretestWaitSec}s` : null}
+              controlArt={ideRunning ? undefined : "run"}
+              artLabel={UiContext.ideMode ? ideRunLabel : i18n('Run Pretest')}
+              artStatus={UiContext.ideMode ? null : this.props.isRunning ? '运行中…' : this.props.isPosting ? '提交中…' : this.props.pretestWaitSec ? `${this.props.pretestWaitSec}s` : null}
               aria-busy={this.props.isRunning || this.props.isPosting}
               onClick={() => this.props.postPretest(this.props)}
               data-global-hotkey="f9"
-              data-tooltip={`${UiContext.ideMode ? '运行代码' : i18n('Pretest Your Code')} (F9)`}
+              data-tooltip={`${UiContext.ideMode ? ideRunLabel : i18n('Pretest Your Code')} (F9)`}
             >
-              <Icon name="play" />
-              <span>{UiContext.ideMode ? '运行代码' : i18n('Run Pretest')}</span>
+              {ideRunning ? <span aria-hidden="true">■</span> : <Icon name="play" />}
+              <span>{UiContext.ideMode ? ideRunLabel : i18n('Run Pretest')}</span>
               {this.props.pretestWaitSec
                 ? <span className="scratchpad__toolbar__wait">{this.props.pretestWaitSec}s</span>
                 : <kbd>F9</kbd>}
@@ -244,6 +268,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
                 : <kbd>F10</kbd>}
             </ToolbarButton>
           )}
+          {UiContext.ideMode && <span className="scratchpad__toolbar__ide-status" role="status">{this.state.ideState === 'compiling' ? '正在编译…' : this.state.ideState === 'waiting-input' ? '等待终端输入' : this.state.ideState === 'running' ? '运行中' : this.state.ideMessage}</span>}
           {noAvailableLanguages && (
             <span className="scratchpad__toolbar__wait" role="status">当前题目的可用语言与老师设置不一致，请联系老师调整。</span>
           )}
@@ -278,7 +303,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
             </ToolbarButton>
           )}
           <ScratchpadThemePicker />
-          {canUsePretest && (
+          {canUsePretest && !UiContext.ideMode && (
             <ToolbarButton
               controlArt="pretestTab"
               artLabel={i18n('Pretest')}

@@ -33,6 +33,7 @@ import {
     authorizeHomeworkReview, loadHomeworkReviewRecord, loadHomeworkReviewRecords, publicHomeworkReviewRecord, rejectHomeworkReviewMutation,
 } from '../lib/homework_review';
 import { isInlineRasterImage } from '../lib/inline_image';
+import { IDE_LANGUAGES } from '../lib/ide_protocol';
 import { isMediaCacheRequest } from '../lib/media_cache';
 import { canAccessHomeworkProblem, loadMistakeHomework } from '../lib/mistake_access';
 import { getMistakePromptState } from '../lib/mistake_prompt';
@@ -638,96 +639,24 @@ export class ProblemRandomHandler extends Handler {
 }
 
 export class OnlineIdeHandler extends Handler {
-    getAllowedLangs(pdoc: ProblemDoc, ddoc: DomainDoc | null) {
-        if (!pdoc || typeof pdoc.config === 'string') return [];
-        const limits = [];
-        if (pdoc.config.langs?.length) limits.push(pdoc.config.langs);
-        if (ddoc?.langs) limits.push(ddoc.langs.split(',').map((i) => i.trim()).filter((i) => i));
-        const needHiddenLangs = flattenDeep(limits).length;
-        const baseLangs = Object.keys(setting.langs).filter((i) =>
-            (needHiddenLangs ? !setting.langs[i].remote : !setting.langs[i].remote && !setting.langs[i].hidden)
-            && !setting.langs[i].disabled);
-        const studentLangs = getStudentSubmissionLanguages(this.user, ddoc?._id || pdoc.domainId);
-        if (studentLangs !== null) limits.push(studentLangs);
-        return ['objective', 'submit_answer'].includes(pdoc.config.type) ? ['_'] : intersection(baseLangs, ...limits);
-    }
-
-    pickCodeLang(pdoc: ProblemDoc, ddoc: DomainDoc | null) {
-        const langs = this.getAllowedLangs(pdoc, ddoc);
-        return pickPreferredCodeLang(langs, this.user, ddoc);
-    }
-
-    async findHostPdoc(domainId: string, problemQuery: Filter<ProblemDoc>) {
-        const ddoc = await domain.get(domainId);
-        const preferredCodeLang = getDomainDefaultCodeLang(ddoc) || this.user.codeLang;
-        const pdocs = await problem.getMulti(domainId, problemQuery, ['docId'])
-            .sort({ sort: 1, docId: 1 }).limit(200).toArray();
-        const isRunnable = (pdoc: ProblemDoc | null) => !!(pdoc
-            && !pdoc.reference
-            && typeof pdoc.config !== 'string'
-            && pdoc.config?.type === 'default'
-            && pdoc.data?.length);
-        let pdoc: ProblemDoc | null = null;
-        let score = -1;
-        for (const doc of pdocs) {
-            // eslint-disable-next-line no-await-in-loop
-            const fullPdoc = await problem.get(domainId, doc.docId);
-            if (!isRunnable(fullPdoc)) continue;
-            const langs = this.getAllowedLangs(fullPdoc, ddoc);
-            if (!langs.length) continue;
-            const currentScore = langs.includes(preferredCodeLang) ? 4
-                : langs.includes('py.py3') ? 3
-                    : typeof fullPdoc.config !== 'string' && !fullPdoc.config?.langs?.length ? 2 : 1;
-            if (currentScore > score) {
-                pdoc = fullPdoc;
-                score = currentScore;
-                if (currentScore >= 4) break;
-            }
-        }
-        return pdoc;
+    getAllowedLangs(_pdoc: ProblemDoc | null, ddoc: DomainDoc | null) {
+        const domainLangs = ddoc?.langs ? ddoc.langs.split(',').map((i) => i.trim()).filter(Boolean) : null;
+        const studentLangs = getStudentSubmissionLanguages(this.user, ddoc?._id || this.args.domainId);
+        return Object.keys(IDE_LANGUAGES).filter((lang) => setting.langs[lang] && !setting.langs[lang].disabled
+            && !setting.langs[lang].remote && (!setting.langs[lang].hidden || domainLangs?.includes(lang))
+            && (!domainLangs || domainLangs.includes(lang)) && (studentLangs === null || studentLangs.includes(lang)));
     }
 
     async get() {
-        const domainId = this.args.domainId;
-        const problemQuery = buildQuery(this.user);
-        await this.ctx.parallel('problem/list', problemQuery, this);
-        const pdoc = await this.findHostPdoc(domainId, problemQuery);
-        if (!pdoc && domainId === 'system') {
-            const dudict = await domain.getDictUserByDomainId(this.user._id);
-            let domainIds = Object.keys(dudict).filter((id) => id !== 'system');
-            if (this.user.hasPriv(PRIV.PRIV_VIEW_ALL_DOMAIN)) {
-                const allDomains = await domain.getMulti({ _id: { $ne: 'system' } })
-                    .project<{ _id: string }>({ _id: 1 }).toArray();
-                domainIds = Array.from(new Set([...domainIds, ...allDomains.map((ddoc) => ddoc._id)]));
-            }
-            for (const target of domainIds) {
-                // eslint-disable-next-line no-await-in-loop
-                if (await this.findHostPdoc(target, problemQuery)) {
-                    this.response.redirect = this.url('online_ide', { domainId: target });
-                    return;
-                }
-            }
-        }
-        if (!pdoc) {
-            if (getStudentSubmissionLanguages(this.user, domainId) !== null) {
-                throw new ValidationError('lang', null, '当前题目的可用语言与老师设置不一致，请联系老师调整。');
-            }
-            throw new NoProblemError();
-        }
-        const ddoc = await domain.get(domainId);
-        if (typeof pdoc.config === 'string') throw new NoProblemError();
-        const ideAllowedLangs = this.getAllowedLangs(pdoc, ddoc);
-        const hostPdoc = {
-            ...pdoc,
-            config: {
-                ...pdoc.config,
-                langs: ideAllowedLangs,
-            },
-        };
+        const ddoc = await domain.get(this.args.domainId);
+        if (isScratchDomain(ddoc)) throw new PermissionError(PERM.PERM_SUBMIT_PROBLEM);
+        const ideAllowedLangs = this.getAllowedLangs(null, ddoc);
+        if (!ideAllowedLangs.length) throw new ValidationError('lang', null, '当前课堂没有可用的在线运行语言，请联系老师调整。');
         this.response.template = 'online_ide.html';
-        this.response.body.hostPdoc = hostPdoc;
+        // The independent IDE must work even in a classroom with no judge problem.
+        this.response.body.hostPdoc = { docId: -1, domainId: this.args.domainId, config: { type: 'default', langs: ideAllowedLangs } };
         this.response.body.ideAllowedLangs = ideAllowedLangs;
-        this.response.body.ideCodeLang = this.pickCodeLang(pdoc, ddoc);
+        this.response.body.ideCodeLang = pickPreferredCodeLang(ideAllowedLangs, this.user, ddoc);
         this.response.body.cppEditorMode = getCppEditorMode(this.user);
         this.response.body.cppStarterTemplate = getCppEditorMode(this.user) === 'preset' ? CPP_STARTER_TEMPLATE : '';
     }

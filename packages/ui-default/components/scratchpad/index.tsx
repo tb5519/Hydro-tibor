@@ -1,3 +1,4 @@
+import IdeRuntimeWindows from '../ide/IdeRuntimeWindows';
 import ProblemIcon from '@vscode/codicons/src/icons/file.svg?react';
 import SettingsIcon from '@vscode/codicons/src/icons/settings-gear.svg?react';
 import { Allotment, AllotmentHandle } from 'allotment';
@@ -160,13 +161,14 @@ export default function ScratchpadContainer() {
               )}
               <ScratchpadEditor />
             </div>
-            <Allotment.Pane visible={ui.pretest.visible}>
+            <Allotment.Pane visible={!ideMode && ui.pretest.visible}>
               <ScratchpadPretest key="pretest" />
             </Allotment.Pane>
-            <Allotment.Pane visible={ui.records.visible}>
+            <Allotment.Pane visible={!ideMode && ui.records.visible}>
               <ScratchpadRecords key="records" />
             </Allotment.Pane>
           </Allotment>
+          {ideMode && <IdeRuntimeWindows />}
         </div>
       </Allotment>
     </ScratchpadArtThemeContext.Provider>

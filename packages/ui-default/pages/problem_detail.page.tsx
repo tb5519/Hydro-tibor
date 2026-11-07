@@ -720,7 +720,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
 
     // @ts-ignore
     window.store = store;
-    if (!UiContext.homeworkReview) {
+    if (!UiContext.homeworkReview && !UiContext.ideMode) {
       const sock = new WebSocket(UiContext.ws_prefix + UiContext.pretestConnUrl);
       sock.onmessage = (message, data) => {
         const msg = JSON.parse(data || message.data);
@@ -813,7 +813,7 @@ const page = new NamedPage(['problem_detail', 'contest_detail_problem', 'homewor
   if (UiContext.pdoc.config?.type === 'objective') {
     loadObjective();
     $(document).on('vjContentNew', loadObjective);
-  } else if (UiContext.homeworkReview || UiContext.recordReplay || new URL(window.location.href).searchParams.get('scratchpad') === '1') {
+  } else if (UiContext.ideMode || UiContext.homeworkReview || UiContext.recordReplay || new URL(window.location.href).searchParams.get('scratchpad') === '1') {
     enterScratchpadMode();
   }
 });
