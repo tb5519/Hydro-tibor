@@ -295,3 +295,45 @@ it('textarea adapter synchronizes student input events without touching teacher 
     assert.equal(window.editor, original);
     assert.equal(document.getElementById('viewer').children.length, 0);
 });
+
+it('annotation documents acknowledge and resume independently without dirtying or unlocking read-only code', (t) => {
+    const code = pair(t, 'const unchanged = true;', { canWrite: () => false });
+    const events = [];
+    const common = { ...code.common, document: 'annotations' };
+    const source = new CollaborativeText({ ...common, role: 'source', send: (message) => events.push(message) });
+    const viewer = new CollaborativeText({ ...common, role: 'viewer', send: (message) => events.push(message) });
+    t.after(() => { source.dispose(); viewer.dispose(); });
+    viewer.receive({ ...common, type: 'edit:init', state: source.snapshot });
+    viewer.doc.transact(() => viewer.doc.getMap('notes').set('first', { text: '这是批注' }), viewer.localOrigin);
+    viewer.flushOutgoing();
+    const update = events.shift();
+    assert.equal(update.document, 'annotations');
+    assert.equal(code.student.receive(update), false, 'annotation packets cannot enter the code document');
+    assert.equal(code.teacher.receive(update), false);
+    assert.equal(source.receive(update), true);
+    const ack = events.shift();
+    assert.equal(ack.document, 'annotations');
+    assert.equal(source.doc.getMap('notes').get('first').text, '这是批注');
+    // Drop the ACK and reconnect: replay must not duplicate or lose notes.
+    viewer.setConnected(false); viewer.setConnected(true);
+    viewer.receive({ ...common, type: 'edit:init', state: source.snapshot });
+    source.receive(events.shift()); viewer.receive(events.shift());
+    assert.equal(viewer.pendingCount, 0);
+    assert.equal(source.doc.getMap('notes').size, 1);
+    assert.equal(code.student.value, 'const unchanged = true;');
+    assert.equal(code.student.changed, false);
+    assert.equal(code.student.undoManager.undoStack.length, 0);
+    assert.equal(code.student.editable, false);
+    assert.equal(code.student.doc.getMap('notes').size, 0);
+});
+
+it('code geometry revisions detect pure deletions even when the Yjs insertion clock stays unchanged', (t) => {
+    const p = pair(t, 'remove\nkeep');
+    const previousVector = Y.encodeStateVector(p.student.doc);
+    const previousRevision = p.student.revision;
+    p.student.replace('keep');
+    assert.deepEqual(Y.encodeStateVector(p.student.doc), previousVector, 'this reproduces a delete-only update');
+    assert.notEqual(p.student.revision, previousRevision);
+    p.flush();
+    assert.equal(p.teacher.revision, p.student.revision, 'equal merged code histories produce the same geometry revision');
+});

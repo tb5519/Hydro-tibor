@@ -72,9 +72,10 @@ before(async () => {
 });
 after(async () => { await browser?.close(); if (server) await new Promise((resolve) => server.close(resolve)); });
 
-async function peers() {
-    const context = await browser.newContext({ viewport: { width: 1100, height: 800 } });
-    const student = await context.newPage(); const teacher = await context.newPage();
+async function peers(options = {}) {
+    const context = await browser.newContext({ viewport: options.studentViewport || { width: 1100, height: 800 }, deviceScaleFactor: options.studentScaleFactor || 1 });
+    const teacherContext = await browser.newContext({ viewport: options.teacherViewport || { width: 1100, height: 800 }, deviceScaleFactor: options.teacherScaleFactor || 1 });
+    const student = await context.newPage(); const teacher = await teacherContext.newPage();
     const errors = [];
     for (const page of [student, teacher]) { page.setDefaultTimeout(6000); page.on('pageerror', (error) => errors.push(error.message)); }
     await Promise.all([student.goto(`${origin}/student`), teacher.goto(`${origin}/teacher`)]);
@@ -84,7 +85,7 @@ async function peers() {
         window.editor = monaco.editor.create(document.querySelector('#original'), { value: 'alpha = 12345\nbeta = 67890\nprint(alpha + beta)\n' + Array.from({ length: 35 }, (_, i) => `# line ${i}`).join('\n'),
             language: 'python', fontSize: 20, lineHeight: 30, minimap: { enabled: false }, wordWrap: 'on' });
         document.querySelector('#test-input').value = 'first input line\nsecond input line\nthird input line';
-        window.controller = LiveEditors.attachSourceEditors({ pageId, send: (message) => outbox.push(message) });
+        window.controller = LiveEditors.attachSourceEditors({ pageId, send: (message) => { outbox.push(message); if (message.type === 'edit:focus') window.lastFocus = message; } });
     }, pageId);
     await teacher.evaluate((pageId) => {
         window.outbox = [];
@@ -101,7 +102,7 @@ async function peers() {
         }
     }
     await flush(); await teacher.waitForFunction(() => !!sharedEditor());
-    return { teacher, student, errors, flush, close: () => context.close() };
+    return { teacher, student, errors, flush, close: () => Promise.all([context.close(), teacherContext.close()]) };
 }
 
 it('Monaco teacher selections show exact line frames on both peers without moving learner selection or capturing Enter', { timeout: 30000 }, async () => {
@@ -245,6 +246,286 @@ it('teacher clicks outside Monaco or textarea clear the temporary focus without 
         await f.teacher.locator('textarea[data-live-share-editor]').focus(); await f.flush();
         assert.equal(await f.student.locator(`${boxSelector}:visible`).count(), 1, 'returning to the existing textarea selection restores focus');
         assert.equal(await f.teacher.locator('[data-share-annotation-note]:visible').count(), 0);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+const noteSelector = '[data-share-code-annotation]';
+async function addCodeNote(f, range = [2, 1, 2, 9]) {
+    await f.teacher.evaluate((range) => {
+        sharedEditor().focus(); sharedEditor().setSelection(new monaco.Selection(...range));
+    }, range);
+    await f.teacher.keyboard.press('Shift+Enter');
+    await f.flush();
+    await f.teacher.waitForFunction(() => document.activeElement?.matches('[data-share-annotation-input]'));
+    const id = await f.teacher.evaluate(() => document.activeElement.closest('[data-share-code-annotation]').dataset.shareCodeAnnotation);
+    return f.teacher.locator(`[data-share-code-annotation="${id}"] [data-share-annotation-input]`);
+}
+
+it('Shift+Enter creates live code notes on both peers; typing and newline in notes never alter learner code', { timeout: 30000 }, async () => {
+    const f = await peers();
+    try {
+        const initial = await f.student.evaluate(() => {
+            window.changeEvents = 0; editor.onDidChangeModelContent(() => changeEvents++);
+            editor.setSelection(new monaco.Selection(3, 1, 3, 6));
+            return editor.getValue();
+        });
+        const input = await addCodeNote(f);
+        assert.equal(await f.student.locator(`${noteSelector} [data-share-annotation-note]:visible`).count(), 1);
+        assert.equal(await f.teacher.locator(`${noteSelector} [data-share-annotation-arrow]:visible`).count(), 0);
+        await input.fill('先看变量'); await input.press('Enter'); await input.press('End');
+        await f.teacher.keyboard.insertText('再看输出'); await f.flush();
+        assert.equal(await input.inputValue(), '先看变量\n再看输出');
+        assert.equal(await f.student.locator(`${noteSelector} [data-share-annotation-note]`).textContent().then((text) => text.includes('先看变量\n再看输出')), true);
+        assert.equal(await f.student.evaluate(() => editor.getValue()), initial);
+        assert.equal(await f.student.evaluate(() => changeEvents), 0, 'annotations never trigger code persistence or rejudging');
+        assert.equal(await f.student.evaluate(() => editor.getSelection().startLineNumber), 3);
+        assert.deepEqual(await f.teacher.evaluate(() => controller.getPendingDrafts()), [], 'notes are not unsaved code drafts');
+        await f.teacher.evaluate(() => { sharedEditor().focus(); sharedEditor().setPosition({ lineNumber: 4, column: 1 }); });
+        await f.teacher.keyboard.press('Enter'); await f.flush();
+        assert.equal(await f.student.evaluate(() => editor.getValue()), initial.replace('# line 0', '\n# line 0'));
+        assert.equal(await f.teacher.locator(noteSelector).count(), 1, 'normal code Enter must not open an additional note');
+        assert.equal(await f.student.locator(noteSelector).count(), 1);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('multiple code notes retain independent anchors, drag and resize together, and survive reconnect until deleted', { timeout: 30000 }, async () => {
+    const f = await peers();
+    try {
+        const first = await addCodeNote(f, [1, 1, 1, 6]); await first.fill('甲'); await f.flush();
+        const second = await addCodeNote(f, [3, 1, 3, 6]); await second.fill('乙'); await f.flush();
+        assert.equal(await f.teacher.locator(noteSelector).count(), 2);
+        assert.equal(await f.student.locator(noteSelector).count(), 2);
+        const id = await first.evaluate((node) => node.closest('[data-share-code-annotation]').dataset.shareCodeAnnotation);
+        const firstRoot = `${noteSelector}[data-share-code-annotation="${id}"]`;
+        const teacherBubble = f.teacher.locator(`${firstRoot} [data-share-annotation-note]`);
+        const studentBubble = f.student.locator(`${firstRoot} [data-share-annotation-note]`);
+        const before = await teacherBubble.boundingBox();
+        const handle = await f.teacher.locator(`${firstRoot} [data-share-annotation-drag]`).boundingBox();
+        await f.teacher.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+        await f.teacher.mouse.down(); await f.teacher.mouse.move(handle.x + handle.width / 2 + 95, handle.y + handle.height / 2 + 35, { steps: 4 });
+        await f.teacher.mouse.up(); await f.flush();
+        const dragged = await teacherBubble.boundingBox();
+        assert(dragged.x > before.x + 50, `teacher can drag one code note: ${JSON.stringify({before, handle, dragged})}`);
+        const grip = f.teacher.locator(`${firstRoot} [data-share-annotation-resize]`);
+        await grip.press('ArrowRight'); await grip.press('ArrowDown'); await f.flush();
+        const resized = await teacherBubble.boundingBox(); const sourceSize = await studentBubble.boundingBox();
+        assert(resized.width > dragged.width + 5); assert(resized.height > dragged.height + 5);
+        for (const key of ['x', 'y', 'width', 'height']) assert(Math.abs(sourceSize[key] * .75 - resized[key]) < 2, `note ${key} aligns after scale`);
+        const outline = `${firstRoot} [data-share-annotation-box]`;
+        const oldY = await f.student.locator(outline).evaluate((node) => node.getBoundingClientRect().y);
+        await f.student.evaluate(() => editor.executeEdits('student', [{ range: new monaco.Range(1, 1, 1, 1), text: '# prefix\n' }]));
+        await f.flush();
+        await f.student.waitForFunction(({ selector, oldY }) => {
+            const shape = document.querySelector(selector);
+            return shape && Math.abs(shape.getBoundingClientRect().y - oldY - 30) < 2;
+        }, { selector: outline, oldY });
+        const newY = await f.student.locator(outline).evaluate((node) => node.getBoundingClientRect().y);
+        assert(Math.abs(newY - oldY - 30) < 2, 'relative note anchor follows code inserted before the selected word');
+        await Promise.all([f.teacher.evaluate(() => controller.setConnected(false)), f.student.evaluate(() => controller.setConnected(false))]);
+        assert.equal(await f.teacher.locator(`${noteSelector}:visible`).count(), 0);
+        await Promise.all([f.teacher.evaluate(() => controller.setConnected(true)), f.student.evaluate(() => controller.setConnected(true))]);
+        await f.flush();
+        assert.equal(await f.teacher.locator(`${noteSelector}:visible`).count(), 2);
+        assert.equal(await f.student.locator(`${noteSelector}:visible`).count(), 2);
+        await teacherBubble.hover();
+        await f.teacher.locator(`${firstRoot} [data-share-annotation-clear]`).click(); await f.flush();
+        assert.equal(await f.teacher.locator(noteSelector).count(), 1);
+        assert.equal(await f.student.locator(noteSelector).count(), 1);
+        assert.equal(await f.student.locator(`${noteSelector} [data-share-annotation-note]`).textContent().then((text) => text.includes('乙')), true);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('read-only Monaco and textarea accept code annotations with Shift+Enter without unlocking their source text', { timeout: 30000 }, async () => {
+    const f = await peers();
+    try {
+        const original = await f.student.evaluate(() => {
+            editor.updateOptions({ readOnly: true });
+            document.querySelector('#test-input').readOnly = true;
+            window.inputEvents = 0; document.querySelector('#test-input').addEventListener('input', () => inputEvents++);
+            return editor.getValue();
+        });
+        await f.flush();
+        const codeNote = await addCodeNote(f); await codeNote.fill('只读讲解'); await f.flush();
+        assert.equal(await f.teacher.evaluate(() => sharedEditor().getRawOptions().readOnly), true);
+        const textarea = f.teacher.locator('textarea[data-live-share-editor]');
+        await textarea.evaluate((node) => { node.focus(); node.setSelectionRange(0, 5); });
+        await textarea.press('Shift+Enter'); await f.flush();
+        await f.teacher.waitForFunction(() => document.activeElement?.matches('[data-share-annotation-input]'));
+        await f.teacher.locator(`${noteSelector} [data-share-annotation-input]`).last().fill('输入提示'); await f.flush();
+        assert.equal(await f.student.locator(noteSelector).count(), 2);
+        assert.equal(await f.student.locator('#test-input').inputValue(), 'first input line\nsecond input line\nthird input line');
+        assert.equal(await f.student.evaluate(() => inputEvents), 0);
+        assert.equal(await f.student.evaluate(() => editor.getValue()), original);
+        assert.equal(await textarea.evaluate((node) => node.readOnly), true);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('empty code notes disappear after leaving, while text and note controls preserve the intended annotation', { timeout: 30000 }, async () => {
+    const f = await peers();
+    try {
+        const initial = await f.student.evaluate(() => editor.getValue());
+        const empty = await addCodeNote(f);
+        const id = await empty.evaluate((node) => node.closest('[data-share-code-annotation]').dataset.shareCodeAnnotation);
+        const root = `[data-share-code-annotation="${id}"]`;
+        const grip = f.teacher.locator(`${root} [data-share-annotation-resize]`);
+        // Focusing a note control is still editing that note, not an outside click.
+        await grip.press('ArrowRight'); await grip.press('ArrowDown'); await f.flush();
+        assert.equal(await f.teacher.locator(root).count(), 1);
+        assert.equal(await f.student.locator(root).count(), 1);
+        const handle = await f.teacher.locator(`${root} [data-share-annotation-drag]`).boundingBox();
+        await f.teacher.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+        await f.teacher.mouse.down(); await f.teacher.mouse.move(handle.x + handle.width / 2 + 35, handle.y + handle.height / 2 + 20, { steps: 3 });
+        await f.teacher.mouse.up(); await f.flush();
+        assert.equal(await f.teacher.locator(root).count(), 1, 'dragging an empty note must not delete it');
+        await f.teacher.evaluate(() => sharedEditor().focus()); await f.flush();
+        assert.equal(await f.teacher.locator(noteSelector).count(), 0, 'leaving a blank note removes it');
+        assert.equal(await f.student.locator(noteSelector).count(), 0);
+        const written = await addCodeNote(f); await written.fill('保留这条讲解'); await f.flush();
+        await f.teacher.evaluate(() => sharedEditor().focus()); await f.flush();
+        assert.equal(await f.teacher.locator(noteSelector).count(), 1, 'a note with text remains after editing code');
+        assert.equal(await f.student.locator(noteSelector).count(), 1);
+        await written.fill('   '); await f.teacher.evaluate(() => sharedEditor().focus()); await f.flush();
+        assert.equal(await f.teacher.locator(noteSelector).count(), 0, 'clearing all text then leaving removes the note');
+        assert.equal(await f.student.locator(noteSelector).count(), 0);
+        assert.equal(await f.student.evaluate(() => editor.getValue()), initial);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('different display pixel densities and teacher zoom keep wrapped Monaco outlines in learner coordinates', { timeout: 30000 }, async () => {
+    const f = await peers({ studentViewport: { width: 1366, height: 768 }, teacherViewport: { width: 1920, height: 1080 }, studentScaleFactor: 1, teacherScaleFactor: 2 });
+    try {
+        await f.student.evaluate(() => {
+            document.querySelector('#original').style.width = '527px'; editor.layout();
+            editor.updateOptions({ fontSize: 23, lineHeight: 31, letterSpacing: 0.3, glyphMargin: true, minimap: { enabled: true }, wordWrap: 'on' });
+            editor.setValue('const message = "' + 'Ab中文\t'.repeat(50) + '";\nconst next = 42;');
+        });
+        await f.flush();
+        await f.teacher.evaluate(() => { sharedEditor().focus(); sharedEditor().setSelection(new monaco.Selection(1, 18, 1, 100)); });
+        await f.flush();
+        for (const zoom of [0.63, 1.17, 0.9]) {
+            await f.teacher.evaluate((value) => { document.querySelector('#viewer').style.transform = `scale(${value})`; }, zoom);
+            await f.flush();
+            const paths = await Promise.all([f.student, f.teacher].map((page) => page.locator(`${boxSelector}:visible`).first().getAttribute('d')));
+            assert.equal(paths[1], paths[0], `wrapped shape must match at teacher zoom ${zoom}`);
+            await f.teacher.setViewportSize({ width: 760, height: 540 });
+        }
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('textarea focus uses the learner padding and wrapping when teacher screen size differs', { timeout: 30000 }, async () => {
+    const f = await peers({ studentViewport: { width: 1366, height: 768 }, teacherViewport: { width: 900, height: 650 }, teacherScaleFactor: 2 });
+    try {
+        await f.student.locator('#test-input').evaluate((node) => {
+            node.wrap = 'soft'; node.style.width = '360px'; node.style.padding = '18px 24px'; node.style.letterSpacing = '0.4px';
+            node.style.overflowY = 'scroll'; node.style.scrollbarGutter = 'stable';
+            node.value = 'A very long test input line with numbers 12345 and repeated words to wrap into several rows.\nSecond line';
+            node.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await f.flush();
+        await f.teacher.locator('textarea[data-live-share-editor]').evaluate((node) => { node.focus(); node.setSelectionRange(7, 85); });
+        await f.flush();
+        // Deliver asynchronous learner geometry until both peers have rendered it.
+        let paths;
+        for (let attempt = 0; attempt < 12; attempt++) {
+            await f.flush();
+            paths = await Promise.all([f.student, f.teacher].map((page) => page.locator(`${boxSelector}:visible`).first().getAttribute('d')));
+            if (paths[0] === paths[1]) break;
+        }
+        assert.equal(paths[1], paths[0], 'textarea outline follows the same learner rows');
+        const widths = await Promise.all([f.student.locator('#test-input'), f.teacher.locator('textarea[data-live-share-editor]')].map((field) => field.evaluate((node) => {
+            const style = getComputedStyle(node); return node.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+        })));
+        assert.equal(widths[1], widths[0], 'textarea text space matches even with a reserved learner scrollbar gutter');
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('late code focus geometry cannot restore pre-deletion frames, and unchanged notes republish after reconnect', { timeout: 30000 }, async () => {
+    const f = await peers();
+    try {
+        const note = await addCodeNote(f, [3, 1, 3, 6]); await note.fill('检查输出'); await f.flush(); await f.flush();
+        const old = await f.student.evaluate(() => lastFocus);
+        const selector = `${noteSelector} [data-share-annotation-box]`;
+        const before = await f.teacher.locator(selector).boundingBox();
+        await f.student.evaluate(() => editor.executeEdits('delete-only', [{ range: new monaco.Range(1, 1, 2, 1), text: '' }]));
+        await f.student.waitForTimeout(120);
+        const messages = await f.student.evaluate(() => outbox.splice(0));
+        await f.teacher.evaluate((messages) => messages.filter((message) => message.type !== 'edit:focus').forEach((message) => controller.receive(message)), messages);
+        await f.teacher.evaluate((message) => controller.receive(message), old);
+        await f.teacher.waitForTimeout(60);
+        const after = await f.teacher.locator(selector).boundingBox();
+        assert(Math.abs(after.y - before.y + 22.5) < 1, 'stale pre-deletion geometry must not move the note back to its old row');
+        const current = await f.student.evaluate(() => lastFocus);
+        assert.notEqual(current.focus.revision, old.focus.revision);
+        for (const invalid of [
+            { ...current, pageId: 'old-page' },
+            { ...current, focus: { ...current.focus, width: current.focus.width + 10 } },
+            { ...current, focus: { ...current.focus, scrollTop: current.focus.scrollTop + 40 } },
+            { ...current, focus: { ...current.focus, selections: current.focus.selections.map((entry) => ({ ...entry, noteId: 'other-note', rects: [{ x: 150, y: 220, width: 100, height: 25 }] })) } },
+        ]) {
+            await f.teacher.evaluate((message) => controller.receive(message), invalid);
+            await f.teacher.waitForTimeout(30);
+            assert(Math.abs((await f.teacher.locator(selector).boundingBox()).y - after.y) < 1, 'foreign page, note, viewport or scroll cannot replace this note frame');
+        }
+        await Promise.all([f.teacher.evaluate(() => controller.setConnected(false)), f.student.evaluate(() => controller.setConnected(false))]);
+        await Promise.all([f.teacher.evaluate(() => controller.setConnected(true)), f.student.evaluate(() => controller.setConnected(true))]);
+        await f.flush(); await f.flush();
+        assert.equal(await f.teacher.locator(selector).getAttribute('d'), await f.student.locator(selector).getAttribute('d'));
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('queued focus batches discard geometry measured before a simultaneous resize and code deletion', { timeout: 30000 }, async () => {
+    const f = await peers();
+    try {
+        await f.student.evaluate(() => {
+            const timeout = window.setTimeout.bind(window); const clear = window.clearTimeout.bind(window);
+            const raf = window.requestAnimationFrame.bind(window); const cancel = window.cancelAnimationFrame.bind(window);
+            const queued = new Map(); const frames = new Set();
+            window.setTimeout = (callback, delay, ...args) => {
+                if (delay !== 40) return timeout(callback, delay, ...args);
+                const id = timeout(() => {}, 60000); queued.set(id, () => callback(...args)); return id;
+            };
+            window.clearTimeout = (id) => { queued.delete(id); clear(id); };
+            window.requestAnimationFrame = (callback) => {
+                const id = raf((time) => { frames.delete(id); callback(time); }); frames.add(id); return id;
+            };
+            window.pauseMeasuredFrames = () => { for (const id of frames) cancel(id); frames.clear(); window.requestAnimationFrame = () => 0; };
+            window.drainMeasuredBatch = () => {
+                const callbacks = [...queued]; queued.clear();
+                for (const [id, callback] of callbacks) { clear(id); callback(); }
+            };
+            window.restoreMeasuredFrames = () => {
+                window.setTimeout = timeout; window.clearTimeout = clear;
+                window.requestAnimationFrame = raf; window.cancelAnimationFrame = cancel;
+                drainMeasuredBatch();
+            };
+        });
+        await f.teacher.evaluate(() => { sharedEditor().focus(); sharedEditor().setSelection(new monaco.Selection(2, 1, 3, 6)); });
+        await f.flush(); await f.student.locator(`${boxSelector}:visible`).waitFor();
+        const pending = await f.student.evaluate(() => {
+            pauseMeasuredFrames(); outbox.length = 0;
+            document.querySelector('#original').style.width = '360px'; editor.layout();
+            editor.executeEdits('delete-only', [{ range: new monaco.Range(1, 1, 2, 1), text: '' }]);
+            drainMeasuredBatch();
+            return outbox.filter((message) => message.type === 'edit:focus' && message.editorId === editor.getDomNode().dataset.liveShareEditor);
+        });
+        assert.deepEqual(pending, [], 'old measured rectangles must never be relabelled with the resized editor or deleted-code revision');
+        await f.student.evaluate(() => restoreMeasuredFrames()); await f.flush();
+        await f.teacher.evaluate(() => sharedEditor().setSelection(new monaco.Selection(1, 1, 2, 6)));
+        let paths;
+        for (let attempt = 0; attempt < 12; attempt++) {
+            await f.flush();
+            paths = await Promise.all([f.student, f.teacher].map((page) => page.locator(`${boxSelector}:visible`).getAttribute('d')));
+            if (paths[0] === paths[1]) break;
+        }
+        assert.equal(paths[1], paths[0], 'a fresh measurement restores matching outlines after the resize/delete batch');
         assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
 });

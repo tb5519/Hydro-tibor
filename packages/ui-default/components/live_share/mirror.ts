@@ -101,8 +101,8 @@ function annotationRange(doc: Document, mirror: any, value: ShareAnnotation | nu
   if (!value || typeof value.quote !== 'string' || !value.quote.trim() || value.quote.length > 4000
     || typeof value.text !== 'string' || value.text.length > 1000
     || typeof value.noteOpen !== 'boolean'
-    || (value.width !== undefined && (!Number.isFinite(value.width) || value.width < 160 || value.width > 960))
-    || (value.height !== undefined && (!Number.isFinite(value.height) || value.height < 100 || value.height > 800))
+    || (value.width !== undefined && (!Number.isFinite(value.width) || value.width < 36 || value.width > 960))
+    || (value.height !== undefined && (!Number.isFinite(value.height) || value.height < 36 || value.height > 800))
     || ![value.startNodeId, value.endNodeId].every((id) => Number.isSafeInteger(id) && id > 0)
     || ![value.startOffset, value.endOffset].every((offset) => Number.isSafeInteger(offset) && offset >= 0)
     || ![value.offsetX, value.offsetY].every((offset) => Number.isFinite(offset) && Math.abs(offset) <= 10000)) return null;
@@ -1061,7 +1061,8 @@ export function attachViewerMirror(options: ViewerOptions) {
       if (element && allowedSelect(element)) command(element, 'select', { value: element.value });
     };
     const keydown = (event: KeyboardEvent) => {
-      if (event.key === 'Enter' && !event.isComposing && selectingId && !textOrControl(event.target)) {
+      if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
+        && !event.isComposing && selectingId && !textOrControl(event.target)) {
         const entry = annotations.get(selectingId);
         if (entry && connected && ready && annotationRange(doc, player.getMirror(), entry.value)) {
           event.preventDefault(); event.stopImmediatePropagation();

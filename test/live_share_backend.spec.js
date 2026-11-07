@@ -156,6 +156,20 @@ describe('live share protocol boundaries', () => {
         assert.throws(() => limit.accept({ type: 'list' }, 0), errorCode('RATE_LIMIT'));
         limit.accept({ type: 'list' }, 1000);
     });
+    it('isolates code annotation documents from editor layout and limits source initialization to learners', () => {
+        const common = { pageId: 'page-testing', editorId: 'editor-testing', document: 'annotations' };
+        protocol.validateRelayData('student', 'editor', { ...common, type: 'edit:init', state: 'YQ==' }, common.pageId);
+        protocol.validateRelayData('teacher', 'editor', { ...common, type: 'edit:update', update: 'YQ==', opId: 'note-update-1' }, common.pageId);
+        protocol.validateRelayData('student', 'editor', { ...common, type: 'edit:ack', opId: 'note-update-1' }, common.pageId);
+        for (const change of [{ document: 'code' }, { document: true }, { kind: 'textarea' }, { readOnly: false },
+            { rect: { x: 0, y: 0, width: 100, height: 100 } }, { type: 'edit:cursor', anchor: 'YQ==', head: 'YQ==' },
+            { type: 'edit:sync' }, { type: 'edit:scroll', scrollTop: 0, scrollLeft: 0, scrollSeq: 1 }]) {
+            assert.throws(() => protocol.validateRelayData('teacher', 'editor', {
+                ...common, type: 'edit:update', update: 'YQ==', ...change,
+            }, common.pageId), errorCode('INVALID_RELAY'));
+        }
+        assert.throws(() => protocol.validateRelayData('teacher', 'editor', { ...common, type: 'edit:init', state: 'YQ==' }, common.pageId), errorCode('INVALID_RELAY'));
+    });
     it('relays editor scrolling and source appearance while rejecting invalid options and directions', () => {
         const scroll = { type: 'edit:scroll', pageId: 'page-testing', editorId: 'editor-testing', scrollTop: 172.5, scrollLeft: 0, scrollSeq: 3 };
         protocol.validateRelayData('teacher', 'editor', scroll, 'page-testing');
@@ -183,6 +197,41 @@ describe('live share protocol boundaries', () => {
         assert.throws(() => protocol.validateRelayData('teacher', 'editor', { ...scroll, view: layout.view }, 'page-testing'), errorCode('INVALID_RELAY'));
         assert.throws(() => protocol.validateRelayData('student', 'editor', { ...layout, type: 'edit:cursor' }, 'page-testing'), errorCode('INVALID_RELAY'));
     });
+    it('accepts bounded learner focus geometry only and rejects malformed or excessive snapshots', () => {
+        const selection = { noteId: 'note-testing', anchor: 'YQ==', head: 'Yg==', rects: [{ x: 20, y: 30, width: 100, height: 24 }] };
+        const focus = { width: 640, height: 320, scrollTop: 0, scrollLeft: 0, revision: 'AA==:12:abcdef:123456', selections: [selection] };
+        const message = { type: 'edit:focus', pageId: 'page-testing', editorId: 'editor-testing', focus };
+        protocol.validateRelayData('student', 'editor', message, message.pageId);
+        protocol.validateRelayData('student', 'editor', { ...message, focus: { ...focus, selections: [] } }, message.pageId);
+        protocol.validateRelayData('student', 'editor', { ...message, focus: { ...focus, selections: [{ ...selection, rects: [] }] } }, message.pageId);
+        assert.throws(() => protocol.validateRelayData('teacher', 'editor', message, message.pageId), errorCode('INVALID_RELAY'));
+        for (const change of [{ width: -1 }, { height: 10001 }, { scrollTop: -1 }, { revision: '' }, { revision: '<script>' },
+            { selections: Array.from({ length: 42 }, (_, i) => ({ ...selection, noteId: `n-${i}` })) },
+            { selections: [selection, selection] }, { selections: [{ ...selection, anchor: '' }] },
+            { selections: [{ ...selection, rects: Array(257).fill(selection.rects[0]) }] },
+            { selections: Array.from({ length: 9 }, (_, i) => ({ ...selection, noteId: `n-${i}`, rects: Array(256).fill(selection.rects[0]) })) },
+            { selections: [{ ...selection, rects: [{ x: -1, y: 0, width: 20, height: 20 }] }] },
+            { selections: [{ ...selection, rects: [{ x: 620, y: 0, width: 40, height: 20 }] }] },
+            { selections: [{ ...selection, rects: [{ x: 0, y: 0, width: 0, height: 20 }] }] },
+            { selections: [{ ...selection, html: '<script>' }] }]) {
+            assert.throws(() => protocol.validateRelayData('student', 'editor', { ...message, focus: { ...focus, ...change } }, message.pageId), errorCode('INVALID_RELAY'));
+        }
+        assert.throws(() => protocol.validateRelayData('student', 'editor', { ...message, document: 'annotations' }, message.pageId), errorCode('INVALID_RELAY'));
+        assert.throws(() => protocol.validateRelayData('student', 'editor', { ...message, type: 'edit:layout' }, message.pageId), errorCode('INVALID_RELAY'));
+    });
+    it('allows only learner textarea layout fields and rejects arbitrary styles', () => {
+        const textStyle = { wrap: 'soft', fontWeight: '400', fontStyle: 'italic', paddingTop: 18, paddingRight: 24, paddingBottom: 18, paddingLeft: 24,
+            borderTopWidth: 2, borderRightWidth: 2, borderBottomWidth: 2, borderLeftWidth: 2,
+            scrollbarWidth: 15, scrollbarHeight: 0, letterSpacing: 0.4, wordSpacing: 0, textIndent: 0, tabSize: 4 };
+        const message = { type: 'edit:layout', pageId: 'page-testing', editorId: 'editor-testing', textStyle };
+        protocol.validateRelayData('student', 'editor', message, message.pageId);
+        assert.throws(() => protocol.validateRelayData('teacher', 'editor', { ...message, type: 'edit:update', update: 'YQ==' }, message.pageId), errorCode('INVALID_RELAY'));
+        for (const change of [{ wrap: 'eval' }, { fontWeight: 'url(https://invalid)' }, { fontStyle: 'position:absolute' }, { paddingLeft: -1 },
+            { borderLeftWidth: 257 }, { scrollbarWidth: -1 }, { scrollbarHeight: Infinity }, { tabSize: 0 }, { letterSpacing: 2001 },
+            { transform: 'scale(0)' }, { onerror: 'alert(1)' }]) {
+            assert.throws(() => protocol.validateRelayData('student', 'editor', { ...message, textStyle: { ...textStyle, ...change } }, message.pageId), errorCode('INVALID_RELAY'));
+        }
+    });
     it('allows only bounded teacher splitter resizing with an exact command shape', () => {
         const command = { id: 'resize-command-testing', pageId: 'page-testing', nodeId: 42, action: 'resize', target: 'safe-sash-hash', x: 0.5 };
         for (const x of [0, 0.125, 0.5, 1]) protocol.validateRelayData('teacher', 'command', { ...command, x }, 'page-testing');
@@ -202,7 +251,7 @@ describe('live share protocol boundaries', () => {
         protocol.validateRelayData('teacher', 'command', { ...command, annotation: { ...annotation, text: '' } }, 'page-testing');
         protocol.validateRelayData('teacher', 'command', { ...command, annotation: { ...annotation, noteOpen: false, text: '' } }, 'page-testing');
         // Existing notes remain valid without dimensions; resized notes use bounded CSS pixels.
-        for (const dimensions of [{ width: 160 }, { height: 100 }, { width: 960, height: 800 }, { width: 320.5, height: 180.25 }]) {
+        for (const dimensions of [{ width: 36 }, { height: 36 }, { width: 960, height: 800 }, { width: 320.5, height: 180.25 }]) {
             protocol.validateRelayData('teacher', 'command', { ...command, annotation: { ...annotation, ...dimensions } }, 'page-testing');
         }
         // HTML-looking content is permitted as inert note text; no HTML/style fields are accepted.
@@ -214,7 +263,7 @@ describe('live share protocol boundaries', () => {
             { quote: '' }, { quote: ' \n ' }, { quote: 'x'.repeat(4001) }, { text: 'x'.repeat(1001) },
             { text: null }, { noteOpen: undefined }, { noteOpen: null }, { noteOpen: 'true' }, { noteOpen: 1 },
             { offsetX: Infinity }, { offsetY: NaN }, { offsetX: '5' }, { offsetY: 10001 },
-            { width: 159.99 }, { width: 960.01 }, { height: 99.99 }, { height: 800.01 },
+            { width: 35.99 }, { width: 960.01 }, { height: 35.99 }, { height: 800.01 },
             { width: Infinity }, { width: NaN }, { width: '300' }, { width: null }, { height: -Infinity }, { height: '180' }, { height: false },
             { html: '<script>alert(1)</script>' }, { style: 'position:fixed' }, { onclick: 'run()' },
         ]) {

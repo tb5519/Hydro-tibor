@@ -129,8 +129,8 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
                     || (note.startNodeId === note.endNodeId && note.startOffset >= note.endOffset)
                     || !short(note.quote, 4000) || !note.quote.trim() || !short(note.text, 1000)
                     || typeof note.noteOpen !== 'boolean'
-                    || (note.width !== undefined && (!finite(note.width) || note.width < 160 || note.width > 960))
-                    || (note.height !== undefined && (!finite(note.height) || note.height < 100 || note.height > 800))
+                    || (note.width !== undefined && (!finite(note.width) || note.width < 36 || note.width > 960))
+                    || (note.height !== undefined && (!finite(note.height) || note.height < 36 || note.height > 800))
                     || ![note.offsetX, note.offsetY].every((offset) => finite(offset) && Math.abs(offset) <= 10000)) invalid();
             }
         }
@@ -139,9 +139,54 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
             || (data.reason !== undefined && !short(data.reason, 512))) invalid();
     } else if (kind === 'editor') {
         const allowed = role === 'teacher' ? ['edit:update', 'edit:cursor', 'edit:sync', 'edit:scroll']
-            : ['edit:init', 'edit:layout', 'edit:remove', 'edit:update', 'edit:cursor', 'edit:ack'];
+            : ['edit:init', 'edit:layout', 'edit:remove', 'edit:update', 'edit:cursor', 'edit:ack', 'edit:focus'];
         if (!allowed.includes(data.type) || data.pageId !== pageId || !short(data.editorId, 128)
             || (!data.editorId && data.type !== 'edit:sync')) invalid();
+        if (data.type === 'edit:focus') {
+            const focus = data.focus;
+            if (Object.keys(data).some((key) => !['type', 'pageId', 'editorId', 'focus'].includes(key))
+                || !focus || typeof focus !== 'object' || Array.isArray(focus)
+                || Object.keys(focus).some((key) => !['width', 'height', 'scrollTop', 'scrollLeft', 'revision', 'selections'].includes(key))
+                || ![focus.width, focus.height].every((value) => finite(value) && value >= 0 && value <= 10000)
+                || ![focus.scrollTop, focus.scrollLeft].every((value) => finite(value) && value >= 0)
+                || !short(focus.revision, 4096) || !/^[a-zA-Z0-9+/=:]+$/.test(focus.revision)
+                || !Array.isArray(focus.selections) || focus.selections.length > 41) invalid();
+            const ids = new Set<string>(); let count = 0;
+            for (const selection of focus.selections) {
+                if (!selection || typeof selection !== 'object' || Array.isArray(selection)
+                    || Object.keys(selection).some((key) => !['noteId', 'anchor', 'head', 'rects'].includes(key))
+                    || (selection.noteId !== undefined && (typeof selection.noteId !== 'string' || !/^[\w-]{1,128}$/.test(selection.noteId)))
+                    || ids.has(selection.noteId || '')
+                    || ![selection.anchor, selection.head].every((value) => short(value, 4096) && /^[a-zA-Z0-9+/]+={0,2}$/.test(value))
+                    || !Array.isArray(selection.rects) || selection.rects.length > 256) invalid();
+                ids.add(selection.noteId || ''); count += selection.rects.length;
+                for (const rect of selection.rects) {
+                    if (!rect || typeof rect !== 'object' || Array.isArray(rect) || Object.keys(rect).length !== 4
+                        || !['x', 'y', 'width', 'height'].every((key) => finite(rect[key]) && rect[key] >= 0)
+                        || !(rect.width > 0) || !(rect.height > 0)
+                        || rect.x + rect.width > focus.width + 1 || rect.y + rect.height > focus.height + 1) invalid();
+                }
+            }
+            if (count > 2048) invalid();
+        } else if (data.focus !== undefined) invalid();
+        if (data.textStyle !== undefined) {
+            const style = data.textStyle;
+            const pixels = ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+                'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'scrollbarWidth', 'scrollbarHeight'];
+            if (role !== 'student' || !['edit:init', 'edit:layout'].includes(data.type)
+                || !style || typeof style !== 'object' || Array.isArray(style)
+                || Object.keys(style).some((key) => ![...pixels, 'wrap', 'fontWeight', 'fontStyle', 'letterSpacing', 'wordSpacing', 'textIndent', 'tabSize'].includes(key))
+                || !['off', 'soft', 'hard'].includes(style.wrap) || !['normal', 'italic', 'oblique'].includes(style.fontStyle)
+                || typeof style.fontWeight !== 'string' || !/^(?:normal|bold|[1-9]\d{0,2}|1000)$/.test(style.fontWeight)
+                || !pixels.every((key) => finite(style[key]) && style[key] >= 0 && style[key] <= 256)
+                || !['letterSpacing', 'wordSpacing', 'textIndent'].every((key) => finite(style[key]) && Math.abs(style[key]) <= 2000)
+                || !finite(style.tabSize) || style.tabSize < 1 || style.tabSize > 64) invalid();
+        }
+        // Annotation state uses an independent document so writing a note cannot
+        // modify the learner's code, including read-only editor models.
+        if (data.document !== undefined && (data.document !== 'annotations'
+            || !['edit:init', 'edit:update', 'edit:ack'].includes(data.type)
+            || Object.keys(data).some((key) => !['type', 'pageId', 'editorId', 'document', 'state', 'update', 'opId'].includes(key)))) invalid();
         for (const key of ['update', 'state', 'anchor', 'head']) {
             if (data[key] !== undefined && (!short(data[key], 320 * 1024) || !/^[a-zA-Z0-9+/]*={0,2}$/.test(data[key]))) invalid();
         }

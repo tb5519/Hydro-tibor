@@ -1,3 +1,5 @@
+import { placeAnnotationArrow } from './annotation_arrow';
+
 export interface ShareAnnotation {
   startNodeId: number;
   endNodeId: number;
@@ -18,136 +20,37 @@ interface AnnotationPatch { text?: string; offsetX?: number; offsetY?: number; w
 let annotationLayer = 1003;
 let annotationAsset = 0;
 
-/** Follow visual rows, joining paragraph gaps with a broad, direct silhouette. */
+/** Trace only the outside of the selected visual rows, never their shared edges. */
 function selectionOutline(lines: Rect[]) {
-  const strips = lines.map((line) => ({ left: line.x - 4, top: line.y - 3, right: line.x + line.width + 4, bottom: line.y + line.height + 3 }));
-  if (strips.every((strip, index) => !index || strip.top >= strips[index - 1].bottom)) {
-    // Keep each row's actual width. Only the space between rows is bridged:
-    // the two outer edges slope directly to the next row instead of doubling
-    // back through a thin corridor (especially around inline formulas).
-    const right = strips.flatMap((strip) => [[strip.right, strip.top], [strip.right, strip.bottom]]);
-    const left = strips.slice().reverse().flatMap((strip) => [[strip.left, strip.bottom], [strip.left, strip.top]]);
-    return strips.length ? `M ${[...right, ...left].map(([x, y]) => `${x} ${y}`).join(' L ')} Z` : '';
-  }
-  // Preserve separate horizontal runs in tables/columns and overlapping rows.
-  // They cannot use a single left/right envelope without enclosing unrelated text.
-  const regions = [...strips];
-  for (let index = 1; index < strips.length; index++) {
-    const a = strips[index - 1]; const b = strips[index];
-    const left = Math.max(a.left, b.left); const right = Math.min(a.right, b.right);
-    if (right > left) {
-      // Fill only the shared horizontal span between rows, leaving short row ends outside.
-      if (b.top > a.bottom) regions.push({ left, right, top: a.bottom, bottom: b.top });
-    } else {
-      // Disjoint text columns still form a single silhouette through a small elbow.
-      const from = b.left >= a.right ? a.right - 3 : a.left + 3;
-      const to = b.left >= a.right ? b.left + 3 : b.right - 3;
-      const midY = (Math.min(a.bottom, b.top) + Math.max(a.bottom, b.top)) / 2;
-      const ay = (a.top + a.bottom) / 2; const by = (b.top + b.bottom) / 2;
-      regions.push({ left: from - 3, right: from + 3, top: Math.min(ay, midY), bottom: Math.max(ay, midY) },
-        { left: Math.min(from, to), right: Math.max(from, to), top: midY - 3, bottom: midY + 3 },
-        { left: to - 3, right: to + 3, top: Math.min(by, midY), bottom: Math.max(by, midY) });
-    }
-  }
-  type Interval = [number, number];
+  const strips = lines.map((line) => ({ left: line.x - 4, top: line.y - 3,
+    right: line.x + line.width + 4, bottom: line.y + line.height + 3 }));
+  if (!strips.length) return '';
   type Point = [number, number];
-  const events = new Map<number, { add: number[]; remove: number[] }>();
-  regions.forEach((region, index) => {
-    for (const key of ['left', 'right', 'top', 'bottom']) region[key] = Math.round(region[key] * 1000) / 1000;
-    if (region.right <= region.left || region.bottom <= region.top) return;
-    for (const [y, kind] of [[region.top, 'add'], [region.bottom, 'remove']] as const) {
-      if (!events.has(y)) events.set(y, { add: [], remove: [] });
-      events.get(y)[kind].push(index);
-    }
-  });
-  const merge = (intervals: Interval[]) => {
-    const result: Interval[] = [];
-    for (const [left, right] of intervals.sort((a, b) => a[0] - b[0])) {
-      const last = result.at(-1);
-      if (last && left <= last[1]) last[1] = Math.max(last[1], right);
-      else result.push([left, right]);
-    }
-    return result;
-  };
-  const subtract = (source: Interval[], cover: Interval[]) => {
-    const result: Interval[] = [];
-    for (const [left, right] of source) {
-      let start = left;
-      for (const [a, b] of cover) {
-        if (b <= start) continue;
-        if (a >= right) break;
-        if (a > start) result.push([start, a]);
-        start = Math.max(start, b);
-        if (start >= right) break;
-      }
-      if (start < right) result.push([start, right]);
-    }
-    return result;
-  };
-  const edges = new Map<string, Point[]>();
-  const key = ([x, y]: Point) => `${x},${y}`;
-  const edge = (from: Point, to: Point) => {
-    const id = key(from);
-    if (!edges.has(id)) edges.set(id, []);
-    edges.get(id).push(to);
-  };
-  const active = new Set<number>();
-  const rows = [...events.keys()].sort((a, b) => a - b);
-  let previous: Interval[] = [];
-  rows.forEach((y, index) => {
-    const event = events.get(y);
-    event.remove.forEach((id) => active.delete(id)); event.add.forEach((id) => active.add(id));
-    const current = merge([...active].map((id) => [regions[id].left, regions[id].right]));
-    subtract(current, previous).forEach(([left, right]) => edge([left, y], [right, y]));
-    subtract(previous, current).forEach(([left, right]) => edge([right, y], [left, y]));
-    const nextY = rows[index + 1];
-    if (nextY !== undefined) current.forEach(([left, right]) => { edge([left, nextY], [left, y]); edge([right, y], [right, nextY]); });
-    previous = current;
-  });
-  let outline: Point[] = []; let largestArea = 0;
-  while (edges.size) {
-    const first = edges.keys().next().value;
-    const start = first.split(',').map(Number) as Point;
-    const points: Point[] = [start]; let current = start;
-    do {
-      const options = edges.get(key(current));
-      if (!options?.length) break;
-      const next = options.pop();
-      if (!options.length) edges.delete(key(current));
-      current = next;
-      if (key(current) !== first) points.push(current);
-    } while (key(current) !== first);
-    const area = Math.abs(points.reduce((sum, point, index) => {
-      const next = points[(index + 1) % points.length];
-      return sum + point[0] * next[1] - next[0] * point[1];
-    }, 0));
-    if (area > largestArea) { largestArea = area; outline = points; }
+  const left: Point[] = []; const right: Point[] = [];
+  const levels = [...new Set(strips.flatMap((strip) => [strip.top, strip.bottom]))].sort((a, b) => a - b);
+  for (let index = 1; index < levels.length; index++) {
+    const top = levels[index - 1]; const bottom = levels[index];
+    const active = strips.filter((strip) => strip.top < bottom && strip.bottom > top);
+    if (!active.length) continue;
+    // A horizontal band has exactly two outside edges. Padding around inline
+    // code, overlapping line boxes and selected spaces are inside the same
+    // block; drawing their individual rectangle edges would leave seam lines.
+    const start = Math.min(...active.map((strip) => strip.left));
+    const end = Math.max(...active.map((strip) => strip.right));
+    left.push([start, top], [start, bottom]);
+    right.push([end, top], [end, bottom]);
   }
-  const corners = outline.filter((point, index) => {
-    const before = outline[(index + outline.length - 1) % outline.length]; const after = outline[(index + 1) % outline.length];
-    return !((before[0] === point[0] && after[0] === point[0]) || (before[1] === point[1] && after[1] === point[1]));
+  // Empty bands between paragraphs connect directly to the next outside edge.
+  // Each text row retains its own ends, rather than becoming a bounding box.
+  const points = [...right, ...left.reverse()].filter((point, index, all) => !index
+    || point[0] !== all[index - 1][0] || point[1] !== all[index - 1][1]);
+  const corners = points.filter((point, index) => {
+    const before = points[(index + points.length - 1) % points.length];
+    const after = points[(index + 1) % points.length];
+    return (point[0] - before[0]) * (after[1] - point[1])
+      !== (point[1] - before[1]) * (after[0] - point[0]);
   });
   return corners.length ? `M ${corners.map(([x, y]) => `${x} ${y}`).join(' L ')} Z` : '';
-}
-
-function roundedArrow(startX: number, startY: number, endX: number, endY: number) {
-  const length = Math.hypot(endX - startX, endY - startY);
-  if (length < 1) return '';
-  const ux = (endX - startX) / length; const uy = (endY - startY) / length;
-  const size = Math.min(1, length / 70);
-  const points = [[0, -10 * size], [length - 30 * size, -10 * size], [length - 30 * size, -23 * size],
-    [length, 0], [length - 30 * size, 23 * size], [length - 30 * size, 10 * size], [0, 10 * size]];
-  const position = ([x, y]: number[]) => `${startX + x * ux - y * uy} ${startY + x * uy + y * ux}`;
-  const corners = points.map((point, index) => {
-    const before = points[(index + points.length - 1) % points.length]; const after = points[(index + 1) % points.length];
-    const toward = (other: number[]) => {
-      const distance = Math.hypot(other[0] - point[0], other[1] - point[1]);
-      const ratio = Math.min((index === 0 || index === 6 ? 8 : 4) * size / distance, .45);
-      return point.map((value, axis) => value + (other[axis] - value) * ratio);
-    };
-    return { before: toward(before), point, after: toward(after) };
-  });
-  return `M ${position(corners[0].before)} ${corners.map((corner) => `L ${position(corner.before)} Q ${position(corner.point)} ${position(corner.after)}`).join(' ')} Z`;
 }
 
 /** Both peers draw in the learner's CSS pixels, including when the teacher zooms the stage. */
@@ -210,43 +113,41 @@ export function attachAnnotationSurface(options: {
   bubble.setAttribute('aria-label', '老师批注');
   const header = node('div', 'live-share-annotation__header');
   header.dataset.shareAnnotationDrag = '';
-  const mark = node('span', 'live-share-annotation__mark', '✦');
-  mark.setAttribute('aria-hidden', 'true');
-  header.append(mark, node('span', 'live-share-annotation__title', '老师批注'));
+  header.setAttribute('aria-label', '拖动批注');
   const textarea = options.teacher ? node('textarea', 'live-share-annotation__input') : null;
   const copy = options.teacher ? null : node('div', 'live-share-annotation__text');
   let close: HTMLButtonElement | null = null;
   let resizeHandle: HTMLButtonElement | null = null;
   if (textarea) {
-    const grip = node('span', 'live-share-annotation__grip', '⠿');
-    grip.setAttribute('aria-hidden', 'true');
-    header.append(grip);
+    header.setAttribute('role', 'button');
+    header.tabIndex = 0;
     header.title = '拖动批注';
-    close = node('button', 'live-share-annotation__close', '删除批注');
+    close = node('button', 'live-share-annotation__close', '×');
     close.type = 'button';
     close.dataset.shareAnnotationClear = '';
     close.setAttribute('aria-label', '删除批注');
     close.title = '删除这条批注';
-    header.append(close);
     textarea.setAttribute('aria-label', '批注内容');
     textarea.dataset.shareAnnotationInput = '';
-    textarea.placeholder = '输入提示，回车换行…';
+    textarea.placeholder = '…';
     textarea.maxLength = 1000;
-    textarea.rows = 2;
+    textarea.rows = 1;
     textarea.spellcheck = false;
     resizeHandle = node('button', 'live-share-annotation__resize');
     resizeHandle.type = 'button';
     resizeHandle.dataset.shareAnnotationResize = '';
     resizeHandle.setAttribute('aria-label', '调整批注大小');
     resizeHandle.title = '拖动调整大小，也可使用方向键';
-    bubble.append(header, textarea, node('div', 'live-share-annotation__hint', '实时同步 · 右下角可调整大小'), resizeHandle);
+    bubble.append(textarea, header, close, resizeHandle);
   } else {
     copy.dataset.shareAnnotationText = '';
     copy.tabIndex = 0;
     copy.setAttribute('aria-label', '老师批注内容，可滚动查看');
-    bubble.append(header, copy);
+    bubble.append(copy);
   }
-  root.append(box, svg, connector, bubble);
+  const measure = node('div', 'live-share-annotation__measure');
+  measure.setAttribute('aria-hidden', 'true');
+  root.append(box, svg, connector, bubble, measure);
   options.container.append(root);
   let annotation: ShareAnnotation | null = null;
   let selectionRect: AnnotationRect | null = null;
@@ -255,9 +156,10 @@ export function attachAnnotationSurface(options: {
   let resizing: { id: number; x: number; y: number; width: number; height: number; left: number; top: number } | null = null;
   let dragFrame = 0;
   let pendingDrag: AnnotationPatch | null = null;
-  let inputMeasure: { text: string; width: number; maxHeight: number; fixed: boolean } | null = null;
-  let bodyMaxHeight = 0;
+  let measured: { text: string; width: number; height: number; availableWidth: number; availableHeight: number; fixedWidth?: number; fixedHeight?: number } | null = null;
   let outlineGeometry = '';
+  let arrowGeometry = '';
+  let arrowPath = '';
   const clamp = (value: number, lower: number, upper: number) => Math.max(lower, Math.min(Math.max(lower, upper), value));
   const bringToFront = () => { root.style.zIndex = String(++annotationLayer); };
 
@@ -288,17 +190,12 @@ export function attachAnnotationSurface(options: {
     for (const { pieces } of rows) {
       const top = Math.min(...pieces.map((piece) => piece.y));
       const bottom = Math.max(...pieces.map((piece) => piece.y + piece.height));
-      let run: Rect | undefined;
-      for (const piece of pieces.sort((a, b) => a.x - b.x)) {
-        // Small inline gaps belong to the selected sentence; distant columns
-        // remain separate. Overflow-clipped text is never remeasured here.
-        if (run && piece.x <= run.x + run.width + Math.max(1, piece.height * .25)) {
-          run.width = Math.max(run.width, piece.x + piece.width - run.x);
-        } else {
-          run = { x: piece.x, y: top, width: piece.width, height: bottom - top };
-          lines.push(run);
-        }
-      }
+      const left = Math.min(...pieces.map((piece) => piece.x));
+      const right = Math.max(...pieces.map((piece) => piece.x + piece.width));
+      // A selected visual row is one strip, including the spacing around inline
+      // code. Keeping those pieces separate introduces false internal borders.
+      // These are already clipped text rectangles; never remeasure the Range.
+      lines.push({ x: left, y: top, width: right - left, height: bottom - top });
     }
     return lines.sort((a, b) => a.y - b.y || a.x - b.x);
   }
@@ -324,46 +221,38 @@ export function attachAnnotationSurface(options: {
     svg.toggleAttribute('hidden', annotation.noteOpen);
     connector.toggleAttribute('hidden', !annotation.noteOpen);
     if (textarea && textarea.value !== annotation.text) textarea.value = annotation.text;
-    const displayText = annotation.text.trim() ? annotation.text : '老师正在输入…';
+    const displayText = annotation.text || '…';
     const copyChanged = copy && copy.textContent !== displayText;
     const copyScrollTop = copy?.scrollTop || 0;
+    const inputScrollTop = textarea?.scrollTop || 0;
     const followingText = copyChanged && !copy.classList.contains('is-placeholder') && copy.textContent
       && copy.scrollHeight - copy.clientHeight - copy.scrollTop < 8;
     if (copyChanged) copy.textContent = displayText;
-    copy?.classList.toggle('is-placeholder', !annotation.text.trim());
+    copy?.classList.toggle('is-placeholder', !annotation.text);
     const availableWidth = Math.max(1, Math.min(960, width - 24));
     const availableHeight = Math.max(1, Math.min(800, height - 24));
-    const noteWidth = clamp(Number.isFinite(annotation.width) ? annotation.width : 300, Math.min(220, availableWidth), availableWidth);
-    const fixedHeight = Number.isFinite(annotation.height) && annotation.height > 0;
-    bubble.style.width = `${noteWidth}px`;
-    bubble.style.height = fixedHeight ? `${clamp(annotation.height, Math.min(136, availableHeight), availableHeight)}px` : '';
-    bubble.classList.toggle('is-sized', fixedHeight);
-    const maxBodyHeight = Math.max(24, Math.min(options.teacher ? 190 : 220, height - (options.teacher ? 100 : 90)));
-    if (textarea && fixedHeight) {
-      textarea.style.flex = '1 1 0px';
-      textarea.style.minHeight = '0px'; textarea.style.maxHeight = 'none'; textarea.style.height = '0px';
-      inputMeasure = { text: annotation.text, width: noteWidth, maxHeight: maxBodyHeight, fixed: true };
-    } else if (bodyMaxHeight !== maxBodyHeight || inputMeasure?.fixed) {
-      bodyMaxHeight = maxBodyHeight;
-      if (textarea) {
-        textarea.style.flex = '0 0 auto';
-        textarea.style.minHeight = `${Math.min(52, maxBodyHeight)}px`;
-        textarea.style.maxHeight = `${maxBodyHeight}px`;
-      }
+    const fixedWidth = Number.isFinite(annotation.width) && annotation.width > 0 ? annotation.width : undefined;
+    const fixedHeight = Number.isFinite(annotation.height) && annotation.height > 0 ? annotation.height : undefined;
+    if (!measured || measured.text !== annotation.text || measured.availableWidth !== availableWidth
+      || measured.availableHeight !== availableHeight || measured.fixedWidth !== fixedWidth || measured.fixedHeight !== fixedHeight) {
+      // Both peers use the same styled text measurement. No heading/footer is
+      // reserved; an empty note or a single character is just a small bubble.
+      // A trailing zero-width character keeps the final newline measurable.
+      measure.textContent = `${displayText}\u200b`;
+      measure.style.width = 'max-content';
+      measure.style.whiteSpace = 'pre';
+      const naturalWidth = Math.ceil(measure.scrollWidth) + 2;
+      const noteWidth = clamp(fixedWidth ?? Math.min(360, naturalWidth), Math.min(36, availableWidth), availableWidth);
+      measure.style.width = `${Math.max(1, noteWidth - 2)}px`;
+      measure.style.whiteSpace = 'pre-wrap';
+      const noteHeight = clamp(fixedHeight ?? Math.min(260, Math.ceil(measure.scrollHeight) + 2),
+        Math.min(36, availableHeight), availableHeight);
+      measured = { text: annotation.text, width: noteWidth, height: noteHeight, availableWidth, availableHeight, fixedWidth, fixedHeight };
     }
-    if (copy) {
-      copy.style.flex = fixedHeight ? '1 1 0px' : '0 0 auto';
-      copy.style.minHeight = '0px';
-      copy.style.maxHeight = fixedHeight ? 'none' : `${maxBodyHeight}px`;
-    }
-    if (textarea && !fixedHeight && !bubble.hidden && (!inputMeasure || inputMeasure.text !== annotation.text
-      || inputMeasure.width !== noteWidth || inputMeasure.maxHeight !== maxBodyHeight || inputMeasure.fixed)) {
-      const scrollTop = textarea.scrollTop;
-      textarea.style.height = '0px';
-      textarea.style.height = `${Math.min(maxBodyHeight, Math.max(52, textarea.scrollHeight))}px`;
-      textarea.scrollTop = scrollTop;
-      inputMeasure = { text: annotation.text, width: noteWidth, maxHeight: maxBodyHeight, fixed: false };
-    }
+    bubble.style.width = `${measured.width}px`;
+    bubble.style.height = `${measured.height}px`;
+    bubble.classList.toggle('is-sized', !!fixedWidth || !!fixedHeight);
+    if (textarea) textarea.scrollTop = inputScrollTop;
     if (copyChanged) copy.scrollTop = followingText ? copy.scrollHeight : copyScrollTop;
     const margin = 12;
     const bubbleWidth = bubble.offsetWidth;
@@ -382,12 +271,12 @@ export function attachAnnotationSurface(options: {
       right: clamp(focusLine.x + focusLine.width + 2, 3, width - 3), bottom: clamp(focusLine.y + focusLine.height + 1, 3, height - 3) };
     let endX: number; let endY: number; let startX: number; let startY: number;
     if (bubble.hidden) {
-      // A selection starts with an arrow; opening its note replaces it with a plain connector.
-      const above = visible.top > 64;
-      endX = clamp(visible.left + Math.min(22, focusLine.width / 3), 8, width - 8);
-      endY = above ? visible.top - 2 : visible.bottom + 2;
-      startX = clamp(endX - 62, 18, width - 18);
-      startY = clamp(endY + (above ? -58 : 58), 18, height - 18);
+      const key = `${width}|${height}|${rect.x}|${rect.y}|${geometry}`;
+      if (key !== arrowGeometry) {
+        arrowGeometry = key; arrowPath = placeAnnotationArrow(lines, width, height)?.d || '';
+        arrowShape.setAttribute('d', arrowPath);
+      }
+      svg.toggleAttribute('hidden', !arrowPath);
     } else {
       const centerX = x + bubbleWidth / 2;
       const centerY = y + bubbleHeight / 2;
@@ -405,11 +294,10 @@ export function attachAnnotationSurface(options: {
       const fraction = Math.min(bubbleWidth / 2 / Math.max(.001, Math.abs(dx)), bubbleHeight / 2 / Math.max(.001, Math.abs(dy)));
       startX = centerX + dx * Math.min(1, fraction);
       startY = centerY + dy * Math.min(1, fraction);
+      connectorLine.setAttribute('d', `M ${startX} ${startY} L ${endX} ${endY}`);
     }
     svg.style.width = `${width}px`; svg.style.height = `${height}px`;
     connector.style.width = `${width}px`; connector.style.height = `${height}px`;
-    arrowShape.setAttribute('d', roundedArrow(startX, startY, endX, endY));
-    connectorLine.setAttribute('d', `M ${startX} ${startY} L ${endX} ${endY}`);
   }
 
   function update(patch: AnnotationPatch) {
@@ -471,9 +359,9 @@ export function attachAnnotationSurface(options: {
   function resizeSize(width: number, height: number, left: number, top: number) {
     // Keep synchronized sizes within the protocol limits even in a tiny pane.
     // draw() independently clips the visible bubble to the available viewport.
-    const maxWidth = Math.max(160, Math.min(960, root.clientWidth - left - 12));
-    const maxHeight = Math.max(100, Math.min(800, root.clientHeight - top - 12));
-    return { width: clamp(width, Math.min(220, maxWidth), maxWidth), height: clamp(height, Math.min(136, maxHeight), maxHeight) };
+    const maxWidth = Math.max(36, Math.min(960, root.clientWidth - left - 12));
+    const maxHeight = Math.max(36, Math.min(800, root.clientHeight - top - 12));
+    return { width: clamp(width, 36, maxWidth), height: clamp(height, 36, maxHeight) };
   }
   function resizeDown(event: PointerEvent) {
     if (!annotation || !selectionRect || drag || resizing || event.button !== 0) return;
@@ -507,6 +395,17 @@ export function attachAnnotationSurface(options: {
     win.cancelAnimationFrame(dragFrame); flushDrag();
   }
   function finishGestures() { finishDrag(); finishResize(); }
+  function dragKey(event: KeyboardEvent) {
+    if (!annotation || !selectionRect || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault(); event.stopPropagation();
+    const step = event.shiftKey ? 24 : 8;
+    update({
+      offsetX: clamp(selectionRect.x + annotation.offsetX + (event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0),
+        12, root.clientWidth - bubble.offsetWidth - 12) - selectionRect.x,
+      offsetY: clamp(selectionRect.y + annotation.offsetY + (event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0),
+        12, root.clientHeight - bubble.offsetHeight - 12) - selectionRect.y,
+    });
+  }
   function resizeKey(event: KeyboardEvent) {
     if (!annotation || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
     event.preventDefault(); event.stopPropagation();
@@ -526,6 +425,7 @@ export function attachAnnotationSurface(options: {
   header.addEventListener('pointerup', pointerup);
   header.addEventListener('pointercancel', pointerup);
   header.addEventListener('lostpointercapture', pointerup);
+  header.addEventListener('keydown', dragKey);
   resizeHandle?.addEventListener('pointerdown', resizeDown);
   resizeHandle?.addEventListener('pointermove', resizeMove);
   resizeHandle?.addEventListener('pointerup', resizeUp);
@@ -558,6 +458,7 @@ export function attachAnnotationSurface(options: {
       header.removeEventListener('pointerup', pointerup);
       header.removeEventListener('pointercancel', pointerup);
       header.removeEventListener('lostpointercapture', pointerup);
+      header.removeEventListener('keydown', dragKey);
       resizeHandle?.removeEventListener('pointerdown', resizeDown);
       resizeHandle?.removeEventListener('pointermove', resizeMove);
       resizeHandle?.removeEventListener('pointerup', resizeUp);

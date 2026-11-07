@@ -404,50 +404,43 @@
     filter: none
   &__bubble
     position: absolute
-    display: flex
-    flex-direction: column
+    display: block
     padding: 0
     margin: 0
-    border: 1px solid #dcd8f4
-    border-top: 3px solid #8172e6
-    border-radius: 14px
-    background: #ffffff
-    box-shadow: 0 7px 28px #35305a1f, 0 2px 5px #35305a08
-    overflow: hidden
+    border: 1px solid #c8bcea
+    border-radius: 10px
+    background: #fffefe
+    box-shadow: 0 4px 16px #5141761c, 0 1px 3px #5141760a
+    overflow: visible
     pointer-events: none
   &__header
-    display: flex
-    flex-shrink: 0
-    align-items: center
-    gap: 7px
-    min-height: 38px
-    padding: 8px 13px 5px
-    color: #70659e
-    user-select: none
-  &__mark
-    color: #8b7ad9
-    font-size: 15px
-    line-height: 1
-  &__title
-    font-size: 11px
-    font-weight: 600
-    letter-spacing: .04em
-  &__grip
-    margin-left: auto
-    color: #bcb6d1
-    font-size: 17px
-    line-height: 1
-  &__close
-    display: block
-    flex: 0 0 auto
-    height: 24px
-    margin: -3px -5px -3px 2px
-    padding: 0 6px
-    border: 0
-    border-radius: 7px
+    position: absolute
+    top: -4px
+    left: 1px
+    right: 1px
+    height: 10px
+    border-radius: 10px
     background: transparent
-    color: #a38a9b
-    font: 11px/24px var(--font-family, "PingFang SC", "Microsoft YaHei", sans-serif) !important
+    user-select: none
+    &:focus-visible
+      outline: 2px solid #a99ae9
+      outline-offset: 1px
+  &__close
+    position: absolute
+    top: -9px
+    right: -9px
+    display: block
+    width: 18px
+    height: 18px
+    margin: 0
+    padding: 0
+    border: 1px solid #ded5ef
+    border-radius: 50%
+    background: #fff
+    color: #8e7ca8
+    font: 15px/16px var(--font-family, "PingFang SC", "Microsoft YaHei", sans-serif) !important
+    opacity: 0
+    pointer-events: none
     cursor: pointer
     &:hover
       background: #f1edf9
@@ -457,81 +450,86 @@
       outline-offset: 1px
   &__resize
     position: absolute
-    right: 2px
-    bottom: 2px
-    width: 23px
-    height: 23px
+    right: -6px
+    bottom: -6px
+    width: 14px
+    height: 14px
     margin: 0
     padding: 0
     border: 0
-    border-radius: 6px
+    border-radius: 4px
     background: transparent
+    opacity: 0
+    pointer-events: none
     cursor: nwse-resize
     touch-action: none
     &::after
       content: ''
       position: absolute
-      right: 4px
-      bottom: 4px
-      width: 12px
-      height: 12px
+      right: 2px
+      bottom: 2px
+      width: 9px
+      height: 9px
       clip-path: polygon(100% 0, 100% 100%, 0 100%)
-      background: repeating-linear-gradient(135deg, transparent 0 3px, #a99ac9 3px 5px)
+      background: repeating-linear-gradient(135deg, transparent 0 2px, #9d8bbf 2px 3px)
     &:hover
       background: #eee8fa
     &:focus-visible
       outline: 2px solid #a99ae9
       outline-offset: 0
-  &__input, &__text
+  &__input, &__text, &__measure
     display: block
     width: 100%
     margin: 0
-    padding: 4px 15px 13px
+    padding: 7px 9px
     color: #364460
-    font: 14px/24px var(--font-family, "PingFang SC", "Microsoft YaHei", sans-serif)
+    font: 14px/20px var(--font-family, "PingFang SC", "Microsoft YaHei", sans-serif)
+    letter-spacing: normal
     text-align: left
     overflow-wrap: anywhere
     white-space: pre-wrap
-  &__input
-    min-height: 52px
-    max-height: 190px
+    tab-size: 4
+  &__input, &__text
+    height: 100%
+    min-height: 0
+    min-width: 0
+    max-height: none
     border: 0 !important
-    border-radius: 0
-    outline: none !important
+    border-radius: 9px
     background: transparent
-    box-shadow: none !important
-    resize: none
-    overflow-y: auto
-    overscroll-behavior: contain
-    &::placeholder
-      color: #a49db5
-      font-size: 12px
-  &__text
-    max-height: 220px
     overflow-x: hidden
     overflow-y: auto
     overscroll-behavior: contain
+  &__input
+    outline: none !important
+    box-shadow: none !important
+    resize: none
+    &::placeholder
+      color: #a49db5
+  &__text
     pointer-events: auto
     touch-action: pan-y
     cursor: text
     user-select: text
     &.is-placeholder
       color: #a49db5
-      font-size: 12px
     &:focus-visible
       outline: 2px solid #b8aaeb
       outline-offset: -3px
-  &__hint
-    flex-shrink: 0
-    padding: 6px 28px 8px 14px
-    border-top: 1px solid #f0edf8
-    background: #fcfbff
-    color: #a49db6
-    font-size: 10px
-    line-height: 1.5
-    user-select: none
+  &__measure
+    position: absolute
+    top: 0
+    left: -10000px
+    width: max-content
+    height: auto
+    visibility: hidden
+    pointer-events: none
   &.is-teacher &__bubble
     pointer-events: auto
+    &:hover, &:focus-within
+      .live-share-annotation__close, .live-share-annotation__resize
+        opacity: 1
+        pointer-events: auto
   &.is-teacher &__header
     cursor: grab
     touch-action: none
@@ -539,6 +537,12 @@
     cursor: grabbing
   &.is-resizing
     cursor: nwse-resize
+
+@media (hover: none)
+  .live-share-annotation.is-teacher
+    .live-share-annotation__close, .live-share-annotation__resize
+      opacity: 1
+      pointer-events: auto
 
 .live-share-overlay.is-disconnected .live-share-annotation
   display: none

@@ -43,9 +43,10 @@ before(async () => {
 });
 after(async () => { await browser?.close(); });
 
-async function fixture({ scale = 1, latency = 20 } = {}) {
-    const studentContext = await browser.newContext({ viewport: { width: 1100, height: 780 }, deviceScaleFactor: 1 });
-    const teacherContext = await browser.newContext({ viewport: { width: 1400, height: 1000 }, deviceScaleFactor: 2 });
+async function fixture({ scale = 1, latency = 20, studentViewport = { width: 1100, height: 780 },
+    teacherViewport = { width: 1400, height: 1000 }, studentDpr = 1, teacherDpr = 2 } = {}) {
+    const studentContext = await browser.newContext({ viewport: studentViewport, deviceScaleFactor: studentDpr });
+    const teacherContext = await browser.newContext({ viewport: teacherViewport, deviceScaleFactor: teacherDpr });
     const student = await studentContext.newPage();
     const teacher = await teacherContext.newPage();
     const inputSession = await teacherContext.newCDPSession(teacher);
@@ -82,7 +83,10 @@ async function fixture({ scale = 1, latency = 20 } = {}) {
     await teacher.evaluate((pageId) => {
         window.viewerReady = false;
         window.viewer = Mirror.attachViewerMirror({ pageId, container: document.querySelector('#mirror'),
-            sendCommand: (data) => window.sendCommand(data), onViewport: () => { window.viewerReady = true; } });
+            sendCommand: (data) => window.sendCommand(data), onViewport: ({ width, height }) => {
+                Object.assign(document.querySelector('#mirror').style, { width: `${width}px`, height: `${height}px` });
+                window.viewerReady = true;
+            } });
     }, pageId);
     await student.exposeFunction('sendPacket', async (data) => {
         if (!active) return;
@@ -151,6 +155,60 @@ const selectors = {
     selection: '[data-share-annotation-selection]', resize: '[data-share-annotation-resize]',
     outline: '[data-share-annotation-outline]',
 };
+
+for (const resolution of [
+    { name: 'smaller teacher', studentViewport: { width: 1440, height: 900 }, teacherViewport: { width: 1024, height: 900 }, scale: 0.6, studentDpr: 1, teacherDpr: 2 },
+    { name: 'larger teacher', studentViewport: { width: 900, height: 660 }, teacherViewport: { width: 1800, height: 1100 }, scale: 1.2, studentDpr: 2, teacherDpr: 1 },
+]) it(`prose annotation geometry matches with a ${resolution.name} viewport and different pixel density`, { timeout: 30000 }, async () => {
+    const f = await fixture(resolution);
+    try {
+        const expected = await f.student.locator('#multiline').textContent();
+        await selectText(f, '#multiline');
+        await f.teacher.exposeFunction('finalResolutionSelectionReceived', () => f.commands.some((command) =>
+            command.action === 'annotate' && command.annotation?.quote === expected
+            && f.acks.some((ack) => ack.id === command.id && ack.ok)));
+        await f.teacher.waitForFunction(() => window.finalResolutionSelectionReceived());
+        const measure = (element) => {
+            const doc = element.ownerDocument;
+            const walker = doc.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+            const rects = []; let text;
+            while ((text = walker.nextNode())) {
+                const range = doc.createRange(); range.selectNodeContents(text);
+                for (const rect of range.getClientRects()) rects.push([rect.x, rect.y, rect.width, rect.height]);
+            }
+            return { rects, width: doc.defaultView.innerWidth, height: doc.defaultView.innerHeight,
+                clientWidth: doc.documentElement.clientWidth, font: doc.defaultView.getComputedStyle(element).font };
+        };
+        const source = await f.student.locator('#multiline').evaluate(measure);
+        const replay = await f.frame().locator('#multiline').evaluate(measure);
+        assert.deepEqual(replay, source, 'both peer text runs use the learner viewport and CSS-pixel geometry');
+        assert.equal(await f.teacher.locator(selectors.box).getAttribute('d'), await f.student.locator(selectors.box).getAttribute('d'),
+            'the outer scale and pixel density never change the focus shape');
+        const teacherBox = await f.teacher.locator(selectors.box).boundingBox();
+        const studentBox = await f.student.locator(selectors.box).boundingBox();
+        assert(Math.abs(teacherBox.width / resolution.scale - studentBox.width) < 0.5);
+        assert(Math.abs(teacherBox.height / resolution.scale - studentBox.height) < 0.5);
+        const resized = { width: resolution.studentViewport.width - 180, height: resolution.studentViewport.height - 120 };
+        await f.student.setViewportSize(resized);
+        await f.teacher.waitForFunction(({ width, height }) => {
+            const view = document.querySelector('#mirror iframe').contentWindow;
+            return view.innerWidth === width && view.innerHeight === height;
+        }, resized);
+        assert.deepEqual(await f.frame().locator('#multiline').evaluate(measure), await f.student.locator('#multiline').evaluate(measure),
+            'a learner window resize updates text wrapping in the replay');
+        const resizedPath = await f.student.locator(selectors.box).getAttribute('d');
+        await f.teacher.waitForFunction(({ selector, d }) => document.querySelector(selector)?.getAttribute('d') === d,
+            { selector: selectors.box, d: resizedPath });
+        await f.student.evaluate(() => window.scrollTo(0, 80));
+        await f.teacher.waitForFunction(() => document.querySelector('#mirror iframe').contentWindow.scrollY === 80);
+        assert.deepEqual(await f.frame().locator('#multiline').evaluate(measure), await f.student.locator('#multiline').evaluate(measure),
+            'scrolling after a resize keeps both text ranges in the same coordinates');
+        const scrolledPath = await f.student.locator(selectors.box).getAttribute('d');
+        await f.teacher.waitForFunction(({ selector, d }) => document.querySelector(selector)?.getAttribute('d') === d,
+            { selector: selectors.box, d: scrolledPath });
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
 
 it('temporary focus forms one closed text-shaped contour with a solid rounded arrow and clears on outside click', { timeout: 25000 }, async () => {
     const f = await fixture();
@@ -301,6 +359,115 @@ it('mixed inline math and separate paragraphs form a solid smooth focus block in
     } finally { await f.close(); }
 });
 
+for (const layout of ['punctuation', 'formatting']) it(`selected ${layout} list has one outer block without inner seams or folded connectors`, { timeout: 30000 }, async () => {
+    const f = await fixture();
+    try {
+        await f.student.evaluate((layout) => {
+            const lesson = document.querySelector('#lesson');
+            lesson.innerHTML = layout === 'punctuation'
+                ? `<h2>题目描述</h2><p>编写一个能够输出 <code>Hello,World!</code> 的程序。</p>
+                    <ul id="bullet-focus"><li id="bullet-start">使用英文标点符号，</li>
+                    <li><code>Hello,World!</code> 逗号后面没有空格。</li>
+                    <li id="bullet-end"><code>H</code> 和 <code>W</code> 为大写字母</li></ul>
+                    <h2>输入格式</h2><p>无</p>`
+                : `<h2>数据范围与约定</h2><p>-100.0 ≤ n ≤ 100.0</p><hr>
+                    <h2 id="bullet-start">提示</h2><ul id="bullet-focus">
+                    <li>使用 <code>ceil(n)</code> 与 <code>floor(n)</code> 时，它们的返回值仍然属于 <strong>double 类型</strong>。</li>
+                    <li>double 类型默认输出会保留 6 位小数。</li>
+                    <li>如果你需要输出为整数形式，请使用格式化输出，例如：<code style="position:relative;top:3px">%.0lf</code></li></ul>
+                    <hr><h2 id="bullet-end">样例输入 1</h2><pre>6.18</pre>`;
+            const style = document.createElement('style');
+            style.textContent = '#lesson{padding:20px 42px}#lesson h2{font-size:30px;line-height:1.3;margin:20px 0}#lesson p{font-size:22px}#bullet-focus{padding-left:26px;margin:10px 0;list-style-type:square;font-size:24px;line-height:1.16}#bullet-focus li{white-space:nowrap;margin:0}#lesson code{font:22px/1.1 monospace;padding:3px 6px;border:1px solid #dbe2ef;border-radius:6px;color:#d33;background:#f8f7fc}';
+            document.head.append(style);
+        }, layout);
+        await f.frame().locator('#bullet-end').waitFor();
+        const { start } = await selectionPoints(f, '#bullet-start');
+        const { end } = await selectionPoints(f, '#bullet-end');
+        await dragSelection(f, start, end);
+        const suffix = layout === 'punctuation' ? '为大写字母' : '样例输入 1';
+        await f.teacher.exposeFunction('finalListSelectionReceived', () => f.commands.some((command) =>
+            command.action === 'annotate' && command.annotation?.quote.trim().endsWith(suffix)
+            && f.acks.some((ack) => ack.id === command.id && ack.ok)));
+        await f.teacher.waitForFunction(() => window.finalListSelectionReceived());
+        const finalTeacherPath = await f.teacher.locator(selectors.box).getAttribute('d');
+        await f.student.waitForFunction(({ selector, d }) => document.querySelector(selector)?.getAttribute('d') === d,
+            { selector: selectors.box, d: finalTeacherPath });
+        const shape = await f.student.locator(selectors.box).evaluate((outline) => {
+            const rows = [...document.querySelectorAll('#bullet-start,#bullet-focus li,#bullet-end')];
+            const rects = [...new Set(rows)].map((row) => {
+                const range = document.createRange(); range.selectNodeContents(row);
+                const bounds = range.getBoundingClientRect();
+                return { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom };
+            }).sort((a, b) => a.top - b.top);
+            const inverse = outline.getScreenCTM().inverse();
+            let seams = 0; let empty = 0; let samples = 0;
+            for (let index = 1; index < rects.length; index++) {
+                const a = rects[index - 1]; const b = rects[index];
+                // The common inner portion of adjacent selected rows is solid.
+                // Internal strokes here are the exact defects circled by the teacher.
+                const left = Math.max(a.left, b.left) + 12;
+                const right = Math.min(a.right, b.right) - 12;
+                for (let y = (a.top + a.bottom) / 2; y <= (b.top + b.bottom) / 2; y += 2) {
+                    for (let x = left; x <= right; x += 3) {
+                        const point = outline.ownerSVGElement.createSVGPoint(); point.x = x; point.y = y;
+                        const local = point.matrixTransform(inverse);
+                        seams += Number(outline.isPointInStroke(local));
+                        empty += Number(!outline.isPointInFill(local)); samples++;
+                    }
+                }
+            }
+            return { d: outline.getAttribute('d'), seams, empty, samples, rows: rects.length };
+        });
+        if (process.env.LIVE_SHARE_SCREENSHOTS === '1') {
+            await f.student.screenshot({ path: path.join(os.tmpdir(), `live-share-annotation-${layout}-list.png`), caret: 'initial' });
+        }
+        assert(shape.samples > 100 && shape.rows >= 3, 'the fixture spans tightly spaced list rows and inline code');
+        assert.equal((shape.d.match(/m/gi) || []).length, 1);
+        assert.equal((shape.d.match(/z/gi) || []).length, 1);
+        assert.equal(shape.seams, 0, 'adjacent selected list rows contain no internal boundary stroke');
+        assert.equal(shape.empty, 0, 'the shared interior remains filled instead of splitting into thin corridors');
+        assert.equal(await f.teacher.locator(selectors.box).getAttribute('d'), shape.d);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+it('a multiline focus at the top of the viewport keeps its arrow outside the selected content', { timeout: 25000 }, async () => {
+    const f = await fixture();
+    try {
+        await f.student.evaluate(() => {
+            document.querySelector('header').remove();
+            const lesson = document.querySelector('#lesson');
+            lesson.style.cssText = 'margin:0;padding:4px 96px;background:white;min-height:900px';
+            lesson.innerHTML = '<pre id="top-code" style="font:24px/1.45 monospace;white-space:pre;margin:0">using namespace std;\nint main(){\n\n    return 0;\n}</pre>';
+        });
+        await f.frame().locator('#top-code').waitFor();
+        await selectText(f, '#top-code');
+        await f.teacher.exposeFunction('finalTopSelectionReceived', () => f.commands.some((command) =>
+            command.action === 'annotate' && command.annotation?.quote.trim().endsWith('}')
+            && f.acks.some((ack) => ack.id === command.id && ack.ok)));
+        await f.teacher.waitForFunction(() => window.finalTopSelectionReceived());
+        const finalTeacherPath = await f.teacher.locator(selectors.box).getAttribute('d');
+        await f.student.waitForFunction(({ selector, d }) => document.querySelector(selector)?.getAttribute('d') === d,
+            { selector: selectors.box, d: finalTeacherPath });
+        if (process.env.LIVE_SHARE_SCREENSHOTS === '1') {
+            await f.student.screenshot({ path: path.join(os.tmpdir(), 'live-share-annotation-top-arrow.png'), caret: 'initial' });
+        }
+        for (const page of [f.student, f.teacher]) {
+            const geometry = await page.locator(selectors.root).evaluate((root) => {
+                const focus = root.querySelector('[data-share-annotation-box]').getBoundingClientRect();
+                const arrow = root.querySelector('[data-share-annotation-arrow-shape]').getBoundingClientRect();
+                return { focus: { left: focus.left, top: focus.top, right: focus.right, bottom: focus.bottom },
+                    arrow: { left: arrow.left, top: arrow.top, right: arrow.right, bottom: arrow.bottom, width: arrow.width, height: arrow.height } };
+            });
+            const a = geometry.arrow; const b = geometry.focus;
+            assert(a.width > 15 && a.height > 15, 'the broad arrow remains visible');
+            assert(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom,
+                'the entire arrow lies outside the focused content, including near the viewport top');
+        }
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
 it('a selection spanning outside paragraphs and a scroller clips each text fragment to its own overflow bounds', { timeout: 25000 }, async () => {
     const f = await fixture();
     try {
@@ -351,7 +518,7 @@ it('a selection spanning outside paragraphs and a scroller clips each text fragm
     } finally { await f.close(); }
 });
 
-it('drag selection shows only focus boxes and arrows; Enter opens notes on both sides and writing streams immediately', { timeout: 30000 }, async () => {
+it('drag selection shows only focus boxes and arrows; Shift+Enter opens notes on both sides and writing streams immediately', { timeout: 30000 }, async () => {
     const f = await fixture();
     try {
         const sourceHeight = await f.student.evaluate(() => document.scrollingElement.scrollHeight);
@@ -365,6 +532,9 @@ it('drag selection shows only focus boxes and arrows; Enter opens notes on both 
         assert.equal(await f.teacher.locator(selectors.bubble).isVisible(), false, 'selection alone does not open the teacher note');
         assert.equal(await f.student.locator(selectors.bubble).isVisible(), false, 'selection alone does not open the student note');
         await f.teacher.keyboard.press('Enter');
+        assert.equal(await f.teacher.locator(selectors.bubble).isVisible(), false, 'ordinary Enter must not open a teacher note');
+        assert.equal(await f.student.locator(selectors.bubble).isVisible(), false, 'ordinary Enter must not open a learner note');
+        await f.teacher.keyboard.press('Shift+Enter');
         await f.teacher.locator(selectors.input).waitFor({ state: 'visible' });
         await f.student.locator(selectors.bubble).waitFor({ state: 'visible' });
         assert.equal(await f.teacher.locator(selectors.arrow).isVisible(), false, 'the standalone arrow gives way to a note connector');
@@ -375,6 +545,10 @@ it('drag selection shows only focus boxes and arrows; Enter opens notes on both 
         assert.equal(quote, '从输出固定内容开始');
         await f.teacher.locator(selectors.input).pressSequentially('先');
         await f.student.locator(selectors.bubble).getByText('先', { exact: true }).waitFor();
+        await f.teacher.locator(selectors.input).press('Enter');
+        await f.teacher.locator(selectors.input).pressSequentially('下一行');
+        await f.student.locator(selectors.bubble).getByText('先\n下一行', { exact: true }).waitFor();
+        assert.equal(await f.teacher.locator(selectors.input).inputValue(), '先\n下一行', 'ordinary Enter inserts a note newline after the note opens');
         await f.teacher.locator(selectors.input).evaluate((input) => {
             input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
             input.value = '注意大小写';
@@ -392,7 +566,7 @@ it('drag selection shows only focus boxes and arrows; Enter opens notes on both 
         assert(!JSON.stringify(f.packets).includes('onerror'), 'the source annotation layer is excluded from rrweb to avoid recursive copies');
         assert(!JSON.stringify(f.packets).includes('PRIVATE-ANNOTATION-SECRET'));
         await f.teacher.locator(selectors.input).fill('');
-        await f.student.locator(selectors.bubble).getByText('老师正在输入…', { exact: true }).waitFor();
+        await f.student.locator(selectors.bubble).getByText('…', { exact: true }).waitFor();
         assert(await f.student.locator(selectors.bubble).isVisible(), 'an opened note stays visible while its text is being replaced');
         assert(await f.student.locator(selectors.box).isVisible(), 'clearing note text retains the focus box');
         await f.teacher.locator('#teacher-draft').click();
@@ -417,7 +591,7 @@ it('a fast drag over a study link selects its text without navigating the studen
         await f.inputSession.send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: end.x, y: end.y });
         await f.student.locator(selectors.box).waitFor({ state: 'visible' });
         assert.equal(f.student.url(), originalUrl, 'releasing a fast text selection must not become a remote link click');
-        await f.teacher.keyboard.press('Enter');
+        await f.teacher.keyboard.press('Shift+Enter');
         await f.teacher.locator(selectors.input).fill('链接文字也可以圈出重点。');
         await f.student.locator(selectors.bubble).getByText('链接文字也可以圈出重点。', { exact: true }).waitFor();
         assert.equal(f.commands.filter((command) => command.action === 'click').length, 0);
@@ -429,7 +603,7 @@ it('scaled note dragging and resizing synchronize dimensions, and anchors follow
     const f = await fixture({ scale: 0.5 });
     try {
         await selectText(f);
-        await f.teacher.keyboard.press('Enter');
+        await f.teacher.keyboard.press('Shift+Enter');
         await f.teacher.locator(selectors.input).fill('看这里，先写出正确的输出格式。');
         await f.student.locator(selectors.bubble).waitFor({ state: 'visible' });
         const teacherBubble = await f.teacher.locator(selectors.bubble).boundingBox();
@@ -464,6 +638,24 @@ it('scaled note dragging and resizing synchronize dimensions, and anchors follow
         await f.student.locator(selectors.bubble).getByText('手动调好的大小不应在继续写字时跳回默认值。\n下一行继续实时显示。', { exact: true }).waitFor();
         const afterWriting = await f.student.locator(selectors.bubble).boundingBox();
         assert(Math.abs(afterWriting.width - resizedStudent.width) < 1 && Math.abs(afterWriting.height - resizedStudent.height) < 1);
+        // Small notes must travel through the real validated relay as well as
+        // the local sizing helper; the former 160 × 100 minimum rejected them.
+        const shrinkHandle = await f.teacher.locator(selectors.resize).boundingBox();
+        const shrinkX = shrinkHandle.x + shrinkHandle.width / 2;
+        const shrinkY = shrinkHandle.y + shrinkHandle.height / 2;
+        await f.teacher.mouse.move(shrinkX, shrinkY); await f.teacher.mouse.down();
+        await f.teacher.mouse.move(shrinkX + (48 - resizedStudent.width) / 2,
+            shrinkY + (52 - resizedStudent.height) / 2, { steps: 10 });
+        await f.teacher.mouse.up();
+        await f.student.waitForFunction((selector) => {
+            const bounds = document.querySelector(selector).getBoundingClientRect();
+            return Math.abs(bounds.width - 48) < 2 && Math.abs(bounds.height - 52) < 2;
+        }, selectors.bubble);
+        const smallTeacher = await f.teacher.locator(selectors.bubble).boundingBox();
+        const smallStudent = await f.student.locator(selectors.bubble).boundingBox();
+        assert(Math.abs(smallTeacher.width * 2 - smallStudent.width) < 2
+            && Math.abs(smallTeacher.height * 2 - smallStudent.height) < 2,
+        'teacher and learner retain matching compact manual dimensions after the relay');
         const before = await f.student.locator(selectors.box).boundingBox();
         await f.student.evaluate(() => window.scrollTo(0, 80));
         await f.student.waitForFunction(({ selector, y }) => Math.abs(document.querySelector(selector).getBoundingClientRect().y - (y - 80)) < 3,
@@ -478,7 +670,7 @@ it('scaled note dragging and resizing synchronize dimensions, and anchors follow
         await f.teacher.waitForFunction(() => document.querySelector('#mirror iframe').contentDocument.querySelector('#lesson').style.paddingLeft === '100px');
         await f.teacher.getByRole('button', { name: '删除批注', exact: true }).click();
         await selectText(f, '#nested-focus');
-        await f.teacher.keyboard.press('Enter');
+        await f.teacher.keyboard.press('Shift+Enter');
         await f.teacher.locator(selectors.input).fill('独立区域也要跟随。');
         const nestedBefore = await f.student.locator(selectors.box).boundingBox();
         await f.student.evaluate(() => { document.querySelector('#nested').scrollTop = 10; });
@@ -495,12 +687,12 @@ it('scaled note dragging and resizing synchronize dimensions, and anchors follow
 it('multiple annotations keep their own text and position, one can close independently, and long notes remain readable', { timeout: 35000 }, async () => {
     const f = await fixture();
     try {
-        await selectText(f); await f.teacher.keyboard.press('Enter');
+        await selectText(f); await f.teacher.keyboard.press('Shift+Enter');
         const first = f.teacher.locator(selectors.root).last();
         await first.locator(selectors.input).fill('第一处：注意输出内容。');
         const firstId = await first.getAttribute('data-share-annotation-id');
         const firstSelector = `[data-share-annotation-id="${firstId}"]`;
-        await f.student.locator(firstSelector).getByText('第一处：注意输出内容。', { exact: true }).waitFor();
+        await f.student.locator(firstSelector).locator(selectors.text).getByText('第一处：注意输出内容。', { exact: true }).waitFor();
         await f.frame().locator('h2').click();
         assert(await f.teacher.locator(firstSelector).locator(selectors.bubble).isVisible(), 'written notes survive clicks outside them');
         await selectText(f, '#title');
@@ -508,13 +700,13 @@ it('multiple annotations keep their own text and position, one can close indepen
         await f.frame().locator('h2').click();
         await f.student.locator(`[data-share-annotation-id="${temporaryId}"]`).waitFor({ state: 'detached' });
         assert(await f.student.locator(firstSelector).locator(selectors.bubble).isVisible(), 'discarding a new temporary focus does not delete a written note');
-        await selectText(f, '#title'); await f.teacher.keyboard.press('Enter');
+        await selectText(f, '#title'); await f.teacher.keyboard.press('Shift+Enter');
         const second = f.teacher.locator(selectors.root).last();
         const secondId = await second.getAttribute('data-share-annotation-id');
         const secondSelector = `[data-share-annotation-id="${secondId}"]`;
         assert.notEqual(firstId, secondId);
         await second.locator(selectors.input).fill('第二处：先阅读题目。');
-        await f.student.locator(secondSelector).getByText('第二处：先阅读题目。', { exact: true }).waitFor();
+        await f.student.locator(secondSelector).locator(selectors.text).getByText('第二处：先阅读题目。', { exact: true }).waitFor();
         if (process.env.LIVE_SHARE_SCREENSHOTS === '1') {
             await f.teacher.screenshot({ path: path.join(os.tmpdir(), 'live-share-annotation-multiple-teacher.png'), caret: 'initial' });
             await f.student.screenshot({ path: path.join(os.tmpdir(), 'live-share-annotation-multiple-student.png'), caret: 'initial' });
@@ -553,7 +745,7 @@ it('stale or mismatched anchors are rejected, disappearing text hides the annota
     const f = await fixture();
     try {
         await selectText(f);
-        await f.teacher.keyboard.press('Enter');
+        await f.teacher.keyboard.press('Shift+Enter');
         await f.teacher.locator(selectors.input).fill('这条提示只能发给当前页面。');
         await f.student.locator(selectors.bubble).getByText('这条提示只能发给当前页面。', { exact: true }).waitFor();
         const valid = f.commands.filter((command) => command.action === 'annotate' && command.annotation?.text).at(-1);
@@ -567,7 +759,7 @@ it('stale or mismatched anchors are rejected, disappearing text hides the annota
         await f.student.locator(selectors.box).waitFor({ state: 'hidden' });
         await f.teacher.locator(selectors.box).waitFor({ state: 'hidden' });
         await selectText(f, '#multiline');
-        await f.teacher.keyboard.press('Enter');
+        await f.teacher.keyboard.press('Shift+Enter');
         await f.teacher.locator(`${selectors.root}:visible ${selectors.input}`).fill('第二段提示');
         await f.student.locator(`${selectors.root}:visible ${selectors.box}`).first().waitFor({ state: 'visible' });
         await Promise.all([f.teacher.evaluate(() => window.viewer.setConnected(false)), f.student.evaluate(() => window.source.setConnected(false))]);

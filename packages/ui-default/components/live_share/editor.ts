@@ -1,7 +1,22 @@
 import { Y, MonacoBinding } from './vendor';
-import { attachAnnotationSurface } from './annotation';
+import { attachAnnotationSurface, ShareAnnotation } from './annotation';
 
 export interface EditorRect { x: number; y: number; width: number; height: number }
+export interface SharedTextareaStyle {
+  wrap: 'off' | 'soft' | 'hard'; fontWeight: string; fontStyle: 'normal' | 'italic' | 'oblique';
+  paddingTop: number; paddingRight: number; paddingBottom: number; paddingLeft: number;
+  borderTopWidth: number; borderRightWidth: number; borderBottomWidth: number; borderLeftWidth: number;
+  scrollbarWidth: number; scrollbarHeight: number;
+  letterSpacing: number; wordSpacing: number; textIndent: number; tabSize: number;
+}
+interface CodeFocusSelection { noteId?: string; anchor: string; head: string; rects: EditorRect[] }
+interface SharedCodeFocus {
+  width: number; height: number; scrollTop: number; scrollLeft: number; revision: string; selections: CodeFocusSelection[];
+}
+interface CodeFocusGeometry {
+  publish?: (message: EditorMessage | null, noteId: string | undefined, rects: EditorRect[]) => void;
+  get?: (message: EditorMessage, noteId?: string) => EditorRect[] | undefined;
+}
 export interface SharedEditorView {
   wordWrap?: 'off' | 'on' | 'wordWrapColumn' | 'bounded'; wordWrapColumn?: number;
   tabSize?: number; insertSpaces?: boolean; glyphMargin?: boolean;
@@ -16,7 +31,7 @@ export interface SharedEditorTheme {
   encodedTokensColors?: string[];
 }
 export interface EditorMessage {
-  type: 'edit:init' | 'edit:update' | 'edit:ack' | 'edit:cursor' | 'edit:layout' | 'edit:remove' | 'edit:sync' | 'edit:scroll';
+  type: 'edit:init' | 'edit:update' | 'edit:ack' | 'edit:cursor' | 'edit:layout' | 'edit:remove' | 'edit:sync' | 'edit:scroll' | 'edit:focus';
   pageId: string;
   editorId: string;
   update?: string;
@@ -36,6 +51,9 @@ export interface EditorMessage {
   theme?: SharedEditorTheme;
   anchor?: string;
   head?: string;
+  document?: 'annotations';
+  focus?: SharedCodeFocus;
+  textStyle?: SharedTextareaStyle;
 }
 
 export interface EditorStatus { editorId: string; pending: number; connected: boolean; ready: boolean; error?: string }
@@ -89,6 +107,7 @@ export class CollaborativeText {
   private incoming: EditorMessage[] = [];
   private readonly writer = uniqueId();
   private listener: (update: Uint8Array, origin: unknown) => void;
+  private revisionValue?: string;
 
   constructor(private options: CommonOptions & {
     editorId: string;
@@ -96,12 +115,14 @@ export class CollaborativeText {
     value?: string;
     canWrite?: () => boolean;
     localWritable?: () => boolean;
+    document?: 'annotations';
   }) {
     this.ready = options.role === 'source';
     if (options.role === 'source' && options.value) this.text.insert(0, options.value);
     this.undoManager = new Y.UndoManager(this.text, { trackedOrigins: new Set([this.localOrigin]), captureTimeout: 350 });
     this.listener = (update, origin) => {
       if (this.disposed) return;
+      this.revisionValue = undefined;
       this.changed = true;
       if (origin === REMOTE) return;
       if (options.role === 'source' && !this.connected) return;
@@ -119,9 +140,20 @@ export class CollaborativeText {
   get value() { return this.text.toString(); }
   get pendingCount() { return this.options.role === 'viewer' ? this.pending.size + (this.queuedUpdates.length || this.unsent ? 1 : 0) : 0; }
   get snapshot() { return encodeUpdate(Y.encodeStateAsUpdate(this.doc)); }
+  get revision() {
+    if (!this.revisionValue) {
+      // Yjs vectors alone do not change after a delete-only transaction.
+      // Include a cached content digest so old pre-deletion geometry is rejected.
+      let first = 2166136261; let second = 5381;
+      const value = this.value;
+      for (let i = 0; i < value.length; i++) { first = Math.imul(first ^ value.charCodeAt(i), 16777619); second = Math.imul(second, 33) ^ value.charCodeAt(i); }
+      this.revisionValue = `${encodeUpdate(Y.encodeStateVector(this.doc))}:${value.length}:${(first >>> 0).toString(36)}:${(second >>> 0).toString(36)}`;
+    }
+    return this.revisionValue;
+  }
   trackOrigin(origin: unknown) { this.undoManager.addTrackedOrigin(origin); }
   private transmit(message: EditorMessage) {
-    try { this.options.send(message); } catch { this.setConnected(false); }
+    try { this.options.send({ ...message, ...(this.options.document ? { document: this.options.document } : {}) }); } catch { this.setConnected(false); }
   }
   private status(error?: string) {
     this.options.onStatus?.({
@@ -156,7 +188,8 @@ export class CollaborativeText {
   }
 
   receive(message: EditorMessage) {
-    if (this.disposed || message.pageId !== this.options.pageId || message.editorId !== this.options.editorId) return false;
+    if (this.disposed || message.pageId !== this.options.pageId || message.editorId !== this.options.editorId
+      || message.document !== this.options.document) return false;
     if (message.type === 'edit:ack' && this.options.role === 'viewer') {
       this.pending.delete(message.opId!);
       this.status();
@@ -434,16 +467,33 @@ function observeTextareaCursor(node: HTMLTextAreaElement, shared: CollaborativeT
   };
 }
 
-/** Teacher focus is a visual layer only: never change either peer's native selection or keyboard handling. */
-function attachCodeFocus(node: HTMLElement, shared: CollaborativeText, editor?: any, container?: HTMLElement) {
+interface CodeNote {
+  anchor: string; head: string; text: string; offsetX: number; offsetY: number; width?: number; height?: number;
+}
+
+/** Drawing a focus or a note never changes either peer's native selection. */
+function attachCodeFocus(node: HTMLElement, shared: CollaborativeText, editor?: any, container?: HTMLElement,
+  note?: { id: string; teacher: boolean; onChange: (patch: Partial<CodeNote>) => void; onClear: () => void; onLeave: () => void },
+  geometry?: CodeFocusGeometry) {
   const root = document.createElement('div');
   root.className = 'live-share-code-focus-layer';
   root.dataset.liveSharePrivate = ''; root.dataset.liveShareUi = '';
   root.dataset.shareCodeFocus = '';
+  if (note) root.dataset.shareCodeAnnotation = note.id;
   root.style.cssText = `position:${container ? 'absolute' : 'fixed'};pointer-events:none;overflow:hidden;z-index:1002;display:none`;
   (container || document.body).appendChild(root);
-  const surface = attachAnnotationSurface({ container: root, teacher: false });
-  const mark = { startNodeId: 1, endNodeId: 1, startOffset: 0, endOffset: 1, quote: '代码重点', text: '', noteOpen: false, offsetX: 0, offsetY: 0 };
+  const promote = () => {
+    if (!note) return;
+    for (const sibling of root.parentElement?.querySelectorAll<HTMLElement>('[data-share-code-annotation]') || []) sibling.style.zIndex = '1002';
+    root.style.zIndex = '1003';
+  };
+  if (note?.teacher) {
+    root.addEventListener('pointerdown', promote, true);
+    root.addEventListener('focusin', promote);
+  }
+  const surface = attachAnnotationSurface({ container: root, teacher: !!note?.teacher, id: note?.id,
+    onChange: note?.onChange, onClear: note?.onClear });
+  let mark: ShareAnnotation = { startNodeId: 1, endNodeId: 1, startOffset: 0, endOffset: 1, quote: '代码重点', text: '', noteOpen: false, offsetX: 0, offsetY: 0 };
   let current: EditorMessage | null = null;
   let frame = 0;
   let disposed = false;
@@ -452,9 +502,24 @@ function attachCodeFocus(node: HTMLElement, shared: CollaborativeText, editor?: 
   let measure: HTMLDivElement | undefined;
   let selected: HTMLSpanElement | undefined;
   let measureSignature = '';
+  const decorationClass = `live-share-focus-${uniqueId()}`;
+  let focusInput = false;
+  let blurTimer: ReturnType<typeof setTimeout> | undefined;
+  const leave = () => {
+    clearTimeout(blurTimer);
+    // Let focus settle first: moving to the resize handle or another control
+    // of this same note is not leaving it, and dragging must keep the draft.
+    blurTimer = setTimeout(() => {
+      blurTimer = undefined;
+      if (!disposed && !root.contains(node.ownerDocument.activeElement)
+        && !root.querySelector('.is-dragging, .is-resizing')) note?.onLeave();
+    }, 0);
+  };
+  if (note?.teacher) root.addEventListener('focusout', leave);
   const reset = () => {
     if (frame) window.cancelAnimationFrame(frame);
     frame = 0; current = null; rangeSignature = '';
+    geometry?.publish?.(null, note?.id, []);
     if (editor && !editor.getModel()?.isDisposed?.()) decorations = editor.deltaDecorations(decorations, []);
     root.style.display = 'none'; surface.render(null, null);
   };
@@ -490,12 +555,12 @@ function attachCodeFocus(node: HTMLElement, shared: CollaborativeText, editor?: 
         rangeSignature = signature;
         decorations = editor.deltaDecorations(decorations, [{
           range: { startLineNumber: start.lineNumber, startColumn: start.column, endLineNumber: end.lineNumber, endColumn: end.column },
-          options: { className: 'live-share-teacher-focus-region', showIfCollapsed: false },
+          options: { className: `live-share-teacher-focus-region ${decorationClass}`, showIfCollapsed: false },
         }]);
       }
       const layout = editor.getLayoutInfo();
       clip.left = layout.contentLeft; clip.right = layout.contentLeft + layout.contentWidth;
-      for (const part of node.querySelectorAll<HTMLElement>('.live-share-teacher-focus-region')) {
+      for (const part of node.querySelectorAll<HTMLElement>(`.${decorationClass}`)) {
         const rect = part.getBoundingClientRect();
         add({ x: (rect.left - box.left) / scaleX, y: (rect.top - box.top) / scaleY, width: rect.width / scaleX, height: rect.height / scaleY });
       }
@@ -527,16 +592,100 @@ function attachCodeFocus(node: HTMLElement, shared: CollaborativeText, editor?: 
       for (const rect of selected.getClientRects()) add({ x: (rect.left - base.left) / scaleX + borderX - textarea.scrollLeft,
         y: (rect.top - base.top) / scaleY + borderY - textarea.scrollTop, width: Math.max(2, rect.width / scaleX), height: rect.height / scaleY });
     }
+    // Monaco's measured fragments can differ under CSS scale or device pixel
+    // density. Both peers ultimately draw the learner's exact CSS-pixel rows.
+    for (const rect of rects) for (const key of ['x', 'y', 'width', 'height'] as const) rect[key] = Math.round(rect[key] * 1000) / 1000;
+    geometry?.publish?.(current, note?.id, rects);
+    const authoritative = geometry?.get?.(current, note?.id);
+    if (authoritative) rects.splice(0, rects.length, ...authoritative);
     if (rects.length) {
       const x = Math.min(...rects.map((rect) => rect.x)); const y = Math.min(...rects.map((rect) => rect.y));
       const right = Math.max(...rects.map((rect) => rect.x + rect.width)); const bottom = Math.max(...rects.map((rect) => rect.y + rect.height));
-      surface.render(mark, { x, y, width: right - x, height: bottom - y, rects });
+      surface.render(mark, { x, y, width: right - x, height: bottom - y, rects }, focusInput);
+      if (focusInput) surface.focus();
+      focusInput = false;
     } else surface.render(null, null);
     frame = window.requestAnimationFrame(render);
   };
   return {
-    set(message: EditorMessage | null) { current = message; if (message) render(); else reset(); },
-    dispose() { disposed = true; reset(); surface.dispose(); root.remove(); },
+    set(message: EditorMessage | null, value?: CodeNote, focus = false) {
+      current = message;
+      if (value && (value.text !== mark.text || value.offsetX !== mark.offsetX || value.offsetY !== mark.offsetY
+        || value.width !== mark.width || value.height !== mark.height)) promote();
+      if (value) mark = { ...mark, ...value, noteOpen: true };
+      focusInput ||= focus;
+      if (message) render(); else reset();
+    },
+    dispose() {
+      disposed = true; reset(); surface.dispose();
+      clearTimeout(blurTimer); root.removeEventListener('focusout', leave);
+      root.removeEventListener('pointerdown', promote, true); root.removeEventListener('focusin', promote);
+      root.remove();
+    },
+  };
+}
+
+/** Notes have their own CRDT document: annotating read-only code must never
+ * change its model, dirty state, undo history or normal newline behaviour. */
+function attachCodeAnnotations(node: HTMLElement, code: CollaborativeText, notes: CollaborativeText,
+  options: CommonOptions & { editorId: string; teacher: boolean; connected: () => boolean; editor?: any; container?: HTMLElement; geometry?: CodeFocusGeometry }) {
+  const values = notes.doc.getMap('notes');
+  const surfaces = new Map<string, ReturnType<typeof attachCodeFocus>>();
+  let disposed = false;
+  const valid = (value: any): value is CodeNote => value && typeof value === 'object'
+    && [value.anchor, value.head].every((part) => typeof part === 'string' && part.length > 0 && part.length <= 4096 && /^[A-Za-z0-9+/]*={0,2}$/.test(part))
+    && typeof value.text === 'string' && value.text.length <= 1000
+    && [value.offsetX, value.offsetY].every((part) => Number.isFinite(part) && Math.abs(part) <= 10000)
+    && (value.width === undefined || Number.isFinite(value.width) && value.width >= 36 && value.width <= 960)
+    && (value.height === undefined || Number.isFinite(value.height) && value.height >= 36 && value.height <= 800);
+  const write = (id: string, value: CodeNote | null) => {
+    if (!options.teacher || !options.connected() || !notes.editable) return;
+    notes.doc.transact(() => { if (value) values.set(id, value); else values.delete(id); }, notes.localOrigin);
+  };
+  const cursor = (value: CodeNote): EditorMessage => ({ type: 'edit:cursor', pageId: options.pageId,
+    editorId: options.editorId, anchor: value.anchor, head: value.head });
+  const render = () => {
+    if (disposed) return;
+    const present = new Set<string>();
+    for (const [id, value] of values) {
+      if (present.size >= 40 || typeof id !== 'string' || !/^[\w-]{1,128}$/.test(id) || !valid(value)) continue;
+      present.add(id);
+      let surface = surfaces.get(id);
+      if (!surface) {
+        surface = attachCodeFocus(node, code, options.editor, options.container, { id, teacher: options.teacher,
+          onChange: (patch) => { const current = values.get(id); if (valid(current)) write(id, { ...current, ...patch }); },
+          onClear: () => write(id, null),
+          onLeave: () => { const current = values.get(id); if (valid(current) && !current.text.trim()) write(id, null); } }, options.geometry);
+        surfaces.set(id, surface);
+      }
+      surface.set(options.connected() ? cursor(value) : null, value);
+    }
+    for (const [id, surface] of surfaces) if (!present.has(id)) { surface.dispose(); surfaces.delete(id); }
+  };
+  const keydown = (event: KeyboardEvent) => {
+    if (!options.teacher || !options.connected() || !notes.editable || event.isComposing || event.keyCode === 229
+      || event.key !== 'Enter' || !event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || values.size >= 40) return;
+    const textarea = node as HTMLTextAreaElement;
+    const message = options.editor ? cursorMessage(code, options.editor, options.pageId, options.editorId)
+      : cursorFromOffsets(code, textarea.selectionStart, textarea.selectionEnd, options.pageId, options.editorId);
+    const offsets = message && cursorOffsets(code, message);
+    if (!message || !offsets || offsets.start === offsets.end) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    const id = uniqueId();
+    const value: CodeNote = { anchor: message.anchor!, head: message.head!, text: '', offsetX: 24, offsetY: 48 };
+    write(id, value);
+    surfaces.get(id)?.set(message, value, true);
+  };
+  values.observe(render); code.text.observe(render);
+  if (options.teacher) node.addEventListener('keydown', keydown, true);
+  render();
+  return {
+    refresh: render,
+    dispose() {
+      disposed = true; values.unobserve(render); code.text.unobserve(render);
+      node.removeEventListener('keydown', keydown, true);
+      for (const surface of surfaces.values()) surface.dispose(); surfaces.clear();
+    },
   };
 }
 function cursorDecoration(shared: CollaborativeText, editor: any, message: EditorMessage, previous: string[], source: boolean): string[] {
@@ -564,6 +713,7 @@ interface SourceBinding {
   editor?: any;
   model?: any;
   shared: CollaborativeText;
+  notes: CollaborativeText;
   announce: () => void;
   layout: () => void;
   resetCursor: () => void;
@@ -595,7 +745,9 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
     const localWritable = () => editor ? !editor.getRawOptions?.().readOnly : !textarea.readOnly && !textarea.disabled;
     const writable = () => !document.hidden && localWritable();
     const shared = new CollaborativeText({ ...options, editorId: id, role: 'source', value: model ? model.getValue() : textarea.value, canWrite: writable, localWritable });
+    const notes = new CollaborativeText({ pageId: options.pageId, send: options.send, editorId: id, role: 'source', document: 'annotations' });
     shared.setConnected(connected);
+    notes.setConnected(connected);
     const previousMarker = node.getAttribute('data-live-share-editor');
     node.setAttribute('data-live-share-editor', id);
     const cleanups: Array<() => void> = [];
@@ -606,8 +758,47 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
     let lastTheme = '';
     let scrollSeq = 0;
     let layoutTimer: ReturnType<typeof setTimeout> | undefined;
-    const focus = attachCodeFocus(node, shared, editor);
+    let focusTimer: ReturnType<typeof setTimeout> | undefined;
+    let geometryDisposed = false;
+    let lastFocus = '';
+    type FocusContext = Omit<SharedCodeFocus, 'selections'>;
+    const focusContext = (): FocusContext => ({ width: node.offsetWidth, height: node.offsetHeight,
+      scrollTop: editor ? editor.getScrollTop() : node.scrollTop, scrollLeft: editor ? editor.getScrollLeft() : node.scrollLeft,
+      revision: shared.revision });
+    let measuredContext: FocusContext | undefined;
+    let measuredKey = '';
+    const focusSelections = new Map<string, { key: string; selection: CodeFocusSelection }>();
+    const geometry: CodeFocusGeometry = { publish(message, noteId, rects) {
+      if (geometryDisposed) return;
+      measuredContext = focusContext(); measuredKey = JSON.stringify(measuredContext);
+      if (message) focusSelections.set(noteId || '', { key: measuredKey,
+        selection: { ...(noteId ? { noteId } : {}), anchor: message.anchor!, head: message.head!, rects: rects.slice(0, 256) } });
+      else focusSelections.delete(noteId || '');
+      if (!connected) return;
+      focusTimer ||= setTimeout(() => {
+        focusTimer = undefined;
+        // Never relabel rectangles measured before an edit/resize with the new
+        // code revision or dimensions. The next measured frame will republish.
+        if (!connected || !measuredContext || JSON.stringify(focusContext()) !== measuredKey) return;
+        const selections: CodeFocusSelection[] = [];
+        let count = 0;
+        for (const entry of focusSelections.values()) {
+          if (entry.key !== measuredKey) continue;
+          const { selection } = entry;
+          if (selections.length >= 41 || count + selection.rects.length > 2048) continue;
+          selections.push(selection); count += selection.rects.length;
+        }
+        const focus: SharedCodeFocus = { ...measuredContext, selections };
+        const signature = JSON.stringify(focus);
+        if (signature === lastFocus || signature.length > MAX_UPDATE) return;
+        lastFocus = signature;
+        safeSend(options, { type: 'edit:focus', pageId: options.pageId, editorId: id, focus });
+      }, 40);
+    } };
+    const focus = attachCodeFocus(node, shared, editor, undefined, undefined, geometry);
     cleanups.push(() => focus.dispose());
+    const annotations = attachCodeAnnotations(node, shared, notes, { ...options, editorId: id, teacher: false, connected: () => connected, editor, geometry });
+    cleanups.push(() => annotations.dispose());
     if (editor) {
       const binding = new MonacoBinding(shared.text, model, new Set([editor]));
       shared.trackOrigin(binding);
@@ -620,6 +811,18 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
       const raw = editor?.getRawOptions?.() || {};
       const fontId = (window as any).monaco?.editor?.EditorOptions?.fontInfo?.id;
       const font = editor && fontId !== undefined ? editor.getOption(fontId) : raw;
+      const textStyle: SharedTextareaStyle | undefined = editor ? undefined : {
+        wrap: ['soft', 'hard'].includes(textarea.wrap) ? textarea.wrap as 'soft' | 'hard' : 'off',
+        fontWeight: style.fontWeight, fontStyle: ['italic', 'oblique'].includes(style.fontStyle) ? style.fontStyle as 'italic' | 'oblique' : 'normal',
+        paddingTop: parseFloat(style.paddingTop) || 0, paddingRight: parseFloat(style.paddingRight) || 0,
+        paddingBottom: parseFloat(style.paddingBottom) || 0, paddingLeft: parseFloat(style.paddingLeft) || 0,
+        borderTopWidth: parseFloat(style.borderTopWidth) || 0, borderRightWidth: parseFloat(style.borderRightWidth) || 0,
+        borderBottomWidth: parseFloat(style.borderBottomWidth) || 0, borderLeftWidth: parseFloat(style.borderLeftWidth) || 0,
+        scrollbarWidth: Math.max(0, node.offsetWidth - node.clientWidth - (parseFloat(style.borderLeftWidth) || 0) - (parseFloat(style.borderRightWidth) || 0)),
+        scrollbarHeight: Math.max(0, node.offsetHeight - node.clientHeight - (parseFloat(style.borderTopWidth) || 0) - (parseFloat(style.borderBottomWidth) || 0)),
+        letterSpacing: parseFloat(style.letterSpacing) || 0, wordSpacing: parseFloat(style.wordSpacing) || 0,
+        textIndent: parseFloat(style.textIndent) || 0, tabSize: parseFloat(style.tabSize) || 8,
+      };
       return {
         kind: editor ? 'monaco' as const : 'textarea' as const, language: model?.getLanguageId?.() || 'plaintext',
         rect: rectangle(node), readOnly: !writable(), fontSize: Number(font.fontSize) || parseFloat(style.fontSize) || 14,
@@ -627,10 +830,11 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
         lineHeight: Number(font.lineHeight) || parseFloat(style.lineHeight) || 20,
         scrollTop: editor ? editor.getScrollTop() : node.scrollTop,
         scrollLeft: editor ? editor.getScrollLeft() : node.scrollLeft,
-        scrollSeq, view: editorView(editor, model), theme: editorTheme(editor),
+        scrollSeq, view: editorView(editor, model), theme: editorTheme(editor), ...(textStyle ? { textStyle } : {}),
       };
     };
     const announce = () => {
+      lastFocus = '';
       const state = shared.snapshot;
       if (state.length > MAX_UPDATE) {
         options.onStatus?.({ editorId: id, pending: 0, connected, ready: false, error: '这份代码过大，暂不支持共享编辑；学员原代码已保留' });
@@ -640,6 +844,7 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
       if (connected) {
         const data = metadata(); lastTheme = JSON.stringify(data.theme);
         safeSend(options, { type: 'edit:init', pageId: options.pageId, editorId: id, state, ...data });
+        safeSend(options, { type: 'edit:init', pageId: options.pageId, editorId: id, state: notes.snapshot, document: 'annotations' });
       }
     };
     const layout = (force = false) => {
@@ -661,15 +866,17 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
       node.addEventListener('scroll', scheduleLayout, { passive: true });
       cleanups.push(() => node.removeEventListener('scroll', scheduleLayout));
     }
-    cleanups.push(() => clearTimeout(layoutTimer));
+    cleanups.push(() => { clearTimeout(layoutTimer); clearTimeout(focusTimer); });
     return {
-      id, node, editor, model, shared, announce, layout,
+      id, node, editor, model, shared, notes, announce, layout,
       resetCursor() {
         remoteCursor = undefined; focus.set(null);
+        annotations.refresh();
         if (editor && !model.isDisposed?.()) decorations = editor.deltaDecorations(decorations, []);
       },
       receive(message) {
         if (message.type === 'edit:sync') { announce(); return; }
+        if (message.document === 'annotations') { notes.receive(message); return; }
         if (message.type === 'edit:scroll') {
           if (document.hidden || !Number.isSafeInteger(message.scrollSeq) || message.scrollSeq! <= scrollSeq) return;
           scrollSeq = message.scrollSeq!;
@@ -682,9 +889,11 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
         if (remoteCursor && editor) decorations = cursorDecoration(shared, editor, remoteCursor, decorations, true);
       },
       dispose() {
+        geometryDisposed = true;
         if (editor && !model.isDisposed?.()) editor.deltaDecorations(decorations, []);
         for (const cleanup of cleanups.reverse()) cleanup();
         shared.dispose();
+        notes.dispose();
         if (node.getAttribute('data-live-share-editor') === id) {
           if (previousMarker === null) node.removeAttribute('data-live-share-editor');
           else node.setAttribute('data-live-share-editor', previousMarker);
@@ -735,7 +944,10 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
     },
     setConnected(value) {
       connected = value;
-      for (const binding of bindings.values()) { binding.shared.setConnected(value); if (value) binding.announce(); else binding.resetCursor(); }
+      for (const binding of bindings.values()) {
+        binding.shared.setConnected(value); binding.notes.setConnected(value); binding.resetCursor();
+        if (value) binding.announce();
+      }
     },
     dispose() {
       disposed = true; window.clearInterval(timer);
@@ -747,6 +959,7 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
 
 interface ViewerBinding {
   shared: CollaborativeText;
+  notes: CollaborativeText;
   node: HTMLElement;
   editor?: any;
   readOnly: boolean;
@@ -761,6 +974,7 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
 } {
   const bindings = new Map<string, ViewerBinding>();
   const creating = new Map<string, EditorMessage[]>();
+  const pendingNotes = new Map<string, EditorMessage[]>();
   const detachedDrafts = new Map<string, { editorId: string; language?: string; value: string }>();
   let disposed = false;
   let connected = true;
@@ -803,6 +1017,9 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
       });
       shared.setConnected(connected);
       shared.receive(initial);
+      const notes = new CollaborativeText({ pageId: options.pageId, send: options.send, editorId: initial.editorId,
+        role: 'viewer', document: 'annotations' });
+      notes.setConnected(connected);
       let editor: any;
       let model: any;
       let applyingScroll = false;
@@ -819,6 +1036,7 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
       let lastRect = '';
       let decorations: string[] = [];
       let remoteCursor: EditorMessage | undefined;
+      let sourceFocus: SharedCodeFocus | undefined;
       const cleanups: Array<() => void> = [];
       let focus: ReturnType<typeof attachCodeFocus>;
       if (monaco) {
@@ -843,8 +1061,19 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
         cleanups.push(bindTextarea(textarea, shared, false));
         cleanups.push(observeTextareaCursor(textarea, shared, options, initial.editorId, () => connected, (message) => focus?.set(message)));
       }
-      focus = attachCodeFocus(node, shared, editor, options.container);
+      const geometry: CodeFocusGeometry = { get(message, noteId) {
+        if (!sourceFocus || sourceFocus.width !== node.offsetWidth || sourceFocus.height !== node.offsetHeight
+          || sourceFocus.revision !== shared.revision
+          || Math.abs(sourceFocus.scrollTop - (editor ? editor.getScrollTop() : node.scrollTop)) > 0.5
+          || Math.abs(sourceFocus.scrollLeft - (editor ? editor.getScrollLeft() : node.scrollLeft)) > 0.5) return undefined;
+        return sourceFocus.selections.find((selection) => selection.noteId === noteId
+          && selection.anchor === message.anchor && selection.head === message.head)?.rects;
+      } };
+      focus = attachCodeFocus(node, shared, editor, options.container, undefined, geometry);
       cleanups.push(() => focus.dispose());
+      const annotations = attachCodeAnnotations(node, shared, notes, { ...options, editorId: initial.editorId,
+        teacher: true, connected: () => connected, editor, geometry });
+      cleanups.push(() => annotations.dispose());
       const onScroll = () => {
         if (applyingScroll || !connected) return;
         const top = editor ? editor.getScrollTop() : node.scrollTop;
@@ -899,6 +1128,8 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
       };
       refresh = () => { if (editor) editor.updateOptions({ readOnly: !shared.editable }); else (node as HTMLTextAreaElement).readOnly = !shared.editable; };
       const update = (message: EditorMessage) => {
+        if (message.document === 'annotations') { notes.receive(message); annotations.refresh(); return; }
+        if (message.type === 'edit:focus') { sourceFocus = message.focus; return; }
         applyingScroll = true;
         if (message.type === 'edit:cursor') remoteCursor = message;
         else shared.receive(message);
@@ -930,6 +1161,16 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
           } else {
             node.style.fontSize = `${message.fontSize || 14}px`; node.style.fontFamily = message.fontFamily || 'monospace';
             node.style.lineHeight = `${message.lineHeight || 20}px`;
+            if (message.textStyle) {
+              const { wrap, fontWeight, fontStyle, tabSize, scrollbarWidth, scrollbarHeight, ...pixels } = message.textStyle;
+              (node as HTMLTextAreaElement).wrap = wrap;
+              Object.assign(node.style, { fontWeight, fontStyle, tabSize: String(tabSize), borderStyle: 'solid', borderColor: 'transparent' });
+              for (const [key, value] of Object.entries(pixels)) node.style[key] = `${value}px`;
+              // Reserve the learner's actual scrollbar space even when the
+              // teacher uses overlay scrollbars or a different operating system.
+              node.style.paddingRight = `${pixels.paddingRight + scrollbarWidth}px`;
+              node.style.paddingBottom = `${pixels.paddingBottom + scrollbarHeight}px`;
+            }
           }
           // Retain the newest student position during a teacher gesture and
           // apply it after the gesture settles, even if no further event arrives.
@@ -940,19 +1181,21 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
         applyingScroll = false;
       };
       const result: ViewerBinding = {
-        shared, node, editor, readOnly, update, refresh, layout,
+        shared, notes, node, editor, readOnly, update, refresh, layout,
         resetCursor() {
-          remoteCursor = undefined; focus.set(null);
+          remoteCursor = undefined; sourceFocus = undefined; focus.set(null);
+          annotations.refresh();
           if (editor && !model.isDisposed?.()) decorations = editor.deltaDecorations(decorations, []);
         },
         dispose() {
           for (const cleanup of cleanups.reverse()) cleanup();
-          shared.dispose(); editor?.dispose(); model?.dispose(); node.remove();
+          shared.dispose(); notes.dispose(); editor?.dispose(); model?.dispose(); node.remove();
         },
       };
       bindings.set(initial.editorId, result);
       update(initial);
-      const queue = creating.get(initial.editorId) || [];
+      const queue = [...(pendingNotes.get(initial.editorId) || []), ...(creating.get(initial.editorId) || [])];
+      pendingNotes.delete(initial.editorId);
       creating.delete(initial.editorId);
       for (const message of queue) update(message);
     } catch {
@@ -977,21 +1220,27 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
       if (message.type === 'edit:remove') {
         const binding = bindings.get(message.editorId);
         if (binding) { preserveDraft(message.editorId, binding); binding.dispose(); bindings.delete(message.editorId); }
-        creating.delete(message.editorId); return;
+        creating.delete(message.editorId); pendingNotes.delete(message.editorId); return;
       }
       const binding = bindings.get(message.editorId);
       if (binding) binding.update(message);
       else if (creating.has(message.editorId)) creating.get(message.editorId)!.push(message);
+      else if (message.document === 'annotations') {
+        const queue = pendingNotes.get(message.editorId) || [];
+        if (pendingNotes.size < 64 && queue.length < 64) { queue.push(message); pendingNotes.set(message.editorId, queue); }
+      }
       else if (message.type === 'edit:init') void create(message);
       else if (message.type === 'edit:update' && connected) safeSend(options, { type: 'edit:sync', pageId: options.pageId, editorId: message.editorId });
     },
     setConnected(value) {
       connected = value;
-      for (const binding of bindings.values()) { binding.shared.setConnected(value); binding.refresh(); if (!value) binding.resetCursor(); }
+      for (const binding of bindings.values()) {
+        binding.shared.setConnected(value); binding.notes.setConnected(value); binding.refresh(); binding.resetCursor();
+      }
       if (value) safeSend(options, { type: 'edit:sync', pageId: options.pageId, editorId: '' });
     },
     dispose() {
-      disposed = true; creating.clear();
+      disposed = true; creating.clear(); pendingNotes.clear();
       if (geometryFrame) window.cancelAnimationFrame(geometryFrame);
       const currentTheme = themeService?.getColorTheme?.()?.themeName;
       for (const [editorId, binding] of bindings) { preserveDraft(editorId, binding); binding.dispose(); }
