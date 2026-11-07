@@ -143,7 +143,8 @@ export function attachAnnotationSurface(options: {
     copy.dataset.shareAnnotationText = '';
     copy.tabIndex = 0;
     copy.setAttribute('aria-label', '老师批注内容，可滚动查看');
-    bubble.append(copy);
+    header.setAttribute('aria-hidden', 'true');
+    bubble.append(copy, header);
   }
   const measure = node('div', 'live-share-annotation__measure');
   measure.setAttribute('aria-hidden', 'true');
@@ -235,13 +236,16 @@ export function attachAnnotationSurface(options: {
     const fixedHeight = Number.isFinite(annotation.height) && annotation.height > 0 ? annotation.height : undefined;
     if (!measured || measured.text !== annotation.text || measured.availableWidth !== availableWidth
       || measured.availableHeight !== availableHeight || measured.fixedWidth !== fixedWidth || measured.fixedHeight !== fixedHeight) {
-      // Both peers use the same styled text measurement. No heading/footer is
-      // reserved; an empty note or a single character is just a small bubble.
+      // Both peers use the same isolated note typography, independent of page
+      // and code font preferences. The drag strip stays outside the text area.
       // A trailing zero-width character keeps the final newline measurable.
       measure.textContent = `${displayText}\u200b`;
       measure.style.width = 'max-content';
       measure.style.whiteSpace = 'pre';
-      const naturalWidth = Math.ceil(measure.scrollWidth) + 2;
+      // scrollWidth is already rounded to an integer. Rounding it again can
+      // lose a fraction of a glyph and wrap the last character onto a new line.
+      // CSS width is unscaled even inside the teacher's transformed viewport.
+      const naturalWidth = Math.ceil(Number.parseFloat(win.getComputedStyle(measure).width)) + 3;
       const noteWidth = clamp(fixedWidth ?? Math.min(360, naturalWidth), Math.min(36, availableWidth), availableWidth);
       measure.style.width = `${Math.max(1, noteWidth - 2)}px`;
       measure.style.whiteSpace = 'pre-wrap';
@@ -252,8 +256,9 @@ export function attachAnnotationSurface(options: {
     bubble.style.width = `${measured.width}px`;
     bubble.style.height = `${measured.height}px`;
     bubble.classList.toggle('is-sized', !!fixedWidth || !!fixedHeight);
-    if (textarea) textarea.scrollTop = inputScrollTop;
-    if (copyChanged) copy.scrollTop = followingText ? copy.scrollHeight : copyScrollTop;
+    if (textarea) textarea.scrollTop = textarea.scrollHeight <= textarea.clientHeight ? 0 : inputScrollTop;
+    if (copy) copy.scrollTop = copy.scrollHeight <= copy.clientHeight ? 0
+      : copyChanged && followingText ? copy.scrollHeight : copyScrollTop;
     const margin = 12;
     const bubbleWidth = bubble.offsetWidth;
     const bubbleHeight = bubble.offsetHeight;
@@ -433,6 +438,11 @@ export function attachAnnotationSurface(options: {
   resizeHandle?.addEventListener('lostpointercapture', resizeUp);
   resizeHandle?.addEventListener('keydown', resizeKey);
   win.addEventListener('blur', finishGestures);
+  function fontsChanged() { if (!disposed) { measured = null; draw(); } }
+  // An available webfont can arrive after the first measurement. Never keep
+  // dimensions from the fallback font until the teacher next types a letter.
+  doc.fonts?.addEventListener('loadingdone', fontsChanged);
+  doc.fonts?.ready.then(fontsChanged);
   const resize = new ResizeObserver(draw);
   resize.observe(options.container);
   return {
@@ -466,6 +476,7 @@ export function attachAnnotationSurface(options: {
       resizeHandle?.removeEventListener('lostpointercapture', resizeUp);
       resizeHandle?.removeEventListener('keydown', resizeKey);
       win.removeEventListener('blur', finishGestures);
+      doc.fonts?.removeEventListener('loadingdone', fontsChanged);
       root.remove();
     },
   };

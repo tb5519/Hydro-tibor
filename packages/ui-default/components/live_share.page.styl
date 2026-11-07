@@ -415,13 +415,25 @@
     pointer-events: none
   &__header
     position: absolute
-    top: -4px
+    top: -11px
     left: 1px
     right: 1px
-    height: 10px
-    border-radius: 10px
-    background: transparent
+    height: 18px
+    border: 1px solid #c8bcea
+    border-bottom: 0
+    border-radius: 10px 10px 4px 4px
+    background: #f0ebfb
     user-select: none
+    &::after
+      content: ''
+      position: absolute
+      left: 50%
+      top: 6px
+      width: 16px
+      height: 3px
+      border-radius: 3px
+      background: #c4b5e6
+      transform: translateX(-50%)
     &:focus-visible
       outline: 2px solid #a99ae9
       outline-offset: 1px
@@ -483,8 +495,15 @@
     margin: 0
     padding: 7px 9px
     color: #364460
-    font: 14px/20px var(--font-family, "PingFang SC", "Microsoft YaHei", sans-serif)
+    // The site gives every textarea an !important code font. Notes must use
+    // the same typography for input, learner copy and size measurement, even
+    // when the two accounts choose different page/code fonts.
+    font: normal 400 14px/20px Arial, "PingFang SC", "Microsoft YaHei", sans-serif !important
     letter-spacing: normal
+    word-spacing: normal
+    word-break: normal
+    text-transform: none
+    text-indent: 0
     text-align: left
     overflow-wrap: anywhere
     white-space: pre-wrap
@@ -500,6 +519,11 @@
     overflow-x: hidden
     overflow-y: auto
     overscroll-behavior: contain
+    // Native scrollbar widths vary by operating system. They must not steal
+    // text width on just one peer and change the shared note's line breaks.
+    scrollbar-width: none
+    &::-webkit-scrollbar
+      display: none
   &__input
     outline: none !important
     box-shadow: none !important
