@@ -20,7 +20,10 @@ cd "$DEPLOY_ROOT"
 docker inspect "$HYDRO_CONTAINER" >/dev/null 2>&1 || stop '找不到指定 Hydro 容器'
 [ "$(docker inspect -f '{{.State.Running}}' "$HYDRO_CONTAINER")" = true ] || stop 'Hydro 当前未运行'
 
-judge_container="$(docker ps -a --filter label=com.docker.compose.service=judge --format '{{.Names}}')"
+# The dedicated IDE runtime reuses the Judge image, including its Compose
+# service label. Exclude only this known container, never other Judge matches.
+judge_container="$(docker ps -a --filter label=com.docker.compose.service=judge --format '{{.Names}}' \
+    | awk '$0 != "hydro-ide-sandbox"')"
 if [ -z "$judge_container" ]; then
     judge_container="$(docker ps -a --format '{{.Names}}' | awk '/(^|[-_])judge([-_]|$)/ {print}')"
 fi

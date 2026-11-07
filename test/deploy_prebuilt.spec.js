@@ -153,6 +153,50 @@ describe('prebuilt production deployment script', () => {
         assert.equal(result.status, 0, result.stderr);
     });
 
+    it('excludes only the dedicated IDE runtime from Judge discovery while retaining fail-closed ambiguity checks', () => {
+        const discovery = script.slice(script.indexOf('judge_container="$('), script.indexOf('mount_info="$('));
+        const check = (labels, names = labels, failPs = false) => spawnSync('bash', ['-c', `
+set -Eeuo pipefail
+stop() { echo "STOP:$*" >&2; exit 1; }
+docker() {
+    if [ "$1" = ps ]; then
+        [ "$TEST_FAIL_PS" = false ] || return 9
+        case "$*" in
+            *label=com.docker.compose.service=judge*) printf '%s\\n' "$TEST_LABELS" ;;
+            *) printf '%s\\n' "$TEST_NAMES" ;;
+        esac
+    elif [ "$1" = inspect ]; then
+        [ "$2" = hydro-dev-judge-1 ] || return 98
+    else
+        return 99
+    fi
+}
+${discovery}
+printf '%s\\n' "$judge_container"
+`], { encoding: 'utf8', env: { ...process.env, TEST_LABELS: labels, TEST_NAMES: names, TEST_FAIL_PS: String(failPs) } });
+        for (const [labels, names] of [
+            ['hydro-ide-sandbox\nhydro-dev-judge-1', 'hydro-ide-sandbox\nhydro-dev-judge-1'],
+            ['hydro-dev-judge-1', 'hydro-dev-judge-1'],
+            ['hydro-ide-sandbox', 'hydro-ide-sandbox\nhydro-dev-judge-1'],
+        ]) {
+            const result = check(labels, names);
+            assert.equal(result.status, 0, result.stderr);
+            assert.equal(result.stdout.trim(), 'hydro-dev-judge-1');
+            assert.equal(result.stderr, '');
+        }
+        for (const names of [
+            'hydro-ide-sandbox',
+            'hydro-ide-sandbox\nhydro-dev-judge-1\nhydro-dev-judge-2',
+            'hydro-ide-sandbox-shadow\nhydro-dev-judge-1',
+        ]) {
+            const result = check(names);
+            assert.notEqual(result.status, 0);
+            assert.match(result.stderr, /无法唯一识别 Judge/);
+        }
+        const failedDocker = check('hydro-dev-judge-1', 'hydro-dev-judge-1', true);
+        assert.notEqual(failedDocker.status, 0);
+    });
+
     it('pins a full commit and preserves both tracked Compose files', () => {
         assert.match(script, /\^\[0-9a-f\]\{40\}\$/);
         assert.match(script, /COMPOSE_FILES=\(docker-compose\.yml docker-compose\.judge\.yml\)/);
