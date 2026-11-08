@@ -21,6 +21,7 @@ declare module 'hydrooj' {
     staticVersion?: string;
     themeVersion?: string;
     defaultThemeVersion?: string;
+    serviceWorkerVersion?: string;
   }
 }
 

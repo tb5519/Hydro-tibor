@@ -12,26 +12,33 @@ const manifest = (overrides = {}) => ({
     [runtimeKey]: `/${runtimeKey}?123abc`,
     'theme.css': `/theme-${uiVersion}.css?456def`,
     'default.theme.js': '/default.theme.js?789abc',
+    'service-worker.js': '/service-worker.js?abcdef',
     ...overrides,
 });
-const emptyVersions = { staticVersion: undefined, themeVersion: undefined, defaultThemeVersion: undefined };
+const emptyVersions = { staticVersion: undefined, themeVersion: undefined, defaultThemeVersion: undefined, serviceWorkerVersion: undefined };
 
 describe('independent static asset content versions', () => {
     it('reads the runtime, CSS, and development theme hashes from their own manifest entries', () => {
         assert.deepEqual(getStaticAssetVersions(manifest(), uiVersion), {
-            staticVersion: '123abc', themeVersion: '456def', defaultThemeVersion: '789abc',
+            staticVersion: '123abc', themeVersion: '456def', defaultThemeVersion: '789abc', serviceWorkerVersion: 'abcdef',
         });
     });
 
     it('updates only the CSS key when only the stylesheet changes', () => {
         assert.deepEqual(getStaticAssetVersions(manifest({ 'theme.css': '/theme.css?abcdef' }), uiVersion), {
-            staticVersion: '123abc', themeVersion: 'abcdef', defaultThemeVersion: '789abc',
+            staticVersion: '123abc', themeVersion: 'abcdef', defaultThemeVersion: '789abc', serviceWorkerVersion: 'abcdef',
         });
     });
 
     it('updates only the development theme key when only that script changes', () => {
         assert.deepEqual(getStaticAssetVersions(manifest({ 'default.theme.js': '/default.theme.js?fedcba' }), uiVersion), {
-            staticVersion: '123abc', themeVersion: '456def', defaultThemeVersion: 'fedcba',
+            staticVersion: '123abc', themeVersion: '456def', defaultThemeVersion: 'fedcba', serviceWorkerVersion: 'abcdef',
+        });
+    });
+
+    it('updates the worker URL version independently of the UI package version', () => {
+        assert.deepEqual(getStaticAssetVersions(manifest({ 'service-worker.js': '/service-worker.js?aaaaaa' }), uiVersion), {
+            staticVersion: '123abc', themeVersion: '456def', defaultThemeVersion: '789abc', serviceWorkerVersion: 'aaaaaa',
         });
     });
 
@@ -60,7 +67,7 @@ describe('independent static asset content versions', () => {
         ];
         for (const asset of invalidAssets) {
             assert.deepEqual(getStaticAssetVersions(manifest({ 'theme.css': asset }), uiVersion), {
-                staticVersion: '123abc', themeVersion: undefined, defaultThemeVersion: '789abc',
+                staticVersion: '123abc', themeVersion: undefined, defaultThemeVersion: '789abc', serviceWorkerVersion: 'abcdef',
             }, `Unexpected accepted asset: ${JSON.stringify(asset)}`);
         }
     });

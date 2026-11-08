@@ -145,6 +145,20 @@ export async function apply(ctx: Context) {
         applyApiHandler(childContext, 'api', '/api/:op');
         server.setDefaultContext(childContext);
 
+        // This stable URL controls all subsequent browser requests. It must not
+        // inherit the public asset cache lifetime, including compressed variants
+        // or a version-query registration served through an intermediary cache.
+        server.addServerLayer('service-worker-cache', async (c, next) => {
+            const worker = c.request.path === '/service-worker.js'
+                && ['GET', 'HEAD'].includes(c.request.method.toUpperCase());
+            await next();
+            if (!worker) return;
+            c.set('Cache-Control', 'no-store, no-cache, max-age=0, must-revalidate');
+            c.set('CDN-Cache-Control', 'no-store');
+            c.set('Surrogate-Control', 'no-store');
+            c.remove('Expires');
+        });
+
         // The sandboxed editor has an opaque origin and reads only public
         // editor assets here. Private domain APIs retain their own policy.
         server.addServerLayer('scratch-editor-cors', async (c, next) => {

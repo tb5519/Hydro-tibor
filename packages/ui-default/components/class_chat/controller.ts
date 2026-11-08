@@ -45,7 +45,11 @@ export function installClassChat(config: ClassChatConfig) {
     <div class="class-chat__attachment" hidden></div><textarea class="class-chat__input" rows="2" maxlength="10000" placeholder="说说你的想法…" aria-label="消息内容"></textarea>
     <footer class="class-chat__compose-tools"><div class="class-chat__attachments"><button type="button" class="class-chat__icon-button" data-image aria-label="发送图片" title="图片，最多 5 MB">${icon('image')}</button><button type="button" class="class-chat__icon-button" data-file aria-label="发送文件" title="文件，最多 10 MB">${icon('attach')}</button><span class="class-chat__keyboard-hint">Enter 发送 · Shift + Enter 换行</span></div><button type="button" class="class-chat__send" disabled>发送 ${icon('send')}</button></footer>
     <input type="file" data-file-input hidden /><input type="file" data-image-input accept="image/png,image/jpeg,image/gif,image/webp" hidden /></div></div></div>
-  </section>`;
+  </section>
+  <dialog class="class-chat__lightbox" aria-label="图片预览" aria-describedby="class-chat-image-name">
+    <button type="button" class="class-chat__lightbox-close" aria-label="关闭图片预览" title="关闭 · Esc">${icon('close')}</button>
+    <figure class="class-chat__lightbox-figure"><img class="class-chat__lightbox-image" alt="" hidden /><p class="class-chat__lightbox-status" role="status">正在加载图片…</p><figcaption id="class-chat-image-name" class="class-chat__lightbox-name"></figcaption></figure>
+  </dialog>`;
   doc.body.append(host);
   const query = <T extends HTMLElement = HTMLElement>(selector: string) => host.querySelector<T>(selector)!;
   const launcher = query<HTMLButtonElement>('.class-chat__launcher');
@@ -67,6 +71,10 @@ export function installClassChat(config: ClassChatConfig) {
   const badge = query('.class-chat__badge');
   const feedback = query('.class-chat__feedback');
   const newMessage = query<HTMLButtonElement>('.class-chat__new-message');
+  const lightbox = query<HTMLDialogElement>('.class-chat__lightbox');
+  const lightboxImage = query<HTMLImageElement>('.class-chat__lightbox-image');
+  const lightboxStatus = query('.class-chat__lightbox-status');
+  let imageOpener: HTMLElement | null = null;
   const drafts = new Map<string, string>();
   const positionKey = `onebyone.class-chat.position.v1:${config.uid}`;
   let roster: ChatRoster = { canTeach: config.canTeach, peers: [], unread: 0, quotaBytes: 52428800, maxFileBytes: 10485760, maxImageBytes: 5242880 };
@@ -126,6 +134,20 @@ export function installClassChat(config: ClassChatConfig) {
       image.addEventListener('error', () => { target.textContent = name.slice(0, 1) || '聊'; }, { once: true });
       target.append(image);
     } else target.textContent = name.slice(0, 1) || '聊';
+  }
+  function closeImagePreview(restoreFocus = true) {
+    const opener = imageOpener; imageOpener = null;
+    if (lightbox.open) lightbox.close();
+    lightboxImage.removeAttribute('src'); lightboxImage.hidden = true;
+    if (restoreFocus && opener?.isConnected) opener.focus({ preventScroll: true });
+  }
+  function openImagePreview(url: string, name: string, opener: HTMLElement) {
+    imageOpener = opener;
+    lightboxImage.hidden = true; lightboxImage.alt = name;
+    lightboxStatus.textContent = '正在加载图片…'; lightboxStatus.hidden = false;
+    query('.class-chat__lightbox-name').textContent = name;
+    lightboxImage.src = url;
+    if (!lightbox.open) lightbox.showModal();
   }
   function renderLauncherAvatar() {
     const teacher = !config.canTeach && defaultTeacher();
@@ -280,6 +302,7 @@ export function installClassChat(config: ClassChatConfig) {
       } catch (error) {
         if ([401, 403].includes((error as any).status)) {
           authorizationLost = true;
+          closeImagePreview(false);
           win.clearTimeout(reconnectTimer); socket?.close();
           if (selected) drafts.set(peerKey(selected), input.value);
           selected = null; messages = []; hasMore = false;
@@ -352,19 +375,21 @@ export function installClassChat(config: ClassChatConfig) {
         const attachment = message.attachment;
         const url = safeAssetUrl(attachment.url, win.location.href, true);
         if (url) {
-          const link = element('a', message.kind === 'image' ? 'class-chat__image-link' : 'class-chat__file-link');
-          link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer';
           if (message.kind === 'image' && /^image\/(png|jpeg|gif|webp)$/.test(attachment.mime)) {
+            const preview = element('button', 'class-chat__image-link'); preview.type = 'button';
+            preview.setAttribute('aria-label', `查看图片：${attachment.name}`); preview.setAttribute('aria-haspopup', 'dialog');
+            preview.addEventListener('click', () => openImagePreview(url, attachment.name, preview), { signal });
             const image = element('img', 'class-chat__image'); image.src = url; image.alt = attachment.name; image.loading = 'lazy';
             image.addEventListener('load', () => { if (shouldScroll) scrollBottom(); }, { once: true });
-            image.addEventListener('error', () => { link.replaceChildren(element('span', 'class-chat__image-error', '图片暂时无法加载')); }, { once: true });
-            link.append(image);
+            image.addEventListener('error', () => { preview.replaceChildren(element('span', 'class-chat__image-error', '图片暂时无法加载')); }, { once: true });
+            preview.append(image); bubble.append(preview);
           } else {
+            const link = element('a', 'class-chat__file-link');
+            link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer';
             const mark = element('span', 'class-chat__file-icon'); mark.innerHTML = icon('file');
             const text = element('span'); text.append(element('strong', '', attachment.name), element('small', '', `${fileSize(attachment.size)} · 点击下载`));
-            link.append(mark, text);
+            link.append(mark, text); bubble.append(link);
           }
-          bubble.append(link);
         }
       }
       if (message.snapshot) {
@@ -611,6 +636,17 @@ export function installClassChat(config: ClassChatConfig) {
   query('.class-chat__composer').addEventListener('drop', (event: DragEvent) => { event.preventDefault(); chooseFile(event.dataTransfer?.files?.[0]); }, { signal });
   messagesRoot.addEventListener('scroll', () => { if (atBottom()) { newMessage.hidden = true; void markRead(); } }, { passive: true, signal });
   newMessage.addEventListener('click', () => { scrollBottom(); void markRead(); }, { signal });
+  query('.class-chat__lightbox-close').addEventListener('click', () => closeImagePreview(), { signal });
+  lightbox.addEventListener('click', (event) => { if (event.target === lightbox) closeImagePreview(); }, { signal });
+  lightbox.addEventListener('cancel', (event) => { event.preventDefault(); closeImagePreview(); }, { signal });
+  lightboxImage.addEventListener('load', () => {
+    if (!lightbox.open) return;
+    lightboxImage.hidden = false; lightboxStatus.hidden = true;
+  }, { signal });
+  lightboxImage.addEventListener('error', () => {
+    if (!lightbox.open) return;
+    lightboxImage.hidden = true; lightboxStatus.hidden = false; lightboxStatus.textContent = '图片暂时无法加载，请关闭后重试。';
+  }, { signal });
   panel.addEventListener('keydown', (event) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); } }, { signal });
   // Remote assistance and classroom drawing must never intercept private chat typing or clicks.
   ['pointerdown', 'pointerup', 'click', 'keydown', 'keyup', 'wheel'].forEach((type) => host.addEventListener(type, (event) => event.stopPropagation(), { signal }));
@@ -625,7 +661,7 @@ export function installClassChat(config: ClassChatConfig) {
   const polling = win.setInterval(() => { if (!doc.hidden || roster.unread) changed(); }, 15000);
   placeLauncher(); updateControls(); renderPeers(); void refreshRoster(); connect();
   const dispose = () => {
-    disposed = true; lifetime.abort();
+    disposed = true; closeImagePreview(false); lifetime.abort();
     win.clearInterval(polling); win.clearInterval(pingTimer); win.clearTimeout(reconnectTimer); win.clearTimeout(refreshTimer); win.clearTimeout(feedbackTimer);
     socket?.close(); channel?.close();
     if (previewUrl) URL.revokeObjectURL(previewUrl);

@@ -7,6 +7,7 @@ import { installAchievementWallReadiness } from './components/achievement_wall';
 import { startAchievementAssetWarmup } from './components/achievement_assets';
 import { startDailyQuizGate } from './components/daily_quiz_gate';
 import { attachPlatformPage, installPlatformShell, notifyPlatformPageReady } from './utils/persistent-navigation';
+import { registerPlatformServiceWorker } from './utils/service-worker-registration';
 
 installAchievementWallReadiness();
 
@@ -59,15 +60,8 @@ if (!contentPage && 'serviceWorker' in navigator) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(UiContext.SWConfig),
   });
-  navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' }).then((registration) => {
+  registerPlatformServiceWorker(navigator.serviceWorker, UiContext.serviceWorkerVersion, sendConfig).then((registration) => {
     console.log('SW registered: ', registration);
-    const sw = registration.active || registration.waiting || registration.installing;
-    if (sw.state === 'activated') sendConfig();
-    else {
-      sw.addEventListener('statechange', (e) => {
-        if (e.target.state === 'activated') sendConfig();
-      });
-    }
   }).catch((registrationError) => {
     console.log('SW registration failed: ', registrationError);
   });

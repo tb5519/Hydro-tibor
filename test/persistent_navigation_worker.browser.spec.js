@@ -88,3 +88,114 @@ test('a controlling worker preserves document/iframe destinations, redirects and
     assert.equal(await page.locator('h1').textContent(), 'document');
     assert.equal(page.url(), `${origin}/page.html?redirected=1`);
 });
+
+test('versioned registration replaces a permanently stale root worker and configures its new controller', async (t) => {
+    assert(executablePath, 'Chromium is required for the worker upgrade regression');
+    const workerDiagnostics = [];
+    const registrationBundle = buildSync({
+        entryPoints: [path.join(__dirname, '../packages/ui-default/utils/service-worker-registration.ts')],
+        bundle: true, write: false, format: 'iife', globalName: 'WorkerRegistration',
+    }).outputFiles[0].text;
+    const version = '0123456789abcdef0123456789abcdef';
+    const requests = [];
+    const staleWorker = `self.addEventListener('install', e => e.waitUntil(self.skipWaiting()));
+      self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+      self.addEventListener('fetch', e => {
+        if (e.request.mode === 'navigate') e.respondWith(fetch(e.request));
+        if (e.request.url.endsWith('/service-worker-config')) {
+          e.waitUntil(e.request.text());
+          e.respondWith(new Response('old configuration'));
+        }
+      });`;
+    const server = http.createServer(async (request, response) => {
+        for await (const _ of request) { /* Drain configuration bodies. */ }
+        const url = new URL(request.url, 'http://local.test');
+        requests.push({ path: url.pathname, search: url.search, destination: request.headers['sec-fetch-dest'] });
+        response.setHeader('Cache-Control', 'no-store');
+        if (url.pathname === '/service-worker.js') {
+            // Reproduce a proxy that indefinitely serves an old, mutable URL.
+            response.setHeader('Content-Type', 'application/javascript');
+            response.end(url.searchParams.get('v') === version ? worker : staleWorker);
+            return;
+        }
+        if (url.pathname === '/assets/probe.txt') {
+            response.setHeader('Content-Type', 'text/plain');
+            response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            response.end('configured asset cache');
+            return;
+        }
+        response.setHeader('Content-Type', 'text/html; charset=utf-8');
+        response.setHeader('Vary', 'Sec-Fetch-Dest');
+        response.end(`<!doctype html><html><body><h1>${request.headers['sec-fetch-dest'] || 'missing'}</h1></body></html>`);
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise((resolve) => server.close(resolve)));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const browser = await playwright.chromium.launch({ executablePath, headless: true });
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    page.on('console', (message) => workerDiagnostics.push(message.text()));
+    page.on('pageerror', (error) => workerDiagnostics.push(String(error)));
+    await page.goto(origin);
+    await page.evaluate(async () => {
+        await navigator.serviceWorker.register('/service-worker.js', { scope: '/', updateViaCache: 'none' });
+        await navigator.serviceWorker.ready;
+        if (!navigator.serviceWorker.controller) await new Promise((resolve) => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
+    });
+    await page.reload();
+    assert.equal(await page.locator('h1').textContent(), 'empty', 'the stale worker must reproduce destination loss before the upgrade');
+    await page.addScriptTag({ content: registrationBundle });
+    await page.evaluate(({ version, origin }) => {
+        window.configuredControllers = [];
+        window.registrationOptions = [];
+        const nativeRegister = navigator.serviceWorker.register.bind(navigator.serviceWorker);
+        navigator.serviceWorker.register = (url, options) => {
+            window.registrationOptions.push({ url: String(url), ...options });
+            return nativeRegister(url, options);
+        };
+        window.registrationResult = WorkerRegistration.registerPlatformServiceWorker(navigator.serviceWorker, version, async () => {
+            await fetch('/service-worker-config', {
+                method: 'POST', body: JSON.stringify({ hosts: [origin], assets: [`${origin}/assets/`], domains: [] }),
+            });
+            window.configuredControllers.push(navigator.serviceWorker.controller?.scriptURL);
+        });
+    }, { version, origin });
+    await page.waitForFunction((version) => navigator.serviceWorker.controller?.scriptURL.endsWith(`?v=${version}`)
+        && window.configuredControllers.some((url) => url?.endsWith(`?v=${version}`)), version, { timeout: 10000 }).catch(async (error) => {
+        const state = await page.evaluate(async () => ({
+            controller: navigator.serviceWorker.controller?.scriptURL,
+            configured: window.configuredControllers,
+            options: window.registrationOptions,
+            result: await Promise.resolve(window.registrationResult).then(() => 'registered', (reason) => String(reason)),
+            registrations: (await navigator.serviceWorker.getRegistrations()).map((item) => ({
+                active: item.active?.scriptURL, waiting: item.waiting?.scriptURL, installing: item.installing?.scriptURL,
+            })),
+        }));
+        throw new Error(`${error.message}: ${JSON.stringify({ state, requests, workerDiagnostics })}`);
+    });
+    const state = await page.evaluate(async () => ({
+        registrations: (await navigator.serviceWorker.getRegistrations()).map((item) => ({ scope: item.scope, active: item.active?.scriptURL })),
+        options: window.registrationOptions,
+        configured: window.configuredControllers,
+    }));
+    assert.deepEqual(state.registrations, [{ scope: `${origin}/`, active: `${origin}/service-worker.js?v=${version}` }]);
+    assert.deepEqual(state.configured, [`${origin}/service-worker.js?v=${version}`],
+        'obsolete controllers must not receive configuration while the requested worker is taking over');
+    assert.equal(state.options[0].scope, '/');
+    assert.equal(state.options[0].updateViaCache, 'none');
+    assert.match(state.options[0].url, new RegExp(`/service-worker\\.js\\?v=${version}$`));
+    assert.deepEqual(await page.evaluate(async () => [
+        await (await fetch('/assets/probe.txt')).text(),
+        await (await fetch('/assets/probe.txt')).text(),
+    ]), ['configured asset cache', 'configured asset cache']);
+    assert.equal(requests.filter((item) => item.path === '/assets/probe.txt').length, 1,
+        'configuration must reach the newly activated worker so it can cache assets immediately');
+    await page.reload();
+    assert.equal(await page.locator('h1').textContent(), 'document');
+    await page.reload();
+    assert.equal(await page.locator('h1').textContent(), 'document');
+    await page.evaluate(() => { const frame = document.createElement('iframe'); frame.src = '/content'; document.body.append(frame); });
+    await page.frameLocator('iframe').locator('h1').waitFor();
+    assert.equal(await page.frameLocator('iframe').locator('h1').textContent(), 'iframe');
+    assert.equal((await page.evaluate(() => navigator.serviceWorker.getRegistrations().then((items) => items.length))), 1);
+});

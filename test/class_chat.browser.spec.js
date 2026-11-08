@@ -562,6 +562,75 @@ it('read receipts and new messages reuse loaded private images without another d
   assert.deepEqual(errors, []); await context.close();
 });
 
+it('chat images preview in place on desktop and mobile without losing draft, position, history or connection', async () => {
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    reset();
+    records.push(...Array.from({ length: 12 }, (_, i) => message(2, 40, `第 ${i + 1} 条课堂消息，继续练习输入输出。`)));
+    const { context, page, errors } = await fixture(40, viewport);
+    try {
+      const png = await page.evaluate(() => {
+        const canvas = document.createElement('canvas'); canvas.width = 1400; canvas.height = 800;
+        const pen = canvas.getContext('2d'); pen.fillStyle = '#182738'; pen.fillRect(0, 0, 1400, 800);
+        pen.fillStyle = '#d4e7ef'; pen.font = '40px monospace';
+        ['#include <iostream>', 'using namespace std;', '', 'int main() {', '    cout << "Hello, OneByOne!";', '    return 0;', '}']
+          .forEach((line, index) => pen.fillText(line, 60, 100 + index * 80));
+        return canvas.toDataURL('image/png').split(',')[1];
+      });
+      let failImage = false;
+      await page.route(`${origin}/asset/picture`, route => route.fulfill(failImage
+        ? { status: 404, body: '' } : { contentType: 'image/png', body: Buffer.from(png, 'base64'), headers: { 'cache-control': 'no-store' } }));
+      records.push(message(2, 40, '', { kind: 'image', attachment: { name: '课堂代码.png', size: png.length, mime: 'image/png', url: '/asset/picture' } }),
+        message(2, 40, '', { kind: 'file', attachment: { name: '练习.cpp', size: 48, mime: 'text/plain', url: '/asset/download' } }));
+      notify();
+      const thumbnail = page.getByRole('button', { name: '查看图片：课堂代码.png' });
+      await thumbnail.waitFor({ state: 'visible' });
+      await page.locator('.class-chat__input').fill('看完图片继续写这份草稿。');
+      await thumbnail.scrollIntoViewIfNeeded();
+      const saved = await page.evaluate(() => ({
+        scroll: document.querySelector('.class-chat__messages').scrollTop,
+        panel: document.querySelector('.class-chat__panel').getBoundingClientRect().toJSON(),
+      }));
+      const sockets = [...wss.clients]; const originalUrl = page.url();
+      const dialog = page.getByRole('dialog', { name: '图片预览' });
+      await thumbnail.click();
+      await dialog.waitFor({ state: 'visible' });
+      await page.waitForFunction(() => !document.querySelector('.class-chat__lightbox-image').hidden);
+      assert.equal(context.pages().length, 1, 'image preview never creates another page');
+      assert.equal(page.url(), originalUrl);
+      assert.equal(await dialog.locator('img').getAttribute('alt'), '课堂代码.png');
+      const bounds = await dialog.locator('img').boundingBox();
+      assert(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= viewport.width && bounds.y + bounds.height <= viewport.height);
+      assert(Math.abs(bounds.width / bounds.height - 1.75) < 0.01, 'full image keeps its aspect ratio without cropping');
+      await page.screenshot({ path: `/tmp/onebyone-chat-image-preview-${viewport.width}.png` });
+      await page.keyboard.press('Escape');
+      assert.equal(await dialog.isVisible(), false);
+      assert.equal(await page.locator('.class-chat__panel').isVisible(), true, 'Escape closes only the image');
+      assert.equal(await thumbnail.evaluate(node => document.activeElement === node), true, 'focus returns to the image button');
+      assert.equal(await page.locator('.class-chat__input').inputValue(), '看完图片继续写这份草稿。');
+      const restored = await page.evaluate(() => ({ scroll: document.querySelector('.class-chat__messages').scrollTop,
+        panel: document.querySelector('.class-chat__panel').getBoundingClientRect().toJSON() }));
+      assert.deepEqual(restored, saved);
+      await thumbnail.press('Enter');
+      await dialog.getByRole('button', { name: '关闭图片预览' }).click();
+      assert.equal(await dialog.isVisible(), false);
+      await thumbnail.click();
+      await page.mouse.click(8, 8);
+      assert.equal(await dialog.isVisible(), false, 'backdrop dismisses the preview');
+      const file = page.locator('.class-chat__file-link');
+      assert.equal(await file.getAttribute('href'), `${origin}/asset/download`);
+      assert.equal(await file.getAttribute('target'), '_blank', 'non-image attachment behavior stays unchanged');
+      assert(sockets.every(socket => socket.readyState === 1 && wss.clients.has(socket)), 'preview does not replace the chat connection');
+      assert.equal(wss.clients.size, sockets.length);
+      failImage = true;
+      await thumbnail.click();
+      await dialog.locator('[role="status"]').filter({ hasText: '图片暂时无法加载' }).waitFor({ state: 'visible' });
+      await page.evaluate(() => window.dispatchEvent(new Event('onebyone:session-ended')));
+      assert.equal(await page.locator('.class-chat').count(), 0, 'ending the session also removes the private preview');
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
 it('a hidden mobile conversation does not mark incoming messages read while the teacher views contacts', async () => {
   reset(); records.push(message(40, 2, '第一条消息'));
   const { context, page, errors } = await fixture(2, { width: 390, height: 844 });

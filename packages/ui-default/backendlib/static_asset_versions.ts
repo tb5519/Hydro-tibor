@@ -14,5 +14,6 @@ export function getStaticAssetVersions(manifest: unknown, uiVersion: string) {
     staticVersion: hash(`hydro-${uiVersion}.js`),
     themeVersion: hash('theme.css'),
     defaultThemeVersion: hash('default.theme.js'),
+    serviceWorkerVersion: hash('service-worker.js'),
   };
 }
