@@ -161,6 +161,14 @@
   padding: 16px 22px
   border-bottom: 1px solid #e9eff2
   background: linear-gradient(110deg, #f4f9f8, #fff 75%)
+  touch-action: none
+  user-select: none
+
+  &[data-chat-panel-draggable="true"]
+    cursor: grab
+
+  .is-dragging &
+    cursor: grabbing
 
   h2
     margin: 2px 0 0
@@ -349,6 +357,7 @@
   display: none
 
 .class-chat__peer-info
+  position: relative
   flex: 1
   min-width: 0
 
@@ -367,6 +376,27 @@
     margin-top: 2px
     color: #99a8b1
     font-size: 10px
+
+  &.can-switch-teacher strong::after
+    content: '⌄'
+    margin-left: 7px
+    color: #849caa
+
+.class-chat__teacher-picker
+  position: absolute
+  top: 0
+  left: 0
+  width: 100%
+  height: 24px
+  margin: 0
+  padding: 0
+  opacity: 0
+  cursor: pointer
+
+.class-chat__peer-info:focus-within strong
+  text-decoration: underline
+  text-decoration-color: #91bdb0
+  text-underline-offset: 4px
 
 .class-chat__quota
   flex-shrink: 0

@@ -1,5 +1,6 @@
 import { captureProblemSnapshot, canCaptureProblemSnapshot } from './snapshot';
 import { createStudentChatReminder } from './sound';
+import { installChatPanelDrag } from './drag';
 import {
   ChatMessage, ChatPeer, ChatRoster, ClassChatConfig, fileSize, messageSummary, peerKey, safeAssetUrl,
 } from './types';
@@ -51,6 +52,7 @@ export function installClassChat(config: ClassChatConfig) {
   const query = <T extends HTMLElement = HTMLElement>(selector: string) => host.querySelector<T>(selector)!;
   const launcher = query<HTMLButtonElement>('.class-chat__launcher');
   const panel = query('.class-chat__panel');
+  const panelDrag = installChatPanelDrag(panel, query('.class-chat__top'), config.uid, signal);
   const peersRoot = query('.class-chat__peers');
   const messagesRoot = query('.class-chat__messages');
   const input = query<HTMLTextAreaElement>('.class-chat__input');
@@ -59,6 +61,11 @@ export function installClassChat(config: ClassChatConfig) {
   const fileInput = query<HTMLInputElement>('[data-file-input]');
   const imageInput = query<HTMLInputElement>('[data-image-input]');
   const search = query<HTMLInputElement>('.class-chat__search input');
+  const teacherPicker = doc.createElement('select');
+  teacherPicker.className = 'class-chat__teacher-picker';
+  teacherPicker.setAttribute('aria-label', '选择聊天老师');
+  teacherPicker.hidden = true;
+  query('.class-chat__peer-info').append(teacherPicker);
   const badge = query('.class-chat__badge');
   const feedback = query('.class-chat__feedback');
   const newMessage = query<HTMLButtonElement>('.class-chat__new-message');
@@ -100,6 +107,9 @@ export function installClassChat(config: ClassChatConfig) {
     if (Number.isFinite(saved?.x) && Number.isFinite(saved?.y)) position = { x: Math.max(0, Math.min(1, saved.x)), y: Math.max(0, Math.min(1, saved.y)) };
   } catch { /* Position is optional when storage is disabled. */ }
   host.classList.toggle('is-teacher', config.canTeach);
+  query('.class-chat__sidebar').hidden = !config.canTeach;
+  query('.class-chat__quota').hidden = !config.canTeach;
+  query('[data-back]').hidden = !config.canTeach;
   search.placeholder = config.canTeach ? '搜索学员' : '搜索老师';
   query('.class-chat__peer-name').textContent = config.canTeach ? '选择一位学员' : '和老师聊一聊';
 
@@ -160,12 +170,21 @@ export function installClassChat(config: ClassChatConfig) {
     query<HTMLButtonElement>('[data-image]').disabled = !selected || sending;
     query<HTMLButtonElement>('[data-file]').disabled = !selected || sending;
     panel.classList.toggle('has-contact', !!selected);
-    panel.classList.toggle('has-sidebar', config.canTeach || roster.peers.length > 1);
+    panel.classList.toggle('has-sidebar', config.canTeach);
+    teacherPicker.disabled = sending;
+  }
+  function defaultTeacher() {
+    return roster.peers.find((peer) => peer.uid === roster.defaultPeerUid) || roster.peers[0];
   }
   function renderPeers() {
     const needle = search.value.trim().toLocaleLowerCase();
     peersRoot.replaceChildren();
     const peers = roster.peers.filter((peer) => `${peer.name} ${peer.uid}`.toLocaleLowerCase().includes(needle));
+    if (config.canTeach) {
+      const priority = (peer: ChatPeer) => (peer.unread > 0 ? (peer.online ? 0 : 1) : peer.online ? 2 : 3);
+      const lastAt = (peer: ChatPeer) => new Date(peer.lastAt || 0).getTime() || 0;
+      peers.sort((a, b) => priority(a) - priority(b) || lastAt(b) - lastAt(a) || a.uid - b.uid);
+    }
     if (!peers.length) peersRoot.append(element('p', 'class-chat__peer-empty', hasFetchedRoster ? (needle ? '没有找到这位联系人' : config.canTeach ? '还没有可联系的学员' : '暂时没有可联系的老师') : '正在加载…'));
     peers.forEach((peer) => {
       const button = element('button', `class-chat__peer${selected && peerKey(selected) === peerKey(peer) ? ' is-selected' : ''}`);
@@ -185,6 +204,14 @@ export function installClassChat(config: ClassChatConfig) {
       button.addEventListener('click', () => { void selectPeer(peer); }, { signal });
       peersRoot.append(button);
     });
+    teacherPicker.hidden = config.canTeach || roster.peers.length < 2;
+    query('.class-chat__peer-info').classList.toggle('can-switch-teacher', !teacherPicker.hidden);
+    teacherPicker.replaceChildren(...roster.peers.map((peer) => {
+      const option = element('option', '', `${peer.name}${peer.unread ? ` · ${peer.unread} 条未读` : ''}`);
+      option.value = peerKey(peer);
+      option.selected = peerKey(peer) === (selected ? peerKey(selected) : defaultTeacher() && peerKey(defaultTeacher()!));
+      return option;
+    }));
     badge.hidden = roster.unread === 0;
     badge.textContent = roster.unread > 99 ? '99+' : String(roster.unread);
     launcher.classList.toggle('has-unread', roster.unread > 0);
@@ -222,7 +249,7 @@ export function installClassChat(config: ClassChatConfig) {
           else { selected = null; messages = []; renderMessages(); }
         }
         renderPeers();
-        if (!selected && !config.canTeach && roster.peers.length === 1 && opened) await selectPeer(roster.peers[0]);
+        if (!selected && !config.canTeach && defaultTeacher() && opened) await selectPeer(defaultTeacher()!);
       } catch (error) {
         if ([401, 403].includes((error as any).status)) {
           authorizationLost = true;
@@ -454,8 +481,9 @@ export function installClassChat(config: ClassChatConfig) {
     if (value) {
       void refreshRoster();
       updateControls();
+      panelDrag.refresh();
       if (selected) { void loadMessages(); input.focus({ preventScroll: true }); }
-      else if (roster.peers.length === 1 && !config.canTeach) void selectPeer(roster.peers[0]);
+      else if (!config.canTeach && defaultTeacher()) void selectPeer(defaultTeacher()!);
       else { renderMessages(); panel.focus({ preventScroll: true }); }
     } else launcher.focus({ preventScroll: true });
   }
@@ -522,6 +550,10 @@ export function installClassChat(config: ClassChatConfig) {
   query('[data-close]').addEventListener('click', () => setOpen(false), { signal });
   query('[data-back]').addEventListener('click', () => panel.classList.remove('show-conversation'), { signal });
   search.addEventListener('input', renderPeers, { signal });
+  teacherPicker.addEventListener('change', () => {
+    const peer = roster.peers.find((item) => peerKey(item) === teacherPicker.value);
+    if (peer) void selectPeer(peer);
+  }, { signal });
   input.addEventListener('input', () => { if (selected) drafts.set(peerKey(selected), input.value); updateControls(); }, { signal });
   input.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); void send(); } }, { signal });
   panel.addEventListener('paste', (event: ClipboardEvent) => {

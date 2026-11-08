@@ -122,40 +122,59 @@ export async function authorizePair(uid: number, peerUid: number, domainId: stri
     const peer = await users.findOne({ _id: peerAccount._id }, { projection: { _id: 1, uname: 1, displayName: 1, avatar: 1 } });
     return { id, teacherUid, studentUid, workspaceId, domainId, canTeach: current.canTeach, peer: publicAccount(peer) };
 }
-export type ChatPair = Awaited<ReturnType<typeof authorizePair>>;
+export type ChatPair = Awaited<ReturnType<typeof authorizePair>> & { teacherPriority?: number };
 
 const rosterCache = new Map<string, { until: number, pending: Promise<ChatPair[]> }>();
 export function clearRosterCache() { rosterCache.clear(); }
 
 async function discoverPeers(uid: number, scope: Awaited<ReturnType<typeof resolveScope>>) {
     const classrooms = await workspace.getDomains(scope.workspaceId);
-    const candidates = new Map<number, string[]>();
+    const candidates = new Map<number, { domainId: string, priority: number }[]>();
+    const addCandidate = (peerUid: number, domainId: string, priority: number) => {
+        if (peerUid > 1 && peerUid !== uid) candidates.set(peerUid, [...candidates.get(peerUid) || [], { domainId, priority }]);
+    };
     if (scope.canTeach) {
         for (const classroom of classrooms) {
             try { await share.teacherScope(uid, classroom._id); } catch { continue; }
             const memberships = await domain.collUser.find({ domainId: classroom._id, uid: { $gt: 1, $ne: uid },
                 join: true, blockedByStudentManagement: { $ne: true } }).project({ uid: 1 }).limit(2000).toArray();
-            for (const item of memberships) candidates.set(item.uid, [...candidates.get(item.uid) || [], classroom._id]);
+            for (const item of memberships) addCandidate(item.uid, classroom._id, 0);
         }
     } else {
-        const members = await workspace.getMembers(scope.workspaceId);
+        const [members, previous] = await Promise.all([
+            workspace.getMembers(scope.workspaceId),
+            conversations.find({ workspaceId: scope.workspaceId, studentUid: uid }).project({ _id: 1, teacherUid: 1 }).toArray(),
+        ]);
+        const retained = previous.length ? new Set(await messages.distinct('conversation', {
+            conversation: { $in: previous.map((item) => item._id) }, removed: { $ne: true },
+        })) : new Set<string>();
         for (const classroom of classrooms) {
-            try { await share.studentScope(uid, classroom._id); } catch { continue; }
-            const legacy = scope.workspaceId === workspace.LEGACY_WORKSPACE_ID
-                ? await users.find({ priv: { $bitsAllSet: PRIV.PRIV_EDIT_SYSTEM } }).project({ _id: 1 }).toArray() : [];
+            let joined: Awaited<ReturnType<typeof share.studentScope>>;
+            try { joined = await share.studentScope(uid, classroom._id); } catch { continue; }
+            const current = classroom._id === scope.classroom._id;
             const classroomMembers = await domain.collUser.find({ domainId: classroom._id, join: true,
-                role: { $ne: 'default' }, blockedByStudentManagement: { $ne: true } }).project({ uid: 1 }).toArray();
-            for (const peerUid of new Set([classroom.owner, ...members.map((m) => m.uid), ...legacy.map((m) => m._id),
-                ...classroomMembers.map((m) => m.uid)])) {
-                if (peerUid > 1 && peerUid !== uid) candidates.set(peerUid, [...candidates.get(peerUid) || [], classroom._id]);
+                role: { $ne: 'default' }, blockedByStudentManagement: { $ne: true } }).project({ uid: 1, role: 1 }).toArray();
+            addCandidate(classroom.owner, classroom._id, current ? 0 : 4);
+            for (const member of classroomMembers) {
+                const permissions = BigInt(joined.classroom.roles?.[member.role] ?? BUILTIN_ROLES[member.role] ?? 0);
+                if ((permissions & PERM.PERM_EDIT_DOMAIN) === PERM.PERM_EDIT_DOMAIN) {
+                    addCandidate(member.uid, classroom._id, current ? 1 : 5);
+                }
             }
+            for (const member of members) if (member.role === 'owner' || member.role === 'teacher') {
+                addCandidate(member.uid, classroom._id, member.role === 'owner' ? 2 : 3);
+            }
+            // Platform-wide privileges alone do not make an account a learner's
+            // teacher. Preserve existing conversations only, after fresh pair authorization.
+            for (const conversation of previous) if (retained.has(conversation._id)) addCandidate(conversation.teacherUid, classroom._id, 6);
         }
     }
-    const peers = [];
-    for (const [peerUid, domainIds] of candidates) {
+    const peers: ChatPair[] = [];
+    for (const [peerUid, options] of candidates) {
         let pair: ChatPair;
-        for (const id of domainIds) {
-            try { pair = await authorizePair(uid, peerUid, id); break; } catch { /* Staff and removed accounts are filtered here. */ }
+        for (const option of options.sort((a, b) => a.priority - b.priority || a.domainId.localeCompare(b.domainId))) {
+            try { pair = { ...await authorizePair(uid, peerUid, option.domainId), teacherPriority: option.priority }; break; }
+            catch { /* Staff and removed accounts are filtered here. */ }
         }
         if (!pair) continue;
         peers.push(pair);
@@ -206,15 +225,21 @@ async function refreshPeers(uid: number, scope: Awaited<ReturnType<typeof resolv
 export async function peersFor(uid: number, domainId: string) {
     const scope = await resolveScope(uid, domainId);
     const key = `${uid}:${scope.workspaceId}:${scope.canTeach}`;
-    let cached = rosterCache.get(key);
-    if (!cached || cached.until <= Date.now()) {
-        if (rosterCache.size >= 200) rosterCache.delete(rosterCache.keys().next().value);
-        cached = { until: Date.now() + 15_000, pending: discoverPeers(uid, scope) };
-        rosterCache.set(key, cached);
-    }
-    // Only identities are briefly cached. All message reads, attachments, sends and snapshots reauthorize fresh membership.
     let pairs: ChatPair[];
-    try { pairs = await refreshPeers(uid, scope, await cached.pending); } catch (error) { rosterCache.delete(key); throw error; }
+    if (!scope.canTeach) {
+        // A short teacher list stays fresh when the learner changes classrooms,
+        // a teacher is reassigned, or a previously contacted teacher sends a reply.
+        pairs = await discoverPeers(uid, scope);
+    } else {
+        let cached = rosterCache.get(key);
+        if (!cached || cached.until <= Date.now()) {
+            if (rosterCache.size >= 200) rosterCache.delete(rosterCache.keys().next().value);
+            cached = { until: Date.now() + 15_000, pending: discoverPeers(uid, scope) };
+            rosterCache.set(key, cached);
+        }
+        // Only identities are briefly cached. Message previews still reauthorize fresh membership.
+        try { pairs = await refreshPeers(uid, scope, await cached.pending); } catch (error) { rosterCache.delete(key); throw error; }
+    }
     const ids = pairs.map((pair) => pair.id);
     const conversationsById = new Map((await conversations.find({ _id: { $in: ids } }).toArray()).map((item) => [item._id, item]));
     const [lastRows, unreadRows] = ids.length ? await Promise.all([
@@ -239,8 +264,13 @@ export async function peersFor(uid: number, domainId: string) {
             lastMessage: last ? chatPreview(last) : '', lastAt: last?.createdAt || null,
             ...(online ? { online: online.has(pair.studentUid) } : {}) };
     });
-    peers.sort((a, b) => +(b.lastAt || 0) - +(a.lastAt || 0) || a.uid - b.uid);
+    const group = (peer: typeof peers[number]) => peer.unread > 0 ? peer.online ? 0 : 1 : peer.online ? 2 : 3;
+    peers.sort((a, b) => (scope.canTeach ? group(a) - group(b) : 0) || +(b.lastAt || 0) - +(a.lastAt || 0) || a.uid - b.uid);
+    const priority = new Map(pairs.map((pair) => [pair.peer.uid, pair.teacherPriority ?? 6]));
+    const preferred = scope.canTeach ? null : [...peers].sort((a, b) => priority.get(a.uid) - priority.get(b.uid)
+        || +(b.lastAt || 0) - +(a.lastAt || 0) || a.uid - b.uid)[0];
     return { canTeach: scope.canTeach, peers, unread: peers.reduce((sum, item) => sum + item.unread, 0),
+        ...(!scope.canTeach ? { defaultPeerUid: preferred?.uid || null } : {}),
         quotaBytes: CHAT_QUOTA_BYTES, maxFileBytes: CHAT_FILE_BYTES, maxImageBytes: CHAT_IMAGE_BYTES };
 }
 

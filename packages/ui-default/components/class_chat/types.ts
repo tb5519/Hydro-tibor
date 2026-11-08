@@ -36,6 +36,7 @@ export interface ChatMessage {
 export interface ChatRoster {
   canTeach: boolean;
   peers: ChatPeer[];
+  defaultPeerUid?: number | null;
   unread: number;
   quotaBytes: number;
   maxFileBytes: number;

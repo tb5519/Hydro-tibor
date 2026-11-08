@@ -16,8 +16,8 @@ const executablePath = [playwright?.chromium.executablePath(),
   path.join(os.homedir(), 'Library/Caches/ms-playwright/chromium-1140/chrome-mac/Chromium.app/Contents/MacOS/Chromium')].find((entry) => entry && fs.existsSync(entry));
 let browser; let server; let origin; let wss;
 let records = []; let requests = []; let sequence = 0; let failResponseOnce = false; let onlineStudents = new Set([40]); let imageRequests = 0;
-let multipleTeachers = false; let forbiddenUsers = new Set();
-const names = { 2: '唐老师', 3: '李老师', 40: '当当', 41: '橙子' };
+let multipleTeachers = false; let forbiddenUsers = new Set(); let teacherRosterIds = [40, 41];
+const names = { 2: '唐老师', 3: '李老师', 40: '当当', 41: '橙子', 42: '周焱', 43: '睿睿', 44: '小宇', 45: '阳阳' };
 const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jB6kAAAAASUVORK5CYII=', 'base64');
 const out = (res, value) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(value)); };
 const message = (from, to, text, extra = {}) => ({ id: String(++sequence).padStart(24, '0'), from, to, text, createdAt: new Date().toISOString(), kind: 'text', read: false, ...extra });
@@ -69,13 +69,14 @@ before(async () => {
         const items = records.filter((m) => m.from === uid && m.to === peer || m.from === peer && m.to === uid);
         out(res, { messages: items, hasMore: false, usedBytes: 5000, ...quota }); return;
       }
-      const ids = uid === 2 ? [40, 41] : multipleTeachers ? [2, 3] : [2];
+      const ids = uid === 2 ? teacherRosterIds : multipleTeachers ? [3, 2] : [2];
       const peers = ids.map((id) => {
         const items = records.filter((m) => m.from === uid && m.to === id || m.from === id && m.to === uid);
         return { uid: id, name: names[id], domainId: 'classroom', online: onlineStudents.has(id), unread: items.filter((m) => m.to === uid && !m.read).length,
           lastMessage: items.at(-1)?.text || '', lastAt: items.at(-1)?.createdAt };
       });
-      out(res, { peers, canTeach: uid === 2, unread: peers.reduce((sum, p) => sum + p.unread, 0), ...quota }); return;
+      out(res, { peers, canTeach: uid === 2, ...(uid === 2 ? {} : { defaultPeerUid: 2 }),
+        unread: peers.reduce((sum, p) => sum + p.unread, 0), ...quota }); return;
     }
     const uid = Number(url.searchParams.get('uid')) || 40;
     res.setHeader('content-type', 'text/html; charset=utf-8');
@@ -99,7 +100,123 @@ async function fixture(uid = 40, viewport = { width: 1440, height: 900 }) {
   await page.waitForFunction(() => document.querySelectorAll('[data-peer-uid]').length > 0);
   return { context, page, errors };
 }
-const reset = () => { records = []; requests = []; sequence = 0; failResponseOnce = false; onlineStudents = new Set([40]); imageRequests = 0; multipleTeachers = false; forbiddenUsers = new Set(); };
+const reset = () => { records = []; requests = []; sequence = 0; failResponseOnce = false; onlineStudents = new Set([40]); imageRequests = 0; multipleTeachers = false; forbiddenUsers = new Set(); teacherRosterIds = [40, 41]; };
+
+it('students open their main teacher directly without a sidebar or quota, and can reach another teacher with unread messages', async () => {
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    reset(); multipleTeachers = true;
+    const primary = message(2, 40, '今天继续练习输入输出。');
+    const others = [message(3, 40, '另一位老师的第一条消息'), message(3, 40, '另一位老师的第二条消息')];
+    records.push(primary, ...others);
+    const { context, page, errors } = await fixture(40, viewport);
+    try {
+      assert.equal(await page.locator('.class-chat__badge').textContent(), '3');
+      await page.locator('.class-chat__launcher').click();
+      await page.waitForFunction(() => document.querySelector('.class-chat__peer-name')?.textContent === '唐老师'
+        && document.querySelector('.class-chat__message .class-chat__text')?.textContent === '今天继续练习输入输出。');
+      assert.equal(await page.locator('.class-chat__sidebar').isVisible(), false);
+      assert.equal(await page.locator('[data-back]').isVisible(), false);
+      assert.equal(await page.locator('.class-chat__quota:visible').count(), 0);
+      assert.doesNotMatch(await page.locator('.class-chat__panel').innerText(), /50\s*MB/);
+      await page.waitForFunction(() => document.querySelector('.class-chat__badge').textContent === '2');
+      assert.equal(primary.read, true);
+      assert(others.every((item) => !item.read), 'opening the primary teacher must not mark the other teacher read');
+      await page.locator('.class-chat__input').fill('唐老师，我开始做题啦！');
+      await page.locator('.class-chat__input').press('Enter');
+      await page.waitForFunction(() => document.querySelector('.class-chat__input').value === '');
+      assert.equal(records.at(-1).to, 2, 'default recipient comes from defaultPeerUid, not roster order or unread count');
+      const picker = page.getByRole('combobox', { name: '选择聊天老师' });
+      assert.equal(await picker.isVisible(), true);
+      assert.match(await picker.locator('option').allTextContents().then((items) => items.join(' ')), /李老师.*2/);
+      await page.screenshot({ path: `/tmp/onebyone-class-chat-direct-teacher-${viewport.width}.png`, animations: 'disabled' });
+      await picker.selectOption('classroom:3');
+      await page.waitForFunction(() => document.querySelector('.class-chat__badge').hidden);
+      assert(others.every((item) => item.read), 'a second teacher remains reachable without returning to a contact list');
+      assert.equal(await page.locator('.class-chat__sidebar').isVisible(), false);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
+it('teacher contacts prioritize unread online, unread offline, online, then recent messages, and reorder live', async () => {
+  reset(); teacherRosterIds = [44, 43, 42, 41, 40, 45]; onlineStudents = new Set([40, 42, 45]);
+  const at = (minute) => `2026-11-08T04:${String(minute).padStart(2, '0')}:00.000Z`;
+  records.push(message(40, 2, '在线未读稍早', { createdAt: at(1) }),
+    message(45, 2, '在线未读较新', { createdAt: at(3) }),
+    message(41, 2, '离线未读最新', { createdAt: at(5) }),
+    message(42, 2, '在线已读', { createdAt: at(0), read: true }),
+    message(43, 2, '离线已读', { createdAt: at(9), read: true }));
+  const { context, page, errors } = await fixture(2);
+  try {
+    const order = () => page.locator('[data-peer-uid]').evaluateAll((nodes) => nodes.map((node) => Number(node.dataset.peerUid)));
+    await page.locator('.class-chat__launcher').click();
+    assert.deepEqual(await order(), [45, 40, 41, 42, 43, 44]);
+    onlineStudents.add(41); notify();
+    await page.waitForFunction(() => document.querySelector('[data-peer-uid]')?.getAttribute('data-peer-uid') === '41');
+    assert.deepEqual(await order(), [41, 45, 40, 42, 43, 44]);
+    assert(records.slice(0, 3).every((item) => !item.read), 'sorting alone never acknowledges unopened messages');
+    await page.locator('[data-peer-uid="41"]').click();
+    await page.waitForFunction(() => document.querySelectorAll('[data-peer-uid]')[2]?.getAttribute('data-peer-uid') === '41');
+    assert.deepEqual(await order(), [45, 40, 41, 42, 43, 44]);
+    await page.screenshot({ path: '/tmp/onebyone-class-chat-teacher-sorted.png', animations: 'disabled' });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+it('opened chat panels drag by their title bar, keep drafts and attachments, and remain reachable after resizing', async () => {
+  for (const uid of [40, 2]) {
+    reset(); const { context, page, errors } = await fixture(uid);
+    try {
+      const panel = page.locator('.class-chat__panel');
+      await page.locator('.class-chat__launcher').click();
+      if (uid === 2) await page.locator('[data-peer-uid="40"]').click();
+      await page.locator('.class-chat__input').fill('这份草稿不会被拖动打断。');
+      await page.locator('[data-file-input]').setInputFiles({ name: '练习.py', mimeType: 'text/plain', buffer: Buffer.from('print(123)') });
+      await page.waitForTimeout(220);
+      const original = await panel.boundingBox();
+      const title = await page.locator('.class-chat__top h2').boundingBox();
+      await page.mouse.move(title.x + 20, title.y + title.height / 2); await page.mouse.down();
+      await page.mouse.move(title.x - 120, title.y + title.height / 2 - 110, { steps: 8 }); await page.mouse.up();
+      const moved = await panel.boundingBox();
+      assert(Math.abs(moved.x - original.x + 140) < 3 && Math.abs(moved.y - original.y + 110) < 3, 'title drag moves the whole panel with the pointer');
+      assert.equal(await page.locator('.class-chat__input').inputValue(), '这份草稿不会被拖动打断。');
+      assert.equal(await page.locator('.class-chat__attachment').isVisible(), true);
+      assert.equal(records.length, 0);
+
+      const input = await page.locator('.class-chat__input').boundingBox();
+      await page.mouse.move(input.x + 16, input.y + 16); await page.mouse.down();
+      await page.mouse.move(input.x + 100, input.y + 16, { steps: 4 }); await page.mouse.up();
+      const afterInput = await panel.boundingBox();
+      assert(Math.abs(afterInput.x - moved.x) < 1 && Math.abs(afterInput.y - moved.y) < 1, 'selecting message text does not drag its panel');
+      await page.getByRole('button', { name: '取消附件' }).click();
+      assert.equal(await page.locator('.class-chat__attachment').isVisible(), false);
+      await page.getByRole('button', { name: '收起消息' }).click();
+      assert.equal(await panel.isVisible(), false, 'close stays clickable inside the drag handle');
+      await page.locator('.class-chat__launcher').click();
+      await page.waitForTimeout(220);
+      const reopened = await panel.boundingBox();
+      assert(Math.abs(reopened.x - moved.x) < 2 && Math.abs(reopened.y - moved.y) < 2, 'reopening keeps the chosen panel position');
+      assert.equal(await page.locator('.class-chat__input').inputValue(), '这份草稿不会被拖动打断。');
+
+      await page.reload();
+      await page.locator('.class-chat__launcher').click();
+      await page.waitForTimeout(220);
+      const restored = await panel.boundingBox();
+      assert(Math.abs(restored.x - moved.x) < 2 && Math.abs(restored.y - moved.y) < 2, 'page navigation keeps the chosen panel position');
+
+      for (const viewport of [{ width: 800, height: 600 }, { width: 390, height: 640 }]) {
+        await page.setViewportSize(viewport);
+        await page.waitForFunction(() => {
+          const rect = document.querySelector('.class-chat__panel').getBoundingClientRect();
+          return rect.left >= -1 && rect.top >= -1 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1;
+        });
+        const close = await page.getByRole('button', { name: '收起消息' }).boundingBox();
+        assert(close && close.x >= 0 && close.y >= 0 && close.x + close.width <= viewport.width && close.y + close.height <= viewport.height);
+      }
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
 
 it('student unread survives until viewed, teacher remains silent, and private chat never auto-opens', async () => {
   reset(); records.push(message(2, 40, '先看一下输入格式，等你回复。'));
@@ -353,19 +470,19 @@ it('read receipts and new messages reuse loaded private images without another d
   assert.deepEqual(errors, []); await context.close();
 });
 
-it('a hidden mobile conversation does not mark incoming messages read while the learner views contacts', async () => {
-  reset(); multipleTeachers = true; records.push(message(2, 40, '第一条消息'));
-  const { context, page, errors } = await fixture(40, { width: 390, height: 844 });
+it('a hidden mobile conversation does not mark incoming messages read while the teacher views contacts', async () => {
+  reset(); records.push(message(40, 2, '第一条消息'));
+  const { context, page, errors } = await fixture(2, { width: 390, height: 844 });
   await page.locator('.class-chat__launcher').click();
-  await page.locator('[data-peer-uid="2"]').click();
+  await page.locator('[data-peer-uid="40"]').click();
   await page.waitForFunction(() => document.querySelector('.class-chat__badge').hidden);
   await page.locator('[data-back]').click();
   assert.equal(await page.locator('.class-chat__messages').isVisible(), false);
-  records.push(message(2, 40, '这条还没有打开看')); notify();
+  records.push(message(40, 2, '这条还没有打开看')); notify();
   await page.waitForFunction(() => document.querySelectorAll('.class-chat__message').length === 2);
   assert.equal(records.at(-1).read, false, 'hidden panes are not read receipts');
   assert.equal(await page.locator('.class-chat__badge').textContent(), '1');
-  await page.locator('[data-peer-uid="2"]').click();
+  await page.locator('[data-peer-uid="40"]').click();
   await page.waitForFunction(() => document.querySelector('.class-chat__badge').hidden);
   assert.equal(records.at(-1).read, true);
   assert.deepEqual(errors, []); await context.close();

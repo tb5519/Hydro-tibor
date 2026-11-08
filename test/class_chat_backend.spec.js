@@ -20,18 +20,18 @@ function load(file, dependencies = {}) {
 const lib = load('packages/hydrooj/src/lib/class_chat.ts');
 let mongo; let client; let database; let model; let handlers; let accounts; let directory; let storage;
 let revoked; let documents; let failDelete; let logins; let events;
+let staffMembers; let teacherUids; let studentUids;
 const rooms = [{ _id: 'python', workspaceId: 'a', owner: 2 }, { _id: 'cpp', workspaceId: 'a', owner: 2 },
     { _id: 'other', workspaceId: 'b', owner: 3 }];
 const workspace = {
     LEGACY_WORKSPACE_ID: 'tang', getDomains: async (id) => rooms.filter((r) => r.workspaceId === id),
-    getMembers: async (id) => [{ uid: id === 'a' ? 2 : 3, role: 'teacher' }],
+    getMembers: async (id) => staffMembers.filter((member) => member.workspaceId === id),
     getExcludedLegacyUids: async () => new Set(),
 };
 async function scope(uid, domainId, teacher) {
     const classroom = rooms.find((r) => r._id === domainId);
     if (!classroom || revoked.has(uid)
-        || !(teacher ? classroom.workspaceId === 'a' ? uid === 2 : uid === 3
-            : classroom.workspaceId === 'a' ? [10, 11].includes(uid) : uid === 12)) throw Object.assign(new Error('forbidden'), { code: 'FORBIDDEN' });
+        || !(teacher ? teacherUids : studentUids).get(classroom.workspaceId)?.has(uid)) throw Object.assign(new Error('forbidden'), { code: 'FORBIDDEN' });
     return { account: await accounts.findOne({ _id: uid }), classroom, workspaceId: classroom.workspaceId };
 }
 const share = {
@@ -83,6 +83,11 @@ beforeEach(async () => {
     await Promise.all(['class.chat.message', 'class.chat.conversation', 'class.chat.asset', 'class.chat.grant', 'class.chat.presence', 'user', 'domain.user', 'workspace.student', 'test.storage']
         .map((name) => database.collection(name).deleteMany({})));
     revoked = new Set(); failDelete = false; events = [];
+    staffMembers = [{ workspaceId: 'a', uid: 2, role: 'teacher' }, { workspaceId: 'b', uid: 3, role: 'teacher' }];
+    teacherUids = new Map([['a', new Set([2])], ['b', new Set([3])]]);
+    studentUids = new Map([['a', new Set([10, 11])], ['b', new Set([12])]]);
+    workspace.LEGACY_WORKSPACE_ID = 'tang';
+    rooms[0].owner = 2; rooms[1].owner = 2;
     model.clearRosterCache();
     logins = new Map([2, 3, 10, 11, 12].map((uid) => [`login-${uid}`, { uid, expireAt: new Date(Date.now() + 60000) }]));
     await accounts.insertMany([2, 3, 10, 11, 12].map((_id) => ({ _id, uname: `user${_id}`, priv: 2, avatar: `photo${_id}` })));
@@ -113,11 +118,63 @@ describe('private classroom chat storage', () => {
         const roster = await model.peersFor(2, 'cpp');
         assert.equal(roster.unread, 2); assert.equal(roster.peers[0].uid, 10);
         assert.equal(roster.peers[0].avatarUrl, '/avatar/photo10');
-        assert.equal((await model.peersFor(10, 'python')).peers[0].uid, 2);
+        const studentRoster = await model.peersFor(10, 'python');
+        assert.equal(studentRoster.peers[0].uid, 2); assert.equal(studentRoster.defaultPeerUid, 2);
+        assert.equal(Object.hasOwn(roster, 'defaultPeerUid'), false);
         await model.acknowledge(await pair(2, 10), 2, second.message.id);
         assert.equal((await model.peersFor(2, 'python')).unread, 0);
         await model.send(p, 10, send('new unread'));
         assert.equal((await model.peersFor(2, 'python')).unread, 1);
+    });
+
+    it('prefers the actual classroom owner without auto-listing unrelated platform administrators', async () => {
+        workspace.LEGACY_WORKSPACE_ID = 'a';
+        teacherUids.get('a').add(4).add(5);
+        await accounts.insertMany([{ _id: 4, uname: 'platform-admin', priv: 3 }, { _id: 5, uname: 'another-teacher', priv: 2 }]);
+        staffMembers.push({ workspaceId: 'a', uid: 4, role: 'admin' }, { workspaceId: 'a', uid: 5, role: 'teacher' });
+        await database.collection('domain.user').insertOne({ uid: 5, domainId: 'python', join: true, role: 'teacher' });
+        await model.send(await pair(5, 10), 5, send('other teacher unread'));
+        const roster = await model.peersFor(10, 'python');
+        assert.equal(roster.defaultPeerUid, 2);
+        assert.equal(roster.peers.find((peer) => peer.uid === 5).unread, 1);
+        assert.equal(roster.peers.some((peer) => peer.uid === 4), false, 'global system privileges are not a teaching assignment');
+        assert.ok(roster.peers.every((peer) => !Object.hasOwn(peer, 'online')));
+        await model.send(await pair(4, 10), 4, send('existing support conversation'));
+        const retained = await model.peersFor(10, 'python');
+        assert.equal(retained.defaultPeerUid, 2);
+        assert.equal(retained.peers.find((peer) => peer.uid === 4).unread, 1, 'existing authorized conversations remain reachable');
+        revoked.add(4);
+        assert.equal((await model.peersFor(10, 'python')).peers.some((peer) => peer.uid === 4), false);
+    });
+
+    it('reselects the default teacher from the current classroom and falls back only to authorized staff', async () => {
+        teacherUids.get('a').add(5);
+        await accounts.insertOne({ _id: 5, uname: 'cpp-owner', priv: 2 });
+        staffMembers.push({ workspaceId: 'a', uid: 5, role: 'teacher' });
+        rooms[1].owner = 5;
+        assert.equal((await model.peersFor(10, 'python')).defaultPeerUid, 2);
+        assert.equal((await model.peersFor(10, 'cpp')).defaultPeerUid, 5);
+        revoked.add(5);
+        assert.equal((await model.peersFor(10, 'cpp')).defaultPeerUid, 2);
+        revoked.add(2);
+        const empty = await model.peersFor(10, 'cpp');
+        assert.equal(empty.defaultPeerUid, null); assert.equal(empty.peers.length, 0);
+    });
+
+    it('orders teacher contacts by unread-online, unread-offline, online, then most recent contact', async () => {
+        const extra = [13, 14, 15]; extra.forEach((uid) => studentUids.get('a').add(uid));
+        await accounts.insertMany(extra.map((_id) => ({ _id, uname: `user${_id}`, priv: 2 })));
+        await database.collection('domain.user').insertMany(extra.map((uid) => ({ uid, domainId: 'python', join: true, role: 'default' })));
+        const time = new Date('2026-11-01T01:00:00Z').getTime();
+        for (const [uid, age] of [[10, 0], [11, 5], [13, 1], [14, 3], [15, 4]]) {
+            const value = await model.send(await pair(uid), uid, send(`from ${uid}`));
+            await model.messages.updateOne({ _id: new ObjectId(value.message.id) }, { $set: { createdAt: new Date(time + age * 1000) } });
+            if (uid >= 13) await model.acknowledge(await pair(2, uid), 2, value.message.id);
+        }
+        await model.connectPresence(10, 'python'); await model.connectPresence(13, 'python');
+        const roster = await model.peersFor(2, 'python');
+        assert.deepEqual(Array.from(roster.peers, (peer) => peer.uid), [10, 11, 13, 15, 14]);
+        assert.equal(roster.unread, 2);
     });
 
     it('fresh roster filtering removes previews immediately when a cached student is removed or disabled', async () => {
