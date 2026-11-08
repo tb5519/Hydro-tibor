@@ -14,6 +14,7 @@ function fixture() {
   function client() {
     const listeners = new Map(); const timers = new Map(); let timerId = 0; let tones = 0; let contexts = 0;
     const win = {
+      addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: (name) => listeners.delete(name),
       localStorage: { getItem: (key) => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) },
       document: { hidden: false, addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: (name) => listeners.delete(name) },
       setInterval: (fn) => { timers.set(++timerId, fn); return timerId; }, clearInterval: (id) => timers.delete(id),
@@ -24,7 +25,7 @@ function fixture() {
         createGain() { return { gain: { setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {} }; }
       },
     };
-    return { win, gesture: () => listeners.get('pointerdown')?.(), tick: () => [...timers.values()].forEach((fn) => fn()), tones: () => tones, contexts: () => contexts };
+    return { win, gesture: () => listeners.get('pointerdown')?.(), frameGesture: () => listeners.get('onebyone:platform-gesture')?.(), tick: () => [...timers.values()].forEach((fn) => fn()), tones: () => tones, contexts: () => contexts };
   }
   return { create: exported.exports.createStudentChatReminder, client, advance: () => { now += 10000; } };
 }
@@ -54,4 +55,12 @@ it('when the first tab closes another tab can continue the unread reminder', asy
   f.advance(); b.tick();
   assert.equal(b.tones(), 2);
   second.dispose();
+});
+
+it('gestures inside a persistent content page unlock the parent reminder and dispose cleanly', async () => {
+  const f = fixture(); const a = f.client(); const reminder = f.create(40, true, a.win);
+  reminder.setUnread(true); a.frameGesture(); await Promise.resolve();
+  assert.equal(a.tones(), 2);
+  reminder.dispose(); f.advance(); a.frameGesture();
+  assert.equal(a.contexts(), 1, 'a disposed session must not create another audio context');
 });

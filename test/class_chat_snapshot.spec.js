@@ -67,6 +67,32 @@ it('refuses an oversized code snapshot rather than silently truncating the stude
   await assert.rejects(f.captureProblemSnapshot(), /128KB/);
 });
 
+it('persistent chat captures the active content document after navigation and never the previous page', async (t) => {
+  const f = fixture(); const child = fixture('<section name="submit_section"><textarea name="code">print("current page")</textarea><input name="lang" value="py.py3"></section>');
+  t.after(() => { f.dom.window.close(); child.dom.window.close(); });
+  f.window.store = { getState: () => ({ editor: { code: 'stale parent code' } }) };
+  child.window.UiContext.classChat.problem = { pid: 76, domainId: 'python', grant: 'current-grant' };
+  let active = child.window;
+  f.window.__onebyonePlatformShell = { contentWindow: () => active };
+  assert.deepEqual(JSON.parse(JSON.stringify(await f.captureProblemSnapshot())), {
+    pid: 76, domainId: 'python', code: 'print("current page")', lang: 'py.py3', grant: 'current-grant',
+  });
+  child.window.UiContext = { ideMode: true };
+  assert.equal(f.canCaptureProblemSnapshot(), false, 'the IDE does not reuse a previous problem grant');
+  active = null;
+  assert.equal(await f.captureProblemSnapshot(), null, 'a loading content frame does not fall back to stale parent content');
+});
+
+it('persistent chat refuses a newly logged-in account before the host has been replaced', async (t) => {
+  const f = fixture(); const child = fixture();
+  t.after(() => { f.dom.window.close(); child.dom.window.close(); });
+  child.window.UserContext._id = 41;
+  f.window.__onebyonePlatformShell = { contentWindow: () => child.window };
+  assert.equal(await f.captureProblemSnapshot(), null);
+  f.window.__onebyonePlatformShell.contentWindow = () => { throw new Error('frame left the origin'); };
+  assert.equal(f.canCaptureProblemSnapshot(), false);
+});
+
 it('snapshot page escapes student code and labels, and remains private in shared screens', () => {
   const template = fs.readFileSync(path.join(root, 'packages/ui-default/templates/class_chat_snapshot.html'), 'utf8');
   const env = new nunjucks.Environment({ getSource(name) {

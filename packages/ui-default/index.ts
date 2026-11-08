@@ -223,6 +223,9 @@ export function apply(ctx: Context, config: ReturnType<typeof Config>) {
     }
   });
   ctx.on('handler/after', async (that) => {
+    // Top-level GET documents contain only the persistent communication shell;
+    // iframe requests for the same URL contain the full application page.
+    if (that.response.template && !that.request.json) that.context.vary('Sec-Fetch-Dest');
     that.UiContext.scratchpadThemePreferenceUrl = that.url('home_settings', { category: 'preference' });
     // Reuse the domain cache; no image/catalog queries on the page-render path. Only selected posters are public.
     if (that.response.template && !that.response.redirect && !that.request.json && !(that.response.status >= 400)) {

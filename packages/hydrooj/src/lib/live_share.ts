@@ -329,7 +329,7 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
 
 export function validateShareMessage(payload: any) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)
-        || !['hello', 'list', 'start', 'stop', 'relay', 'pulse'].includes(payload.type)) {
+        || !['hello', 'page', 'list', 'start', 'stop', 'relay', 'pulse'].includes(payload.type)) {
         throw new LiveShareError('INVALID_MESSAGE', '无法识别共享消息。');
     }
     if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > LIVE_SHARE_MAX_BYTES) {
@@ -340,6 +340,13 @@ export function validateShareMessage(payload: any) {
             || typeof payload.title !== 'string' || payload.title.length > 160 || typeof payload.visible !== 'boolean') {
             throw new LiveShareError('INVALID_HELLO', '共享页面信息不完整，请刷新页面。');
         }
+    }
+    if (payload.type === 'page' && (!shareId(payload.pageId) || typeof payload.url !== 'string' || payload.url.length > 2048
+        || (payload.requestId !== undefined && !shareId(payload.requestId))
+        || typeof payload.title !== 'string' || payload.title.length > 160 || typeof payload.visible !== 'boolean'
+        || (payload.domainId !== undefined && (typeof payload.domainId !== 'string' || !payload.domainId.length || payload.domainId.length > 128))
+        || (payload.pageGrant !== undefined && !shareId(payload.pageGrant)))) {
+        throw new LiveShareError('INVALID_PAGE', '共享页面信息不完整，请刷新页面。');
     }
     if (payload.type === 'start' && (!Number.isSafeInteger(payload.studentUid) || payload.studentUid <= 1
         || (payload.tabId !== undefined && !shareId(payload.tabId)))) {
@@ -374,7 +381,7 @@ export class ShareRateLimit {
         this.bytes = Math.min(2 * 1024 * 1024, this.bytes + elapsed * 1024 * 1024);
         this.controls = Math.min(12, this.controls + elapsed * 2);
         const bytes = Buffer.byteLength(JSON.stringify(payload), 'utf8');
-        const control = ['list', 'start', 'stop', 'hello', 'broadcast:start', 'broadcast:stop', 'broadcast:sync'].includes(payload.type);
+        const control = ['list', 'start', 'stop', 'hello', 'page', 'broadcast:start', 'broadcast:stop', 'broadcast:sync'].includes(payload.type);
         if (this.events < 1 || this.bytes < bytes || (control && this.controls < 1)) {
             throw new LiveShareError('RATE_LIMIT', '共享操作过于频繁，请稍候。');
         }

@@ -24,7 +24,8 @@ function fixture({ blocked = false, pending = false } = {}) {
         }
         createGain() { return { gain: { setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {} }; }
     }
-    const ctx = vm.createContext({ document, window: { AudioContext: Audio, setInterval(callback) { intervals.set(++sequence, callback); return sequence; }, clearInterval(id) { intervals.delete(id); } } });
+    const window = Object.assign(new EventTarget(), { AudioContext: Audio, setInterval(callback) { intervals.set(++sequence, callback); return sequence; }, clearInterval(id) { intervals.delete(id); } });
+    const ctx = vm.createContext({ document, window });
     vm.runInContext(source, ctx);
     return { ring: ctx.Ringtone.createCallRinger(), contexts, intervals, document };
 }

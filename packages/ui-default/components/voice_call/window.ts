@@ -9,8 +9,8 @@ export interface VoiceCallWindowOptions {
   audioFactory?: (options: ConstructorParameters<typeof VoiceAudio>[0]) => VoiceAudio;
 }
 
-// The floating call lives on this page. Navigation closes the microphone, then
-// the next page resumes only the server-confirmed owner of this same tab.
+// The floating call belongs to the persistent host rather than any individual
+// application page. Real reload recovery still verifies the same tab's owner.
 export function mountVoiceCallWindow(root: HTMLElement, config: VoiceCallConfig, options: VoiceCallWindowOptions) {
   root.classList.add('voice-call-window');
   root.setAttribute('data-live-share-private', '');

@@ -6,6 +6,7 @@ import { startBackgroundVideoWarmup } from './utils/background-video-warmup';
 import { installAchievementWallReadiness } from './components/achievement_wall';
 import { startAchievementAssetWarmup } from './components/achievement_assets';
 import { startDailyQuizGate } from './components/daily_quiz_gate';
+import { attachPlatformPage, installPlatformShell, notifyPlatformPageReady } from './utils/persistent-navigation';
 
 installAchievementWallReadiness();
 
@@ -34,21 +35,25 @@ console.log(
 
 window.UiContext = JSON.parse(window.UiContext);
 window.UserContext = JSON.parse(window.UserContext);
-startDailyQuizGate(window.UiContext);
-$(document).on('vjContentNew.dailyQuizGate', () => startDailyQuizGate(window.UiContext));
-startAchievementAssetWarmup(window.UiContext);
-$(document).on('vjContentNew.achievementAssets', () => startAchievementAssetWarmup(window.UiContext));
-startImageWarmup(window.UiContext.imageWarmup);
-startBackgroundVideoWarmup(window.UiContext.backgroundVideoWarmup);
+const contentPage = attachPlatformPage(window);
+const communicationHost = window.top === window && document.documentElement.dataset.platformShell === 'host';
+if (!communicationHost) {
+  startDailyQuizGate(window.UiContext);
+  $(document).on('vjContentNew.dailyQuizGate', () => startDailyQuizGate(window.UiContext));
+  startAchievementAssetWarmup(window.UiContext);
+  $(document).on('vjContentNew.achievementAssets', () => startAchievementAssetWarmup(window.UiContext));
+  startImageWarmup(window.UiContext.imageWarmup);
+  startBackgroundVideoWarmup(window.UiContext.backgroundVideoWarmup);
+}
 try {
   __webpack_public_path__ = UiContext.cdn_prefix;
 } catch (e) { }
-if (window.UiContext.learningMediaWarmup) {
+if (!communicationHost && window.UiContext.learningMediaWarmup) {
   void import('./utils/learning-media-warmup').then(({ startLearningMediaWarmup }) => {
     startLearningMediaWarmup(window.UiContext.learningMediaWarmup);
   }).catch(() => {});
 }
-if ('serviceWorker' in navigator) {
+if (!contentPage && 'serviceWorker' in navigator) {
   const sendConfig = () => fetch('/service-worker-config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -84,9 +89,17 @@ if (process.env.NODE_ENV === 'production' && UiContext.sentry_dsn) {
 document.addEventListener('DOMContentLoaded', async () => {
   Object.assign(window.UiContext, JSON.parse(window.UiContextNew));
   Object.assign(window.UserContext, JSON.parse(window.UserContextNew));
+  if (communicationHost && installPlatformShell(window)) {
+    // No page-specific handlers run in the connection host. Each content document
+    // retains its own editor, event handlers and normal browser cleanup lifecycle.
+    await import('./components/platform_shell').then(({ installPlatformCommunications }) => installPlatformCommunications());
+    return;
+  }
+  if (contentPage) notifyPlatformPageReady(window);
   startDailyQuizGate(window.UiContext);
   startAchievementAssetWarmup(window.UiContext);
   window.HydroExports = await import('./api');
   await window._hydroLoad();
   await window.HydroExports.initPageLoader();
+  if (contentPage) notifyPlatformPageReady(window);
 }, false);

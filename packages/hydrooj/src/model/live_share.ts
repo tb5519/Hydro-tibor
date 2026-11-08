@@ -132,6 +132,19 @@ export async function verifyPageGrant(uid: number, domainId: string, token: stri
     return !!await grants.findOne({ _id: token, uid, domainId, url: page.path, expiresAt: { $gt: new Date(now) } });
 }
 
+/** Keep the currently rendered page reconnectable while its authenticated host stays open. */
+export async function renewPageGrant(item: SharePresence, token: string, now = Date.now()) {
+    const page = sharePage(item.url);
+    if (!page || (page.domainId && page.domainId !== item.domainId) || typeof token !== 'string') return false;
+    const scope = item.canTeach ? await teacherScope(item.uid, item.domainId) : await studentScope(item.uid, item.domainId);
+    if (scope.workspaceId !== item.workspaceId) throw new LiveShareError('FORBIDDEN', '不能共享其他工作区的页面。');
+    // Extend only the same unexpired token issued by authorized HTTP rendering.
+    // This cannot mint a grant, change its route, or revive an expired grant.
+    const result = await grants.updateOne({ _id: token, uid: item.uid, domainId: item.domainId, url: page.path,
+        expiresAt: { $gt: new Date(now) } }, { $max: { expiresAt: new Date(now + LIVE_SHARE_GRANT_MS) } });
+    return !!result.matchedCount;
+}
+
 export async function connectPresence(value: Omit<SharePresence, '_id' | 'expiresAt' | 'connected'>, now = Date.now()) {
     if (await presence.countDocuments({ uid: value.uid, tabId: { $ne: value.tabId }, connected: true,
         expiresAt: { $gt: new Date(now) } }) >= 8) throw new LiveShareError('TOO_MANY_TABS', '打开的学习页面较多，请关闭部分标签页后重试。');
@@ -146,6 +159,25 @@ export async function pulsePresence(item: SharePresence, visible: boolean, now =
     if (!updated.matchedCount) throw new LiveShareError('REPLACED', '此标签页已重新连接。');
     item.visible = visible;
     item.expiresAt = new Date(now + LIVE_SHARE_LEASE_MS);
+}
+
+/** A persistent browser host changes its granted page without replacing its connection. */
+export async function updatePresencePage(item: SharePresence, page: {
+    pageId: string; domainId?: string; pageGrant?: string; url: string; title: string; visible: boolean;
+}, now = Date.now()) {
+    const domainId = page.domainId || item.domainId;
+    const scope = item.canTeach ? await teacherScope(item.uid, domainId) : await studentScope(item.uid, domainId);
+    if (scope.workspaceId !== item.workspaceId) throw new LiveShareError('FORBIDDEN', '不能共享其他工作区的页面。');
+    // An empty URL explicitly pauses capture during navigation or a sensitive page.
+    // A nonempty URL always requires a new exact-path grant from authorized HTTP rendering.
+    if (page.url && !await verifyPageGrant(item.uid, domainId, page.pageGrant, page.url, now)) {
+        throw new LiveShareError('UNSUPPORTED_PAGE', '当前页面尚未获准共享。');
+    }
+    const change = { pageId: page.pageId, domainId, url: page.url, title: page.title,
+        visible: page.visible && (!!page.url || item.canTeach), expiresAt: new Date(now + LIVE_SHARE_LEASE_MS) };
+    const result = await presence.updateOne({ _id: item._id, connectionId: item.connectionId, connected: true }, { $set: change });
+    if (!result.matchedCount) throw new LiveShareError('REPLACED', '此标签页已重新连接。');
+    return Object.assign(item, change);
 }
 
 export async function disconnectPresence(item: SharePresence) {
@@ -224,7 +256,7 @@ export async function startSession(teacher: SharePresence, studentUid: number, t
 export async function refreshSession(session: ShareSession, emit: Emit, now = Date.now()) {
     try {
         const student = await livePresence(session.studentUid, session.studentTabId, now);
-        if (!student || !student.visible) return null;
+        if (!student || !student.visible || !student.url) return null;
         const pair = await authorizePair(session.teacherUid, session.studentUid, student.domainId);
         if (student.workspaceId !== session.workspaceId || pair.teacher.workspaceId !== session.workspaceId) {
             throw new LiveShareError('FORBIDDEN', '学员已离开当前工作区。');

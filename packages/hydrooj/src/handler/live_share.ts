@@ -56,6 +56,8 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
     private lastAuthorization = 0;
     private lastPeerCheck = 0;
     private lastLoginCheck = 0;
+    private activePageGrant: string;
+    private lastGrantRenewal = 0;
     private lastDiscovery = 0;
     private paused = false;
     private checking = false;
@@ -87,20 +89,21 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
             if (this.pending >= MAX_PENDING_MESSAGES || this.pendingBytes + bytes > MAX_PENDING_BYTES) {
                 throw new LiveShareError('BACKPRESSURE', '共享正在重新同步，请稍候。');
             }
-        } catch (error) { this.report(error, payload?.type?.startsWith?.('broadcast:')); return; }
+        } catch (error) { this.report(error, payload?.type?.startsWith?.('broadcast:'), payload); return; }
         this.pending++;
         this.pendingBytes += bytes;
         this.queue = this.queue.then(async () => { if (!this.disposed) await this.processMessage(payload); })
-            .catch((error) => this.report(error, payload?.type?.startsWith?.('broadcast:'))).finally(() => {
+            .catch((error) => this.report(error, payload?.type?.startsWith?.('broadcast:'), payload)).finally(() => {
                 this.pending--; this.pendingBytes -= bytes;
             });
         await this.queue;
     }
 
-    private report(error: any, isBroadcast = false) {
+    private report(error: any, isBroadcast = false, payload?: any) {
         if (this.disposed) return;
         const known = error instanceof LiveShareError;
-        this.send({ type: isBroadcast ? 'broadcast:error' : 'error', code: known ? error.code : 'UNAVAILABLE', message: known ? error.message : '共享暂时不可用，请稍后重新连接。' });
+        this.send({ type: isBroadcast ? 'broadcast:error' : 'error', code: known ? error.code : 'UNAVAILABLE', message: known ? error.message : '共享暂时不可用，请稍后重新连接。',
+            ...(payload?.type === 'page' ? { operation: 'page', requestId: typeof payload.requestId === 'string' ? payload.requestId.slice(0, 96) : undefined } : {}) });
     }
 
     private async checkLogin() {
@@ -138,6 +141,8 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
             this.peer = await share.connectPresence({ uid: this.user._id, tabId: payload.tabId, pageId: payload.pageId,
                 connectionId: this.connectionId, deviceId: payload.deviceId, domainId: this.domain._id, workspaceId: scope.workspaceId,
                 url: pageAllowed ? payload.url : '', title: payload.title, visible: payload.visible, canTeach: this.canTeach, serverId });
+            this.activePageGrant = pageAllowed ? payload.pageGrant : undefined;
+            this.lastGrantRenewal = Date.now();
             emitLiveShare({ uid: this.peer.uid, tabId: this.peer.tabId,
                 message: { type: 'peer-connected', connectionId: this.connectionId } });
             this.lastPeerCheck = Date.now();
@@ -158,8 +163,21 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
             }
             this.lastPeerCheck = Date.now();
         }
+        if (payload.type === 'page') {
+            this.peer = await share.updatePresencePage(this.peer, payload);
+            this.activePageGrant = payload.url ? payload.pageGrant : undefined;
+            this.lastGrantRenewal = Date.now();
+            this.lastAuthorization = 0; this.lastBroadcastAuthorization = 0;
+            this.send({ type: 'page-ready', pageId: this.peer.pageId, requestId: payload.requestId });
+            await this.checkSession(true);
+            return;
+        }
         if (payload.type === 'pulse') {
-            await share.pulsePresence(this.peer, payload.visible);
+            await share.pulsePresence(this.peer, payload.visible && (!!this.peer.url || this.canTeach));
+            if (this.activePageGrant && Date.now() - this.lastGrantRenewal >= 60 * 60 * 1000) {
+                if (!await share.renewPageGrant(this.peer, this.activePageGrant)) this.activePageGrant = undefined;
+                this.lastGrantRenewal = Date.now();
+            }
             const followed = await broadcast.follow(this.peer, emitLiveShare);
             if (followed) this.currentBroadcast = followed;
             if (!this.canTeach && !payload.visible && this.currentSession) {
@@ -176,10 +194,10 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         } else if (payload.type.startsWith('broadcast:')) await this.processBroadcast(payload);
         else if (payload.type === 'list') {
             if (!this.canTeach) throw new LiveShareError('FORBIDDEN', '只有老师可以选择共享学员。');
-            this.send({ type: 'students', students: await share.listStudents(this.peer.uid, this.domain._id) });
+            this.send({ type: 'students', students: await share.listStudents(this.peer.uid, this.peer.domainId) });
         } else if (payload.type === 'start') {
             if (!this.canTeach) throw new LiveShareError('FORBIDDEN', '只有老师可以发起共享。');
-            await share.teacherScope(this.peer.uid, this.domain._id);
+            await share.teacherScope(this.peer.uid, this.peer.domainId);
             this.currentSession = await share.startSession(this.peer, payload.studentUid, payload.tabId, emitLiveShare);
             this.lastAuthorization = Date.now();
         } else if (payload.type === 'stop') {
@@ -473,7 +491,7 @@ export async function injectLiveShare(handler: Handler) {
         try { pageGrant = await share.issuePageGrant(handler.user._id, domainId, path); } catch { /* Assistance remains available. */ }
     }
     handler.UiContext.liveShare = {
-        enabled: true, uid: handler.user._id, canTeach, pageGrant, socketUrl: handler.url('live_share_conn', { domainId }),
+        enabled: true, uid: handler.user._id, canTeach, pageGrant, domainId, socketUrl: handler.url('live_share_conn', { domainId }),
     };
 }
 

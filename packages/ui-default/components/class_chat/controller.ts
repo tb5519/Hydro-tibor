@@ -1,5 +1,4 @@
 import { captureProblemSnapshot, canCaptureProblemSnapshot } from './snapshot';
-import { createStudentChatReminder } from './sound';
 import { installChatPanelDrag } from './drag';
 import {
   ChatMessage, ChatPeer, ChatRoster, ClassChatConfig, fileSize, messageSummary, peerKey, safeAssetUrl,
@@ -27,14 +26,13 @@ export function installClassChat(config: ClassChatConfig) {
   const win = window;
   const lifetime = new AbortController();
   const signal = lifetime.signal;
-  const reminder = createStudentChatReminder(config.uid, !config.canTeach);
   const host = doc.createElement('aside');
   host.className = 'class-chat';
   host.dataset.liveSharePrivate = '';
   host.dataset.classChat = '';
   host.setAttribute('aria-label', '师生消息');
   host.innerHTML = `<button type="button" class="class-chat__launcher" aria-label="打开师生消息，可拖动调整位置" title="师生消息 · 拖动调整位置" aria-haspopup="dialog" aria-expanded="false" aria-controls="class-chat-panel">
-    <span class="class-chat__launcher-avatar"></span><span class="class-chat__launcher-mark">${icon('chat')}</span><span class="class-chat__badge" hidden></span>
+    <span class="class-chat__launcher-hint"${config.canTeach ? ' hidden' : ''}>给老师发消息</span><span class="class-chat__launcher-avatar"></span><span class="class-chat__launcher-mark">${icon('chat')}</span><span class="class-chat__badge" hidden></span>
   </button>
   <section class="class-chat__panel" id="class-chat-panel" role="dialog" aria-label="师生消息" hidden tabindex="-1">
     <header class="class-chat__top"><div><span class="class-chat__eyebrow">随时聊一聊</span><h2>师生消息</h2></div><button type="button" class="class-chat__icon-button" data-close aria-label="收起消息">${icon('close')}</button></header>
@@ -102,6 +100,7 @@ export function installClassChat(config: ClassChatConfig) {
   let drag: { pointerId: number; startX: number; startY: number; left: number; top: number; moved: boolean } | null = null;
   let suppressClick = false;
   let position = { x: 1, y: 0.74 };
+  let launcherIdentity = '';
   try {
     const saved = JSON.parse(localStorage.getItem(positionKey) || 'null');
     if (Number.isFinite(saved?.x) && Number.isFinite(saved?.y)) position = { x: Math.max(0, Math.min(1, saved.x)), y: Math.max(0, Math.min(1, saved.y)) };
@@ -123,12 +122,20 @@ export function installClassChat(config: ClassChatConfig) {
     target.replaceChildren();
     const address = safeAssetUrl(url, win.location.href);
     if (address) {
-      const image = element('img'); image.src = address; image.alt = ''; image.loading = 'lazy';
+      const image = element('img'); image.src = address; image.alt = ''; image.loading = 'lazy'; image.draggable = false;
       image.addEventListener('error', () => { target.textContent = name.slice(0, 1) || '聊'; }, { once: true });
       target.append(image);
     } else target.textContent = name.slice(0, 1) || '聊';
   }
-  avatar(query('.class-chat__launcher-avatar'), config.name || '聊', config.avatarUrl);
+  function renderLauncherAvatar() {
+    const teacher = !config.canTeach && defaultTeacher();
+    const name = config.canTeach ? config.name || '聊' : teacher ? teacher.name : '老师';
+    const url = config.canTeach ? config.avatarUrl : teacher ? teacher.avatarUrl : undefined;
+    const identity = JSON.stringify([name, url]);
+    if (identity === launcherIdentity) return;
+    launcherIdentity = identity;
+    avatar(query('.class-chat__launcher-avatar'), name, url);
+  }
 
   function notify(text: string, error = false, temporary = false) {
     win.clearTimeout(feedbackTimer);
@@ -151,11 +158,20 @@ export function installClassChat(config: ClassChatConfig) {
     if (!response.ok || result.error) throw Object.assign(new Error(result.error?.message || '暂时无法完成，请稍后再试。'), { status: response.status });
     return result;
   }
-  function placeLauncher() {
+  function launcherBounds() {
     const view = win.visualViewport;
     const width = view?.width || win.innerWidth; const height = view?.height || win.innerHeight;
-    host.style.left = `${(view?.offsetLeft || 0) + 14 + position.x * Math.max(0, width - 80)}px`;
-    host.style.top = `${(view?.offsetTop || 0) + 14 + position.y * Math.max(0, height - 80)}px`;
+    const hint = query('.class-chat__launcher-hint');
+    const hintWidth = config.canTeach ? 52 : Math.max(52, hint.offsetWidth);
+    const side = 14 + Math.max(0, (hintWidth - 52) / 2);
+    const top = config.canTeach ? 14 : 14 + hint.offsetHeight + 8;
+    return { left: (view?.offsetLeft || 0) + side, top: (view?.offsetTop || 0) + top,
+      width: Math.max(0, width - side * 2 - 52), height: Math.max(0, height - top - 66) };
+  }
+  function placeLauncher() {
+    const bounds = launcherBounds();
+    host.style.left = `${bounds.left + position.x * bounds.width}px`;
+    host.style.top = `${bounds.top + position.y * bounds.height}px`;
   }
   function savePosition() {
     try { localStorage.setItem(positionKey, JSON.stringify(position)); } catch { /* Optional. */ }
@@ -177,6 +193,7 @@ export function installClassChat(config: ClassChatConfig) {
     return roster.peers.find((peer) => peer.uid === roster.defaultPeerUid) || roster.peers[0];
   }
   function renderPeers() {
+    renderLauncherAvatar();
     const needle = search.value.trim().toLocaleLowerCase();
     peersRoot.replaceChildren();
     const peers = roster.peers.filter((peer) => `${peer.name} ${peer.uid}`.toLocaleLowerCase().includes(needle));
@@ -216,9 +233,7 @@ export function installClassChat(config: ClassChatConfig) {
     badge.textContent = roster.unread > 99 ? '99+' : String(roster.unread);
     launcher.classList.toggle('has-unread', roster.unread > 0);
     launcher.setAttribute('aria-label', roster.unread ? `${roster.unread} 条未读消息，打开师生消息` : '打开师生消息，可拖动调整位置');
-    launcher.title = roster.unread && !config.canTeach && !reminder.isUnlocked()
-      ? '老师有新消息 · 点击查看（浏览器需先点击页面才能播放提醒）' : '师生消息 · 拖动调整位置';
-    reminder.setUnread(roster.unread > 0);
+    launcher.title = config.canTeach ? '师生消息 · 拖动调整位置' : '给老师发消息 · 拖动调整位置';
     renderPeerStatus();
     updateControls();
   }
@@ -241,6 +256,12 @@ export function installClassChat(config: ClassChatConfig) {
         const resumeConnection = authorizationLost;
         authorizationLost = false;
         if (resumeConnection) connect();
+        const previousPeers = new Map(roster.peers.map((peer) => [peerKey(peer), peer]));
+        const incoming = !config.canTeach && hasFetchedRoster && !resumeConnection ? (result.peers as ChatPeer[]).filter((peer) => {
+          const previous = previousPeers.get(peerKey(peer));
+          return peer.unread > 0 && (peer.unread > (previous?.unread || 0)
+            || peer.unread >= (previous?.unread || 0) && peer.lastAt !== previous?.lastAt);
+        }).sort((a, b) => new Date(b.lastAt || 0).getTime() - new Date(a.lastAt || 0).getTime())[0] : undefined;
         roster = { ...roster, ...result };
         hasFetchedRoster = true;
         if (selected) {
@@ -249,7 +270,13 @@ export function installClassChat(config: ClassChatConfig) {
           else { selected = null; messages = []; renderMessages(); }
         }
         renderPeers();
-        if (!selected && !config.canTeach && defaultTeacher() && opened) await selectPeer(defaultTeacher()!);
+        if (incoming) {
+          // Reveal the teacher's new message without stealing a child's editor
+          // focus or restarting their program. Repeated polls do not reopen it.
+          if (!opened) setOpen(true, { focus: false, load: false });
+          if (!selected || peerKey(selected) !== peerKey(incoming)) await selectPeer(incoming, false);
+          else { await loadMessages(); scrollBottom(); void markRead(); }
+        } else if (!selected && !config.canTeach && defaultTeacher() && opened) await selectPeer(defaultTeacher()!);
       } catch (error) {
         if ([401, 403].includes((error as any).status)) {
           authorizationLost = true;
@@ -426,7 +453,7 @@ export function installClassChat(config: ClassChatConfig) {
     notify(''); updateControls(); input.focus();
     return true;
   }
-  async function selectPeer(peer: ChatPeer) {
+  async function selectPeer(peer: ChatPeer, focus = true) {
     if (sending) return;
     if (selected) drafts.set(peerKey(selected), input.value);
     const same = selected && peerKey(selected) === peerKey(peer);
@@ -438,7 +465,7 @@ export function installClassChat(config: ClassChatConfig) {
     panel.classList.add('show-conversation');
     renderPeers(); renderMessages();
     await loadMessages(); scrollBottom(); void markRead();
-    if (win.innerWidth > 640) input.focus({ preventScroll: true });
+    if (focus && win.innerWidth > 640) input.focus({ preventScroll: true });
   }
   async function send(snapshot = false) {
     if (!selected || sending) return;
@@ -475,16 +502,17 @@ export function installClassChat(config: ClassChatConfig) {
     } catch (error) { if (!signal.aborted) notify((error as Error).message, true); }
     finally { sending = false; sendButton.innerHTML = `发送 ${icon('send')}`; updateControls(); }
   }
-  function setOpen(value: boolean) {
+  function setOpen(value: boolean, options: { focus?: boolean; load?: boolean } = {}) {
     opened = value; panel.hidden = !value;
     launcher.setAttribute('aria-expanded', String(value)); host.classList.toggle('is-open', value);
     if (value) {
-      void refreshRoster();
+      if (options.load !== false) void refreshRoster();
       updateControls();
       panelDrag.refresh();
-      if (selected) { void loadMessages(); input.focus({ preventScroll: true }); }
-      else if (!config.canTeach && defaultTeacher()) void selectPeer(defaultTeacher()!);
-      else { renderMessages(); panel.focus({ preventScroll: true }); }
+      if (options.load === false) return;
+      if (selected) { void loadMessages(); if (options.focus !== false) input.focus({ preventScroll: true }); }
+      else if (!config.canTeach && defaultTeacher()) void selectPeer(defaultTeacher()!, options.focus !== false);
+      else { renderMessages(); if (options.focus !== false) panel.focus({ preventScroll: true }); }
     } else launcher.focus({ preventScroll: true });
   }
   function changed() {
@@ -518,6 +546,7 @@ export function installClassChat(config: ClassChatConfig) {
     if (event.button !== 0 || !event.isPrimary) return;
     const rect = launcher.getBoundingClientRect();
     drag = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, left: rect.left, top: rect.top, moved: false };
+    event.preventDefault();
     launcher.setPointerCapture(event.pointerId); suppressClick = false;
   }, { signal });
   launcher.addEventListener('pointermove', (event) => {
@@ -526,9 +555,9 @@ export function installClassChat(config: ClassChatConfig) {
     if (!drag.moved && Math.hypot(dx, dy) < 6) return;
     drag.moved = true; suppressClick = true;
     host.classList.add('is-dragging');
-    const view = win.visualViewport;
-    position = { x: Math.max(0, Math.min(1, (drag.left + dx - 14 - (view?.offsetLeft || 0)) / Math.max(1, (view?.width || win.innerWidth) - 80))),
-      y: Math.max(0, Math.min(1, (drag.top + dy - 14 - (view?.offsetTop || 0)) / Math.max(1, (view?.height || win.innerHeight) - 80))) };
+    const bounds = launcherBounds();
+    position = { x: Math.max(0, Math.min(1, (drag.left + dx - bounds.left) / Math.max(1, bounds.width))),
+      y: Math.max(0, Math.min(1, (drag.top + dy - bounds.top) / Math.max(1, bounds.height))) };
     placeLauncher();
   }, { signal });
   const finishDrag = (event: PointerEvent) => {
@@ -539,12 +568,15 @@ export function installClassChat(config: ClassChatConfig) {
   };
   launcher.addEventListener('pointerup', finishDrag, { signal });
   launcher.addEventListener('pointercancel', finishDrag, { signal });
+  launcher.addEventListener('lostpointercapture', finishDrag, { signal });
+  launcher.addEventListener('dragstart', (event) => event.preventDefault(), { signal });
   launcher.addEventListener('click', (event) => { if (suppressClick && event.detail) { suppressClick = false; return; } setOpen(!opened); }, { signal });
   launcher.addEventListener('keydown', (event) => {
     if (!event.altKey || !event.key.startsWith('Arrow')) return;
     event.preventDefault();
-    position.x = Math.max(0, Math.min(1, position.x + (event.key === 'ArrowLeft' ? -16 : event.key === 'ArrowRight' ? 16 : 0) / Math.max(1, win.innerWidth - 80)));
-    position.y = Math.max(0, Math.min(1, position.y + (event.key === 'ArrowUp' ? -16 : event.key === 'ArrowDown' ? 16 : 0) / Math.max(1, win.innerHeight - 80)));
+    const bounds = launcherBounds();
+    position.x = Math.max(0, Math.min(1, position.x + (event.key === 'ArrowLeft' ? -16 : event.key === 'ArrowRight' ? 16 : 0) / Math.max(1, bounds.width)));
+    position.y = Math.max(0, Math.min(1, position.y + (event.key === 'ArrowUp' ? -16 : event.key === 'ArrowDown' ? 16 : 0) / Math.max(1, bounds.height)));
     placeLauncher(); savePosition();
   }, { signal });
   query('[data-close]').addEventListener('click', () => setOpen(false), { signal });
@@ -586,24 +618,28 @@ export function installClassChat(config: ClassChatConfig) {
   win.visualViewport?.addEventListener('resize', placeLauncher, { signal });
   win.visualViewport?.addEventListener('scroll', placeLauncher, { signal });
   win.addEventListener('online', changed, { signal });
+  // Only the application document changes during platform navigation. The
+  // private conversation, upload, draft and socket keep their existing lifetime.
+  win.addEventListener('onebyone:page-change', updateControls, { signal });
   doc.addEventListener('visibilitychange', () => { if (!doc.hidden) { changed(); void markRead(); } }, { signal });
   const polling = win.setInterval(() => { if (!doc.hidden || roster.unread) changed(); }, 15000);
   placeLauncher(); updateControls(); renderPeers(); void refreshRoster(); connect();
   const dispose = () => {
     disposed = true; lifetime.abort();
     win.clearInterval(polling); win.clearInterval(pingTimer); win.clearTimeout(reconnectTimer); win.clearTimeout(refreshTimer); win.clearTimeout(feedbackTimer);
-    socket?.close(); channel?.close(); reminder.dispose();
+    socket?.close(); channel?.close();
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     host.remove(); installed = null;
   };
   win.addEventListener('pagehide', (event) => {
     if (!event.persisted) { dispose(); return; }
-    cachedPage = true; socket?.close(); win.clearTimeout(reconnectTimer); reminder.setUnread(false);
+    cachedPage = true; socket?.close(); win.clearTimeout(reconnectTimer);
   }, { signal });
   win.addEventListener('pageshow', (event) => {
     if (!event.persisted) return;
     cachedPage = false; win.clearTimeout(reconnectTimer); connect(); changed();
   }, { signal });
+  win.addEventListener('onebyone:session-ended', dispose, { signal });
   installed = dispose;
   return dispose;
 }

@@ -1,15 +1,19 @@
 import { installBroadcastController } from './broadcast_controller';
 import { clearSessionAnnotations } from './annotation_cache';
+import type { DrawingAnchor, DrawingGeometry, DrawingNodeIdentity } from './drawing_anchor';
 
 export interface LiveShareConfig {
-  enabled: boolean; uid: number; canTeach: boolean; socketUrl: string; pageGrant?: string;
+  enabled: boolean; uid: number; canTeach: boolean; socketUrl: string; pageGrant?: string; domainId?: string;
 }
-type Controllers = {
+type Controllers<Identity = number> = {
   dispose(): void; setConnected(connected: boolean): void; snapshot?(): void; getPendingDrafts?(): any[];
   receive?(data: any): void; receiveCommand?(data: any): any;
   getEditorRect?(id: string): { x: number; y: number; width: number; height: number } | null;
   getFrameRect?(id: string): { x: number; y: number; width: number; height: number } | null;
   getDrawingDocument?(frameId?: string): Document | null;
+  getDrawingNodeId?(node: Element): Identity | null;
+  getDrawingNode?(identity: Identity): Element | null;
+  getDrawingGeometry?(anchor: DrawingAnchor): DrawingGeometry | null;
 };
 type Adapters = typeof import('./mirror') & typeof import('./editor') & typeof import('./frames') & typeof import('./drawing') & typeof import('./ide');
 interface Student { uid: number; name: string; online: boolean; tabs?: { tabId: string; title: string; visible: boolean }[] }
@@ -21,6 +25,16 @@ export function installLiveShare(config: LiveShareConfig, options: {
   loadBroadcastAdapters?: () => Promise<typeof import('./broadcast_adapters')>;
 } = {}) {
   if (installed || !config?.enabled || !config.uid || window.top !== window) return installed;
+  // The first eligible page can start this service after the host booted. Never
+  // clear/replace the child UiContext's grant while preparing our private state.
+  config = { ...config };
+  const platformShell = (window as any).__onebyonePlatformShell;
+  const contentWindow = (): Window | null => platformShell ? platformShell.contentWindow() : window;
+  let contentReady = !platformShell;
+  let sourceDocument: Document | null = platformShell ? null : document;
+  let currentPageUrl = location.pathname + location.search;
+  let currentPageTitle = document.title.slice(0, 160);
+  if (platformShell) config.pageGrant = undefined;
   const uid = config.uid;
   const randomId = () => Array.from(window.crypto.getRandomValues(new Uint8Array(16)), (value) => value.toString(16).padStart(2, '0')).join('');
   const identity = (storage: Storage | null, key: string) => {
@@ -40,6 +54,11 @@ export function installLiveShare(config: LiveShareConfig, options: {
   const deviceKey = `onebyone.live-share.device:${uid}`;
   let deviceId = identity(localStorage, deviceKey);
   let pageId = randomId();
+  let announcedPageId = '';
+  let pendingPageUpdate: any = null;
+  let helloPageUpdate: any = null;
+  let pageRetryTimer = 0;
+  let pageRetryAttempt = 0;
   const resumeKey = `onebyone.live-share.resume:${uid}`;
   const backupKey = `onebyone.live-share.unsynced:${uid}`;
   const closedSessions = new Set<string>();
@@ -75,14 +94,14 @@ export function installLiveShare(config: LiveShareConfig, options: {
   let broadcast: ReturnType<typeof installBroadcastController> | null = null;
   let sourceMirror: Controllers | null = null;
   let sourceEditors: Controllers | null = null;
-  let sourceFrames: Controllers | null = null;
+  let sourceFrames: Controllers<DrawingNodeIdentity> | null = null;
   let sourceDrawing: Controllers | null = null;
   let sourceIde: Controllers | null = null;
   let viewerIde: Controllers | null = null;
   let sourceDrawingRoot: HTMLElement | null = null;
   let viewerMirror: Controllers | null = null;
   let viewerEditors: Controllers | null = null;
-  let viewerFrames: Controllers | null = null;
+  let viewerFrames: Controllers<DrawingNodeIdentity> | null = null;
   let viewerDrawing: Controllers | null = null;
   let localDrawing: Controllers | null = null;
   let localDrawingRoot: HTMLElement | null = null;
@@ -136,6 +155,11 @@ export function installLiveShare(config: LiveShareConfig, options: {
     }
     return adaptersPromise;
   }
+  function loadSourceAdapters(): Promise<Adapters> {
+    if (!platformShell) return loadAdapters();
+    const factories = (contentWindow() as any)?.__onebyoneLiveShareSources;
+    return factories?.loadAdapters ? factories.loadAdapters() : Promise.reject(new Error('Page is loading'));
+  }
   function send(payload: any) {
     // Never queue stale clicks/edits in a reconnecting socket.
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
@@ -171,14 +195,29 @@ export function installLiveShare(config: LiveShareConfig, options: {
     if (notice && source) notice.querySelector('span')!.textContent = value
       ? `${source.teacherName || '老师'}正在协助` : '共享连接中断，正在重新连接…';
   }
-  function drawingRoot() {
-    const node = el('div', 'live-share-drawing-root');
+  function drawingRoot(doc = document) {
+    const node = doc.createElement('div'); node.className = 'live-share-drawing-root';
     node.dataset.liveSharePrivate = ''; node.dataset.liveShareUi = '';
     node.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147482000';
-    document.body.append(node);
+    doc.body.append(node);
     return node;
   }
-  function updateLocalDrawing() { localDrawing?.setConnected(!disposed && !suspended && !viewing && !source && !broadcast?.active); }
+  function updateLocalDrawing() { localDrawing?.setConnected(contentReady && !disposed && !suspended && !viewing && !source && !broadcast?.active); }
+  let localDrawingGeneration = 0;
+  function installLocalDrawing() {
+    const version = ++localDrawingGeneration;
+    localDrawing?.dispose(); localDrawing = null; localDrawingRoot?.remove(); localDrawingRoot = null;
+    if (!config.canTeach || !contentReady) return;
+    const win = contentWindow();
+    const drawing = platformShell ? (win as any)?.__onebyoneLiveShareSources?.loadDrawing?.()
+      : options.loadAdapters ? options.loadAdapters() : import(/* webpackChunkName: "live-share-drawing" */ './drawing');
+    drawing?.then((adapter) => {
+      if (disposed || version !== localDrawingGeneration || !contentReady || win !== contentWindow() || !adapter.attachTemporaryDrawing) return;
+      localDrawingRoot = drawingRoot(win!.document);
+      localDrawing = adapter.attachTemporaryDrawing({ pageId, container: localDrawingRoot, teacher: true, scopeDocument: true });
+      updateLocalDrawing();
+    }).catch(() => { /* The local pen must not interrupt the page. */ });
+  }
   function clearSource() {
     sourceMirror?.dispose(); sourceEditors?.dispose();
     sourceFrames?.dispose(); sourceFrames = null;
@@ -473,7 +512,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     }
   }
   async function startSource(next: Session) {
-    if (next.pageId !== pageId || !config.pageGrant) return;
+    if (!contentReady || next.pageId !== pageId || !config.pageGrant) return;
     if (source?.sessionId === next.sessionId && source.pageId === next.pageId && sourceMirror && sourceEditors) {
       connected(true); return;
     }
@@ -488,7 +527,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
       if (message.includes('同步中断')) { ready = false; connected(false); socket?.close(); }
     };
     try {
-      const adapters = await loadAdapters();
+      const adapters = await loadSourceAdapters();
       if (disposed || source !== next) return;
       sourceEditors = adapters.attachSourceEditors({ pageId,
         send: (data) => relay(next, 'editor', data),
@@ -498,7 +537,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
         send: (data) => relay(next, 'mirror', data), sendAck: (data) => relay(next, 'ack', data), onStatus: sourceStatus,
       }) || null;
       if (adapters.attachTemporaryDrawing) {
-        sourceDrawingRoot = drawingRoot();
+        sourceDrawingRoot = drawingRoot(contentWindow()!.document);
         sourceDrawing = adapters.attachTemporaryDrawing({ pageId, container: sourceDrawingRoot, teacher: false,
           anchors: {
             identify: (node) => {
@@ -562,16 +601,40 @@ export function installLiveShare(config: LiveShareConfig, options: {
   }
   function onMessage(message: any) {
     if (!message || typeof message !== 'object') return;
+    if ((message.type === 'error' || message.error) && message.operation === 'page') {
+      // Late failures/acks from a previous navigation cannot revive that page.
+      // Handle transient page failures before broadcast sees a generic error:
+      // retrying this state must not restart the room or its healthy socket.
+      if (pendingPageUpdate?.requestId !== message.requestId) return;
+      if (/^(?:RATE_LIMIT|BACKPRESSURE|UNAVAILABLE|NOT_READY)$/.test(message.code || '')) {
+        schedulePageRetry();
+        return;
+      }
+      clearTimeout(pageRetryTimer); pageRetryTimer = 0; pendingPageUpdate = null;
+    }
     broadcast?.receive(message);
     if (String(message.type).startsWith('broadcast:')) return;
     if (message.type === 'ready') {
       ready = true; reconnectDelay = 750;
+      if (platformShell) {
+        // Hello acknowledges exactly the page state sent when this socket opened.
+        // Navigation may have already advanced to a later ready/loading state.
+        if (pendingPageUpdate === helloPageUpdate) pendingPageUpdate = null;
+        if (pendingPageUpdate) transmitCurrentPage();
+        else if (announcedPageId !== pageId) sendCurrentPage();
+      }
       for (const sessionId of closedSessions) send({ type: 'stop', sessionId });
       if (roster) send({ type: 'list' });
       if (config.canTeach && deferredStart) {
         const target = deferredStart; deferredStart = null;
         chooseStudent(target.studentUid, target.tabId, true);
       } else if (config.canTeach && resume && !viewing) chooseStudent(resume.studentUid, resume.tabId);
+      return;
+    }
+    if (message.type === 'page-ready') {
+      if (pendingPageUpdate?.requestId === message.requestId && pendingPageUpdate.pageId === message.pageId) {
+        clearTimeout(pageRetryTimer); pageRetryTimer = 0; pendingPageUpdate = null; pageRetryAttempt = 0;
+      }
       return;
     }
     if (message.type === 'students') { students = Array.isArray(message.students) ? message.students : []; renderStudents(); }
@@ -605,6 +668,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
   function connect() {
     if (!identityReady) { shouldConnect = true; return; }
     if (disposed || suspended || authenticationRevoked || socket && socket.readyState < WebSocket.CLOSING) return;
+    if (platformShell && !config.canTeach && (!contentReady || !config.pageGrant)) return;
     const url = new URL(config.socketUrl, window.location.href);
     if (url.origin !== window.location.origin) return;
     url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -619,8 +683,10 @@ export function installLiveShare(config: LiveShareConfig, options: {
         const currentDevice = localStorage?.getItem(deviceKey);
         if (currentDevice && /^[a-zA-Z0-9_-]{8,96}$/.test(currentDevice)) deviceId = currentDevice;
       } catch { /* Keep the stable in-memory identity if storage is unavailable. */ }
+      announcedPageId = pageId;
+      helloPageUpdate = pendingPageUpdate;
       send({ type: 'hello', tabId, pageId, pageGrant: config.pageGrant, deviceId,
-        url: window.location.pathname + window.location.search, title: document.title.slice(0, 160), visible: !document.hidden });
+        url: contentReady ? currentPageUrl : '', title: currentPageTitle, visible: !document.hidden });
       clearInterval(pulseTimer);
       pulseTimer = window.setInterval(() => {
         if (Date.now() - lastPong > 65000) { ws.close(); return; }
@@ -636,7 +702,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     });
     ws.addEventListener('close', (event: CloseEvent) => {
       if (socket !== ws || disposed) return;
-      ready = false; socket = null; pendingStart = 0; clearInterval(pulseTimer); connected(false);
+      ready = false; socket = null; pendingStart = 0; clearInterval(pulseTimer); clearTimeout(pageRetryTimer); connected(false);
       if (event.code === 4003) {
         authenticationRevoked = true; clearTimeout(reconnectTimer); saveResume(null); deferredStart = null;
         preservePending(); clearSource(); closeView(); closeRoster(); broadcast?.authenticationLost();
@@ -738,6 +804,71 @@ export function installLiveShare(config: LiveShareConfig, options: {
   on(window, 'keyup', (event: KeyboardEvent) => { if (event.code === 'Space') endViewPan(); }, { capture: true });
   on(window, 'blur', endViewPan);
   on(document, 'visibilitychange', () => { if (ready) send({ type: 'pulse', visible: !document.hidden }); });
+  function schedulePageRetry() {
+    clearTimeout(pageRetryTimer);
+    const update = pendingPageUpdate;
+    if (!update || disposed || suspended || authenticationRevoked) return;
+    pageRetryTimer = window.setTimeout(() => {
+      if (pendingPageUpdate === update) transmitCurrentPage();
+    }, Math.min(8000, 1000 * 2 ** Math.min(Math.max(0, pageRetryAttempt - 1), 3)));
+  }
+  function transmitCurrentPage() {
+    if (!pendingPageUpdate || !ready || disposed || suspended || authenticationRevoked) return;
+    clearTimeout(pageRetryTimer);
+    if (send(pendingPageUpdate)) { pageRetryAttempt++; schedulePageRetry(); }
+  }
+  function sendCurrentPage() {
+    clearTimeout(pageRetryTimer); pageRetryAttempt = 0;
+    pendingPageUpdate = { type: 'page', requestId: randomId(), pageId, domainId: config.domainId,
+      ...(contentReady && config.pageGrant ? { pageGrant: config.pageGrant, url: currentPageUrl } : { url: '' }),
+      title: contentReady ? currentPageTitle : '', visible: !document.hidden };
+    if (!ready) { connect(); return; }
+    transmitCurrentPage();
+  }
+  function pageLoading() {
+    if (!platformShell || !contentReady) return;
+    contentReady = false; pageId = randomId(); config.pageGrant = undefined;
+    clearSource(); broadcast?.pageLoading(); installLocalDrawing();
+    sendCurrentPage();
+  }
+  function pageChanged(event: CustomEvent) {
+    if (!platformShell || disposed || event.detail?.window !== contentWindow()) return;
+    const page = contentWindow();
+    const doc = page?.document;
+    if (!doc) return;
+    const next = event.detail.context?.liveShare as LiveShareConfig | undefined;
+    const sameDocument = sourceDocument === doc;
+    const allowed = next?.enabled && next.uid === uid && next.canTeach === config.canTeach;
+    const factories = (page as any).__onebyoneLiveShareSources;
+    const nextReady = !!(allowed && next.pageGrant && factories?.loadAdapters && factories?.loadBroadcastAdapters);
+    // DOM ready, iframe load and the final module boot all announce the same
+    // document. Title/hash/PJAX history changes must not rotate its editor epoch.
+    // A history URL alone also cannot repurpose this document's exact-path grant.
+    if (sameDocument && contentReady && nextReady && next.pageGrant === config.pageGrant) {
+      currentPageTitle = String(event.detail.title || '').slice(0, 160);
+      return;
+    }
+    const wasReady = contentReady;
+    const previousGrant = config.pageGrant;
+    if (!sameDocument) {
+      pageLoading(); sourceDocument = doc; pageId = randomId();
+    } else if (contentReady && (!nextReady || next.pageGrant !== config.pageGrant)) pageLoading();
+    if (allowed) {
+      Object.assign(config, next);
+      if (!sameDocument || previousGrant !== next.pageGrant) {
+        const url = new URL(event.detail.url, location.href);
+        currentPageUrl = url.pathname + url.search;
+      }
+      currentPageTitle = String(event.detail.title || '').slice(0, 160);
+    }
+    contentReady = nextReady;
+    if (!sameDocument || wasReady !== contentReady || previousGrant !== config.pageGrant) {
+      sendCurrentPage(); installLocalDrawing();
+      broadcast?.pageReady();
+    }
+  }
+  on(window, 'onebyone:page-loading', pageLoading);
+  on(window, 'onebyone:page-change', pageChanged);
   on(window, 'pagehide', () => {
     // Keep the server's short reconnect grace across a student's navigation.
     preservePending();
@@ -751,12 +882,13 @@ export function installLiveShare(config: LiveShareConfig, options: {
   });
   const cleanup = () => {
     preservePending();
-    disposed = true; generation++; clearTimeout(reconnectTimer); clearTimeout(endTimer); clearInterval(pulseTimer); clearInterval(rosterTimer);
+    disposed = true; generation++; clearTimeout(reconnectTimer); clearTimeout(endTimer); clearTimeout(pageRetryTimer); clearInterval(pulseTimer); clearInterval(rosterTimer);
     tabChannel?.close(); socket?.close(); clearSource(); closeRoster(); closeView(); disposers.forEach((dispose) => dispose()); installed = undefined;
-    localDrawing?.dispose(); localDrawing = null; localDrawingRoot?.remove(); localDrawingRoot = null;
+    localDrawingGeneration++; localDrawing?.dispose(); localDrawing = null; localDrawingRoot?.remove(); localDrawingRoot = null;
     broadcast?.dispose(); broadcast = null;
   };
   installed = cleanup;
+  on(window, 'onebyone:session-ended', cleanup);
   // Duplicating/opening a tab copies sessionStorage. Claim a fresh identity if
   // another live document already owns it; navigation's departing document is suspended.
   try {
@@ -777,21 +909,17 @@ export function installLiveShare(config: LiveShareConfig, options: {
   broadcast = installBroadcastController(config, { send, connect, reconnect: () => {
     ready = false; connected(false);
     if (socket) socket.close(); else connect();
-  }, pageId: () => pageId, ready: () => ready,
+  }, pageId: () => pageId, sourceReady: () => contentReady, ready: () => ready,
     sharing: () => !!viewing || !!source || !!pendingStart || ending, onActiveChange: updateLocalDrawing },
-  { loadAdapters: options.loadBroadcastAdapters });
+  { loadAdapters: options.loadBroadcastAdapters,
+    loadSourceAdapters: platformShell ? () => {
+      const factories = (contentWindow() as any)?.__onebyoneLiveShareSources;
+      return factories?.loadBroadcastAdapters ? factories.loadBroadcastAdapters() : Promise.reject(new Error('Page is loading'));
+    } : undefined });
   if (!config.canTeach || resume || broadcast.wantsConnection()) connect();
   if (config.canTeach) showBackups();
   // A small independent chunk enables the local teacher pen without loading
   // rrweb, collaboration editors or opening a room on every teacher page.
-  if (config.canTeach) {
-    const drawing = options.loadAdapters ? options.loadAdapters() : import(/* webpackChunkName: "live-share-drawing" */ './drawing');
-    drawing.then((adapter) => {
-      if (disposed || !adapter.attachTemporaryDrawing) return;
-      localDrawingRoot = drawingRoot();
-      localDrawing = adapter.attachTemporaryDrawing({ pageId, container: localDrawingRoot, teacher: true, scopeDocument: true });
-      updateLocalDrawing();
-    }).catch(() => { /* Local drawing must never interrupt the teacher's page. */ });
-  }
+  installLocalDrawing();
   return cleanup;
 }

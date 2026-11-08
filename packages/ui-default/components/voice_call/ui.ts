@@ -60,7 +60,7 @@ export function installVoiceCall(config: VoiceConfig, options: {
   const listStatus = el('p', 'voice-call-picker__status', '正在连接…'); listStatus.setAttribute('role', 'status');
   const list = el('div', 'voice-call-picker__list'); list.setAttribute('aria-label', '可拨打学员');
   const error = el('p', 'voice-call-picker__error'); error.setAttribute('role', 'alert'); error.hidden = true;
-  const foot = el('p', 'voice-call-picker__foot', '通话留在页面里。切换页面时会短暂重连，无需重新接听。');
+  const foot = el('p', 'voice-call-picker__foot', '通话留在这里，切换平台页面也可以继续聊。');
   picker.append(header, intro, searchLabel, listStatus, list, error, foot);
 
   const card = privateRoot(el('aside', 'voice-call-card')); card.hidden = true;
@@ -233,9 +233,14 @@ export function installVoiceCall(config: VoiceConfig, options: {
     window.clearInterval(rosterTimer);
     rosterTimer = window.setInterval(() => { if (picker.open) transport.send({ type: 'list' }); }, 10000);
   }
-  for (const opener of document.querySelectorAll<HTMLElement>('[data-voice-call-open]')) {
-    if (config.canTeach) on(opener, 'click', openPicker); else opener.hidden = true;
-  }
+  // The server-rendered assistant menu follows the current classroom. Delegate
+  // its action so replacing that menu does not replace the call or microphone.
+  on(document, 'click', ((event: MouseEvent) => {
+    const opener = (event.target as Element)?.closest?.('[data-voice-call-open]');
+    if (!opener || !config.canTeach) return;
+    event.preventDefault(); openPicker();
+  }) as EventListener);
+  if (!config.canTeach) document.querySelectorAll<HTMLElement>('[data-voice-call-open]').forEach((opener) => { opener.hidden = true; });
   on(search, 'input', renderStudents);
   on(picker, 'close', () => { window.clearInterval(rosterTimer); rosterTimer = 0; });
   on(picker, 'click', ((event: MouseEvent) => {
@@ -251,8 +256,10 @@ export function installVoiceCall(config: VoiceConfig, options: {
     if (titleBeforeRing !== null) document.title = titleBeforeRing;
     installed = undefined;
   };
-  // Page navigation releases this microphone; the same tab resumes its accepted call.
+  // Application pages navigate below this host. Only leaving the host, losing
+  // the authenticated account, or hanging up releases the microphone.
   on(window, 'pagehide', dispose);
+  on(window, 'onebyone:session-ended', dispose);
   const restore = (event: PageTransitionEvent) => {
     if (event.persisted) {
       window.removeEventListener('pageshow', restore);

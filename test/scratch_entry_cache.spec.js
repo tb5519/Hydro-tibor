@@ -9,10 +9,12 @@ const code = buildSync({
     bundle: true, write: false, format: 'cjs', define: { 'process.env.NODE_ENV': '"production"' },
 }).outputFiles[0].text;
 
-function setup() {
+function setup(options = {}) {
     const stores = new Map();
     const listeners = new Map();
     const requests = [];
+    const rawRequests = [];
+    const intercepted = [];
     let claimed = false;
     const urlOf = (request) => typeof request === 'string' ? request : request.url;
     const caches = {
@@ -35,28 +37,31 @@ function setup() {
         },
     };
     const location = new URL('https://classroom.test/service-worker.js');
+    const network = async (request, init) => {
+        requests.push(urlOf(request));
+        rawRequests.push({ request, init });
+        if (options.fetch) return options.fetch(request, init);
+        return new Response('current editor', { headers: { 'Cache-Control': 'no-cache' } });
+    };
     vm.runInNewContext(code, {
         module: { exports: {} }, exports: {}, URL, Request, Response, Headers, location, caches,
         console: { log() {}, debug() {}, warn() {} },
         self: { location, clients: { claim: async () => { claimed = true; } },
             addEventListener: (type, callback) => listeners.set(type, callback) },
-        fetch: async (request) => {
-            requests.push(urlOf(request));
-            return new Response('current editor', { headers: { 'Cache-Control': 'no-cache' } });
-        },
+        fetch: network,
     });
-    const cfg = { hosts: ['https://classroom.test/'], assets: ['https://cdn.test/'], domains: [] };
+    const cfg = { hosts: ['https://classroom.test/'], assets: ['https://cdn.test/'], domains: [], ...options.config };
     listeners.get('fetch')({ request: new Request('https://classroom.test/service-worker-config', {
         method: 'POST', body: JSON.stringify(cfg),
     }), respondWith() {} });
-    return { stores, caches, requests, get claimed() { return claimed; },
+    return { stores, caches, requests, rawRequests, intercepted, get claimed() { return claimed; },
         async fetch(url) {
             // Allow the real config message's async JSON parsing to finish.
             await new Promise(setImmediate);
             let response;
-            listeners.get('fetch')({ request: new Request(url), respondWith: (value) => { response = value; } });
-            assert(response, 'Expected this resource to be handled by the service worker');
-            return response;
+            const request = url instanceof Request ? url : new Request(url);
+            listeners.get('fetch')({ request, respondWith: (value) => { response = value; intercepted.push(request); } });
+            return response || network(request); // An unintercepted request proceeds through the browser normally.
         },
         async activate() {
             let pending;
@@ -78,6 +83,41 @@ test('old Scratch HTML never wins over the deployed entry, including signed-out 
         assert.equal(await (await sw.fetch(url)).text(), 'current editor');
         assert.equal(sw.requests.at(-1), url);
         assert.equal(await (await sw.caches.match(url)).text(), 'broken old editor', 'HTML must not be written back to CacheStorage');
+    }
+});
+
+test('document and iframe navigations preserve the original Request and never read or populate asset caches', async () => {
+    const sw = setup({ config: { domains: ['mirror.test'] } });
+    const cache = await sw.caches.open('ui-resources-cache');
+    for (const destination of ['document', 'iframe']) {
+        const url = `https://classroom.test/page-${destination}.html`;
+        await cache.put(url, new Response('stale HTML'));
+        const request = new Request(url, { credentials: 'include', redirect: 'manual' });
+        Object.defineProperties(request, { mode: { value: 'navigate' }, destination: { value: destination } });
+        assert.equal(await (await sw.fetch(request)).text(), 'current editor');
+        assert.equal(sw.rawRequests.at(-1).request, request);
+        assert.equal(sw.intercepted.includes(request), false, 'even forwarding fetch(request) loses browser navigation destination');
+        assert.equal(sw.rawRequests.at(-1).init, undefined, 'browser-managed navigation metadata must be preserved');
+        assert.equal(await (await sw.caches.match(url)).text(), 'stale HTML');
+    }
+});
+
+test('navigation POSTs and mutation requests pass through once with their bodies and failed responses intact', async () => {
+    const sw = setup({ config: { domains: ['mirror.test', 'second-mirror.test'] },
+        fetch: async () => new Response('do not submit twice', { status: 500, headers: { Vary: 'Sec-Fetch-Dest' } }) });
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+        const request = new Request('https://classroom.test/save', { method, body: 'answer=123', credentials: 'include', redirect: 'follow' });
+        if (method === 'POST') Object.defineProperties(request, { mode: { value: 'navigate' }, destination: { value: 'iframe' } });
+        const before = sw.requests.length;
+        const response = await sw.fetch(request);
+        assert.equal(response.status, 500);
+        assert.equal(response.headers.get('Vary'), 'Sec-Fetch-Dest');
+        assert.equal(await response.text(), 'do not submit twice');
+        assert.equal(sw.requests.length, before + 1);
+        assert.equal(sw.rawRequests.at(-1).request, request);
+        assert.equal(sw.intercepted.includes(request), false);
+        assert.equal(sw.rawRequests.at(-1).init, undefined);
+        assert.equal(await request.text(), 'answer=123');
     }
 });
 

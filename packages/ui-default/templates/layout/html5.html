@@ -6,7 +6,8 @@
 {% import "components/user.html" as user with context %}
 <!DOCTYPE html>
 {% set theme = (handler.user|default({})).theme|default('default') %}
-<html data-page="{{ page_name }}" data-layout="{{ layout_name }}" class="layout--{{ layout_name }} page--{{ page_name }}{% if UiContext.homeworkReview and page_name == 'homework_detail_problem' %} page--problem_detail{% endif %} theme--{{ theme }} nojs" data-mantine-color-scheme="{{ 'dark' if theme.includes('dark') else 'light' }}" lang="{{ UserContext.viewLang }}" data-app="Hydro">
+{% set persistentHost = (handler.request.method|upper) == 'GET' and handler.request.headers['sec-fetch-dest'] == 'document' and not isIE(handler.request.headers['user-agent']) and not handler.session.legacy and page_name != 'user_sudo_redirect' %}
+<html data-page="{{ page_name }}" data-layout="{{ layout_name }}" data-platform-shell="{{ 'host' if persistentHost else 'page' }}" class="layout--{{ layout_name }} page--{{ page_name }}{% if UiContext.homeworkReview and page_name == 'homework_detail_problem' %} page--problem_detail{% endif %} theme--{{ theme }} nojs" data-mantine-color-scheme="{{ 'dark' if theme.includes('dark') else 'light' }}" lang="{{ UserContext.viewLang }}" data-app="Hydro">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
@@ -74,10 +75,15 @@
     <script type="text/javascript" src="{{ UiContext.cdn_prefix }}resource/{{ global.Hydro.version['ui-default'] }}/lang-{{ _('__id') }}.js{% if UiContext.constantVersion %}?version={{ UiContext.constantVersion }}{% endif %}"></script>
     <script type="text/javascript" src="{{ UiContext.cdn_prefix }}hydro-{{ global.Hydro.version['ui-default'] }}.js{% if UiContext.staticVersion or (process.env.DEV and UiContext.constantVersion) %}?version={{ UiContext.staticVersion|default(UiContext.constantVersion|default('dev')) }}{% endif %}"></script>
   {% endif %}
-  {% block body %}{% endblock %}
-  {% include "partials/broadcast_dialog.html" %}
+  {% if not persistentHost %}
+    {% block body %}{% endblock %}
+    {% include "partials/broadcast_dialog.html" %}
+  {% else %}
+    <div style="position:fixed;inset:0;display:grid;place-items:center;background:#edf0f2;color:#657b8f;font-size:14px" role="status">正在打开页面…</div>
+    <noscript><iframe src="{{ handler.context.request.url }}" title="OneByOne 页面" style="position:fixed;inset:0;width:100%;height:100%;border:0"></iframe></noscript>
+  {% endif %}
   {% include "partials/teacher_assistant.html" %}
-  {% block script %}{% endblock %}
+  {% if not persistentHost %}{% block script %}{% endblock %}{% endif %}
   {% if not isIE(handler.request.headers['user-agent']) and not handler.session.legacy %}
     <script>
       window.UiContextNew = '{{ UiContext|json|jsesc|safe }}';

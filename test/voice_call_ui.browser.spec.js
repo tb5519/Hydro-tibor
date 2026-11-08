@@ -76,6 +76,35 @@ it('teacher can search and dial an available learner; mere presence never starts
     assert.deepEqual(errors, []);
 });
 
+it('content navigation and a replaced assistant menu preserve the active call until the account ends', async (t) => {
+    const { page, errors } = await fixture(t);
+    await page.locator('[data-voice-call-open]').click();
+    await page.evaluate((message) => deliver(message), roster);
+    await page.locator('[data-voice-student="5"]').click();
+    await page.evaluate((message) => deliver(message), call({ status: 'active', isOwner: true, acceptedAt: Date.now() }));
+    await page.waitForFunction(() => fakeAudio.ready);
+    const before = await page.evaluate(() => ({ audioStarts, audioStops, transport: transport.ready }));
+    await page.route('https://voice-ui.test/content/**', (route) => route.fulfill({ contentType: 'text/html', body: '<h1>下一页</h1><a href="/content/next">继续</a>' }));
+    await page.evaluate(() => {
+        const frame = document.createElement('iframe'); frame.id = 'content'; frame.src = '/content/first'; document.body.append(frame);
+        const assistant = document.querySelector('[data-teacher-assistant]');
+        assistant.replaceChildren(Object.assign(document.createElement('button'), { textContent: '新的语音入口' }));
+        assistant.firstElementChild.setAttribute('data-voice-call-open', '');
+        assistant.style.cssText = 'position:fixed;left:12px;top:12px;right:auto;bottom:auto';
+    });
+    await page.frameLocator('#content').getByRole('link', { name: '继续' }).click();
+    await page.waitForFunction(() => document.querySelector('#content').contentWindow.location.pathname === '/content/next');
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('onebyone:page-change', { detail: { window: document.querySelector('#content').contentWindow } })));
+    await page.locator('[data-voice-call-open]').click();
+    assert.equal(await page.locator('.voice-call-floating').isVisible(), true);
+    assert.deepEqual(await page.evaluate(() => ({ audioStarts, audioStops, transport: transport.ready })), before, 'no microphone or transport restart on content navigation');
+    await page.evaluate(() => window.dispatchEvent(new Event('onebyone:session-ended')));
+    assert.equal(await page.evaluate(() => fakeAudio.ready), false);
+    assert.equal(await page.evaluate(() => transport.ready), false);
+    assert.equal(await page.locator('.voice-call-floating').count(), 0);
+    assert.deepEqual(errors, []);
+});
+
 it('student sees a private incoming card and explicitly accepts before opening the microphone', async (t) => {
     const { page, errors } = await fixture(t, { student: true });
     await page.evaluate((message) => deliver(message), call());

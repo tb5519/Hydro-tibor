@@ -91,8 +91,8 @@ function pageAssets({ dev = false, cdnPrefix = '/', assets = manifest(), achieve
         _: (key) => (key === '__id' ? 'zh' : key),
         isIE: () => false,
         handler: {
-            user: { theme: 'default' }, domain: { ui: { name: 'OneByOne' } },
-            context: { request: { url: '/' } }, request: { path: '/', headers: {} }, session: {},
+            user: { _id: 0, theme: 'default', hasPerm: () => false, hasPriv: () => false }, domain: { ui: { name: 'OneByOne' } },
+            context: { request: { url: '/' } }, request: { method: 'get', path: '/', headers: { 'sec-fetch-dest': 'iframe' } }, session: {},
             renderTitle: () => 'OneByOne',
         },
         model: { system: { get: (key) => (key === 'server.url' ? 'http://localhost/' : 'OneByOne') } },

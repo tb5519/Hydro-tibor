@@ -32,6 +32,7 @@ before(async () => {
     const url = new URL(req.url, 'http://localhost');
     if (url.pathname === '/chat.js') { res.setHeader('content-type', 'text/javascript'); res.end(js); return; }
     if (url.pathname === '/asset/picture') { imageRequests++; res.setHeader('content-type', 'image/png'); res.setHeader('cache-control', 'private, no-store'); res.end(image); return; }
+    if (url.pathname.startsWith('/asset/avatar/')) { res.setHeader('content-type', 'image/png'); res.end(image); return; }
     if (url.pathname === '/chat-api') {
       const uid = Number(url.searchParams.get('uid'));
       if (forbiddenUsers.has(uid)) { res.statusCode = 403; out(res, { error: { message: '当前账号暂时没有聊天权限。' } }); return; }
@@ -72,7 +73,7 @@ before(async () => {
       const ids = uid === 2 ? teacherRosterIds : multipleTeachers ? [3, 2] : [2];
       const peers = ids.map((id) => {
         const items = records.filter((m) => m.from === uid && m.to === id || m.from === id && m.to === uid);
-        return { uid: id, name: names[id], domainId: 'classroom', online: onlineStudents.has(id), unread: items.filter((m) => m.to === uid && !m.read).length,
+        return { uid: id, name: names[id], avatarUrl: `/asset/avatar/${id}`, domainId: 'classroom', online: onlineStudents.has(id), unread: items.filter((m) => m.to === uid && !m.read).length,
           lastMessage: items.at(-1)?.text || '', lastAt: items.at(-1)?.createdAt };
       });
       out(res, { peers, canTeach: uid === 2, ...(uid === 2 ? {} : { defaultPeerUid: 2 }),
@@ -82,7 +83,7 @@ before(async () => {
     res.setHeader('content-type', 'text/html; charset=utf-8');
     res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;background:#f0f3f5;color:#253a4c;font-family:Arial,"PingFang SC",sans-serif}nav.demo{background:white;padding:22px 70px;border-bottom:1px solid #dae2e9}main{margin:60px;max-width:900px;padding:40px;background:white;border-radius:20px;line-height:2}h1{font-size:30px}${css}</style><nav class="demo"><b>OneByOne</b>　首页　　题库　　训练　　作业</nav><main><h1>三位数相加</h1><h2>题目描述</h2><p>读入三个整数，计算它们的和。</p><div id="scratchpad"><div id="editor"></div></div></main>
     <script>window.UiContext={classChat:{problem:{pid:54,domainId:'classroom',grant:'fixture-grant'}}};window.UserContext={_id:${uid}};window.currentCode='a, b, c = map(int, input().split())\\nprint(a + b + c)';window.editor={getDomNode:()=>document.querySelector('#editor'),getValue:()=>window.currentCode};window.audioCount=0;window.toneCount=0;window.AudioContext=class {constructor(){window.audioCount++;this.state='running';this.currentTime=0;this.destination={};}resume(){return Promise.resolve()}close(){return Promise.resolve()}createOscillator(){return {type:'',frequency:{value:0},connect(){},disconnect(){},start(){window.toneCount++},stop(){}}}createGain(){return{gain:{setValueAtTime(){},linearRampToValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){},disconnect(){}}}};</script>
-    <script src="/chat.js"></script><script>window.disposeChat=ClassChat.installClassChat({enabled:true,uid:${uid},canTeach:${uid === 2},name:${JSON.stringify(names[uid])},apiUrl:'/chat-api?uid=${uid}',socketUrl:'/socket?uid=${uid}'});</script>`);
+    <script src="/chat.js"></script><script>window.disposeChat=ClassChat.installClassChat({enabled:true,uid:${uid},canTeach:${uid === 2},name:${JSON.stringify(names[uid])},avatarUrl:'/asset/avatar/${uid}',apiUrl:'/chat-api?uid=${uid}',socketUrl:'/socket?uid=${uid}'});</script>`);
   });
   wss = new WebSocketServer({ server });
   wss.on('connection', (ws) => ws.send(JSON.stringify({ type: 'ready' })));
@@ -101,6 +102,42 @@ async function fixture(uid = 40, viewport = { width: 1440, height: 900 }) {
   return { context, page, errors };
 }
 const reset = () => { records = []; requests = []; sequence = 0; failResponseOnce = false; onlineStudents = new Set([40]); imageRequests = 0; multipleTeachers = false; forbiddenUsers = new Set(); teacherRosterIds = [40, 41]; };
+
+it('persistent chat keeps its conversation and draft while snapshot action follows the newly loaded content page', async () => {
+  reset();
+  const { context, page, errors } = await fixture();
+  try {
+    await page.locator('.class-chat__launcher').click();
+    await page.waitForFunction(() => document.querySelector('.class-chat__input').disabled === false);
+    await page.locator('.class-chat__input').fill('保留草稿');
+    await page.route(`${origin}/_content/**`, (route) => {
+      const problem = route.request().url().endsWith('/problem');
+      route.fulfill({ contentType: 'text/html', body: `<div id="scratchpad"><div id="editor"></div></div><script>
+        window.UserContext={_id:40};window.UiContext=${problem ? "{classChat:{problem:{pid:91,domainId:'python',grant:'new-problem-grant'}}}" : '{ideMode:true}'};
+        window.editor={getDomNode:()=>document.querySelector('#editor'),getValue:()=> 'print("new problem")'};
+      </script>` });
+    });
+    await page.evaluate(() => {
+      const frame = document.createElement('iframe'); frame.id = 'active-content'; frame.src = '/_content/ide'; document.body.append(frame);
+      window.__onebyonePlatformShell = { contentWindow: () => frame.contentWindow };
+      frame.addEventListener('load', () => window.dispatchEvent(new CustomEvent('onebyone:page-change', { detail: { window: frame.contentWindow } })));
+    });
+    await page.waitForFunction(() => document.querySelector('#active-content').contentWindow.UiContext?.ideMode);
+    assert.equal(await page.locator('[data-snapshot]').isVisible(), false);
+    assert.equal(await page.locator('.class-chat__input').inputValue(), '保留草稿');
+    await page.evaluate(() => { document.querySelector('#active-content').src = '/_content/problem'; });
+    await page.waitForFunction(() => document.querySelector('#active-content').contentWindow.UiContext?.classChat?.problem.pid === 91);
+    await page.locator('[data-snapshot]').click();
+    await page.waitForFunction(() => document.querySelector('.class-chat__input').value === '');
+    assert.equal(records.at(-1).snapshot.pid, 91);
+    assert.equal(records.at(-1).snapshot.code, 'print("new problem")');
+    assert.equal(records.at(-1).text, '保留草稿');
+    assert.equal(await page.locator('.class-chat__panel').count(), 1);
+    await page.evaluate(() => window.dispatchEvent(new Event('onebyone:session-ended')));
+    assert.equal(await page.locator('.class-chat').count(), 0);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
 
 it('students open their main teacher directly without a sidebar or quota, and can reach another teacher with unread messages', async () => {
   for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
@@ -218,7 +255,7 @@ it('opened chat panels drag by their title bar, keep drafts and attachments, and
   }
 });
 
-it('student unread survives until viewed, teacher remains silent, and private chat never auto-opens', async () => {
+it('historical unread waits to be opened, and neither teacher nor student plays notification sounds', async () => {
   reset(); records.push(message(2, 40, '先看一下输入格式，等你回复。'));
   const student = await fixture();
   assert.equal(await student.page.locator('.class-chat__badge').textContent(), '1');
@@ -226,7 +263,8 @@ it('student unread survives until viewed, teacher remains silent, and private ch
   assert.equal(requests.filter((r) => r.value.operation === 'read').length, 0);
   assert.equal(await student.page.locator('[data-live-share-private] .class-chat__launcher').count(), 1);
   await student.page.locator('h1').click();
-  assert.equal(await student.page.evaluate(() => toneCount), 2);
+  assert.equal(await student.page.evaluate(() => audioCount), 0);
+  assert.equal(await student.page.evaluate(() => toneCount), 0);
   await student.page.locator('.class-chat__launcher').click();
   await student.page.waitForSelector('.class-chat__message');
   await student.page.waitForFunction(() => document.querySelector('.class-chat__badge').hidden);
@@ -317,17 +355,71 @@ it('mobile remains within viewport and draggable avatar remembers position acros
   assert.deepEqual(errors, []); await context.close();
 });
 
-it('new websocket message updates unread live and students see image and snapshot cards', async () => {
+it('new teacher messages automatically open the student conversation with no sound or stolen editor focus', async () => {
   reset(); const { context, page, errors } = await fixture();
+  await page.evaluate(() => { const code = document.createElement('textarea'); code.id = 'editing-code'; document.querySelector('main').append(code); code.focus(); });
   records.push(message(2, 40, '这一步可以这样理解。', { kind: 'image', attachment: { name: '示意图.png', size: image.length, mime: 'image/png', url: '/asset/picture' } }));
   notify();
-  await page.waitForFunction(() => document.querySelector('.class-chat__badge').textContent === '1');
-  await page.locator('.class-chat__launcher').click();
+  await page.waitForSelector('.class-chat__panel', { state: 'visible' });
   await page.waitForSelector('.class-chat__image');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'editing-code');
+  assert.equal(await page.evaluate(() => audioCount), 0);
   await page.waitForFunction(() => document.querySelector('.class-chat__image').naturalWidth > 0);
   await page.locator('[data-snapshot]').click(); await page.waitForSelector('.class-chat__code-card');
   await page.screenshot({ path: '/tmp/onebyone-class-chat-student.png' });
   assert.deepEqual(errors, []); await context.close();
+});
+
+it('teacher messages reopen once for each new arrival while student messages only update the teacher badge', async () => {
+  reset(); multipleTeachers = true;
+  const student = await fixture(); const teacher = await fixture(2);
+  try {
+    records.push(message(40, 2, '老师请看一下')); notify();
+    await teacher.page.waitForFunction(() => document.querySelector('.class-chat__badge').textContent === '1');
+    assert.equal(await teacher.page.locator('.class-chat__panel').isVisible(), false);
+    assert.equal(await teacher.page.evaluate(() => audioCount), 0);
+    records.push(message(3, 40, '李老师的新消息')); notify();
+    await student.page.waitForSelector('.class-chat__panel', { state: 'visible' });
+    await student.page.waitForFunction(() => document.querySelector('.class-chat__peer-name').textContent === '李老师');
+    await student.page.waitForFunction(() => document.querySelector('.class-chat__badge').hidden);
+    await student.page.locator('[data-close]').click(); notify();
+    await student.page.waitForTimeout(250);
+    assert.equal(await student.page.locator('.class-chat__panel').isVisible(), false, 'an unchanged poll must not reopen dismissed conversation');
+    records.push(message(2, 40, '唐老师的新消息')); notify();
+    await student.page.waitForSelector('.class-chat__panel', { state: 'visible' });
+    await student.page.waitForFunction(() => document.querySelector('.class-chat__peer-name').textContent === '唐老师');
+    assert.equal(await student.page.evaluate(() => audioCount), 0);
+    assert.deepEqual(student.errors, []); assert.deepEqual(teacher.errors, []);
+  } finally { await student.context.close(); await teacher.context.close(); }
+});
+
+it('the entire real avatar drags from center, edge and mark, with a teacher portrait and reachable student hint', async () => {
+  reset(); const { context, page, errors } = await fixture(40, { width: 390, height: 844 });
+  try {
+    assert.equal(await page.locator('.class-chat__launcher-avatar img').getAttribute('src'), `${origin}/asset/avatar/2`);
+    await page.waitForFunction(() => document.querySelector('.class-chat__launcher-avatar img').naturalWidth > 0);
+    assert.equal(await page.locator('.class-chat__launcher-hint').textContent(), '给老师发消息');
+    for (const point of [[26, 26], [8, 26], [44, 44]]) {
+      const before = await page.locator('.class-chat__launcher').boundingBox();
+      await page.mouse.move(before.x + point[0], before.y + point[1]); await page.mouse.down();
+      await page.mouse.move(before.x + point[0] - 35, before.y + point[1] - 65, { steps: 8 }); await page.mouse.up();
+      const after = await page.locator('.class-chat__launcher').boundingBox();
+      assert(Math.abs(after.y - before.y + 65) < 2, 'each part of the avatar moves smoothly');
+      assert.equal(await page.locator('.class-chat__panel').isVisible(), false, 'drag must not activate chat');
+    }
+    const current = await page.locator('.class-chat__launcher').boundingBox();
+    await page.mouse.move(current.x + 26, current.y + 26); await page.mouse.down(); await page.mouse.move(0, 0, { steps: 8 }); await page.mouse.up();
+    const hint = await page.locator('.class-chat__launcher-hint').boundingBox();
+    assert(hint.x >= 0 && hint.y >= 0 && hint.x + hint.width <= 390, 'hint stays visible against the viewport edges');
+    const placed = await page.locator('.class-chat__launcher').boundingBox();
+    await page.reload(); await page.waitForSelector('.class-chat__launcher-avatar img');
+    const restored = await page.locator('.class-chat__launcher').boundingBox();
+    assert(Math.abs(restored.x - placed.x) < 2 && Math.abs(restored.y - placed.y) < 2);
+    await page.screenshot({ path: '/tmp/onebyone-class-chat-launcher-hint.png' });
+    await page.locator('.class-chat__launcher').click();
+    assert.equal(await page.locator('.class-chat__panel').isVisible(), true, 'plain click still opens chat');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
 });
 
 it('retry after an ambiguous network failure reuses the message identity and preserves the draft', async () => {
@@ -488,16 +580,16 @@ it('a hidden mobile conversation does not mark incoming messages read while the 
   assert.deepEqual(errors, []); await context.close();
 });
 
-it('revoked authentication clears stale unread reminders and reconnects after access is restored', async () => {
+it('revoked authentication clears stale unread badges and restores access without notification sounds', async () => {
   reset(); records.push(message(2, 40, '尚未查看的老师消息'));
   const { context, page, errors } = await fixture();
   await page.locator('h1').click();
-  assert.equal(await page.evaluate(() => toneCount), 2);
+  assert.equal(await page.evaluate(() => toneCount), 0);
   forbiddenUsers.add(40); notify();
   await page.waitForFunction(() => document.querySelector('.class-chat__badge').hidden);
   await page.evaluate(() => { const original = Date.now.bind(Date); Date.now = () => original() + 20000; });
   await page.locator('h1').click();
-  assert.equal(await page.evaluate(() => toneCount), 2, 'old unread cannot keep ringing after authorization is lost');
+  assert.equal(await page.evaluate(() => toneCount), 0, 'chat never plays notification audio');
   forbiddenUsers.delete(40);
   await page.evaluate(() => window.dispatchEvent(new Event('online')));
   await page.waitForFunction(() => !document.querySelector('.class-chat__badge').hidden);

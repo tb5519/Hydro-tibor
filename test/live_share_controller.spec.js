@@ -357,3 +357,147 @@ it('an overflowing initialization buffer reconnects and discards the stale snaps
     assert.equal(await page.evaluate(() => mirrorAdapters.at(-1).received.length), 0);
     assert.equal(await page.evaluate(() => editorAdapters.at(-1).connected), true);
 });
+
+async function persistentFixture(t, teacher, controlledClock = false) {
+    const context = await browser.newContext({ viewport: { width: 1000, height: 700 } });
+    t.after(() => context.close());
+    const page = await context.newPage(); const errors = [];
+    if (controlledClock) {
+        const clockStart = new Date('2026-11-06T00:00:00Z');
+        await page.clock.install({ time: clockStart });
+        await page.clock.pauseAt(new Date(clockStart.getTime() + 1000));
+    }
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.route('https://persistent-share.test/**', (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname.startsWith('/content')) return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body><h1>${url.pathname}</h1><script>
+          const liveShare={enabled:true,uid:${teacher ? 2 : 10},canTeach:${teacher},socketUrl:'/d/class-a/live-share/conn',domainId:'class-a',pageGrant:'grant-current-page'};
+          window.notifyHost=()=>parent.dispatchEvent(new parent.CustomEvent('onebyone:page-change',{detail:{window,context:{liveShare},url:location.href,title:document.title}}));
+          notifyHost();
+          const make=(kind,options)=>{ const value={kind,options,document,disposed:false,connected:true,dispose(){this.disposed=true},setConnected(v){this.connected=v},receive(){},receiveCommand(){}};parent.created.push(value);return value };
+          window.__onebyoneLiveShareSources={
+            loadAdapters:async()=>({attachSourceMirror:o=>make('mirror',o),attachSourceEditors:o=>make('editor',o),attachSourceFrames:o=>make('frames',o),attachSourceIde:o=>make('ide',o),attachTemporaryDrawing:o=>make('drawing',o)}),
+            loadBroadcastAdapters:async()=>({attachBroadcastSource:o=>make('broadcast',o)}),
+            loadDrawing:async()=>({attachTemporaryDrawing:o=>make('local-drawing',o)})
+          };
+          notifyHost(); notifyHost();
+        </script></body></html>` });
+        return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body><iframe id="content"></iframe><script>${controller}</script><script>
+          window.BroadcastChannel=undefined;window.sockets=[];window.created=[];
+          window.__onebyonePlatformShell={contentWindow:()=>document.querySelector('iframe').contentWindow};
+          class FakeSocket extends EventTarget {
+            constructor(){super();this.readyState=0;this.bufferedAmount=0;this.sent=[];this.closed=0;sockets.push(this)}
+            send(s){this.sent.push(s==='ping'?s:JSON.parse(s))}
+            open(){this.readyState=1;this.dispatchEvent(new Event('open'))}
+            deliver(m){this.dispatchEvent(new MessageEvent('message',{data:JSON.stringify(m)}))}
+            close(){this.closed++;this.readyState=3;this.dispatchEvent(new Event('close'))}
+          }
+          window.cleanup=LiveController.installLiveShare({enabled:true,uid:${teacher ? 2 : 10},canTeach:${teacher},socketUrl:'/d/class-a/live-share/conn',domainId:'class-a',pageGrant:'old-initial-page'}, {socketFactory:()=>new FakeSocket()});
+          document.querySelector('iframe').src='/content-one';
+        </script></body></html>` });
+    });
+    await page.goto('https://persistent-share.test/');
+    await page.waitForFunction(() => sockets.length === 1);
+    await page.evaluate(() => { sockets[0].open(); sockets[0].deliver({ type: 'ready' }); });
+    const announce = async (kind) => page.evaluate((kind) => {
+        const sent = sockets[0].sent.filter((item) => item.type === 'hello' || item.type === 'page').at(-1);
+        if (sent.type === 'page') sockets[0].deliver({ type: 'page-ready', pageId: sent.pageId, requestId: sent.requestId });
+        sockets[0].deliver({ type: kind, sessionId: 'persistent-session', pageId: sent.pageId, teacherUid: 2, studentUid: 10,
+            teacherName: '唐老师', studentName: '学员', pageUrl: sent.url, studentUids: [10] });
+    }, kind);
+    const navigate = async (url) => {
+        await page.evaluate((url) => { dispatchEvent(new CustomEvent('onebyone:page-loading')); document.querySelector('iframe').src = url; }, url);
+        await page.waitForFunction((url) => sockets[0].sent.some((item) => item.type === 'page' && item.url === url), url);
+    };
+    return { page, errors, announce, navigate };
+}
+
+it('keeps one assistance transport while child source documents, editors and drawing roots change', async (t) => {
+    const { page, errors, announce, navigate } = await persistentFixture(t, false);
+    await announce('share-start');
+    await page.waitForFunction(() => created.some((item) => item.kind === 'mirror'));
+    const before = await page.evaluate(() => ({ messages: sockets[0].sent.length, adapters: created.length }));
+    await page.evaluate(() => {
+        const child = document.querySelector('iframe').contentWindow;
+        child.document.title = '标题已更新'; child.notifyHost();
+        child.history.replaceState({}, '', '/content-one?filter=recent#detail'); child.notifyHost(); child.notifyHost();
+    });
+    assert.deepEqual(await page.evaluate(() => ({ messages: sockets[0].sent.length, adapters: created.length })), before);
+    assert.equal(await page.evaluate(() => created.some((item) => item.disposed)), false);
+    assert.equal(await page.evaluate(() => created.find((item) => item.kind === 'drawing').options.container.ownerDocument === document.querySelector('iframe').contentDocument), true);
+    await navigate('/content-two');
+    assert.equal(await page.evaluate(() => created.filter((item) => ['mirror', 'editor', 'frames', 'drawing', 'ide'].includes(item.kind)).every((item) => item.disposed)), true);
+    await announce('share-start');
+    await page.waitForFunction(() => created.filter((item) => item.kind === 'mirror').length === 2);
+    assert.equal(await page.evaluate(() => sockets.length), 1);
+    assert.equal(await page.evaluate(() => sockets[0].closed), 0);
+    assert.equal(await page.evaluate(() => created.filter((item) => item.kind === 'mirror').at(-1).document === document.querySelector('iframe').contentDocument), true);
+    assert.deepEqual(errors, []);
+});
+
+it('keeps teacher broadcast identity and socket while loading source adapters from each child realm', async (t) => {
+    const { page, errors, announce, navigate } = await persistentFixture(t, true);
+    await announce('broadcast:started');
+    await page.waitForFunction(() => created.some((item) => item.kind === 'broadcast'));
+    await navigate('/content-two');
+    assert.equal(await page.evaluate(() => created.find((item) => item.kind === 'broadcast').disposed), true);
+    assert.equal(await page.locator('.teacher-broadcast-bar').count(), 1);
+    await announce('broadcast:started');
+    await page.waitForFunction(() => created.filter((item) => item.kind === 'broadcast').length === 2);
+    assert.equal(await page.evaluate(() => sockets.length), 1);
+    assert.equal(await page.evaluate(() => sockets[0].closed), 0);
+    assert.equal(await page.evaluate(() => created.filter((item) => item.kind === 'broadcast').at(-1).document === document.querySelector('iframe').contentDocument), true);
+    assert.deepEqual(errors, []);
+});
+
+it('retries only the latest page after temporary rate limits or lost acknowledgments without reconnecting', async (t) => {
+    const { page, errors, announce, navigate } = await persistentFixture(t, true, true);
+    await announce('broadcast:started');
+    await page.waitForFunction(() => created.some((item) => item.kind === 'broadcast'));
+    await navigate('/content-two');
+    const earlier = await page.evaluate(() => sockets[0].sent.filter((item) => item.type === 'page').at(-1));
+    await navigate('/content-three');
+    const latest = await page.evaluate(() => sockets[0].sent.filter((item) => item.type === 'page').at(-1));
+    await page.evaluate(({ earlier, latest }) => {
+        sockets[0].deliver({ type: 'page-ready', pageId: earlier.pageId, requestId: earlier.requestId });
+        sockets[0].deliver({ type: 'error', operation: 'page', requestId: earlier.requestId, code: 'FORBIDDEN' });
+        sockets[0].deliver({ type: 'error', operation: 'page', requestId: latest.requestId, code: 'RATE_LIMIT' });
+    }, { earlier, latest });
+    const messages = await page.evaluate(() => sockets[0].sent.filter((item) => item.type === 'page').length);
+    await page.clock.runFor(999);
+    assert.equal(await page.evaluate(() => sockets[0].sent.filter((item) => item.type === 'page').length), messages);
+    await page.clock.runFor(1);
+    assert.deepEqual(await page.evaluate(() => sockets[0].sent.filter((item) => item.type === 'page').at(-1)), latest);
+    assert.equal(await page.evaluate(() => sockets[0].sent.filter((item) => item.type === 'page').length), messages + 1);
+    await page.evaluate((latest) => sockets[0].deliver({ type: 'error', operation: 'page', requestId: latest.requestId, code: 'UNAVAILABLE' }), latest);
+    await page.clock.runFor(2000);
+    assert.equal(await page.evaluate(() => sockets[0].sent.filter((item) => item.type === 'page').length), messages + 2);
+    await page.evaluate((latest) => sockets[0].deliver({ type: 'page-ready', pageId: latest.pageId, requestId: latest.requestId }), latest);
+    await page.clock.runFor(9000);
+    assert.equal(await page.evaluate(() => sockets[0].sent.filter((item) => item.type === 'page').length), messages + 2);
+    assert.equal(await page.evaluate(() => sockets.length), 1);
+    assert.equal(await page.evaluate(() => sockets[0].closed), 0);
+    assert.equal(await page.locator('.teacher-broadcast-bar').count(), 1);
+    await announce('broadcast:started');
+    await page.waitForFunction(() => created.filter((item) => item.kind === 'broadcast').length === 2);
+    assert.deepEqual(errors, []);
+});
+
+it('does not confuse a loading-state acknowledgment with the later ready state of the same document', async (t) => {
+    const { page, errors, navigate } = await persistentFixture(t, false, true);
+    await navigate('/content-two');
+    const updates = await page.evaluate(() => sockets[0].sent.filter((item) => item.type === 'page'));
+    const latest = updates.at(-1);
+    const loading = updates.find((item) => item.pageId === latest.pageId && item.url === '');
+    assert.ok(loading, 'the early DOM-ready event announces a paused version of the same page epoch');
+    assert.notEqual(loading.requestId, latest.requestId);
+    await page.evaluate((loading) => sockets[0].deliver({ type: 'page-ready', pageId: loading.pageId, requestId: loading.requestId }), loading);
+    await page.clock.runFor(1000);
+    assert.deepEqual(await page.evaluate(() => sockets[0].sent.filter((item) => item.type === 'page').at(-1)), latest);
+    assert.equal(await page.evaluate(() => sockets[0].sent.filter((item) => item.type === 'page').length), updates.length + 1);
+    await page.evaluate((latest) => sockets[0].deliver({ type: 'page-ready', pageId: latest.pageId, requestId: latest.requestId }), latest);
+    await page.clock.runFor(8000);
+    assert.equal(await page.evaluate(() => sockets[0].sent.filter((item) => item.type === 'page').length), updates.length + 1);
+    assert.equal(await page.evaluate(() => sockets[0].closed), 0);
+    assert.deepEqual(errors, []);
+});

@@ -1,6 +1,52 @@
 interface Position { x: number; y: number }
 
 const installations = new WeakMap<HTMLElement, () => void>();
+const persistentInstallations = new WeakMap<Document, () => void>();
+
+/** Keep one assistant in the communication host, but take its permitted menu
+ * links from the current server-rendered application page. */
+export function installPersistentTeacherAssistant(root: Document = document) {
+  if (persistentInstallations.has(root)) return persistentInstallations.get(root);
+  const view = root.defaultView;
+  if (!view) return undefined;
+  let disposeAssistant = installTeacherAssistant(root);
+  const change = (event: Event) => {
+    const page: Window | undefined = (event as CustomEvent).detail?.window;
+    try {
+      const shell = (view as any).__onebyonePlatformShell;
+      if (!page || page === view || page !== shell?.contentWindow()
+        || page.location.origin !== view.location.origin) return;
+      const source = page.document.querySelector<HTMLElement>('[data-teacher-assistant]');
+      const current = root.querySelector<HTMLElement>('[data-teacher-assistant]');
+      if (source && current && source.dataset.userId === current.dataset.userId) {
+        // Sharing inserts its live controls into this panel and keeps references
+        // to them. Only replace server-owned links, never the persistent panel.
+        const sourceLinks = source.querySelector('.teacher-assistant__links');
+        const currentLinks = current.querySelector('.teacher-assistant__links');
+        if (sourceLinks && currentLinks) {
+          if (sourceLinks.innerHTML !== currentLinks.innerHTML) currentLinks.replaceWith(root.importNode(sourceLinks, true));
+          return;
+        }
+      }
+      disposeAssistant?.(); current?.remove();
+      disposeAssistant = undefined;
+      if (!source) return;
+      const next = root.importNode(source, true);
+      next.hidden = true;
+      root.body.append(next);
+      disposeAssistant = installTeacherAssistant(root);
+    } catch { /* A page that cannot be accessed cannot supply a permitted menu. */ }
+  };
+  const dispose = () => {
+    view.removeEventListener('onebyone:page-change', change);
+    view.removeEventListener('onebyone:session-ended', dispose);
+    disposeAssistant?.(); persistentInstallations.delete(root);
+  };
+  view.addEventListener('onebyone:page-change', change);
+  view.addEventListener('onebyone:session-ended', dispose);
+  persistentInstallations.set(root, dispose);
+  return dispose;
+}
 
 /** The server owns visibility and link permissions; this module only manages the floating UI. */
 export function installTeacherAssistant(root: Document = document) {
@@ -157,6 +203,7 @@ export function installTeacherAssistant(root: Document = document) {
     on(view.visualViewport, 'scroll', schedulePlace);
   }
   on(view, 'pagehide', () => setOpen(false));
+  on(view, 'onebyone:platform-gesture', () => setOpen(false));
   // Clicking into the Scratch iframe does not bubble a pointer event to this document.
   on(view, 'blur', () => setOpen(false));
   place();

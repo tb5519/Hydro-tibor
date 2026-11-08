@@ -268,6 +268,15 @@ self.addEventListener('fetch', (event: FetchEvent) => {
     streamsaver(event);
     return;
   }
+  if (event.request.mode === 'navigate' || ['document', 'iframe', 'frame'].includes(event.request.destination)
+    || !['GET', 'HEAD'].includes(event.request.method.toUpperCase())) {
+    // Let the browser send its original navigation/form request. Even forwarding
+    // fetch(event.request) can replace Sec-Fetch-Dest with "empty", preventing
+    // the server from distinguishing the persistent host from its content frame.
+    // No respondWith: preserve destination, credentials, redirects and body;
+    // HTML never uses the asset cache and mutations never retry across hosts.
+    return;
+  }
   // Resolve the current authorized version even after the worker is restarted
   // and before a page has supplied its optional static-resource configuration.
   if (isMediaCacheRequest(event.request, self.location.origin)) {

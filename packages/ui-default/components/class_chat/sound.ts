@@ -55,6 +55,9 @@ export function createStudentChatReminder(uid: number, enabled: boolean, win: Wi
   if (enabled) {
     win.document.addEventListener('pointerdown', gesture, { capture: true, passive: true });
     win.document.addEventListener('keydown', gesture, true);
+    // Same-origin page gestures are relayed synchronously by the persistent
+    // host, retaining the browser's user activation for audio permission.
+    win.addEventListener('onebyone:platform-gesture', gesture);
   }
   const interval = enabled ? win.setInterval(beep, 10000) : 0;
   return {
@@ -65,6 +68,7 @@ export function createStudentChatReminder(uid: number, enabled: boolean, win: Wi
       win.clearInterval(interval);
       win.document.removeEventListener('pointerdown', gesture, true);
       win.document.removeEventListener('keydown', gesture, true);
+      win.removeEventListener('onebyone:platform-gesture', gesture);
       release(); void context?.close();
     },
   };

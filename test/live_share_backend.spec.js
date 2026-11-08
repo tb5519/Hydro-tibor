@@ -797,6 +797,26 @@ describe('live share durable session broker', () => {
         assert.equal(await model.verifyPageGrant(10, 'class-b', rootToken, '/home/profile'), false);
         await assert.rejects(model.issuePageGrant(10, 'class-a', '/d/other'), errorCode('UNSUPPORTED_PAGE'));
     });
+    it('renews only an unexpired current-page grant after rechecking classroom scope', async () => {
+        const now = Date.now();
+        const student = await peer(10); const teacher = await peer(2);
+        for (const item of [student, teacher]) {
+            const token = await model.issuePageGrant(item.uid, item.domainId, item.url, now);
+            const renewAt = now + protocol.LIVE_SHARE_GRANT_MS - 1000;
+            assert.equal(await model.renewPageGrant(item, token, renewAt), true);
+            assert.equal(await model.verifyPageGrant(item.uid, item.domainId, token, item.url, now + protocol.LIVE_SHARE_GRANT_MS + 1000), true);
+            assert.equal(await model.renewPageGrant({ ...item, url: '/d/class-a/p/other' }, token, renewAt), false);
+            assert.equal(await model.renewPageGrant({ ...item, domainId: 'class-b', url: '/d/class-b/p/1000' }, token, renewAt), false);
+            assert.equal(await model.renewPageGrant({ ...item, url: '' }, token, renewAt), false);
+            assert.equal(await model.renewPageGrant(item, 'missing-token-testing', renewAt), false);
+            assert.equal(await model.renewPageGrant(item, token, renewAt + protocol.LIVE_SHARE_GRANT_MS + 1), false);
+        }
+        const token = await model.issuePageGrant(10, student.domainId, student.url, now);
+        assert.equal(await model.renewPageGrant({ ...student, uid: 11 }, token, now + 1000), false);
+        await workspaceStudents.updateOne({ uid: 10 }, { $set: { status: 'disabled' } });
+        await assert.rejects(model.renewPageGrant(student, token, now + 1000), errorCode('FORBIDDEN'));
+        assert.equal(+(await database.collection('live.share.grant').findOne({ _id: token })).expiresAt, now + protocol.LIVE_SHARE_GRANT_MS);
+    });
     it('starts one selected room, resumes idempotently, and switches without affecting another learner', async () => {
         const teacher = await peer(2); await peer(10); await peer(11);
         const events = []; const emit = (event) => events.push(event);
@@ -990,6 +1010,119 @@ describe('live share websocket integration', () => {
         const student = connection(10); await hello(student, 10);
         await student.instance.message({ type: 'list' });
         assert.equal(student.sent.at(-1).code, 'FORBIDDEN');
+    });
+    it('changes a granted page and classroom on the same connection while retaining the assistance room', async () => {
+        const teacher = connection(2); const student = connection(10);
+        await hello(teacher, 2); await hello(student, 10);
+        await teacher.instance.message({ type: 'start', studentUid: 10 }); await settle();
+        const old = teacher.sent.find((message) => message.type === 'started');
+        const connectionId = student.instance.peer.connectionId;
+        const url = '/d/class-b/ide';
+        const pageGrant = await model.issuePageGrant(10, 'class-b', url);
+        await student.instance.message({ type: 'page', pageId: 'new-ide-page-testing', domainId: 'class-b', pageGrant,
+            url, title: '在线 IDE', visible: true }); await settle();
+        assert.equal(student.closed.length, 0);
+        assert.equal(student.instance.peer.connectionId, connectionId);
+        const started = teacher.sent.filter((message) => message.type === 'started').at(-1);
+        assert.equal(started.sessionId, old.sessionId);
+        assert.equal(started.pageId, 'new-ide-page-testing');
+        assert.equal(started.pageUrl, url);
+        assert.equal((await model.sessions.findOne({ _id: old.sessionId })).domainId, 'class-b');
+        await student.instance.message({ type: 'relay', sessionId: old.sessionId, pageId: old.pageId, kind: 'mirror',
+            data: { type: 'rrweb', sequence: 1, event: { type: 3, data: {} } } });
+        assert.equal(student.sent.at(-1).code, 'STALE_PAGE');
+    });
+    it('correlates page acknowledgments and temporary failures for safe latest-only retry', async () => {
+        const student = connection(10); await hello(student, 10);
+        const url = '/d/class-a/ide';
+        const pageGrant = await model.issuePageGrant(10, 'class-a', url);
+        const payload = { type: 'page', requestId: 'page-request-testing', pageId: 'new-ide-page-testing',
+            domainId: 'class-a', pageGrant, url, title: '在线 IDE', visible: true };
+        const accept = student.instance.limiter.accept.bind(student.instance.limiter);
+        student.instance.limiter.accept = () => { throw new protocol.LiveShareError('RATE_LIMIT', '稍候'); };
+        await student.instance.message(payload);
+        assert.equal(student.sent.at(-1).code, 'RATE_LIMIT');
+        assert.equal(student.sent.at(-1).operation, 'page');
+        assert.equal(student.sent.at(-1).requestId, payload.requestId);
+        assert.equal(student.instance.peer.pageId, 'page-10-testing');
+        student.instance.limiter.accept = accept;
+        const process = student.instance.processMessage;
+        try {
+            student.instance.processMessage = async () => { throw new Error('temporary database failure'); };
+            await student.instance.message(payload);
+            assert.equal(student.sent.at(-1).code, 'UNAVAILABLE');
+            assert.equal(student.sent.at(-1).operation, 'page');
+            assert.equal(student.sent.at(-1).requestId, payload.requestId);
+        } finally { student.instance.processMessage = process; }
+        await student.instance.message(payload);
+        assert.equal(student.sent.at(-1).type, 'page-ready');
+        assert.equal(student.sent.at(-1).requestId, payload.requestId);
+        assert.equal(student.sent.at(-1).pageId, payload.pageId);
+        assert.equal(student.closed.length, 0);
+        assert.throws(() => protocol.validateShareMessage({ ...payload, requestId: 'invalid id' }), errorCode('INVALID_PAGE'));
+    });
+    it('heartbeats renew only the current verified page token, throttled hourly and cleared while navigating', async () => {
+        const student = connection(10); await hello(student, 10);
+        const grants = database.collection('live.share.grant');
+        const original = await grants.findOne({ uid: 10 });
+        const nearExpiry = new Date(Date.now() + 10000);
+        await grants.updateOne({ _id: original._id }, { $set: { expiresAt: nearExpiry } });
+        await student.instance.message({ type: 'pulse', visible: true });
+        assert.equal(+(await grants.findOne({ _id: original._id })).expiresAt, +nearExpiry);
+        student.instance.lastGrantRenewal = 0;
+        await student.instance.message({ type: 'pulse', visible: true });
+        assert.ok(+(await grants.findOne({ _id: original._id })).expiresAt > Date.now() + protocol.LIVE_SHARE_GRANT_MS - 1000);
+        const pageGrant = await model.issuePageGrant(10, 'class-b', '/d/class-b/ide');
+        await student.instance.message({ type: 'page', pageId: 'current-page-testing', domainId: 'class-b', pageGrant,
+            url: '/d/class-b/ide', title: 'IDE', visible: true });
+        await grants.updateMany({ uid: 10 }, { $set: { expiresAt: nearExpiry } });
+        student.instance.lastGrantRenewal = 0;
+        await student.instance.message({ type: 'pulse', visible: true });
+        assert.equal(+(await grants.findOne({ _id: original._id })).expiresAt, +nearExpiry);
+        assert.ok(+(await grants.findOne({ _id: pageGrant })).expiresAt > +nearExpiry);
+        await student.instance.message({ type: 'page', pageId: 'loading-page-testing', url: '', title: '', visible: true });
+        await grants.updateOne({ _id: pageGrant }, { $set: { expiresAt: nearExpiry } });
+        student.instance.lastGrantRenewal = 0;
+        await student.instance.message({ type: 'pulse', visible: true });
+        assert.equal(+(await grants.findOne({ _id: pageGrant })).expiresAt, +nearExpiry);
+        assert.equal(student.instance.activePageGrant, undefined);
+        assert.equal(student.closed.length, 0);
+    });
+    it('pauses capture without disconnecting on private/navigation pages and verifies every new page grant', async () => {
+        const teacher = connection(2); const student = connection(10);
+        await hello(teacher, 2); await hello(student, 10);
+        await teacher.instance.message({ type: 'start', studentUid: 10 }); await settle();
+        const old = teacher.sent.find((message) => message.type === 'started');
+        await student.instance.message({ type: 'page', pageId: 'private-page-testing', url: '', title: '', visible: true }); await settle();
+        assert.equal(student.instance.peer.url, ''); assert.equal(student.instance.peer.visible, false);
+        await student.instance.message({ type: 'pulse', visible: true });
+        assert.equal(student.instance.peer.visible, false);
+        assert.equal(student.closed.length, 0);
+        assert.equal((await model.sessions.findOne({ _id: old.sessionId })).active, true);
+        await student.instance.message({ type: 'page', pageId: 'forged-page-testing', url: '/d/class-a/manage', title: '管理', visible: true });
+        assert.equal(student.sent.at(-1).code, 'UNSUPPORTED_PAGE');
+        assert.equal(student.instance.peer.url, '');
+        const url = '/d/class-a/home'; const pageGrant = await model.issuePageGrant(10, 'class-a', url);
+        await student.instance.message({ type: 'page', pageId: 'resume-page-testing', pageGrant, url, title: '个人中心', visible: true }); await settle();
+        assert.equal(teacher.sent.filter((message) => message.type === 'started').at(-1).sessionId, old.sessionId);
+        assert.equal(student.instance.peer.visible, true);
+    });
+    it('keeps a teacher broadcast room across page changes and forbids switching to unauthorized classrooms', async () => {
+        const teacher = connection(2); const student = connection(10);
+        await hello(teacher, 2); await hello(student, 10);
+        await teacher.instance.message({ type: 'broadcast:start', studentUids: [10] }); await settle();
+        const old = teacher.sent.find((message) => message.type === 'broadcast:started');
+        const url = '/d/class-b/contest'; const pageGrant = await model.issuePageGrant(2, 'class-b', url);
+        await teacher.instance.message({ type: 'page', domainId: 'class-b', pageId: 'broadcast-page-testing', pageGrant,
+            url, title: '比赛', visible: true }); await settle();
+        assert.equal(teacher.closed.length, 0);
+        const view = student.sent.filter((message) => message.type === 'broadcast:view').at(-1);
+        assert.equal(view.sessionId, old.sessionId); assert.equal(view.pageId, 'broadcast-page-testing');
+        const forged = await model.issuePageGrant(2, 'other', '/d/other/p/1');
+        await teacher.instance.message({ type: 'page', domainId: 'other', pageId: 'forged-page-testing', pageGrant: forged,
+            url: '/d/other/p/1', title: '其他课堂', visible: true });
+        assert.equal(teacher.sent.at(-1).code, 'FORBIDDEN');
+        assert.equal(teacher.instance.peer.domainId, 'class-b');
     });
     it('routes learner events only to the selected teacher and rejects forged direction/session', async () => {
         const teacher = connection(2); const student = connection(10); const other = connection(11);

@@ -279,3 +279,42 @@ for (const failure of [false, true]) it(`freezes visible Monaco and Scratch afte
     assert.equal(await student.evaluate(() => monaco.editor.getEditors().length), 0, 'disposing the replacement fallback releases its editor');
     assert.deepEqual(errors, []);
 });
+
+it('records the actual content iframe and its Monaco registry inside a persistent host', { timeout: 60000 }, async (t) => {
+    const context = await browser.newContext({ viewport: { width: 1100, height: 850 } }); t.after(() => context.close());
+    const host = await context.newPage(); const learner = await context.newPage(); const errors = [];
+    for (const page of [host, learner]) page.on('pageerror', (error) => errors.push(error.message));
+    await Promise.all([host.goto(`${origin}/host`), learner.goto(`${origin}/student`)]);
+    await Promise.all([host.waitForFunction(() => window.ready), learner.waitForFunction(() => window.ready)]);
+    const childNavigation = host.waitForEvent('framenavigated', { predicate: (frame) => frame.url().endsWith('/teacher') });
+    await host.evaluate(() => {
+        const child = document.createElement('iframe'); child.id = 'application'; child.src = '/teacher';
+        child.style.cssText = 'position:fixed;inset:0;border:0;width:100%;height:100%'; document.body.append(child);
+    });
+    const child = await childNavigation;
+    await child.waitForFunction(() => window.ready);
+    let active = true; t.after(() => { active = false; }); let deliveries = Promise.resolve();
+    await host.exposeFunction('deliverSource', (kind, data) => {
+        deliveries = deliveries.then(async () => {
+            if (active) await learner.evaluate(({ kind, data }) => window.adapter.receive(kind, data), { kind, data });
+        });
+    });
+    await learner.evaluate(() => {
+        window.adapter = Broadcast.attachBroadcastViewer({ pageId: 'nested-content-page', container: document.querySelector('#stage'),
+            sendDrawing() {}, onViewport() { window.synced = true; } });
+        window.adapter.setConnected(true);
+    });
+    await child.evaluate(() => {
+        window.editor = monaco.editor.create(document.querySelector('#editor'), { value: 'print("nested runtime")', language: 'python' });
+        window.adapter = Broadcast.attachBroadcastSource({ pageId: 'nested-content-page', send: (kind, data) => parent.deliverSource(kind, data) });
+        window.adapter.setConnected(true);
+    });
+    await learner.waitForFunction(() => window.synced && monaco.editor.getEditors().some((editor) => editor.getValue().includes('nested runtime')));
+    assert.equal(await learner.frameLocator('iframe').first().locator('h1').innerText(), '老师课堂');
+    assert.equal(await learner.frameLocator('iframe').first().locator('#application').count(), 0, 'the shell itself is never captured');
+    await child.evaluate(() => editor.setValue('print("live child changes")'));
+    await learner.waitForFunction(() => monaco.editor.getEditors().some((editor) => editor.getValue().includes('live child changes')));
+    await child.evaluate(() => adapter.dispose());
+    await deliveries;
+    assert.deepEqual(errors, []);
+});

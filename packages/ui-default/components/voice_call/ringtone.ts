@@ -46,6 +46,7 @@ export function createCallRinger() {
   function activate() { if (incoming && !document.hidden) void chime(); }
   document.addEventListener('visibilitychange', visibility);
   document.addEventListener('pointerdown', activate, { passive: true });
+  window.addEventListener('onebyone:platform-gesture', activate);
   return {
     setIncoming(value: boolean) {
       if (value === incoming || disposed) return;
@@ -54,6 +55,7 @@ export function createCallRinger() {
     dispose() {
       if (disposed) return; disposed = true; incoming = false; silence();
       document.removeEventListener('visibilitychange', visibility); document.removeEventListener('pointerdown', activate);
+      window.removeEventListener('onebyone:platform-gesture', activate);
     },
   };
 }

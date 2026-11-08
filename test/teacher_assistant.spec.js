@@ -267,6 +267,47 @@ test('keyboard opening works immediately after a drag and clicking the editor if
     } finally { await context.close(); }
 });
 
+test('persistent assistant follows the current server menu without duplicating controls or losing its position', async () => {
+    const { page, context, errors } = await fixture();
+    try {
+        await drag(page, 500, 600);
+        const before = await buttonBox(page);
+        await page.route('https://teacher-assistant.test/assistant-content', (route) => route.fulfill({ contentType: 'text/html', body: render() }));
+        await page.evaluate(() => { document.querySelector('#scratch-frame').src = '/assistant-content'; document.querySelector('#scratch-frame').removeAttribute('srcdoc'); });
+        await page.waitForFunction(() => document.querySelector('#scratch-frame').contentWindow.location.pathname === '/assistant-content');
+        await page.evaluate(() => {
+            TeacherAssistant.installPersistentTeacherAssistant(document);
+            const frame = document.querySelector('#scratch-frame');
+            const next = document.querySelector('[data-teacher-assistant]').cloneNode(true);
+            next.querySelector('.teacher-assistant__links').innerHTML = '<a href="/d/python/settings">新的课堂设置</a>';
+            frame.contentDocument.body.replaceChildren(next);
+            window.liveControls = document.createElement('section');
+            window.liveControls.className = 'live-share-controls';
+            const disconnect = document.createElement('button');
+            disconnect.textContent = '断开共享';
+            disconnect.onclick = () => { window.disconnected = true; };
+            window.liveControls.append(disconnect);
+            document.querySelector('[data-assistant-panel]').append(window.liveControls);
+            window.originalAssistantPanel = document.querySelector('[data-assistant-panel]');
+            window.__onebyonePlatformShell = { contentWindow: () => frame.contentWindow };
+            window.dispatchEvent(new CustomEvent('onebyone:page-change', { detail: { window: frame.contentWindow } }));
+            window.dispatchEvent(new CustomEvent('onebyone:page-change', { detail: { window: frame.contentWindow } }));
+        });
+        assert.equal(await page.locator('[data-teacher-assistant]').count(), 1);
+        const after = await buttonBox(page);
+        assert(Math.abs(before.x - after.x) <= 1 && Math.abs(before.y - after.y) <= 1);
+        await page.locator('[data-assistant-toggle]').click();
+        assert.equal(await page.getByRole('link', { name: '新的课堂设置' }).isVisible(), true);
+        assert.equal(await page.evaluate(() => window.liveControls.isConnected
+            && document.querySelector('[data-assistant-panel]') === window.originalAssistantPanel), true);
+        await page.getByRole('button', { name: '断开共享' }).click();
+        assert.equal(await page.evaluate(() => window.disconnected), true);
+        await page.evaluate(() => window.dispatchEvent(new Event('onebyone:session-ended')));
+        assert.equal(await page.locator('[data-assistant-toggle]').isVisible(), false);
+        assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+});
+
 test('invalid or unavailable browser storage does not prevent opening and dragging', async () => {
     for (const options of [{ storage: '{broken' }, { storage: '{"x":null,"y":"bad"}' }, { blockedStorage: true }]) {
         const { page, context, errors } = await fixture(options);

@@ -43,6 +43,7 @@ async function createApp(t, nodeEnv) {
         '../lib/domain_avatar_access': { isDomainAvatarImageRequest: () => false },
         '../lib/scratch_share_access': { isScratchShareRequest: () => false },
         '../lib/domain_type': require('../packages/hydrooj/src/lib/domain_type'),
+        '../lib/public_media_cache': require('../packages/hydrooj/src/lib/public_media_cache'),
         '../logger': { Logger: class {} },
         '../model/builtin': {},
         '../model/opcount': {},

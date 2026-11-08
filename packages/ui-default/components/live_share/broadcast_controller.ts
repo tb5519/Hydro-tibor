@@ -12,6 +12,7 @@ export interface BroadcastBridge {
   connect(): void;
   reconnect(): void;
   pageId(): string;
+  sourceReady?(): boolean;
   ready(): boolean;
   sharing(): boolean;
   onActiveChange(): void;
@@ -20,6 +21,7 @@ export interface BroadcastBridge {
 /** Uses the existing authenticated presence connection. No second socket or account switch. */
 export function installBroadcastController(config: LiveShareConfig, bridge: BroadcastBridge, options: {
   loadAdapters?: () => Promise<Adapters>;
+  loadSourceAdapters?: () => Promise<Adapters>;
 } = {}) {
   const resumeKey = `onebyone.broadcast.resume:${config.uid}`;
   const el = (tag: string, cls = '', text = '') => {
@@ -325,7 +327,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
       return bridge.send({ type: 'broadcast:relay', sessionId: next.sessionId, pageId: next.pageId, kind, data });
     };
     try {
-      const adapters = await loadAdapters();
+      const adapters = await (teacher && options.loadSourceAdapters ? options.loadSourceAdapters() : loadAdapters());
       if (disposed || generation !== version || room !== next) return;
       adapter = teacher ? adapters.attachBroadcastSource({ pageId: next.pageId, send, onStatus, annotationScope: { sessionId: next.sessionId, url: location.href } })
         : adapters.attachBroadcastViewer({ pageId: next.pageId, container: stage!, sendDrawing: (packet) => {
@@ -431,15 +433,19 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   function updateCount() {
     const online = [...selected].filter((uid) => students.some((student) => student.uid === uid && student.online));
     if (count) count.textContent = `已选 ${online.length} 位`;
-    if (start) { start.disabled = !connected || pending || !online.length || bridge.sharing(); start.textContent = pending ? '正在开始…' : '开始分享'; }
+    if (start) { start.disabled = !connected || pending || !online.length || bridge.sharing() || !config.pageGrant
+      || bridge.sourceReady?.() === false; start.textContent = pending ? '正在开始…' : '开始分享'; }
   }
   async function startSharing() {
-    if (!connected || pending || bridge.sharing()) return;
+    if (!connected || pending || bridge.sharing() || !config.pageGrant || bridge.sourceReady?.() === false) return;
+    const page = bridge.pageId();
     const studentUids = [...selected].filter((uid) => students.some((student) => student.uid === uid && student.online));
     if (!studentUids.length || studentUids.length > 30) return;
     pending = true; if (error) error.hidden = true; renderStudents();
     try {
-      await loadAdapters(); if (disposed || !picker || !pending) return;
+      await (options.loadSourceAdapters ? options.loadSourceAdapters() : loadAdapters());
+      if (disposed || !picker || !pending) return;
+      if (page !== bridge.pageId() || bridge.sourceReady?.() === false) { pending = false; renderStudents(); return; }
       if (!bridge.send({ type: 'broadcast:start', studentUids })) throw new Error('disconnected');
       pendingTimer = window.setTimeout(() => { if (pending) { pending = false; renderStudents(); showMessage('开始分享超时，请稍后重试。'); } }, 15000);
     } catch { pending = false; renderStudents(); showMessage('连接准备失败，请稍后重试。'); }
@@ -455,6 +461,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     if (bridge.sharing()) { showMessage('请先结束当前共享，再分享你的画面。'); return; }
     if (picker) { search?.focus(); return; }
     if (!config.pageGrant) { showMessage('当前页面不支持分享，请进入学习页面后再试。'); return; }
+    if (bridge.sourceReady?.() === false) { showMessage('页面正在准备，请稍候。'); return; }
     document.querySelector<HTMLButtonElement>('[data-assistant-close]')?.click();
     picker = el('div', 'live-share-picker teacher-broadcast-picker'); picker.dataset.liveSharePrivate = '';
     const dialog = el('section', 'live-share-picker__card'); dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true');
@@ -526,6 +533,16 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   document.addEventListener('click', click); window.addEventListener('resize', resize);
   return {
     receive, setConnected, wantsConnection, open, showMessage, authenticationLost,
+    pageReady() { renderStudents(); },
+    pageLoading() {
+      renderStudents();
+      if (!source || !room) return;
+      // Keep room identity and the authenticated socket alive. The old document
+      // may unload, so stop only its recorder/editors until the next granted page.
+      generation++; adapter?.dispose(); adapter = null; adapterLoading = false;
+      buffered.length = 0; bufferedBytes = 0;
+      updateState('正在切换页面…');
+    },
     get active() { return !!room || pending; },
     dispose() { disposed = true; pending = false; clearTimeout(pendingTimer); clearTimeout(flashTimer); flash?.remove(); closePicker(); clearRoom(); presence?.dispose(); document.removeEventListener('click', click); window.removeEventListener('resize', resize); },
   };
