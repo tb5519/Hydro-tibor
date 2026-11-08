@@ -16,6 +16,8 @@ import { ConnectionHandler, Handler, subscribe } from '../service/server';
 
 const cluster = process.env.exec_mode === 'cluster_mode';
 const serverId = cluster ? `${hostname()}:${process.env.name || 'hydro'}` : share.opaqueShareId();
+const MAX_PENDING_MESSAGES = 160;
+const MAX_PENDING_BYTES = 1024 * 1024;
 let pendingIPCBytes = 0;
 
 /** Learning payloads must not enter the generic durable Mongo event outbox. */
@@ -41,6 +43,7 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
     private readonly connectionId = share.opaqueShareId();
     private readonly limiter = new ShareRateLimit();
     private pending = 0;
+    private pendingBytes = 0;
     private queue = Promise.resolve();
     private outgoing = Promise.resolve();
     private outgoingBytes = 0;
@@ -73,15 +76,24 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
 
     async message(payload: any) {
         if (this.disposed) return;
+        let bytes = 0;
         try {
             if (typeof payload?.type === 'string' && payload.type.startsWith('broadcast:')) validateBroadcastMessage(payload);
             else validateShareMessage(payload);
-            this.limiter.accept(payload);
-            if (this.pending >= 16) throw new LiveShareError('BACKPRESSURE', '共享正在重新同步，请稍候。');
+            bytes = this.limiter.accept(payload);
+            // WebSocket callbacks can deliver an entire small-frame burst while
+            // the first permission lookup is awaiting I/O. Bound actual queued
+            // bytes and the existing 160-event burst, not an arbitrary 16 frames.
+            if (this.pending >= MAX_PENDING_MESSAGES || this.pendingBytes + bytes > MAX_PENDING_BYTES) {
+                throw new LiveShareError('BACKPRESSURE', '共享正在重新同步，请稍候。');
+            }
         } catch (error) { this.report(error, payload?.type?.startsWith?.('broadcast:')); return; }
         this.pending++;
+        this.pendingBytes += bytes;
         this.queue = this.queue.then(async () => { if (!this.disposed) await this.processMessage(payload); })
-            .catch((error) => this.report(error, payload?.type?.startsWith?.('broadcast:'))).finally(() => { this.pending--; });
+            .catch((error) => this.report(error, payload?.type?.startsWith?.('broadcast:'))).finally(() => {
+                this.pending--; this.pendingBytes -= bytes;
+            });
         await this.queue;
     }
 
@@ -253,10 +265,13 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         const message = { type: 'broadcast:relay', sessionId: room._id, pageId: room.pageId, kind: payload.kind,
             data: payload.kind === 'drawing' ? broadcastDrawing(this.peer.uid, payload.data) : payload.data,
             senderUid: this.peer.uid, senderName: isTeacher ? room.teacherName : room.viewers.find((v) => v.uid === this.peer.uid)?.name };
-        if (!isTeacher) emitLiveShare({ uid: room.teacherUid, tabId: room.teacherTabId, message });
-        for (const viewer of room.viewers) {
-            if (viewer.uid !== this.peer.uid) emitLiveShare({ uid: viewer.uid, tabId: viewer.tabId, message });
-        }
+        // A full DOM snapshot can span many chunks. Fan out after IPC delivery,
+        // not before: sending each chunk 30 times exhausts the shared IPC budget
+        // and leaves later learners with incomplete snapshots.
+        const recipients = room.viewers.filter((viewer) => viewer.uid !== this.peer.uid)
+            .map(({ uid, tabId }) => ({ uid, tabId }));
+        if (!isTeacher) recipients.unshift({ uid: room.teacherUid, tabId: room.teacherTabId });
+        if (recipients.length) emitLiveShare({ uid: 0, tabId: '', recipients, message });
     }
 
     private async checkBroadcast(announce = false) {
@@ -320,7 +335,11 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
 
     @subscribe('live-share/event')
     async onShareEvent(event: share.ShareEvent) {
-        if (this.disposed || !this.peer || event.uid !== this.peer.uid || event.tabId !== this.peer.tabId) return;
+        if (this.disposed || !this.peer) return;
+        const addressed = event.recipients
+            ? event.recipients.some((recipient) => recipient.uid === this.peer.uid && recipient.tabId === this.peer.tabId)
+            : event.uid === this.peer.uid && event.tabId === this.peer.tabId;
+        if (!addressed) return;
         const bytes = Buffer.byteLength(JSON.stringify(event));
         if (this.outgoingBytes + bytes > 2 * 1024 * 1024) { this.close(1013, 'Shared view needs resynchronization'); return; }
         this.outgoingBytes += bytes;

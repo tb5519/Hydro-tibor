@@ -18,6 +18,8 @@ const MAX_EVENT_BYTES = 8 * 1024 * 1024;
 const MAX_QUEUED_BYTES = 12 * 1024 * 1024;
 const MAX_CHUNKS = 768;
 const CHUNK_CHARS = 16 * 1024;
+const FRAGMENT_IDLE_MS = 8000;
+const MIRROR_BYTES_PER_SECOND = 256 * 1024;
 const EDITOR_MARKER = 'data-live-share-editor';
 const FRAME_MARKER = 'data-live-share-frame';
 const CANVAS_FRAME_BYTES = 48 * 1024;
@@ -69,6 +71,8 @@ interface ViewerOptions {
   /** Scroll deltas (previous minus current pointer position) for natural grab panning. */
   onViewPan?: (gesture: { dx: number; dy: number }) => void;
   onStatus?: (message: string) => void;
+  /** A real sandbox snapshot is installed, rather than merely received. */
+  onReady?: () => void;
   /** Trusted teacher-owned controls; never infer authority from peer DOM attributes. */
   onDocument?: (document: Document) => { dispose(): void; owns(target: EventTarget | null): boolean };
 }
@@ -405,6 +409,7 @@ export class MirrorAssembler {
   private disposed = false;
   private generation = 0;
   private pending = Promise.resolve();
+  private fragmentTimer: ReturnType<typeof setTimeout>;
 
   constructor(private emit: (event: RREvent) => void, private fail: (message: string) => void) {}
 
@@ -412,8 +417,22 @@ export class MirrorAssembler {
     if (this.disposed) return;
     const generation = this.generation;
     this.pending = this.pending.then(() => this.consume(data, generation)).catch(() => {
-      if (!this.disposed && generation === this.generation) this.fail('共享画面同步中断，请重新连接。');
+      if (!this.disposed && generation === this.generation) {
+        this.reset(); this.fail('共享画面同步中断，请重新连接。');
+      }
     });
+  }
+
+  private watchFragments() {
+    clearTimeout(this.fragmentTimer);
+    if (!this.fragments.size || this.disposed) return;
+    const oldestProgress = Math.min(...[...this.fragments.values()].map((entry) => entry.at));
+    this.fragmentTimer = setTimeout(() => {
+      if (this.disposed) return;
+      // A missing final fragment must recover even when the source page is idle.
+      this.reset();
+      this.fail('共享画面同步中断，请重新连接。');
+    }, Math.max(1, oldestProgress + FRAGMENT_IDLE_MS - Date.now()));
   }
 
   private async consume(data: any, generation: number) {
@@ -425,9 +444,6 @@ export class MirrorAssembler {
         await this.consume({ type: 'rrweb', sequence: data.sequence + index, event: data.events[index] }, generation);
       }
       return;
-    }
-    for (const [id, item] of this.fragments) {
-      if (Date.now() - item.at > 30000) { this.fragments.delete(id); this.size -= item.size; throw new Error('expired'); }
     }
     let event = data.type === 'rrweb' ? data.event : null;
     if (data.type === 'rrweb-chunk') {
@@ -445,11 +461,14 @@ export class MirrorAssembler {
         entry.chunks.set(data.index, data.chunk);
         entry.size += data.chunk.length;
         this.size += data.chunk.length;
+        entry.at = Date.now();
       }
       if (this.size > MAX_QUEUED_BYTES) throw new Error('too much data');
+      this.watchFragments();
       if (entry.chunks.size !== entry.total) return;
       this.fragments.delete(data.id);
       this.size -= entry.size;
+      this.watchFragments();
       let text = Array.from({ length: entry.total }, (_, index) => entry.chunks.get(index)).join('');
       if (entry.encoding === 'gzip') {
         if (typeof DecompressionStream === 'undefined') throw new Error('unsupported compression');
@@ -462,11 +481,18 @@ export class MirrorAssembler {
     if (data.sequence !== this.last + 1 && event.type !== 2 && event.type !== 4) throw new Error('sequence gap');
     const safe = sanitizeMirrorEvent(event);
     if (!safe) throw new Error('unsafe event');
+    // A later complete snapshot supersedes any interrupted older snapshot.
+    if (safe.type === 2) {
+      for (const [id, item] of this.fragments) if (item.sequence < data.sequence) {
+        this.fragments.delete(id); this.size -= item.size;
+      }
+      this.watchFragments();
+    }
     this.last = data.sequence;
     if (!this.disposed) this.emit(safe);
   }
 
-  reset() { this.generation++; this.fragments.clear(); this.size = 0; this.last = 0; }
+  reset() { this.generation++; clearTimeout(this.fragmentTimer); this.fragments.clear(); this.size = 0; this.last = 0; }
   dispose() { this.disposed = true; this.reset(); }
 }
 
@@ -586,6 +612,8 @@ export function attachSourceMirror(options: SourceOptions) {
   let queuedBytes = 0;
   let queue: RREvent[] = [];
   let pumping = false;
+  let sendingSnapshot = false;
+  let snapshotRequested = false;
   let hasSnapshot = false;
   let canvasFrame = 0;
   let canvasOffset = 0;
@@ -766,11 +794,19 @@ export function attachSourceMirror(options: SourceOptions) {
           await new Promise((resolve) => setTimeout(resolve, 150));
           continue;
         }
+        sendingSnapshot = event.type === 2;
         const packets = await mirrorPackets(event, ++sequence);
         for (const packet of packets) {
           if (!connected || disposed || current !== generation) break;
           if (options.send(packet) === false) throw new Error('transport unavailable');
-          await new Promise((resolve) => setTimeout(resolve, 50));
+          // A chunk is measured in characters, but the socket limit is in bytes.
+          // Chinese/emoji snapshots otherwise use nearly the entire socket budget.
+          const delay = Math.max(50, encoder.encode(JSON.stringify(packet)).length * 1000 / MIRROR_BYTES_PER_SECOND);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+        sendingSnapshot = false;
+        if (snapshotRequested && current === generation && connected && !disposed) {
+          snapshotRequested = false; requestSnapshot();
         }
       }
     } catch {
@@ -778,9 +814,20 @@ export function attachSourceMirror(options: SourceOptions) {
       message('共享画面同步中断，请重新连接。');
     }
     finally {
+      sendingSnapshot = false;
       pumping = false;
       if (connected && !disposed && queue.length) void pump();
     }
+  }
+  function requestSnapshot() {
+    if (!connected || disposed || !stop) return;
+    if (sendingSnapshot || queue.some((event) => event.type === 2)) {
+      // A burst of late viewers/retry requests needs one follow-up snapshot,
+      // not many copies of a large DOM filling the bounded transport queue.
+      snapshotRequested = true; return;
+    }
+    (record as any).takeFullSnapshot(true);
+    localAnnotations?.snapshot();
   }
   function start() {
     if (disposed || !connected || stop) return;
@@ -1042,10 +1089,10 @@ export function attachSourceMirror(options: SourceOptions) {
       const id = sourceMirror()?.getId(node);
       return Number.isSafeInteger(id) && id > 0 ? id as number : null;
     },
-    snapshot() { if (connected && !disposed && stop) { (record as any).takeFullSnapshot(true); localAnnotations?.snapshot(); } },
+    snapshot: requestSnapshot,
     setConnected(value: boolean) {
       if (disposed) return;
-      if (connected === value) { if (value && stop) (record as any).takeFullSnapshot(true); return; }
+      if (connected === value) { if (value) requestSnapshot(); return; }
       pointer.hide();
       connected = value;
       scratchControl?.reset();
@@ -1055,7 +1102,7 @@ export function attachSourceMirror(options: SourceOptions) {
       cancelAnimationFrame(canvasFrame); canvasFrame = 0;
       generation++;
       stop?.(); stop = undefined;
-      queue = []; queuedBytes = 0;
+      queue = []; queuedBytes = 0; snapshotRequested = false;
       if (value) start();
     },
     dispose() {
@@ -1077,13 +1124,15 @@ export function attachViewerMirror(options: ViewerOptions) {
   let disposed = false;
   let connected = true;
   let player: any;
+  let playerRoot: HTMLElement;
+  type PendingReplay = { player: any; root: HTMLElement; rebuilt: boolean; events: RREvent[]; bytes: number; cleanup: () => void };
+  let pendingReplay: PendingReplay;
   let meta: RREvent;
   let timestamp = 0;
   let serial = 0;
   let currentViewport = { width: 1280, height: 800 };
   let ready = false;
   let cleanupDocument = () => {};
-  let installTimer: ReturnType<typeof setTimeout>;
   let wheelTimer: ReturnType<typeof setTimeout>;
   type LocalScroll = { node: Element; commandNode: Node; x: number; y: number; touched: number; dirty: boolean;
     confirmed: boolean; release: ReturnType<typeof setTimeout>; echoed?: { x: number; y: number } };
@@ -1198,7 +1247,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     if (!player || disposed) return;
     const frame = player.iframe as HTMLIFrameElement;
     const doc = frame.contentDocument;
-    if (!doc?.body) { installTimer = setTimeout(installInteractions, 50); return; }
+    if (!doc?.body) return;
     cleanupDocument();
     // Never enable allow-scripts. A peer snapshot is untrusted display data.
     frame.setAttribute('sandbox', 'allow-same-origin');
@@ -1517,6 +1566,75 @@ export function attachViewerMirror(options: ViewerOptions) {
     host.style.width = `${data.width}px`;
     host.style.height = `${data.height}px`;
   }
+  function discardPendingReplay() {
+    const pending = pendingReplay; pendingReplay = undefined;
+    if (!pending) return;
+    pending.cleanup(); pending.player?.destroy(); pending.root.remove();
+  }
+  function failedReplay(message = '共享画面同步中断，请重新连接。') {
+    connected = false; ready = false; pointer.hide();
+    discardPendingReplay(); player?.disableInteract();
+    options.onStatus?.(message);
+  }
+  function prepareReplay(event: RREvent) {
+    discardPendingReplay();
+    pointer.hide(); ready = false; resetScrolls(); player?.disableInteract();
+    for (const entry of annotations.values()) entry.surface.render(null, null);
+    const root = document.createElement('div');
+    root.style.cssText = 'position:absolute;inset:0;visibility:hidden;pointer-events:none';
+    host.append(root);
+    const pending: PendingReplay = { player: undefined, root, rebuilt: false, events: [], bytes: 0, cleanup: () => {} };
+    pendingReplay = pending;
+    const initialMeta = meta || { type: 4, timestamp: event.timestamp - 1, data: { width: 1280, height: 800, href: location.origin } };
+    const initialTimestamp = event.timestamp;
+    const candidate = new Replayer([{ ...initialMeta, timestamp: initialTimestamp - 1 }, event], {
+      root, liveMode: true, mouseTail: false, showWarning: false, showDebug: false,
+      UNSAFE_replayCanvas: false, loadTimeout: 0, skipInactive: false,
+      insertStyleRules: ['iframe,object,embed{pointer-events:none!important}', 'a,button{cursor:pointer!important}',
+        '.live-share-annotation-source,.live-share-code-focus-layer,.teacher-broadcast-bar,.teacher-broadcast-picker,.teacher-broadcast-flash,.teacher-assistant,.voice-call-toast,.voice-call-card,.voice-call-floating{display:none!important}',
+        '.live-share-notice,[data-teacher-assistant],[data-live-share-private]{visibility:hidden!important;pointer-events:none!important}'],
+    } as any);
+    pending.player = candidate;
+    let deadline = setTimeout(() => { if (pendingReplay === pending) failedReplay(); }, 8000);
+    const removeResourceListeners: (() => void)[] = [];
+    pending.cleanup = () => { clearTimeout(deadline); for (const cleanup of removeResourceListeners) cleanup(); };
+    const commit = () => {
+      if (disposed || !connected || pendingReplay !== pending || !pending.rebuilt) return;
+      pending.cleanup();
+      // Keep the old visible frame intact until the replacement has actually
+      // rebuilt. Never move an iframe between parents: that resets its document.
+      cleanupDocument(); resetScrolls();
+      const previous = player; const previousRoot = playerRoot;
+      player = candidate; playerRoot = root; pendingReplay = undefined;
+      installInteractions();
+      root.style.visibility = 'visible'; root.style.pointerEvents = '';
+      previous?.destroy(); previousRoot?.remove();
+      options.onStatus?.('画面已同步'); options.onReady?.();
+    };
+    candidate.on('fullsnapshot-rebuilded', () => queueMicrotask(() => {
+      if (disposed || !connected || pendingReplay !== pending || pending.rebuilt) return;
+      const doc = candidate.iframe.contentDocument;
+      if (!doc?.body || candidate.getMirror().getNode(event.data.node.id) !== doc) return;
+      pending.rebuilt = true;
+      // rrweb's stylesheet wait pauses a live replay, but only resumes the
+      // non-live "playing" state. Restart *after* that wait has run, and do not
+      // hand it increments before their full-snapshot target nodes exist.
+      candidate.startLive(initialTimestamp - 2);
+      for (const queued of pending.events) candidate.addEvent(queued);
+      pending.events = []; pending.bytes = 0;
+      clearTimeout(deadline);
+      const sheets = [...doc.querySelectorAll('link[rel="stylesheet"]')].filter((link: HTMLLinkElement) => !link.sheet);
+      if (!sheets.length) { commit(); return; }
+      const waiting = new Set(sheets);
+      for (const sheet of sheets) {
+        const settled = () => { waiting.delete(sheet); if (!waiting.size) commit(); };
+        sheet.addEventListener('load', settled, { once: true }); sheet.addEventListener('error', settled, { once: true });
+        removeResourceListeners.push(() => { sheet.removeEventListener('load', settled); sheet.removeEventListener('error', settled); });
+      }
+      // A broken CDN must not block the classroom indefinitely.
+      deadline = setTimeout(commit, 1500);
+    }));
+  }
   const assembler = new MirrorAssembler((event) => {
     if (disposed || !connected) return;
     // Normalize different device clocks while preserving replay order.
@@ -1524,27 +1642,14 @@ export function attachViewerMirror(options: ViewerOptions) {
     event.timestamp = timestamp;
     if (event.type === 4) { meta = event; viewport(event.data); return; }
     if (event.type === 2) {
-      pointer.hide();
-      ready = false;
-      for (const entry of annotations.values()) entry.surface.render(null, null);
-      cleanupDocument(); clearTimeout(installTimer);
-      player?.destroy(); host.replaceChildren();
-      const initialMeta = meta || { type: 4, timestamp: timestamp - 1, data: { width: 1280, height: 800, href: location.origin } };
-      initialMeta.timestamp = timestamp - 1;
-      player = new Replayer([initialMeta, event], {
-        root: host, liveMode: true, mouseTail: false, showWarning: false, showDebug: false,
-        UNSAFE_replayCanvas: false, loadTimeout: 0, skipInactive: false,
-        insertStyleRules: ['iframe,object,embed{pointer-events:none!important}', 'a,button{cursor:pointer!important}',
-          '.live-share-annotation-source,.live-share-code-focus-layer,.teacher-broadcast-bar,.teacher-broadcast-picker,.teacher-broadcast-flash,.teacher-assistant,.voice-call-toast,.voice-call-card,.voice-call-floating{display:none!important}',
-          '.live-share-notice,[data-teacher-assistant],[data-live-share-private]{visibility:hidden!important;pointer-events:none!important}'],
-      } as any);
-      player.startLive(timestamp - 2);
-      player.on('fullsnapshot-rebuilded', () => { clearTimeout(installTimer); installTimer = setTimeout(installInteractions, 0); });
-      installTimer = setTimeout(installInteractions, 50);
-      options.onStatus?.('画面已同步');
-      return;
+      prepareReplay(event); return;
     }
-    if (!player) return;
+    if (!player && !pendingReplay) return;
+    if (pendingReplay && !pendingReplay.rebuilt) {
+      pendingReplay.bytes += encoder.encode(JSON.stringify(event)).length;
+      if (pendingReplay.bytes > MAX_QUEUED_BYTES) throw new Error('too many pending replay events');
+      pendingReplay.events.push(event); return;
+    }
     if (event.type === 3 && [1, 6, 12].includes(event.data.source)) {
       pointer.receive(event.data.positions, currentViewport); return;
     }
@@ -1562,8 +1667,8 @@ export function attachViewerMirror(options: ViewerOptions) {
       }
     }
     if (event.type === 3 && event.data.source === 4) viewport(event.data);
-    player.addEvent(event);
-  }, (message) => { connected = false; pointer.hide(); options.onStatus?.(message); });
+    (pendingReplay?.player || player).addEvent(event);
+  }, failedReplay);
   return {
     receive(data: any) { if (!disposed && connected) assembler.receive(data); },
     receiveAnnotation(data: MirrorCommand) {
@@ -1587,14 +1692,16 @@ export function attachViewerMirror(options: ViewerOptions) {
       return Number.isSafeInteger(id) && id > 0 ? id as number : null;
     },
     getEditorRect(id: string) {
-      if (disposed || !connected || !ready || !validEditorId(id)) return null;
+      // Separate display geometry from control readiness: preserve the last
+      // visible editor/frame overlays while its replacement is preparing.
+      if (disposed || !connected || (!ready && !pendingReplay) || !validEditorId(id)) return null;
       const node = player?.iframe?.contentDocument?.querySelector(`[${EDITOR_MARKER}="${id}"]`);
       if (!node) return null;
       const rect = node.getBoundingClientRect();
       return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
     },
     getFrameRect(id: string) {
-      if (disposed || !connected || !ready || !validEditorId(id)) return null;
+      if (disposed || !connected || (!ready && !pendingReplay) || !validEditorId(id)) return null;
       const node = player?.iframe?.contentDocument?.querySelector(`[${FRAME_MARKER}="${id}"]`);
       if (!node) return null;
       const rect = node.getBoundingClientRect();
@@ -1608,6 +1715,7 @@ export function attachViewerMirror(options: ViewerOptions) {
       ready = false;
       resetScrolls();
       assembler.reset();
+      discardPendingReplay();
       // Reconnection requires a fresh snapshot; stale node IDs must never control the source.
       player?.disableInteract();
     },
@@ -1616,7 +1724,7 @@ export function attachViewerMirror(options: ViewerOptions) {
       clearInterval(restoreAnnotationsTimer);
       pointer.dispose();
       clearAnnotations();
-      clearTimeout(installTimer); clearTimeout(wheelTimer); cleanupDocument();
+      discardPendingReplay(); clearTimeout(wheelTimer); cleanupDocument();
       player?.destroy(); player = undefined; host.remove();
     },
   };

@@ -193,3 +193,89 @@ it('teacher broadcasts the real page to two readonly viewers with live code, not
     assert.deepEqual(errors, []);
     await Promise.all(pages.map((p) => p.evaluate(() => window.adapter.dispose())));
 });
+
+for (const failure of [false, true]) it(`freezes visible Monaco and Scratch after ${failure ? 'a replay failure' : 'a network interruption'} without allowing viewer input or relays`, { timeout: 30000 }, async (t) => {
+    const context = await browser.newContext({ viewport: { width: 1100, height: 850 } });
+    t.after(() => context.close());
+    const teacher = await context.newPage(); const student = await context.newPage();
+    const errors = []; const questions = []; let delivery = Promise.resolve(); let active = true;
+    t.after(() => { active = false; });
+    for (const page of [teacher, student]) page.on('pageerror', (error) => errors.push(error.message));
+    await Promise.all([teacher.goto(`${origin}/teacher`), student.goto(`${origin}/student-freeze`)]);
+    await Promise.all([teacher, student].map((page) => page.waitForFunction(() => window.ready)));
+    await student.exposeFunction('sendQuestion', (packet) => questions.push(packet));
+    await student.evaluate(() => {
+        window.statuses = [];
+        window.adapter = Broadcast.attachBroadcastViewer({ pageId: 'freeze-page-123', container: document.querySelector('#stage'),
+            sendDrawing: (packet) => window.sendQuestion(packet), onReady: () => { window.synced = true; },
+            onStatus: (status) => { statuses.push(status); if (status.includes('同步中断')) adapter.setConnected(false); } });
+    });
+    await teacher.exposeFunction('sendPacket', (kind, data) => {
+        delivery = delivery.then(() => active && student.evaluate(({ kind, data }) => adapter.receive(kind, data), { kind, data }));
+    });
+    await teacher.evaluate(() => {
+        // A real child-frame replay is provided below; the source placeholder has
+        // the same geometry contract as the controlled Scratch iframe.
+        const frame = document.createElement('iframe'); frame.src = 'about:blank';
+        frame.setAttribute('data-live-share-frame', 'freeze-frame-123');
+        frame.style.cssText = 'position:absolute;left:750px;top:350px;width:300px;height:200px'; document.body.append(frame);
+        window.editor = monaco.editor.create(document.querySelector('#editor'), { value: 'print("保留老师代码")', language: 'python', fontSize: 18 });
+        window.adapter = Broadcast.attachBroadcastSource({ pageId: 'freeze-page-123', send: (kind, data) => window.sendPacket(kind, data) });
+    });
+    await student.waitForFunction(() => window.synced && monaco.editor.getEditors()[0]?.getValue() === 'print("保留老师代码")');
+    await student.evaluate(() => {
+        const element = (id, tagName, attributes = {}, childNodes = []) => ({ type: 2, id, tagName, attributes, childNodes });
+        const relay = (sequence, event) => adapter.receive('mirror', { type: 'frame', id: 'freeze-frame-123', packet: { type: 'rrweb', sequence, event } });
+        relay(1, { type: 4, timestamp: Date.now(), data: { width: 300, height: 200, href: location.href } });
+        relay(2, { type: 2, timestamp: Date.now(), data: { initialOffset: { top: 0, left: 0 }, node: {
+            type: 0, id: 1, childNodes: [element(2, 'html', {}, [element(3, 'head'), element(4, 'body', {
+                style: 'margin:0;background:#fcdf87;font:22px system-ui;color:#243650',
+            }, [element(5, 'div', { id: 'scratch-stage' }, [{ type: 3, id: 6, textContent: 'Scratch 舞台仍在这里' }])])])],
+        } } });
+    });
+    const child = student.locator('[data-live-share-frame-viewer="freeze-frame-123"]');
+    await child.waitFor({ state: 'visible' });
+    await child.frameLocator('iframe').locator('#scratch-stage').waitFor();
+    await student.mouse.move(430, 120); await student.mouse.down(); await student.mouse.move(560, 150, { steps: 4 }); await student.mouse.up();
+    await student.waitForTimeout(100);
+    assert(questions.length > 0, 'the same real viewer accepts temporary learner ink before freezing');
+    await delivery;
+    await student.evaluate((fail) => {
+        window.oldChildFrame = document.querySelector('[data-live-share-frame-viewer] iframe');
+        window.oldChildDoc = oldChildFrame.contentDocument;
+        window.oldEditor = monaco.editor.getEditors()[0];
+        window.frozenRect = document.querySelector('[data-live-share-frame-viewer]').getBoundingClientRect().toJSON();
+        if (fail) adapter.receive('mirror', { type: 'rrweb', sequence: 999999, event: { type: 3, timestamp: Date.now(),
+            data: { source: 0, adds: [], removes: [], attributes: [], texts: [] } } });
+        else adapter.setConnected(false);
+    }, failure);
+    if (failure) await student.waitForFunction(() => statuses.some((status) => status.includes('同步中断')));
+    const beforeFrozenInput = questions.length;
+    await teacher.evaluate(() => { editor.setValue('print("冻结后不应显示这次更新")'); document.querySelector('#focus').textContent = '冻结后不应显示新页面内容'; });
+    await delivery;
+    await student.evaluate(() => adapter.receive('mirror', { type: 'frame-remove', id: 'freeze-frame-123' }));
+    await student.mouse.move(420, 120); await student.mouse.down(); await student.mouse.move(590, 170, { steps: 8 }); await student.mouse.up();
+    const box = await child.boundingBox();
+    assert(box, 'a failed mirror must retain the visible Scratch surface while awaiting a replacement');
+    await student.mouse.move(box.x + 20, box.y + 25); await student.mouse.down();
+    await student.mouse.move(box.x + 160, box.y + 60, { steps: 6 }); await student.mouse.up();
+    await student.keyboard.press('Shift+Enter'); await student.keyboard.type('不得发送');
+    await student.waitForTimeout(300);
+    assert.equal(questions.length, beforeFrozenInput, 'no learner pen events escape either frozen page or child frame');
+    assert.equal(await student.evaluate(() => document.querySelector('[data-live-share-viewer]').inert), true);
+    assert.equal(await child.isVisible(), true);
+    assert.equal(await child.frameLocator('iframe').locator('#scratch-stage').textContent(), 'Scratch 舞台仍在这里');
+    assert.deepEqual(await child.evaluate((node) => node.getBoundingClientRect().toJSON()), await student.evaluate(() => frozenRect));
+    assert.equal(await student.evaluate(() => oldChildFrame.isConnected && oldChildFrame.contentDocument === oldChildDoc), true,
+        'the opaque child replay is retained in place, rather than removed or navigated');
+    assert.equal(await student.evaluate(() => oldEditor.getValue()), 'print("保留老师代码")');
+    assert.equal(await student.evaluate(() => oldEditor.getDomNode().getBoundingClientRect().width > 600
+        && getComputedStyle(oldEditor.getDomNode()).visibility === 'visible'), true, 'Monaco remains a visible frozen image');
+    assert.equal(await student.locator('#draft').inputValue(), '原本的学员草稿');
+    active = false; await delivery;
+    await Promise.all([teacher, student].map((page) => page.evaluate(() => adapter.dispose())));
+    assert.equal(await student.locator('#stage').evaluate((node) => node.childElementCount), 0);
+    assert.equal(await student.evaluate(() => oldChildFrame.isConnected), false);
+    assert.equal(await student.evaluate(() => monaco.editor.getEditors().length), 0, 'disposing the replacement fallback releases its editor');
+    assert.deepEqual(errors, []);
+});

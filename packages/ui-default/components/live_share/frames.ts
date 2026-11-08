@@ -11,7 +11,7 @@ const randomId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (v
 type Rect = { x: number; y: number; width: number; height: number };
 export interface FrameCommand { id: string; pageId: string; nodeId: number; action: 'frame'; frameId: string; command: MirrorCommand }
 interface SourceOptions { pageId: string; send: (data: any) => void | boolean; sendAck?: (data: MirrorAck) => void; sendDrawing?: (data: DrawingPacket) => void; onStatus?: (message: string) => void }
-interface SourceFrame { id: string; frame: HTMLIFrameElement; channel: string; href: string; previousMarker: string | null; started?: boolean; loaded: () => void }
+interface SourceFrame { id: string; frame: HTMLIFrameElement; channel: string; href: string; previousMarker: string | null; started?: boolean; retryTimer?: number; loaded: () => void }
 
 /** Only our opaque-origin Scratch runtime implements this authenticated bridge. */
 function controlledFrame(frame: HTMLIFrameElement, allowOffscreen = false) {
@@ -31,6 +31,7 @@ function controlledFrame(frame: HTMLIFrameElement, allowOffscreen = false) {
 
 export function attachSourceFrames(options: SourceOptions) {
   const bindings = new Map<HTMLIFrameElement, SourceFrame>();
+  const retries = new WeakMap<HTMLIFrameElement, { count: number; stableSince: number }>();
   const geometry = new Map<string, { frameId: string; nodeId: number; mode: DrawingAnchorMode; requested: number; received: number; value: DrawingGeometry | null }>();
   const pending = new Map<string, { outerId: string; frameId: string; at: number }>();
   const inkFrames = new Map<string, { frameId: string; matrix: DrawingMatrix; expires: number }>();
@@ -40,6 +41,7 @@ export function attachSourceFrames(options: SourceOptions) {
     binding.frame.contentWindow?.postMessage({ type: 'live-share-capture', action, channel: binding.channel, id: binding.id }, '*');
   };
   const remove = (binding: SourceFrame) => {
+    clearTimeout(binding.retryTimer);
     post(binding, 'stop');
     binding.frame.removeEventListener('load', binding.loaded);
     if (binding.frame.getAttribute(MARKER) === binding.id) {
@@ -66,7 +68,7 @@ export function attachSourceFrames(options: SourceOptions) {
       const info = controlledFrame(frame);
       if (!info) continue;
       const binding: SourceFrame = { frame, id: randomId(), ...info, previousMarker: frame.getAttribute(MARKER),
-        loaded: () => { remove(binding); scan(); } };
+        loaded: () => { retries.delete(frame); remove(binding); scan(); } };
       bindings.set(frame, binding);
       frame.setAttribute(MARKER, binding.id);
       frame.addEventListener('load', binding.loaded);
@@ -74,10 +76,26 @@ export function attachSourceFrames(options: SourceOptions) {
     }
   };
   const receive = (event: MessageEvent) => {
-    if (disposed || !connected || event.origin !== 'null' || !['live-share-frame', 'live-share-frame-start', 'live-share-frame-ack', 'live-share-frame-geometry', 'live-share-frame-drawing'].includes(event.data?.type)) return;
+    if (disposed || !connected || event.origin !== 'null' || !['live-share-frame', 'live-share-frame-start', 'live-share-frame-status', 'live-share-frame-ack', 'live-share-frame-geometry', 'live-share-frame-drawing'].includes(event.data?.type)) return;
     const binding = [...bindings.values()].find((item) => event.source === item.frame.contentWindow
       && event.data.channel === item.channel && event.data.id === item.id);
     if (!binding || !controlledFrame(binding.frame, true)) return;
+    if (event.data.type === 'live-share-frame-status') {
+      if (event.data.code !== 'RECORDER_STOPPED' || binding.retryTimer) return;
+      const previous = retries.get(binding.frame);
+      const stable = previous?.stableSince && Date.now() - previous.stableSince >= 30000;
+      const count = previous && !stable ? Math.min(5, previous.count + 1) : 1;
+      retries.set(binding.frame, { count, stableSince: 0 });
+      options.onStatus?.('Scratch 画面正在重新同步…');
+      // Retry locally so a Scratch issue does not interrupt the rest of the
+      // classroom. After five consecutive failures, cool down for a minute.
+      // Idle failed time cannot reset the counter: only healthy capture can.
+      binding.retryTimer = window.setTimeout(() => {
+        if (disposed || !connected || bindings.get(binding.frame) !== binding) return;
+        remove(binding); scan();
+      }, count >= 5 ? 60000 : 800 * 2 ** (count - 1));
+      return;
+    }
     if (event.data.type === 'live-share-frame-drawing') {
       const packet = event.data.packet;
       if (!options.sendDrawing || !validDrawingPacket(packet) || packet.anchor?.kind === 'editor') return;
@@ -146,6 +164,11 @@ export function attachSourceFrames(options: SourceOptions) {
     // Server validation and the viewer sanitizer remain the final boundaries.
     try {
       if (JSON.stringify(packet).length > 350 * 1024) return;
+      const previous = retries.get(binding.frame);
+      if (previous && !binding.retryTimer) {
+        if (!previous.stableSince) previous.stableSince = Date.now();
+        else if (Date.now() - previous.stableSince >= 30000) retries.delete(binding.frame);
+      }
       options.send({ type: 'frame', id: binding.id, packet });
     } catch { options.onStatus?.('Scratch 画面同步暂时中断，正在等待连接恢复。'); }
   };
@@ -193,7 +216,7 @@ export function attachSourceFrames(options: SourceOptions) {
       const command = envelope?.command;
       const binding = [...bindings.values()].find((item) => item.id === envelope?.frameId);
       if (disposed || !connected || envelope?.action !== 'frame' || envelope.pageId !== options.pageId || !validId(envelope.id)
-        || !binding || !controlledFrame(binding.frame) || command?.pageId !== binding.id || command.action !== 'scratch'
+        || !binding || binding.retryTimer || !controlledFrame(binding.frame) || command?.pageId !== binding.id || command.action !== 'scratch'
         || !validId(command.id) || !Number.isSafeInteger(command.nodeId) || command.nodeId < 1
         || typeof command.target !== 'string' || command.target.length > 32 || !validScratchInput(command.input)) { deny(); return; }
       if (pending.size >= 256) pending.delete(pending.keys().next().value);

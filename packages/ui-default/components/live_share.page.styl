@@ -160,6 +160,32 @@
   background: #fff
   box-shadow: 0 0 30px #273a4910
 
+.teacher-broadcast-loading
+  position: absolute
+  inset: 0
+  display: flex
+  flex-direction: column
+  align-items: center
+  justify-content: center
+  gap: 12px
+  padding: 24px
+  color: #80919d
+  font-size: 13px
+  pointer-events: none
+  &[hidden]
+    display: none
+  strong
+    color: #536f64
+    font-size: 16px
+    font-weight: 500
+  &__dot
+    width: 14px
+    height: 14px
+    margin-bottom: 10px
+    border-radius: 50%
+    background: #82aa98
+    box-shadow: 0 0 0 9px #82aa9818, 0 0 0 18px #82aa980c
+
 .teacher-broadcast-hint
   display: flex
   justify-content: center

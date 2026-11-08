@@ -381,6 +381,7 @@ export class ShareRateLimit {
         this.events--;
         this.bytes -= bytes;
         if (control) this.controls--;
+        return bytes;
     }
 }
 

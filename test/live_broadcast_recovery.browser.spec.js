@@ -36,7 +36,7 @@ async function fixture(t, teacher = false) {
         deliver(message){this.dispatchEvent(new MessageEvent('message',{data:JSON.stringify(message)}))}
         close(code=1000){if(this.readyState===3)return;this.readyState=3;this.dispatchEvent(new CloseEvent('close',{code}))}
       }
-      const create=(options)=>{const a={options,connected:true,disposed:false,snapshots:0,received:[],connections:[],
+      const create=(options)=>{if(options.container){const view=document.createElement('div');view.textContent=options.pageId;options.container.append(view)}const a={options,connected:true,disposed:false,snapshots:0,received:[],connections:[],
         receive(kind,data){if(this.connected&&!this.disposed)this.received.push({kind,data})},
         snapshot(){this.snapshots++},setConnected(value){this.connections.push(value);this.connected=value},dispose(){this.disposed=true}};adapters.push(a);return a};
       const module={attachBroadcastViewer:create,attachBroadcastSource:create};
@@ -69,6 +69,110 @@ it('successive failed reconnects and bare ready messages cannot postpone releasi
     assert.equal(await page.locator('#previously-inert').evaluate(n => n.inert), true);
     assert.equal(await page.locator('#draft').inputValue(), 'unsaved original');
     assert.deepEqual(errors, []);
+});
+
+it('the first complete picture, not viewport metadata, clears loading and stops snapshot retries', async (t) => {
+    const { page, errors } = await fixture(t);
+    assert.equal(await page.locator('.teacher-broadcast-loading').evaluate(n => n.hidden), false);
+    await page.evaluate(() => adapters[0].options.onViewport({width:1440,height:900}));
+    assert.match(await page.locator('.teacher-broadcast-hint__status').textContent(), /正在同步/);
+    await page.clock.runFor(100);
+    const initial = await page.evaluate(() => allSent().filter(m => m.type === 'broadcast:sync').length);
+    // Losing every initial frame packet leaves no fragment timer to trigger recovery.
+    await page.clock.runFor(12100);
+    assert.equal(await page.evaluate(() => allSent().filter(m => m.type === 'broadcast:sync').length), initial + 1);
+    await page.evaluate(() => adapters[0].options.onReady());
+    assert.equal(await page.locator('.teacher-broadcast-loading').evaluate(n => n.hidden), true);
+    assert.match(await page.locator('.teacher-broadcast-hint__status').textContent(), /正在观看/);
+    await page.clock.runFor(24000);
+    assert.equal(await page.evaluate(() => allSent().filter(m => m.type === 'broadcast:sync').length), initial + 1);
+    assert.deepEqual(errors, []);
+});
+
+it('a progressing large snapshot is allowed to finish without repeated capture requests', async (t) => {
+    const { page } = await fixture(t);
+    await page.clock.runFor(100);
+    const initial = await page.evaluate(() => allSent().filter(m => m.type === 'broadcast:sync').length);
+    for (let i = 0; i < 8; i++) {
+        await page.clock.runFor(5000);
+        await page.evaluate(() => receive({type:'broadcast:relay',...room(),senderUid:2,kind:'mirror',data:{type:'rrweb-chunk'}}));
+    }
+    assert.equal(await page.evaluate(() => allSent().filter(m => m.type === 'broadcast:sync').length), initial);
+    await page.evaluate(() => adapters[0].options.onReady());
+    assert.match(await page.locator('.teacher-broadcast-hint__status').textContent(), /正在观看/);
+});
+
+it('continuous increments without a full picture cannot conceal a missing initial snapshot forever', async (t) => {
+    const { page } = await fixture(t);
+    for (let i = 0; i < 12; i++) {
+        await page.evaluate(() => receive({type:'broadcast:relay',...room(),senderUid:2,kind:'mirror',data:{type:'rrweb-batch'}}));
+        await page.clock.runFor(5000);
+    }
+    assert.equal(await page.evaluate(() => sockets[0].readyState), 3);
+    assert.equal(await page.locator('.teacher-broadcast-loading').evaluate(n => n.hidden), false);
+    assert.match(await page.locator('.teacher-broadcast-hint__status').textContent(), /重新同步|重新连接/);
+});
+
+it('page changes and failed replacement frames keep the last picture until a complete new frame is ready', async (t) => {
+    const { page, errors } = await fixture(t);
+    await page.evaluate(() => adapters[0].options.onReady());
+    await page.evaluate(() => {
+        const previous=room;window.room=()=>({...previous(),pageId:'teacher-next-page'});
+        announce();
+    });
+    await page.waitForFunction(() => adapters.length === 2);
+    assert.equal(await page.locator('.teacher-broadcast-overlay').count(), 1);
+    assert.equal(await page.evaluate(() => adapters[0].disposed), false);
+    assert.equal(await page.evaluate(() => adapters[0].connected), false);
+    assert.equal(await page.locator('.teacher-broadcast-stage[data-ready=true]').textContent(), 'teacher-page-123');
+    assert.equal(await page.locator('.teacher-broadcast-stage').last().evaluate(n => n.style.visibility), 'hidden');
+    assert.equal(await page.locator('#original').evaluate(n => n.inert), true);
+    // Even another failed construction must not discard the usable prior page.
+    await page.evaluate(() => adapters[1].options.onStatus('共享画面同步中断，请重新连接。'));
+    assert.equal(await page.evaluate(() => adapters[0].disposed), false);
+    assert.equal(await page.evaluate(() => adapters[1].disposed), true);
+    await page.clock.runFor(900);
+    await page.evaluate(() => {sockets.at(-1).open();receive({type:'ready'});announce();});
+    await page.waitForFunction(() => adapters.length === 3);
+    await page.evaluate(() => adapters[1].options.onReady());
+    assert.equal(await page.evaluate(() => adapters[0].disposed), false, 'a superseded callback cannot hide the retained picture');
+    await page.evaluate(() => adapters[2].options.onReady());
+    assert.equal(await page.evaluate(() => adapters[0].disposed), true);
+    assert.equal(await page.locator('.teacher-broadcast-stage').count(), 1);
+    assert.equal(await page.locator('.teacher-broadcast-stage').textContent(), 'teacher-next-page');
+    assert.equal(await page.locator('.voice-call-floating').evaluate(n => n.inert), false);
+    await page.evaluate(() => receive({type:'broadcast:ended',sessionId:room().sessionId}));
+    assert.equal(await page.locator('.teacher-broadcast-overlay').count(), 0);
+    assert.equal(await page.locator('#original').evaluate(n => n.inert), false);
+    assert.equal(await page.locator('#draft').inputValue(), 'unsaved original');
+    assert.deepEqual(errors, []);
+});
+
+it('revoking a session removes both the retained picture and the unready replacement', async (t) => {
+    const { page } = await fixture(t);
+    await page.evaluate(() => {adapters[0].options.onReady();receive({type:'broadcast:view',...room(),pageId:'teacher-next-page'});});
+    await page.waitForFunction(() => adapters.length === 2);
+    await page.evaluate(() => receive({type:'broadcast:error',code:'FORBIDDEN',message:'分享已结束'}));
+    assert.equal(await page.locator('.teacher-broadcast-overlay').count(), 0);
+    assert.equal(await page.evaluate(() => adapters.every(a => a.disposed)), true);
+    assert.equal(await page.locator('#original').evaluate(n => n.inert), false);
+    await page.evaluate(() => adapters[1].options.onReady());
+    assert.equal(await page.locator('.teacher-broadcast-overlay').count(), 0);
+});
+
+it('repeated oversized captures stop safely instead of remaining frozen or reconnecting indefinitely', async (t) => {
+    const { page } = await fixture(t, true);
+    for (let i = 0; i < 3; i++) {
+        await page.evaluate(() => adapters.at(-1).options.onStatus('共享画面变化过多，已暂停，请重新连接。'));
+        if (i < 2) {
+            await page.clock.runFor(900);
+            await page.evaluate(() => {sockets.at(-1).open();receive({type:'ready'});announce();});
+            await page.waitForFunction(count => adapters.length === count, i + 2);
+        }
+    }
+    assert.equal(await page.locator('.teacher-broadcast-bar').count(), 0);
+    assert.match(await page.locator('.teacher-broadcast-flash').textContent(), /内容过多/);
+    assert.equal(await page.evaluate(() => allSent().some(m => m.type === 'broadcast:stop')), true);
 });
 
 it('an authenticated room resume cancels the outage deadline and requests a fresh viewer snapshot', async (t) => {

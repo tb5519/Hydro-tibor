@@ -202,13 +202,13 @@ test('one teacher broadcasts to two selected learners, with read-only pen questi
         await second.waitForFunction(() => parseFloat(document.querySelector('.teacher-broadcast-stage').style.left) < -1000);
         await teacher.evaluate(() => document.querySelector('#test-runtime').remove());
         await teacher.locator('#run').click();
-        for (const page of viewers) await page.frameLocator('.live-share-mirror iframe').locator('#result').filter({ hasText: '已运行 2' }).waitFor();
+        for (const page of viewers) await page.frameLocator('.teacher-broadcast-stage[data-ready="true"] .live-share-mirror iframe:visible').locator('#result').filter({ hasText: '已运行 2' }).waitFor();
         await teacher.evaluate(() => editor.executeEdits('demonstration', [{ range: new monaco.Range(1, 1, 1, 1), text: '# live teacher edit\n' }]));
         await Promise.all(viewers.map((page) => page.waitForFunction(() => sharedEditor()?.getValue().includes('# live teacher edit'))));
         const editorValue = await teacher.evaluate(() => editor.getValue());
         for (const page of viewers) assert.equal(await page.evaluate(() => sharedEditor().getValue()), editorValue);
         if (process.env.LIVE_BROADCAST_SCREENSHOTS === '1') await first.screenshot({ path: '/tmp/onebyone-broadcast-student.png' });
-        const mirrorButton = await first.frameLocator('.live-share-mirror iframe').locator('#run').boundingBox();
+        const mirrorButton = await first.frameLocator('.teacher-broadcast-stage[data-ready="true"] .live-share-mirror iframe:visible').locator('#run').boundingBox();
         await first.mouse.click(mirrorButton.x + mirrorButton.width / 2, mirrorButton.y + mirrorButton.height / 2);
         await first.keyboard.type('learner must not type'); await first.mouse.wheel(0, 400);
         assert.equal(await teacher.evaluate(() => runs), 2); assert.equal(await teacher.evaluate(() => editor.getValue()), editorValue);
@@ -247,7 +247,7 @@ test('one teacher broadcasts to two selected learners, with read-only pen questi
         assert.notEqual(room.pageId, oldPage, 'teacher refresh resumes broadcast on the new page identity');
         await teacher.locator('#next').click(); await teacher.waitForURL('**/lesson-two?uid=2'); await teacher.waitForFunction(() => ready);
         await teacher.locator('[data-broadcast-stop]').waitFor();
-        for (const page of viewers) await page.frameLocator('.live-share-mirror iframe').locator('h1').filter({ hasText: '/lesson-two' }).waitFor();
+        for (const page of viewers) await page.frameLocator('.teacher-broadcast-stage[data-ready="true"] .live-share-mirror iframe:visible').locator('h1').filter({ hasText: '/lesson-two' }).waitFor();
         assert.equal(events.filter((event) => event.type === 'broadcast:start').length, 1, 'refresh and navigation rejoin the existing room');
         await teacher.locator('[data-broadcast-stop]').click();
         await Promise.all(viewers.map((page) => page.waitForFunction(() => !document.querySelector('.teacher-broadcast-overlay'))));

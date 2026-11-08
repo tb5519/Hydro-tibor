@@ -55,6 +55,7 @@ export function attachBroadcastSource(options: CommonOptions & {
 /** Display-only replica; a learner's sole outgoing interaction is a temporary left-button pen. */
 export function attachBroadcastViewer(options: CommonOptions & {
   container: HTMLElement; sendDrawing: (packet: DrawingPacket) => void;
+  onReady?: () => void;
   onViewport?: (size: { width: number; height: number }) => void;
   onFocus?: (focus: BroadcastFocus) => void;
   onViewWheel?: (event: Pick<WheelEvent, 'deltaX' | 'deltaY' | 'deltaMode' | 'shiftKey'>) => void;
@@ -65,13 +66,27 @@ export function attachBroadcastViewer(options: CommonOptions & {
   const mirrorRoot = document.createElement('div'); const editorRoot = document.createElement('div'); const frameRoot = document.createElement('div');
   for (const layer of [mirrorRoot, frameRoot, editorRoot]) layer.style.cssText = 'position:absolute;inset:0;pointer-events:none';
   root.append(mirrorRoot, frameRoot, editorRoot); options.container.append(root);
+  let connected = true;
+  type DisplayRect = { x: number; y: number; width: number; height: number };
+  const editorRects = new Map<string, DisplayRect>();
+  const frameRects = new Map<string, DisplayRect>();
+  const displayRect = (id: string, cache: Map<string, DisplayRect>, read: () => DisplayRect | null) => {
+    // A failed mirror has already disabled its node lookup before reporting the
+    // error. Retain display geometry only for the disconnected, inert fallback.
+    if (!connected) return cache.get(id) || null;
+    const rect = read();
+    if (rect) cache.set(id, { ...rect }); else cache.delete(id);
+    return rect;
+  };
+  const reportStatus = (message: string) => { if (connected) options.onStatus?.(message); };
   const mirror = attachViewerMirror({ pageId: options.pageId, container: mirrorRoot, readOnly: true,
-    sendCommand: () => {}, onViewport: options.onViewport, onViewWheel: options.onViewWheel, onStatus: options.onStatus });
+    sendCommand: () => {}, onViewport: options.onViewport, onViewWheel: options.onViewWheel, onStatus: reportStatus,
+    onReady: () => { if (connected) options.onReady?.(); } });
   const frames = attachViewerFrames({ pageId: options.pageId, container: frameRoot, readOnly: true,
-    getNodeRect: (id) => mirror.getFrameRect(id), onStatus: options.onStatus });
+    getNodeRect: (id) => displayRect(id, frameRects, () => mirror.getFrameRect(id)), onStatus: reportStatus });
   const editors = attachViewerEditors({ pageId: options.pageId, container: editorRoot, readOnly: true,
-    getNodeRect: (id) => mirror.getEditorRect(id) || undefined,
-    send: () => {}, onStatus: (status) => { if (status.error) options.onStatus?.(status.error); } });
+    getNodeRect: (id) => displayRect(id, editorRects, () => mirror.getEditorRect(id)) || undefined,
+    send: () => {}, onStatus: (status) => { if (status.error) reportStatus(status.error); } });
   const ide = attachViewerIde({ pageId: options.pageId, container: root, readOnly: true, sendCommand: () => {} });
   const drawing = attachTemporaryDrawing({ pageId: options.pageId, container: root, teacher: true, inputButton: 0, allowNotes: false, penRole: 'student',
     anchors: {
@@ -86,8 +101,8 @@ export function attachBroadcastViewer(options: CommonOptions & {
   let disposed = false;
   return {
     receive(kind: BroadcastKind, data: any, role: DrawingRole = 'teacher') {
-      if (disposed) return;
-      if (kind === 'editor') editors.receive(data);
+      if (disposed || !connected) return;
+      if (kind === 'editor') { if (data?.type === 'edit:remove') editorRects.delete(data.editorId); editors.receive(data); }
       else if (kind === 'drawing') drawing.receive(data, role);
       else if (kind === 'annotation') mirror.receiveAnnotation(data);
       else if (kind === 'mirror') {
@@ -95,17 +110,28 @@ export function attachBroadcastViewer(options: CommonOptions & {
           if (['x', 'y', 'width', 'height'].every((key) => Number.isFinite(data[key]) && data[key] >= 0 && data[key] <= 16384)
             && data.width > 0 && data.height > 0) options.onFocus?.(data);
         } else if (data?.type === 'ide') ide.receive(data);
-        else if (data?.type === 'frame' || data?.type === 'frame-remove') frames.receive(data);
+        else if (data?.type === 'frame' || data?.type === 'frame-remove') {
+          if (data.type === 'frame-remove') frameRects.delete(data.id);
+          frames.receive(data);
+        }
         else mirror.receive(data);
       }
     },
     setConnected(value: boolean) {
       if (disposed) return;
-      mirror.setConnected(value); editors.setConnected(value); frames.setConnected(value); drawing.setConnected(value); ide.setConnected(value);
+      const restoring = !connected && value;
+      connected = value; root.inert = !value;
+      // This adapter is strictly display-only. Freeze the visible DOM and its
+      // Scratch/editor geometry while disconnected; the controller retains it
+      // until a complete replacement is ready. No pen or relay may escape it.
+      if (restoring) { mirror.setConnected(false); frames.setConnected(false); }
+      if (value) { mirror.setConnected(true); frames.setConnected(true); }
+      editors.setConnected(value); drawing.setConnected(value); ide.setConnected(value);
     },
     dispose() {
       if (disposed) return; disposed = true;
       mirror.dispose(); editors.dispose(); frames.dispose(); drawing.dispose(); ide.dispose();
+      editorRects.clear(); frameRects.clear();
       for (const name of blockedEvents) root.removeEventListener(name, block, true);
       root.remove();
     },

@@ -83,8 +83,17 @@ export function installFrameCapture() {
     if (capture && id === message.id) { if (message.action === 'snapshot') { capture.snapshot(); drawing?.snapshot(); } return; }
     stop(); id = message.id;
     const capturedId = id;
+    let failed = false;
     parent.postMessage({ type: 'live-share-frame-start', channel, id }, parentOrigin);
     capture = attachSourceMirror({ pageId: id, inlineLocalImages: true, showNonSensitiveInputs: true, scratchControls: true,
+      onStatus: (status) => {
+        if (failed || id !== capturedId || Date.now() >= lease
+          || !/(?:同步中断|已暂停.*重新连接)/.test(status)) return;
+        // A stopped recorder cannot be revived by renewing its lease. Ask the
+        // authenticated parent for a fresh epoch, without reusing old node IDs.
+        failed = true;
+        parent.postMessage({ type: 'live-share-frame-status', channel, id, code: 'RECORDER_STOPPED' }, parentOrigin);
+      },
       sendAck: (ack) => {
         if (id === capturedId && Date.now() < lease) parent.postMessage({ type: 'live-share-frame-ack', channel, id, ack }, parentOrigin);
       },
@@ -100,7 +109,7 @@ export function installFrameCapture() {
         }
       },
       send: (packet) => {
-        if (id !== capturedId || Date.now() >= lease) return false;
+        if (failed || id !== capturedId || Date.now() >= lease) return false;
         parent.postMessage({ type: 'live-share-frame', channel, id, packet }, parentOrigin);
         return true;
       } });

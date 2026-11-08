@@ -46,7 +46,7 @@ export async function end(room: BroadcastRoom, reason: string, emit: Emit) {
         emit({ uid, tabId, message: { type: 'broadcast:ended', sessionId: room._id, reason } });
     }
 }
-export async function requestSnapshot(room: BroadcastRoom, emit: Emit, now = Date.now(), trailing = false) {
+export async function requestSnapshot(room: BroadcastRoom, emit: Emit, now = Date.now()) {
     // Thirty reconnecting viewers still cause at most one full-source capture a
     // second, rather than thirty snapshots competing with ordinary updates.
     const requested = await rooms.updateOne({ _id: room._id, active: true, pageId: room.pageId, $or: [
@@ -55,14 +55,17 @@ export async function requestSnapshot(room: BroadcastRoom, emit: Emit, now = Dat
     if (requested.modifiedCount) {
         emit({ uid: room.teacherUid, tabId: room.teacherTabId,
             message: { type: 'broadcast:resync', sessionId: room._id, pageId: room.pageId } });
-    } else if (!trailing && !pendingSnapshots.has(room._id)) {
+    } else if (!pendingSnapshots.has(room._id)) {
         // A late-loading viewer may have missed the first capture. Coalesce its
         // request rather than discard it, and re-read the active page at delivery.
         const timer = setTimeout(async () => {
             pendingSnapshots.delete(room._id);
             try {
                 const current = await rooms.findOne({ _id: room._id, active: true, expiresAt: { $gt: new Date() } });
-                if (current) await requestSnapshot(current, emit, Date.now(), true);
+                // Another worker may have used the rate-limit slot meanwhile.
+                // Keep this single coalesced retry until a capture can be sent;
+                // otherwise late-ready viewers can lose their only request.
+                if (current) await requestSnapshot(current, emit);
             } catch { /* Reconnecting clients request another capture. */ }
         }, 1100);
         timer.unref();

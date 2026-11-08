@@ -22,7 +22,7 @@ const { Router } = load('framework/framework/router.ts');
 const errorCode = (code) => (error) => error.code === code;
 const PERM = { PERM_VIEW: 1n, PERM_EDIT_DOMAIN: 2n, PERM_ALL: 3n };
 const PRIV = { PRIV_USER_PROFILE: 2, PRIV_EDIT_SYSTEM: 1, PRIV_JUDGE: 4 };
-let server; let client; let database; let model; let broadcasts; let handlers; let busListeners; let logins;
+let server; let client; let database; let model; let broadcasts; let handlers; let handlerDependencies; let busListeners; let busEvents; let logins;
 let memberships; let accounts; let workspaceStudents; let workspaceMembers;
 const rooms = [
     { _id: 'class-a', workspaceId: 'a', domainType: 'oj' },
@@ -66,18 +66,20 @@ before(async () => {
         '../service/db': db, './live_share': model,
     });
     await broadcasts.apply();
-    handlers = load('packages/hydrooj/src/handler/live_share.ts', {
+    handlerDependencies = {
         '../lib/live_share': protocol, '../model/live_share': model, '../model/workspace': ws, '../model/builtin': { PERM, PRIV },
         '../lib/teacher_broadcast': broadcastProtocol, '../model/teacher_broadcast': broadcasts,
         '../model/token': { TYPE_SESSION: 0, get: async (id) => logins.get(id) },
         '../service/bus': { parallel: async (name, event) => {
+            busEvents.push(event);
             await Promise.all(busListeners.map((listener) => listener.onShareEvent(event)));
         } },
         '../service/server': { Handler: class {}, ConnectionHandler: class {}, subscribe: () => () => {} },
-    });
+    };
+    handlers = load('packages/hydrooj/src/handler/live_share.ts', handlerDependencies);
 });
 beforeEach(async () => {
-    busListeners = [];
+    busListeners = []; busEvents = [];
     logins = new Map([2, 3, 10, 11, 12, 99].map((uid) => [`login-${uid}`, { uid, scope: '3', expireAt: new Date(Date.now() + 60000) }]));
     await Promise.all(['live.share.presence', 'live.share.session', 'live.share.grant', 'live.share.occupancy', 'live.broadcast.room',
         'domain.user', 'user', 'workspace.student', 'workspace.member']
@@ -141,6 +143,89 @@ describe('teacher broadcast protocol and multi-learner isolation', () => {
         assert.ok(started, JSON.stringify(teacher.sent));
         return { teacher, first, second, outsider, started };
     }
+    it('preserves same-read bursts of 24 and 40 small frames while authorization is waiting', async () => {
+        const { teacher, first, second, started } = await lesson();
+        const processMessage = teacher.instance.processMessage.bind(teacher.instance);
+        for (const count of [24, 40]) {
+            let release; const held = new Promise((resolve) => { release = resolve; });
+            teacher.instance.processMessage = async (payload) => { await held; return processMessage(payload); };
+            const sentBefore = first.sent.length;
+            const tasks = Array.from({ length: count }, (_, index) => teacher.instance.message({
+                type: 'broadcast:relay', sessionId: started.sessionId, pageId: started.pageId, kind: 'editor',
+                data: { type: 'edit:init', pageId: started.pageId, editorId: `burst-editor-${count}-${index}`, state: 'YQ==' },
+            }));
+            assert.equal(teacher.instance.pending, count);
+            assert.ok(teacher.instance.pendingBytes > 0 && teacher.instance.pendingBytes < 32 * 1024);
+            assert.equal(teacher.sent.some((message) => message.code === 'BACKPRESSURE'), false);
+            release(); await Promise.all(tasks); await settle();
+            const editors = first.sent.slice(sentBefore).filter((message) => message.kind === 'editor').map((message) => message.data.editorId);
+            assert.deepEqual(editors, Array.from({ length: count }, (_, index) => `burst-editor-${count}-${index}`));
+            assert.equal(second.sent.filter((message) => message.data?.editorId?.startsWith(`burst-editor-${count}-`)).length, count);
+            assert.equal(teacher.instance.pending, 0); assert.equal(teacher.instance.pendingBytes, 0);
+        }
+        teacher.instance.processMessage = processMessage;
+    });
+    it('rejects oversized pending-byte bursts and releases the full budget after processing', async () => {
+        const teacher = connection(2); let release;
+        const held = new Promise((resolve) => { release = resolve; });
+        teacher.instance.processMessage = () => held;
+        const packet = { type: 'broadcast:relay', sessionId: 'session-testing', pageId: 'page-testing', kind: 'mirror',
+            data: { type: 'rrweb-chunk', id: 'byte-budget-test', sequence: 1, index: 0, total: 9, chunk: 'x'.repeat(128 * 1024) } };
+        const tasks = Array.from({ length: 9 }, (_, index) => teacher.instance.message({ ...packet, data: { ...packet.data, index } }));
+        assert.equal(teacher.instance.pending, 7);
+        assert.ok(teacher.instance.pendingBytes <= 1024 * 1024);
+        assert.equal(teacher.sent.filter((message) => message.code === 'BACKPRESSURE').length, 2);
+        release(); await Promise.all(tasks);
+        assert.equal(teacher.instance.pending, 0); assert.equal(teacher.instance.pendingBytes, 0);
+        await teacher.instance.message(packet);
+        assert.equal(teacher.sent.filter((message) => message.code === 'BACKPRESSURE').length, 2);
+    });
+    it('releases pending-byte accounting after a rejected relay and connection cleanup', async () => {
+        const { teacher, started } = await lesson();
+        await teacher.instance.message({ type: 'broadcast:relay', sessionId: started.sessionId, pageId: started.pageId,
+            kind: 'mirror', data: { type: 'invalid-mirror' } });
+        assert.ok(teacher.sent.some((message) => message.code === 'INVALID_RELAY'));
+        assert.equal(teacher.instance.pending, 0); assert.equal(teacher.instance.pendingBytes, 0);
+        let release; const held = new Promise((resolve) => { release = resolve; });
+        teacher.instance.processMessage = () => held;
+        const tasks = Array.from({ length: 24 }, () => teacher.instance.message({ type: 'broadcast:relay',
+            sessionId: started.sessionId, pageId: started.pageId, kind: 'mirror',
+            data: { type: 'rrweb', sequence: 1, event: { type: 4, data: {} } } }));
+        await teacher.instance.cleanup(); release(); await Promise.all(tasks);
+        assert.equal(teacher.instance.pending, 0); assert.equal(teacher.instance.pendingBytes, 0);
+        await teacher.instance.message({ type: 'pulse', visible: true });
+        assert.equal(teacher.instance.pendingBytes, 0, 'closed connections must not reserve a new budget');
+    });
+    it('relays each source snapshot chunk once and fans out only to selected viewer tabs', async () => {
+        const { teacher, first, second, outsider, started } = await lesson();
+        const before = busEvents.length;
+        const packet = { type: 'broadcast:relay', sessionId: started.sessionId, pageId: started.pageId, kind: 'mirror',
+            data: { type: 'rrweb-chunk', id: 'snapshot-multicast', sequence: 1, index: 0, total: 1, chunk: 'x'.repeat(128 * 1024) } };
+        await teacher.instance.message(packet); await settle();
+        const relayed = busEvents.slice(before).filter((event) => event.message.type === 'broadcast:relay');
+        assert.equal(relayed.length, 1, 'one source chunk must consume one shared IPC payload');
+        assert.deepEqual(Array.from(relayed[0].recipients, (target) => target.uid), [10, 11]);
+        for (const viewer of [first, second]) assert.ok(viewer.sent.some((message) => message.data?.id === 'snapshot-multicast'));
+        assert.equal(outsider.sent.some((message) => message.data?.id === 'snapshot-multicast'), false);
+        assert.equal(teacher.sent.some((message) => message.data?.id === 'snapshot-multicast'), false);
+        const wrongTab = connection(10); wrongTab.instance.peer = { ...first.instance.peer, tabId: 'unselected-tab-testing' };
+        await wrongTab.instance.onShareEvent(relayed[0]); assert.equal(wrongTab.sent.length, 0);
+    });
+    it('keeps a thirty-viewer snapshot burst inside the bounded cluster IPC budget', () => {
+        const sent = []; const callbacks = [];
+        const clustered = load('packages/hydrooj/src/handler/live_share.ts', handlerDependencies, { process: {
+            env: { exec_mode: 'cluster_mode' }, connected: true,
+            send(message, callback) { sent.push(message); callbacks.push(callback); },
+        } });
+        const event = { uid: 0, tabId: '', recipients: Array.from({ length: 30 }, (_, i) => ({ uid: 10 + i, tabId: `student-tab-${i}` })),
+            message: { type: 'broadcast:relay', sessionId: 'session-testing', pageId: 'page-testing', kind: 'mirror',
+                data: { type: 'rrweb-chunk', id: 'large-snapshot', sequence: 1, index: 0, total: 20, chunk: 'x'.repeat(128 * 1024) } } };
+        assert.doesNotThrow(() => { for (let i = 0; i < 20; i++) clustered.emitLiveShare({ ...event,
+            message: { ...event.message, data: { ...event.message.data, index: i } } }); });
+        assert.equal(sent.length, 20);
+        assert.ok(sent.reduce((sum, item) => sum + Buffer.byteLength(item.data.payload), 0) < 4 * 1024 * 1024);
+        callbacks.forEach((callback) => callback());
+    });
     it('rejects executable learner data, persistent notes, unknown fields and oversized audiences', () => {
         broadcastProtocol.validateBroadcastMessage({ type: 'broadcast:start', studentUids: [10, 11] });
         for (const uids of [[], [10, 10], [1], Array.from({ length: 31 }, (_, i) => i + 10)]) {
@@ -320,6 +405,25 @@ describe('teacher broadcast protocol and multi-learner isolation', () => {
         assert.equal(sent.length, 1);
         await new Promise((resolve) => setTimeout(resolve, 1250));
         assert.equal(sent.length, 2);
+        await broadcasts.end(room, 'done', () => {});
+    });
+    it('retries a coalesced snapshot if another request consumed its trailing rate-limit slot', async () => {
+        const timers = [];
+        const retrying = load('packages/hydrooj/src/model/teacher_broadcast.ts', {
+            '../lib/live_share': protocol, '../lib/teacher_broadcast': broadcastProtocol,
+            '../service/db': { collection: (name) => database.collection(name) }, './live_share': model,
+            timers: { setTimeout(fn) { const timer = { fn, unref() {} }; timers.push(timer); return timer; }, clearTimeout() {} },
+        });
+        const teacher = await peer(2); await peer(10);
+        const room = await broadcasts.start(teacher, [10], () => {}); const sent = [];
+        await retrying.requestSnapshot(room, (event) => sent.push(event));
+        await retrying.requestSnapshot(room, (event) => sent.push(event));
+        assert.equal(sent.length, 1); assert.equal(timers.length, 1);
+        await broadcasts.rooms.updateOne({ _id: room._id }, { $set: { lastSnapshotAt: new Date() } });
+        await timers.shift().fn();
+        assert.equal(sent.length, 1); assert.equal(timers.length, 1, 'a blocked trailing request must remain scheduled');
+        await broadcasts.rooms.updateOne({ _id: room._id }, { $set: { lastSnapshotAt: new Date(Date.now() - 1100) } });
+        await timers.shift().fn(); assert.equal(sent.length, 2); assert.equal(timers.length, 0);
         await broadcasts.end(room, 'done', () => {});
     });
     it('ends the broadcast after teacher logout and rejects a restricted teacher login', async () => {

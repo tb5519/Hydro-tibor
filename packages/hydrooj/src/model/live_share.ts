@@ -15,7 +15,11 @@ export interface SharePresence {
     visible: boolean; canTeach: boolean; connected: boolean; expiresAt: Date; serverId: string;
 }
 interface ShareGrant { _id: string; uid: number; domainId: string; url: string; expiresAt: Date }
-export interface ShareEvent { uid: number; tabId: string; message: Record<string, any> }
+export interface ShareEvent {
+    uid: number; tabId: string; message: Record<string, any>;
+    /** Server-selected broadcast recipients share one IPC payload, never supplied by a client. */
+    recipients?: { uid: number, tabId: string }[];
+}
 interface ShareOccupancy { _id: number; roomId: string; kind: 'assist' | 'broadcast'; expiresAt: Date }
 
 declare module '../service/db' {

@@ -33,6 +33,15 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   let room: Room | null = null;
   let source = false;
   let adapter: Adapter | null = null;
+  let adapterLoading = false;
+  let frameReady = false;
+  let retainedView: { adapter: Adapter; stage: HTMLElement } | null = null;
+  let frameTimer = 0;
+  let frameProgress = 0;
+  let frameStarted = 0;
+  let frameRetries = 0;
+  let loadFailures = 0;
+  const capacityFailures: number[] = [];
   let generation = 0;
   let loader: Promise<Adapters> | null = null;
   let wantsSnapshot = false;
@@ -55,6 +64,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   let overlay: HTMLElement | null = null;
   let viewport: HTMLElement | null = null;
   let stage: HTMLElement | null = null;
+  let loading: HTMLElement | null = null;
   let status: HTMLElement | null = null;
   let viewToggle: HTMLButtonElement | null = null;
   let viewMode: 'readable' | 'fit' = 'readable';
@@ -89,7 +99,9 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     document.body.append(flash); flashTimer = window.setTimeout(() => { flash?.remove(); flash = null; }, 4500);
   }
   function updateState(text?: string) {
-    if (status) status.textContent = text || (connected ? `正在观看${room?.teacherName || '老师'}的分享` : '连接中断，正在重新连接…');
+    if (status) status.textContent = text || (connected
+      ? (frameReady ? `正在观看${room?.teacherName || '老师'}的分享` : '正在同步老师画面…') : '连接中断，正在重新连接…');
+    if (loading) loading.hidden = frameReady || !!retainedView || stage?.dataset.ready === 'true';
     if (bar) {
       const viewers = room?.viewers;
       const total = room?.studentUids?.length ?? viewers?.length ?? 0;
@@ -160,8 +172,10 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     if (overlay) return;
     original = { x: scrollX, y: scrollY, focus: document.activeElement as HTMLElement, overflow: document.body.style.overflow, inert: new Map() };
     overlay = el('section', 'teacher-broadcast-overlay'); overlay.dataset.liveSharePrivate = ''; overlay.setAttribute('aria-label', '老师分享的实时画面');
-    viewport = el('div', 'teacher-broadcast-viewport'); stage = el('div', 'teacher-broadcast-stage');
-    viewport.append(stage); overlay.append(viewport);
+    viewport = el('div', 'teacher-broadcast-viewport');
+    loading = el('div', 'teacher-broadcast-loading');
+    loading.append(el('span', 'teacher-broadcast-loading__dot'), el('strong', '', '正在同步老师画面'), el('span', '', '连接会自动恢复，请稍候'));
+    viewport.append(loading); overlay.append(viewport);
     const footer = el('footer', 'teacher-broadcast-hint');
     status = el('span', 'teacher-broadcast-hint__status'); status.setAttribute('role', 'status');
     viewToggle = button('完整画面', 'teacher-broadcast-hint__view', () => {
@@ -194,11 +208,13 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   }
   function clearRoom() {
     presence?.pause(); generation++; adapter?.dispose(); adapter = null; room = null;
+    retainedView?.adapter.dispose(); retainedView = null; adapterLoading = false; frameReady = false;
+    clearTimeout(frameTimer); frameTimer = 0; frameRetries = 0;
     buffered.length = 0; bufferedBytes = 0; wantsSnapshot = false;
     clearTimeout(disconnectTimer); disconnectTimer = 0; disconnectDeadline = 0;
     clearTimeout(snapshotTimer); snapshotTimer = 0; recovering = false;
     bar?.remove(); bar = null; originalObserver?.disconnect(); originalObserver = null;
-    overlay?.remove(); overlay = null; viewport = null; stage = null; status = null; viewToggle = null;
+    overlay?.remove(); overlay = null; viewport = null; stage = null; loading = null; status = null; viewToggle = null;
     focus = null; viewLeft = 0; viewTop = 0; viewScale = 1; drawing = false; manualUntil = 0;
     clearTimeout(followTimer); followTimer = 0;
     document.body.classList.remove('teacher-broadcast-viewing');
@@ -226,16 +242,57 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
       else bridge.send({ type: 'broadcast:sync', sessionId: room.sessionId, pageId: room.pageId });
     }, 80);
   }
+  function waitForFrame() {
+    clearTimeout(frameTimer); frameTimer = 0;
+    if (source || !room || !connected || frameReady) return;
+    frameTimer = window.setTimeout(() => {
+      frameTimer = 0;
+      if (source || !room || !connected || frameReady) return;
+      // Cursor, focus and presence updates cannot prove that a complete picture
+      // arrived. Only actual rrweb traffic extends this progress deadline.
+      if (Date.now() - frameStarted >= 60000) { recover('画面正在重新同步…'); return; }
+      if (Date.now() - frameProgress >= 12000) {
+        frameRetries++;
+        if (frameRetries >= 3) { recover('画面正在重新同步…'); return; }
+        queueSnapshot(); updateState('画面正在重新同步…');
+      }
+      waitForFrame();
+    }, 12000);
+  }
+  function retireAdapter() {
+    clearTimeout(frameTimer); frameTimer = 0;
+    clearTimeout(snapshotTimer); snapshotTimer = 0;
+    adapterLoading = false;
+    if (!source && adapter && stage?.dataset.ready === 'true') {
+      retainedView?.adapter.dispose(); retainedView?.stage.remove();
+      adapter.setConnected(false); stage.style.pointerEvents = 'none';
+      retainedView = { adapter, stage };
+    } else {
+      adapter?.dispose(); stage?.remove();
+    }
+    adapter = null; stage = null; frameReady = false;
+    buffered.length = 0; bufferedBytes = 0; wantsSnapshot = false;
+  }
   function recover(text: string) {
     if (!room || disposed || recovering) return;
     recovering = true; setConnected(false); updateState(text);
     // A failed mirror stops accepting packets. Rebuild all display adapters after
     // a fresh authenticated room announcement, rather than keep a frozen player.
-    generation++; adapter?.dispose(); adapter = null; buffered.length = 0; bufferedBytes = 0;
+    generation++; retireAdapter(); updateState(text);
     bridge.reconnect();
   }
   function adapterStatus(text: string) {
     if (text.includes('同步中断')) recover('画面正在重新同步…');
+    else if (text.includes('变化过多')) {
+      const now = Date.now(); capacityFailures.push(now);
+      while (capacityFailures[0] < now - 60000) capacityFailures.shift();
+      // A permanently oversized page must not create a rapid reconnect loop.
+      if (capacityFailures.length >= 3) {
+        if (source) stopSharing(); else clearRoom();
+        showMessage('当前页面内容过多，分享已暂停。请关闭不需要的内容后重新分享。');
+      } else recover('页面内容较多，正在重新同步…');
+    }
+    else if (text === '画面已同步' && !source && !frameReady) return;
     else updateState(text);
   }
   async function begin(next: Room, teacher: boolean) {
@@ -243,21 +300,28 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     if (teacher && (next.pageId !== bridge.pageId() || !config.pageGrant)) return;
     if (ended.has(next.sessionId)) { if (teacher) bridge.send({ type: 'broadcast:stop', sessionId: next.sessionId }); return; }
     pending = false; clearTimeout(pendingTimer);
-    if (room?.sessionId === next.sessionId && room.pageId === next.pageId && source === teacher && adapter) {
+    if (room?.sessionId === next.sessionId && room.pageId === next.pageId && source === teacher && (adapter || adapterLoading) && (connected || teacher)) {
       const restoring = !connected;
       Object.assign(room, next);
       if (restoring) { setConnected(true); if (!teacher) queueSnapshot(); }
       updateState();
       return;
     }
-    clearRoom(); source = teacher; room = next; connected = true; bridge.onActiveChange();
+    const keepView = !teacher && !source && room?.sessionId === next.sessionId && !!overlay;
+    if (keepView) { generation++; retireAdapter(); }
+    else clearRoom();
+    source = teacher; room = next; setConnected(true); frameRetries = 0; frameProgress = frameStarted = Date.now(); bridge.onActiveChange();
     if (teacher) { presence?.start(next.sessionId); saveResume(true); createSourceBar(); closePicker(); document.querySelector<HTMLButtonElement>('[data-assistant-close]')?.click(); }
-    else createView();
+    else {
+      createView(); stage = el('div', 'teacher-broadcast-stage'); stage.style.visibility = 'hidden';
+      viewport!.append(stage); fit();
+    }
     updateState(teacher ? undefined : '正在同步老师画面…');
     const version = generation;
+    adapterLoading = true;
     const onStatus = (text: string) => { if (generation === version && room === next) adapterStatus(text); };
     const send = (kind: string, data: any) => {
-      if (disposed || !connected || room !== next) return false;
+      if (disposed || generation !== version || !connected || room !== next) return false;
       return bridge.send({ type: 'broadcast:relay', sessionId: next.sessionId, pageId: next.pageId, kind, data });
     };
     try {
@@ -271,7 +335,13 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
             else if (packet.phase === 'end') endDrawing();
             send('drawing', packet);
           },
-          onStatus, onViewWheel: viewWheel, onFocus: (nextFocus) => {
+          onStatus, onReady: () => {
+            if (disposed || generation !== version || room !== next) return;
+            frameReady = true; frameRetries = 0; clearTimeout(frameTimer); frameTimer = 0;
+            if (stage) { stage.style.visibility = ''; stage.dataset.ready = 'true'; }
+            retainedView?.adapter.dispose(); retainedView?.stage.remove(); retainedView = null;
+            updateState();
+          }, onViewWheel: viewWheel, onFocus: (nextFocus) => {
             if (generation !== version || room !== next) return;
             focus = nextFocus; fit();
           }, onViewport: (size) => {
@@ -280,19 +350,27 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
             fit(); updateState();
           } });
       if (generation !== version || room !== next) { adapter.dispose(); adapter = null; return; }
+      adapterLoading = false;
+      loadFailures = 0;
       // IDE transport starts disconnected even though the mirror/editor adapters
       // start live. Activate the bundle once; repeated room announcements skip it.
       adapter.setConnected(connected);
       const waiting = buffered.splice(0); bufferedBytes = 0; waiting.forEach(receiveRelay);
       if (!teacher || wantsSnapshot) queueSnapshot();
+      waitForFrame();
     } catch {
       if (generation !== version || room !== next) return;
-      if (teacher) stopSharing(); else clearRoom();
-      showMessage('分享组件未加载成功，请刷新后重试。');
+      adapterLoading = false;
+      if (++loadFailures < 3) recover('分享组件正在重新连接…');
+      else {
+        if (teacher) stopSharing(); else clearRoom();
+        showMessage('分享组件暂时无法加载，请检查网络后重新进入。');
+      }
     }
   }
   function receiveRelay(message: any) {
     if (!room || room.sessionId !== message.sessionId || room.pageId !== message.pageId) return;
+    if (message.senderUid === room.teacherUid && message.kind === 'mirror' && /^rrweb(?:-chunk|-batch)?$/.test(message.data?.type)) frameProgress = Date.now();
     if (!adapter) {
       const bytes = JSON.stringify(message).length;
       if (buffered.length < 160 && bufferedBytes + bytes <= 8 * 1024 * 1024) { buffered.push(message); bufferedBytes += bytes; }
@@ -303,6 +381,12 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   }
   function setConnected(value: boolean) {
     const changed = connected !== value;
+    if (changed && !source) {
+      // Keep the visible frame during a socket interruption; the next complete
+      // snapshot, rather than a ready/pong packet, marks the display as current.
+      if (value) { frameReady = false; frameProgress = frameStarted = Date.now(); frameRetries = 0; }
+      clearTimeout(frameTimer); frameTimer = 0;
+    }
     connected = value; if (changed) adapter?.setConnected(value); updateState(); renderStudents();
     if (value) { clearTimeout(disconnectTimer); disconnectTimer = 0; disconnectDeadline = 0; recovering = false; }
     else if (room && !disconnectDeadline) {
@@ -314,6 +398,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
       }, 125000);
     }
     if (!value) { pending = false; clearTimeout(pendingTimer); }
+    else if (changed) waitForFrame();
   }
   function authenticationLost() {
     pending = false; clearTimeout(pendingTimer); ended.clear(); presence?.end(); saveResume(false); clearRoom(); closePicker();
