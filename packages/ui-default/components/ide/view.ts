@@ -37,12 +37,13 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
   dock.append(sharedRun);
   const windows = {} as Record<IdeWindowName, ReturnType<typeof makeWindow>>;
   function command(value: IdeCommand) { options.onCommand(value); }
+  function isDefaultWindow(name: IdeWindowName) {
+    const config = state.windows[name]; const initial = defaultWindows[name];
+    return config.visible && !config.minimized && !config.maximized
+      && (['x', 'y', 'width', 'height'] as const).every((key) => config[key] === initial[key]);
+  }
   function stackDefaultWindows() {
-    return root.clientHeight >= 500 && (['terminal', 'graphics'] as const).every((name) => {
-      const config = state.windows[name]; const initial = defaultWindows[name];
-      return config.visible && !config.minimized && !config.maximized
-        && (['x', 'y', 'width', 'height'] as const).every((key) => config[key] === initial[key]);
-    });
+    return root.clientHeight >= 400 && (['terminal', 'graphics'] as const).every(isDefaultWindow);
   }
   function makeWindow(name: IdeWindowName) {
     const section = element('section', `ide-window ide-window--${name}`);
@@ -77,14 +78,13 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
       const scaleY = root.clientHeight / (bounds.height || 1);
       // A manual move takes over the current arrangement, including the fitted
       // heights. Freeze both windows before dragging so neither jumps in size.
-      const placements = stackDefaultWindows()
-        ? (['terminal', 'graphics'] as const).map((window) => {
-          const rect = windows[window].section.getBoundingClientRect();
-          const width = rect.width * scaleX; const height = rect.height * scaleY;
-          return { type: 'window', window, patch: { width, height,
-            x: (rect.left - bounds.left) * scaleX / Math.max(1, root.clientWidth - width),
-            y: (rect.top - bounds.top) * scaleY / Math.max(1, root.clientHeight - height) } } as IdeCommand;
-        }) : [];
+      const placements = (['terminal', 'graphics'] as const).filter(isDefaultWindow).map((window) => {
+        const rect = windows[window].section.getBoundingClientRect();
+        const width = rect.width * scaleX; const height = rect.height * scaleY;
+        return { type: 'window', window, patch: { width, height,
+          x: (rect.left - bounds.left) * scaleX / Math.max(1, root.clientWidth - width),
+          y: (rect.top - bounds.top) * scaleY / Math.max(1, root.clientHeight - height) } } as IdeCommand;
+      });
       let arranged = !placements.length;
       const move = (e: PointerEvent) => {
         if (!arranged) { arranged = true; placements.forEach(command); }
@@ -250,22 +250,32 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
     if (disposed) return;
     const width = root.clientWidth; const height = root.clientHeight;
     const stacked = stackDefaultWindows();
-    const fit = Math.min(1, Math.max(0, height - 28)
-      / (defaultWindows.terminal.height + defaultWindows.graphics.height));
+    const defaultWidth = Math.min(width, Math.max(360, Math.min(760, width * 0.375)));
+    const defaultHeights = { terminal: defaultWidth / 2, graphics: defaultWidth * 0.75 + 43 };
+    const fit = Math.min(1, Math.max(0, height - 28) / (defaultHeights.terminal + defaultHeights.graphics));
     for (const name of ['terminal', 'graphics'] as const) {
       const config = state.windows[name]; const win = windows[name];
       win.section.hidden = !config.visible || config.minimized;
       win.dockButton.hidden = !config.visible || !config.minimized;
-      const w = config.maximized ? width : Math.min(config.width, width);
-      const h = config.maximized ? height : Math.min(config.height * (stacked ? fit : 1), height);
+      const initial = isDefaultWindow(name);
+      const w = config.maximized ? width : initial ? defaultWidth : Math.min(config.width, width);
+      const h = config.maximized ? height : Math.min((initial ? defaultHeights[name] : config.height) * (stacked ? fit : 1), height);
       win.section.style.width = `${Math.max(1, w)}px`; win.section.style.height = `${Math.max(1, h)}px`;
-      win.section.style.left = `${config.maximized ? 0 : config.x * Math.max(0, width - w)}px`;
-      win.section.style.top = `${config.maximized ? 0 : (stacked ? (name === 'graphics' ? 0 : 0.98) : config.y) * Math.max(0, height - h)}px`;
+      win.section.style.left = `${config.maximized ? 0 : initial ? Math.min(width * 0.48, width - w) : config.x * Math.max(0, width - w)}px`;
+      win.section.style.top = `${config.maximized ? 0 : stacked ? (name === 'graphics' ? 0 : .98 * Math.max(0, height - h)) : initial ? 0 : config.y * Math.max(0, height - h)}px`;
       win.section.classList.toggle('is-maximized', config.maximized);
       win.section.classList.toggle('is-front', state.activeWindow === name);
     }
   }
-  const observer = new ResizeObserver(layout); observer.observe(root); cleanup.push(() => observer.disconnect());
+  const toolbar = !options.shared ? container.closest('.scratchpad__coding-area')?.querySelector<HTMLElement>('.scratchpad__toolbar') : null;
+  const observer = new ResizeObserver(() => {
+    // A narrow screen can wrap the new file/theme controls onto another row.
+    // Keep runtime windows below the whole toolbar instead of covering actions.
+    if (toolbar) root.style.top = `${toolbar.offsetHeight + 12}px`;
+    layout();
+  });
+  observer.observe(root); if (toolbar) observer.observe(toolbar);
+  cleanup.push(() => observer.disconnect());
   function render(next: IdeSnapshot) {
     state = next;
     const fontSize = `${state.fontSize ?? IDE_FONT_DEFAULT}px`;

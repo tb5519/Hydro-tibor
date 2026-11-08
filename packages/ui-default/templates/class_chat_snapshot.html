@@ -1,0 +1,27 @@
+{% extends "layout/basic.html" %}
+{% block content %}
+<div class="row"><div class="columns">
+  <main class="chat-snapshot" data-live-share-private>
+    <header class="chat-snapshot__header">
+      <div>
+        <span class="chat-snapshot__eyebrow">学员发来的题目与代码</span>
+        <h1>{{ snapshot.title }}</h1>
+        <p>{{ sender.name }} <span>·</span> {{ datetimeSpan(message.createdAt, false)|safe }} <span>·</span> 发送时的版本</p>
+      </div>
+      <a class="chat-snapshot__link" href="{{ snapshot.problemUrl }}">打开原题 <span aria-hidden="true">↗</span></a>
+    </header>
+    <div class="chat-snapshot__grid">
+      <section class="chat-snapshot__card">
+        <div class="chat-snapshot__bar"><h2>题目</h2><span>{{ snapshot.pid }}</span></div>
+        <article class="chat-snapshot__statement typo">{{ snapshot.content|content(handler.user.viewLang or 'zh', snapshot.html)|safe }}</article>
+      </section>
+      <section class="chat-snapshot__card chat-snapshot__code-card">
+        <div class="chat-snapshot__bar"><h2>当时的代码</h2><span>{{ snapshot.lang }}</span><button type="button" data-copy-chat-code>复制代码</button></div>
+        {% if snapshot.code %}
+        <pre class="chat-snapshot__code" data-chat-snapshot-code>{{ snapshot.code }}</pre>
+        {% else %}<p class="chat-snapshot__empty">发送时还没有编写代码。</p>{% endif %}
+      </section>
+    </div>
+  </main>
+</div></div>
+{% endblock %}

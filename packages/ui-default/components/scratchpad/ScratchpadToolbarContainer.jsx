@@ -8,6 +8,7 @@ import Icon from 'vj/components/react/IconComponent';
 import { getAvailableLangs, i18n, request } from 'vj/utils';
 import ScratchpadThemePicker from './ScratchpadThemePicker';
 import IdeFontSizeControl from '../ide/IdeFontSizeControl';
+import IdeFilesControl from '../ide/IdeFilesControl';
 import IdeCapacityBadge from '../ide/IdeCapacityBadge';
 import { ScratchpadLanguageArt } from './ScratchpadControlArt';
 import Toolbar, {
@@ -304,6 +305,7 @@ export default connect(mapStateToProps, mapDispatchToProps)(class ScratchpadTool
               </span>
             </ToolbarButton>
           )}
+          {UiContext.ideMode && <IdeFilesControl />}
           <ScratchpadThemePicker />
           {UiContext.ideMode && <><IdeFontSizeControl /><IdeCapacityBadge language={this.props.editorLang}/></>}
           {canUsePretest && !UiContext.ideMode && (

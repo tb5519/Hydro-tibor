@@ -78,6 +78,7 @@ test('one teacher broadcasts to two selected learners, with read-only pen questi
         <button id="run" type="button">运行示范</button><span id="result">尚未运行</span><a id="next" href="/lesson-two?uid=${uid}">下一题</a>
         <p id="explanation">选中一段讲解，老师可以写批注，孩子只能用画笔圈出疑问。</p><div id="original"></div>
         <button id="far-focus" style="position:fixed;right:40px;bottom:130px">右侧演示</button><textarea id="draft">学员${uid}未提交的草稿</textarea><div style="height:1500px"></div></main><aside id="already-inert" inert>原本不可操作</aside>
+        <aside data-class-chat data-live-share-private style="position:fixed;z-index:2147482300;right:18px;top:30px"><input id="private-chat-draft" aria-label="私聊草稿" placeholder="私聊" /></aside>
         ${teacher ? assistant : ''}<script src="/vs/loader.js"></script><script src="/share.js"></script><script>
         window.UiContext={};window.UserContext={_id:${uid}};window.runs=0;
         document.querySelector('#run').addEventListener('click',()=>{runs++;document.querySelector('#result').textContent='已运行 '+runs});
@@ -142,6 +143,10 @@ test('one teacher broadcasts to two selected learners, with read-only pen questi
             assert.equal(await page.locator('.teacher-broadcast-stage').evaluate((node) => node.style.width), '3840px');
             assert.equal(await page.evaluate(() => sharedEditor().getOption(monaco.editor.EditorOption.readOnly)), true);
             assert.equal(await page.locator('#own-page').evaluate((node) => node.inert), true);
+            assert.equal(await page.locator('[data-class-chat]').evaluate((node) => node.inert), false,
+                'a learner can privately message the teacher while the broadcast locks the learning page');
+            await page.locator('#private-chat-draft').fill('PRIVATE-LEARNER-QUESTION');
+            assert.equal(await page.locator('#private-chat-draft').inputValue(), 'PRIVATE-LEARNER-QUESTION');
             assert.match(await page.locator('.teacher-broadcast-hint').textContent(), /左键.*圈出/);
             const stage = await page.locator('.teacher-broadcast-stage').boundingBox(); const viewport = await page.locator('.teacher-broadcast-viewport').boundingBox();
             assert(stage.width >= 3840 * .85 - 1, 'large teacher viewport never shrinks code below the readable scale');

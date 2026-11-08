@@ -75,7 +75,9 @@ it('opens runtime windows on the right, fits both without overlap and preserves 
   send(ws, { type: 'output', runId, seq: 2, stream: 'stdout', text: '右侧终端' });
   const terminal = page.locator('.ide-window--terminal'); const graphics = page.locator('.ide-window--graphics');
   await terminal.waitFor({ state: 'visible' });
-  assert((await terminal.boundingBox()).x > 1280 / 2, 'output leaves the left code area visible');
+  assert((await terminal.boundingBox()).x > 1280 * .45, 'output leaves the left code area visible');
+  assert((await terminal.boundingBox()).y < 90, 'single terminal starts below the toolbar, not near the bottom');
+  await page.screenshot({ path: '/tmp/onebyone-ide-default-window.png' });
   send(ws, { type: 'turtle', runId, seq: 3, commands: [{ op: 'screen', width: 640, height: 480 }] });
   await graphics.waitFor({ state: 'visible' });
   for (const height of [800, 650]) {
@@ -94,7 +96,7 @@ it('opens runtime windows on the right, fits both without overlap and preserves 
   assert(moved.x < before.x - 100, 'the teacher or learner can move the window away from the default');
   assert(Math.abs(moved.height - before.height) < 1 && Math.abs(terminalAfter.height - terminalBefore.height) < 1,
     'taking over a fitted layout does not jump either window size');
-  assert(Math.abs(terminalAfter.y - terminalBefore.y) < 1, 'the other window stays in place during dragging');
+  assert(Math.abs(terminalAfter.y - terminalBefore.y) < 1, `the other window stays in place during dragging: ${terminalAfter.y} versus ${terminalBefore.y}`);
   const placement = await page.evaluate(() => ({ ...runtime.snapshot().windows.graphics }));
   send(ws, { type: 'exit', runId, seq: 4, exitCode: 0, status: 'Accepted' });
   await page.waitForFunction(() => runtime.snapshot().state === 'finished');
@@ -181,8 +183,8 @@ it('drags, resizes, minimizes and restores windows; renders runtime requests saf
   const title = page.locator('[data-ide-drag="terminal"]'); await title.waitFor({ state: 'visible' });
   const before = await page.locator('.ide-window--terminal').boundingBox();
   const box = await title.boundingBox(); await page.mouse.move(box.x + 150, box.y + 20); await page.mouse.down();
-  await page.mouse.move(box.x + 40, box.y - 60, { steps: 5 }); await page.mouse.up();
-  const moved = await page.locator('.ide-window--terminal').boundingBox(); assert(moved.x < before.x - 50); assert(moved.y < before.y);
+  await page.mouse.move(box.x + 40, box.y + 100, { steps: 5 }); await page.mouse.up();
+  const moved = await page.locator('.ide-window--terminal').boundingBox(); assert(moved.x < before.x - 50); assert(moved.y > before.y);
   const grip = await page.locator('[data-ide-resize="terminal"]').boundingBox();
   await page.mouse.move(grip.x + 8, grip.y + 8); await page.mouse.down(); await page.mouse.move(grip.x + 108, grip.y + 68, { steps: 5 }); await page.mouse.up();
   const sized = await page.locator('.ide-window--terminal').boundingBox(); assert(sized.width > before.width + 50);

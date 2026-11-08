@@ -388,9 +388,9 @@ export function createAssetStorageModel(dependencies: {
             }
         }
 
-        static async cleanFiles() {
+        static async cleanFiles(paths?: string[]) {
             await this.recoverAbandonedGates();
-            const expired = this.coll.find({ autoDelete: { $lte: new Date() } });
+            const expired = this.coll.find({ autoDelete: { $lte: new Date() }, ...(paths ? { path: { $in: paths } } : {}) });
             for await (const file of expired) {
                 const id = physicalIdentity(file);
                 if (!file.remoteAsset) await this.initializeGate(id);
@@ -412,8 +412,10 @@ export function createAssetStorageModel(dependencies: {
                     await this.unlockDelete(id);
                 }
             }
-            for await (const gate of this.assets.find({ state: 'ready', writers: 0, remoteAsset: { $exists: true } })) {
-                await this.collectRemote(gate.remoteAsset);
+            if (!paths) {
+                for await (const gate of this.assets.find({ state: 'ready', writers: 0, remoteAsset: { $exists: true } })) {
+                    await this.collectRemote(gate.remoteAsset);
+                }
             }
         }
     };

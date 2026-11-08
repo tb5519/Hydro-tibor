@@ -144,7 +144,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     if (!original) return;
     for (const node of Array.from(document.body.children)) {
       if (!(node instanceof HTMLElement) || node === overlay
-        || node.matches('script,style,link,[data-voice-call-ui],.voice-call-card,.voice-call-floating,.voice-call-toast')) continue;
+        || node.matches('script,style,link,[data-class-chat],[data-voice-call-ui],.voice-call-card,.voice-call-floating,.voice-call-toast')) continue;
       if (!original.inert.has(node)) original.inert.set(node, node.inert);
       node.inert = true;
     }

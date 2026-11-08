@@ -357,6 +357,27 @@ it('network deletion failure keeps the expired record and retries safely', async
     assert.equal(objects.size, 0);
 });
 
+it('targeted private-chat cleanup reclaims only selected expired paths and preserves other references', async () => {
+    const privatePath = 'class-chat/private-upload.bin';
+    const unrelatedPath = 'class-chat/another-pair.bin';
+    await model.put(privatePath, Buffer.from('private chat'));
+    await model.copy(privatePath, 'class-chat/retained-copy.bin');
+    await model.put(unrelatedPath, Buffer.from('unrelated chat'));
+    await model.del([privatePath, unrelatedPath]);
+    await model.coll.updateMany({ path: { $in: [privatePath, unrelatedPath] } }, { $set: { autoDelete: new Date(0) } });
+    await model.cleanFiles([privatePath]);
+    assert.equal(await model.coll.findOne({ path: privatePath }), null);
+    assert.ok(await model.coll.findOne({ path: unrelatedPath }));
+    assert.equal((await bytes(await model.get('class-chat/retained-copy.bin'))).toString(), 'private chat');
+    assert.equal(local.size, 2);
+    await model.del(['class-chat/retained-copy.bin']);
+    await model.coll.updateOne({ path: 'class-chat/retained-copy.bin' }, { $set: { autoDelete: new Date(0) } });
+    await model.cleanFiles(['class-chat/retained-copy.bin']);
+    assert.equal(local.size, 1);
+    await model.cleanFiles([unrelatedPath]);
+    assert.equal(local.size, 0);
+});
+
 it('GC cannot remove an object while a copy is between acquiring its writer gate and inserting its reference', async () => {
     await model.put(imagePath, Buffer.from('saved'));
     const insert = model.coll.insertOne.bind(model.coll);
