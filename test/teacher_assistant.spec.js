@@ -35,13 +35,14 @@ after(async () => { await browser?.close(); });
 const test = (name, fn) => it(name, { skip: !executablePath && 'Install Playwright and Chromium' }, fn);
 const key = (uid) => `onebyone.teacher-assistant.position.v1:${uid}`;
 
-function render({ role = 'teacher', uid = 2 } = {}) {
+function render({ role = 'teacher', uid = 2, cppEditorMode } = {}) {
     const workspace = role.startsWith('workspace-') ? { code: 'classroom', legacy: false } : undefined;
     const member = workspace ? { role: role.slice('workspace-'.length) } : undefined;
     return env.renderString(template, {
         handler: {
             user: {
                 _id: role === 'guest' ? 0 : uid,
+                cppEditorMode,
                 hasPerm: (value) => role === 'teacher' || role === 'admin',
                 hasPriv: (value) => role === 'admin' || value === 'PRIV_USER_PROFILE' && role !== 'guest',
             },
@@ -68,7 +69,7 @@ function render({ role = 'teacher', uid = 2 } = {}) {
     });
 }
 
-async function fixture({ width = 1440, height = 900, role = 'teacher', uid = 2, storage, blockedStorage = false, hasTouch = false } = {}) {
+async function fixture({ width = 1440, height = 900, role = 'teacher', uid = 2, storage, blockedStorage = false, hasTouch = false, quickSettings } = {}) {
     const context = await browser.newContext({ viewport: { width, height }, hasTouch });
     const page = await context.newPage();
     const errors = [];
@@ -88,7 +89,17 @@ async function fixture({ width = 1440, height = 900, role = 'teacher', uid = 2, 
     await page.route('https://teacher-assistant.test/**', async (route) => {
         const requested = new URL(route.request().url());
         const currentUid = Number(requested.searchParams.get('uid') || uid);
-        const html = render({ role, uid: currentUid });
+        if (requested.pathname.endsWith('/teacher_quick_settings') && quickSettings) {
+            const mode = route.request().postDataJSON().cppEditorMode;
+            quickSettings.requests.push(mode);
+            if (quickSettings.fail) await route.fulfill({ status: 500 });
+            else {
+                quickSettings.mode = mode;
+                await route.fulfill({ json: { cppEditorMode: mode } });
+            }
+            return;
+        }
+        const html = render({ role, uid: currentUid, cppEditorMode: quickSettings?.mode });
         await route.fulfill({ contentType: 'text/html', body: `<!DOCTYPE html><html class="theme--default hasjs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${theme}
           *{box-sizing:border-box}body{margin:0;background:#eef1f4;font-family:system-ui,sans-serif;color:#24364d}.fixture-topbar{height:64px;padding:20px 32px;background:white;border-bottom:1px solid #dce4ec}#panel{transform:translateZ(0);padding:32px;min-height:2400px}.content{padding:30px;background:white;border:1px solid #e0e8ef;border-radius:20px;max-width:900px}button,a{font:inherit} ${css}
           </style></head><body><nav class="fixture-topbar">OneByOne · 老师工作台</nav><div id="panel"><div class="content"><h1>学员训练看板</h1><p>课堂里的每一步进步，都值得看见。</p><button id="outside">查看学员</button><iframe id="scratch-frame" title="Scratch 编辑器" style="display:block;width:250px;height:60px;margin-top:20px;border:0" srcdoc="<button>继续搭积木</button>"></iframe><div style="margin-top:100px;height:340px;background:linear-gradient(135deg,#edf7f9,#f6f1ff);border-radius:18px"></div></div></div>${html}<script>${controls}</script><script>window.cleanupAssistant = TeacherAssistant.installTeacherAssistant(document);</script></body></html>` });
@@ -149,6 +160,31 @@ test('opens on click or keyboard, closes with Escape and outside click, and supp
         await page.locator('[data-assistant-close]').click();
         assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
         assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+});
+
+test('quick settings save the selected C++ mode, restore it on reload, and roll back a failed save', async () => {
+    const quickSettings = { mode: 'beginner', requests: [], fail: false };
+    const { page, context } = await fixture({ quickSettings });
+    const select = page.getByLabel('老师 C++ 模式');
+    const status = page.locator('[data-assistant-setting-status]');
+    const open = async () => {
+        await page.locator('[data-assistant-toggle]').click();
+        await page.getByText('老师快捷设置', { exact: true }).click();
+    };
+    try {
+        await open();
+        assert.equal(await select.inputValue(), 'beginner');
+        await select.selectOption('preset');
+        await status.getByText('已保存，重新打开编辑器后生效').waitFor();
+        await page.reload();
+        await open();
+        assert.equal(await select.inputValue(), 'preset');
+        quickSettings.fail = true;
+        await select.selectOption('proficient');
+        await status.getByText('保存失败，请重新选择').waitFor();
+        assert.equal(await select.inputValue(), 'preset');
+        assert.deepEqual(quickSettings.requests, ['preset', 'proficient']);
     } finally { await context.close(); }
 });
 

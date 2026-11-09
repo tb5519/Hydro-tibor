@@ -8,8 +8,10 @@ export function fileLanguage(name: string, current: string, available: Record<st
   return matches(current) ? current : Object.keys(available).find(matches) || '';
 }
 export function codeFileName(name: string, lang: string) {
-  const value = (name || '我的程序').trim().replace(/[\x00-\x1f\x7f/\\]/g, '').slice(0, 72) || '我的程序';
-  return /\.[a-z0-9]+$/i.test(value) ? value : `${value}${lang === 'py3' || lang.startsWith('py.') ? '.py' : lang === 'c' ? '.c' : '.cpp'}`;
+  const value = (name || '我的程序').trim().replace(/[\x00-\x1f\x7f/\\]/g, '').slice(0, 80) || '我的程序';
+  if (/\.[a-z0-9]+$/i.test(value)) return value;
+  const extension = lang === 'py3' || lang.startsWith('py.') ? '.py' : lang === 'c' ? '.c' : '.cpp';
+  return `${value.slice(0, 80 - extension.length)}${extension}`;
 }
 export function validateLocalCode(file: File, text: string) {
   if (file.size > IDE_FILE_BYTES || new TextEncoder().encode(text).length > IDE_FILE_BYTES) throw new Error('代码文件不能超过 128 KB。');

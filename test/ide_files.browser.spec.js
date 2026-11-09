@@ -33,6 +33,12 @@ before(async () => {
       let body = ''; for await (const chunk of req) body += chunk;
       const input = JSON.parse(body); requests.push(input);
       if (input.action === 'delete') { files.delete(input.id); res.end('{"ok":true}'); return; }
+      const duplicate = [...files.values()].find((value) => value.name === input.name);
+      if (!input.id && duplicate) {
+        res.statusCode = 409;
+        res.end(JSON.stringify({ error: 'DUPLICATE_NAME', existing: { id: duplicate.id, revision: duplicate.revision } }));
+        return;
+      }
       const file = { ...input, id: input.id || String(files.size + 1).padStart(24, '0'), revision: (input.revision || 0) + 1, updatedAt: new Date().toISOString() };
       files.set(file.id, file); res.end(JSON.stringify({ file })); return;
     }
@@ -43,18 +49,36 @@ before(async () => {
   browser = await playwright.chromium.launch({ headless: true, executablePath });
 });
 after(async () => { await browser?.close(); await new Promise((r) => server?.close(r)); });
-it('defaults to cloud, names once then saves directly, opens exact code and confirms draft replacement', async () => {
+it('prompts on each save, rejects a duplicate until confirmed and opens exact saved code', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   await page.goto(origin); await page.getByRole('button', { name: '云端文件，点击切换本地' }).waitFor();
   await page.getByRole('button', { name: '保存', exact: true }).click();
-  await page.getByLabel('文件名').fill('第一个程序');
+  await page.getByLabel('程序名称').fill('第一个程序');
   await page.locator('dialog').getByRole('button', { name: '保存', exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('dialog'));
   assert.equal([...files.values()].at(-1).name, '第一个程序.py');
   await page.evaluate(() => store.dispatch({ type: 'SCRATCHPAD_EDITOR_UPDATE_CODE', payload: 'print(2)' }));
+  const dialog = page.locator('dialog');
   await page.getByRole('button', { name: '保存', exact: true }).click();
-  await page.waitForFunction(() => document.querySelector('.ide-files__notice')?.textContent.includes('已保存'));
+  assert.equal(await page.getByLabel('程序名称').inputValue(), '第一个程序.py');
+  await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  await page.getByRole('heading', { name: '覆盖同名程序？' }).waitFor();
+  assert.equal([...files.values()].at(-1).code, 'print(1)');
+  await dialog.getByRole('button', { name: '换个名字' }).click();
+  await page.getByText('请换一个程序名称。').waitFor();
+  assert.equal(await page.getByLabel('程序名称').evaluate((element) => document.activeElement === element), true);
+  await page.getByLabel('程序名称').fill('第二个程序');
+  await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  await dialog.waitFor({ state: 'hidden' });
+  assert.equal([...files.values()].at(-1).name, '第二个程序.py');
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await page.getByLabel('程序名称').fill('第一个程序');
+  await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  await dialog.getByRole('button', { name: '确认覆盖' }).click();
+  await dialog.waitFor({ state: 'hidden' });
+  assert.equal([...files.values()].find((value) => value.name === '第一个程序.py').code, 'print(2)');
   assert.equal([...files.values()].at(-1).code, 'print(2)');
+  assert.equal(files.size, 2);
   assert.equal(await page.locator('dialog').count(), 0);
   await page.evaluate(() => store.dispatch({ type: 'SCRATCHPAD_EDITOR_UPDATE_CODE', payload: 'unsaved' }));
   await page.getByRole('button', { name: '打开', exact: true }).click();
@@ -78,6 +102,8 @@ it('switches locally, imports C++ with its language, downloads exact code and re
   // Exercise the portable fallback used by browsers without filesystem picker support.
   await page.evaluate(() => { delete window.showSaveFilePicker; });
   const download = page.waitForEvent('download'); await page.getByRole('button', { name: '保存', exact: true }).click();
+  assert.equal(await page.getByLabel('程序名称').inputValue(), '测试.cpp');
+  await page.locator('dialog').getByRole('button', { name: '保存', exact: true }).click();
   const file = await download; assert.equal(file.suggestedFilename(), '测试.cpp');
   assert.equal(fs.readFileSync(await file.path(), 'utf8'), current.code);
   await page.locator('input[type=file]').setInputFiles({ name: 'too-big.py', mimeType: 'text/plain', buffer: Buffer.alloc(128 * 1024 + 1, 'a') });
@@ -105,6 +131,7 @@ it('opening a cloud document requests a new local destination instead of overwri
     await page.goto(origin);
     await page.getByRole('button', { name: '云端文件，点击切换本地' }).click();
     await page.getByRole('button', { name: '保存', exact: true }).click();
+    await page.locator('dialog').getByRole('button', { name: '保存', exact: true }).click();
     await page.waitForFunction(() => window.__localSaves.contents['本地程序A.py'] === 'print(1)');
     await page.getByRole('button', { name: '本地文件，点击切换云端' }).click();
     await page.getByRole('button', { name: '打开', exact: true }).click();
@@ -112,6 +139,7 @@ it('opening a cloud document requests a new local destination instead of overwri
     await page.waitForFunction(() => store.getState().editor.code === 'print("B")');
     await page.getByRole('button', { name: '云端文件，点击切换本地' }).click();
     await page.getByRole('button', { name: '保存', exact: true }).click();
+    await page.locator('dialog').getByRole('button', { name: '保存', exact: true }).click();
     await page.waitForFunction(() => !document.querySelector('.ide-files button:disabled'));
     let state = await page.evaluate(() => window.__localSaves);
     assert.equal(state.suggestedNames.length, 2, 'opening B must discard the local write handle for A');
@@ -120,6 +148,8 @@ it('opening a cloud document requests a new local destination instead of overwri
     assert.equal(state.contents['云端程序B.py'], 'print("B")');
     await page.evaluate(() => store.dispatch({ type: 'SCRATCHPAD_EDITOR_UPDATE_CODE', payload: 'print("B updated")' }));
     await page.getByRole('button', { name: '保存', exact: true }).click();
+    await page.locator('dialog').getByRole('button', { name: '保存', exact: true }).click();
+    await page.getByRole('button', { name: '确认覆盖' }).click();
     await page.waitForFunction(() => window.__localSaves.contents['云端程序B.py'] === 'print("B updated")');
     state = await page.evaluate(() => window.__localSaves);
     assert.equal(state.suggestedNames.length, 2, 'later saves of B may reuse its own explicitly selected local handle');

@@ -61,6 +61,7 @@ export function installTeacherAssistant(root: Document = document) {
   const edge = 12;
   const listeners: (() => void)[] = [];
   let opened = false;
+  let savingCppMode = false;
   let suppressClick = false;
   let suppressTimer: number;
   let frame = 0;
@@ -192,6 +193,46 @@ export function installTeacherAssistant(root: Document = document) {
   const reset = host.querySelector('[data-assistant-reset]');
   if (close) on(close, 'click', () => setOpen(false, true));
   if (reset) on(reset, 'click', () => { position = defaultPosition(); persist(); place(); });
+  on(host, 'toggle', (event) => {
+    if ((event.target as HTMLElement).matches('[data-assistant-settings]')) placePanel();
+  }, { capture: true });
+  on(host, 'change', async (event) => {
+    const select = event.target as HTMLSelectElement;
+    if (!select.matches('[data-assistant-cpp-mode]')) return;
+    const settings = select.closest<HTMLElement>('[data-assistant-settings]');
+    if (!settings?.dataset.url) return;
+    const previous = Array.from(select.options).find((option) => option.defaultSelected)?.value || 'proficient';
+    if (savingCppMode) { select.value = previous; return; }
+    const cppEditorMode = select.value;
+    const status = settings.querySelector<HTMLElement>('[data-assistant-setting-status]');
+    if (!status) return;
+    savingCppMode = true;
+    select.disabled = true;
+    status.textContent = '正在保存…';
+    status.classList.remove('is-error');
+    try {
+      const response = await view.fetch(settings.dataset.url, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cppEditorMode, workspaceId: settings.dataset.workspaceId || undefined }),
+      });
+      if (!response.ok || (await response.json()).cppEditorMode !== cppEditorMode) throw new Error('Unable to save mode');
+      const current = host.querySelector<HTMLSelectElement>('[data-assistant-cpp-mode]');
+      if (current) {
+        Array.from(current.options).forEach((option) => { option.defaultSelected = option.value === cppEditorMode; });
+        current.value = cppEditorMode;
+      }
+      status.textContent = '已保存，重新打开编辑器后生效';
+    } catch {
+      select.value = previous;
+      status.textContent = '保存失败，请重新选择';
+      status.classList.add('is-error');
+    } finally {
+      savingCppMode = false;
+      select.disabled = false;
+      placePanel();
+    }
+  });
   on(root, 'pointerdown', (event) => { if (opened && !host.contains(event.target as Node)) setOpen(false); });
   on(root, 'focusin', (event) => { if (opened && !host.contains(event.target as Node)) setOpen(false); });
   on(root, 'keydown', ((event: KeyboardEvent) => {

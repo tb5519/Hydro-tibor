@@ -44,6 +44,23 @@ it('prevents simultaneous updates from silently overwriting a newer saved progra
   await assert.rejects(files.deleteIdeFile(2, 'python', file.id, 1), (error) => error.code === 'CONFLICT');
   await files.deleteIdeFile(2, 'python', file.id, 2); assert.equal((await files.listIdeFiles(2, 'python')).length, 0);
 });
+it('creates only one cloud file per name and keeps existing duplicate records addressable', async () => {
+  const attempts = await Promise.allSettled(['a', 'b', 'c'].map((code) => files.saveIdeFile(2, 'python', { ...payload(), code }, ['py.py3'])));
+  const [created] = attempts.filter((result) => result.status === 'fulfilled');
+  assert.equal(attempts.filter((result) => result.status === 'fulfilled').length, 1);
+  for (const result of attempts.filter((entry) => entry.status === 'rejected')) {
+    assert.equal(result.reason.code, 'DUPLICATE_NAME');
+    assert.equal(result.reason.existing.id, created.value.id);
+    assert.equal(result.reason.existing.revision, 1);
+  }
+  const separate = await files.saveIdeFile(2, 'python', payload('另一个.py'), ['py.py3']);
+  await assert.rejects(files.saveIdeFile(2, 'python', { ...payload(), id: separate.id, revision: 1 }, ['py.py3']), (error) => error.code === 'CONFLICT');
+  // Simulate a same-name record saved before duplicate checks existed.
+  await files.libraries.updateOne({ _id: '2:python' }, { $set: { 'files.1.name': payload().name } });
+  await files.saveIdeFile(2, 'python', { ...payload(), id: separate.id, revision: 1, code: 'updated' }, ['py.py3']);
+  assert.equal((await files.listIdeFiles(2, 'python')).length, 2);
+  assert.equal((await files.getIdeFile(2, 'python', separate.id)).code, 'updated');
+});
 it('enforces its cloud capacity atomically even when many requests arrive at once', async () => {
   const outcomes = await Promise.allSettled(Array.from({ length: 65 }, (_, i) => files.saveIdeFile(2, 'python', payload(`${i}.py`), ['py.py3'])));
   assert.equal(outcomes.filter((entry) => entry.status === 'fulfilled').length, 50);
@@ -71,4 +88,11 @@ it('checks fresh access and same-origin rules for every list/read/write without 
   assert.deepEqual(events, ['origin:true', 'authorize']);
   assert.equal((await files.listIdeFiles(2, 'python')).length, 1);
   assert.equal((await files.listIdeFiles(99, 'other')).length, 0);
+  const { id, revision } = handler.response.body.file;
+  await handler.post();
+  assert.equal(handler.response.status, 409);
+  assert.equal(handler.response.body.error, 'DUPLICATE_NAME');
+  assert.equal(handler.response.body.existing.id, id);
+  assert.equal(handler.response.body.existing.revision, revision);
+  assert.equal(handler.response.body.existing.code, undefined);
 });

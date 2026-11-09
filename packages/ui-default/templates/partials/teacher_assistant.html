@@ -39,6 +39,28 @@
       <button type="button" class="teacher-assistant__close" data-assistant-close aria-label="收起老师助手"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button>
     </header>
     <nav class="teacher-assistant__links" aria-label="老师常用入口">
+      {% if assistantProfile %}
+      {% set cppModes = ['beginner', 'preset', 'proficient'] %}
+      {% set cppMode = assistantUser.cppEditorMode %}
+      {% if cppMode not in cppModes %}{% set cppMode = (assistantUser._dudoc or {}).cppEditorMode %}{% endif %}
+      {% if cppMode not in cppModes %}{% set cppMode = 'preset' if (assistantUser._dudoc or {}).cppStarterTemplate else 'proficient' %}{% endif %}
+      <details class="teacher-assistant__settings" data-assistant-settings data-url="{{ url('teacher_quick_settings') }}" data-workspace-id="{{ (assistantWorkspace or {})._id or '' }}">
+        <summary class="teacher-assistant__link">
+          <span class="teacher-assistant__icon">{{ assistantIcon('settings') }}</span>
+          <span class="teacher-assistant__copy"><strong>老师快捷设置</strong><span>调整自己的编辑方式</span></span>
+          <span class="teacher-assistant__arrow teacher-assistant__chevron" aria-hidden="true">⌄</span>
+        </summary>
+        <div class="teacher-assistant__setting-card">
+          <label for="teacher-assistant-cpp-mode">老师 C++ 模式</label>
+          <select id="teacher-assistant-cpp-mode" data-assistant-cpp-mode aria-describedby="teacher-assistant-cpp-status">
+            <option value="beginner"{% if cppMode == 'beginner' %} selected{% endif %}>新手模式</option>
+            <option value="preset"{% if cppMode == 'preset' %} selected{% endif %}>预制模式</option>
+            <option value="proficient"{% if cppMode == 'proficient' %} selected{% endif %}>熟练模式</option>
+          </select>
+          <small id="teacher-assistant-cpp-status" data-assistant-setting-status role="status">自动保存，重新打开编辑器后生效</small>
+        </div>
+      </details>
+      {% endif %}
       {% if UiContext.voiceCall and UiContext.voiceCall.canTeach %}
       <button type="button" class="teacher-assistant__link teacher-assistant__voice" data-voice-call-open>
         <span class="teacher-assistant__icon">{{ assistantIcon('phone') }}</span>

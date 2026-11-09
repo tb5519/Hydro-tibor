@@ -5,6 +5,11 @@ import db from '../service/db';
 export interface IdeFile {
     id: string; name: string; lang: string; code: string; revision: number; updatedAt: Date;
 }
+export class DuplicateIdeFileError extends IdeError {
+    constructor(public readonly existing: Pick<IdeFile, 'id' | 'revision'>) {
+        super('DUPLICATE_NAME', '已有同名程序。');
+    }
+}
 interface IdeLibrary { _id: string; uid: number; domainId: string; files: IdeFile[] }
 declare module '../service/db' { interface Collections { 'ide.file.library': IdeLibrary } }
 export const libraries = db.collection('ide.file.library');
@@ -18,7 +23,7 @@ export function validateIdeFile(input: any, languages: string[]) {
         invalid('代码文件不能超过 128 KB，且必须是文本文件。');
     }
     if (typeof input.lang !== 'string' || !languages.includes(input.lang)) invalid('请选择当前课堂支持的代码语言。');
-    if (input.id !== undefined && !/^[a-f0-9]{24}$/.test(input.id)) invalid('文件编号无效。');
+    if (input.id !== undefined && (typeof input.id !== 'string' || !/^[a-f0-9]{24}$/.test(input.id))) invalid('文件编号无效。');
     if (input.id && (!Number.isSafeInteger(input.revision) || input.revision < 1)) invalid('文件版本无效，请重新打开。');
     return { name: input.name.trim(), lang: input.lang, code: input.code };
 }
@@ -38,14 +43,32 @@ export async function saveIdeFile(uid: number, domainId: string, input: any, lan
     const file: IdeFile = { ...fields, id, revision: input.id ? input.revision + 1 : 1, updatedAt: new Date() };
     const _id = key(uid, domainId);
     if (input.id) {
-        const result = await libraries.updateOne({ _id, files: { $elemMatch: { id, revision: input.revision } } }, { $set: { 'files.$': file } });
+        const current = { id, revision: input.revision };
+        const result = await libraries.updateOne({
+            _id,
+            files: { $elemMatch: current },
+            // Historical duplicates can still be updated by ID, without allowing new duplicates on rename.
+            $or: [{ files: { $elemMatch: { ...current, name: fields.name } } }, { 'files.name': { $ne: fields.name } }],
+        }, { $set: { 'files.$[current]': file } }, {
+            arrayFilters: [{ 'current.id': id, 'current.revision': input.revision }],
+        });
         if (!result.matchedCount) throw new IdeError('CONFLICT', '文件已在其他页面修改或删除。请另存一份，或重新打开最新版本。');
     } else {
         // One bounded document makes capacity checks and writes atomic across workers.
         try { await libraries.updateOne({ _id }, { $setOnInsert: { uid, domainId, files: [] } }, { upsert: true }); }
         catch (error) { if (error.code !== 11000) throw error; }
-        const result = await libraries.updateOne({ _id, [`files.${IDE_FILE_LIMIT - 1}`]: { $exists: false } }, { $push: { files: file } });
-        if (!result.matchedCount) throw new IdeError('FILE_LIMIT', '云端最多保存 50 个文件，请先删除不需要的文件。');
+        const result = await libraries.updateOne({
+            _id,
+            [`files.${IDE_FILE_LIMIT - 1}`]: { $exists: false },
+            'files.name': { $ne: fields.name },
+        }, { $push: { files: file } });
+        if (!result.matchedCount) {
+            const files = await listIdeFiles(uid, domainId);
+            const existing = files.find((entry) => entry.name === fields.name);
+            if (existing) throw new DuplicateIdeFileError({ id: existing.id, revision: existing.revision });
+            if (files.length >= IDE_FILE_LIMIT) throw new IdeError('FILE_LIMIT', '云端最多保存 50 个文件，请先删除不需要的文件。');
+            throw new IdeError('CONFLICT', '文件列表刚刚有变动，请重新点击保存。');
+        }
     }
     return file;
 }

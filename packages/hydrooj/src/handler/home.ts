@@ -14,7 +14,7 @@ import {
     NotFoundError, PermissionError, UserAlreadyExistError,
     UserNotFoundError, ValidationError, VerifyPasswordError,
 } from '../error';
-import { DomainDoc, Setting } from '../interface';
+import { CppEditorMode, DomainDoc, Setting } from '../interface';
 import { tryRedirectAsset } from '../lib/asset_delivery';
 import { setMediaCacheHeaders } from '../lib/media_cache';
 import avatar, { validate } from '../lib/avatar';
@@ -1201,6 +1201,23 @@ class HomeProfilePasswordHandler extends Handler {
     }
 }
 
+class TeacherQuickSettingsHandler extends Handler {
+    @param('cppEditorMode', Types.Range(['beginner', 'preset', 'proficient']))
+    @param('workspaceId', Types.String, true)
+    async post(domainId: string, cppEditorMode: CppEditorMode, workspaceId?: string) {
+        const uid = this.user._id;
+        if (uid <= 0 || this.session.sudoUid) throw new PermissionError();
+        if (!this.user.hasPerm(PERM.PERM_EDIT_DOMAIN) && !this.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM)
+            && !workspace.isPlatformAdmin(uid) && !workspace.isLegacyOwner(uid)) {
+            const classroomWorkspace = await workspace.get(workspaceId || workspace.resolveDomainWorkspaceId(this.domain));
+            const member = classroomWorkspace?.status === 'active' && await workspace.getMember(classroomWorkspace._id, uid);
+            if (!member || !['owner', 'admin', 'teacher'].includes(member.role)) throw new PermissionError();
+        }
+        await user.setById(uid, { cppEditorMode });
+        this.response.body = { cppEditorMode };
+    }
+}
+
 class HomeSettingsHandler extends Handler {
     @param('category', Types.Range(['preference', 'account', 'domain']))
     async get({ }, category: string) {
@@ -1418,6 +1435,7 @@ export async function apply(ctx: Context) {
     ctx.Route('home_security', '/home/security', HomeSecurityHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('user_changemail_with_code', '/home/changeMail/:code', UserChangemailWithCodeHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_settings', '/home/settings/:category', HomeSettingsHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('teacher_quick_settings', '/home/teacher-quick-settings', TeacherQuickSettingsHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_profile', '/home/profile', HomeProfileHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_profile_password', '/home/profile/password', HomeProfilePasswordHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('home_avatar', '/home/avatar', HomeAvatarHandler, PRIV.PRIV_USER_PROFILE);

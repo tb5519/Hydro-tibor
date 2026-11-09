@@ -20,7 +20,7 @@
     font: inherit
     cursor: pointer
 
-  button:focus-visible, a:focus-visible
+  button:focus-visible, a:focus-visible, summary:focus-visible, select:focus-visible
     outline: 3px solid #a9c6e6
     outline-offset: 3px
 
@@ -181,6 +181,47 @@
     color: #b0bdcc
     font-size: 16px
 
+  &__settings
+    summary
+      cursor: pointer
+      list-style: none
+
+      &::-webkit-details-marker
+        display: none
+
+    &[open] .teacher-assistant__chevron
+      transform: rotate(180deg)
+
+  &__setting-card
+    display: grid
+    gap: 7px
+    margin: 0 6px 6px
+    padding: 12px
+    border: 1px solid #e3ebf3
+    border-radius: 12px
+    background: #f6f9fc
+
+    label
+      font-size: 12px
+      font-weight: 650
+
+    select
+      width: 100%
+      min-height: 36px
+      padding: 0 8px
+      border: 1px solid #d7e2ee
+      border-radius: 8px
+      background: #fff
+      color: inherit
+      font: inherit
+
+    small
+      color: #61768e
+      font-size: 11px
+
+      &.is-error
+        color: #b34747
+
   &__footer
     display: flex
     align-items: center
@@ -237,6 +278,17 @@ html[data-mantine-color-scheme="dark"] .teacher-assistant
     color: #9cb9dc
   &__footer
     border-color: #354355
+  &__setting-card
+    border-color: #3b4b5e
+    background: #263446
+    color: #dbe5f1
+    select
+      border-color: #4a5b70
+      background: #202c3b
+    small
+      color: #acbed3
+      &.is-error
+        color: #f4a8a8
 
 @keyframes teacher-assistant-appear
   from

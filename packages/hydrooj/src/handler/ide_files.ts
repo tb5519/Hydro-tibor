@@ -1,7 +1,7 @@
 import type { Context } from '../context';
 import { IdeError } from '../lib/ide_protocol';
 import { PERM, PRIV } from '../model/builtin';
-import { deleteIdeFile, getIdeFile, listIdeFiles, saveIdeFile } from '../model/ide_file';
+import { deleteIdeFile, DuplicateIdeFileError, getIdeFile, listIdeFiles, saveIdeFile } from '../model/ide_file';
 import { Handler } from '../service/server';
 import { authorizeIdeAccess, checkIdeHttpOrigin } from './ide_runtime';
 
@@ -29,9 +29,10 @@ export class IdeFilesHandler extends Handler {
             } else throw new IdeError('INVALID_MESSAGE', '操作无效。');
         } catch (error) {
             this.response.status = error instanceof IdeError
-                ? ({ FORBIDDEN: 403, NOT_FOUND: 404, CONFLICT: 409, FILE_LIMIT: 413 }[error.code] || 400) : 503;
+                ? ({ FORBIDDEN: 403, NOT_FOUND: 404, CONFLICT: 409, DUPLICATE_NAME: 409, FILE_LIMIT: 413 }[error.code] || 400) : 503;
             this.response.body = { error: error instanceof IdeError ? error.code : 'UNAVAILABLE',
-                message: error instanceof IdeError ? error.message : '暂时无法访问云端文件，请稍后重试。' };
+                message: error instanceof IdeError ? error.message : '暂时无法访问云端文件，请稍后重试。',
+                ...(error instanceof DuplicateIdeFileError ? { existing: error.existing } : {}) };
         }
     }
     async get() { await this.handle(false); }
