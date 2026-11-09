@@ -920,6 +920,124 @@ describe('live share durable session broker', () => {
 });
 
 describe('live share websocket integration', () => {
+    const sharedContestId = 'aaaaaaaaaaaaaaaaaaaaaaaa';
+    const sharedRecordId = 'bbbbbbbbbbbbbbbbbbbbbbbb';
+    const sharedContestPages = [
+        [`/contest/${sharedContestId}`, 'contest_detail.html'],
+        [`/contest/${sharedContestId}/problems`, 'contest_problemlist.html'],
+        [`/p/1000?tid=${sharedContestId}`, 'problem_detail.html'],
+        [`/p/1000/submit?tid=${sharedContestId}`, 'problem_submit.html'],
+        [`/contest/${sharedContestId}/scoreboard/html`, 'contest_scoreboard.html'],
+        [`/record/${sharedRecordId}?tid=${sharedContestId}`, 'record_detail.html'],
+    ];
+    // This is the state after resolveContestEntry has authorized an all-domain
+    // contest: storage/user are source-scoped, but the visible URL is entry-scoped.
+    const sharedContestPage = (uid, route, template) => {
+        const url = new URL(`/d/class-a${route}`, 'https://school.test');
+        url.searchParams.set('entryDomainId', 'class-a');
+        const contest = Object.freeze({ docId: sharedContestId, domainId: 'class-b', allDomains: true, pids: [1000] });
+        return {
+            user: Object.freeze({ _id: uid, perm: 0n, _dudoc: Object.freeze({ join: false }), hasPriv: () => true }),
+            domain: rooms[1], contestEntryContext: { domain: rooms[0], contest },
+            args: { domainId: 'class-b', entryDomainId: 'class-a', tid: sharedContestId }, session: {},
+            UiContext: { domainId: 'class-a', domain: rooms[0] },
+            request: { method: 'GET', originalPath: url.pathname, query: Object.fromEntries(url.searchParams) },
+            context: { request: { querystring: url.search.slice(1) } },
+            response: { status: 200, template, body: { tdoc: contest } },
+            url: (_name, options) => `/d/${options.domainId}/live-share/conn`,
+        };
+    };
+    const renderedUrl = (handler) => `${handler.request.originalPath}?${handler.context.request.querystring}`;
+
+    it('grants shared contest pages in their authorized entry classroom without adding source-domain permissions', async () => {
+        await memberships.deleteMany({ domainId: 'class-b', uid: { $in: [2, 10] } });
+        for (const uid of [2, 10]) {
+            for (const [route, template] of sharedContestPages) {
+                const page = sharedContestPage(uid, route, template);
+                const sourceUser = page.user; const sourceContest = page.response.body.tdoc;
+                await handlers.injectLiveShare(page);
+                const config = page.UiContext.liveShare;
+                assert.ok(config?.pageGrant, `${uid}: ${route}`);
+                assert.equal(config.domainId, 'class-a');
+                assert.equal(config.socketUrl, '/d/class-a/live-share/conn');
+                assert.equal(config.canTeach, uid === 2);
+                assert.equal(await model.verifyPageGrant(uid, 'class-a', config.pageGrant, renderedUrl(page)), true);
+                assert.equal(await model.verifyPageGrant(uid, 'class-b', config.pageGrant, renderedUrl(page)), false);
+                assert.equal(page.domain._id, 'class-b', 'contest storage remains in its source domain');
+                assert.equal(page.args.domainId, 'class-b');
+                assert.equal(page.user, sourceUser); assert.equal(page.user.perm, 0n);
+                assert.equal(page.response.body.tdoc, sourceContest);
+            }
+        }
+        assert.equal(await memberships.countDocuments({ domainId: 'class-b', uid: { $in: [2, 10] } }), 0);
+        await assert.rejects(model.studentScope(10, 'class-b'), errorCode('FORBIDDEN'));
+        await assert.rejects(model.teacherScope(2, 'class-b'), errorCode('FORBIDDEN'));
+    });
+
+    it('keeps the same assisted session and bidirectional relay through shared contest detail, questions, submit, scoreboard and records', async () => {
+        await memberships.deleteOne({ domainId: 'class-b', uid: 10 });
+        const teacher = connection(2); const student = connection(10); const other = connection(11);
+        const initial = sharedContestPage(10, ...sharedContestPages[0]); await handlers.injectLiveShare(initial);
+        assert.ok(initial.UiContext.liveShare?.pageGrant);
+        await hello(teacher, 2); await hello(student, 10, {
+            pageGrant: initial.UiContext.liveShare.pageGrant, url: renderedUrl(initial), title: '周赛',
+        }); await hello(other, 11);
+        await teacher.instance.message({ type: 'list' });
+        assert.equal(teacher.sent.find((message) => message.type === 'students').students.find((entry) => entry.uid === 10).online, true);
+        await teacher.instance.message({ type: 'start', studentUid: 10 }); await settle();
+        const original = teacher.sent.find((message) => message.type === 'started'); assert.ok(original);
+        const connectionId = student.instance.peer.connectionId;
+        for (let index = 0; index < sharedContestPages.length; index++) {
+            const [route, template] = sharedContestPages[index];
+            const page = sharedContestPage(10, route, template); await handlers.injectLiveShare(page);
+            assert.ok(page.UiContext.liveShare?.pageGrant, route);
+            const pageId = `contest-page-${index}-testing`;
+            await student.instance.message({ type: 'page', pageId, domainId: page.UiContext.liveShare.domainId,
+                pageGrant: page.UiContext.liveShare.pageGrant, url: renderedUrl(page), title: route, visible: true }); await settle();
+            const started = teacher.sent.filter((message) => message.type === 'started').at(-1);
+            assert.equal(started.sessionId, original.sessionId); assert.equal(started.pageId, pageId);
+            assert.equal(started.pageUrl, renderedUrl(page));
+            const session = await model.sessions.findOne({ _id: original.sessionId });
+            assert.equal(session.domainId, 'class-a'); assert.equal(session.active, true);
+            await student.instance.message({ type: 'relay', sessionId: original.sessionId, pageId, kind: 'mirror',
+                data: { type: 'rrweb', sequence: index, event: { type: 4, data: { width: 1440, height: 900 } } } }); await settle();
+            assert.ok(teacher.sent.some((message) => message.type === 'relay' && message.pageId === pageId && message.kind === 'mirror'));
+            await teacher.instance.message({ type: 'relay', sessionId: original.sessionId, pageId, kind: 'command',
+                data: { id: `contest-click-${index}`, pageId, nodeId: 1, action: 'click' } }); await settle();
+            assert.ok(student.sent.some((message) => message.type === 'relay' && message.data?.id === `contest-click-${index}`));
+        }
+        assert.equal(student.instance.peer.connectionId, connectionId);
+        assert.equal(student.closed.length, 0); assert.equal(teacher.closed.length, 0);
+        assert.equal(student.sent.some((message) => message.type === 'error'), false, JSON.stringify(student.sent));
+        assert.equal(teacher.sent.some((message) => message.type === 'error'), false, JSON.stringify(teacher.sent));
+        assert.equal(other.sent.some((message) => message.type === 'relay'), false);
+        await assert.rejects(model.studentScope(10, 'class-b'), errorCode('FORBIDDEN'));
+    });
+
+    it('does not trust entry-domain query/UI fields or failed contest responses to grant sharing', async () => {
+        await memberships.deleteOne({ domainId: 'class-b', uid: 10 });
+        for (const prefix of ['class-a', 'class-b', 'other']) {
+            const forged = sharedContestPage(10, `/contest/${sharedContestId}`, 'contest_detail.html');
+            delete forged.contestEntryContext;
+            forged.request.originalPath = `/d/${prefix}/contest/${sharedContestId}`;
+            await handlers.injectLiveShare(forged);
+            assert.equal(forged.UiContext.liveShare, undefined, `query/UI cannot authorize ${prefix}`);
+        }
+        for (const response of [{ status: 403 }, { status: 404 }, { redirect: '/login' }, { template: undefined }]) {
+            const page = sharedContestPage(10, `/contest/${sharedContestId}`, 'contest_detail.html');
+            Object.assign(page.response, response); await handlers.injectLiveShare(page);
+            assert.equal(page.UiContext.liveShare, undefined, JSON.stringify(response));
+        }
+        const post = sharedContestPage(10, '/p/1000/submit', 'problem_submit.html');
+        post.request.method = 'POST'; await handlers.injectLiveShare(post);
+        assert.equal(post.UiContext.liveShare, undefined, 'posting a solution cannot grant a new rendered page');
+        await memberships.updateOne({ domainId: 'class-a', uid: 10 }, { $set: { join: false } });
+        const removed = sharedContestPage(10, `/contest/${sharedContestId}`, 'contest_detail.html');
+        await handlers.injectLiveShare(removed);
+        assert.equal(removed.UiContext.liveShare, undefined, 'entry membership is still checked freshly');
+        assert.equal(await model.grants.countDocuments({ uid: 10 }), 0);
+    });
+
     it('binds global daily quiz pages to an actually joined classroom without granting foreign-domain access', async () => {
         const make = (path = '/daily-quiz', uid = 10) => ({
             user: { _id: uid, hasPriv: () => true }, domain: rooms.find((room) => room._id === 'system'),

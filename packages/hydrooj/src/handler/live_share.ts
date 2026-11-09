@@ -437,7 +437,11 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
 export async function injectLiveShare(handler: Handler) {
     if (handler.request.method.toUpperCase() !== 'GET' || handler.response.redirect || handler.response.status >= 400 || !handler.response.template
         || handler.user?._id <= 1 || !handler.user?.hasPriv(PRIV.PRIV_USER_PROFILE) || handler.session.sudoUid) return;
-    let domainId = handler.domain._id;
+    // A shared contest reads and judges in its source domain, but the browser
+    // stays in the classroom that admitted the participant. Bind capture to
+    // that server-validated classroom, not to the storage domain or a query hint.
+    const pageDomain = handler.contestEntryContext?.domain || handler.domain;
+    let domainId = pageDomain._id;
     let canTeach = false;
     try { await share.teacherScope(handler.user._id, domainId); canTeach = true; } catch {
         const workspaceDoc = (handler as Handler & { workspaceDoc?: { _id: string } }).workspaceDoc;
@@ -467,7 +471,7 @@ export async function injectLiveShare(handler: Handler) {
             // /d/... page must never fall back to a different domain.
             if (page.domainId) return;
             const workspaceDoc = (handler as Handler & { workspaceDoc?: { _id: string } }).workspaceDoc;
-            const spaces = [...new Set([workspaceDoc?._id, workspace.resolveDomainWorkspaceId(handler.domain),
+            const spaces = [...new Set([workspaceDoc?._id, workspace.resolveDomainWorkspaceId(pageDomain),
                 ...await workspace.getAssignedWorkspaceIds(handler.user._id)].filter(Boolean))];
             let found = false;
             for (const space of spaces) {
