@@ -22,7 +22,7 @@ const { Router } = load('framework/framework/router.ts');
 const errorCode = (code) => (error) => error.code === code;
 const PERM = { PERM_VIEW: 1n, PERM_EDIT_DOMAIN: 2n, PERM_ALL: 3n };
 const PRIV = { PRIV_USER_PROFILE: 2, PRIV_EDIT_SYSTEM: 1, PRIV_JUDGE: 4 };
-let server; let client; let database; let model; let broadcasts; let handlers; let handlerDependencies; let busListeners; let busEvents; let logins;
+let server; let client; let database; let model; let broadcasts; let switches; let handlers; let handlerDependencies; let busListeners; let busEvents; let logins;
 let memberships; let accounts; let workspaceStudents; let workspaceMembers;
 const rooms = [
     { _id: 'class-a', workspaceId: 'a', domainType: 'oj' },
@@ -66,9 +66,13 @@ before(async () => {
         '../service/db': db, './live_share': model,
     });
     await broadcasts.apply();
+    switches = load('packages/hydrooj/src/model/live_share_switch.ts', {
+        '../lib/live_share': protocol, './live_share': model, './teacher_broadcast': broadcasts,
+    });
     handlerDependencies = {
         '../lib/live_share': protocol, '../model/live_share': model, '../model/workspace': ws, '../model/builtin': { PERM, PRIV },
         '../lib/teacher_broadcast': broadcastProtocol, '../model/teacher_broadcast': broadcasts,
+        '../model/live_share_switch': switches,
         '../model/token': { TYPE_SESSION: 0, get: async (id) => logins.get(id) },
         '../service/bus': { parallel: async (name, event) => {
             busEvents.push(event);
@@ -360,15 +364,15 @@ describe('teacher broadcast protocol and multi-learner isolation', () => {
     it('never resurrects participant locks when a stop races the refresh heartbeat', async () => {
         const teacher = await peer(2); await peer(10); await peer(11);
         const room = await broadcasts.start(teacher, [10, 11], () => {});
-        const original = model.occupancy.findOneAndUpdate.bind(model.occupancy);
+        const original = model.occupancy.updateOne.bind(model.occupancy);
         let ended = false;
-        model.occupancy.findOneAndUpdate = async (...args) => {
+        model.occupancy.updateOne = async (...args) => {
             const result = await original(...args);
             if (!ended) { ended = true; await broadcasts.end(room, 'teacher stop', () => {}); }
             return result;
         };
         try { assert.equal(await broadcasts.refresh(room, () => {}), null); }
-        finally { model.occupancy.findOneAndUpdate = original; }
+        finally { model.occupancy.updateOne = original; }
         assert.equal(await model.occupancy.countDocuments({}), 0);
         assert.equal((await broadcasts.rooms.findOne({ _id: room._id })).active, false);
     });
@@ -435,6 +439,157 @@ describe('teacher broadcast protocol and multi-learner isolation', () => {
         assert.equal((await broadcasts.rooms.findOne({ _id: started.sessionId })).active, false);
         logins.set('login-3', { uid: 3, scope: '1', expireAt: new Date(Date.now() + 60000) });
         await assert.rejects(connection(3).instance.prepare(), errorCode('FORBIDDEN'));
+    });
+});
+
+describe('one logical connection across assistance and broadcast directions', () => {
+    async function connected(mode = 'assist', audience = [10]) {
+        const teacher = connection(2); const first = connection(10); const second = connection(11);
+        await hello(teacher, 2); await hello(first, 10); await hello(second, 11);
+        await teacher.instance.message(mode === 'assist' ? { type: 'start', studentUid: audience[0] }
+            : { type: 'broadcast:start', studentUids: audience }); await settle();
+        const initial = teacher.sent.find((message) => message.type === (mode === 'assist' ? 'started' : 'broadcast:started'));
+        assert.ok(initial);
+        return { teacher, first, second, initial };
+    }
+    async function switchTo(teacher, sessionId, mode, requestId, studentUid) {
+        await teacher.instance.message({ type: 'switch', sessionId, mode, requestId,
+            ...(studentUid === undefined ? {} : { studentUid }) }); await settle();
+        const ack = teacher.sent.find((message) => message.type === 'switch:ready' && message.requestId === requestId);
+        assert.ok(ack, JSON.stringify(teacher.sent));
+        return ack;
+    }
+    it('validates exact direction-switch fields and correlates invalid control errors', async () => {
+        const valid = { type: 'switch', sessionId: 'old-session-testing', requestId: 'switch-request-testing', mode: 'assist', studentUid: 10 };
+        assert.doesNotThrow(() => protocol.validateShareMessage(valid));
+        for (const patch of [{ mode: 'watch' }, { studentUid: 0 }, { sessionId: 'bad' }, { requestId: null },
+            { connectionId: 'forged-connection' }, { mode: 'broadcast' }]) {
+            assert.throws(() => protocol.validateShareMessage({ ...valid, ...patch }), errorCode('INVALID_SWITCH'));
+        }
+        const teacher = connection(2); await hello(teacher, 2);
+        await teacher.instance.message({ ...valid, mode: 'watch' });
+        assert.equal(teacher.sent.at(-1).operation, 'switch'); assert.equal(teacher.sent.at(-1).requestId, valid.requestId);
+    });
+    it('round-trips one learner with stable annotation identity, fresh transport IDs and idempotent retries', async () => {
+        const { teacher, first, initial } = await connected();
+        const firstRequest = { type: 'switch', sessionId: initial.sessionId, mode: 'broadcast', requestId: 'switch-to-broadcast' };
+        const shared = await switchTo(teacher, initial.sessionId, 'broadcast', firstRequest.requestId);
+        assert.notEqual(shared.sessionId, initial.sessionId); assert.equal(shared.connectionId, initial.connectionId);
+        assert.equal(shared.connectionVersion, 1);
+        assert.ok(first.sent.some((message) => message.type === 'ended' && message.switched
+            && message.connectionId === initial.connectionId && message.connectionVersion === 1));
+        assert.ok(first.sent.some((message) => message.type === 'broadcast:view' && message.sessionId === shared.sessionId));
+        await teacher.instance.message(firstRequest); await settle();
+        assert.equal(teacher.sent.filter((message) => message.type === 'switch:ready').at(-1).sessionId, shared.sessionId);
+        assert.equal(await broadcasts.rooms.countDocuments({}), 1, 'retry must not create another transport');
+        const assisted = await switchTo(teacher, shared.sessionId, 'assist', 'switch-back-assist');
+        assert.notEqual(assisted.sessionId, initial.sessionId); assert.equal(assisted.connectionId, initial.connectionId);
+        assert.equal(assisted.connectionVersion, 2);
+        assert.ok(first.sent.some((message) => message.type === 'share-start' && message.sessionId === assisted.sessionId));
+        const before = first.sent.filter((message) => message.type === 'relay' || message.type === 'broadcast:relay').length;
+        const errorCount = teacher.sent.filter((message) => message.type.endsWith('error')).length;
+        await teacher.instance.message({ type: 'broadcast:relay', sessionId: shared.sessionId, pageId: 'page-2-testing', kind: 'mirror',
+            data: { type: 'rrweb', sequence: 1, event: { type: 4, data: {} } } });
+        await teacher.instance.message({ type: 'relay', sessionId: initial.sessionId, pageId: initial.pageId, kind: 'command',
+            data: { id: 'old-command-testing', pageId: initial.pageId, nodeId: 1, action: 'click' } }); await settle();
+        assert.equal(first.sent.filter((message) => message.type === 'relay' || message.type === 'broadcast:relay').length, before);
+        assert.equal(teacher.sent.filter((message) => message.type.endsWith('error')).length, errorCount, 'queued obsolete frames are silently discarded');
+        await teacher.instance.message(firstRequest);
+        assert.equal(teacher.sent.at(-1).code, 'STALE_SESSION'); assert.equal(teacher.sent.at(-1).operation, 'switch');
+        assert.equal(teacher.sent.at(-1).requestId, firstRequest.requestId);
+        const slot = await model.occupancy.findOne({ _id: 2 });
+        assert.equal(slot.roomId, initial.connectionId); assert.equal(slot.transportId, assisted.sessionId);
+    });
+    it('pauses other viewers, reserves them, restores the original audience and clears everyone only on disconnect', async () => {
+        const { teacher, first, second, initial } = await connected('broadcast', [10, 11]);
+        const assisted = await switchTo(teacher, initial.sessionId, 'assist', 'choose-one-learner', 10);
+        assert.ok(second.sent.some((message) => message.type === 'broadcast:ended' && message.switched));
+        assert.equal(second.sent.some((message) => message.type === 'share-start'), false);
+        assert.equal(second.sent.some((message) => message.type === 'connection:ended'), false);
+        const room = await model.sessions.findOne({ _id: assisted.sessionId });
+        assert.deepEqual(room.returnAudience.map((member) => member.uid), [10, 11]);
+        const competing = await peer(3, { serverId: teacher.instance.peer.serverId });
+        await assert.rejects(model.startSession(competing, 11, undefined, () => {}), errorCode('BUSY'));
+        await first.instance.message({ type: 'relay', sessionId: assisted.sessionId, pageId: room.pageId, kind: 'mirror',
+            data: { type: 'rrweb', sequence: 1, event: { type: 4, data: {} } } }); await settle();
+        assert.ok(teacher.sent.some((message) => message.type === 'relay' && message.sessionId === assisted.sessionId));
+        assert.equal(second.sent.some((message) => message.type === 'relay'), false, 'other viewers never see the selected learner page');
+        const returned = await switchTo(teacher, assisted.sessionId, 'broadcast', 'restore-original-audience');
+        const restored = await broadcasts.rooms.findOne({ _id: returned.sessionId });
+        assert.deepEqual(restored.studentUids, [10, 11]);
+        for (const viewer of [first, second]) assert.ok(viewer.sent.some((message) => message.type === 'broadcast:view'
+            && message.sessionId === returned.sessionId && message.connectionId === initial.connectionId));
+        await teacher.instance.message({ type: 'broadcast:stop', sessionId: returned.sessionId }); await settle();
+        assert.equal(await model.occupancy.countDocuments({ roomId: initial.connectionId }), 0);
+        for (const member of [teacher, first, second]) assert.ok(member.sent.some((message) => message.type === 'connection:ended'
+            && message.connectionId === initial.connectionId));
+    });
+    it('refuses learners, outside viewers and unavailable source pages without damaging the current mode', async () => {
+        const { teacher, first, initial } = await connected('broadcast', [10, 11]);
+        const request = { type: 'switch', sessionId: initial.sessionId, requestId: 'forbidden-switch', mode: 'assist', studentUid: 12 };
+        await teacher.instance.message(request); assert.equal(teacher.sent.at(-1).code, 'INVALID_STUDENT');
+        await first.instance.message({ ...request, studentUid: 10 }); assert.equal(first.sent.at(-1).code, 'FORBIDDEN');
+        await model.presence.updateOne({ _id: first.instance.peer._id }, { $set: { visible: false } });
+        await teacher.instance.message({ ...request, requestId: 'offline-learner-switch', studentUid: 10 });
+        assert.equal(teacher.sent.at(-1).code, 'OFFLINE');
+        assert.equal((await broadcasts.rooms.findOne({ _id: initial.sessionId })).active, true);
+        assert.equal(await model.sessions.countDocuments({ active: true }), 0);
+        assert.equal(await model.occupancy.countDocuments({ roomId: initial.connectionId }), 3);
+    });
+    it('requires a granted teacher page before reversing an assistance connection', async () => {
+        const { teacher, initial } = await connected();
+        await teacher.instance.message({ type: 'page', pageId: 'private-teacher-page', url: '', title: '', visible: true });
+        await teacher.instance.message({ type: 'switch', sessionId: initial.sessionId, requestId: 'private-page-switch', mode: 'broadcast' });
+        assert.equal(teacher.sent.at(-1).code, 'UNSUPPORTED_PAGE');
+        assert.equal((await model.sessions.findOne({ _id: initial.sessionId })).active, true);
+        assert.equal(await broadcasts.rooms.countDocuments({ active: true }), 0);
+    });
+    it('commits only one concurrent switch and old heartbeat/stop cannot release its reservations', async () => {
+        const teacher = await peer(2); await peer(10); await peer(11);
+        const old = await broadcasts.start(teacher, [10, 11], () => {});
+        const outcomes = await Promise.allSettled([10, 11].map((uid) => switches.switchDirection(teacher,
+            { sessionId: old._id, requestId: `concurrent-switch-${uid}`, mode: 'assist', studentUid: uid }, () => {})));
+        assert.equal(outcomes.filter((outcome) => outcome.status === 'fulfilled').length, 1);
+        const current = outcomes.find((outcome) => outcome.status === 'fulfilled').value;
+        assert.equal(await broadcasts.refresh(old, () => {}), null);
+        await broadcasts.end(old, 'stale stop', () => {});
+        assert.equal(await model.occupancy.countDocuments({ roomId: current.connectionId }), 3);
+        assert.equal((await model.occupancy.findOne({ _id: 2 })).transportId, current._id);
+        const events = []; await model.endSession(current, 'stop current', (event) => events.push(event));
+        assert.equal(await model.occupancy.countDocuments({}), 0);
+        assert.deepEqual(events.filter((event) => event.message.type === 'connection:ended').map((event) => event.uid).sort((a, b) => a - b), [2, 10, 11]);
+    });
+    it('leaves the old direction intact if preparing the target fails and never recreates locks after a racing stop', async () => {
+        const teacher = await peer(2); await peer(10);
+        const old = await model.startSession(teacher, 10, undefined, () => {});
+        const original = broadcasts.rooms.insertOne.bind(broadcasts.rooms);
+        const request = { sessionId: old._id, requestId: 'failed-target-switch', mode: 'broadcast' };
+        broadcasts.rooms.insertOne = async () => { throw new Error('temporary write failure'); };
+        try { await assert.rejects(switches.switchDirection(teacher, request, () => {}), /temporary write failure/); }
+        finally { broadcasts.rooms.insertOne = original; }
+        assert.equal((await model.sessions.findOne({ _id: old._id })).active, true);
+        assert.equal((await model.occupancy.findOne({ _id: 2 })).transportId, old._id);
+        assert.equal((await model.occupancy.findOne({ _id: 2 })).switching, undefined);
+        broadcasts.rooms.insertOne = async (target) => {
+            const result = await original(target); await model.endSession(old, 'stop during prepare', () => {}); return result;
+        };
+        try { await assert.rejects(switches.switchDirection(teacher, { ...request, requestId: 'stop-race-switch' }, () => {}), errorCode('STALE_SESSION')); }
+        finally { broadcasts.rooms.insertOne = original; }
+        assert.equal(await broadcasts.rooms.countDocuments({}), 0);
+        assert.equal(await model.occupancy.countDocuments({}), 0);
+        assert.equal((await model.sessions.findOne({ _id: old._id })).active, false);
+    });
+    it('restores only still-authorized original viewers after an unselected learner was removed', async () => {
+        const teacher = await peer(2); await peer(10); await peer(11);
+        const old = await broadcasts.start(teacher, [10, 11], () => {});
+        const assist = await switches.switchDirection(teacher, { sessionId: old._id, requestId: 'pick-first-viewer', mode: 'assist', studentUid: 10 }, () => {});
+        await workspaceStudents.updateOne({ uid: 11 }, { $set: { status: 'disabled' } });
+        const events = [];
+        const resumed = await switches.switchDirection(teacher, { sessionId: assist._id, requestId: 'restore-valid-viewers', mode: 'broadcast' }, (event) => events.push(event));
+        assert.deepEqual([...resumed.studentUids], [10]);
+        assert.equal(await model.occupancy.findOne({ _id: 11 }), null);
+        assert.ok(events.some((event) => event.uid === 11 && event.message.type === 'connection:ended'));
+        assert.equal(events.some((event) => event.uid === 11 && event.message.type === 'broadcast:view'), false);
     });
 });
 

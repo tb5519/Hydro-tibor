@@ -8,6 +8,7 @@ import {
 import { broadcastDrawing, validateBroadcastMessage, validateBroadcastRelay } from '../lib/teacher_broadcast';
 import { PERM, PRIV } from '../model/builtin';
 import * as share from '../model/live_share';
+import { switchDirection } from '../model/live_share_switch';
 import * as broadcast from '../model/teacher_broadcast';
 import token from '../model/token';
 import workspace from '../model/workspace';
@@ -103,7 +104,8 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         if (this.disposed) return;
         const known = error instanceof LiveShareError;
         this.send({ type: isBroadcast ? 'broadcast:error' : 'error', code: known ? error.code : 'UNAVAILABLE', message: known ? error.message : '共享暂时不可用，请稍后重新连接。',
-            ...(payload?.type === 'page' ? { operation: 'page', requestId: typeof payload.requestId === 'string' ? payload.requestId.slice(0, 96) : undefined } : {}) });
+            ...(['page', 'switch'].includes(payload?.type) ? { operation: payload.type,
+                requestId: typeof payload.requestId === 'string' ? payload.requestId.slice(0, 96) : undefined } : {}) });
     }
 
     private async checkLogin() {
@@ -191,6 +193,13 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
                 this.currentSession = await share.followStudentTab(this.peer, emitLiveShare) || this.currentSession;
             }
             await this.checkSession();
+        } else if (payload.type === 'switch') {
+            const room = await switchDirection(this.peer, payload, emitLiveShare);
+            this.currentSession = 'viewers' in room ? null : room;
+            this.currentBroadcast = 'viewers' in room ? room : null;
+            this.lastAuthorization = 0; this.lastBroadcastAuthorization = 0;
+            this.send({ type: 'switch:ready', requestId: payload.requestId, mode: payload.mode,
+                sessionId: room._id, ...share.connectionInfo(room) });
         } else if (payload.type.startsWith('broadcast:')) await this.processBroadcast(payload);
         else if (payload.type === 'list') {
             if (!this.canTeach) throw new LiveShareError('FORBIDDEN', '只有老师可以选择共享学员。');
@@ -206,15 +215,17 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
                 throw new LiveShareError('FORBIDDEN', '只有当前老师可以结束共享。');
             }
             if (session.active) await share.endSession(session, '老师已结束共享。', emitLiveShare);
-            else this.send({ type: 'ended', sessionId: session._id, reason: '共享已结束。' });
+            else this.send({ type: 'ended', sessionId: session._id, ...await share.connectionDeparture(session), reason: '共享已结束。' });
         } else if (payload.type === 'relay') await this.relay(payload);
     }
 
     private async relay(payload: any) {
+        if (share.transportRetired(payload.sessionId)) return;
         let session = this.currentSession?._id === payload.sessionId ? this.currentSession : null;
         if (!session || Date.now() - this.lastAuthorization > 3000) {
             session = await share.sessions.findOne({ _id: payload.sessionId, active: true });
-            if (!session || !sessionRole(session, this.peer.uid, this.peer.tabId)) throw new LiveShareError('ENDED', '共享已结束。');
+            if (!session || !sessionRole(session, this.peer.uid, this.peer.tabId)
+                || !await share.currentTransport(session)) throw new LiveShareError('ENDED', '共享已结束。');
             session = await share.refreshSession(session, emitLiveShare);
             if (!session) throw new LiveShareError('PAUSED', '正在等待对方重新连接。');
             this.currentSession = session;
@@ -223,7 +234,7 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         if (!session) throw new LiveShareError('ENDED', '共享已结束。');
         const role = authorizeRelay(session, this.peer.uid, this.peer.tabId, payload.pageId, payload.kind);
         validateRelayData(role, payload.kind, payload.data, payload.pageId);
-        if (this.disposed) return;
+        if (this.disposed || share.transportRetired(session._id)) return;
         emitLiveShare({ uid: role === 'teacher' ? session.studentUid : session.teacherUid,
             tabId: role === 'teacher' ? session.studentTabId : session.teacherTabId, message: {
             type: 'relay', sessionId: session._id, pageId: session.pageId, kind: payload.kind, data: payload.data,
@@ -231,10 +242,11 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
     }
 
     private async authorizeBroadcast(sessionId: string) {
+        if (share.transportRetired(sessionId)) throw new LiveShareError('STALE_SESSION', '共享方向已切换。');
         let room = this.currentBroadcast?._id === sessionId ? this.currentBroadcast : null;
         if (!room || Date.now() - this.lastBroadcastAuthorization > 3000) {
             room = await broadcast.rooms.findOne({ _id: sessionId, active: true });
-            if (!room || +room.expiresAt <= Date.now() || !broadcast.role(room, this.peer)) {
+            if (!room || +room.expiresAt <= Date.now() || !broadcast.role(room, this.peer) || !await share.currentTransport(room)) {
                 throw new LiveShareError('ENDED', '分享已结束。');
             }
             const teacher = await share.livePresence(room.teacherUid, room.teacherTabId);
@@ -266,9 +278,10 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
             const room = await broadcast.rooms.findOne({ _id: payload.sessionId });
             if (!room || broadcast.role(room, this.peer) !== 'teacher') throw new LiveShareError('FORBIDDEN', '只有当前老师可以结束分享。');
             if (room.active) await broadcast.end(room, '老师已结束分享。', emitLiveShare);
-            else this.send({ type: 'broadcast:ended', sessionId: room._id, reason: '分享已结束。' });
+            else this.send({ type: 'broadcast:ended', sessionId: room._id, ...await share.connectionDeparture(room), reason: '分享已结束。' });
             return;
         }
+        if (payload.type === 'broadcast:relay' && share.transportRetired(payload.sessionId)) return;
         const room = await this.authorizeBroadcast(payload.sessionId);
         if (payload.pageId !== room.pageId) throw new LiveShareError('STALE_PAGE', '老师已切换页面，正在重新同步。');
         if (payload.type === 'broadcast:sync') {
@@ -286,6 +299,7 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         // A full DOM snapshot can span many chunks. Fan out after IPC delivery,
         // not before: sending each chunk 30 times exhausts the shared IPC budget
         // and leaves later learners with incomplete snapshots.
+        if (share.transportRetired(room._id)) return;
         const recipients = room.viewers.filter((viewer) => viewer.uid !== this.peer.uid)
             .map(({ uid, tabId }) => ({ uid, tabId }));
         if (!isTeacher) recipients.unshift({ uid: room.teacherUid, tabId: room.teacherTabId });
@@ -300,7 +314,8 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
             const stored = this.currentBroadcast ? await broadcast.rooms.findOne({ _id: this.currentBroadcast._id, active: true })
                 : await broadcast.roomFor(this.peer);
             if (!stored || !broadcast.role(stored, this.peer)) {
-                if (this.currentBroadcast) this.send({ type: 'broadcast:ended', sessionId: this.currentBroadcast._id, reason: '分享已结束。' });
+                if (this.currentBroadcast) this.send({ type: 'broadcast:ended', sessionId: this.currentBroadcast._id,
+                    ...await share.connectionDeparture(this.currentBroadcast), reason: '分享已结束。' });
                 this.currentBroadcast = null; return;
             }
             if (+stored.expiresAt <= Date.now()) { await broadcast.end(stored, '分享连接已超时。', emitLiveShare); this.currentBroadcast = null; return; }
@@ -331,7 +346,8 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
             const stored = this.currentSession ? await share.sessions.findOne({ _id: this.currentSession._id, active: true })
                 : await share.sessionFor(this.peer);
             if (!stored) {
-                if (this.currentSession) this.send({ type: 'ended', sessionId: this.currentSession._id, reason: '共享已结束。' });
+                if (this.currentSession) this.send({ type: 'ended', sessionId: this.currentSession._id,
+                    ...await share.connectionDeparture(this.currentSession), reason: '共享已结束。' });
                 this.currentSession = null;
                 return;
             }
@@ -378,7 +394,9 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         }
         if (event.message.type.startsWith('broadcast:')) {
             const message = event.message;
+            if (message.type !== 'broadcast:ended' && share.transportRetired(message.sessionId)) return;
             if (message.type === 'broadcast:ended') {
+                if (message.switched) share.retireTransport(message.sessionId);
                 if (this.currentBroadcast?._id === message.sessionId) this.currentBroadcast = null;
                 this.lastBroadcastAuthorization = 0; this.lastBroadcastDiscovery = 0;
             } else if (message.type === 'broadcast:paused') {
@@ -393,11 +411,15 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
             this.send(message); return;
         }
         if (['ended', 'paused'].includes(event.message.type)) {
-            this.currentSession = null; this.lastAuthorization = 0; this.lastDiscovery = 0;
+            if (event.message.switched) share.retireTransport(event.message.sessionId);
+            if (this.currentSession?._id === event.message.sessionId) this.currentSession = null;
+            this.lastAuthorization = 0; this.lastDiscovery = 0;
             if (event.message.type === 'paused') this.paused = true;
         }
         if (['started', 'share-start'].includes(event.message.type)) {
-            this.currentSession = await share.sessions.findOne({ _id: event.message.sessionId, active: true });
+            const current = await share.sessions.findOne({ _id: event.message.sessionId, active: true });
+            if (!current || !await share.currentTransport(current)) return;
+            this.currentSession = current;
             this.lastAuthorization = 0;
         }
         if (event.message.type === 'relay') {

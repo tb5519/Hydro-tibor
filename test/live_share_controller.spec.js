@@ -83,7 +83,7 @@ it('an old ending timeout cannot stop a newly selected learner after the old roo
     await start();
     await page.evaluate(() => pending('old room'));
     await page.getByRole('button', { name: '断开共享' }).click();
-    await page.getByRole('button', { name: '切换学员' }).click();
+    assert.equal(await page.getByRole('button', { name: '切换学员' }).isEnabled(), false);
     assert.equal(await page.locator('.live-share-picker').count(), 0, 'switching stays disabled while final writes drain');
     await page.evaluate(() => receive({ type: 'ended', sessionId: 'session-a' }));
     await start('session-b', 6, 'page-b');
@@ -441,7 +441,7 @@ it('keeps teacher broadcast identity and socket while loading source adapters fr
     await page.waitForFunction(() => created.some((item) => item.kind === 'broadcast'));
     await navigate('/content-two');
     assert.equal(await page.evaluate(() => created.find((item) => item.kind === 'broadcast').disposed), true);
-    assert.equal(await page.locator('.teacher-broadcast-bar').count(), 1);
+    assert.equal(await page.locator('[data-teacher-share-controls][data-mode="broadcast"]:not([hidden])').count(), 1);
     await announce('broadcast:started');
     await page.waitForFunction(() => created.filter((item) => item.kind === 'broadcast').length === 2);
     assert.equal(await page.evaluate(() => sockets.length), 1);
@@ -477,7 +477,7 @@ it('retries only the latest page after temporary rate limits or lost acknowledgm
     assert.equal(await page.evaluate(() => sockets[0].sent.filter((item) => item.type === 'page').length), messages + 2);
     assert.equal(await page.evaluate(() => sockets.length), 1);
     assert.equal(await page.evaluate(() => sockets[0].closed), 0);
-    assert.equal(await page.locator('.teacher-broadcast-bar').count(), 1);
+    assert.equal(await page.locator('[data-teacher-share-controls][data-mode="broadcast"]:not([hidden])').count(), 1);
     await announce('broadcast:started');
     await page.waitForFunction(() => created.filter((item) => item.kind === 'broadcast').length === 2);
     assert.deepEqual(errors, []);

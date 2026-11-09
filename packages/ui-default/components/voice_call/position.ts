@@ -49,7 +49,7 @@ export function positionVoiceOverlays(overlays: HTMLElement[]) {
       }
     }
     for (const overlay of overlays) {
-      if (!visible(overlay)) continue;
+      if (!visible(overlay) || overlay.hasAttribute('data-voice-incoming-position')) continue;
       const box = overlay.getBoundingClientRect();
       const target = voicePosition(view, box, obstacles, view.width < 480 ? 16 : 24);
       const left = `${target.left}px`; const top = `${target.top}px`;

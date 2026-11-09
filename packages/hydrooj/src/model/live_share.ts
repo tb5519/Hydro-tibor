@@ -1,7 +1,7 @@
 import { randomBytes } from 'crypto';
 import {
     LIVE_SHARE_GRANT_MS, LIVE_SHARE_LEASE_MS, LIVE_SHARE_RECONNECT_MS, LiveShareError,
-    ShareSession, sharePage,
+    ShareConnection, ShareParticipant, ShareSession, sharePage,
 } from '../lib/live_share';
 import db from '../service/db';
 import { BUILTIN_ROLES, PERM, PRIV } from './builtin';
@@ -20,7 +20,12 @@ export interface ShareEvent {
     /** Server-selected broadcast recipients share one IPC payload, never supplied by a client. */
     recipients?: { uid: number, tabId: string }[];
 }
-interface ShareOccupancy { _id: number; roomId: string; kind: 'assist' | 'broadcast'; expiresAt: Date }
+interface ShareOccupancy {
+    _id: number; roomId: string; kind: 'assist' | 'broadcast'; expiresAt: Date;
+    transportId?: string; connectionVersion?: number; closed?: boolean;
+    switching?: { requestId: string; expiresAt: Date };
+    lastSwitch?: { requestId: string; fromId: string; mode: string; studentUid?: number };
+}
 
 declare module '../service/db' {
     interface Collections {
@@ -64,6 +69,66 @@ export async function claimParticipants(kind: ShareOccupancy['kind'], roomId: st
 
 export async function releaseParticipants(roomId: string, uids?: number[]) {
     await occupancy.deleteMany({ roomId, ...(uids ? { _id: { $in: uids } } : {}) });
+}
+
+export const connectionKey = (room: ShareConnection) => room.connectionId || room._id;
+export const connectionInfo = (room: ShareConnection) => ({ connectionId: connectionKey(room), connectionVersion: room.connectionVersion || 0 });
+const retiredTransports = new Map<string, number>();
+export function retireTransport(id: string) {
+    const now = Date.now();
+    for (const [key, until] of retiredTransports) if (until < now) retiredTransports.delete(key);
+    retiredTransports.set(id, now + LIVE_SHARE_RECONNECT_MS);
+}
+export const transportRetired = (id: string) => (retiredTransports.get(id) || 0) > Date.now();
+
+/** The teacher's single occupancy row is the atomic authority across both room collections. */
+export async function currentTransport(room: ShareConnection) {
+    if (transportRetired(room._id)) return false;
+    const slot = await occupancy.findOne({ _id: room.teacherUid });
+    if (!slot) return false;
+    return slot.roomId === connectionKey(room) && !slot.closed && (!slot.transportId || slot.transportId === room._id);
+}
+
+export async function bindTransport(room: ShareConnection) {
+    const updated = await occupancy.updateOne({ _id: room.teacherUid, roomId: connectionKey(room), closed: { $ne: true },
+        $or: [{ transportId: room._id }, { transportId: { $exists: false } }] },
+    { $set: { transportId: room._id, connectionVersion: room.connectionVersion || 0 } });
+    if (!updated.matchedCount) throw new LiveShareError('STALE_SESSION', '共享方向已切换，请等待当前画面。');
+}
+
+export async function pulseParticipants(room: ShareConnection, kind: ShareOccupancy['kind'], uids: number[], now: number) {
+    const updated = await occupancy.updateOne({ _id: room.teacherUid, roomId: connectionKey(room), closed: { $ne: true },
+        $or: [{ transportId: room._id }, { transportId: { $exists: false } }] },
+    { $set: { expiresAt: new Date(now + LIVE_SHARE_RECONNECT_MS), transportId: room._id } });
+    if (!updated.matchedCount) throw new LiveShareError('STALE_SESSION', '共享方向已切换，请等待当前画面。');
+    // Never overwrite the teacher authority from a stale asynchronous heartbeat.
+    const members = [...new Set(uids.filter((uid) => uid !== room.teacherUid))];
+    const renewed = await occupancy.updateMany({ _id: { $in: members }, roomId: connectionKey(room) },
+        { $set: { expiresAt: new Date(now + LIVE_SHARE_RECONNECT_MS) } });
+    if (renewed.matchedCount !== members.length) throw new LiveShareError('STALE_SESSION', '原连接已结束，请重新连接。');
+}
+
+export async function connectionDeparture(room: ShareConnection) {
+    const slot = await occupancy.findOne({ _id: room.teacherUid, roomId: connectionKey(room), closed: { $ne: true } });
+    return { ...connectionInfo(room), ...(slot?.transportId && slot.transportId !== room._id ? {
+        switched: true, connectionVersion: slot.connectionVersion || 0,
+    } : {}) };
+}
+
+export async function closeConnection(room: ShareConnection, participants: ShareParticipant[], emit: Emit) {
+    const result = await occupancy.findOneAndUpdate({ _id: room.teacherUid, roomId: connectionKey(room), closed: { $ne: true },
+        $or: [{ transportId: room._id }, { transportId: { $exists: false } }] }, { $set: { closed: true } });
+    if (!result && room.connectionId) return false;
+    if (!result && !await currentTransport(room)) return false;
+    retireTransport(room._id);
+    await releaseParticipants(connectionKey(room));
+    const online = await presence.find({ uid: { $in: participants.map((p) => p.uid) }, connected: true }).toArray();
+    const audience = new Map([[`${room.teacherUid}:${room.teacherTabId}`, { uid: room.teacherUid, tabId: room.teacherTabId }],
+        ...participants.map((p) => [`${p.uid}:${p.tabId}`, { uid: p.uid, tabId: p.tabId }] as const),
+        ...online.filter((p) => participants.some((member) => member.uid === p.uid && member.deviceId === p.deviceId))
+            .map((p) => [`${p.uid}:${p.tabId}`, { uid: p.uid, tabId: p.tabId }] as const)]);
+    for (const { uid, tabId } of audience.values()) emit({ uid, tabId, message: { type: 'connection:ended', ...connectionInfo(room) } });
+    return true;
 }
 
 async function accountAndDomain(uid: number, domainId: string) {
@@ -192,28 +257,33 @@ export async function livePresence(uid: number, tabId: string, now = Date.now())
 export function notifySession(session: ShareSession, emit: Emit) {
     emit({ uid: session.teacherUid, tabId: session.teacherTabId, message: {
         type: 'started', sessionId: session._id, studentUid: session.studentUid, studentName: session.studentName,
+        ...connectionInfo(session),
         teacherName: session.teacherName, tabId: session.studentTabId, pageId: session.pageId, pageUrl: session.pageUrl,
     } });
     emit({ uid: session.studentUid, tabId: session.studentTabId, message: {
         type: 'share-start', sessionId: session._id, teacherUid: session.teacherUid, teacherName: session.teacherName,
+        ...connectionInfo(session),
         tabId: session.studentTabId, pageId: session.pageId, pageUrl: session.pageUrl,
     } });
 }
 
 export async function endSession(session: ShareSession, reason: string, emit: Emit) {
+    const participants = session.returnAudience || [{ uid: session.studentUid, tabId: session.studentTabId,
+        deviceId: session.studentDeviceId, domainId: session.domainId, name: session.studentName }];
+    if (!await closeConnection(session, participants, emit)) return;
     const result = await sessions.updateOne({ _id: session._id, active: true },
         { $set: { active: false, expiresAt: new Date(Date.now() + LIVE_SHARE_RECONNECT_MS) } });
     if (!result.modifiedCount) return;
-    await releaseParticipants(session._id);
     for (const [uid, tabId] of [[session.teacherUid, session.teacherTabId], [session.studentUid, session.studentTabId]] as [number, string][]) {
-        emit({ uid, tabId, message: { type: 'ended', sessionId: session._id, reason } });
+        emit({ uid, tabId, message: { type: 'ended', sessionId: session._id, reason, ...connectionInfo(session) } });
     }
 }
 
 export async function sessionFor(item: SharePresence, now = Date.now()) {
-    return sessions.findOne({ active: true, expiresAt: { $gt: new Date(now) }, $or: [
+    const session = await sessions.findOne({ active: true, expiresAt: { $gt: new Date(now) }, $or: [
         { teacherUid: item.uid, teacherTabId: item.tabId }, { studentUid: item.uid, studentTabId: item.tabId },
     ] });
+    return session && await currentTransport(session) ? session : null;
 }
 
 export async function startSession(teacher: SharePresence, studentUid: number, tabId: string | undefined, emit: Emit, now = Date.now()) {
@@ -238,12 +308,14 @@ export async function startSession(teacher: SharePresence, studentUid: number, t
     const session: ShareSession = {
         _id: opaqueShareId(), teacherUid: teacher.uid, teacherTabId: teacher.tabId, studentUid, studentTabId: student.tabId,
         studentDeviceId: student.deviceId,
+        teacherDeviceId: teacher.deviceId,
         workspaceId: teacher.workspaceId, domainId: student.domainId, pageId: student.pageId, pageUrl: student.url,
         teacherName: scope.teacher.name, studentName: scope.student.name, active: true,
         createdAt: new Date(now), expiresAt: new Date(now + LIVE_SHARE_RECONNECT_MS),
     };
+    session.connectionId = session._id; session.connectionVersion = 0;
     await claimParticipants('assist', session._id, [teacher.uid, studentUid], now);
-    try { await sessions.insertOne(session); } catch (error) {
+    try { await bindTransport(session); await sessions.insertOne(session); } catch (error) {
         await releaseParticipants(session._id);
         if (error.code === 11000) throw new LiveShareError('BUSY', '该学员已经在共享中，请稍后再试。');
         throw error;
@@ -255,6 +327,7 @@ export async function startSession(teacher: SharePresence, studentUid: number, t
 /** Revalidate both participants and bind the room to the learner's newest page. */
 export async function refreshSession(session: ShareSession, emit: Emit, now = Date.now()) {
     try {
+        if (!await currentTransport(session)) return null;
         const student = await livePresence(session.studentUid, session.studentTabId, now);
         if (!student || !student.visible || !student.url) return null;
         const pair = await authorizePair(session.teacherUid, session.studentUid, student.domainId);
@@ -264,16 +337,17 @@ export async function refreshSession(session: ShareSession, emit: Emit, now = Da
         const teacher = await livePresence(session.teacherUid, session.teacherTabId, now);
         if (!teacher) return null;
         if (teacher.serverId !== student.serverId) throw new LiveShareError('DIFFERENT_SERVER', '共享双方连接到了不同服务实例，请重新连接。');
-        await claimParticipants('assist', session._id, [session.teacherUid, session.studentUid], now);
+        await pulseParticipants(session, 'assist', [session.teacherUid, session.studentUid,
+            ...(session.returnAudience || []).map((viewer) => viewer.uid)], now);
         const updated = await sessions.findOneAndUpdate({ _id: session._id, active: true, studentTabId: session.studentTabId,
             pageId: session.pageId, expiresAt: { $gt: new Date(now) } }, {
             $set: { pageId: student.pageId, pageUrl: student.url, domainId: student.domainId, expiresAt: new Date(now + LIVE_SHARE_RECONNECT_MS) },
         }, { returnDocument: 'after' });
         const current = updated || await sessions.findOne({ _id: session._id, active: true, studentTabId: session.studentTabId,
             expiresAt: { $gt: new Date(now) } });
-        if (!current && !await sessions.findOne({ _id: session._id, active: true })) await releaseParticipants(session._id);
         return current;
     } catch (error) {
+        if (error instanceof LiveShareError && error.code === 'STALE_SESSION') return null;
         if (error instanceof LiveShareError) await endSession(session, error.message, emit);
         throw error;
     }
@@ -285,6 +359,7 @@ export async function followStudentTab(item: SharePresence, emit: Emit, now = Da
     const session = await sessions.findOne({ studentUid: item.uid, studentDeviceId: item.deviceId, active: true,
         expiresAt: { $gt: new Date(now) } });
     if (!session || session.studentTabId === item.tabId) return null;
+    if (!await currentTransport(session)) return null;
     const pair = await authorizePair(session.teacherUid, item.uid, item.domainId);
     const teacher = await livePresence(session.teacherUid, session.teacherTabId, now);
     if (!teacher) return null;

@@ -2,6 +2,7 @@ import { VoiceTransport } from './transport';
 import { mountVoiceCallWindow } from './window';
 import { createCallRinger } from './ringtone';
 import { positionVoiceOverlays } from './position';
+import { positionIncomingVoiceCard } from './incoming_position';
 
 interface VoiceConfig { enabled: boolean; uid: number; canTeach: boolean; socketUrl: string; windowUrl?: string }
 interface Student { uid: number; name: string; online: boolean; busy?: boolean }
@@ -100,6 +101,8 @@ export function installVoiceCall(config: VoiceConfig, options: {
   floating.append(floatingHeader, mediaRoot);
   document.body.append(picker, card, floating, notification);
   const releasePositioning = positionVoiceOverlays([card, floating]);
+  const incomingPosition = positionIncomingVoiceCard(card, cardTop);
+  disposers.push(() => incomingPosition.dispose());
 
   function showError(text: string) {
     const node = picker.open ? error : cardError;
@@ -160,6 +163,7 @@ export function installVoiceCall(config: VoiceConfig, options: {
     card.hidden = !call || mediaShown;
     floating.hidden = !mediaShown;
     if (!call) {
+      incomingPosition.update(null);
       ringer.setIncoming(false);
       if (titleBeforeRing !== null) { document.title = titleBeforeRing; titleBeforeRing = null; }
       return;
@@ -175,6 +179,7 @@ export function installVoiceCall(config: VoiceConfig, options: {
     hangup.disabled = !connected;
     accept.textContent = accepting ? '正在接听…' : '接听';
     cardStatus.textContent = !connected ? '连接恢复中…' : incoming ? '邀请你语音通话' : '通话正在另一个页面进行';
+    incomingPosition.update(incoming && !mediaShown ? call.callId : null);
     floatingLabel.textContent = `与 ${name} 语音通话`;
     if (incoming && titleBeforeRing === null) { titleBeforeRing = document.title; document.title = `语音来电 · ${name}`; }
     else if (!incoming && titleBeforeRing !== null) { document.title = titleBeforeRing; titleBeforeRing = null; }

@@ -218,7 +218,6 @@ it('connects one student, mirrors typing/navigation, edits jointly, and restores
         await teacher.waitForFunction(() => document.querySelector('.live-share-overlay')?.classList.contains('is-disconnected'));
         await teacher.waitForFunction(() => document.querySelector('.live-share-overlay')
           && !document.querySelector('.live-share-overlay').classList.contains('is-disconnected'));
-        await teacher.locator('[data-assistant-toggle]').click();
         await teacher.getByRole('button', { name: '切换学员', exact: true }).click();
         await teacher.getByRole('button', { name: /学员6/ }).click();
         await teacher.frameLocator('.live-share-mirror iframe').locator('h1').filter({ hasText: '学员6' }).waitFor();
@@ -226,7 +225,6 @@ it('connects one student, mirrors typing/navigation, edits jointly, and restores
         await teacher.locator('.live-share-editors textarea').fill('# second student only');
         await other.waitForFunction(() => document.querySelector('#code').value === '# second student only');
         assert.equal(await student.locator('#code').inputValue(), '# resumed comment');
-        await teacher.locator('[data-assistant-toggle]').click();
         await teacher.getByRole('button', { name: '断开共享', exact: true }).click();
         await teacher.waitForFunction(() => !document.querySelector('.live-share-overlay'));
         assert.equal(await teacher.locator('#code').inputValue(), '# original teacher draft\nprint(123)');
@@ -304,7 +302,6 @@ it('follows student navigation through contest and personal pages, foreground ta
         await teacher.locator('.live-share-editors textarea').fill('# recovered personal page');
         await current.waitForFunction(() => document.querySelector('#code').value === '# recovered personal page');
 
-        await teacher.locator('[data-assistant-toggle]').click();
         await teacher.getByRole('button', { name: '断开共享', exact: true }).click();
         await teacher.waitForFunction(() => !document.querySelector('.live-share-overlay'));
         await current.waitForFunction(() => !document.querySelector('.live-share-notice'));
@@ -375,7 +372,6 @@ it('keeps local teacher drawing private, shares identical strokes across resolut
         assert.equal(completed.filter((entry) => entry.message.data.drawing.phase === 'end').length, 2);
         const staleStroke = completed.find((entry) => entry.message.data.drawing.phase === 'start').message;
 
-        await teacher.locator('[data-assistant-toggle]').click();
         await teacher.getByRole('button', { name: '断开共享', exact: true }).click();
         await teacher.waitForFunction(() => !document.querySelector('.live-share-overlay'));
         await student.waitForFunction(() => !document.querySelector('.live-share-drawing-root'));
@@ -508,7 +504,6 @@ it('pins a right-button mark with a live label across different DPRs while prese
             'ordinary code typing must not create pen marks or pen labels');
         assert.equal(await student.locator('#code').inputValue(), 'print("still code")');
         assert.equal(await other.locator('[data-share-code-annotation],[data-share-drawing-note]').count(), 0);
-        await teacher.locator('[data-assistant-toggle]').click();
         await teacher.getByRole('button', { name: '断开共享', exact: true }).click();
         await teacher.waitForFunction(() => !document.querySelector('.live-share-overlay'));
         assert.deepEqual(errors, []);

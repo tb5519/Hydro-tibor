@@ -4,7 +4,7 @@ import { clearSessionAnnotations } from './annotation_cache';
 import { createBroadcastPresence } from './broadcast_presence';
 
 interface Student { uid: number; name: string; online: boolean; tabs?: { title: string; visible: boolean }[] }
-interface Room { sessionId: string; pageId: string; teacherName: string; teacherUid: number; studentUids?: number[]; viewers?: Student[] }
+interface Room { sessionId: string; connectionId?: string; pageId: string; teacherName: string; teacherUid: number; studentUids?: number[]; viewers?: Student[] }
 type Adapters = typeof import('./broadcast_adapters');
 type Adapter = { receive(kind: string, data: any, role?: 'teacher' | 'student'): void; snapshot?(): void; setConnected(value: boolean): void; dispose(): void };
 export interface BroadcastBridge {
@@ -62,7 +62,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   let count: HTMLElement | null = null;
   let start: HTMLButtonElement | null = null;
   let flash: HTMLElement | null = null;
-  let bar: HTMLElement | null = null;
+  let teacherStatus = '';
   let overlay: HTMLElement | null = null;
   let viewport: HTMLElement | null = null;
   let stage: HTMLElement | null = null;
@@ -104,11 +104,12 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     if (status) status.textContent = text || (connected
       ? (frameReady ? `正在观看${room?.teacherName || '老师'}的分享` : '正在同步老师画面…') : '连接中断，正在重新连接…');
     if (loading) loading.hidden = frameReady || !!retainedView || stage?.dataset.ready === 'true';
-    if (bar) {
-      const viewers = room?.viewers;
-      const total = room?.studentUids?.length ?? viewers?.length ?? 0;
+    if (source && room) {
+      const viewers = room.viewers;
+      const total = room.studentUids?.length ?? viewers?.length ?? 0;
       const online = viewers ? viewers.filter((item) => item.online).length : total;
-      bar.querySelector('[data-broadcast-status]')!.textContent = text || (connected ? `正在分享 · ${online}/${total} 位学员在线` : '正在重新连接…');
+      teacherStatus = text || (connected ? `正在分享 · ${online}/${total} 位学员在线` : '正在重新连接…');
+      bridge.onActiveChange();
     }
     overlay?.classList.toggle('is-disconnected', !connected);
   }
@@ -200,14 +201,6 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     }, { passive: false, capture: true });
     fit();
   }
-  function createSourceBar() {
-    if (bar) return;
-    bar = el('aside', 'teacher-broadcast-bar'); bar.dataset.liveSharePrivate = ''; bar.dataset.liveShareUi = '';
-    const copy = el('span', 'teacher-broadcast-bar__status'); copy.dataset.broadcastStatus = ''; copy.setAttribute('role', 'status');
-    const dot = el('i', 'live-share-dot');
-    const stop = button('结束分享', 'teacher-broadcast-bar__stop', stopSharing); stop.dataset.broadcastStop = '';
-    bar.append(dot, copy, stop); document.body.append(bar);
-  }
   function clearRoom() {
     presence?.pause(); generation++; adapter?.dispose(); adapter = null; room = null;
     retainedView?.adapter.dispose(); retainedView = null; adapterLoading = false; frameReady = false;
@@ -215,7 +208,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     buffered.length = 0; bufferedBytes = 0; wantsSnapshot = false;
     clearTimeout(disconnectTimer); disconnectTimer = 0; disconnectDeadline = 0;
     clearTimeout(snapshotTimer); snapshotTimer = 0; recovering = false;
-    bar?.remove(); bar = null; originalObserver?.disconnect(); originalObserver = null;
+    teacherStatus = ''; originalObserver?.disconnect(); originalObserver = null;
     overlay?.remove(); overlay = null; viewport = null; stage = null; loading = null; status = null; viewToggle = null;
     focus = null; viewLeft = 0; viewTop = 0; viewScale = 1; drawing = false; manualUntil = 0;
     clearTimeout(followTimer); followTimer = 0;
@@ -229,9 +222,9 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   }
   function stopSharing() {
     if (!room || !source) return;
-    const sessionId = room.sessionId;
+    const { sessionId, connectionId = sessionId } = room;
     ended.add(sessionId); presence?.end(sessionId); bridge.send({ type: 'broadcast:stop', sessionId });
-    saveResume(false); clearRoom(); clearSessionAnnotations(sessionId); closePicker();
+    saveResume(false); clearRoom(); clearSessionAnnotations(connectionId); closePicker();
   }
   function queueSnapshot() {
     wantsSnapshot = true;
@@ -313,7 +306,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     if (keepView) { generation++; retireAdapter(); }
     else clearRoom();
     source = teacher; room = next; setConnected(true); frameRetries = 0; frameProgress = frameStarted = Date.now(); bridge.onActiveChange();
-    if (teacher) { presence?.start(next.sessionId); saveResume(true); createSourceBar(); closePicker(); document.querySelector<HTMLButtonElement>('[data-assistant-close]')?.click(); }
+    if (teacher) { presence?.start(next.sessionId); saveResume(true); closePicker(); document.querySelector<HTMLButtonElement>('[data-assistant-close]')?.click(); }
     else {
       createView(); stage = el('div', 'teacher-broadcast-stage'); stage.style.visibility = 'hidden';
       viewport!.append(stage); fit();
@@ -329,7 +322,8 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     try {
       const adapters = await (teacher && options.loadSourceAdapters ? options.loadSourceAdapters() : loadAdapters());
       if (disposed || generation !== version || room !== next) return;
-      adapter = teacher ? adapters.attachBroadcastSource({ pageId: next.pageId, send, onStatus, annotationScope: { sessionId: next.sessionId, url: location.href } })
+      adapter = teacher ? adapters.attachBroadcastSource({ pageId: next.pageId, send, onStatus,
+        annotationScope: { sessionId: `${next.connectionId || next.sessionId}:broadcast:${config.uid}`, url: location.href } })
         : adapters.attachBroadcastViewer({ pageId: next.pageId, container: stage!, sendDrawing: (packet) => {
             // The pen owns window-capture events, including nested frame gestures.
             // Freeze from its actual lifecycle rather than an obscured DOM listener.
@@ -403,7 +397,9 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     else if (changed) waitForFrame();
   }
   function authenticationLost() {
+    const connectionId = room?.connectionId || room?.sessionId;
     pending = false; clearTimeout(pendingTimer); ended.clear(); presence?.end(); saveResume(false); clearRoom(); closePicker();
+    if (connectionId) clearSessionAnnotations(connectionId);
     connected = false; showMessage('登录已失效，分享已结束，请重新登录。');
   }
   function renderStudents() {
@@ -513,9 +509,9 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     if (message.type === 'broadcast:ended') {
       ended.delete(message.sessionId);
       if (!message.followed) presence?.end(message.sessionId);
-      if (room?.sessionId === message.sessionId) { saveResume(false); clearRoom(); if (message.reason) showMessage(message.reason); }
+      if (room?.sessionId === message.sessionId) { saveResume(false); clearRoom(); if (message.reason && !message.switched) showMessage(message.reason); }
       // Adapter disposal flushes its cache; clear only after that final write.
-      if (!message.followed) clearSessionAnnotations(message.sessionId);
+      if (!message.followed && !message.switched) clearSessionAnnotations(message.connectionId || message.sessionId);
     }
     if (message.type === 'broadcast:error' || ((message.type === 'error' || message.error) && (pending || picker || room))) {
       pending = false; clearTimeout(pendingTimer); renderStudents();
@@ -532,7 +528,10 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   const resize = () => fit();
   document.addEventListener('click', click); window.addEventListener('resize', resize);
   return {
-    receive, setConnected, wantsConnection, open, showMessage, authenticationLost,
+    receive, setConnected, wantsConnection, open, showMessage, authenticationLost, stopSharing,
+    get currentRoom() { return room; },
+    get teacherRoom() { return source ? room : null; },
+    get teacherStatus() { return teacherStatus; },
     pageReady() { renderStudents(); },
     pageLoading() {
       renderStudents();

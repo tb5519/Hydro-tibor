@@ -1,11 +1,11 @@
 import { clearTimeout, setTimeout } from 'timers';
-import { LIVE_SHARE_RECONNECT_MS, LiveShareError } from '../lib/live_share';
+import { LIVE_SHARE_RECONNECT_MS, LiveShareError, ShareConnection } from '../lib/live_share';
 import { BROADCAST_MAX_STUDENTS } from '../lib/teacher_broadcast';
 import db from '../service/db';
 import * as share from './live_share';
 
 export interface BroadcastViewer { uid: number; tabId: string; deviceId: string; domainId: string; name: string }
-export interface BroadcastRoom {
+export interface BroadcastRoom extends ShareConnection {
     _id: string; teacherUid: number; teacherTabId: string; teacherDeviceId: string; teacherName: string;
     workspaceId: string; domainId: string; pageId: string; viewers: BroadcastViewer[]; studentUids: number[];
     active: boolean; revision: number; lastSnapshotAt?: Date; createdAt: Date; expiresAt: Date;
@@ -20,14 +20,15 @@ export function role(room: BroadcastRoom, peer: share.SharePresence) {
     return room.viewers.some((v) => v.uid === peer.uid && v.tabId === peer.tabId) ? 'student' : null;
 }
 export async function roomFor(peer: share.SharePresence, now = Date.now()) {
-    return rooms.findOne({ active: true, expiresAt: { $gt: new Date(now) }, $or: [
+    const room = await rooms.findOne({ active: true, expiresAt: { $gt: new Date(now) }, $or: [
         { teacherUid: peer.uid, teacherTabId: peer.tabId }, { viewers: { $elemMatch: { uid: peer.uid, tabId: peer.tabId } } },
     ] });
+    return room && await share.currentTransport(room) ? room : null;
 }
 export async function notify(room: BroadcastRoom, emit: Emit, now = Date.now()) {
     const online = await share.presence.find({ uid: { $in: room.studentUids }, connected: true,
         expiresAt: { $gt: new Date(now) } }).project({ uid: 1, tabId: 1 }).toArray();
-    const info = { sessionId: room._id, teacherUid: room.teacherUid, teacherName: room.teacherName,
+    const info = { sessionId: room._id, ...share.connectionInfo(room), teacherUid: room.teacherUid, teacherName: room.teacherName,
         pageId: room.pageId, studentUids: room.studentUids, viewers: room.viewers.map((v) => ({
             uid: v.uid, name: v.name, online: online.some((p) => p.uid === v.uid && p.tabId === v.tabId),
         })) };
@@ -36,17 +37,18 @@ export async function notify(room: BroadcastRoom, emit: Emit, now = Date.now()) 
     emit({ uid: room.teacherUid, tabId: room.teacherTabId, message: { type: 'broadcast:resync', sessionId: room._id, pageId: room.pageId } });
 }
 export async function end(room: BroadcastRoom, reason: string, emit: Emit) {
+    if (!await share.closeConnection(room, room.viewers, emit)) return;
     const result = await rooms.updateOne({ _id: room._id, active: true },
         { $set: { active: false, expiresAt: new Date(Date.now() + LIVE_SHARE_RECONNECT_MS) } });
     if (!result.modifiedCount) return;
     clearTimeout(pendingSnapshots.get(room._id));
     pendingSnapshots.delete(room._id);
-    await share.releaseParticipants(room._id);
     for (const [uid, tabId] of [[room.teacherUid, room.teacherTabId], ...room.viewers.map((v) => [v.uid, v.tabId])] as [number, string][]) {
-        emit({ uid, tabId, message: { type: 'broadcast:ended', sessionId: room._id, reason } });
+        emit({ uid, tabId, message: { type: 'broadcast:ended', sessionId: room._id, reason, ...share.connectionInfo(room) } });
     }
 }
 export async function requestSnapshot(room: BroadcastRoom, emit: Emit, now = Date.now()) {
+    if (!await share.currentTransport(room)) return;
     // Thirty reconnecting viewers still cause at most one full-source capture a
     // second, rather than thirty snapshots competing with ordinary updates.
     const requested = await rooms.updateOne({ _id: room._id, active: true, pageId: room.pageId, $or: [
@@ -103,8 +105,9 @@ export async function start(teacher: share.SharePresence, uids: number[], emit: 
         teacherDeviceId: teacher.deviceId, teacherName: scope.name, workspaceId: teacher.workspaceId,
         domainId: teacher.domainId, pageId: teacher.pageId, viewers, studentUids: [...uids], active: true, revision: 0,
         createdAt: new Date(now), expiresAt: new Date(now + LIVE_SHARE_RECONNECT_MS) };
+    room.connectionId = room._id; room.connectionVersion = 0;
     await share.claimParticipants('broadcast', room._id, [teacher.uid, ...uids], now);
-    try { await rooms.insertOne(room); } catch (error) {
+    try { await share.bindTransport(room); await rooms.insertOne(room); } catch (error) {
         await share.releaseParticipants(room._id);
         if (error.code === 11000) throw new LiveShareError('BUSY', '老师或学员已经在分享中。');
         throw error;
@@ -115,6 +118,7 @@ export async function start(teacher: share.SharePresence, uids: number[], emit: 
 
 /** Revalidate membership and source page; only the source extends the room lease. */
 export async function refresh(room: BroadcastRoom, emit: Emit, now = Date.now()) {
+    if (!await share.currentTransport(room)) return null;
     if (!room.active || +room.expiresAt <= now) { await end(room, '分享连接已结束。', emit); return null; }
     const teacher = await share.livePresence(room.teacherUid, room.teacherTabId, now);
     if (!teacher || !teacher.visible || !teacher.url) return null;
@@ -129,19 +133,20 @@ export async function refresh(room: BroadcastRoom, emit: Emit, now = Date.now())
                 if (pair.teacher.workspaceId === room.workspaceId) { viewers.push(viewer); continue; }
             } catch { /* Revoked learners leave immediately; keep the other learners' lesson running. */ }
             // eslint-disable-next-line no-await-in-loop
-            await share.releaseParticipants(room._id, [viewer.uid]);
-            emit({ uid: viewer.uid, tabId: viewer.tabId, message: { type: 'broadcast:ended', sessionId: room._id, reason: '你已不在本次分享的课堂范围。' } });
+            await share.releaseParticipants(share.connectionKey(room), [viewer.uid]);
+            emit({ uid: viewer.uid, tabId: viewer.tabId, message: { type: 'broadcast:ended', sessionId: room._id,
+                ...share.connectionInfo(room), reason: '你已不在本次分享的课堂范围。' } });
         }
         if (!viewers.length) { await end(room, '分享学员已全部离开。', emit); return null; }
-        await share.claimParticipants('broadcast', room._id, [room.teacherUid, ...viewers.map((v) => v.uid)], now);
+        await share.pulseParticipants(room, 'broadcast', [room.teacherUid, ...viewers.map((v) => v.uid)], now);
         const updated = await rooms.findOneAndUpdate({ _id: room._id, active: true, revision: room.revision }, { $set: {
             pageId: teacher.pageId, domainId: teacher.domainId, viewers, studentUids: viewers.map((v) => v.uid),
             expiresAt: new Date(now + LIVE_SHARE_RECONNECT_MS),
         }, $inc: { revision: 1 } }, { returnDocument: 'after' });
         const current = updated || await rooms.findOne({ _id: room._id, active: true });
-        if (!current) await share.releaseParticipants(room._id);
         return current;
     } catch (error) {
+        if (error instanceof LiveShareError && error.code === 'STALE_SESSION') return null;
         if (error instanceof LiveShareError) await end(room, error.message, emit);
         throw error;
     }
@@ -154,6 +159,7 @@ export async function follow(peer: share.SharePresence, emit: Emit, now = Date.n
         ? { teacherUid: peer.uid, teacherDeviceId: peer.deviceId }
         : { viewers: { $elemMatch: { uid: peer.uid, deviceId: peer.deviceId } } }) });
     if (!room) return null;
+    if (!await share.currentTransport(room)) return null;
     const oldTab = peer.canTeach ? room.teacherTabId : room.viewers.find((v) => v.uid === peer.uid)?.tabId;
     if (peer.workspaceId !== room.workspaceId) throw new LiveShareError('FORBIDDEN', '不能跟随到其他工作区。');
     if (peer.canTeach) {
@@ -170,6 +176,7 @@ export async function follow(peer: share.SharePresence, emit: Emit, now = Date.n
     if (!updated) return null;
     if (oldTab !== peer.tabId) emit({ uid: peer.uid, tabId: oldTab, message: {
         type: 'broadcast:ended', sessionId: room._id, reason: '分享已跟随到当前页面。', followed: true,
+        ...share.connectionInfo(room),
     } });
     await notify(updated, emit, now);
     return updated;

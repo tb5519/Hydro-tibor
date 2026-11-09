@@ -329,7 +329,7 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
 
 export function validateShareMessage(payload: any) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)
-        || !['hello', 'page', 'list', 'start', 'stop', 'relay', 'pulse'].includes(payload.type)) {
+        || !['hello', 'page', 'list', 'start', 'stop', 'switch', 'relay', 'pulse'].includes(payload.type)) {
         throw new LiveShareError('INVALID_MESSAGE', '无法识别共享消息。');
     }
     if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > LIVE_SHARE_MAX_BYTES) {
@@ -355,6 +355,11 @@ export function validateShareMessage(payload: any) {
     if (['stop', 'relay'].includes(payload.type) && !shareId(payload.sessionId)) {
         throw new LiveShareError('INVALID_SESSION', '共享已失效，请重新连接。');
     }
+    if (payload.type === 'switch' && (!shareId(payload.sessionId) || !shareId(payload.requestId)
+        || !['assist', 'broadcast'].includes(payload.mode)
+        || Object.keys(payload).some((key) => !['type', 'sessionId', 'requestId', 'mode', 'studentUid'].includes(key))
+        || (payload.studentUid !== undefined && (!Number.isSafeInteger(payload.studentUid) || payload.studentUid <= 1
+            || payload.mode !== 'assist')))) throw new LiveShareError('INVALID_SWITCH', '切换方向的信息不正确。');
     if (payload.type === 'relay' && (!shareId(payload.pageId) || !['mirror', 'editor', 'command', 'ack'].includes(payload.kind)
         || payload.data === null || typeof payload.data !== 'object' || Array.isArray(payload.data))) {
         throw new LiveShareError('INVALID_RELAY', '共享内容格式不正确。');
@@ -381,7 +386,7 @@ export class ShareRateLimit {
         this.bytes = Math.min(2 * 1024 * 1024, this.bytes + elapsed * 1024 * 1024);
         this.controls = Math.min(12, this.controls + elapsed * 2);
         const bytes = Buffer.byteLength(JSON.stringify(payload), 'utf8');
-        const control = ['list', 'start', 'stop', 'hello', 'page', 'broadcast:start', 'broadcast:stop', 'broadcast:sync'].includes(payload.type);
+        const control = ['list', 'start', 'stop', 'switch', 'hello', 'page', 'broadcast:start', 'broadcast:stop', 'broadcast:sync'].includes(payload.type);
         if (this.events < 1 || this.bytes < bytes || (control && this.controls < 1)) {
             throw new LiveShareError('RATE_LIMIT', '共享操作过于频繁，请稍候。');
         }
@@ -392,13 +397,20 @@ export class ShareRateLimit {
     }
 }
 
-export interface ShareSession {
+export interface ShareParticipant { uid: number; tabId: string; deviceId: string; domainId: string; name: string }
+export interface ShareConnection {
+    _id: string; teacherUid: number; teacherTabId: string;
+    connectionId?: string; connectionVersion?: number;
+}
+export interface ShareSession extends ShareConnection {
     _id: string;
     teacherUid: number;
     teacherTabId: string;
     studentUid: number;
     studentTabId: string;
     studentDeviceId: string;
+    teacherDeviceId?: string;
+    returnAudience?: ShareParticipant[];
     workspaceId: string;
     domainId: string;
     pageId: string;

@@ -4,7 +4,7 @@
   border: 0
   background: transparent
 
-.teacher-broadcast-picker, .teacher-broadcast-bar, .teacher-broadcast-hint, .teacher-broadcast-flash
+.teacher-broadcast-picker, .teacher-broadcast-hint, .teacher-broadcast-flash
   font-family: var(--font-family, "PingFang SC", "Microsoft YaHei", sans-serif)
   &, *
     box-sizing: border-box
@@ -101,39 +101,6 @@
     flex-shrink: 0
     &.is-online
       color: #4a8a72
-
-.teacher-broadcast-bar
-  position: fixed
-  z-index: 2147482100
-  left: 50%
-  bottom: calc(16px + env(safe-area-inset-bottom, 0px))
-  transform: translateX(-50%)
-  max-width: calc(100vw - 32px)
-  display: flex
-  align-items: center
-  gap: 9px
-  padding: 8px 10px 8px 14px
-  border: 1px solid #cee2d9
-  border-radius: 99px
-  background: #fafffdf5
-  box-shadow: 0 4px 20px #304b3b13
-  color: #426c5b
-  font-size: 12px
-  &__status
-    overflow: hidden
-    white-space: nowrap
-    text-overflow: ellipsis
-  &__stop
-    flex-shrink: 0
-    padding: 5px 10px
-    border: 0
-    border-radius: 99px
-    background: #e8f2ed
-    color: #37634f
-    font: inherit
-    cursor: pointer
-    &:hover
-      background: #dbece3
 
 .teacher-broadcast-overlay
   position: fixed
@@ -261,7 +228,7 @@
   .teacher-assistant__mark
     color: #329578
 
-.live-share-overlay, .live-share-picker, .live-share-notice, .live-share-controls
+.live-share-overlay, .live-share-picker, .live-share-notice
   font-family: var(--font-family, "PingFang SC", "Microsoft YaHei", sans-serif)
   color: #263c54
   &, *
@@ -418,26 +385,195 @@
     padding: 20px 28px
     font-size: 15px
 
-.live-share-controls
-  padding: 0 8px 10px
-  &__eyebrow, &__name, &__status
-    display: block
-  &__eyebrow
-    font-size: 11px
-    color: #78928b
-    margin-bottom: 8px
-  &__name
-    font-size: 20px
-    line-height: 1.5
-    color: #243c51
-  &__status
-    color: #719082
-    font-size: 12px
-    line-height: 1.7
-    margin: 5px 0 18px
-  &__actions
+.teacher-share-controls
+  position: fixed
+  z-index: 2147482400
+  right: unquote('max(14px, env(safe-area-inset-right))')
+  top: 50%
+  transform: translateY(-50%)
+  width: 184px
+  max-width: calc(100vw - 24px)
+  padding: 14px
+  border: 1px solid #dce8e4
+  border-radius: 18px
+  background: #fffffff5
+  box-shadow: 0 8px 32px #253f4520, 0 2px 8px #253f450a
+  color: #304c50
+  font-family: var(--font-family, "PingFang SC", "Microsoft YaHei", sans-serif)
+  font-size: 13px
+  line-height: 1.5
+  text-align: left
+  &, *
+    box-sizing: border-box
+  &[hidden], [hidden]
+    display: none !important
+  svg
+    width: 18px
+    height: 18px
+    flex: 0 0 18px
+    fill: none
+    stroke: currentColor
+    stroke-width: 1.6
+    stroke-linecap: round
+    stroke-linejoin: round
+  button
+    appearance: none
+    font: inherit
+    cursor: pointer
+    transition: background .15s, border-color .15s
+    &:focus-visible
+      outline: 3px solid #9ecfbe
+      outline-offset: 3px
+    &:disabled
+      cursor: default
+      opacity: .48
+  &__heading
     display: flex
+    align-items: center
+    justify-content: space-between
+    min-height: 24px
+  &__mode
+    display: flex
+    align-items: center
+    gap: 6px
+    font-size: 11px
+    color: #75918b
+    &:before
+      content: ''
+      width: 6px
+      height: 6px
+      border-radius: 50%
+      background: #5ba78e
+  &__name.live-share-controls__name
+    display: block
+    overflow: hidden
+    white-space: nowrap
+    text-overflow: ellipsis
+    margin: 3px 0 0
+    color: #2b4547
+    font-size: 15px
+    font-weight: 600
+    line-height: 1.6
+  &__status
+    display: block
+    margin-top: 2px
+    color: #829692
+    font-size: 11px
+    line-height: 1.6
+    overflow-wrap: anywhere
+  &__choose
+    display: grid
+    place-items: center
+    width: 28px
+    height: 26px
+    margin: -2px -6px -2px 0
+    border: 0
+    border-radius: 7px
+    background: transparent
+    color: #78988d
+    &:hover
+      background: #eef6f2
+  &__switch, &__end
+    display: flex
+    align-items: center
+    justify-content: center
+    gap: 7px
+    width: 100%
+    min-height: 38px
+    padding: 8px 4px
+    border-radius: 10px
+    font-weight: 500 !important
+  &__switch
+    margin-top: 12px
+    border: 1px solid #cfe2da
+    background: #eef7f3
+    color: #397b65
+    &:hover:not(:disabled)
+      border-color: #a9cdbd
+      background: #e5f3eb
+  &__end
+    margin-top: 6px
+    border: 1px solid transparent
+    color: #a57979
+    background: transparent
+    &:hover:not(:disabled)
+      background: #fff2f1
+      color: #a85e5e
+  &__picker
+    position: absolute
+    right: calc(100% + 10px)
+    top: 0
+    width: 216px
+    padding: 10px
+    border: 1px solid #dce8e4
+    border-radius: 16px
+    background: #fff
+    box-shadow: 0 8px 28px #253f4520
+  &__picker-heading
+    padding: 4px 7px 8px
+    font-size: 11px
+    color: #829692
+  &__students
+    max-height: unquote('min(320px, 45vh)')
+    overflow: auto
+    overscroll-behavior: contain
+  &__student
+    display: flex
+    align-items: center
     gap: 8px
+    width: 100%
+    min-height: 40px
+    padding: 8px
+    border: 0
+    border-radius: 9px
+    background: transparent
+    color: #375750
+    text-align: left
+    &:hover:not(:disabled)
+      background: #edf6f2
+    > span
+      flex: 1
+      min-width: 0
+      overflow: hidden
+      text-overflow: ellipsis
+      white-space: nowrap
+    > i
+      width: 6px
+      height: 6px
+      flex: 0 0 6px
+      border-radius: 50%
+      background: #5ba78e
+      &.is-offline
+        background: #b5c1bd
+    > small
+      color: #879b95
+      font-size: 10px
+  &.is-busy .teacher-share-controls__mode:before
+    background: #c7a36d
+
+@media (max-width: 480px)
+  .teacher-share-controls
+    right: unquote('max(10px, env(safe-area-inset-right))')
+    width: 166px
+    padding: 11px
+    &__picker
+      right: 0
+      top: auto
+      bottom: calc(100% + 8px)
+      width: unquote('min(216px, calc(100vw - 24px))')
+      .teacher-share-controls__students
+        max-height: unquote('min(180px, 24vh)')
+
+@media (max-height: 480px)
+  .teacher-share-controls
+    top: 12px
+    transform: none
+    &__status
+      max-height: 36px
+      overflow: auto
+    &__picker
+      top: 0
+      bottom: auto
 
 .live-share-button
   flex: 1
@@ -455,16 +591,6 @@
     background: #fff8f7
     &:hover
       background: #fbeeed
-
-.live-share-fallback
-  position: fixed
-  bottom: 24px
-  right: 24px
-  width: 280px
-  padding: 20px 12px 10px
-  border: 1px solid #dce6ee
-  border-radius: 18px
-  background: white
 
 .live-share-picker
   position: fixed

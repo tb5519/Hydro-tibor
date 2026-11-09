@@ -232,7 +232,7 @@ test('different screen sizes and DPR preserve source editor geometry, concurrent
         assert.deepEqual(await teacher.locator('[data-live-share-frame-viewer] iframe').evaluate((frame) => ({ width: frame.contentWindow.innerWidth, height: frame.contentWindow.innerHeight })),
             childViewport, 'Scratch is scaled together with the page without changing its inner layout');
         await teacher.locator('[data-share-zoom-fit]').click();
-        await teacher.locator('[data-assistant-toggle]').click(); await teacher.getByRole('button', { name: '断开共享', exact: true }).click();
+        await teacher.getByRole('button', { name: '断开共享', exact: true }).click();
         await teacher.waitForFunction(() => !document.querySelector('.live-share-overlay'));
         const restored = await teacher.evaluate(() => ({ url: location.href, width: innerWidth, height: innerHeight, dpr: devicePixelRatio,
             scroll: scrollY, code: editor.getValue(), layout: editor.getLayoutInfo(), font: editor.getOption(monaco.editor.EditorOption.fontInfo) }));

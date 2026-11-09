@@ -221,6 +221,32 @@
 
 .voice-call-card
   padding: 20px
+  &.is-incoming
+    z-index: 2147483000
+    max-height: calc(100dvh - 24px)
+    overflow-y: auto
+    cursor: grab
+    user-select: none
+    touch-action: none
+    &:before
+      content: ''
+      display: block
+      position: absolute
+      top: 8px
+      left: 50%
+      width: 26px
+      height: 3px
+      border-radius: 4px
+      background: #d8cfe8
+      transform: translateX(-50%)
+      pointer-events: none
+    .voice-call-card__top
+      outline-offset: 5px
+      border-radius: 8px
+      &:focus-visible
+        outline: 2px solid #b4a1da
+    &.is-dragging
+      cursor: grabbing
   &__top
     display: flex
     align-items: center

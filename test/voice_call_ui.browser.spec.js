@@ -135,6 +135,64 @@ it('student sees a private incoming card and explicitly accepts before opening t
     assert.deepEqual(errors, []);
 });
 
+it('incoming calls start centered, drag from the full header or blank space, and reset only for a new call', async (t) => {
+    const { page, errors } = await fixture(t, { student: true });
+    await page.evaluate((value) => deliver(value), call());
+    const card = page.locator('.voice-call-card.is-incoming');
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.voice-call-card')).opacity === '1');
+    const center = await card.boundingBox();
+    assert.ok(Math.abs(center.x + center.width / 2 - 640) <= 1);
+    assert.ok(Math.abs(center.y + center.height / 2 - 400) <= 1);
+    const handle = await page.locator('.voice-call-card__name').boundingBox();
+    await page.mouse.move(handle.x + 20, handle.y + 8); await page.mouse.down();
+    await page.mouse.move(handle.x - 160, handle.y - 92, { steps: 8 }); await page.mouse.up();
+    const moved = await card.boundingBox();
+    assert.ok(moved.x < center.x - 150 && moved.y < center.y - 70, 'dragging the teacher name moves the card');
+    await page.evaluate((value) => deliver(value), call());
+    assert.deepEqual(await card.boundingBox(), moved, 'repeat snapshots do not reset a dragged call');
+    await page.mouse.move(moved.x + 8, moved.y + moved.height - 8); await page.mouse.down();
+    await page.mouse.move(-80, -80, { steps: 8 }); await page.mouse.up();
+    const clamped = await card.boundingBox();
+    assert.ok(clamped.x >= 12 && clamped.y >= 12, 'blank-space dragging stays inside the viewport');
+    await page.locator('.voice-call-card__top').focus(); await page.keyboard.press('Home');
+    assert.deepEqual(await card.boundingBox(), center, 'Home recenters the incoming card');
+    await page.keyboard.press('ArrowRight');
+    assert.ok((await card.boundingBox()).x > center.x);
+    await page.evaluate((value) => deliver(value), call({ callId: 'voice-call-next-ring' }));
+    assert.deepEqual(await card.boundingBox(), center, 'a fresh call starts centered again');
+    await page.locator('.voice-call-card__button.is-accept').click();
+    assert.equal(await page.evaluate(() => audioStarts), 1, 'drag does not break explicit acceptance');
+    assert.equal(await card.isVisible(), false);
+    assert.deepEqual(errors, []);
+});
+
+it('incoming call stays reachable over a shared screen and clamps after a small-window resize', async (t) => {
+    const { page, errors } = await fixture(t, { student: true, viewport: { width: 390, height: 620 } });
+    await page.evaluate((value) => {
+        const overlay = document.createElement('div'); overlay.style.cssText = 'position:fixed;inset:0;background:#f4f6f7;z-index:2147481000';
+        document.body.append(overlay); deliver(value);
+    }, call());
+    const card = page.locator('.voice-call-card.is-incoming');
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.voice-call-card')).opacity === '1');
+    const box = await card.boundingBox();
+    assert.ok(Math.abs(box.x + box.width / 2 - 195) <= 1 && Math.abs(box.y + box.height / 2 - 310) <= 1);
+    assert.equal(await card.evaluate(node => {
+        const rect = node.getBoundingClientRect(); return !!document.elementFromPoint(rect.x + 20, rect.y + 20)?.closest('.voice-call-card');
+    }), true, 'the incoming card is above classroom sharing');
+    const header = await page.locator('.voice-call-card__top').boundingBox();
+    await page.mouse.move(header.x + 25, header.y + 25); await page.mouse.down();
+    await page.mouse.move(380, 600, { steps: 6 }); await page.mouse.up();
+    await page.setViewportSize({ width: 320, height: 360 });
+    await page.waitForFunction(() => {
+        const rect = document.querySelector('.voice-call-card').getBoundingClientRect();
+        return rect.x >= 12 && rect.y >= 12 && rect.right <= innerWidth - 11 && rect.bottom <= innerHeight - 11;
+    });
+    await page.getByRole('button', { name: '暂不接听', exact: true }).click();
+    assert.equal(await page.evaluate(() => sent.at(-1).type), 'reject');
+    assert.equal(await page.evaluate(() => audioStarts), 0, 'moving/rejecting a call never requests microphone');
+    assert.deepEqual(errors, []);
+});
+
 it('reject and a different tab stay silent; notification names are text, not markup', async (t) => {
     const { page } = await fixture(t, { student: true });
     const name = '<img src=x onerror="alert(1)">';

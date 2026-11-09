@@ -43,3 +43,26 @@ it('annotation cache expires old lessons and bounds total storage while preservi
     assert.equal(f.api.readAnnotationCache({ sessionId: 'lesson-limit', url: '/p/9' }, 'text').length, 0);
     assert.equal(Object.keys(f.values).length, 0);
 });
+
+it('keeps same-page annotations separate across teaching directions and learners until the whole connection ends', () => {
+    const f = fixture(); const connectionId = 'lesson-switch-123'; const url = '/p/1';
+    const teacher = { sessionId: `${connectionId}:broadcast:2`, url };
+    const first = { sessionId: `${connectionId}:assist:5`, url };
+    const second = { sessionId: `${connectionId}:assist:6`, url };
+    const unrelated = { sessionId: 'another-lesson:assist:5', url };
+    for (const [scope, text] of [[teacher, '老师示范'], [first, '第一位学员'], [second, '第二位学员'], [unrelated, '另一次连接']]) {
+        for (const kind of ['text', 'code-editor', 'ink', 'scratch-frame']) {
+            f.api.writeAnnotationCache(scope, kind, [{ id: 'same-note-id', text }]);
+        }
+    }
+    for (const kind of ['text', 'code-editor', 'ink', 'scratch-frame']) {
+        assert.equal(f.api.readAnnotationCache(teacher, kind)[0].text, '老师示范');
+        assert.equal(f.api.readAnnotationCache(first, kind)[0].text, '第一位学员');
+        assert.equal(f.api.readAnnotationCache(second, kind)[0].text, '第二位学员');
+    }
+    f.api.clearSessionAnnotations(connectionId);
+    for (const scope of [teacher, first, second]) {
+        for (const kind of ['text', 'code-editor', 'ink', 'scratch-frame']) assert.equal(f.api.readAnnotationCache(scope, kind).length, 0);
+    }
+    assert.equal(f.api.readAnnotationCache(unrelated, 'text')[0].text, '另一次连接');
+});

@@ -170,7 +170,7 @@ it('repeated oversized captures stop safely instead of remaining frozen or recon
             await page.waitForFunction(count => adapters.length === count, i + 2);
         }
     }
-    assert.equal(await page.locator('.teacher-broadcast-bar').count(), 0);
+    assert.equal(await page.locator('[data-teacher-share-controls][data-mode="broadcast"]:not([hidden])').count(), 0);
     assert.match(await page.locator('.teacher-broadcast-flash').textContent(), /内容过多/);
     assert.equal(await page.evaluate(() => allSent().some(m => m.type === 'broadcast:stop')), true);
 });
