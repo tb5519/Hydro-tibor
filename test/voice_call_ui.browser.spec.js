@@ -303,6 +303,28 @@ it('terminal logout closes microphone and removes the active call strip', async 
     assert.equal(await page.locator('.voice-call-floating').isVisible(), false);
     assert.equal(await page.locator('.voice-call-card').isVisible(), false);
 });
+it('a replaced idle page stays quiet and explains the issue when the teacher opens the picker', async (t) => {
+    const { page } = await fixture(t);
+    await page.evaluate(() => {
+        handlers.onConnection(false);
+        deliver({ type: 'terminated', closeCode: 4002, reason: '语音已在另一个页面接续。' });
+    });
+    assert.equal(await page.locator('.voice-call-toast').isVisible(), false);
+    await page.locator('[data-voice-call-open]').click();
+    await page.getByText('语音已在另一个页面接续，请刷新此页后重试。').waitFor();
+    assert.equal(await page.locator('.voice-call-toast').isVisible(), false);
+});
+it('still explains when an active call is moved to another page', async (t) => {
+    const { page } = await fixture(t);
+    await page.evaluate((message) => deliver(message), call({ status: 'active', isOwner: true, acceptedAt: Date.now() }));
+    await page.waitForFunction(() => fakeAudio.ready);
+    await page.evaluate(() => {
+        handlers.onConnection(false);
+        deliver({ type: 'terminated', closeCode: 4002, reason: '语音已在另一个页面接续。' });
+    });
+    assert.equal(await page.evaluate(() => fakeAudio.ready), false);
+    assert.equal(await page.locator('.voice-call-toast').innerText(), '语音已在另一个页面接续。');
+});
 it('old call events cannot hide the strip of a new outgoing call', async (t) => {
     const { page } = await fixture(t);
     const dial = async () => {

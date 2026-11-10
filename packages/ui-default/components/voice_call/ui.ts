@@ -12,6 +12,7 @@ interface Call {
 }
 interface Transport { start(): void; send(data: any): boolean; dispose(): void; readonly ready: boolean }
 let installed: (() => void) | undefined;
+const replacementHint = '语音已在另一个页面接续，请刷新此页后重试。';
 
 const phoneSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3H4a1 1 0 0 0-1 1c0 9.4 7.6 17 17 17a1 1 0 0 0 1-1v-3l-5-2-2 2a14 14 0 0 1-7-7l2-2-2-5Z"/></svg>';
 const closeSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>';
@@ -23,6 +24,7 @@ export function installVoiceCall(config: VoiceConfig, options: {
   if (installed || !config?.enabled || !config.uid || window.top !== window) return installed;
   let disposed = false;
   let connected = false;
+  let replaced = false;
   let students: Student[] = [];
   let call: Call | null = null;
   let pendingStudent = 0;
@@ -142,7 +144,8 @@ export function installVoiceCall(config: VoiceConfig, options: {
     const shown = students.filter((student) => !query || `${student.name} ${student.uid}`.toLocaleLowerCase().includes(query))
       .sort((a, b) => Number(b.online && !b.busy) - Number(a.online && !a.busy) || a.name.localeCompare(b.name, 'zh'));
     list.replaceChildren();
-    listStatus.textContent = !connected ? '正在连接语音服务…' : `${students.filter((student) => student.online && !student.busy).length} 位学员可以接听`;
+    listStatus.textContent = replaced ? '此页语音已停止' : !connected ? '正在连接语音服务…'
+      : `${students.filter((student) => student.online && !student.busy).length} 位学员可以接听`;
     if (!shown.length) {
       list.append(el('div', 'voice-call-picker__empty', query ? '没有找到这位学员，换个名字试试。' : '学员进入平台后，就可以在这里拨打。'));
       return;
@@ -186,6 +189,7 @@ export function installVoiceCall(config: VoiceConfig, options: {
   }
   function receive(message: any) {
     if (disposed || !message || typeof message !== 'object') return;
+    const wasUsingVoice = !!call || mediaShown;
     if (controller.receive(message) === false) return;
     if (message.type === 'ready') {
       connected = true;
@@ -203,8 +207,15 @@ export function installVoiceCall(config: VoiceConfig, options: {
       if (picker.open) closePicker();
     } else if (message.type === 'ended' || message.type === 'terminated') {
       if (message.type === 'ended' && call && message.callId !== call.callId) return;
+      const replacement = message.type === 'terminated' && message.closeCode === 4002;
+      if (replacement) replaced = true;
       call = null; pendingStudent = 0; accepting = false; mediaShown = false;
       renderCard(); renderStudents();
+      if (replacement) {
+        if (picker.open) showError(replacementHint);
+        else if (wasUsingVoice) toast('语音已在另一个页面接续。');
+        return;
+      }
       const reason: Record<string, string> = { rejected: '对方暂时不方便接听', declined: '对方暂时不方便接听', timeout: '暂时无人接听，稍后再试', no_answer: '暂时无人接听，稍后再试', disconnected: '语音连接已断开', hangup: '通话已结束', ended: '通话已结束' };
       toast(reason[message.reason] || (typeof message.reason === 'string' && /[\u4e00-\u9fff]/.test(message.reason) ? message.reason : '通话已结束'));
     } else if (message.type === 'error') {
@@ -234,7 +245,9 @@ export function installVoiceCall(config: VoiceConfig, options: {
     document.querySelector<HTMLButtonElement>('[data-assistant-close]')?.click();
     error.hidden = true; search.value = ''; renderStudents();
     if (!picker.open) picker.showModal();
-    search.focus(); transport.send({ type: 'list' });
+    search.focus();
+    if (replaced) { showError(replacementHint); return; }
+    transport.send({ type: 'list' });
     window.clearInterval(rosterTimer);
     rosterTimer = window.setInterval(() => { if (picker.open) transport.send({ type: 'list' }); }, 10000);
   }

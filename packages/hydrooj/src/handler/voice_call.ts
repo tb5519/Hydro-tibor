@@ -48,6 +48,7 @@ export class VoiceCallConnectionHandler extends ConnectionHandler {
     private pending = 0;
     private checking = false;
     private disposed = false;
+    private closing = false;
     private lastLoginCheck = 0;
     private lastAuthorization = 0;
     private lastDiscovery = 0;
@@ -66,12 +67,20 @@ export class VoiceCallConnectionHandler extends ConnectionHandler {
     }
 
     private report(error: any, request?: any) {
-        if (this.disposed) return;
+        if (this.disposed || this.closing) return;
         const known = error instanceof VoiceCallError || error instanceof LiveShareError;
         this.send({ type: 'error', code: known ? error.code : 'UNAVAILABLE',
             ...(request?.type === 'dial' && voiceId(request.requestId) ? { requestId: request.requestId } : {}),
             ...(['accept', 'reject', 'hangup'].includes(request?.type) && voiceId(request.callId) ? { callId: request.callId } : {}),
             message: known ? error.message : '语音服务暂时不可用，请稍后重试。' });
+    }
+
+    private closeVoice(code: number, reason: string) {
+        if (this.disposed || this.closing) return;
+        // Stop queued controls and audio immediately; the framework still
+        // invokes cleanup after the actual socket close.
+        this.closing = true; this.lastAuthorization = 0;
+        this.close(code, reason);
     }
 
     private async checkLogin() {
@@ -88,14 +97,14 @@ export class VoiceCallConnectionHandler extends ConnectionHandler {
             if (this.currentCall && this.peer && ownsVoice(this.currentCall, this.peer)) {
                 await voice.endCall(this.currentCall, '账号已退出登录，通话已结束。', emitVoiceCall);
             }
-            this.close(4003, 'Login revoked');
+            this.closeVoice(4003, 'Login revoked');
             throw new VoiceCallError('FORBIDDEN', '登录已失效，请重新登录。');
         }
         this.lastLoginCheck = Date.now();
     }
 
     async message(payload: any) {
-        if (this.disposed) return;
+        if (this.disposed || this.closing) return;
         try {
             validateVoiceMessage(payload);
             if (!this.limiter.accept(payload.type)) return;
@@ -104,21 +113,24 @@ export class VoiceCallConnectionHandler extends ConnectionHandler {
         } catch (error) { this.report(error, payload); return; }
         this.pending += 1;
         this.queue = this.queue.then(async () => {
-            if (!this.disposed) await this.processMessage(payload);
+            if (!this.disposed && !this.closing) await this.processMessage(payload);
         }).catch((error) => this.report(error, payload)).finally(() => { this.pending -= 1; });
         await this.queue;
     }
 
     private async processMessage(payload: any) {
         await this.checkLogin();
+        if (this.disposed || this.closing) return;
         if (payload.type === 'hello') {
             if (this.peer && (this.peer.tabId !== payload.tabId || this.peer.deviceId !== payload.deviceId
                 || this.peer.mediaOwner !== !!payload.mediaOwner)) throw new VoiceCallError('FORBIDDEN', '不能更换语音窗口身份。');
             const scope = this.canTeach ? await share.teacherScope(this.user._id, this.domain._id)
                 : await share.studentScope(this.user._id, this.domain._id);
+            if (this.disposed || this.closing) return;
             this.peer = await voice.connectPresence({ uid: this.user._id, tabId: payload.tabId, deviceId: payload.deviceId,
                 connectionId: this.connectionId, domainId: this.domain._id, workspaceId: scope.workspaceId, serverId,
                 canTeach: this.canTeach, mediaOwner: !!payload.mediaOwner, visible: payload.visible });
+            if (this.disposed || this.closing) { await voice.disconnectPresence(this.peer); return; }
             emitVoiceCall({ uid: this.peer.uid, tabId: this.peer.tabId,
                 message: { type: 'peer-connected', connectionId: this.connectionId } });
             this.send({ type: 'ready', uid: this.peer.uid, canTeach: this.canTeach, mediaOwner: this.peer.mediaOwner });
@@ -127,10 +139,22 @@ export class VoiceCallConnectionHandler extends ConnectionHandler {
             return;
         }
         if (!this.peer) throw new VoiceCallError('HELLO_REQUIRED', '请先连接语音服务。');
-        const alive = await voice.presence.findOne({ _id: this.peer._id, connectionId: this.connectionId, connected: true });
-        if (!alive) throw new VoiceCallError('REPLACED', '此语音窗口已重新连接。');
+        try {
+            // A control message is also activity. The normal heartbeat now
+            // needs one conditional write, rather than a read then a write.
+            await voice.pulsePresence(this.peer, payload.type === 'pulse' ? payload.visible ?? this.peer.visible : this.peer.visible);
+        } catch (error) {
+            if (error.code === 'REPLACED') this.closeVoice(4002, 'Tab reconnected');
+            else if (error.code === 'FORBIDDEN') this.closeVoice(4003, 'Classroom revoked');
+            else this.closeVoice(4008, 'Presence recovery required');
+            return;
+        }
+        if (this.disposed || this.closing) {
+            // A close may finish while a recovery write is in flight.
+            await voice.disconnectPresence(this.peer);
+            return;
+        }
         if (payload.type === 'pulse') {
-            await voice.pulsePresence(this.peer, payload.visible ?? this.peer.visible);
             await this.checkSession();
         } else if (payload.type === 'list') {
             if (!this.canTeach) throw new VoiceCallError('FORBIDDEN', '只有老师可以选择学员拨号。');
@@ -158,7 +182,7 @@ export class VoiceCallConnectionHandler extends ConnectionHandler {
         const call = this.currentCall;
         // No DB round-trip on the audio path. Short cached leases are revalidated
         // independently, and revocation/ended events immediately stop forwarding.
-        if (!this.peer || !call || call._id !== payload.callId || call.status !== 'active' || !call.active
+        if (this.disposed || this.closing || !this.peer || !call || call._id !== payload.callId || call.status !== 'active' || !call.active
             || !ownsVoice(call, this.peer) || +call.expiresAt <= Date.now() || Date.now() - this.lastAuthorization > 6500
             || Date.now() - this.lastLoginCheck > 6500 || payload.seq <= this.lastSeq) return;
         this.lastSeq = payload.seq;
@@ -172,7 +196,7 @@ export class VoiceCallConnectionHandler extends ConnectionHandler {
     }
 
     private async checkSession(announce = false) {
-        if (!this.peer || this.disposed || this.checking) return;
+        if (!this.peer || this.disposed || this.closing || this.checking) return;
         // Incoming events are immediate. Idle tabs only need occasional recovery
         // discovery, rather than polling MongoDB as frequently as active calls.
         if (!this.currentCall && !announce && Date.now() - this.lastDiscovery < 30_000) return;
@@ -181,12 +205,14 @@ export class VoiceCallConnectionHandler extends ConnectionHandler {
             this.lastDiscovery = Date.now();
             await this.checkLogin();
             const stored = await voice.callFor(this.peer);
+            if (this.disposed || this.closing) return;
             if (!stored) {
                 if (this.currentCall) this.send({ type: 'ended', callId: this.currentCall._id,
                     requestId: this.currentCall.dialRequestId, reason: '通话已结束。' });
                 this.currentCall = null; this.lastAuthorization = 0; return;
             }
             const call = await voice.refreshCall(stored, emitVoiceCall);
+            if (this.disposed || this.closing) return;
             if (!call) { this.currentCall = null; this.lastAuthorization = 0; return; }
             const changed = !this.currentCall || this.currentCall._id !== call._id || this.currentCall.status !== call.status
                 || ownsVoice(this.currentCall, this.peer) !== ownsVoice(call, this.peer);
@@ -198,7 +224,7 @@ export class VoiceCallConnectionHandler extends ConnectionHandler {
 
     @subscribe('voice-call/event')
     async onVoiceEvent(event: voice.VoiceEvent) {
-        if (this.disposed || !this.peer || event.uid !== this.peer.uid
+        if (this.disposed || this.closing || !this.peer || event.uid !== this.peer.uid
             || (event.tabId && event.tabId !== this.peer.tabId)
             || (event.connectionId && event.connectionId !== this.connectionId)) return;
         if (event.message.type === 'audio') {
@@ -212,7 +238,7 @@ export class VoiceCallConnectionHandler extends ConnectionHandler {
             return;
         }
         if (event.message.type === 'peer-connected') {
-            if (event.message.connectionId !== this.connectionId) { this.lastAuthorization = 0; this.close(4002, 'Tab reconnected'); }
+            if (event.message.connectionId !== this.connectionId) this.closeVoice(4002, 'Tab reconnected');
             return;
         }
         if (event.message.type === 'ended') {

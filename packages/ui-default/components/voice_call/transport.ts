@@ -117,7 +117,7 @@ export class VoiceTransport {
       this.options.onConnection?.(false);
       if (event.code === 4002 || event.code === 4003) {
         this.dispose();
-        this.options.onMessage({ type: 'terminated', reason: event.code === 4002
+        this.options.onMessage({ type: 'terminated', closeCode: event.code, reason: event.code === 4002
           ? '语音已在另一个页面接续。' : '登录或课堂权限已失效，语音已结束。' });
         return;
       }

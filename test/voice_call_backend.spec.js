@@ -177,9 +177,118 @@ describe('voice call model with real MongoDB', () => {
         assert.equal(students.find((item) => item.uid === 10).online, true);
         assert.equal(students.find((item) => item.uid === 11).online, false);
     });
+    it('renews an expired presence and restores a TTL-deleted one without changing socket ownership', async () => {
+        const now = Date.now(); const student = await peer(10, {}, now - 60000);
+        await model.pulsePresence(student, false, now);
+        assert.equal(+(await model.presence.findOne({ _id: student._id })).expiresAt, now + protocol.VOICE_PRESENCE_MS);
+        await model.presence.deleteOne({ _id: student._id });
+        await model.pulsePresence(student, true, now + 100);
+        const restored = await model.presence.findOne({ _id: student._id });
+        assert.equal(restored.connectionId, student.connectionId);
+        assert.equal(restored.deviceId, student.deviceId); assert.equal(restored.tabId, student.tabId);
+        assert.equal(restored.workspaceId, student.workspaceId); assert.equal(restored.connected, true);
+        assert.equal(restored.visible, true); assert.equal(+restored.expiresAt, now + 100 + protocol.VOICE_PRESENCE_MS);
+    });
+    it('never restores over a newer connection, including one arriving during the recovery check', async (t) => {
+        const old = await peer(10); const replacement = await peer(10, { connectionId: 'newer-connection-testing' });
+        await assert.rejects(model.pulsePresence(old, true), errorCode('REPLACED'));
+        assert.equal((await model.presence.findOne({ _id: old._id })).connectionId, replacement.connectionId);
+        await model.presence.deleteOne({ _id: old._id });
+        const original = share.studentScope;
+        t.after(() => { share.studentScope = original; });
+        share.studentScope = async (...args) => {
+            const scope = await original(...args);
+            await peer(10, { connectionId: 'racing-connection-testing' });
+            return scope;
+        };
+        await assert.rejects(model.pulsePresence(old, true), errorCode('REPLACED'));
+        assert.equal((await model.presence.findOne({ _id: old._id })).connectionId, 'racing-connection-testing');
+    });
+    it('revalidates teacher and learner scope before restoring a missing presence', async () => {
+        for (const uid of [2, 10]) {
+            const original = await peer(uid);
+            await model.presence.deleteOne({ _id: original._id }); blocked.add(uid);
+            await assert.rejects(model.pulsePresence(original, true), errorCode('FORBIDDEN'));
+            assert.equal(await model.presence.findOne({ _id: original._id }), null);
+        }
+    });
+    it('does not restore a presence into a different workspace or revive explicitly disconnected presence', async () => {
+        const student = await peer(10, { workspaceId: 'former-workspace' });
+        await model.presence.deleteOne({ _id: student._id });
+        await assert.rejects(model.pulsePresence(student, true), errorCode('FORBIDDEN'));
+        assert.equal(await model.presence.findOne({ _id: student._id }), null);
+        const disconnected = await peer(10); await model.disconnectPresence(disconnected);
+        await assert.rejects(model.pulsePresence(disconnected, true), errorCode('REPLACED'));
+        assert.equal((await model.presence.findOne({ _id: disconnected._id })).connected, false);
+    });
 });
 
 describe('voice socket boundaries and relay', () => {
+    it('silently recovers a missing presence during an active call and keeps two-way audio on the same sockets', async () => {
+        const { teacher, student, callId } = await activeCall();
+        const previous = await model.presence.findOne({ uid: 2 });
+        await model.presence.deleteOne({ _id: previous._id });
+        for (let i = 0; i < 3; i++) await teacher.instance.message({ type: 'pulse', visible: true });
+        const recovered = await model.presence.findOne({ _id: previous._id });
+        assert.equal(recovered.connectionId, previous.connectionId);
+        assert.equal(teacher.closed.length, 0); assert.equal(teacher.sent.filter((item) => item.type === 'error').length, 0);
+        await teacher.instance.message({ type: 'audio', callId, seq: 0, data: frame }); await settle();
+        await student.instance.message({ type: 'audio', callId, seq: 0, data: frame }); await settle();
+        assert.equal(student.sent.filter((item) => item.type === 'audio').length, 1);
+        assert.equal(teacher.sent.filter((item) => item.type === 'audio').length, 1);
+    });
+    it('quietly closes a superseded socket once and ignores its queued controls even if the replacement event was missed', async () => {
+        const old = connection(2); await hello(old, 2);
+        const original = await model.presence.findOne({ uid: 2 });
+        await model.connectPresence({ ...original, connectionId: 'replacement-connection-testing' });
+        await Promise.all([
+            old.instance.message({ type: 'pulse', visible: true }),
+            old.instance.message({ type: 'list' }),
+            old.instance.message({ type: 'hello', tabId: original.tabId, deviceId: original.deviceId, visible: true, mediaOwner: true }),
+        ]);
+        assert.deepEqual(old.closed.map((item) => item.code), [4002]);
+        assert.equal(old.sent.filter((item) => item.type === 'error' || item.type === 'students').length, 0);
+        await old.instance.cleanup();
+        const current = await model.presence.findOne({ _id: original._id });
+        assert.equal(current.connectionId, 'replacement-connection-testing'); assert.equal(current.connected, true);
+    });
+    it('closes with a retryable code for presence database failure without repeating errors', async (t) => {
+        const teacher = connection(2); await hello(teacher, 2);
+        const original = model.presence.updateOne;
+        t.after(() => { model.presence.updateOne = original; });
+        model.presence.updateOne = async () => { throw new Error('temporary database failure'); };
+        await teacher.instance.message({ type: 'pulse', visible: true });
+        await teacher.instance.message({ type: 'list' });
+        assert.deepEqual(teacher.closed.map((item) => item.code), [4008]);
+        assert.equal(teacher.sent.filter((item) => item.type === 'error').length, 0);
+        model.presence.updateOne = original;
+        await teacher.instance.cleanup();
+        assert.equal((await model.presence.findOne({ uid: 2 })).connected, false);
+        const reconnected = connection(2); await hello(reconnected, 2);
+        assert.ok(reconnected.sent.some((item) => item.type === 'ready'));
+    });
+    it('refuses recovery after classroom revocation and leaves the presence absent', async () => {
+        const student = connection(10); await hello(student, 10);
+        await model.presence.deleteMany({ uid: 10 }); blocked.add(10);
+        await student.instance.message({ type: 'pulse', visible: true });
+        await student.instance.message({ type: 'pulse', visible: true });
+        assert.deepEqual(student.closed.map((item) => item.code), [4003]);
+        assert.equal(await model.presence.findOne({ uid: 10 }), null);
+        assert.equal(student.sent.filter((item) => item.type === 'error').length, 0);
+    });
+    it('cleans up a recovery that finishes after the socket has closed', async (t) => {
+        const student = connection(10); await hello(student, 10);
+        await model.presence.deleteMany({ uid: 10 });
+        const original = share.studentScope; let entered; let release;
+        const enteredScope = new Promise((resolve) => { entered = resolve; });
+        const wait = new Promise((resolve) => { release = resolve; });
+        t.after(() => { share.studentScope = original; });
+        share.studentScope = async (...args) => { entered(); await wait; return original(...args); };
+        const pending = student.instance.message({ type: 'pulse', visible: true });
+        await enteredScope; await student.instance.cleanup(); release(); await pending;
+        assert.equal((await model.presence.findOne({ uid: 10 })).connected, false);
+        assert.equal(student.sent.filter((item) => item.type === 'error').length, 0);
+    });
     it('rejects cross-origin connections and impersonation sessions', async () => {
         const foreign = connection(2); foreign.instance.request.headers.origin = 'https://evil.test';
         await assert.rejects(foreign.instance.prepare(), errorCode('ORIGIN'));

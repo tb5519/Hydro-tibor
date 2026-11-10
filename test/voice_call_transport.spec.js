@@ -59,11 +59,25 @@ it('disposal cancels connections and cross-origin socket configuration is refuse
     assert.equal(f.transport.ready, false); assert.equal(ws.readyState, 3);
     assert.equal(f.transport.send({ type: 'audio' }), false);
 });
+it('reconnects silently with the same identity when the server asks it to retry', async (t) => {
+    const f = fixture(t);
+    f.transport.start(); const first = f.sockets[0]; first.open(); first.message({ type: 'ready' });
+    first.close(4008);
+    assert.equal(f.transport.ready, false);
+    assert.deepEqual(f.connections, [true, false]);
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    assert.equal(f.sockets.length, 2);
+    const second = f.sockets[1]; second.open(); second.message({ type: 'ready' });
+    assert.deepEqual(JSON.parse(second.sent[0]), JSON.parse(first.sent[0]));
+    assert.deepEqual(f.messages.map(({ type }) => type), ['ready', 'ready']);
+    assert.equal(f.transport.ready, true);
+});
 for (const code of [4002, 4003]) it(`terminal server close ${code} ends voice without racing to reconnect`, async (t) => {
     const f = fixture(t); f.transport.start(); const ws = f.sockets[0]; ws.open(); ws.message({ type: 'ready' });
     ws.close(code);
     assert.equal(f.transport.ready, false);
     assert.equal(f.messages.at(-1).type, 'terminated');
+    assert.equal(f.messages.at(-1).closeCode, code);
     await new Promise((resolve) => setTimeout(resolve, 750));
     assert.equal(f.sockets.length, 1); assert.equal(f.transport.send({ type: 'audio' }), false);
 });

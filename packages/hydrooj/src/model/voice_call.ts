@@ -35,8 +35,29 @@ export async function connectPresence(value: Omit<VoicePresence, '_id' | 'connec
 
 export async function pulsePresence(peer: VoicePresence, visible: boolean, now = Date.now()) {
     const expiresAt = new Date(now + VOICE_PRESENCE_MS);
-    const result = await presence.updateOne({ _id: peer._id, connectionId: peer.connectionId }, { $set: { visible, expiresAt, connected: true } });
-    if (!result.matchedCount) throw new VoiceCallError('REPLACED', '此语音页面已重新连接。');
+    const owner = { _id: peer._id, connectionId: peer.connectionId, connected: true };
+    const renewal = { visible, expiresAt, connected: true };
+    const result = await presence.updateOne(owner, { $set: renewal });
+    if (!result.matchedCount) {
+        // Browser background throttling can let the TTL index remove presence
+        // while the socket is still alive. Only restore an absent record: a
+        // newer socket (or a disconnected one) must never be taken over.
+        if (await presence.findOne({ _id: peer._id })) throw new VoiceCallError('REPLACED', '此语音页面已重新连接。');
+        const scope = peer.canTeach ? await share.teacherScope(peer.uid, peer.domainId)
+            : await share.studentScope(peer.uid, peer.domainId);
+        if (scope.workspaceId !== peer.workspaceId) throw new VoiceCallError('FORBIDDEN', '课堂权限已变更，请重新连接语音。');
+        const identity = { uid: peer.uid, tabId: peer.tabId, deviceId: peer.deviceId, connectionId: peer.connectionId,
+            domainId: peer.domainId, workspaceId: peer.workspaceId, serverId: peer.serverId,
+            canTeach: peer.canTeach, mediaOwner: peer.mediaOwner };
+        try {
+            await presence.updateOne(owner, { $set: renewal, $setOnInsert: identity }, { upsert: true });
+        } catch (error) {
+            // The unique presence key also protects the race between the
+            // absence check above and a newly connected replacement socket.
+            if (error.code === 11000) throw new VoiceCallError('REPLACED', '此语音页面已重新连接。');
+            throw error;
+        }
+    }
     peer.visible = visible; peer.expiresAt = expiresAt;
 }
 
