@@ -1,0 +1,249 @@
+.teaching-solution
+  color: #25374b
+  max-width: 1680px
+  margin: 4px auto 100px
+  &__header
+    display: flex
+    justify-content: space-between
+    align-items: center
+    gap: 24px
+    margin-bottom: 14px
+    h1
+      font-size: clamp(23px, 2.5vw, 32px)
+      font-weight: 700
+      margin: 6px 0 8px
+      line-height: 1.4
+    p
+      color: #7b8b9b
+      font-size: 14px
+      margin: 0
+  &__eyebrow
+    color: #477f77
+    font-size: 12px
+    letter-spacing: .12em
+  &__hint
+    font-size: 12px
+    color: #8a96a5
+    margin: 0 0 18px
+  &__grid
+    display: grid
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)
+    gap: 20px
+    align-items: start
+  &__card
+    background: white
+    border: 1px solid #dfe7ee
+    border-radius: 17px
+    box-shadow: 0 6px 25px rgba(35, 58, 82, .035)
+    min-width: 0
+  &__bar
+    display: flex
+    align-items: center
+    gap: 12px
+    padding: 16px 20px
+    border-bottom: 1px solid #e8edf2
+    h2
+      margin: 0
+      font-size: 15px
+      font-weight: 600
+    > span
+      font-size: 12px
+      color: #8493a3
+  &__bar > &__status
+    margin-left: auto
+    font-size: 11px
+    color: #5e9085
+  &__statement
+    padding: 22px 26px 32px
+    overflow-wrap: anywhere
+    img
+      max-width: 100%
+  &__code-card
+    position: sticky
+    top: 18px
+  &__editor
+    height: calc(100vh - 260px)
+    min-height: 420px
+    display: none
+    border-radius: 0 0 17px 17px
+    overflow: hidden
+    .monaco-editor
+      border-radius: 0 0 17px 17px
+  &__fallback
+    padding: 20px
+    margin: 0
+    min-height: 300px
+    white-space: pre-wrap
+    overflow-wrap: anywhere
+    font-size: 16px
+    line-height: 1.7
+  &__run-tools
+    display: flex
+    align-items: center
+    gap: 8px
+    padding: 10px 16px
+    border-bottom: 1px solid #edf1f4
+    button
+      border: 1px solid #dbe7e4
+      color: #32786f
+      background: #f0f7f4
+      border-radius: 8px
+      padding: 7px 11px
+      font-size: 12px
+      cursor: pointer
+      &:disabled
+        opacity: .45
+        cursor: default
+    > span
+      font-size: 11px
+      color: #7e9294
+    [data-solution-editor-mode]
+      margin-left: auto
+  &__run-panel
+    border-top: 1px solid #dfe9e7
+    border-radius: 0 0 17px 17px
+    padding: 12px 16px 16px
+    background: #f9fbfb
+    &[hidden]
+      display: none
+    header
+      display: flex
+      align-items: center
+      gap: 12px
+      margin-bottom: 12px
+      strong
+        font-size: 12px
+        font-weight: 600
+      span
+        font-size: 11px
+        color: #7e9294
+      button
+        margin-left: auto
+        border: 0
+        color: #819493
+        background: transparent
+        font-size: 20px
+        cursor: pointer
+  &__run-grid
+    display: grid
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)
+    gap: 14px
+    label, > div > span
+      color: #778c8b
+      font-size: 11px
+    textarea, pre
+      display: block
+      width: 100%
+      box-sizing: border-box
+      padding: 10px
+      margin: 7px 0 0
+      border: 1px solid #e0e9e7
+      border-radius: 8px
+      background: white
+      color: #304b4b
+      min-height: 100px
+      max-height: 200px
+      font: 13px/1.6 var(--code-font-family, monospace)
+      overflow: auto
+      white-space: pre-wrap
+      overflow-wrap: anywhere
+    textarea
+      resize: vertical
+  &__code-card:has([data-solution-run-panel]:not([hidden])) &__editor
+    height: calc(100vh - 505px)
+    min-height: 260px
+  &.is-ready &__editor
+    display: block
+  &.is-ready &__fallback
+    display: none
+  &__return
+    display: inline-flex
+    align-items: center
+    gap: 22px
+    padding: 12px 18px
+    border-radius: 12px
+    background: #307f72
+    color: white
+    white-space: nowrap
+    font-size: 14px
+    font-weight: 600
+    position: fixed
+    right: 80px
+    bottom: 24px
+    z-index: 1010
+    box-shadow: 0 5px 22px rgba(33, 64, 60, .16)
+    &:hover
+      color: white
+      background: #286e63
+  &__actions
+    display: flex
+    align-items: center
+    gap: 8px
+    position: fixed
+    right: 80px
+    bottom: 24px
+    z-index: 1010
+    padding: 8px
+    border: 1px solid #dce7e4
+    background: rgba(255, 255, 255, .96)
+    border-radius: 15px
+    box-shadow: 0 6px 28px rgba(33, 64, 60, .12)
+    button
+      display: inline-flex
+      gap: 7px
+      align-items: center
+      border: 0
+      background: #f2f6f5
+      color: #4c6866
+      font-size: 12px
+      border-radius: 9px
+      padding: 10px 13px
+      cursor: pointer
+      &:hover:not(:disabled)
+        background: #e5f0ec
+      &:disabled
+        opacity: .45
+        cursor: default
+      &.is-primary
+        color: white
+        background: #307f72
+        &:hover:not(:disabled)
+          background: #286e63
+  &__feedback
+    position: fixed
+    bottom: 92px
+    right: 80px
+    z-index: 1011
+    max-width: unquote('min(440px, calc(100vw - 40px))')
+    margin: 0
+    padding: 11px 16px
+    border: 1px solid #dce7e4
+    background: #fff
+    color: #477f77
+    border-radius: 11px
+    font-size: 13px
+    box-shadow: 0 4px 18px rgba(33, 64, 60, .08)
+    &.is-error
+      color: #b15f4c
+      border-color: #efd8d0
+  @media (max-width: 850px)
+    &__grid
+      grid-template-columns: 1fr
+    &__header
+      align-items: flex-start
+      flex-wrap: wrap
+    &__code-card
+      position: static
+    &__actions
+      right: 70px
+      bottom: 14px
+      max-width: calc(100vw - 82px)
+      gap: 5px
+      button
+        padding: 10px 8px
+        font-size: 11px
+    &__feedback
+      right: 70px
+    &__return
+      right: 70px
+      bottom: 14px

@@ -18,7 +18,9 @@ function load(file, dependencies = {}) {
     return module.exports;
 }
 const lib = load('packages/hydrooj/src/lib/class_chat.ts');
-let mongo; let client; let database; let model; let handlers; let accounts; let directory; let storage;
+const solutionLib = load('packages/hydrooj/src/lib/class_chat_solution.ts', { './class_chat': lib });
+const cppModeLib = load('packages/hydrooj/src/lib/cpp_editor_mode.ts');
+let mongo; let client; let database; let model; let solutions; let handlers; let accounts; let directory; let storage;
 let revoked; let documents; let failDelete; let logins; let events;
 let staffMembers; let teacherUids; let studentUids;
 const rooms = [{ _id: 'python', workspaceId: 'a', owner: 2 }, { _id: 'cpp', workspaceId: 'a', owner: 2 },
@@ -57,30 +59,39 @@ before(async () => {
     };
     model = load('packages/hydrooj/src/model/class_chat.ts', {
         '../lib/avatar': (value) => `/avatar/${value || 'default'}`,
-        '../lib/class_chat': lib, '../service/db': { collection: (name) => database.collection(name) },
+        '../lib/class_chat': lib, '../lib/class_chat_solution': solutionLib, '../service/db': { collection: (name) => database.collection(name) },
+        '../lib/cpp_editor_mode': cppModeLib,
         '../service/bus': { broadcast: (name, value) => events.push({ name, value }) },
         './builtin': { PRIV: { PRIV_EDIT_SYSTEM: 1, PRIV_USER_PROFILE: 2, PRIV_JUDGE: 4, PRIV_MANAGE_ALL_DOMAIN: 8 },
             PERM: { PERM_VIEW: 1n, PERM_EDIT_DOMAIN: 2n }, BUILTIN_ROLES: { default: 1n, teacher: 3n, root: 3n } },
         './live_share': share, './workspace': workspace, './storage': storage,
-        './user': { coll: accounts, default: { getById: async (domainId, uid) => ({ _id: uid, domainId }) },
-            getById: async (domainId, uid) => ({ _id: uid, domainId }) },
+        './user': { coll: accounts, default: { getById: async (domainId, uid) => ({ ...await accounts.findOne({ _id: uid }), domainId }) },
+            getById: async (domainId, uid) => ({ ...await accounts.findOne({ _id: uid }), domainId }) },
         './domain': { collUser: database.collection('domain.user') },
         './problem': { get: async (id, pid) => documents.find((p) => p.domainId === id && `${p.docId}` === `${pid}`),
             isObjectiveSource: (p) => !!p.objective, canViewBy: (p, account) => !p.hidden || account._id === 2 },
+    });
+    solutions = load('packages/hydrooj/src/model/class_chat_solution.ts', {
+        '../lib/class_chat': lib, '../lib/class_chat_solution': solutionLib,
+        '../service/db': { collection: (name) => database.collection(name) }, './class_chat': model,
     });
     const noop = () => () => {};
     handlers = load('packages/hydrooj/src/handler/class_chat.ts', {
         '../lib/avatar': (value) => `/avatar/${value || 'default'}`, '../lib/class_chat': lib,
         '../lib/live_share': { checkShareOrigin: (origin, host) => { if (new URL(origin).host !== host) throw new Error('Origin denied'); } },
         '../model/builtin': { PRIV: { PRIV_USER_PROFILE: 2 } }, '../model/class_chat': model, '../model/storage': storage,
+        '../model/class_chat_solution': solutions, '../lib/class_chat_solution': solutionLib,
+        '../lib/cpp_editor_mode': cppModeLib,
         '../model/token': { TYPE_SESSION: 0, get: async (id) => logins.get(id) }, '../model/user': { coll: accounts },
         '../service/bus': { broadcast: (name, value) => events.push({ name, value }) },
         '../service/server': { Handler: class {}, ConnectionHandler: class {}, subscribe: noop },
     });
     await model.apply();
+    await solutions.apply();
 });
 beforeEach(async () => {
-    await Promise.all(['class.chat.message', 'class.chat.conversation', 'class.chat.asset', 'class.chat.grant', 'class.chat.presence', 'user', 'domain.user', 'workspace.student', 'test.storage']
+    await Promise.all(['class.chat.message', 'class.chat.conversation', 'class.chat.asset', 'class.chat.grant', 'class.chat.presence',
+        'class.chat.solution.draft', 'class.chat.solution.standard', 'user', 'domain.user', 'workspace.student', 'test.storage']
         .map((name) => database.collection(name).deleteMany({})));
     revoked = new Set(); failDelete = false; events = [];
     staffMembers = [{ workspaceId: 'a', uid: 2, role: 'teacher' }, { workspaceId: 'b', uid: 3, role: 'teacher' }];
@@ -381,11 +392,102 @@ describe('private classroom chat storage', () => {
 
 function handler(Class = handlers.ClassChatHandler, uid = 10) {
     const h = new Class(); h.user = { _id: uid }; h.session = { _id: `login-${uid}` }; h.domain = { _id: 'python' };
-    h.args = {}; h.request = { method: 'GET', host: 'onebyone.test', headers: {}, body: {}, files: {}, query: {} };
+    h.args = {}; h.UiContext = {}; h.request = { method: 'GET', host: 'onebyone.test', headers: {}, body: {}, files: {}, query: {} };
     h.response = { headers: {}, addHeader(name, value) { this.headers[name] = value; } };
     h.checkPriv = () => {}; h.limitRate = async () => {}; return h;
 }
 describe('chat HTTP security and transport', () => {
+    it('saves independent teacher drafts and standards with revision checks, without altering the learner snapshot', async () => {
+        const original = await model.send(await pair(), 10, { ...send(''), snapshot: { pid: 5, domainId: 'python', lang: 'cpp', code: 'student draft' } });
+        const id = original.message.id;
+        const content = { code: 'int main() {}', lang: 'cpp', annotations: solutionLib.emptyChatSolutionAnnotations() };
+        const initial = await solutions.solutionState(2, 'python', id);
+        assert.equal(initial.draft.code, 'student draft'); assert.equal(initial.draft.revision, 0); assert.equal(initial.standard, null);
+        const changes = await Promise.allSettled([1, 2].map(() => solutions.saveDraft(2, 'python', id, content, 0)));
+        assert.equal(changes.filter((result) => result.status === 'fulfilled').length, 1);
+        assert.equal(changes.find((result) => result.status === 'rejected').reason.code, 'CONFLICT');
+        await solutions.saveStandard(2, 'python', id, content, 0);
+        const another = await model.send(await pair(11), 11, { ...send(''), snapshot: { pid: 5, domainId: 'python', lang: 'cpp', code: 'different student' } });
+        const loaded = await solutions.solutionState(2, 'python', another.message.id);
+        assert.equal(loaded.draft.code, 'different student'); assert.equal(loaded.standard.code, content.code);
+        assert.equal((await model.authorizedMessage(10, 'python', id)).item.snapshot.code, 'student draft');
+        await assert.rejects(solutions.solutionState(10, 'python', id), err('FORBIDDEN'));
+        await assert.rejects(solutions.solutionState(3, 'python', id), err('NOT_FOUND'));
+        revoked.add(10);
+        await assert.rejects(solutions.saveDraft(2, 'python', id, content, 1), err('FORBIDDEN'));
+    });
+
+    it('sends immutable annotated solutions only to the source learner and handles retries and private reads', async () => {
+        const tid = '123456789012345678901234';
+        const grant = await model.issueSnapshotGrant(10, 'python', 5, tid);
+        const original = await model.send(await pair(), 10, { ...send(''), snapshot: { pid: 5, domainId: 'python', lang: 'cpp', code: 'student draft', tid, grant } });
+        const annotations = solutionLib.emptyChatSolutionAnnotations();
+        annotations.code.push({ id: 'code-note', editorId: 'code', start: 0, end: 3, quote: 'int', text: '入口', noteOpen: true, offsetX: 0, offsetY: 0 });
+        const content = { code: 'int main() {}', lang: 'cpp', annotations };
+        const teacher = handler(handlers.ClassChatHandler, 2);
+        teacher.request.body = { snapshotId: original.message.id, content, clientId: 'solution_retry' };
+        await teacher.postSolutionSend();
+        const sent = teacher.response.body.message;
+        assert.equal(sent.kind, 'solution'); assert.equal(sent.to, 10);
+        assert.match(sent.snapshot.problemUrl, /\?tid=123456789012345678901234$/);
+        assert.equal(sent.solution.annotationCount, 1);
+        assert.equal(sent.solution.annotations, undefined);
+        content.code = 'changed later';
+        const full = (await model.authorizedMessage(10, 'python', sent.id)).item;
+        assert.equal(full.snapshot.code, 'int main() {}');
+        const view = handler(handlers.ClassChatSolutionHandler, 10); view.args.id = sent.id;
+        await view.get();
+        assert.equal(view.UiContext.classChatSolution.canEdit, false);
+        assert.equal(view.UiContext.classChatSolution.draft.annotations.code[0].text, '入口');
+        await assert.rejects(model.authorizedMessage(11, 'python', sent.id), err('NOT_FOUND'));
+        content.code = 'int main() {}';
+        await teacher.postSolutionSend();
+        assert.equal(teacher.response.body.message.id, sent.id);
+        await assert.rejects(model.sendSolution(10, 'python', original.message.id, content, 'student_forgery'), err('FORBIDDEN'));
+        const forged = { ...send(''), snapshot: { pid: 5, domainId: 'python', lang: 'cpp', code: '', tid: '999999999999999999999999', grant } };
+        await assert.rejects(model.send(await pair(), 10, forged), err('FORBIDDEN'));
+        assert.equal(lib.chatPreview(full), '老师讲解 · A + B');
+    });
+
+    it('freezes trusted learner C++ mode and falls back to the learner for old snapshots, leaving the teacher preference intact', async () => {
+        await accounts.updateOne({ _id: 2 }, { $set: { cppEditorMode: 'proficient' } });
+        await accounts.updateOne({ _id: 10 }, { $set: { cppEditorMode: 'beginner' } });
+        const grant = await model.issueSnapshotGrant(10, 'python', 5, undefined, 'beginner');
+        const original = await model.send(await pair(), 10, { ...send(''), snapshot: {
+            pid: 5, domainId: 'python', lang: 'cc', code: 'cout << 42;', grant, cppEditorMode: 'proficient',
+        } });
+        assert.equal(original.message.snapshot.cppEditorMode, 'beginner');
+        assert.equal(await solutions.executionMode(2, 'python', 5, original.message.id), 'beginner');
+        await accounts.updateOne({ _id: 10 }, { $set: { cppEditorMode: 'preset' } });
+        assert.equal(await solutions.executionMode(2, 'python', 5, original.message.id), 'beginner');
+        await model.messages.updateOne({ _id: new ObjectId(original.message.id) }, { $unset: { 'snapshot.cppEditorMode': '' } });
+        assert.equal(await solutions.executionMode(2, 'python', 5, original.message.id), 'preset');
+        await assert.rejects(solutions.executionMode(2, 'python', 6, original.message.id), err('FORBIDDEN'));
+        await assert.rejects(solutions.executionMode(2, 'cpp', 5, original.message.id), err('FORBIDDEN'));
+        assert.equal((await accounts.findOne({ _id: 2 })).cppEditorMode, 'proficient');
+    });
+
+    it('cleans orphaned private drafts after source quota removal while retaining reusable standards', async () => {
+        const original = await model.send(await pair(), 10, { ...send(''), snapshot: { pid: 5, domainId: 'python', lang: 'cc', code: 'student' } });
+        const content = { code: 'int main() {}', lang: 'cc', annotations: solutionLib.emptyChatSolutionAnnotations() };
+        await solutions.saveDraft(2, 'python', original.message.id, content, 0);
+        await solutions.saveStandard(2, 'python', original.message.id, content, 0);
+        await solutions.cleanupDrafts();
+        assert.equal(await solutions.drafts.countDocuments({}), 1);
+        await model.messages.deleteOne({ _id: new ObjectId(original.message.id) });
+        await solutions.cleanupDrafts();
+        assert.equal(await solutions.drafts.countDocuments({}), 0);
+        assert.equal(await solutions.standards.countDocuments({}), 1);
+    });
+
+    it('rejects oversized, malformed or executable-looking annotation structures without exposing other drafts', () => {
+        const value = { code: 'int main() {}', lang: 'cpp', annotations: solutionLib.emptyChatSolutionAnnotations() };
+        for (const annotations of [{ version: 1, text: {}, code: [], ink: [] }, { ...value.annotations, code: Array(41).fill({}) },
+            { ...value.annotations, ink: [{ id: 'bad', anchor: { kind: 'element', key: 'statement', path: [] },
+                reference: [1, 0, 0, 1, 0, 0], points: [[Infinity, 1]] }] }]) {
+            assert.throws(() => solutionLib.validateChatSolution({ ...value, annotations }), err('INVALID_SOLUTION'));
+        }
+    });
     it('student read acknowledgements notify the teacher, while teacher reading does not notify students', async () => {
         const reply = await model.send(await pair(2, 10), 2, send('teacher reply'));
         const student = handler(); student.request.body = { peerUid: 2, domainId: 'python', through: reply.message.id };
@@ -455,10 +557,14 @@ describe('chat HTTP security and transport', () => {
         const snapshot = await model.send(await pair(), 10, { ...send(''), snapshot: { pid: 5, domainId: 'python', lang: 'cpp', code: 'return 0;' } });
         const view = handler(handlers.ClassChatSnapshotHandler, 2); view.args.id = snapshot.message.id;
         await view.prepare(); assert.equal(view.response.type, 'application/json');
-        await view.get(); assert.equal(view.response.template, 'class_chat_snapshot.html');
-        assert.equal(view.response.type, undefined, 'framework/base.ts only renders templates when response.type is empty');
-        assert.equal(view.response.headers['Cache-Control'], 'private, no-store');
-        assert.equal(view.response.body.snapshot.code, 'return 0;');
+        await view.get(); assert.equal(view.response.redirect, `/d/python/class-chat/solution/${snapshot.message.id}`);
+        const solution = handler(handlers.ClassChatSolutionHandler, 2); solution.args.id = snapshot.message.id;
+        await solution.prepare(); await solution.get();
+        assert.equal(solution.response.template, 'class_chat_solution.html');
+        assert.equal(solution.response.type, undefined, 'framework/base.ts only renders templates when response.type is empty');
+        assert.equal(solution.response.headers['Cache-Control'], 'private, no-store');
+        assert.equal(solution.response.body.snapshot.code, 'return 0;');
+        assert.equal(solution.UiContext.classChatSolution.canEdit, true);
         const stranger = handler(handlers.ClassChatSnapshotHandler, 11); stranger.args.id = snapshot.message.id;
         await assert.rejects(stranger.get(), err('NOT_FOUND'));
     });

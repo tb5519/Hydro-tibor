@@ -28,6 +28,7 @@ import { tryRedirectAsset } from '../lib/asset_delivery';
 import avatar from '../lib/avatar';
 import { getActiveBadgeAcTheme } from '../lib/badge_ac_theme';
 import { getContestPracticeWindow } from '../lib/contest_practice';
+import { getCppEditorMode } from '../lib/cpp_editor_mode';
 import { isScratchDomain } from '../lib/domain_type';
 import {
     authorizeHomeworkReview, loadHomeworkReviewRecord, loadHomeworkReviewRecords, publicHomeworkReviewRecord, rejectHomeworkReviewMutation,
@@ -54,6 +55,7 @@ import {
     appendHiddenSuperAdminFilter, canViewRecordOwner, getHiddenSuperAdminUids,
 } from '../lib/record_visibility';
 import { PERM, PRIV, STATUS } from '../model/builtin';
+import { executionMode as teachingSolutionMode } from '../model/class_chat_solution';
 import * as contest from '../model/contest';
 import * as discussion from '../model/discussion';
 import * as document from '../model/document';
@@ -90,27 +92,6 @@ const CPP_BEGINNER_TEMPLATE_SUFFIX = `
     return 0;
 }
 `;
-
-type CppEditorMode = 'beginner' | 'preset' | 'proficient';
-
-function getCppEditorMode(udoc: User): CppEditorMode {
-    const globalSettings = udoc as unknown as { cppEditorMode?: unknown };
-    if (globalSettings.cppEditorMode === 'beginner'
-        || globalSettings.cppEditorMode === 'preset'
-        || globalSettings.cppEditorMode === 'proficient') {
-        return globalSettings.cppEditorMode;
-    }
-    // A previous release stored this on each membership. Continue honoring a
-    // legacy value in the current domain until an administrator saves the new
-    // account-wide preference.
-    const legacySettings = udoc._dudoc as { cppEditorMode?: unknown, cppStarterTemplate?: unknown };
-    if (legacySettings.cppEditorMode === 'beginner'
-        || legacySettings.cppEditorMode === 'preset'
-        || legacySettings.cppEditorMode === 'proficient') {
-        return legacySettings.cppEditorMode;
-    }
-    return legacySettings.cppStarterTemplate === true ? 'preset' : 'proficient';
-}
 
 function isCppLanguage(lang: string) {
     const language = setting.langs[lang];
@@ -1095,8 +1076,10 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
     @param('input', Types.ArrayOf(Types.String, true), true)
     @param('source', Types.String, true)
     @param('tid', Types.ObjectId, true)
+    @param('solutionSource', Types.ObjectId, true)
     async post(
         domainId: string, lang: string, code: string, pretest = false, input: string[] = [], source = '', tid?: ObjectId,
+        solutionSource?: ObjectId,
     ) {
         rejectHomeworkReviewMutation(this.request);
         const config = this.pdoc.config;
@@ -1123,8 +1106,12 @@ export class ProblemSubmitHandler extends ProblemDetailHandler {
         // Beginner mode deliberately keeps Scratchpad free of C++ boilerplate.
         // The source marker leaves the conventional submit page and file uploads
         // untouched, while still allowing an empty beginner editor to run.
-        const isBeginnerScratchpadCpp = source === 'scratchpad'
-            && getCppEditorMode(this.user) === 'beginner'
+        if (source === 'teaching-solution' && (!solutionSource || this.session?.sudoUid)) throw new ValidationError('solutionSource');
+        const editorMode = source === 'teaching-solution'
+            ? await teachingSolutionMode(this.user._id, domainId, this.pdoc.docId, solutionSource.toHexString())
+            : getCppEditorMode(this.user);
+        const isBeginnerScratchpadCpp = ['scratchpad', 'teaching-solution'].includes(source)
+            && editorMode === 'beginner'
             && (isCppLanguage(submittedLang) || isCppLanguage(lang));
         if (isBeginnerScratchpadCpp) {
             code = (code || '').replace(/\r\n/g, '\n');

@@ -4,6 +4,9 @@ import { open, stat } from 'fs/promises';
 import { ObjectId } from 'mongodb';
 import type { Context } from '../context';
 import avatar from '../lib/avatar';
+import { CppEditorMode, getCppEditorMode } from '../lib/cpp_editor_mode';
+import type { ChatSolutionAnnotations, ChatSolutionContent } from '../lib/class_chat_solution';
+import { validateChatSolution } from '../lib/class_chat_solution';
 import {
     CHAT_FILE_BYTES, CHAT_IMAGE_BYTES, CHAT_PAGE_SIZE, CHAT_QUOTA_BYTES, ClassChatError,
     chatFilename, chatImageMime, chatPreview, rewriteChatProblemMedia, validateChatSend,
@@ -20,13 +23,16 @@ import workspace from './workspace';
 
 export interface ChatSnapshot {
     title: string; content: string; html: boolean; pid: number; domainId: string; lang: string; code: string;
+    problemUrl?: string;
+    cppEditorMode?: CppEditorMode;
     media?: { name: string, path: string, etag: string, size: number, mime: string }[];
 }
 export interface ChatAttachment { id: string, name: string, size: number, mime: string }
 export interface ChatMessage {
     _id: ObjectId; conversation: string; seq: number; from: number; to: number; clientId: string;
-    kind: 'text' | 'file' | 'image' | 'snapshot'; text: string; createdAt: Date; bytes: number;
+    kind: 'text' | 'file' | 'image' | 'snapshot' | 'solution'; text: string; createdAt: Date; bytes: number;
     attachment?: ChatAttachment; snapshot?: ChatSnapshot; removed?: boolean;
+    solution?: { sourceMessageId: string; annotations: ChatSolutionAnnotations };
 }
 interface ChatConversation {
     _id: string; workspaceId: string; teacherUid: number; studentUid: number; domainId: string;
@@ -36,7 +42,10 @@ interface ChatAsset {
     _id: string; conversation: string; path: string; messageId: ObjectId;
     createdAt: Date; checkAfter: Date;
 }
-interface ChatGrant { _id: string; uid: number; domainId: string; pid: number; expiresAt: Date }
+interface ChatGrant {
+    _id: string; uid: number; domainId: string; pid: number; expiresAt: Date;
+    tid?: string; problemUrl?: string; cppEditorMode?: CppEditorMode;
+}
 interface ChatPresence { _id: string; uid: number; workspaceId: string; domainId: string; expiresAt: Date }
 export interface ChatEvent { uid: number; peerUid: number }
 declare module '../service/db' {
@@ -283,8 +292,8 @@ export function serialize(message: ChatMessage, domainId: string, fullSnapshot =
             ...(fullSnapshot ? { code, html, content: rewriteChatProblemMedia(content, publicSnapshot.pid, (media || []).map((file) => file.name),
                 (name) => `${prefix}/snapshot/${message._id}/file/${encodeURIComponent(name)}`) }
                 : { codePreview: code.split('\n').slice(0, 3).join('\n').slice(0, 500) }),
-            url: `${prefix}/snapshot/${message._id}`,
-            problemUrl: `/d/${encodeURIComponent(publicSnapshot.domainId)}/p/${publicSnapshot.pid}` };
+            url: `${prefix}/${message.kind === 'solution' ? 'solution' : 'snapshot'}/${message._id}`,
+            problemUrl: publicSnapshot.problemUrl || `/d/${encodeURIComponent(publicSnapshot.domainId)}/p/${publicSnapshot.pid}` };
     }
     return {
         id: message._id.toHexString(), from: message.from, to: message.to, seq: message.seq,
@@ -293,6 +302,12 @@ export function serialize(message: ChatMessage, domainId: string, fullSnapshot =
         ...(message.attachment ? { attachment: { name: message.attachment.name, size: message.attachment.size,
             mime: message.attachment.mime, url: `${prefix}/attachment/${message._id}` } } : {}),
         ...(snapshot ? { snapshot } : {}),
+        ...(message.solution ? { solution: {
+            sourceMessageId: message.solution.sourceMessageId,
+            url: `${prefix}/solution/${message._id}`,
+            annotationCount: message.solution.annotations.text.length + message.solution.annotations.code.length + message.solution.annotations.ink.length,
+            ...(fullSnapshot ? { annotations: message.solution.annotations } : {}),
+        } } : {}),
     };
 }
 
@@ -347,8 +362,11 @@ async function withConversation<T>(pair: ChatPair, fn: (guard: () => Promise<voi
     finally { await conversations.updateOne({ _id: pair.id, lock: lease }, { $unset: { lock: '', lockedUntil: '' } }); }
 }
 
-export async function issueSnapshotGrant(uid: number, domainId: string, pid: number) {
-    const value = { _id: opaqueId(), uid, domainId, pid, expiresAt: new Date(Date.now() + 60 * 60 * 1000) };
+export async function issueSnapshotGrant(uid: number, domainId: string, pid: number, contextTid?: string, cppEditorMode?: CppEditorMode) {
+    const tid = typeof contextTid === 'string' && /^[a-f\d]{24}$/i.test(contextTid) ? contextTid : undefined;
+    const problemUrl = `/d/${encodeURIComponent(domainId)}/p/${pid}${tid ? `?tid=${tid}` : ''}`;
+    const value = { _id: opaqueId(), uid, domainId, pid, expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        ...(tid ? { tid } : {}), problemUrl, ...(cppEditorMode ? { cppEditorMode } : {}) };
     await grants.insertOne(value);
     return value._id;
 }
@@ -360,8 +378,11 @@ async function freezeSnapshot(pair: ChatPair, uid: number, value: any): Promise<
     const pdoc = await problem.get(value.domainId, value.pid);
     if (!pdoc || problem.isObjectiveSource(pdoc)) throw new ClassChatError('FORBIDDEN', '这道题目暂时不能发送。', 403);
     const account = await user.getById(value.domainId, uid);
-    const grant = typeof value.grant === 'string' && await grants.findOne({ _id: value.grant, uid,
-        domainId: value.domainId, pid: pdoc.docId, expiresAt: { $gt: new Date() } });
+    const grant = typeof value.grant === 'string' ? await grants.findOne({ _id: value.grant, uid,
+        domainId: value.domainId, pid: pdoc.docId, expiresAt: { $gt: new Date() } }) : null;
+    if (value.tid !== undefined && (!grant || grant.tid !== value.tid)) {
+        throw new ClassChatError('FORBIDDEN', '题目所在作业或比赛信息已变动，请重新打开题目后发送。', 403);
+    }
     if (!problem.canViewBy(pdoc, account) && !grant) throw new ClassChatError('FORBIDDEN', '请先打开有权限查看的题目，再发送给老师。', 403);
     const content = typeof pdoc.content === 'string' ? pdoc.content : JSON.stringify(pdoc.content);
     if (Buffer.byteLength(content || '') > 512 * 1024) throw new ClassChatError('SNAPSHOT_TOO_LARGE', '题目内容较大，请发送链接与代码文件。');
@@ -380,7 +401,15 @@ async function freezeSnapshot(pair: ChatPair, uid: number, value: any): Promise<
         }
     }
     return { title: String(pdoc.title).slice(0, 300), content: content || '', html: !!pdoc.html, pid: pdoc.docId,
-        domainId: value.domainId, lang: value.lang, code: value.code, ...(media.length ? { media } : {}) };
+        domainId: value.domainId, lang: value.lang, code: value.code,
+        cppEditorMode: grant?.cppEditorMode || getCppEditorMode(account),
+        problemUrl: grant?.problemUrl || `/d/${encodeURIComponent(value.domainId)}/p/${pdoc.docId}`,
+        ...(media.length ? { media } : {}) };
+}
+
+export async function snapshotCppEditorMode(snapshot: ChatSnapshot, studentUid: number) {
+    if (['beginner', 'preset', 'proficient'].includes(snapshot.cppEditorMode)) return snapshot.cppEditorMode;
+    return getCppEditorMode(await user.getById(snapshot.domainId, studentUid));
 }
 
 async function prepareAttachment(pair: ChatPair, uid: number, messageId: ObjectId, file: any) {
@@ -455,12 +484,31 @@ export async function send(pair: ChatPair, uid: number, payload: any, file?: any
         message.attachment = await prepareAttachment(pair, uid, message._id, file);
         message.kind = message.attachment.mime.startsWith('image/') ? 'image' : 'file';
     }
+    return persistMessage(pair, uid, value.clientId, message);
+}
+
+export async function sendSolution(uid: number, domainId: string, sourceMessageId: string, content: ChatSolutionContent, clientId: string) {
+    const { item, pair } = await authorizedMessage(uid, domainId, sourceMessageId);
+    if (!pair.canTeach || item.kind !== 'snapshot' || !item.snapshot || item.from !== pair.studentUid || item.to !== uid) {
+        throw new ClassChatError('FORBIDDEN', '请从学员发来的题目与代码进入讲解。', 403);
+    }
+    validateChatSend({ clientId, text: '' });
+    const value = validateChatSolution(content);
+    const message: ChatMessage = { _id: new ObjectId(), conversation: pair.id, seq: 0, from: uid,
+        to: pair.studentUid, clientId, kind: 'solution', text: '', createdAt: new Date(), bytes: 0,
+        snapshot: { ...item.snapshot, code: value.code, lang: value.lang,
+            cppEditorMode: await snapshotCppEditorMode(item.snapshot, pair.studentUid) },
+        solution: { sourceMessageId: item._id.toHexString(), annotations: value.annotations } };
+    return persistMessage(pair, uid, clientId, message);
+}
+
+async function persistMessage(pair: ChatPair, uid: number, clientId: string, message: ChatMessage) {
     message.bytes = Buffer.byteLength(JSON.stringify(message)) + (message.attachment?.size || 0) + 256;
     try {
         const result = await withConversation(pair, async (guard) => {
             // Membership may change while an attachment uploads.
             await authorizePair(uid, message.to, pair.domainId);
-            const duplicate = await messages.findOne({ conversation: pair.id, from: uid, clientId: value.clientId, removed: { $ne: true } });
+            const duplicate = await messages.findOne({ conversation: pair.id, from: uid, clientId, removed: { $ne: true } });
             if (duplicate) return { message: await serializeSent(pair, duplicate), quotaBytes: CHAT_QUOTA_BYTES };
             const usedBytes = await pruneConversation(pair, message.bytes, guard);
             await guard();

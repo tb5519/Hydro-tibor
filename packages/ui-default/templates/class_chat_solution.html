@@ -1,0 +1,54 @@
+{% extends "layout/basic.html" %}
+{% block content %}
+<div class="row"><div class="columns">
+  <main class="teaching-solution" data-solution-workspace data-live-share-private>
+    <header class="teaching-solution__header">
+      <div>
+        <span class="teaching-solution__eyebrow">{% if canEdit %}题解工作台{% else %}老师的题解{% endif %}</span>
+        <h1>{{ snapshot.title }}</h1>
+        <p>{% if canEdit %}给 {{ peer.name }} 的讲解{% else %}{{ sender.name }} 的讲解 · 只读查看{% endif %}</p>
+      </div>
+      {% if not canEdit %}
+      <a class="teaching-solution__return" data-solution-return href="{{ snapshot.problemUrl }}">回到自己的代码 <span aria-hidden="true">→</span></a>
+      {% endif %}
+    </header>
+    {% if canEdit %}<p class="teaching-solution__hint">选中文字突出重点 · Shift + 回车添加标注 · 按住鼠标右键画线</p>{% endif %}
+    <div class="teaching-solution__grid">
+      <section class="teaching-solution__card teaching-solution__problem">
+        <div class="teaching-solution__bar"><h2>题目</h2><span>#{{ snapshot.pid }}</span></div>
+        <article class="teaching-solution__statement typo" data-solution-annotation-text="statement">{{ snapshot.content|content(handler.user.viewLang or 'zh', snapshot.html)|safe }}</article>
+      </section>
+      <section class="teaching-solution__card teaching-solution__code-card">
+        <div class="teaching-solution__bar"><h2>{% if canEdit %}讲解代码{% else %}老师的代码{% endif %}</h2><span data-solution-language>{{ snapshot.lang }}</span><span class="teaching-solution__status" data-solution-status role="status" aria-live="polite">正在准备编辑器…</span></div>
+        {% if canEdit %}
+        <div class="teaching-solution__run-tools" data-solution-annotation-exclude>
+          <button type="button" data-solution-run disabled><span aria-hidden="true">▶</span> 运行自测</button>
+          <button type="button" data-solution-submit disabled>提交评测 <span aria-hidden="true">↗</span></button>
+          <span data-solution-editor-mode></span>
+          <span data-solution-run-status role="status" aria-live="polite"></span>
+        </div>
+        {% endif %}
+        <div class="teaching-solution__editor" data-solution-editor></div>
+        <pre class="teaching-solution__fallback" data-solution-code>{{ snapshot.code }}</pre>
+        {% if canEdit %}
+        <section class="teaching-solution__run-panel" data-solution-run-panel data-solution-annotation-exclude hidden>
+          <header><strong>自测与评测</strong><span data-solution-run-detail></span><button type="button" data-solution-run-close aria-label="收起运行结果">×</button></header>
+          <div class="teaching-solution__run-grid">
+            <label>测试输入<textarea data-solution-run-input aria-label="测试输入" placeholder="在这里准备测试数据，再点击运行自测" spellcheck="false"></textarea></label>
+            <div><span>运行结果</span><pre data-solution-run-output aria-label="运行结果" aria-live="polite"></pre></div>
+          </div>
+        </section>
+        {% endif %}
+      </section>
+    </div>
+    <p class="teaching-solution__feedback" data-solution-feedback role="status" aria-live="polite" hidden></p>
+    {% if canEdit %}
+    <nav class="teaching-solution__actions" aria-label="题解操作" data-solution-controls>
+      <button type="button" data-solution-action="save-standard" disabled><span aria-hidden="true">☆</span> 保存成标准题解</button>
+      <button type="button" data-solution-action="load-standard" disabled><span aria-hidden="true">↶</span> 加载标准题解</button>
+      <button type="button" class="is-primary" data-solution-action="send" disabled>发送给 {{ peer.name }} <span aria-hidden="true">↗</span></button>
+    </nav>
+    {% endif %}
+  </main>
+</div></div>
+{% endblock %}

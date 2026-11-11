@@ -61,6 +61,15 @@ it('does not send IDE/review code or a problem that was not granted on this page
   assert.equal(await f.captureProblemSnapshot(), null);
 });
 
+it('preserves a real contest context for returning to the learner current contest draft', async (t) => {
+  const f = fixture(); t.after(() => f.dom.window.close());
+  f.window.UiContext.tdoc = { _id: '0123456789abcdef01234567' };
+  f.window.localStorage.setItem('40/classroom/54@0123456789abcdef01234567', 'current contest work');
+  const result = await f.captureProblemSnapshot();
+  assert.equal(result.tid, '0123456789abcdef01234567');
+  assert.equal(result.code, 'current contest work');
+});
+
 it('refuses an oversized code snapshot rather than silently truncating the student code', async (t) => {
   const f = fixture(); t.after(() => f.dom.window.close());
   f.window.store = { getState: () => ({ editor: { code: '字'.repeat(50000), lang: 'cc.cc14' } }) };
@@ -110,4 +119,26 @@ it('snapshot page escapes student code and labels, and remains private in shared
   assert.equal(dom.window.document.querySelector('[data-chat-snapshot-code]').textContent, '</code><script>alert(1)</script>');
   assert(dom.window.document.querySelector('main[data-live-share-private]'));
   dom.window.close();
+});
+
+it('solution template keeps code escaped, private and teacher controls absent for the learner', () => {
+  const template = fs.readFileSync(path.join(root, 'packages/ui-default/templates/class_chat_solution.html'), 'utf8');
+  const env = new nunjucks.Environment({ getSource(name) {
+    return { src: name === 'class_chat_solution.html' ? template : '{% block content %}{% endblock %}', path: name };
+  } }, { autoescape: true });
+  env.addFilter('content', () => '<p>题目正文</p>');
+  for (const canEdit of [true, false]) {
+    const output = env.render('class_chat_solution.html', { canEdit,
+      snapshot: { title: '<script>unsafe</script>', code: '</pre><script>alert(1)</script>',
+        lang: 'cc.cc14', pid: 54, content: '', problemUrl: '/d/classroom/p/54?tid=0123456789abcdef01234567' },
+      sender: { name: '唐老师' }, peer: { name: '学员' }, handler: { user: { viewLang: 'zh' } },
+    });
+    const dom = new JSDOM(output);
+    assert.equal(dom.window.document.querySelectorAll('script').length, 0);
+    assert.equal(dom.window.document.querySelector('[data-solution-code]').textContent, '</pre><script>alert(1)</script>');
+    assert(dom.window.document.querySelector('main[data-live-share-private]'));
+    assert.equal(dom.window.document.querySelectorAll('[data-solution-action]').length, canEdit ? 3 : 0);
+    assert.equal(dom.window.document.querySelectorAll('[data-solution-return]').length, canEdit ? 0 : 1);
+    dom.window.close();
+  }
 });

@@ -23,7 +23,7 @@ export interface ChatMessage {
   id: string;
   from: number;
   to: number;
-  kind: 'text' | 'file' | 'image' | 'snapshot';
+  kind: 'text' | 'file' | 'image' | 'snapshot' | 'solution';
   text?: string;
   createdAt: string;
   seq?: number;
@@ -62,6 +62,7 @@ export function safeAssetUrl(value: string | undefined, base: string, sameOrigin
 }
 
 export function messageSummary(message: ChatMessage) {
+  if (message.kind === 'solution') return `老师讲解 · ${message.snapshot?.title || '编程问题'}`;
   if (message.kind === 'snapshot') return `题目与代码 · ${message.snapshot?.title || '编程问题'}`;
   if (message.kind === 'image') return '[图片]';
   if (message.kind === 'file') return `[文件] ${message.attachment?.name || ''}`;

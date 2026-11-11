@@ -1,9 +1,12 @@
 import type { Context } from '../context';
 import avatar from '../lib/avatar';
 import { ClassChatError, chatId, chatUid } from '../lib/class_chat';
+import { emptyChatSolutionAnnotations } from '../lib/class_chat_solution';
+import { getCppEditorMode } from '../lib/cpp_editor_mode';
 import { checkShareOrigin } from '../lib/live_share';
 import { PRIV } from '../model/builtin';
 import * as chat from '../model/class_chat';
+import * as solutions from '../model/class_chat_solution';
 import storage from '../model/storage';
 import token from '../model/token';
 import { coll as users } from '../model/user';
@@ -54,6 +57,10 @@ export class ClassChatHandler extends Handler {
     async get() {
         await this.limitRate('class_chat_fetch', 60, 180);
         const id = domainId(this.request.query?.domainId, this.domain._id);
+        if (this.request.query?.solution) {
+            this.response.body = await solutions.solutionState(this.user._id, id, chatId(this.request.query.solution));
+            return;
+        }
         if (!this.args.peerUid) this.response.body = await chat.peersFor(this.user._id, id);
         else {
             const pair = await chat.authorizePair(this.user._id, chatUid(this.args.peerUid), id);
@@ -83,6 +90,33 @@ export class ClassChatHandler extends Handler {
         bus.broadcast('class-chat/changed', { uid: this.user._id, peerUid });
         if (!pair.canTeach) bus.broadcast('class-chat/changed', { uid: pair.teacherUid, peerUid: this.user._id });
         this.response.body = { ok: true };
+    }
+
+    async postSolutionSave() {
+        await this.limitRate('class_chat_solution_save', 60, 180);
+        const value = this.request.body;
+        this.response.body = { draft: await solutions.saveDraft(this.user._id, this.domain._id,
+            chatId(value.snapshotId), value.content, value.revision) };
+    }
+
+    async postSolutionStandardSave() {
+        await this.limitRate('class_chat_solution_standard', 60, 30);
+        const value = this.request.body;
+        this.response.body = { standard: await solutions.saveStandard(this.user._id, this.domain._id,
+            chatId(value.snapshotId), value.content, value.revision) };
+    }
+
+    async postSolutionStandardLoad() {
+        await this.limitRate('class_chat_solution_load', 60, 120);
+        this.response.body = { standard: await solutions.loadStandard(this.user._id, this.domain._id, chatId(this.request.body.snapshotId)) };
+    }
+
+    async postSolutionSend() {
+        await this.limitRate('class_chat_send', 60, 60);
+        const value = this.request.body;
+        this.response.body = await chat.sendSolution(this.user._id, this.domain._id, chatId(value.snapshotId), value.content, value.clientId);
+        const message = this.response.body.message;
+        announce(this.user._id, message.to);
     }
 
     async onerror(error: any) {
@@ -121,6 +155,10 @@ export class ClassChatSnapshotHandler extends ClassChatHandler {
     async get() {
         const { item, pair } = await chat.authorizedMessage(this.user._id, this.domain._id, chatId(this.args.id));
         if (!item.snapshot) throw new ClassChatError('NOT_FOUND', '题目与代码已清理。', 404);
+        if (item.kind === 'solution' || (pair.canTeach && item.kind === 'snapshot' && item.from === pair.studentUid)) {
+            this.response.redirect = `/d/${encodeURIComponent(pair.domainId)}/class-chat/solution/${item._id}`;
+            return;
+        }
         const sender = await users.findOne({ _id: item.from }, { projection: { _id: 1, uname: 1, displayName: 1, avatar: 1 } });
         const message = chat.serialize(item, pair.domainId, true);
         // Let the framework render the template; an explicit type bypasses its HTML rendering branch.
@@ -132,6 +170,34 @@ export class ClassChatSnapshotHandler extends ClassChatHandler {
 
     async postSend() { throw new ClassChatError('METHOD', '不支持这个操作。', 405); }
     async postRead() { throw new ClassChatError('METHOD', '不支持这个操作。', 405); }
+}
+
+export class ClassChatSolutionHandler extends ClassChatHandler {
+    async get() {
+        await this.limitRate('class_chat_solution_view', 60, 120);
+        const { item, pair } = await chat.authorizedMessage(this.user._id, this.domain._id, chatId(this.args.id));
+        if (!item.snapshot || !['snapshot', 'solution'].includes(item.kind)) {
+            throw new ClassChatError('NOT_FOUND', '这份讲解已清理。', 404);
+        }
+        const canEdit = pair.canTeach && item.kind === 'snapshot' && item.from === pair.studentUid && item.to === this.user._id;
+        if (item.kind === 'snapshot' && !canEdit) throw new ClassChatError('FORBIDDEN', '讲解完成后老师会发送给你。', 403);
+        const sourceMessageId = item.solution?.sourceMessageId || item._id.toHexString();
+        const message = chat.serialize(item, pair.domainId, true);
+        const state = canEdit ? await solutions.solutionState(this.user._id, pair.domainId, sourceMessageId) : {
+            draft: { code: item.snapshot.code, lang: item.snapshot.lang,
+                annotations: item.solution?.annotations || emptyChatSolutionAnnotations(), revision: 0, updatedAt: item.createdAt },
+            standard: null,
+        };
+        const sender = await users.findOne({ _id: item.from }, { projection: { _id: 1, uname: 1, displayName: 1, avatar: 1 } });
+        this.UiContext.classChatSolution = { ...state, sourceMessageId, messageId: item._id.toHexString(),
+            canEdit, apiUrl: `/d/${encodeURIComponent(pair.domainId)}/class-chat`, problemUrl: message.snapshot.problemUrl,
+            cppEditorMode: await chat.snapshotCppEditorMode(item.snapshot, pair.studentUid),
+            ...(canEdit ? { submitUrl: `/d/${encodeURIComponent(item.snapshot.domainId)}/p/${item.snapshot.pid}/submit` } : {}) };
+        this.response.type = undefined;
+        this.response.template = 'class_chat_solution.html';
+        this.response.body = { message, snapshot: message.snapshot, peer: pair.peer, canEdit, solutionState: state,
+            sender: { uid: item.from, name: sender?.displayName || sender?.uname || String(item.from), avatarUrl: avatar(sender?.avatar || '', 80) } };
+    }
 }
 
 export class ClassChatSnapshotFileHandler extends ClassChatAttachmentHandler {
@@ -220,7 +286,8 @@ export async function injectClassChat(handler: Handler) {
         if (pdoc?.docId && ['problem_detail.html', 'problem_submit.html'].includes(handler.response.template)
             && /^\/p\/[^/]+(?:\/submit)?\/?$/.test(path)) {
             config.problem = { pid: pdoc.docId, domainId: handler.domain._id, title: pdoc.title,
-                grant: await chat.issueSnapshotGrant(handler.user._id, handler.domain._id, pdoc.docId) };
+                grant: await chat.issueSnapshotGrant(handler.user._id, handler.domain._id, pdoc.docId,
+                    String(handler.response.body?.tdoc?.docId || handler.response.body?.tdoc?._id || ''), getCppEditorMode(handler.user)) };
         }
         handler.UiContext.classChat = config;
     } catch { /* Ordinary visitors and non-classroom accounts have no chat launcher. */ }
@@ -228,9 +295,11 @@ export async function injectClassChat(handler: Handler) {
 
 export async function apply(ctx: Context) {
     await chat.apply();
+    await solutions.apply(ctx);
     ctx.Route('class_chat', '/class-chat', ClassChatHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('class_chat_attachment', '/class-chat/attachment/:id', ClassChatAttachmentHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('class_chat_snapshot', '/class-chat/snapshot/:id', ClassChatSnapshotHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('class_chat_solution', '/class-chat/solution/:id', ClassChatSolutionHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('class_chat_snapshot_file', '/class-chat/snapshot/:id/file/:filename', ClassChatSnapshotFileHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Connection('class_chat_conn', '/class-chat/conn', ClassChatConnectionHandler, PRIV.PRIV_USER_PROFILE);
     ctx.on('handler/after', injectClassChat);

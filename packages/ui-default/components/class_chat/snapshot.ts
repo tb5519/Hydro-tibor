@@ -4,6 +4,7 @@ export interface ProblemChatSnapshot {
   code: string;
   lang: string;
   grant?: string;
+  tid?: string;
 }
 
 /** Persistent communication controls live above the current application page.
@@ -67,5 +68,7 @@ export async function captureProblemSnapshot(): Promise<ProblemChatSnapshot | nu
   }
   code ??= '';
   if (new TextEncoder().encode(code).byteLength > 128 * 1024) throw new Error('代码超过 128KB，请改用文件发送。');
-  return { pid: problem.pid, domainId: problem.domainId, code, lang, ...(problem.grant ? { grant: problem.grant } : {}) };
+  const tid = typeof context.tdoc?._id === 'string' && /^[a-f\d]{24}$/i.test(context.tdoc._id) ? context.tdoc._id : undefined;
+  return { pid: problem.pid, domainId: problem.domainId, code, lang,
+    ...(problem.grant ? { grant: problem.grant } : {}), ...(tid ? { tid } : {}) };
 }

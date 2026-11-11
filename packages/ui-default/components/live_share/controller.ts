@@ -307,6 +307,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     preservePending(); saveResume(null); closeView(); clearSource(); showBackups();
   }
   const controls = config.canTeach ? createTeacherShareControls({
+    userId: uid,
     onSwitch: switchMode,
     onEnd: () => { if (viewing) endSharing(); else broadcast?.stopSharing(); },
     onChooseStudent: openRoster,

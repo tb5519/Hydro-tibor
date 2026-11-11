@@ -91,6 +91,12 @@ export function attachTemporaryDrawing(options: {
   annotationStore?: { read: () => unknown[]; write: (drafts: unknown[]) => void };
   /** Local teacher-only overlay can listen across its owner page rather than inside a mirrored stage. */
   scopeDocument?: boolean;
+  /** Saved solution artifacts keep their ink; live sharing retains its temporary default. */
+  persistent?: boolean;
+  onRemove?: (strokeId: string) => void;
+  onStart?: () => void;
+  /** A standalone surface coordinates this shortcut with its text/code selections. */
+  handleNoteShortcut?: boolean;
   anchors?: DrawingAnchorResolvers;
   send?: (packet: DrawingPacket) => void;
 }) {
@@ -264,11 +270,12 @@ export function attachTemporaryDrawing(options: {
     win.clearTimeout(stroke.expiry); win.clearTimeout(stroke.removal);
     if (dragging?.id === id) endDrag();
     stroke.wrapper.remove(); stroke.clipPath.remove(); stroke.bubble?.remove(); stroke.connector?.remove(); strokes.delete(id); pendingNotes.delete(id); outgoing.delete(id);
+    options.onRemove?.(id);
     if (!strokes.size) { win.cancelAnimationFrame(geometryFrame); geometryFrame = 0; }
   }
   function fade(id: string, delay: number) {
     const stroke = strokes.get(id);
-    if (!stroke || stroke.note) return;
+    if (!stroke || stroke.note || options.persistent) return;
     win.clearTimeout(stroke.expiry);
     stroke.expiresAt = now() + delay + FADE_MS;
     stroke.expiry = win.setTimeout(() => {
@@ -556,6 +563,7 @@ export function attachTemporaryDrawing(options: {
       if (event.button !== inputButton || !connected || !within(event, eventWindow)) return;
       const point = pointFrom(event, eventWindow);
       if (!point) return;
+      options.onStart?.();
       cancelEvent(event); finish();
       if (strokes.size >= MAX_STROKES && [...strokes.values()].every((stroke) => stroke.note)) return;
       const id = Array.from(win.crypto.getRandomValues(new Uint8Array(12)), (value) => value.toString(16).padStart(2, '0')).join('');
@@ -603,7 +611,7 @@ export function attachTemporaryDrawing(options: {
       win.setTimeout(() => { if (!doc.hasFocus()) finish(); }, 0);
     };
     const keydown = (event: KeyboardEvent) => {
-      if (!canAnnotate || !connected || event.key !== 'Enter' || !event.shiftKey || event.altKey || event.ctrlKey || event.metaKey
+      if (options.handleNoteShortcut === false || !canAnnotate || !connected || event.key !== 'Enter' || !event.shiftKey || event.altKey || event.ctrlKey || event.metaKey
         || event.isComposing || event.keyCode === 229 || composing.has(eventWindow) || !within(event, eventWindow)) return;
       const target = event.target as Element | null;
       // Existing text/code note inputs own their line breaks. A previous
@@ -763,6 +771,8 @@ export function attachTemporaryDrawing(options: {
   }
   return {
     receive,
+    flush() { finish(); flushNotes(); },
+    pinLatest() { return canAnnotate && connected && !disposed && pinLatest(); },
     snapshot() { restoreStrokes(); if (connected && !disposed) for (const [id, packets] of outgoing) {
       if (strokes.get(id)?.note) for (const packet of packets) options.send?.(packet);
     } },

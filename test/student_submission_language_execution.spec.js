@@ -29,6 +29,8 @@ const LANGS = {
     'python-internal': { display: 'Python runner', hidden: true },
 };
 const handlerSource = fs.readFileSync(path.join(root, 'packages/hydrooj/src/handler/problem.ts'), 'utf8');
+const cppHelpers = compile(`${handlerSource.slice(handlerSource.indexOf('const CPP_BEGINNER_TEMPLATE_PREFIX'), handlerSource.indexOf('function getDomainDefaultCodeLang'))}
+export { isCppLanguage, isCompleteCppTranslationUnit, wrapBeginnerCppCode };`, { setting: { langs: LANGS } });
 const handlerSections = [
     handlerSource.slice(handlerSource.indexOf('function getDomainDefaultCodeLang'), handlerSource.indexOf('type ProblemCategoryEntry')),
     handlerSource.slice(handlerSource.indexOf('export class OnlineIdeHandler'), handlerSource.indexOf('function isScratchObjectiveTeacher')),
@@ -79,7 +81,8 @@ function harness(options = {}) {
         rejectHomeworkReviewMutation: () => {}, assertRecordReplayRequest: () => {}, isScratchObjectiveTeacher: () => false,
         authorizeHomeworkReview: async () => ({ _id: 21, uname: 'Student' }), canAccessHomeworkProblem: async () => true,
         canUseProblemRecordPicker: () => false, canManageRecordList: () => false, getContestPracticeWindow: () => null,
-        getActiveBadgeAcTheme: async () => null, getCppEditorMode: () => 'proficient', isCppLanguage: () => false,
+        getActiveBadgeAcTheme: async () => null, getCppEditorMode: () => options.teacherMode || 'proficient', ...cppHelpers,
+        teachingSolutionMode: async () => options.teachingMode || 'proficient',
         mistake: { get: async () => null, getPracticeState: () => null }, loadObjectiveCorrectAnswers: async () => null,
         loadHomeworkReviewRecord: async () => ({ _id: new ObjectId(), lang: 'cc.cc17', code: 'old code' }),
         publicHomeworkReviewRecord: (record) => record,
@@ -123,6 +126,30 @@ test('direct submissions, file uploads and pretests cannot bypass the account po
     assert.equal(h.writes[1][3], 'python-internal');
     assert.equal(h.writes[1][6].type, 'pretest');
     await assert.rejects(h.submit('python-internal', true), ProblemNotAllowLanguageError);
+});
+
+test('teacher solution pretests and submissions wrap only the learner temporary beginner mode', async () => {
+    const raw = 'cout << 42;';
+    const sourceId = new ObjectId();
+    for (const pretest of [false, true]) {
+        const h = harness({ teachingMode: 'beginner' });
+        h.handler.user.cppEditorMode = 'proficient';
+        await h.handler.post('class-a', 'cc.cc17', raw, pretest, [''], 'teaching-solution', undefined, sourceId);
+        assert.equal(h.writes.length, 1);
+        assert.equal(h.writes[0][2], h.handler.user._id, 'the teacher owns the record');
+        assert.match(h.writes[0][4], /#include<bits\/stdc\+\+\.h>/);
+        assert.match(h.writes[0][4], /int main\(\)/);
+        assert(h.writes[0][4].includes(raw));
+        assert.equal(h.handler.user.cppEditorMode, 'proficient');
+    }
+    const advanced = harness({ teacherMode: 'beginner', teachingMode: 'proficient' });
+    await advanced.handler.post('class-a', 'cc.cc17', raw, false, [], 'teaching-solution', undefined, sourceId);
+    assert.equal(advanced.writes[0][4], raw, 'the learner mode controls this request, independently of the teacher preference');
+    const denied = harness({ policy: globalPolicy(['py.py3']), teachingMode: 'beginner' });
+    await assert.rejects(denied.handler.post('class-a', 'cc.cc17', raw, false, [], 'teaching-solution', undefined, sourceId), ProblemNotAllowLanguageError);
+    const missing = harness({ teachingMode: 'beginner' });
+    await assert.rejects(missing.handler.post('class-a', 'cc.cc17', raw, false, [], 'teaching-solution'), ValidationError);
+    assert.equal(missing.writes.length, 0);
 });
 
 test('legacy users remain unrestricted and a domain policy does not affect an unrelated domain', async () => {

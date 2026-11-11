@@ -51,6 +51,7 @@ export function chatImageMime(bytes: Buffer) {
 
 export function chatPreview(message: { kind: string, text: string, snapshot?: { title: string }, attachment?: { name: string } }) {
     if (message.kind === 'snapshot') return `题目与代码 · ${message.snapshot?.title || '学习题目'}`;
+    if (message.kind === 'solution') return `老师讲解 · ${message.snapshot?.title || '学习题目'}`;
     if (message.kind === 'image') return '[图片]';
     if (message.kind === 'file') return `[文件] ${message.attachment?.name || ''}`.slice(0, 100);
     return message.text.slice(0, 100);

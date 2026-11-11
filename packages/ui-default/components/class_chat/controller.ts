@@ -395,11 +395,15 @@ export function installClassChat(config: ClassChatConfig) {
       if (message.snapshot) {
         const url = safeAssetUrl(message.snapshot.url, win.location.href, true);
         if (url) {
-          const link = element('a', 'class-chat__code-card'); link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer';
-          const label = element('span', 'class-chat__code-label', '题目与当时的代码');
+          const link = element('a', 'class-chat__code-card'); link.href = url;
+          link.addEventListener('click', (event) => {
+            if (!event.button && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) setOpen(false);
+          }, { signal });
+          const solution = message.kind === 'solution';
+          const label = element('span', 'class-chat__code-label', solution ? '老师的题解 · 代码与标注' : '题目与当时的代码');
           const title = element('strong', '', message.snapshot.title);
           const excerpt = element('pre', '', (message.snapshot.codePreview ?? message.snapshot.code ?? '').split('\n').slice(0, 3).join('\n') || '（发送时尚未填写代码）');
-          const action = element('span', 'class-chat__code-action', '查看题目与代码 '); const arrow = element('span'); arrow.innerHTML = icon('arrow'); action.append(arrow);
+          const action = element('span', 'class-chat__code-action', solution ? '查看老师讲解 ' : config.canTeach ? '打开题解工作台 ' : '查看题目与代码 '); const arrow = element('span'); arrow.innerHTML = icon('arrow'); action.append(arrow);
           link.append(label, title, excerpt, action); bubble.append(link);
         }
       }

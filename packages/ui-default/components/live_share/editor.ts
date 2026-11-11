@@ -480,7 +480,7 @@ interface CodeNote {
 /** Drawing a focus or a note never changes either peer's native selection. */
 function attachCodeFocus(node: HTMLElement, shared: CollaborativeText, editor?: any, container?: HTMLElement,
   note?: { id: string; teacher: boolean; onChange: (patch: Partial<CodeNote>) => void; onClear: () => void; onLeave: () => void },
-  geometry?: CodeFocusGeometry) {
+  geometry?: CodeFocusGeometry, localOffsets?: () => { start: number; end: number } | null) {
   const root = document.createElement('div');
   root.className = 'live-share-code-focus-layer';
   root.dataset.liveSharePrivate = ''; root.dataset.liveShareUi = '';
@@ -533,7 +533,7 @@ function attachCodeFocus(node: HTMLElement, shared: CollaborativeText, editor?: 
     if (frame) window.cancelAnimationFrame(frame);
     frame = 0;
     if (disposed || !current) return;
-    const offsets = cursorOffsets(shared, current);
+    const offsets = localOffsets ? localOffsets() : cursorOffsets(shared, current);
     if (!offsets || offsets.start === offsets.end) { reset(); return; }
     const box = node.getBoundingClientRect();
     const width = node.offsetWidth; const height = node.offsetHeight;
@@ -614,11 +614,12 @@ function attachCodeFocus(node: HTMLElement, shared: CollaborativeText, editor?: 
     frame = window.requestAnimationFrame(render);
   };
   return {
-    set(message: EditorMessage | null, value?: CodeNote, focus = false) {
+    set(message: EditorMessage | null, value?: CodeNote, focus = false, noteOpen?: boolean) {
       current = message;
       if (value && (value.text !== mark.text || value.offsetX !== mark.offsetX || value.offsetY !== mark.offsetY
         || value.width !== mark.width || value.height !== mark.height)) promote();
       if (value) mark = { ...mark, ...value, noteOpen: true };
+      if (noteOpen !== undefined) mark.noteOpen = noteOpen;
       focusInput ||= focus;
       if (message) render(); else reset();
     },
@@ -628,6 +629,29 @@ function attachCodeFocus(node: HTMLElement, shared: CollaborativeText, editor?: 
       root.removeEventListener('pointerdown', promote, true); root.removeEventListener('focusin', promote);
       root.remove();
     },
+  };
+}
+
+/** The same code outline/bubble renderer, without a shared CRDT, socket or room. */
+export function attachStandaloneCodeFocus(options: {
+  editor: any; container: HTMLElement; id: string; teacher: boolean;
+  onChange: (patch: Partial<Pick<ShareAnnotation, 'text' | 'offsetX' | 'offsetY' | 'width' | 'height'>>) => void;
+  onClear: () => void;
+}) {
+  type Value = Pick<ShareAnnotation, 'text' | 'noteOpen' | 'offsetX' | 'offsetY' | 'width' | 'height'> & { start: number; end: number };
+  let value: Value | null = null;
+  // localOffsets supplies positions directly, so this renderer never reads a
+  // CRDT. In particular, loading a saved annotation cannot edit the model.
+  const surface = attachCodeFocus(options.editor.getDomNode(), null as unknown as CollaborativeText,
+    options.editor, options.container, { id: options.id, teacher: options.teacher,
+      onChange: options.onChange, onClear: options.onClear, onLeave: () => {} }, undefined, () => value);
+  return {
+    render(next: Value | null, focus = false) {
+      value = next;
+      surface.set(next ? { type: 'edit:cursor', pageId: 'standalone', editorId: options.id } : null,
+        next ? { ...next, anchor: '', head: '' } : undefined, focus, next?.noteOpen);
+    },
+    dispose: () => surface.dispose(),
   };
 }
 
