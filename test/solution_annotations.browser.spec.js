@@ -62,24 +62,237 @@ before(async () => {
 });
 after(async () => { await browser?.close(); if (server) await new Promise((resolve) => server.close(resolve)); });
 
-async function pageFixture(t, editable = true, initial) {
-    const context = await browser.newContext({ viewport: { width: editable ? 1250 : 1100, height: 950 } });
+async function pageFixture(t, editable = true, initial, options = {}) {
+    const context = await browser.newContext({ viewport: options.viewport || { width: editable ? 1250 : 1100, height: 950 } });
     t.after(() => context.close());
     const page = await context.newPage(); const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`${origin}/?${editable ? 'teacher' : 'learner'}`); await page.waitForFunction(() => window.ready);
-    await page.evaluate(({ editable, initial }) => {
+    await page.evaluate(({ editable, initial, options }) => {
+        if (options.scrollLayout) {
+            document.body.style.padding = '16px';
+            const workspace = document.querySelector('#workspace');
+            const scroller = document.createElement('div'); scroller.id = 'platform-scroller';
+            Object.assign(scroller.style, { position: 'relative', height: '760px', width: '100%', overflow: 'auto' });
+            workspace.parentNode.insertBefore(scroller, workspace); scroller.append(workspace);
+            Object.assign(workspace.style, { width: '100%', minHeight: '1400px', padding: '28px' });
+            Object.assign(document.querySelector('#statement').style, { width: '100%',
+                height: options.statementScroll === false ? 'auto' : '230px', overflow: options.statementScroll === false ? 'visible' : 'auto' });
+            const spacer = document.createElement('div'); spacer.style.height = '600px';
+            document.querySelector('#statement').append(spacer);
+            Object.assign(document.querySelector('#code').style, { width: '100%', height: '300px', marginTop: '40px' });
+        }
+        if (options.reflowText) {
+            const paragraph = document.createElement('p'); paragraph.id = 'reflow-paragraph'; paragraph.textContent = options.reflowText;
+            document.querySelector('#paragraph').after(paragraph);
+        }
         window.transportCount = 0;
         window.WebSocket = class { constructor() { window.transportCount++; throw Error('standalone annotations must not connect'); } };
         window.liveShareSentinel = { sessionId: 'unrelated-active-session', untouched: true };
-        window.editor = monaco.editor.create(document.querySelector('#code'), { value: 'int main() {\n    int a = 3;\n    return a;\n}', language: 'cpp', minimap: { enabled: false },
+        window.editor = monaco.editor.create(document.querySelector('#code'), { value: options.source || 'int main() {\n    int a = 3;\n    return a;\n}', language: 'cpp', minimap: { enabled: false },
             readOnly: !editable, fontSize: 20, lineHeight: 28, automaticLayout: true, scrollBeyondLastLine: false });
         window.changes = [];
+        window.liveSnapshots = [];
         window.annotations = SolutionAnnotations.attachSolutionAnnotations({ root: document.querySelector('#workspace'), editable, initial,
-            editors: [{ id: 'code', editor }], onChange: (value) => changes.push(value) });
-    }, { editable, initial });
+            editors: [{ id: 'code', editor }], onChange: (value) => {
+                changes.push(value);
+                if (options.snapshotOnChange) liveSnapshots.push(annotations.serialize());
+            } });
+    }, { editable, initial, options });
     return { page, errors };
 }
+
+async function inkAt(page, start, label) {
+    await page.mouse.move(start.x, start.y); await page.mouse.down({ button: 'right' });
+    await page.mouse.move(start.x + 110, start.y + 3, { steps: 8 }); await page.mouse.up({ button: 'right' });
+    await page.keyboard.press('Shift+Enter');
+    const input = page.locator('[data-share-drawing-note-input]').last();
+    await input.waitFor({ state: 'visible' }); await input.fill(label);
+    const id = await input.locator('..').getAttribute('data-share-drawing-note');
+    return id;
+}
+const inkPath = (page, id) => page.locator(`[data-share-drawing-stroke="${id}"] path`).last();
+const inkNote = (page, id) => page.locator(`[data-share-drawing-note="${id}"]`);
+async function dragInkNote(page, id, dx, dy) {
+    const grip = await inkNote(page, id).locator('[data-share-drawing-note-drag]').boundingBox();
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2); await page.mouse.down();
+    await page.mouse.move(grip.x + grip.width / 2 + dx, grip.y + grip.height / 2 + dy, { steps: 8 }); await page.mouse.up();
+}
+async function center(locator) {
+    return locator.evaluate((node) => {
+        const rect = node.getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    });
+}
+async function codePoint(page, line) {
+    return page.evaluate((line) => {
+        const node = editor.getDomNode().getBoundingClientRect();
+        const point = editor.getScrolledVisiblePosition({ lineNumber: line, column: 5 });
+        return { x: node.left + point.left, y: node.top + point.top + point.height / 2 };
+    }, line);
+}
+async function glyphPoint(page, offset) {
+    return page.evaluate((offset) => {
+        const text = document.querySelector('#reflow-paragraph').firstChild;
+        const range = document.createRange(); range.setStart(text, offset); range.setEnd(text, offset + 1);
+        const rect = range.getBoundingClientRect(); return { x: rect.left, y: rect.top + rect.height / 2 };
+    }, offset);
+}
+async function expectAttached(page, id, original, target) {
+    try { await page.waitForFunction(({ id, original, target }) => {
+        const path = document.querySelector(`[data-share-drawing-stroke="${id}"] path:last-child`);
+        const note = document.querySelector(`[data-share-drawing-note="${id}"]`);
+        if (!path || !note) return false;
+        const center = (node) => { const rect = node.getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; };
+        const stroke = center(path); const bubble = center(note);
+        return Math.abs(stroke.x - target.x - original.stroke.x) < 2 && Math.abs(stroke.y - target.y - original.stroke.y) < 2
+            && Math.abs(bubble.x - target.x - original.note.x) < 2 && Math.abs(bubble.y - target.y - original.note.y) < 2;
+    }, { id, original, target }, { timeout: 7000 }); } catch (error) {
+        console.error('INK_GEOMETRY', JSON.stringify({ id, original, target,
+            stroke: await center(inkPath(page, id)), note: await center(inkNote(page, id)),
+            state: await page.evaluate(() => ({ scrollTop: editor.getScrollTop(), scrollLeft: editor.getScrollLeft(), saved: annotations.serialize() })) }));
+        await page.screenshot({ path: '/tmp/onebyone-solution-scroll-failure.png' });
+        throw error;
+    }
+}
+async function relativeInk(page, id, target) {
+    const stroke = await center(inkPath(page, id)); const note = await center(inkNote(page, id));
+    return { stroke: { x: stroke.x - target.x, y: stroke.y - target.y }, note: { x: note.x - target.x, y: note.y - target.y } };
+}
+
+it('saved ink remains attached through nested statement and application-page scrolling', async (t) => {
+    const { page, errors } = await pageFixture(t, true, undefined, { scrollLayout: true });
+    const target = page.locator('#paragraph strong');
+    const initial = await target.boundingBox();
+    const id = await inkAt(page, { x: initial.x + 8, y: initial.y + initial.height - 3 }, '题面重点');
+    const saved = await page.evaluate(() => annotations.serialize());
+    assert.equal(saved.ink.length, 1, 'drawing on a page with an outer scroller must retain a content anchor');
+    assert.equal(saved.ink[0].anchor.key, 'statement');
+    const original = await relativeInk(page, id, await center(target));
+    await page.evaluate(() => { document.querySelector('#statement').scrollTop = 40; });
+    await expectAttached(page, id, original, await center(target));
+    await page.evaluate(() => { document.querySelector('#platform-scroller').scrollTop = 60; });
+    await expectAttached(page, id, original, await center(target));
+    const learner = await pageFixture(t, false, saved, { scrollLayout: true, viewport: { width: 860, height: 950 } });
+    await learner.page.waitForSelector(`[data-share-drawing-note="${id}"]`);
+    assert.equal(await inkNote(learner.page, id).locator('textarea').getAttribute('readonly'), '');
+    await learner.page.evaluate(() => { document.querySelector('#statement').scrollTop = 40; document.querySelector('#platform-scroller').scrollTop = 60; });
+    await expectAttached(learner.page, id, original, await center(learner.page.locator('#paragraph strong')));
+    assert.deepEqual([...errors, ...learner.errors], []);
+});
+
+it('a normal long statement keeps saved ink bound inside the workspace instead of the outer scrolling page', async (t) => {
+    const { page, errors } = await pageFixture(t, true, undefined, { scrollLayout: true, statementScroll: false });
+    const target = page.locator('#paragraph strong'); const rect = await target.boundingBox();
+    const id = await inkAt(page, { x: rect.x + 10, y: rect.y + rect.height - 3 }, '随题面滚动');
+    const saved = await page.evaluate(() => annotations.serialize());
+    assert.equal(saved.ink.length, 1, 'an outer scroll viewport must not prevent persistent topic anchoring');
+    const original = await relativeInk(page, id, await center(target));
+    await page.evaluate(() => { document.querySelector('#platform-scroller').scrollTop = 75; });
+    await expectAttached(page, id, original, await center(target));
+    assert.deepEqual(errors, []);
+});
+
+it('saved statement ink follows the same words when a narrower learner layout wraps the paragraph', async (t) => {
+    const reflowText = '先仔细阅读题意再分析输入和输出，确定每一步需要完成什么，最后检查计算顺序和输出格式。'.repeat(4);
+    const { page, errors } = await pageFixture(t, true, undefined, { scrollLayout: true, statementScroll: false, reflowText,
+        viewport: { width: 1600, height: 950 } });
+    const point = await glyphPoint(page, 55);
+    const id = await inkAt(page, { x: point.x + 1, y: point.y }, '同一段题意');
+    const saved = await page.evaluate(() => annotations.serialize());
+    assert.equal(typeof saved.ink[0].anchor.textOffset, 'number', 'text ink must persist its content location');
+    const offset = saved.ink[0].anchor.textOffset;
+    const original = await relativeInk(page, id, await glyphPoint(page, offset));
+    const learner = await pageFixture(t, false, saved, { scrollLayout: true, statementScroll: false, reflowText,
+        viewport: { width: 840, height: 950 } });
+    const wrapped = await glyphPoint(learner.page, offset);
+    assert(Math.abs(wrapped.x - (await glyphPoint(page, offset)).x) > 100, 'the smaller page must actually rewrap the anchored word');
+    await expectAttached(learner.page, id, original, wrapped);
+    await learner.page.evaluate(() => { document.querySelector('#platform-scroller').scrollTop = 60; });
+    await expectAttached(learner.page, id, original, await glyphPoint(learner.page, offset));
+    assert.deepEqual([...errors, ...learner.errors], []);
+});
+
+it('Monaco ink and label follow internal scrolling and inserted lines, including saved readonly replay', async (t) => {
+    const source = Array.from({ length: 90 }, (_, index) => `int value_${index + 1} = ${index + 1}; // ${'horizontal scrolling '.repeat(10)}`).join('\n');
+    const { page, errors } = await pageFixture(t, true, undefined, { scrollLayout: true, source });
+    const statement = await page.locator('#paragraph strong').boundingBox();
+    await inkAt(page, { x: statement.x + 8, y: statement.y + statement.height - 3 }, '题面范围');
+    await page.evaluate(() => { editor.setScrollTop(7 * 28); });
+    await page.waitForFunction(() => editor.getScrollTop() === 7 * 28);
+    const target = await codePoint(page, 14);
+    const id = await inkAt(page, { x: target.x, y: target.y + 7 }, '第十四行');
+    await dragInkNote(page, id, 65, 35);
+    const original = await relativeInk(page, id, await codePoint(page, 14));
+    await page.evaluate(() => { editor.setScrollTop(9 * 28); });
+    await page.waitForFunction(() => editor.getScrollTop() === 9 * 28);
+    await expectAttached(page, id, original, await codePoint(page, 14));
+    await page.evaluate(() => { editor.setScrollLeft(20); });
+    await page.waitForFunction(() => editor.getScrollLeft() === 20);
+    await expectAttached(page, id, original, await codePoint(page, 14));
+    await page.evaluate(() => editor.executeEdits('test-insert-before-ink', [{ range: new monaco.Range(1, 1, 1, 1), text: '// 一\n// 二\n// 三\n' }]));
+    await expectAttached(page, id, original, await codePoint(page, 17));
+    const saved = await page.evaluate(() => annotations.serialize());
+    assert.equal(saved.ink.length, 2);
+    await page.screenshot({ path: '/tmp/onebyone-solution-scroll-teacher.png' });
+    const learner = await pageFixture(t, false, saved, { scrollLayout: true, source: `// 一\n// 二\n// 三\n${source}`,
+        viewport: { width: 840, height: 950 } });
+    await learner.page.evaluate(() => { editor.setScrollTop(12 * 28); });
+    await expectAttached(learner.page, id, original, await codePoint(learner.page, 17));
+    assert.equal(await inkNote(learner.page, id).locator('[data-share-drawing-note-delete]').count(), 0);
+    await learner.page.screenshot({ path: '/tmp/onebyone-solution-scroll-readonly.png' });
+    assert.deepEqual([...errors, ...learner.errors], []);
+});
+
+it('legacy saved element and editor ink without new anchor metadata remains readable', async (t) => {
+    const { page } = await pageFixture(t);
+    const legacy = await page.evaluate(() => {
+        const root = document.querySelector('#workspace').getBoundingClientRect();
+        const statement = document.querySelector('#paragraph strong').getBoundingClientRect();
+        const code = editor.getDomNode().getBoundingClientRect(); const layout = editor.getLayoutInfo();
+        const position = editor.getScrolledVisiblePosition({ lineNumber: 2, column: 5 });
+        const make = (id, anchor, reference, x, y, label) => ({ id, anchor, reference,
+            points: [[x, y], [x + 80, y + 2]], note: { text: label, x: x + 95, y, width: 90, height: 43 } });
+        return { version: 1, text: [], code: [], ink: [
+            make('legacy-statement-ink', { kind: 'element', key: 'statement', path: [1, 0] },
+                [1, 0, 0, 1, statement.left - root.left, statement.top - root.top],
+                statement.left - root.left + 8, statement.bottom - root.top - 3, '旧题面笔迹'),
+            make('legacy-editor-ink', { kind: 'editor', editorId: 'code' },
+                [20, 0, 0, 28, code.left - root.left + layout.contentLeft, code.top - root.top],
+                code.left - root.left + position.left, code.top - root.top + position.top + 20, '旧代码笔迹'),
+        ] };
+    });
+    const learner = await pageFixture(t, false, legacy);
+    for (const mark of legacy.ink) {
+        await inkNote(learner.page, mark.id).waitFor({ state: 'visible' });
+        assert.equal(await inkNote(learner.page, mark.id).locator('textarea').inputValue(), mark.note.text);
+    }
+    assert.equal(await learner.page.locator('[data-share-drawing-note-delete]').count(), 0);
+    assert.deepEqual(await learner.page.evaluate(() => annotations.serialize()), legacy);
+    assert.deepEqual(learner.errors, []);
+});
+
+it('live autosave snapshots do not terminate a right-button stroke while the mouse remains held', async (t) => {
+    const { page, errors } = await pageFixture(t, true, undefined, { snapshotOnChange: true });
+    const box = await page.locator('#paragraph strong').boundingBox();
+    const start = { x: box.x + 5, y: box.y + box.height - 3 };
+    await page.mouse.move(start.x, start.y); await page.mouse.down({ button: 'right' });
+    for (let step = 1; step <= 5; step++) {
+        await page.mouse.move(start.x + step * 25, start.y + step);
+        await page.waitForTimeout(50);
+    }
+    await page.mouse.up({ button: 'right' });
+    await page.keyboard.press('Shift+Enter'); await page.locator('[data-share-drawing-note-input]').fill('完整的这一笔');
+    const saved = await page.evaluate(() => annotations.serialize());
+    assert(saved.ink[0].points.length >= 5, 'taking a recovery snapshot must keep the active pen gesture running');
+    const stroke = await inkPath(page, saved.ink[0].id).boundingBox();
+    assert(stroke.width >= 120, 'the visible line must include the full teacher gesture');
+    assert(await page.evaluate(() => liveSnapshots.length > 1));
+    await page.waitForTimeout(100);
+    const snapshotCount = await page.evaluate(() => liveSnapshots.length);
+    await page.waitForTimeout(100);
+    assert.equal(await page.evaluate(() => liveSnapshots.length), snapshotCount, 'snapshot serialization must settle after pending packets drain');
+    assert.deepEqual(errors, []);
+});
 async function selectText(page, selector) {
     await page.evaluate((selector) => {
         const node = document.querySelector(selector); const range = document.createRange(); range.selectNodeContents(node);

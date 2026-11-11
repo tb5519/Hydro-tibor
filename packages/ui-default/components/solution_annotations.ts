@@ -1,7 +1,10 @@
 import { attachAnnotationSurface, ShareAnnotation } from './live_share/annotation';
 import { attachStandaloneCodeFocus } from './live_share/editor';
 import { attachTemporaryDrawing, DrawingPacket, validDrawingPacket } from './live_share/drawing';
-import { captureDrawingAnchor, registerDrawingEditor, DrawingMatrix } from './live_share/drawing_anchor';
+import {
+  captureDrawingAnchor, registerDrawingEditor, drawingEditorGeometry, drawingNodeGeometry, resolveDrawingAnchor,
+  DrawingMatrix, DrawingAnchorBinding, DrawingAnchorMode, DrawingGeometry,
+} from './live_share/drawing_anchor';
 
 export interface SolutionMark {
   id: string; start: number; end: number; quote: string; text: string; noteOpen: boolean;
@@ -11,7 +14,8 @@ export interface SolutionTextMark extends SolutionMark { key: string }
 export interface SolutionCodeMark extends SolutionMark { editorId: string }
 export interface SolutionInkMark {
   id: string;
-  anchor: { kind: 'element'; key: string; path: number[] } | { kind: 'editor'; editorId: string };
+  anchor: { kind: 'element'; key: string; path: number[]; mode?: DrawingAnchorMode; textOffset?: number }
+    | { kind: 'editor'; editorId: string; offset?: number };
   reference: DrawingMatrix; points: [number, number][];
   note?: NonNullable<DrawingPacket['note']>;
 }
@@ -206,6 +210,102 @@ export function attachSolutionAnnotations(options: {
     }
     return node && root.contains(node) && !excluded(node) ? node as HTMLElement : null;
   }
+  function textPoint(node: HTMLElement, offset: number) {
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1000000) return null;
+    let remaining = offset;
+    const values = textNodes(node);
+    for (let index = 0; index < values.length; index++) {
+      const child = values[index];
+      if (remaining < child.length || index === values.length - 1 && remaining === child.length) {
+        const range = doc.createRange(); range.setStart(child, remaining); range.collapse(true);
+        const rect = range.getBoundingClientRect();
+        return rect.height > 0 ? rect : null;
+      }
+      remaining -= child.length;
+    }
+    return null;
+  }
+  function inkGeometry(mark: SolutionInkMark, binding?: DrawingAnchorBinding): DrawingGeometry | null {
+    const node = resolveInk(mark.anchor); if (!node) return null;
+    if (mark.anchor.kind === 'editor') return drawingEditorGeometry(node, root, mark.anchor.offset);
+    if (!mark.anchor.mode && binding) return resolveDrawingAnchor(binding, root, anchors);
+    const geometry = drawingNodeGeometry(node, mark.anchor.mode || 'element', root);
+    if (!geometry || mark.anchor.textOffset === undefined) return geometry;
+    const point = textPoint(node, mark.anchor.textOffset); if (!point) return null;
+    const rect = node.getBoundingClientRect();
+    const scaleX = geometry.matrix[0] / (rect.width / (node.offsetWidth || rect.width || 1));
+    const scaleY = geometry.matrix[3] / (rect.height / (node.offsetHeight || rect.height || 1));
+    // Text-local origin survives a narrower learner layout wrapping the same
+    // words onto a different line. Ink keeps its freehand shape around it.
+    const matrix = [...geometry.matrix] as DrawingMatrix;
+    matrix[4] += (point.left - rect.left) * scaleX; matrix[5] += (point.top - rect.top) * scaleY;
+    return { ...geometry, matrix };
+  }
+  function pointerPosition(point: [number, number]) {
+    const rect = root.getBoundingClientRect();
+    return { x: rect.left + point[0] * rect.width / root.clientWidth,
+      y: rect.top + point[1] * rect.height / root.clientHeight };
+  }
+  function capturedTextOffset(node: HTMLElement, point: [number, number]) {
+    const position = pointerPosition(point);
+    const caret = (doc as any).caretPositionFromPoint?.(position.x, position.y);
+    const range = !caret && (doc as any).caretRangeFromPoint?.(position.x, position.y);
+    const target = caret?.offsetNode || range?.startContainer; const index = caret?.offset ?? range?.startOffset;
+    if (!target || target.nodeType !== 3 || !node.contains(target) || !Number.isSafeInteger(index)) return undefined;
+    let offset = 0;
+    for (const child of textNodes(node)) {
+      if (child === target) {
+        const value = offset + index; const rect = textPoint(node, value);
+        // Blank padding/space below a paragraph must remain element-local.
+        return rect && position.y >= rect.top - 4 && position.y <= rect.bottom + 4 ? value : undefined;
+      }
+      offset += child.length;
+    }
+    return undefined;
+  }
+  function captureInk(target: EventTarget | null, point: [number, number], id: string): DrawingAnchorBinding | null {
+    const targetNode = target as HTMLElement | null;
+    if (!targetNode || targetNode.nodeType !== 1 || !root.contains(targetNode) || excluded(targetNode)) return null;
+    const editorEntry = [...editors].find(([, editor]) => editor.getDomNode()?.contains(targetNode));
+    let anchor: SolutionInkMark['anchor']; let binding: DrawingAnchorBinding;
+    if (editorEntry) {
+      const [editorId, editor] = editorEntry; const node = editor.getDomNode();
+      const captured = captureDrawingAnchor(node, root, anchors); if (!captured?.anchor) return null;
+      const position = pointerPosition(point); const model = editor.getModel(); if (!model) return null;
+      let line = editor.getTargetAtClientPoint(position.x, position.y)?.position?.lineNumber;
+      if (!line) {
+        const rect = node.getBoundingClientRect();
+        const y = (position.y - rect.top) * node.offsetHeight / rect.height + editor.getScrollTop();
+        let low = 1; let high = model.getLineCount();
+        while (low < high) {
+          const middle = Math.ceil((low + high) / 2);
+          if (editor.getTopForLineNumber(middle) <= y) low = middle; else high = middle - 1;
+        }
+        line = low;
+      }
+      const offset = model.getOffsetAt({ lineNumber: line, column: 1 });
+      anchor = { kind: 'editor', editorId, offset }; binding = captured;
+    } else {
+      // Never climb into the platform's outer scrolling viewport. Such a node
+      // is outside this artifact, cannot be saved, and moves independently of
+      // the statement. Bind to the actual content node inside the workspace.
+      const captured = elementAnchor(targetNode); if (!captured || captured.kind !== 'element') return null;
+      const style = win.getComputedStyle(targetNode);
+      const scrolls = targetNode.scrollHeight > targetNode.clientHeight + 1 && /(auto|scroll|overlay)/.test(style.overflowY)
+        || targetNode.scrollWidth > targetNode.clientWidth + 1 && /(auto|scroll|overlay)/.test(style.overflowX);
+      const mode: DrawingAnchorMode = targetNode.namespaceURI === 'http://www.w3.org/2000/svg' ? 'svg' : scrolls ? 'scroll' : 'element';
+      const offset = mode === 'element' ? capturedTextOffset(targetNode, point) : undefined;
+      anchor = { ...captured, mode, ...(offset !== undefined ? { textOffset: offset } : {}) };
+      const identity = anchors.identify(targetNode)!;
+      binding = { node: targetNode, mode, reference: [1, 0, 0, 1, 0, 0],
+        anchor: { kind: 'dom', mode, ...identity, matrix: [1, 0, 0, 1, 0, 0] } };
+    }
+    const mark: SolutionInkMark = { id, anchor, reference: binding.reference, points: [point] };
+    const geometry = inkGeometry(mark, binding); if (!geometry || !binding.anchor) return null;
+    binding = { ...binding, reference: geometry.matrix, anchor: { ...binding.anchor, matrix: geometry.matrix } };
+    mark.reference = [...geometry.matrix]; ink.set(id, mark);
+    return binding;
+  }
   for (const [id, editor] of editors) {
     const node = editor.getDomNode() as HTMLElement; const previous = node.getAttribute('data-live-share-editor');
     // This is only the renderer's local anchor registry. It never registers a
@@ -238,6 +338,9 @@ export function attachSolutionAnnotations(options: {
           mark.quote = editor.getModel().getValue().slice(mark.start, mark.end);
           if (!mark.quote) code.delete(key);
         }
+        for (const mark of ink.values()) if (mark.anchor.kind === 'editor' && mark.anchor.editorId === id && mark.anchor.offset !== undefined) {
+          mark.anchor.offset = Math.max(0, Math.min(editor.getModel().getValueLength(), shift(mark.anchor.offset, false)));
+        }
         schedule(); emit();
       });
       cleanups.push(() => { selection.dispose(); content.dispose(); });
@@ -245,15 +348,16 @@ export function attachSolutionAnnotations(options: {
   }
   const drawing = attachTemporaryDrawing({ container: root, teacher: editable, pageId: 'solution-annotations',
     persistent: true, handleNoteShortcut: false, anchors,
+    captureAnchor: captureInk,
+    resolveAnchor: (binding, id) => {
+      const mark = ink.get(id); return mark ? inkGeometry(mark, binding) : resolveDrawingAnchor(binding, root, anchors);
+    },
     onStart: () => { clearTransient(); lastGesture = 'ink'; },
     onRemove: (id) => { if (!disposed && ink.delete(id)) emit(); },
     send: (packet) => {
       if (restoring || disposed) return;
       if (packet.phase === 'start') {
-        const node = packet.anchor?.kind === 'dom' ? anchors.resolve(packet.anchor)
-          : [...editors.values()].map((editor) => editor.getDomNode()).find((node) => node.getAttribute('data-live-share-editor') === (packet.anchor as any)?.editorId);
-        const anchor = node && elementAnchor(node);
-        if (anchor && packet.anchor) ink.set(packet.strokeId, { id: packet.strokeId, anchor, reference: [...packet.anchor.matrix], points: clone(packet.points) });
+        const mark = ink.get(packet.strokeId); if (mark) mark.points = clone(packet.points);
       } else if (packet.phase === 'delete') ink.delete(packet.strokeId);
       else {
         const mark = ink.get(packet.strokeId); if (!mark) return;
@@ -267,7 +371,20 @@ export function attachSolutionAnnotations(options: {
     if (!item || !/^[a-zA-Z0-9_-]{8,96}$/.test(item.id) || !Array.isArray(item.points) || !item.points.length || item.points.length > 2048
       || !Array.isArray(item.reference) || item.reference.length !== 6 || !item.reference.every((part, index) => bounded(part, index < 4 ? 100 : 1e7))) continue;
     const node = resolveInk(item.anchor); if (!node) continue;
-    const binding = captureDrawingAnchor(node, root, anchors); if (!binding?.anchor) continue;
+    if (item.anchor.kind === 'element' && (item.anchor.mode !== undefined && !['element', 'scroll', 'svg'].includes(item.anchor.mode)
+      || item.anchor.textOffset !== undefined && (!Number.isSafeInteger(item.anchor.textOffset) || item.anchor.textOffset < 0 || item.anchor.textOffset > 1000000))) continue;
+    if (item.anchor.kind === 'editor' && item.anchor.offset !== undefined
+      && (!Number.isSafeInteger(item.anchor.offset) || item.anchor.offset < 0 || item.anchor.offset > Math.min(1000000, editors.get(item.anchor.editorId)?.getModel()?.getValueLength() ?? -1))) continue;
+    let binding = captureDrawingAnchor(node, root, anchors);
+    // Old element records do not carry a mode. Preserve their saved target if
+    // the new page's outer scroll wrapper would otherwise capture it instead.
+    if (item.anchor.kind === 'element' && (item.anchor.mode || !binding?.anchor || !binding.node || !root.contains(binding.node))) {
+      const mode = item.anchor.mode || 'element'; const geometry = drawingNodeGeometry(node, mode, root);
+      if (!geometry) continue;
+      binding = { node, mode, reference: geometry.matrix,
+        anchor: { kind: 'dom', mode, ...anchors.identify(node)!, matrix: geometry.matrix } };
+    }
+    if (!binding?.anchor) continue;
     const packets: DrawingPacket[] = [{ strokeId: item.id, phase: 'start', sequence: 0, points: item.points.slice(0, 32),
       anchor: { ...binding.anchor, matrix: item.reference } }];
     for (let index = 32; index < item.points.length; index += 32) packets.push({ strokeId: item.id, phase: 'move', sequence: packets.length, points: item.points.slice(index, index + 32) });
@@ -304,7 +421,7 @@ export function attachSolutionAnnotations(options: {
   doc.addEventListener('scroll', schedule, true); win.addEventListener('resize', schedule);
   restoring = false; refresh();
   return {
-    serialize(): SolutionAnnotationDocument { drawing.flush(); return clone(raw()); },
+    serialize(): SolutionAnnotationDocument { drawing.flushPending(); return clone(raw()); },
     refresh,
     dispose() {
       if (disposed) return;

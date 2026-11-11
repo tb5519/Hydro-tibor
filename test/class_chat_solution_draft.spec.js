@@ -34,3 +34,32 @@ it('never replaces a newer other-tab server revision or unrelated content with a
   assert.equal(recoverSolutionDraft(raw, 3, content('different source')), null);
   assert.equal(recoverSolutionDraft('{broken', 3, base), null);
 });
+
+it('recovers ink drafts after server validation reorders anchor and label object properties', () => {
+  const editorVersion = content('cout << 1;');
+  editorVersion.annotations.ink = [{ id: 'ink-one',
+    anchor: { kind: 'editor', editorId: 'code', offset: 0 }, reference: [1, 0, 0, 1, 0, 0], points: [[10, 20]],
+    note: { text: '重点', width: 60, height: 36, x: 50, y: 80 } }];
+  const serverVersion = content('cout << 1;');
+  serverVersion.annotations.ink = [{ points: [[10, 20]], reference: [1, 0, 0, 1, 0, 0],
+    note: { text: '重点', x: 50, y: 80, width: 60, height: 36 },
+    anchor: { offset: 0, editorId: 'code', kind: 'editor' }, id: 'ink-one' }];
+  const latest = { ...editorVersion, code: 'cout << 2; // latest edit' };
+  const raw = JSON.stringify({ version: 1, revision: 4, base: JSON.stringify(editorVersion), content: latest });
+  assert.equal(recoverSolutionDraft(raw, 4, serverVersion).code, latest.code);
+  const pending = JSON.stringify({ version: 1, revision: 3, base: JSON.stringify(base),
+    pending: JSON.stringify(editorVersion), content: latest });
+  assert.equal(recoverSolutionDraft(pending, 4, serverVersion).code, latest.code);
+  serverVersion.annotations.ink[0].note.text = 'another tab changed the label';
+  assert.equal(recoverSolutionDraft(raw, 4, serverVersion), null);
+  assert.equal(recoverSolutionDraft(pending, 4, serverVersion), null);
+});
+
+it('preserves array order in the recovery comparison so different ink paths cannot match', () => {
+  const server = content('cout << 1;');
+  server.annotations.ink = [{ points: [[1, 2], [3, 4]] }];
+  const changedPath = content('cout << 1;');
+  changedPath.annotations.ink = [{ points: [[3, 4], [1, 2]] }];
+  const raw = JSON.stringify({ version: 1, revision: 1, base: JSON.stringify(changedPath), content: content('latest') });
+  assert.equal(recoverSolutionDraft(raw, 1, server), null);
+});

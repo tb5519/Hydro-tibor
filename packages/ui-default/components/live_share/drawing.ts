@@ -1,7 +1,7 @@
 import {
   captureDrawingAnchor, drawingAnchorTransform, drawingEditorContent, drawingPoint, inverseDrawingMatrix, resolveDrawingAnchor, validDrawingAnchor,
 } from './drawing_anchor';
-import type { DrawingAnchor, DrawingAnchorBinding, DrawingAnchorResolvers, DrawingClip, DrawingMatrix } from './drawing_anchor';
+import type { DrawingAnchor, DrawingAnchorBinding, DrawingAnchorResolvers, DrawingClip, DrawingGeometry, DrawingMatrix } from './drawing_anchor';
 import { AnnotationScope, ElementBookmark, annotationFingerprint, bookmarkElement, resolveElementBookmark, readAnnotationCache, writeAnnotationCache } from './annotation_cache';
 
 /** Points retain the initial learner viewport coordinates; an optional content anchor follows scrolling. */
@@ -98,6 +98,9 @@ export function attachTemporaryDrawing(options: {
   /** A standalone surface coordinates this shortcut with its text/code selections. */
   handleNoteShortcut?: boolean;
   anchors?: DrawingAnchorResolvers;
+  /** Saved independent surfaces can bind ink to their own persistent content IDs. */
+  captureAnchor?: (target: EventTarget | null, point: Point, strokeId: string) => DrawingAnchorBinding | null;
+  resolveAnchor?: (binding: DrawingAnchorBinding, strokeId: string) => DrawingGeometry | null;
   send?: (packet: DrawingPacket) => void;
 }) {
   const canAnnotate = options.teacher && options.allowNotes !== false;
@@ -239,7 +242,8 @@ export function attachTemporaryDrawing(options: {
       top: Math.min(...points.map((point) => point[1])), bottom: Math.max(...points.map((point) => point[1])) };
   }
   function refreshGeometry(id: string, stroke: Stroke, force = false) {
-    const geometry = stroke.binding ? resolveDrawingAnchor(stroke.binding, options.container, options.anchors)
+    const geometry = stroke.binding ? (options.resolveAnchor
+      ? options.resolveAnchor(stroke.binding, id) : resolveDrawingAnchor(stroke.binding, options.container, options.anchors))
       : { matrix: [1, 0, 0, 1, 0, 0] as DrawingMatrix, clip: viewportClip() };
     const transform = geometry && stroke.binding ? drawingAnchorTransform(stroke.binding.reference, geometry.matrix)
       : [1, 0, 0, 1, 0, 0] as DrawingMatrix;
@@ -567,7 +571,11 @@ export function attachTemporaryDrawing(options: {
       cancelEvent(event); finish();
       if (strokes.size >= MAX_STROKES && [...strokes.values()].every((stroke) => stroke.note)) return;
       const id = Array.from(win.crypto.getRandomValues(new Uint8Array(12)), (value) => value.toString(16).padStart(2, '0')).join('');
-      const binding = captureDrawingAnchor(event.target, options.container, options.anchors);
+      const binding = options.captureAnchor ? options.captureAnchor(event.target, point, id)
+        : captureDrawingAnchor(event.target, options.container, options.anchors);
+      // An explicitly scoped surface must not turn a private/unresolved target
+      // into an unanchored viewport stroke that can neither follow nor save.
+      if (options.captureAnchor && !binding) return;
       const packet: DrawingPacket = { strokeId: id, phase: 'start', sequence: 0, points: [point], ...(binding?.anchor ? { anchor: binding.anchor } : {}) };
       receive(packet, options.penRole ?? 'teacher');
       if (!strokes.has(id)) return;
@@ -771,6 +779,9 @@ export function attachTemporaryDrawing(options: {
   }
   return {
     receive,
+    /** Autosave may read while the pointer is still held. Drain drafts without
+     * ending that gesture; only pointer-up, pinning or disposal should do so. */
+    flushPending() { flush(); flushNotes(); },
     flush() { finish(); flushNotes(); },
     pinLatest() { return canAnnotate && connected && !disposed && pinLatest(); },
     snapshot() { restoreStrokes(); if (connected && !disposed) for (const [id, packets] of outgoing) {

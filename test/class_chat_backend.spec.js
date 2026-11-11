@@ -488,6 +488,77 @@ describe('chat HTTP security and transport', () => {
             assert.throws(() => solutionLib.validateChatSolution({ ...value, annotations }), err('INVALID_SOLUTION'));
         }
     });
+
+    it('preserves optional drawing content anchors through drafts, standards and frozen solution messages, including old artifacts', async () => {
+        const json = (value) => JSON.parse(JSON.stringify(value));
+        const original = await model.send(await pair(), 10, { ...send(''), snapshot: {
+            pid: 5, domainId: 'python', lang: 'cc', code: 'line one\nline two\nline three',
+        } });
+        for (const anchored of [false, true]) {
+            const annotations = solutionLib.emptyChatSolutionAnnotations();
+            annotations.ink.push(
+                { id: 'element-stroke', anchor: { kind: 'element', key: 'statement', path: [0], ...(anchored ? { mode: 'scroll', textOffset: 12 } : {}) },
+                    reference: [1, 0, 0, 1, 25, 60], points: [[5, 8], [16, 19]] },
+                { id: 'editor-stroke', anchor: { kind: 'editor', editorId: 'code', ...(anchored ? { offset: 9 } : {}) },
+                    reference: [1, 0, 0, 1, 40, 120], points: [[1, 2], [12, 18]],
+                    note: { text: '这一行', x: 15, y: 25, width: 96, height: 36 } },
+            );
+            const content = { code: 'line one\nline two\nline three', lang: 'cc', annotations };
+            const revision = anchored ? 1 : 0;
+            await solutions.saveDraft(2, 'python', original.message.id, content, revision);
+            await solutions.saveStandard(2, 'python', original.message.id, content, revision);
+            const state = await solutions.solutionState(2, 'python', original.message.id);
+            assert.deepEqual(json(state.draft.annotations), json(annotations));
+            assert.deepEqual(json(state.standard.annotations), json(annotations));
+            assert.deepEqual(json((await solutions.loadStandard(2, 'python', original.message.id)).annotations), json(annotations));
+            const result = await model.sendSolution(2, 'python', original.message.id, content, `anchor_roundtrip_${anchored}`);
+            const view = handler(handlers.ClassChatSolutionHandler, 10); view.args.id = result.message.id;
+            await view.get();
+            assert.deepEqual(json(view.UiContext.classChatSolution.draft.annotations), json(annotations));
+            assert.equal(view.UiContext.classChatSolution.canEdit, false);
+            content.annotations.ink[1].anchor.offset = 0;
+            content.annotations.ink[0].anchor.textOffset = 0;
+            const stored = (await model.authorizedMessage(10, 'python', result.message.id)).item;
+            assert.equal(stored.solution.annotations.ink[1].anchor.offset, anchored ? 9 : undefined);
+            assert.equal(stored.solution.annotations.ink[0].anchor.textOffset, anchored ? 12 : undefined);
+        }
+    });
+
+    it('validates content-anchor modes and offsets without loosening drawing identity or size bounds', () => {
+        const stroke = { id: 'editor-stroke', anchor: { kind: 'editor', editorId: 'code', offset: 0 },
+            reference: [1, 0, 0, 1, 0, 0], points: [[1, 2]] };
+        const value = { code: 'line one\nline two', lang: 'cc', annotations: solutionLib.emptyChatSolutionAnnotations() };
+        const check = (anchor) => solutionLib.validateChatSolution({ ...value, annotations: { ...value.annotations, ink: [{ ...stroke, anchor }] } });
+        for (const offset of [-1, 0.5, NaN, Infinity, '0', null, value.code.length + 1, 1_000_001]) {
+            assert.throws(() => check({ kind: 'editor', editorId: 'code', offset }), err('INVALID_SOLUTION'));
+        }
+        for (const mode of ['', 'fixed', null, 1]) {
+            assert.throws(() => check({ kind: 'element', key: 'statement', path: [], mode }), err('INVALID_SOLUTION'));
+        }
+        for (const textOffset of [-1, 0.5, NaN, Infinity, '0', null, 1_000_001]) {
+            assert.throws(() => check({ kind: 'element', key: 'statement', path: [], textOffset }), err('INVALID_SOLUTION'));
+        }
+        for (const textOffset of [0, 1_000_000]) {
+            assert.equal(check({ kind: 'element', key: 'statement', path: [], textOffset }).annotations.ink[0].anchor.textOffset, textOffset);
+        }
+        for (const mode of ['element', 'scroll', 'svg']) {
+            assert.equal(check({ kind: 'element', key: 'statement', path: [], mode }).annotations.ink[0].anchor.mode, mode);
+        }
+        assert.equal(check({ kind: 'editor', editorId: 'code', offset: value.code.length }).annotations.ink[0].anchor.offset, value.code.length);
+        assert.equal(check({ kind: 'editor', editorId: 'code', offset: 0 }).annotations.ink[0].anchor.offset, 0);
+        assert.equal(check({ kind: 'editor', editorId: 'code', mode: 'fixed' }).annotations.ink[0].anchor.mode, undefined);
+        assert.equal(check({ kind: 'editor', editorId: 'code', textOffset: 12 }).annotations.ink[0].anchor.textOffset, undefined);
+        assert.equal(check({ kind: 'element', key: 'statement', path: [], offset: -1 }).annotations.ink[0].anchor.offset, undefined);
+        assert.throws(() => check({ kind: 'editor', editorId: 'other', offset: 0 }), err('INVALID_SOLUTION'));
+        assert.throws(() => solutionLib.validateChatSolution({ ...value, annotations: { ...value.annotations,
+            ink: [{ ...stroke, id: 'bad' }] } }), err('INVALID_SOLUTION'));
+        assert.throws(() => solutionLib.validateChatSolution({ ...value, annotations: { ...value.annotations,
+            ink: Array.from({ length: 33 }, (_, i) => ({ ...stroke, id: `stroke_${i}` })) } }), err('INVALID_SOLUTION'));
+        const oversized = { ...value.annotations, ink: Array.from({ length: 32 }, (_, i) => ({
+            ...stroke, id: `stroke_${i}`, points: Array.from({ length: 2048 }, () => [9999, 9999]),
+        })) };
+        assert.throws(() => solutionLib.validateChatSolution({ ...value, annotations: oversized }), err('INVALID_SOLUTION'));
+    });
     it('student read acknowledgements notify the teacher, while teacher reading does not notify students', async () => {
         const reply = await model.send(await pair(2, 10), 2, send('teacher reply'));
         const student = handler(); student.request.body = { peerUid: 2, domainId: 'python', through: reply.message.id };

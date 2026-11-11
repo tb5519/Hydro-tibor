@@ -157,14 +157,22 @@ function monacoFor(node: HTMLElement) {
   const available = win.monaco?.editor?.getEditors?.() || [];
   return available.find((editor: any) => editor.getDomNode?.() === node) || (win.editor?.getDomNode?.() === node ? win.editor : null);
 }
-function editorGeometry(node: HTMLElement, container: HTMLElement): DrawingGeometry | null {
+export function drawingEditorGeometry(node: HTMLElement, container: HTMLElement, offset?: number): DrawingGeometry | null {
   const geometry = drawingNodeGeometry(node, 'element', container);
   if (!geometry) return null;
   const editor = monacoFor(node); const layout = editor?.getLayoutInfo?.();
   const style = node.ownerDocument.defaultView!.getComputedStyle(node.querySelector('.view-lines') || node);
   const font = parseFloat(style.fontSize) || 15; const line = parseFloat(style.lineHeight) || font * 1.2;
   const left = (layout?.contentLeft ?? node.clientLeft) - (editor?.getScrollLeft?.() ?? node.scrollLeft);
-  const top = node.clientTop - (editor?.getScrollTop?.() ?? node.scrollTop);
+  let top = node.clientTop - (editor?.getScrollTop?.() ?? node.scrollTop);
+  if (offset !== undefined) {
+    const model = editor?.getModel?.();
+    if (!model || !Number.isSafeInteger(offset) || offset < 0 || offset > model.getValueLength()) return null;
+    const position = model.getPositionAt(offset);
+    // A saved stroke follows the code line, not a recycled .view-line node or
+    // the line number it happened to occupy before another line was inserted.
+    top += editor.getTopForPosition?.(position.lineNumber, 1) ?? editor.getTopForLineNumber(position.lineNumber);
+  }
   const matrix = multiplyDrawingMatrix(geometry.matrix, [font, 0, 0, line, left, top]);
   // Freehand ink may circle a line number or extend left of the text. Its
   // coordinates still follow code scrolling, but the text column is not its
@@ -181,7 +189,7 @@ export function captureDrawingAnchor(target: EventTarget | null, container: HTML
   if (!node || node.nodeType !== 1 || isPrivate(node, container)) return null;
   const editorNode = node.closest<HTMLElement>('[data-live-share-editor]') || node.closest<HTMLElement>('.monaco-editor,textarea');
   if (editorNode) {
-    const geometry = editorGeometry(editorNode, container); if (!geometry) return null;
+    const geometry = drawingEditorGeometry(editorNode, container); if (!geometry) return null;
     const editorId = editorNode.getAttribute('data-live-share-editor');
     const anchor: DrawingAnchor | undefined = validId(editorId) ? { kind: 'editor', mode: 'scroll', editorId, matrix: geometry.matrix } : undefined;
     return { anchor, node: editorNode, mode: 'scroll', reference: geometry.matrix, editor: true };
@@ -211,9 +219,9 @@ export function resolveDrawingAnchor(binding: DrawingAnchorBinding, container: H
     let node = binding.node as HTMLElement | undefined;
     if (!node?.isConnected) node = [...editors.keys()].find((candidate) => candidate.isConnected && candidate.getAttribute('data-live-share-editor') === anchor.editorId);
     if (!node) node = container.ownerDocument.querySelector<HTMLElement>(`[data-live-share-editor="${anchor.editorId}"]`) || undefined;
-    return node ? editorGeometry(node, container) : null;
+    return node ? drawingEditorGeometry(node, container) : null;
   }
-  if (binding.editor) return binding.node?.isConnected ? editorGeometry(binding.node as HTMLElement, container) : null;
+  if (binding.editor) return binding.node?.isConnected ? drawingEditorGeometry(binding.node as HTMLElement, container) : null;
   let node = binding.node;
   if (anchor?.kind === 'dom') node = resolvers?.resolve({ nodeId: anchor.nodeId, ...(anchor.frameId ? { frameId: anchor.frameId } : {}) }) || undefined;
   if (node?.isConnected) return drawingNodeGeometry(node, binding.mode, container);

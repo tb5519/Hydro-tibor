@@ -10,7 +10,8 @@ export interface ChatSolutionAnnotations {
     code: (SolutionMark & { editorId: string })[];
     ink: {
         id: string;
-        anchor: { kind: 'element'; key: string; path: number[] } | { kind: 'editor'; editorId: string };
+        anchor: { kind: 'element'; key: string; path: number[]; mode?: 'element' | 'scroll' | 'svg'; textOffset?: number }
+            | { kind: 'editor'; editorId: string; offset?: number };
         reference: number[];
         points: number[][];
         note?: { text: string; x: number; y: number; width: number; height: number };
@@ -69,11 +70,17 @@ export function validateChatSolution(value: any): ChatSolutionContent {
         let target: ChatSolutionAnnotations['ink'][number]['anchor'];
         if (anchor.kind === 'element') {
             if (!['statement', '$root'].includes(anchor.key) || !Array.isArray(anchor.path) || anchor.path.length > 24
-                || anchor.path.some((part) => !Number.isSafeInteger(part) || part < 0 || part > 20000)) invalid();
-            target = { kind: 'element', key: anchor.key, path: [...anchor.path] };
+                || anchor.path.some((part) => !Number.isSafeInteger(part) || part < 0 || part > 20000)
+                || (anchor.mode !== undefined && !['element', 'scroll', 'svg'].includes(anchor.mode))
+                || (anchor.textOffset !== undefined && (!Number.isSafeInteger(anchor.textOffset)
+                    || anchor.textOffset < 0 || anchor.textOffset > 1_000_000))) invalid();
+            target = { kind: 'element', key: anchor.key, path: [...anchor.path],
+                ...(anchor.mode !== undefined ? { mode: anchor.mode } : {}),
+                ...(anchor.textOffset !== undefined ? { textOffset: anchor.textOffset } : {}) };
         } else {
-            if (anchor.editorId !== 'code') invalid();
-            target = { kind: 'editor', editorId: 'code' };
+            if (anchor.editorId !== 'code' || (anchor.offset !== undefined && (!Number.isSafeInteger(anchor.offset)
+                || anchor.offset < 0 || anchor.offset > Math.min(value.code.length, 1_000_000)))) invalid();
+            target = { kind: 'editor', editorId: 'code', ...(anchor.offset !== undefined ? { offset: anchor.offset } : {}) };
         }
         const note = item.note;
         if (note !== undefined && (!note || typeof note.text !== 'string' || note.text.length > 1000

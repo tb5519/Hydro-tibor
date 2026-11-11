@@ -148,7 +148,7 @@ else {
     });
 
     async function participant(name) {
-        const context = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+        const context = await browser.newContext({ viewport: { width: name === 'student' ? 1180 : 1360, height: 900 } });
         const login = await context.request.post(`${fixture.origin}/login`, {
             form: { uname: fixture[name], password: fixture.password }, maxRedirects: 0,
         });
@@ -205,6 +205,60 @@ else {
         const note = frame.locator('textarea[data-share-annotation-input]').last();
         await note.waitFor({ state: 'visible' }); await note.fill(text);
         await frame.waitForFunction((text) => window.__onebyoneSolutionWorkspace.serialize().annotations.code.some((item) => item.text === text), text);
+    }
+    async function solutionPoint(frame, line) {
+        return frame.evaluate((line) => {
+            if (!line) {
+                const rect = document.querySelector('[data-solution-annotation-text="statement"] p:last-of-type').getBoundingClientRect();
+                return { x: rect.left + 12, y: rect.top + rect.height / 2 };
+            }
+            const editor = window.__onebyoneSolutionWorkspace.editor; const rect = editor.getDomNode().getBoundingClientRect();
+            const position = editor.getScrolledVisiblePosition({ lineNumber: line, column: 1 });
+            return { x: rect.left + position.left, y: rect.top + position.top + position.height / 2 };
+        }, line);
+    }
+    async function rightInk(page, frame, point, label) {
+        const offset = frame.parentFrame() ? await (await frame.frameElement()).boundingBox() : { x: 0, y: 0 };
+        await page.mouse.move(offset.x + point.x, offset.y + point.y + 7); await page.mouse.down({ button: 'right' });
+        for (let step = 1; step <= 4; step++) {
+            await page.mouse.move(offset.x + point.x + 20 * step, offset.y + point.y + 7 + step / 2);
+            await page.waitForTimeout(40);
+        }
+        await page.mouse.up({ button: 'right' });
+        await page.keyboard.press('Shift+Enter');
+        const note = frame.locator('[data-share-drawing-note-input]').last();
+        await note.waitFor({ state: 'visible' }); await note.fill(label);
+        const id = await note.locator('..').getAttribute('data-share-drawing-note');
+        const count = await frame.evaluate((id) => window.__onebyoneSolutionWorkspace.serialize().annotations.ink.find((mark) => mark.id === id).points.length, id);
+        assert(count >= 4, 'live autosave must not finish a right-button gesture before the teacher releases the mouse');
+        const stroke = await frame.locator(`[data-share-drawing-stroke="${id}"] path`).last().boundingBox();
+        assert(stroke.width >= 60, 'the visible stroke must cover the full right-button drag');
+        return id;
+    }
+    async function dragHandle(page, handle, dx, dy) {
+        const grip = await handle.boundingBox();
+        await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2); await page.mouse.down();
+        await page.mouse.move(grip.x + grip.width / 2 + dx, grip.y + grip.height / 2 + dy, { steps: 8 }); await page.mouse.up();
+    }
+    async function inkRelative(frame, id, target) {
+        return frame.evaluate(({ id, target }) => {
+            const offset = (node) => { const rect = node.getBoundingClientRect(); return {
+                x: rect.left + rect.width / 2 - target.x, y: rect.top + rect.height / 2 - target.y }; };
+            return { stroke: offset(document.querySelector(`[data-share-drawing-stroke="${id}"] path:last-child`)),
+                note: offset(document.querySelector(`[data-share-drawing-note="${id}"]`)) };
+        }, { id, target });
+    }
+    async function assertInkAttached(frame, id, original, target) {
+        await frame.waitForFunction(({ id, original, target }) => {
+            const path = document.querySelector(`[data-share-drawing-stroke="${id}"] path:last-child`);
+            const note = document.querySelector(`[data-share-drawing-note="${id}"]`);
+            if (!path || !note) return false;
+            const offset = (node) => { const rect = node.getBoundingClientRect(); return {
+                x: rect.left + rect.width / 2 - target.x, y: rect.top + rect.height / 2 - target.y }; };
+            const stroke = offset(path); const bubble = offset(note);
+            return Math.abs(stroke.x - original.stroke.x) < 2 && Math.abs(stroke.y - original.stroke.y) < 2
+                && Math.abs(bubble.x - original.note.x) < 2 && Math.abs(bubble.y - original.note.y) < 2;
+        }, { id, original, target }, { timeout: 10000 });
     }
     const problemPath = () => `/d/${fixture.domainId}/p/${fixture.pid}`;
     const chatPath = () => `/d/${fixture.domainId}/class-chat`;
@@ -300,12 +354,24 @@ else {
                 assert.equal(await teacherFrame.locator('[data-solution-annotation-text="statement"]').count(), 1);
                 assert.equal(await editorValue(teacherFrame), sentCode);
                 assert.equal(await teacherFrame.evaluate(() => UiContext.classChatSolution.cppEditorMode), 'beginner');
-                const standardCode = 'int number;\ncin >> number;\ncout << number + 1;';
+                let standardCode = 'int number;\ncin >> number;\ncout << number + 1;';
                 await typeCode(teacher.page, teacherFrame, standardCode);
+                const statementInkId = await rightInk(teacher.page, teacherFrame, await solutionPoint(teacherFrame), '输出格式重点');
+                const statementInkPosition = await inkRelative(teacherFrame, statementInkId, await solutionPoint(teacherFrame));
+                const codeInkId = await rightInk(teacher.page, teacherFrame, await solutionPoint(teacherFrame, 3), '这一行输出结果');
+                await dragHandle(teacher.page, teacherFrame.locator(`[data-share-drawing-note="${codeInkId}"] [data-share-drawing-note-drag]`), 125, 90);
+                const codeInkPosition = await inkRelative(teacherFrame, codeInkId, await solutionPoint(teacherFrame, 3));
                 const explanation = '读入以后再加一';
                 await annotateStatement(teacher.page, teacherFrame, explanation);
                 const codeExplanation = '变量保存输入的整数';
                 await annotateCode(teacher.page, teacherFrame, codeExplanation);
+                await dragHandle(teacher.page, teacherFrame.locator('[data-share-code-annotation] [data-share-annotation-drag]').last(), 200, 40);
+                await teacherFrame.evaluate(() => window.__onebyoneSolutionWorkspace.editor.executeEdits('test-insert-before-pinned-ink', [
+                    { range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 }, text: '// 保留这一段讲解\n' },
+                ]));
+                standardCode = `// 保留这一段讲解\n${standardCode}`;
+                await assertInkAttached(teacherFrame, codeInkId, codeInkPosition, await solutionPoint(teacherFrame, 4));
+                await assertInkAttached(teacherFrame, statementInkId, statementInkPosition, await solutionPoint(teacherFrame));
 
                 stage = 'save and load teacher standard';
                 const saving = teacher.page.waitForResponse((response) => response.url().includes('/class-chat')
@@ -314,15 +380,35 @@ else {
                 const standardReply = await (await saving).json();
                 assert(standardReply.standard.annotations.text.some((note) => note.text === explanation));
                 assert(standardReply.standard.annotations.code.some((note) => note.text === codeExplanation));
+                assert.equal(standardReply.standard.annotations.ink.length, 2);
+                const savedInk = standardReply.standard.annotations.ink;
+                for (const mark of savedInk) {
+                    assert(mark.points.length >= 4);
+                    assert(Math.max(...mark.points.map(([x]) => x)) - Math.min(...mark.points.map(([x]) => x)) >= 60);
+                }
+                assert.equal(standardReply.standard.annotations.ink.find((mark) => mark.id === codeInkId).anchor.offset, standardCode.indexOf('cout'));
                 stage = 'fast teacher navigation preserves unsaved local edits';
                 const quickEdit = 'cout << "temporary teacher edit before navigation";';
                 await typeCode(teacher.page, teacherFrame, quickEdit);
+                const beforeNavigation = await teacherFrame.evaluate(() => ({ content: window.__onebyoneSolutionWorkspace.serialize(),
+                    backup: localStorage.getItem(`onebyone.solution.draft.v1/${UserContext._id}/${UiContext.classChatSolution.sourceMessageId}`) }));
                 await teacher.page.goto(`${fixture.origin}/d/${fixture.domainId}/`, { waitUntil: 'domcontentloaded' });
                 await teacher.page.goto(`${fixture.origin}${chatPath()}/solution/${sourceId}`, { waitUntil: 'domcontentloaded' });
                 teacherFrame = await activeFrame(teacher.page, '[data-solution-workspace] .monaco-editor');
-                await teacherFrame.waitForFunction((code) => window.__onebyoneSolutionWorkspace?.editor?.getValue() === code, quickEdit);
+                try {
+                    await teacherFrame.waitForFunction((code) => window.__onebyoneSolutionWorkspace?.editor?.getValue() === code, quickEdit);
+                } catch (error) {
+                    console.error('SOLUTION_DRAFT_RECOVERY', JSON.stringify({ beforeNavigation,
+                        afterNavigation: await teacherFrame.evaluate(() => ({ server: UiContext.classChatSolution.draft,
+                            live: window.__onebyoneSolutionWorkspace.serialize(),
+                            backup: localStorage.getItem(`onebyone.solution.draft.v1/${UserContext._id}/${UiContext.classChatSolution.sourceMessageId}`) })) }));
+                    throw error;
+                }
                 await teacherFrame.locator('[data-solution-action="load-standard"]').click();
                 await teacherFrame.waitForFunction((code) => window.__onebyoneSolutionWorkspace?.editor?.getValue() === code, standardCode);
+                await assertInkAttached(teacherFrame, codeInkId, codeInkPosition, await solutionPoint(teacherFrame, 4));
+                await assertInkAttached(teacherFrame, statementInkId, statementInkPosition, await solutionPoint(teacherFrame));
+                assert.deepEqual(await teacherFrame.evaluate(() => window.__onebyoneSolutionWorkspace.serialize().annotations.ink), savedInk);
 
                 stage = 'real beginner self-test and submission records';
                 await queueRun(teacher, teacherFrame, true, standardCode);
@@ -341,7 +427,7 @@ else {
                 const reply = await (await sending).json();
                 assert.equal(reply.message.kind, 'solution');
                 assert.equal(reply.message.solution.sourceMessageId, sourceId);
-                assert(reply.message.solution.annotationCount >= 2);
+                assert(reply.message.solution.annotationCount >= 4);
                 const immutableUrl = reply.message.solution.url;
                 await typeCode(teacher.page, teacherFrame, 'cout << "edited after delivery";');
                 const solutionCard = student.page.locator(`[data-message-id="${reply.message.id}"] a.class-chat__code-card`);
@@ -353,6 +439,11 @@ else {
                 await learnerFrame.locator('[data-share-annotation-text]').filter({ hasText: explanation }).waitFor({ state: 'visible' });
                 await learnerFrame.locator('[data-share-annotation-text]').filter({ hasText: codeExplanation }).waitFor({ state: 'visible' });
                 assert.equal(await learnerFrame.locator('textarea[data-share-annotation-input]').count(), 0, 'learner notes are display text only');
+                await assertInkAttached(learnerFrame, codeInkId, codeInkPosition, await solutionPoint(learnerFrame, 4));
+                await assertInkAttached(learnerFrame, statementInkId, statementInkPosition, await solutionPoint(learnerFrame));
+                assert.equal(await learnerFrame.locator('[data-share-drawing-note-input]').count(), 2);
+                assert.equal(await learnerFrame.locator('[data-share-drawing-note-input]').first().getAttribute('readonly'), '');
+                assert.deepEqual(await learnerFrame.evaluate(() => window.__onebyoneSolutionWorkspace.serialize().annotations.ink), savedInk);
                 await student.page.screenshot({ path: path.join(os.tmpdir(), 'onebyone-solution-learner-readonly.png') });
                 await learnerFrame.locator('.monaco-editor textarea.inputarea').first().focus();
                 await student.page.keyboard.insertText('learner must not edit this');
