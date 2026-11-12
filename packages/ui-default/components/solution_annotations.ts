@@ -76,7 +76,8 @@ export function attachSolutionAnnotations(options: {
     resolve(identity: { nodeId: number }) { return nodes.get(identity.nodeId) || null; },
   };
   const raw = (): SolutionAnnotationDocument => ({ version: 1,
-    text: [...text.values()].filter(savedMark), code: [...code.values()].filter(savedMark), ink: [...ink.values()] });
+    text: [...text.values()].filter(savedMark), code: [...code.values()].filter(savedMark),
+    ink: [...ink.values()].filter((mark) => !!mark.note) });
   const emit = () => {
     if (!editable || disposed || restoring || emitFrame) return;
     emitFrame = win.requestAnimationFrame(() => { emitFrame = 0; if (!disposed) options.onChange?.(clone(raw())); });
@@ -354,13 +355,16 @@ export function attachSolutionAnnotations(options: {
     }
   }
   const drawing = attachTemporaryDrawing({ container: root, teacher: editable, pageId: 'solution-annotations',
-    persistent: true, handleNoteShortcut: false, anchors,
+    handleNoteShortcut: false, anchors,
     captureAnchor: captureInk,
     resolveAnchor: (binding, id) => {
       const mark = ink.get(id); return mark ? inkGeometry(mark, binding) : resolveDrawingAnchor(binding, root, anchors);
     },
     onStart: () => { clearTransient(); lastGesture = 'ink'; },
-    onRemove: (id) => { if (!disposed && ink.delete(id)) emit(); },
+    onRemove: (id) => {
+      const saved = !!ink.get(id)?.note;
+      if (!disposed && ink.delete(id) && saved) emit();
+    },
     send: (packet) => {
       if (restoring || disposed) return;
       if (packet.phase === 'start') {
@@ -371,11 +375,11 @@ export function attachSolutionAnnotations(options: {
         if (packet.points.length) mark.points.push(...clone(packet.points));
         if (packet.note) mark.note = clone(packet.note);
       }
-      emit();
+      if (packet.note || packet.phase === 'delete') emit();
     },
   });
   for (const item of (Array.isArray(initial?.ink) ? initial.ink : []).slice(0, 32)) {
-    if (!item || !/^[a-zA-Z0-9_-]{8,96}$/.test(item.id) || !Array.isArray(item.points) || !item.points.length || item.points.length > 2048
+    if (!item || !item.note || !/^[a-zA-Z0-9_-]{8,96}$/.test(item.id) || !Array.isArray(item.points) || !item.points.length || item.points.length > 2048
       || !Array.isArray(item.reference) || item.reference.length !== 6 || !item.reference.every((part, index) => bounded(part, index < 4 ? 100 : 1e7))) continue;
     const node = resolveInk(item.anchor); if (!node) continue;
     if (item.anchor.kind === 'element' && (item.anchor.mode !== undefined && !['element', 'scroll', 'svg'].includes(item.anchor.mode)

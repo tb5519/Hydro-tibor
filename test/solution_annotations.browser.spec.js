@@ -243,7 +243,7 @@ it('Monaco ink and label follow internal scrolling and inserted lines, including
     assert.deepEqual([...errors, ...learner.errors], []);
 });
 
-it('legacy saved element and editor ink without new anchor metadata remains readable', async (t) => {
+it('legacy saved ink drops unlabeled strokes but preserves labeled element and editor ink', async (t) => {
     const { page } = await pageFixture(t);
     const legacy = await page.evaluate(() => {
         const root = document.querySelector('#workspace').getBoundingClientRect();
@@ -261,14 +261,18 @@ it('legacy saved element and editor ink without new anchor metadata remains read
                 code.left - root.left + position.left, code.top - root.top + position.top + 20, '旧代码笔迹'),
         ] };
     });
-    const learner = await pageFixture(t, false, legacy);
-    for (const mark of legacy.ink) {
-        await inkNote(learner.page, mark.id).waitFor({ state: 'visible' });
-        assert.equal(await inkNote(learner.page, mark.id).locator('textarea').inputValue(), mark.note.text);
+    const oldDraft = { ...legacy, ink: [...legacy.ink, ...legacy.ink.map(({ note, ...mark }) => ({ ...mark, id: `${mark.id}-bare` }))] };
+    for (const editable of [true, false]) {
+        const restored = await pageFixture(t, editable, oldDraft);
+        for (const mark of legacy.ink) {
+            await inkNote(restored.page, mark.id).waitFor({ state: 'visible' });
+            assert.equal(await inkNote(restored.page, mark.id).locator('textarea').inputValue(), mark.note.text);
+            assert.equal(await restored.page.locator(`[data-share-drawing-stroke="${mark.id}-bare"]`).count(), 0);
+        }
+        if (!editable) assert.equal(await restored.page.locator('[data-share-drawing-note-delete]').count(), 0);
+        assert.deepEqual(await restored.page.evaluate(() => annotations.serialize()), legacy);
+        assert.deepEqual(restored.errors, []);
     }
-    assert.equal(await learner.page.locator('[data-share-drawing-note-delete]').count(), 0);
-    assert.deepEqual(await learner.page.evaluate(() => annotations.serialize()), legacy);
-    assert.deepEqual(learner.errors, []);
 });
 
 it('live autosave snapshots do not terminate a right-button stroke while the mouse remains held', async (t) => {
@@ -278,8 +282,13 @@ it('live autosave snapshots do not terminate a right-button stroke while the mou
     await page.mouse.move(start.x, start.y); await page.mouse.down({ button: 'right' });
     for (let step = 1; step <= 5; step++) {
         await page.mouse.move(start.x + step * 25, start.y + step);
+        await page.evaluate(() => liveSnapshots.push(annotations.serialize()));
         await page.waitForTimeout(50);
     }
+    const heldStroke = await page.locator('[data-share-drawing-stroke] path').last().boundingBox();
+    assert(heldStroke.width >= 120, 'live rendering keeps the complete pen gesture while the mouse is still down');
+    assert.equal((await page.evaluate(() => annotations.serialize())).ink.length, 0, 'an active, unpinned stroke is not saved work');
+    assert(await page.evaluate(() => liveSnapshots.every((snapshot) => snapshot.ink.length === 0)));
     await page.mouse.up({ button: 'right' });
     await page.keyboard.press('Shift+Enter'); await page.locator('[data-share-drawing-note-input]').fill('完整的这一笔');
     const saved = await page.evaluate(() => annotations.serialize());
@@ -450,18 +459,41 @@ it('real Monaco selection notes never change source code and follow an edit befo
     assert.deepEqual([...errors, ...learner.errors], []);
 });
 
-it('right-button ink persists beyond the live-share fade interval, saves labels, and readonly replay cannot edit it', async (t) => {
+it('bare statement and code ink stays out of autosave and fades on the same schedule as live sharing', async (t) => {
+    const { page, errors } = await pageFixture(t, true, undefined, { snapshotOnChange: true });
+    const statement = await page.locator('#paragraph strong').boundingBox();
+    const code = await codePoint(page, 2);
+    for (const point of [{ x: statement.x + 5, y: statement.y + statement.height - 2 }, code]) {
+        await page.mouse.move(point.x, point.y); await page.mouse.down({ button: 'right' });
+        await page.mouse.move(point.x + 95, point.y + 3, { steps: 8 }); await page.mouse.up({ button: 'right' });
+    }
+    assert.equal(await page.locator('[data-share-drawing-stroke]').count(), 2);
+    assert.equal((await page.evaluate(() => annotations.serialize())).ink.length, 0);
+    assert(await page.evaluate(() => liveSnapshots.every((snapshot) => snapshot.ink.length === 0)));
+    assert.equal(await page.locator('[data-share-drawing-note]').count(), 0);
+    // Shared drawing uses HOLD_MS=5000, then FADE_MS=1000. Observe the real
+    // opacity transition and final removal rather than a private clock mock.
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-share-drawing-stroke]')]
+        .some((stroke) => stroke.style.opacity === '0'), null, { timeout: 6500 });
+    await page.waitForFunction(() => document.querySelectorAll('[data-share-drawing-stroke]').length === 0,
+        null, { timeout: 2500 });
+    assert.equal((await page.evaluate(() => annotations.serialize())).ink.length, 0);
+    assert.deepEqual(errors, []);
+});
+
+it('pinning right-button ink before it expires saves its label and keeps readonly replay immutable', async (t) => {
     const { page, errors } = await pageFixture(t);
     const point = await page.locator('#paragraph').boundingBox();
     await page.mouse.move(point.x + 25, point.y + 15); await page.mouse.down({ button: 'right' });
     await page.mouse.move(point.x + 160, point.y + 22, { steps: 8 }); await page.mouse.up({ button: 'right' });
-    await page.waitForTimeout(6200);
-    assert.equal(await page.locator('[data-share-drawing-stroke]').count(), 1);
-    assert.equal(await page.locator('[data-share-drawing-stroke]').evaluate((node) => getComputedStyle(node).opacity), '1');
     await page.keyboard.press('Shift+Enter'); await page.locator('[data-share-drawing-note-input]').fill('这里');
     const saved = await page.evaluate(() => annotations.serialize());
     assert.equal(saved.ink.length, 1); assert.equal(saved.ink[0].note.text, '这里');
     assert.equal(saved.ink[0].anchor.kind, 'element'); assert.equal(saved.ink[0].anchor.key, 'statement');
+    await page.waitForTimeout(6200);
+    assert.equal(await page.locator('[data-share-drawing-stroke]').count(), 1);
+    assert.equal(await page.locator('[data-share-drawing-stroke]').evaluate((node) => getComputedStyle(node).opacity), '1');
+    assert.deepEqual(await page.evaluate(() => annotations.serialize()), saved, 'a pinned stroke remains saved after the temporary fade interval');
     const learner = await pageFixture(t, false, saved);
     await learner.page.waitForSelector('[data-share-drawing-note-input]');
     assert.equal(await learner.page.locator('[data-share-drawing-note-input]').inputValue(), '这里');
