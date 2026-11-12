@@ -295,11 +295,115 @@ it('live autosave snapshots do not terminate a right-button stroke while the mou
 });
 async function selectText(page, selector) {
     await page.evaluate((selector) => {
-        const node = document.querySelector(selector); const range = document.createRange(); range.selectNodeContents(node);
-        const selection = document.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+        const node = document.querySelector(selector);
+        const selection = document.getSelection(); selection.removeAllRanges();
+        node.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
+        const range = document.createRange(); range.selectNodeContents(node);
+        selection.addRange(range);
         node.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0 }));
     }, selector);
 }
+
+it('temporary text highlights never enter saved drafts and clicks clear them without replaying an old selection', async (t) => {
+    const { page, errors } = await pageFixture(t, true, undefined, { snapshotOnChange: true });
+    await selectText(page, '#paragraph strong');
+    await page.waitForSelector('[data-share-annotation-arrow]:not([hidden])');
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal((await page.evaluate(() => annotations.serialize())).text.length, 0);
+    assert(await page.evaluate(() => changes.every((value) => value.text.length === 0 && value.code.length === 0)));
+    await page.evaluate(() => {
+        // Buttons can keep the browser selection intact; its old Range must
+        // not turn back into a new annotation on an unrelated pointerup.
+        document.querySelector('#outside').addEventListener('pointerdown', (event) => event.preventDefault());
+    });
+    await page.locator('#outside').click();
+    assert.equal(await page.locator('[data-share-annotation]').count(), 0, 'clicking outside the workspace clears its temporary mark');
+    assert.equal(await page.evaluate(() => document.getSelection().toString()), '输出它们相加后的结果');
+    await selectText(page, '#paragraph strong');
+    await page.evaluate(() => {
+        const control = document.createElement('button'); control.id = 'inside-control'; control.textContent = '运行自测';
+        control.dataset.solutionAnnotationExclude = '';
+        control.addEventListener('pointerdown', (event) => event.preventDefault());
+        document.querySelector('#workspace').prepend(control);
+    });
+    await page.locator('#inside-control').click();
+    assert.equal(await page.locator('[data-share-annotation]').count(), 0, 'clicking an internal control must not recapture the old selection');
+    assert.equal((await page.evaluate(() => annotations.serialize())).text.length, 0);
+    assert.deepEqual(errors, []);
+});
+
+it('temporary Monaco highlights do not persist while multiple pinned notes survive outside clicks', async (t) => {
+    const { page, errors } = await pageFixture(t, true, undefined, { snapshotOnChange: true });
+    await page.evaluate(() => { editor.focus(); editor.setSelection(new monaco.Range(2, 5, 2, 15)); });
+    await page.waitForSelector('[data-share-code-annotation] [data-share-annotation-arrow]:not([hidden])');
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal((await page.evaluate(() => annotations.serialize())).code.length, 0);
+    assert(await page.evaluate(() => changes.every((value) => value.code.length === 0)));
+    await page.locator('#outside').click();
+    assert.equal(await page.locator('[data-share-code-annotation]').count(), 0);
+    await selectText(page, '#paragraph strong'); await page.keyboard.press('Shift+Enter');
+    await page.locator('[data-share-annotation-input]').fill('第一处');
+    await selectText(page, '#second'); await page.keyboard.press('Shift+Enter');
+    await page.locator('[data-share-annotation-input]').last().fill('第二处');
+    await selectText(page, '#paragraph strong');
+    await page.locator('#outside').click();
+    assert.equal(await page.locator('[data-share-annotation]').count(), 2);
+    assert.deepEqual(await page.evaluate(() => annotations.serialize().text.map((mark) => mark.text)), ['第一处', '第二处']);
+    assert.equal(await page.locator('[data-share-annotation-arrow]:not([hidden])').count(), 0);
+    assert.deepEqual(errors, []);
+});
+
+it('typing capitals or selecting inside a note does not replay the old statement selection', async (t) => {
+    const { page, errors } = await pageFixture(t);
+    await selectText(page, '#paragraph strong'); await page.keyboard.press('Shift+Enter');
+    const input = page.locator('[data-share-annotation-input]'); await input.fill('先看这里');
+    await input.press('Shift+A'); await input.press('Shift+ArrowLeft');
+    assert.equal(await page.locator('[data-share-annotation]').count(), 1);
+    assert.equal(await page.locator('[data-share-annotation-arrow]:not([hidden])').count(), 0,
+        'typing or selecting within a bubble must not create a bare arrow from the previous statement Range');
+    assert.equal((await page.evaluate(() => annotations.serialize())).text.length, 1);
+    await page.evaluate(() => {
+        const workspace = document.querySelector('#workspace'); workspace.tabIndex = -1; workspace.focus();
+        const text = document.querySelector('#paragraph strong').firstChild;
+        const range = document.createRange(); range.setStart(text, 0); range.setEnd(text, 1);
+        const selection = document.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+    });
+    await page.keyboard.press('Shift+ArrowRight');
+    await page.waitForSelector('[data-share-annotation-arrow]:not([hidden])');
+    assert.equal(await page.locator('[data-share-annotation]').count(), 2, 'real keyboard selection in the statement still creates a temporary focus');
+    assert.equal((await page.evaluate(() => annotations.serialize())).text.length, 1, 'keyboard focus remains temporary until explicitly annotated');
+    await page.locator('#outside').click();
+    assert.equal(await page.locator('[data-share-annotation]').count(), 1);
+    assert.deepEqual(errors, []);
+});
+
+it('restoring legacy drafts drops bare arrows but retains explicitly opened and written notes', async (t) => {
+    const { page } = await pageFixture(t);
+    const initial = await page.evaluate(() => {
+        const statement = document.querySelector('#statement').textContent;
+        const textQuote = '输出它们相加后的结果'; const codeQuote = 'int a = 3;';
+        const mark = (id, start, quote, noteOpen, text) => ({ id, start, end: start + quote.length, quote,
+            noteOpen, text, offsetX: 0, offsetY: 32 });
+        return { version: 1, ink: [],
+            text: [
+                { ...mark('old_text_bare', statement.indexOf(textQuote), textQuote, false, ''), key: 'statement' },
+                { ...mark('old_text_open', statement.indexOf(textQuote), textQuote, true, ''), key: 'statement' },
+                { ...mark('old_text_written', statement.indexOf(textQuote), textQuote, false, '已写批注'), key: 'statement' },
+            ], code: [
+                { ...mark('old_code_bare', editor.getValue().indexOf(codeQuote), codeQuote, false, ''), editorId: 'code' },
+                { ...mark('old_code_open', editor.getValue().indexOf(codeQuote), codeQuote, true, ''), editorId: 'code' },
+                { ...mark('old_code_written', editor.getValue().indexOf(codeQuote), codeQuote, false, '已有代码说明'), editorId: 'code' },
+            ] };
+    });
+    for (const editable of [true, false]) {
+        const restored = await pageFixture(t, editable, initial);
+        const saved = await restored.page.evaluate(() => annotations.serialize());
+        assert.deepEqual(saved.text.map((mark) => mark.id), ['old_text_open', 'old_text_written']);
+        assert.deepEqual(saved.code.map((mark) => mark.id), ['old_code_open', 'old_code_written']);
+        assert.equal(await restored.page.locator('[data-share-annotation-id="old_text_bare"],[data-share-code-annotation="old_code_bare"]').count(), 0);
+        assert.deepEqual(restored.errors, []);
+    }
+});
 
 it('private workspaces can annotate statement text, keep multiple notes, and replay on a differently wrapped read-only page', async (t) => {
     const { page, errors } = await pageFixture(t);

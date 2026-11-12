@@ -37,6 +37,10 @@ function validMark(value: SolutionMark) {
     && (value.height === undefined || bounded(value.height, 800) && value.height >= 36);
 }
 
+// Merely selecting content is a temporary teaching pointer, not saved work.
+// Keep explicitly opened notes and older notes which already contain text.
+const savedMark = (mark: SolutionMark) => mark.noteOpen || !!mark.text.trim();
+
 /** Independent saved annotations. No shared session, transport, cache or editor binding is created. */
 export function attachSolutionAnnotations(options: {
   root: HTMLElement; editable: boolean; initial?: SolutionAnnotationDocument;
@@ -49,9 +53,9 @@ export function attachSolutionAnnotations(options: {
   if (win.getComputedStyle(root).position === 'static') root.style.position = 'relative';
   const initial = options.initial?.version === 1 ? options.initial : undefined;
   const text = new Map<string, SolutionTextMark>((Array.isArray(initial?.text) ? initial.text : []).slice(0, 40)
-    .filter((item) => validMark(item) && validId(item.key)).map((item) => [item.id, clone(item)]));
+    .filter((item) => validMark(item) && validId(item.key) && savedMark(item)).map((item) => [item.id, clone(item)]));
   const code = new Map<string, SolutionCodeMark>((Array.isArray(initial?.code) ? initial.code : []).slice(0, 40)
-    .filter((item) => validMark(item) && validId(item.editorId)).map((item) => [item.id, clone(item)]));
+    .filter((item) => validMark(item) && validId(item.editorId) && savedMark(item)).map((item) => [item.id, clone(item)]));
   const ink = new Map<string, SolutionInkMark>();
   const textSurfaces = new Map<string, ReturnType<typeof attachAnnotationSurface>>();
   const codeSurfaces = new Map<string, ReturnType<typeof attachStandaloneCodeFocus>>();
@@ -71,7 +75,8 @@ export function attachSolutionAnnotations(options: {
     },
     resolve(identity: { nodeId: number }) { return nodes.get(identity.nodeId) || null; },
   };
-  const raw = (): SolutionAnnotationDocument => ({ version: 1, text: [...text.values()], code: [...code.values()], ink: [...ink.values()] });
+  const raw = (): SolutionAnnotationDocument => ({ version: 1,
+    text: [...text.values()].filter(savedMark), code: [...code.values()].filter(savedMark), ink: [...ink.values()] });
   const emit = () => {
     if (!editable || disposed || restoring || emitFrame) return;
     emitFrame = win.requestAnimationFrame(() => { emitFrame = 0; if (!disposed) options.onChange?.(clone(raw())); });
@@ -120,9 +125,11 @@ export function attachSolutionAnnotations(options: {
       height: Math.max(...rects.map((rect) => rect.y + rect.height)) - y, rects };
   }
   function erase(kind: 'text' | 'code', id: string) {
-    (kind === 'text' ? text : code).delete(id);
+    const entries = kind === 'text' ? text : code;
+    const changed = entries.has(id) && savedMark(entries.get(id)!);
+    entries.delete(id);
     if (transient?.id === id) transient = null;
-    refresh(); emit();
+    refresh(); if (changed) emit();
   }
   function refresh() {
     if (disposed) return;
@@ -163,7 +170,7 @@ export function attachSolutionAnnotations(options: {
     clearTransient();
     const mark = { id: newId(), start, end, quote, text: '', noteOpen: false, offsetX: 0, offsetY: 32, ...value };
     if (kind === 'text') text.set(mark.id, mark as SolutionTextMark); else code.set(mark.id, mark as SolutionCodeMark);
-    transient = { kind, id: mark.id }; lastGesture = 'selection'; refresh(); emit();
+    transient = { kind, id: mark.id }; lastGesture = 'selection'; refresh();
   }
   function selectedText() {
     if (!editable || disposed) return;
@@ -407,14 +414,37 @@ export function attachSolutionAnnotations(options: {
     if (kind === 'text') textSurfaces.get(id)?.focus(); else codeSurfaces.get(id)?.render(mark, true);
     event.preventDefault(); event.stopImmediatePropagation(); emit();
   }
+  let selectionPointer: { x: number; y: number; before: Range | null } | null = null;
   const pointerdown = (event: PointerEvent) => {
-    if (event.button !== 0 || (event.target as Element)?.closest?.('[data-share-annotation-id],[data-share-drawing-note]')) return;
+    if (event.button !== 0) return;
+    selectionPointer = null;
+    const annotation = (event.target as Element)?.closest?.('[data-share-annotation-id],[data-share-drawing-note]');
+    if (annotation && root.contains(annotation)) return;
     clearTransient(); lastGesture = 'selection';
+    if (!root.contains(event.target as Node)) return;
+    const selection = doc.getSelection();
+    selectionPointer = { x: event.clientX, y: event.clientY,
+      before: selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null };
   };
-  const pointerup = (event: PointerEvent) => { if (event.button === 0) selectedText(); };
-  const keyup = (event: KeyboardEvent) => { if (event.shiftKey && event.key !== 'Enter') selectedText(); };
+  const pointerup = (event: PointerEvent) => {
+    if (event.button !== 0) return;
+    const gesture = selectionPointer; selectionPointer = null;
+    if (!gesture) return;
+    const selection = doc.getSelection(); const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const same = range && gesture.before && range.startContainer === gesture.before.startContainer
+      && range.startOffset === gesture.before.startOffset && range.endContainer === gesture.before.endContainer
+      && range.endOffset === gesture.before.endOffset;
+    // Buttons/focus changes can leave the browser's old native selection in
+    // place. Do not turn that stale selection into another arrow on mouse-up.
+    if (same && Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) < 3) return;
+    selectedText();
+  };
+  const keyup = (event: KeyboardEvent) => {
+    if (event.shiftKey && !event.isComposing && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)
+      && !excluded(event.target as Element, `${privateSelector},[data-share-annotation-id],[data-share-drawing-note]`)) selectedText();
+  };
   if (editable) {
-    root.addEventListener('pointerdown', pointerdown, true); root.addEventListener('pointerup', pointerup);
+    doc.addEventListener('pointerdown', pointerdown, true); doc.addEventListener('pointerup', pointerup);
     root.addEventListener('keyup', keyup); win.addEventListener('keydown', keydown, true);
   }
   const observer = new win.ResizeObserver(schedule); observer.observe(root);
@@ -427,7 +457,7 @@ export function attachSolutionAnnotations(options: {
       if (disposed) return;
       drawing.flush(); disposed = true;
       win.cancelAnimationFrame(renderFrame); win.cancelAnimationFrame(emitFrame);
-      root.removeEventListener('pointerdown', pointerdown, true); root.removeEventListener('pointerup', pointerup);
+      doc.removeEventListener('pointerdown', pointerdown, true); doc.removeEventListener('pointerup', pointerup);
       root.removeEventListener('keyup', keyup); win.removeEventListener('keydown', keydown, true);
       doc.removeEventListener('scroll', schedule, true); win.removeEventListener('resize', schedule); observer.disconnect();
       drawing.dispose(); textSurfaces.forEach((surface) => surface.dispose()); codeSurfaces.forEach((surface) => surface.dispose());
