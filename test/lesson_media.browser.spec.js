@@ -22,7 +22,7 @@ before(async () => {
 });
 after(async () => browser?.close());
 
-async function fixture(t) {
+async function fixture(t, options = {}) {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     t.after(() => context.close());
     const page = await context.newPage();
@@ -32,16 +32,17 @@ async function fixture(t) {
 body{background:#f1f5f9;font:16px system-ui;color:#243044;padding:32px}main{background:white;padding:32px;border-radius:24px;height:500px}button{font:inherit;padding:10px 16px} ${css}
 </style></head><body><main><h1>编程课堂</h1><p>老师分享页面，师生摄像头可以拖动及桌面悬浮。</p><button id="join">进入课堂</button></main>
 <script>${script}</script><script>
+${options.noDocumentPip ? "Object.defineProperty(window,'documentPictureInPicture',{value:undefined});" : ''}
 window.sent=[];window.left=0;window.media=LessonMedia.mountLessonMedia({uid:2},{send(message){sent.push(message);return true},onLeave(){left++}});
 window.room={_id:'camera-lesson',teacherUid:2,studentUid:5,teacherName:'唐老师',studentName:'橙子'};
-document.querySelector('#join').onclick=()=>{window.joined=media.start(room);media.setConnected(true);media.receive({type:'peer',online:true})};
+document.querySelector('#join').onclick=()=>{const desktop=media.prepareDesktop();window.joined=(async()=>{await new Promise(resolve=>setTimeout(resolve,100));await media.start(room,desktop);media.setConnected(true);media.receive({type:'peer',online:true})})()};
 </script></body></html>` }));
     await page.goto('https://lesson-camera.test/classroom');
     return { context, page, errors };
 }
 
 it('a real browser captures bounded JPEG and microphone frames, lets the camera move and stops both tracks on leave', async (t) => {
-    const { page, errors } = await fixture(t);
+    const { page, errors } = await fixture(t, { noDocumentPip: true });
     assert.equal(await page.locator('[data-lesson-media]').isVisible(), false);
     assert.equal(await page.evaluate(() => sent.length), 0);
     await page.locator('#join').click();
@@ -49,8 +50,8 @@ it('a real browser captures bounded JPEG and microphone frames, lets the camera 
     const stats = await page.evaluate(() => ({ video: sent.filter((message) => message.type === 'video').map((message) => message.data.length),
         audio: sent.filter((message) => message.type === 'audio').map((message) => message.data.length),
         camera: document.querySelector('[data-lesson-local-video]').srcObject.getVideoTracks()[0].getSettings() }));
-    assert(stats.video.every((length) => length <= 32768)); assert(stats.audio.every((length) => length === 856));
-    assert(stats.camera.width <= 320 && stats.camera.height <= 240);
+    assert(stats.video.every((length) => length <= 262144)); assert(stats.audio.every((length) => length === 856));
+    assert(stats.camera.width === 1280 && stats.camera.height === 720);
     await page.evaluate(() => {
         const frame = sent.find((message) => message.type === 'video');
         media.receive({ ...frame, uid: 5, streamId: 'student-camera' });
@@ -71,14 +72,13 @@ it('a real browser captures bounded JPEG and microphone frames, lets the camera 
     assert.equal(await page.evaluate(() => left), 1); assert.deepEqual(errors, []);
 });
 
-it('desktop floating opens a real browser Document Picture-in-Picture window and closing it restores the controls', async (t) => {
+it('joining automatically opens a real Document Picture-in-Picture window and sustains 30 fps with teacher above learner', async (t) => {
     const { page, errors } = await fixture(t);
-    await page.locator('#join').click();
-    await page.waitForFunction(() => document.querySelector('[data-lesson-local-video]').srcObject);
     if (!await page.evaluate(() => !!window.documentPictureInPicture?.requestWindow)) {
         t.skip('This installed Chromium does not expose Document Picture-in-Picture'); return;
     }
-    await page.locator('[data-lesson-desktop]').click();
+    await page.locator('#join').click();
+    await page.waitForFunction(() => documentPictureInPicture.window?.document.querySelector('[data-lesson-local-video]')?.srcObject);
     await page.waitForFunction(() => !!documentPictureInPicture.window?.document.querySelector('[data-lesson-media]'));
     assert.equal(await page.locator('[data-lesson-media]').count(), 0);
     const result = await page.evaluate(() => {
@@ -87,6 +87,23 @@ it('desktop floating opens a real browser Document Picture-in-Picture window and
             controls: pip.document.querySelectorAll('.lesson-media__controls button').length };
     });
     assert.equal(result.title, 'OneByOne 上课'); assert.equal(result.local, true); assert(result.controls >= 4);
+    const stats = await page.evaluate(async () => {
+        const pip = documentPictureInPicture.window;
+        const start = sent.filter(message => message.type === 'video').length;
+        const at = performance.now();
+        await new Promise(resolve => pip.setTimeout(resolve, 1500));
+        const frames = sent.filter(message => message.type === 'video').length - start;
+        const tiles = Array.from(pip.document.querySelectorAll('[data-lesson-participant]'));
+        return { fps: frames / ((performance.now() - at) / 1000),
+            roles: tiles.map(tile => tile.dataset.lessonParticipant),
+            top: tiles[0].getBoundingClientRect().top, bottom: tiles[1].getBoundingClientRect().top,
+            camera: pip.document.querySelector('[data-lesson-local-video]').srcObject.getVideoTracks()[0].getSettings(),
+            toggleVisible: !pip.document.querySelector('[data-lesson-desktop]').hidden };
+    });
+    assert(stats.fps >= 25, `expected at least 25 live frames/sec, got ${stats.fps.toFixed(1)}`);
+    assert.equal(stats.camera.width, 1280); assert.equal(stats.camera.height, 720); assert(stats.camera.frameRate >= 25);
+    assert.deepEqual(stats.roles, ['teacher', 'student']); assert(stats.top < stats.bottom);
+    assert.equal(stats.toggleVisible, false);
     await page.evaluate(() => documentPictureInPicture.window.close());
     await page.waitForFunction(() => !!document.querySelector('[data-lesson-media]'));
     await page.locator('[data-lesson-media-leave]').click(); assert.deepEqual(errors, []);

@@ -33,17 +33,23 @@ async function fixture(t, options = {}) {
     const uid = options.student ? 5 : 2;
     const rows = structuredClone(options.lessons || []);
     const requests = []; const messages = []; const shareEvents = []; const mediaReceives = []; const mediaConnections = [];
+    const desktopEvents = []; const desktopReservations = []; const mediaStartArgs = [];
     let mediaStarts = 0; let mediaStops = 0; let mediaDisposes = 0; let mediaCallbacks;
     const sockets = [];
-    let delayRead = false; let heldRead;
+    let delayRead = false; let heldRead; let heldMutation;
     const roster = [{ uid: 5, name: '橙子', online: true }, { uid: 7, name: '睿睿', online: false }];
     const response = (data, status = 200) => ({ ok: status < 400, json: async () => structuredClone(data) });
     async function fakeFetch(url, init) {
         const body = init.body ? JSON.parse(init.body) : null; requests.push({ url, body });
+        if (body) desktopEvents.push(`request:${body.operation}`);
         if (!body) {
             const data = structuredClone({ lessons: rows.filter(row => url.startsWith('/d/C0002') ? row.domainId === 'C0002' : row.domainId === 'C0001'), students: roster, serverNow: new Date(clockNow).toISOString() });
             if (delayRead) { delayRead = false; return new Promise(resolve => { heldRead = () => resolve(response(data)); }); }
             return response(data);
+        }
+        if (['join', 'create'].includes(body.operation)) {
+            if (options.holdMutation) return new Promise(resolve => { heldMutation = data => resolve(response(data)); });
+            if (options.mutationResponse) return response(options.mutationResponse, options.mutationStatus || 200);
         }
         if (body.operation === 'create') {
             const row = makeLesson({ _id: 'lesson-created-abcdefghijkl', studentUid: body.studentUid,
@@ -61,7 +67,12 @@ async function fixture(t, options = {}) {
         if (body.operation === 'end') row.status = 'ended';
         return response({ lesson: row });
     }
-    const media = { start: async () => { mediaStarts++; }, receive: message => mediaReceives.push(message),
+    const media = { prepareDesktop() {
+        const reservation = { id: desktopReservations.length + 1, cancelled: false };
+        desktopReservations.push(reservation); desktopEvents.push('prepare'); return reservation;
+    }, cancelDesktop(reservation) { reservation.cancelled = true; desktopEvents.push('cancel'); },
+        start: async (lesson, reservation) => { mediaStarts++; mediaStartArgs.push({ lesson, reservation }); desktopEvents.push('start'); },
+        receive: message => mediaReceives.push(message),
         setConnected: value => mediaConnections.push(value), stop: () => { mediaStops++; }, dispose: () => { mediaDisposes++; } };
     function socketFactory(url) {
         const socket = { url, readyState: 0, bufferedAmount: 0, onopen: null, onmessage: null, onclose: null, onerror: null,
@@ -101,6 +112,7 @@ async function fixture(t, options = {}) {
     }
     const click = async selector => { const node = document.querySelector(selector); assert(node, `Missing ${selector}`); node.click(); await settle(); };
     return { window, document, rows, requests, messages, sockets, shareEvents, mediaReceives, mediaConnections,
+        desktopEvents, desktopReservations, mediaStartArgs, releaseMutation: data => heldMutation?.(data),
         click, refresh, advance, navigate, exports: module.exports, cleanup, leaveMedia: () => mediaCallbacks.onLeave(),
         holdNextRead: () => { delayRead = true; }, releaseRead: () => heldRead?.(),
         get mediaStarts() { return mediaStarts; }, get mediaStops() { return mediaStops; }, get mediaDisposes() { return mediaDisposes; } };
@@ -118,6 +130,7 @@ it('an offline learner can be booked in Beijing wall-clock time with no device o
     assert.equal(created.body.studentUid, 7); assert.equal(created.body.startAt, '2026-11-16T11:30:00.000Z');
     assert.equal(created.body.durationMinutes, 60); assert.match(created.body.tabId, /^[a-f0-9]{32}$/);
     assert.equal(f.mediaStarts, 0); assert.equal(f.sockets.length, 0);
+    assert.equal(f.desktopReservations.length, 0, 'booking never opens a desktop window');
     assert.match(f.document.querySelector('[data-lesson-home]').textContent, /19:30/);
     assert.match(f.document.querySelector('[data-lesson-home]').textContent, /睿睿/);
     assert(f.document.querySelector('.ui-pinned-contest__action'), 'the competition entry remains available');
@@ -132,10 +145,65 @@ it('a scheduled lesson becomes a centered reminder at its time but captures only
     await f.advance(11 * 60000);
     assert.equal(reminder.open, true); assert.match(reminder.textContent, /上课时间到了/);
     assert.equal(f.mediaStarts, 0); assert.equal(f.sockets.length, 0);
+    assert.equal(f.desktopReservations.length, 0, 'a due reminder alone never opens a desktop window');
     await f.click('[data-lesson-reminder-join]'); await f.advance();
     assert.equal(f.mediaStarts, 1); assert.equal(f.sockets.length, 1); assert.equal(reminder.open, false);
     assert(f.messages.some(item => item.type === 'join'));
     assert(f.mediaConnections.includes(true));
+    assert.deepEqual(f.desktopEvents.slice(0, 3), ['prepare', 'request:join', 'start']);
+    assert.equal(f.mediaStartArgs[0].reservation, f.desktopReservations[0]);
+    assert.equal(f.desktopReservations[0].cancelled, false);
+});
+
+it('immediate teaching reserves desktop floating in the click before the REST request and transfers that exact window', async t => {
+    const f = await fixture(t);
+    assert.equal(f.desktopReservations.length, 0);
+    await f.click('[data-lesson-open]'); await f.click('[data-lesson-student="5"]');
+    await f.click('[data-lesson-create]'); await f.advance();
+    assert.deepEqual(f.desktopEvents.slice(0, 3), ['prepare', 'request:create', 'start']);
+    assert.equal(f.desktopReservations.length, 1);
+    assert.equal(f.mediaStartArgs[0].reservation, f.desktopReservations[0]);
+    assert.equal(f.desktopReservations[0].cancelled, false);
+});
+
+it('the homepage join entry also reserves desktop floating before joining', async t => {
+    const f = await fixture(t, { lessons: [makeLesson()] });
+    await f.click('[data-lesson-home] [data-lesson-join]');
+    assert.deepEqual(f.desktopEvents.slice(0, 3), ['prepare', 'request:join', 'start']);
+    assert.equal(f.mediaStartArgs[0].reservation, f.desktopReservations[0]);
+});
+
+it('failed and malformed entry replies close their reserved desktop window without starting media', async t => {
+    for (const operation of ['join', 'create']) {
+        for (const reply of [{ mutationResponse: { error: 'FORBIDDEN', message: '没有课堂权限' }, mutationStatus: 403 },
+            { mutationResponse: {} }]) {
+            const f = await fixture(t, { ...reply, lessons: [makeLesson()] });
+            if (operation === 'join') await f.click('[data-lesson-home] [data-lesson-join]');
+            else {
+                await f.click('[data-lesson-open]'); await f.click('[data-lesson-student="5"]'); await f.click('[data-lesson-create]');
+            }
+            assert.equal(f.desktopReservations.length, 1);
+            assert.equal(f.desktopReservations[0].cancelled, true, `${operation} must release a failed reservation`);
+            assert.equal(f.mediaStarts, 0); assert.equal(f.sockets.length, 0);
+            assert.deepEqual(f.desktopEvents.slice(0, 3), ['prepare', `request:${operation}`, 'cancel']);
+            f.cleanup();
+        }
+    }
+});
+
+it('ending the session closes a pending entry window immediately and a late reply cannot start devices', async t => {
+    for (const operation of ['join', 'create']) {
+        const f = await fixture(t, { holdMutation: true, lessons: [makeLesson()] });
+        if (operation === 'join') await f.click('[data-lesson-home] [data-lesson-join]');
+        else {
+            await f.click('[data-lesson-open]'); await f.click('[data-lesson-student="5"]'); await f.click('[data-lesson-create]');
+        }
+        assert.equal(f.mediaStarts, 0); assert.equal(f.desktopReservations[0].cancelled, false);
+        f.window.dispatchEvent(new f.window.Event('onebyone:session-ended'));
+        assert.equal(f.desktopReservations[0].cancelled, true, 'disposal does not wait for the network reply');
+        f.releaseMutation({ lesson: makeLesson({ status: 'active', teacherJoined: true }) }); await settle();
+        assert.equal(f.mediaStarts, 0); assert.equal(f.sockets.length, 0);
+    }
 });
 
 it('a teacher joining a future booking early never prompts the learner before the booked start', async t => {

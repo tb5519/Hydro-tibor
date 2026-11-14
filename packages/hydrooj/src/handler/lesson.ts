@@ -13,21 +13,31 @@ import { ConnectionHandler, Handler, subscribe } from '../service/server';
 const cluster = process.env.exec_mode === 'cluster_mode';
 const serverId = cluster ? `${hostname()}:${process.env.name || 'hydro'}` : lesson.opaqueLessonId();
 let pendingIPCBytes = 0;
+let pendingVideoIPCBytes = 0;
 
 /** Never use the durable broadcast/outbox for camera or microphone payloads. */
 export function emitLesson(event: lesson.LessonEvent) {
     if (!cluster) { void bus.parallel('lesson/event', event).catch(() => {}); return; }
     if (!process.send || !process.connected) throw new LessonError('UNAVAILABLE', '课堂连接暂时不可用。');
     const payload = BSON.EJSON.stringify([event]); const bytes = Buffer.byteLength(payload);
-    const media = event.message.type === 'video' || event.message.type === 'audio';
-    if (pendingIPCBytes + bytes > (media ? 512 : 768) * 1024) {
-        if (media) return;
+    const video = event.message.type === 'video';
+    const audio = event.message.type === 'audio';
+    // Camera IPC has its own bounded allowance so a large picture does not
+    // consume the original microphone and control-message capacity.
+    if (video ? pendingVideoIPCBytes + bytes > 2 * 1024 * 1024
+        : pendingIPCBytes + bytes > (audio ? 512 : 768) * 1024) {
+        if (video || audio) return;
         throw new LessonError('UNAVAILABLE', '课堂连接繁忙，请稍后重试。');
     }
-    pendingIPCBytes += bytes;
+    if (video) pendingVideoIPCBytes += bytes;
+    else pendingIPCBytes += bytes;
+    const release = () => {
+        if (video) pendingVideoIPCBytes -= bytes;
+        else pendingIPCBytes -= bytes;
+    };
     try {
-        process.send({ type: 'hydro:broadcast', data: { event: 'lesson/event', payload } }, () => { pendingIPCBytes -= bytes; });
-    } catch (error) { pendingIPCBytes -= bytes; throw error; }
+        process.send({ type: 'hydro:broadcast', data: { event: 'lesson/event', payload } }, release);
+    } catch (error) { release(); throw error; }
 }
 
 const knownError = (error: any) => error instanceof LessonError || error instanceof LiveShareError;
@@ -212,7 +222,7 @@ export class LessonConnectionHandler extends ConnectionHandler {
         const message = event.message;
         if (message.type === 'video' || message.type === 'audio') {
             if (!event.sentAt || Date.now() - event.sentAt > LESSON_MEDIA_MAX_AGE_MS
-                || this.conn.bufferedAmount > (message.type === 'audio' ? 16 : 64) * 1024
+                || this.conn.bufferedAmount > (message.type === 'audio' ? 16 : 512) * 1024
                 || Date.now() - this.lastAuthorization > 6500 || Date.now() - this.lastLoginCheck > 6500
                 || !this.other || message.streamId !== this.other.connectionId || message.uid !== this.other._id) return;
             this.send(message); return;

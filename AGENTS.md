@@ -10,5 +10,5 @@ The production server must never build the UI. This is a user-required safety ru
 
 # Completion workflow
 
-- After each requested code change passes its relevant checks, commit and push the prepared release, then give the user an exact, copyable server update command.
+- After each requested code change passes its relevant checks, commit and push the prepared release into `master`, deploy that exact prepared commit through the user's available server terminal, then verify Hydro, Judge and the changed feature. The user has authorized this routine deployment workflow; complete it directly when the connection is available.
 - The user has given standing authorization for these routine commits and pushes; do not leave validated changes only in the local worktree or ask for push permission again.

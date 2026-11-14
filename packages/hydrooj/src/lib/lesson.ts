@@ -1,8 +1,8 @@
-/** Classroom media is live-only: small JPEG previews and 16 kHz μ-law audio. */
+/** Classroom media is live-only: bounded JPEG camera frames and 16 kHz μ-law audio. */
 export const LESSON_LEASE_MS = 45_000;
 export const LESSON_JOIN_MS = 120_000;
-export const LESSON_MAX_MESSAGE_BYTES = 34 * 1024;
-export const LESSON_VIDEO_MAX_LENGTH = 32768;
+export const LESSON_MAX_MESSAGE_BYTES = 258 * 1024;
+export const LESSON_VIDEO_MAX_LENGTH = 262144;
 export const LESSON_MEDIA_MAX_AGE_MS = 600;
 
 export class LessonError extends Error {
@@ -35,7 +35,7 @@ function validJpeg(value: string) {
         if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
             if (length < 8) return false;
             const height = data.readUInt16BE(offset + 3); const width = data.readUInt16BE(offset + 5);
-            return width > 0 && height > 0 && width <= 640 && height <= 480;
+            return width > 0 && height > 0 && width <= 1280 && height <= 720;
         }
         offset += length;
     }
@@ -62,16 +62,16 @@ export function validateLessonMessage(value: any) {
 export class LessonRateLimit {
     private audio = { tokens: 8, at: 0 };
     private video = { tokens: 3, at: 0 };
-    private bytes = { tokens: 65536, at: 0 };
+    private bytes = { tokens: 512 * 1024, at: 0 };
     private controls: number[] = [];
     accept(type: string, length = 0, now = Date.now()) {
         if (type === 'audio' || type === 'video') {
-            const bucket = this[type]; const rate = type === 'audio' ? .03 : .006;
+            const bucket = this[type]; const rate = type === 'audio' ? .03 : .04;
             bucket.tokens = Math.min(type === 'audio' ? 8 : 3, bucket.tokens + Math.max(0, now - bucket.at) * rate);
             bucket.at = now;
             if (bucket.tokens < 1) return false;
             if (type === 'video') {
-                this.bytes.tokens = Math.min(65536, this.bytes.tokens + Math.max(0, now - this.bytes.at) * 65.536);
+                this.bytes.tokens = Math.min(512 * 1024, this.bytes.tokens + Math.max(0, now - this.bytes.at) * (3 * 1024 * 1024 / 1000));
                 this.bytes.at = now;
                 if (this.bytes.tokens < length) return false;
                 this.bytes.tokens -= length;

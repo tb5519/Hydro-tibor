@@ -4,9 +4,10 @@
   bottom: 86px
   z-index: 2147483005
   box-sizing: border-box
-  width: 360px
+  width: 300px
   max-width: calc(100vw - 16px)
-  overflow: hidden
+  max-height: calc(100vh - 16px)
+  overflow: auto
   border: 1px solid #34435b
   border-radius: 16px
   background: #111b2d
@@ -49,7 +50,7 @@
 
   &__grid
     display: grid
-    grid-template-columns: 1fr 1fr
+    grid-template-columns: 1fr
     gap: 6px
     padding: 0 8px
 
@@ -57,7 +58,7 @@
     position: relative
     display: grid
     place-items: center
-    aspect-ratio: 4 / 3
+    aspect-ratio: 16 / 9
     overflow: hidden
     border-radius: 10px
     background: #243044

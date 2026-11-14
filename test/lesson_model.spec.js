@@ -23,9 +23,10 @@ const PRIV = { PRIV_USER_PROFILE: 2 };
 const code = (expected) => (error) => error.code === expected;
 const audio = Buffer.alloc(640, 127).toString('base64');
 // Small baseline JPEG SOF fixture. The protocol bounds dimensions before decode.
-function jpeg(width = 320, height = 240) {
-    const bytes = Buffer.from([255, 216, 255, 192, 0, 11, 8, height >> 8, height & 255, width >> 8, width & 255,
+function jpeg(width = 320, height = 240, padding = 0) {
+    const header = Buffer.from([255, 216, 255, 192, 0, 11, 8, height >> 8, height & 255, width >> 8, width & 255,
         1, 1, 17, 0, 255, 217]);
+    const bytes = Buffer.concat([header.subarray(0, -2), Buffer.alloc(padding), header.subarray(-2)]);
     return `data:image/jpeg;base64,${bytes.toString('base64')}`;
 }
 const tab = (uid) => `lesson-tab-${uid}-testing`;
@@ -287,9 +288,24 @@ describe('lesson media authorization with in-memory storage fixture', () => {
         }
         assert(busCalls.every((item) => item.name === 'lesson/event'));
     });
+    it('relays larger 720p pictures without weakening microphone backpressure', async () => {
+        const { room, teacher, student } = await activePair();
+        const data = jpeg(1280, 720, 90000);
+        assert(data.length > 64 * 1024 && data.length < protocol.LESSON_VIDEO_MAX_LENGTH);
+        assert.equal(teacher.instance.maxMessageBytes, protocol.LESSON_MAX_MESSAGE_BYTES);
+        student.instance.conn.bufferedAmount = 80 * 1024;
+        await teacher.instance.message({ type: 'video', lessonId: room._id, seq: 0, data }); await settle();
+        assert(student.sent.some((item) => item.type === 'video' && item.data === data));
+        student.instance.conn.bufferedAmount = 20 * 1024;
+        await teacher.instance.message({ type: 'audio', lessonId: room._id, seq: 0, data: audio }); await settle();
+        assert(!student.sent.some((item) => item.type === 'audio'), 'The original 16 KiB audio backpressure still applies');
+        student.instance.conn.bufferedAmount = 0;
+        await teacher.instance.message({ type: 'audio', lessonId: room._id, seq: 1, data: audio }); await settle();
+        assert(student.sent.some((item) => item.type === 'audio'));
+    });
     it('applies receiver backpressure and packet age limits without queuing old video', async () => {
         const { room, teacher, student } = await activePair();
-        student.instance.conn.bufferedAmount = 80 * 1024;
+        student.instance.conn.bufferedAmount = 600 * 1024;
         await teacher.instance.message({ type: 'video', lessonId: room._id, seq: 0, data: jpeg() }); await settle();
         assert(!student.sent.some((item) => item.type === 'video'));
         student.instance.conn.bufferedAmount = 0;

@@ -42,14 +42,21 @@ async function fixture(t, options = {}) {
           body{margin:0;background:#edf0f4;font-family:system-ui;color:#33465d}main{margin:36px}.ui-v2-home__hero{height:200px;background:linear-gradient(120deg,#d9eefe,#91bee9);border-radius:20px;padding:20px;margin-bottom:24px}.ui-pinned-contest{display:flex;align-items:center;justify-content:space-between;padding:24px;background:white;border:1px solid #dce5ee;border-radius:16px}.ui-pinned-contest__main{min-width:0}.ui-pinned-contest__main h2{font-size:22px}.ui-pinned-contest__action{padding:12px;background:#609fd5;color:white;border-radius:12px}.ui-v2-home__body{margin-top:24px;background:white;padding:36px;border-radius:20px}.assistant{position:fixed;bottom:25px;right:25px;padding:15px;background:#fff;border:1px solid #dce5ee;border-radius:14px}${css}
           </style></head><body><main class="ui-v2-home"><section class="ui-v2-home__hero"><h1>开始你的编程训练</h1><p>从一道题开始，记录每一次进步。</p></section><section class="ui-pinned-contest"><div class="ui-pinned-contest__main"><small>置顶比赛 · 正在进行</small><h2>周赛（11月9日—11月15日）</h2><p>2 小时 · 4 题</p></div><a class="ui-pinned-contest__action" href="#contest">进入比赛</a></section><div class="ui-v2-home__body">我的作业与训练计划</div></main><button class="assistant" data-lesson-open>上课模式</button><script>${code}</script><script>
           window.fakeNow=${options.now ?? now};window.requests=[];window.messages=[];window.mediaStarts=0;window.mediaStops=0;window.mediaReceives=[];window.mediaConnections=[];window.shareEvents=[];
+          window.desktopEvents=[];window.desktopReservations=[];window.startedReservation=null;
           window.rows=${JSON.stringify(options.lessons || [])};window.uid=${options.student ? 5 : 2};
           window.students=[{uid:5,name:'橙子',online:true},{uid:7,name:'睿睿',online:false}];
-          window.media={start(lesson){mediaStarts++;window.startedLesson=lesson._id;return Promise.resolve()},receive(message){mediaReceives.push(message)},setConnected(value){mediaConnections.push(value)},stop(){mediaStops++},dispose(){mediaStops++}};
+          window.media={prepareDesktop(){const reservation={id:desktopReservations.length+1,cancelled:false};desktopReservations.push(reservation);desktopEvents.push('prepare');return reservation},cancelDesktop(reservation){reservation.cancelled=true;desktopEvents.push('cancel')},start(lesson,reservation){mediaStarts++;window.startedLesson=lesson._id;window.startedReservation=reservation;desktopEvents.push('start');return Promise.resolve()},receive(message){mediaReceives.push(message)},setConnected(value){mediaConnections.push(value)},stop(){mediaStops++},dispose(){mediaStops++}};
           window.dispatchShare=(type,detail)=>window.dispatchEvent(new CustomEvent(type,{detail}));
           for(const type of ['onebyone:lesson-share-start','onebyone:lesson-share-stop'])window.addEventListener(type,event=>shareEvents.push({type,detail:event.detail}));
           window.fakeFetch=async(url,init)=>{
             const body=init.body?JSON.parse(init.body):null;requests.push({url,body});
             if(body){
+              desktopEvents.push('request:'+body.operation);
+              if(['join','create'].includes(body.operation)){
+                if(${!!options.holdMutation})return new Promise(resolve=>{window.releaseMutation=data=>{resolve(new Response(JSON.stringify(data)));setTimeout(()=>{window.mutationReplyDelivered=true},0)}});
+                const reply=${JSON.stringify(options.mutationResponse ?? null)};
+                if(reply)return new Response(JSON.stringify(reply),{status:${options.mutationStatus || 200}});
+              }
               if(body.operation==='create'){
                 const planned=!!body.startAt;
                 const item={_id:'lesson-created-abcdefghijkl',domainId:'C0001',workspaceId:'legacy',teacherUid:2,studentUid:body.studentUid,teacherName:'唐老师',studentName:students.find(x=>x.uid===body.studentUid).name,title:body.title,startAt:body.startAt||new Date(fakeNow).toISOString(),endAt:new Date((body.startAt?Date.parse(body.startAt):fakeNow)+body.durationMinutes*60000).toISOString(),status:planned?'scheduled':'active',teacherJoined:!planned,studentJoined:false};rows.push(item);return new Response(JSON.stringify({lesson:item}));
@@ -95,6 +102,7 @@ it('booking an offline learner uses Beijing time on a device in another timezone
     assert.equal(request.body.durationMinutes, 60);
     assert.match(request.body.tabId, /^[a-f0-9]{32}$/);
     assert.equal(await page.evaluate(() => mediaStarts), 0);
+    assert.equal(await page.evaluate(() => desktopReservations.length), 0);
     await page.waitForSelector('[data-lesson-home]');
     assert.match(await page.locator('[data-lesson-home]').textContent(), /19:30/);
     assert.match(await page.locator('[data-lesson-home]').textContent(), /睿睿/);
@@ -108,6 +116,7 @@ it('due-time reminders require a click and keep both devices idle until the lear
     assert.equal(await page.locator('.lesson-reminder').isVisible(), false);
     assert.equal(await page.locator('[data-lesson-home] [data-lesson-join]').isDisabled(), true);
     assert.equal(await page.evaluate(() => mediaStarts), 0);
+    assert.equal(await page.evaluate(() => desktopReservations.length), 0, 'the reminder does not open desktop floating');
     await page.evaluate(() => { fakeNow += 11 * 60000; });
     await page.waitForFunction(() => document.querySelector('.lesson-reminder')?.open);
     assert.equal(await page.evaluate(() => mediaStarts), 0);
@@ -119,6 +128,8 @@ it('due-time reminders require a click and keep both devices idle until the lear
     assert.equal(await page.locator('.lesson-reminder').isVisible(), false);
     assert.equal(await page.evaluate(() => connections.length), 1);
     assert.equal(await page.evaluate(() => requests.filter(x => x.body?.operation === 'join').length), 1);
+    assert.deepEqual(await page.evaluate(() => desktopEvents.slice(0, 3)), ['prepare', 'request:join', 'start']);
+    assert.equal(await page.evaluate(() => startedReservation === desktopReservations[0] && !startedReservation.cancelled), true);
     assert.deepEqual(errors, []);
 });
 
@@ -135,6 +146,35 @@ it('an invitation already active when a learner logs in shows the central join c
     assert.deepEqual(errors, []);
 });
 
+it('an entry rejected by the server releases desktop floating without starting media', async t => {
+    const { page, errors } = await fixture(t, { student: true,
+        lessons: [lesson({ status: 'active', teacherJoined: true, startAt: new Date(now - 60000).toISOString() })],
+        mutationResponse: { error: 'FORBIDDEN', message: '没有课堂权限' }, mutationStatus: 403 });
+    await page.locator('[data-lesson-reminder-join]').click();
+    await page.waitForFunction(() => desktopReservations[0]?.cancelled);
+    assert.deepEqual(await page.evaluate(() => desktopEvents.slice(0, 3)), ['prepare', 'request:join', 'cancel']);
+    assert.equal(await page.evaluate(() => mediaStarts), 0);
+    assert.equal(await page.evaluate(() => connections.length), 0);
+    assert.match(await page.locator('.lesson-reminder .lesson-error').textContent(), /没有课堂权限/);
+    assert.deepEqual(errors, []);
+});
+
+it('session disposal closes an entry reservation before its delayed REST reply arrives', async t => {
+    const { page, errors } = await fixture(t, { holdMutation: true });
+    await page.locator('[data-lesson-open]').click();
+    await page.locator('[data-lesson-student="5"]').click();
+    await page.locator('[data-lesson-create]').click();
+    await page.waitForFunction(() => !!window.releaseMutation);
+    assert.equal(await page.evaluate(() => mediaStarts), 0);
+    await page.evaluate(() => window.dispatchEvent(new Event('onebyone:session-ended')));
+    assert.equal(await page.evaluate(() => desktopReservations[0].cancelled), true);
+    await page.evaluate(() => releaseMutation({ lesson: { ...rows[0], _id: 'late-classroom' } }));
+    await page.waitForFunction(() => window.mutationReplyDelivered);
+    assert.equal(await page.evaluate(() => mediaStarts), 0);
+    assert.equal(await page.evaluate(() => connections.length), 0);
+    assert.deepEqual(errors, []);
+});
+
 it('a teacher enters immediately, waits for learner consent, and switches sharing without restarting media', async t => {
     const { page, errors } = await fixture(t);
     await page.locator('[data-lesson-open]').click();
@@ -143,6 +183,8 @@ it('a teacher enters immediately, waits for learner consent, and switches sharin
     await page.screenshot({ path: path.join(os.tmpdir(), 'onebyone-lesson-picker.png') });
     await page.locator('[data-lesson-create]').click();
     await page.waitForFunction(() => mediaStarts === 1 && connections.length === 1 && mediaConnections.includes(true));
+    assert.deepEqual(await page.evaluate(() => desktopEvents.slice(0, 3)), ['prepare', 'request:create', 'start']);
+    assert.equal(await page.evaluate(() => startedReservation === desktopReservations[0] && !startedReservation.cancelled), true);
     assert.equal(await page.evaluate(() => shareEvents.length), 0, 'unaccepted invitations do not start sharing');
     await page.evaluate(() => {
         rows[0].studentJoined = true;

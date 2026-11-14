@@ -1,4 +1,4 @@
-import { mountLessonMedia } from './media';
+import { mountLessonMedia, type LessonDesktopReservation } from './media';
 
 export interface Lesson {
   _id: string; domainId: string; workspaceId: string; teacherUid: number; studentUid: number;
@@ -76,6 +76,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   let sharedLesson = '';
   let currentMode: 'broadcast' | 'assist' = 'broadcast';
   let currentCardSignature = '';
+  const pendingDesktop = new Set<LessonDesktopReservation>();
   const tabKey = `onebyone.lesson.tab:${config.uid}`;
   let tabId = '';
   try { tabId = sessionStorage.getItem(tabKey) || ''; } catch { /* Media still has an in-memory identity. */ }
@@ -368,8 +369,18 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     const old = socket; socket = null;
     if (old) { old.onclose = old.onerror = old.onmessage = old.onopen = null; old.close(); }
   }
+  function prepareDesktop() {
+    const reservation = media.prepareDesktop();
+    if (reservation) pendingDesktop.add(reservation);
+    return reservation;
+  }
+  function cancelPendingDesktop() {
+    for (const reservation of pendingDesktop) media.cancelDesktop(reservation);
+    pendingDesktop.clear();
+  }
   function stopActive(message = '') {
     generation++; dataRevision++; active = null; joining = false; reconnectAttempt = 0;
+    cancelPendingDesktop();
     closeSocket(); stopSharing(); media.stop(); lessonBar.hidden = true;
     if (message) showMessage(message);
     renderRoster(); renderSchedules();
@@ -423,15 +434,16 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
       showMessage('课堂连接失败，请离开后重新加入。');
     }
   }
-  async function enterLesson(lesson: Lesson) {
-    if (disposed) return;
+  async function enterLesson(lesson: Lesson, desktop?: LessonDesktopReservation) {
+    if (disposed) return false;
     dataRevision++;
     active = lesson; reminderLesson = null;
     if (reminder.open) reminder.close(); if (dialog.open) dialog.close();
     renderActive(); renderSchedules();
     // Only this user-initiated path starts media. Polling and reminders never do.
-    void media.start(lesson).catch(cause => { if (active?._id === lesson._id) showMessage(errorText(cause)); });
+    void media.start(lesson, desktop).catch(cause => { if (active?._id === lesson._id) showMessage(errorText(cause)); });
     connect();
+    return true;
   }
   async function join(lesson: Lesson) {
     if (joining || active || busy || disposed) return;
@@ -440,15 +452,21 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     joining = true; enter.disabled = true; enter.textContent = '正在进入…';
     reminderError.hidden = true; renderSchedules();
     const version = generation;
+    const desktop = prepareDesktop();
+    let transferred = false;
     try {
       const result = await api({ operation: 'join', lessonId: lesson._id });
       if (disposed || version !== generation || !result.lesson) return;
-      replaceLesson(result.lesson); await enterLesson(result.lesson);
+      replaceLesson(result.lesson); transferred = await enterLesson(result.lesson, desktop);
     } catch (cause) {
       if (disposed) return;
       const text = errorText(cause); showMessage(text);
       reminderError.textContent = text; reminderError.hidden = false;
-    } finally { joining = false; enter.disabled = false; enter.textContent = '点击上课'; if (!disposed) { renderSchedules(); applyPageScope(); } }
+    } finally {
+      if (desktop) { pendingDesktop.delete(desktop); if (!transferred) media.cancelDesktop(desktop); }
+      joining = false; enter.disabled = false; enter.textContent = '点击上课';
+      if (!disposed) { renderSchedules(); applyPageScope(); }
+    }
   }
   async function create() {
     if (busy || active || !selection || disposed) return;
@@ -464,16 +482,19 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     dataRevision++;
     busy = true; close.disabled = true; immediate.disabled = reserve.disabled = true; renderRoster();
     const version = generation;
+    const desktop = booking ? undefined : prepareDesktop();
+    let transferred = false;
     try {
       const result = await api({ operation: 'create', studentUid: selection, ...(startAt ? { startAt } : {}),
         durationMinutes: Number(duration.value), title: lessonTitle.value.trim() || '一对一课堂' });
       if (disposed || generation !== version || !result.lesson) return;
       replaceLesson(result.lesson);
       if (booking) { dialog.close(); showMessage(`已预约 ${timeText(result.lesson.startAt)}，到时提醒学员上课。`); }
-      else await enterLesson(result.lesson);
+      else transferred = await enterLesson(result.lesson, desktop);
     } catch (cause) {
       if (!disposed) { formError.textContent = errorText(cause); formError.hidden = false; }
     } finally {
+      if (desktop) { pendingDesktop.delete(desktop); if (!transferred) media.cancelDesktop(desktop); }
       busy = false; close.disabled = false; immediate.disabled = reserve.disabled = false;
       if (!disposed) { renderRoster(); renderSchedules(); applyPageScope(); }
     }
@@ -571,7 +592,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   }, 1000);
   function dispose() {
     if (disposed) return;
-    disposed = true; generation++; closeSocket(); stopSharing(); media.dispose();
+    disposed = true; generation++; cancelPendingDesktop(); closeSocket(); stopSharing(); media.dispose();
     clearTimeout(pollTimer); clearTimeout(messageTimer); clearInterval(pulse); clearInterval(clock);
     fetches.forEach(abort => abort.abort()); fetches.clear();
     disposers.forEach(remove => remove()); contentRelease?.(); clearHomeCards();

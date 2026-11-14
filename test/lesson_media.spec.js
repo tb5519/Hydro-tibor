@@ -18,7 +18,7 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
 function fixture(t, options = {}) {
     const dom = new JSDOM('<main>学习页面</main>', { url: 'https://onebyone.test/', pretendToBeVisual: true });
     const { window } = dom;
-    const sent = []; const captures = []; const streams = []; const audioFrames = [];
+    const sent = []; const captures = []; const streams = []; const audioFrames = []; const encodes = [];
     let now = Date.now(); let intervalId = 0;
     const intervals = new Map();
     if (options.manualClock) {
@@ -70,7 +70,7 @@ function fixture(t, options = {}) {
         fillRect() {}, clearRect() {}, drawImage() {}, fillText() {}, save() {}, restore() {},
         measureText: () => ({ width: 20 }),
     });
-    window.HTMLCanvasElement.prototype.toDataURL = () => jpeg;
+    window.HTMLCanvasElement.prototype.toDataURL = function(type, quality) { encodes.push({ width: this.width, height: this.height, quality }); return options.encodeFrame ? options.encodeFrame(this.width, this.height, quality) : jpeg; };
     const module = { exports: {} };
     const code = transformSync(fs.readFileSync(source, 'utf8'), { loader: 'ts', format: 'cjs' }).code;
     vm.runInNewContext(code, {
@@ -86,15 +86,16 @@ function fixture(t, options = {}) {
             throw new Error(`Unexpected import: ${name}`);
         },
     });
-    const media = module.exports.mountLessonMedia({ uid: lesson.teacherUid }, {
-        send(message) { sent.push(message); return true; }, onLeave() { left++; },
+    const media = module.exports.mountLessonMedia({ uid: options.uid || lesson.teacherUid }, {
+        send(message) { if (options.sendBlocked) return false; sent.push(message); return true; }, onLeave() { left++; },
         audioFactory(value) { audioOptions = value; return audio; },
     });
+    const root = window.document.querySelector('[data-lesson-media]');
     t.after(() => { media.dispose(); window.close(); });
-    return { window, document: window.document, media, sent, captures, streams, audio, audioFrames,
+    return { window, document: window.document, media, sent, captures, streams, audio, audioFrames, encodes,
         resolveCamera: () => delayedResolve?.(), sendAudio: (data) => audioOptions.onFrame(data),
         advance(milliseconds) { now += milliseconds; for (const interval of intervals.values()) interval.callback(); },
-        get root() { return window.document.querySelector('[data-lesson-media]'); },
+        get root() { return root; },
         get audioStarts() { return audioStarts; }, get audioStops() { return audioStops; },
         get audioResets() { return audioResets; }, get left() { return left; } };
 }
@@ -169,8 +170,7 @@ it('document Picture-in-Picture moves the real controls into an OS window and re
     f.window.documentPictureInPicture = { async requestWindow() { requests++; return pip.window; } };
     t.after(originalClose);
     await f.media.start(lesson); f.media.setConnected(true);
-    await f.media.openDesktop();
-    assert.equal(requests, 1);
+    assert.equal(requests, 1, 'joining automatically opens desktop floating');
     assert.ok(pip.window.document.querySelector('[data-lesson-media]'));
     assert.equal(f.document.querySelector('[data-lesson-media]'), null, 'there is one set of live controls');
     pip.window.dispatchEvent(new pip.window.Event('pagehide'));
@@ -209,8 +209,7 @@ it('leaving while the OS Picture-in-Picture request is pending closes the late w
     f.window.documentPictureInPicture = { requestWindow() { return new Promise((resolve) => { resolveWindow = resolve; }); } };
     t.after(originalClose);
     await f.media.start(lesson); f.media.setConnected(true);
-    const pending = f.media.openDesktop();
-    f.media.stop(); resolveWindow(pip.window); await pending;
+    f.media.stop(); resolveWindow(pip.window); await tick();
     assert.equal(closed, 1); assert.equal(pip.window.document.querySelector('[data-lesson-media]'), null);
     assert.equal(f.root.hidden, true); assert.equal(f.root.ownerDocument, f.document);
 });
@@ -229,4 +228,101 @@ it('an undecoded or stopped video expires and cannot block the next live picture
     assert.equal(remote.getAttribute('src'), jpeg);
     remote.dispatchEvent(new f.window.Event('load'));
     assert.equal(remote.hidden, false);
+});
+
+
+it('reserves an empty desktop window in the join click and only adopts it after authenticated consent', async (t) => {
+    const f = fixture(t);
+    const pip = new JSDOM('<head></head><body></body>', { url: 'https://onebyone.test/' });
+    let calls = 0; let closed = 0;
+    const originalClose = pip.window.close.bind(pip.window);
+    pip.window.close = () => { closed++; pip.window.dispatchEvent(new pip.window.Event('pagehide')); };
+    f.window.documentPictureInPicture = { requestWindow(size) { calls++; assert.equal(size.width, 320); assert(size.height <= 600); return Promise.resolve(pip.window); } };
+    t.after(originalClose);
+    const reservation = f.media.prepareDesktop();
+    assert.equal(calls, 1, 'the browser API runs synchronously, before a REST promise can consume user activation');
+    await tick();
+    assert.equal(f.captures.length, 0); assert.equal(f.audioStarts, 0);
+    assert.equal(pip.window.document.querySelector('video'), null);
+    assert.match(pip.window.document.body.textContent, /正在进入课堂/);
+    await f.media.start(lesson, reservation); await tick();
+    assert.equal(calls, 1, 'start reuses its already opened OS window');
+    assert.equal(closed, 0, 'start cleanup must preserve the reserved desktop');
+    assert.equal(f.root.ownerDocument, pip.window.document);
+    assert.equal(f.root.querySelector('[data-lesson-desktop]').hidden, true, 'normal classes have no floating-mode choice');
+    f.media.stop(); assert.equal(closed, 1); assert.equal(f.root.ownerDocument, f.document);
+});
+
+it('cancelling a failed join closes a late reserved window without opening devices', async (t) => {
+    const f = fixture(t);
+    const pip = new JSDOM('<head></head><body></body>', { url: 'https://onebyone.test/' });
+    const originalClose = pip.window.close.bind(pip.window);
+    let resolveWindow; let closed = 0;
+    pip.window.close = () => { closed++; };
+    f.window.documentPictureInPicture = { requestWindow() { return new Promise(resolve => { resolveWindow = resolve; }); } };
+    t.after(originalClose);
+    const reservation = f.media.prepareDesktop(); f.media.cancelDesktop(reservation); f.media.cancelDesktop(reservation);
+    resolveWindow(pip.window); await tick();
+    assert.equal(closed, 1); assert.equal(f.captures.length, 0); assert.equal(f.audioStarts, 0);
+    assert.equal(f.root.hidden, true); assert.equal(pip.window.document.querySelector('[data-lesson-media]'), null);
+});
+
+it('a browser rejecting automatic floating keeps a visible retry without a return-to-page mode switch', async (t) => {
+    const f = fixture(t);
+    f.window.documentPictureInPicture = { requestWindow() { throw Object.assign(new Error('Browser activation required'), { name: 'NotAllowedError' }); } };
+    const reservation = f.media.prepareDesktop();
+    await f.media.start(lesson, reservation); await tick();
+    const retry = f.root.querySelector('[data-lesson-desktop]');
+    assert.equal(retry.hidden, false); assert.match(retry.textContent, /重新打开悬浮窗/);
+    assert.match(f.root.textContent, /浏览器拦截/); assert.doesNotMatch(f.root.textContent, /返回页面/);
+});
+
+it('teacher stays above learner for either participant and capture targets 1280x720 at 30 fps', async (t) => {
+    for (const uid of [lesson.teacherUid, lesson.studentUid]) {
+        const f = fixture(t, { uid, manualClock: true });
+        await f.media.start(lesson); f.media.setConnected(true);
+        const tiles = f.root.querySelectorAll('.lesson-media__grid > [data-lesson-participant]');
+        assert.deepEqual(Array.from(tiles, tile => tile.dataset.lessonParticipant), ['teacher', 'student']);
+        assert.match(tiles[0].textContent, /唐老师 · 老师/); assert.match(tiles[1].textContent, /橙子 · 学员/);
+        assert.equal(f.captures[0].video.width.ideal, 1280); assert.equal(f.captures[0].video.height.ideal, 720);
+        assert.equal(f.captures[0].video.frameRate.ideal, 30);
+        for (let frame = 0; frame < 30; frame++) f.advance(33);
+        assert.equal(f.sent.filter(message => message.type === 'video').length, 30);
+        assert(f.encodes.every(frame => frame.width === 1280 && frame.height === 720));
+    }
+});
+
+it('complex camera frames reduce quality and dimensions to keep a bounded live byte rate', async (t) => {
+    const frame = length => 'data:image/jpeg;base64,' + 'A'.repeat(length - 23);
+    const f = fixture(t, { manualClock: true, encodeFrame(width, _height, quality) {
+        return frame(width === 1280 ? 180000 : quality > .3 ? 110000 : 70000);
+    } });
+    await f.media.start(lesson); f.media.setConnected(true);
+    for (let i = 0; i < 60; i++) f.advance(33);
+    const frames = f.sent.filter(message => message.type === 'video');
+    assert.equal(frames.length, 60, 'large source frames adapt instead of reducing a 30 fps stream to 4 fps');
+    assert(f.encodes.some(encode => encode.width === 960));
+    assert(f.encodes.some(encode => encode.quality < .3));
+    assert(frames.reduce((sum, message) => sum + message.data.length + 256, 0) <= 3 * 1024 * 1024 * 1.98 + 210000);
+    f.media.stop(); const sent = f.sent.length; f.advance(1000); assert.equal(f.sent.length, sent);
+});
+
+
+it('a hanging desktop request times out to a retry and closes a window that arrives afterwards', async (t) => {
+    const f = fixture(t);
+    const pip = new JSDOM('<head></head><body></body>', { url: 'https://onebyone.test/' });
+    const originalClose = pip.window.close.bind(pip.window);
+    const originalTimeout = f.window.setTimeout.bind(f.window);
+    let expire; let resolveWindow; let closed = 0;
+    f.window.setTimeout = (callback, delay) => { if (delay === 30000) expire = callback; return originalTimeout(callback, delay); };
+    pip.window.close = () => { closed++; };
+    f.window.documentPictureInPicture = { requestWindow() { return new Promise(resolve => { resolveWindow = resolve; }); } };
+    t.after(originalClose);
+    const reservation = f.media.prepareDesktop(); await f.media.start(lesson, reservation);
+    assert.equal(f.root.querySelector('[data-lesson-desktop]').hidden, true);
+    expire(); await tick();
+    assert.equal(f.root.querySelector('[data-lesson-desktop]').hidden, false);
+    assert.equal(f.audio.ready, true, 'a floating-window failure must not terminate permitted lesson devices');
+    resolveWindow(pip.window); await tick();
+    assert.equal(closed, 1); assert.equal(pip.window.document.querySelector('[data-lesson-media]'), null);
 });

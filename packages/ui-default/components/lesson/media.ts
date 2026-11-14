@@ -16,18 +16,29 @@ interface MediaOptions {
 type PictureInPictureWindow = Window & { document: Document };
 type DesktopWindow = Window & { documentPictureInPicture?: { requestWindow(options: { width: number; height: number }): Promise<PictureInPictureWindow> } };
 type PictureVideo = HTMLVideoElement & { webkitSetPresentationMode?: (mode: string) => void };
+export interface LessonDesktopReservation {
+  cancelled: boolean;
+  claimed: boolean;
+  window: PictureInPictureWindow | null;
+  promise: Promise<PictureInPictureWindow>;
+  timer: number;
+  abort?: () => void;
+}
 
-const VIDEO_WIDTH = 320;
-const VIDEO_HEIGHT = 240;
-const VIDEO_INTERVAL = 250;
-const MAX_VIDEO_LENGTH = 32768;
+const VIDEO_WIDTH = 1280;
+const VIDEO_HEIGHT = 720;
+const VIDEO_FPS = 30;
+const VIDEO_INTERVAL = Math.round(1000 / VIDEO_FPS);
+const VIDEO_BYTES_PER_SECOND = 3 * 1024 * 1024;
+const VIDEO_FRAME_TARGET = Math.floor(VIDEO_BYTES_PER_SECOND / VIDEO_FPS) - 256;
+const MAX_VIDEO_LENGTH = 262144;
 const STALE_VIDEO_MS = 1800;
 const PIP_STYLE = `
 *{box-sizing:border-box}body{margin:0;background:#111827;color:#f8fafc;font:13px system-ui,sans-serif}
-.lesson-media{position:static!important;inset:auto!important;transform:none!important;width:100%!important;max-width:none!important;border:0!important;border-radius:0!important;box-shadow:none!important;background:#111827;color:#f8fafc}
+.lesson-media{position:static!important;inset:auto!important;transform:none!important;width:100%!important;max-width:none!important;max-height:100vh;overflow:auto;border:0!important;border-radius:0!important;box-shadow:none!important;background:#111827;color:#f8fafc}
 .lesson-media__header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;font-size:13px}.lesson-media__header strong{font-size:14px}
-.lesson-media__eyebrow{color:#a5b4fc;font-size:10px;margin-right:8px}.lesson-media__grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:0 8px}
-.lesson-media__tile{position:relative;aspect-ratio:4/3;background:#243044;border-radius:9px;overflow:hidden;display:grid;place-items:center}
+.lesson-media__eyebrow{color:#a5b4fc;font-size:10px;margin-right:8px}.lesson-media__grid{display:grid;grid-template-columns:1fr;gap:6px;padding:0 8px}
+.lesson-media__tile{position:relative;aspect-ratio:16/9;background:#243044;border-radius:9px;overflow:hidden;display:grid;place-items:center}
 .lesson-media__tile video,.lesson-media__tile img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.lesson-media__tile video{transform:scaleX(-1)}
 .lesson-media__placeholder{color:#cbd5e1;font-size:12px;padding:16px;text-align:center}.lesson-media__name{position:absolute;bottom:5px;left:5px;border-radius:5px;background:#111827cc;padding:3px 6px;font-size:11px}
 .lesson-media__status{font-size:11px;color:#cbd5e1;padding:7px 10px;margin:0;line-height:1.5}.lesson-media__controls{padding:0 8px 8px;display:flex;gap:5px;flex-wrap:wrap}
@@ -67,7 +78,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   const localPlaceholder = el('span', 'lesson-media__placeholder', '摄像头未开启');
   const localVideo = el('video'); localVideo.dataset.lessonLocalVideo = ''; localVideo.autoplay = true;
   localVideo.muted = true; localVideo.playsInline = true; localVideo.hidden = true;
-  localTile.append(localPlaceholder, localVideo, el('span', 'lesson-media__name', '我')); grid.append(remoteTile, localTile);
+  const localName = el('span', 'lesson-media__name', '我'); localTile.append(localPlaceholder, localVideo, localName); grid.append(localTile, remoteTile);
   const status = el('p', 'lesson-media__status'); status.dataset.lessonMediaStatus = ''; status.setAttribute('role', 'status');
   const controls = el('div', 'lesson-media__controls');
   const control = (label: string, attribute: string) => {
@@ -75,7 +86,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   };
   const camera = control('开启摄像头', 'data-lesson-camera');
   const microphone = control('开启麦克风', 'data-lesson-microphone');
-  const desktop = control('桌面悬浮', 'data-lesson-desktop');
+  const desktop = control('重新打开悬浮窗', 'data-lesson-desktop'); desktop.hidden = true;
   const retry = control('重试设备', 'data-lesson-device-retry'); retry.hidden = true;
   const leave = control('离开课堂', 'data-lesson-media-leave'); leave.className = 'is-danger';
   root.append(header, grid, status, controls); doc.body.append(root);
@@ -104,6 +115,13 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   let drag: { x: number; y: number; left: number; top: number; pointerId: number } | null = null;
   let pip: PictureInPictureWindow | null = null;
   let pipPending = false;
+  let desktopReservation: LessonDesktopReservation | null = null;
+  const reservations = new Set<LessonDesktopReservation>();
+  let captureBudget = VIDEO_FRAME_TARGET * 2;
+  let captureBudgetAt = Date.now();
+  let jpegQuality = .72;
+  let captureTimer = 0;
+  let captureTimerWindow: Window = win;
   let fallbackVideo: PictureVideo | null = null;
   let fallbackStream: MediaStream | null = null;
   let composite: HTMLCanvasElement | null = null;
@@ -123,7 +141,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
     camera.textContent = cameraOn ? '关闭摄像头' : '开启摄像头'; camera.setAttribute('aria-pressed', String(cameraOn)); camera.disabled = cameraStarting;
     microphone.textContent = !audio.ready ? '开启麦克风' : muted ? '打开声音' : '静音';
     microphone.setAttribute('aria-pressed', String(audio.ready && !muted)); microphone.disabled = audioStarting;
-    desktop.textContent = pip || fallbackVideo ? '返回页面' : '桌面悬浮'; desktop.disabled = pipPending;
+    desktop.hidden = !!pip || !!fallbackVideo || pipPending || !desktopFailure; desktop.disabled = pipPending;
     retry.hidden = !cameraFailure && !audioFailure && (!!cameraStream || !cameraWanted) && audio.ready;
     peerLabel.textContent = peerOnline ? '双方已连接' : '等待对方';
     const base = !connected ? '正在连接课堂，连接恢复后可点击重试设备。'
@@ -152,7 +170,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
     try {
       if (!win.isSecureContext || !navigator.mediaDevices?.getUserMedia) throw new Error('摄像头需要 HTTPS 或本机 localhost 安全连接。');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: {
-        width: { ideal: VIDEO_WIDTH }, height: { ideal: VIDEO_HEIGHT }, frameRate: { ideal: 6, max: 10 }, facingMode: 'user',
+        width: { ideal: VIDEO_WIDTH }, height: { ideal: VIDEO_HEIGHT }, frameRate: { ideal: 30, max: 30 }, facingMode: 'user',
       } });
       if (attempt !== generation || disposed || !current || !cameraWanted) { stream.getTracks().forEach((track) => track.stop()); return; }
       cameraStream = stream; localVideo.srcObject = stream;
@@ -181,7 +199,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   }
   function restorePanel() {
     if (root.ownerDocument !== doc && !disposed) doc.body.append(root);
-    pip = null; root.classList.remove('is-desktop'); render();
+    pip = null; root.classList.remove('is-desktop'); startCaptureClock(win); render();
     if (position) place(position);
   }
   function closeDesktop() {
@@ -197,67 +215,127 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
     stopFallback();
   }
   function drawComposite() {
-    if (!composite) return;
+    if (!composite || !current) return;
     const context = composite.getContext('2d'); if (!context) return;
-    context.fillStyle = '#111827'; context.fillRect(0, 0, 640, 264);
-    const image = (source: CanvasImageSource, left: number, enabled: boolean) => {
+    context.fillStyle = '#111827'; context.fillRect(0, 0, 320, 408);
+    const isTeacher = config.uid === current.teacherUid;
+    const image = (source: CanvasImageSource, top: number, enabled: boolean) => {
       if (!enabled) return;
-      try { context.drawImage(source, left, 0, 320, 240); } catch { /* First frame may still be decoding. */ }
+      try { context.drawImage(source, 0, top, 320, 180); } catch { /* First frame may still be decoding. */ }
     };
-    image(remoteVideo, 0, !remoteVideo.hidden && remoteVideo.complete && remoteVideo.naturalWidth > 0);
-    image(localVideo, 320, !!cameraStream && localVideo.readyState >= 2);
+    image(localVideo, isTeacher ? 0 : 204, !!cameraStream && localVideo.readyState >= 2);
+    image(remoteVideo, isTeacher ? 204 : 0, !remoteVideo.hidden && remoteVideo.complete && remoteVideo.naturalWidth > 0);
     context.fillStyle = '#f8fafc'; context.font = '14px sans-serif';
-    context.fillText(remoteName.textContent || '对方', 10, 258); context.fillText('我', 330, 258);
+    context.fillText(`${current.teacherName} · 老师`, 10, 198);
+    context.fillText(`${current.studentName} · 学员`, 10, 402);
   }
-  async function openDesktop() {
-    if (!current || disposed || pipPending) return;
-    if (pip || fallbackVideo) { closeDesktop(); render(); return; }
-    const attempt = generation;
+  function cancelDesktop(reservation?: LessonDesktopReservation) {
+    if (!reservation || reservation.cancelled) return;
+    reservation.cancelled = true; reservations.delete(reservation); win.clearTimeout(reservation.timer); reservation.abort?.();
+    if (desktopReservation === reservation) desktopReservation = null;
+    try { reservation.window?.close(); } catch { /* The user may already have closed it. */ }
+  }
+  function prepareDesktop(): LessonDesktopReservation | undefined {
+    if (disposed) return;
+    const picture = (win as DesktopWindow).documentPictureInPicture;
+    if (!picture?.requestWindow) return;
+    const reservation: LessonDesktopReservation = { cancelled: false, claimed: false, window: null,
+      promise: null as unknown as Promise<PictureInPictureWindow>, timer: 0 };
+    reservations.add(reservation);
+    // This call must run synchronously in the join click, before its REST await.
+    try { reservation.promise = picture.requestWindow({ width: 320, height: 520 }); }
+    catch (cause) { reservation.promise = Promise.reject(cause); }
+    const request = reservation.promise.then(next => {
+      reservation.window = next;
+      if (disposed || reservation.cancelled || next.closed) { next.close(); return next; }
+      const style = next.document.createElement('style'); style.textContent = PIP_STYLE; next.document.head.append(style);
+      next.document.title = 'OneByOne 上课';
+      const waiting = next.document.createElement('p'); waiting.textContent = '正在进入课堂…';
+      waiting.style.cssText = 'padding:24px;margin:0;color:#cbd5e1'; next.document.body.append(waiting);
+      next.addEventListener('pagehide', () => {
+        reservation.cancelled = true; reservations.delete(reservation); win.clearTimeout(reservation.timer);
+        if (desktopReservation === reservation) desktopReservation = null;
+        if (pip === next) {
+          desktopFailure = current ? '桌面悬浮已关闭，可点击重新打开悬浮窗。' : '';
+          restorePanel();
+        }
+      }, { once: true });
+      return next;
+    });
+    const cancelled = new Promise<PictureInPictureWindow>((_resolve, reject) => {
+      reservation.abort = () => reject(new Error('桌面悬浮未能开启，请点击重新打开悬浮窗。'));
+    });
+    reservation.promise = Promise.race([request, cancelled]);
+    // A rejected browser request is inspected on join, never an unhandled rejection.
+    void reservation.promise.catch(() => {});
+    reservation.timer = win.setTimeout(() => {
+      if (!reservation.window || !reservation.claimed) cancelDesktop(reservation);
+    }, 30000);
+    return reservation;
+  }
+  async function adoptDesktop(reservation: LessonDesktopReservation, attempt = generation) {
+    reservation.claimed = true; desktopReservation = reservation;
     desktopFailure = ''; pipPending = true; render();
     try {
-      const picture = (win as DesktopWindow).documentPictureInPicture;
-      if (picture?.requestWindow) {
-        // requestWindow executes before the first await, preserving user activation.
-        const next = await picture.requestWindow({ width: 440, height: 275 });
-        if (disposed || !current || generation !== attempt) { next.close(); return; }
-        pip = next;
-        const style = next.document.createElement('style'); style.textContent = PIP_STYLE; next.document.head.append(style);
-        next.document.title = 'OneByOne 上课'; next.document.body.append(root); root.classList.add('is-desktop');
-        next.addEventListener('pagehide', () => { if (pip === next) restorePanel(); }, { once: true });
-      } else {
-        // Standard video PiP supports one <video>. Compose both cameras into a
-        // transient live stream; no recording or MediaRecorder is involved.
-        composite = doc.createElement('canvas'); composite.width = 640; composite.height = 264;
-        if (!composite.captureStream) throw new Error('当前浏览器不支持桌面悬浮，请使用支持画中画的浏览器。');
-        const video = el('video', 'lesson-media__pip-composite') as PictureVideo;
-        video.muted = true; video.autoplay = true; video.playsInline = true;
-        if (!video.requestPictureInPicture && !video.webkitSetPresentationMode) throw new Error('当前浏览器不支持桌面悬浮，请使用支持画中画的浏览器。');
-        fallbackStream = composite.captureStream(4); video.srcObject = fallbackStream; fallbackVideo = video; root.append(video);
-        drawComposite(); compositeTimer = win.setInterval(drawComposite, VIDEO_INTERVAL);
-        await video.play();
-        if (disposed || generation !== attempt || !current) { stopFallback(); return; }
-        video.addEventListener('leavepictureinpicture', () => { stopFallback(); render(); }, { once: true });
-        video.addEventListener('webkitpresentationmodechanged', () => {
-          if ((video as PictureVideo & { webkitPresentationMode?: string }).webkitPresentationMode === 'inline') {
-            stopFallback(); render();
-          }
-        });
-        if (video.requestPictureInPicture) await video.requestPictureInPicture();
-        else video.webkitSetPresentationMode!('picture-in-picture');
-        if (disposed || generation !== attempt || !current) closeDesktop();
+      const next = await reservation.promise;
+      win.clearTimeout(reservation.timer);
+      if (disposed || reservation.cancelled || next.closed || !current || generation !== attempt
+        || desktopReservation !== reservation) {
+        if (!disposed && current && generation === attempt && (reservation.cancelled || next.closed)) {
+          desktopFailure = '桌面悬浮已关闭，可点击重新打开悬浮窗。';
+        }
+        cancelDesktop(reservation); return;
       }
+      pip = next; next.document.body.replaceChildren(root); root.classList.add('is-desktop'); startCaptureClock(next);
+    } catch (cause: any) {
+      if (attempt === generation && current && !disposed) {
+        desktopFailure = cause?.name === 'NotAllowedError'
+          ? '浏览器拦截了桌面悬浮，请点击重新打开悬浮窗。' : cause?.message || '桌面悬浮未能开启，请点击重新打开悬浮窗。';
+      }
+      cancelDesktop(reservation);
+    } finally { if (attempt === generation) { pipPending = false; render(); } }
+  }
+  async function openDesktop() {
+    if (!current || disposed || pipPending || pip || fallbackVideo) return;
+    const attempt = generation;
+    const reservation = prepareDesktop();
+    if (reservation) { await adoptDesktop(reservation, attempt); return; }
+    desktopFailure = ''; pipPending = true; render();
+    try {
+      // Standard video PiP displays a live, vertical canvas containing both cameras.
+      composite = doc.createElement('canvas'); composite.width = 320; composite.height = 408;
+      if (!composite.captureStream) throw new Error('当前浏览器不支持桌面悬浮，请使用支持画中画的浏览器。');
+      const video = el('video', 'lesson-media__pip-composite') as PictureVideo;
+      video.muted = true; video.autoplay = true; video.playsInline = true;
+      if (!video.requestPictureInPicture && !video.webkitSetPresentationMode) throw new Error('当前浏览器不支持桌面悬浮，请使用支持画中画的浏览器。');
+      fallbackStream = composite.captureStream(VIDEO_FPS); video.srcObject = fallbackStream; fallbackVideo = video; root.append(video);
+      drawComposite(); compositeTimer = win.setInterval(drawComposite, VIDEO_INTERVAL);
+      await video.play();
+      if (disposed || generation !== attempt || !current) { stopFallback(); return; }
+      video.addEventListener('leavepictureinpicture', () => {
+        stopFallback(); desktopFailure = current ? '桌面悬浮已关闭，可点击重新打开悬浮窗。' : ''; render();
+      }, { once: true });
+      video.addEventListener('webkitpresentationmodechanged', () => {
+        if ((video as PictureVideo & { webkitPresentationMode?: string }).webkitPresentationMode === 'inline') {
+          stopFallback(); desktopFailure = current ? '桌面悬浮已关闭，可点击重新打开悬浮窗。' : ''; render();
+        }
+      });
+      if (video.requestPictureInPicture) await video.requestPictureInPicture();
+      else video.webkitSetPresentationMode!('picture-in-picture');
+      if (disposed || generation !== attempt || !current) closeDesktop();
     } catch (cause: any) {
       closeDesktop();
-      desktopFailure = cause?.name === 'NotAllowedError' ? '请点击“桌面悬浮”按钮，并允许浏览器打开画中画。'
-        : cause?.message || '桌面悬浮未能开启，请再点击一次。';
-    } finally { pipPending = false; render(); }
+      desktopFailure = cause?.name === 'NotAllowedError' ? '浏览器拦截了桌面悬浮，请点击重新打开悬浮窗。'
+        : cause?.message || '桌面悬浮未能开启，请点击重新打开悬浮窗。';
+    } finally { if (attempt === generation) { pipPending = false; render(); } }
   }
-  function release() {
+  function release(preserve?: LessonDesktopReservation) {
+    for (const reservation of reservations) if (reservation !== preserve) cancelDesktop(reservation);
     generation++; cameraStarting = false; audioStarting = false; pipPending = false;
     stopCamera(); audio.stop(); clearRemote(); closeDesktop();
   }
-  function stop() {
-    release(); current = null; connected = false; peerOnline = false; root.hidden = true;
+  function stop(preserve?: LessonDesktopReservation) {
+    release(preserve); current = null; connected = false; peerOnline = false; root.hidden = true;
   }
   camera.addEventListener('click', () => {
     if (!current) return;
@@ -293,15 +371,44 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   });
   const resize = () => { if (position && !pip) place(position); };
   win.addEventListener('resize', resize);
-  const captureTimer = win.setInterval(() => {
+  function captureFrame() {
     if (!current || disposed || !connected || !cameraStream || localVideo.readyState < 2) return;
+    const now = Date.now();
+    captureBudget = Math.min(VIDEO_FRAME_TARGET * 2,
+      captureBudget + Math.max(0, now - captureBudgetAt) * VIDEO_BYTES_PER_SECOND / 1000);
+    captureBudgetAt = now;
+    const limit = Math.min(VIDEO_FRAME_TARGET, Math.floor(captureBudget) - 256);
+    if (limit < 2048) return;
     try {
-      captureContext ||= captureCanvas.getContext('2d'); if (!captureContext) return;
-      captureContext.drawImage(localVideo, 0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
-      const data = captureCanvas.toDataURL('image/jpeg', .5);
-      if (data.length <= MAX_VIDEO_LENGTH) options.send({ type: 'video', lessonId: current._id, seq: sequence++, data });
+      let data = '';
+      let quality = jpegQuality;
+      // Keep a steady cadence within a byte budget instead of queuing large frames.
+      for (const [width, height] of [[VIDEO_WIDTH, VIDEO_HEIGHT], [960, 540], [640, 360]]) {
+        if (captureCanvas.width !== width) captureCanvas.width = width;
+        if (captureCanvas.height !== height) captureCanvas.height = height;
+        captureContext ||= captureCanvas.getContext('2d'); if (!captureContext) return;
+        captureContext.drawImage(localVideo, 0, 0, width, height);
+        for (let attempt = 0; attempt < 4; attempt++) {
+          data = captureCanvas.toDataURL('image/jpeg', quality);
+          if (data.length <= limit) break;
+          quality = Math.max(.18, quality * .7);
+        }
+        if (data.length <= limit) break;
+        quality = .4;
+      }
+      if (data.length > limit || data.length > MAX_VIDEO_LENGTH) return;
+      if (options.send({ type: 'video', lessonId: current._id, seq: sequence++, data })) {
+        captureBudget -= data.length + 256;
+        jpegQuality = Math.min(.72, quality + .02);
+      }
     } catch { /* Drop an undecoded or oversize frame, never queue stale video. */ }
-  }, VIDEO_INTERVAL);
+  }
+  function startCaptureClock(host: Window) {
+    try { captureTimerWindow.clearInterval(captureTimer); } catch { /* Its desktop window may already be gone. */ }
+    captureTimerWindow = host;
+    if (!disposed) captureTimer = host.setInterval(captureFrame, VIDEO_INTERVAL);
+  }
+  startCaptureClock(win);
   const staleTimer = win.setInterval(() => {
     if (remoteAt && Date.now() - remoteAt > STALE_VIDEO_MS) {
       remoteVideo.removeAttribute('src'); remoteVideo.hidden = true; remotePlaceholder.hidden = false;
@@ -317,12 +424,19 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   remoteVideo.addEventListener('error', () => { remotePending = false; remoteVideo.hidden = true; remotePlaceholder.hidden = false; });
 
   return {
-    async start(lesson: LessonMediaRoom, _isTeacher?: boolean) {
+    async start(lesson: LessonMediaRoom, reservation?: LessonDesktopReservation) {
       if (disposed) return;
-      stop(); current = lesson; cameraWanted = true; muted = false;
+      stop(reservation); current = lesson; cameraWanted = true; muted = false;
       cameraFailure = ''; audioFailure = ''; desktopFailure = ''; root.hidden = false;
-      remoteName.textContent = config.uid === lesson.teacherUid ? lesson.studentName : lesson.teacherName;
+      const isTeacher = config.uid === lesson.teacherUid;
+      localName.textContent = `${isTeacher ? lesson.teacherName : lesson.studentName} · ${isTeacher ? '老师' : '学员'}`;
+      remoteName.textContent = `${isTeacher ? lesson.studentName : lesson.teacherName} · ${isTeacher ? '学员' : '老师'}`;
+      localTile.dataset.lessonParticipant = isTeacher ? 'teacher' : 'student';
+      remoteTile.dataset.lessonParticipant = isTeacher ? 'student' : 'teacher';
+      grid.replaceChildren(...(isTeacher ? [localTile, remoteTile] : [remoteTile, localTile]));
+      captureBudget = VIDEO_FRAME_TARGET * 2; captureBudgetAt = Date.now(); jpegQuality = .72;
       leave.textContent = config.uid === lesson.teacherUid ? '结束上课' : '离开课堂'; render();
+      if (reservation) void adoptDesktop(reservation); else void openDesktop();
       await Promise.all([startCamera(), startAudio()]);
     },
     receive(message: any) {
@@ -359,11 +473,15 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
       else audio.setTransmitting(audio.ready);
       render();
     },
+    prepareDesktop,
+    cancelDesktop,
     openDesktop,
     stop,
     dispose() {
       if (disposed) return;
-      stop(); disposed = true; win.clearInterval(captureTimer); win.clearInterval(staleTimer);
+      stop(); disposed = true;
+      try { captureTimerWindow.clearInterval(captureTimer); } catch { /* Its desktop window may already be gone. */ }
+      win.clearInterval(staleTimer);
       win.removeEventListener('resize', resize); root.remove();
     },
   };
