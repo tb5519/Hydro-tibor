@@ -67,6 +67,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
   const connectionVersions = new Map<string, number>();
   const pendingEdits = new Map<string, number>();
   let ending = false;
+  let endedLessonAnnotations = '';
   let afterSync: (() => void) | null = null;
   let endTimer = 0;
   let backupNotice: HTMLElement | null = null;
@@ -284,6 +285,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     saveResume(null); pendingStart = 0; deferredStart = null;
     closeView(); clearSource(); closeRoster();
     if (current) clearSessionAnnotations(current.connectionId || current.sessionId);
+    if (endedLessonAnnotations) { clearSessionAnnotations(endedLessonAnnotations); endedLessonAnnotations = ''; }
     showBackups();
   }
   function finishSync() {
@@ -505,7 +507,9 @@ export function installLiveShare(config: LiveShareConfig, options: {
       const frameRoot = el('div', 'live-share-frames');
       frameRoot.style.cssText = 'position:absolute;inset:0;pointer-events:none;overflow:hidden';
       stage.append(mirrorRoot, frameRoot, editorRoot);
-      const annotationScope = next.pageUrl ? { sessionId: `${next.connectionId || next.sessionId}:assist:${next.studentUid}`, url: next.pageUrl } : undefined;
+      const annotationId = lessonLink?.owns && !lessonLink.cancelled && lessonLink.studentUid === next.studentUid
+        ? `classroom:${uid}:${lessonLink.lessonId}` : next.connectionId || next.sessionId;
+      const annotationScope = next.pageUrl ? { sessionId: `${annotationId}:assist:${next.studentUid}`, url: next.pageUrl } : undefined;
       viewerMirror = adapters.attachViewerMirror({ pageId: next.pageId, container: mirrorRoot,
         annotationScope,
         onDocument: adapters.attachIdeCapacityMirror,
@@ -954,7 +958,10 @@ export function installLiveShare(config: LiveShareConfig, options: {
     if (deferredStart?.studentUid === lessonLink.studentUid) deferredStart = null;
     if (pendingStart === lessonLink.studentUid) pendingStart = 0;
     const current = viewing;
-    if (current && (current.connectionId || current.sessionId) === lessonLink.connectionId) endSharing();
+    if (current && (current.connectionId || current.sessionId) === lessonLink.connectionId) {
+      if (event.detail.clearAnnotations) endedLessonAnnotations = `classroom:${uid}:${lessonLink.lessonId}`;
+      endSharing();
+    } else if (event.detail.clearAnnotations) clearSessionAnnotations(`classroom:${uid}:${lessonLink.lessonId}`);
     // The broadcast listener owns its own stop/late-ack handling. Switching
     // direction keeps connectionId, so a late new direction is stopped above.
   });
@@ -1087,5 +1094,6 @@ export function installLiveShare(config: LiveShareConfig, options: {
   // A small independent chunk enables the local teacher pen without loading
   // rrweb, collaboration editors or opening a room on every teacher page.
   installLocalDrawing();
+  window.dispatchEvent(new CustomEvent('onebyone:lesson-share-ready', { detail: { uid } }));
   return cleanup;
 }

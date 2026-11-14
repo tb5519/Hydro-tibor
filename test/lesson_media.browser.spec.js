@@ -104,6 +104,23 @@ it('joining automatically opens a real Document Picture-in-Picture window and su
     assert.equal(stats.camera.width, 1280); assert.equal(stats.camera.height, 720); assert(stats.camera.frameRate >= 25);
     assert.deepEqual(stats.roles, ['teacher', 'student']); assert(stats.top < stats.bottom);
     assert.equal(stats.toggleVisible, false);
+    const recovery = await page.evaluate(async () => {
+        const pip = documentPictureInPicture.window;
+        const video = pip.document.querySelector('[data-lesson-local-video]');
+        const stream = video.srcObject; const track = stream.getVideoTracks()[0];
+        media.setConnected(false);
+        const pausedAt = sent.length;
+        await new Promise(resolve => pip.setTimeout(resolve, 180));
+        const pausedFrames = sent.length - pausedAt;
+        media.setConnected(true); media.receive({ type: 'peer', online: true });
+        await new Promise(resolve => pip.setTimeout(resolve, 200));
+        return { pausedFrames, sameWindow: documentPictureInPicture.window === pip,
+            sameStream: video.srcObject === stream, sameTrack: video.srcObject.getVideoTracks()[0] === track,
+            trackState: track.readyState, resumed: sent.slice(pausedAt).map(message => message.type) };
+    });
+    assert.equal(recovery.pausedFrames, 0);
+    assert.equal(recovery.sameWindow, true); assert.equal(recovery.sameStream, true); assert.equal(recovery.sameTrack, true);
+    assert.equal(recovery.trackState, 'live'); assert(recovery.resumed.includes('video')); assert(recovery.resumed.includes('audio'));
     await page.evaluate(() => documentPictureInPicture.window.close());
     await page.waitForFunction(() => !!document.querySelector('[data-lesson-media]'));
     await page.locator('[data-lesson-media-leave]').click(); assert.deepEqual(errors, []);

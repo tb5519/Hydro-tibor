@@ -60,8 +60,8 @@ function fixture(t, options = {}) {
         loadSourceAdapters: async () => { if (options.loadGate) await options.loadGate.promise; return adapters; },
     });
     window.addEventListener('onebyone:lesson-share-state', (event) => states.push({ ...event.detail }));
-    const dispatch = (name, lessonId = 'lesson-one', studentUid = 10) => {
-        window.dispatchEvent(new window.CustomEvent(`onebyone:lesson-share-${name}`, { detail: { lessonId, studentUid } }));
+    const dispatch = (name, lessonId = 'lesson-one', studentUid = 10, detail = {}) => {
+        window.dispatchEvent(new window.CustomEvent(`onebyone:lesson-share-${name}`, { detail: { lessonId, studentUid, ...detail } }));
     };
     const started = (sessionId = 'own-broadcast-123', studentUids = [10]) => controller.receive({ type: 'broadcast:started',
         sessionId, pageId: 'teacher-page-123', teacherUid: 2, teacherName: '唐老师', studentUids });
@@ -210,4 +210,40 @@ test('learners and invalid invite targets cannot activate the teacher share brid
     const teacher = fixture(t);
     teacher.dispatch('start', 'lesson-one', 0); teacher.dispatch('start', 'lesson-one', '10'); await flush();
     assert.equal(teacher.sent.length, 0); assert.equal(teacher.states.length, 0);
+});
+
+test('a reconnecting lesson renews its share deadline instead of inheriting an expired attempt', async (t) => {
+    const h = fixture(t, { ready: false });
+    h.dispatch('start'); await h.advance(18000);
+    h.dispatch('start'); await h.advance(3000);
+    assert(!h.states.some(state => state.state === 'error'));
+    h.setReady(true); await h.advance(400);
+    assert.deepEqual(h.sent.at(-1), { type: 'broadcast:start', studentUids: [10] });
+});
+
+test('a long classroom share interruption requests automatic repair and retains its lesson annotation scope', async (t) => {
+    const h = fixture(t);
+    h.dispatch('start'); await flush(); h.started('before-disconnect'); await flush();
+    const scope = h.sources[0].annotationScope.sessionId;
+    h.controller.setConnected(false); h.setReady(false);
+    await h.advance(125001);
+    assert.equal(h.controller.currentRoom, null);
+    assert(h.states.some(state => state.state === 'ended' && state.lessonId === 'lesson-one'));
+    h.setReady(true); h.dispatch('start'); await flush();
+    assert.equal(h.sent.at(-1).type, 'broadcast:start');
+    h.started('after-disconnect'); await flush();
+    assert.equal(h.sources.at(-1).annotationScope.sessionId, scope);
+    assert(scope.includes('lesson-one'));
+    assert(!h.sent.some(message => message.type === 'broadcast:stop'), 'a network outage is not a classroom hangup');
+});
+
+test('only a real classroom end clears the stable classroom annotation drafts after disposing its recorder', async (t) => {
+    const h = fixture(t);
+    h.dispatch('start'); await flush(); h.started(); await flush();
+    h.dispatch('stop', 'lesson-one', 10, { clearAnnotations: true });
+    assert(h.cleared.includes('classroom:2:lesson-one'));
+    const handover = fixture(t);
+    handover.dispatch('start'); await flush(); handover.started(); await flush();
+    handover.dispatch('stop', 'lesson-one', 10, { clearAnnotations: false });
+    assert(!handover.cleared.includes('classroom:2:lesson-one'));
 });

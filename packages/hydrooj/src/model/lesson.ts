@@ -15,7 +15,11 @@ export interface Lesson {
 }
 export interface LessonMember {
     _id: number; lessonId: string; tabId: string; joinedAt: Date; expiresAt: Date;
-    connectionId?: string; serverId?: string; connected?: boolean;
+    connectionId?: string; serverId?: string; connected?: boolean; ownerVersion?: number;
+}
+interface LessonResumption {
+    _id: number; lessonId: string | null; domainId?: string; tabId?: string;
+    version: number; accepted: boolean; joinedAt?: Date;
 }
 interface BookingSlot { _id: string; lessonId: string; expiresAt: Date }
 export interface LessonEvent {
@@ -23,7 +27,10 @@ export interface LessonEvent {
     message: Record<string, any>;
 }
 declare module '../service/db' {
-    interface Collections { 'lesson.room': Lesson; 'lesson.member': LessonMember; 'lesson.booking.slot': BookingSlot }
+    interface Collections {
+        'lesson.room': Lesson; 'lesson.member': LessonMember; 'lesson.booking.slot': BookingSlot;
+        'lesson.resume': LessonResumption;
+    }
 }
 declare module '../service/bus' {
     interface EventMap { 'lesson/event': (event: LessonEvent) => void }
@@ -31,6 +38,9 @@ declare module '../service/bus' {
 export const rooms = db.collection('lesson.room');
 export const members = db.collection('lesson.member');
 export const bookingSlots = db.collection('lesson.booking.slot');
+// This is deliberate participation, not online presence. It must never expire
+// with the short media lease or disappear when a server process restarts.
+export const resumptions = db.collection('lesson.resume');
 export const opaqueLessonId = () => randomBytes(24).toString('hex');
 type Emit = (event: LessonEvent) => void;
 
@@ -47,7 +57,8 @@ export async function authorize(uid: number, domainId: string, id: unknown, now 
     if (pair.teacher.workspaceId !== room.workspaceId || pair.student.workspaceId !== room.workspaceId) {
         throw new LessonError('FORBIDDEN', '这节课已不在你的工作区中。');
     }
-    if (room.status === 'ended' || room.status === 'cancelled' || +room.endAt + 2 * 3600_000 < now) {
+    if (room.status === 'ended' || room.status === 'cancelled'
+        || (room.status === 'scheduled' && +room.endAt + 2 * 3600_000 < now)) {
         throw new LessonError('ENDED', '这节课已经结束或取消。');
     }
     return room;
@@ -64,7 +75,7 @@ export async function snapshot(room: Lesson, now = Date.now()) {
 export async function list(uid: number, domainId: string, now = Date.now()) {
     const access = await scope(uid, domainId);
     const candidates = await rooms.find({ participantUids: uid, domainId, workspaceId: access.workspaceId,
-        status: { $in: ['scheduled', 'active'] }, endAt: { $gt: new Date(now - 2 * 3600_000) } })
+        $or: [{ status: 'active' }, { status: 'scheduled', endAt: { $gt: new Date(now - 2 * 3600_000) } }] })
         .sort({ startAt: 1 }).limit(100).toArray();
     const lessons = (await Promise.all(candidates.map(async (room) => {
         try { return await snapshot(await authorize(uid, domainId, room._id, now), now); } catch { return null; }
@@ -134,6 +145,7 @@ export async function create(teacherUid: number, domainId: string, value: any, e
     } catch (error) {
         await bookingSlots.deleteMany({ lessonId: room._id });
         await members.deleteMany({ lessonId: room._id });
+        await clearRoomResumptions(room);
         await rooms.deleteOne({ _id: room._id });
         if (error.code === 11000) throw new LessonError('CONFLICT', '老师或学员在这个时间已有课程，请换个时间。');
         throw error;
@@ -142,32 +154,144 @@ export async function create(teacherUid: number, domainId: string, value: any, e
     return snapshot(room, now);
 }
 
+async function clearResumption(intent: LessonResumption) {
+    await resumptions.updateOne({ _id: intent._id, lessonId: intent.lessonId, version: intent.version },
+        { $set: { lessonId: null, accepted: false }, $unset: { domainId: '', tabId: '', joinedAt: '' }, $inc: { version: 1 } });
+}
+
+async function clearRoomResumptions(room: Lesson) {
+    await Promise.all(room.participantUids.map((_id) => resumptions.updateOne({ _id, lessonId: room._id },
+        { $set: { lessonId: null, accepted: false }, $unset: { domainId: '', tabId: '', joinedAt: '' }, $inc: { version: 1 } })));
+}
+
+async function admit(uid: number, room: Lesson, tabId: string, emit: Emit, now: number,
+    recovering?: LessonResumption, legacy?: LessonMember) {
+    let previous = recovering || await resumptions.findOne({ _id: uid });
+    if (legacy && previous) throw new LessonError('REPLACED', '课堂已在另一个页面继续。');
+    if (previous?.lessonId && previous.lessonId !== room._id) {
+        try {
+            await authorize(uid, previous.domainId, previous.lessonId, now);
+            throw new LessonError('BUSY', '你还有未结束的课堂，请先结束原来的课堂。');
+        } catch (error) {
+            if (!['ENDED', 'NOT_FOUND', 'FORBIDDEN'].includes(error.code)) throw error;
+            await clearResumption(previous);
+            previous = await resumptions.findOne({ _id: uid });
+        }
+    }
+    if (!recovering && !legacy) {
+        const owner = await members.findOne({ _id: uid, expiresAt: { $gt: new Date(now) } });
+        if (owner && (owner.lessonId !== room._id || owner.tabId !== tabId)) {
+            throw new LessonError('BUSY', '你已经在其他页面上课，请先退出原来的课堂。');
+        }
+    }
+    let intent: LessonResumption;
+    try {
+        // The persistent per-account version is also the media admission fence.
+        // A delayed request can never overwrite a newer tab's owner record.
+        intent = await resumptions.findOneAndUpdate(previous
+            ? { _id: uid, version: previous.version, lessonId: previous.lessonId, ...(recovering ? { accepted: true } : {}) }
+            : { _id: uid, lessonId: { $exists: false } },
+        { $set: { lessonId: room._id, domainId: room.domainId, tabId,
+            accepted: !!legacy || (previous?.lessonId === room._id && previous.accepted === true),
+            joinedAt: previous?.lessonId === room._id ? previous.joinedAt || new Date(now) : new Date(now) },
+        $inc: { version: 1 } }, { upsert: !recovering, returnDocument: 'after' });
+    } catch (error) {
+        if (error.code === 11000) throw new LessonError('BUSY', '课堂正在另一个页面进入，请稍后重试。');
+        throw error;
+    }
+    if (!intent) throw new LessonError('REPLACED', '课堂已在另一个页面继续。');
+    try {
+        const claimed = await members.findOneAndUpdate(legacy
+            ? { _id: uid, lessonId: legacy.lessonId, tabId: legacy.tabId,
+                expiresAt: { $gt: new Date(now) }, ownerVersion: { $exists: false } }
+            : { _id: uid, $or: [
+            { ownerVersion: { $lte: intent.version } }, { ownerVersion: { $exists: false } },
+        ] }, { $set: { lessonId: room._id, tabId, joinedAt: intent.joinedAt,
+            ownerVersion: intent.version, connected: false, expiresAt: new Date(now + LESSON_JOIN_MS) },
+        $unset: { connectionId: '', serverId: '' } }, { upsert: !legacy, returnDocument: 'after' });
+        if (!claimed) throw new LessonError('REPLACED', '原课堂连接已经离开，请重新点击上课。');
+        const activated = await rooms.findOneAndUpdate({ _id: room._id, status: { $in: ['scheduled', 'active'] } },
+            { $set: { status: 'active', updatedAt: new Date(now) } }, { returnDocument: 'after' });
+        if (!activated) throw new LessonError('ENDED', '这节课已经结束或取消。');
+        const accepted = await resumptions.updateOne({ _id: uid, lessonId: room._id, version: intent.version, tabId },
+            { $set: { accepted: true } });
+        if (!accepted.matchedCount) throw new LessonError('REPLACED', '课堂已在另一个页面继续。');
+        await authorize(uid, room.domainId, room._id, now);
+        if (!await resumptions.findOne({ _id: uid, lessonId: room._id, version: intent.version, accepted: true })) {
+            throw new LessonError('REPLACED', '课堂已在另一个页面继续。');
+        }
+        emit({ uid, lessonId: room._id, message: { type: 'owner', ownerVersion: intent.version } });
+        await notify(activated, emit, now);
+        return snapshot(activated, now);
+    } catch (error) {
+        await members.deleteOne({ _id: uid, lessonId: room._id, ownerVersion: intent.version });
+        if (legacy || !intent.accepted || ['ENDED', 'NOT_FOUND', 'FORBIDDEN'].includes(error.code)) await clearResumption(intent);
+        if (error.code === 11000) throw new LessonError('REPLACED', '课堂已在另一个页面继续。');
+        throw error;
+    }
+}
+
 export async function join(uid: number, domainId: string, id: unknown, tabId: unknown, emit: Emit, now = Date.now()) {
     if (!lessonId(tabId)) throw new LessonError('INVALID_MESSAGE', '请刷新页面后再进入课堂。');
     const room = await authorize(uid, domainId, id, now);
     if (uid === room.studentUid && +room.startAt > now) throw new LessonError('TOO_EARLY', '还没到上课时间，稍后再来。');
+    return admit(uid, room, tabId, emit, now);
+}
+
+export async function resume(uid: number, tabId: unknown, emit: Emit, now = Date.now(), checkAccess?: (room: Lesson) => Promise<void>) {
+    if (!lessonId(tabId)) throw new LessonError('INVALID_MESSAGE', '课堂窗口身份无效，请刷新页面。');
+    await apply();
+    const intent = await resumptions.findOne({ _id: uid });
+    if (!intent) {
+        // One-time upgrade compatibility: an unexpired pre-recovery media
+        // member is itself the result of the previous version's explicit REST
+        // join. Never infer a learner's consent merely from an active room.
+        const legacy = await members.findOne({ _id: uid, expiresAt: { $gt: new Date(now) }, ownerVersion: { $exists: false } });
+        if (!legacy) return null;
+        const previousRoom = await rooms.findOne({ _id: legacy.lessonId, participantUids: uid, status: 'active' });
+        if (!previousRoom) return null;
+        const room = await authorize(uid, previousRoom.domainId, previousRoom._id, now);
+        await checkAccess?.(room);
+        return admit(uid, room, tabId, emit, now, undefined, legacy);
+    }
+    if (!intent.accepted || !intent.lessonId) return null;
+    let room: Lesson;
     try {
-        await members.findOneAndUpdate({ _id: uid, $or: [{ lessonId: room._id, tabId }, { expiresAt: { $lte: new Date(now) } }] },
-            { $set: { lessonId: room._id, tabId, joinedAt: new Date(now), expiresAt: new Date(now + LESSON_JOIN_MS) } }, { upsert: true });
+        room = await authorize(uid, intent.domainId, intent.lessonId, now);
+        if (room.status !== 'active') return null;
     } catch (error) {
-        if (error.code === 11000) throw new LessonError('BUSY', '你已经在其他页面上课，请先退出原来的课堂。');
+        if (['ENDED', 'NOT_FOUND', 'FORBIDDEN'].includes(error.code)) await clearResumption(intent);
+        if (['ENDED', 'NOT_FOUND'].includes(error.code)) return null;
         throw error;
     }
-    const activated = await rooms.findOneAndUpdate({ _id: room._id, status: { $in: ['scheduled', 'active'] } },
-        { $set: { status: 'active', updatedAt: new Date(now) } }, { returnDocument: 'after' });
-    if (!activated) { await members.deleteOne({ _id: uid, lessonId: room._id, tabId }); throw new LessonError('ENDED', '这节课已经结束或取消。'); }
-    await notify(activated, emit, now);
-    return snapshot(activated, now);
+    // A narrower/expired login on this request must not erase another valid
+    // browser's durable participation. It simply cannot recover this owner.
+    await checkAccess?.(room);
+    return admit(uid, room, tabId, emit, now, intent);
 }
 
 export async function leave(uid: number, domainId: string, id: unknown, tabId: unknown, emit: Emit, now = Date.now()) {
     const room = await authorize(uid, domainId, id, now);
     if (!lessonId(tabId)) throw new LessonError('INVALID_MESSAGE', '课堂窗口身份无效。');
-    const removed = await members.deleteOne({ _id: uid, lessonId: room._id, tabId });
-    if (removed.deletedCount) {
+    const intent = await resumptions.findOne({ _id: uid, lessonId: room._id, tabId });
+    if (intent) {
+        const cleared = await resumptions.updateOne({ _id: uid, lessonId: room._id, tabId, version: intent.version },
+            { $set: { lessonId: null, accepted: false }, $unset: { domainId: '', tabId: '', joinedAt: '' }, $inc: { version: 1 } });
+        if (!cleared.matchedCount) return snapshot(room, now);
+        await members.deleteOne({ _id: uid, lessonId: room._id, tabId, ownerVersion: intent.version });
         const other = uid === room.teacherUid ? room.studentUid : room.teacherUid;
         emit({ uid: other, lessonId: room._id, message: { type: 'peer', online: false } });
         await notify(room, emit, now);
+    } else if (!await resumptions.findOne({ _id: uid })) {
+        // A pre-upgrade browser can still explicitly leave its old lease.
+        // Requiring its original tab and absent ownerVersion cannot revoke a
+        // newly migrated owner or re-enable a tombstoned participation record.
+        const removed = await members.deleteOne({ _id: uid, lessonId: room._id, tabId, ownerVersion: { $exists: false } });
+        if (removed.deletedCount) {
+            emit({ uid: uid === room.teacherUid ? room.studentUid : room.teacherUid,
+                lessonId: room._id, message: { type: 'peer', online: false } });
+            await notify(room, emit, now);
+        }
     }
     return snapshot(room, now);
 }
@@ -177,7 +301,7 @@ export async function finish(uid: number, domainId: string, id: unknown, status:
     if (room.teacherUid !== uid) throw new LessonError('FORBIDDEN', '只有这节课的老师可以结束或取消课程。');
     if (status === 'cancelled' && room.status !== 'scheduled') throw new LessonError('CONFLICT', '正在进行的课程请使用结束上课。');
     await rooms.updateOne({ _id: room._id, status: { $in: ['scheduled', 'active'] } }, { $set: { status, updatedAt: new Date(now) } });
-    await Promise.all([members.deleteMany({ lessonId: room._id }), bookingSlots.deleteMany({ lessonId: room._id })]);
+    await Promise.all([members.deleteMany({ lessonId: room._id }), bookingSlots.deleteMany({ lessonId: room._id }), clearRoomResumptions(room)]);
     for (const participant of room.participantUids) emit({ uid: participant, lessonId: room._id,
         message: { type: 'ended', lessonId: room._id, reason: status === 'cancelled' ? '课程已取消。' : '老师已结束上课。' } });
     return snapshot({ ...room, status }, now);
@@ -186,7 +310,10 @@ export async function finish(uid: number, domainId: string, id: unknown, status:
 export async function bind(uid: number, domainId: string, id: string, tabId: string, connectionId: string, serverId: string, now = Date.now()) {
     const room = await authorize(uid, domainId, id, now);
     if (uid === room.studentUid && +room.startAt > now) throw new LessonError('TOO_EARLY', '还没到上课时间。');
-    const peer = await members.findOneAndUpdate({ _id: uid, lessonId: id, tabId, expiresAt: { $gt: new Date(now) } },
+    const intent = await resumptions.findOne({ _id: uid, lessonId: id, accepted: true });
+    if (!intent) throw new LessonError('JOIN_REQUIRED', '请先点击上课按钮进入课堂。');
+    if (intent.tabId !== tabId) throw new LessonError('REPLACED', '课堂已在另一个页面继续。');
+    const peer = await members.findOneAndUpdate({ _id: uid, lessonId: id, tabId, ownerVersion: intent.version, expiresAt: { $gt: new Date(now) } },
         { $set: { connectionId, serverId, connected: true, expiresAt: new Date(now + LESSON_LEASE_MS) } }, { returnDocument: 'after' });
     if (!peer) throw new LessonError('JOIN_REQUIRED', '请先点击上课按钮进入课堂。');
     return { room, peer };
@@ -194,9 +321,16 @@ export async function bind(uid: number, domainId: string, id: string, tabId: str
 
 export async function pulse(peer: LessonMember, domainId: string, now = Date.now()) {
     const room = await authorize(peer._id, domainId, peer.lessonId, now);
+    const intent = await resumptions.findOne({ _id: peer._id, lessonId: peer.lessonId, tabId: peer.tabId,
+        accepted: true, version: peer.ownerVersion });
+    if (!intent) throw new LessonError('REPLACED', '此课堂已在另一个连接中打开。');
     const updated = await members.updateOne({ _id: peer._id, lessonId: peer.lessonId, tabId: peer.tabId,
         connectionId: peer.connectionId, connected: true }, { $set: { expiresAt: new Date(now + LESSON_LEASE_MS) } });
-    if (!updated.matchedCount) throw new LessonError('REPLACED', '此课堂已在另一个连接中打开。');
+    if (!updated.matchedCount) {
+        const owner = await members.findOne({ _id: peer._id, lessonId: peer.lessonId });
+        if (!owner) throw new LessonError('JOIN_REQUIRED', '课堂连接已过期，正在重新恢复。');
+        throw new LessonError('REPLACED', '此课堂已在另一个连接中打开。');
+    }
     return room;
 }
 
@@ -218,6 +352,7 @@ export function apply() {
             { key: { lessonId: 1 }, name: 'lesson_member_room' }]),
         bookingSlots.createIndexes([{ key: { expiresAt: 1 }, name: 'lesson_booking_expiry', expireAfterSeconds: 0 },
             { key: { lessonId: 1 }, name: 'lesson_booking_room' }]),
+        resumptions.createIndexes([{ key: { lessonId: 1 }, name: 'lesson_resume_room' }]),
     ]).catch((error) => { indexesReady = undefined; throw error; });
     return indexesReady;
 }

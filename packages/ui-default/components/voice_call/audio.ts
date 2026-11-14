@@ -119,7 +119,15 @@ export class VoiceAudio {
   get ready() { return !!this.processor; }
 
   async start() {
-    if (this.processor) { await this.context?.resume(); return; }
+    if (this.processor) {
+      let resumeTimeout = 0;
+      try {
+        await Promise.race([this.context?.resume(), new Promise((_, reject) => {
+          resumeTimeout = window.setTimeout(() => reject(new Error('浏览器暂停了语音，请点击“重试设备”恢复语音。')), 1800);
+        })]);
+      } finally { window.clearTimeout(resumeTimeout); }
+      return;
+    }
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       throw new Error('语音需要安全连接，请通过 HTTPS 网站或本机 localhost 打开。');
     }
@@ -155,7 +163,9 @@ export class VoiceAudio {
         this.options.onFrame(encodeVoiceFrame(data.bytes));
         this.options.onLevel?.(Math.min(1, Number(data.level) * 5 || 0));
       };
-      processor.onprocessorerror = () => this.options.onError?.(new Error('音频设备发生错误，请重新拨号。'));
+      processor.onprocessorerror = () => {
+        if (generation === this.generation) this.options.onError?.(new Error('音频设备发生错误，请重新拨号。'));
+      };
       for (const track of stream.getAudioTracks()) track.addEventListener('ended', () => {
         if (generation === this.generation) this.options.onError?.(new Error('麦克风已断开，请重新连接后拨号。'));
       });

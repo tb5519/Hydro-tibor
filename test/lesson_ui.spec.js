@@ -31,17 +31,31 @@ async function fixture(t, options = {}) {
     window.setInterval = (callback, delay) => { const id = ++timerId; intervals.set(id, { callback, delay, at: clockNow + delay }); return id; };
     window.clearInterval = id => intervals.delete(id);
     const uid = options.student ? 5 : 2;
+    const accepted = new Set(options.resumeLessonId ? [options.resumeLessonId] : []);
+    if (options.savedHint) window.localStorage.setItem(`onebyone.lesson.recovery:${uid}`, JSON.stringify(options.savedHint));
+    if (options.copiedTabId) window.sessionStorage.setItem(`onebyone.lesson.tab:${uid}`, options.copiedTabId);
     const rows = structuredClone(options.lessons || []);
     const requests = []; const messages = []; const shareEvents = []; const mediaReceives = []; const mediaConnections = [];
     const desktopEvents = []; const desktopReservations = []; const mediaStartArgs = [];
     let mediaStarts = 0; let mediaStops = 0; let mediaDisposes = 0; let mediaCallbacks;
     const sockets = [];
-    let delayRead = false; let heldRead; let heldMutation;
+    let delayRead = false; let heldRead; let heldMutation; let heldResume; let heldExit;
     const roster = [{ uid: 5, name: '橙子', online: true }, { uid: 7, name: '睿睿', online: false }];
-    const response = (data, status = 200) => ({ ok: status < 400, json: async () => structuredClone(data) });
+    const response = (data, status = 200) => ({ ok: status < 400, status, json: async () => structuredClone(data) });
     async function fakeFetch(url, init) {
         const body = init.body ? JSON.parse(init.body) : null; requests.push({ url, body });
-        if (body) desktopEvents.push(`request:${body.operation}`);
+        if (options.offline) throw new Error('network offline');
+        if (url.endsWith('/resume')) {
+            if (options.holdResume) return new Promise(resolve => { heldResume = data => resolve(response(data)); });
+            if (options.resumeFailureCount > 0) { options.resumeFailureCount--; return response({ code: 'UNAVAILABLE' }, 503); }
+            if (options.resumeResponse) return response({ uid, ...options.resumeResponse }, options.resumeStatus || 200);
+            const lesson = rows.find(row => accepted.has(row._id) && row.status === 'active');
+            if (!lesson) return response({ uid, lesson: null, serverNow: new Date(clockNow).toISOString() });
+            lesson[uid === lesson.teacherUid ? 'teacherJoined' : 'studentJoined'] = true;
+            return response({ uid, lesson, apiUrl: `/d/${lesson.domainId}/lesson`, socketUrl: `/d/${lesson.domainId}/lesson/conn`,
+                canTeach: uid === lesson.teacherUid, serverNow: new Date(clockNow).toISOString() });
+        }
+        if (body?.operation) desktopEvents.push(`request:${body.operation}`);
         if (!body) {
             const data = structuredClone({ lessons: rows.filter(row => url.startsWith('/d/C0002') ? row.domainId === 'C0002' : row.domainId === 'C0001'), students: roster, serverNow: new Date(clockNow).toISOString() });
             if (delayRead) { delayRead = false; return new Promise(resolve => { heldRead = () => resolve(response(data)); }); }
@@ -57,14 +71,15 @@ async function fixture(t, options = {}) {
                 startAt: body.startAt || new Date(clockNow).toISOString(),
                 endAt: new Date((body.startAt ? Date.parse(body.startAt) : clockNow) + body.durationMinutes * 60000).toISOString(),
                 status: body.startAt ? 'scheduled' : 'active', teacherJoined: !body.startAt });
-            rows.push(row); return response({ lesson: row });
+            rows.push(row); if (!body.startAt) accepted.add(row._id); return response({ lesson: row });
         }
         const row = rows.find(item => item._id === body.lessonId);
         if (!row) return response({ error: 'NOT_FOUND', message: '没有这节课' }, 404);
-        if (body.operation === 'join') { row.status = 'active'; row[uid === row.teacherUid ? 'teacherJoined' : 'studentJoined'] = true; }
-        if (body.operation === 'leave') row[uid === row.teacherUid ? 'teacherJoined' : 'studentJoined'] = false;
+        if (options.holdExit && ['end', 'leave'].includes(body.operation)) return new Promise(resolve => { heldExit = data => resolve(response(data)); });
+        if (body.operation === 'join') { row.status = 'active'; row[uid === row.teacherUid ? 'teacherJoined' : 'studentJoined'] = true; accepted.add(row._id); }
+        if (body.operation === 'leave') { row[uid === row.teacherUid ? 'teacherJoined' : 'studentJoined'] = false; accepted.delete(row._id); }
         if (body.operation === 'cancel') row.status = 'cancelled';
-        if (body.operation === 'end') row.status = 'ended';
+        if (body.operation === 'end') { row.status = 'ended'; accepted.delete(row._id); }
         return response({ lesson: row });
     }
     const media = { prepareDesktop() {
@@ -77,7 +92,8 @@ async function fixture(t, options = {}) {
     function socketFactory(url) {
         const socket = { url, readyState: 0, bufferedAmount: 0, onopen: null, onmessage: null, onclose: null, onerror: null,
             send(data) { const message = JSON.parse(data); messages.push(message);
-                if (message.type === 'join') this.deliver({ type: 'ready', lesson: rows.find(row => row._id === message.lessonId), peerOnline: !!options.peerOnline }); },
+                if (message.type === 'join' && !options.noReady) this.deliver({ type: 'ready', lesson: rows.find(row => row._id === message.lessonId), peerOnline: !!options.peerOnline });
+                if (message.type === 'pulse' && !options.noAck) this.deliver({ type: 'pulse' }); },
             deliver(message) { this.onmessage?.({ data: JSON.stringify(structuredClone(message)) }); },
             close() { this.readyState = 3; },
         };
@@ -91,7 +107,8 @@ async function fixture(t, options = {}) {
         setTimeout: window.setTimeout, clearTimeout: window.clearTimeout, setInterval: window.setInterval, clearInterval: window.clearInterval,
         require(name) { if (name === './media') return { mountLessonMedia() { throw Error('A media factory is required in this test'); } }; throw Error(`Unexpected import ${name}`); },
     });
-    const config = { enabled: true, uid, canTeach: !options.student, apiUrl: '/d/C0001/lesson', socketUrl: '/d/C0001/lesson/conn' };
+    const pageDomain = options.pageDomain || 'C0001';
+    const config = { enabled: true, uid, canTeach: !options.student, apiUrl: `/d/${pageDomain}/lesson`, socketUrl: `/d/${pageDomain}/lesson/conn` };
     const cleanup = module.exports.installLesson(config, { now: () => clockNow, fetch: fakeFetch,
         pollIntervalMs: 1000000, socketFactory, mediaFactory: (_config, callbacks) => { mediaCallbacks = callbacks; return media; } });
     t.after(() => { cleanup(); for (const frame of frames) frame.window.close(); window.close(); });
@@ -112,7 +129,10 @@ async function fixture(t, options = {}) {
     }
     const click = async selector => { const node = document.querySelector(selector); assert(node, `Missing ${selector}`); node.click(); await settle(); };
     return { window, document, rows, requests, messages, sockets, shareEvents, mediaReceives, mediaConnections,
-        desktopEvents, desktopReservations, mediaStartArgs, releaseMutation: data => heldMutation?.(data),
+        desktopEvents, desktopReservations, mediaStartArgs, options, accepted, releaseMutation: data => heldMutation?.(data),
+        releaseResume: data => heldResume?.(data),
+        releaseExit: data => heldExit?.(data),
+        get hint() { return JSON.parse(window.localStorage.getItem(`onebyone.lesson.recovery:${uid}`)); },
         click, refresh, advance, navigate, exports: module.exports, cleanup, leaveMedia: () => mediaCallbacks.onLeave(),
         holdNextRead: () => { delayRead = true; }, releaseRead: () => heldRead?.(),
         get mediaStarts() { return mediaStarts; }, get mediaStops() { return mediaStops; }, get mediaDisposes() { return mediaDisposes; } };
@@ -135,6 +155,170 @@ it('an offline learner can be booked in Beijing wall-clock time with no device o
     assert.match(f.document.querySelector('[data-lesson-home]').textContent, /睿睿/);
     assert(f.document.querySelector('.ui-pinned-contest__action'), 'the competition entry remains available');
     assert.equal(f.document.querySelector('.lesson-picker').open, false);
+});
+
+it('an accepted unfinished lesson resumes on another classroom page without a new invitation or desktop reservation', async t => {
+    const row = makeLesson({ status: 'active', teacherJoined: false, studentJoined: false, startAt: new Date(initialNow - 60000).toISOString() });
+    const copiedTabId = 'a'.repeat(32);
+    const f = await fixture(t, { lessons: [row], resumeLessonId: row._id, pageDomain: 'C0002', copiedTabId, peerOnline: true,
+        savedHint: { lessonId: row._id, apiUrl: '/d/C0001/lesson', socketUrl: '/d/C0001/lesson/conn', mode: 'assist' } });
+    await f.advance();
+    assert.equal(f.mediaStarts, 1); assert.equal(f.desktopReservations.length, 0);
+    assert.equal(f.sockets[0].url, 'wss://onebyone.test/d/C0001/lesson/conn');
+    assert(f.requests.some(item => item.url === '/d/C0002/lesson/resume'));
+    assert.notEqual(f.requests.find(item => item.url.endsWith('/resume')).body.tabId, copiedTabId, 'a copied session tab must get a fresh owner identity');
+    assert.equal(f.requests.some(item => ['create', 'join'].includes(item.body?.operation)), false);
+    assert.equal(f.document.querySelectorAll('.lesson-mode-button')[1].getAttribute('aria-pressed'), 'true');
+    assert.equal(f.shareEvents.at(-1).detail.mode, 'assist');
+    f.window.dispatchEvent(new f.window.Event('onebyone:lesson-share-ready'));
+    assert.equal(f.shareEvents.at(-1).detail.mode, 'assist', 'late-loaded sharing receives an idempotent start');
+    assert.equal(f.mediaStarts, 1);
+});
+
+it('a stored lesson hint cannot auto-join a learner who has never accepted the invitation', async t => {
+    const row = makeLesson({ status: 'active', teacherJoined: true, startAt: new Date(initialNow - 60000).toISOString() });
+    const f = await fixture(t, { student: true, lessons: [row],
+        savedHint: { lessonId: row._id, apiUrl: '/d/C0001/lesson', socketUrl: '/d/C0001/lesson/conn', mode: 'broadcast' } });
+    assert.equal(f.mediaStarts, 0); assert.equal(f.desktopReservations.length, 0); assert.equal(f.sockets.length, 0);
+    assert.equal(f.document.querySelector('.lesson-reminder').open, true);
+});
+
+it('a connection recovers after more than six transient failures without reopening devices or clearing sharing', async t => {
+    const f = await fixture(t, { peerOnline: true });
+    await f.click('[data-lesson-open]'); await f.click('[data-lesson-student="5"]'); await f.click('[data-lesson-create]'); await f.advance();
+    const original = f.sockets[0];
+    f.options.resumeFailureCount = 8; f.rows[0].teacherJoined = false;
+    original.onclose({});
+    assert.equal(f.mediaConnections.at(-1), false); assert.equal(f.mediaStops, 0);
+    for (let index = 0; index < 10; index++) await f.advance(20000);
+    await f.advance();
+    assert(f.requests.filter(item => item.url.endsWith('/resume')).length >= 10);
+    assert(f.sockets.length >= 2); assert.equal(f.mediaStarts, 1); assert.equal(f.mediaStops, 0);
+    assert.equal(f.mediaConnections.at(-1), true);
+    assert.equal(f.shareEvents.filter(event => event.type.endsWith('share-stop')).length, 0);
+});
+
+it('handshake and heartbeat silence recover half-open sockets, while pulse acknowledgements keep healthy ones', async t => {
+    const row = makeLesson({ status: 'active', startAt: new Date(initialNow - 60000).toISOString() });
+    for (const failure of ['noReady', 'noAck']) {
+        const f = await fixture(t, { lessons: [row], resumeLessonId: row._id, [failure]: true });
+        await f.advance();
+        await f.advance(failure === 'noReady' ? 16000 : 31000);
+        f.options[failure] = false;
+        await f.advance(20000); await f.advance();
+        assert(f.sockets.length >= 2, `${failure} must release the stale socket`);
+        assert.equal(f.mediaStarts, 1); assert.equal(f.mediaStops, 0);
+        assert.equal(f.mediaConnections.at(-1), true);
+        for (let index = 0; index < 10; index++) await f.advance(5000);
+        assert.equal(f.sockets.length, 2, 'acknowledged heartbeat does not create reconnect churn');
+        f.cleanup();
+    }
+});
+
+it('a replaced tab releases its devices and never steals recovery ownership back', async t => {
+    const row = makeLesson({ status: 'active', startAt: new Date(initialNow - 60000).toISOString() });
+    const f = await fixture(t, { lessons: [row], resumeLessonId: row._id }); await f.advance();
+    const before = f.requests.length;
+    f.sockets[0].deliver({ type: 'error', code: 'REPLACED', message: '另一页面继续上课' });
+    assert.equal(f.mediaStops, 1); assert(f.hint, 'the old tab does not erase shared recovery details');
+    f.window.dispatchEvent(new f.window.Event('online')); await f.refresh(); await f.advance(60000);
+    assert.equal(f.requests.length, before, 'visibility, online and polling do not reclaim the new owner');
+    assert.equal(f.mediaStarts, 1);
+});
+
+it('REST ownership replacement also gives way and a cached document restores only the same authenticated account', async t => {
+    const row = makeLesson({ status: 'active', startAt: new Date(initialNow - 60000).toISOString() });
+    const replaced = await fixture(t, { lessons: [row], resumeResponse: { code: 'REPLACED', error: 'REPLACED' }, resumeStatus: 409 });
+    const requests = replaced.requests.length;
+    replaced.window.dispatchEvent(new replaced.window.Event('online')); await replaced.advance(120000);
+    assert.equal(replaced.requests.length, requests); assert.equal(replaced.mediaStarts, 0);
+    replaced.cleanup();
+    const wrongAccount = await fixture(t, { lessons: [row], resumeResponse: { uid: 5, lesson: row,
+        apiUrl: '/d/C0001/lesson', socketUrl: '/d/C0001/lesson/conn' } });
+    assert.equal(wrongAccount.requests.find(item => item.url.endsWith('/resume')).body.expectedUid, 2);
+    assert.equal(wrongAccount.mediaStarts, 0); assert.equal(wrongAccount.mediaDisposes, 1);
+});
+
+it('back-forward cache restores the classroom without ending the existing sharing session or clearing editor content', async t => {
+    const row = makeLesson({ status: 'active', studentJoined: true, startAt: new Date(initialNow - 60000).toISOString() });
+    const f = await fixture(t, { lessons: [row], resumeLessonId: row._id, peerOnline: true }); await f.advance();
+    const editor = f.document.createElement('textarea'); editor.value = 'unsaved lesson code'; f.document.body.append(editor);
+    f.window.dispatchEvent(new f.window.Event('pagehide'));
+    assert.equal(f.mediaDisposes, 1);
+    assert.equal(f.shareEvents.some(event => event.type.endsWith('share-stop')), false);
+    f.window.dispatchEvent(new f.window.PageTransitionEvent('pageshow', { persisted: true })); await settle(); await f.advance();
+    assert.equal(f.mediaStarts, 2); assert.equal(editor.value, 'unsaved lesson code');
+    assert.equal(f.desktopReservations.length, 0);
+    assert.equal(f.requests.filter(item => item.url.endsWith('/resume')).length, 2);
+    f.window.dispatchEvent(new f.window.Event('onebyone:session-ended'));
+});
+
+it('offline end and leave are replayed before any recovery after a full reload, using their original owner identity', async t => {
+  for (const operation of ['end', 'leave']) {
+    const f = await fixture(t);
+    await f.click('[data-lesson-open]'); await f.click('[data-lesson-student="5"]'); await f.click('[data-lesson-create]'); await f.advance();
+    f.options.offline = true;
+    f.document.querySelector(operation === 'end' ? '.lesson-session .is-danger' : '.lesson-session .lesson-button').click(); await settle();
+    const savedHint = f.hint;
+    assert.equal(savedHint.pending, operation); assert.equal(f.mediaStops, 1);
+    const lesson = structuredClone(f.rows[0]); f.cleanup();
+    const restored = await fixture(t, { lessons: [lesson], resumeLessonId: lesson._id, savedHint });
+    const ending = restored.requests.find(item => item.body?.operation === operation);
+    assert.equal(ending.body.tabId, savedHint.tabId);
+    assert.equal(restored.requests.some(item => item.url.endsWith('/resume')), false);
+    assert.equal(restored.mediaStarts, 0); assert.equal(restored.desktopReservations.length, 0); assert.equal(restored.hint, null);
+  }
+});
+
+it('a failed storage write cannot turn an offline ending back into automatic camera recovery in the same page', async t => {
+    const f = await fixture(t);
+    await f.click('[data-lesson-open]'); await f.click('[data-lesson-student="5"]'); await f.click('[data-lesson-create]'); await f.advance();
+    const prototype = Object.getPrototypeOf(f.window.localStorage); const setItem = prototype.setItem;
+    prototype.setItem = () => { throw new Error('quota exceeded'); };
+    f.options.offline = true; f.document.querySelector('.lesson-session .is-danger').click(); await settle();
+    assert.equal(f.hint.pending, undefined, 'the old storage snapshot is intentionally stale');
+    const resumes = f.requests.filter(item => item.url.endsWith('/resume')).length;
+    prototype.setItem = setItem; f.options.offline = false;
+    f.window.dispatchEvent(new f.window.Event('online')); await f.advance();
+    assert.equal(f.requests.filter(item => item.url.endsWith('/resume')).length, resumes);
+    assert(f.requests.filter(item => item.body?.operation === 'end').length >= 2);
+    assert.equal(f.mediaStarts, 1); assert.equal(f.mediaStops, 1);
+});
+
+it('late recovery and late end responses cannot replace a newer lesson or erase its pending end action', async t => {
+    const old = makeLesson({ status: 'active', startAt: new Date(initialNow - 60000).toISOString() });
+    const f = await fixture(t, { holdResume: true, lessons: [old] });
+    await f.click('[data-lesson-open]'); await f.click('[data-lesson-student="7"]'); await f.click('[data-lesson-create]'); await f.advance();
+    f.releaseResume({ lesson: old, apiUrl: '/d/C0001/lesson', socketUrl: '/d/C0001/lesson/conn' }); await settle();
+    assert.equal(f.mediaStarts, 1); assert.equal(f.mediaStartArgs[0].lesson._id, 'lesson-created-abcdefghijkl');
+    f.options.holdExit = true; f.document.querySelector('.lesson-session .is-danger').click(); await settle();
+    const newer = { ...f.hint, lessonId: 'a-newer-lesson-record', pending: 'end' };
+    f.window.localStorage.setItem('onebyone.lesson.recovery:2', JSON.stringify(newer));
+    f.releaseExit({ lesson: { ...f.rows.at(-1), status: 'ended' } }); await settle();
+    assert.deepEqual(f.hint, newer);
+});
+
+it('a stale initial recovery reply is retried after an overlapping explicit join fails', async t => {
+    const row = makeLesson({ status: 'active', startAt: new Date(initialNow - 60000).toISOString() });
+    const f = await fixture(t, { lessons: [row], resumeLessonId: row._id, holdResume: true,
+        mutationResponse: { code: 'BUSY', error: 'BUSY' }, mutationStatus: 409 });
+    await f.click('[data-lesson-home] [data-lesson-join]');
+    assert.equal(f.mediaStarts, 0);
+    f.options.holdResume = false;
+    f.releaseResume({ uid: 2, lesson: row, apiUrl: '/d/C0001/lesson', socketUrl: '/d/C0001/lesson/conn' }); await settle();
+    await f.advance(20000); await f.advance();
+    assert.equal(f.mediaStarts, 1); assert.equal(f.mediaConnections.at(-1), true);
+    assert(f.requests.filter(item => item.url.endsWith('/resume')).length >= 2);
+});
+
+it('invalid recovery URLs are never fetched and an authoritative no-lesson reply ends a disconnected class', async t => {
+    const row = makeLesson({ status: 'active', startAt: new Date(initialNow - 60000).toISOString() });
+    const invalid = await fixture(t, { lessons: [row], resumeResponse: { lesson: row, apiUrl: 'https://foreign.test/lesson', socketUrl: 'https://foreign.test/lesson/conn' } });
+    assert.equal(invalid.mediaStarts, 0); assert.equal(invalid.requests.some(item => String(item.url).includes('foreign')), false);
+    invalid.cleanup();
+    const f = await fixture(t, { lessons: [row], resumeLessonId: row._id }); await f.advance();
+    f.accepted.clear(); f.sockets[0].onclose({}); await f.advance(20000);
+    assert.equal(f.mediaStops, 1); assert.equal(f.document.querySelector('.lesson-session').hidden, true);
 });
 
 it('a scheduled lesson becomes a centered reminder at its time but captures only after the learner clicks', async t => {
@@ -229,7 +413,7 @@ it('an invitation available on login stays opt-in and can be snoozed before open
     await f.advance(5 * 60000); assert.equal(reminder.open, true);
 });
 
-it('sharing waits for the invited learner, switches both directions without media restarts, and pauses when the peer leaves', async t => {
+it('sharing waits for the invited learner, switches both directions without media restarts, and retains annotations during peer loss', async t => {
     const f = await fixture(t);
     await f.click('[data-lesson-open]'); await f.click('[data-lesson-student="5"]'); await f.click('[data-lesson-create]'); await f.advance();
     assert.equal(f.mediaStarts, 1); assert.equal(f.shareEvents.length, 0);
@@ -245,7 +429,7 @@ it('sharing waits for the invited learner, switches both directions without medi
     broadcast.click(); await settle(); assert.equal(f.shareEvents.at(-1).detail.mode, 'broadcast');
     assert.equal(f.mediaStarts, 1); assert.equal(f.mediaStops, 0);
     socket.deliver({ type: 'peer', online: false });
-    assert.equal(f.shareEvents.at(-1).type, 'onebyone:lesson-share-stop');
+    assert.equal(f.shareEvents.filter(event => event.type.endsWith('share-stop')).length, 0);
     assert.equal(f.mediaStops, 0); assert.deepEqual(JSON.parse(JSON.stringify(f.mediaReceives.at(-1))), { type: 'peer', online: false });
     await f.advance(5000); assert.deepEqual(f.messages.at(-1), { type: 'pulse' });
     f.document.querySelector('.lesson-session .is-danger').click(); await settle();
@@ -307,7 +491,9 @@ it('a GET captured before joining cannot undo the accepted membership; later val
     await f.advance();
     assert.equal(f.mediaStops, 0, 'a fresh poll sees the accepted server membership');
     f.rows[0].studentJoined = false; await f.refresh();
-    assert.equal(f.mediaStops, 1, 'a later server revocation must still stop an active lesson');
+    assert.equal(f.mediaStops, 0, 'an expired online lease is not a lesson ending');
+    f.rows[0].status = 'ended'; await f.refresh();
+    assert.equal(f.mediaStops, 1, 'an authoritative server ending must still stop an active lesson');
 });
 
 it('a GET captured before immediate creation cannot replace the newly joined lesson with an empty list', async t => {
@@ -341,7 +527,7 @@ it('socket membership updates supersede in-flight list snapshots without suppres
     f.holdNextRead(); await f.refresh();
     f.rows[0].studentJoined = false;
     f.sockets[0].deliver({ type: 'lesson', lesson: f.rows[0] });
-    assert.equal(f.shareEvents.at(-1).type, 'onebyone:lesson-share-stop');
+    assert.equal(f.shareEvents.filter(event => event.type.endsWith('share-stop')).length, 0);
     const events = f.shareEvents.length;
     f.releaseRead(); await settle();
     assert.equal(f.shareEvents.length, events, 'an old joined snapshot must not restart sharing');

@@ -5,7 +5,11 @@ export interface Lesson {
   teacherName: string; studentName: string; title: string; startAt: string; endAt: string;
   status: 'scheduled' | 'active' | 'ended' | 'cancelled'; teacherJoined: boolean; studentJoined: boolean;
 }
-export interface LessonConfig { enabled: boolean; uid: number; canTeach: boolean; apiUrl: string; socketUrl: string }
+export interface LessonConfig { enabled: boolean; uid: number; canTeach: boolean; apiUrl: string; socketUrl: string; resumeUrl?: string }
+interface RecoveryHint {
+  lessonId: string; apiUrl: string; socketUrl: string; mode: 'broadcast' | 'assist';
+  pending?: 'end' | 'leave'; tabId?: string;
+}
 interface Student { uid: number; name: string; online: boolean }
 interface LessonSocket {
   readyState: number; bufferedAmount: number;
@@ -56,6 +60,13 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   let peerOnline = false;
   let reconnectTimer = 0;
   let reconnectAttempt = 0;
+  let handshakeTimer = 0;
+  let recovering = false;
+  let recoveryQueued = false;
+  let recoveryPaused = false;
+  let lastServerMessageAt = 0;
+  let memoryHint: RecoveryHint | null = null;
+  let hintStorageFailed = false;
   let pollTimer = 0;
   let messageTimer = 0;
   let refreshing = false;
@@ -74,16 +85,15 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   let contentDocument = document;
   let contentRelease: (() => void) | undefined;
   let sharedLesson = '';
+  let shareRetryTimer = 0;
+  let shareRetryAttempt = 0;
   let currentMode: 'broadcast' | 'assist' = 'broadcast';
   let currentCardSignature = '';
   const pendingDesktop = new Set<LessonDesktopReservation>();
-  const tabKey = `onebyone.lesson.tab:${config.uid}`;
-  let tabId = '';
-  try { tabId = sessionStorage.getItem(tabKey) || ''; } catch { /* Media still has an in-memory identity. */ }
-  if (!/^[a-f0-9]{32}$/.test(tabId)) {
-    tabId = Array.from(window.crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join('');
-    try { sessionStorage.setItem(tabKey, tabId); } catch { /* Optional recovery. */ }
-  }
+  const recoveryKey = `onebyone.lesson.recovery:${config.uid}`;
+  // A duplicated browser tab copies sessionStorage. Each communication host
+  // needs its own ownership identity; normal content navigation keeps this host.
+  const tabId = Array.from(window.crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join('');
   const timestamp = () => now() + skew;
   const on = (target: EventTarget, name: string, listener: EventListener) => {
     target.addEventListener(name, listener); disposers.push(() => target.removeEventListener(name, listener));
@@ -166,21 +176,63 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   document.body.append(dialog, reminder, lessonBar, toast);
   const media = (options.mediaFactory || mountLessonMedia)(config, { send, onLeave: () => { void leaveLesson(active?.teacherUid === config.uid); } });
 
+  function safeRoute(value: unknown, ending: 'lesson' | 'lesson/conn' | 'lesson/resume') {
+    if (typeof value !== 'string') return null;
+    try {
+      const url = new URL(value, window.location.href);
+      if (url.origin !== window.location.origin || url.search || url.hash
+        || !new RegExp(`^(?:/d/[^/]+)?/${ending}$`).test(url.pathname)) return null;
+      return url.pathname;
+    } catch { return null; }
+  }
+  function readHint(): RecoveryHint | null {
+    let hint: any = memoryHint;
+    try {
+      if (!hintStorageFailed) { const value = window.localStorage.getItem(recoveryKey); hint = value ? JSON.parse(value) : null; }
+    } catch { /* Optional local recovery details. */ }
+    if (!hint || !/^[a-zA-Z0-9_-]{8,96}$/.test(hint.lessonId)
+      || !safeRoute(hint.apiUrl, 'lesson') || !safeRoute(hint.socketUrl, 'lesson/conn')
+      || !['broadcast', 'assist'].includes(hint.mode)
+      || (hint.pending && !['end', 'leave'].includes(hint.pending))
+      || (hint.tabId && !/^[a-f0-9]{32}$/.test(hint.tabId))) return null;
+    return hint;
+  }
+  function writeHint(hint: RecoveryHint | null) {
+    memoryHint = hint;
+    try {
+      if (hint) window.localStorage.setItem(recoveryKey, JSON.stringify(hint)); else window.localStorage.removeItem(recoveryKey);
+      hintStorageFailed = false;
+    } catch { hintStorageFailed = true; }
+  }
+  function clearHintIfMatches(expected: RecoveryHint) {
+    const current = readHint();
+    if (current?.lessonId === expected.lessonId && current.pending === expected.pending
+      && current.tabId === expected.tabId && current.apiUrl === expected.apiUrl) writeHint(null);
+  }
+  function rememberActive() {
+    if (active && !readHint()?.pending) writeHint({ lessonId: active._id, apiUrl: config.apiUrl,
+      socketUrl: config.socketUrl, mode: currentMode });
+  }
+  function errorCode(cause: any) { return typeof cause?.code === 'string' ? cause.code : ''; }
+
   function showMessage(message: string) {
     if (disposed) return;
     toast.textContent = message; toast.hidden = false; clearTimeout(messageTimer);
     messageTimer = window.setTimeout(() => { toast.hidden = true; }, 5000);
   }
   function errorText(cause: any) { return typeof cause?.message === 'string' ? cause.message : '操作暂时未完成，请稍后重试。'; }
-  async function api(body?: any, apiUrl = config.apiUrl) {
+  async function api(body?: any, apiUrl = config.apiUrl, ownerTabId = tabId) {
     const abort = new AbortController(); fetches.add(abort);
     const timeout = window.setTimeout(() => abort.abort(), 15000);
     try {
       const response = await request(apiUrl, { method: body ? 'POST' : 'GET', credentials: 'same-origin',
         headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
-        ...(body ? { body: JSON.stringify({ ...body, tabId }) } : {}), signal: abort.signal });
-      const result = await response.json();
-      if (!response.ok || result.error) throw new Error(result.error?.message || result.message || '操作暂时未完成，请稍后重试。');
+        ...(body ? { body: JSON.stringify({ ...body, tabId: ownerTabId }) } : {}), signal: abort.signal });
+      let result: any;
+      try { result = await response.json(); }
+      catch { throw Object.assign(new Error('课堂服务暂时不可用。'), { status: response.status }); }
+      if (!response.ok || result.error) throw Object.assign(new Error(result.error?.message || result.message || '操作暂时未完成，请稍后重试。'),
+        { code: result.code || (typeof result.error === 'string' ? result.error : result.error?.code), status: response.status });
       return result;
     } finally { clearTimeout(timeout); fetches.delete(abort); }
   }
@@ -282,21 +334,30 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   }
   function changeMode(value: 'broadcast' | 'assist') {
     if (currentMode === value || active?.teacherUid !== config.uid) return;
-    currentMode = value; renderActive();
+    currentMode = value; rememberActive(); renderActive();
     if (peerOnline && socketReady) { sharedLesson = active._id; requestSharing(); }
   }
-  function updateSharing() {
-    const shouldShare = active?.teacherUid === config.uid && active.studentJoined && socketReady && peerOnline;
-    if (shouldShare && sharedLesson !== active!._id) {
+  function updateSharing(restart = false) {
+    const shouldShare = active?.teacherUid === config.uid && socketReady && peerOnline;
+    if (shouldShare && (restart || sharedLesson !== active!._id)) {
       sharedLesson = active!._id;
       requestSharing();
-    } else if (!shouldShare && sharedLesson) stopSharing();
+    }
   }
-  function stopSharing() {
+  function scheduleSharingRecovery() {
+    clearTimeout(shareRetryTimer);
+    if (disposed || !active || active.teacherUid !== config.uid) return;
+    const id = active._id;
+    shareRetryTimer = window.setTimeout(() => {
+      if (!disposed && active?._id === id && peerOnline && socketReady) updateSharing(true);
+    }, Math.min(15000, 1000 * 2 ** Math.min(shareRetryAttempt++, 4)));
+  }
+  function stopSharing(clearAnnotations = false) {
+    clearTimeout(shareRetryTimer); shareRetryAttempt = 0;
     if (!sharedLesson) return;
     const lessonId = sharedLesson; sharedLesson = '';
     shareState.hidden = true; retryShare.hidden = true;
-    window.dispatchEvent(new CustomEvent('onebyone:lesson-share-stop', { detail: { lessonId } }));
+    window.dispatchEvent(new CustomEvent('onebyone:lesson-share-stop', { detail: { lessonId, clearAnnotations } }));
   }
   function snooze() {
     if (reminderLesson) dismissed.set(reminderLesson._id, timestamp() + 5 * 60000);
@@ -319,8 +380,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     const index = lessons.findIndex(item => item._id === lesson._id);
     if (index >= 0) lessons[index] = lesson; else lessons.push(lesson);
     if (active?._id === lesson._id) {
-      if (!['scheduled', 'active'].includes(lesson.status)
-        || !(config.uid === lesson.teacherUid ? lesson.teacherJoined : lesson.studentJoined)) {
+      if (!['scheduled', 'active'].includes(lesson.status)) {
         stopActive('课堂已结束'); return;
       }
       active = lesson; renderActive(); updateSharing();
@@ -343,9 +403,9 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
       if (Number.isFinite(serverNow)) skew = serverNow - (startedAt + now()) / 2;
       if (active) {
         const item = lessons.find(lesson => lesson._id === active!._id);
-        if (!item || !['scheduled', 'active'].includes(item.status)
-          || !(config.uid === item.teacherUid ? item.teacherJoined : item.studentJoined)) stopActive('课堂已结束');
-        else { active = item; renderActive(); updateSharing(); }
+        if (item && !['scheduled', 'active'].includes(item.status)) stopActive('课堂已结束');
+        else if (item) { active = item; renderActive(); updateSharing(); }
+        if (!socket && !recoveryPaused) void recover();
       }
       renderRoster(); renderSchedules(); updateReminder();
     } catch (cause) {
@@ -365,7 +425,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     try { socket.send(JSON.stringify(message)); return true; } catch { return false; }
   }
   function closeSocket() {
-    clearTimeout(reconnectTimer); socketReady = false; peerOnline = false;
+    clearTimeout(reconnectTimer); clearTimeout(handshakeTimer); socketReady = false; peerOnline = false;
     const old = socket; socket = null;
     if (old) { old.onclose = old.onerror = old.onmessage = old.onopen = null; old.close(); }
   }
@@ -378,77 +438,160 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     for (const reservation of pendingDesktop) media.cancelDesktop(reservation);
     pendingDesktop.clear();
   }
-  function stopActive(message = '') {
+  function stopActive(message = '', clearHint = true, clearAnnotations = clearHint) {
     generation++; dataRevision++; active = null; joining = false; reconnectAttempt = 0;
+    recoveryQueued = false;
+    if (clearHint) writeHint(null);
     cancelPendingDesktop();
-    closeSocket(); stopSharing(); media.stop(); lessonBar.hidden = true;
+    closeSocket(); stopSharing(clearAnnotations); media.stop(); lessonBar.hidden = true;
     if (message) showMessage(message);
     renderRoster(); renderSchedules();
     applyPageScope();
   }
+  function scheduleRecovery(immediate = false) {
+    if (disposed || recoveryPaused) return;
+    clearTimeout(reconnectTimer);
+    const delay = immediate ? 0 : Math.max(document.hidden ? 15000 : 0,
+      Math.min(15000, 750 * 2 ** Math.min(reconnectAttempt++, 5)) * (.85 + Math.random() * .3));
+    reconnectTimer = window.setTimeout(() => { void recover(); }, delay);
+  }
+  async function recover() {
+    if (disposed || recoveryPaused || socket) return;
+    if (recovering || busy || joining) { recoveryQueued = true; return; }
+    recoveryQueued = false;
+    recovering = true;
+    const version = generation;
+    const revision = dataRevision;
+    try {
+      const hint = readHint();
+      if (hint?.pending) {
+        try {
+          const result = await api({ operation: hint.pending, lessonId: hint.lessonId }, hint.apiUrl, hint.tabId || tabId);
+          if (disposed || version !== generation) return;
+          if (result.lesson) replaceLesson(result.lesson);
+        } catch (cause) {
+          if (!['ENDED', 'NOT_FOUND'].includes(errorCode(cause))) throw cause;
+        }
+        if (!disposed && version === generation) clearHintIfMatches(hint);
+        return;
+      }
+      const resumeUrl = safeRoute(config.resumeUrl || `${config.apiUrl}/resume`, 'lesson/resume');
+      if (!resumeUrl) throw new Error('课堂恢复地址无效。');
+      const startedAt = now();
+      const result = await api({ expectedUid: config.uid }, resumeUrl);
+      if (disposed || recoveryPaused || version !== generation) return;
+      if (revision !== dataRevision) { recoveryQueued = true; return; }
+      if (result.uid !== config.uid) { dispose(); return; }
+      if (!result.lesson) {
+        if (active) stopActive('课堂已结束'); else writeHint(null);
+        return;
+      }
+      const lesson: Lesson = result.lesson;
+      const apiUrl = safeRoute(result.apiUrl, 'lesson');
+      const socketUrl = safeRoute(result.socketUrl, 'lesson/conn');
+      if (!apiUrl || !socketUrl || !/^[a-zA-Z0-9_-]{8,96}$/.test(lesson._id)
+        || ![lesson.teacherUid, lesson.studentUid].includes(config.uid) || lesson.status !== 'active'
+        || socketUrl !== `${apiUrl}/conn`) throw new Error('课堂恢复信息无效。');
+      const serverNow = +new Date(result.serverNow);
+      if (Number.isFinite(serverNow)) skew = serverNow - (startedAt + now()) / 2;
+      const sameLesson = active?._id === lesson._id;
+      if (active && !sameLesson) stopActive('', false);
+      if (config.apiUrl !== apiUrl) { scopeGeneration++; lessons = []; students = []; }
+      config = { ...config, apiUrl, socketUrl, canTeach: lesson.teacherUid === config.uid };
+      if (!sameLesson) currentMode = hint?.lessonId === lesson._id ? hint.mode : 'broadcast';
+      replaceLesson(lesson);
+      if (sameLesson) { active = lesson; rememberActive(); renderActive(); connect(); }
+      else await enterLesson(lesson);
+      reconnectAttempt = 0;
+    } catch (cause) {
+      if (disposed || version !== generation || recoveryPaused) return;
+      if (revision !== dataRevision) { recoveryQueued = true; return; }
+      if (['FORBIDDEN', 'LOGIN_REVOKED', 'REPLACED'].includes(errorCode(cause)) || [401, 403].includes((cause as any)?.status)) {
+        recoveryPaused = true; stopActive(errorText(cause), false);
+      } else { renderActive('连接中断，正在自动续课…'); scheduleRecovery(); }
+    } finally {
+      recovering = false;
+      if (recoveryQueued && !disposed && !recoveryPaused && !socket && !busy && !joining) {
+        recoveryQueued = false; scheduleRecovery();
+      }
+    }
+  }
+  function reconnect() {
+    if (!active || disposed || recoveryPaused) return;
+    closeSocket(); media.setConnected(false); renderActive('连接中断，正在自动续课…');
+    scheduleRecovery();
+  }
   function connect() {
-    if (!active || disposed || socket) return;
+    if (!active || disposed || socket || recoveryPaused) return;
     const lessonId = active._id;
     const url = new URL(config.socketUrl, window.location.href); url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     try {
       const connection = options.socketFactory ? options.socketFactory(url.href) : new WebSocket(url.href);
       socket = connection;
       const valid = () => !disposed && socket === connection && active?._id === lessonId;
+      handshakeTimer = window.setTimeout(() => { if (valid() && !socketReady) reconnect(); }, 15000);
       connection.onopen = () => { if (valid()) connection.send(JSON.stringify({ type: 'join', lessonId, tabId })); };
       connection.onmessage = event => {
         if (!valid()) return;
         let message: any;
         try { message = JSON.parse(event.data); } catch { return; }
+        if (!message || typeof message !== 'object') return;
+        lastServerMessageAt = now();
         if (message.type === 'ready') {
           if (message.lesson?._id !== lessonId) return;
+          clearTimeout(handshakeTimer);
+          recoveryQueued = false;
           socketReady = true; peerOnline = !!message.peerOnline; reconnectAttempt = 0;
           media.setConnected(true); media.receive({ type: 'peer', online: peerOnline });
-          replaceLesson(message.lesson); renderActive(); updateSharing();
+          replaceLesson(message.lesson); renderActive(); updateSharing(true);
         } else if (message.type === 'lesson' && message.lesson?._id === lessonId) replaceLesson(message.lesson);
         else if (message.type === 'ended' && (!message.lessonId || message.lessonId === lessonId)) {
           stopActive(message.reason || '课堂已结束'); void refresh();
         } else if (message.type === 'error') {
-          if (/^(FORBIDDEN|ENDED|REPLACED|LOGIN_REVOKED|NOT_JOINED|NOT_FOUND|JOIN_REQUIRED|TOO_EARLY)$/.test(message.code || '')) {
-            stopActive(message.message || '课堂连接已结束'); void refresh();
-          } else { showMessage(message.message || '课堂连接暂时不可用'); renderActive(message.message); }
+          if (message.code === 'REPLACED') {
+            recoveryPaused = true; stopActive(message.message || '课堂已在另一个页面恢复。', false);
+          } else if (/^(FORBIDDEN|LOGIN_REVOKED)$/.test(message.code || '')) {
+            recoveryPaused = true; stopActive(message.message || '课堂权限已失效。', false);
+          } else if (/^(ENDED|NOT_FOUND)$/.test(message.code || '')) {
+            stopActive(message.message || '课堂已结束'); void refresh();
+          } else if (/^(NOT_JOINED|JOIN_REQUIRED|OFFLINE|UNAVAILABLE|RATE_LIMIT|TOO_EARLY)$/.test(message.code || '')) reconnect();
+          else { showMessage(message.message || '课堂连接暂时不可用'); renderActive(message.message); }
         } else {
           media.receive(message);
           if (message.type === 'peer') {
-            peerOnline = !!message.online; updateSharing();
+            peerOnline = !!message.online; updateSharing(peerOnline);
             renderActive(message.online ? '正在上课' : '对方暂时离开，等待重新加入…');
           }
         }
       };
       const disconnected = () => {
         if (!valid()) return;
-        connection.onclose = connection.onerror = connection.onmessage = connection.onopen = null;
-        socket = null; socketReady = false; peerOnline = false; media.setConnected(false); stopSharing(); renderActive('连接中断，正在重新连接…');
-        try { connection.close(); } catch { /* Transport already closed. */ }
-        reconnectAttempt++;
-        if (reconnectAttempt > 6) { stopActive('连接未能恢复，请点击上课重新加入。'); void refresh(); return; }
-        reconnectTimer = window.setTimeout(connect, Math.min(15000, 1000 * 2 ** (reconnectAttempt - 1)));
+        reconnect();
       };
       connection.onclose = disconnected; connection.onerror = disconnected;
     } catch {
-      media.setConnected(false); renderActive('课堂连接失败，请离开后重新加入。');
-      showMessage('课堂连接失败，请离开后重新加入。');
+      reconnect();
     }
   }
   async function enterLesson(lesson: Lesson, desktop?: LessonDesktopReservation) {
     if (disposed) return false;
     dataRevision++;
+    recoveryPaused = false;
     active = lesson; reminderLesson = null;
+    rememberActive();
     if (reminder.open) reminder.close(); if (dialog.open) dialog.close();
     renderActive(); renderSchedules();
-    // Only this user-initiated path starts media. Polling and reminders never do.
+    // This follows either an explicit join or a server-confirmed recovery of it.
     void media.start(lesson, desktop).catch(cause => { if (active?._id === lesson._id) showMessage(errorText(cause)); });
     connect();
     return true;
   }
   async function join(lesson: Lesson) {
     if (joining || active || busy || disposed) return;
+    if (readHint()?.pending) { showMessage('正在同步上次离开课堂的操作，网络恢复后可继续。'); return; }
     if (lesson.teacherUid !== config.uid && !lessonIsDue(lesson, timestamp())) { showMessage('还没到上课时间。'); return; }
     dataRevision++;
+    recoveryPaused = false;
     joining = true; enter.disabled = true; enter.textContent = '正在进入…';
     reminderError.hidden = true; renderSchedules();
     const version = generation;
@@ -466,10 +609,12 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
       if (desktop) { pendingDesktop.delete(desktop); if (!transferred) media.cancelDesktop(desktop); }
       joining = false; enter.disabled = false; enter.textContent = '点击上课';
       if (!disposed) { renderSchedules(); applyPageScope(); }
+      if (recoveryQueued && !active && !socket) scheduleRecovery();
     }
   }
   async function create() {
     if (busy || active || !selection || disposed) return;
+    if (readHint()?.pending) { showMessage('正在同步上次离开课堂的操作，网络恢复后可继续。'); return; }
     formError.hidden = true;
     let startAt: string | undefined;
     try {
@@ -480,6 +625,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
       if (!duration.checkValidity() || !Number.isInteger(Number(duration.value))) throw new Error('请选择 15～240 分钟的课程时长。');
     } catch (cause) { formError.textContent = errorText(cause); formError.hidden = false; return; }
     dataRevision++;
+    recoveryPaused = false;
     busy = true; close.disabled = true; immediate.disabled = reserve.disabled = true; renderRoster();
     const version = generation;
     const desktop = booking ? undefined : prepareDesktop();
@@ -497,6 +643,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
       if (desktop) { pendingDesktop.delete(desktop); if (!transferred) media.cancelDesktop(desktop); }
       busy = false; close.disabled = false; immediate.disabled = reserve.disabled = false;
       if (!disposed) { renderRoster(); renderSchedules(); applyPageScope(); }
+      if (recoveryQueued && !active && !socket) scheduleRecovery();
     }
   }
   async function leaveLesson(ending: boolean) {
@@ -506,11 +653,23 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     dataRevision++;
     busy = true;
     dismissed.set(lesson._id, timestamp() + 5 * 60000);
+    const pendingAction: RecoveryHint = { lessonId: lesson._id, apiUrl, socketUrl: config.socketUrl, mode: currentMode,
+      pending: ending ? 'end' : 'leave', tabId };
+    writeHint(pendingAction);
     // Release devices immediately even when the server is unreachable.
-    stopActive();
-    try { const result = await api({ operation: ending ? 'end' : 'leave', lessonId: lesson._id }, apiUrl); if (result.lesson && !disposed) replaceLesson(result.lesson); }
-    catch { if (!disposed) showMessage('你已离开课堂，连接正在释放。'); }
-    finally { busy = false; if (!disposed) { applyPageScope(); void refresh(); renderRoster(); renderSchedules(); } }
+    stopActive('', false, ending);
+    try {
+      const result = await api({ operation: ending ? 'end' : 'leave', lessonId: lesson._id }, apiUrl);
+      if (result.lesson && !disposed) replaceLesson(result.lesson);
+      clearHintIfMatches(pendingAction);
+    } catch (cause) {
+      if (['ENDED', 'NOT_FOUND'].includes(errorCode(cause))) clearHintIfMatches(pendingAction);
+      else if (!disposed) { showMessage(ending ? '已停止上课；网络恢复后会同步下课。' : '已离开课堂；网络恢复后会同步。'); scheduleRecovery(); }
+    }
+    finally {
+      busy = false; if (!disposed) { applyPageScope(); void refresh(); renderRoster(); renderSchedules(); }
+      if (recoveryQueued && !active && !socket) scheduleRecovery();
+    }
   }
   async function cancel(lessonId: string) {
     if (busy || active || disposed) return;
@@ -518,7 +677,10 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     busy = true; renderSchedules();
     try { const result = await api({ operation: 'cancel', lessonId }); if (!disposed && result.lesson) replaceLesson(result.lesson); }
     catch (cause) { showMessage(errorText(cause)); }
-    finally { busy = false; if (!disposed) { renderSchedules(); void refresh(); } }
+    finally {
+      busy = false; if (!disposed) { renderSchedules(); void refresh(); }
+      if (recoveryQueued && !active && !socket) scheduleRecovery();
+    }
   }
   function open() {
     if (!config.canTeach || disposed) return;
@@ -574,25 +736,47 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   });
   on(window, 'onebyone:communication-page-ready', event => {
     const page = (event as CustomEvent).detail?.window; if (page) attachContent(page);
+    updateSharing(true);
   });
+  on(window, 'onebyone:lesson-share-ready', () => updateSharing(true));
   on(window, 'onebyone:lesson-share-state', event => {
     const detail = (event as CustomEvent).detail;
     if (!active || detail?.lessonId !== active._id || active.teacherUid !== config.uid) return;
-    if (detail.mode === 'broadcast' || detail.mode === 'assist') currentMode = detail.mode;
+    if (detail.mode === 'broadcast' || detail.mode === 'assist') { currentMode = detail.mode; rememberActive(); }
     renderActive();
     shareState.hidden = false;
     shareState.textContent = detail.message || ({ pending: '正在准备分享画面…', active: '画面已分享', error: '分享暂时未能开始', ended: '分享已结束' } as Record<string, string>)[detail.state] || '';
     retryShare.hidden = !['error', 'ended'].includes(detail.state);
+    if (['error', 'ended'].includes(detail.state)) scheduleSharingRecovery();
+    else if (detail.state === 'active') { clearTimeout(shareRetryTimer); shareRetryAttempt = 0; }
   });
-  on(document, 'visibilitychange', () => { if (!document.hidden) { void refresh(); updateReminder(); } });
-  on(window, 'online', () => { if (active && !socket) connect(); void refresh(); });
-  const pulse = window.setInterval(() => { if (socketReady) send({ type: 'pulse' }); }, 5000);
+  const wake = () => {
+    if (disposed || recoveryPaused) return;
+    if (socketReady && now() - lastServerMessageAt > 30000) reconnect();
+    else if (!socket) scheduleRecovery(true);
+    void refresh(); updateReminder();
+  };
+  on(document, 'visibilitychange', () => { if (!document.hidden) wake(); });
+  on(window, 'online', wake);
+  on(window, 'storage', event => {
+    if ((event as StorageEvent).key !== recoveryKey || disposed) return;
+    if (hintStorageFailed && memoryHint?.pending) return;
+    hintStorageFailed = false;
+    memoryHint = null;
+    const hint = readHint();
+    if (hint?.pending && active?._id === hint.lessonId) { stopActive('', false, hint.pending === 'end'); scheduleRecovery(true); }
+  });
+  const pulse = window.setInterval(() => {
+    if (!socketReady) return;
+    if (now() - lastServerMessageAt > (document.hidden ? 120000 : 30000)) reconnect();
+    else send({ type: 'pulse' });
+  }, 5000);
   const clock = window.setInterval(() => {
     renderHomeCards(); updateReminder();
   }, 1000);
   function dispose() {
     if (disposed) return;
-    disposed = true; generation++; cancelPendingDesktop(); closeSocket(); stopSharing(); media.dispose();
+    disposed = true; generation++; cancelPendingDesktop(); closeSocket(); clearTimeout(shareRetryTimer); media.dispose();
     clearTimeout(pollTimer); clearTimeout(messageTimer); clearInterval(pulse); clearInterval(clock);
     fetches.forEach(abort => abort.abort()); fetches.clear();
     disposers.forEach(remove => remove()); contentRelease?.(); clearHomeCards();
@@ -600,9 +784,14 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     dialog.remove(); reminder.remove(); lessonBar.remove(); toast.remove(); installed = undefined;
   }
   on(window, 'onebyone:session-ended', dispose);
-  on(window, 'pagehide', dispose);
+  on(window, 'pagehide', () => {
+    dispose();
+    window.addEventListener('pageshow', event => {
+      if ((event as PageTransitionEvent).persisted) installLesson(pageConfig, options);
+    }, { once: true });
+  });
   setBooking(false); renderRoster();
   const currentPage = (window as any).__onebyonePlatformShell?.contentWindow(); if (currentPage) attachContent(currentPage);
-  installed = dispose; void refresh();
+  installed = dispose; void refresh(); void recover();
   return dispose;
 }

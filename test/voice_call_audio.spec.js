@@ -68,3 +68,60 @@ it('playback starts after a short jitter buffer, stays bounded, and clears old s
     p.message({ type: 'clear' }); p.instance.process([], [[output]]);
     assert.equal(output.some(Boolean), false); assert.equal(p.instance.queue.length, 0);
 });
+
+function audioFixture() {
+    const nodes = []; const errors = [];
+    let captures = 0;
+    class AudioContext {
+        constructor() { this.destination = {}; this.audioWorklet = { async addModule() {} }; }
+        async resume() {}
+        async close() {}
+        createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+    }
+    class AudioWorkletNode {
+        constructor() { this.port = { postMessage() {}, close() {} }; nodes.push(this); }
+        connect() {}
+        disconnect() {}
+    }
+    const window = { isSecureContext: true, AudioContext, AudioWorkletNode,
+        setTimeout, clearTimeout, setInterval: () => 1, clearInterval() {} };
+    const value = { exports: {} };
+    vm.runInNewContext(transformSync(fs.readFileSync(file, 'utf8'), { loader: 'ts', format: 'cjs' }).code, {
+        module: value, exports: value.exports, window, AudioContext, AudioWorkletNode, Blob,
+        URL: { createObjectURL: () => 'blob:voice-worklet', revokeObjectURL() {} },
+        navigator: { mediaDevices: { async getUserMedia() {
+            captures++;
+            const track = { stop() {}, addEventListener() {} };
+            return { getTracks: () => [track], getAudioTracks: () => [track] };
+        } } },
+        btoa, atob, Uint8Array,
+    });
+    const audio = new value.exports.VoiceAudio({ onFrame() {}, onError(error) { errors.push(error.message); } });
+    return { audio, nodes, errors, window, get captures() { return captures; } };
+}
+
+it('an error from a stopped audio processor cannot interrupt a later classroom microphone', async () => {
+    const { audio, nodes, errors } = audioFixture();
+    await audio.start(); const previous = nodes[0];
+    audio.stop(); await audio.start();
+    previous.onprocessorerror();
+    assert.equal(errors.length, 0); assert.equal(audio.ready, true);
+    nodes[1].onprocessorerror();
+    assert.equal(errors.length, 1, 'the current processor still reports real device errors');
+    audio.stop();
+});
+
+it('resuming an existing microphone has a bounded autoplay timeout and never captures another device', async () => {
+    const f = audioFixture();
+    await f.audio.start();
+    const context = f.audio.context;
+    f.window.setTimeout = (callback, delay) => setTimeout(callback, delay === 1800 ? 5 : delay);
+    context.resume = () => new Promise(() => {});
+    await assert.rejects(f.audio.start(), /重试设备/);
+    assert.equal(f.audio.ready, true); assert.equal(f.audio.context, context);
+    assert.equal(f.captures, 1); assert.equal(f.nodes.length, 1);
+    context.resume = async () => {};
+    await f.audio.start();
+    assert.equal(f.captures, 1); assert.equal(f.nodes.length, 1);
+    f.audio.stop();
+});

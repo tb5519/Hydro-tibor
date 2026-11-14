@@ -98,6 +98,57 @@ export class LessonHandler extends Handler {
     }
 }
 
+/** Recovery belongs to the authenticated account, independent of the page's
+ * current teaching domain. The target room supplies its fresh access checks. */
+export class LessonResumeHandler extends Handler {
+    async prepare() {
+        this.response.type = 'application/json';
+        this.response.addHeader('Cache-Control', 'private, no-store');
+        this.response.addHeader('Vary', 'Cookie');
+        this.checkPriv(PRIV.PRIV_USER_PROFILE);
+        if (this.session.sudoUid) throw new LessonError('FORBIDDEN', '代登录状态不能上课。');
+        checkShareOrigin(this.request.headers.origin, this.request.host);
+        await this.limitRate('lesson_resume', 60, 60);
+        const login = this.session._id ? await token.get(this.session._id, token.TYPE_SESSION) : null;
+        if (!login || login.uid !== this.user._id || login.sudoUid || !(+login.expireAt > Date.now())) {
+            throw new LessonError('FORBIDDEN', '登录已失效，请重新登录。');
+        }
+    }
+
+    async post() {
+        const body = this.request.body;
+        if (!body || typeof body !== 'object' || Array.isArray(body)
+            || Object.keys(body).some((key) => !['tabId', 'expectedUid'].includes(key))) {
+            throw new LessonError('INVALID_MESSAGE', '课堂恢复请求格式不正确。');
+        }
+        const uid = this.user._id;
+        if (body.expectedUid !== undefined && body.expectedUid !== uid) {
+            throw new LessonError('FORBIDDEN', '登录账号已改变，请刷新页面。');
+        }
+        const restored = await lesson.resume(uid, body.tabId, emitLesson, Date.now(), async (room) => {
+            const login = this.session._id ? await token.get(this.session._id, token.TYPE_SESSION) : null;
+            const permission = room.teacherUid === uid ? PERM.PERM_EDIT_DOMAIN : PERM.PERM_VIEW;
+            let allowed = false;
+            try { allowed = login && login.uid === uid && !login.sudoUid && +login.expireAt > Date.now()
+                && (BigInt(login.scope ?? PERM.PERM_ALL) & permission) === permission; } catch { /* Fail closed. */ }
+            if (!allowed) throw new LessonError('FORBIDDEN', '登录或课堂权限已失效，请重新登录。');
+        });
+        this.response.body = { uid, lesson: restored, ...(restored ? {
+            apiUrl: this.url('lesson', { domainId: restored.domainId }),
+            socketUrl: this.url('lesson_conn', { domainId: restored.domainId }),
+            canTeach: restored.teacherUid === uid,
+        } : {}), serverNow: new Date().toISOString() };
+    }
+
+    async onerror(error: any) {
+        this.response.type = 'application/json';
+        this.response.addHeader('Cache-Control', 'private, no-store');
+        this.response.status = knownError(error)
+            ? ({ FORBIDDEN: 403, ORIGIN: 403, NOT_FOUND: 404, CONFLICT: 409, BUSY: 409, REPLACED: 409, ENDED: 410 }[error.code] || 400) : 503;
+        this.response.body = errorBody(error);
+    }
+}
+
 export class LessonConnectionHandler extends ConnectionHandler {
     maxMessageBytes = LESSON_MAX_MESSAGE_BYTES;
     private readonly connectionId = lesson.opaqueLessonId();
@@ -168,12 +219,13 @@ export class LessonConnectionHandler extends ConnectionHandler {
                 this.peer = bound.peer; this.room = bound.room;
                 this.lastLoginCheck = 0; await this.checkSession(true);
                 emitLesson({ uid: this.user._id, lessonId: this.room._id,
-                    message: { type: 'owner', connectionId: this.connectionId } });
+                    message: { type: 'owner', connectionId: this.connectionId, ownerVersion: this.peer.ownerVersion } });
                 const otherUid = this.user._id === this.room.teacherUid ? this.room.studentUid : this.room.teacherUid;
                 emitLesson({ uid: otherUid, lessonId: this.room._id, message: { type: 'peer', online: true, streamId: this.connectionId } });
             } else {
                 if (!this.peer) throw new LessonError('JOIN_REQUIRED', '请先点击上课按钮。');
                 await this.checkSession();
+                if (!this.closing) this.send({ type: 'pulse' });
             }
         }).catch((error) => {
             if (knownError(error) && ['FORBIDDEN', 'ENDED', 'REPLACED', 'JOIN_REQUIRED'].includes(error.code)) this.stop(error.message, error.code);
@@ -199,9 +251,12 @@ export class LessonConnectionHandler extends ConnectionHandler {
         try {
             await this.checkLogin();
             const room = await lesson.pulse(this.peer, this.domain._id);
-            const other = await lesson.otherMember(room, this.user._id);
+            let other = await lesson.otherMember(room, this.user._id);
             if (this.closing || version !== this.authorizationVersion) return;
-            if (other && other.serverId !== serverId) throw new LessonError('UNAVAILABLE', '课堂连接到了不同服务实例，请重新连接。');
+            // The other browser can still have a short lease from the previous
+            // server process. Wait for its fresh binding instead of repeatedly
+            // disconnecting the participant who has already recovered.
+            if (other && other.serverId !== serverId) other = null;
             const changed = this.other?.connectionId !== other?.connectionId;
             this.room = room; this.other = other; this.lastAuthorization = Date.now();
             if (announce) this.send({ type: 'ready', lesson: await lesson.snapshot(room), peerOnline: !!other });
@@ -228,7 +283,16 @@ export class LessonConnectionHandler extends ConnectionHandler {
             this.send(message); return;
         }
         if (message.type === 'owner') {
-            if (message.connectionId !== this.connectionId) this.stop('课堂已重新连接。', 'REPLACED');
+            const owner = await lesson.members.findOne({ _id: this.user._id, lessonId: this.room._id });
+            if (this.closing || !owner) return;
+            // IPC delivery can reorder two bindings of the SAME admission
+            // version. Only the owner currently recorded by Mongo may replace
+            // this socket; a delayed notification from its predecessor cannot.
+            if (Number.isSafeInteger(message.ownerVersion) && message.ownerVersion !== owner.ownerVersion) return;
+            if (message.connectionId && message.connectionId !== owner.connectionId) return;
+            if (owner.connectionId !== this.connectionId || owner.ownerVersion !== this.peer.ownerVersion) {
+                this.stop('课堂已重新连接。', 'REPLACED');
+            }
             return;
         }
         if (message.type === 'ended') {
@@ -288,11 +352,13 @@ export async function injectLesson(handler: Handler) {
         if (!access) return;
     }
     handler.UiContext.lesson = { enabled: true, uid: handler.user._id, canTeach: access.canTeach,
-        apiUrl: handler.url('lesson', { domainId }), socketUrl: handler.url('lesson_conn', { domainId }) };
+        apiUrl: handler.url('lesson', { domainId }), socketUrl: handler.url('lesson_conn', { domainId }),
+        resumeUrl: handler.url('lesson_resume', { domainId }) };
 }
 
 export function apply(ctx: Context) {
     ctx.Route('lesson', '/lesson', LessonHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('lesson_resume', '/lesson/resume', LessonResumeHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Connection('lesson_conn', '/lesson/conn', LessonConnectionHandler, PRIV.PRIV_USER_PROFILE);
     ctx.on('handler/after', injectLesson);
 }

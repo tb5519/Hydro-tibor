@@ -44,6 +44,8 @@ async function fixture(t, options = {}) {
           window.fakeNow=${options.now ?? now};window.requests=[];window.messages=[];window.mediaStarts=0;window.mediaStops=0;window.mediaReceives=[];window.mediaConnections=[];window.shareEvents=[];
           window.desktopEvents=[];window.desktopReservations=[];window.startedReservation=null;
           window.rows=${JSON.stringify(options.lessons || [])};window.uid=${options.student ? 5 : 2};
+          window.resumeIntent=${JSON.stringify(options.resumeLessonId || null)};window.failFinish=false;window.failResume=false;
+          window.pageDomain=location.pathname.match(/^\\/d\\/([^/]+)/)?.[1]||'C0001';
           window.students=[{uid:5,name:'橙子',online:true},{uid:7,name:'睿睿',online:false}];
           window.media={prepareDesktop(){const reservation={id:desktopReservations.length+1,cancelled:false};desktopReservations.push(reservation);desktopEvents.push('prepare');return reservation},cancelDesktop(reservation){reservation.cancelled=true;desktopEvents.push('cancel')},start(lesson,reservation){mediaStarts++;window.startedLesson=lesson._id;window.startedReservation=reservation;desktopEvents.push('start');return Promise.resolve()},receive(message){mediaReceives.push(message)},setConnected(value){mediaConnections.push(value)},stop(){mediaStops++},dispose(){mediaStops++}};
           window.dispatchShare=(type,detail)=>window.dispatchEvent(new CustomEvent(type,{detail}));
@@ -51,6 +53,14 @@ async function fixture(t, options = {}) {
           window.fakeFetch=async(url,init)=>{
             const body=init.body?JSON.parse(init.body):null;requests.push({url,body});
             if(body){
+              if(url.endsWith('/lesson/resume')){
+                if(failResume)throw new Error('网络中断');
+                const item=rows.find(row=>row._id===resumeIntent&&row.status==='active');
+                if(body.expectedUid!==uid)return new Response(JSON.stringify({code:'FORBIDDEN'}),{status:403});
+                if(!item)return new Response(JSON.stringify({uid,lesson:null,serverNow:new Date(fakeNow).toISOString()}));
+                item[uid===item.teacherUid?'teacherJoined':'studentJoined']=true;
+                return new Response(JSON.stringify({uid,lesson:item,apiUrl:'/d/'+item.domainId+'/lesson',socketUrl:'/d/'+item.domainId+'/lesson/conn',canTeach:uid===item.teacherUid,serverNow:new Date(fakeNow).toISOString()}));
+              }
               desktopEvents.push('request:'+body.operation);
               if(['join','create'].includes(body.operation)){
                 if(${!!options.holdMutation})return new Promise(resolve=>{window.releaseMutation=data=>{resolve(new Response(JSON.stringify(data)));setTimeout(()=>{window.mutationReplyDelivered=true},0)}});
@@ -59,25 +69,27 @@ async function fixture(t, options = {}) {
               }
               if(body.operation==='create'){
                 const planned=!!body.startAt;
-                const item={_id:'lesson-created-abcdefghijkl',domainId:'C0001',workspaceId:'legacy',teacherUid:2,studentUid:body.studentUid,teacherName:'唐老师',studentName:students.find(x=>x.uid===body.studentUid).name,title:body.title,startAt:body.startAt||new Date(fakeNow).toISOString(),endAt:new Date((body.startAt?Date.parse(body.startAt):fakeNow)+body.durationMinutes*60000).toISOString(),status:planned?'scheduled':'active',teacherJoined:!planned,studentJoined:false};rows.push(item);return new Response(JSON.stringify({lesson:item}));
+                const item={_id:'lesson-created-abcdefghijkl',domainId:pageDomain,workspaceId:'legacy',teacherUid:2,studentUid:body.studentUid,teacherName:'唐老师',studentName:students.find(x=>x.uid===body.studentUid).name,title:body.title,startAt:body.startAt||new Date(fakeNow).toISOString(),endAt:new Date((body.startAt?Date.parse(body.startAt):fakeNow)+body.durationMinutes*60000).toISOString(),status:planned?'scheduled':'active',teacherJoined:!planned,studentJoined:false};rows.push(item);if(!planned)resumeIntent=item._id;return new Response(JSON.stringify({lesson:item}));
               }
               const item=rows.find(row=>row._id===body.lessonId);
               if(!item)return new Response(JSON.stringify({message:'没有这节课'}),{status:404});
-              if(body.operation==='join'){item[uid===item.teacherUid?'teacherJoined':'studentJoined']=true;item.status='active'}
-              if(body.operation==='leave')item[uid===item.teacherUid?'teacherJoined':'studentJoined']=false;
-              if(body.operation==='cancel')item.status='cancelled';if(body.operation==='end')item.status='ended';
+              if(body.operation==='join'){item[uid===item.teacherUid?'teacherJoined':'studentJoined']=true;item.status='active';resumeIntent=item._id}
+              if(['end','leave'].includes(body.operation)&&failFinish)throw new Error('网络中断');
+              if(body.operation==='leave'){item[uid===item.teacherUid?'teacherJoined':'studentJoined']=false;resumeIntent=null}
+              if(body.operation==='cancel')item.status='cancelled';if(body.operation==='end'){item.status='ended';resumeIntent=null}
               return new Response(JSON.stringify({lesson:item}));
             }
-            return new Response(JSON.stringify({lessons:rows.filter(row=>url.startsWith('/d/C0002')?row.domainId==='C0002':row.domainId==='C0001'),students,serverNow:new Date(fakeNow).toISOString()}));
+            const domainId=url.match(/^\\/d\\/([^/]+)\\/lesson$/)?.[1]||pageDomain;
+            return new Response(JSON.stringify({lessons:rows.filter(row=>row.domainId===domainId),students,serverNow:new Date(fakeNow).toISOString()}));
           };
           window.connections=[];
           window.fakeSocket=(url)=>{
             const connection={readyState:0,bufferedAmount:0,onopen:null,onmessage:null,onclose:null,onerror:null,url,
-              send(data){const msg=JSON.parse(data);messages.push(msg);if(msg.type==='join')setTimeout(()=>this.deliver({type:'ready',lesson:rows.find(x=>x._id===msg.lessonId),peerOnline:${!!options.peerOnline}}),0)},
-              deliver(data){this.onmessage?.({data:JSON.stringify(data)})},close(){this.readyState=3}};
+              send(data){const msg=JSON.parse(data);messages.push(msg);if(msg.type==='join')setTimeout(()=>this.deliver({type:'ready',lesson:rows.find(x=>x._id===msg.lessonId),peerOnline:${!!options.peerOnline}}),0);if(msg.type==='pulse')this.deliver({type:'pulse'})},
+              deliver(data){this.onmessage?.({data:JSON.stringify(data)})},close(){this.readyState=3},drop(){this.readyState=3;this.onclose?.({})}};
             connections.push(connection);setTimeout(()=>{connection.readyState=1;connection.onopen?.({})},10);return connection;
           };
-          window.cleanup=LessonUI.installLesson({enabled:true,uid,canTeach:${!options.student},apiUrl:'/d/C0001/lesson',socketUrl:'/d/C0001/lesson/conn'}, {fetch:fakeFetch,now:()=>fakeNow,pollIntervalMs:1000000,socketFactory:fakeSocket,mediaFactory:()=>media});
+          window.cleanup=LessonUI.installLesson({enabled:true,uid,canTeach:${!options.student},apiUrl:'/d/'+pageDomain+'/lesson',socketUrl:'/d/'+pageDomain+'/lesson/conn',resumeUrl:'/d/'+pageDomain+'/lesson/resume'}, {fetch:fakeFetch,now:()=>fakeNow,pollIntervalMs:1000000,socketFactory:fakeSocket,mediaFactory:()=>media});
           window.refreshLessons=()=>document.dispatchEvent(new Event('visibilitychange'));
         </script></body></html>` });
     });
@@ -206,7 +218,8 @@ it('a teacher enters immediately, waits for learner consent, and switches sharin
     assert.equal(await page.evaluate(() => mediaStarts), starts);
     assert.equal(await page.evaluate(() => mediaStops), stops);
     await page.evaluate(() => connections[0].deliver({ type: 'peer', online: false }));
-    assert.equal(await page.evaluate(() => shareEvents.at(-1).type), 'onebyone:lesson-share-stop');
+    assert.equal(await page.evaluate(() => shareEvents.some(event => event.type.endsWith('share-stop'))), false,
+        'a short peer outage must preserve the existing classroom sharing and its annotations');
     assert.equal(await page.evaluate(() => mediaStops), stops, 'a peer leaving clears its image without releasing the local camera');
     await page.getByRole('button', { name: '结束课堂', exact: true }).click();
     await page.waitForFunction(() => requests.some(x => x.body?.operation === 'end'));
@@ -255,5 +268,67 @@ it('cancelled bookings disappear and invalid calendar dates are rejected before 
         return values.map(value => { try { LessonUI.lessonStartIso(value); return false; } catch { return true; } });
     });
     assert.deepEqual(result, [true, true, true]);
+    assert.deepEqual(errors, []);
+});
+
+it('a previously joined class resumes from another classroom page and reloads without another invitation or desktop click', async t => {
+    const current = lesson({ status: 'active', teacherJoined: true, studentJoined: true,
+        startAt: new Date(now - 60000).toISOString() });
+    const { page, errors } = await fixture(t, { lessons: [current], resumeLessonId: current._id, peerOnline: true });
+    await page.waitForFunction(() => mediaStarts === 1 && mediaConnections.includes(true));
+    await page.getByRole('button', { name: '共享学员页面', exact: true }).click();
+    await page.goto('https://lesson-ui.test/d/C0002/p');
+    await page.waitForFunction(() => mediaStarts === 1 && mediaConnections.includes(true));
+    assert.equal(await page.evaluate(() => startedLesson), current._id);
+    assert.equal(await page.evaluate(() => connections[0].url), 'wss://lesson-ui.test/d/C0001/lesson/conn');
+    assert.equal(await page.evaluate(() => desktopReservations.length), 0, 'automatic recovery never prepares a window without a click');
+    assert.equal(await page.getByRole('button', { name: '共享学员页面', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.evaluate(() => requests.some(item => ['join', 'create'].includes(item.body?.operation))), false);
+    const before = await page.evaluate(() => shareEvents.filter(item => item.type.endsWith('share-start')).length);
+    await page.evaluate(() => window.dispatchEvent(new Event('onebyone:lesson-share-ready')));
+    assert.equal(await page.evaluate(() => shareEvents.filter(item => item.type.endsWith('share-start')).length), before + 1,
+        'late share-module initialization receives the active classroom again');
+    await page.reload();
+    await page.waitForFunction(() => mediaStarts === 1 && mediaConnections.includes(true));
+    assert.equal(await page.evaluate(() => desktopReservations.length), 0);
+    assert.equal(await page.getByRole('button', { name: '共享学员页面', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.deepEqual(errors, []);
+});
+
+it('a dropped classroom reconnects through REST without restarting devices, while a replaced tab stays yielded', async t => {
+    const current = lesson({ status: 'active', teacherJoined: true, studentJoined: true,
+        startAt: new Date(now - 60000).toISOString() });
+    const { page, errors } = await fixture(t, { lessons: [current], resumeLessonId: current._id, peerOnline: true });
+    await page.waitForFunction(() => mediaStarts === 1 && mediaConnections.includes(true));
+    const initialResumes = await page.evaluate(() => requests.filter(item => item.url.endsWith('/resume')).length);
+    await page.evaluate(() => { connections[0].drop(); window.dispatchEvent(new Event('online')); });
+    await page.waitForFunction(() => connections.length === 2 && mediaConnections.at(-1) === true);
+    assert.equal(await page.evaluate(() => mediaStarts), 1);
+    assert.equal(await page.evaluate(() => mediaStops), 0);
+    assert.equal(await page.evaluate(() => requests.filter(item => item.url.endsWith('/resume')).length), initialResumes + 1);
+    assert.equal(await page.evaluate(() => shareEvents.some(item => item.type.endsWith('share-stop'))), false);
+    await page.evaluate(() => connections[1].deliver({ type: 'error', code: 'REPLACED', message: '已在其他页面续课' }));
+    const yielded = await page.evaluate(() => ({ sockets: connections.length, resumes: requests.filter(item => item.url.endsWith('/resume')).length }));
+    await page.evaluate(() => { window.dispatchEvent(new Event('online')); refreshLessons(); });
+    await page.waitForTimeout(100);
+    assert.deepEqual(await page.evaluate(() => ({ sockets: connections.length, resumes: requests.filter(item => item.url.endsWith('/resume')).length })), yielded);
+    assert.equal(await page.evaluate(() => mediaStops), 1);
+    assert.deepEqual(errors, []);
+});
+
+it('an offline teacher end is synchronized before page recovery and never reopens the camera', async t => {
+    const current = lesson({ status: 'active', teacherJoined: true, studentJoined: true,
+        startAt: new Date(now - 60000).toISOString() });
+    const { page, errors } = await fixture(t, { lessons: [current], resumeLessonId: current._id, peerOnline: true });
+    await page.waitForFunction(() => mediaStarts === 1 && mediaConnections.includes(true));
+    await page.evaluate(() => { failFinish = true; });
+    await page.getByRole('button', { name: '结束课堂', exact: true }).click();
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('onebyone.lesson.recovery:2') || '{}').pending === 'end');
+    await page.reload();
+    await page.waitForFunction(() => requests.some(item => item.body?.operation === 'end'));
+    await page.waitForFunction(() => !localStorage.getItem('onebyone.lesson.recovery:2'));
+    assert.equal(await page.evaluate(() => mediaStarts), 0);
+    assert.equal(await page.evaluate(() => connections.length), 0);
+    assert.equal(await page.evaluate(() => requests.some(item => item.url.endsWith('/resume'))), false);
     assert.deepEqual(errors, []);
 });

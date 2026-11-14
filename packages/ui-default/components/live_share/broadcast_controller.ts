@@ -131,6 +131,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     if (!config.canTeach || disposed || typeof detail?.lessonId !== 'string' || detail.lessonId.length > 128
       || !Number.isSafeInteger(detail.studentUid) || detail.studentUid <= 1) return;
     if (lessonShare?.lessonId === detail.lessonId && !lessonShare.cancelled) {
+      if (!lessonShare.starting) lessonShare.deadline = Date.now() + 20000;
       if (lessonShare.sessionId && room?.sessionId === lessonShare.sessionId) lessonState('active');
       else void startLessonShare();
       return;
@@ -141,8 +142,10 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   };
   const lessonStop = (event: Event) => {
     if (!lessonShare || (event as CustomEvent).detail?.lessonId !== lessonShare.lessonId) return;
+    const annotationId = `classroom:${config.uid}:${lessonShare.lessonId}`;
     clearTimeout(lessonTimer); lessonShare.cancelled = true;
     if (lessonShare.sessionId && room?.sessionId === lessonShare.sessionId) stopSharing();
+    if ((event as CustomEvent).detail.clearAnnotations) clearSessionAnnotations(annotationId);
     if (!lessonShare.starting || !lessonShare.sent) { pending = false; lessonShare = null; }
   };
   const presence = config.canTeach ? createBroadcastPresence(config.uid, () => {
@@ -386,8 +389,10 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     try {
       const adapters = await (teacher && options.loadSourceAdapters ? options.loadSourceAdapters() : loadAdapters());
       if (disposed || generation !== version || room !== next) return;
+      const annotationId = lessonShare?.sessionId === next.sessionId && !lessonShare.cancelled
+        ? `classroom:${config.uid}:${lessonShare.lessonId}` : next.connectionId || next.sessionId;
       adapter = teacher ? adapters.attachBroadcastSource({ pageId: next.pageId, send, onStatus,
-        annotationScope: { sessionId: `${next.connectionId || next.sessionId}:broadcast:${config.uid}`, url: location.href } })
+        annotationScope: { sessionId: `${annotationId}:broadcast:${config.uid}`, url: location.href } })
         : adapters.attachBroadcastViewer({ pageId: next.pageId, container: stage!, sendDrawing: (packet) => {
             // The pen owns window-capture events, including nested frame gestures.
             // Freeze from its actual lifecycle rather than an obscured DOM listener.
@@ -454,6 +459,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
       disconnectTimer = window.setTimeout(() => {
         if (room && disconnectDeadline && Date.now() >= disconnectDeadline) {
           saveResume(false); clearRoom(); showMessage('分享连接已断开，已恢复你的页面。');
+          if (lessonShare && !lessonShare.cancelled) lessonState('ended', '分享连接正在自动恢复…');
         }
       }, 125000);
     }

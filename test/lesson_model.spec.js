@@ -83,7 +83,7 @@ beforeEach(async () => {
     blocked = new Set(); workspaceOverrides = new Map(); listeners = []; busCalls = [];
     logins = new Map([2, 3, 10, 11].map((uid) => [`login-${uid}`, { uid, scope: '3', expireAt: new Date(Date.now() + 60000) }]));
     if (!database) return;
-    await Promise.all([model.rooms.deleteMany({}), model.members.deleteMany({}), model.bookingSlots.deleteMany({}),
+    await Promise.all([model.rooms.deleteMany({}), model.members.deleteMany({}), model.bookingSlots.deleteMany({}), model.resumptions.deleteMany({}),
         database.collection('domain.user').deleteMany({})]);
     await database.collection('domain.user').insertMany([10, 11].map((uid) => ({ domainId: 'class-a', uid, role: 'default', join: true })));
 });
@@ -132,6 +132,12 @@ function http(uid, body = {}, method = 'POST') {
 }
 
 describe('lesson memory fixture semantics', () => {
+    it('increments missing numeric fields and preserves owner versions across updates', async () => {
+        const collection = makeStore().collection('versions');
+        await collection.findOneAndUpdate({ _id: 10 }, { $set: { lessonId: 'first' }, $inc: { version: 1 } }, { upsert: true });
+        const next = await collection.findOneAndUpdate({ _id: 10, version: 1 }, { $set: { lessonId: null }, $inc: { version: 1 } }, { returnDocument: 'after' });
+        assert.equal(next.version, 2); assert.equal(next.lessonId, null);
+    });
     it('enforces unique IDs even when an upsert filter does not match the existing owner', async () => {
         const collection = makeStore().collection('owners');
         await collection.insertOne({ _id: 10, tabId: 'first-tab', expiresAt: new Date('2030-01-01') });
@@ -336,5 +342,348 @@ describe('lesson media authorization with in-memory storage fixture', () => {
         assert(!student.sent.some((item) => item.type === 'video'));
         await teacher.timers[0](); assert(teacher.closed.length);
         await student.timers[0](); assert(student.closed.length);
+    });
+});
+
+
+function resumeHttp(uid, body = { tabId: tab(uid) }, currentDomain = 'class-b') {
+    const headers = new Map();
+    const instance = Object.assign(new handlers.LessonResumeHandler(), {
+        user: { _id: uid }, domain: { _id: currentDomain }, session: { _id: 'login-' + uid },
+        request: { method: 'POST', body, host: 'school.test', headers: { origin: 'https://school.test' } },
+        response: { status: 200, addHeader(key, value) { headers.set(key, value); } },
+        checkPriv() {}, checkPerm() { throw new Error('Resume must not check the current page domain role'); },
+        limitRate: async () => {},
+        url(name, parameters = {}) {
+            return '/d/' + parameters.domainId + '/' + (name === 'lesson_conn' ? 'lesson/conn' : name === 'lesson_resume' ? 'lesson/resume' : 'lesson');
+        },
+    });
+    return { instance, headers };
+}
+
+async function runResumeHttp(fixture) {
+    await fixture.instance.prepare(); await fixture.instance.post(); return fixture.instance.response.body;
+}
+
+describe('durable classroom recovery', () => {
+    before(setupDatabase);
+    async function legacyStudent() {
+        const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        await model.join(10, 'class-a', room._id, tab(10), quiet);
+        await model.resumptions.deleteOne({ _id: 10 });
+        await model.members.updateOne({ _id: 10 }, { $unset: { ownerVersion: '' } });
+        return room;
+    }
+    it('migrates an unexpired legacy explicit-join lease into one durable new-tab recovery owner', async () => {
+        const room = await legacyStudent();
+        const result = await model.resume(10, 'migrated-student-tab', quiet);
+        assert.equal(result._id, room._id);
+        const intent = await model.resumptions.findOne({ _id: 10 });
+        const member = await model.members.findOne({ _id: 10 });
+        assert.equal(intent.accepted, true); assert.equal(intent.lessonId, room._id);
+        assert.equal(intent.tabId, 'migrated-student-tab'); assert(intent.version > 0);
+        assert.equal(member.tabId, intent.tabId); assert.equal(member.ownerVersion, intent.version);
+        await model.bind(10, 'class-a', room._id, intent.tabId, 'migrated-owner-connection', 'server-a');
+    });
+    it('never migrates missing, expired, fenced or tombstoned legacy participation', async () => {
+        await legacyStudent();
+        const original = await model.members.findOne({ _id: 10 });
+        await model.members.deleteOne({ _id: 10 });
+        assert.equal(await model.resume(10, 'missing-legacy-tab', quiet), null);
+        await model.members.insertOne({ ...original, expiresAt: new Date(Date.now() - 1) });
+        assert.equal(await model.resume(10, 'expired-legacy-tab', quiet), null);
+        await model.members.updateOne({ _id: 10 }, { $set: { expiresAt: new Date(Date.now() + 60000), ownerVersion: 3 } });
+        assert.equal(await model.resume(10, 'fenced-legacy-tab', quiet), null);
+        await model.members.updateOne({ _id: 10 }, { $unset: { ownerVersion: '' } });
+        await model.resumptions.insertOne({ _id: 10, lessonId: null, accepted: false, version: 4 });
+        assert.equal(await model.resume(10, 'tombstoned-legacy-tab', quiet), null);
+        assert.equal((await model.members.findOne({ _id: 10 })).tabId, original.tabId);
+        assert.equal((await model.resumptions.findOne({ _id: 10 })).accepted, false);
+    });
+    it('rejects narrowed token or failed target access before migrating a legacy owner', async () => {
+        await legacyStudent();
+        const original = await model.members.findOne({ _id: 10 });
+        await assert.rejects(model.resume(10, 'denied-legacy-tab', quiet, Date.now(), async () => {
+            throw new protocol.LessonError('FORBIDDEN', 'Target access was revoked');
+        }), code('FORBIDDEN'));
+        assert.equal(await model.resumptions.findOne({ _id: 10 }), null);
+        assert.deepEqual(await model.members.findOne({ _id: 10 }), original);
+        logins.get('login-10').scope = '0';
+        await assert.rejects(runResumeHttp(resumeHttp(10, { tabId: 'narrow-legacy-tab', expectedUid: 10 })), code('FORBIDDEN'));
+        assert.equal(await model.resumptions.findOne({ _id: 10 }), null);
+        assert.deepEqual(await model.members.findOne({ _id: 10 }), original);
+    });
+    it('honors a legacy tab leave and cannot resurrect its lease during migration', async () => {
+        const room = await legacyStudent();
+        const result = await Promise.allSettled([model.resume(10, 'legacy-leave-race-tab', quiet, Date.now(), async () => {
+            await model.leave(10, 'class-a', room._id, tab(10), quiet);
+        })]);
+        assert(result[0].status === 'rejected' || result[0].value === null);
+        assert.equal(await model.members.findOne({ _id: 10 }), null);
+        assert.equal(await model.resumptions.countDocuments({ _id: 10, accepted: true }), 0);
+        assert.equal(await model.resume(10, 'legacy-after-leave-tab', quiet), null);
+        assert.equal((await model.rooms.findOne({ _id: room._id })).status, 'active');
+    });
+    it('checks the original page account before recovery even when both accounts belong to the same room', async () => {
+        const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        await model.join(10, 'class-a', room._id, tab(10), quiet);
+        const teacherOwner = await model.members.findOne({ _id: 2 });
+        const studentOwner = await model.members.findOne({ _id: 10 });
+        await assert.rejects(runResumeHttp(resumeHttp(10, { tabId: 'old-teacher-page-tab', expectedUid: 2 })), code('FORBIDDEN'));
+        await assert.rejects(runResumeHttp(resumeHttp(2, { tabId: 'old-student-page-tab', expectedUid: 10 })), code('FORBIDDEN'));
+        assert.deepEqual(await model.members.findOne({ _id: 2 }), teacherOwner);
+        assert.deepEqual(await model.members.findOne({ _id: 10 }), studentOwner);
+        const restored = await runResumeHttp(resumeHttp(10, { tabId: 'correct-student-page-tab', expectedUid: 10 }));
+        assert.equal(restored.uid, 10); assert.equal(restored.lesson._id, room._id);
+        const absent = await runResumeHttp(resumeHttp(11, { tabId: 'not-attending-page-tab', expectedUid: 11 }));
+        assert.equal(absent.uid, 11); assert.equal(absent.lesson, null);
+    });
+
+    it('never grants automatic recovery to an invited learner before their first explicit click', async () => {
+        const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        assert.equal(await model.resume(10, 'new-student-tab', quiet), null);
+        assert.equal(await model.resumptions.countDocuments({ _id: 10, accepted: true }), 0);
+        const resumedTeacher = await model.resume(2, 'new-teacher-tab', quiet);
+        assert.equal(resumedTeacher._id, room._id);
+        await model.join(10, 'class-a', room._id, tab(10), quiet);
+        assert.equal((await model.resume(10, 'new-student-tab', quiet))._id, room._id);
+    });
+    it('recovers both participants after media leases are removed and long after the planned lesson end', async () => {
+        const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        await model.join(10, 'class-a', room._id, tab(10), quiet);
+        const teacherVersion = (await model.resumptions.findOne({ _id: 2 })).version;
+        await model.members.deleteMany({ lessonId: room._id });
+        const later = Date.parse(room.endAt) + 8 * 3600000;
+        assert.equal((await model.authorize(2, 'class-a', room._id, later)).status, 'active');
+        assert((await model.list(10, 'class-a', later)).lessons.some(item => item._id === room._id));
+        const teacher = await model.resume(2, 'reopened-teacher-tab', quiet, later);
+        const student = await model.resume(10, 'reopened-student-tab', quiet, later);
+        assert.equal(teacher._id, room._id); assert.equal(student._id, room._id);
+        assert((await model.resumptions.findOne({ _id: 2 })).version > teacherVersion);
+        assert.equal((await model.members.findOne({ _id: 10 })).tabId, 'reopened-student-tab');
+    });
+    it('transfers the owner to a new tab and an old tab leave cannot revoke the new recovery intent', async () => {
+        const { room, student } = await activePair();
+        const events = [];
+        const old = await model.members.findOne({ _id: 10 });
+        await model.resume(10, 'replacement-student-tab', event => { events.push(event); handlers.emitLesson(event); });
+        await settle();
+        assert(events.some(event => event.uid === 10 && event.message.type === 'owner'));
+        assert(student.closed.some(event => event.reason === 'REPLACED'));
+        const current = await model.bind(10, 'class-a', room._id, 'replacement-student-tab', 'replacement-connection', 'server-a');
+        await model.leave(10, 'class-a', room._id, old.tabId, quiet);
+        assert.equal((await model.resumptions.findOne({ _id: 10 })).accepted, true);
+        assert.equal((await model.members.findOne({ _id: 10 })).tabId, 'replacement-student-tab');
+        await model.pulse(current.peer, 'class-a');
+        await assert.rejects(model.bind(10, 'class-a', room._id, old.tabId, 'stale-tab-connection', 'server-a'), code('REPLACED'));
+    });
+    it('ignores late owner messages from older admissions without closing the current recovered socket', async () => {
+        const { room } = await activePair();
+        await model.resume(10, 'recovered-owner-tab', handlers.emitLesson);
+        const recovered = connection(10);
+        await connect(recovered, 10, room._id, 'recovered-owner-tab');
+        const member = await model.members.findOne({ _id: 10 });
+        assert.equal(recovered.closed.length, 0);
+        await recovered.instance.onLessonEvent({ uid: 10, lessonId: room._id,
+            message: { type: 'owner', ownerVersion: member.ownerVersion - 1, connectionId: 'older-owner-connection' } });
+        await recovered.instance.onLessonEvent({ uid: 10, lessonId: room._id,
+            message: { type: 'owner', ownerVersion: member.ownerVersion } });
+        assert.equal(recovered.closed.length, 0);
+        await recovered.instance.message({ type: 'pulse' });
+        assert(recovered.sent.some(message => message.type === 'pulse'));
+        await recovered.instance.onLessonEvent({ uid: 10, lessonId: room._id,
+            message: { type: 'owner', ownerVersion: member.ownerVersion + 1 } });
+        assert.equal(recovered.closed.length, 0, 'a future notice must match an actual database owner');
+        await model.resume(10, 'newer-owner-notice-tab', quiet);
+        await recovered.instance.onLessonEvent({ uid: 10, lessonId: room._id,
+            message: { type: 'owner', ownerVersion: member.ownerVersion + 1 } });
+        assert(recovered.closed.some(event => event.reason === 'REPLACED'));
+    });
+    it('ignores an old connection notice after the same admission version binds a replacement socket', async () => {
+        const { room } = await activePair();
+        const oldOwner = await model.members.findOne({ _id: 10 });
+        const replacement = connection(10);
+        await connect(replacement, 10, room._id, tab(10));
+        const current = await model.members.findOne({ _id: 10 });
+        assert.equal(current.ownerVersion, oldOwner.ownerVersion);
+        assert.notEqual(current.connectionId, oldOwner.connectionId);
+        await replacement.instance.onLessonEvent({ uid: 10, lessonId: room._id,
+            message: { type: 'owner', ownerVersion: oldOwner.ownerVersion, connectionId: oldOwner.connectionId } });
+        assert.equal(replacement.closed.length, 0);
+        await replacement.instance.message({ type: 'pulse' });
+        assert(replacement.sent.some(message => message.type === 'pulse'));
+        assert.equal((await model.members.findOne({ _id: 10 })).connectionId, current.connectionId);
+    });
+    it('classifies an expired media lease as recoverable and recreates it without ending the classroom', async () => {
+        const { room, student } = await activePair();
+        const previous = await model.members.findOne({ _id: 10 });
+        await model.members.deleteOne({ _id: 10 });
+        await assert.rejects(model.pulse(previous, 'class-a'), code('JOIN_REQUIRED'));
+        await student.instance.message({ type: 'pulse' });
+        assert(student.sent.some(message => message.type === 'error' && message.code === 'JOIN_REQUIRED'));
+        assert(student.closed.some(event => event.reason === 'JOIN_REQUIRED'));
+        const resumed = await model.resume(10, 'lease-recreated-tab', handlers.emitLesson);
+        assert.equal(resumed._id, room._id);
+        assert.equal((await model.rooms.findOne({ _id: room._id })).status, 'active');
+        const recovered = connection(10);
+        await connect(recovered, 10, room._id, 'lease-recreated-tab');
+        assert(recovered.sent.some(message => message.type === 'ready'));
+        assert.equal(recovered.closed.length, 0);
+    });
+    it('labels a late old-tab bind as replaced instead of asking that old page to recover ownership again', async () => {
+        const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        await model.join(10, 'class-a', room._id, tab(10), quiet);
+        const events = [];
+        await model.resume(10, 'latest-student-page-tab', event => { events.push(event); handlers.emitLesson(event); });
+        const intent = await model.resumptions.findOne({ _id: 10 });
+        const admission = events.find(event => event.uid === 10 && event.message.type === 'owner');
+        assert(admission); assert.equal(admission.message.ownerVersion, intent.version);
+        assert.equal(admission.message.connectionId, undefined);
+        await assert.rejects(model.bind(10, 'class-a', room._id, tab(10), 'old-delayed-bind', 'server-a'), code('REPLACED'));
+        const stale = connection(10);
+        await connect(stale, 10, room._id, tab(10));
+        assert(stale.closed.some(event => event.reason === 'REPLACED'));
+        assert.equal((await model.resumptions.findOne({ _id: 10 })).version, intent.version);
+        assert.equal((await model.members.findOne({ _id: 10 })).tabId, 'latest-student-page-tab');
+        const latest = connection(10);
+        await connect(latest, 10, room._id, 'latest-student-page-tab');
+        assert(latest.sent.some(message => message.type === 'ready'));
+        assert(busCalls.some(call => call.event.uid === 10 && call.event.message.type === 'owner'
+            && call.event.message.ownerVersion === intent.version && typeof call.event.message.connectionId === 'string'));
+    });
+    it('keeps one recovery classroom per account and never silently replaces another active class', async () => {
+        const original = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2), durationMinutes: 15 }, quiet);
+        const future = await model.create(2, 'class-a', scheduled(11), quiet);
+        await assert.rejects(model.join(2, 'class-a', future._id, tab(2), quiet), code('BUSY'));
+        assert.equal((await model.resume(2, 'reopened-teacher-tab', quiet))._id, original._id);
+    });
+    it('honors an explicit learner leave and clears both recovery intentions when the teacher ends class', async () => {
+        const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        await model.join(10, 'class-a', room._id, tab(10), quiet);
+        await model.leave(10, 'class-a', room._id, tab(10), quiet);
+        assert.equal(await model.resume(10, 'later-student-tab', quiet), null);
+        assert.equal((await model.rooms.findOne({ _id: room._id })).status, 'active');
+        await model.finish(2, 'class-a', room._id, 'ended', quiet);
+        assert.equal(await model.resume(2, 'later-teacher-tab', quiet), null);
+        assert.equal(await model.resume(10, 'later-student-tab', quiet), null);
+        assert.equal(await model.members.countDocuments({ lessonId: room._id }), 0);
+    });
+    it('rechecks membership, workspace and request token scope before changing recovery ownership', async () => {
+        const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        await model.join(10, 'class-a', room._id, tab(10), quiet);
+        blocked.add(10);
+        await assert.rejects(model.resume(10, 'blocked-student-tab', quiet), code('FORBIDDEN'));
+        blocked.delete(10);
+        await model.join(10, 'class-a', room._id, tab(10), quiet);
+        workspaceOverrides.set(10, 'different-workspace');
+        await assert.rejects(model.resume(10, 'cross-workspace-tab', quiet), code('FORBIDDEN'));
+        workspaceOverrides.delete(10);
+        logins.get('login-2').scope = '1';
+        await assert.rejects(runResumeHttp(resumeHttp(2, { tabId: 'narrow-teacher-tab' })), code('FORBIDDEN'));
+        assert.equal((await model.members.findOne({ _id: 2 })).tabId, tab(2));
+    });
+    it('resumes the original classroom from another page domain while rejecting forged or malformed requests', async () => {
+        const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        const fixture = resumeHttp(2, { tabId: 'another-page-teacher-tab' }, 'unrelated-page-domain');
+        const result = await runResumeHttp(fixture);
+        assert.equal(result.lesson._id, room._id); assert.equal(result.canTeach, true);
+        assert.equal(result.apiUrl, '/d/class-a/lesson'); assert.equal(result.socketUrl, '/d/class-a/lesson/conn');
+        assert.equal(fixture.headers.get('Cache-Control'), 'private, no-store');
+        const forged = resumeHttp(2); forged.instance.request.headers.origin = 'https://attacker.test';
+        await assert.rejects(runResumeHttp(forged), code('ORIGIN'));
+        const sudo = resumeHttp(2); sudo.instance.session.sudoUid = 10;
+        await assert.rejects(runResumeHttp(sudo), code('FORBIDDEN'));
+        await assert.rejects(runResumeHttp(resumeHttp(2, { tabId: 'malformed-request-tab', uid: 10 })), code('INVALID_MESSAGE'));
+        logins.delete('login-2');
+        await assert.rejects(runResumeHttp(resumeHttp(2)), code('FORBIDDEN'));
+    });
+    it('does not revive a lesson when the teacher ends it while recovery is awaiting authorization', async () => {
+        const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        await model.join(10, 'class-a', room._id, tab(10), quiet);
+        const result = await Promise.allSettled([model.resume(10, 'racing-student-tab', quiet, Date.now(), async () => {
+            await model.finish(2, 'class-a', room._id, 'ended', quiet);
+        })]);
+        assert(result[0].status === 'rejected' || result[0].value === null);
+        assert.equal((await model.rooms.findOne({ _id: room._id })).status, 'ended');
+        assert.equal(await model.members.countDocuments({ lessonId: room._id }), 0);
+        assert.equal(await model.resumptions.countDocuments({ lessonId: room._id, accepted: true }), 0);
+        assert.equal(await model.resume(10, 'after-ended-tab', quiet), null);
+    });
+    it('removes a delayed recovery lease that arrives after the teacher has ended the room', async () => {
+        const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        await model.join(10, 'class-a', room._id, tab(10), quiet);
+        let release; let reached;
+        const blockedWrite = new Promise(resolve => { release = resolve; });
+        const writeReached = new Promise(resolve => { reached = resolve; });
+        const original = model.members.findOneAndUpdate;
+        model.members.findOneAndUpdate = async function delayedOwner(query, update, options) {
+            if (update.$set?.tabId === 'delayed-recovery-tab') { reached(); await blockedWrite; }
+            return original.call(this, query, update, options);
+        };
+        try {
+            const recovery = model.resume(10, 'delayed-recovery-tab', quiet).then(value => ({ value }), error => ({ error }));
+            await writeReached;
+            await model.finish(2, 'class-a', room._id, 'ended', quiet);
+            release();
+            const result = await recovery;
+            assert(result.error || result.value === null);
+            assert.equal((await model.rooms.findOne({ _id: room._id })).status, 'ended');
+            assert.equal(await model.members.countDocuments({ lessonId: room._id }), 0);
+            assert.equal(await model.resumptions.countDocuments({ lessonId: room._id, accepted: true }), 0);
+        } finally { release(); model.members.findOneAndUpdate = original; }
+    });
+    it('a delayed earlier recovery write cannot overwrite or remove the newer tab owner', async () => {
+        const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        await model.join(10, 'class-a', room._id, tab(10), quiet);
+        let release; let reached;
+        const blockedWrite = new Promise(resolve => { release = resolve; });
+        const writeReached = new Promise(resolve => { reached = resolve; });
+        const original = model.members.findOneAndUpdate;
+        model.members.findOneAndUpdate = async function delayedOwner(query, update, options) {
+            if (update.$set?.tabId === 'delayed-old-recovery-tab') { reached(); await blockedWrite; }
+            return original.call(this, query, update, options);
+        };
+        try {
+            const older = model.resume(10, 'delayed-old-recovery-tab', quiet).then(value => ({ value }), error => ({ error }));
+            await writeReached;
+            await model.resume(10, 'newer-recovery-tab', quiet);
+            release();
+            const outcome = await older;
+            assert.equal(outcome.error?.code, 'REPLACED');
+            const intent = await model.resumptions.findOne({ _id: 10 });
+            const member = await model.members.findOne({ _id: 10 });
+            assert.equal(intent.tabId, 'newer-recovery-tab'); assert.equal(member.tabId, 'newer-recovery-tab');
+            assert.equal(member.ownerVersion, intent.version);
+            await model.bind(10, 'class-a', room._id, 'newer-recovery-tab', 'latest-owner-connection', 'server-a');
+        } finally { release(); model.members.findOneAndUpdate = original; }
+    });
+    it('keeps a newer owner when two replacement pages race to resume the same classroom', async () => {
+        const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        await model.join(10, 'class-a', room._id, tab(10), quiet);
+        await Promise.allSettled([model.resume(10, 'racing-page-first', quiet), model.resume(10, 'racing-page-second', quiet)]);
+        const intent = await model.resumptions.findOne({ _id: 10 });
+        const current = await model.members.findOne({ _id: 10 });
+        assert.equal(current.tabId, intent.tabId); assert.equal(current.ownerVersion, intent.version);
+        const results = await Promise.allSettled(['racing-page-first', 'racing-page-second'].map((id, index) =>
+            model.bind(10, 'class-a', room._id, id, 'racing-connection-' + index, 'server-a')));
+        assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+    });
+    it('acknowledges a healthy pulse even when no camera or audio frames are flowing', async () => {
+        const { teacher } = await activePair(); teacher.sent.length = 0;
+        await teacher.instance.message({ type: 'pulse' });
+        assert(teacher.sent.some(message => message.type === 'pulse'));
+        assert.equal(teacher.closed.length, 0);
+    });
+    it('treats a previous server instance peer as offline until that participant reconnects', async () => {
+        const { room, teacher } = await activePair(); teacher.sent.length = 0;
+        await model.members.updateOne({ _id: 10 }, { $set: { serverId: 'previous-server-instance' } });
+        await teacher.instance.message({ type: 'pulse' });
+        assert.equal(teacher.closed.length, 0);
+        assert(teacher.sent.some(message => message.type === 'peer' && message.online === false));
+        await model.resume(10, 'student-after-server-restart', handlers.emitLesson);
+        const replacement = connection(10);
+        await connect(replacement, 10, room._id, 'student-after-server-restart');
+        await teacher.instance.message({ type: 'pulse' });
+        assert(teacher.sent.some(message => message.type === 'peer' && message.online === true));
     });
 });

@@ -12,3 +12,8 @@ The production server must never build the UI. This is a user-required safety ru
 
 - After each requested code change passes its relevant checks, commit and push the prepared release into `master`, deploy that exact prepared commit through the user's available server terminal, then verify Hydro, Judge and the changed feature. The user has authorized this routine deployment workflow; complete it directly when the connection is available.
 - The user has given standing authorization for these routine commits and pushes; do not leave validated changes only in the local worktree or ask for push permission again.
+
+# Git connection
+
+- In Work sessions, preserve the runtime's existing `GIT_SSH_COMMAND` proxy when selecting SSH 443. Replacing it with bare `ssh` can break DNS/network access.
+- The verified command prefix is `GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o HostName=ssh.github.com -p 443 -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=yes"`. Use normal Git fetch/push through this route; keep proxy values and credentials out of outputs.

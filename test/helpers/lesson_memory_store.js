@@ -32,8 +32,12 @@ function applyUpdate(original, update, inserted = false) {
     if (update.$set) Object.assign(next, copy(update.$set));
     if (update.$unset) for (const key of Object.keys(update.$unset)) delete next[key];
     if (update.$max) for (const [key, value] of Object.entries(update.$max)) if (next[key] === undefined || next[key] < value) next[key] = copy(value);
+    if (update.$inc) for (const [key, value] of Object.entries(update.$inc)) {
+        if (typeof value !== 'number' || (next[key] !== undefined && typeof next[key] !== 'number')) throw new Error(`Invalid memory increment ${key}`);
+        next[key] = (next[key] ?? 0) + value;
+    }
     for (const operator of Object.keys(update)) {
-        if (!['$set', '$unset', '$setOnInsert', '$max'].includes(operator)) throw new Error(`Unsupported memory update ${operator}`);
+        if (!['$set', '$unset', '$setOnInsert', '$max', '$inc'].includes(operator)) throw new Error(`Unsupported memory update ${operator}`);
     }
     return next;
 }
