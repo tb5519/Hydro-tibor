@@ -26,6 +26,8 @@ export async function installPlatformCommunications() {
       .then(({ installVoiceCall }) => { if (!ended) installVoiceCall(context.voiceCall); }));
     once('liveShare', () => import(/* webpackChunkName: "live-share-controls" */ './live_share/controller')
       .then(({ installLiveShare }) => { if (!ended) { installLiveShare(context.liveShare); ready(); } }));
+    once('lesson', () => import(/* webpackChunkName: "lesson-controls" */ './lesson/controller')
+      .then(({ installLesson }) => { if (!ended) installLesson(context.lesson); }));
     if (jobs.length) { await Promise.allSettled(jobs); ready(); }
   }
   const changed = (event: Event) => start((event as CustomEvent).detail?.context);

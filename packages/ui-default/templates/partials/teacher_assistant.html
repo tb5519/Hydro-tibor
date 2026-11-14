@@ -61,6 +61,13 @@
         </div>
       </details>
       {% endif %}
+      {% if UiContext.lesson and UiContext.lesson.canTeach %}
+      <button type="button" class="teacher-assistant__link teacher-assistant__lesson" data-lesson-open>
+        <span class="teacher-assistant__icon">{{ assistantIcon('book') }}</span>
+        <span class="teacher-assistant__copy"><strong>上课模式</strong><span>邀请学员上课，或安排上课时间</span></span>
+        <span class="teacher-assistant__arrow" aria-hidden="true">↗</span>
+      </button>
+      {% endif %}
       {% if UiContext.voiceCall and UiContext.voiceCall.canTeach %}
       <button type="button" class="teacher-assistant__link teacher-assistant__voice" data-voice-call-open>
         <span class="teacher-assistant__icon">{{ assistantIcon('phone') }}</span>

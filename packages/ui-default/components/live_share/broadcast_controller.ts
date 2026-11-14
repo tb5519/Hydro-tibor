@@ -81,6 +81,70 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   const ended = new Set<string>();
   const buffered: any[] = [];
   let bufferedBytes = 0;
+  let lessonShare: { lessonId: string; studentUid: number; deadline: number; starting?: boolean; sent?: boolean; cancelled?: boolean; sessionId?: string; connectionId?: string } | null = null;
+  let lessonTimer = 0;
+  function lessonState(state: string, message = '') {
+    if (lessonShare) window.dispatchEvent(new CustomEvent('onebyone:lesson-share-state', {
+      detail: { lessonId: lessonShare.lessonId, state, message },
+    }));
+  }
+  function lessonFailure(message: string) {
+    lessonState('error', message); clearTimeout(lessonTimer);
+    // A late started acknowledgement must still be stopped after cancellation.
+    if (lessonShare?.starting && lessonShare.sent) lessonShare.cancelled = true;
+    else lessonShare = null;
+  }
+  async function startLessonShare() {
+    const request = lessonShare;
+    if (!request || request.cancelled || request.starting || disposed) return;
+    if (room) {
+      if (source && room.studentUids?.includes(request.studentUid)) { lessonState('active'); return; }
+      lessonFailure('请先结束当前分享，再进入上课模式。'); return;
+    }
+    if (bridge.sharing() || pending) { lessonFailure('请先结束当前共享，再开始课堂分享。'); return; }
+    if (Date.now() > request.deadline) { lessonFailure('课堂分享连接超时，请点击重试分享。'); return; }
+    if (!bridge.ready() || !config.pageGrant || bridge.sourceReady?.() === false) {
+      bridge.connect(); clearTimeout(lessonTimer);
+      lessonTimer = window.setTimeout(() => { void startLessonShare(); }, 400); return;
+    }
+    request.starting = true; pending = true;
+    try {
+      await (options.loadSourceAdapters ? options.loadSourceAdapters() : loadAdapters());
+      if (disposed || lessonShare !== request || request.cancelled) { if (lessonShare === request) { pending = false; lessonShare = null; } return; }
+      if (!bridge.ready() || !config.pageGrant || bridge.sourceReady?.() === false) {
+        request.starting = false; pending = false; void startLessonShare(); return;
+      }
+      if (!bridge.send({ type: 'broadcast:start', studentUids: [request.studentUid] })) throw new Error('disconnected');
+      request.sent = true;
+      clearTimeout(lessonTimer);
+      lessonTimer = window.setTimeout(() => {
+        if (lessonShare === request && request.starting) { pending = false; lessonFailure('课堂分享连接超时，请重试。'); }
+      }, 15000);
+    } catch {
+      request.starting = false; pending = false;
+      if (lessonShare === request) lessonFailure('课堂分享暂时无法连接，请重试。');
+    }
+  }
+  const lessonStart = (event: Event) => {
+    const detail = (event as CustomEvent).detail;
+    if (detail?.mode === 'assist') return;
+    if (!config.canTeach || disposed || typeof detail?.lessonId !== 'string' || detail.lessonId.length > 128
+      || !Number.isSafeInteger(detail.studentUid) || detail.studentUid <= 1) return;
+    if (lessonShare?.lessonId === detail.lessonId && !lessonShare.cancelled) {
+      if (lessonShare.sessionId && room?.sessionId === lessonShare.sessionId) lessonState('active');
+      else void startLessonShare();
+      return;
+    }
+    if (lessonShare?.starting) { lessonState('error', '正在结束之前的课堂分享，请稍后重试。'); return; }
+    lessonShare = { lessonId: detail.lessonId, studentUid: detail.studentUid, deadline: Date.now() + 20000 };
+    lessonState('pending', '正在连接课堂分享…'); void startLessonShare();
+  };
+  const lessonStop = (event: Event) => {
+    if (!lessonShare || (event as CustomEvent).detail?.lessonId !== lessonShare.lessonId) return;
+    clearTimeout(lessonTimer); lessonShare.cancelled = true;
+    if (lessonShare.sessionId && room?.sessionId === lessonShare.sessionId) stopSharing();
+    if (!lessonShare.starting || !lessonShare.sent) { pending = false; lessonShare = null; }
+  };
   const presence = config.canTeach ? createBroadcastPresence(config.uid, () => {
     if (!disposed && config.pageGrant && !bridge.sharing()) bridge.connect();
   }) : null;
@@ -88,7 +152,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     try { if (active) sessionStorage.setItem(resumeKey, '1'); else sessionStorage.removeItem(resumeKey); } catch { /* Optional storage. */ }
   }
   function wantsConnection() {
-    try { return !!room || !!picker || pending || !!presence?.active() || (config.canTeach && sessionStorage.getItem(resumeKey) === '1'); } catch { return !!room || !!picker || pending || !!presence?.active(); }
+    try { return !!room || !!picker || !!lessonShare || pending || !!presence?.active() || (config.canTeach && sessionStorage.getItem(resumeKey) === '1'); } catch { return !!room || !!picker || !!lessonShare || pending || !!presence?.active(); }
   }
   function loadAdapters() {
     loader ||= options.loadAdapters ? options.loadAdapters() : import(/* webpackChunkName: "teacher-broadcast" */ './broadcast_adapters');
@@ -499,7 +563,27 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
       if (picker) bridge.send({ type: 'list' }); renderStudents(); return;
     }
     if (message.type === 'students') { students = Array.isArray(message.students) ? message.students : []; renderStudents(); return; }
-    if (message.type === 'broadcast:started') void begin(message, true);
+    if (message.type === 'broadcast:started') {
+      const matchesLesson = lessonShare && message.teacherUid === config.uid && message.pageId === bridge.pageId()
+        && message.studentUids?.length === 1 && message.studentUids[0] === lessonShare.studentUid;
+      if (lessonShare?.cancelled && (matchesLesson || message.connectionId === lessonShare.connectionId)) {
+        clearTimeout(lessonTimer); ended.add(message.sessionId);
+        bridge.send({ type: 'broadcast:stop', sessionId: message.sessionId });
+        lessonShare = null; pending = false; return;
+      }
+      if (lessonShare?.starting && matchesLesson) {
+        clearTimeout(lessonTimer); lessonShare.starting = false; lessonShare.sessionId = message.sessionId;
+        lessonShare.connectionId = message.connectionId || message.sessionId;
+        if (lessonShare.cancelled) {
+          ended.add(message.sessionId); bridge.send({ type: 'broadcast:stop', sessionId: message.sessionId });
+          lessonShare = null; pending = false; return;
+        }
+        lessonState('active');
+      } else if (lessonShare?.connectionId && message.connectionId === lessonShare.connectionId) {
+        lessonShare.sessionId = message.sessionId;
+      }
+      void begin(message, true);
+    }
     if (message.type === 'broadcast:view') void begin(message, false);
     if (message.type === 'broadcast:relay') receiveRelay(message);
     if (message.type === 'broadcast:resync' && source && room?.sessionId === message.sessionId && room.pageId === message.pageId) {
@@ -507,6 +591,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
     }
     if (message.type === 'broadcast:paused' && room?.sessionId === message.sessionId) { setConnected(false); updateState(message.reason || '老师正在切换页面，稍候自动继续…'); }
     if (message.type === 'broadcast:ended') {
+      if (!message.switched && lessonShare?.sessionId === message.sessionId) { lessonState('ended', message.reason || '课堂分享已结束'); lessonShare = null; }
       ended.delete(message.sessionId);
       if (!message.followed) presence?.end(message.sessionId);
       if (room?.sessionId === message.sessionId) { saveResume(false); clearRoom(); if (message.reason && !message.switched) showMessage(message.reason); }
@@ -514,6 +599,7 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
       if (!message.followed && !message.switched) clearSessionAnnotations(message.connectionId || message.sessionId);
     }
     if (message.type === 'broadcast:error' || ((message.type === 'error' || message.error) && (pending || picker || room))) {
+      if (lessonShare) { lessonShare.starting = false; lessonFailure(message.message || '课堂分享暂时不可用，请重试。'); }
       pending = false; clearTimeout(pendingTimer); renderStudents();
       const text = message.message || '分享暂时不可用，请稍后重试。';
       if (room) updateState(text); else showMessage(text);
@@ -527,8 +613,16 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
   };
   const resize = () => fit();
   document.addEventListener('click', click); window.addEventListener('resize', resize);
+  window.addEventListener('onebyone:lesson-share-start', lessonStart);
+  window.addEventListener('onebyone:lesson-share-stop', lessonStop);
   return {
     receive, setConnected, wantsConnection, open, showMessage, authenticationLost, stopSharing,
+    rejectLessonStart(sessionId: string) {
+      // Retire an acknowledgement without invoking begin(), even after a
+      // direction switch has already removed the original broadcast room.
+      clearTimeout(lessonTimer); lessonShare = null; pending = false;
+      ended.add(sessionId); bridge.send({ type: 'broadcast:stop', sessionId });
+    },
     get currentRoom() { return room; },
     get teacherRoom() { return source ? room : null; },
     get teacherStatus() { return teacherStatus; },
@@ -543,6 +637,6 @@ export function installBroadcastController(config: LiveShareConfig, bridge: Broa
       updateState('正在切换页面…');
     },
     get active() { return !!room || pending; },
-    dispose() { disposed = true; pending = false; clearTimeout(pendingTimer); clearTimeout(flashTimer); flash?.remove(); closePicker(); clearRoom(); presence?.dispose(); document.removeEventListener('click', click); window.removeEventListener('resize', resize); },
+    dispose() { disposed = true; pending = false; clearTimeout(pendingTimer); clearTimeout(flashTimer); clearTimeout(lessonTimer); lessonShare = null; flash?.remove(); closePicker(); clearRoom(); presence?.dispose(); document.removeEventListener('click', click); window.removeEventListener('resize', resize); window.removeEventListener('onebyone:lesson-share-start', lessonStart); window.removeEventListener('onebyone:lesson-share-stop', lessonStop); },
   };
 }

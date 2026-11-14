@@ -95,6 +95,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
   let source: Session | null = null;
   let viewing: Session | null = null;
   let broadcast: ReturnType<typeof installBroadcastController> | null = null;
+  let lessonLink: { lessonId: string; studentUid: number; owns: boolean; connectionId?: string; cancelled?: boolean } | null = null;
   let switching: { requestId: string; sessionId: string; connectionId: string; mode: 'assist' | 'broadcast' } | null = null;
   let switchTimer = 0;
   let sourceMirror: Controllers | null = null;
@@ -324,6 +325,12 @@ export function installLiveShare(config: LiveShareConfig, options: {
       status: switching ? '正在切换画面…' : broadcast?.teacherStatus,
       switchDisabled: !ready });
     else if (!switching) controls.update(null);
+    if (lessonLink && !lessonLink.cancelled && (viewing || room)) {
+      const participant = viewing?.studentUid ?? (room?.studentUids?.length === 1 ? room.studentUids[0] : undefined);
+      if (participant === lessonLink.studentUid) window.dispatchEvent(new CustomEvent('onebyone:lesson-share-state', {
+        detail: { lessonId: lessonLink.lessonId, state: 'active', mode: viewing ? 'assist' : 'broadcast' },
+      }));
+    }
   }
   function clearSwitch() {
     clearTimeout(switchTimer); switchTimer = 0; switching = null;
@@ -646,6 +653,23 @@ export function installLiveShare(config: LiveShareConfig, options: {
   }
   function onMessage(message: any) {
     if (!message || typeof message !== 'object') return;
+    if (lessonLink?.owns && ['started', 'broadcast:started'].includes(message.type)) {
+      const sameStudent = message.type === 'started' ? message.studentUid === lessonLink.studentUid
+        : message.studentUids?.length === 1 && message.studentUids[0] === lessonLink.studentUid;
+      if (sameStudent) {
+        const connection = message.connectionId || message.sessionId;
+        if (lessonLink.connectionId && lessonLink.connectionId !== connection) {
+          // A later manually started connection is independent of the old
+          // classroom. A cancelled classroom must not blacklist its learner.
+          lessonLink = null;
+        } else if (lessonLink.cancelled) {
+          closedSessions.add(message.sessionId);
+          if (message.type === 'broadcast:started') broadcast?.rejectLessonStart(message.sessionId);
+          else send({ type: 'stop', sessionId: message.sessionId });
+          return;
+        } else lessonLink.connectionId = connection;
+      }
+    }
     if (message.type === 'switch:error' || (message.type === 'error' && message.operation === 'switch')) {
       if (switching?.requestId !== message.requestId) return;
       clearSwitch();
@@ -898,6 +922,41 @@ export function installLiveShare(config: LiveShareConfig, options: {
   }
   on(document, 'click', (event: MouseEvent) => {
     if ((event.target as Element)?.closest?.('[data-live-share-open]')) { event.preventDefault(); openRoster(); }
+  });
+  on(window, 'onebyone:lesson-share-start', (event: CustomEvent) => {
+    const detail = event.detail;
+    if (!config.canTeach || typeof detail?.lessonId !== 'string' || !Number.isSafeInteger(detail.studentUid) || detail.studentUid <= 1) return;
+    const current = viewing || broadcast?.teacherRoom;
+    const participant = viewing?.studentUid ?? (broadcast?.teacherRoom?.studentUids?.length === 1 ? broadcast.teacherRoom.studentUids[0] : undefined);
+    const same = lessonLink?.lessonId === detail.lessonId && !lessonLink.cancelled;
+    if (!same) lessonLink = { lessonId: detail.lessonId, studentUid: detail.studentUid, owns: !current };
+    const target = detail.mode === 'assist' ? 'assist' : 'broadcast';
+    if (current && participant !== detail.studentUid) {
+      event.stopImmediatePropagation();
+      window.dispatchEvent(new CustomEvent('onebyone:lesson-share-state', { detail: {
+        lessonId: detail.lessonId, state: 'error', message: '请先结束当前画面，再为这位学员切换。',
+      } })); return;
+    }
+    if (current) {
+      event.stopImmediatePropagation();
+      if ((viewing ? 'assist' : 'broadcast') !== target) switchMode(detail.studentUid);
+      else updateControls();
+    } else if (target === 'assist') {
+      event.stopImmediatePropagation();
+      if (!ready) { deferredStart = { studentUid: detail.studentUid }; connect(); }
+      else void chooseStudent(detail.studentUid);
+    }
+  });
+  on(window, 'onebyone:lesson-share-stop', (event: CustomEvent) => {
+    if (!lessonLink || event.detail?.lessonId !== lessonLink.lessonId) return;
+    lessonLink.cancelled = true;
+    if (!lessonLink.owns) return;
+    if (deferredStart?.studentUid === lessonLink.studentUid) deferredStart = null;
+    if (pendingStart === lessonLink.studentUid) pendingStart = 0;
+    const current = viewing;
+    if (current && (current.connectionId || current.sessionId) === lessonLink.connectionId) endSharing();
+    // The broadcast listener owns its own stop/late-ack handling. Switching
+    // direction keeps connectionId, so a late new direction is stopped above.
   });
   on(window, 'resize', sizeStage);
   on(window, 'keydown', (event: KeyboardEvent) => {
