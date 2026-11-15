@@ -27,6 +27,8 @@ uniform sampler2D u_image;
 uniform vec2 u_texel;
 uniform float u_whitening;
 uniform float u_smoothing;
+uniform vec2 u_smoothing_radius;
+uniform float u_smoothing_range;
 varying vec2 v_uv;
 
 float skinMask(vec3 color) {
@@ -40,10 +42,13 @@ float skinMask(vec3 color) {
   return clamp(chroma * warmth * exposure, 0.0, 1.0);
 }
 
-void addSample(vec2 offset, vec3 center, inout vec3 sum, inout float total) {
-  vec3 neighbor = texture2D(u_image, v_uv + offset * u_texel * 2.0).rgb;
+void addSample(vec2 offset, float radius, float spatialWeight, vec3 center, inout vec3 sum, inout float total) {
+  vec3 neighbor = texture2D(u_image, v_uv + offset * u_texel * radius).rgb;
   vec3 difference = neighbor - center;
-  float weight = exp(-dot(difference, difference) * 52.0) * skinMask(neighbor);
+  float luminanceEdge = abs(dot(difference, vec3(0.299, 0.587, 0.114)));
+  float edgeProtection = 1.0 - smoothstep(0.11, 0.27, luminanceEdge);
+  float weight = spatialWeight * exp(-dot(difference, difference) * u_smoothing_range)
+    * skinMask(neighbor) * edgeProtection;
   sum += neighbor * weight;
   total += weight;
 }
@@ -53,17 +58,25 @@ void main() {
   float mask = skinMask(center);
   vec3 color = center;
   if (u_smoothing > 0.0) {
-    vec3 sum = center * 4.0;
-    float total = 4.0;
-    addSample(vec2(-1.0, -1.0), center, sum, total);
-    addSample(vec2(0.0, -1.0), center, sum, total);
-    addSample(vec2(1.0, -1.0), center, sum, total);
-    addSample(vec2(-1.0, 0.0), center, sum, total);
-    addSample(vec2(1.0, 0.0), center, sum, total);
-    addSample(vec2(-1.0, 1.0), center, sum, total);
-    addSample(vec2(0.0, 1.0), center, sum, total);
-    addSample(vec2(1.0, 1.0), center, sum, total);
-    color = mix(center, sum / total, u_smoothing * 0.9 * mask);
+    vec3 sum = center;
+    float total = 1.0;
+    addSample(vec2(-1.0, -1.0), u_smoothing_radius.x, 1.0, center, sum, total);
+    addSample(vec2(0.0, -1.0), u_smoothing_radius.x, 1.0, center, sum, total);
+    addSample(vec2(1.0, -1.0), u_smoothing_radius.x, 1.0, center, sum, total);
+    addSample(vec2(-1.0, 0.0), u_smoothing_radius.x, 1.0, center, sum, total);
+    addSample(vec2(1.0, 0.0), u_smoothing_radius.x, 1.0, center, sum, total);
+    addSample(vec2(-1.0, 1.0), u_smoothing_radius.x, 1.0, center, sum, total);
+    addSample(vec2(0.0, 1.0), u_smoothing_radius.x, 1.0, center, sum, total);
+    addSample(vec2(1.0, 1.0), u_smoothing_radius.x, 1.0, center, sum, total);
+    addSample(vec2(-1.0, -1.0), u_smoothing_radius.y, 0.65, center, sum, total);
+    addSample(vec2(0.0, -1.0), u_smoothing_radius.y, 0.65, center, sum, total);
+    addSample(vec2(1.0, -1.0), u_smoothing_radius.y, 0.65, center, sum, total);
+    addSample(vec2(-1.0, 0.0), u_smoothing_radius.y, 0.65, center, sum, total);
+    addSample(vec2(1.0, 0.0), u_smoothing_radius.y, 0.65, center, sum, total);
+    addSample(vec2(-1.0, 1.0), u_smoothing_radius.y, 0.65, center, sum, total);
+    addSample(vec2(0.0, 1.0), u_smoothing_radius.y, 0.65, center, sum, total);
+    addSample(vec2(1.0, 1.0), u_smoothing_radius.y, 0.65, center, sum, total);
+    color = mix(center, sum / total, u_smoothing * sqrt(mask));
   }
   color += (vec3(1.0) - color) * color * (u_whitening * 0.5 * mask);
   gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
@@ -79,7 +92,8 @@ export function createTeacherCameraBeauty(canvas: HTMLCanvasElement, onStatus?: 
   let buffer: WebGLBuffer | null = null;
   let shaders: WebGLShader[] = [];
   let uniforms: { image: WebGLUniformLocation; texel: WebGLUniformLocation;
-    whitening: WebGLUniformLocation; smoothing: WebGLUniformLocation } | null = null;
+    whitening: WebGLUniformLocation; smoothing: WebGLUniformLocation;
+    smoothingRadius: WebGLUniformLocation; smoothingRange: WebGLUniformLocation } | null = null;
   let disposed = false;
   let failed = false;
   let lost = false;
@@ -142,7 +156,8 @@ export function createTeacherCameraBeauty(canvas: HTMLCanvasElement, onStatus?: 
         return value;
       };
       uniforms = { image: uniform('u_image'), texel: uniform('u_texel'),
-        whitening: uniform('u_whitening'), smoothing: uniform('u_smoothing') };
+        whitening: uniform('u_whitening'), smoothing: uniform('u_smoothing'),
+        smoothingRadius: uniform('u_smoothing_radius'), smoothingRange: uniform('u_smoothing_range') };
       gl.uniform1i(uniforms.image, 0); status('');
       return true;
     } catch { fail(); return false; }
@@ -183,7 +198,12 @@ export function createTeacherCameraBeauty(canvas: HTMLCanvasElement, onStatus?: 
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
         gl.uniform2f(uniforms.texel, 1 / width, 1 / height);
         gl.uniform1f(uniforms.whitening, value.whitening / 100);
-        gl.uniform1f(uniforms.smoothing, value.smoothing / 100);
+        // Widen the neighborhood as the slider rises so 720p texture changes
+        // remain visible after the camera is scaled into a floating tile.
+        const smoothingResponse = Math.pow(value.smoothing / 100, .65);
+        gl.uniform1f(uniforms.smoothing, .96 * smoothingResponse);
+        gl.uniform2f(uniforms.smoothingRadius, 1.3 + 1.7 * smoothingResponse, 3 + 6 * smoothingResponse);
+        gl.uniform1f(uniforms.smoothingRange, 70 - 52 * smoothingResponse);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         // WebGL reports upload/draw faults through its error queue as well as
         // exceptions. A failed GPU frame must never replace the raw camera.

@@ -4,6 +4,7 @@ export interface Lesson {
   _id: string; domainId: string; workspaceId: string; teacherUid: number; studentUid: number;
   teacherName: string; studentName: string; title: string; startAt: string; endAt: string;
   status: 'scheduled' | 'active' | 'ended' | 'cancelled'; teacherJoined: boolean; studentJoined: boolean;
+  apiUrl?: string; domainName?: string;
 }
 export interface LessonConfig { enabled: boolean; uid: number; canTeach: boolean; apiUrl: string; socketUrl: string; resumeUrl?: string }
 interface RecoveryHint {
@@ -40,6 +41,9 @@ export function lessonIsDue(lesson: Lesson, timestamp: number) {
 const timeText = (value: string) => new Intl.DateTimeFormat('zh-CN', {
   timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
 }).format(new Date(value));
+const historyTimeText = (value: string) => new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai', year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+}).format(new Date(value));
 
 /** The persistent communication document owns the call; content pages only hold schedule cards. */
 export function installLesson(config: LessonConfig, options: LessonOptions = {}) {
@@ -53,6 +57,8 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   const dismissed = new Map<string, number>();
   let disposed = false;
   let lessons: Lesson[] = [];
+  let history: Lesson[] = [];
+  let historyHasMore = false;
   let students: Student[] = [];
   let active: Lesson | null = null;
   let socket: LessonSocket | null = null;
@@ -67,6 +73,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   let lastServerMessageAt = 0;
   let memoryHint: RecoveryHint | null = null;
   let hintStorageFailed = false;
+  let allowNavigationUntil = 0;
   let pollTimer = 0;
   let messageTimer = 0;
   let refreshing = false;
@@ -138,7 +145,13 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   foot.append(hint, submit); form.append(searchLabel, roster, selectionText, dateLabel, fields, formError, foot);
   const scheduled = el('section', 'lesson-picker__scheduled'); scheduled.append(el('h3', '', '已安排的课程'));
   const scheduleList = el('div', 'lesson-schedule-list'); scheduled.append(scheduleList);
-  dialog.append(header, mode, form, scheduled);
+  const historical = el('section', 'lesson-picker__history'); historical.dataset.lessonHistory = '';
+  historical.append(el('h3', '', '历史课程'));
+  const historyError = el('p', 'lesson-error'); historyError.hidden = true; historyError.setAttribute('role', 'alert');
+  const historyList = el('div', 'lesson-history-list');
+  const historyNote = el('p', 'lesson-history-note'); historyNote.hidden = true;
+  historical.append(historyError, historyList, historyNote);
+  dialog.append(header, mode, form, scheduled, historical);
 
   const reminder = privateRoot(el('dialog', 'lesson-reminder'));
   reminder.setAttribute('aria-labelledby', 'lesson-reminder-title');
@@ -221,6 +234,44 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     messageTimer = window.setTimeout(() => { toast.hidden = true; }, 5000);
   }
   function errorText(cause: any) { return typeof cause?.message === 'string' ? cause.message : '操作暂时未完成，请稍后重试。'; }
+  function confirmLessonExit(reason: 'end' | 'leave', lesson: Lesson) {
+    try {
+      const action = reason === 'end' ? '结束' : '离开';
+      return window.confirm(`确定${action}「${lesson.title || '一对一课堂'}」吗？${reason === 'end' ? '\n结束后，老师和学员都会离开这节课堂。' : ''}`);
+    } catch { return false; }
+  }
+  function confirmNavigation(reason: string, allowUnload = true) {
+    if (!active || disposed) return true;
+    const label = ({ logout: '退出登录', 'switch-account': '切换账号', 'change-password': '修改密码', 'logout-sessions': '注销所有登录' } as Record<string, string>)[reason] || '离开当前页面';
+    let allowed = false;
+    try { allowed = window.confirm(`当前仍在上课，${label}会中断课堂连接。确定继续吗？`); } catch { /* A suppressed browser prompt is a cancellation. */ }
+    allowNavigationUntil = allowed && allowUnload ? now() + 5000 : 0;
+    return allowed;
+  }
+  function navigationReason(value: string, base: string) {
+    try {
+      const url = new URL(value, base);
+      if (url.origin !== window.location.origin) return '';
+      if (/\/logout\/?$/.test(url.pathname)) return 'logout';
+      if (/^\/account\/\d+\/?$/.test(url.pathname)) return 'switch-account';
+    } catch { /* Invalid links cannot be an account exit. */ }
+    return '';
+  }
+  function guardExitLink(event: Event) {
+    const link = (event.target as Element)?.closest?.('a[href]') as HTMLAnchorElement;
+    if (!link || link.matches('[name="nav_logout"],[name="nav_switch_account"]')) return;
+    const reason = navigationReason(link.getAttribute('href') || '', link.ownerDocument.baseURI);
+    if (reason && !confirmNavigation(reason)) { event.preventDefault(); event.stopImmediatePropagation(); }
+  }
+  function guardExitSubmit(event: Event) {
+    const form = event.target as HTMLFormElement;
+    if (form?.tagName !== 'FORM') return;
+    const operation = form.querySelector<HTMLInputElement>('input[name="operation"]')?.value;
+    const reason = form.hasAttribute('data-profile-password-form') || operation === 'change_password' ? 'change-password'
+      : operation === 'delete_all_tokens' ? 'logout-sessions'
+        : navigationReason(form.getAttribute('action') || '', form.ownerDocument.baseURI);
+    if (reason && !confirmNavigation(reason, false)) { event.preventDefault(); event.stopImmediatePropagation(); }
+  }
   async function api(body?: any, apiUrl = config.apiUrl, ownerTabId = tabId) {
     const abort = new AbortController(); fetches.add(abort);
     const timeout = window.setTimeout(() => abort.abort(), 15000);
@@ -284,11 +335,58 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     }
     return row;
   }
+  function lessonApiUrl(lesson: Lesson) {
+    if (lesson.apiUrl) return safeRoute(lesson.apiUrl, 'lesson');
+    const current = new URL(config.apiUrl, window.location.href).pathname;
+    const currentDomain = current.match(/^\/d\/([^/]+)\/lesson$/)?.[1] || 'system';
+    return currentDomain === encodeURIComponent(lesson.domainId) ? safeRoute(config.apiUrl, 'lesson') : null;
+  }
+  function historyEntry(lesson: Lesson) {
+    const row = el('article', 'lesson-history-item'); row.dataset.lessonHistoryId = lesson._id;
+    const copy = el('div', 'lesson-history-item__copy');
+    copy.append(el('strong', '', lesson.title || '一对一课堂'));
+    copy.append(el('span', '', `${historyTimeText(lesson.startAt)} — ${historyTimeText(lesson.endAt)}（北京时间）`));
+    copy.append(el('span', '', `${lesson.studentName} · ${lesson.domainName || lesson.domainId}`));
+    const open = ['scheduled', 'active'].includes(lesson.status);
+    const status = lesson.status === 'ended' ? '已结束' : lesson.status === 'cancelled' ? '已取消'
+      : lesson.status === 'scheduled' && +new Date(lesson.startAt) > timestamp() ? '已预约'
+      : lesson.status === 'active' && (active?._id === lesson._id || (lesson.teacherJoined && lesson.studentJoined))
+        ? '进行中' : '未结束';
+    const badge = el('span', `lesson-history-status${open ? ' is-open' : ''}`, status);
+    if (open && +new Date(lesson.endAt) <= timestamp()) copy.append(el('small', '', '已过计划时间，老师尚未下课'));
+    const actions = el('div', 'lesson-history-item__actions'); actions.append(badge);
+    if (open && lesson.teacherUid === config.uid) {
+      const continueButton = button(active?._id === lesson._id ? '当前课堂' : '继续上课', 'lesson-button is-primary', () => { void join(lesson); });
+      continueButton.dataset.lessonJoin = lesson._id;
+      continueButton.disabled = busy || joining || !!active || !lessonApiUrl(lesson);
+      if (lesson.status === 'scheduled' && +new Date(lesson.endAt) + 2 * 3600000 < timestamp()) {
+        continueButton.textContent = '预约已过期'; continueButton.disabled = true;
+        continueButton.title = '预约已过期，可结束这节课程。';
+      }
+      const endButton = button('结束课程', 'lesson-button is-danger', () => { void endHistorical(lesson); });
+      endButton.dataset.lessonEnd = lesson._id; endButton.disabled = busy || joining || !lessonApiUrl(lesson);
+      actions.append(continueButton, endButton);
+    }
+    row.append(copy, actions); return row;
+  }
   function renderSchedules() {
     scheduleList.replaceChildren();
-    const items = relevant();
-    for (const lesson of items.slice(0, 20)) scheduleList.append(lessonEntry(lesson));
+    const items = relevant().filter(lesson => !config.canTeach || lesson._id === active?._id
+      || (lesson.status === 'scheduled' && +new Date(lesson.endAt) > timestamp()));
+    for (const lesson of items) scheduleList.append(lessonEntry(lesson));
     if (!items.length) scheduleList.append(el('p', 'lesson-empty', '还没有安排课程，选好学员就可以开始。'));
+    historical.hidden = !config.canTeach;
+    historyList.replaceChildren();
+    if (!historical.hidden) {
+      const arrangedIds = new Set(items.map(lesson => lesson._id));
+      const historicalItems = history.filter(lesson => lesson.teacherUid === config.uid && !arrangedIds.has(lesson._id))
+        .sort((a, b) => Number(['scheduled', 'active'].includes(b.status)) - Number(['scheduled', 'active'].includes(a.status))
+          || +new Date(b.startAt) - +new Date(a.startAt));
+      for (const lesson of historicalItems) historyList.append(historyEntry(lesson));
+      if (!historicalItems.length) historyList.append(el('p', 'lesson-empty', '还没有历史课程。'));
+      historyNote.hidden = !historyHasMore;
+      historyNote.textContent = '已显示最近 100 条结束记录，未结束课程全部显示。';
+    }
     renderHomeCards();
   }
   function clearHomeCards() {
@@ -379,6 +477,13 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     dataRevision++;
     const index = lessons.findIndex(item => item._id === lesson._id);
     if (index >= 0) lessons[index] = lesson; else lessons.push(lesson);
+    const historyIndex = history.findIndex(item => item._id === lesson._id);
+    if (historyIndex >= 0) history[historyIndex] = { ...history[historyIndex], ...lesson };
+    else if (lesson.teacherUid === config.uid) history.push({ ...lesson,
+      apiUrl: lesson.apiUrl || (lesson.domainId === (config.apiUrl.match(/^\/d\/([^/]+)\/lesson$/)?.[1] || 'system') ? config.apiUrl : undefined) });
+    if (reminderLesson?._id === lesson._id && !['scheduled', 'active'].includes(lesson.status)) {
+      reminderLesson = null; if (reminder.open) reminder.close();
+    }
     if (active?._id === lesson._id) {
       if (!['scheduled', 'active'].includes(lesson.status)) {
         stopActive('课堂已结束'); return;
@@ -398,6 +503,8 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
       const result = await api(); if (disposed || scope !== scopeGeneration) return;
       if (revision !== dataRevision) { refreshQueued = true; return; }
       lessons = Array.isArray(result.lessons) ? result.lessons : [];
+      history = Array.isArray(result.history) ? result.history : [];
+      historyHasMore = !!result.historyHasMore;
       students = Array.isArray(result.students) ? result.students : [];
       const serverNow = +new Date(result.serverNow);
       if (Number.isFinite(serverNow)) skew = serverNow - (startedAt + now()) / 2;
@@ -590,6 +697,8 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     if (joining || active || busy || disposed) return;
     if (readHint()?.pending) { showMessage('正在同步上次离开课堂的操作，网络恢复后可继续。'); return; }
     if (lesson.teacherUid !== config.uid && !lessonIsDue(lesson, timestamp())) { showMessage('还没到上课时间。'); return; }
+    const targetApiUrl = lessonApiUrl(lesson);
+    if (!targetApiUrl) { showMessage('这节课的上课地址无效，请刷新课程列表。'); return; }
     dataRevision++;
     recoveryPaused = false;
     joining = true; enter.disabled = true; enter.textContent = '正在进入…';
@@ -598,8 +707,12 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     const desktop = prepareDesktop();
     let transferred = false;
     try {
-      const result = await api({ operation: 'join', lessonId: lesson._id });
+      const result = await api({ operation: 'join', lessonId: lesson._id }, targetApiUrl);
       if (disposed || version !== generation || !result.lesson) return;
+      if (config.apiUrl !== targetApiUrl) {
+        scopeGeneration++; lessons = []; students = [];
+        config = { ...config, apiUrl: targetApiUrl, socketUrl: `${targetApiUrl}/conn`, canTeach: result.lesson.teacherUid === config.uid };
+      }
       replaceLesson(result.lesson); transferred = await enterLesson(result.lesson, desktop);
     } catch (cause) {
       if (disposed) return;
@@ -649,6 +762,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   async function leaveLesson(ending: boolean) {
     if (!active || busy) return;
     const lesson = active;
+    if (!confirmLessonExit(ending ? 'end' : 'leave', lesson)) return;
     const apiUrl = config.apiUrl;
     dataRevision++;
     busy = true;
@@ -682,10 +796,30 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
       if (recoveryQueued && !active && !socket) scheduleRecovery();
     }
   }
+  async function endHistorical(lesson: Lesson) {
+    if (disposed || busy || joining || lesson.teacherUid !== config.uid || !['scheduled', 'active'].includes(lesson.status)) return;
+    if (active?._id === lesson._id) { await leaveLesson(true); return; }
+    if (!confirmLessonExit('end', lesson)) return;
+    const targetApiUrl = lessonApiUrl(lesson);
+    if (!targetApiUrl) { historyError.textContent = '课程地址无效，请刷新列表后重试。'; historyError.hidden = false; return; }
+    dataRevision++; busy = true; historyError.hidden = true; renderSchedules(); renderActive();
+    try {
+      const result = await api({ operation: 'end', lessonId: lesson._id }, targetApiUrl);
+      if (disposed) return;
+      if (!result.lesson || result.lesson._id !== lesson._id || result.lesson.teacherUid !== config.uid) throw new Error('课程结束状态未能确认，请刷新后重试。');
+      replaceLesson(result.lesson);
+      showMessage('课程已结束，学员不会再收到这节课的上课提醒。');
+    } catch (cause) {
+      if (!disposed) { historyError.textContent = `未能结束课程：${errorText(cause)}`; historyError.hidden = false; }
+    } finally {
+      busy = false;
+      if (!disposed) { renderSchedules(); renderActive(); applyPageScope(); void refresh(); }
+      if (recoveryQueued && !active && !socket) scheduleRecovery();
+    }
+  }
   function open() {
     if (!config.canTeach || disposed) return;
     document.querySelector<HTMLButtonElement>('[data-assistant-close]')?.click();
-    if (active) { showMessage('你正在课堂中，可在摄像头窗口控制设备或离开课堂。'); return; }
     if (reminder.open) reminder.close();
     formError.hidden = true; date.value ||= beijingDateTime(Math.ceil((timestamp() + 30 * 60000) / 900000) * 900000);
     date.min = beijingDateTime(timestamp() + 60000);
@@ -696,7 +830,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     const target = (event.target as Element)?.closest?.('[data-lesson-open],[data-lesson-join],[data-lesson-cancel]') as HTMLElement;
     if (!target) return;
     if (target.hasAttribute('data-lesson-open')) { event.preventDefault(); open(); }
-    if (target.dataset.lessonJoin) { const lesson = lessons.find(item => item._id === target.dataset.lessonJoin); if (lesson) { event.preventDefault(); void join(lesson); } }
+    if (target.dataset.lessonJoin) { const lesson = [...lessons, ...history].find(item => item._id === target.dataset.lessonJoin); if (lesson) { event.preventDefault(); void join(lesson); } }
     if (target.dataset.lessonCancel) { event.preventDefault(); void cancel(target.dataset.lessonCancel); }
   }
   function attachContent(page: Window) {
@@ -705,7 +839,10 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
       const next = page.document;
       if (contentDocument !== next) {
         clearHomeCards(); contentRelease?.(); contentDocument = next;
-        if (next !== document) { next.addEventListener('click', action); contentRelease = () => next.removeEventListener('click', action); }
+        if (next !== document) {
+          next.addEventListener('click', action); next.addEventListener('click', guardExitLink, true); next.addEventListener('submit', guardExitSubmit, true);
+          contentRelease = () => { next.removeEventListener('click', action); next.removeEventListener('click', guardExitLink, true); next.removeEventListener('submit', guardExitSubmit, true); };
+        }
         else contentRelease = undefined;
       }
       renderHomeCards();
@@ -714,12 +851,23 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   function applyPageScope() {
     if (disposed || active || busy || joining || (config.apiUrl === pageConfig.apiUrl
       && config.socketUrl === pageConfig.socketUrl && config.canTeach === pageConfig.canTeach)) return;
-    config = { ...pageConfig }; scopeGeneration++; selection = 0; lessons = []; students = []; skew = 0;
+    config = { ...pageConfig }; scopeGeneration++; selection = 0; lessons = []; history = []; historyHasMore = false; students = []; skew = 0;
     currentMode = 'broadcast'; reminderLesson = null;
     if (reminder.open) reminder.close();
     renderRoster(); renderSchedules(); void refresh();
   }
   on(document, 'click', action);
+  document.addEventListener('click', guardExitLink, true); document.addEventListener('submit', guardExitSubmit, true);
+  disposers.push(() => { document.removeEventListener('click', guardExitLink, true); document.removeEventListener('submit', guardExitSubmit, true); });
+  on(window, 'onebyone:lesson-before-exit', event => {
+    if (!confirmNavigation((event as CustomEvent).detail?.reason || '')) event.preventDefault();
+  });
+  on(window, 'onebyone:lesson-exit-failed', () => { allowNavigationUntil = 0; });
+  on(window, 'beforeunload', event => {
+    if (!active || disposed) return;
+    if (allowNavigationUntil > now()) { allowNavigationUntil = 0; return; }
+    event.preventDefault(); (event as BeforeUnloadEvent).returnValue = '';
+  });
   on(search, 'input', renderRoster);
   on(form, 'submit', event => { event.preventDefault(); void create(); });
   on(reminder, 'cancel', event => { event.preventDefault(); snooze(); });

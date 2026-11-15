@@ -65,7 +65,8 @@ export async function authorize(uid: number, domainId: string, id: unknown, now 
 }
 
 export async function snapshot(room: Lesson, now = Date.now()) {
-    const joined = await members.find({ lessonId: room._id, expiresAt: { $gt: new Date(now) } }).toArray();
+    const joined = room.status === 'ended' || room.status === 'cancelled' ? []
+        : await members.find({ lessonId: room._id, expiresAt: { $gt: new Date(now) } }).toArray();
     return { _id: room._id, domainId: room.domainId, workspaceId: room.workspaceId,
         teacherUid: room.teacherUid, studentUid: room.studentUid, teacherName: room.teacherName, studentName: room.studentName,
         title: room.title, startAt: room.startAt.toISOString(), endAt: room.endAt.toISOString(), status: room.status,
@@ -74,13 +75,20 @@ export async function snapshot(room: Lesson, now = Date.now()) {
 
 export async function list(uid: number, domainId: string, now = Date.now()) {
     const access = await scope(uid, domainId);
-    const candidates = await rooms.find({ participantUids: uid, domainId, workspaceId: access.workspaceId,
-        $or: [{ status: 'active' }, { status: 'scheduled', endAt: { $gt: new Date(now - 2 * 3600_000) } }] })
-        .sort({ startAt: 1 }).limit(100).toArray();
+    const currentScope = { participantUids: uid, domainId, workspaceId: access.workspaceId };
+    // Future bookings cannot push an unfinished live class out of the list.
+    const [active, scheduled] = await Promise.all([
+        rooms.find({ ...currentScope, status: 'active' }).sort({ startAt: 1 }).toArray(),
+        rooms.find({ ...currentScope, status: 'scheduled', endAt: { $gt: new Date(now - 2 * 3600_000) } })
+            .sort({ startAt: 1 }).limit(100).toArray(),
+    ]);
+    const candidates = [...active, ...scheduled];
     const lessons = (await Promise.all(candidates.map(async (room) => {
         try { return await snapshot(await authorize(uid, domainId, room._id, now), now); } catch { return null; }
     }))).filter(Boolean);
     let students;
+    let history: (Awaited<ReturnType<typeof snapshot>> & { domainName: string })[] = [];
+    let historyHasMore = false;
     if (access.canTeach) {
         const available = await share.listStudents(uid, domainId, now);
         const classroom = await domain.get(domainId);
@@ -91,8 +99,29 @@ export async function list(uid: number, domainId: string, now = Date.now()) {
             return (permissions & PERM.PERM_VIEW) === PERM.PERM_VIEW && (permissions & PERM.PERM_EDIT_DOMAIN) !== PERM.PERM_EDIT_DOMAIN;
         }).map((member) => member.uid));
         students = available.filter((item) => ids.has(item.uid)).map(({ uid: studentUid, name, online }) => ({ uid: studentUid, name, online }));
+        const recordedDomains = await rooms.distinct('domainId', { teacherUid: uid });
+        const manageable = (await Promise.all(recordedDomains.map(async (id) => {
+            try {
+                const teacher = await share.teacherScope(uid, id);
+                const classroomDoc = await domain.get(id);
+                return { domainId: id, workspaceId: teacher.workspaceId,
+                    domainName: typeof classroomDoc?.name === 'string' && classroomDoc.name ? classroomDoc.name : id };
+            } catch { return null; }
+        }))).filter((item): item is NonNullable<typeof item> => !!item);
+        if (manageable.length) {
+            const ownedScope = { teacherUid: uid, $or: manageable.map(({ domainId: id, workspaceId }) => ({ domainId: id, workspaceId })) };
+            const [unfinished, completed] = await Promise.all([
+                rooms.find({ ...ownedScope, status: { $in: ['scheduled', 'active'] } }).sort({ startAt: -1 }).toArray(),
+                rooms.find({ ...ownedScope, status: { $in: ['ended', 'cancelled'] } }).sort({ startAt: -1 }).limit(101).toArray(),
+            ]);
+            historyHasMore = completed.length > 100;
+            const names = new Map(manageable.map((item) => [item.domainId, item.domainName]));
+            history = await Promise.all([...unfinished, ...completed.slice(0, 100)]
+                .sort((a, b) => +b.startAt - +a.startAt)
+                .map(async (room) => ({ ...await snapshot(room, now), domainName: names.get(room.domainId) || room.domainId })));
+        }
     }
-    return { lessons, ...(students ? { students } : {}), serverNow: new Date(now).toISOString() };
+    return { lessons, history, historyHasMore, ...(students ? { students } : {}), serverNow: new Date(now).toISOString() };
 }
 
 function normalizedCreate(value: any, now: number) {
@@ -297,14 +326,26 @@ export async function leave(uid: number, domainId: string, id: unknown, tabId: u
 }
 
 export async function finish(uid: number, domainId: string, id: unknown, status: 'ended' | 'cancelled', emit: Emit, now = Date.now()) {
-    const room = await authorize(uid, domainId, id, now);
-    if (room.teacherUid !== uid) throw new LessonError('FORBIDDEN', '只有这节课的老师可以结束或取消课程。');
-    if (status === 'cancelled' && room.status !== 'scheduled') throw new LessonError('CONFLICT', '正在进行的课程请使用结束上课。');
-    await rooms.updateOne({ _id: room._id, status: { $in: ['scheduled', 'active'] } }, { $set: { status, updatedAt: new Date(now) } });
+    if (!lessonId(id)) throw new LessonError('INVALID_MESSAGE', '课程编号无效。');
+    // Managing an owned historical class requires the original teacher's
+    // current authority. A removed student must not prevent closing the class.
+    const teacher = await share.teacherScope(uid, domainId);
+    let room = await rooms.findOne({ _id: id, domainId, teacherUid: uid });
+    if (!room) throw new LessonError('NOT_FOUND', '没有找到这节课。');
+    if (room.workspaceId !== teacher.workspaceId) throw new LessonError('FORBIDDEN', '这节课已不在你的工作区中。');
+    if (room.status === 'scheduled' || room.status === 'active') {
+        if (status === 'cancelled' && room.status !== 'scheduled') throw new LessonError('CONFLICT', '正在进行的课程请使用结束上课。');
+        room = await rooms.findOneAndUpdate({ _id: room._id, domainId, teacherUid: uid,
+            status: status === 'cancelled' ? 'scheduled' : { $in: ['scheduled', 'active'] } },
+        { $set: { status, updatedAt: new Date(now) } }, { returnDocument: 'after' })
+            || await rooms.findOne({ _id: id, domainId, teacherUid: uid });
+        if (!room) throw new LessonError('NOT_FOUND', '没有找到这节课。');
+        if (room.status === 'active' || room.status === 'scheduled') throw new LessonError('CONFLICT', '课程状态已改变，请刷新后结束上课。');
+    }
     await Promise.all([members.deleteMany({ lessonId: room._id }), bookingSlots.deleteMany({ lessonId: room._id }), clearRoomResumptions(room)]);
     for (const participant of room.participantUids) emit({ uid: participant, lessonId: room._id,
-        message: { type: 'ended', lessonId: room._id, reason: status === 'cancelled' ? '课程已取消。' : '老师已结束上课。' } });
-    return snapshot({ ...room, status }, now);
+        message: { type: 'ended', lessonId: room._id, reason: room.status === 'cancelled' ? '课程已取消。' : '老师已结束上课。' } });
+    return snapshot(room, now);
 }
 
 export async function bind(uid: number, domainId: string, id: string, tabId: string, connectionId: string, serverId: string, now = Date.now()) {
@@ -347,7 +388,8 @@ export async function otherMember(room: Lesson, uid: number, now = Date.now()) {
 let indexesReady: Promise<any>;
 export function apply() {
     indexesReady ||= Promise.all([
-        rooms.createIndexes([{ key: { participantUids: 1, domainId: 1, startAt: 1 }, name: 'lesson_participants_schedule' }]),
+        rooms.createIndexes([{ key: { participantUids: 1, domainId: 1, startAt: 1 }, name: 'lesson_participants_schedule' },
+            { key: { teacherUid: 1, domainId: 1, workspaceId: 1, status: 1, startAt: -1 }, name: 'lesson_teacher_history' }]),
         members.createIndexes([{ key: { expiresAt: 1 }, name: 'lesson_member_expiry', expireAfterSeconds: 0 },
             { key: { lessonId: 1 }, name: 'lesson_member_room' }]),
         bookingSlots.createIndexes([{ key: { expiresAt: 1 }, name: 'lesson_booking_expiry', expireAfterSeconds: 0 },

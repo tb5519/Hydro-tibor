@@ -150,6 +150,31 @@ it('camera permission rejection leaves the classroom usable and keeps an indepen
     assert.equal(f.left, 1, 'a denied camera cannot trap the learner in the room');
 });
 
+it('leave requests preserve both participants devices and desktop until the controller confirms exit', async (t) => {
+    for (const uid of [lesson.teacherUid, lesson.studentUid]) {
+        const f = fixture(t, { uid, manualClock: true });
+        const pip = new JSDOM('<head></head><body></body>', { url: 'https://onebyone.test/' });
+        const originalClose = pip.window.close.bind(pip.window);
+        let closed = 0;
+        pip.window.close = () => { closed++; pip.window.dispatchEvent(new pip.window.Event('pagehide')); };
+        f.window.documentPictureInPicture = { async requestWindow() { return pip.window; } };
+        t.after(originalClose);
+        await f.media.start(lesson); f.media.setConnected(true); await tick();
+        const track = f.streams[0].track;
+        const stops = f.audioStops;
+        f.root.querySelector('[data-lesson-media-leave]').click();
+        assert.equal(f.left, 1, 'the controller decides whether an exit request is accepted');
+        assert.equal(track.readyState, 'live'); assert.equal(track.stopped, 0);
+        assert.equal(f.audio.ready, true); assert.equal(f.audio.transmitting, true); assert.equal(f.audioStops, stops);
+        assert.equal(closed, 0); assert.equal(f.root.ownerDocument, pip.window.document); assert.equal(f.root.hidden, false);
+        const sent = f.sent.length; f.advance(34); f.sendAudio('after-cancelled-exit');
+        assert(f.sent.length > sent, 'cancelling exit keeps transport running');
+        f.media.stop();
+        assert.equal(track.readyState, 'ended'); assert.equal(f.audio.ready, false);
+        assert.equal(closed, 1); assert.equal(f.root.hidden, true);
+    }
+});
+
 it('a camera permission result arriving after leave is stopped instead of reopening capture', async (t) => {
     const f = fixture(t, { delayedCamera: true });
     const pending = f.media.start(lesson);

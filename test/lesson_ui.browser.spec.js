@@ -31,6 +31,12 @@ async function fixture(t, options = {}) {
     const context = await browser.newContext({ viewport: options.viewport || { width: 1360, height: 920 }, timezoneId: 'America/Los_Angeles' });
     t.after(() => context.close());
     const page = await context.newPage();
+    let allowExit = options.confirmExit !== false;
+    const confirmations = [];
+    page.on('dialog', async dialog => {
+        confirmations.push(dialog.message());
+        if (allowExit) await dialog.accept(); else await dialog.dismiss();
+    });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.route('https://lesson-ui.test/**', async route => {
@@ -43,7 +49,7 @@ async function fixture(t, options = {}) {
           </style></head><body><main class="ui-v2-home"><section class="ui-v2-home__hero"><h1>开始你的编程训练</h1><p>从一道题开始，记录每一次进步。</p></section><section class="ui-pinned-contest"><div class="ui-pinned-contest__main"><small>置顶比赛 · 正在进行</small><h2>周赛（11月9日—11月15日）</h2><p>2 小时 · 4 题</p></div><a class="ui-pinned-contest__action" href="#contest">进入比赛</a></section><div class="ui-v2-home__body">我的作业与训练计划</div></main><button class="assistant" data-lesson-open>上课模式</button><script>${code}</script><script>
           window.fakeNow=${options.now ?? now};window.requests=[];window.messages=[];window.mediaStarts=0;window.mediaStops=0;window.mediaReceives=[];window.mediaConnections=[];window.shareEvents=[];
           window.desktopEvents=[];window.desktopReservations=[];window.startedReservation=null;
-          window.rows=${JSON.stringify(options.lessons || [])};window.uid=${options.student ? 5 : 2};
+          window.rows=${JSON.stringify([...new Map([...(options.lessons || []), ...(options.history || [])].map(row => [row._id, row])).values()])};window.uid=${options.student ? 5 : 2};
           window.resumeIntent=${JSON.stringify(options.resumeLessonId || null)};window.failFinish=false;window.failResume=false;
           window.pageDomain=location.pathname.match(/^\\/d\\/([^/]+)/)?.[1]||'C0001';
           window.students=[{uid:5,name:'橙子',online:true},{uid:7,name:'睿睿',online:false}];
@@ -75,12 +81,12 @@ async function fixture(t, options = {}) {
               if(!item)return new Response(JSON.stringify({message:'没有这节课'}),{status:404});
               if(body.operation==='join'){item[uid===item.teacherUid?'teacherJoined':'studentJoined']=true;item.status='active';resumeIntent=item._id}
               if(['end','leave'].includes(body.operation)&&failFinish)throw new Error('网络中断');
-              if(body.operation==='leave'){item[uid===item.teacherUid?'teacherJoined':'studentJoined']=false;resumeIntent=null}
-              if(body.operation==='cancel')item.status='cancelled';if(body.operation==='end'){item.status='ended';resumeIntent=null}
+              if(body.operation==='leave'){item[uid===item.teacherUid?'teacherJoined':'studentJoined']=false;if(resumeIntent===item._id)resumeIntent=null}
+              if(body.operation==='cancel')item.status='cancelled';if(body.operation==='end'){item.status='ended';if(resumeIntent===item._id)resumeIntent=null}
               return new Response(JSON.stringify({lesson:item}));
             }
             const domainId=url.match(/^\\/d\\/([^/]+)\\/lesson$/)?.[1]||pageDomain;
-            return new Response(JSON.stringify({lessons:rows.filter(row=>row.domainId===domainId),students,serverNow:new Date(fakeNow).toISOString()}));
+            return new Response(JSON.stringify({lessons:rows.filter(row=>row.domainId===domainId),history:uid===2?rows.filter(row=>row.teacherUid===uid).map(row=>({...row,apiUrl:'/d/'+row.domainId+'/lesson',domainName:'课堂 '+row.domainId})):[],historyHasMore:false,students,serverNow:new Date(fakeNow).toISOString()}));
           };
           window.connections=[];
           window.fakeSocket=(url)=>{
@@ -95,7 +101,7 @@ async function fixture(t, options = {}) {
     });
     await page.goto('https://lesson-ui.test/d/C0001/');
     await page.waitForFunction(() => requests.length > 0);
-    return { page, errors };
+    return { page, errors, confirmations, setExitDecision(value) { allowExit = value; } };
 }
 
 it('booking an offline learner uses Beijing time on a device in another timezone without starting devices', async t => {
@@ -269,6 +275,31 @@ it('cancelled bookings disappear and invalid calendar dates are rejected before 
     });
     assert.deepEqual(result, [true, true, true]);
     assert.deepEqual(errors, []);
+});
+
+it('a teacher can confirm ending a cross-domain old lesson while keeping the current class and cancelling is inert', async t => {
+    const current = lesson({ status: 'active', teacherJoined: true, studentJoined: true, title: '当前新课', startAt: new Date(now - 60000).toISOString() });
+    const old = lesson({ _id: 'historical-old-domain-class', domainId: 'C0002', status: 'active', title: '待清理旧课',
+        startAt: new Date(now - 3 * 86400000).toISOString(), endAt: new Date(now - 2 * 86400000).toISOString() });
+    const { page, errors, confirmations, setExitDecision } = await fixture(t, { lessons: [current], history: [old],
+        resumeLessonId: current._id, peerOnline: true, confirmExit: false });
+    await page.waitForFunction(() => mediaStarts === 1 && mediaConnections.includes(true));
+    await page.locator('[data-lesson-open]').click();
+    await page.getByRole('heading', { name: '历史课程', exact: true }).waitFor();
+    const baseline = await page.evaluate(() => ({ starts: mediaStarts, stops: mediaStops,
+        hint: localStorage.getItem('onebyone.lesson.recovery:2'), events: shareEvents.length }));
+    await page.locator('[data-lesson-end="historical-old-domain-class"]').click();
+    assert.equal(confirmations.length, 1);
+    assert.equal(await page.evaluate(() => requests.some(item => item.body?.operation === 'end')), false);
+    assert.deepEqual(await page.evaluate(() => ({ starts: mediaStarts, stops: mediaStops,
+        hint: localStorage.getItem('onebyone.lesson.recovery:2'), events: shareEvents.length })), baseline);
+    setExitDecision(true);
+    await page.locator('[data-lesson-end="historical-old-domain-class"]').click();
+    await page.locator('[data-lesson-history-id="historical-old-domain-class"]').getByText('已结束', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => requests.find(item => item.body?.operation === 'end').url), '/d/C0002/lesson');
+    assert.deepEqual(await page.evaluate(() => ({ starts: mediaStarts, stops: mediaStops,
+        hint: localStorage.getItem('onebyone.lesson.recovery:2'), events: shareEvents.length })), baseline);
+    assert.equal(await page.locator('.lesson-session').isVisible(), true); assert.deepEqual(errors, []);
 });
 
 it('a previously joined class resumes from another classroom page and reloads without another invitation or desktop click', async t => {

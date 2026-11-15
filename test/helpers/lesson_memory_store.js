@@ -75,6 +75,16 @@ class MemoryCollection {
         return cursor;
     }
     async countDocuments(query = {}) { return [...this.documents.values()].filter((document) => matches(document, query)).length; }
+    async distinct(field, query = {}) {
+        const values = [];
+        for (const document of this.documents.values()) {
+            if (!matches(document, query) || document[field] === undefined) continue;
+            for (const value of Array.isArray(document[field]) ? document[field] : [document[field]]) {
+                if (!values.some(entry => isDeepStrictEqual(entry, value))) values.push(copy(value));
+            }
+        }
+        return values;
+    }
     async findOneAndUpdate(query, update, options = {}) {
         const old = [...this.documents.values()].find((document) => matches(document, query));
         if (old) {

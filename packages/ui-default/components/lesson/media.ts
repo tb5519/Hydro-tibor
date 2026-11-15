@@ -428,7 +428,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
     if (!current || !connected) return;
     void Promise.all([startCamera(), startAudio()]);
   });
-  leave.addEventListener('click', () => { stop(); options.onLeave(); });
+  leave.addEventListener('click', () => { if (current && !disposed) options.onLeave(); });
   header.addEventListener('pointerdown', (event) => {
     if (event.button !== 0 || pip) return;
     const bounds = root.getBoundingClientRect(); drag = { x: event.clientX, y: event.clientY, left: bounds.left, top: bounds.top, pointerId: event.pointerId };

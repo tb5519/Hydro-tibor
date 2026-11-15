@@ -63,7 +63,11 @@ export class LessonHandler extends Handler {
         this.checkPerm(access.canTeach ? PERM.PERM_EDIT_DOMAIN : PERM.PERM_VIEW);
     }
 
-    async get() { this.response.body = await lesson.list(this.user._id, this.domain._id); }
+    async get() {
+        const result = await lesson.list(this.user._id, this.domain._id);
+        this.response.body = { ...result, history: result.history.map((item) => ({ ...item,
+            apiUrl: this.url('lesson', { domainId: item.domainId }) })) };
+    }
 
     async post() {
         if (!this.request.body?.operation) throw new LessonError('INVALID_MESSAGE', '请选择课堂操作。');

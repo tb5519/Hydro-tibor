@@ -6,13 +6,28 @@ import selectUser from 'vj/components/selectUser';
 import { AutoloadPage } from 'vj/misc/Page';
 import { i18n, request, tpl } from 'vj/utils';
 
+function lessonExitEvent(name, reason, cancelable = false) {
+  let host = window;
+  try {
+    while (host.parent !== host && host.parent.location.origin === window.location.origin) host = host.parent;
+  } catch { /* A different-origin parent cannot own this platform's classroom. */ }
+  const event = new host.CustomEvent(name, { cancelable, detail: { reason } });
+  return host.dispatchEvent(event) && !event.defaultPrevented;
+}
+
+function lessonExitFailed(reason) {
+  try { lessonExitEvent('onebyone:lesson-exit-failed', reason); } catch { /* The source page may already be gone. */ }
+}
+
 async function handleNavLogoutClick(ev) {
   const $logoutLink = $(ev.currentTarget);
   ev.preventDefault();
   try {
+    if (!lessonExitEvent('onebyone:lesson-before-exit', 'logout', true)) return;
     const res = await request.post($logoutLink.attr('href'));
     window.location.href = res.url || window.location.href;
   } catch (error) {
+    lessonExitFailed('logout');
     Notification.error(error.message);
   }
 }
@@ -22,10 +37,12 @@ async function handlerSwitchAccount(ev) {
   const target = await selectUser('Hint::icon::switch_account');
   if (!target) return;
   try {
+    if (!lessonExitEvent('onebyone:lesson-before-exit', 'switch-account', true)) return;
     const res = await request.get(`/account/${target._id}`);
     if (res.url) window.location.href = res.url;
     else window.location.reload();
   } catch (error) {
+    lessonExitFailed('switch-account');
     Notification.error(error.message);
   }
 }

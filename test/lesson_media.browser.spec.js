@@ -33,7 +33,7 @@ body{background:#f1f5f9;font:16px system-ui;color:#243044;padding:32px}main{back
 </style></head><body><main><h1>编程课堂</h1><p>老师分享页面，师生摄像头可以拖动及桌面悬浮。</p><button id="join">进入课堂</button></main>
 <script>${script}</script><script>
 ${options.noDocumentPip ? "Object.defineProperty(window,'documentPictureInPicture',{value:undefined});" : ''}
-window.sent=[];window.left=0;window.media=LessonMedia.mountLessonMedia({uid:2},{send(message){sent.push(message);return true},onLeave(){left++}});
+window.sent=[];window.left=0;window.leaveApproved=true;window.media=LessonMedia.mountLessonMedia({uid:2},{send(message){sent.push(message);return true},onLeave(){left++;if(window.leaveApproved)media.stop()}});
 window.room={_id:'camera-lesson',teacherUid:2,studentUid:5,teacherName:'唐老师',studentName:'橙子'};
 document.querySelector('#join').onclick=()=>{const desktop=media.prepareDesktop();window.joined=(async()=>{await new Promise(resolve=>setTimeout(resolve,100));await media.start(room,desktop);media.setConnected(true);media.receive({type:'peer',online:true})})()};
 </script></body></html>` }));
@@ -64,12 +64,16 @@ it('a real browser captures bounded JPEG and microphone frames, lets the camera 
     const moved = await page.locator('[data-lesson-media]').boundingBox();
     assert(moved.x < before.x - 150 && moved.y < before.y - 80);
     await page.screenshot({ path: path.join(os.tmpdir(), 'onebyone-classroom-camera.png') });
-    await page.evaluate(() => { window.cameraTrack = document.querySelector('[data-lesson-local-video]').srcObject.getVideoTracks()[0]; });
+    await page.evaluate(() => { window.cameraTrack = document.querySelector('[data-lesson-local-video]').srcObject.getVideoTracks()[0]; window.leaveApproved = false; });
+    await page.locator('[data-lesson-media-leave]').click();
+    assert.equal(await page.evaluate(() => cameraTrack.readyState), 'live');
+    assert.equal(await page.locator('[data-lesson-media]').isVisible(), true);
+    await page.evaluate(() => { window.leaveApproved = true; });
     await page.locator('[data-lesson-media-leave]').click();
     assert.equal(await page.evaluate(() => cameraTrack.readyState), 'ended');
     const count = await page.evaluate(() => sent.length);
     await page.waitForTimeout(350); assert.equal(await page.evaluate(() => sent.length), count);
-    assert.equal(await page.evaluate(() => left), 1); assert.deepEqual(errors, []);
+    assert.equal(await page.evaluate(() => left), 2); assert.deepEqual(errors, []);
 });
 
 it('joining automatically opens a real Document Picture-in-Picture window and sustains 30 fps with teacher above learner', async (t) => {

@@ -84,7 +84,7 @@
     > span
       color #7a899e
       font-size 12px
-  &__scheduled
+  &__scheduled, &__history
     border-top 1px solid #e9eef5
     padding-top 20px
     margin-top 24px
@@ -92,6 +92,58 @@
       font-size 15px
       font-weight 700
       margin-bottom 10px
+
+.lesson-history-item
+  display flex
+  align-items center
+  justify-content space-between
+  gap 12px
+  padding 14px 0
+  & + &
+    border-top 1px solid #edf1f6
+  &__copy
+    display flex
+    flex-direction column
+    gap 4px
+    min-width 0
+    strong
+      color #2c4564
+      font-size 13px
+      overflow-wrap anywhere
+    span
+      color #7b8da5
+      font-size 11px
+    small
+      color #ad7844
+      font-size 11px
+  &__actions
+    display flex
+    justify-content flex-end
+    align-items center
+    flex-wrap wrap
+    gap 6px
+    flex-shrink 0
+    max-width 230px
+    .lesson-button
+      min-height 30px
+      padding 5px 9px
+      font-size 11px
+
+.lesson-history-status
+  padding 3px 7px
+  border-radius 6px
+  background #eef2f7
+  color #7b8da5
+  font-size 11px
+  white-space nowrap
+  &.is-open
+    color #aa6d30
+    background #fff4e7
+
+.lesson-history-note
+  color #8a9aaf
+  font-size 11px
+  padding-top 10px
 
 .lesson-eyebrow
   color #5780ad
@@ -449,6 +501,12 @@
         text-align center
   .lesson-roster
     grid-template-columns 1fr
+  .lesson-history-item
+    align-items flex-start
+    flex-direction column
+    &__actions
+      max-width none
+      justify-content flex-start
   .lesson-session
     flex-wrap wrap
     width calc(100vw - 24px)

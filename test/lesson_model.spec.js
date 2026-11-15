@@ -127,6 +127,7 @@ function http(uid, body = {}, method = 'POST') {
                 throw new shareProtocol.LiveShareError('FORBIDDEN', '会话权限不足');
             }
         }, limitRate: async () => {},
+        url(name, parameters = {}) { return '/d/' + (parameters.domainId || 'class-a') + '/' + (name === 'lesson_conn' ? 'lesson/conn' : 'lesson'); },
     });
     return { instance, headers };
 }
@@ -685,5 +686,150 @@ describe('durable classroom recovery', () => {
         await connect(replacement, 10, room._id, 'student-after-server-restart');
         await teacher.instance.message({ type: 'pulse' });
         assert(teacher.sent.some(message => message.type === 'peer' && message.online === true));
+    });
+});
+
+
+function historyRoom(id, changes = {}) {
+    const startAt = new Date(Date.now() - 2 * 86400000);
+    return { _id: 'history-lesson-' + id, participantUids: [2, 10], teacherUid: 2, studentUid: 10,
+        teacherName: '老师-2', studentName: '学员-10', domainId: 'class-a', workspaceId: 'a',
+        title: '旧课程 ' + id, startAt, endAt: new Date(+startAt + 3600000),
+        createdAt: startAt, updatedAt: startAt, status: 'ended', ...changes };
+}
+function historyHttp(uid, domainId = 'class-a') {
+    const fixture = resumeHttp(uid, {}, domainId);
+    fixture.instance = Object.assign(new handlers.LessonHandler(), fixture.instance);
+    fixture.instance.request.method = 'GET';
+    fixture.instance.checkPerm = function checkPermission(permission) {
+        if ((BigInt(logins.get(this.session._id)?.scope || 0) & permission) !== permission) {
+            throw new shareProtocol.LiveShareError('FORBIDDEN', '会话权限不足');
+        }
+    };
+    return fixture;
+}
+
+describe('teacher classroom history and historical cleanup', () => {
+    before(setupDatabase);
+    it('lists owned history across authorized original domains and workspaces without student access', async () => {
+        const original = share.teacherScope;
+        share.teacherScope = async (uid, domainId) => ({ ...await original(uid, domainId), workspaceId: domainId === 'class-b' ? 'b' : 'a' });
+        try {
+            const a = historyRoom('owned-a');
+            const b = historyRoom('owned-b', { domainId: 'class-b', workspaceId: 'b', status: 'scheduled' });
+            const other = historyRoom('other-teacher', { teacherUid: 3, participantUids: [3, 10] });
+            const misplaced = historyRoom('wrong-workspace', { domainId: 'class-b', workspaceId: 'different' });
+            const unknown = historyRoom('unknown-domain', { domainId: 'not-an-authorized-domain' });
+            await model.rooms.insertMany([a, b, other, misplaced, unknown]);
+            blocked.add(10); workspaceOverrides.set(10, 'removed-student-workspace');
+            const result = await model.list(2, 'class-a');
+            assert.deepEqual(new Set(result.history.map(item => item._id)), new Set([a._id, b._id]));
+            assert(result.history.every(item => item.domainName === item.domainId));
+            assert.equal(result.historyHasMore, false);
+            const httpFixture = historyHttp(2); await httpFixture.instance.prepare(); await httpFixture.instance.get();
+            for (const item of httpFixture.instance.response.body.history) assert.equal(item.apiUrl, '/d/' + item.domainId + '/lesson');
+            await assert.rejects(model.join(2, 'class-b', b._id, tab(2), quiet), code('FORBIDDEN'));
+            assert.equal((await model.finish(2, 'class-b', b._id, 'cancelled', quiet)).status, 'cancelled');
+        } finally { share.teacherScope = original; }
+    });
+    it('keeps every unfinished course and the newest hundred terminal courses with an accurate more flag', async () => {
+        const now = Date.now();
+        const scheduledRows = Array.from({ length: 125 }, (_, index) => historyRoom('scheduled-' + index,
+            { status: 'scheduled', startAt: new Date(now + (index + 1) * 60000), endAt: new Date(now + (index + 61) * 60000) }));
+        const activeRows = Array.from({ length: 2 }, (_, index) => historyRoom('active-' + index,
+            { status: 'active', startAt: new Date(now + 180 * 86400000 + index * 60000), endAt: new Date(now + 181 * 86400000) }));
+        const endedRows = Array.from({ length: 105 }, (_, index) => historyRoom('terminal-' + index,
+            { status: index % 2 ? 'ended' : 'cancelled', startAt: new Date(now - (105 - index) * 60000), endAt: new Date(now - 60000) }));
+        await model.rooms.insertMany([...scheduledRows, ...activeRows, ...endedRows]);
+        const result = await model.list(2, 'class-a', now);
+        const unfinished = result.history.filter(item => item.status === 'active' || item.status === 'scheduled');
+        const terminal = result.history.filter(item => item.status === 'ended' || item.status === 'cancelled');
+        assert.equal(unfinished.length, 127); assert.equal(terminal.length, 100); assert.equal(result.historyHasMore, true);
+        assert.deepEqual(Array.from(terminal, item => item._id), endedRows.slice(5).reverse().map(item => item._id));
+        for (const item of activeRows) assert(result.lessons.some(lesson => lesson._id === item._id), 'future schedules cannot crowd out an active class');
+        assert.equal(result.lessons.filter(item => item.status === 'scheduled').length, 100);
+    });
+    it('does not count unfinished courses toward the completed-history page limit', async () => {
+        const now = Date.now();
+        const scheduledRows = Array.from({ length: 120 }, (_, index) => historyRoom('open-limit-' + index,
+            { status: 'scheduled', startAt: new Date(now + (index + 1) * 60000), endAt: new Date(now + (index + 61) * 60000) }));
+        const endedRows = Array.from({ length: 100 }, (_, index) => historyRoom('ended-limit-' + index,
+            { startAt: new Date(now - (index + 1) * 60000) }));
+        await model.rooms.insertMany([...scheduledRows, ...endedRows]);
+        const result = await model.list(2, 'class-a', now);
+        assert.equal(result.history.length, 220); assert.equal(result.historyHasMore, false);
+    });
+    it('does not expose another teacher history or student history and rechecks original teacher authority', async () => {
+        const row = historyRoom('private-owner', { domainId: 'class-b', status: 'active' });
+        await model.rooms.insertOne(row);
+        const student = await model.list(10, 'class-a');
+        const other = await model.list(3, 'class-a');
+        assert.equal(student.history.length, 0); assert.equal(other.history.length, 0);
+        await assert.rejects(model.finish(10, 'class-b', row._id, 'ended', quiet), code('FORBIDDEN'));
+        await assert.rejects(model.finish(3, 'class-b', row._id, 'ended', quiet), code('NOT_FOUND'));
+        await assert.rejects(model.finish(2, 'class-a', row._id, 'ended', quiet), code('NOT_FOUND'));
+        const original = share.teacherScope;
+        share.teacherScope = async (uid, domainId) => {
+            if (uid === 2 && domainId === 'class-b') throw new shareProtocol.LiveShareError('FORBIDDEN', '原课堂权限已撤销');
+            return original(uid, domainId);
+        };
+        try {
+            assert(!(await model.list(2, 'class-a')).history.some(item => item._id === row._id));
+            await assert.rejects(model.finish(2, 'class-b', row._id, 'ended', quiet), code('FORBIDDEN'));
+        } finally { share.teacherScope = original; }
+        await model.rooms.updateOne({ _id: row._id }, { $set: { workspaceId: 'moved-workspace' } });
+        assert(!(await model.list(2, 'class-a')).history.some(item => item._id === row._id));
+        await assert.rejects(model.finish(2, 'class-b', row._id, 'ended', quiet), code('FORBIDDEN'));
+    });
+    it('finishes expired scheduled courses and keeps an existing terminal status on repeat cleanup', async () => {
+        const old = historyRoom('expired-schedule', { status: 'scheduled' });
+        const cancelled = historyRoom('already-cancelled', { status: 'cancelled' });
+        await model.rooms.insertMany([old, cancelled]);
+        await model.members.insertOne({ _id: 10, lessonId: cancelled._id, tabId: tab(10), expiresAt: new Date(Date.now() + 60000) });
+        blocked.add(10);
+        const result = await model.finish(2, 'class-a', old._id, 'ended', quiet);
+        assert.equal(result.status, 'ended');
+        assert.equal((await model.finish(2, 'class-a', cancelled._id, 'ended', quiet)).status, 'cancelled');
+        assert.equal((await model.finish(2, 'class-a', cancelled._id, 'cancelled', quiet)).status, 'cancelled');
+        assert.equal((await model.rooms.findOne({ _id: cancelled._id })).status, 'cancelled');
+        assert.equal(await model.members.countDocuments({ lessonId: cancelled._id }), 0);
+        const completed = (await model.list(2, 'class-a')).history.find(item => item._id === cancelled._id);
+        assert.equal(completed.teacherJoined, false); assert.equal(completed.studentJoined, false);
+    });
+    it('does not cancel or clean a course that becomes active during the scheduled cancellation race', async () => {
+        const room = await model.create(2, 'class-a', scheduled(), quiet);
+        const original = model.rooms.findOneAndUpdate;
+        model.rooms.findOneAndUpdate = async function activateBeforeCancellation(query, update, options) {
+            if (query._id === room._id && update.$set?.status === 'cancelled') {
+                await model.join(2, 'class-a', room._id, tab(2), quiet);
+            }
+            return original.call(this, query, update, options);
+        };
+        try {
+            await assert.rejects(model.finish(2, 'class-a', room._id, 'cancelled', quiet), code('CONFLICT'));
+            assert.equal((await model.rooms.findOne({ _id: room._id })).status, 'active');
+            assert.equal((await model.members.findOne({ _id: 2 })).lessonId, room._id);
+            assert.equal((await model.resumptions.findOne({ _id: 2 })).accepted, true);
+            assert(await model.bookingSlots.countDocuments({ lessonId: room._id }) > 0);
+        } finally { model.rooms.findOneAndUpdate = original; }
+    });
+    it('closing an old classroom only cleans that lesson and removes its old learner reminder', async () => {
+        const current = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        await model.join(10, 'class-a', current._id, tab(10), quiet);
+        const currentMembers = await model.members.find({ lessonId: current._id }).toArray();
+        const currentIntents = await model.resumptions.find({ lessonId: current._id }).toArray();
+        const currentReservations = await model.bookingSlots.countDocuments({ lessonId: current._id });
+        const old = historyRoom('old-unclosed-room', { domainId: 'class-b', status: 'active' });
+        await model.rooms.insertOne(old);
+        await model.bookingSlots.insertOne({ _id: 'old-test-reservation', lessonId: old._id, expiresAt: new Date(Date.now() + 60000) });
+        assert((await model.list(10, 'class-b')).lessons.some(item => item._id === old._id));
+        await model.finish(2, 'class-b', old._id, 'ended', quiet);
+        await model.finish(2, 'class-b', old._id, 'ended', quiet);
+        assert.deepEqual(await model.members.find({ lessonId: current._id }).toArray(), currentMembers);
+        assert.deepEqual(await model.resumptions.find({ lessonId: current._id }).toArray(), currentIntents);
+        assert.equal(await model.bookingSlots.countDocuments({ lessonId: current._id }), currentReservations);
+        assert.equal(await model.bookingSlots.countDocuments({ lessonId: old._id }), 0);
+        assert(!(await model.list(10, 'class-b')).lessons.some(item => item._id === old._id));
+        assert.equal((await model.resume(2, 'still-current-teacher-tab', quiet))._id, current._id);
     });
 });

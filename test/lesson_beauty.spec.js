@@ -84,14 +84,38 @@ it('renders adjustable effects into the same bounded canvas that the preview and
     assert.equal(f.canvas.width, 1280); assert.equal(f.canvas.height, 720);
     assert.equal(f.calls.uploads[0], source);
     assert.deepEqual(f.calls.viewports[0], [0, 0, 1280, 720]);
-    assert.equal(f.calls.draws[0].u_whitening, .2); assert.equal(f.calls.draws[0].u_smoothing, .25);
+    assert.equal(f.calls.draws[0].u_whitening, .2);
+    assert(f.calls.draws[0].u_smoothing > .35 && f.calls.draws[0].u_smoothing < .5);
     assert.deepEqual(f.calls.draws[0].u_texel, [1 / 1280, 1 / 720]);
     const allocated = f.resources.length;
     assert.equal(f.processor.process(source, { whitening: 80, smoothing: 60 }), f.canvas);
     assert.equal(f.resources.length, allocated, 'slider updates and new frames reuse their GPU resources');
-    assert.equal(f.calls.draws[1].u_whitening, .8); assert.equal(f.calls.draws[1].u_smoothing, .6);
+    assert.equal(f.calls.draws[1].u_whitening, .8);
+    assert(f.calls.draws[1].u_smoothing > f.calls.draws[0].u_smoothing);
     assert.equal(f.processor.process(source, { whitening: 0, smoothing: 0 }), source);
     assert.equal(f.calls.draws.length, 2, 'turning both controls off immediately restores the raw path');
+    f.processor.dispose();
+});
+
+it('the smoothing slider progressively widens its skin filter and increases strength without changing whitening', () => {
+    const f = fixture(); const source = frame();
+    for (const smoothing of [0, 25, 50, 75, 100]) {
+        assert.equal(f.processor.process(source, { whitening: 20, smoothing }), f.canvas);
+    }
+    const profiles = f.calls.draws;
+    assert.equal(profiles[0].u_smoothing, 0, 'zero disables smoothing independently of whitening');
+    assert(profiles[1].u_smoothing > .35, 'the default smoothing setting is visible rather than only a tiny linear blend');
+    for (let index = 1; index < profiles.length; index++) {
+        assert(profiles[index].u_smoothing > profiles[index - 1].u_smoothing);
+        assert(profiles[index].u_smoothing_radius[0] > profiles[index - 1].u_smoothing_radius[0]);
+        assert(profiles[index].u_smoothing_radius[1] > profiles[index - 1].u_smoothing_radius[1]);
+        assert(profiles[index].u_smoothing_range < profiles[index - 1].u_smoothing_range);
+        assert.equal(profiles[index].u_whitening, .2);
+    }
+    assert(profiles.at(-1).u_smoothing > .9 && profiles.at(-1).u_smoothing < 1);
+    assert(profiles.at(-1).u_smoothing_radius[1] >= 8, 'high smoothing reaches blemishes beyond the old two-pixel neighborhood');
+    assert(profiles.every(profile => profile.u_smoothing_radius[0] > 0 && profile.u_smoothing_radius[1] <= 10));
+    assert(f.resources.length < 10, 'slider changes keep the original GPU allocations');
     f.processor.dispose();
 });
 
@@ -174,7 +198,7 @@ it('a later class can create a new processor on the same canvas after the previo
     assert.equal(next.process(source, { whitening: 40, smoothing: 50 }), f.canvas);
     assert.equal(f.canvas.width, 1280); assert.equal(f.canvas.height, 720);
     assert(f.resources.length > allocated); assert.equal(f.calls.draws.at(-1).u_whitening, .4);
-    assert.equal(f.calls.draws.at(-1).u_smoothing, .5);
+    assert(f.calls.draws.at(-1).u_smoothing > .5 && f.calls.draws.at(-1).u_smoothing < .8);
     next.dispose();
     assert.equal(f.options.lost, undefined); assert.equal(f.listeners.size, 0);
     assert.deepEqual(new Set(f.deleted), new Set(f.resources));

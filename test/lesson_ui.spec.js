@@ -23,6 +23,8 @@ async function fixture(t, options = {}) {
     const { document } = window;
     window.HTMLDialogElement.prototype.showModal = function showModal() { this.open = true; };
     window.HTMLDialogElement.prototype.close = function close() { this.open = false; };
+    const confirmations = [];
+    window.confirm = message => { confirmations.push(message); return options.confirmExit !== false; };
     let clockNow = options.now ?? initialNow;
     let timerId = 0;
     const timers = new Map(); const intervals = new Map(); const frames = [];
@@ -34,7 +36,7 @@ async function fixture(t, options = {}) {
     const accepted = new Set(options.resumeLessonId ? [options.resumeLessonId] : []);
     if (options.savedHint) window.localStorage.setItem(`onebyone.lesson.recovery:${uid}`, JSON.stringify(options.savedHint));
     if (options.copiedTabId) window.sessionStorage.setItem(`onebyone.lesson.tab:${uid}`, options.copiedTabId);
-    const rows = structuredClone(options.lessons || []);
+    const rows = structuredClone([...new Map([...(options.lessons || []), ...(options.history || [])].map(row => [row._id, row])).values()]);
     const requests = []; const messages = []; const shareEvents = []; const mediaReceives = []; const mediaConnections = [];
     const desktopEvents = []; const desktopReservations = []; const mediaStartArgs = [];
     let mediaStarts = 0; let mediaStops = 0; let mediaDisposes = 0; let mediaCallbacks;
@@ -57,7 +59,10 @@ async function fixture(t, options = {}) {
         }
         if (body?.operation) desktopEvents.push(`request:${body.operation}`);
         if (!body) {
-            const data = structuredClone({ lessons: rows.filter(row => url.startsWith('/d/C0002') ? row.domainId === 'C0002' : row.domainId === 'C0001'), students: roster, serverNow: new Date(clockNow).toISOString() });
+            const data = structuredClone({ lessons: rows.filter(row => url.startsWith('/d/C0002') ? row.domainId === 'C0002' : row.domainId === 'C0001'),
+                history: options.student ? [] : rows.filter(row => row.teacherUid === uid).map(row => ({ ...row,
+                    apiUrl: options.historyApiUrls?.[row._id] || `/d/${row.domainId}/lesson`, domainName: row.domainName || `课堂 ${row.domainId}` })),
+                historyHasMore: !!options.historyHasMore, students: roster, serverNow: new Date(clockNow).toISOString() });
             if (delayRead) { delayRead = false; return new Promise(resolve => { heldRead = () => resolve(response(data)); }); }
             return response(data);
         }
@@ -129,7 +134,7 @@ async function fixture(t, options = {}) {
     }
     const click = async selector => { const node = document.querySelector(selector); assert(node, `Missing ${selector}`); node.click(); await settle(); };
     return { window, document, rows, requests, messages, sockets, shareEvents, mediaReceives, mediaConnections,
-        desktopEvents, desktopReservations, mediaStartArgs, options, accepted, releaseMutation: data => heldMutation?.(data),
+        desktopEvents, desktopReservations, mediaStartArgs, confirmations, options, accepted, releaseMutation: data => heldMutation?.(data),
         releaseResume: data => heldResume?.(data),
         releaseExit: data => heldExit?.(data),
         get hint() { return JSON.parse(window.localStorage.getItem(`onebyone.lesson.recovery:${uid}`)); },
@@ -540,4 +545,165 @@ it('lesson styling compiles with the camera panel and keeps responsive sizing as
     const css = stylus.render(fs.readFileSync(file, 'utf8'), { filename: file });
     assert.match(css, /width: min\(620px, calc\(100vw - 32px\)\)/);
     assert.match(css, /\.lesson-media/);
+});
+
+it('the teacher can find every unfinished historical lesson and see ended and cancelled records below the arranged list', async t => {
+    const old = Array.from({ length: 24 }, (_, index) => makeLesson({ _id: `old-unfinished-${String(index).padStart(3, '0')}`, status: 'active',
+        title: `旧课 ${index + 1}`, startAt: new Date(initialNow - (index + 3) * 86400000).toISOString(), endAt: new Date(initialNow - (index + 2) * 86400000).toISOString() }));
+    const closed = makeLesson({ _id: 'ended-course-record', status: 'ended', title: '已结束的递归课', startAt: new Date(initialNow - 86400000).toISOString() });
+    const cancelled = makeLesson({ _id: 'cancelled-course-record', status: 'cancelled', title: '已取消的预约课' });
+    const f = await fixture(t, { lessons: [makeLesson()], history: [...old, closed, cancelled], historyHasMore: true });
+    await f.click('[data-lesson-open]');
+    const section = f.document.querySelector('[data-lesson-history]');
+    assert.match(section.textContent, /历史课程/); assert.match(section.textContent, /已结束/); assert.match(section.textContent, /已取消/);
+    assert.match(section.textContent, /老师尚未下课/); assert.match(section.textContent, /课堂 C0001/);
+    assert.equal(section.querySelectorAll('[data-lesson-end]').length, old.length, 'unfinished records have no twenty-row cutoff');
+    assert.equal(section.querySelectorAll('[data-lesson-history-id="ended-course-record"] button').length, 0);
+    assert.equal(section.querySelectorAll('[data-lesson-history-id="cancelled-course-record"] button').length, 0);
+    assert.equal(f.document.querySelector('.lesson-picker__scheduled').nextElementSibling, section);
+    assert.match(f.document.querySelector('.lesson-history-note').textContent, /未结束课程全部显示/);
+});
+
+it('ending an old lesson in its original classroom does not stop a different current class or erase its recovery details', async t => {
+    const current = makeLesson({ status: 'active', teacherJoined: true, studentJoined: true, title: '正在上的新课', startAt: new Date(initialNow - 60000).toISOString() });
+    const old = makeLesson({ _id: 'old-cross-domain-class', domainId: 'C0002', status: 'active', title: '另一个课堂旧课',
+        startAt: new Date(initialNow - 3 * 86400000).toISOString(), endAt: new Date(initialNow - 2 * 86400000).toISOString() });
+    const f = await fixture(t, { lessons: [current], history: [old], resumeLessonId: current._id, peerOnline: true }); await f.advance();
+    const hint = structuredClone(f.hint); const stops = f.mediaStops; const sharing = f.shareEvents.length;
+    await f.click('[data-lesson-open]');
+    assert.equal(f.document.querySelector('.lesson-picker').open, true, 'history remains accessible while teaching');
+    await f.click('[data-lesson-end="old-cross-domain-class"]');
+    assert.equal(f.requests.find(item => item.body?.operation === 'end').url, '/d/C0002/lesson');
+    assert.equal(f.mediaStops, stops); assert.equal(f.mediaStarts, 1); assert.deepEqual(f.hint, hint);
+    assert.equal(f.shareEvents.length, sharing); assert.equal(f.document.querySelector('.lesson-session').hidden, false);
+    assert.match(f.document.querySelector('[data-lesson-history-id="old-cross-domain-class"]').textContent, /已结束/);
+    assert.equal(f.document.querySelector('[data-lesson-end="old-cross-domain-class"]'), null);
+});
+
+it('an unfinished cross-domain historical lesson can be continued through its own join and socket routes', async t => {
+    const old = makeLesson({ _id: 'old-lesson-to-continue', domainId: 'C0002', status: 'active', title: '未结束的旧课堂',
+        startAt: new Date(initialNow - 3 * 86400000).toISOString(), endAt: new Date(initialNow - 2 * 86400000).toISOString() });
+    const f = await fixture(t, { history: [old] });
+    await f.click('[data-lesson-open]');
+    await f.click('[data-lesson-history-id="old-lesson-to-continue"] [data-lesson-join]'); await f.advance();
+    assert.equal(f.requests.find(item => item.body?.operation === 'join').url, '/d/C0002/lesson');
+    assert.equal(f.sockets[0].url, 'wss://onebyone.test/d/C0002/lesson/conn');
+    assert.equal(f.mediaStarts, 1); assert.equal(f.mediaStartArgs[0].lesson._id, old._id);
+});
+
+it('a failed historical end remains visible and retryable, and a stale list cannot revive a confirmed ending', async t => {
+    const old = makeLesson({ _id: 'old-lesson-end-retry', status: 'active', title: '需要清理的旧课',
+        startAt: new Date(initialNow - 3 * 86400000).toISOString(), endAt: new Date(initialNow - 2 * 86400000).toISOString() });
+    const f = await fixture(t, { history: [old] });
+    await f.click('[data-lesson-open]'); f.options.offline = true;
+    await f.click('[data-lesson-end="old-lesson-end-retry"]');
+    assert.match(f.document.querySelector('[data-lesson-history] .lesson-error').textContent, /未能结束/);
+    assert.equal(f.document.querySelector('[data-lesson-end="old-lesson-end-retry"]').disabled, false);
+    f.options.offline = false; f.holdNextRead(); await f.refresh();
+    await f.click('[data-lesson-end="old-lesson-end-retry"]');
+    f.releaseRead(); await settle();
+    assert.equal(f.document.querySelector('[data-lesson-end="old-lesson-end-retry"]'), null);
+    assert.match(f.document.querySelector('[data-lesson-history-id="old-lesson-end-retry"]').textContent, /已结束/);
+    assert.equal(f.mediaStarts, 0); assert.equal(f.hint, null);
+});
+
+it('learners have no historical ending controls and foreign historical action URLs stay disabled', async t => {
+    const old = makeLesson({ _id: 'old-hidden-teacher-controls', status: 'active', startAt: new Date(initialNow - 86400000).toISOString() });
+    const learner = await fixture(t, { student: true, history: [old] });
+    assert.equal(learner.document.querySelector('[data-lesson-history]').hidden, true);
+    assert.equal(learner.document.querySelector('[data-lesson-end]'), null); learner.cleanup();
+    const f = await fixture(t, { history: [old], historyApiUrls: { [old._id]: 'https://foreign.test/lesson' } });
+    await f.click('[data-lesson-open]');
+    assert.equal(f.document.querySelector(`[data-lesson-end="${old._id}"]`).disabled, true);
+    assert.equal(f.requests.some(item => String(item.url).includes('foreign')), false);
+});
+
+it('teachers and learners can cancel every explicit classroom exit before any state or request changes', async t => {
+    for (const action of ['teacher-end', 'teacher-leave', 'teacher-media', 'student-leave', 'student-media']) {
+        const row = makeLesson({ status: 'active', teacherJoined: true, studentJoined: true, startAt: new Date(initialNow - 60000).toISOString() });
+        const f = await fixture(t, { student: action.startsWith('student'), lessons: [row], resumeLessonId: row._id, peerOnline: true, confirmExit: false });
+        await f.advance();
+        const hint = structuredClone(f.hint); const requests = f.requests.length; const sharing = f.shareEvents.length;
+        if (action.endsWith('media')) f.leaveMedia();
+        else f.document.querySelector(action.endsWith('end') ? '.lesson-session .is-danger' : '.lesson-session .lesson-button').click();
+        await settle();
+        assert.equal(f.confirmations.length, 1, action);
+        assert.equal(f.requests.length, requests, `${action}: cancellation sends no request`);
+        assert.equal(f.mediaStops, 0, `${action}: camera continues`);
+        assert.equal(f.shareEvents.length, sharing, `${action}: sharing continues`);
+        assert.deepEqual(f.hint, hint, `${action}: no pending exit is written`);
+        assert.equal(f.document.querySelector('.lesson-session').hidden, false);
+        f.cleanup();
+    }
+});
+
+it('an old historical course ending requires confirmation and cannot affect a different current class when cancelled', async t => {
+    const row = makeLesson({ status: 'active', teacherJoined: true, studentJoined: true, startAt: new Date(initialNow - 60000).toISOString() });
+    const old = makeLesson({ _id: 'old-confirm-before-ending', domainId: 'C0002', status: 'active', title: '确认要结束的旧课', startAt: new Date(initialNow - 86400000).toISOString() });
+    const f = await fixture(t, { lessons: [row], history: [old], resumeLessonId: row._id, peerOnline: true, confirmExit: false }); await f.advance();
+    await f.click('[data-lesson-open]'); const hint = structuredClone(f.hint); const before = f.requests.length;
+    await f.click('[data-lesson-end="old-confirm-before-ending"]');
+    assert.match(f.confirmations[0], /确认要结束的旧课/);
+    assert.equal(f.requests.length, before); assert.equal(f.mediaStops, 0); assert.deepEqual(f.hint, hint);
+    assert(f.document.querySelector('[data-lesson-end="old-confirm-before-ending"]'));
+    f.options.confirmExit = true; await f.click('[data-lesson-end="old-confirm-before-ending"]');
+    assert.equal(f.requests.find(item => item.body?.operation === 'end').url, '/d/C0002/lesson');
+    assert.equal(f.mediaStops, 0); assert.deepEqual(f.hint, hint);
+});
+
+it('account exit guards run before mutations and the native unload allowance is once-only and reset on failure', async t => {
+    const row = makeLesson({ status: 'active', startAt: new Date(initialNow - 60000).toISOString() });
+    const f = await fixture(t, { lessons: [row], resumeLessonId: row._id, confirmExit: false }); await f.advance();
+    const hint = structuredClone(f.hint); const before = f.requests.length;
+    const denied = new f.window.CustomEvent('onebyone:lesson-before-exit', { cancelable: true, detail: { reason: 'logout' } });
+    assert.equal(f.window.dispatchEvent(denied), false); assert.equal(denied.defaultPrevented, true);
+    const reload = new f.window.Event('beforeunload', { cancelable: true }); f.window.dispatchEvent(reload);
+    assert.equal(reload.defaultPrevented, true); assert.equal(f.requests.length, before); assert.deepEqual(f.hint, hint); assert.equal(f.mediaStops, 0);
+    f.options.confirmExit = true;
+    const approved = new f.window.CustomEvent('onebyone:lesson-before-exit', { cancelable: true, detail: { reason: 'switch-account' } });
+    assert.equal(f.window.dispatchEvent(approved), true);
+    const first = new f.window.Event('beforeunload', { cancelable: true }); f.window.dispatchEvent(first); assert.equal(first.defaultPrevented, false);
+    const second = new f.window.Event('beforeunload', { cancelable: true }); f.window.dispatchEvent(second); assert.equal(second.defaultPrevented, true);
+    f.window.dispatchEvent(new f.window.CustomEvent('onebyone:lesson-before-exit', { cancelable: true, detail: { reason: 'logout' } }));
+    f.window.dispatchEvent(new f.window.Event('onebyone:lesson-exit-failed'));
+    const failed = new f.window.Event('beforeunload', { cancelable: true }); f.window.dispatchEvent(failed); assert.equal(failed.defaultPrevented, true);
+    const passwordForm = f.document.createElement('form'); passwordForm.dataset.profilePasswordForm = ''; f.document.body.append(passwordForm);
+    const submit = new f.window.Event('submit', { bubbles: true, cancelable: true }); passwordForm.dispatchEvent(submit);
+    assert.equal(submit.defaultPrevented, false, 'confirming the form allows its own validation and request');
+    const laterReload = new f.window.Event('beforeunload', { cancelable: true }); f.window.dispatchEvent(laterReload);
+    assert.equal(laterReload.defaultPrevented, true, 'form confirmation never grants an unrelated refresh a bypass window');
+    f.sockets[0].deliver({ type: 'ended', lessonId: row._id });
+    const ended = new f.window.Event('beforeunload', { cancelable: true }); f.window.dispatchEvent(ended); assert.equal(ended.defaultPrevented, false);
+});
+
+it('plain logout links and session-ending forms are guarded in both host and content documents without blocking normal saves', async t => {
+    const row = makeLesson({ status: 'active', startAt: new Date(initialNow - 60000).toISOString() });
+    const f = await fixture(t, { lessons: [row], resumeLessonId: row._id, confirmExit: false }); await f.advance();
+    const content = await f.navigate();
+    for (const doc of [f.document, content.document]) {
+        const win = doc.defaultView;
+        for (const path of ['/logout', '/account/5']) {
+            const link = doc.createElement('a'); link.href = path; doc.body.append(link);
+            const event = new win.MouseEvent('click', { bubbles: true, cancelable: true }); link.dispatchEvent(event); assert.equal(event.defaultPrevented, true);
+        }
+        for (const operation of ['delete_all_tokens', 'change_password']) {
+            const form = doc.createElement('form'); const field = doc.createElement('input'); field.name = 'operation'; field.value = operation; form.append(field); doc.body.append(form);
+            const event = new win.Event('submit', { bubbles: true, cancelable: true }); form.dispatchEvent(event); assert.equal(event.defaultPrevented, true);
+        }
+        const password = doc.createElement('form'); password.dataset.profilePasswordForm = ''; doc.body.append(password);
+        const change = new win.Event('submit', { bubbles: true, cancelable: true }); password.dispatchEvent(change); assert.equal(change.defaultPrevented, true);
+        const save = doc.createElement('form'); const field = doc.createElement('input'); field.name = 'operation'; field.value = 'delete_token'; save.append(field); doc.body.append(save);
+        const unaffected = new win.Event('submit', { bubbles: true, cancelable: true }); save.dispatchEvent(unaffected); assert.equal(unaffected.defaultPrevented, false);
+    }
+    assert.equal(f.confirmations.length, 10); assert.equal(f.mediaStops, 0);
+});
+
+it('expired never-started bookings can be ended but are not offered as resumable active lessons', async t => {
+    const old = makeLesson({ _id: 'expired-unstarted-booking', status: 'scheduled', startAt: new Date(initialNow - 5 * 86400000).toISOString(), endAt: new Date(initialNow - 4 * 86400000).toISOString() });
+    const f = await fixture(t, { history: [old] }); await f.click('[data-lesson-open]');
+    const row = f.document.querySelector('[data-lesson-history-id="expired-unstarted-booking"]');
+    assert.equal(row.querySelector('[data-lesson-join]').disabled, true); assert.match(row.textContent, /预约已过期/);
+    assert.equal(row.querySelector('[data-lesson-end]').disabled, false);
+    await f.click('[data-lesson-end="expired-unstarted-booking"]');
+    assert(f.requests.some(item => item.body?.operation === 'end')); assert.equal(f.mediaStarts, 0);
 });
