@@ -63,7 +63,7 @@ function handler(Type, actor = teacher, method = 'get') {
 }
 before(async () => {
     temp = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-presets-'));
-    mongod = await MongoMemoryServer.create();
+    mongod = await MongoMemoryServer.create({ instance: { args: ['--nounixsocket'] } });
     client = await MongoClient.connect(mongod.getUri());
     db = client.db('presets_test');
     const storage = {
@@ -73,10 +73,12 @@ before(async () => {
     };
     const delivery = { queueAssetMirror: (source) => mirror.push(source), tryRedirectAsset: () => false };
     files = load('packages/hydrooj/src/lib/scratch_files.ts', { '../error': errors });
+    const problemIds = load('packages/hydrooj/src/model/scratch_problem_id.ts', {
+        '../service/db': { collection: (name) => db.collection(name) }, '../error': errors });
     model = load('packages/hydrooj/src/model/scratch.ts', {
         '../error': errors, '../lib/scratch_files': files, '../lib/asset_delivery': delivery,
         '../lib/scratch_state': {},
-        '../logger': { Logger: class { warn() {} } }, './storage': storage, './scratch_objective': {},
+        '../logger': { Logger: class { warn() {} } }, './storage': storage, './scratch_objective': {}, './scratch_problem_id': problemIds,
         '../service/db': { collection: (name) => db.collection(name), ensureIndexes: (coll, ...indexes) => coll.createIndexes(indexes) },
     });
     await model.apply({ on: (event, callback) => { if (event === 'domain/delete') deleteDomain = callback; } });
@@ -86,7 +88,7 @@ before(async () => {
         '../lib/scratch_assignment_progress': load('packages/hydrooj/src/lib/scratch_assignment_progress.ts', {}),
         '../error': errors, '../lib/scratch_files': files, '../model/builtin': builtin,
         '../model/domain': { collUser: db.collection('domain.user') }, '../model/scratch': model,
-        '../model/storage': storage, '../model/user': { getListForRender: async () => ({}) }, '../model/scratch_objective': {},
+        '../model/scratch_problem_id': problemIds, '../model/storage': storage, '../model/user': { getListForRender: async () => ({}) }, '../model/scratch_objective': {},
         '../lib/asset_delivery': delivery, '../lib/domain_type': domainType,
         '../lib/scratch_editor_assets': { getScratchEditorVersion: () => 'v1' }, '../service/server': { Handler: class {} },
     });

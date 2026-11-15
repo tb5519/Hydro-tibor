@@ -15,6 +15,7 @@ import { BUILTIN_ROLES, PERM, PRIV } from '../model/builtin';
 import domain from '../model/domain';
 import * as scratch from '../model/scratch';
 import * as scratchObjective from '../model/scratch_objective';
+import { compareProblemCodes, ensureDomainProblemCodes, getProblemCode, problemCodeKey } from '../model/scratch_problem_id';
 import storage from '../model/storage';
 import user from '../model/user';
 import { Handler } from '../service/server';
@@ -391,6 +392,7 @@ export class ScratchProblemMainHandler extends ScratchHandler {
                 .sort({ createdAt: -1 }).toArray(),
             scratchObjective.listPublicPapers(this.actor),
         ]);
+        const problemCodes = await ensureDomainProblemCodes(this.actor.domainId);
         const projectIds = projects.map((problem) => problem._id);
         const [workDocs, submissionStats, backingDocs, linkedAssignments] = await Promise.all([
             scratch.works.find({ domainId: this.actor.domainId, owner: this.actor.uid, assignmentId: { $in: projectIds } })
@@ -468,6 +470,7 @@ export class ScratchProblemMainHandler extends ScratchHandler {
             const passed = !!accepted;
             return {
                 id: problem._id.toHexString(), kind: 'project', title: problem.title, tags: problem.tags || [], hidden: !!problem.hidden,
+                problemCode: problemCodes.get(problemCodeKey('project', problem._id))!,
                 url: this.url('scratch_problem_detail', { problemId: problem._id }),
                 editUrl: this.actor.isTeacher ? this.url('scratch_problem_edit', { problemId: problem._id }) : null,
                 status: passed ? 'ac' : latestStatus, latestStatus, passed,
@@ -489,6 +492,7 @@ export class ScratchProblemMainHandler extends ScratchHandler {
             };
             return {
                 id: `${paper.paperId}`, kind: 'objective', title: paper.title, tags: paper.tags, hidden: paper.hidden,
+                problemCode: problemCodes.get(problemCodeKey('objective', paper.paperId))!,
                 url: this.url(paper.hidden ? 'scratch_problem_paper_edit' : 'scratch_problem_paper', { paperId: paper.paperId }),
                 editUrl: this.actor.isTeacher ? this.url('scratch_problem_paper_edit', { paperId: paper.paperId }) : null,
                 questionCount: paper.questionCount, totalScore: paper.totalScore,
@@ -496,9 +500,9 @@ export class ScratchProblemMainHandler extends ScratchHandler {
                     : progress.answered ? 'draft' : 'new', ...progress,
             };
         });
-        const all = [...projectItems, ...paperItems];
+        const all = [...projectItems, ...paperItems].sort(compareProblemCodes);
         const filtered = all.filter((item) => (!kind || item.kind === kind)
-            && (!q || `${item.title} ${item.tags.join(' ')}`.toLocaleLowerCase().includes(q.toLocaleLowerCase())));
+            && (!q || `${item.problemCode} ${item.title} ${item.tags.join(' ')}`.toLocaleLowerCase().includes(q.toLocaleLowerCase())));
         const stats = { total: all.length, project: projects.length, objective: papers.length,
             pendingReview: this.actor.isTeacher ? submissionStats.reduce((sum, entry) => sum + entry.pending, 0) : 0 };
         await this.renderScratch('scratch_problem_main.html', {
@@ -520,7 +524,8 @@ export class ScratchProblemEditHandler extends ScratchHandler {
         scratch.requireTeacher(this.actor);
         const problem = this.request.params.problemId ? await scratch.getAssignment(this.actor, this.routeId('problemId')) : null;
         if (problem && (problem.kind !== 'problem' || problem.problemPaperId)) throw new NotFoundError('Scratch 创作题');
-        await this.renderScratch('scratch_problem_edit.html', { problem, tagInput: problem?.tags?.join(', ') || '' });
+        await this.renderScratch('scratch_problem_edit.html', { problem: problem ? { ...problem,
+            problemCode: await getProblemCode(this.actor, 'project', problem._id) } : null, tagInput: problem?.tags?.join(', ') || '' });
     }
 
     async post() {
@@ -542,6 +547,7 @@ export class ScratchProblemHandler extends ScratchHandler {
         ]);
         await this.renderScratch('scratch_problem_detail.html', {
             problem: { ...problem, id: problem._id, kind: 'project', tags: problem.tags || [],
+                problemCode: await getProblemCode(this.actor, 'project', problem._id),
                 editUrl: this.actor.isTeacher ? this.url('scratch_problem_edit', { problemId: problem._id }) : null,
                 assignmentUrl: this.actor.isTeacher ? this.url('scratch_assignment_create', { query: { projectProblemId: problem._id } }) : null }, work, submissions,
         });
@@ -571,6 +577,7 @@ export class ScratchProblemPaperHandler extends ScratchHandler {
         await this.renderScratch('scratch_problem_detail.html', {
             problem: {
                 id: paperId, kind: 'objective', title: paper.title, tags: paper.tag || [],
+                problemCode: await getProblemCode(this.actor, 'objective', paperId),
                 description: '', questionCount: paper.objectivePaper.items.length,
                 totalScore: paper.objectivePaper.items.reduce((sum, item) => sum + item.score, 0),
                 editUrl: this.actor.isTeacher ? this.url('scratch_problem_paper_edit', { paperId }) : null,

@@ -7,6 +7,7 @@
   <form class="scb-editor-form" method="post" enctype="multipart/form-data" data-scratch-problem-form>
     <section class="scb-form-main">
       <label class="scb-field"><span>题目名称 <b>必填</b></span><input name="title" maxlength="120" required value="{{ problem.title }}" placeholder="例如：小猫的星空冒险"></label>
+      <label class="scb-field"><span>题目 ID <b class="scb-optional">选填</b></span><input name="problemCode" value="{{ problem.problemCode }}" maxlength="32" autocomplete="off" placeholder="例如：S12 或 12" aria-describedby="scratch-problem-code-help"><small id="scratch-problem-code-help">{{ '修改后按新 ID 排序；留空保留当前 ID。' if problem else '留空自动分配 S1、S2…；可填写数字或字母编号。' }} 最多 32 个字符；正整数不以 0 开头，字母开头可带数字、短横线或下划线。</small></label>
       <div class="scb-field">
         <span><label for="scratch-problem-description">任务说明</label><b>必填</b></span>
         <textarea id="scratch-problem-description" name="description" rows="12" maxlength="20000" required aria-describedby="scratch-problem-description-help" placeholder="孩子需要做什么？&#10;1. 点击绿旗，让小猫说一句问候。&#10;2. 用方向键控制小猫移动。&#10;3. 为你的故事添加合适的背景。&#10;&#10;也可以直接粘贴截图，展示作品效果或积木示例。">{{ problem.description }}</textarea>
@@ -20,6 +21,7 @@
       {% if problem.templateFileId %}<a class="scb-file-link" href="{{ url('scratch_file', fileId=problem.templateFileId) }}">↓ 下载当前起始作品</a><p class="scb-form-hint">不上传新文件，会保留当前起始作品。</p>{% endif %}
       <label class="scb-field"><span>谁可以看到</span><select name="hidden"><option value="false"{% if not problem.hidden %} selected{% endif %}>发布到题库，学员可见</option><option value="true"{% if problem.hidden %} selected{% endif %}>暂存，仅老师可见</option></select></label>
       <div class="scb-form-note"><span aria-hidden="true">✦</span><p>作品提交后会进入「批改作品」，老师可以查看作品、评分并写下反馈。</p></div>
+      <p class="scb-form-error" data-scratch-problem-error role="alert" tabindex="-1" hidden></p>
       <button class="scb-button scb-button-primary" type="submit">{{ '保存修改' if problem else '保存题目' }}</button><a class="scb-cancel" href="{{ url('scratch_problem_main') }}">取消</a>
     </aside>
   </form>

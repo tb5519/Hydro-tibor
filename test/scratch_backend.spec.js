@@ -125,7 +125,7 @@ async function insertPublicationSources(docs, target = model) {
 }
 before(async () => {
     temp = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-backend-test-'));
-    mongod = await MongoMemoryServer.create();
+    mongod = await MongoMemoryServer.create({ instance: { args: ['--nounixsocket'] } });
     client = await MongoClient.connect(mongod.getUri());
     database = client.db('scratch_test');
     const db = {
@@ -141,13 +141,14 @@ before(async () => {
     };
     scratchFiles = load('packages/hydrooj/src/lib/scratch_files.ts', { '../error': errors });
     scratchState = load('packages/hydrooj/src/lib/scratch_state.ts', { '../error': errors });
+    const problemIds = load('packages/hydrooj/src/model/scratch_problem_id.ts', { '../service/db': db, '../error': errors });
     model = load('packages/hydrooj/src/model/scratch.ts', {
         __Date: MetricDate,
         '../context': {}, '../error': errors, '../lib/scratch_files': scratchFiles, '../logger': { Logger: class { warn() {} } },
         '../lib/asset_delivery': assetDelivery,
         '../lib/scratch_state': scratchState,
         '../service/db': db, './storage': storage,
-        './scratch_objective': { parsePaperIds: (ids) => ids, snapshotQuiz: async () => null },
+        './scratch_objective': { parsePaperIds: (ids) => ids, snapshotQuiz: async () => null }, './scratch_problem_id': problemIds,
     });
     await model.apply({ on: (event, callback) => { if (event === 'domain/delete') deleteDomainData = callback; } });
     handlers = load('packages/hydrooj/src/handler/scratch.ts', {
@@ -159,7 +160,7 @@ before(async () => {
         '../lib/scratch_files': scratchFiles, '../model/builtin': { PERM: { PERM_EDIT_DOMAIN: 1n, PERM_VIEW_USER_PRIVATE_INFO: 2n }, PRIV: { PRIV_USER_PROFILE: 1, PRIV_MANAGE_ALL_DOMAIN: 2 }, BUILTIN_ROLES: { default: 0n, root: 3n } },
         '../model/domain': { collUser: database.collection('domain.user') }, '../model/scratch': model,
         '../model/scratch_objective': { results: database.collection('scratch.objective.result'), listPublicPapers: async () => [] },
-        '../model/storage': storage,
+        '../model/scratch_problem_id': problemIds, '../model/storage': storage,
         '../model/user': {
             coll: database.collection('user'),
             getListForRender: async () => ({}),
@@ -2319,6 +2320,7 @@ describe('Scratch community engagement and private teacher analytics', () => {
             '../lib/scratch_state': scratchState,
             '../service/db': mappedDb, './storage': {},
             './scratch_objective': {},
+            './scratch_problem_id': load('packages/hydrooj/src/model/scratch_problem_id.ts', { '../service/db': mappedDb, '../error': errors }),
         });
         await prefixed.apply({ on() {} });
         const id = new ObjectId();

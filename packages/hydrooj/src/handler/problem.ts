@@ -64,6 +64,7 @@ import * as mistake from '../model/mistake';
 import * as oplog from '../model/oplog';
 import problem from '../model/problem';
 import record from '../model/record';
+import * as scratchProblemIds from '../model/scratch_problem_id';
 import * as setting from '../model/setting';
 import solution from '../model/solution';
 import storage from '../model/storage';
@@ -1808,7 +1809,12 @@ export class ProblemObjectiveHandler extends ObjectiveAuthoringHandler {
     @post('pid', Types.ProblemId, true, (i) => /^(?:[a-z0-9]{1,10}-)?[a-z][a-z0-9]*$/i.test(i))
     @post('content', Types.Content, true)
     @post('tag', Types.Content, true, null, parseCategory)
-    async post(domainId: string, title: string, paper: string, pid: string | number = '', content = '', tag: string[] = []) {
+    @post('problemCode', Types.String, true)
+    async post(domainId: string, title: string, paper: string, pid: string | number = '', content = '', tag: string[] = [], problemCode?: string) {
+        const scratchActor = isScratchDomain(this.domain)
+            ? { domainId, uid: this.user._id, isTeacher: this.user.hasPerm(PERM.PERM_EDIT_DOMAIN) } : null;
+        if (scratchActor && !scratchActor.isTeacher) throw new PermissionError(PERM.PERM_EDIT_DOMAIN);
+        const displayCode = scratchActor ? scratchProblemIds.normalizeProblemCode(problemCode) : undefined;
         const selection = parseObjectivePaper(paper);
         if (typeof pid !== 'string') pid = `P${pid}`;
         if (pid && await problem.get(domainId, pid)) throw new ProblemAlreadyExistError(pid);
@@ -1843,10 +1849,13 @@ export class ProblemObjectiveHandler extends ObjectiveAuthoringHandler {
         const explicitTags = tag.map((value) => value.trim()).filter(Boolean);
         const tags = explicitTags.length ? parseObjectiveTags(explicitTags)
             : [...new Set(snapshot.items.flatMap((item) => item.tags))].slice(0, 20);
+        if (scratchActor) await scratchProblemIds.ensureDomainProblemCodes(domainId);
         const docId = await problem.add(domainId, pid, title, built.content, this.user._id, tags, {
             hidden: true, objectivePaper: snapshot,
         });
+        let reservation: scratchProblemIds.ScratchProblemCodeReservation | undefined;
         try {
+            if (scratchActor) reservation = await scratchProblemIds.reserveProblemCode(scratchActor, 'objective', docId, displayCode);
             await problem.addTestdata(domainId, docId, 'config.yaml', Buffer.from(built.config), this.user._id);
             const copies = await Promise.allSettled(files.map(async ({ sourceId, oldName, newName }) => {
                 await storage.copy(`problem/${domainId}/${sourceId}/additional_file/${oldName}`,
@@ -1855,10 +1864,11 @@ export class ProblemObjectiveHandler extends ObjectiveAuthoringHandler {
             }));
             const failed = copies.find((result) => result.status === 'rejected');
             if (failed?.status === 'rejected') throw failed.reason;
-            // The configured paper becomes a normal catalog problem only after all copies succeed.
+            // Keep the new paper hidden until its files and display ID are ready.
+            await reservation?.commit();
             await problem.edit(domainId, docId, { hidden: false, config: built.config });
         } catch (error) {
-            await problem.del(domainId, docId);
+            await Promise.allSettled([reservation?.rollback(), problem.del(domainId, docId)]);
             throw error;
         }
         this.response.body = { pid: pid || docId };

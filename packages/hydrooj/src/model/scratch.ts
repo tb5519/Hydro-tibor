@@ -11,6 +11,7 @@ import { ScratchReviewStatus, submissionReviewStatus } from '../lib/scratch_revi
 import { Logger } from '../logger';
 import db from '../service/db';
 import * as scratchObjective from './scratch_objective';
+import { ensureDomainProblemCodes, normalizeProblemCode, reserveProblemCode } from './scratch_problem_id';
 import storage from './storage';
 
 const logger = new Logger('scratch');
@@ -598,8 +599,10 @@ async function copyAssignmentTemplate(actor: ScratchActor, assignmentId: ObjectI
 
 export async function writeAssignment(
     actor: ScratchActor, input: AssignmentInput, _id?: ObjectId, template?: { filepath: string, originalFilename?: string },
+    createProblemId?: ObjectId,
 ) {
     requireTeacher(actor);
+    if (createProblemId && (_id || input.kind !== 'problem' || !(createProblemId instanceof ObjectId))) throw new ValidationError('problemId');
     const current = _id ? await requireActiveAssignment(actor, _id) : null;
     if (current?.problemPaperId) throw new ValidationError('assignmentId', null, '题卷快照不能修改，请在客观题工作台编辑原题卷');
     const projectRequired = input.projectRequired ?? current?.projectRequired ?? true;
@@ -637,7 +640,7 @@ export async function writeAssignment(
     const paperIds = scratchObjective.parsePaperIds(input.objectivePaperIds ?? current?.objectiveQuiz?.paperIds ?? []);
     if (!fields.projectRequired && !paperIds.length) throw new ValidationError('objectivePaperIds', null, '请添加客观题，或开启 Scratch 作品任务');
     const objectiveQuiz = await scratchObjective.snapshotQuiz(actor, paperIds, current);
-    const doc: ScratchAssignment = current || { ...base(actor), ...fields, templateFileId: null };
+    const doc: ScratchAssignment = current || { ...base(actor), ...(createProblemId ? { _id: createProblemId } : {}), ...fields, templateFileId: null };
     let file: ScratchFile = null;
     try {
         file = template ? await putFile(actor, template, { assignmentId: doc._id }, true)
@@ -668,7 +671,7 @@ export async function writeAssignment(
 }
 
 export async function writeProblem(
-    actor: ScratchActor, input: { title: string, description: string, tag?: unknown, hidden?: unknown },
+    actor: ScratchActor, input: { title: string, description: string, tag?: unknown, hidden?: unknown, problemCode?: unknown },
     _id?: ObjectId, template?: { filepath: string, originalFilename?: string },
 ) {
     requireTeacher(actor);
@@ -682,10 +685,18 @@ export async function writeProblem(
     const raw = Array.isArray(input.tag) ? input.tag : `${input.tag || ''}`.split(/[,，\n]/);
     const tags = [...new Set(raw.map((tag) => `${tag}`.trim()).filter(Boolean))];
     if (tags.length > 50 || tags.some((tag) => tag.length > 60)) throw new ValidationError('tag');
-    return writeAssignment(actor, {
-        title: input.title, description: input.description, deadline: null, projectRequired: true, objectivePaperIds: [],
-        kind: 'problem', tags, hidden: [true, 'true', '1'].includes(input.hidden as any),
-    }, _id, template);
+    normalizeProblemCode(input.problemCode);
+    await ensureDomainProblemCodes(actor.domainId);
+    const sourceId = _id || new ObjectId();
+    const reservation = await reserveProblemCode(actor, 'project', sourceId, input.problemCode);
+    try {
+        const problem = await writeAssignment(actor, {
+            title: input.title, description: input.description, deadline: null, projectRequired: true, objectivePaperIds: [],
+            kind: 'problem', tags, hidden: [true, 'true', '1'].includes(input.hidden as any),
+        }, _id, template, _id ? undefined : sourceId);
+        await reservation.commit();
+        return { ...problem, problemCode: reservation.code };
+    } catch (error) { await reservation.rollback(); throw error; }
 }
 export async function writeMaterial(
     actor: ScratchActor, input: { title: string, category: string, recipientIds: number[], assignmentId?: ObjectId },

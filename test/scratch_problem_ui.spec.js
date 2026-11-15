@@ -272,14 +272,14 @@ test('all Scratch problem routes have readable Chinese and English document titl
         assert.match(english[key], /^Scratch |^Create Scratch |^Edit Scratch |^Review Scratch /);
     }
 });
-test('paper metadata editing only posts title, tags and explicit publication visibility', () => {
+test('paper metadata editing posts the display ID, title, tags and explicit publication visibility', () => {
     for (const hidden of [false, true]) {
         const dom = render('scratch_problem_paper_edit.html', {
             problem: { paperId: 12, title: '方向 <小挑战>', tags: ['运动', '坐标'], hidden }, tagInput: '运动, 坐标',
         });
         const doc = dom.window.document;
         assert.equal(doc.querySelector('form').method, 'post');
-        assert.deepEqual([...doc.querySelectorAll('form [name]')].map((element) => element.name), ['title', 'tag', 'hidden']);
+        assert.deepEqual([...doc.querySelectorAll('form [name]')].map((element) => element.name), ['title', 'problemCode', 'tag', 'hidden']);
         assert.equal(doc.querySelector('[name=title]').value, '方向 <小挑战>');
         assert.equal(doc.querySelector('[name=title]').required, true);
         assert.equal(doc.querySelector('[name=tag]').value, '运动, 坐标');
@@ -303,4 +303,123 @@ test('unpublished papers offer only editing and a static publishing state while 
     assert.equal(paper.querySelector('a').getAttribute('href'), '/edit/2');
     assert.equal(paper.querySelector('.scb-row-actions .scb-status').textContent, '待发布');
     dom.window.close();
+});
+
+test('Scratch bank and detail show escaped display IDs without changing their links', () => {
+    const problemCode = 'S12<unsafe>';
+    const bank = render('scratch_problem_main.html', { problems: [{ ...base.problems[0], problemCode }] });
+    assert.equal(bank.window.document.querySelector('[data-scratch-problem-code]').textContent, problemCode);
+    assert.equal(bank.window.document.querySelector('unsafe'), null);
+    assert.equal(bank.window.document.querySelector('h2 a').getAttribute('href'), '/question/1');
+    assert.match(bank.window.document.querySelector('.scb-list-heading').textContent, /按题目 ID 排序/);
+    assert.match(bank.window.document.querySelector('[name=q]').placeholder, /ID/);
+    const detail = render('scratch_problem_detail.html', { problem: { ...base.problems[0], problemCode } });
+    assert.equal(detail.window.document.querySelector('[data-scratch-problem-code]').textContent, problemCode);
+    bank.window.close(); detail.window.close();
+});
+
+test('project and paper editors expose optional IDs with distinct new and existing hints', () => {
+    const created = render('scratch_problem_edit.html');
+    assert.equal(created.window.document.querySelector('[name=problemCode]').required, false);
+    assert.match(created.window.document.querySelector('#scratch-problem-code-help').textContent, /留空自动分配 S1、S2/);
+    for (const name of ['scratch_problem_edit.html', 'scratch_problem_paper_edit.html']) {
+        const dom = render(name, { problem: { title: '题目', problemCode: 'S14' } });
+        const input = dom.window.document.querySelector('[name=problemCode]');
+        assert.equal(input.value, 'S14'); assert.equal(input.maxLength, 32);
+        assert.match(dom.window.document.querySelector('#scratch-problem-code-help').textContent, /留空保留当前 ID/);
+        assert(dom.window.document.querySelector('form[data-scratch-problem-form]'));
+        dom.window.close();
+    }
+    created.window.close();
+});
+
+const editorScript = transformSync(fs.readFileSync(path.join(root, 'pages/scratch_problem_edit.page.ts'), 'utf8'), {
+    loader: 'ts', format: 'cjs',
+}).code;
+const editorFlush = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+function editorHarness(template = 'scratch_problem_edit.html', fetchHandler = async () => ({ ok: true, json: async () => ({ url: '/saved' }) })) {
+    const dom = render(template, { problem: { title: '已有题目', description: '已有任务', problemCode: 'S1', hidden: false } });
+    const { window } = dom; const form = window.document.querySelector('form');
+    const calls = []; const navigations = [];
+    const location = { href: window.location.href, origin: window.location.origin };
+    const fakeWindow = { location: { assign: (url) => navigations.push(url) },
+        setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window),
+        addEventListener: window.addEventListener.bind(window) };
+    const mod = { exports: {} };
+    vm.runInNewContext(editorScript, {
+        module: mod, exports: mod.exports, document: window.document, window: fakeWindow, location,
+        URL: window.URL, FormData: window.FormData, AbortController: window.AbortController,
+        fetch: async (url, options) => { calls.push({ url, options }); return fetchHandler(url, options); },
+        require(name) {
+            if (name === 'vj/misc/Page') return { NamedPage: class { constructor(names, callback) { this.names = names; this.callback = callback; } } };
+            if (name.includes('markdown-image-paste')) return { attachMarkdownImagePaste() {} };
+            throw new Error(`Unexpected import ${name}`);
+        },
+    });
+    mod.exports.default.callback();
+    return { dom, window, form, calls, navigations, page: mod.exports.default,
+        submit: async () => { form.dispatchEvent(new window.Event('submit', { cancelable: true, bubbles: true })); await editorFlush(); },
+        close: () => dom.window.close() };
+}
+
+for (const template of ['scratch_problem_edit.html', 'scratch_problem_paper_edit.html']) {
+    test(`${template} normalizes display IDs and posts the original form before navigating`, async () => {
+        const h = editorHarness(template);
+        assert(h.page.names.includes('scratch_problem_paper_edit'));
+        h.form.querySelector('[name=problemCode]').value = ' s12 ';
+        await h.submit();
+        assert.equal(h.calls.length, 1);
+        assert.equal(h.calls[0].options.body.get('problemCode'), 'S12');
+        assert.equal(h.calls[0].options.body.get('title'), '已有题目');
+        assert.equal(h.calls[0].options.credentials, 'same-origin');
+        assert.equal(h.calls[0].options.headers.Accept, 'application/json');
+        assert.deepEqual(h.navigations, ['https://class.test/saved']);
+        h.close();
+    });
+}
+
+test('invalid IDs block requests without discarding the title, description or selected file', async () => {
+    const h = editorHarness(); const input = h.form.querySelector('[name=problemCode]');
+    const selected = [new h.window.File(['project'], 'start.sb3')];
+    Object.defineProperty(h.form.querySelector('[name=template]'), 'files', { value: selected });
+    for (const code of ['0', '01', 'bad code', 'S'.repeat(33)]) {
+        input.value = code; await h.submit();
+        assert.equal(h.calls.length, 0); assert.equal(input.value, code);
+        assert.equal(h.form.querySelector('[data-scratch-problem-error]').hidden, false);
+    }
+    assert.equal(h.form.querySelector('[name=title]').value, '已有题目');
+    assert.equal(h.form.querySelector('[name=description]').value, '已有任务');
+    assert.equal(h.form.querySelector('[name=template]').files, selected);
+    h.close();
+});
+
+test('a duplicate response preserves the edited form and file and permits a corrected retry', async () => {
+    let attempt = 0;
+    const h = editorHarness('scratch_problem_edit.html', async () => ++attempt === 1
+        ? { ok: false, json: async () => ({ error: { params: ['problemCode', '题目ID已被使用'] } }) }
+        : { ok: true, json: async () => ({ url: '/saved' }) });
+    const selected = [new h.window.File(['project'], 'start.sb3')];
+    Object.defineProperty(h.form.querySelector('[name=template]'), 'files', { value: selected });
+    h.form.querySelector('[name=problemCode]').value = 'S2'; await h.submit();
+    assert.match(h.form.querySelector('[data-scratch-problem-error]').textContent, /已被使用.*内容和文件已保留/);
+    assert.equal(h.form.querySelector('[name=template]').files, selected);
+    assert.equal(h.form.querySelector('[name=problemCode]').value, 'S2');
+    assert.equal(h.form.querySelector('button[type=submit]').disabled, false);
+    h.form.querySelector('[name=problemCode]').value = 'S3'; await h.submit();
+    assert.equal(h.calls.length, 2); assert.equal(h.navigations.length, 1); h.close();
+});
+
+test('duplicate clicks and late responses after leaving the page cannot submit or navigate twice', async () => {
+    let finish;
+    const h = editorHarness('scratch_problem_paper_edit.html', () => new Promise(resolve => { finish = resolve; }));
+    await h.submit(); await h.submit();
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.form.querySelector('button[type=submit]').disabled, true);
+    h.window.dispatchEvent(new h.window.Event('pagehide'));
+    assert.equal(h.calls[0].options.signal.aborted, true);
+    finish({ ok: true, json: async () => ({ url: '/late' }) }); await editorFlush();
+    assert.deepEqual(h.navigations, []);
+    h.window.dispatchEvent(new h.window.Event('pageshow'));
+    assert.equal(h.form.querySelector('button[type=submit]').disabled, false);
+    h.close();
 });

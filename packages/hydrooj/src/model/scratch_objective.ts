@@ -11,6 +11,7 @@ import * as document from './document';
 import domain from './domain';
 import problem from './problem';
 import { getAssignment, withAssignmentMutation, ScratchActor, ScratchAssignment } from './scratch';
+import { getProblemCode, normalizeProblemCode, reserveProblemCode } from './scratch_problem_id';
 import storage from './storage';
 import user from './user';
 
@@ -79,10 +80,11 @@ export async function getEditablePaper(actor: ScratchActor, paperId: number) {
     const paper = await document.get(actor.domainId, document.TYPE_PROBLEM, paperId,
         ['docId', 'title', 'tag', 'hidden', 'reference', 'objectiveKind', 'objectivePaper']);
     if (!paper || paper.reference || paper.objectiveKind || !paper.objectivePaper?.items?.length) throw new NotFoundError('Scratch 客观题');
-    return { paperId: paper.docId, title: paper.title, tags: paper.tag || [], hidden: !!paper.hidden };
+    return { paperId: paper.docId, title: paper.title, tags: paper.tag || [], hidden: !!paper.hidden,
+        problemCode: await getProblemCode(actor, 'objective', paperId) };
 }
 
-export async function editPaperMetadata(actor: ScratchActor, paperId: number, input: { title?: unknown, tag?: unknown, hidden?: unknown }) {
+export async function editPaperMetadata(actor: ScratchActor, paperId: number, input: { title?: unknown, tag?: unknown, hidden?: unknown, problemCode?: unknown }) {
     await getEditablePaper(actor, paperId);
     const title = `${input.title || ''}`.trim();
     if (!title || title.length > 120) throw new ValidationError('title');
@@ -90,7 +92,12 @@ export async function editPaperMetadata(actor: ScratchActor, paperId: number, in
     const tags = [...new Set(raw.map((tag) => `${tag}`.trim()).filter(Boolean))];
     if (tags.length > 50 || tags.some((tag) => tag.length > 60)) throw new ValidationError('tag');
     if (![true, false, 'true', 'false', '1', '0'].includes(input.hidden as any)) throw new ValidationError('hidden');
-    await problem.edit(actor.domainId, paperId, { title, tag: tags, hidden: [true, 'true', '1'].includes(input.hidden as any) });
+    normalizeProblemCode(input.problemCode);
+    const reservation = await reserveProblemCode(actor, 'objective', paperId, input.problemCode);
+    try {
+        await problem.edit(actor.domainId, paperId, { title, tag: tags, hidden: [true, 'true', '1'].includes(input.hidden as any) });
+        await reservation.commit();
+    } catch (error) { await reservation.rollback(); throw error; }
     return getEditablePaper(actor, paperId);
 }
 

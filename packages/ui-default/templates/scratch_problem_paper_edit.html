@@ -3,16 +3,18 @@
 {% include "partials/scratch_problem_style.html" %}
 <div class="scb">
   <a class="scb-back" href="{{ url('scratch_problem_main') }}">← 返回题库</a>
-  <header class="scb-heading"><div><span class="scb-kicker">SCRATCH · 知识练习</span><h1>编辑知识练习</h1><p>调整练习名称、知识点标签与发布状态。</p></div></header>
-  <form class="scb-editor-form" method="post">
+  <header class="scb-heading"><div><span class="scb-kicker">SCRATCH · 知识练习</span><h1>编辑知识练习</h1><p>调整题目 ID、练习名称、知识点标签与发布状态。</p></div></header>
+  <form class="scb-editor-form" method="post" data-scratch-problem-form>
     <section class="scb-form-main">
       <label class="scb-field"><span>练习名称 <b>必填</b></span><input name="title" maxlength="120" required value="{{ problem.title }}" placeholder="例如：方向与坐标小挑战"></label>
+      <label class="scb-field"><span>题目 ID <b class="scb-optional">选填</b></span><input name="problemCode" value="{{ problem.problemCode }}" maxlength="32" autocomplete="off" placeholder="例如：S12 或 12" aria-describedby="scratch-problem-code-help"><small id="scratch-problem-code-help">修改后按新 ID 排序；留空保留当前 ID。最多 32 个字符；正整数不以 0 开头，字母开头可带数字、短横线和下划线。</small></label>
       <label class="scb-field"><span>知识点标签</span><input name="tag" value="{{ tagInput }}" maxlength="2000" placeholder="例如：运动、坐标、方向"><small>用逗号分隔，方便在题库中查找。</small></label>
       <div class="scb-form-note"><span aria-hidden="true">✦</span><p>需要修改题目、答案或分值时，请在客观题工作台重新组卷。</p></div>
       <a class="scb-file-link" href="{{ url('problem_objective') }}">前往组题工作台 →</a>
     </section>
     <aside class="scb-form-aside"><h2>发布设置</h2>
       <label class="scb-field"><span>谁可以看到</span><select name="hidden"><option value="false"{% if not problem.hidden %} selected{% endif %}>发布到题库，学员可见</option><option value="true"{% if problem.hidden %} selected{% endif %}>暂存，仅老师可见</option></select></label>
+      <p class="scb-form-error" data-scratch-problem-error role="alert" tabindex="-1" hidden></p>
       <button class="scb-button scb-button-primary" type="submit">保存修改</button><a class="scb-cancel" href="{{ url('scratch_problem_main') }}">取消</a>
     </aside>
   </form>

@@ -114,6 +114,7 @@ function ObjectiveWorkbench({ initial }: { initial: InitialData }) {
   const [selection, setSelection] = useState<Selection[]>([]);
   const [title, setTitle] = useState('');
   const [pid, setPid] = useState('');
+  const [problemCode, setProblemCode] = useState('');
   const [intro, setIntro] = useState('');
   const [paperTags, setPaperTags] = useState('');
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -126,7 +127,7 @@ function ObjectiveWorkbench({ initial }: { initial: InitialData }) {
   const saved = useRef(false);
   const dirty = useRef(false);
   const publishForm = useRef<HTMLFormElement>(null);
-  dirty.current = !!(selection.length || title || pid || intro || paperTags);
+  dirty.current = !!(selection.length || title || pid || problemCode || intro || paperTags);
   const selectedIds = useMemo(() => new Set(selection.map((entry) => entry.material.docId)), [selection]);
   const totalScore = selection.reduce((total, entry) => total + (Number(entry.score) || 0), 0);
   const pageCount = Math.max(1, Math.ceil(result.total / result.pageSize));
@@ -217,6 +218,11 @@ function ObjectiveWorkbench({ initial }: { initial: InitialData }) {
     if (!selection.length) nextErrors.items = '先从素材库选入至少一道题。';
     if (selection.length > 100) nextErrors.items = '每份试卷最多可选择 100 道题。';
     if (!title.trim()) nextErrors.title = '给这份试卷起个名字，方便学员找到它。';
+    const normalizedCode = problemCode.trim().toUpperCase();
+    if (initial.scratchMode && normalizedCode
+      && (normalizedCode.length > 32 || !/^(?:[1-9][0-9]*|[A-Z][A-Z0-9_-]*)$/.test(normalizedCode))) {
+      nextErrors.problemCode = '题目 ID 最多 32 个字符，可使用正整数，或字母开头的字母、数字、短横线和下划线组合。';
+    }
     if (selection.some((entry) => !/^\d+$/.test(entry.score) || Number(entry.score) < 1 || Number(entry.score) > 100)) {
       nextErrors.scores = '每道题的分值应为 1–100 的整数。';
     } else if (totalScore > 1000) nextErrors.scores = '试卷总分不能超过 1,000 分，请调整各题分值。';
@@ -246,6 +252,7 @@ function ObjectiveWorkbench({ initial }: { initial: InitialData }) {
       const response = await request.post(initial.publishUrl, {
         title: title.trim(),
         pid: pid.trim(),
+        ...(initial.scratchMode ? { problemCode: normalizedCode } : {}),
         content: intro.trim(),
         tag: tags.join(', '),
         paper: JSON.stringify({
@@ -608,6 +615,24 @@ function ObjectiveWorkbench({ initial }: { initial: InitialData }) {
                 <p className="objective-error" id="objective-paper-title-error">
                   {errors.title}
                 </p>
+              )}
+              {initial.scratchMode && (
+                <div className="objective-field">
+                  <label className="objective-label" htmlFor="scratch-paper-problem-code">题目 ID <small>选填</small></label>
+                  <input
+                    id="scratch-paper-problem-code"
+                    className="objective-input"
+                    maxLength={32}
+                    autoComplete="off"
+                    placeholder="留空自动分配 S1、S2…"
+                    value={problemCode}
+                    aria-invalid={!!errors.problemCode}
+                    aria-describedby="scratch-paper-problem-code-help"
+                    onChange={(event) => { setProblemCode(event.target.value); clearError('problemCode'); }}
+                  />
+                  <p className="objective-hint" id="scratch-paper-problem-code-help">发布后按题目 ID 排序，也可以在题库中编辑修改。</p>
+                  {errors.problemCode && <p className="objective-error">{errors.problemCode}</p>}
+                </div>
               )}
               <details className="objective-paper__more" open={!!(errors.intro || errors.tags) || undefined}>
                 <summary>

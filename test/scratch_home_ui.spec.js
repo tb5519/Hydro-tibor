@@ -15,6 +15,7 @@ function load(relative, dependencies) {
     }).code, {
         module, exports: module.exports, Date,
         require: (name) => Object.hasOwn(dependencies, name) ? dependencies[name]
+            : name.endsWith('/media_cache') ? load('packages/hydrooj/src/lib/media_cache.ts', {})
             : name.endsWith('/scratch_review') ? load('packages/hydrooj/src/lib/scratch_review.ts', {}) : require(name),
     });
     return module.exports;
@@ -42,9 +43,11 @@ async function home(actor = student) {
 }
 
 before(async () => {
-    mongod = await MongoMemoryServer.create();
+    mongod = await MongoMemoryServer.create({ instance: { args: ['--nounixsocket'] } });
     client = await MongoClient.connect(mongod.getUri());
     const database = client.db('scratch_home_ui_test');
+    const problemIds = load('packages/hydrooj/src/model/scratch_problem_id.ts', {
+        '../service/db': { collection: (name) => database.collection(name) }, '../error': {} });
     model = load('packages/hydrooj/src/model/scratch.ts', {
         '../context': {}, '../error': {}, '../lib/scratch_files': {}, '../logger': { Logger: class {} },
         '../lib/asset_delivery': { queueAssetMirror: () => false },
@@ -53,7 +56,7 @@ before(async () => {
             collection: (name) => database.collection(name),
             ensureIndexes: (collection, ...indexes) => collection.createIndexes(indexes),
         },
-        './storage': {}, './scratch_objective': {},
+        './storage': {}, './scratch_objective': {}, './scratch_problem_id': problemIds,
     });
     await model.apply({ on() {} });
     handlers = load('packages/hydrooj/src/handler/scratch.ts', {
@@ -62,7 +65,7 @@ before(async () => {
         '../lib/scratch_editor_assets': { getScratchEditorVersion: () => 'a'.repeat(64) },
         '../lib/asset_delivery': { tryRedirectAsset: () => false },
         '../model/builtin': {}, '../model/domain': {}, '../model/scratch': model, '../model/scratch_objective': {},
-        '../model/storage': {}, '../model/user': {}, '../service/server': { Handler: class {} },
+        '../model/scratch_problem_id': problemIds, '../model/storage': {}, '../model/user': {}, '../service/server': { Handler: class {} },
     });
 });
 beforeEach(async () => {
