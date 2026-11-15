@@ -1,7 +1,8 @@
 import { hostname } from 'os';
 import { BSON } from 'mongodb';
 import type { Context } from '../context';
-import { LessonError, LESSON_MAX_MESSAGE_BYTES, LESSON_MEDIA_MAX_AGE_MS, LessonRateLimit, validateLessonMessage } from '../lib/lesson';
+import { LessonError, LESSON_MAX_MESSAGE_BYTES, LESSON_MEDIA_MAX_AGE_MS, LESSON_NOTIFICATION_MAX_MESSAGE_BYTES,
+    LessonRateLimit, validateLessonMessage, validateLessonNotificationMessage } from '../lib/lesson';
 import { checkShareOrigin, LiveShareError } from '../lib/live_share';
 import { PERM, PRIV } from '../model/builtin';
 import * as lesson from '../model/lesson';
@@ -44,6 +45,17 @@ const knownError = (error: any) => error instanceof LessonError || error instanc
 function errorBody(error: any) {
     return { error: knownError(error) ? error.code : 'UNAVAILABLE', code: knownError(error) ? error.code : 'UNAVAILABLE',
         message: knownError(error) ? error.message : '课堂服务暂时不可用，请稍后重试。' };
+}
+
+async function notificationPermissions(uid: number, sessionId: any, sudoUid: number) {
+    const login = sessionId ? await token.get(sessionId, token.TYPE_SESSION) : null;
+    let permissions = 0n;
+    try { permissions = BigInt(login?.scope ?? PERM.PERM_ALL); } catch { /* Fail closed. */ }
+    if (!Number.isSafeInteger(uid) || uid <= 1 || sudoUid || !login || login.uid !== uid || login.sudoUid
+        || !(+login.expireAt > Date.now()) || !(permissions & (PERM.PERM_VIEW | PERM.PERM_EDIT_DOMAIN))) {
+        throw new LessonError('FORBIDDEN', '登录或课堂权限已失效，请重新登录。');
+    }
+    return permissions;
 }
 
 export class LessonHandler extends Handler {
@@ -151,6 +163,134 @@ export class LessonResumeHandler extends Handler {
             ? ({ FORBIDDEN: 403, ORIGIN: 403, NOT_FOUND: 404, CONFLICT: 409, BUSY: 409, REPLACED: 409, ENDED: 410 }[error.code] || 400) : 503;
         this.response.body = errorBody(error);
     }
+}
+
+/** Initial and reconnect snapshots use a read-only account inbox, so a learner
+ * can receive an invitation on any page without joining or opening devices. */
+export class LessonInboxHandler extends Handler {
+    private permissions = 0n;
+
+    async prepare() {
+        this.response.type = 'application/json';
+        this.response.addHeader('Cache-Control', 'private, no-store');
+        this.response.addHeader('Vary', 'Cookie');
+        this.checkPriv(PRIV.PRIV_USER_PROFILE);
+        if (this.request.headers.origin) checkShareOrigin(this.request.headers.origin, this.request.host);
+        this.permissions = await notificationPermissions(this.user._id, this.session._id, this.session.sudoUid);
+        await this.limitRate('lesson_inbox', 60, 120);
+    }
+
+    async get() {
+        const uid = this.user._id;
+        const lessons = await lesson.inbox(uid, Date.now(), async (room) => {
+            const permission = room.teacherUid === uid ? PERM.PERM_EDIT_DOMAIN : PERM.PERM_VIEW;
+            if ((this.permissions & permission) !== permission) throw new LessonError('FORBIDDEN', '课堂权限不足。');
+        });
+        this.response.body = { uid, lessons: lessons.map((item) => ({ ...item,
+            apiUrl: this.url('lesson', { domainId: item.domainId }),
+            socketUrl: this.url('lesson_conn', { domainId: item.domainId }), canTeach: item.teacherUid === uid,
+        })), serverNow: new Date().toISOString() };
+    }
+
+    async onerror(error: any) {
+        this.response.type = 'application/json';
+        this.response.addHeader('Cache-Control', 'private, no-store');
+        this.response.status = knownError(error)
+            ? ({ FORBIDDEN: 403, ORIGIN: 403, RATE_LIMIT: 429 }[error.code] || 400) : 503;
+        this.response.body = errorBody(error);
+    }
+}
+
+/** This socket carries invalidation signals only. Raw room events, media,
+ * recipient identifiers and media admission never pass through this channel. */
+export class LessonNotificationHandler extends ConnectionHandler {
+    maxMessageBytes = LESSON_NOTIFICATION_MAX_MESSAGE_BYTES;
+    private readonly limiter = new LessonRateLimit();
+    private subscribed = false;
+    private closing = false;
+    private revision = 0;
+    private changePending = false;
+    private checkingChange = false;
+    private queue = Promise.resolve();
+    private pending = 0;
+
+    async prepare() {
+        this.checkPriv(PRIV.PRIV_USER_PROFILE);
+        checkShareOrigin(this.request.headers.origin, this.request.host);
+        await this.checkLogin();
+        await this.limitRate('lesson_notifications', 60, 30);
+        this.ctx.setTimeout(() => { if (!this.subscribed) this.stop('课堂通知连接未能准备完成。', 'OFFLINE'); }, 15000);
+        this.ctx.interval(() => this.checkLogin().then(() => {
+            if (!this.closing && this.subscribed) this.send({ type: 'pulse', uid: this.user._id });
+        }).catch((error) => this.stop(knownError(error) ? error.message : '课堂通知暂时不可用。',
+            knownError(error) ? error.code : 'UNAVAILABLE')), 20000);
+    }
+
+    private async checkLogin() {
+        await notificationPermissions(this.user._id, this.session._id, this.session.sudoUid);
+    }
+
+    private stop(message: string, code = 'UNAVAILABLE') {
+        if (this.closing) return;
+        this.closing = true; this.changePending = false;
+        this.send({ type: 'error', uid: this.user._id, code, message }); this.close(4003, code);
+    }
+
+    async message(payload: any) {
+        if (this.closing) return;
+        try {
+            validateLessonNotificationMessage(payload);
+            this.limiter.accept(payload.type);
+            if (this.pending >= 4) throw new LessonError('RATE_LIMIT', '请等待课堂通知连接准备完成。');
+        } catch (error) { this.stop(knownError(error) ? error.message : '课堂通知消息无效。', knownError(error) ? error.code : 'INVALID_MESSAGE'); return; }
+        this.pending++;
+        this.queue = this.queue.then(async () => {
+            if (this.closing) return;
+            await this.checkLogin();
+            if (this.closing) return;
+            if (payload.type === 'subscribe') {
+                if (payload.expectedUid !== this.user._id) throw new LessonError('FORBIDDEN', '登录账号已改变，请刷新页面。');
+                this.subscribed = true;
+                this.send({ type: 'ready', uid: this.user._id, revision: this.revision });
+                if (this.changePending) void this.flushChanges();
+            } else {
+                if (!this.subscribed) throw new LessonError('INVALID_MESSAGE', '请先订阅课堂通知。');
+                this.send({ type: 'pulse', uid: this.user._id });
+            }
+        }).catch((error) => this.stop(knownError(error) ? error.message : '课堂通知暂时不可用。',
+            knownError(error) ? error.code : 'UNAVAILABLE')).finally(() => { this.pending--; });
+        await this.queue;
+    }
+
+    private async flushChanges() {
+        this.changePending = true;
+        if (this.closing || !this.subscribed || this.checkingChange) return;
+        this.checkingChange = true;
+        try {
+            while (this.changePending && !this.closing) {
+                this.changePending = false;
+                await this.checkLogin();
+                if (this.closing) return;
+                if (this.conn.bufferedAmount > 64 * 1024) throw new LessonError('UNAVAILABLE', '课堂通知连接繁忙，请重新连接。');
+                this.send({ type: 'changed', uid: this.user._id, revision: ++this.revision });
+            }
+        } catch (error) { this.stop(knownError(error) ? error.message : '课堂通知暂时不可用。', knownError(error) ? error.code : 'UNAVAILABLE'); }
+        finally { this.checkingChange = false; }
+    }
+
+    @subscribe('lesson/event')
+    async onLessonEvent(event: lesson.LessonEvent) {
+        if (this.closing || event.uid !== this.user?._id || !['lesson', 'ended'].includes(event.message?.type)) return;
+        await this.flushChanges();
+    }
+
+    @subscribe('user/delcache')
+    async onUserPermissionsChanged() { await this.flushChanges(); }
+
+    @subscribe('domain/delete-cache')
+    async onDomainPermissionsChanged() { await this.flushChanges(); }
+
+    async cleanup() { this.closing = true; this.changePending = false; }
 }
 
 export class LessonConnectionHandler extends ConnectionHandler {
@@ -357,12 +497,15 @@ export async function injectLesson(handler: Handler) {
     }
     handler.UiContext.lesson = { enabled: true, uid: handler.user._id, canTeach: access.canTeach,
         apiUrl: handler.url('lesson', { domainId }), socketUrl: handler.url('lesson_conn', { domainId }),
-        resumeUrl: handler.url('lesson_resume', { domainId }) };
+        resumeUrl: handler.url('lesson_resume', { domainId }), inboxUrl: handler.url('lesson_inbox', { domainId }),
+        notificationsUrl: handler.url('lesson_notifications', { domainId }) };
 }
 
 export function apply(ctx: Context) {
     ctx.Route('lesson', '/lesson', LessonHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Route('lesson_resume', '/lesson/resume', LessonResumeHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Route('lesson_inbox', '/lesson/inbox', LessonInboxHandler, PRIV.PRIV_USER_PROFILE);
+    ctx.Connection('lesson_notifications', '/lesson/notifications', LessonNotificationHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Connection('lesson_conn', '/lesson/conn', LessonConnectionHandler, PRIV.PRIV_USER_PROFILE);
     ctx.on('handler/after', injectLesson);
 }

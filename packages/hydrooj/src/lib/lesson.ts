@@ -4,6 +4,7 @@ export const LESSON_JOIN_MS = 120_000;
 export const LESSON_MAX_MESSAGE_BYTES = 258 * 1024;
 export const LESSON_VIDEO_MAX_LENGTH = 262144;
 export const LESSON_MEDIA_MAX_AGE_MS = 600;
+export const LESSON_NOTIFICATION_MAX_MESSAGE_BYTES = 1024;
 
 export class LessonError extends Error {
     constructor(public code: string, message: string) { super(message); }
@@ -56,6 +57,15 @@ export function validateLessonMessage(value: any) {
     if (value.type === 'video' && !validJpeg(value.data)) invalid();
     if (value.type === 'audio' && (value.data.length !== 856 || !/^[A-Za-z0-9+/]{854}==$/.test(value.data)
         || Buffer.from(value.data, 'base64').length !== 640 || Buffer.from(value.data, 'base64').toString('base64') !== value.data)) invalid();
+}
+
+/** Account notifications never accept a media join, recipient or room ID. */
+export function validateLessonNotificationMessage(value: any) {
+    const invalid = () => { throw new LessonError('INVALID_MESSAGE', '课堂通知消息格式不正确。'); };
+    if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
+    const fields = value.type === 'subscribe' ? ['type', 'expectedUid'] : value.type === 'pulse' ? ['type'] : null;
+    if (!fields || Object.keys(value).some((key) => !fields.includes(key))) invalid();
+    if (value.type === 'subscribe' && (!Number.isSafeInteger(value.expectedUid) || value.expectedUid <= 1)) invalid();
 }
 
 /** Separate budgets keep a camera burst from delaying audio and heartbeat. */

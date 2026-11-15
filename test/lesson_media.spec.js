@@ -29,7 +29,7 @@ function fixture(t, options = {}) {
         window.clearInterval = (id) => intervals.delete(id);
     }
     let audioStarts = 0; let audioStops = 0; let audioResets = 0; let audioResumes = 0;
-    let left = 0; let delayedResolve; let resumeResolve;
+    let left = 0; let delayedResolve; let resumeResolve; const leaveConfirmations = [];
     let audioOptions;
     const audio = {
         ready: false, transmitting: false, muted: false,
@@ -101,7 +101,7 @@ function fixture(t, options = {}) {
         },
     });
     const media = module.exports.mountLessonMedia({ uid: options.uid || lesson.teacherUid }, {
-        send(message) { if (options.sendBlocked) return false; sent.push(message); return true; }, onLeave() { left++; },
+        send(message) { if (options.sendBlocked) return false; sent.push(message); return true; }, onLeave(confirmation) { left++; leaveConfirmations.push(confirmation); },
         audioFactory(value) { audioOptions = value; return audio; },
         beautyFactory(canvas, onStatus) {
             const instance = { canvas, calls: [], disposed: 0, notify: onStatus,
@@ -117,7 +117,7 @@ function fixture(t, options = {}) {
     });
     const root = window.document.querySelector('[data-lesson-media]');
     t.after(() => { media.dispose(); window.close(); });
-    return { window, document: window.document, media, sent, captures, streams, audio, audioFrames, encodes, beautyInstances, draws,
+    return { window, document: window.document, media, sent, captures, streams, audio, audioFrames, encodes, beautyInstances, draws, leaveConfirmations,
         resolveCamera: () => delayedResolve?.(), sendAudio: (data) => audioOptions.onFrame(data),
         resolveAudioResume: () => resumeResolve?.(),
         advance(milliseconds) { now += milliseconds; for (const interval of intervals.values()) interval.callback(); },
@@ -147,6 +147,7 @@ it('camera permission rejection leaves the classroom usable and keeps an indepen
     assert.match(f.root.textContent, /摄像头|权限/);
     assert.ok(f.root.querySelector('[data-lesson-device-retry]'));
     f.root.querySelector('[data-lesson-media-leave]').click();
+    assert.equal(f.left, 0); f.root.querySelector('[data-lesson-exit-confirm]').click();
     assert.equal(f.left, 1, 'a denied camera cannot trap the learner in the room');
 });
 
@@ -159,20 +160,44 @@ it('leave requests preserve both participants devices and desktop until the cont
         pip.window.close = () => { closed++; pip.window.dispatchEvent(new pip.window.Event('pagehide')); };
         f.window.documentPictureInPicture = { async requestWindow() { return pip.window; } };
         t.after(originalClose);
+        f.window.confirm = pip.window.confirm = () => { throw new Error('Document PiP must not call a native modal'); };
         await f.media.start(lesson); f.media.setConnected(true); await tick();
         const track = f.streams[0].track;
         const stops = f.audioStops;
         f.root.querySelector('[data-lesson-media-leave]').click();
-        assert.equal(f.left, 1, 'the controller decides whether an exit request is accepted');
+        assert.equal(f.left, 0, 'showing the in-window dialog never requests exit');
+        assert.equal(f.root.querySelector('[data-lesson-exit-dialog]').hidden, false);
+        assert.equal(pip.window.document.activeElement, f.root.querySelector('[data-lesson-exit-cancel]'));
+        f.root.querySelector('[data-lesson-exit-cancel]').click();
+        assert.equal(f.left, 0); assert.equal(f.root.querySelector('[data-lesson-exit-dialog]').hidden, true);
         assert.equal(track.readyState, 'live'); assert.equal(track.stopped, 0);
         assert.equal(f.audio.ready, true); assert.equal(f.audio.transmitting, true); assert.equal(f.audioStops, stops);
         assert.equal(closed, 0); assert.equal(f.root.ownerDocument, pip.window.document); assert.equal(f.root.hidden, false);
         const sent = f.sent.length; f.advance(34); f.sendAudio('after-cancelled-exit');
         assert(f.sent.length > sent, 'cancelling exit keeps transport running');
+        f.root.querySelector('[data-lesson-media-leave]').click();
+        f.root.querySelector('[data-lesson-exit-confirm]').click();
+        f.root.querySelector('[data-lesson-exit-confirm]').click();
+        assert.equal(f.left, 1, 'one confirmation gives the controller one exit request');
+        assert.deepEqual(JSON.parse(JSON.stringify(f.leaveConfirmations)), [{ confirmed: true, lessonId: lesson._id }]);
+        assert.equal(track.readyState, 'live', 'only the controller may stop accepted classroom media');
         f.media.stop();
         assert.equal(track.readyState, 'ended'); assert.equal(f.audio.ready, false);
         assert.equal(closed, 1); assert.equal(f.root.hidden, true);
     }
+});
+
+it('a cancelled or stale in-window exit confirmation cannot leave a later classroom', async (t) => {
+    const f = fixture(t);
+    await f.media.start(lesson); f.media.setConnected(true);
+    f.root.querySelector('[data-lesson-media-leave]').click();
+    f.root.querySelector('[data-lesson-exit-dialog]').dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assert.equal(f.left, 0); assert.equal(f.root.querySelector('[data-lesson-exit-dialog]').hidden, true);
+    f.root.querySelector('[data-lesson-media-leave]').click(); f.media.stop();
+    await f.media.start({ ...lesson, _id: 'later-class' });
+    f.root.querySelector('[data-lesson-exit-confirm]').click();
+    assert.equal(f.left, 0); assert.equal(f.streams.at(-1).track.readyState, 'live');
+    assert.equal(f.root.querySelector('[data-lesson-exit-dialog]').hidden, true);
 });
 
 it('a camera permission result arriving after leave is stopped instead of reopening capture', async (t) => {
@@ -416,7 +441,7 @@ it('reserves an empty desktop window in the join click and only adopts it after 
     let calls = 0; let closed = 0;
     const originalClose = pip.window.close.bind(pip.window);
     pip.window.close = () => { closed++; pip.window.dispatchEvent(new pip.window.Event('pagehide')); };
-    f.window.documentPictureInPicture = { requestWindow(size) { calls++; assert.equal(size.width, 320); assert(size.height <= 600); return Promise.resolve(pip.window); } };
+    f.window.documentPictureInPicture = { requestWindow(size) { calls++; assert.equal(size.width, 260); assert.equal(size.height, 420); return Promise.resolve(pip.window); } };
     t.after(originalClose);
     const reservation = f.media.prepareDesktop();
     assert.equal(calls, 1, 'the browser API runs synchronously, before a REST promise can consume user activation');
@@ -456,34 +481,51 @@ it('a browser rejecting automatic floating keeps a visible retry without a retur
     assert.match(f.root.textContent, /浏览器拦截/); assert.doesNotMatch(f.root.textContent, /返回页面/);
 });
 
-it('teacher stays above learner for either participant and capture targets 1280x720 at 30 fps', async (t) => {
+it('teacher stays above learner for either participant and capture targets 960x540 at 25 fps', async (t) => {
     for (const uid of [lesson.teacherUid, lesson.studentUid]) {
         const f = fixture(t, { uid, manualClock: true });
         await f.media.start(lesson); f.media.setConnected(true);
         const tiles = f.root.querySelectorAll('.lesson-media__grid > [data-lesson-participant]');
         assert.deepEqual(Array.from(tiles, tile => tile.dataset.lessonParticipant), ['teacher', 'student']);
         assert.match(tiles[0].textContent, /唐老师 · 老师/); assert.match(tiles[1].textContent, /橙子 · 学员/);
-        assert.equal(f.captures[0].video.width.ideal, 1280); assert.equal(f.captures[0].video.height.ideal, 720);
-        assert.equal(f.captures[0].video.frameRate.ideal, 30);
-        for (let frame = 0; frame < 30; frame++) f.advance(33);
-        assert.equal(f.sent.filter(message => message.type === 'video').length, 30);
-        assert(f.encodes.every(frame => frame.width === 1280 && frame.height === 720));
+        assert.equal(f.captures[0].video.width.ideal, 960); assert.equal(f.captures[0].video.height.ideal, 540);
+        assert.equal(f.captures[0].video.frameRate.ideal, 25); assert.equal(f.captures[0].video.frameRate.max, 25);
+        for (let frame = 0; frame < 25; frame++) f.advance(40);
+        assert.equal(f.sent.filter(message => message.type === 'video').length, 25);
+        assert(f.encodes.every(frame => frame.width === 960 && frame.height === 540));
     }
+});
+
+it('camera and microphone icons live on the local picture and show clear off and muted states', async (t) => {
+    const f = fixture(t, { uid: lesson.studentUid });
+    await f.media.start(lesson); f.media.setConnected(true);
+    const camera = f.root.querySelector('[data-lesson-camera]'); const microphone = f.root.querySelector('[data-lesson-microphone]');
+    const localTile = f.root.querySelector('[data-lesson-local-video]').parentElement;
+    assert.equal(camera.closest('.lesson-media__tile'), localTile); assert.equal(microphone.closest('.lesson-media__tile'), localTile);
+    assert.equal(f.root.querySelector('[data-lesson-remote-video]').parentElement.querySelector('button'), null);
+    assert.equal(camera.dataset.state, 'on'); assert.equal(microphone.dataset.state, 'on');
+    assert.ok(camera.querySelector('svg')); assert.ok(microphone.querySelector('svg'));
+    camera.click(); microphone.click();
+    assert.equal(camera.dataset.state, 'off'); assert.equal(microphone.dataset.state, 'off');
+    assert.match(camera.getAttribute('aria-label'), /已关闭/); assert.match(microphone.getAttribute('aria-label'), /已静音/);
+    assert.equal(camera.getAttribute('aria-pressed'), 'false'); assert.equal(microphone.getAttribute('aria-pressed'), 'false');
+    assert.equal(f.audio.muted, true); assert.equal(f.streams[0].track.readyState, 'ended');
+    assert.equal(f.root.querySelector('.lesson-media__controls [data-lesson-camera]'), null);
 });
 
 it('complex camera frames reduce quality and dimensions to keep a bounded live byte rate', async (t) => {
     const frame = length => 'data:image/jpeg;base64,' + 'A'.repeat(length - 23);
     const f = fixture(t, { manualClock: true, encodeFrame(width, _height, quality) {
-        return frame(width === 1280 ? 180000 : quality > .3 ? 110000 : 70000);
+        return frame(width === 960 ? 180000 : quality > .3 ? 110000 : 70000);
     } });
     await f.media.start(lesson); f.media.setConnected(true);
-    for (let i = 0; i < 60; i++) f.advance(33);
+    for (let i = 0; i < 60; i++) f.advance(40);
     const frames = f.sent.filter(message => message.type === 'video');
-    assert.equal(frames.length, 60, 'large source frames adapt instead of reducing a 30 fps stream to 4 fps');
+    assert.equal(frames.length, 60, 'large source frames adapt instead of reducing a 25 fps stream to 4 fps');
     assert.equal(f.beautyInstances[0].calls.length, 60, 'JPEG quality/size retries reuse one processed camera frame');
-    assert(f.encodes.some(encode => encode.width === 960));
+    assert(f.encodes.some(encode => encode.width === 640));
     assert(f.encodes.some(encode => encode.quality < .3));
-    assert(frames.reduce((sum, message) => sum + message.data.length + 256, 0) <= 3 * 1024 * 1024 * 1.98 + 210000);
+    assert(frames.reduce((sum, message) => sum + message.data.length + 256, 0) <= 3 * 1024 * 1024 * 2.4 + 252000);
     f.media.stop(); const sent = f.sent.length; f.advance(1000); assert.equal(f.sent.length, sent);
 });
 
@@ -511,9 +553,22 @@ it('teacher beauty uses one processed frame for preview and outgoing video and s
     const f = fixture(t, { filteredBeauty: true, manualClock: true });
     await f.media.start(lesson); f.media.setConnected(true); await tick();
     const group = f.root.querySelector('[aria-label="老师摄像头美颜"]');
+    const toggle = f.root.querySelector('[data-lesson-beauty-toggle]');
+    assert.equal(group.hidden, true, 'beauty sliders start collapsed below the teacher camera');
+    assert.equal(toggle.closest('[data-lesson-participant]').dataset.lessonParticipant, 'teacher');
+    toggle.click();
     assert.equal(group.hidden, false);
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+    assert.equal(group.previousElementSibling.dataset.lessonParticipant, 'teacher');
+    assert.equal(group.nextElementSibling.dataset.lessonParticipant, 'student');
+    assert.equal(group.closest('.lesson-media__tile'), null, 'sliders cannot cover any part of either video');
+    assert.equal(f.root.querySelector('.lesson-media__controls').parentElement, f.root);
+    assert.equal(f.root.querySelector('.lesson-media__content').contains(f.root.querySelector('.lesson-media__controls')), false);
     assert.equal(f.root.querySelector('[data-lesson-beauty="whitening"]').value, '20');
     assert.equal(f.root.querySelector('[data-lesson-beauty="smoothing"]').value, '25');
+    assert.equal(f.root.querySelector('[data-lesson-beauty="eyeBrightening"]').value, '20');
+    group.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assert.equal(group.hidden, true); assert.equal(toggle.getAttribute('aria-expanded'), 'false');
     f.advance(33);
     const processor = f.beautyInstances[0]; const preview = f.root.querySelector('[data-lesson-local-preview]');
     assert.equal(processor.calls.length, 1); assert.equal(preview, processor.canvas);
@@ -529,10 +584,51 @@ it('teacher beauty uses one processed frame for preview and outgoing video and s
     assert.equal(processor.disposed, 1); assert.equal(processor.calls.length, processed);
 });
 
+it('beauty expansion grows the desktop window from a user click and collapsing restores its previous height', async (t) => {
+    const f = fixture(t);
+    const pip = new JSDOM('<head></head><body></body>', { url: 'https://onebyone.test/' });
+    let height = 420; const resizes = [];
+    Object.defineProperties(pip.window, { outerHeight: { get: () => height }, outerWidth: { get: () => 260 } });
+    pip.window.resizeBy = (width, delta) => { resizes.push(['by', width, delta]); height += delta; };
+    pip.window.resizeTo = (width, nextHeight) => { resizes.push(['to', width, nextHeight]); height = nextHeight; };
+    f.window.documentPictureInPicture = { async requestWindow() { return pip.window; } };
+    t.after(() => pip.window.close());
+    await f.media.start(lesson); f.media.setConnected(true); await tick();
+    const toggle = f.root.querySelector('[data-lesson-beauty-toggle]'); const group = f.root.querySelector('[aria-label="老师摄像头美颜"]');
+    assert.equal(group.hidden, true); assert.equal(resizes.length, 0);
+    toggle.click(); assert.equal(height, 540); assert.equal(group.hidden, false);
+    f.media.setConnected(false); f.media.setConnected(true);
+    assert.equal(resizes.length, 1, 'network recovery never resizes a permitted desktop window');
+    toggle.click(); assert.equal(height, 420); assert.equal(group.hidden, true);
+    assert.deepEqual(resizes, [['by', 0, 120], ['to', 260, 420]]);
+    assert.equal(f.captures.length, 1); assert.equal(f.streams[0].track.readyState, 'live');
+});
+
+it('denied desktop resizing leaves a separate scrollable beauty panel and usable end controls', async (t) => {
+    const f = fixture(t);
+    const pip = new JSDOM('<head></head><body></body>', { url: 'https://onebyone.test/' });
+    pip.window.resizeBy = () => { throw new Error('Resizing unavailable'); };
+    f.window.documentPictureInPicture = { async requestWindow() { return pip.window; } };
+    t.after(() => pip.window.close());
+    await f.media.start(lesson); f.media.setConnected(true); await tick();
+    f.root.querySelector('[data-lesson-beauty-toggle]').click();
+    const group = f.root.querySelector('[aria-label="老师摄像头美颜"]');
+    assert.equal(group.hidden, false); assert.equal(group.closest('.lesson-media__tile'), null);
+    assert.equal(group.closest('.lesson-media__content'), f.root.querySelector('.lesson-media__content'));
+    f.root.querySelector('[data-lesson-media-leave]').click();
+    assert.equal(f.root.querySelector('[data-lesson-exit-dialog]').hidden, false);
+    f.root.querySelector('[data-lesson-exit-cancel]').click();
+    assert.equal(f.left, 0); assert.equal(f.streams[0].track.readyState, 'live');
+});
+
 it('student cameras have no beauty controls or processing and cannot save teacher parameters', async (t) => {
     const f = fixture(t, { uid: lesson.studentUid, filteredBeauty: true, manualClock: true });
     await f.media.start(lesson); f.media.setConnected(true); f.advance(33);
     assert.equal(f.root.querySelector('[aria-label="老师摄像头美颜"]').hidden, true);
+    assert.equal(f.root.querySelector('[data-lesson-beauty-toggle]').hidden, true);
+    const localTile = f.root.querySelector('[data-lesson-local-video]').parentElement;
+    assert.equal(localTile.dataset.lessonParticipant, 'student');
+    assert.equal(localTile.querySelectorAll('.lesson-media__icon:not([hidden])').length, 2);
     assert.equal(f.beautyInstances.length, 0);
     assert.equal(f.draws.at(-1)[0], f.root.querySelector('[data-lesson-local-video]'));
     const input = f.root.querySelector('[data-lesson-beauty="whitening"]');
@@ -540,26 +636,30 @@ it('student cameras have no beauty controls or processing and cannot save teache
     assert.equal(f.window.localStorage.getItem(`onebyone.lesson.beauty.v1:${lesson.studentUid}`), null);
 });
 
-it('teacher beauty sliders persist by account and zeroing both restores unprocessed preview and video', async (t) => {
+it('teacher beauty sliders persist by account and zeroing all three restores unprocessed preview and video', async (t) => {
     const f = fixture(t, { filteredBeauty: true, manualClock: true });
     await f.media.start(lesson); f.media.setConnected(true);
     const change = (key, value) => {
         const input = f.root.querySelector(`[data-lesson-beauty="${key}"]`);
         input.value = String(value); input.dispatchEvent(new f.window.Event('input'));
     };
-    change('whitening', 60); change('smoothing', 45); f.advance(33);
+    change('whitening', 60); change('smoothing', 45); change('eyeBrightening', 70); f.advance(40);
     const processor = f.beautyInstances[0];
-    assert.deepEqual(processor.calls.at(-1).settings, { whitening: 60, smoothing: 45 });
+    assert.deepEqual(processor.calls.at(-1).settings, { whitening: 60, smoothing: 45, eyeBrightening: 70 });
     const key = `onebyone.lesson.beauty.v1:${lesson.teacherUid}`;
     const saved = f.window.localStorage.getItem(key);
-    assert.deepEqual(JSON.parse(saved), { whitening: 60, smoothing: 45 });
+    assert.deepEqual(JSON.parse(saved), { whitening: 60, smoothing: 45, eyeBrightening: 70 });
     const recovered = fixture(t, { storage: { [key]: saved } }); await recovered.media.start(lesson);
     assert.equal(recovered.root.querySelector('[data-lesson-beauty="whitening"]').value, '60');
     assert.equal(recovered.root.querySelector('[data-lesson-beauty="smoothing"]').value, '45');
+    assert.equal(recovered.root.querySelector('[data-lesson-beauty="eyeBrightening"]').value, '70');
     const other = fixture(t, { uid: 3, storage: { [key]: saved } });
     await other.media.start({ ...lesson, teacherUid: 3 });
     assert.equal(other.root.querySelector('[data-lesson-beauty="whitening"]').value, '20');
-    change('whitening', 0); change('smoothing', 0); f.advance(33);
+    change('whitening', 0); change('smoothing', 0); f.advance(40);
+    assert.equal(processor.disposed, 0, 'eye brightening alone continues through the shared processed source');
+    assert.equal(processor.calls.at(-1).settings.eyeBrightening, 70);
+    change('eyeBrightening', 0); f.advance(40);
     assert.equal(processor.disposed, 1); assert.equal(f.beautyInstances.length, 1);
     assert.equal(f.root.querySelector('[data-lesson-local-preview]').hidden, true);
     assert.equal(f.root.querySelector('[data-lesson-local-video]').hidden, false);
@@ -603,6 +703,6 @@ it('video picture-in-picture composes the same processed teacher preview that is
     f.window.HTMLVideoElement.prototype.requestPictureInPicture = async () => {};
     await f.media.start(lesson); f.media.setConnected(true); await tick(); f.advance(33);
     const preview = f.root.querySelector('[data-lesson-local-preview]');
-    assert(f.draws.some(args => args[0] === preview && args[3] === 1280 && args[4] === 720), 'outgoing JPEG uses the filtered source');
+    assert(f.draws.some(args => args[0] === preview && args[3] === 960 && args[4] === 540), 'outgoing JPEG uses the filtered source');
     assert(f.draws.some(args => args[0] === preview && args[3] === 320 && args[4] === 180), 'the desktop composite uses that same filtered source');
 });

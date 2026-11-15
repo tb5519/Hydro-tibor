@@ -40,13 +40,22 @@ async function fixture(t, options = {}) {
     const requests = []; const messages = []; const shareEvents = []; const mediaReceives = []; const mediaConnections = [];
     const desktopEvents = []; const desktopReservations = []; const mediaStartArgs = [];
     let mediaStarts = 0; let mediaStops = 0; let mediaDisposes = 0; let mediaCallbacks;
-    const sockets = [];
-    let delayRead = false; let heldRead; let heldMutation; let heldResume; let heldExit;
+    const sockets = []; const notificationSockets = []; const notificationMessages = [];
+    let delayRead = false; let heldRead; let heldMutation; let heldResume; let heldExit; let delayInbox = false; let heldInbox;
     const roster = [{ uid: 5, name: '橙子', online: true }, { uid: 7, name: '睿睿', online: false }];
     const response = (data, status = 200) => ({ ok: status < 400, status, json: async () => structuredClone(data) });
     async function fakeFetch(url, init) {
         const body = init.body ? JSON.parse(init.body) : null; requests.push({ url, body });
         if (options.offline) throw new Error('network offline');
+        if (url.endsWith('/inbox')) {
+            const data = options.inboxResponse || { uid, lessons: rows.filter(row => ['scheduled', 'active'].includes(row.status)
+                && [row.teacherUid, row.studentUid].includes(uid)).map(row => ({ ...row,
+                apiUrl: `/d/${row.domainId}/lesson`, socketUrl: `/d/${row.domainId}/lesson/conn`, canTeach: row.teacherUid === uid,
+                domainName: row.domainName || `课堂 ${row.domainId}` })), serverNow: new Date(clockNow).toISOString() };
+            const snapshot = structuredClone(data);
+            if (delayInbox) { delayInbox = false; return new Promise(resolve => { heldInbox = () => resolve(response(snapshot)); }); }
+            return response(snapshot);
+        }
         if (url.endsWith('/resume')) {
             if (options.holdResume) return new Promise(resolve => { heldResume = data => resolve(response(data)); });
             if (options.resumeFailureCount > 0) { options.resumeFailureCount--; return response({ code: 'UNAVAILABLE' }, 503); }
@@ -95,14 +104,20 @@ async function fixture(t, options = {}) {
         receive: message => mediaReceives.push(message),
         setConnected: value => mediaConnections.push(value), stop: () => { mediaStops++; }, dispose: () => { mediaDisposes++; } };
     function socketFactory(url) {
+        const notification = url.endsWith('/notifications');
         const socket = { url, readyState: 0, bufferedAmount: 0, onopen: null, onmessage: null, onclose: null, onerror: null,
-            send(data) { const message = JSON.parse(data); messages.push(message);
+            send(data) { const message = JSON.parse(data); (notification ? notificationMessages : messages).push(message);
+                if (notification) {
+                    if (message.type === 'subscribe' && !options.noNotificationReady) this.deliver({ type: 'ready', uid, revision: 0 });
+                    if (message.type === 'pulse' && !options.noNotificationAck) this.deliver({ type: 'pulse', uid });
+                    return;
+                }
                 if (message.type === 'join' && !options.noReady) this.deliver({ type: 'ready', lesson: rows.find(row => row._id === message.lessonId), peerOnline: !!options.peerOnline });
                 if (message.type === 'pulse' && !options.noAck) this.deliver({ type: 'pulse' }); },
             deliver(message) { this.onmessage?.({ data: JSON.stringify(structuredClone(message)) }); },
             close() { this.readyState = 3; },
         };
-        sockets.push(socket); window.setTimeout(() => { socket.readyState = 1; socket.onopen?.({}); }); return socket;
+        (notification ? notificationSockets : sockets).push(socket); window.setTimeout(() => { socket.readyState = 1; socket.onopen?.({}); }); return socket;
     }
     for (const type of ['onebyone:lesson-share-start', 'onebyone:lesson-share-stop']) window.addEventListener(type, event => shareEvents.push({ type, detail: event.detail }));
     const module = { exports: {} };
@@ -113,7 +128,8 @@ async function fixture(t, options = {}) {
         require(name) { if (name === './media') return { mountLessonMedia() { throw Error('A media factory is required in this test'); } }; throw Error(`Unexpected import ${name}`); },
     });
     const pageDomain = options.pageDomain || 'C0001';
-    const config = { enabled: true, uid, canTeach: !options.student, apiUrl: `/d/${pageDomain}/lesson`, socketUrl: `/d/${pageDomain}/lesson/conn` };
+    const config = { enabled: true, uid, canTeach: !options.student, apiUrl: `/d/${pageDomain}/lesson`, socketUrl: `/d/${pageDomain}/lesson/conn`,
+        ...(options.notifications ? { inboxUrl: `/d/${pageDomain}/lesson/inbox`, notificationsUrl: `/d/${pageDomain}/lesson/notifications` } : {}) };
     const cleanup = module.exports.installLesson(config, { now: () => clockNow, fetch: fakeFetch,
         pollIntervalMs: 1000000, socketFactory, mediaFactory: (_config, callbacks) => { mediaCallbacks = callbacks; return media; } });
     t.after(() => { cleanup(); for (const frame of frames) frame.window.close(); window.close(); });
@@ -133,13 +149,14 @@ async function fixture(t, options = {}) {
         await settle(); return frame.window;
     }
     const click = async selector => { const node = document.querySelector(selector); assert(node, `Missing ${selector}`); node.click(); await settle(); };
-    return { window, document, rows, requests, messages, sockets, shareEvents, mediaReceives, mediaConnections,
+    return { window, document, rows, requests, messages, sockets, notificationSockets, notificationMessages, shareEvents, mediaReceives, mediaConnections,
         desktopEvents, desktopReservations, mediaStartArgs, confirmations, options, accepted, releaseMutation: data => heldMutation?.(data),
         releaseResume: data => heldResume?.(data),
         releaseExit: data => heldExit?.(data),
         get hint() { return JSON.parse(window.localStorage.getItem(`onebyone.lesson.recovery:${uid}`)); },
-        click, refresh, advance, navigate, exports: module.exports, cleanup, leaveMedia: () => mediaCallbacks.onLeave(),
+        click, refresh, advance, navigate, exports: module.exports, cleanup, leaveMedia: confirmation => mediaCallbacks.onLeave(confirmation),
         holdNextRead: () => { delayRead = true; }, releaseRead: () => heldRead?.(),
+        holdNextInbox: () => { delayInbox = true; }, releaseInbox: () => heldInbox?.(),
         get mediaStarts() { return mediaStarts; }, get mediaStops() { return mediaStops; }, get mediaDisposes() { return mediaDisposes; } };
 }
 
@@ -706,4 +723,117 @@ it('expired never-started bookings can be ended but are not offered as resumable
     assert.equal(row.querySelector('[data-lesson-end]').disabled, false);
     await f.click('[data-lesson-end="expired-unstarted-booking"]');
     assert(f.requests.some(item => item.body?.operation === 'end')); assert.equal(f.mediaStarts, 0);
+});
+
+it('a background account notification shows a cross-domain invitation immediately and waits for the learner click', async t => {
+    const f = await fixture(t, { student: true, notifications: true }); await f.advance();
+    assert.deepEqual(f.notificationMessages[0], { type: 'subscribe', expectedUid: 5 });
+    Object.defineProperty(f.document, 'hidden', { configurable: true, value: true });
+    const invitation = makeLesson({ _id: 'invitation-from-other-domain', domainId: 'C0002', status: 'active',
+        title: '另一个课堂的实时邀请', startAt: new Date(initialNow - 1000).toISOString(), teacherJoined: true });
+    f.rows.push(invitation);
+    f.notificationSockets[0].deliver({ type: 'changed', uid: 5, revision: 1 }); await settle();
+    assert.equal(f.document.querySelector('.lesson-reminder').open, true);
+    assert.match(f.document.querySelector('.lesson-reminder').textContent, /另一个课堂的实时邀请/);
+    assert.match(f.document.querySelector('.lesson-reminder__time').textContent, /C0002/);
+    assert.equal(f.mediaStarts, 0); assert.equal(f.desktopReservations.length, 0); assert.equal(f.sockets.length, 0);
+    assert.equal(f.requests.some(item => item.body?.operation === 'join'), false);
+    await f.click('[data-lesson-reminder-join]'); await f.advance();
+    assert.equal(f.requests.find(item => item.body?.operation === 'join').url, '/d/C0002/lesson');
+    assert.equal(f.sockets[0].url, 'wss://onebyone.test/d/C0002/lesson/conn');
+    assert.equal(f.mediaStarts, 1);
+});
+
+it('first subscription and reconnection reconcile missed account invitations and cancellations without joining media', async t => {
+    const f = await fixture(t, { student: true, notifications: true });
+    const invitation = makeLesson({ _id: 'invitation-during-subscription', domainId: 'C0002', status: 'active',
+        startAt: new Date(initialNow - 1000).toISOString(), teacherJoined: true });
+    f.rows.push(invitation); await f.advance();
+    assert.equal(f.document.querySelector('.lesson-reminder').open, true, 'ready rechecks invitations created before the socket subscribed');
+    f.notificationSockets[0].onclose({}); invitation.status = 'cancelled';
+    await f.advance(20000); await f.advance();
+    assert.equal(f.notificationSockets.length, 2);
+    assert.equal(f.document.querySelector('.lesson-reminder').open, false, 'reconnection removes a cancellation missed while offline');
+    assert.equal(f.mediaStarts, 0); assert.equal(f.sockets.length, 0);
+    assert.equal(f.requests.some(item => item.body?.operation === 'join'), false);
+});
+
+it('an in-flight inbox cannot revive a cancelled invitation after another changed signal or a domain poll', async t => {
+    const invitation = makeLesson({ domainId: 'C0002', status: 'active', teacherJoined: true, startAt: new Date(initialNow - 1000).toISOString() });
+    const f = await fixture(t, { student: true, notifications: true, lessons: [invitation] }); await f.advance();
+    f.holdNextInbox(); f.notificationSockets[0].deliver({ type: 'changed', uid: 5, revision: 1 }); await settle();
+    f.rows[0].status = 'cancelled';
+    f.notificationSockets[0].deliver({ type: 'changed', uid: 5, revision: 2 }); await settle();
+    f.releaseInbox(); await settle(); await f.advance();
+    assert.equal(f.document.querySelector('.lesson-reminder').open, false);
+    f.rows[0].status = 'active';
+    f.options.inboxResponse = { uid: 5, lessons: [], serverNow: new Date(initialNow).toISOString() };
+    await f.refresh();
+    assert.equal(f.document.querySelector('.lesson-reminder').open, false, 'a current-domain poll does not override the account snapshot');
+    assert.equal(f.mediaStarts, 0);
+});
+
+it('newer invitations stay visible during another classroom and account notifications survive media ownership replacement', async t => {
+    const current = makeLesson({ status: 'active', teacherJoined: true, studentJoined: true, startAt: new Date(initialNow - 3600000).toISOString() });
+    const f = await fixture(t, { student: true, notifications: true, lessons: [current], resumeLessonId: current._id }); await f.advance();
+    const hint = structuredClone(f.hint);
+    const invitation = makeLesson({ _id: 'new-invitation-during-another-class', domainId: 'C0002', status: 'active', teacherJoined: true,
+        title: '刚收到的新邀请', startAt: new Date(initialNow - 1000).toISOString() });
+    f.rows.push(invitation); f.notificationSockets[0].deliver({ type: 'changed', uid: 5, revision: 1 }); await settle();
+    const notice = f.document.querySelector('.lesson-invitations');
+    assert.equal(notice.hidden, false); assert.match(notice.textContent, /刚收到的新邀请/);
+    assert.equal(notice.querySelector('[data-lesson-join]').disabled, true);
+    assert.equal(f.document.querySelector('.lesson-reminder').open, false);
+    assert.equal(f.mediaStarts, 1); assert.equal(f.mediaStops, 0); assert.deepEqual(f.hint, hint);
+    f.sockets[0].deliver({ type: 'error', code: 'REPLACED' });
+    const resumes = f.requests.filter(item => item.url.endsWith('/resume')).length;
+    f.notificationSockets[0].deliver({ type: 'changed', uid: 5, revision: 2 }); await settle();
+    assert.equal(f.document.querySelector('.lesson-reminder').open, true);
+    assert.match(f.document.querySelector('.lesson-reminder__name').textContent, /刚收到的新邀请/);
+    assert.equal(f.requests.filter(item => item.url.endsWith('/resume')).length, resumes, 'read-only notifications never reclaim media ownership');
+    assert.equal(f.mediaStarts, 1);
+});
+
+it('account inboxes reject foreign routes and an account identity mismatch releases the stale host', async t => {
+    const row = makeLesson({ status: 'active', teacherJoined: true, startAt: new Date(initialNow - 1000).toISOString(),
+        apiUrl: 'https://foreign.test/d/C0001/lesson', socketUrl: '/d/C0001/lesson/conn' });
+    const f = await fixture(t, { student: true, notifications: true,
+        inboxResponse: { uid: 5, lessons: [row], serverNow: new Date(initialNow).toISOString() } }); await f.advance();
+    assert.equal(f.document.querySelector('.lesson-reminder').open, false);
+    assert.equal(f.mediaStarts, 0); assert.equal(f.sockets.length, 0);
+    f.notificationSockets[0].deliver({ type: 'changed', uid: 999, revision: 1 }); await settle();
+    assert.equal(f.mediaDisposes, 1); assert.equal(f.notificationSockets[0].readyState, 3);
+});
+
+it('the confirmed camera-panel exit bypasses suppressed native prompts only for the exact displayed lesson', async t => {
+    const row = makeLesson({ status: 'active', teacherJoined: true, startAt: new Date(initialNow - 1000).toISOString() });
+    const f = await fixture(t, { lessons: [row], resumeLessonId: row._id, confirmExit: false }); await f.advance();
+    f.leaveMedia({ confirmed: true, lessonId: 'previously-displayed-lesson' }); await settle();
+    assert.equal(f.mediaStops, 0); assert.equal(f.requests.some(item => item.body?.operation === 'end'), false);
+    f.leaveMedia({ confirmed: true, lessonId: row._id }); await settle();
+    assert.equal(f.confirmations.length, 0, 'the camera panel already collected the confirmation');
+    assert.equal(f.mediaStops, 1); assert.equal(f.requests.filter(item => item.body?.operation === 'end').length, 1);
+});
+
+it('account notification handshakes and half-open connections recover independently of classroom media', async t => {
+    for (const failure of ['noNotificationReady', 'noNotificationAck']) {
+        const f = await fixture(t, { student: true, notifications: true, [failure]: true }); await f.advance();
+        await f.advance(failure === 'noNotificationReady' ? 16000 : 61000);
+        f.options[failure] = false;
+        await f.advance(20000); await f.advance();
+        assert.equal(f.notificationSockets.length, 2, `${failure} must recreate only the notification connection`);
+        assert.equal(f.mediaStarts, 0); assert.equal(f.sockets.length, 0);
+        assert.equal(f.requests.some(item => item.body?.operation === 'join'), false);
+        f.cleanup(); assert.equal(f.notificationSockets.at(-1).readyState, 3);
+    }
+});
+
+it('cross-domain scheduled account entries cancel in their original classroom and honor each lesson participant role', async t => {
+    const booking = makeLesson({ domainId: 'C0002' });
+    const invited = makeLesson({ _id: 'teacher-is-a-learner-in-another-domain', domainId: 'C0003', teacherUid: 9, studentUid: 2 });
+    const f = await fixture(t, { notifications: true, lessons: [booking, invited] }); await f.advance();
+    assert.equal(f.document.querySelector(`[data-lesson-join="${invited._id}"]`).disabled, true, 'being a teacher on the page cannot skip learner due-time consent');
+    await f.click(`[data-lesson-cancel="${booking._id}"]`);
+    assert.equal(f.requests.find(item => item.body?.operation === 'cancel').url, '/d/C0002/lesson');
+    assert.equal(f.mediaStarts, 0); assert.equal(f.sockets.length, 0);
 });

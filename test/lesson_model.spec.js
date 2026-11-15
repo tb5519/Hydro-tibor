@@ -833,3 +833,177 @@ describe('teacher classroom history and historical cleanup', () => {
         assert.equal((await model.resume(2, 'still-current-teacher-tab', quiet))._id, current._id);
     });
 });
+
+
+function inboxHttp(uid, options = {}) {
+    const fixture = resumeHttp(uid, {}, options.domainId || 'unrelated-current-page');
+    fixture.instance = Object.assign(new handlers.LessonInboxHandler(), fixture.instance);
+    fixture.instance.request.method = 'GET';
+    if (options.noOrigin) delete fixture.instance.request.headers.origin;
+    if (options.origin) fixture.instance.request.headers.origin = options.origin;
+    return fixture;
+}
+async function readInbox(fixture) {
+    await fixture.instance.prepare(); await fixture.instance.get(); return fixture.instance.response.body;
+}
+function notification(uid, options = {}) {
+    const sent = []; const closed = []; const timers = [];
+    const instance = Object.assign(new handlers.LessonNotificationHandler(), {
+        user: { _id: uid }, domain: { _id: options.domainId || 'unrelated-current-page' }, session: { _id: 'login-' + uid },
+        request: { host: 'school.test', headers: { origin: options.origin || 'https://school.test' } },
+        ctx: { setTimeout() {}, interval(callback, milliseconds) { timers.push({ callback, milliseconds }); } },
+        conn: { bufferedAmount: 0 }, checkPriv() {},
+        checkPerm() { throw new Error('Notifications must not use the current page domain role'); },
+        limitRate: async () => {}, send: data => sent.push(data), close: (status, reason) => closed.push({ status, reason }),
+    });
+    listeners.push(instance); return { instance, sent, closed, timers };
+}
+async function subscribeNotifications(fixture, uid) {
+    await fixture.instance.prepare(); await fixture.instance.message({ type: 'subscribe', expectedUid: uid }); await settle();
+}
+
+describe('account-scoped classroom invitation notifications', () => {
+    before(setupDatabase);
+    it('signals a new invitation immediately to an unjoined learner and keeps inbox reads free of consent or media writes', async () => {
+        const learner = notification(10); await subscribeNotifications(learner, 10);
+        assert(learner.sent.some(message => message.type === 'ready' && message.uid === 10 && message.revision === 0));
+        const room = await model.create(2, 'class-b', { studentUid: 10, tabId: tab(2) }, handlers.emitLesson);
+        await settle();
+        const changed = learner.sent.filter(message => message.type === 'changed');
+        assert(changed.length > 0);
+        for (let index = 0; index < changed.length; index++) {
+            assert.equal(changed[index].uid, 10); assert(changed[index].revision > (index ? changed[index - 1].revision : 0));
+        }
+        const response = await readInbox(inboxHttp(10));
+        assert.equal(response.uid, 10); assert(response.lessons.some(item => item._id === room._id));
+        const entry = response.lessons.find(item => item._id === room._id);
+        assert.equal(entry.apiUrl, '/d/class-b/lesson'); assert.equal(entry.socketUrl, '/d/class-b/lesson/conn'); assert.equal(entry.canTeach, false);
+        await model.inbox(10); await readInbox(inboxHttp(10, { noOrigin: true }));
+        assert.equal(await model.members.findOne({ _id: 10 }), null);
+        assert.equal(await model.resumptions.findOne({ _id: 10 }), null);
+    });
+    it('reads invitations across authorized domains and filters terminal, expired, revoked and mismatched workspace rows', async () => {
+        const now = Date.now();
+        const a = historyRoom('inbox-a', { status: 'active', startAt: new Date(now - 12 * 3600000), endAt: new Date(now - 11 * 3600000) });
+        const b = historyRoom('inbox-b', { domainId: 'class-b', status: 'scheduled', startAt: new Date(now + 60000), endAt: new Date(now + 3600000) });
+        const expired = historyRoom('inbox-expired', { status: 'scheduled', endAt: new Date(now - 3 * 3600000) });
+        const terminal = historyRoom('inbox-ended');
+        const mismatch = historyRoom('inbox-workspace', { domainId: 'class-b', workspaceId: 'other', status: 'active' });
+        const another = historyRoom('inbox-other-student', { participantUids: [2, 11], studentUid: 11, status: 'active' });
+        await model.rooms.insertMany([a, b, expired, terminal, mismatch, another]);
+        assert.deepEqual(new Set((await model.inbox(10, now)).map(item => item._id)), new Set([a._id, b._id]));
+        const original = share.studentScope;
+        share.studentScope = async (uid, domainId) => {
+            if (uid === 10 && domainId === 'class-b') throw new shareProtocol.LiveShareError('FORBIDDEN', 'Classroom membership was revoked');
+            return original(uid, domainId);
+        };
+        try { assert.deepEqual(Array.from(await model.inbox(10, now), item => item._id), [a._id]); }
+        finally { share.studentScope = original; }
+        assert.deepEqual(Array.from(await model.inbox(10, now, async room => {
+            if (room._id === a._id) throw new protocol.LessonError('FORBIDDEN', 'Token scope denied');
+        }), item => item._id), [b._id]);
+        await assert.rejects(model.inbox(10, now, async () => { throw new Error('Unexpected access database failure'); }), /Unexpected access database failure/);
+    });
+    it('checks the authenticated account, origin and token role before exposing an inbox or subscribing', async () => {
+        const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        const forged = notification(10, { origin: 'https://attacker.test' });
+        await assert.rejects(forged.instance.prepare(), code('ORIGIN'));
+        await assert.rejects(readInbox(inboxHttp(10, { origin: 'https://attacker.test' })), code('ORIGIN'));
+        const impersonating = notification(10); await impersonating.instance.prepare();
+        await impersonating.instance.message({ type: 'subscribe', expectedUid: 11 });
+        assert(impersonating.closed.some(event => event.reason === 'FORBIDDEN'));
+        assert(!impersonating.sent.some(message => message.type === 'ready'));
+        logins.get('login-2').scope = '1';
+        assert.equal((await readInbox(inboxHttp(2))).lessons.length, 0, 'VIEW scope cannot expose a teacher EDIT invitation');
+        logins.get('login-10').scope = '1';
+        assert((await readInbox(inboxHttp(10))).lessons.some(item => item._id === room._id));
+        logins.delete('login-10');
+        await assert.rejects(notification(10).instance.prepare(), code('FORBIDDEN'));
+        await assert.rejects(readInbox(inboxHttp(10)), code('FORBIDDEN'));
+    });
+    it('forwards only account change hints and never copies another account, room, owner or media payload', async () => {
+        const learner = notification(10); await subscribeNotifications(learner, 10); learner.sent.length = 0;
+        const event = { uid: 10, lessonId: 'private-room-event', message: {} };
+        for (const type of ['video', 'audio', 'owner', 'peer', 'ready']) {
+            await learner.instance.onLessonEvent({ ...event, message: { type, secret: 'private-media-sentinel', data: jpeg() } });
+        }
+        await learner.instance.onLessonEvent({ ...event, uid: 11, message: { type: 'lesson', secret: 'other-account-sentinel' } });
+        assert.equal(learner.sent.length, 0);
+        await learner.instance.onLessonEvent({ ...event, message: { type: 'lesson', lesson: { _id: event.lessonId, secret: 'private-room-sentinel' } } });
+        await learner.instance.onLessonEvent({ ...event, message: { type: 'ended', lessonId: event.lessonId, reason: 'private-end-reason' } });
+        assert.equal(learner.sent.length, 2);
+        for (const message of learner.sent) {
+            assert.equal(message.type, 'changed'); assert.equal(message.uid, 10);
+            assert.deepEqual(Object.keys(message).sort(), ['revision', 'type', 'uid']);
+        }
+        assert(!JSON.stringify(learner.sent).includes('private-')); assert(!JSON.stringify(learner.sent).includes('other-account'));
+    });
+    it('latches an invitation arriving between prepare and subscribe and announces it after ready', async () => {
+        const learner = notification(10); await learner.instance.prepare();
+        const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, handlers.emitLesson);
+        await settle(); assert(!learner.sent.some(message => message.type === 'changed'));
+        await learner.instance.message({ type: 'subscribe', expectedUid: 10 }); await settle();
+        assert.equal(learner.sent[0].type, 'ready'); assert.equal(learner.sent[0].revision, 0);
+        assert(learner.sent.slice(1).some(message => message.type === 'changed' && message.revision > 0));
+        assert((await model.inbox(10)).some(item => item._id === room._id));
+    });
+    it('signals endings and cancellations so an independent inbox no longer contains their invitations', async () => {
+        const learner = notification(10); await subscribeNotifications(learner, 10);
+        const active = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, handlers.emitLesson);
+        const future = await model.create(2, 'class-b', scheduled(), handlers.emitLesson);
+        assert.equal((await model.inbox(10)).length, 2); learner.sent.length = 0;
+        await model.finish(2, 'class-a', active._id, 'ended', handlers.emitLesson);
+        await model.finish(2, 'class-b', future._id, 'cancelled', handlers.emitLesson); await settle();
+        assert(learner.sent.some(message => message.type === 'changed')); assert.equal((await model.inbox(10)).length, 0);
+        assert.equal(await model.members.findOne({ _id: 10 }), null); assert.equal(await model.resumptions.findOne({ _id: 10 }), null);
+    });
+    it('a reconnect ready followed by an inbox snapshot recovers an invitation missed while offline', async () => {
+        const first = notification(10); await subscribeNotifications(first, 10); await first.instance.cleanup();
+        first.sent.length = 0;
+        const room = await model.create(2, 'class-b', { studentUid: 10, tabId: tab(2) }, handlers.emitLesson); await settle();
+        assert.equal(first.sent.length, 0);
+        const restored = notification(10); await subscribeNotifications(restored, 10);
+        assert(restored.sent.some(message => message.type === 'ready' && message.uid === 10));
+        assert((await readInbox(inboxHttp(10))).lessons.some(item => item._id === room._id));
+    });
+    it('invalidates a revoked classroom invitation without exposing its old private room data', async () => {
+        const learner = notification(10); await subscribeNotifications(learner, 10);
+        const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, handlers.emitLesson); await settle();
+        assert((await readInbox(inboxHttp(10))).lessons.some(item => item._id === room._id));
+        learner.sent.length = 0; blocked.add(10);
+        await learner.instance.onDomainPermissionsChanged();
+        assert(learner.sent.some(message => message.type === 'changed'));
+        assert.equal((await readInbox(inboxHttp(10))).lessons.length, 0);
+        assert(learner.sent.every(message => !Object.hasOwn(message, 'lesson') && !Object.hasOwn(message, 'lessonId')));
+        assert.equal(await model.members.findOne({ _id: 10 }), null);
+    });
+    it('rechecks expired sessions and revoked token permissions before notifications or heartbeats', async () => {
+        const learner = notification(10); await subscribeNotifications(learner, 10); learner.sent.length = 0;
+        logins.get('login-10').scope = '0';
+        await learner.instance.onLessonEvent({ uid: 10, lessonId: 'forbidden-room-event', message: { type: 'lesson' } });
+        assert(learner.closed.some(event => event.reason === 'FORBIDDEN'));
+        assert(!learner.sent.some(message => message.type === 'changed'));
+        logins.get('login-10').scope = '3';
+        const heartbeat = notification(10); await subscribeNotifications(heartbeat, 10); heartbeat.sent.length = 0;
+        const timer = heartbeat.timers.find(item => item.milliseconds === 20000); assert(timer);
+        await timer.callback(); assert(heartbeat.sent.some(message => message.type === 'pulse' && message.uid === 10));
+        heartbeat.sent.length = 0; logins.delete('login-10'); await timer.callback();
+        assert(heartbeat.closed.some(event => event.reason === 'FORBIDDEN'));
+        assert(!heartbeat.sent.some(message => message.type === 'pulse'));
+    });
+    it('accepts only bounded notification controls and stops malformed or flooding clients', async () => {
+        for (const payload of [null, [], {}, { type: 'video', data: jpeg() }, { type: 'subscribe', expectedUid: 10, uid: 11 },
+            { type: 'subscribe', expectedUid: 10, extra: 'x'.repeat(2048) }, { type: 'pulse', expectedUid: 10 }]) {
+            const fixture = notification(10); await fixture.instance.prepare();
+            assert.equal(fixture.instance.maxMessageBytes, 1024);
+            await fixture.instance.message(payload);
+            assert(fixture.closed.some(event => event.reason === 'INVALID_MESSAGE'));
+            assert(!fixture.sent.some(message => message.type === 'ready'));
+        }
+        const valid = notification(10); await subscribeNotifications(valid, 10); valid.sent.length = 0;
+        await valid.instance.message({ type: 'pulse' });
+        assert(valid.sent.some(message => message.type === 'pulse' && message.uid === 10));
+        for (let index = 0; index < 50 && !valid.closed.length; index++) await valid.instance.message({ type: 'pulse' });
+        assert(valid.closed.some(event => event.reason === 'RATE_LIMIT'));
+    });
+});

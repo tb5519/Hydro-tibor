@@ -58,6 +58,7 @@ async function fixture(t, options = {}) {
           for(const type of ['onebyone:lesson-share-start','onebyone:lesson-share-stop'])window.addEventListener(type,event=>shareEvents.push({type,detail:event.detail}));
           window.fakeFetch=async(url,init)=>{
             const body=init.body?JSON.parse(init.body):null;requests.push({url,body});
+            if(url.endsWith('/lesson/inbox'))return new Response(JSON.stringify({uid,lessons:rows.filter(row=>[row.teacherUid,row.studentUid].includes(uid)&&['scheduled','active'].includes(row.status)).map(row=>({...row,apiUrl:'/d/'+row.domainId+'/lesson',socketUrl:'/d/'+row.domainId+'/lesson/conn',canTeach:row.teacherUid===uid})),serverNow:new Date(fakeNow).toISOString()}));
             if(body){
               if(url.endsWith('/lesson/resume')){
                 if(failResume)throw new Error('网络中断');
@@ -88,14 +89,20 @@ async function fixture(t, options = {}) {
             const domainId=url.match(/^\\/d\\/([^/]+)\\/lesson$/)?.[1]||pageDomain;
             return new Response(JSON.stringify({lessons:rows.filter(row=>row.domainId===domainId),history:uid===2?rows.filter(row=>row.teacherUid===uid).map(row=>({...row,apiUrl:'/d/'+row.domainId+'/lesson',domainName:'课堂 '+row.domainId})):[],historyHasMore:false,students,serverNow:new Date(fakeNow).toISOString()}));
           };
-          window.connections=[];
+          window.connections=[];window.noticeConnections=[];window.noticeMessages=[];
           window.fakeSocket=(url)=>{
+            if(url.endsWith('/lesson/notifications')){
+              const notice={readyState:0,bufferedAmount:0,onopen:null,onmessage:null,onclose:null,onerror:null,url,
+                send(data){const msg=JSON.parse(data);noticeMessages.push(msg);if(msg.type==='subscribe'&&(!${!!options.holdNoticeReady}||noticeConnections.length>1))setTimeout(()=>this.deliver({type:'ready',uid,revision:0}),0);if(msg.type==='pulse')this.deliver({type:'pulse',uid})},
+                deliver(data){this.onmessage?.({data:JSON.stringify(data)})},close(){this.readyState=3},drop(){this.readyState=3;this.onclose?.({})}};
+              noticeConnections.push(notice);setTimeout(()=>{notice.readyState=1;notice.onopen?.({})},10);return notice;
+            }
             const connection={readyState:0,bufferedAmount:0,onopen:null,onmessage:null,onclose:null,onerror:null,url,
               send(data){const msg=JSON.parse(data);messages.push(msg);if(msg.type==='join')setTimeout(()=>this.deliver({type:'ready',lesson:rows.find(x=>x._id===msg.lessonId),peerOnline:${!!options.peerOnline}}),0);if(msg.type==='pulse')this.deliver({type:'pulse'})},
               deliver(data){this.onmessage?.({data:JSON.stringify(data)})},close(){this.readyState=3},drop(){this.readyState=3;this.onclose?.({})}};
             connections.push(connection);setTimeout(()=>{connection.readyState=1;connection.onopen?.({})},10);return connection;
           };
-          window.cleanup=LessonUI.installLesson({enabled:true,uid,canTeach:${!options.student},apiUrl:'/d/'+pageDomain+'/lesson',socketUrl:'/d/'+pageDomain+'/lesson/conn',resumeUrl:'/d/'+pageDomain+'/lesson/resume'}, {fetch:fakeFetch,now:()=>fakeNow,pollIntervalMs:1000000,socketFactory:fakeSocket,mediaFactory:()=>media});
+          window.cleanup=LessonUI.installLesson({enabled:true,uid,canTeach:${!options.student},apiUrl:'/d/'+pageDomain+'/lesson',socketUrl:'/d/'+pageDomain+'/lesson/conn',resumeUrl:'/d/'+pageDomain+'/lesson/resume',...(${!!options.notifications}?{notificationsUrl:'/d/'+pageDomain+'/lesson/notifications',inboxUrl:'/d/'+pageDomain+'/lesson/inbox'}:{})}, {fetch:fakeFetch,now:()=>fakeNow,pollIntervalMs:1000000,socketFactory:fakeSocket,mediaFactory:()=>media});
           window.refreshLessons=()=>document.dispatchEvent(new Event('visibilitychange'));
         </script></body></html>` });
     });
@@ -361,5 +368,61 @@ it('an offline teacher end is synchronized before page recovery and never reopen
     assert.equal(await page.evaluate(() => mediaStarts), 0);
     assert.equal(await page.evaluate(() => connections.length), 0);
     assert.equal(await page.evaluate(() => requests.some(item => item.url.endsWith('/resume'))), false);
+    assert.deepEqual(errors, []);
+});
+
+it('account notifications deliver a cross-domain invitation immediately and join only after a click using its original classroom', async t => {
+    const { page, errors } = await fixture(t, { student: true, notifications: true });
+    await page.waitForFunction(() => requests.some(item => item.url.endsWith('/lesson/inbox')) && noticeMessages.some(item => item.type === 'subscribe'));
+    assert.deepEqual(await page.evaluate(() => noticeMessages[0]), { type: 'subscribe', expectedUid: 5 });
+    const invitation = lesson({ _id: 'lesson-account-invitation', domainId: 'C0002', status: 'active',
+        teacherJoined: true, startAt: new Date(now - 60000).toISOString() });
+    await page.evaluate(row => {
+        rows.push(row); noticeConnections[0].deliver({ type: 'changed', uid: 5, revision: 1 });
+    }, invitation);
+    await page.waitForFunction(() => document.querySelector('.lesson-reminder')?.open);
+    assert.match(await page.locator('.lesson-reminder').textContent(), /老师邀请你上课/);
+    assert.equal(await page.evaluate(() => mediaStarts), 0);
+    assert.equal(await page.evaluate(() => connections.length), 0);
+    assert.equal(await page.evaluate(() => desktopReservations.length), 0);
+    await page.locator('[data-lesson-reminder-join]').click();
+    await page.waitForFunction(() => mediaStarts === 1 && mediaConnections.includes(true));
+    assert.equal(await page.evaluate(() => requests.find(item => item.body?.operation === 'join').url), '/d/C0002/lesson');
+    assert.equal(await page.evaluate(() => connections[0].url), 'wss://lesson-ui.test/d/C0002/lesson/conn');
+    await page.evaluate(row => {
+        rows.push(row); noticeConnections[0].deliver({ type: 'changed', uid: 5, revision: 2 });
+    }, lesson({ _id: 'lesson-another-invitation', domainId: 'C0003', status: 'active',
+        teacherUid: 3, teacherName: '另一位老师', teacherJoined: true, startAt: new Date(now - 60000).toISOString() }));
+    await page.waitForFunction(() => !document.querySelector('.lesson-invitations')?.hidden
+        && document.querySelector('.lesson-invitations')?.textContent.includes('另一位老师'));
+    assert.equal(await page.evaluate(() => startedLesson), invitation._id);
+    assert.equal(await page.evaluate(() => mediaStarts), 1);
+    assert.equal(await page.evaluate(() => mediaStops), 0);
+    assert.equal(await page.locator('.lesson-reminder').isVisible(), false, 'a new invitation does not cover an ongoing class');
+    assert.equal(await page.evaluate(() => requests.filter(item => item.body?.operation === 'join').length), 1);
+    assert.deepEqual(errors, []);
+});
+
+it('notifications fetch the latest invitation after first subscription and remove cancellations missed while disconnected', async t => {
+    const { page, errors } = await fixture(t, { student: true, notifications: true, holdNoticeReady: true });
+    await page.waitForFunction(() => noticeMessages.some(item => item.type === 'subscribe'));
+    const beforeReadyInboxCount = await page.evaluate(() => requests.filter(item => item.url.endsWith('/lesson/inbox')).length);
+    const invitation = lesson({ _id: 'lesson-during-subscription', domainId: 'C0002',
+        startAt: new Date(now - 60000).toISOString() });
+    await page.evaluate(row => {
+        rows.push(row); noticeConnections[0].deliver({ type: 'ready', uid: 5, revision: 0 });
+    }, invitation);
+    await page.waitForFunction(() => document.querySelector('.lesson-reminder')?.open);
+    assert(await page.evaluate(() => requests.filter(item => item.url.endsWith('/lesson/inbox')).length) > beforeReadyInboxCount,
+        'subscription readiness refreshes the account snapshot even when no changed event was received');
+    assert.equal(await page.evaluate(() => mediaStarts), 0);
+    await page.evaluate(() => {
+        noticeConnections[0].drop(); rows[0].status = 'cancelled'; window.dispatchEvent(new Event('online'));
+    });
+    await page.waitForFunction(() => noticeConnections.length === 2 && requests.filter(item => item.url.endsWith('/lesson/inbox')).length >= 2);
+    await page.waitForFunction(() => !document.querySelector('.lesson-reminder')?.open);
+    assert.equal(await page.evaluate(() => mediaStarts), 0);
+    assert.equal(await page.evaluate(() => connections.length), 0);
+    assert.equal(await page.evaluate(() => desktopReservations.length), 0);
     assert.deepEqual(errors, []);
 });

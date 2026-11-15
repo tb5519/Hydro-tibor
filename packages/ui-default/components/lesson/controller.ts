@@ -4,9 +4,12 @@ export interface Lesson {
   _id: string; domainId: string; workspaceId: string; teacherUid: number; studentUid: number;
   teacherName: string; studentName: string; title: string; startAt: string; endAt: string;
   status: 'scheduled' | 'active' | 'ended' | 'cancelled'; teacherJoined: boolean; studentJoined: boolean;
-  apiUrl?: string; domainName?: string;
+  apiUrl?: string; socketUrl?: string; canTeach?: boolean; domainName?: string;
 }
-export interface LessonConfig { enabled: boolean; uid: number; canTeach: boolean; apiUrl: string; socketUrl: string; resumeUrl?: string }
+export interface LessonConfig {
+  enabled: boolean; uid: number; canTeach: boolean; apiUrl: string; socketUrl: string; resumeUrl?: string;
+  inboxUrl?: string; notificationsUrl?: string;
+}
 interface RecoveryHint {
   lessonId: string; apiUrl: string; socketUrl: string; mode: 'broadcast' | 'assist';
   pending?: 'end' | 'leave'; tabId?: string;
@@ -57,6 +60,19 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   const dismissed = new Map<string, number>();
   let disposed = false;
   let lessons: Lesson[] = [];
+  let inboxLessons: Lesson[] = [];
+  let inboxReady = false;
+  let inboxRefreshing = false;
+  let inboxQueued = false;
+  let inboxRevision = 0;
+  let inboxTimer = 0;
+  let inboxAttempt = 0;
+  let notificationSocket: LessonSocket | null = null;
+  let notificationTimer = 0;
+  let notificationHandshake = 0;
+  let notificationAttempt = 0;
+  let notificationPaused = false;
+  let lastNotificationAt = 0;
   let history: Lesson[] = [];
   let historyHasMore = false;
   let students: Student[] = [];
@@ -96,8 +112,13 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   let shareRetryAttempt = 0;
   let currentMode: 'broadcast' | 'assist' = 'broadcast';
   let currentCardSignature = '';
+  let invitationSignature = '';
   const pendingDesktop = new Set<LessonDesktopReservation>();
   const recoveryKey = `onebyone.lesson.recovery:${config.uid}`;
+  // This read-only channel belongs to the account, independently of whichever
+  // domain owns the current page or the active classroom's media connection.
+  const inboxUrl = safeRoute(config.inboxUrl, 'lesson/inbox');
+  const notificationsUrl = safeRoute(config.notificationsUrl, 'lesson/notifications');
   // A duplicated browser tab copies sessionStorage. Each communication host
   // needs its own ownership identity; normal content navigation keeps this host.
   const tabId = Array.from(window.crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join('');
@@ -166,6 +187,8 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   const enter = button('点击上课', 'lesson-button is-primary', () => { if (reminderLesson) void join(reminderLesson); });
   enter.dataset.lessonReminderJoin = ''; reminderActions.append(later, enter);
   reminder.append(reminderIcon, reminderHeading, reminderName, reminderTime, reminderNote, reminderError, reminderActions);
+  const invitationNotice = privateRoot(el('aside', 'lesson-invitations')); invitationNotice.hidden = true;
+  invitationNotice.setAttribute('aria-label', '其他上课邀请'); invitationNotice.setAttribute('aria-live', 'polite');
 
   const lessonBar = privateRoot(el('aside', 'lesson-session')); lessonBar.hidden = true; lessonBar.setAttribute('aria-label', '当前课堂');
   const lessonBarCopy = el('div', 'lesson-session__copy');
@@ -186,10 +209,13 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   shareModes.append(broadcastMode, assistMode);
   lessonBarCopy.append(shareState); lessonBar.append(lessonBarCopy, shareModes, retryShare, leave, end);
   const toast = privateRoot(el('div', 'lesson-toast')); toast.hidden = true; toast.setAttribute('role', 'status');
-  document.body.append(dialog, reminder, lessonBar, toast);
-  const media = (options.mediaFactory || mountLessonMedia)(config, { send, onLeave: () => { void leaveLesson(active?.teacherUid === config.uid); } });
+  document.body.append(dialog, reminder, invitationNotice, lessonBar, toast);
+  const media = (options.mediaFactory || mountLessonMedia)(config, { send, onLeave: confirmation => {
+    if (confirmation?.confirmed && active?._id !== confirmation.lessonId) return;
+    void leaveLesson(active?.teacherUid === config.uid, !!confirmation?.confirmed);
+  } });
 
-  function safeRoute(value: unknown, ending: 'lesson' | 'lesson/conn' | 'lesson/resume') {
+  function safeRoute(value: unknown, ending: 'lesson' | 'lesson/conn' | 'lesson/resume' | 'lesson/inbox' | 'lesson/notifications') {
     if (typeof value !== 'string') return null;
     try {
       const url = new URL(value, window.location.href);
@@ -287,9 +313,102 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
       return result;
     } finally { clearTimeout(timeout); fetches.delete(abort); }
   }
+  function notificationDelay(attempt: number) {
+    return Math.max(document.hidden ? 5000 : 0, Math.min(15000, 1000 * 2 ** Math.min(attempt, 4)) * (.8 + Math.random() * .4));
+  }
+  async function refreshInbox() {
+    if (disposed || notificationPaused || !inboxUrl) return;
+    if (inboxRefreshing) { inboxQueued = true; return; }
+    inboxRefreshing = true; clearTimeout(inboxTimer);
+    const revision = inboxRevision; const writeRevision = dataRevision; const startedAt = now();
+    let failed = false;
+    try {
+      const result = await api(undefined, inboxUrl);
+      if (disposed) return;
+      if (result.uid !== config.uid) { dispose(); return; }
+      if (revision !== inboxRevision || writeRevision !== dataRevision) { inboxQueued = true; return; }
+      if (!Array.isArray(result.lessons)) throw new Error('课堂邀请列表暂时不可用。');
+      const normalized: Lesson[] = [];
+      for (const lesson of result.lessons) {
+        const apiUrl = safeRoute(lesson?.apiUrl, 'lesson');
+        const socketUrl = safeRoute(lesson?.socketUrl, 'lesson/conn');
+        if (!lesson || typeof lesson._id !== 'string' || ![lesson.teacherUid, lesson.studentUid].includes(config.uid)
+          || !['scheduled', 'active', 'ended', 'cancelled'].includes(lesson.status)
+          || !Number.isFinite(+new Date(lesson.startAt)) || !Number.isFinite(+new Date(lesson.endAt))
+          || !apiUrl || socketUrl !== `${apiUrl}/conn`) continue;
+        normalized.push({ ...lesson, apiUrl, socketUrl });
+      }
+      inboxLessons = [...new Map(normalized.map(lesson => [lesson._id, lesson])).values()];
+      inboxReady = true; inboxAttempt = 0;
+      const serverNow = +new Date(result.serverNow);
+      if (Number.isFinite(serverNow)) skew = serverNow - (startedAt + now()) / 2;
+      renderSchedules(); updateReminder();
+    } catch (cause) {
+      failed = true;
+      if (disposed) return;
+      if ([401, 403].includes(Number((cause as any)?.status))) {
+        notificationPaused = true; closeNotifications(); inboxLessons = []; inboxReady = true;
+        renderSchedules(); updateReminder();
+      }
+    } finally {
+      inboxRefreshing = false;
+      if (!disposed && !notificationPaused) {
+        const delay = inboxQueued ? 0 : failed ? notificationDelay(inboxAttempt++) : document.hidden ? 60000 : 30000;
+        inboxQueued = false; inboxTimer = window.setTimeout(() => { void refreshInbox(); }, delay);
+      }
+    }
+  }
+  function closeNotifications() {
+    clearTimeout(notificationTimer); clearTimeout(notificationHandshake);
+    const old = notificationSocket; notificationSocket = null;
+    if (old) { old.onopen = old.onmessage = old.onerror = old.onclose = null; old.close(); }
+  }
+  function scheduleNotifications(immediate = false) {
+    if (disposed || notificationPaused || !notificationsUrl || notificationSocket) return;
+    clearTimeout(notificationTimer);
+    notificationTimer = window.setTimeout(connectNotifications, immediate ? 0 : notificationDelay(notificationAttempt++));
+  }
+  function reconnectNotifications() {
+    closeNotifications(); scheduleNotifications();
+  }
+  function connectNotifications() {
+    if (disposed || notificationPaused || !notificationsUrl || notificationSocket) return;
+    try {
+      const url = new URL(notificationsUrl, window.location.href); url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+      const connection = options.socketFactory ? options.socketFactory(url.href) : new WebSocket(url.href) as LessonSocket;
+      notificationSocket = connection; lastNotificationAt = now();
+      const valid = () => !disposed && notificationSocket === connection;
+      notificationHandshake = window.setTimeout(() => { if (valid()) reconnectNotifications(); }, 15000);
+      connection.onopen = () => {
+        if (!valid()) return;
+        try { connection.send(JSON.stringify({ type: 'subscribe', expectedUid: config.uid })); }
+        catch { reconnectNotifications(); }
+      };
+      connection.onmessage = event => {
+        if (!valid() || typeof event.data !== 'string' || event.data.length > 8192) return;
+        let message: any; try { message = JSON.parse(event.data); } catch { return; }
+        if (message.uid !== undefined && message.uid !== config.uid) { dispose(); return; }
+        if (message.type === 'error') {
+          if (['FORBIDDEN', 'LOGIN_REVOKED'].includes(message.code)) { notificationPaused = true; closeNotifications(); }
+          else reconnectNotifications();
+          return;
+        }
+        if (!['ready', 'changed', 'pulse'].includes(message.type) || message.uid !== config.uid) return;
+        lastNotificationAt = now();
+        if (message.type === 'ready') { clearTimeout(notificationHandshake); notificationAttempt = 0; }
+        if (message.type === 'ready' || message.type === 'changed') {
+          inboxRevision++; void refreshInbox();
+          if (dialog.open) void refresh();
+        }
+      };
+      connection.onerror = connection.onclose = () => { if (valid()) reconnectNotifications(); };
+    } catch { notificationSocket = null; scheduleNotifications(); }
+  }
   function relevant() {
-    return lessons.filter(lesson => lesson.status === 'active' || (lesson.status === 'scheduled' && +new Date(lesson.endAt) > timestamp()))
-      .sort((a, b) => Number(b.status === 'active') - Number(a.status === 'active') || +new Date(a.startAt) - +new Date(b.startAt));
+    return (inboxReady ? inboxLessons : lessons)
+      .filter(lesson => lesson.status === 'active' || (lesson.status === 'scheduled' && +new Date(lesson.endAt) > timestamp()))
+      .sort((a, b) => Number(b.status === 'active') - Number(a.status === 'active')
+        || (a.status === 'active' ? +new Date(b.startAt) - +new Date(a.startAt) : +new Date(a.startAt) - +new Date(b.startAt)));
   }
   function setBooking(value: boolean) {
     booking = value;
@@ -322,11 +441,11 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     const row = doc.createElement('div'); row.className = 'lesson-schedule-item';
     const copy = doc.createElement('div'); copy.className = 'lesson-schedule-item__copy';
     const name = doc.createElement('strong'); name.textContent = lesson.title || '一对一课堂';
-    const meta = doc.createElement('span'); meta.textContent = `${timeText(lesson.startAt)} · ${config.uid === lesson.teacherUid ? lesson.studentName : lesson.teacherName}`;
+    const meta = doc.createElement('span'); meta.textContent = `${timeText(lesson.startAt)} · ${config.uid === lesson.teacherUid ? lesson.studentName : lesson.teacherName}${lesson.domainName ? ` · ${lesson.domainName}` : ''}`;
     copy.append(name, meta);
     const joinButton = doc.createElement('button'); joinButton.type = 'button'; joinButton.className = 'lesson-button is-primary';
     joinButton.textContent = active?._id === lesson._id ? '已在课堂中' : '点击上课'; joinButton.dataset.lessonJoin = lesson._id;
-    joinButton.disabled = !!active || joining || (!config.canTeach && !lessonIsDue(lesson, timestamp()));
+    joinButton.disabled = !!active || joining || (lesson.teacherUid !== config.uid && !lessonIsDue(lesson, timestamp()));
     if (joinButton.disabled && !active && !joining) joinButton.title = '到上课时间后可以进入';
     row.append(copy, joinButton);
     if (lesson.teacherUid === config.uid && !active && lesson.status === 'scheduled') {
@@ -462,19 +581,37 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     reminder.close(); reminderLesson = null;
   }
   function updateReminder() {
-    if (active || joining || busy || dialog.open || disposed) return;
-    const lesson = relevant().find(item => item.studentUid === config.uid && lessonIsDue(item, timestamp())
-      && (dismissed.get(item._id) || 0) <= timestamp());
+    if (disposed) return;
+    const invitations = relevant().filter(item => item.studentUid === config.uid && item._id !== active?._id
+      && lessonIsDue(item, timestamp()) && (dismissed.get(item._id) || 0) <= timestamp());
+    invitationNotice.hidden = !active || !invitations.length;
+    const signature = invitationNotice.hidden ? '' : JSON.stringify([active?._id, joining,
+      invitations.map(item => [item._id, item.title, item.teacherName, item.domainName, item.startAt])]);
+    if (signature !== invitationSignature) {
+      invitationSignature = signature; invitationNotice.replaceChildren();
+      if (!invitationNotice.hidden) {
+        invitationNotice.append(el('strong', '', '收到新的上课邀请'), el('p', '', '离开当前课堂后，可以进入以下课堂。'));
+        for (const invitation of invitations) invitationNotice.append(lessonEntry(invitation));
+      }
+    }
+    if (active || joining || busy || dialog.open) return;
+    const lesson = invitations[0];
     if (!lesson) { if (reminder.open) reminder.close(); reminderLesson = null; return; }
     reminderLesson = lesson;
     reminderHeading.textContent = lesson.teacherJoined ? '老师邀请你上课' : '上课时间到了';
     reminderName.textContent = `${lesson.teacherName} · ${lesson.title || '一对一课堂'}`;
-    reminderTime.textContent = `${timeText(lesson.startAt)}（北京时间）`;
+    reminderTime.textContent = `${timeText(lesson.startAt)}（北京时间）${lesson.domainName ? ` · ${lesson.domainName}` : ''}`;
     enter.disabled = joining; enter.textContent = joining ? '正在进入…' : '点击上课';
     if (!reminder.open) { reminderError.hidden = true; reminder.showModal(); }
   }
   function replaceLesson(lesson: Lesson) {
-    dataRevision++;
+    dataRevision++; inboxRevision++;
+    const inboxIndex = inboxLessons.findIndex(item => item._id === lesson._id);
+    if (inboxIndex >= 0) inboxLessons[inboxIndex] = { ...inboxLessons[inboxIndex], ...lesson };
+    else if ([lesson.teacherUid, lesson.studentUid].includes(config.uid)) {
+      const apiUrl = lessonApiUrl(lesson);
+      if (apiUrl) inboxLessons.push({ ...lesson, apiUrl, socketUrl: `${apiUrl}/conn` });
+    }
     const index = lessons.findIndex(item => item._id === lesson._id);
     if (index >= 0) lessons[index] = lesson; else lessons.push(lesson);
     const historyIndex = history.findIndex(item => item._id === lesson._id);
@@ -759,10 +896,10 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
       if (recoveryQueued && !active && !socket) scheduleRecovery();
     }
   }
-  async function leaveLesson(ending: boolean) {
+  async function leaveLesson(ending: boolean, confirmed = false) {
     if (!active || busy) return;
     const lesson = active;
-    if (!confirmLessonExit(ending ? 'end' : 'leave', lesson)) return;
+    if (!confirmed && !confirmLessonExit(ending ? 'end' : 'leave', lesson)) return;
     const apiUrl = config.apiUrl;
     dataRevision++;
     busy = true;
@@ -787,9 +924,12 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   }
   async function cancel(lessonId: string) {
     if (busy || active || disposed) return;
+    const lesson = [...inboxLessons, ...lessons, ...history].find(item => item._id === lessonId);
+    const apiUrl = lesson && lessonApiUrl(lesson);
+    if (!apiUrl) { showMessage('这节课的上课地址无效，请刷新课程列表。'); return; }
     dataRevision++;
     busy = true; renderSchedules();
-    try { const result = await api({ operation: 'cancel', lessonId }); if (!disposed && result.lesson) replaceLesson(result.lesson); }
+    try { const result = await api({ operation: 'cancel', lessonId }, apiUrl); if (!disposed && result.lesson) replaceLesson(result.lesson); }
     catch (cause) { showMessage(errorText(cause)); }
     finally {
       busy = false; if (!disposed) { renderSchedules(); void refresh(); }
@@ -830,7 +970,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     const target = (event.target as Element)?.closest?.('[data-lesson-open],[data-lesson-join],[data-lesson-cancel]') as HTMLElement;
     if (!target) return;
     if (target.hasAttribute('data-lesson-open')) { event.preventDefault(); open(); }
-    if (target.dataset.lessonJoin) { const lesson = [...lessons, ...history].find(item => item._id === target.dataset.lessonJoin); if (lesson) { event.preventDefault(); void join(lesson); } }
+    if (target.dataset.lessonJoin) { const lesson = [...inboxLessons, ...lessons, ...history].find(item => item._id === target.dataset.lessonJoin); if (lesson) { event.preventDefault(); void join(lesson); } }
     if (target.dataset.lessonCancel) { event.preventDefault(); void cancel(target.dataset.lessonCancel); }
   }
   function attachContent(page: Window) {
@@ -854,7 +994,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     config = { ...pageConfig }; scopeGeneration++; selection = 0; lessons = []; history = []; historyHasMore = false; students = []; skew = 0;
     currentMode = 'broadcast'; reminderLesson = null;
     if (reminder.open) reminder.close();
-    renderRoster(); renderSchedules(); void refresh();
+    renderRoster(); renderSchedules(); updateReminder(); void refresh();
   }
   on(document, 'click', action);
   document.addEventListener('click', guardExitLink, true); document.addEventListener('submit', guardExitSubmit, true);
@@ -899,7 +1039,11 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     else if (detail.state === 'active') { clearTimeout(shareRetryTimer); shareRetryAttempt = 0; }
   });
   const wake = () => {
-    if (disposed || recoveryPaused) return;
+    if (disposed) return;
+    if (notificationSocket && now() - lastNotificationAt > 60000) reconnectNotifications();
+    else if (!notificationSocket) scheduleNotifications(true);
+    void refreshInbox();
+    if (recoveryPaused) return;
     if (socketReady && now() - lastServerMessageAt > 30000) reconnect();
     else if (!socket) scheduleRecovery(true);
     void refresh(); updateReminder();
@@ -915,6 +1059,12 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     if (hint?.pending && active?._id === hint.lessonId) { stopActive('', false, hint.pending === 'end'); scheduleRecovery(true); }
   });
   const pulse = window.setInterval(() => {
+    if (notificationSocket?.readyState === 1) {
+      if (now() - lastNotificationAt > (document.hidden ? 120000 : 60000)) reconnectNotifications();
+      else if (now() - lastNotificationAt >= 20000) {
+        try { notificationSocket.send(JSON.stringify({ type: 'pulse' })); } catch { reconnectNotifications(); }
+      }
+    }
     if (!socketReady) return;
     if (now() - lastServerMessageAt > (document.hidden ? 120000 : 30000)) reconnect();
     else send({ type: 'pulse' });
@@ -924,12 +1074,12 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   }, 1000);
   function dispose() {
     if (disposed) return;
-    disposed = true; generation++; cancelPendingDesktop(); closeSocket(); clearTimeout(shareRetryTimer); media.dispose();
-    clearTimeout(pollTimer); clearTimeout(messageTimer); clearInterval(pulse); clearInterval(clock);
+    disposed = true; generation++; cancelPendingDesktop(); closeSocket(); closeNotifications(); clearTimeout(shareRetryTimer); media.dispose();
+    clearTimeout(inboxTimer); clearTimeout(pollTimer); clearTimeout(messageTimer); clearInterval(pulse); clearInterval(clock);
     fetches.forEach(abort => abort.abort()); fetches.clear();
     disposers.forEach(remove => remove()); contentRelease?.(); clearHomeCards();
     if (dialog.open) dialog.close(); if (reminder.open) reminder.close();
-    dialog.remove(); reminder.remove(); lessonBar.remove(); toast.remove(); installed = undefined;
+    dialog.remove(); reminder.remove(); invitationNotice.remove(); lessonBar.remove(); toast.remove(); installed = undefined;
   }
   on(window, 'onebyone:session-ended', dispose);
   on(window, 'pagehide', () => {
@@ -940,6 +1090,6 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   });
   setBooking(false); renderRoster();
   const currentPage = (window as any).__onebyonePlatformShell?.contentWindow(); if (currentPage) attachContent(currentPage);
-  installed = dispose; void refresh(); void recover();
+  installed = dispose; void refresh(); void recover(); void refreshInbox(); connectNotifications();
   return dispose;
 }

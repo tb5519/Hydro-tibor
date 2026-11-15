@@ -1,6 +1,6 @@
 @import './lesson/media.styl'
 
-.lesson-picker, .lesson-reminder, .lesson-session, .lesson-home-card, .lesson-toast
+.lesson-picker, .lesson-reminder, .lesson-invitations, .lesson-session, .lesson-home-card, .lesson-toast
   box-sizing border-box
   font-family var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif)
   font-size 14px
@@ -422,6 +422,26 @@
       padding 11px 12px
   .lesson-error
     margin-top 16px
+
+.lesson-invitations
+  position fixed
+  top 84px
+  right 20px
+  z-index 2147483629
+  width unquote('min(380px, calc(100vw - 32px))')
+  max-height 45vh
+  overflow auto
+  padding 16px 18px
+  border 1px solid #dce6f1
+  border-radius 14px
+  background white
+  box-shadow 0 8px 36px rgba(37, 56, 83, .14)
+  > strong
+    color #326fd0
+  > p
+    color #7b8da5
+    font-size 12px
+    margin-top 4px
 
 .lesson-session
   display flex

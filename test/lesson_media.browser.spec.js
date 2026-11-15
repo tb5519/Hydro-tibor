@@ -51,7 +51,7 @@ it('a real browser captures bounded JPEG and microphone frames, lets the camera 
         audio: sent.filter((message) => message.type === 'audio').map((message) => message.data.length),
         camera: document.querySelector('[data-lesson-local-video]').srcObject.getVideoTracks()[0].getSettings() }));
     assert(stats.video.every((length) => length <= 262144)); assert(stats.audio.every((length) => length === 856));
-    assert(stats.camera.width === 1280 && stats.camera.height === 720);
+    assert(stats.camera.width === 960 && stats.camera.height === 540);
     await page.evaluate(() => {
         const frame = sent.find((message) => message.type === 'video');
         media.receive({ ...frame, uid: 5, streamId: 'student-camera' });
@@ -64,19 +64,21 @@ it('a real browser captures bounded JPEG and microphone frames, lets the camera 
     const moved = await page.locator('[data-lesson-media]').boundingBox();
     assert(moved.x < before.x - 150 && moved.y < before.y - 80);
     await page.screenshot({ path: path.join(os.tmpdir(), 'onebyone-classroom-camera.png') });
-    await page.evaluate(() => { window.cameraTrack = document.querySelector('[data-lesson-local-video]').srcObject.getVideoTracks()[0]; window.leaveApproved = false; });
+    await page.evaluate(() => { window.cameraTrack = document.querySelector('[data-lesson-local-video]').srcObject.getVideoTracks()[0]; });
     await page.locator('[data-lesson-media-leave]').click();
     assert.equal(await page.evaluate(() => cameraTrack.readyState), 'live');
+    assert.equal(await page.locator('[data-lesson-exit-dialog]').isVisible(), true);
+    await page.locator('[data-lesson-exit-cancel]').click();
     assert.equal(await page.locator('[data-lesson-media]').isVisible(), true);
-    await page.evaluate(() => { window.leaveApproved = true; });
     await page.locator('[data-lesson-media-leave]').click();
+    await page.locator('[data-lesson-exit-confirm]').click();
     assert.equal(await page.evaluate(() => cameraTrack.readyState), 'ended');
     const count = await page.evaluate(() => sent.length);
     await page.waitForTimeout(350); assert.equal(await page.evaluate(() => sent.length), count);
-    assert.equal(await page.evaluate(() => left), 2); assert.deepEqual(errors, []);
+    assert.equal(await page.evaluate(() => left), 1); assert.deepEqual(errors, []);
 });
 
-it('joining automatically opens a real Document Picture-in-Picture window and sustains 30 fps with teacher above learner', async (t) => {
+it('joining automatically opens a compact Document Picture-in-Picture window and targets 25 fps with teacher above learner', async (t) => {
     const { page, errors } = await fixture(t);
     if (!await page.evaluate(() => !!window.documentPictureInPicture?.requestWindow)) {
         t.skip('This installed Chromium does not expose Document Picture-in-Picture'); return;
@@ -90,7 +92,7 @@ it('joining automatically opens a real Document Picture-in-Picture window and su
         return { title: pip.document.title, local: !!pip.document.querySelector('[data-lesson-local-video]').srcObject,
             controls: pip.document.querySelectorAll('.lesson-media__controls button').length };
     });
-    assert.equal(result.title, 'OneByOne 上课'); assert.equal(result.local, true); assert(result.controls >= 4);
+    assert.equal(result.title, 'OneByOne 上课'); assert.equal(result.local, true); assert(result.controls >= 3);
     const stats = await page.evaluate(async () => {
         const pip = documentPictureInPicture.window;
         const start = sent.filter(message => message.type === 'video').length;
@@ -104,8 +106,8 @@ it('joining automatically opens a real Document Picture-in-Picture window and su
             camera: pip.document.querySelector('[data-lesson-local-video]').srcObject.getVideoTracks()[0].getSettings(),
             toggleVisible: !pip.document.querySelector('[data-lesson-desktop]').hidden };
     });
-    assert(stats.fps >= 25, `expected at least 25 live frames/sec, got ${stats.fps.toFixed(1)}`);
-    assert.equal(stats.camera.width, 1280); assert.equal(stats.camera.height, 720); assert(stats.camera.frameRate >= 25);
+    assert(stats.fps >= 22, `expected a 25 fps target to sustain at least 22 live frames/sec, got ${stats.fps.toFixed(1)}`);
+    assert.equal(stats.camera.width, 960); assert.equal(stats.camera.height, 540); assert(stats.camera.frameRate >= 24);
     assert.deepEqual(stats.roles, ['teacher', 'student']); assert(stats.top < stats.bottom);
     assert.equal(stats.toggleVisible, false);
     const recovery = await page.evaluate(async () => {
@@ -127,5 +129,45 @@ it('joining automatically opens a real Document Picture-in-Picture window and su
     assert.equal(recovery.trackState, 'live'); assert(recovery.resumed.includes('video')); assert(recovery.resumed.includes('audio'));
     await page.evaluate(() => documentPictureInPicture.window.close());
     await page.waitForFunction(() => !!document.querySelector('[data-lesson-media]'));
-    await page.locator('[data-lesson-media-leave]').click(); assert.deepEqual(errors, []);
+    await page.locator('[data-lesson-media-leave]').click(); await page.locator('[data-lesson-exit-confirm]').click(); assert.deepEqual(errors, []);
+});
+
+it('the desktop camera window opens beauty between both pictures and confirms end without native browser dialogs', async (t) => {
+    const { page, errors } = await fixture(t);
+    if (!await page.evaluate(() => !!window.documentPictureInPicture?.requestWindow)) {
+        t.skip('This installed Chromium does not expose Document Picture-in-Picture'); return;
+    }
+    await page.locator('#join').click();
+    await page.waitForFunction(() => documentPictureInPicture.window?.document.querySelector('[data-lesson-local-video]')?.srcObject);
+    const cancelled = await page.evaluate(() => {
+        const pip = documentPictureInPicture.window; const doc = pip.document;
+        window.confirm = pip.confirm = () => { throw new Error('A native confirmation cannot be used inside desktop PiP'); };
+        const camera = doc.querySelector('[data-lesson-local-video]'); window.cameraTrack = camera.srcObject.getVideoTracks()[0];
+        const group = doc.querySelector('[aria-label="老师摄像头美颜"]');
+        const collapsed = group.hidden; const footer = doc.querySelector('.lesson-media__controls').getBoundingClientRect();
+        const footerVisible = footer.top >= 0 && footer.bottom <= pip.innerHeight;
+        doc.querySelector('[data-lesson-beauty-toggle]').click();
+        const expanded = !group.hidden && group.closest('.lesson-media__tile') === null;
+        const sliders = Array.from(group.querySelectorAll('input')).map(input => input.dataset.lessonBeauty);
+        const panel = group.getBoundingClientRect(); const teacher = doc.querySelector('[data-lesson-participant="teacher"]').getBoundingClientRect();
+        const student = doc.querySelector('[data-lesson-participant="student"]').getBoundingClientRect();
+        doc.querySelector('[data-lesson-media-leave]').click();
+        const dialog = !doc.querySelector('[data-lesson-exit-dialog]').hidden;
+        doc.querySelector('[data-lesson-exit-cancel]').click();
+        return { collapsed, expanded, sliders, footerVisible, betweenCameras: panel.top >= teacher.bottom && panel.bottom <= student.top,
+            dialog, cancelled: doc.querySelector('[data-lesson-exit-dialog]').hidden,
+            state: cameraTrack.readyState, sameWindow: documentPictureInPicture.window === pip, left };
+    });
+    assert.equal(cancelled.collapsed, true); assert.equal(cancelled.expanded, true); assert.equal(cancelled.betweenCameras, true);
+    assert.equal(cancelled.footerVisible, true);
+    assert.deepEqual(cancelled.sliders, ['whitening', 'smoothing', 'eyeBrightening']);
+    assert.equal(cancelled.dialog, true); assert.equal(cancelled.cancelled, true);
+    assert.equal(cancelled.state, 'live'); assert.equal(cancelled.sameWindow, true); assert.equal(cancelled.left, 0);
+    await page.evaluate(() => {
+        const doc = documentPictureInPicture.window.document;
+        doc.querySelector('[data-lesson-media-leave]').click(); doc.querySelector('[data-lesson-exit-confirm]').click();
+    });
+    await page.waitForFunction(() => !documentPictureInPicture.window);
+    assert.equal(await page.evaluate(() => cameraTrack.readyState), 'ended');
+    assert.equal(await page.evaluate(() => left), 1); assert.deepEqual(errors, []);
 });

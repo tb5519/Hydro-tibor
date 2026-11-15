@@ -11,7 +11,7 @@ export interface LessonMediaRoom {
 }
 interface MediaOptions {
   send(message: any): boolean;
-  onLeave(): void;
+  onLeave(confirmation?: { confirmed: boolean; lessonId: string }): void;
   audioFactory?: (options: ConstructorParameters<typeof VoiceAudio>[0]) => VoiceAudio;
   beautyFactory?: typeof createTeacherCameraBeauty;
 }
@@ -27,9 +27,9 @@ export interface LessonDesktopReservation {
   abort?: () => void;
 }
 
-const VIDEO_WIDTH = 1280;
-const VIDEO_HEIGHT = 720;
-const VIDEO_FPS = 30;
+const VIDEO_WIDTH = 960;
+const VIDEO_HEIGHT = 540;
+const VIDEO_FPS = 25;
 const VIDEO_INTERVAL = Math.round(1000 / VIDEO_FPS);
 const VIDEO_BYTES_PER_SECOND = 3 * 1024 * 1024;
 const VIDEO_FRAME_TARGET = Math.floor(VIDEO_BYTES_PER_SECOND / VIDEO_FPS) - 256;
@@ -37,15 +37,17 @@ const MAX_VIDEO_LENGTH = 262144;
 const STALE_VIDEO_MS = 1800;
 const PIP_STYLE = `
 *{box-sizing:border-box}body{margin:0;background:#111827;color:#f8fafc;font:13px system-ui,sans-serif}
-.lesson-media{position:static!important;inset:auto!important;transform:none!important;width:100%!important;max-width:none!important;max-height:100vh;overflow:auto;border:0!important;border-radius:0!important;box-shadow:none!important;background:#111827;color:#f8fafc}
-.lesson-media__header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;font-size:13px}.lesson-media__header strong{font-size:14px}
+.lesson-media{position:relative!important;inset:auto!important;transform:none!important;display:flex;flex-direction:column;width:100%!important;max-width:none!important;height:100vh;max-height:100vh;overflow:hidden;border:0!important;border-radius:0!important;box-shadow:none!important;background:#111827;color:#f8fafc}
+.lesson-media__header{display:flex;flex-shrink:0;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;font-size:12px}.lesson-media__header strong{display:block;font-size:13px}.lesson-media__content{min-height:0;overflow:auto;flex:1 1 auto;scrollbar-width:thin}
 .lesson-media__eyebrow{color:#a5b4fc;font-size:10px;margin-right:8px}.lesson-media__grid{display:grid;grid-template-columns:1fr;gap:6px;padding:0 8px}
 .lesson-media__tile{position:relative;aspect-ratio:16/9;background:#243044;border-radius:9px;overflow:hidden;display:grid;place-items:center}
 .lesson-media__tile video,.lesson-media__tile img,.lesson-media__tile canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.lesson-media__tile video,.lesson-media__preview{transform:scaleX(-1)}
 .lesson-media__placeholder{color:#cbd5e1;font-size:12px;padding:16px;text-align:center}.lesson-media__name{position:absolute;bottom:5px;left:5px;border-radius:5px;background:#111827cc;padding:3px 6px;font-size:11px}
-.lesson-media__status{font-size:11px;color:#cbd5e1;padding:7px 10px;margin:0;line-height:1.5}.lesson-media__controls{padding:0 8px 8px;display:flex;gap:5px;flex-wrap:wrap}
-.lesson-media__beauty{display:grid;gap:6px;margin:8px 8px 0;padding:8px;border:1px solid #34435b;border-radius:8px}.lesson-media__beauty-title{font-size:11px;color:#cbd5e1}.lesson-media__beauty label{display:grid;grid-template-columns:30px 1fr 24px;align-items:center;gap:7px;font-size:11px}.lesson-media__beauty input{min-width:0;width:100%;height:18px;margin:0;accent-color:#a5b4fc}.lesson-media__beauty output{text-align:right;color:#cbd5e1}
-.lesson-media__controls button{border:1px solid #475569;background:#263449;color:#f8fafc;font:inherit;border-radius:6px;padding:7px 9px;cursor:pointer;font-size:11px}.lesson-media__controls .is-danger{background:#b91c1c;border-color:#dc2626}.lesson-media__controls button[aria-pressed="true"]{background:#334779}
+.lesson-media__status{font-size:11px;color:#cbd5e1;padding:6px 10px;margin:0;line-height:1.5}.lesson-media__controls{position:relative;z-index:5;flex-shrink:0;padding:8px;display:flex;gap:5px;flex-wrap:wrap;background:#111827;border-top:1px solid #34435b}
+.lesson-media__tile-controls{position:absolute;bottom:5px;right:5px;z-index:4;display:flex;gap:4px}.lesson-media__icon{display:grid;place-items:center;width:28px;height:28px;padding:5px;margin:0;border:1px solid #ffffff40;border-radius:7px;background:#111827db;color:#f8fafc;cursor:pointer}.lesson-media__icon svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.lesson-media__icon[data-state="off"]{color:#fecaca;background:#7f1d1de8;border-color:#f8717180}.lesson-media__icon[data-state="on"] .lesson-media__icon-slash{display:none}.lesson-media__icon[aria-expanded="true"]{background:#4338ca}.lesson-media__icon:disabled{opacity:.55;cursor:wait}
+.lesson-media__beauty{display:grid;gap:5px;padding:8px;border:1px solid #475569;border-radius:8px;background:#1e293b}.lesson-media__beauty-title{font-size:11px;color:#e2e8f0}.lesson-media__beauty label{display:grid;grid-template-columns:26px 1fr 22px;align-items:center;gap:5px;font-size:11px;color:#f8fafc}.lesson-media__beauty input{min-width:0;width:100%;height:18px;margin:0;accent-color:#a5b4fc}.lesson-media__beauty output{text-align:right;color:#cbd5e1}
+.lesson-media__controls button,.lesson-media__exit-actions button{border:1px solid #475569;background:#263449;color:#f8fafc;font:inherit;border-radius:6px;padding:6px 8px;cursor:pointer;font-size:11px}.lesson-media .is-danger{background:#b91c1c;border-color:#dc2626}.lesson-media button:focus-visible{outline:2px solid #a5b4fc;outline-offset:2px}
+.lesson-media__exit{position:absolute;inset:0;z-index:20;display:grid;place-items:center;padding:14px;background:#0f172aeb}.lesson-media__exit-card{width:100%;padding:16px 12px;border:1px solid #64748b;border-radius:12px;background:#1e293b}.lesson-media__exit-card strong{font-size:16px}.lesson-media__exit-card p{font-size:12px;line-height:1.7;color:#cbd5e1;margin:12px 0 18px}.lesson-media__exit-actions{display:flex;gap:8px;justify-content:flex-end}
 [hidden]{display:none!important}.lesson-media__pip-composite{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 `;
 
@@ -96,6 +98,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
     return { input, output };
   };
   const whitening = beautySlider('美白', 'whitening'); const smoothing = beautySlider('磨皮', 'smoothing');
+  const eyeBrightening = beautySlider('亮眼', 'eyeBrightening');
   const status = el('p', 'lesson-media__status'); status.dataset.lessonMediaStatus = ''; status.setAttribute('role', 'status');
   const controls = el('div', 'lesson-media__controls');
   const control = (label: string, attribute: string) => {
@@ -103,10 +106,35 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   };
   const camera = control('开启摄像头', 'data-lesson-camera');
   const microphone = control('开启麦克风', 'data-lesson-microphone');
+  const tileControls = el('div', 'lesson-media__tile-controls');
+  const beautyToggle = el('button', 'lesson-media__icon'); beautyToggle.type = 'button'; beautyToggle.dataset.lessonBeautyToggle = '';
+  beautyToggle.setAttribute('aria-label', '调节摄像头美颜'); beautyToggle.title = '调节摄像头美颜'; beautyToggle.setAttribute('aria-expanded', 'false');
+  const icon = (button: HTMLButtonElement, path: string, toggle = false) => {
+    const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
+    const shape = doc.createElementNS('http://www.w3.org/2000/svg', 'path'); shape.setAttribute('d', path); svg.append(shape);
+    if (toggle) {
+      const slash = doc.createElementNS('http://www.w3.org/2000/svg', 'path'); slash.setAttribute('d', 'M4 4 20 20');
+      slash.classList.add('lesson-media__icon-slash'); svg.append(slash);
+    }
+    button.replaceChildren(svg); button.classList.add('lesson-media__icon');
+  };
+  icon(camera, 'M4 7h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Zm12 3 6-3v10l-6-3', true);
+  icon(microphone, 'M9 5a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0V5Zm-3 6v1a6 6 0 0 0 12 0v-1M12 18v4m-4 0h8', true);
+  icon(beautyToggle, 'm12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4L12 3Zm7-2v4m-2-2h4');
+  tileControls.append(camera, microphone, beautyToggle); localTile.append(tileControls);
   const desktop = control('重新打开悬浮窗', 'data-lesson-desktop'); desktop.hidden = true;
   const retry = control('重试设备', 'data-lesson-device-retry'); retry.hidden = true;
   const leave = control('离开课堂', 'data-lesson-media-leave'); leave.className = 'is-danger';
-  root.append(header, grid, beautyControls, status, controls); doc.body.append(root);
+  const exitOverlay = el('div', 'lesson-media__exit'); exitOverlay.hidden = true; exitOverlay.dataset.lessonExitDialog = '';
+  exitOverlay.setAttribute('role', 'dialog'); exitOverlay.setAttribute('aria-modal', 'true'); exitOverlay.setAttribute('aria-label', '确认退出课堂');
+  const exitCard = el('div', 'lesson-media__exit-card'); const exitTitle = el('strong'); const exitDetail = el('p');
+  const exitActions = el('div', 'lesson-media__exit-actions');
+  const exitCancel = el('button', '', '继续上课'); exitCancel.type = 'button'; exitCancel.dataset.lessonExitCancel = '';
+  const exitConfirm = el('button', 'is-danger', '确认退出'); exitConfirm.type = 'button'; exitConfirm.dataset.lessonExitConfirm = '';
+  exitActions.append(exitCancel, exitConfirm); exitCard.append(exitTitle, exitDetail, exitActions); exitOverlay.append(exitCard);
+  const content = el('div', 'lesson-media__content'); content.append(grid, status);
+  root.append(header, content, controls, exitOverlay); doc.body.append(root);
 
   let current: LessonMediaRoom | null = null;
   let connected = false;
@@ -126,6 +154,9 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   let beautySettings: CameraBeautySettings = { ...DEFAULT_TEACHER_BEAUTY };
   let beautyProcessor: ReturnType<typeof createTeacherCameraBeauty> | null = null;
   let beautyPreview = false;
+  let beautyExpanded = false;
+  let beautyDesktopSize: { window: PictureInPictureWindow; width: number; height: number } | null = null;
+  let exitLessonId = '';
   let sequence = Date.now() * 100;
   let remoteSequence = -1;
   let remoteAudioSequence = -1;
@@ -176,12 +207,13 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
     } catch { beautySettings = { ...DEFAULT_TEACHER_BEAUTY }; }
     whitening.input.value = String(beautySettings.whitening); whitening.output.textContent = whitening.input.value;
     smoothing.input.value = String(beautySettings.smoothing); smoothing.output.textContent = smoothing.input.value;
+    eyeBrightening.input.value = String(beautySettings.eyeBrightening); eyeBrightening.output.textContent = eyeBrightening.input.value;
   }
   function stopBeauty() {
     beautyProcessor?.dispose(); beautyProcessor = null; beautyPreview = false; beautyFailure = ''; localPreview.hidden = true;
   }
   function localCameraFrame(): HTMLVideoElement | HTMLCanvasElement {
-    if (!current || config.uid !== current.teacherUid || (!beautySettings.whitening && !beautySettings.smoothing)) {
+    if (!current || config.uid !== current.teacherUid || (!beautySettings.whitening && !beautySettings.smoothing && !beautySettings.eyeBrightening)) {
       if (beautyPreview) { beautyPreview = false; render(); }
       return localVideo;
     }
@@ -199,28 +231,35 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   }
   const updateBeauty = () => {
     if (!current || config.uid !== current.teacherUid) return;
-    beautySettings = normalizeBeautySettings({ whitening: Number(whitening.input.value), smoothing: Number(smoothing.input.value) });
+    beautySettings = normalizeBeautySettings({ whitening: Number(whitening.input.value), smoothing: Number(smoothing.input.value), eyeBrightening: Number(eyeBrightening.input.value) });
     whitening.output.textContent = String(beautySettings.whitening); smoothing.output.textContent = String(beautySettings.smoothing);
+    eyeBrightening.output.textContent = String(beautySettings.eyeBrightening);
     try { win.localStorage.setItem(`onebyone.lesson.beauty.v1:${config.uid}`, JSON.stringify(beautySettings)); } catch { /* Optional settings. */ }
-    if (!beautySettings.whitening && !beautySettings.smoothing) stopBeauty();
+    if (!beautySettings.whitening && !beautySettings.smoothing && !beautySettings.eyeBrightening) stopBeauty();
     render();
   };
   whitening.input.addEventListener('input', updateBeauty); smoothing.input.addEventListener('input', updateBeauty);
+  eyeBrightening.input.addEventListener('input', updateBeauty);
 
   function render() {
     if (disposed) return;
     const cameraOn = !!cameraStream;
     localVideo.hidden = !cameraOn || beautyPreview; localPreview.hidden = !cameraOn || !beautyPreview; localPlaceholder.hidden = cameraOn;
-    beautyControls.hidden = !current || config.uid !== current.teacherUid;
-    camera.textContent = cameraOn ? '关闭摄像头' : '开启摄像头'; camera.setAttribute('aria-pressed', String(cameraOn)); camera.disabled = cameraStarting;
-    microphone.textContent = !audio.ready ? '开启麦克风' : muted ? '打开声音' : '静音';
+    const isTeacher = !!current && config.uid === current.teacherUid;
+    beautyToggle.hidden = !isTeacher; beautyControls.hidden = !isTeacher || !beautyExpanded;
+    beautyToggle.setAttribute('aria-expanded', String(isTeacher && beautyExpanded));
+    const cameraLabel = cameraOn ? '摄像头已开启，点击关闭' : '摄像头已关闭，点击开启';
+    camera.title = cameraLabel; camera.setAttribute('aria-label', cameraLabel); camera.dataset.state = cameraOn ? 'on' : 'off';
+    camera.setAttribute('aria-pressed', String(cameraOn)); camera.disabled = cameraStarting;
+    const microphoneLabel = !audio.ready ? '麦克风未开启，点击开启' : muted ? '麦克风已静音，点击取消静音' : '麦克风已开启，点击静音';
+    microphone.title = microphoneLabel; microphone.setAttribute('aria-label', microphoneLabel); microphone.dataset.state = audio.ready && !muted ? 'on' : 'off';
     microphone.setAttribute('aria-pressed', String(audio.ready && !muted)); microphone.disabled = audioStarting;
     desktop.hidden = !!pip || !!fallbackVideo || pipPending || !desktopFailure; desktop.disabled = pipPending;
     retry.hidden = !cameraFailure && !audioFailure && (!!cameraStream || !cameraWanted) && audio.ready;
     peerLabel.textContent = peerOnline ? '双方已连接' : '等待对方';
-    const base = !connected ? '正在自动恢复课堂连接，恢复后继续上课。'
-      : !peerOnline ? '等待对方进入课堂。' : '课堂已连接，双方可以边看边讲。';
+    const base = !connected ? '正在恢复连接…' : '';
     status.textContent = [base, cameraFailure, audioFailure, desktopFailure, beautyFailure].filter(Boolean).join(' ');
+    status.hidden = !status.textContent;
   }
   function clearRemote() {
     remoteAt = 0; remotePending = false; remoteSequence = -1;
@@ -245,7 +284,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
     try {
       if (!win.isSecureContext || !navigator.mediaDevices?.getUserMedia) throw new Error('摄像头需要 HTTPS 或本机 localhost 安全连接。');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: {
-        width: { ideal: VIDEO_WIDTH }, height: { ideal: VIDEO_HEIGHT }, frameRate: { ideal: 30, max: 30 }, facingMode: 'user',
+        width: { ideal: VIDEO_WIDTH }, height: { ideal: VIDEO_HEIGHT }, frameRate: { ideal: VIDEO_FPS, max: VIDEO_FPS }, facingMode: 'user',
       } });
       if (attempt !== generation || disposed || !current || !cameraWanted) { stream.getTracks().forEach((track) => track.stop()); return; }
       cameraStream = stream; localVideo.srcObject = stream;
@@ -275,6 +314,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   }
   function restorePanel() {
     if (root.ownerDocument !== doc && !disposed) doc.body.append(root);
+    beautyDesktopSize = null; beautyExpanded = false;
     pip = null; root.classList.remove('is-desktop'); startCaptureClock(win); render();
     if (position) place(position);
   }
@@ -319,7 +359,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
       promise: null as unknown as Promise<PictureInPictureWindow>, timer: 0 };
     reservations.add(reservation);
     // This call must run synchronously in the join click, before its REST await.
-    try { reservation.promise = picture.requestWindow({ width: 320, height: 520 }); }
+    try { reservation.promise = picture.requestWindow({ width: 260, height: 420 }); }
     catch (cause) { reservation.promise = Promise.reject(cause); }
     const request = reservation.promise.then(next => {
       reservation.window = next;
@@ -411,8 +451,59 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
     stopCamera(); audio.stop(); clearRemote(); closeDesktop();
   }
   function stop(preserve?: LessonDesktopReservation) {
+    dismissExit(); beautyExpanded = false;
     release(preserve); current = null; connected = false; peerOnline = false; root.hidden = true;
   }
+  function dismissExit() {
+    exitLessonId = ''; exitOverlay.hidden = true;
+    header.inert = false; grid.inert = false; controls.inert = false;
+  }
+  function requestExit() {
+    if (!current || disposed || exitLessonId) return;
+    exitLessonId = current._id;
+    const isTeacher = config.uid === current.teacherUid;
+    exitTitle.textContent = isTeacher ? '结束本次上课？' : '离开课堂？';
+    exitDetail.textContent = isTeacher ? '确认后老师和学员都会结束本次课堂。' : '确认后将关闭你的摄像头和麦克风。';
+    exitConfirm.textContent = isTeacher ? '确认结束' : '确认离开';
+    header.inert = true; grid.inert = true; controls.inert = true;
+    exitOverlay.hidden = false; exitCancel.focus();
+  }
+  exitCancel.addEventListener('click', () => { dismissExit(); if (current) leave.focus(); });
+  exitConfirm.addEventListener('click', () => {
+    const lessonId = exitLessonId;
+    if (!lessonId || disposed || current?._id !== lessonId) { dismissExit(); return; }
+    dismissExit();
+    options.onLeave({ confirmed: true, lessonId });
+  });
+  exitOverlay.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); exitCancel.click(); }
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      (root.ownerDocument.activeElement === exitCancel ? exitConfirm : exitCancel).focus();
+    }
+  });
+  function resizeBeautyDesktop(expanded: boolean) {
+    if (!expanded) {
+      const previous = beautyDesktopSize; beautyDesktopSize = null;
+      if (previous && pip === previous.window && !pip.closed) {
+        try { pip.resizeTo(pip.outerWidth || previous.width, previous.height); } catch { /* A compact window can always scroll instead. */ }
+      }
+      return;
+    }
+    if (!pip || beautyDesktopSize || !(pip.outerHeight > 0)) return;
+    const previous = { window: pip, width: pip.outerWidth, height: pip.outerHeight };
+    try {
+      // Called only from the local icon's user gesture; browsers may deny resizing.
+      pip.resizeBy(0, 120); beautyDesktopSize = previous;
+    } catch { /* The independent panel remains reachable in the scroll area. */ }
+  }
+  beautyToggle.addEventListener('click', () => {
+    if (!current || config.uid !== current.teacherUid) return;
+    beautyExpanded = !beautyExpanded; render(); resizeBeautyDesktop(beautyExpanded);
+  });
+  beautyControls.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); beautyExpanded = false; render(); resizeBeautyDesktop(false); beautyToggle.focus(); }
+  });
   camera.addEventListener('click', () => {
     if (!current) return;
     if (cameraStream) { cameraWanted = false; saveDevicePreferences(); stopCamera(); cameraFailure = ''; render(); }
@@ -428,7 +519,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
     if (!current || !connected) return;
     void Promise.all([startCamera(), startAudio()]);
   });
-  leave.addEventListener('click', () => { if (current && !disposed) options.onLeave(); });
+  leave.addEventListener('click', requestExit);
   header.addEventListener('pointerdown', (event) => {
     if (event.button !== 0 || pip) return;
     const bounds = root.getBoundingClientRect(); drag = { x: event.clientX, y: event.clientY, left: bounds.left, top: bounds.top, pointerId: event.pointerId };
@@ -461,7 +552,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
       let data = '';
       let quality = jpegQuality;
       // Keep a steady cadence within a byte budget instead of queuing large frames.
-      for (const [width, height] of [[VIDEO_WIDTH, VIDEO_HEIGHT], [960, 540], [640, 360]]) {
+      for (const [width, height] of [[VIDEO_WIDTH, VIDEO_HEIGHT], [640, 360], [480, 270]]) {
         if (captureCanvas.width !== width) captureCanvas.width = width;
         if (captureCanvas.height !== height) captureCanvas.height = height;
         captureContext ||= captureCanvas.getContext('2d'); if (!captureContext) return;
@@ -514,7 +605,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
       remoteName.textContent = `${isTeacher ? lesson.studentName : lesson.teacherName} · ${isTeacher ? '学员' : '老师'}`;
       localTile.dataset.lessonParticipant = isTeacher ? 'teacher' : 'student';
       remoteTile.dataset.lessonParticipant = isTeacher ? 'student' : 'teacher';
-      grid.replaceChildren(...(isTeacher ? [localTile, remoteTile] : [remoteTile, localTile]));
+      grid.replaceChildren(...(isTeacher ? [localTile, beautyControls, remoteTile] : [remoteTile, beautyControls, localTile]));
       captureBudget = VIDEO_FRAME_TARGET * 2; captureBudgetAt = Date.now(); jpegQuality = .72;
       leave.textContent = config.uid === lesson.teacherUid ? '结束上课' : '离开课堂'; render();
       if (reservation) void adoptDesktop(reservation); else void openDesktop();

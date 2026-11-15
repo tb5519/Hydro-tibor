@@ -4,10 +4,12 @@
   bottom: 86px
   z-index: 2147483005
   box-sizing: border-box
-  width: 300px
+  display: flex
+  flex-direction: column
+  width: 260px
   max-width: calc(100vw - 16px)
   max-height: calc(100vh - 16px)
-  overflow: auto
+  overflow: hidden
   border: 1px solid #34435b
   border-radius: 16px
   background: #111b2d
@@ -24,10 +26,11 @@
 
   &__header
     display: flex
+    flex-shrink: 0
     align-items: center
     justify-content: space-between
     gap: 8px
-    padding: 12px
+    padding: 8px 10px
     cursor: move
     touch-action: none
     user-select: none
@@ -35,7 +38,7 @@
     strong
       display: block
       margin-top: 2px
-      font-size: 14px
+      font-size: 13px
       line-height: 1.4
       color: #f8fafc
 
@@ -53,6 +56,12 @@
     grid-template-columns: 1fr
     gap: 6px
     padding: 0 8px
+
+  &__content
+    min-height: 0
+    overflow: auto
+    flex: 1 1 auto
+    scrollbar-width: thin
 
   &__tile
     position: relative
@@ -76,17 +85,17 @@
 
   &__beauty
     display: grid
-    gap: 6px
-    margin: 8px 8px 0
+    gap: 5px
     padding: 8px
-    border: 1px solid #34435b
+    border: 1px solid #475569
     border-radius: 8px
+    background: #1e293b
 
     label
       display: grid
-      grid-template-columns: 30px 1fr 24px
+      grid-template-columns: 26px 1fr 22px
       align-items: center
-      gap: 7px
+      gap: 5px
       color: #f8fafc
       font-size: 11px
 
@@ -102,8 +111,57 @@
       color: #cbd5e1
 
   &__beauty-title
-    color: #cbd5e1
+    color: #e2e8f0
     font-size: 11px
+
+  &__tile-controls
+    position: absolute
+    bottom: 5px
+    right: 5px
+    z-index: 4
+    display: flex
+    gap: 4px
+
+  &__icon
+    display: grid
+    place-items: center
+    width: 28px
+    height: 28px
+    padding: 5px
+    margin: 0
+    border: 1px solid #ffffff40
+    border-radius: 7px
+    background: #111827db
+    color: #f8fafc
+    cursor: pointer
+
+    svg
+      width: 17px
+      height: 17px
+      fill: none
+      stroke: currentColor
+      stroke-width: 1.8
+      stroke-linecap: round
+      stroke-linejoin: round
+
+    &[data-state="off"]
+      color: #fecaca
+      background: #7f1d1de8
+      border-color: #f8717180
+
+    &[data-state="on"] .lesson-media__icon-slash
+      display: none
+
+    &[aria-expanded="true"]
+      background: #4338ca
+
+    &:disabled
+      opacity: .55
+      cursor: wait
+
+  button:focus-visible
+    outline: 2px solid #a5b4fc
+    outline-offset: 2px
 
   &__placeholder
     padding: 16px
@@ -125,21 +183,26 @@
 
   &__status
     margin: 0
-    padding: 8px 10px
+    padding: 6px 10px
     color: #cbd5e1
     font-size: 11px
     line-height: 1.6
 
   &__controls
+    position: relative
+    z-index: 5
+    flex-shrink: 0
     display: flex
     flex-wrap: wrap
     gap: 5px
-    padding: 0 8px 8px
+    padding: 8px
+    border-top: 1px solid #34435b
+    background: #111827
 
     button
       height: auto
       margin: 0
-      padding: 7px 8px
+      padding: 6px 8px
       border: 1px solid #475569
       border-radius: 7px
       background: #263449
@@ -167,6 +230,52 @@
         border-color: #dc2626
         background: #b91c1c
 
+  &__exit
+    position: absolute
+    inset: 0
+    z-index: 20
+    display: grid
+    place-items: center
+    padding: 14px
+    background: #0f172aeb
+
+  &__exit-card
+    width: 100%
+    padding: 16px 12px
+    border: 1px solid #64748b
+    border-radius: 12px
+    background: #1e293b
+
+    strong
+      font-size: 16px
+
+    p
+      margin: 12px 0 18px
+      color: #cbd5e1
+      font-size: 12px
+      line-height: 1.7
+
+  &__exit-actions
+    display: flex
+    justify-content: flex-end
+    gap: 8px
+
+    button
+      margin: 0
+      padding: 6px 8px
+      border: 1px solid #475569
+      border-radius: 6px
+      background: #263449
+      color: #f8fafc
+      font: inherit
+      font-size: 11px
+      line-height: 1.3
+      cursor: pointer
+
+      &.is-danger
+        border-color: #dc2626
+        background: #b91c1c
+
   &__pip-composite
     position: absolute
     width: 1px
@@ -178,7 +287,7 @@
   .lesson-media
     right: 8px
     bottom: 76px
-    width: 320px
+    width: 260px
 
 @media (prefers-reduced-motion: reduce)
   .lesson-media

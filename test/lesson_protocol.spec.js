@@ -26,6 +26,20 @@ function jpeg(width = 320, height = 240, padding = 0) {
 }
 const tab = (uid) => `lesson-tab-${uid}-testing`;
 describe('lesson media protocol', () => {
+    it('keeps account notification controls small and rejects identity, routing and media fields', () => {
+        const subscribe = { type: 'subscribe', expectedUid: Number.MAX_SAFE_INTEGER };
+        protocol.validateLessonNotificationMessage(subscribe);
+        protocol.validateLessonNotificationMessage({ type: 'pulse' });
+        assert.equal(protocol.LESSON_NOTIFICATION_MAX_MESSAGE_BYTES, 1024);
+        assert(Buffer.byteLength(JSON.stringify(subscribe)) < protocol.LESSON_NOTIFICATION_MAX_MESSAGE_BYTES);
+        for (const payload of [null, [], {}, { type: 'subscribe' }, { type: 'subscribe', expectedUid: 1 },
+            { type: 'subscribe', expectedUid: '10' }, { type: 'subscribe', expectedUid: Number.MAX_SAFE_INTEGER + 1 },
+            { type: 'subscribe', expectedUid: 10, uid: 11 }, { type: 'subscribe', expectedUid: 10, lessonId: 'lesson-testing' },
+            { type: 'pulse', expectedUid: 10 }, { type: 'pulse', data: 'x'.repeat(2048) },
+            { type: 'video', lessonId: 'lesson-testing', seq: 0, data: jpeg() }]) {
+            assert.throws(() => protocol.validateLessonNotificationMessage(payload), code('INVALID_MESSAGE'));
+        }
+    });
     it('accepts only bounded JPEG and exact μ-law audio without client routing fields', () => {
         protocol.validateLessonMessage({ type: 'join', lessonId: 'lesson-testing', tabId: 'tab-testing' });
         protocol.validateLessonMessage({ type: 'video', lessonId: 'lesson-testing', seq: 0, data: jpeg() });

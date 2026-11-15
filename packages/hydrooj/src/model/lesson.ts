@@ -124,6 +124,24 @@ export async function list(uid: number, domainId: string, now = Date.now()) {
     return { lessons, history, historyHasMore, ...(students ? { students } : {}), serverNow: new Date(now).toISOString() };
 }
 
+/** Read-only account inbox: an invitation must reach the learner even while
+ * they are viewing a different classroom. It never grants media admission. */
+export async function inbox(uid: number, now = Date.now(), checkAccess?: (room: Lesson) => Promise<void>) {
+    const candidates = await rooms.find({ participantUids: uid,
+        $or: [{ status: 'active' }, { status: 'scheduled', endAt: { $gt: new Date(now - 2 * 3600_000) } }] })
+        .sort({ startAt: 1 }).toArray();
+    return (await Promise.all(candidates.map(async (room) => {
+        try {
+            const current = await authorize(uid, room.domainId, room._id, now);
+            await checkAccess?.(current);
+            return await snapshot(current, now);
+        } catch (error) {
+            if (['FORBIDDEN', 'NOT_FOUND', 'ENDED'].includes(error.code)) return null;
+            throw error;
+        }
+    }))).filter((item): item is NonNullable<typeof item> => !!item);
+}
+
 function normalizedCreate(value: any, now: number) {
     if (!value || !Number.isSafeInteger(value.studentUid) || value.studentUid <= 1 || !lessonId(value.tabId)) {
         throw new LessonError('INVALID_MESSAGE', '请选择学员后再安排上课。');
