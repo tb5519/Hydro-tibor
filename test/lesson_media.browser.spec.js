@@ -33,7 +33,16 @@ body{background:#f1f5f9;font:16px system-ui;color:#243044;padding:32px}main{back
 </style></head><body><main><h1>编程课堂</h1><p>老师分享页面，师生摄像头可以拖动及桌面悬浮。</p><button id="join">进入课堂</button></main>
 <script>${script}</script><script>
 ${options.noDocumentPip ? "Object.defineProperty(window,'documentPictureInPicture',{value:undefined});" : ''}
-window.sent=[];window.left=0;window.leaveApproved=true;window.media=LessonMedia.mountLessonMedia({uid:2},{send(message){sent.push(message);return true},onLeave(){left++;if(window.leaveApproved)media.stop()}});
+window.screenRequests=[];
+${options.fakeScreen ? `Object.defineProperty(navigator.mediaDevices,'getDisplayMedia',{value:(constraints)=>{
+ screenRequests.push(constraints); const canvas=document.createElement('canvas');canvas.width=1280;canvas.height=720;
+ const context=canvas.getContext('2d');context.fillStyle='#c7d2fe';context.fillRect(0,0,1280,720);
+ context.fillStyle='#172554';context.font='48px sans-serif';context.fillText('Synthetic learner desktop',80,120);
+ const stream=canvas.captureStream(8);window.screenTrack=stream.getVideoTracks()[0];
+ const settings=screenTrack.getSettings.bind(screenTrack);screenTrack.getSettings=()=>({...settings(),displaySurface:'monitor'});
+ return Promise.resolve(stream);
+}});` : ''}
+window.sent=[];window.left=0;window.leaveApproved=true;window.media=LessonMedia.mountLessonMedia({uid:${options.uid || 2}},{send(message){sent.push(message);return true},onLeave(){left++;if(window.leaveApproved)media.stop()}});
 window.room={_id:'camera-lesson',teacherUid:2,studentUid:5,teacherName:'唐老师',studentName:'橙子'};
 document.querySelector('#join').onclick=()=>{const desktop=media.prepareDesktop();window.joined=(async()=>{await new Promise(resolve=>setTimeout(resolve,100));await media.start(room,desktop);media.setConnected(true);media.receive({type:'peer',online:true})})()};
 </script></body></html>` }));
@@ -103,12 +112,14 @@ it('joining automatically opens a compact Document Picture-in-Picture window and
         return { fps: frames / ((performance.now() - at) / 1000),
             roles: tiles.map(tile => tile.dataset.lessonParticipant),
             top: tiles[0].getBoundingClientRect().top, bottom: tiles[1].getBoundingClientRect().top,
+            width: pip.innerWidth, height: pip.innerHeight,
             camera: pip.document.querySelector('[data-lesson-local-video]').srcObject.getVideoTracks()[0].getSettings(),
             toggleVisible: !pip.document.querySelector('[data-lesson-desktop]').hidden };
     });
     assert(stats.fps >= 22, `expected a 25 fps target to sustain at least 22 live frames/sec, got ${stats.fps.toFixed(1)}`);
     assert.equal(stats.camera.width, 960); assert.equal(stats.camera.height, 540); assert(stats.camera.frameRate >= 24);
     assert.deepEqual(stats.roles, ['teacher', 'student']); assert(stats.top < stats.bottom);
+    assert(stats.width <= 240, `compact desktop width was ${stats.width}`); assert(stats.height <= 370, `compact desktop height was ${stats.height}`);
     assert.equal(stats.toggleVisible, false);
     const recovery = await page.evaluate(async () => {
         const pip = documentPictureInPicture.window;
@@ -170,4 +181,72 @@ it('the desktop camera window opens beauty between both pictures and confirms en
     await page.waitForFunction(() => !documentPictureInPicture.window);
     assert.equal(await page.evaluate(() => cameraTrack.readyState), 'ended');
     assert.equal(await page.evaluate(() => left), 1); assert.deepEqual(errors, []);
+});
+
+it('the real desktop window switches the learner tile between screen and camera without restarting devices', async t => {
+    const { page, errors } = await fixture(t);
+    if (!await page.evaluate(() => !!window.documentPictureInPicture?.requestWindow)) {
+        t.skip('This installed Chromium does not expose Document Picture-in-Picture'); return;
+    }
+    await page.locator('#join').click();
+    await page.waitForFunction(() => documentPictureInPicture.window?.document.querySelector('[data-lesson-local-video]')?.srcObject);
+    const toggled = await page.evaluate(() => {
+        const doc = documentPictureInPicture.window.document; const camera = doc.querySelector('[data-lesson-local-video]');
+        window.originalCamera = camera.srcObject; window.originalCameraTrack = camera.srcObject.getVideoTracks()[0];
+        const toggle = doc.querySelector('[data-lesson-screen-toggle]');
+        const tile = toggle.closest('[data-lesson-participant]').dataset.lessonParticipant;
+        toggle.click();
+        return { tile, request: sent.find(message => message.type === 'screen-view' && message.watching), displayRequests: screenRequests.length };
+    });
+    assert.equal(toggled.tile, 'student'); assert(toggled.request); assert.equal(toggled.displayRequests, 0);
+    await page.evaluate(() => {
+        const canvas = document.createElement('canvas'); canvas.width = 1280; canvas.height = 720;
+        const context = canvas.getContext('2d'); context.fillStyle = '#b8e3ff'; context.fillRect(0, 0, 1280, 720);
+        context.fillStyle = '#0f172a'; context.font = '48px sans-serif'; context.fillText('Entire synthetic desktop', 40, 80);
+        media.receive({ type: 'screen-state', lessonId: room._id, uid: 5, streamId: 'learner-desktop', state: 'sharing' });
+        media.receive({ type: 'screen', lessonId: room._id, uid: 5, streamId: 'learner-desktop', seq: 1, data: canvas.toDataURL('image/jpeg', .7) });
+    });
+    await page.waitForFunction(() => {
+        const image = documentPictureInPicture.window.document.querySelector('[data-lesson-remote-screen]');
+        return image && !image.hidden && image.complete && image.naturalWidth === 1280;
+    });
+    const received = await page.evaluate(() => {
+        const pip = documentPictureInPicture.window; const doc = pip.document;
+        const image = doc.querySelector('[data-lesson-remote-screen]');
+        const style = pip.getComputedStyle(image);
+        const fit = style.objectFit; const transform = style.transform;
+        doc.querySelector('[data-lesson-screen-toggle]').click();
+        return { fit, transform, hidden: image.hidden, src: image.getAttribute('src'),
+            sameCamera: doc.querySelector('[data-lesson-local-video]').srcObject === originalCamera,
+            cameraState: originalCameraTrack.readyState, watchingFalse: sent.filter(message => message.type === 'screen-view').at(-1)?.watching === false };
+    });
+    assert.equal(received.fit, 'contain'); assert.equal(received.transform, 'none'); assert.equal(received.hidden, true); assert.equal(received.src, null);
+    assert.equal(received.sameCamera, true); assert.equal(received.cameraState, 'live'); assert.equal(received.watchingFalse, true);
+    await page.evaluate(() => { const doc = documentPictureInPicture.window.document; doc.querySelector('[data-lesson-media-leave]').click(); doc.querySelector('[data-lesson-exit-confirm]').click(); });
+    assert.deepEqual(errors, []);
+});
+
+it('a learner authorizes a synthetic whole-screen stream from PiP and ending class stops that track', async t => {
+    const { page, errors } = await fixture(t, { uid: 5, fakeScreen: true });
+    if (!await page.evaluate(() => !!window.documentPictureInPicture?.requestWindow)) {
+        t.skip('This installed Chromium does not expose Document Picture-in-Picture'); return;
+    }
+    await page.locator('#join').click();
+    await page.waitForFunction(() => documentPictureInPicture.window?.document.querySelector('[data-lesson-local-video]')?.srcObject);
+    await page.evaluate(() => media.receive({ type: 'screen-view', lessonId: room._id, uid: 2, streamId: 'teacher-desktop', watching: true }));
+    assert.equal(await page.evaluate(() => screenRequests.length), 0);
+    const requested = await page.evaluate(() => {
+        const doc = documentPictureInPicture.window.document;
+        const consent = doc.querySelector('[data-lesson-screen-consent]');
+        const visible = !consent.hidden; doc.querySelector('[data-lesson-screen-share]').click();
+        return { visible, calls: screenRequests.length, surface: screenRequests[0]?.video?.displaySurface };
+    });
+    assert.equal(requested.visible, true); assert.equal(requested.calls, 1); assert.equal(requested.surface, 'monitor');
+    await page.waitForFunction(() => sent.some(message => message.type === 'screen'));
+    const frames = await page.evaluate(() => sent.filter(message => message.type === 'screen').map(message => message.data.length));
+    assert(frames.every(length => length <= 262144));
+    assert.equal(await page.evaluate(() => screenTrack.readyState), 'live');
+    await page.evaluate(() => { const doc = documentPictureInPicture.window.document; doc.querySelector('[data-lesson-media-leave]').click(); doc.querySelector('[data-lesson-exit-confirm]').click(); });
+    assert.equal(await page.evaluate(() => screenTrack.readyState), 'ended');
+    assert.deepEqual(errors, []);
 });

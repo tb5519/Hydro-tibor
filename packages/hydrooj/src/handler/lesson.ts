@@ -15,6 +15,7 @@ const cluster = process.env.exec_mode === 'cluster_mode';
 const serverId = cluster ? `${hostname()}:${process.env.name || 'hydro'}` : lesson.opaqueLessonId();
 let pendingIPCBytes = 0;
 let pendingVideoIPCBytes = 0;
+let pendingScreenIPCBytes = 0;
 
 /** Never use the durable broadcast/outbox for camera or microphone payloads. */
 export function emitLesson(event: lesson.LessonEvent) {
@@ -22,18 +23,22 @@ export function emitLesson(event: lesson.LessonEvent) {
     if (!process.send || !process.connected) throw new LessonError('UNAVAILABLE', '课堂连接暂时不可用。');
     const payload = BSON.EJSON.stringify([event]); const bytes = Buffer.byteLength(payload);
     const video = event.message.type === 'video';
+    const screen = event.message.type === 'screen';
     const audio = event.message.type === 'audio';
     // Camera IPC has its own bounded allowance so a large picture does not
     // consume the original microphone and control-message capacity.
-    if (video ? pendingVideoIPCBytes + bytes > 2 * 1024 * 1024
+    if (screen ? pendingScreenIPCBytes + bytes > 2 * 1024 * 1024
+        : video ? pendingVideoIPCBytes + bytes > 2 * 1024 * 1024
         : pendingIPCBytes + bytes > (audio ? 512 : 768) * 1024) {
-        if (video || audio) return;
+        if (video || screen || audio) return;
         throw new LessonError('UNAVAILABLE', '课堂连接繁忙，请稍后重试。');
     }
-    if (video) pendingVideoIPCBytes += bytes;
+    if (screen) pendingScreenIPCBytes += bytes;
+    else if (video) pendingVideoIPCBytes += bytes;
     else pendingIPCBytes += bytes;
     const release = () => {
-        if (video) pendingVideoIPCBytes -= bytes;
+        if (screen) pendingScreenIPCBytes -= bytes;
+        else if (video) pendingVideoIPCBytes -= bytes;
         else pendingIPCBytes -= bytes;
     };
     try {
@@ -307,7 +312,15 @@ export class LessonConnectionHandler extends ConnectionHandler {
     private lastActivity = Date.now();
     private canTeach = false;
     private authorizationVersion = 0;
-    private sequences = { audio: -1, video: -1 };
+    private sequences = { audio: -1, video: -1, screen: -1 };
+    // Ephemeral, connection-scoped agreement: requesting a view never grants
+    // capture consent, and consent never authorizes an unwanted transmission.
+    private screenWatching = false;
+    private screenSharing = false;
+    private otherScreenWatching = false;
+    private otherScreenSharing = false;
+    private screenControlVersion = 0;
+    private otherScreenControlVersion = -1;
     private queue = Promise.resolve();
     private pending = 0;
 
@@ -326,7 +339,7 @@ export class LessonConnectionHandler extends ConnectionHandler {
 
     private stop(message: string, code = 'ENDED') {
         if (this.closing) return;
-        this.closing = true; this.lastAuthorization = 0; this.other = null;
+        this.closing = true; this.lastAuthorization = 0; this.other = null; this.resetScreen();
         this.send({ type: 'error', code, message });
         this.close(4003, code);
     }
@@ -349,7 +362,7 @@ export class LessonConnectionHandler extends ConnectionHandler {
             validateLessonMessage(payload);
             if (!this.limiter.accept(payload.type, payload.data?.length || 0)) return;
             this.lastActivity = Date.now();
-            if (payload.type === 'video' || payload.type === 'audio') { this.relay(payload); return; }
+            if (['video', 'audio', 'screen'].includes(payload.type)) { this.relay(payload); return; }
             if (this.pending >= 6) throw new LessonError('RATE_LIMIT', '请等待课堂连接准备完成。');
         } catch (error) { this.send({ type: 'error', ...errorBody(error) }); return; }
         this.pending++;
@@ -369,7 +382,10 @@ export class LessonConnectionHandler extends ConnectionHandler {
             } else {
                 if (!this.peer) throw new LessonError('JOIN_REQUIRED', '请先点击上课按钮。');
                 await this.checkSession();
-                if (!this.closing) this.send({ type: 'pulse' });
+                if (!this.closing) {
+                    if (payload.type === 'screen-view' || payload.type === 'screen-state') this.screenControl(payload);
+                    else this.send({ type: 'pulse' });
+                }
             }
         }).catch((error) => {
             if (knownError(error) && ['FORBIDDEN', 'ENDED', 'REPLACED', 'JOIN_REQUIRED'].includes(error.code)) this.stop(error.message, error.code);
@@ -382,9 +398,34 @@ export class LessonConnectionHandler extends ConnectionHandler {
         if (!this.room || !this.peer || !this.other || this.closing || payload.lessonId !== this.room._id
             || Date.now() - this.lastAuthorization > 6500 || Date.now() - this.lastLoginCheck > 6500
             || payload.seq <= this.sequences[payload.type] || this.other.serverId !== serverId) return;
+        if (payload.type === 'screen' && (this.user._id !== this.room.studentUid
+            || !this.screenSharing || !this.otherScreenWatching)) return;
         this.sequences[payload.type] = payload.seq;
         emitLesson({ uid: this.other._id, lessonId: this.room._id, connectionId: this.other.connectionId,
             sentAt: Date.now(), message: { ...payload, uid: this.user._id, streamId: this.connectionId } });
+    }
+
+    private resetScreen() {
+        this.screenWatching = false; this.screenSharing = false;
+        this.otherScreenWatching = false; this.otherScreenSharing = false;
+        this.otherScreenControlVersion = -1;
+    }
+
+    private screenControl(payload: any) {
+        if (!this.room || !this.peer || payload.lessonId !== this.room._id) {
+            throw new LessonError('JOIN_REQUIRED', '请先进入当前课堂。');
+        }
+        const teacher = this.user._id === this.room.teacherUid;
+        if (payload.type === 'screen-view' ? !teacher : teacher) {
+            throw new LessonError('INVALID_MESSAGE', '课堂屏幕操作身份不正确。');
+        }
+        if (this.closing || Date.now() - this.lastAuthorization > 6500 || Date.now() - this.lastLoginCheck > 6500) return;
+        if (payload.type === 'screen-view') this.screenWatching = payload.watching;
+        else this.screenSharing = payload.state === 'sharing';
+        if (!this.other || this.other.serverId !== serverId) return;
+        emitLesson({ uid: this.other._id, lessonId: this.room._id, connectionId: this.other.connectionId,
+            sentAt: Date.now(), message: { ...payload, uid: this.user._id, streamId: this.connectionId,
+                controlVersion: ++this.screenControlVersion } });
     }
 
     private async checkSession(announce = false) {
@@ -402,8 +443,10 @@ export class LessonConnectionHandler extends ConnectionHandler {
             // disconnecting the participant who has already recovered.
             if (other && other.serverId !== serverId) other = null;
             const changed = this.other?.connectionId !== other?.connectionId;
+            if (changed) this.resetScreen();
             this.room = room; this.other = other; this.lastAuthorization = Date.now();
-            if (announce) this.send({ type: 'ready', lesson: await lesson.snapshot(room), peerOnline: !!other });
+            if (announce) this.send({ type: 'ready', lesson: await lesson.snapshot(room), peerOnline: !!other,
+                ...(other ? { peerStreamId: other.connectionId } : {}) });
             else if (changed) this.send({ type: 'peer', online: !!other, ...(other ? { streamId: other.connectionId } : {}) });
         } finally {
             this.checking = false;
@@ -419,11 +462,34 @@ export class LessonConnectionHandler extends ConnectionHandler {
         if (this.closing || !this.peer || !this.room || event.uid !== this.user._id || event.lessonId !== this.room._id
             || (event.connectionId && event.connectionId !== this.connectionId)) return;
         const message = event.message;
-        if (message.type === 'video' || message.type === 'audio') {
+        if (['screen-view', 'screen-state'].includes(message.type)) {
+            if (event.connectionId !== this.connectionId || !event.sentAt
+                || Date.now() - event.sentAt > LESSON_MEDIA_MAX_AGE_MS || event.sentAt > Date.now() + 1000
+                || Date.now() - this.lastAuthorization > 6500 || Date.now() - this.lastLoginCheck > 6500
+                || !this.other || message.lessonId !== this.room._id
+                || !Number.isSafeInteger(message.controlVersion) || message.controlVersion < 0
+                || message.controlVersion <= this.otherScreenControlVersion
+                || message.streamId !== this.other.connectionId || message.uid !== this.other._id) return;
+            const teacher = this.user._id === this.room.teacherUid;
+            if (message.type === 'screen-view') {
+                if (teacher || typeof message.watching !== 'boolean' || message.uid !== this.room.teacherUid) return;
+                this.otherScreenWatching = message.watching;
+            } else {
+                if (!teacher || !['sharing', 'stopped', 'declined'].includes(message.state) || message.uid !== this.room.studentUid) return;
+                this.otherScreenSharing = message.state === 'sharing';
+            }
+            this.otherScreenControlVersion = message.controlVersion;
+            this.send(message); return;
+        }
+        if (message.type === 'video' || message.type === 'audio' || message.type === 'screen') {
             if (!event.sentAt || Date.now() - event.sentAt > LESSON_MEDIA_MAX_AGE_MS
                 || this.conn.bufferedAmount > (message.type === 'audio' ? 16 : 512) * 1024
                 || Date.now() - this.lastAuthorization > 6500 || Date.now() - this.lastLoginCheck > 6500
                 || !this.other || message.streamId !== this.other.connectionId || message.uid !== this.other._id) return;
+            if (message.type === 'screen' && (event.connectionId !== this.connectionId || message.lessonId !== this.room._id
+                || this.user._id !== this.room.teacherUid || message.uid !== this.room.studentUid
+                || event.sentAt > Date.now() + 1000
+                || !this.screenWatching || !this.otherScreenSharing)) return;
             this.send(message); return;
         }
         if (message.type === 'owner') {
@@ -440,7 +506,7 @@ export class LessonConnectionHandler extends ConnectionHandler {
             return;
         }
         if (message.type === 'ended') {
-            this.send(message); this.closing = true; this.lastAuthorization = 0; this.other = null;
+            this.send(message); this.closing = true; this.lastAuthorization = 0; this.other = null; this.resetScreen();
             this.close(4000, 'Ended'); return;
         }
         // Invalidate an in-flight authorization as well as its cached lease.
@@ -459,7 +525,7 @@ export class LessonConnectionHandler extends ConnectionHandler {
     onDomainPermissionsChanged() { this.authorizationVersion++; this.lastAuthorization = 0; }
 
     async cleanup() {
-        this.closing = true; this.lastAuthorization = 0;
+        this.closing = true; this.lastAuthorization = 0; this.resetScreen();
         if (!this.peer || !this.room) return;
         const current = await lesson.members.findOne({ _id: this.user._id, lessonId: this.room._id, connectionId: this.connectionId });
         await lesson.disconnect(this.peer);

@@ -1,5 +1,6 @@
 import { microphoneError, VoiceAudio } from '../voice_call/audio';
 import { createTeacherCameraBeauty, DEFAULT_TEACHER_BEAUTY, normalizeBeautySettings, type CameraBeautySettings } from './beauty';
+import { mountLessonScreen } from './screen';
 
 export interface LessonMediaRoom {
   _id: string;
@@ -16,7 +17,7 @@ interface MediaOptions {
   beautyFactory?: typeof createTeacherCameraBeauty;
 }
 type PictureInPictureWindow = Window & { document: Document };
-type DesktopWindow = Window & { documentPictureInPicture?: { requestWindow(options: { width: number; height: number }): Promise<PictureInPictureWindow> } };
+type DesktopWindow = Window & { documentPictureInPicture?: { requestWindow(options: { width: number; height: number; preferInitialWindowPlacement?: boolean }): Promise<PictureInPictureWindow> } };
 type PictureVideo = HTMLVideoElement & { webkitSetPresentationMode?: (mode: string) => void };
 export interface LessonDesktopReservation {
   cancelled: boolean;
@@ -39,9 +40,12 @@ const PIP_STYLE = `
 *{box-sizing:border-box}body{margin:0;background:#111827;color:#f8fafc;font:13px system-ui,sans-serif}
 .lesson-media{position:relative!important;inset:auto!important;transform:none!important;display:flex;flex-direction:column;width:100%!important;max-width:none!important;height:100vh;max-height:100vh;overflow:hidden;border:0!important;border-radius:0!important;box-shadow:none!important;background:#111827;color:#f8fafc}
 .lesson-media__header{display:flex;flex-shrink:0;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;font-size:12px}.lesson-media__header strong{display:block;font-size:13px}.lesson-media__content{min-height:0;overflow:auto;flex:1 1 auto;scrollbar-width:thin}
-.lesson-media__eyebrow{color:#a5b4fc;font-size:10px;margin-right:8px}.lesson-media__grid{display:grid;grid-template-columns:1fr;gap:6px;padding:0 8px}
+.lesson-media__eyebrow{color:#a5b4fc;font-size:10px;margin-right:8px}.lesson-media__grid{display:grid;grid-template-columns:1fr;gap:6px;padding:0 8px;width:100%;max-width:200px;margin:0 auto}
 .lesson-media__tile{position:relative;aspect-ratio:16/9;background:#243044;border-radius:9px;overflow:hidden;display:grid;place-items:center}
 .lesson-media__tile video,.lesson-media__tile img,.lesson-media__tile canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.lesson-media__tile video,.lesson-media__preview{transform:scaleX(-1)}
+.lesson-media__tile img[data-lesson-remote-screen]{object-fit:contain;transform:none;background:#0b1220}.lesson-media__tile.is-screen .lesson-media__name{max-width:calc(100% - 42px)}
+.lesson-media__name{z-index:2;max-width:calc(100% - 90px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lesson-media__screen-consent{margin:6px 8px;padding:8px;border:1px solid #64748b;border-radius:8px;background:#1e293b;font-size:11px;line-height:1.5}.lesson-media__screen-consent strong{display:block;font-size:12px}.lesson-media__screen-consent p{margin:4px 0 6px;color:#cbd5e1}.lesson-media__screen-actions{display:flex;gap:5px;flex-wrap:wrap}.lesson-media__screen-actions button{border:1px solid #64748b;border-radius:6px;background:#334155;color:#f8fafc;padding:5px 7px;font:inherit;cursor:pointer}.lesson-media__screen-actions button:first-child{background:#4338ca}.lesson-media__screen-status{font-size:10px;line-height:1.5;margin:5px 10px;color:#cbd5e1}.lesson-media__icon[data-lesson-screen-toggle][aria-pressed="true"]{background:#4338ca}.lesson-media__icon[data-lesson-screen-stop]{background:#7f1d1de8;color:#fecaca}
 .lesson-media__placeholder{color:#cbd5e1;font-size:12px;padding:16px;text-align:center}.lesson-media__name{position:absolute;bottom:5px;left:5px;border-radius:5px;background:#111827cc;padding:3px 6px;font-size:11px}
 .lesson-media__status{font-size:11px;color:#cbd5e1;padding:6px 10px;margin:0;line-height:1.5}.lesson-media__controls{position:relative;z-index:5;flex-shrink:0;padding:8px;display:flex;gap:5px;flex-wrap:wrap;background:#111827;border-top:1px solid #34435b}
 .lesson-media__tile-controls{position:absolute;bottom:5px;right:5px;z-index:4;display:flex;gap:4px}.lesson-media__icon{display:grid;place-items:center;width:28px;height:28px;padding:5px;margin:0;border:1px solid #ffffff40;border-radius:7px;background:#111827db;color:#f8fafc;cursor:pointer}.lesson-media__icon svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.lesson-media__icon[data-state="off"]{color:#fecaca;background:#7f1d1de8;border-color:#f8717180}.lesson-media__icon[data-state="on"] .lesson-media__icon-slash{display:none}.lesson-media__icon[aria-expanded="true"]{background:#4338ca}.lesson-media__icon:disabled{opacity:.55;cursor:wait}
@@ -79,6 +83,8 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   const remoteVideo = el('img'); remoteVideo.dataset.lessonRemoteVideo = ''; remoteVideo.hidden = true;
   remoteVideo.alt = '对方的实时摄像头画面'; remoteVideo.draggable = false;
   const remoteName = el('span', 'lesson-media__name', '对方'); remoteTile.append(remotePlaceholder, remoteVideo, remoteName);
+  const remoteScreen = el('img'); remoteScreen.dataset.lessonRemoteScreen = ''; remoteScreen.hidden = true;
+  remoteScreen.alt = '学员授权共享的整个电脑屏幕'; remoteScreen.draggable = false; remoteTile.append(remoteScreen);
   const localTile = el('div', 'lesson-media__tile');
   const localPlaceholder = el('span', 'lesson-media__placeholder', '摄像头未开启');
   const localVideo = el('video'); localVideo.dataset.lessonLocalVideo = ''; localVideo.autoplay = true;
@@ -123,6 +129,21 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   icon(microphone, 'M9 5a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0V5Zm-3 6v1a6 6 0 0 0 12 0v-1M12 18v4m-4 0h8', true);
   icon(beautyToggle, 'm12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4L12 3Zm7-2v4m-2-2h4');
   tileControls.append(camera, microphone, beautyToggle); localTile.append(tileControls);
+  const screenToggle = el('button', 'lesson-media__icon'); screenToggle.type = 'button'; screenToggle.dataset.lessonScreenToggle = '';
+  icon(screenToggle, 'M3 4h18v13H3zM12 17v4m-4 0h8');
+  const remoteControls = el('div', 'lesson-media__tile-controls'); remoteControls.append(screenToggle); remoteTile.append(remoteControls);
+  const screenStop = el('button', 'lesson-media__icon'); screenStop.type = 'button'; screenStop.dataset.lessonScreenStop = '';
+  screenStop.title = '停止共享整个屏幕'; screenStop.setAttribute('aria-label', '停止共享整个屏幕');
+  icon(screenStop, 'M3 4h18v13H3zM12 17v4m-4 0h8M4 3l16 18'); tileControls.append(screenStop);
+  const screenConsent = el('div', 'lesson-media__screen-consent'); screenConsent.dataset.lessonScreenConsent = ''; screenConsent.hidden = true;
+  screenConsent.setAttribute('role', 'group'); screenConsent.setAttribute('aria-label', '学员屏幕共享授权');
+  screenConsent.append(el('strong', '', '老师请求查看你的整个屏幕'), el('p', '', '点击后请选择“整个屏幕”。你可以随时停止共享。'));
+  const screenActions = el('div', 'lesson-media__screen-actions');
+  const shareScreen = el('button', '', '选择整个屏幕'); shareScreen.type = 'button'; shareScreen.dataset.lessonScreenShare = '';
+  const declineScreen = el('button', '', '暂不共享'); declineScreen.type = 'button'; declineScreen.dataset.lessonScreenDecline = '';
+  const screenPage = el('button', '', '回页面授权'); screenPage.type = 'button'; screenPage.dataset.lessonScreenOpenPage = ''; screenPage.hidden = true;
+  screenActions.append(shareScreen, declineScreen, screenPage); screenConsent.append(screenActions);
+  const screenStatus = el('p', 'lesson-media__screen-status'); screenStatus.dataset.lessonScreenStatus = ''; screenStatus.setAttribute('role', 'status'); screenStatus.hidden = true;
   const desktop = control('重新打开悬浮窗', 'data-lesson-desktop'); desktop.hidden = true;
   const retry = control('重试设备', 'data-lesson-device-retry'); retry.hidden = true;
   const leave = control('离开课堂', 'data-lesson-media-leave'); leave.className = 'is-danger';
@@ -133,7 +154,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   const exitCancel = el('button', '', '继续上课'); exitCancel.type = 'button'; exitCancel.dataset.lessonExitCancel = '';
   const exitConfirm = el('button', 'is-danger', '确认退出'); exitConfirm.type = 'button'; exitConfirm.dataset.lessonExitConfirm = '';
   exitActions.append(exitCancel, exitConfirm); exitCard.append(exitTitle, exitDetail, exitActions); exitOverlay.append(exitCard);
-  const content = el('div', 'lesson-media__content'); content.append(grid, status);
+  const content = el('div', 'lesson-media__content'); content.append(grid, screenConsent, screenStatus, status);
   root.append(header, content, controls, exitOverlay); doc.body.append(root);
 
   let current: LessonMediaRoom | null = null;
@@ -164,6 +185,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   let remoteVideoStream = '';
   let remoteAt = 0;
   let remotePending = false;
+  let remoteReady = false;
   let position: { x: number; y: number } | null = null;
   let drag: { x: number; y: number; left: number; top: number; pointerId: number } | null = null;
   let pip: PictureInPictureWindow | null = null;
@@ -181,6 +203,8 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   let compositeTimer = 0;
   const captureCanvas = doc.createElement('canvas'); captureCanvas.width = VIDEO_WIDTH; captureCanvas.height = VIDEO_HEIGHT;
   let captureContext: CanvasRenderingContext2D | null = null;
+  let screen: ReturnType<typeof mountLessonScreen> | undefined;
+  screen = mountLessonScreen(config, { send: options.send, onChange: () => { if (screen) render(); } });
   const audioOptions = {
     onFrame(data: string) { if (current && connected && !disposed) options.send({ type: 'audio', lessonId: current._id, seq: sequence++, data }); },
     onError(cause: Error) { audioFailure = microphoneError(cause); audio.stop(); render(); },
@@ -246,6 +270,27 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
     const cameraOn = !!cameraStream;
     localVideo.hidden = !cameraOn || beautyPreview; localPreview.hidden = !cameraOn || !beautyPreview; localPlaceholder.hidden = cameraOn;
     const isTeacher = !!current && config.uid === current.teacherUid;
+    const screenState = screen!.snapshot();
+    const showingScreen = isTeacher && screenState.watching && !!screenState.remoteSource;
+    remoteTile.classList.toggle('is-screen', showingScreen);
+    remoteVideo.hidden = !remoteReady || showingScreen; remotePlaceholder.hidden = remoteReady || showingScreen;
+    remoteScreen.hidden = !showingScreen;
+    if (showingScreen) { if (remoteScreen.getAttribute('src') !== screenState.remoteSource) remoteScreen.src = screenState.remoteSource!; }
+    else remoteScreen.removeAttribute('src');
+    remoteName.textContent = current ? `${isTeacher ? current.studentName : current.teacherName} · ${showingScreen ? '屏幕' : isTeacher ? '学员' : '老师'}` : '对方';
+    screenToggle.hidden = !isTeacher;
+    screenToggle.disabled = !connected || !peerOnline;
+    const screenLabel = screenState.watching ? '返回学员摄像头' : '查看学员整个屏幕';
+    screenToggle.title = screenLabel; screenToggle.setAttribute('aria-label', screenLabel);
+    screenToggle.setAttribute('aria-pressed', String(screenState.watching));
+    screenStop.hidden = isTeacher || !screenState.sharing;
+    screenConsent.hidden = isTeacher || (!screenState.requested && !screenState.starting && !screenState.needsPageAuthorization);
+    shareScreen.disabled = screenState.starting || !connected || !peerOnline;
+    shareScreen.textContent = screenState.starting ? '正在等待授权…' : '选择整个屏幕';
+    declineScreen.disabled = screenState.starting;
+    screenPage.hidden = !pip || !screenState.needsPageAuthorization;
+    screenStatus.textContent = screenState.statusText || screenState.error;
+    screenStatus.hidden = !screenStatus.textContent;
     beautyToggle.hidden = !isTeacher; beautyControls.hidden = !isTeacher || !beautyExpanded;
     beautyToggle.setAttribute('aria-expanded', String(isTeacher && beautyExpanded));
     const cameraLabel = cameraOn ? '摄像头已开启，点击关闭' : '摄像头已关闭，点击开启';
@@ -262,7 +307,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
     status.hidden = !status.textContent;
   }
   function clearRemote() {
-    remoteAt = 0; remotePending = false; remoteSequence = -1;
+    remoteAt = 0; remotePending = false; remoteReady = false; remoteSequence = -1;
     remoteVideo.removeAttribute('src'); remoteVideo.hidden = true;
     remotePlaceholder.hidden = false; remotePlaceholder.textContent = peerOnline ? '对方摄像头未开启' : '等待对方加入';
     audio.resetReceive(); remoteAudioStream = ''; remoteVideoStream = ''; remoteAudioSequence = -1;
@@ -340,7 +385,12 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
       try { context.drawImage(source, 0, top, 320, 180); } catch { /* First frame may still be decoding. */ }
     };
     image(beautyPreview ? localPreview : localVideo, isTeacher ? 0 : 204, !!cameraStream && localVideo.readyState >= 2);
-    image(remoteVideo, isTeacher ? 204 : 0, !remoteVideo.hidden && remoteVideo.complete && remoteVideo.naturalWidth > 0);
+    const sharedScreen = isTeacher && screen?.snapshot().watching && !remoteScreen.hidden;
+    if (sharedScreen && remoteScreen.complete && remoteScreen.naturalWidth > 0) {
+      const scale = Math.min(320 / remoteScreen.naturalWidth, 180 / remoteScreen.naturalHeight);
+      const width = remoteScreen.naturalWidth * scale; const height = remoteScreen.naturalHeight * scale;
+      try { context.drawImage(remoteScreen, (320 - width) / 2, 204 + (180 - height) / 2, width, height); } catch { /* Wait for a decoded frame. */ }
+    } else image(remoteVideo, isTeacher ? 204 : 0, !remoteVideo.hidden && remoteVideo.complete && remoteVideo.naturalWidth > 0);
     context.fillStyle = '#f8fafc'; context.font = '14px sans-serif';
     context.fillText(`${current.teacherName} · 老师`, 10, 198);
     context.fillText(`${current.studentName} · 学员`, 10, 402);
@@ -359,7 +409,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
       promise: null as unknown as Promise<PictureInPictureWindow>, timer: 0 };
     reservations.add(reservation);
     // This call must run synchronously in the join click, before its REST await.
-    try { reservation.promise = picture.requestWindow({ width: 260, height: 420 }); }
+    try { reservation.promise = picture.requestWindow({ width: 220, height: 350, preferInitialWindowPlacement: true }); }
     catch (cause) { reservation.promise = Promise.reject(cause); }
     const request = reservation.promise.then(next => {
       reservation.window = next;
@@ -448,7 +498,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   function release(preserve?: LessonDesktopReservation) {
     for (const reservation of reservations) if (reservation !== preserve) cancelDesktop(reservation);
     generation++; cameraStarting = false; audioStarting = false; audioResuming = false; pipPending = false;
-    stopCamera(); audio.stop(); clearRemote(); closeDesktop();
+    screen?.stop(); stopCamera(); audio.stop(); clearRemote(); closeDesktop();
   }
   function stop(preserve?: LessonDesktopReservation) {
     dismissExit(); beautyExpanded = false;
@@ -501,6 +551,11 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
     if (!current || config.uid !== current.teacherUid) return;
     beautyExpanded = !beautyExpanded; render(); resizeBeautyDesktop(beautyExpanded);
   });
+  screenToggle.addEventListener('click', () => screen?.toggleView());
+  shareScreen.addEventListener('click', () => { void screen?.startSharing(); });
+  declineScreen.addEventListener('click', () => screen?.declineSharing());
+  screenStop.addEventListener('click', () => screen?.stopSharing());
+  screenPage.addEventListener('click', () => { closeDesktop(); win.focus(); shareScreen.focus(); });
   beautyControls.addEventListener('keydown', event => {
     if (event.key === 'Escape') { event.preventDefault(); beautyExpanded = false; render(); resizeBeautyDesktop(false); beautyToggle.focus(); }
   });
@@ -539,6 +594,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   const resize = () => { if (position && !pip) place(position); };
   win.addEventListener('resize', resize);
   function captureFrame() {
+    screen?.capture();
     if (!current || disposed || !cameraStream || localVideo.readyState < 2) return;
     const frame = localCameraFrame();
     if (!connected) return;
@@ -580,22 +636,24 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
   startCaptureClock(win);
   const staleTimer = win.setInterval(() => {
     if (remoteAt && Date.now() - remoteAt > STALE_VIDEO_MS) {
-      remoteVideo.removeAttribute('src'); remoteVideo.hidden = true; remotePlaceholder.hidden = false;
+      remoteReady = false; remoteVideo.removeAttribute('src'); remoteVideo.hidden = true; remotePlaceholder.hidden = false;
       remotePlaceholder.textContent = peerOnline ? '对方摄像头已暂停' : '等待对方加入'; remoteAt = 0; remotePending = false;
+      render();
     }
   }, 300);
   remoteVideo.addEventListener('load', () => {
     remotePending = false;
     if (current && connected && remoteAt && Date.now() - remoteAt <= STALE_VIDEO_MS) {
-      remoteVideo.hidden = false; remotePlaceholder.hidden = true;
+      remoteReady = true; render();
     }
   });
-  remoteVideo.addEventListener('error', () => { remotePending = false; remoteVideo.hidden = true; remotePlaceholder.hidden = false; });
+  remoteVideo.addEventListener('error', () => { remoteReady = false; remotePending = false; render(); });
 
   return {
     async start(lesson: LessonMediaRoom, reservation?: LessonDesktopReservation) {
       if (disposed) return;
       stop(reservation); current = lesson;
+      screen?.start(lesson);
       const preferences = devicePreferences(lesson);
       cameraWanted = preferences?.cameraWanted ?? true; muted = preferences?.muted ?? false;
       cameraFailure = ''; audioFailure = ''; desktopFailure = ''; root.hidden = false;
@@ -615,10 +673,12 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
       if (disposed || !current) return;
       if (message.type === 'peer') {
         peerOnline = !!message.online;
+        screen?.setPeerOnline(peerOnline, message.streamId);
         if (!peerOnline) clearRemote(); render(); return;
       }
       const peerUid = config.uid === current.teacherUid ? current.studentUid : current.teacherUid;
       if (!connected || message.lessonId !== current._id || message.uid !== peerUid) return;
+      if (['screen', 'screen-state', 'screen-view'].includes(message.type)) { screen?.receive(message); return; }
       if (message.type === 'video') {
         if (typeof message.data !== 'string' || message.data.length > MAX_VIDEO_LENGTH
           || !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(message.data)
@@ -642,6 +702,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
       if (disposed) return;
       const wasConnected = connected;
       connected = value && !!current;
+      screen?.setConnected(connected);
       // Renewing a transport lease does not end the accepted classroom or
       // discard devices that the user has already permitted for this class.
       if (!connected) { peerOnline = false; audio.setTransmitting(false); clearRemote(); }
@@ -658,6 +719,7 @@ export function mountLessonMedia(config: { uid: number }, options: MediaOptions)
     dispose() {
       if (disposed) return;
       stop(); disposed = true;
+      screen?.dispose();
       try { captureTimerWindow.clearInterval(captureTimer); } catch { /* Its desktop window may already be gone. */ }
       win.clearInterval(staleTimer);
       win.removeEventListener('resize', resize); root.remove();

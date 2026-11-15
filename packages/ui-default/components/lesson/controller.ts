@@ -786,7 +786,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
           clearTimeout(handshakeTimer);
           recoveryQueued = false;
           socketReady = true; peerOnline = !!message.peerOnline; reconnectAttempt = 0;
-          media.setConnected(true); media.receive({ type: 'peer', online: peerOnline });
+          media.setConnected(true); media.receive({ type: 'peer', online: peerOnline, streamId: message.peerStreamId });
           replaceLesson(message.lesson); renderActive(); updateSharing(true);
         } else if (message.type === 'lesson' && message.lesson?._id === lessonId) replaceLesson(message.lesson);
         else if (message.type === 'ended' && (!message.lessonId || message.lessonId === lessonId)) {

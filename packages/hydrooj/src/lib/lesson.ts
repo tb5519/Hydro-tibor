@@ -1,4 +1,4 @@
-/** Classroom media is live-only: bounded JPEG camera frames and 16 kHz μ-law audio. */
+/** Classroom media is live-only: bounded JPEG camera/screen frames and 16 kHz μ-law audio. */
 export const LESSON_LEASE_MS = 45_000;
 export const LESSON_JOIN_MS = 120_000;
 export const LESSON_MAX_MESSAGE_BYTES = 258 * 1024;
@@ -49,12 +49,17 @@ export function validateLessonMessage(value: any) {
     const fields: Record<string, string[]> = {
         join: ['type', 'lessonId', 'tabId'], pulse: ['type'],
         video: ['type', 'lessonId', 'seq', 'data'], audio: ['type', 'lessonId', 'seq', 'data'],
+        screen: ['type', 'lessonId', 'seq', 'data'],
+        'screen-view': ['type', 'lessonId', 'watching'], 'screen-state': ['type', 'lessonId', 'state'],
     };
     if (!Object.hasOwn(fields, value.type) || Object.keys(value).some((key) => !fields[value.type].includes(key))) invalid();
     if (value.type === 'join' && (!lessonId(value.lessonId) || !lessonId(value.tabId))) invalid();
-    if (['video', 'audio'].includes(value.type) && (!lessonId(value.lessonId) || !Number.isSafeInteger(value.seq)
+    if (['screen-view', 'screen-state'].includes(value.type) && !lessonId(value.lessonId)) invalid();
+    if (value.type === 'screen-view' && typeof value.watching !== 'boolean') invalid();
+    if (value.type === 'screen-state' && !['sharing', 'stopped', 'declined'].includes(value.state)) invalid();
+    if (['video', 'audio', 'screen'].includes(value.type) && (!lessonId(value.lessonId) || !Number.isSafeInteger(value.seq)
         || value.seq < 0 || typeof value.data !== 'string')) invalid();
-    if (value.type === 'video' && !validJpeg(value.data)) invalid();
+    if (['video', 'screen'].includes(value.type) && !validJpeg(value.data)) invalid();
     if (value.type === 'audio' && (value.data.length !== 856 || !/^[A-Za-z0-9+/]{854}==$/.test(value.data)
         || Buffer.from(value.data, 'base64').length !== 640 || Buffer.from(value.data, 'base64').toString('base64') !== value.data)) invalid();
 }
@@ -73,18 +78,22 @@ export class LessonRateLimit {
     private audio = { tokens: 8, at: 0 };
     private video = { tokens: 3, at: 0 };
     private bytes = { tokens: 512 * 1024, at: 0 };
+    private screen = { tokens: 3, at: 0 };
+    private screenBytes = { tokens: 512 * 1024, at: 0 };
     private controls: number[] = [];
     accept(type: string, length = 0, now = Date.now()) {
-        if (type === 'audio' || type === 'video') {
-            const bucket = this[type]; const rate = type === 'audio' ? .03 : .04;
+        if (type === 'audio' || type === 'video' || type === 'screen') {
+            const bucket = this[type]; const rate = type === 'audio' ? .03 : type === 'screen' ? .012 : .04;
             bucket.tokens = Math.min(type === 'audio' ? 8 : 3, bucket.tokens + Math.max(0, now - bucket.at) * rate);
             bucket.at = now;
             if (bucket.tokens < 1) return false;
-            if (type === 'video') {
-                this.bytes.tokens = Math.min(512 * 1024, this.bytes.tokens + Math.max(0, now - this.bytes.at) * (3 * 1024 * 1024 / 1000));
-                this.bytes.at = now;
-                if (this.bytes.tokens < length) return false;
-                this.bytes.tokens -= length;
+            if (type === 'video' || type === 'screen') {
+                const bytes = type === 'screen' ? this.screenBytes : this.bytes;
+                const byteRate = type === 'screen' ? 768 * 1024 : 3 * 1024 * 1024;
+                bytes.tokens = Math.min(512 * 1024, bytes.tokens + Math.max(0, now - bytes.at) * byteRate / 1000);
+                bytes.at = now;
+                if (bytes.tokens < length) return false;
+                bytes.tokens -= length;
             }
             bucket.tokens--;
             return true;

@@ -21,6 +21,7 @@ function fixture(t, options = {}) {
     if (options.storageDenied) Object.defineProperty(window, 'localStorage', { get() { throw new Error('Storage disabled'); } });
     else for (const [key, value] of Object.entries(options.storage || {})) window.localStorage.setItem(key, value);
     const sent = []; const captures = []; const streams = []; const audioFrames = []; const encodes = [];
+    const screenCaptures = []; const screenStreams = []; let delayedScreenResolve;
     const beautyInstances = []; const draws = [];
     let now = Date.now(); let intervalId = 0;
     const intervals = new Map();
@@ -50,17 +51,19 @@ function fixture(t, options = {}) {
         resetReceive() { audioResets++; },
         receive(...args) { audioFrames.push(args); },
     };
-    function makeStream() {
+    function makeStream(screen = false) {
         const listeners = new Map();
         const track = {
             stopped: 0, enabled: true, readyState: 'live',
             stop() { this.stopped++; this.readyState = 'ended'; },
             addEventListener(name, listener) { listeners.set(name, listener); },
             removeEventListener(name) { listeners.delete(name); },
-            getSettings() { return { width: 320, height: 240 }; },
+            getSettings() { return { width: screen ? 1920 : 320, height: screen ? 1080 : 240,
+                ...(screen ? { displaySurface: options.screenSurface || 'monitor' } : {}) }; },
+            end() { this.readyState = 'ended'; listeners.get('ended')?.(); },
         };
-        const stream = { getTracks: () => [track], getVideoTracks: () => [track], getAudioTracks: () => [], track };
-        streams.push(stream); return stream;
+        const stream = { getTracks: () => [track], getVideoTracks: () => [track], getAudioTracks: () => [], track, screen };
+        (screen ? screenStreams : streams).push(stream); return stream;
     }
     Object.defineProperty(window, 'isSecureContext', { value: true });
     Object.defineProperty(window.navigator, 'mediaDevices', { value: {
@@ -71,11 +74,21 @@ function fixture(t, options = {}) {
             if (options.delayedCamera) return new Promise((resolve) => { delayedResolve = () => resolve(stream); });
             return Promise.resolve(stream);
         },
+        getDisplayMedia(constraints) {
+            screenCaptures.push(constraints);
+            if (options.screenDenied) return Promise.reject(Object.assign(new Error('Screen denied'), { name: 'NotAllowedError' }));
+            const stream = makeStream(true);
+            if (options.delayedScreen) return new Promise(resolve => { delayedScreenResolve = () => resolve(stream); });
+            return Promise.resolve(stream);
+        },
     } });
     window.HTMLMediaElement.prototype.play = async () => {};
     window.HTMLMediaElement.prototype.pause = () => {};
     Object.defineProperties(window.HTMLMediaElement.prototype, { readyState: { get: () => 4 }, paused: { get: () => false } });
-    Object.defineProperties(window.HTMLVideoElement.prototype, { videoWidth: { get: () => 320 }, videoHeight: { get: () => 240 } });
+    Object.defineProperties(window.HTMLVideoElement.prototype, {
+        videoWidth: { get() { return this.srcObject?.screen ? 1920 : 320; } },
+        videoHeight: { get() { return this.srcObject?.screen ? 1080 : 240; } },
+    });
     window.HTMLCanvasElement.prototype.getContext = () => ({
         fillRect() {}, clearRect() {}, drawImage(...args) { draws.push(args); }, fillText() {}, save() {}, restore() {},
         measureText: () => ({ width: 20 }),
@@ -86,6 +99,11 @@ function fixture(t, options = {}) {
     vm.runInNewContext(transformSync(fs.readFileSync(path.join(path.dirname(source), 'beauty.ts'), 'utf8'), { loader: 'ts', format: 'cjs' }).code,
         { module: beautyModule, exports: beautyModule.exports, Float32Array });
     const code = transformSync(fs.readFileSync(source, 'utf8'), { loader: 'ts', format: 'cjs' }).code;
+    const fixtureDate = options.manualClock ? class ClockDate extends Date { static now() { return now; } } : Date;
+    const screenModule = { exports: {} };
+    vm.runInNewContext(transformSync(fs.readFileSync(path.join(path.dirname(source), 'screen.ts'), 'utf8'), { loader: 'ts', format: 'cjs' }).code,
+        { module: screenModule, exports: screenModule.exports, window, document: window.document, navigator: window.navigator,
+            Date: fixtureDate, console, setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window) });
     vm.runInNewContext(code, {
         module, exports: module.exports, window, document: window.document, navigator: window.navigator,
         HTMLElement: window.HTMLElement, HTMLVideoElement: window.HTMLVideoElement, Image: window.Image,
@@ -93,10 +111,11 @@ function fixture(t, options = {}) {
         requestAnimationFrame: window.requestAnimationFrame.bind(window), cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
         setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window),
         setInterval: window.setInterval.bind(window), clearInterval: window.clearInterval.bind(window),
-        Date: options.manualClock ? class ClockDate extends Date { static now() { return now; } } : Date,
+        Date: fixtureDate,
         require(name) {
             if (name.includes('voice_call/audio')) return { VoiceAudio: function FakeAudio() {}, microphoneError: (error) => error.message };
             if (name === './beauty') return beautyModule.exports;
+            if (name === './screen') return screenModule.exports;
             throw new Error(`Unexpected import: ${name}`);
         },
     });
@@ -118,6 +137,7 @@ function fixture(t, options = {}) {
     const root = window.document.querySelector('[data-lesson-media]');
     t.after(() => { media.dispose(); window.close(); });
     return { window, document: window.document, media, sent, captures, streams, audio, audioFrames, encodes, beautyInstances, draws, leaveConfirmations,
+        screenCaptures, screenStreams, resolveScreen: () => delayedScreenResolve?.(),
         resolveCamera: () => delayedResolve?.(), sendAudio: (data) => audioOptions.onFrame(data),
         resolveAudioResume: () => resumeResolve?.(),
         advance(milliseconds) { now += milliseconds; for (const interval of intervals.values()) interval.callback(); },
@@ -441,7 +461,10 @@ it('reserves an empty desktop window in the join click and only adopts it after 
     let calls = 0; let closed = 0;
     const originalClose = pip.window.close.bind(pip.window);
     pip.window.close = () => { closed++; pip.window.dispatchEvent(new pip.window.Event('pagehide')); };
-    f.window.documentPictureInPicture = { requestWindow(size) { calls++; assert.equal(size.width, 260); assert.equal(size.height, 420); return Promise.resolve(pip.window); } };
+    f.window.documentPictureInPicture = { requestWindow(size) {
+        calls++; assert.equal(size.width, 220); assert.equal(size.height, 350); assert.equal(size.preferInitialWindowPlacement, true);
+        return Promise.resolve(pip.window);
+    } };
     t.after(originalClose);
     const reservation = f.media.prepareDesktop();
     assert.equal(calls, 1, 'the browser API runs synchronously, before a REST promise can consume user activation');
@@ -502,7 +525,9 @@ it('camera and microphone icons live on the local picture and show clear off and
     const camera = f.root.querySelector('[data-lesson-camera]'); const microphone = f.root.querySelector('[data-lesson-microphone]');
     const localTile = f.root.querySelector('[data-lesson-local-video]').parentElement;
     assert.equal(camera.closest('.lesson-media__tile'), localTile); assert.equal(microphone.closest('.lesson-media__tile'), localTile);
-    assert.equal(f.root.querySelector('[data-lesson-remote-video]').parentElement.querySelector('button'), null);
+    const remoteTile = f.root.querySelector('[data-lesson-remote-video]').parentElement;
+    assert.equal(remoteTile.querySelector('[data-lesson-camera], [data-lesson-microphone]'), null);
+    assert.equal(remoteTile.querySelector('[data-lesson-screen-toggle]').hidden, true, 'only a teacher can request the learner desktop');
     assert.equal(camera.dataset.state, 'on'); assert.equal(microphone.dataset.state, 'on');
     assert.ok(camera.querySelector('svg')); assert.ok(microphone.querySelector('svg'));
     camera.click(); microphone.click();
@@ -705,4 +730,94 @@ it('video picture-in-picture composes the same processed teacher preview that is
     const preview = f.root.querySelector('[data-lesson-local-preview]');
     assert(f.draws.some(args => args[0] === preview && args[3] === 960 && args[4] === 540), 'outgoing JPEG uses the filtered source');
     assert(f.draws.some(args => args[0] === preview && args[3] === 320 && args[4] === 180), 'the desktop composite uses that same filtered source');
+});
+
+async function connectScreenFixture(f) {
+    await f.media.start(lesson); f.media.setConnected(true);
+    f.media.receive({ type: 'peer', online: true, streamId: f.captures.length && f.root.querySelector('[data-lesson-participant="teacher"] [data-lesson-local-video]') ? 'student-screen-tab' : 'teacher-screen-tab' });
+    await tick();
+}
+const screenMessage = (type, values = {}, uid = lesson.teacherUid) => ({
+    type, lessonId: lesson._id, uid, streamId: uid === lesson.teacherUid ? 'teacher-screen-tab' : 'student-screen-tab', ...values,
+});
+
+it('the teacher requests the learner desktop from its camera tile without opening any display picker', async t => {
+    const f = fixture(t, { manualClock: true }); await connectScreenFixture(f);
+    const audioStops = f.audioStops;
+    const toggle = f.root.querySelector('[data-lesson-screen-toggle]');
+    assert(toggle && !toggle.hidden); assert.equal(toggle.closest('[data-lesson-participant]').dataset.lessonParticipant, 'student');
+    assert.equal(f.screenCaptures.length, 0);
+    toggle.click();
+    assert(f.sent.some(message => message.type === 'screen-view' && message.watching === true));
+    assert.equal(f.screenCaptures.length, 0); assert.equal(f.captures.length, 1); assert.equal(f.audioStarts, 1);
+    toggle.click();
+    assert.equal(f.sent.filter(message => message.type === 'screen-view').at(-1).watching, false);
+    assert.equal(f.captures.length, 1); assert.equal(f.streams[0].track.stopped, 0); assert.equal(f.audioStops, audioStops);
+});
+
+it('a learner screen request waits for its explicit click and can be declined with no capture', async t => {
+    const f = fixture(t, { uid: lesson.studentUid, manualClock: true }); await connectScreenFixture(f);
+    f.media.receive(screenMessage('screen-view', { watching: true }));
+    const consent = f.root.querySelector('[data-lesson-screen-consent]');
+    assert(consent && !consent.hidden); assert.equal(f.screenCaptures.length, 0);
+    f.root.querySelector('[data-lesson-screen-decline]').click();
+    assert.equal(consent.hidden, true); assert.equal(f.screenCaptures.length, 0);
+    assert(f.sent.some(message => message.type === 'screen-state' && message.state === 'declined'));
+    assert.equal(f.streams[0].track.stopped, 0);
+});
+
+it('learner whole-desktop sharing starts only from consent and its stop icon closes screen tracks independently', async t => {
+    const f = fixture(t, { uid: lesson.studentUid, manualClock: true }); await connectScreenFixture(f);
+    f.media.receive(screenMessage('screen-view', { watching: true }));
+    f.root.querySelector('[data-lesson-screen-share]').click();
+    assert.equal(f.screenCaptures.length, 1, 'the display picker starts synchronously in the learner click');
+    assert.equal(f.screenCaptures[0].audio, false); assert.equal(f.screenCaptures[0].video.displaySurface, 'monitor');
+    await tick(); f.advance(150);
+    assert(f.sent.some(message => message.type === 'screen-state' && message.state === 'sharing'));
+    assert(f.sent.some(message => message.type === 'screen'));
+    const stop = f.root.querySelector('[data-lesson-screen-stop]'); assert(stop && !stop.hidden);
+    stop.click();
+    assert(f.screenStreams[0].track.stopped > 0); assert.equal(f.streams[0].track.stopped, 0); assert.equal(f.audio.ready, true);
+    assert(f.sent.some(message => message.type === 'screen-state' && message.state === 'stopped'));
+    const count = f.sent.filter(message => message.type === 'screen').length;
+    f.advance(1000); assert.equal(f.sent.filter(message => message.type === 'screen').length, count);
+});
+
+it('camera toggling never restarts permitted media and remote desktop pixels disappear when the learner stops', async t => {
+    const f = fixture(t, { manualClock: true }); await connectScreenFixture(f);
+    const toggle = f.root.querySelector('[data-lesson-screen-toggle]'); toggle.click();
+    f.media.receive(screenMessage('screen-state', { state: 'sharing' }, lesson.studentUid));
+    f.media.receive(screenMessage('screen', { seq: 1, data: jpeg }, lesson.studentUid));
+    const screen = f.root.querySelector('[data-lesson-remote-screen]'); screen.dispatchEvent(new f.window.Event('load'));
+    assert.equal(screen.getAttribute('src'), jpeg); assert.equal(screen.hidden, false);
+    f.media.receive(screenMessage('screen-state', { state: 'stopped' }, lesson.studentUid));
+    assert.equal(screen.hidden, true); assert.equal(screen.getAttribute('src'), null);
+    assert.equal(f.captures.length, 1); assert.equal(f.audioStarts, 1); assert.equal(f.streams[0].track.stopped, 0);
+});
+
+it('a screen picker resolving after class exit cannot revive capture or retain its track', async t => {
+    const f = fixture(t, { uid: lesson.studentUid, manualClock: true, delayedScreen: true }); await connectScreenFixture(f);
+    f.media.receive(screenMessage('screen-view', { watching: true })); f.root.querySelector('[data-lesson-screen-share]').click();
+    assert.equal(f.screenCaptures.length, 1); f.media.stop(); f.resolveScreen(); await tick(); f.advance(1000);
+    assert(f.screenStreams[0].track.stopped > 0); assert.equal(f.sent.filter(message => message.type === 'screen').length, 0);
+    assert.equal(f.root.hidden, true);
+});
+
+it('window-only screen selection is rejected without affecting classroom camera or microphone', async t => {
+    const f = fixture(t, { uid: lesson.studentUid, manualClock: true, screenSurface: 'window' }); await connectScreenFixture(f);
+    f.media.receive(screenMessage('screen-view', { watching: true })); f.root.querySelector('[data-lesson-screen-share]').click();
+    await tick(); f.advance(500);
+    assert(f.screenStreams[0].track.stopped > 0); assert.equal(f.sent.filter(message => message.type === 'screen').length, 0);
+    assert.match(f.root.textContent, /整个屏幕/); assert.equal(f.streams[0].track.stopped, 0); assert.equal(f.audio.ready, true);
+});
+
+it('cancelling browser screen consent leaves the learner camera and microphone running', async t => {
+    const f = fixture(t, { uid: lesson.studentUid, manualClock: true, screenDenied: true }); await connectScreenFixture(f);
+    f.media.receive(screenMessage('screen-view', { watching: true })); f.root.querySelector('[data-lesson-screen-share]').click();
+    await tick(); f.advance(500);
+    assert.equal(f.screenCaptures.length, 1); assert.equal(f.screenStreams.length, 0);
+    assert(f.sent.some(message => message.type === 'screen-state' && message.state === 'declined'));
+    assert.equal(f.sent.filter(message => message.type === 'screen').length, 0);
+    assert.equal(f.streams[0].track.stopped, 0); assert.equal(f.audio.ready, true); assert.equal(f.root.hidden, false);
+    assert.match(f.root.textContent, /授权/);
 });

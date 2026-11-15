@@ -26,6 +26,71 @@ function jpeg(width = 320, height = 240, padding = 0) {
 }
 const tab = (uid) => `lesson-tab-${uid}-testing`;
 describe('lesson media protocol', () => {
+    it('validates bounded screen pictures and only the narrow screen-view and screen-state controls', () => {
+        protocol.validateLessonMessage({ type: 'screen-view', lessonId: 'lesson-testing', watching: true });
+        protocol.validateLessonMessage({ type: 'screen-view', lessonId: 'lesson-testing', watching: false });
+        for (const state of ['sharing', 'stopped', 'declined']) {
+            protocol.validateLessonMessage({ type: 'screen-state', lessonId: 'lesson-testing', state });
+        }
+        protocol.validateLessonMessage({ type: 'screen', lessonId: 'lesson-testing', seq: 0, data: jpeg(1280, 720) });
+        for (const value of [
+            { type: 'screen-view', lessonId: 'lesson-testing', watching: 1 },
+            { type: 'screen-view', lessonId: 'lesson-testing' },
+            { type: 'screen-view', lessonId: 'lesson-testing', watching: true, uid: 10 },
+            { type: 'screen-state', lessonId: 'lesson-testing', state: 'granted' },
+            { type: 'screen-state', lessonId: 'lesson-testing', state: 'sharing', to: 2 },
+            { type: 'screen', lessonId: 'lesson-testing', seq: -1, data: jpeg() },
+            { type: 'screen', lessonId: 'lesson-testing', seq: 1, data: jpeg(1281, 720) },
+            { type: 'screen', lessonId: 'lesson-testing', seq: 1, data: jpeg(1280, 721) },
+            { type: 'screen', lessonId: 'lesson-testing', seq: 1, data: jpeg(1280, 720, 200000) },
+            { type: 'screen', lessonId: 'lesson-testing', seq: 1, data: 'data:image/svg+xml;base64,PHN2Zz4=' },
+            { type: 'screen', lessonId: 'lesson-testing', seq: 1, data: jpeg(), streamId: 'forged-stream' },
+        ]) assert.throws(() => protocol.validateLessonMessage(value), code('INVALID_MESSAGE'));
+    });
+    it('bounds screen frame and byte bursts independently of camera, microphone and control budgets', () => {
+        const frameLimiter = new protocol.LessonRateLimit();
+        for (let i = 0; i < 3; i++) assert.equal(frameLimiter.accept('screen', 1024, 100000), true);
+        assert.equal(frameLimiter.accept('screen', 1024, 100000), false);
+        assert.equal(frameLimiter.accept('screen', 1024, 100090), true);
+        assert.equal(frameLimiter.accept('video', 1024, 100000), true);
+        assert.equal(frameLimiter.accept('audio', 856, 100000), true);
+        assert.equal(frameLimiter.accept('pulse', 0, 100000), true);
+        const byteLimiter = new protocol.LessonRateLimit(); let bytes = 0; let dropped = 0;
+        for (let elapsed = 0; elapsed <= 10000; elapsed += 10) {
+            if (byteLimiter.accept('screen', 262144, 100000 + elapsed)) bytes += 262144;
+            else dropped++;
+        }
+        assert(dropped > 0);
+        assert(bytes <= 512 * 1024 + 10 * 768 * 1024, 'Screen capture has its own bounded 768 KiB/s byte allowance');
+        assert.equal(byteLimiter.accept('video', 96000, 110000), true);
+        assert.equal(byteLimiter.accept('audio', 856, 110000), true);
+        assert.equal(byteLimiter.accept('screen-view', 0, 110000), true);
+    });
+    it('keeps congested screen IPC separate from the camera, microphone and control allowances', () => {
+        const pending = [];
+        const handlers = load('packages/hydrooj/src/handler/lesson.ts', {
+            '../lib/lesson': protocol,
+            '../lib/live_share': { LiveShareError: class extends Error {} },
+            '../model/lesson': {}, '../model/builtin': { PERM: {}, PRIV: {} },
+            '../model/token': {}, '../model/workspace': {},
+            '../service/bus': { parallel() { throw new Error('Cluster media must use live IPC'); } },
+            '../service/server': { Handler: class {}, ConnectionHandler: class {}, subscribe: () => () => {} },
+        }, { process: { env: { exec_mode: 'cluster_mode', name: 'hydro-test' }, connected: true,
+            send(message, done) { pending.push({ message, done }); } } });
+        const event = { uid: 2, lessonId: 'lesson-testing', sentAt: Date.now(),
+            message: { type: 'screen', lessonId: 'lesson-testing', seq: 1, data: jpeg(1280, 720, 196573) } };
+        for (let i = 0; i < 20; i++) handlers.emitLesson(event);
+        const screens = pending.length;
+        assert(screens > 0 && screens < 20);
+        assert(pending.reduce((bytes, item) => bytes + Buffer.byteLength(item.message.data.payload), 0) <= 2 * 1024 * 1024);
+        handlers.emitLesson({ ...event, message: { ...event.message, type: 'video' } });
+        handlers.emitLesson({ ...event, message: { type: 'audio', lessonId: 'lesson-testing', seq: 1, data: audio } });
+        handlers.emitLesson({ ...event, message: { type: 'screen-view', lessonId: 'lesson-testing', watching: false } });
+        assert.equal(pending.length, screens + 3);
+        for (const item of pending) item.done();
+        handlers.emitLesson(event);
+        assert.equal(pending.length, screens + 4); pending.at(-1).done();
+    });
     it('keeps account notification controls small and rejects identity, routing and media fields', () => {
         const subscribe = { type: 'subscribe', expectedUid: Number.MAX_SAFE_INTEGER };
         protocol.validateLessonNotificationMessage(subscribe);

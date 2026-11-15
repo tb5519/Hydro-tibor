@@ -60,7 +60,7 @@ async function setupDatabase() {
     return setupPromise;
 }
 async function startDatabase() {
-    server = await MongoMemoryServer.create();
+    server = await MongoMemoryServer.create({ instance: { args: ['--nounixsocket'] } });
     client = await MongoClient.connect(server.getUri()); database = client.db('lesson_tests');
     model = load('packages/hydrooj/src/model/lesson.ts', {
         '../lib/lesson': protocol, '../service/db': { collection: (name) => database.collection(name) }, './live_share': share,
@@ -306,6 +306,160 @@ function resumeHttp(uid, body = { tabId: tab(uid) }, currentDomain = 'class-b') 
 async function runResumeHttp(fixture) {
     await fixture.instance.prepare(); await fixture.instance.post(); return fixture.instance.response.body;
 }
+
+describe('learner whole-screen media authorization', () => {
+    before(setupDatabase);
+    const screens = fixture => fixture.sent.filter(message => message.type === 'screen');
+    async function shareScreen(pair) {
+        await pair.teacher.instance.message({ type: 'screen-view', lessonId: pair.room._id, watching: true });
+        await settle();
+        await pair.student.instance.message({ type: 'screen-state', lessonId: pair.room._id, state: 'sharing' });
+        await settle();
+    }
+    const screenFrame = (pair, seq = 0) => ({ type: 'screen', lessonId: pair.room._id, seq, data: jpeg(1280, 720) });
+    it('requires both the teacher view request and learner sharing state before sending only to that teacher', async () => {
+        const pair = await activePair();
+        const teacherMember = await model.members.findOne({ _id: 2 });
+        const studentReady = pair.student.sent.find(message => message.type === 'ready');
+        assert.equal(studentReady.peerOnline, true);
+        assert.equal(studentReady.peerStreamId, teacherMember.connectionId,
+            'The student ready message identifies the already bound teacher for the initial screen handshake');
+        await pair.student.instance.message(screenFrame(pair)); await settle();
+        assert.equal(screens(pair.teacher).length, 0);
+        await pair.teacher.instance.message({ type: 'screen-view', lessonId: pair.room._id, watching: true }); await settle();
+        assert(pair.student.sent.some(message => message.type === 'screen-view' && message.watching && message.uid === 2));
+        await pair.student.instance.message(screenFrame(pair, 1)); await settle();
+        assert.equal(screens(pair.teacher).length, 0, 'A teacher request cannot grant learner screen consent');
+        await pair.student.instance.message({ type: 'screen-state', lessonId: pair.room._id, state: 'sharing' }); await settle();
+        assert(pair.teacher.sent.some(message => message.type === 'screen-state' && message.state === 'sharing' && message.uid === 10));
+        await pair.student.instance.message(screenFrame(pair, 2)); await settle();
+        assert.equal(screens(pair.teacher).length, 1);
+        assert.equal(screens(pair.teacher)[0].uid, 10); assert.equal(screens(pair.student).length, 0);
+        for (const name of ['lesson.room', 'lesson.member', 'lesson.booking.slot', 'lesson.resumption']) {
+            assert(!JSON.stringify(await database.collection(name).find({}).toArray()).includes(screenFrame(pair).data));
+        }
+    });
+    it('rejects learner view requests, teacher sharing states and frames, and forged routing without stopping camera or audio', async () => {
+        const pair = await activePair(); await shareScreen(pair);
+        const before = pair.student.sent.length;
+        await pair.student.instance.message({ type: 'screen-view', lessonId: pair.room._id, watching: true });
+        await pair.teacher.instance.message({ type: 'screen-state', lessonId: pair.room._id, state: 'sharing' });
+        await pair.teacher.instance.message(screenFrame(pair));
+        await pair.student.instance.message({ ...screenFrame(pair), uid: 11 });
+        await pair.student.instance.message({ type: 'screen-state', lessonId: pair.room._id, state: 'sharing', connectionId: 'forged-owner' });
+        await settle();
+        assert.equal(screens(pair.teacher).length, 0); assert.equal(screens(pair.student).length, 0);
+        assert(pair.student.sent.slice(before).some(message => message.type === 'error'));
+        assert(pair.teacher.sent.some(message => message.type === 'error'));
+        await pair.teacher.instance.message({ type: 'video', lessonId: pair.room._id, seq: 0, data: jpeg() });
+        await pair.student.instance.message({ type: 'audio', lessonId: pair.room._id, seq: 0, data: audio }); await settle();
+        assert(pair.student.sent.some(message => message.type === 'video' && message.uid === 2));
+        assert(pair.teacher.sent.some(message => message.type === 'audio' && message.uid === 10));
+        assert.equal(pair.student.closed.length, 0); assert.equal(pair.teacher.closed.length, 0);
+    });
+    it('drops screen frames immediately when the teacher returns to the camera or learner stops sharing', async () => {
+        const pair = await activePair(); await shareScreen(pair);
+        await pair.student.instance.message(screenFrame(pair)); await settle();
+        assert.equal(screens(pair.teacher).length, 1);
+        await pair.teacher.instance.message({ type: 'screen-view', lessonId: pair.room._id, watching: false }); await settle();
+        await pair.student.instance.message(screenFrame(pair, 1)); await settle();
+        assert.equal(screens(pair.teacher).length, 1);
+        assert(pair.student.sent.some(message => message.type === 'screen-view' && message.watching === false));
+        await pair.teacher.instance.message({ type: 'screen-view', lessonId: pair.room._id, watching: true }); await settle();
+        await pair.student.instance.message({ type: 'screen-state', lessonId: pair.room._id, state: 'stopped' }); await settle();
+        await pair.student.instance.message(screenFrame(pair, 2)); await settle();
+        assert.equal(screens(pair.teacher).length, 1);
+        assert(pair.teacher.sent.some(message => message.type === 'screen-state' && message.state === 'stopped'));
+    });
+    it('keeps declined screen sharing idle until a later explicit learner sharing state', async () => {
+        const pair = await activePair();
+        await pair.teacher.instance.message({ type: 'screen-view', lessonId: pair.room._id, watching: true }); await settle();
+        await pair.student.instance.message({ type: 'screen-state', lessonId: pair.room._id, state: 'declined' }); await settle();
+        await pair.student.instance.message(screenFrame(pair)); await settle();
+        assert.equal(screens(pair.teacher).length, 0);
+        assert(pair.teacher.sent.some(message => message.type === 'screen-state' && message.state === 'declined'));
+        await pair.student.instance.message({ type: 'screen-state', lessonId: pair.room._id, state: 'sharing' }); await settle();
+        await pair.student.instance.message(screenFrame(pair, 1)); await settle();
+        assert.equal(screens(pair.teacher).length, 1);
+    });
+    it('drops stale or backpressured screen frames and does not replay them after congestion clears', async () => {
+        const pair = await activePair(); await shareScreen(pair);
+        pair.teacher.instance.conn.bufferedAmount = 600 * 1024;
+        await pair.student.instance.message(screenFrame(pair)); await settle();
+        assert.equal(screens(pair.teacher).length, 0);
+        pair.teacher.instance.conn.bufferedAmount = 0;
+        const sender = await model.members.findOne({ _id: 10 }); const receiver = await model.members.findOne({ _id: 2 });
+        await pair.teacher.instance.onLessonEvent({ uid: 2, lessonId: pair.room._id, connectionId: receiver.connectionId,
+            sentAt: Date.now() - 2000, message: { ...screenFrame(pair, 1), uid: 10, streamId: sender.connectionId } });
+        await settle(); assert.equal(screens(pair.teacher).length, 0);
+        await pair.student.instance.message(screenFrame(pair, 2)); await settle();
+        assert.equal(screens(pair.teacher).length, 1); assert.equal(screens(pair.teacher)[0].seq, 2);
+    });
+    it('fences old teacher view requests after a replacement media socket and requires the new pair handshake', async () => {
+        const pair = await activePair(); await shareScreen(pair);
+        const oldTeacher = await model.members.findOne({ _id: 2 });
+        await model.resume(2, 'new-screen-teacher-tab', handlers.emitLesson); await settle();
+        const replacement = connection(2); await connect(replacement, 2, pair.room._id, 'new-screen-teacher-tab');
+        await pair.student.instance.message({ type: 'pulse' }); await replacement.instance.message({ type: 'pulse' }); await settle();
+        const student = await model.members.findOne({ _id: 10 });
+        const teacherReady = replacement.sent.find(message => message.type === 'ready');
+        assert.equal(teacherReady.peerOnline, true);
+        assert.equal(teacherReady.peerStreamId, student.connectionId,
+            'A rebound teacher immediately receives the current learner stream identity');
+        await pair.student.instance.message({ type: 'screen-state', lessonId: pair.room._id, state: 'sharing' }); await settle();
+        await pair.student.instance.onLessonEvent({ uid: 10, lessonId: pair.room._id, connectionId: student.connectionId, sentAt: Date.now(),
+            message: { type: 'screen-view', lessonId: pair.room._id, watching: true, uid: 2, streamId: oldTeacher.connectionId } });
+        await pair.student.instance.message(screenFrame(pair)); await settle();
+        assert.equal(screens(replacement).length, 0);
+        await replacement.instance.message({ type: 'screen-view', lessonId: pair.room._id, watching: true }); await settle();
+        await pair.student.instance.message({ type: 'screen-state', lessonId: pair.room._id, state: 'sharing' }); await settle();
+        await pair.student.instance.message(screenFrame(pair, 1)); await settle();
+        assert.equal(screens(replacement).length, 1); assert.equal(screens(pair.teacher).length, 0);
+    });
+    it('ignores stale control envelopes and cross-room routing even after explicit sharing', async () => {
+        const pair = await activePair(); await shareScreen(pair);
+        const sender = await model.members.findOne({ _id: 2 }); const receiver = await model.members.findOne({ _id: 10 });
+        await pair.teacher.instance.message({ type: 'screen-view', lessonId: pair.room._id, watching: false }); await settle();
+        for (const overrides of [{ sentAt: Date.now() - 2000 }, { lessonId: 'different-screen-room' }, { connectionId: 'different-screen-connection' }]) {
+            await pair.student.instance.onLessonEvent({ uid: 10, lessonId: pair.room._id, connectionId: receiver.connectionId,
+                sentAt: Date.now(), message: { type: 'screen-view', lessonId: pair.room._id, watching: true,
+                    uid: 2, streamId: sender.connectionId }, ...overrides });
+        }
+        await pair.student.instance.message(screenFrame(pair)); await settle();
+        assert.equal(screens(pair.teacher).length, 0);
+    });
+    it('does not let a reordered sharing control revive screen packets after a newer learner stop', async () => {
+        const pair = await activePair(); await shareScreen(pair);
+        const sharing = busCalls.filter(item => item.event.message.type === 'screen-state' && item.event.message.state === 'sharing').at(-1).event;
+        await pair.student.instance.message(screenFrame(pair)); await settle();
+        const frame = busCalls.filter(item => item.event.message.type === 'screen').at(-1).event;
+        assert.equal(screens(pair.teacher).length, 1);
+        await pair.student.instance.message({ type: 'screen-state', lessonId: pair.room._id, state: 'stopped' }); await settle();
+        await pair.teacher.instance.onLessonEvent(sharing);
+        await pair.teacher.instance.onLessonEvent(frame);
+        assert.equal(screens(pair.teacher).length, 1, 'A delayed same-socket sharing control must not override the newer stop');
+    });
+    it('stops screen relay when a learner leaves, even from the original still-open socket', async () => {
+        const pair = await activePair(); await shareScreen(pair);
+        await model.leave(10, 'class-a', pair.room._id, tab(10), handlers.emitLesson); await settle();
+        await pair.student.instance.message(screenFrame(pair)); await settle();
+        assert.equal(screens(pair.teacher).length, 0); assert(pair.student.closed.length);
+    });
+    it('ends screen transport immediately for both participants when the teacher ends class', async () => {
+        const pair = await activePair(); await shareScreen(pair);
+        await model.finish(2, 'class-a', pair.room._id, 'ended', handlers.emitLesson); await settle();
+        await pair.student.instance.message(screenFrame(pair)); await settle();
+        assert.equal(screens(pair.teacher).length, 0); assert(pair.student.closed.length); assert(pair.teacher.closed.length);
+    });
+    it('invalidates screen sending and receiving immediately on learner permission revocation', async () => {
+        const pair = await activePair(); await shareScreen(pair);
+        blocked.add(10); pair.student.instance.onUserPermissionsChanged(); pair.teacher.instance.onUserPermissionsChanged();
+        await pair.student.instance.message(screenFrame(pair)); await settle();
+        assert.equal(screens(pair.teacher).length, 0);
+        await pair.student.timers[0](); await pair.teacher.timers[0]();
+        assert(pair.student.closed.length); assert(pair.teacher.closed.length);
+    });
+});
 
 describe('durable classroom recovery', () => {
     before(setupDatabase);
