@@ -69,12 +69,12 @@ it('playback starts after a short jitter buffer, stays bounded, and clears old s
     assert.equal(output.some(Boolean), false); assert.equal(p.instance.queue.length, 0);
 });
 
-function audioFixture() {
-    const nodes = []; const errors = [];
+function audioFixture({ capture, resume, setupState } = {}) {
+    const nodes = []; const errors = []; const states = []; const calls = []; const tracks = [];
     let captures = 0;
     class AudioContext {
         constructor() { this.destination = {}; this.audioWorklet = { async addModule() {} }; }
-        async resume() {}
+        resume() { calls.push('resume'); return resume ? resume(this) : Promise.resolve(); }
         async close() {}
         createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
     }
@@ -90,14 +90,17 @@ function audioFixture() {
         module: value, exports: value.exports, window, AudioContext, AudioWorkletNode, Blob,
         URL: { createObjectURL: () => 'blob:voice-worklet', revokeObjectURL() {} },
         navigator: { mediaDevices: { async getUserMedia() {
-            captures++;
-            const track = { stop() {}, addEventListener() {} };
+            captures++; calls.push('capture');
+            if (capture) return capture();
+            const track = { stopped: false, stop() { this.stopped = true; }, addEventListener() {} };
+            tracks.push(track);
             return { getTracks: () => [track], getAudioTracks: () => [track] };
         } } },
         btoa, atob, Uint8Array,
     });
-    const audio = new value.exports.VoiceAudio({ onFrame() {}, onError(error) { errors.push(error.message); } });
-    return { audio, nodes, errors, window, get captures() { return captures; } };
+    const audio = new value.exports.VoiceAudio({ onFrame() {}, onError(error) { errors.push(error.message); },
+        onSetupState(state) { states.push(state); setupState?.(state); } });
+    return { audio, nodes, errors, states, calls, tracks, window, get captures() { return captures; } };
 }
 
 it('an error from a stopped audio processor cannot interrupt a later classroom microphone', async () => {
@@ -124,4 +127,90 @@ it('resuming an existing microphone has a bounded autoplay timeout and never cap
     await f.audio.start();
     assert.equal(f.captures, 1); assert.equal(f.nodes.length, 1);
     f.audio.stop();
+});
+
+it('reports microphone setup while initiating resume and capture synchronously in the click', async () => {
+    const f = audioFixture();
+    const starting = f.audio.start();
+    assert.deepEqual(f.calls, ['resume', 'capture'], 'neither browser operation waits for a permission query or timer');
+    assert.deepEqual(f.states, ['idle', 'microphone-pending']);
+    await starting;
+    assert.deepEqual(f.states, ['idle', 'microphone-pending', 'microphone-granted', 'ready']);
+    assert.equal(f.audio.ready, true);
+    await f.audio.start();
+    assert.equal(f.captures, 1, 'resuming the current device does not request microphone permission again');
+    assert.equal(f.states.at(-1), 'ready');
+    f.audio.stop();
+    assert.equal(f.states.at(-1), 'idle');
+    assert.equal(f.tracks[0].stopped, true);
+});
+
+it('keeps microphone permission rejection distinct from browser playback blocking', async () => {
+    const denied = Object.assign(new Error('permission denied'), { name: 'NotAllowedError' });
+    const f = audioFixture({ capture: () => Promise.reject(denied) });
+    await assert.rejects(f.audio.start(), (error) => error === denied);
+    assert.deepEqual(f.states, ['idle', 'microphone-pending', 'idle']);
+    assert.equal(f.audio.ready, false);
+});
+
+for (const synchronous of [false, true]) it(`labels a ${synchronous ? 'synchronous' : 'rejected'} audio resume failure as playback blocking`, async () => {
+    const denied = Object.assign(new Error('autoplay denied'), { name: 'NotAllowedError' });
+    const f = audioFixture({ resume: () => { if (synchronous) throw denied; return Promise.reject(denied); } });
+    await assert.rejects(f.audio.start(), (error) => error.name === 'VoicePlaybackBlockedError' && /开启声音/.test(error.message));
+    assert.deepEqual(f.states, ['idle', 'microphone-pending', 'microphone-granted', 'idle']);
+    assert.equal(f.captures, 1);
+    assert.equal(f.tracks[0].stopped, true, 'a failed setup does not leave a microphone running');
+    assert.equal(f.audio.ready, false);
+});
+
+it('reports a bounded playback timeout after microphone grant without mistaking it for microphone denial', async () => {
+    const f = audioFixture({ resume: () => new Promise(() => {}) });
+    f.window.setTimeout = (callback, delay) => setTimeout(callback, delay === 1800 ? 5 : delay);
+    await assert.rejects(f.audio.start(), (error) => error.name === 'VoicePlaybackBlockedError');
+    assert.deepEqual(f.states, ['idle', 'microphone-pending', 'microphone-granted', 'idle']);
+    assert.equal(f.tracks[0].stopped, true);
+});
+
+it('cancels a still-pending permission request and stops a late stream without stale setup callbacks', async () => {
+    let resolveCapture;
+    const track = { stopped: false, stop() { this.stopped = true; }, addEventListener() {} };
+    const stream = { getTracks: () => [track], getAudioTracks: () => [track] };
+    const f = audioFixture({ capture: () => new Promise((resolve) => { resolveCapture = resolve; }) });
+    const starting = f.audio.start();
+    f.audio.stop();
+    const stoppedStates = f.states.slice();
+    resolveCapture(stream); await starting;
+    assert.equal(track.stopped, true);
+    assert.equal(f.nodes.length, 0);
+    assert.equal(f.audio.ready, false);
+    assert.deepEqual(f.states, stoppedStates, 'a late permission response cannot reopen the guide or mark the call ready');
+});
+
+it('an old permission response cannot overwrite setup for a later microphone', async () => {
+    let resolveFirst;
+    let captures = 0;
+    const oldTrack = { stopped: false, stop() { this.stopped = true; }, addEventListener() {} };
+    const newTrack = { stopped: false, stop() { this.stopped = true; }, addEventListener() {} };
+    const stream = (track) => ({ getTracks: () => [track], getAudioTracks: () => [track] });
+    const f = audioFixture({ capture: () => ++captures === 1 ? new Promise((resolve) => { resolveFirst = resolve; }) : Promise.resolve(stream(newTrack)) });
+    const first = f.audio.start();
+    f.audio.stop(); await f.audio.start();
+    const readyStates = f.states.slice();
+    resolveFirst(stream(oldTrack)); await first;
+    assert.equal(oldTrack.stopped, true); assert.equal(newTrack.stopped, false);
+    assert.equal(f.audio.ready, true); assert.equal(f.nodes.length, 1);
+    assert.deepEqual(f.states, readyStates);
+    f.audio.stop();
+});
+
+it('a stale resume response never reports ready after the device has been stopped', async () => {
+    const f = audioFixture();
+    await f.audio.start();
+    let resolveResume;
+    f.audio.context.resume = () => new Promise((resolve) => { resolveResume = resolve; });
+    const resuming = f.audio.start();
+    f.audio.stop(); const stoppedStates = f.states.slice();
+    resolveResume(); await resuming;
+    assert.deepEqual(f.states, stoppedStates);
+    assert.equal(f.audio.ready, false);
 });

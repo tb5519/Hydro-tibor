@@ -103,6 +103,14 @@ export function microphoneError(error: any) {
   return error?.message || '语音暂时无法启动，请检查麦克风后重试。';
 }
 
+export type VoiceAudioSetupState = 'microphone-pending' | 'microphone-granted' | 'ready' | 'idle';
+
+export class VoicePlaybackBlockedError extends Error {
+  constructor(message = '浏览器暂停了语音，请点击下方按钮开启声音。') {
+    super(message); this.name = 'VoicePlaybackBlockedError';
+  }
+}
+
 export class VoiceAudio {
   private stream: MediaStream | null = null;
   private context: AudioContext | null = null;
@@ -115,16 +123,24 @@ export class VoiceAudio {
   private lastPacketAt = 0;
   private staleTimer = 0;
 
-  constructor(private options: { onFrame(data: string): void; onLevel?(level: number): void; onError?(error: Error): void }) {}
+  constructor(private options: { onFrame(data: string): void; onLevel?(level: number): void; onError?(error: Error): void;
+    onSetupState?(state: VoiceAudioSetupState): void }) {}
   get ready() { return !!this.processor; }
 
   async start() {
     if (this.processor) {
+      const generation = this.generation;
       let resumeTimeout = 0;
       try {
-        await Promise.race([this.context?.resume(), new Promise((_, reject) => {
-          resumeTimeout = window.setTimeout(() => reject(new Error('浏览器暂停了语音，请点击“重试设备”恢复语音。')), 1800);
+        const resume = this.context?.resume();
+        await Promise.race([resume, new Promise((_, reject) => {
+          resumeTimeout = window.setTimeout(() => reject(new VoicePlaybackBlockedError('浏览器暂停了语音，请点击“重试设备”恢复语音。')), 1800);
         })]);
+        if (generation === this.generation) this.options.onSetupState?.('ready');
+      } catch (error) {
+        if (generation !== this.generation) return;
+        if (error instanceof VoicePlaybackBlockedError) throw error;
+        throw new VoicePlaybackBlockedError();
       } finally { window.clearTimeout(resumeTimeout); }
       return;
     }
@@ -138,18 +154,24 @@ export class VoiceAudio {
     this.context = context;
     // Start in the click gesture. A denied or delayed microphone prompt must
     // never stop the signaling socket from receiving a cancellation.
-    const resume = context.resume();
+    let resume: Promise<void>;
+    try { resume = context.resume().catch(() => { throw new VoicePlaybackBlockedError(); }); }
+    catch { resume = Promise.reject(new VoicePlaybackBlockedError()); }
     void resume.catch(() => {});
     try {
+      this.options.onSetupState?.('microphone-pending');
+      if (generation !== this.generation) return;
       const stream = await navigator.mediaDevices.getUserMedia({ audio: {
         channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true,
       }, video: false });
       if (generation !== this.generation) { stream.getTracks().forEach((track) => track.stop()); return; }
       this.stream = stream;
+      this.options.onSetupState?.('microphone-granted');
+      if (generation !== this.generation) return;
       let resumeTimeout = 0;
       try {
         await Promise.race([resume, new Promise((_, reject) => {
-          resumeTimeout = window.setTimeout(() => reject(new Error('浏览器暂停了语音，请点击下方按钮继续通话。')), 1800);
+          resumeTimeout = window.setTimeout(() => reject(new VoicePlaybackBlockedError()), 1800);
         })]);
       } finally { window.clearTimeout(resumeTimeout); }
       const url = URL.createObjectURL(new Blob([VOICE_WORKLET_SOURCE], { type: 'text/javascript' }));
@@ -175,6 +197,7 @@ export class VoiceAudio {
       this.staleTimer = window.setInterval(() => {
         if (this.lastPacketAt && Date.now() - this.lastPacketAt > 400) this.clearPlayback();
       }, 200);
+      this.options.onSetupState?.('ready');
     } catch (error) {
       if (generation !== this.generation) return;
       this.stop(); throw error;
@@ -210,5 +233,6 @@ export class VoiceAudio {
     this.context?.close().catch(() => {});
     this.processor = null; this.source = null; this.stream = null; this.context = null;
     this.options.onLevel?.(0);
+    this.options.onSetupState?.('idle');
   }
 }

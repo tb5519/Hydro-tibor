@@ -7,27 +7,41 @@ const { transformSync } = require('esbuild');
 const { JSDOM } = require('jsdom');
 const file = path.join(__dirname, '../packages/ui-default/components/voice_call/window.ts');
 const code = transformSync(fs.readFileSync(file, 'utf8'), { loader: 'ts', format: 'cjs' }).code;
+const guideFile = path.join(__dirname, '../packages/ui-default/components/voice_call/permission_guide.ts');
 const snapshot = { type: 'snapshot', callId: 'voice-call-1', status: 'active', teacherUid: 1, teacherName: '唐老师',
     studentUid: 2, studentName: '橙子', createdAt: Date.now(), acceptedAt: Date.now(), ringExpiresAt: Date.now() + 45000, isOwner: true };
-function fixture(t, { delayed = false } = {}) {
+function fixture(t, { delayed = false, uid = 1, setup = false, startError = null } = {}) {
     const dom = new JSDOM('<div id="voice"></div>', { url: 'https://onebyone.test/' });
     const module = { exports: {} };
-    const sent = []; const frames = []; let stopped = 0; let reset = 0; let started = 0; let pending;
+    const sent = []; const frames = []; let stopped = 0; let reset = 0; let started = 0; let pending; let callbacks;
+    const guideModule = { exports: {} };
+    vm.runInNewContext(transformSync(fs.readFileSync(guideFile, 'utf8'), { loader: 'ts', format: 'cjs' }).code,
+        { module: guideModule, exports: guideModule.exports, window: dom.window, document: dom.window.document });
     const media = { ready: false, start() {
         started++;
-        if (!delayed) { media.ready = true; return Promise.resolve(); }
-        return new Promise((resolve) => { pending = () => { media.ready = true; resolve(); }; });
-    }, stop() { stopped++; media.ready = false; }, setMuted() {}, setTransmitting() {},
+        if (setup) callbacks.onSetupState('microphone-pending');
+        if (startError) return Promise.reject(startError);
+        const complete = () => {
+            media.ready = true;
+            if (setup) { callbacks.onSetupState('microphone-granted'); callbacks.onSetupState('ready'); }
+        };
+        if (!delayed) { complete(); return Promise.resolve(); }
+        return new Promise((resolve) => { pending = () => { complete(); resolve(); }; });
+    }, stop() { stopped++; media.ready = false; if (setup) callbacks.onSetupState('idle'); }, setMuted() {}, setTransmitting() {},
     receive(...args) { frames.push(args); }, resetReceive() { reset++; } };
     vm.runInNewContext(code, { module, exports: module.exports, window: dom.window, document: dom.window.document,
         sessionStorage: dom.window.sessionStorage, require(name) {
+            if (name === './permission_guide') return guideModule.exports;
             if (name === './audio') return { microphoneError: (e) => e.message }; return {};
         } });
     const root = dom.window.document.querySelector('#voice');
     const transport = { ready: true, send(payload) { sent.push(payload); return true; } };
-    const controller = module.exports.mountVoiceCallWindow(root, { uid: 1 }, { transport, audioFactory: () => media });
+    const controller = module.exports.mountVoiceCallWindow(root, { uid, canTeach: uid === 1 }, {
+        transport, audioFactory: (settings) => { callbacks = settings; return media; },
+    });
     t.after(() => { controller.dispose(); dom.window.close(); });
-    return { root, controller, sent, frames, media, resolve: () => pending?.(),
+    return { root, controller, sent, frames, media, document: dom.window.document, window: dom.window,
+        callbacks, clearStartError: () => { startError = null; }, resolve: () => pending?.(),
         get started() { return started; }, get stopped() { return stopped; }, get reset() { return reset; } };
 }
 const tick = () => new Promise((r) => setImmediate(r));
@@ -122,4 +136,65 @@ it('permission revocation or connection replacement immediately stops an active 
     f.controller.receive(snapshot); await tick(); assert.equal(f.media.ready, true);
     f.controller.receive({ type: 'terminated', reason: '登录已失效' });
     assert.equal(f.media.ready, false); assert.match(f.root.textContent, /登录已失效/);
+});
+
+const waitForGuide = () => new Promise((resolve) => setTimeout(resolve, 530));
+const visibleGuide = (f) => f.document.querySelector('[data-voice-permission-guide]:not([hidden])');
+it('student acceptance shows the pending guide and granting the microphone removes it before accepting', async (t) => {
+    const f = fixture(t, { uid: 2, delayed: true, setup: true });
+    f.controller.accept(snapshot.callId);
+    await waitForGuide();
+    assert.equal(visibleGuide(f)?.dataset.state, 'pending');
+    assert.equal(f.sent.length, 0, 'permission guidance does not itself accept the call');
+    f.resolve(); await tick();
+    assert.equal(visibleGuide(f), null);
+    assert.equal(f.sent.at(-1).type, 'accept');
+});
+it('remembered permission and teacher dialing never flash a student permission overlay', async (t) => {
+    const student = fixture(t, { uid: 2, setup: true });
+    student.controller.accept(snapshot.callId); await tick();
+    const teacher = fixture(t, { delayed: true, setup: true });
+    teacher.controller.dial(2); await waitForGuide();
+    assert.equal(visibleGuide(student), null); assert.equal(visibleGuide(teacher), null);
+});
+it('the guide cancel button hangs up while permission is pending and a late grant never accepts', async (t) => {
+    const f = fixture(t, { uid: 2, delayed: true, setup: true });
+    f.controller.accept(snapshot.callId); await waitForGuide();
+    f.document.querySelector('[data-voice-permission-cancel]').click();
+    assert.equal(visibleGuide(f), null); assert.equal(f.root.hidden, true);
+    assert.equal(f.sent.length, 1); assert.equal(f.sent[0].type, 'hangup'); assert.equal(f.sent[0].callId, snapshot.callId);
+    f.resolve(); await tick();
+    assert.equal(f.sent.some((message) => message.type === 'accept'), false);
+});
+for (const reason of ['ended', 'terminated', 'offline', 'dispose']) {
+    it(`${reason} removes permission guidance and cannot send a late acceptance`, async (t) => {
+        const f = fixture(t, { uid: 2, delayed: true, setup: true });
+        f.controller.accept(snapshot.callId); await waitForGuide();
+        assert.ok(visibleGuide(f));
+        if (reason === 'offline') f.controller.setConnected(false);
+        else if (reason === 'dispose') f.controller.dispose();
+        else f.controller.receive({ type: reason, callId: snapshot.callId });
+        assert.equal(visibleGuide(f), null);
+        f.resolve(); await tick();
+        assert.equal(f.sent.some((message) => message.type === 'accept'), false);
+    });
+}
+it('microphone denial shows settings guidance and an explicit retry can accept the call', async (t) => {
+    const cause = Object.assign(new Error('麦克风被拒绝'), { name: 'NotAllowedError' });
+    const f = fixture(t, { uid: 2, setup: true, startError: cause });
+    f.controller.accept(snapshot.callId); await tick();
+    assert.equal(visibleGuide(f)?.dataset.state, 'blocked');
+    assert.equal(f.sent.length, 0);
+    f.clearStartError(); f.document.querySelector('[data-voice-permission-retry]').click(); await tick();
+    assert.equal(visibleGuide(f), null); assert.equal(f.sent.at(-1).type, 'accept');
+});
+it('playback blocking points to an in-page enable-sound button instead of microphone settings', async (t) => {
+    const cause = Object.assign(new Error('声音已暂停'), { name: 'VoicePlaybackBlockedError' });
+    const f = fixture(t, { uid: 2, setup: true, startError: cause });
+    f.controller.accept(snapshot.callId); await tick();
+    assert.equal(visibleGuide(f)?.dataset.state, 'playback');
+    assert.match(f.document.querySelector('[data-voice-permission-retry]').textContent, /开启声音/);
+    f.clearStartError(); f.document.querySelector('[data-voice-permission-retry]').click();
+    assert.equal(f.started, 2, 'the retry starts within the real button handler');
+    await tick(); assert.equal(f.sent.filter((message) => message.type === 'accept').length, 1);
 });

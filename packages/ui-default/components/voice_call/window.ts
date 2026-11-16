@@ -1,4 +1,6 @@
 import { microphoneError, VoiceAudio } from './audio';
+import type { VoiceAudioSetupState } from './audio';
+import { mountVoicePermissionGuide } from './permission_guide';
 import { VoiceCallConfig, VoiceSnapshot, VoiceTransport } from './transport';
 
 type Intent = { type: 'dial'; studentUid: number; name?: string; requestId: string } | { type: 'accept'; callId: string };
@@ -59,6 +61,7 @@ export function mountVoiceCallWindow(root: HTMLElement, config: VoiceCallConfig,
   let sequence = Date.now() * 100;
   let remoteStream = '';
   let hideTimer = 0;
+  let guideForAttempt = false;
   const cancelledKey = `onebyone.voice.cancelled:${config.uid}`;
   const mutedKey = `onebyone.voice.muted:${config.uid}`;
   let cancelled: string[] = [];
@@ -66,15 +69,36 @@ export function mountVoiceCallWindow(root: HTMLElement, config: VoiceCallConfig,
   try { const saved = JSON.parse(sessionStorage.getItem(cancelledKey) || '[]'); if (Array.isArray(saved)) cancelled = saved.slice(-8); } catch { /* Storage is optional. */ }
   const saveCancelled = () => { try { sessionStorage.setItem(cancelledKey, JSON.stringify(cancelled.slice(-8))); } catch { /* Keep pending cancellation in memory. */ } };
   const setError = (text: string) => { error.textContent = text; error.hidden = !text; };
-  const audio = options.audioFactory ? options.audioFactory({ onFrame, onLevel, onError }) : new VoiceAudio({ onFrame, onLevel, onError });
+  const permissionGuide = mountVoicePermissionGuide(root.ownerDocument, {
+    onCancel: hangUp,
+    onRetry: () => { void prepare(); },
+  });
+  const audioOptions = { onFrame, onLevel, onError, onSetupState };
+  const audio = options.audioFactory ? options.audioFactory(audioOptions) : new VoiceAudio(audioOptions);
+  function isStudentCall() { return intent?.type === 'accept' || current?.studentUid === config.uid; }
+  function onSetupState(state: VoiceAudioSetupState) {
+    if (disposed) return;
+    if (state === 'idle' || state === 'ready') permissionGuide.hide();
+    else if (state === 'microphone-granted') permissionGuide.microphoneGranted();
+    else if (state === 'microphone-pending' && busy && guideForAttempt) permissionGuide.begin();
+  }
+  function showSetupError(cause: any) {
+    const playbackBlocked = cause?.name === 'VoicePlaybackBlockedError';
+    setError(microphoneError(cause)); retry.hidden = false;
+    retry.textContent = playbackBlocked ? '点击开启声音' : '重试麦克风';
+    status.textContent = playbackBlocked ? '请点击开启声音' : '麦克风未开启';
+    if (!guideForAttempt || !connected) return;
+    if (playbackBlocked) permissionGuide.playbackBlocked();
+    else if (cause?.name === 'NotAllowedError' || cause?.name === 'PermissionDeniedError') permissionGuide.blocked();
+  }
   function onFrame(data: string) {
     if (disposed || !connected || !current?.isOwner || current.status !== 'active') return;
     options.transport.send({ type: 'audio', callId: current.callId, seq: sequence++, data });
   }
   function onLevel(level: number) { meter.style.setProperty('--voice-level', String(level)); }
   function onError(cause: Error) {
-    audio.stop(); mute.disabled = true; setError(microphoneError(cause)); retry.hidden = false;
-    status.textContent = '麦克风已暂停';
+    guideForAttempt = isStudentCall();
+    audio.stop(); mute.disabled = true; showSetupError(cause);
   }
   function show() { window.clearTimeout(hideTimer); root.hidden = false; }
   function render() {
@@ -94,7 +118,8 @@ export function mountVoiceCallWindow(root: HTMLElement, config: VoiceCallConfig,
     audio.setTransmitting(!!active && connected && !!current?.isOwner);
   }
   function finish(message = '通话已结束', immediately = false) {
-    generation++; intent = null; busy = false; current = null; audio.stop(); retry.hidden = true; mute.disabled = true;
+    generation++; intent = null; busy = false; current = null; guideForAttempt = false;
+    permissionGuide.hide(); audio.stop(); retry.hidden = true; mute.disabled = true;
     if (!cancelAwaitingRequest) awaitingRequest = null;
     options.onState?.(null); timer.hidden = true; status.textContent = message; root.classList.remove('is-active');
     const hide = () => { root.hidden = true; options.onEnded?.(); };
@@ -125,7 +150,7 @@ export function mountVoiceCallWindow(root: HTMLElement, config: VoiceCallConfig,
     if (!intent && !current?.isOwner) return;
     show(); setError(''); retry.hidden = true;
     if (!connected) { setError('正在连接语音服务，请稍后重试。'); retry.hidden = false; return; }
-    busy = true;
+    busy = true; guideForAttempt = isStudentCall();
     const attempt = ++generation;
     if (intent?.type === 'dial') { name.textContent = intent.name || '学员'; avatar.textContent = Array.from(name.textContent)[0]; }
     render();
@@ -143,8 +168,7 @@ export function mountVoiceCallWindow(root: HTMLElement, config: VoiceCallConfig,
       audio.setMuted(muted); busy = false; render();
     } catch (cause) {
       if (disposed || attempt !== generation) return;
-      busy = false; audio.stop(); setError(microphoneError(cause)); retry.hidden = false;
-      status.textContent = '麦克风未开启';
+      busy = false; audio.stop(); showSetupError(cause);
     }
   }
   mute.addEventListener('click', () => {
@@ -222,7 +246,7 @@ export function mountVoiceCallWindow(root: HTMLElement, config: VoiceCallConfig,
           && !(intent?.type === 'accept' && message.callId === intent.callId)
           && !(awaitingRequest?.type === 'accept' && message.callId === awaitingRequest.callId)) return false;
         if (!current) {
-          generation++; busy = false; audio.stop();
+          generation++; busy = false; permissionGuide.hide(); audio.stop();
           if (!cancelAwaitingRequest && awaitingRequest) intent = awaitingRequest;
           awaitingRequest = null; cancelAwaitingRequest = false;
         }
@@ -236,12 +260,18 @@ export function mountVoiceCallWindow(root: HTMLElement, config: VoiceCallConfig,
     },
     setConnected(value: boolean) {
       connected = value;
-      if (!value) { audio.setTransmitting(false); audio.resetReceive(); }
+      if (!value) {
+        permissionGuide.hide(); audio.setTransmitting(false); audio.resetReceive();
+        if (busy) {
+          generation++; busy = false; audio.stop(); retry.hidden = false;
+          setError('语音连接暂时中断，恢复连接后请重试。');
+        }
+      }
       if (!root.hidden) render();
     },
     dispose() {
       if (disposed) return;
-      disposed = true; generation++; audio.stop(); window.clearInterval(clock); window.clearTimeout(hideTimer);
+      disposed = true; generation++; permissionGuide.dispose(); audio.stop(); window.clearInterval(clock); window.clearTimeout(hideTimer);
       root.replaceChildren();
     },
   };

@@ -575,3 +575,142 @@
     animation: none !important
   .voice-call-window__meter i
     transition: none
+
+.voice-permission-guide
+  position: fixed
+  z-index: 2147483600
+  inset: 0
+  overflow: auto
+  padding: 165px 24px 32px
+  background: #152238c9
+  color: #293d57
+  font-family: var(--font-family, "PingFang SC", "Microsoft YaHei", sans-serif)
+  &, *
+    box-sizing: border-box
+  &[hidden], [hidden]
+    display: none !important
+  &__browser-arrow
+    position: absolute
+    top: 8px
+    left: unquote('clamp(28px, 15vw, 220px)')
+    width: 140px
+    height: 144px
+    overflow: visible
+    fill: none
+    stroke: #ffe7a9
+    stroke-width: 8
+    stroke-linecap: round
+    stroke-linejoin: round
+    filter: drop-shadow(0 3px 9px #0005)
+    animation: voice-permission-point 1.15s ease-in-out infinite
+    pointer-events: none
+  &__card
+    width: 100%
+    max-width: 520px
+    margin-left: unquote('clamp(0px, 12vw, 168px)')
+    padding: 28px
+    border: 1px solid #f2edff
+    border-radius: 25px
+    background: #fffdfb
+    box-shadow: 0 18px 70px #0003
+    text-align: left
+  &__eyebrow
+    margin: 0 0 10px
+    color: #8a73ae
+    font-size: 13px
+    font-weight: 650
+  &__title
+    margin: 0 0 18px
+    font-size: 27px
+    font-weight: 750
+    line-height: 1.45
+    color: #293d57
+  &__copy
+    margin: 0
+    font-size: 19px
+    font-weight: 550
+    line-height: 1.8
+    color: #40516b
+  &__hint
+    margin: 15px 0 0
+    color: #8190a5
+    font-size: 12px
+    line-height: 1.7
+  button
+    font: inherit
+    cursor: pointer
+    &:focus-visible
+      outline: 3px solid #8b79cc
+      outline-offset: 4px
+  &__retry
+    display: block
+    width: 100%
+    min-height: 52px
+    margin: 22px 0 0
+    padding: 12px 16px
+    border: 0
+    border-radius: 13px
+    background: #8066bb
+    color: #fff
+    font-size: 18px !important
+    font-weight: 650 !important
+    &:hover
+      background: #6c52a7
+  &__cancel
+    display: block
+    min-height: 40px
+    margin: 18px 0 0
+    padding: 7px 0
+    border: 0
+    border-radius: 8px
+    background: transparent
+    color: #7f8a9b
+    font-size: 14px !important
+    text-decoration: underline
+    text-underline-offset: 4px
+  &__playback-arrow
+    display: block
+    width: 100%
+    margin: 9px 0 -13px
+    color: #8066bb
+    text-align: center
+    font-size: 39px
+    line-height: 1.2
+    animation: voice-permission-playback 1.15s ease-in-out infinite
+  &[data-state="playback"]
+    display: grid
+    place-items: center
+    padding-top: 32px
+    .voice-permission-guide__card
+      margin-left: 0
+  &[data-state="blocked"] .voice-permission-guide__browser-arrow
+    animation: none
+
+@keyframes voice-permission-point
+  0%, 100%
+    transform: translateY(4px)
+  50%
+    transform: translateY(-7px)
+
+@keyframes voice-permission-playback
+  0%, 100%
+    transform: translateY(-2px)
+  50%
+    transform: translateY(4px)
+
+@media (max-width: 680px)
+  .voice-permission-guide
+    padding-right: 16px
+    padding-left: 16px
+    &__card
+      max-width: 100%
+      margin-left: 0
+      padding: 23px
+    &__title
+      font-size: 23px
+    &__copy
+      font-size: 17px
+
+@media (prefers-reduced-motion: reduce)
+  .voice-permission-guide__browser-arrow, .voice-permission-guide__playback-arrow
+    animation: none !important
