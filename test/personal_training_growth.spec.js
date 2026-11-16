@@ -126,43 +126,44 @@ describe('personal autonomous training growth', () => {
         assert.equal(classes.workspaceId, 'modern'); assert.equal(classes.uid, 10);
         assert.deepEqual(Array.from(classes.domainId.$in).sort(), ['modern-a', 'modern-b']);
     });
-    it('averages four completed weeks including quiet weeks, excluding the partial current week', async () => {
+    it('averages every covered natural week, including quiet weeks and the partial current week', async () => {
         await database.collection('training.time.daily').insertMany([
             row('2026-10-20', '09:00:00', '13:00:00'),
             row('2026-11-13', '09:00:00', '13:00:00'),
             row('2026-11-17', '09:00:00', '10:00:00'),
         ]);
         const result = await get();
-        assert.equal(result.thisWeekSeconds, 3600); assert.equal(result.averageWeekSeconds, 7200);
-        assert.equal(result.averageWeeks, 4); assert.equal(result.averageStart, '2026-10-19');
-        assert.equal(result.averageEnd, '2026-11-16');
+        assert.equal(result.thisWeekSeconds, 3600); assert.equal(result.averageWeekSeconds, 6480);
+        assert.equal(result.averageWeeks, 5); assert.equal(result.averageStart, '2026-10-19');
+        assert.equal(result.averageEnd, '2026-11-17');
         const query = queries.find((item) => item.name === 'training.time.daily').query;
-        assert.equal(query.day.$gte, '2026-10-19'); assert.equal(query.day.$lte, '2026-11-17');
+        assert.equal(query.day.$gte, undefined); assert.equal(query.day.$lte, '2026-11-17');
     });
-    it('excludes an incompletely tracked launch week from the comparison denominator', async () => {
+    it('includes the partial launch week and all subsequent calendar weeks', async () => {
         await database.collection('training.time.meta').updateOne({ _id: 'collection' }, { $set: { startedAt: date('2026-10-28T10:00:00') } });
         await database.collection('training.time.daily').insertMany([
             row('2026-10-30', '09:00:00', '19:00:00'),
             row('2026-11-03', '09:00:00', '11:00:00'),
         ]);
         const result = await get();
-        assert.equal(result.averageWeeks, 2); assert.equal(result.averageWeekSeconds, 3600);
-        assert.equal(result.averageStart, '2026-11-02');
-        assert.equal(queries.find((item) => item.name === 'training.time.daily').query.day.$gte, '2026-11-02');
+        assert.equal(result.averageWeeks, 4); assert.equal(result.averageWeekSeconds, 10800);
+        assert.equal(result.averageStart, '2026-10-26');
+        assert.equal(queries.find((item) => item.name === 'training.time.daily').query.day.$gte, undefined);
     });
-    it('does not invent a weekly average before one fully tracked week exists', async () => {
+    it('counts a newly tracked current week but does not invent an average when no recording history exists', async () => {
         for (const startedAt of [date('2026-11-17T00:00:00'), null]) {
             if (startedAt) await database.collection('training.time.meta').updateOne({ _id: 'collection' }, { $set: { startedAt } });
             else await database.collection('training.time.meta').deleteMany({});
             queries.length = 0;
             const result = await get();
-            assert.equal(result.thisWeekSeconds, 0); assert.equal(result.averageWeekSeconds, null); assert.equal(result.averageWeeks, 0);
-            assert.equal(queries.find((item) => item.name === 'training.time.daily').query.day.$gte, '2026-11-16');
+            assert.equal(result.thisWeekSeconds, 0);
+            assert.equal(result.averageWeekSeconds, startedAt ? 0 : null); assert.equal(result.averageWeeks, startedAt ? 1 : 0);
+            assert.equal(queries.find((item) => item.name === 'training.time.daily').query.day.$gte, undefined);
         }
     });
-    it('returns an actual zero average once complete quiet weeks are tracked', async () => {
+    it('counts zero-activity weeks since the platform started recording, even before the learners first activity', async () => {
         const result = await get();
-        assert.equal(result.averageWeeks, 4); assert.equal(result.averageWeekSeconds, 0);
+        assert.equal(result.averageWeeks, 5); assert.equal(result.averageWeekSeconds, 0);
         assert.equal(result.averageWeekHasEstimate, false);
     });
     it('preserves uncertainty for historical counters instead of presenting estimated time as measured', async () => {
@@ -173,5 +174,38 @@ describe('personal autonomous training growth', () => {
         const result = await get();
         assert.equal(result.thisWeekSeconds, 1800); assert.equal(result.thisWeekHasEstimate, true);
         assert.equal(result.days[1].hasEstimate, true); assert.equal(result.days[1].seconds, 1800);
+        assert.equal(result.averageWeekSeconds, 360); assert.equal(result.averageWeekHasEstimate, true);
+    });
+    it('keeps activity older than four weeks and older legacy rows predating later collection metadata', async () => {
+        await database.collection('training.time.daily').insertMany([
+            row('2026-10-06', '09:00:00', '15:00:00'),
+            row('2026-11-17', '09:00:00', '10:00:00'),
+        ]);
+        const result = await get();
+        assert.equal(result.averageStart, '2026-10-05'); assert.equal(result.averageWeeks, 7);
+        assert.equal(result.averageWeekSeconds, 3600); assert.equal(result.thisWeekSeconds, 3600);
+    });
+    it('uses scoped existing history when collection metadata is missing, without borrowing another learners earlier activity', async () => {
+        await database.collection('training.time.meta').deleteMany({});
+        await database.collection('training.time.daily').insertMany([
+            row('2026-10-28', '09:00:00', '13:00:00'),
+            row('2026-09-01', '09:00:00', '19:00:00', { uid: 11 }),
+            row('2026-08-01', '09:00:00', '19:00:00', { domainId: 'foreign' }),
+        ]);
+        const result = await get();
+        assert.equal(result.averageStart, '2026-10-26'); assert.equal(result.averageWeeks, 4);
+        assert.equal(result.averageWeekSeconds, 3600); assert.equal(result.averageEnd, '2026-11-17');
+    });
+    it('deducts lifetime class overlap and duplicate activity before averaging, using all historical weeks', async () => {
+        await database.collection('training.time.meta').updateOne({ _id: 'collection' }, { $set: { startedAt: date('2026-10-05T08:00:00') } });
+        await database.collection('training.time.daily').insertMany([
+            row('2026-10-06', '09:00:00', '13:00:00'),
+            row('2026-10-06', '10:00:00', '12:00:00', { domainId: 'cpp' }),
+            row('2026-11-17', '09:00:00', '13:00:00'),
+        ]);
+        await database.collection('training.class').insertOne(lesson('2026-10-06', '10:00:00', '11:00:00', { domainId: 'cpp' }));
+        const result = await get(10, { _id: 'python' }, date('2026-11-17T14:00:00'));
+        assert.equal(result.averageWeeks, 7); assert.equal(result.averageWeekSeconds, 3600);
+        assert.equal(result.thisWeekSeconds, 14400);
     });
 });

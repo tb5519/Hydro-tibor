@@ -17,23 +17,16 @@
 <div class="section side nojs--hide homepage-personal">
   <div class="section__header">
     <h1 class="section__title">我的成长</h1>
+    <div class="homepage-personal__points" role="status" aria-label="积分" aria-live="polite" aria-atomic="true">
+      <span>积分</span>
+      <strong data-point-lottery-points>{{ pointLottery.points|default(0) }}</strong>
+    </div>
   </div>
   <div class="section__body homepage-personal__body">
     <div class="homepage-personal__identity">
       <img data-badge-avatar-uid="{{ udoc._id }}" class="homepage-personal__avatar" src="{{ avatarUrl(udoc.avatar|default('')) }}" alt="" loading="lazy" width="42" height="42">
       <div class="homepage-personal__name-wrap">
         <div class="homepage-personal__name">{{ user.render_inline(udoc, avatar=false, badge=false) }}</div>
-        <div class="homepage-personal__rank">
-          {% if stats.rank %}
-            排名 No. {{ stats.rank }}
-          {% else %}
-            暂无排名
-          {% endif %}
-        </div>
-      </div>
-      <div class="homepage-personal__points" role="status" aria-live="polite" aria-atomic="true">
-        <span>当前积分</span>
-        <strong data-point-lottery-points>{{ pointLottery.points|default(0) }}</strong>
       </div>
     </div>
 
@@ -48,55 +41,60 @@
     </div>
 
     <div class="homepage-personal__stats" role="group" aria-label="本周成长数据">
-      <div class="homepage-personal__stat homepage-personal__stat--compact">
-        <span class="homepage-personal__stat-label"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z"/></svg>我的 RP</span>
-        <strong>{{ stats.rp|default(0) }}</strong>
-      </div>
-      <div class="homepage-personal__stat homepage-personal__stat--compact">
-        <span class="homepage-personal__stat-label"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 4h8v5a4 4 0 0 1-8 0V4ZM8 6H4v2a4 4 0 0 0 4 4m8-6h4v2a4 4 0 0 1-4 4m-4 1v5m-4 2h8"/></svg>当前排名</span>
-        <strong>{% if stats.rank %}{{ stats.rank }}{% else %}-{% endif %}</strong>
-      </div>
-      <div class="homepage-personal__stat homepage-personal__stat--weekly" data-growth-weekly-ac>
+      {% set weeklyScope = '工作区所有域' if stats.weeklyAc.scope == 'workspace' else '当前域' %}
+      {% set weeklyNote = weeklyScope + ' · 北京时间本自然周周一 00:00 至周日 22:00，统计正式提交首次 AC 的题目数，重复通过不重复计数。暗影骑士采用相同数据，管理员不参与排名。' %}
+      <div class="homepage-personal__stat homepage-personal__stat--weekly" data-growth-weekly-ac role="group" aria-label="本周新增 AC">
         <div class="homepage-personal__weekly-heading">
-          <span class="homepage-personal__stat-label"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m7 12 3 3 7-7M21 12a9 9 0 1 1-6-8.5"/></svg>本周新增 AC</span>
-          <span class="homepage-personal__week-tag">本自然周</span>
+          <div class="homepage-personal__metric-heading">
+            <details class="homepage-personal__help" name="personal-growth-help">
+              <summary aria-label="查看本周新增 AC 统计说明" title="查看统计说明"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m7 12 3 3 7-7M21 12a9 9 0 1 1-6-8.5"/></svg></summary>
+              <div class="homepage-personal__help-panel">
+                <strong>本周新增 AC</strong><p>{{ weeklyNote }}</p>
+                {% if stats.weeklyAc %}
+                  {% if not stats.weeklyAc.eligible %}<p>此账户不参与学员排名。</p>
+                  {% elif not stats.weeklyAc.topCount %}<p>本周暂无领跑学员。</p>
+                  {% elif stats.weeklyAc.isTop %}<p>本周第 1 名；并列第一同样获得 TOP 1。</p>
+                  {% else %}<p>追平第 1 名还需 {{ stats.weeklyAc.gap }} 题。</p>{% endif %}
+                {% endif %}
+              </div>
+            </details>
+            <span class="homepage-personal__stat-label">本周新增 AC</span>
+          </div>
+          <span class="homepage-personal__cutoff" title="北京时间周一 00:00 至周日 22:00 截止" aria-label="北京时间周日 22 点截止"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg>周日22:00</span>
         </div>
         <div class="homepage-personal__weekly-value">
           <strong>{{ stats.newAcWeek|default(stats.newAc7|default(0)) }}</strong>
           {% if stats.weeklyAc %}
-            {% set weeklyScope = '工作区所有域' if stats.weeklyAc.scope == 'workspace' else '当前域' %}
-            {% set weeklyNote = weeklyScope + ' · 北京时间本自然周周一 00:00 至周日 22:00，统计正式提交首次 AC 的题目数，重复通过不重复计数。暗影骑士采用相同数据，管理员不参与排名。' %}
-            {% if not stats.weeklyAc.eligible %}
-              <span class="homepage-personal__weekly-note" title="{{ weeklyNote }}">不参与排名</span>
-            {% elif not stats.weeklyAc.topCount %}
-              <span class="homepage-personal__weekly-note" title="{{ weeklyNote }}">暂无领跑</span>
-            {% elif stats.weeklyAc.isTop %}
+            {% if stats.weeklyAc.eligible and stats.weeklyAc.topCount and stats.weeklyAc.isTop %}
               <span class="homepage-personal__weekly-top" role="img" aria-label="本周新增 AC 第 1 名" title="{{ weeklyNote }}并列第一同样获得 TOP 1。">
-                TOP 1
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 4h8v5a4 4 0 0 1-8 0V4ZM8 6H4v2a4 4 0 0 0 4 4m8-6h4v2a4 4 0 0 1-4 4m-4 1v5m-4 2h8"/></svg>1
               </span>
-            {% else %}
-              <span class="homepage-personal__weekly-gap" title="{{ weeklyNote }}追平第 1 名还需 {{ stats.weeklyAc.gap }} 题。"><span>距 Top 1</span><span>差 <b>{{ stats.weeklyAc.gap }}</b> 题</span></span>
+            {% elif stats.weeklyAc.eligible and stats.weeklyAc.topCount %}
+              <span class="homepage-personal__weekly-gap" role="img" aria-label="距本周新增 AC 第 1 名还差 {{ stats.weeklyAc.gap }} 题" title="{{ weeklyNote }}追平第 1 名还需 {{ stats.weeklyAc.gap }} 题。"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 4h8v5a4 4 0 0 1-8 0V4ZM8 6H4v2a4 4 0 0 0 4 4m8-6h4v2a4 4 0 0 1-4 4m-4 1v5m-4 2h8"/></svg><span>差<b>{{ stats.weeklyAc.gap }}</b>题</span></span>
             {% endif %}
           {% endif %}
         </div>
-        <p class="homepage-personal__stat-hint">周一 00:00 — 周日 22:00 · 北京时间</p>
       </div>
       {% set trainingTime = stats.trainingTime %}
-      <div class="homepage-personal__stat homepage-personal__stat--time" data-growth-training-week title="北京时间本自然周周一 00:00 至下周一 00:00 的自主训练时长；扣除上课占用时间，多页面活动不重复累计。历史数据不足以精确分离时以“约”标记估算值。">
-        <span class="homepage-personal__time-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg></span>
-        <span class="homepage-personal__stat-label">本周自主训练时长</span>
+      <div class="homepage-personal__stat homepage-personal__stat--time" data-growth-training-week role="group" aria-label="本周自主训练时长">
+        <details class="homepage-personal__help" name="personal-growth-help">
+          <summary class="homepage-personal__time-icon" aria-label="查看本周自主训练时长说明" title="查看统计说明"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg></summary>
+          <div class="homepage-personal__help-panel"><strong>本周自主训练时长</strong><p>北京时间本自然周周一 00:00 至下周一 00:00 的自主训练时长；扣除上课占用时间，多页面活动不重复累计。历史数据不足以精确分离时以“约”标记估算值。</p>{% if trainingTime.thisWeekSeconds is not number %}<p>暂未获取到训练数据。</p>{% endif %}</div>
+        </details>
+        <span class="homepage-personal__stat-label">本周自主训练</span>
         <div class="homepage-personal__time-value">
           {% if trainingTime.thisWeekSeconds is number %}{{ growthDuration(trainingTime.thisWeekSeconds, trainingTime.thisWeekHasEstimate) }}{% else %}<b>—</b>{% endif %}
         </div>
-        <p class="homepage-personal__stat-hint">完整自然周 · 不含上课</p>
       </div>
-      <div class="homepage-personal__stat homepage-personal__stat--time homepage-personal__stat--average" data-growth-training-average title="取最近最多 4 个已结束且有完整采集覆盖的自然周，计算平均每周自主训练时长，包含没有训练的周。尚无完整周时显示“—”；估算值以“约”标记。">
-        <span class="homepage-personal__time-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M4 19h16M6 15V9m6 6V5m6 10v-3M3 3v17h18"/></svg></span>
-        <span class="homepage-personal__stat-label">平均周自主训练时长</span>
+      <div class="homepage-personal__stat homepage-personal__stat--time homepage-personal__stat--average" data-growth-training-average role="group" aria-label="平均周自主训练时长">
+        <details class="homepage-personal__help" name="personal-growth-help">
+          <summary class="homepage-personal__time-icon" aria-label="查看平均周自主训练时长说明" title="查看统计说明"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 19h16M6 15V9m6 6V5m6 10v-3M3 3v17h18"/></svg></summary>
+          <div class="homepage-personal__help-panel"><strong>平均周自主训练时长</strong><p>平台开始记录以来，累计自主训练时长除以覆盖的自然周数，包含零训练周；本周仍在记录中。估算值以“约”标记。</p>{% if trainingTime.averageWeekSeconds is not number %}<p>尚无记录，以“—”表示。</p>{% endif %}</div>
+        </details>
+        <span class="homepage-personal__stat-label">周均自主训练</span>
         <div class="homepage-personal__time-value">
           {% if trainingTime.averageWeekSeconds is number %}{{ growthDuration(trainingTime.averageWeekSeconds, trainingTime.averageWeekHasEstimate) }}{% else %}<b>—</b>{% endif %}
         </div>
-        <p class="homepage-personal__stat-hint">{% if trainingTime.averageWeekSeconds is number and trainingTime.averageWeeks %}近 {{ trainingTime.averageWeeks }} 个完整周{% else %}暂无完整周数据{% endif %}</p>
       </div>
     </div>
 
@@ -112,12 +110,23 @@
 </div>
 
 <style>
+  .homepage-personal > .section__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .6rem;
+  }
+  .homepage-personal > .section__header .section__title {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+  }
   .homepage-personal .section__body {
     padding: 1rem 1.1rem 1.15rem;
   }
   .homepage-personal__identity {
     display: grid;
-    grid-template-columns: 42px minmax(0, 1fr) minmax(4.25rem, max-content);
+    grid-template-columns: 42px minmax(0, 1fr);
     align-items: center;
     gap: .65rem;
   }
@@ -145,32 +154,29 @@
   .homepage-personal__name .user-profile-name {
     color: inherit;
   }
-  .homepage-personal__rank {
-    margin-top: .15rem;
-    color: #64748b;
-    font-size: .78rem;
-  }
   .homepage-personal__points {
+    display: inline-flex;
+    align-items: baseline;
+    flex: 0 0 auto;
+    gap: .3rem;
     box-sizing: border-box;
     max-width: 7rem;
-    padding: .4rem .65rem;
+    padding: .2rem .5rem;
     border: 1px solid var(--ui-v2-border, #dbe6f3);
     border-radius: var(--ui-v2-radius-sm, 10px);
     background: var(--ui-v2-surface-muted, #f8fbff);
     text-align: right;
   }
   .homepage-personal__points span {
-    display: block;
     color: var(--ui-v2-text-muted, #64748b);
-    font-size: .68rem;
+    font-size: .65rem;
     line-height: 1.4;
     white-space: nowrap;
   }
   .homepage-personal__points strong {
-    display: block;
-    margin-top: .12rem;
+    margin: 0;
     color: var(--ui-v2-accent, #2563eb);
-    font-size: 1.2rem;
+    font-size: 1rem;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     line-height: 1.2;
@@ -256,6 +262,7 @@
     font-variant-numeric: tabular-nums;
   }
   .homepage-personal__stat {
+    position: relative;
     box-sizing: border-box;
     min-width: 0;
     padding: .75rem;
@@ -292,23 +299,9 @@
     line-height: 1.15;
     overflow-wrap: anywhere;
   }
-  .homepage-personal__stat--compact {
-    padding: .65rem .75rem;
-    border-color: transparent;
-    background: #f3f6fa;
-  }
-  .homepage-personal__stat--compact strong {
-    margin-top: .3rem;
-    font-size: 1.15rem;
-  }
-  .homepage-personal__stat--compact svg {
-    color: #96a7bc;
-    width: 15px;
-    height: 15px;
-  }
   .homepage-personal__stat--weekly {
     grid-column: 1 / -1;
-    padding: .85rem .9rem .75rem;
+    padding: .7rem .8rem;
     border-color: #cedef6;
     background: linear-gradient(115deg, #edf4ff, #f7faff);
   }
@@ -317,20 +310,31 @@
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: .35rem;
-    margin-bottom: .45rem;
+    gap: .25rem;
+    margin-bottom: .3rem;
   }
   .homepage-personal__weekly-heading .homepage-personal__stat-label {
     color: #3d5e90;
     font-weight: 650;
   }
-  .homepage-personal__week-tag {
-    padding: .12rem .4rem;
-    border-radius: 999px;
-    background: #dfeaff;
-    color: #476695;
+  .homepage-personal__metric-heading {
+    display: flex;
+    align-items: center;
+    gap: .3rem;
+    min-width: 0;
+  }
+  .homepage-personal__cutoff {
+    display: inline-flex;
+    align-items: center;
+    gap: .15rem;
+    color: #647a9d;
     font-size: .58rem;
     line-height: 1.5;
+    white-space: nowrap;
+  }
+  .homepage-personal__cutoff svg {
+    width: 12px;
+    height: 12px;
   }
   .homepage-personal__weekly-value {
     display: flex;
@@ -351,10 +355,12 @@
     letter-spacing: -.03em;
   }
   .homepage-personal__weekly-top {
-    display: block;
+    display: inline-flex;
+    align-items: center;
+    gap: .2rem;
     flex: 0 1 auto;
     min-width: 0;
-    padding: .3rem .5rem;
+    padding: .25rem .4rem;
     border: 1px solid #f0dfb6;
     border-radius: 999px;
     background: #fffbef;
@@ -365,8 +371,7 @@
     line-height: 1.2;
     text-align: center;
   }
-  .homepage-personal__weekly-gap,
-  .homepage-personal__weekly-note {
+  .homepage-personal__weekly-gap {
     min-width: 0;
     color: var(--ui-v2-text-muted, #64748b);
     font-size: .62rem;
@@ -374,10 +379,9 @@
     text-align: right;
   }
   .homepage-personal__weekly-gap {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    column-gap: .22rem;
+    display: inline-flex;
+    align-items: center;
+    gap: .2rem;
   }
   .homepage-personal__weekly-gap > span {
     white-space: nowrap;
@@ -387,12 +391,10 @@
     font-weight: 700;
     font-variant-numeric: tabular-nums;
   }
-  .homepage-personal__stat-hint {
-    margin: .45rem 0 0;
-    color: #64748b;
-    font-size: .62rem;
-    line-height: 1.6;
-    overflow-wrap: anywhere;
+  .homepage-personal__weekly-top svg,
+  .homepage-personal__weekly-gap svg {
+    width: 14px;
+    height: 14px;
   }
   .homepage-personal__stat--time {
     display: flex;
@@ -406,7 +408,7 @@
     place-items: center;
     width: 29px;
     height: 29px;
-    margin-bottom: .5rem;
+    margin-bottom: .35rem;
     border-radius: 9px;
     background: #e2f0e9;
     color: #5b8a76;
@@ -420,8 +422,8 @@
     color: #8c78ad;
   }
   .homepage-personal__stat--time .homepage-personal__stat-label {
-    min-height: 2.9em;
-    font-size: .7rem;
+    display: block;
+    font-size: .68rem;
   }
   .homepage-personal__time-value {
     display: flex;
@@ -431,7 +433,7 @@
     row-gap: .2rem;
     min-width: 0;
     max-width: 100%;
-    margin-top: .2rem;
+    margin-top: .3rem;
     color: #263a45;
     line-height: 1.5;
   }
@@ -455,17 +457,88 @@
     color: #5f7380;
     font-size: .65rem;
   }
-  .homepage-personal__stat--time .homepage-personal__stat-hint {
-    margin-top: auto;
-    padding-top: .45rem;
+  .homepage-personal__help {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 0;
+  }
+  .homepage-personal__help > summary {
+    display: grid;
+    place-items: center;
+    box-sizing: border-box;
+    width: 25px;
+    height: 25px;
+    margin: 0;
+    padding: 3px;
+    border: 0;
+    border-radius: 8px;
+    background: #dfeaff;
+    color: #4e75ad;
+    cursor: pointer;
+    list-style: none;
+  }
+  .homepage-personal__help > summary::-webkit-details-marker {
+    display: none;
+  }
+  .homepage-personal__help > summary:focus-visible {
+    outline: 3px solid #79a5e3;
+    outline-offset: 3px;
+  }
+  .homepage-personal__help[open] > summary {
+    box-shadow: inset 0 0 0 1px currentColor;
+  }
+  .homepage-personal__stat--time .homepage-personal__help {
+    margin-bottom: .4rem;
+  }
+  .homepage-personal__stat--time .homepage-personal__help > summary {
+    background: #e2f0e9;
+    color: #5b8a76;
+  }
+  .homepage-personal__stat--average .homepage-personal__help > summary {
+    background: #ece7f5;
+    color: #8c78ad;
+  }
+  .homepage-personal__help:not([open]) .homepage-personal__help-panel {
+    display: none;
+  }
+  .homepage-personal__help-panel {
+    position: absolute;
+    z-index: 50;
+    box-sizing: border-box;
+    top: calc(100% + .35rem);
+    left: 0;
+    right: 0;
+    padding: .8rem;
+    border: 1px solid #ccd9eb;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 12px 32px #22334c26;
+    color: #53667e;
+    font-size: .72rem;
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+  }
+  .homepage-personal__help-panel strong {
+    display: block;
+    margin: 0 0 .35rem;
+    color: #304c70;
+    font-size: .8rem;
+    line-height: 1.5;
+  }
+  .homepage-personal__help-panel p {
+    margin: .3rem 0 0;
+  }
+  .homepage-personal__stat--time .homepage-personal__help-panel {
+    right: auto;
+    width: calc(200% + .6rem);
+  }
+  .homepage-personal__stat--average .homepage-personal__help-panel {
+    right: 0;
+    left: auto;
   }
   .theme--dark .homepage-personal__stat {
     border-color: #3c4c61;
     background: #253142;
-  }
-  .theme--dark .homepage-personal__stat--compact {
-    border-color: transparent;
-    background: #273445;
   }
   .theme--dark .homepage-personal__stat--weekly {
     border-color: #42597a;
@@ -490,18 +563,18 @@
   .theme--dark .homepage-personal__weekly-heading .homepage-personal__stat-label,
   .theme--dark .homepage-personal__time-value small,
   .theme--dark .homepage-personal__approx,
-  .theme--dark .homepage-personal__stat-hint {
+  .theme--dark .homepage-personal__cutoff {
     color: #adbbcb;
   }
-  .theme--dark .homepage-personal__time-icon {
+  .theme--dark .homepage-personal__stat--time .homepage-personal__help > summary {
     background: #365448;
     color: #a7cfb9;
   }
-  .theme--dark .homepage-personal__stat--average .homepage-personal__time-icon {
+  .theme--dark .homepage-personal__stat--average .homepage-personal__help > summary {
     background: #51445f;
     color: #d2bde7;
   }
-  .theme--dark .homepage-personal__week-tag {
+  .theme--dark .homepage-personal__help > summary {
     background: #344e72;
     color: #bed5f6;
   }
@@ -510,12 +583,20 @@
     background: #392f21;
     color: #edcc88;
   }
-  .theme--dark .homepage-personal__weekly-gap,
-  .theme--dark .homepage-personal__weekly-note {
+  .theme--dark .homepage-personal__weekly-gap {
     color: #a4b3c5;
   }
   .theme--dark .homepage-personal__weekly-gap b {
     color: #93c5fd;
+  }
+  .theme--dark .homepage-personal__help-panel {
+    border-color: #50637d;
+    background: #253447;
+    color: #c0cfe1;
+    box-shadow: 0 12px 32px #050a1466;
+  }
+  .theme--dark .homepage-personal__help-panel strong {
+    color: #e5eef9;
   }
   @media (prefers-reduced-motion: reduce) {
     .homepage-personal__badge:not(.user-profile-badge--more)::after {

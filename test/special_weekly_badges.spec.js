@@ -16,18 +16,26 @@ function compile(relative, requireModule, globals = {}) {
 }
 const { calendarWeek } = compile('packages/hydrooj/src/lib/calendar_week.ts', require);
 
-function fixture(champions = [10, 11]) {
+function fixture(champions = [10, 11], badgeOverrides = {}) {
     const awards = []; const snapshots = []; const expiryInputs = []; const badgeChanges = []; const migrations = []; const badgeReads = [];
     const expiresAt = new Date('2026-09-20T14:00:00Z');
+    const shadowBadge = { _id: 2, title: '暗影骑士', content: '每周日 22:00 自动分配给最近一周 AC 数最多的同学。',
+        users: [77], automaticSource: 'weekly_ac', automaticGrantVersion: 1, backgroundColor: '123456', fontColor: 'abcdef',
+        ...badgeOverrides };
     const ctx = { db: { collection(name) {
         if (name === 'badge') return {
             async findOne(query) {
                 badgeReads.push(query);
-                if (query.content) return query.title === '暗影骑士'
-                    ? { _id: 2, content: '每周日 22:00 自动分配给最近一周 AC 数最多的同学。', users: [77] } : null;
+                if (query.content) {
+                    if (query.title !== shadowBadge.title) return null;
+                    if (query.manualAssignmentVersion && query.manualAssignmentVersion.$ne === shadowBadge.manualAssignmentVersion) return null;
+                    if (query.$or && !query.$or.some((condition) => Object.entries(condition).every(([key, value]) => shadowBadge[key] === value))) return null;
+                    if (typeof query.content === 'string' ? query.content !== shadowBadge.content : !query.content.$in.includes(shadowBadge.content)) return null;
+                    return shadowBadge;
+                }
                 return { _id: query.title === '最强王者' ? 1 : 2, users: [77] };
             },
-            async updateOne(query, update) { badgeChanges.push({ query, update }); },
+            async updateOne(query, update) { badgeChanges.push({ query, update }); Object.assign(shadowBadge, update.$set); },
             async distinct() { return []; },
         };
         if (name === 'user') return { find() { return { project() { return this; }, async toArray() { return [{ _id: 99, priv: 1 }]; } }; } };
@@ -54,7 +62,7 @@ function fixture(champions = [10, 11]) {
         if (name.startsWith('hydrooj/src/') || name.startsWith('./')) return {};
         return require(name);
     }, { global: { Hydro: { model: { userBadge: {}, badge: {}, user: {} } } }, process: { env: { NODE_APP_INSTANCE: '1' } } });
-    return { ctx, addon, awards, snapshots, expiryInputs, expiresAt, badgeChanges, migrations, badgeReads };
+    return { ctx, addon, awards, snapshots, expiryInputs, expiresAt, badgeChanges, migrations, badgeReads, shadowBadge };
 }
 
 it('calendar weeks start Monday regardless of locale, freeze AC on Sunday 22:00, and retain the full training week', () => {
@@ -105,8 +113,33 @@ it('startup updates only the known old scheduler description without replacing m
     const change = f.badgeChanges[0];
     assert.equal(change.query._id, 2);
     assert.equal(change.query.content, '每周日 22:00 自动分配给最近一周 AC 数最多的同学。');
-    assert.equal(change.query.manualAssignmentVersion.$ne, 1);
+    assert.ok(change.query.$or.some((condition) => condition.automaticSource === 'weekly_ac'));
     assert.deepEqual(Object.keys(change.update.$set), ['content']);
     assert.match(change.update.$set.content, /本自然周.*首次正式 AC.*并列第一/);
     assert.deepEqual(f.migrations.map((m) => m.source), ['weekly_ac']);
+});
+
+it('updates an automatic shadow description even after a teacher assigned holders, without migrating ownership', async () => {
+    const f = fixture([], { manualAssignmentVersion: 1 });
+    await f.addon.apply(f.ctx);
+    assert.equal(f.migrations.length, 0);
+    assert.equal(f.badgeChanges.length, 1);
+    assert.deepEqual(Object.keys(f.badgeChanges[0].update.$set), ['content']);
+    assert.match(f.shadowBadge.content, /本自然周.*首次正式 AC.*并列第一/);
+    assert.deepEqual(f.shadowBadge.users, [77]);
+    assert.equal(f.shadowBadge.manualAssignmentVersion, 1);
+    assert.equal(f.shadowBadge.backgroundColor, '123456'); assert.equal(f.shadowBadge.fontColor, 'abcdef');
+    assert.equal(f.awards.length, 0);
+});
+
+it('leaves a manual badge with no automatic provenance and a teacher-written description untouched', async () => {
+    for (const overrides of [
+        { manualAssignmentVersion: 1, automaticSource: undefined, automaticGrantVersion: undefined },
+        { manualAssignmentVersion: 1, content: '老师自己写的规则' },
+    ]) {
+        const f = fixture([], overrides);
+        await f.addon.apply(f.ctx);
+        assert.equal(f.badgeChanges.length, 0); assert.equal(f.migrations.length, 0); assert.equal(f.awards.length, 0);
+        assert.deepEqual(f.shadowBadge.users, [77]);
+    }
 });

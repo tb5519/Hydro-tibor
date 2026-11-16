@@ -724,14 +724,18 @@ export async function apply(ctx: Context) {
         });
         if (badge) {
             await migrateWeeklyAutomaticBadge(ctx, badge._id, kind === 'strongest' ? 'weekly_rp' : 'weekly_ac', nextSunday22());
-            if (kind === 'shadow' && badge.content === LEGACY_SHADOW_BADGE_CONTENT) {
-                await ctx.db.collection('badge').updateOne({
-                    _id: badge._id, content: LEGACY_SHADOW_BADGE_CONTENT,
-                    domainId: { $exists: false }, manualAssignmentVersion: { $ne: 1 },
-                }, { $set: { content: config.content } });
-            }
         }
     }
+    // A teacher may have assigned holders to this automatic badge. That guards
+    // ownership migration, but must not keep its known old award description.
+    const automaticShadow = {
+        title: SPECIAL_BADGES.shadow.title, content: LEGACY_SHADOW_BADGE_CONTENT, domainId: { $exists: false },
+        $or: [{ automaticSource: 'weekly_ac' }, { automaticGrantVersion: 1 }],
+    };
+    const shadowBadge = await ctx.db.collection('badge').findOne(automaticShadow);
+    if (shadowBadge) await ctx.db.collection('badge').updateOne({ _id: shadowBadge._id, ...automaticShadow }, {
+        $set: { content: SPECIAL_BADGES.shadow.content },
+    });
     const badgeDomains = await ctx.db.collection('badge').distinct('domainId', { domainId: { $exists: true } });
     const legacyDomain = await DomainModel.get('system');
     if (legacyDomain) await importLegacyLotteryAutomaticBadges(ctx, legacyDomain);
