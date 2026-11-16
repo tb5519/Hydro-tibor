@@ -87,7 +87,9 @@ test('selected learner shows cross-period duration, classroom breakdown and effo
     const panel = document.querySelector('#training-student');
     assert.equal(panel.querySelector('h2').textContent, '方全然');
     assert.equal(panel.querySelectorAll('.tdash-student__stats>div').length, 4);
-    assert.match(panel.textContent, /平均每周/);
+    assert.match(panel.textContent, /平均周自主训练/);
+    assert.match(panel.textContent, /有记录以来/);
+    assert.doesNotMatch(panel.textContent, /最近 \d+ 个完整自然周/);
     assert.equal(panel.querySelectorAll('.tdash-domain-stat').length, 2);
     const rows = [...panel.querySelectorAll('.tdash-problem-table tbody tr')];
     assert.equal(rows.length, 3);

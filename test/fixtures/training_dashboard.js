@@ -62,7 +62,7 @@ function studentDetail(overrides = {}) {
             { label: '本期训练', value: '2 小时 30 分', helper: '近 7 天' },
             { label: '最近 7 天', value: '2 小时 30 分', helper: '今天及之前 6 天' },
             { label: '本月训练', value: '12 小时 45 分', helper: '10 月 1 日至今' },
-            { label: '平均每周', value: '3 小时 12 分', helper: '最近 4 个完整自然周' },
+            { label: '平均周自主训练', value: '3 小时 12 分', helper: '有记录以来 · 含本周及零训练周' },
         ],
         domains: domainRows.map((row) => ({ ...row })), daily,
         problems: [

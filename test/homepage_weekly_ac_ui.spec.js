@@ -26,7 +26,7 @@ describe('homepage weekly AC comparison', () => {
         t.after(h.close);
         assert.equal(h.value.querySelector(':scope > strong').textContent, '11');
         const badge = h.value.querySelector('.homepage-personal__weekly-top');
-        assert.equal(badge.textContent.trim(), '1');
+        assert.equal(badge.textContent.trim(), 'TOP1');
         assert.equal(badge.getAttribute('aria-label'), '本周新增 AC 第 1 名');
         assert.match(badge.title, /工作区所有域.*管理员不参与排名.*并列第一/);
         assert.equal(h.value.querySelector('.homepage-personal__weekly-gap'), null);
@@ -36,7 +36,7 @@ describe('homepage weekly AC comparison', () => {
         const h = fixture({ eligible: true, isTop: false, gap: 8, topCount: 19, scope: 'domain' });
         t.after(h.close);
         const gap = h.value.querySelector('.homepage-personal__weekly-gap');
-        assert.equal(gap.textContent.trim(), '差8题');
+        assert.equal(gap.textContent.trim(), '距 TOP1 差 8 题');
         assert.match(gap.getAttribute('aria-label'), /第 1 名还差 8 题/);
         assert.match(gap.title, /当前域.*追平第 1 名还需 8 题/);
         assert.equal(h.value.querySelector(':scope > strong').textContent, '11');
@@ -58,6 +58,24 @@ describe('homepage weekly AC comparison', () => {
         assert.equal(h.value.querySelector(':scope > strong').textContent, '42');
         assert.equal(h.value.querySelector('.homepage-personal__weekly-note'), null);
         assert.match(h.document.querySelector('[data-growth-weekly-ac] .homepage-personal__help-panel').textContent, /此账户不参与学员排名/);
+        assert.equal(h.value.querySelector('.homepage-personal__weekly-top'), null);
+        assert.equal(h.value.querySelector('.homepage-personal__weekly-gap').textContent.trim(), '距 TOP1 差 0 题');
+    });
+
+    it('shows a teacher the gap to the student leader while preserving their own count', (t) => {
+        const h = fixture({ eligible: false, isTop: false, gap: 195, topCount: 211, scope: 'workspace' }, 16);
+        t.after(h.close);
+        assert.equal(h.value.querySelector(':scope > strong').textContent, '16');
+        const gap = h.value.querySelector('.homepage-personal__weekly-gap');
+        assert.equal(gap.textContent.trim(), '距 TOP1 差 195 题');
+        assert.match(gap.getAttribute('aria-label'), /第 1 名还差 195 题/);
+        assert.equal(h.value.querySelector('.homepage-personal__weekly-top'), null);
+    });
+
+    it('does not invent a first-place comparison for staff when no student has solved a problem', (t) => {
+        const h = fixture({ eligible: false, isTop: false, gap: 0, topCount: 0, scope: 'workspace' }, 16);
+        t.after(h.close);
+        assert.equal(h.value.querySelector('.homepage-personal__weekly-gap'), null);
         assert.equal(h.value.querySelector('.homepage-personal__weekly-top'), null);
     });
 
@@ -128,6 +146,18 @@ describe('homepage natural-week growth cards', () => {
             thisWeekSeconds: 0, thisWeekHasEstimate: true } }); t.after(zero.close);
         assert.match(compactText(zero.document.querySelector('[data-growth-training-week] .homepage-personal__time-value')), /^0\s*分钟$/);
     });
+
+    for (const [seconds, expected] of [[29, /^约\s*不足 1\s*分钟$/], [30, /^约\s*不足 1\s*分钟$/],
+        [59, /^约\s*不足 1\s*分钟$/], [60, /^约\s*1\s*分钟$/], [89, /^约\s*1\s*分钟$/], [90, /^约\s*2\s*分钟$/]]) {
+        it(`keeps estimated ${seconds}-second durations consistent across both training cards`, (t) => {
+            const h = fixture(undefined, 0, { trainingTime: { ...trainingTime,
+                thisWeekSeconds: seconds, thisWeekHasEstimate: true,
+                averageWeekSeconds: seconds, averageWeekHasEstimate: true } }); t.after(h.close);
+            for (const value of h.document.querySelectorAll('.homepage-personal__time-value')) {
+                assert.match(compactText(value), expected);
+            }
+        });
+    }
 
     it('distinguishes a measured zero cumulative average from missing platform recordings', (t) => {
         const zero = fixture(undefined, 0, { trainingTime: { ...trainingTime, averageWeekSeconds: 0, averageWeeks: 2 } }); t.after(zero.close);

@@ -26,7 +26,7 @@ const STATUS = { STATUS_ACCEPTED: 1 };
 const fixedNow = Date.parse('2026-10-25T18:00:00+08:00');
 const priorNow = moment.now;
 let mongod; let client; let db; let daily; let records; let domains; let accounts; let problems; let classes;
-let model;
+let model; let personalGrowth; let dashboardHelper; let dbContext;
 let startedAt = new Date('2026-10-05T00:00:00+08:00');
 const classrooms = [
     { _id: 'python', name: 'Python 训练', owner: 10 },
@@ -40,7 +40,7 @@ function account(id, domainId = 'python') {
     };
 }
 function handler(query = {}, id = 10) {
-    return { user: account(id), session: {}, domain: { _id: 'python', workspaceId: 'school' },
+    return { user: account(id), session: {}, domain: { _id: 'python', workspaceId: 'school' }, ctx: dbContext,
         request: { query }, url: (name, params = {}) => `/${name}${params.domainId ? `/${params.domainId}/${params.pid}` : ''}` };
 }
 let oidSequence = 1;
@@ -66,10 +66,26 @@ before(async () => {
     const helper = load('packages/hydrooj/src/lib/training_dashboard.ts');
     const clock = load('packages/hydrooj/src/lib/training_time.ts');
     const learning = load('packages/hydrooj/src/lib/learning_time.ts', { './training_time': clock });
+    dashboardHelper = helper;
+    dbContext = { db: { collection(name) {
+        if (name === 'training.time.meta') return { findOne: async () => startedAt ? { startedAt } : null };
+        if (name === 'training.time.daily') return daily;
+        if (name === 'training.class') return classes;
+        throw new Error('Unexpected growth collection ' + name);
+    } } };
+    personalGrowth = load('packages/hydrooj/src/lib/personal_training_growth.ts', {
+        './calendar_week': load('packages/hydrooj/src/lib/calendar_week.ts'),
+        './learning_time': learning, './training_dashboard': helper,
+        '../model/workspace': {
+            LEGACY_WORKSPACE_ID: 'legacy', resolveDomainWorkspaceId: (domain) => domain.workspaceId,
+            getDomains: async () => classrooms.filter((item) => item.domainType !== 'scratch'),
+        },
+    });
     model = load('packages/hydrooj/src/model/training_dashboard.ts', {
         '../error': { PermissionError, ValidationError }, '../lib/domain_type': { isScratchDomain: (d) => d.domainType === 'scratch' },
         '../lib/training_dashboard': helper, './builtin': { PERM, PRIV, STATUS },
         '../lib/learning_time': learning, './class_time': { classes },
+        '../lib/personal_training_growth': personalGrowth,
         '../utils': { Time: { getObjectID: (time) => ObjectId.createFromTime(Math.floor(+time / 1000)) } },
         './domain': { collUser: domains },
         './problem': {
@@ -190,30 +206,34 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         const result = await model.loadTrainingDashboard(handler({ period: 'custom', start: '2026-07-28', end: '2026-10-25' }));
         assert.equal(result.daily.length, 90);
     });
-    it('detail shows per-domain times, recent 7 days, month and complete-week average', async () => {
+    it('detail keeps selected/recent/month totals while averaging every recorded natural week including this week', async () => {
         const result = await model.loadTrainingDashboard(handler({ student: '101' }));
         assert.equal(result.detail.name, '小艾');
         assert.equal(result.detail.overview[0].value, '45 分钟');
         assert.equal(result.detail.overview[1].value, '45 分钟');
         assert.equal(result.detail.overview[2].value, '3 小时 45 分钟');
-        assert.equal(result.detail.overview[3].value, '1 小时 30 分钟');
-        assert.match(result.detail.overview[3].helper, /2 个完整自然周/);
+        assert.equal(result.detail.overview[3].value, '1 小时 15 分钟');
+        assert.match(result.detail.overview[3].helper, /3 个自然周.*含本周和无训练周/);
+        assert.equal(result.detail.averageTraining.averageWeekSeconds, 4500);
+        assert.equal(result.detail.averageTraining.averageWeeks, 3);
         assert.equal(result.detail.domains.find((entry) => entry.id === 'python').seconds, 1500);
         assert.equal(result.detail.domains.find((entry) => entry.id === 'cpp').seconds, 1200);
     });
-    it('historical custom detail reads only the selected and recent windows, not intervening years', async (t) => {
+    it('lifetime averages read only the selected learner and authorized classrooms while detail windows remain bounded', async (t) => {
         await daily.insertMany([
             timer(101, 'python', '2024-01-10', 60),
             timer(101, 'python', '2025-07-01', 999999),
+            timer(102, 'cpp', '2025-07-01', 888888),
+            timer(101, 'foreign', '2025-07-01', 777777),
         ]);
         const originalFind = daily.find;
-        let loadedDays = [];
+        const reads = [];
         daily.find = function (...args) {
             const cursor = originalFind.apply(this, args);
             const originalToArray = cursor.toArray;
             cursor.toArray = async function () {
                 const documents = await originalToArray.call(this);
-                loadedDays = documents.map((item) => item.day);
+                reads.push({ query: args[0], documents });
                 return documents;
             };
             return cursor;
@@ -226,22 +246,62 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         assert.equal(result.detail.overview[0].value, '1 分钟');
         assert.equal(result.detail.overview[1].value, '45 分钟');
         assert.equal(result.detail.overview[2].value, '3 小时 45 分钟');
-        assert(loadedDays.includes('2024-01-10'));
-        assert(loadedDays.includes('2026-10-25'));
-        assert(!loadedDays.includes('2025-07-01'));
+        const cumulative = reads.find((read) => read.query.uid === 101 && read.query.day?.$lte && !read.query.day.$gte);
+        assert.ok(cumulative, 'a separate lifetime query supplies the cumulative average');
+        assert.deepEqual(Array.from(cumulative.query.domainId.$in), ['cpp', 'python']);
+        assert(cumulative.documents.some((item) => item.day === '2025-07-01'));
+        assert(cumulative.documents.every((item) => item.uid === 101 && ['python', 'cpp'].includes(item.domainId)));
+        const bounded = reads.find((read) => read.query.uid === 101 && read.query.$or);
+        assert.ok(bounded);
+        assert(bounded.documents.some((item) => item.day === '2024-01-10'));
+        assert(bounded.documents.some((item) => item.day === '2026-10-25'));
+        assert(!bounded.documents.some((item) => item.day === '2025-07-01'));
+        assert(reads.every((read) => read.query.uid === 101 || read.query.day?.$gte), 'other students are only queried inside the bounded roster window');
     });
     it('detail selected-domain metrics never reintroduce unselected classroom totals', async () => {
         const result = await model.loadTrainingDashboard(handler({ student: '101', domains: 'python' }));
         assert.equal(result.detail.overview[0].value, '25 分钟');
         assert.equal(result.detail.overview[2].value, '1 小时 25 分钟');
-        assert.equal(result.detail.overview[3].value, '30 分钟');
+        assert.equal(result.detail.overview[3].value, '28 分钟');
         assert(result.detail.problems.every((entry) => entry.domainId === 'python'));
     });
-    it('does not misrepresent prelaunch or partial-week periods as zero training', async () => {
+    it('includes the first partial natural week immediately instead of waiting for a completed week', async () => {
         startedAt = new Date('2026-10-24T18:00:00+08:00');
+        await daily.deleteMany({ uid: 101, day: { $lt: '2026-10-24' } });
         const result = await model.loadTrainingDashboard(handler({ student: '101' }));
-        assert.equal(result.detail.overview[3].value, '—');
-        assert.match(result.detail.overview[3].helper, /完整自然周/);
+        assert.equal(result.detail.overview[3].value, '15 分钟');
+        assert.equal(result.detail.averageTraining.averageWeeks, 1);
+        assert.match(result.detail.overview[3].helper, /含本周和无训练周/);
+    });
+    it('homepage and dashboard averages are exactly equal for the same authorized scope and observation time', async () => {
+        await classes.insertMany([
+            { workspaceId: 'school', domainId: 'cpp', uid: 101, externalId: 'cross-domain-average-mask',
+                startAt: new Date('2026-10-25T11:30:00+08:00'), endAt: new Date('2026-10-25T11:45:00+08:00') },
+            { workspaceId: 'other-school', domainId: 'python', uid: 101, externalId: 'foreign-average-mask',
+                startAt: new Date('2026-10-25T11:00:00+08:00'), endAt: new Date('2026-10-25T12:00:00+08:00') },
+            { workspaceId: 'school', domainId: 'python', uid: 103, externalId: 'other-student-average-mask',
+                startAt: new Date('2026-10-25T11:00:00+08:00'), endAt: new Date('2026-10-25T12:00:00+08:00') },
+        ]);
+        for (const now of [new Date(fixedNow), new Date('2026-11-02T10:00:00+08:00')]) {
+            // The modern homepage is scoped to Python, with the same two
+            // authorized OJ classrooms available to this dashboard teacher.
+            const homepage = await personalGrowth.getPersonalTrainingGrowth(dbContext, { _id: 'python', workspaceId: 'school' }, 101, now);
+            const result = await model.loadTrainingDashboard(handler({ domains: 'python', student: '101' }), now);
+            const average = result.detail.averageTraining;
+            for (const key of ['averageWeekSeconds', 'averageWeekHasEstimate', 'averageWeeks', 'averageStart', 'averageEnd']) {
+                assert.equal(average[key], homepage[key], key);
+            }
+            assert.equal(result.detail.overview[3].value,
+                dashboardHelper.trainingDurationEstimate(homepage.averageWeekSeconds, homepage.averageWeekHasEstimate));
+            assert.equal(average.averageWeekHasEstimate, true, 'both views preserve the marked historical point estimate');
+            assert.equal(average.averageWeeks, now.getTime() === fixedNow ? 3 : 5, 'current and zero-training weeks stay in the denominator');
+        }
+    });
+    it('a learner with no training uses zero for every collected week instead of omitting quiet weeks', async () => {
+        const result = await model.loadTrainingDashboard(handler({ student: '103' }));
+        assert.equal(result.detail.overview[3].value, '0 分钟');
+        assert.equal(result.detail.averageTraining.averageWeekSeconds, 0);
+        assert.equal(result.detail.averageTraining.averageWeeks, 3);
     });
     it('hides restricted problem titles and links for limited domain teachers', async () => {
         await problems.updateOne({ domainId: 'python', docId: 1 }, { $set: { hidden: true, title: '未公开竞赛题目' } });
@@ -326,6 +386,8 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         const restricted = await model.loadTrainingDashboard(handler({ period: 'today', domains: 'python', student: '101' }, 11));
         assert.equal(restricted.summary.trainingSeconds, 1200, 'An unauthorized classroom must not become a hidden data source');
         assert.equal(restricted.summary.overlapSeconds, 0);
+        assert.equal(result.detail.averageTraining.averageWeekSeconds, 1400);
+        assert.equal(restricted.detail.averageTraining.averageWeekSeconds, 1800, 'the lifetime average also excludes unauthorized class masks');
     });
     it('corrects classroom-bound legacy counters and displays one marked estimate for a historical lesson crossing', async () => {
         await daily.deleteMany({ uid: 101, day: '2026-10-25' });

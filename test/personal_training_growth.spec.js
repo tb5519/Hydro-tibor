@@ -208,4 +208,67 @@ describe('personal autonomous training growth', () => {
         assert.equal(result.averageWeeks, 7); assert.equal(result.averageWeekSeconds, 3600);
         assert.equal(result.thisWeekSeconds, 14400);
     });
+    it('personal and explicit authorized scope use exactly the same cumulative calculation for the same time', async () => {
+        await database.collection('training.time.daily').insertMany([
+            row('2026-10-28', '09:00:00', '13:00:00'),
+            row('2026-11-17', '09:00:00', '12:00:00'),
+            row('2026-11-17', '10:00:00', '11:00:00', { domainId: 'cpp' }),
+        ]);
+        await database.collection('training.class').insertOne(lesson('2026-11-17', '10:00:00', '11:00:00', { domainId: 'cpp' }));
+        const personal = await get();
+        const explicit = await growth.getScopedPersonalTrainingGrowth(ctx, {
+            workspaceId: 'tang', uid: 10, domainIds: ['python', 'cpp'], authorizedDomainIds: ['python', 'cpp'],
+        }, now);
+        assert.deepEqual(JSON.parse(JSON.stringify(explicit)), JSON.parse(JSON.stringify(personal)));
+        assert.equal(explicit.averageWeekSeconds, 4320);
+    });
+    it('modern personal scope and equivalent dashboard selection agree for the same learner and cutoff', async () => {
+        await database.collection('training.time.daily').insertMany([
+            row('2026-10-28', '09:00:00', '13:00:00', { domainId: 'modern-a' }),
+            row('2026-11-17', '09:00:00', '12:00:00', { domainId: 'modern-a' }),
+            row('2026-11-17', '09:00:00', '12:00:00', { domainId: 'modern-b' }),
+        ]);
+        await database.collection('training.class').insertOne(lesson('2026-11-17', '10:00:00', '11:00:00', { workspaceId: 'modern', domainId: 'modern-b' }));
+        const personal = await get(10, { _id: 'modern-a', workspaceId: 'modern' });
+        const explicit = await growth.getScopedPersonalTrainingGrowth(ctx, {
+            workspaceId: 'modern', uid: 10, domainIds: ['modern-a'], authorizedDomainIds: ['modern-a', 'modern-b'],
+        }, now);
+        assert.deepEqual(JSON.parse(JSON.stringify(explicit)), JSON.parse(JSON.stringify(personal)));
+    });
+    it('an explicitly authorized mask never expands to another workspace classroom', async () => {
+        await database.collection('training.time.daily').insertOne(row('2026-11-17', '09:00:00', '12:00:00'));
+        await database.collection('training.class').insertMany([
+            lesson('2026-11-17', '09:00:00', '10:00:00', { domainId: 'cpp' }),
+            lesson('2026-11-17', '10:00:00', '11:00:00', { workspaceId: 'foreign' }),
+            lesson('2026-11-17', '11:00:00', '12:00:00', { uid: 11 }),
+        ]);
+        const result = await growth.getScopedPersonalTrainingGrowth(ctx, {
+            workspaceId: 'tang', uid: 10, domainIds: ['python'], authorizedDomainIds: ['python'],
+        }, now);
+        assert.equal(result.thisWeekSeconds, 10800);
+        assert.equal(result.averageWeekSeconds, 2160);
+        const query = queries.find((item) => item.name === 'training.class').query;
+        assert.deepEqual(Array.from(query.domainId.$in), ['python']);
+        assert.equal(query.workspaceId, 'tang'); assert.equal(query.uid, 10);
+    });
+    it('rejects selection outside the supplied authorization before reading private ledgers', async () => {
+        const unavailableDb = { db: { collection() { throw new Error('Unexpected private database access'); } } };
+        await assert.rejects(growth.getScopedPersonalTrainingGrowth(unavailableDb, {
+            workspaceId: 'tang', uid: 10, domainIds: ['foreign'], authorizedDomainIds: ['python'],
+        }, now), /exceed the authorized scope/);
+        for (const uid of [0, -1]) {
+            await assert.rejects(growth.getScopedPersonalTrainingGrowth(unavailableDb, {
+                workspaceId: 'tang', uid, domainIds: ['python'], authorizedDomainIds: ['python'],
+            }, now), /Invalid personal training growth scope/);
+        }
+    });
+    it('keeps the personal wrapper available to the root user without reading another learners activity', async () => {
+        await database.collection('training.time.daily').insertMany([
+            row('2026-11-17', '11:00:00', '12:00:00', { uid: 1 }),
+            row('2026-11-17', '09:00:00', '10:00:00'),
+        ]);
+        const result = await get(1);
+        assert.equal(result.thisWeekSeconds, 3600); assert.equal(result.averageWeekSeconds, 720);
+        for (const { query } of queries) assert.equal(query.uid, 1);
+    });
 });

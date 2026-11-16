@@ -2,8 +2,9 @@ import moment from 'moment-timezone';
 import { PermissionError, ValidationError } from '../error';
 import { isScratchDomain } from '../lib/domain_type';
 import { mergeLearningTime } from '../lib/learning_time';
+import { getScopedPersonalTrainingGrowth } from '../lib/personal_training_growth';
 import {
-    TRAINING_PERIODS, TRAINING_TIME_ZONE, trainingAttention, trainingAverageWindow, trainingDailyBars,
+    TRAINING_PERIODS, TRAINING_TIME_ZONE, trainingAttention, trainingDailyBars,
     trainingDomainSelection, trainingDuration, trainingDurationEstimate, trainingRange,
 } from '../lib/training_dashboard';
 import type { Handler } from '../service/server';
@@ -80,13 +81,14 @@ function domainBreakdown(domains: any[], ids: string[], stats: any[]) {
     });
 }
 
-export async function loadTrainingDashboard(handler: Handler) {
+export async function loadTrainingDashboard(handler: Handler, time = new Date()) {
     const scope = await trainingDashboardScope(handler);
+    const now = moment(time).tz(TRAINING_TIME_ZONE);
     const query = handler.request.query || {};
     let range: ReturnType<typeof trainingRange>;
     let selection: ReturnType<typeof trainingDomainSelection>;
     try {
-        range = trainingRange(query);
+        range = trainingRange(query, time);
         selection = trainingDomainSelection(query.domains ?? query.domain, scope.domains.map((item) => item.id));
     } catch (error) { throw new ValidationError(error.message); }
     const { start, end, period } = range;
@@ -182,14 +184,11 @@ export async function loadTrainingDashboard(handler: Handler) {
         closeDetailUrl: url({ student: null }, '#training-roster'), detail: null,
     };
     if (!student) return dashboard;
-    const now = moment().tz(TRAINING_TIME_ZONE);
-    const startedAt = await training.getTrackingStartedAt();
-    const average = trainingAverageWindow(startedAt, now.toDate());
     const recentStart = now.clone().subtract(6, 'days').startOf('day');
     const monthStart = now.clone().startOf('month');
-    const recentHistoryStart = moment.min(recentStart, monthStart, average.start);
-    // A historical custom range and today's comparison windows can be far
-    // apart. Read their union, never all the intervening months/years.
+    const recentHistoryStart = moment.min(recentStart, monthStart);
+    // Keep selected/recent detail reads bounded. The separate lifetime average
+    // is queried for this learner alone, within the authorized classrooms.
     const historyWindows = [
         { day: { $gte: dayString(start), $lte: dayString(end) } },
         { day: { $gte: dayString(recentHistoryStart), $lte: dayString(now) } },
@@ -198,7 +197,7 @@ export async function loadTrainingDashboard(handler: Handler) {
         { startAt: { $lt: new Date(rangeEnd) }, endAt: { $gt: new Date(rangeStart) } },
         { startAt: { $lt: now.clone().add(1, 'day').startOf('day').toDate() }, endAt: { $gt: recentHistoryStart.toDate() } },
     ];
-    const [history, lessonHistory, problemRecords] = await Promise.all([
+    const [history, lessonHistory, problemRecords, growth] = await Promise.all([
         training.daily.find({ domainId: { $in: ids }, uid: student, $or: historyWindows }).toArray(),
         classes.find({ ...classMatch, uid: student, $or: lessonWindows }).toArray(),
         record.coll.aggregate([
@@ -206,6 +205,10 @@ export async function loadTrainingDashboard(handler: Handler) {
             { $group: { _id: { domainId: '$domainId', pid: '$pid' }, submits: { $sum: 1 },
                 accepted: { $max: { $cond: [{ $eq: ['$status', STATUS.STATUS_ACCEPTED] }, 1, 0] } }, last: { $max: '$_id' } } },
         ]).toArray(),
+        getScopedPersonalTrainingGrowth(handler.ctx, {
+            workspaceId: scope.workspaceId, uid: student, domainIds: ids,
+            authorizedDomainIds: scope.domains.map((item) => item.id),
+        }, time),
     ]);
     const studentRow = rows.find((item) => item.uid === student);
     const selectedTimes = mergeTimes(history, lessonHistory, rangeStart, rangeEnd);
@@ -247,15 +250,18 @@ export async function loadTrainingDashboard(handler: Handler) {
             classTrainingLabel: item.classTrainingEstimatedSeconds ? trainingDurationEstimate(item.classTrainingEstimatedSeconds,
                 (item.classTrainingUpperSeconds ?? item.classTrainingSeconds) - item.classTrainingSeconds > 0.001) : '' };
     }));
-    const averageTimes = mergeTimes(history, lessonHistory, +average.start, +average.end).students;
     const recentTime = presentTime(mergeTimes(history, lessonHistory, +recentStart, +now.clone().add(1, 'day').startOf('day')).students[0]);
     const monthTime = presentTime(mergeTimes(history, lessonHistory, +monthStart, +now.clone().add(1, 'day').startOf('day')).students[0]);
-    const averageLabel = average.weeks
-        ? trainingDurationEstimate(sum(averageTimes, 'trainingEstimatedSeconds') / average.weeks, averageTimes.some((item) => item.hasEstimate)) : '—';
+    const averageLabel = growth.averageWeekSeconds === null ? '—'
+        : trainingDurationEstimate(growth.averageWeekSeconds, growth.averageWeekHasEstimate);
     const selectedLessons = lessonHistory.filter((item) => ids.includes(item.domainId) && +item.startAt < rangeEnd && +item.endAt > rangeStart)
         .sort((a, b) => +b.startAt - +a.startAt || a.externalId.localeCompare(b.externalId));
     dashboard.detail = {
         uid: student, name: studentRow.name,
+        averageTraining: {
+            averageWeekSeconds: growth.averageWeekSeconds, averageWeekHasEstimate: growth.averageWeekHasEstimate,
+            averageWeeks: growth.averageWeeks, averageStart: growth.averageStart, averageEnd: growth.averageEnd,
+        },
         timeBreakdown: presentTime(selectedTimes.students[0]),
         lessons: selectedLessons.slice(0, 100).map((item) => ({ externalId: item.externalId, title: item.title || '编程课堂',
             domainName: scope.domains.find((d) => d.id === item.domainId)?.name || item.domainId,
@@ -268,7 +274,7 @@ export async function loadTrainingDashboard(handler: Handler) {
             { label: '最近 7 天', value: recentTime.timeLabel, helper: `${dayString(recentStart)} 至今 · 学习总时长` },
             { label: '本月已记录', value: monthTime.timeLabel, helper: `${now.format('M')} 月 · 学习总时长` },
             { label: '平均周自主训练', value: averageLabel,
-                helper: average.weeks ? `最近 ${average.weeks} 个完整自然周（${average.start.format('M/D')}—${average.end.clone().subtract(1, 'day').format('M/D')}）` : '统计满一个完整自然周后显示' },
+                helper: growth.averageWeeks ? `${growth.averageStart} 至今 · 共 ${growth.averageWeeks} 个自然周（含本周和无训练周）` : '暂无自主训练记录' },
         ],
         daily: dailyBars(start, end, selectedTimes.days),
         domains: domainBreakdown(scope.domains, ids, selectedTimes.domains),

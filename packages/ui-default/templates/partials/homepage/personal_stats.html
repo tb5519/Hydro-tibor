@@ -2,7 +2,7 @@
   {% set minutes = (seconds / 60)|round(0, 'floor') %}
   {% if estimated %}{% set minutes = (seconds / 60)|round %}{% endif %}
   {% if estimated and seconds > 0 %}<span class="homepage-personal__approx">约</span>{% endif %}
-  {% if seconds > 0 and minutes == 0 %}
+  {% if seconds > 0 and seconds < 60 %}
     <span class="homepage-personal__time-part"><b>不足 1</b><small>分钟</small></span>
   {% elif minutes >= 60 %}
     <span class="homepage-personal__time-part"><b>{{ (minutes / 60)|round(0, 'floor') }}</b><small>小时</small></span>
@@ -65,12 +65,12 @@
         <div class="homepage-personal__weekly-value">
           <strong>{{ stats.newAcWeek|default(stats.newAc7|default(0)) }}</strong>
           {% if stats.weeklyAc %}
-            {% if stats.weeklyAc.eligible and stats.weeklyAc.topCount and stats.weeklyAc.isTop %}
+            {% if stats.weeklyAc.eligible and stats.weeklyAc.topCount > 0 and stats.weeklyAc.isTop %}
               <span class="homepage-personal__weekly-top" role="img" aria-label="本周新增 AC 第 1 名" title="{{ weeklyNote }}并列第一同样获得 TOP 1。">
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 4h8v5a4 4 0 0 1-8 0V4ZM8 6H4v2a4 4 0 0 0 4 4m8-6h4v2a4 4 0 0 1-4 4m-4 1v5m-4 2h8"/></svg>1
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 4h8v5a4 4 0 0 1-8 0V4ZM8 6H4v2a4 4 0 0 0 4 4m8-6h4v2a4 4 0 0 1-4 4m-4 1v5m-4 2h8"/></svg>TOP1
               </span>
-            {% elif stats.weeklyAc.eligible and stats.weeklyAc.topCount %}
-              <span class="homepage-personal__weekly-gap" role="img" aria-label="距本周新增 AC 第 1 名还差 {{ stats.weeklyAc.gap }} 题" title="{{ weeklyNote }}追平第 1 名还需 {{ stats.weeklyAc.gap }} 题。"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 4h8v5a4 4 0 0 1-8 0V4ZM8 6H4v2a4 4 0 0 0 4 4m8-6h4v2a4 4 0 0 1-4 4m-4 1v5m-4 2h8"/></svg><span>差<b>{{ stats.weeklyAc.gap }}</b>题</span></span>
+            {% elif stats.weeklyAc.topCount > 0 %}
+              <span class="homepage-personal__weekly-gap" role="img" aria-label="距本周新增 AC 第 1 名还差 {{ stats.weeklyAc.gap }} 题" title="{{ weeklyNote }}追平第 1 名还需 {{ stats.weeklyAc.gap }} 题。"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 4h8v5a4 4 0 0 1-8 0V4ZM8 6H4v2a4 4 0 0 0 4 4m8-6h4v2a4 4 0 0 1-4 4m-4 1v5m-4 2h8"/></svg><span>距 TOP1 差 <b>{{ stats.weeklyAc.gap }}</b> 题</span></span>
             {% endif %}
           {% endif %}
         </div>
@@ -372,7 +372,9 @@
     text-align: center;
   }
   .homepage-personal__weekly-gap {
+    flex: 0 0 auto;
     min-width: 0;
+    max-width: 100%;
     color: var(--ui-v2-text-muted, #64748b);
     font-size: .62rem;
     line-height: 1.4;
