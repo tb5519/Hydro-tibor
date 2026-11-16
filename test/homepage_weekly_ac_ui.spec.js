@@ -81,7 +81,7 @@ describe('homepage natural-week growth cards', () => {
         assert.match(compactText(board), /本周新增 AC/);
         assert.doesNotMatch(compactText(board), /(?:7|30)\s*天新增|近\s*7\s*天/);
         assert.equal(h.value.querySelector('strong').textContent, '7');
-        assert.equal(compactText(board.querySelector('[data-growth-weekly-ac] .homepage-personal__cutoff')), '周日22:00');
+        assert.equal(compactText(board.querySelector('[data-growth-weekly-ac] .homepage-personal__cutoff')), '本周一到本周日');
         assert.equal(board.querySelector('[data-growth-training-week] .homepage-personal__stat-label').textContent, '本周自主训练');
         assert.equal(board.querySelector('[data-growth-training-average] .homepage-personal__stat-label').textContent, '周均自主训练');
         assert.match(compactText(board.querySelector('[data-growth-training-week] .homepage-personal__time-value')), /2\s*小时\s*18\s*分/);
