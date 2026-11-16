@@ -30,6 +30,7 @@ import { getImageWarmupPage } from '../lib/image_prewarm';
 import { getBackgroundVideoWarmup } from '../lib/background_video_prewarm';
 import * as mail from '../lib/mail';
 import { getPersonalAcGrowth, invalidatePersonalAcGrowth } from '../lib/personal_ac_growth';
+import { getPersonalTrainingGrowth } from '../lib/personal_training_growth';
 import { getProfileAcDifficulty } from '../lib/profile_ac_difficulty';
 import { getProfileStatistics } from '../lib/profile_statistics';
 import { getLatestVisiblePinnedContest } from '../lib/pinned_contest';
@@ -382,14 +383,17 @@ export class HomeHandler extends Handler {
     async getPersonalStats(_domainId: string) {
         if (!this.user.hasPriv(PRIV.PRIV_USER_PROFILE) || this.user._id <= 1) return null;
         const uid = this.user._id;
+        const now = new Date();
         this.collectUser([uid]);
 
         const [
             profile,
             acGrowth,
+            trainingTime,
         ] = await Promise.all([
             getProfileStatistics(this.domain, this.user, this.user),
-            getPersonalAcGrowth(this.ctx, this.domain, uid, system.get('timeZone') || 'Asia/Shanghai'),
+            getPersonalAcGrowth(this.ctx, this.domain, uid, 'Asia/Shanghai', now),
+            getPersonalTrainingGrowth(this.ctx, this.domain, uid, now),
         ]);
 
         return {
@@ -397,6 +401,7 @@ export class HomeHandler extends Handler {
             rp: Math.floor(profile.stats.rp || 0),
             rank: profile.stats.rank,
             ...acGrowth,
+            trainingTime,
             rankingMode: profile.rankingMode,
             acDifficulty: getProfileAcDifficulty(profile.acceptedProblems),
         };

@@ -18,10 +18,12 @@ vm.runInNewContext(transformSync(fs.readFileSync(path.join(__dirname, '../packag
 }).code, { module: difficultyModule, exports: difficultyModule.exports });
 
 function fixture({ uid = 27, permitted = true, rankingMode = 'all', problems = [], timezone = 'Asia/Shanghai' } = {}) {
-    const calls = { statistics: [], growth: [], collect: [] };
+    const calls = { statistics: [], growth: [], training: [], collect: [] };
     const currentDomain = { _id: 'python', rankingMode };
     const currentUser = { _id: uid, hasPriv: (privilege) => privilege === 7 && permitted };
-    const growth = { newAc7: 4, newAc30: 12, weeklyAc: { eligible: false, topCount: 5, gap: 1 } };
+    const growth = { newAcWeek: 4, newAc7: 4, newAc30: 12, weeklyAc: { eligible: false, topCount: 5, gap: 1 } };
+    const training = { thisWeekSeconds: 7200, thisWeekHasEstimate: false, averageWeekSeconds: 5400,
+        averageWeekHasEstimate: false, averageWeeks: 4, days: [] };
     const context = { db: {} };
     const mod = { exports: {} };
     vm.runInNewContext(method, {
@@ -39,6 +41,10 @@ function fixture({ uid = 27, permitted = true, rankingMode = 'all', problems = [
             calls.growth.push(args);
             return growth;
         },
+        getPersonalTrainingGrowth: async (...args) => {
+            calls.training.push(args);
+            return training;
+        },
         getProfileAcDifficulty: difficultyModule.exports.getProfileAcDifficulty,
         system: { get: (key) => key === 'timeZone' ? timezone : null },
     });
@@ -50,7 +56,7 @@ function fixture({ uid = 27, permitted = true, rankingMode = 'all', problems = [
         collectUser: (uids) => calls.collect.push([...uids]),
         getPersonalMistakes: () => { throw new Error('the private dashboard must no longer query mistakes'); },
     });
-    return { instance, calls, currentDomain, currentUser, context, growth };
+    return { instance, calls, currentDomain, currentUser, context, growth, training };
 }
 
 describe('private home accepted difficulty distribution', () => {
@@ -60,6 +66,7 @@ describe('private home accepted difficulty distribution', () => {
             assert.equal(await instance.getPersonalStats('python'), null);
             assert.equal(calls.statistics.length, 0);
             assert.equal(calls.growth.length, 0);
+            assert.equal(calls.training.length, 0);
             assert.equal(calls.collect.length, 0);
         }
     });
@@ -96,13 +103,18 @@ describe('private home accepted difficulty distribution', () => {
         assert.equal(result.acDifficulty.highestLevel, 4);
     });
 
-    it('retains the existing AC growth result and timezone input', async () => {
+    it('uses the badge Shanghai timezone and the same clock for both personal growth metrics', async () => {
         const input = fixture({ timezone: 'Asia/Tokyo' });
         const result = await input.instance.getPersonalStats('python');
-        assert.deepEqual(input.calls.growth, [[input.context, input.currentDomain, 27, 'Asia/Tokyo']]);
+        assert.deepEqual(input.calls.growth[0].slice(0, 4), [input.context, input.currentDomain, 27, 'Asia/Shanghai']);
+        assert.deepEqual(input.calls.training[0].slice(0, 3), [input.context, input.currentDomain, 27]);
+        assert.equal(input.calls.growth[0][4], input.calls.training[0][3]);
+        assert.ok(Number.isFinite(input.calls.growth[0][4].getTime()));
+        assert.equal(result.newAcWeek, input.growth.newAcWeek);
         assert.equal(result.newAc7, input.growth.newAc7);
         assert.equal(result.newAc30, input.growth.newAc30);
         assert.deepEqual(result.weeklyAc, input.growth.weeklyAc);
+        assert.deepEqual(result.trainingTime, input.training);
     });
 
     it('renders a zero-safe distribution and retains the fallback timezone', async () => {

@@ -5,7 +5,7 @@ import { lookup } from 'mime-types';
 import moment from 'moment-timezone';
 import { ObjectId } from 'mongodb';
 import {
-    assetDelivery, Context, Handler, NotFoundError, param, PERM, PermissionError, PRIV, STATUS, Types, ValidationError,
+    assetDelivery, Context, Handler, NotFoundError, param, PERM, PermissionError, PRIV, Types, ValidationError,
 } from 'hydrooj';
 import {
     awardWeeklyAutomaticBadge, getAutomaticBadgeManagement, importLegacyLotteryAutomaticBadges,
@@ -15,16 +15,16 @@ import {
     deleteBackgroundVideo, isBackgroundVideoPath, redirectBackgroundVideo, storeBackgroundVideo,
 } from 'hydrooj/src/lib/background_video';
 import { getBadgeAcCelebrationUrl, getBadgeIconUrl } from 'hydrooj/src/lib/badge_image';
+import { calendarWeek } from 'hydrooj/src/lib/calendar_week';
 import { setMediaCacheHeaders } from 'hydrooj/src/lib/media_cache';
+import { getWeeklyAcChampionUids } from 'hydrooj/src/lib/personal_ac_growth';
 import { getSharedRankingSnapshot } from 'hydrooj/src/lib/shared_ranking';
 import { getUserBadgeGallery } from 'hydrooj/src/lib/user_badge_gallery';
 import DomainModel from 'hydrooj/src/model/domain';
-import RecordModel from 'hydrooj/src/model/record';
 import storage from 'hydrooj/src/model/storage';
 import system from 'hydrooj/src/model/system';
 import { deleteUserCache } from 'hydrooj/src/model/user';
 import workspace from 'hydrooj/src/model/workspace';
-import { Time } from 'hydrooj/src/utils';
 import { badgeAcImageCache } from './ac_image_cache';
 import { BADGE_ICON_IMAGE_EXTS, BADGE_ICON_IMAGE_LIMIT, validateBadgeIconImage } from './icon_image';
 import { Badge } from './model';
@@ -35,6 +35,7 @@ const BadgeModel = global.Hydro.model.badge;
 const user = global.Hydro.model.user;
 const SPECIAL_BADGE_TASK = 'badge.autoAssignSpecial';
 const SPECIAL_BADGE_TIMEZONE = 'Asia/Shanghai';
+const LEGACY_SHADOW_BADGE_CONTENT = '每周日 22:00 自动分配给最近一周 AC 数最多的同学。';
 const BADGE_BACKGROUND_IMAGE_LIMIT = 8 * 1024 * 1024;
 const BADGE_BACKGROUND_IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
 const BADGE_AC_IMAGE_LIMIT = 8 * 1024 * 1024;
@@ -54,7 +55,7 @@ const SPECIAL_BADGES = {
         short: '♞ 暗影骑士',
         backgroundColor: '111111',
         fontColor: 'FFD700',
-        content: '每周日 22:00 自动分配给最近一周 AC 数最多的同学。',
+        content: '每周日 22:00，按本自然周周一 00:00 起首次正式 AC 的不同题目数，自动分配给并列第一的同学。',
     },
 };
 
@@ -106,8 +107,8 @@ function getBadgeThemeSoundUrl(handler: Handler, badge: Badge) {
     });
 }
 
-function nextSunday22() {
-    return nextWeeklyAutomaticBadgeExpiry();
+function nextSunday22(now = new Date()) {
+    return nextWeeklyAutomaticBadgeExpiry(now);
 }
 
 function isStudentPriv(priv = 0) {
@@ -229,47 +230,24 @@ async function getStrongestUid(ctx: Context) {
     return rows.find((row) => studentUidSet.has(row.uid) && !excluded.has(row.uid))?.uid || null;
 }
 
-async function getWeeklyAcChampionUid(ctx: Context) {
-    const since = moment().tz(SPECIAL_BADGE_TIMEZONE).subtract(7, 'days').toDate();
-    const rows = await RecordModel.coll.aggregate([
-        {
-            $match: {
-                _id: { $gte: Time.getObjectID(since) },
-                uid: { $gt: 1 },
-                pid: { $gt: 0 },
-                status: STATUS.STATUS_ACCEPTED,
-                contest: { $nin: [RecordModel.RECORD_PRETEST, RecordModel.RECORD_GENERATE] },
-            },
-        },
-        {
-            $group: {
-                _id: '$uid',
-                ac: { $sum: 1 },
-                lastRecordId: { $max: '$_id' },
-            },
-        },
-        { $sort: { ac: -1, lastRecordId: -1, _id: 1 } },
-        { $limit: 50 },
-    ]).toArray();
-    const candidateUids = rows.map((row) => row._id);
-    const studentUidSet = await getStudentUidSet(ctx, candidateUids);
-    const excluded = await workspace.getExcludedLegacyUids();
-    return rows.find((row) => studentUidSet.has(row._id) && !excluded.has(row._id))?._id || null;
-}
-
-async function assignSpecialBadges(ctx: Context) {
+export async function assignSpecialBadges(ctx: Context, now = new Date()) {
     const [strongestBadgeId, shadowBadgeId] = await Promise.all([
         ensureSpecialBadge(ctx, SPECIAL_BADGES.strongest),
         ensureSpecialBadge(ctx, SPECIAL_BADGES.shadow),
     ]);
-    const [strongestUid, shadowUid] = await Promise.all([
+    const currentWeek = calendarWeek(now, SPECIAL_BADGE_TIMEZONE);
+    // A delayed Sunday settlement can run after Monday. It still settles the
+    // most recently closed Monday-to-Sunday window, never the new live week.
+    const closedAt = now >= currentWeek.acCutoff ? currentWeek.acCutoff
+        : moment(currentWeek.acCutoff).tz(SPECIAL_BADGE_TIMEZONE).subtract(1, 'week').toDate();
+    const [strongestUid, shadowUids] = await Promise.all([
         getStrongestUid(ctx),
-        getWeeklyAcChampionUid(ctx),
+        getWeeklyAcChampionUids(ctx, { _id: 'system' }, closedAt),
     ]);
-    const expiresAt = nextSunday22();
+    const expiresAt = nextSunday22(now);
     await Promise.all([
         strongestUid ? awardWeeklyAutomaticBadge(ctx, strongestBadgeId, strongestUid, 'weekly_rp', expiresAt) : null,
-        shadowUid ? awardWeeklyAutomaticBadge(ctx, shadowBadgeId, shadowUid, 'weekly_ac', expiresAt) : null,
+        ...shadowUids.map((uid) => awardWeeklyAutomaticBadge(ctx, shadowBadgeId, uid, 'weekly_ac', expiresAt)),
     ]);
 }
 
@@ -740,9 +718,19 @@ export async function apply(ctx: Context) {
     // Only the two known scheduler-owned legacy definitions are migrated.
     for (const [kind, config] of Object.entries(SPECIAL_BADGES)) {
         const badge = await ctx.db.collection('badge').findOne({
-            title: config.title, content: config.content, domainId: { $exists: false }, manualAssignmentVersion: { $ne: 1 },
+            title: config.title,
+            content: kind === 'shadow' ? { $in: [config.content, LEGACY_SHADOW_BADGE_CONTENT] } : config.content,
+            domainId: { $exists: false }, manualAssignmentVersion: { $ne: 1 },
         });
-        if (badge) await migrateWeeklyAutomaticBadge(ctx, badge._id, kind === 'strongest' ? 'weekly_rp' : 'weekly_ac', nextSunday22());
+        if (badge) {
+            await migrateWeeklyAutomaticBadge(ctx, badge._id, kind === 'strongest' ? 'weekly_rp' : 'weekly_ac', nextSunday22());
+            if (kind === 'shadow' && badge.content === LEGACY_SHADOW_BADGE_CONTENT) {
+                await ctx.db.collection('badge').updateOne({
+                    _id: badge._id, content: LEGACY_SHADOW_BADGE_CONTENT,
+                    domainId: { $exists: false }, manualAssignmentVersion: { $ne: 1 },
+                }, { $set: { content: config.content } });
+            }
+        }
     }
     const badgeDomains = await ctx.db.collection('badge').distinct('domainId', { domainId: { $exists: true } });
     const legacyDomain = await DomainModel.get('system');

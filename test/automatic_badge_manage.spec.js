@@ -104,7 +104,7 @@ async function row(uid, badgeId, domain = tangDomain, options = {}) {
 }
 
 before(async () => {
-    server = await MongoMemoryServer.create();
+    server = await MongoMemoryServer.create({ instance: { args: ['--nounixsocket'] } });
     client = await MongoClient.connect(server.getUri());
     database = client.db('automatic-badge-management-test');
 });

@@ -1,3 +1,16 @@
+{% macro growthDuration(seconds, estimated=false) %}
+  {% set minutes = (seconds / 60)|round(0, 'floor') %}
+  {% if estimated %}{% set minutes = (seconds / 60)|round %}{% endif %}
+  {% if estimated and seconds > 0 %}<span class="homepage-personal__approx">约</span>{% endif %}
+  {% if seconds > 0 and minutes == 0 %}
+    <span class="homepage-personal__time-part"><b>不足 1</b><small>分钟</small></span>
+  {% elif minutes >= 60 %}
+    <span class="homepage-personal__time-part"><b>{{ (minutes / 60)|round(0, 'floor') }}</b><small>小时</small></span>
+    {% if minutes % 60 %}<span class="homepage-personal__time-part"><b>{{ minutes % 60 }}</b><small>分</small></span>{% endif %}
+  {% else %}
+    <span class="homepage-personal__time-part"><b>{{ minutes }}</b><small>分钟</small></span>
+  {% endif %}
+{% endmacro %}
 {% set stats = payload %}
 {% set udoc = udict[stats.uid] %}
 {% if stats and udoc %}
@@ -34,28 +47,31 @@
       </div>
     </div>
 
-    <div class="homepage-personal__stats">
-      <div class="homepage-personal__stat">
-        <span>我的 RP</span>
+    <div class="homepage-personal__stats" role="group" aria-label="本周成长数据">
+      <div class="homepage-personal__stat homepage-personal__stat--compact">
+        <span class="homepage-personal__stat-label"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z"/></svg>我的 RP</span>
         <strong>{{ stats.rp|default(0) }}</strong>
       </div>
-      <div class="homepage-personal__stat">
-        <span>当前排名</span>
+      <div class="homepage-personal__stat homepage-personal__stat--compact">
+        <span class="homepage-personal__stat-label"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 4h8v5a4 4 0 0 1-8 0V4ZM8 6H4v2a4 4 0 0 0 4 4m8-6h4v2a4 4 0 0 1-4 4m-4 1v5m-4 2h8"/></svg>当前排名</span>
         <strong>{% if stats.rank %}{{ stats.rank }}{% else %}-{% endif %}</strong>
       </div>
-      <div class="homepage-personal__stat">
-        <span>7 天新增 AC</span>
+      <div class="homepage-personal__stat homepage-personal__stat--weekly" data-growth-weekly-ac>
+        <div class="homepage-personal__weekly-heading">
+          <span class="homepage-personal__stat-label"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m7 12 3 3 7-7M21 12a9 9 0 1 1-6-8.5"/></svg>本周新增 AC</span>
+          <span class="homepage-personal__week-tag">本自然周</span>
+        </div>
         <div class="homepage-personal__weekly-value">
-          <strong>{{ stats.newAc7|default(0) }}</strong>
+          <strong>{{ stats.newAcWeek|default(stats.newAc7|default(0)) }}</strong>
           {% if stats.weeklyAc %}
             {% set weeklyScope = '工作区所有域' if stats.weeklyAc.scope == 'workspace' else '当前域' %}
-            {% set weeklyNote = weeklyScope + ' · 按平台时区统计近 7 个自然日正式提交首次 AC 的题目数，重复通过不重复计数，管理员不参与排名。' %}
+            {% set weeklyNote = weeklyScope + ' · 北京时间本自然周周一 00:00 至周日 22:00，统计正式提交首次 AC 的题目数，重复通过不重复计数。暗影骑士采用相同数据，管理员不参与排名。' %}
             {% if not stats.weeklyAc.eligible %}
               <span class="homepage-personal__weekly-note" title="{{ weeklyNote }}">不参与排名</span>
             {% elif not stats.weeklyAc.topCount %}
               <span class="homepage-personal__weekly-note" title="{{ weeklyNote }}">暂无领跑</span>
             {% elif stats.weeklyAc.isTop %}
-              <span class="homepage-personal__weekly-top" role="img" aria-label="近 7 天 AC 第 1 名" title="{{ weeklyNote }}并列第一同样获得 TOP 1。">
+              <span class="homepage-personal__weekly-top" role="img" aria-label="本周新增 AC 第 1 名" title="{{ weeklyNote }}并列第一同样获得 TOP 1。">
                 TOP 1
               </span>
             {% else %}
@@ -63,10 +79,24 @@
             {% endif %}
           {% endif %}
         </div>
+        <p class="homepage-personal__stat-hint">周一 00:00 — 周日 22:00 · 北京时间</p>
       </div>
-      <div class="homepage-personal__stat">
-        <span>30 天新增 AC</span>
-        <strong>{{ stats.newAc30|default(0) }}</strong>
+      {% set trainingTime = stats.trainingTime %}
+      <div class="homepage-personal__stat homepage-personal__stat--time" data-growth-training-week title="北京时间本自然周周一 00:00 至下周一 00:00 的自主训练时长；扣除上课占用时间，多页面活动不重复累计。历史数据不足以精确分离时以“约”标记估算值。">
+        <span class="homepage-personal__time-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg></span>
+        <span class="homepage-personal__stat-label">本周自主训练时长</span>
+        <div class="homepage-personal__time-value">
+          {% if trainingTime.thisWeekSeconds is number %}{{ growthDuration(trainingTime.thisWeekSeconds, trainingTime.thisWeekHasEstimate) }}{% else %}<b>—</b>{% endif %}
+        </div>
+        <p class="homepage-personal__stat-hint">完整自然周 · 不含上课</p>
+      </div>
+      <div class="homepage-personal__stat homepage-personal__stat--time homepage-personal__stat--average" data-growth-training-average title="取最近最多 4 个已结束且有完整采集覆盖的自然周，计算平均每周自主训练时长，包含没有训练的周。尚无完整周时显示“—”；估算值以“约”标记。">
+        <span class="homepage-personal__time-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M4 19h16M6 15V9m6 6V5m6 10v-3M3 3v17h18"/></svg></span>
+        <span class="homepage-personal__stat-label">平均周自主训练时长</span>
+        <div class="homepage-personal__time-value">
+          {% if trainingTime.averageWeekSeconds is number %}{{ growthDuration(trainingTime.averageWeekSeconds, trainingTime.averageWeekHasEstimate) }}{% else %}<b>—</b>{% endif %}
+        </div>
+        <p class="homepage-personal__stat-hint">{% if trainingTime.averageWeekSeconds is number and trainingTime.averageWeeks %}近 {{ trainingTime.averageWeeks }} 个完整周{% else %}暂无完整周数据{% endif %}</p>
       </div>
     </div>
 
@@ -222,50 +252,114 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: .6rem;
-    margin-top: .8rem;
+    margin-top: .9rem;
+    font-variant-numeric: tabular-nums;
   }
   .homepage-personal__stat {
+    box-sizing: border-box;
     min-width: 0;
-    padding: .7rem .75rem;
-    border: 1px solid #dbe6f3;
-    border-radius: 8px;
-    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    padding: .75rem;
+    border: 1px solid #e1e8f1;
+    border-radius: 12px;
+    background: #f8fafd;
   }
-  .homepage-personal__stat > span {
-    display: block;
-    margin-bottom: .2rem;
+  .homepage-personal__stat-label {
+    display: flex;
+    align-items: center;
+    gap: .35rem;
+    min-width: 0;
     color: #64748b;
-    font-size: .74rem;
-    white-space: nowrap;
+    font-size: .72rem;
+    line-height: 1.45;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .homepage-personal__stat svg {
+    display: block;
+    width: 17px;
+    height: 17px;
+    flex: 0 0 auto;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
   .homepage-personal__stat strong {
     display: block;
     color: #0f172a;
     font-size: 1.25rem;
     line-height: 1.15;
+    overflow-wrap: anywhere;
+  }
+  .homepage-personal__stat--compact {
+    padding: .65rem .75rem;
+    border-color: transparent;
+    background: #f3f6fa;
+  }
+  .homepage-personal__stat--compact strong {
+    margin-top: .3rem;
+    font-size: 1.15rem;
+  }
+  .homepage-personal__stat--compact svg {
+    color: #96a7bc;
+    width: 15px;
+    height: 15px;
+  }
+  .homepage-personal__stat--weekly {
+    grid-column: 1 / -1;
+    padding: .85rem .9rem .75rem;
+    border-color: #cedef6;
+    background: linear-gradient(115deg, #edf4ff, #f7faff);
+  }
+  .homepage-personal__weekly-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: .35rem;
+    margin-bottom: .45rem;
+  }
+  .homepage-personal__weekly-heading .homepage-personal__stat-label {
+    color: #3d5e90;
+    font-weight: 650;
+  }
+  .homepage-personal__week-tag {
+    padding: .12rem .4rem;
+    border-radius: 999px;
+    background: #dfeaff;
+    color: #476695;
+    font-size: .58rem;
+    line-height: 1.5;
   }
   .homepage-personal__weekly-value {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: .3rem;
+    flex-wrap: wrap;
+    gap: .5rem;
     min-width: 0;
     min-height: 1.75rem;
   }
   .homepage-personal__weekly-value > strong {
-    flex: 0 0 auto;
-    font-variant-numeric: tabular-nums;
+    flex: 1 1 3rem;
+    min-width: 0;
+    max-width: 100%;
+    color: #255aab;
+    font-size: 2rem;
+    font-weight: 750;
+    letter-spacing: -.03em;
   }
   .homepage-personal__weekly-top {
     display: block;
     flex: 0 1 auto;
     min-width: 0;
-    padding: .2rem .32rem;
+    padding: .3rem .5rem;
     border: 1px solid #f0dfb6;
-    border-radius: 6px;
+    border-radius: 999px;
     background: #fffbef;
     color: #936514;
-    font-size: .6rem;
+    font-size: .65rem;
     font-weight: 800;
     letter-spacing: .015em;
     line-height: 1.2;
@@ -293,6 +387,124 @@
     font-weight: 700;
     font-variant-numeric: tabular-nums;
   }
+  .homepage-personal__stat-hint {
+    margin: .45rem 0 0;
+    color: #64748b;
+    font-size: .62rem;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+  }
+  .homepage-personal__stat--time {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    border-color: #daebe5;
+    background: #f3f9f6;
+  }
+  .homepage-personal__time-icon {
+    display: grid;
+    place-items: center;
+    width: 29px;
+    height: 29px;
+    margin-bottom: .5rem;
+    border-radius: 9px;
+    background: #e2f0e9;
+    color: #5b8a76;
+  }
+  .homepage-personal__stat--average {
+    border-color: #e4e0f0;
+    background: #f7f5fb;
+  }
+  .homepage-personal__stat--average .homepage-personal__time-icon {
+    background: #ece7f5;
+    color: #8c78ad;
+  }
+  .homepage-personal__stat--time .homepage-personal__stat-label {
+    min-height: 2.9em;
+    font-size: .7rem;
+  }
+  .homepage-personal__time-value {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: .3rem;
+    row-gap: .2rem;
+    min-width: 0;
+    max-width: 100%;
+    margin-top: .2rem;
+    color: #263a45;
+    line-height: 1.5;
+  }
+  .homepage-personal__time-part {
+    display: inline-flex;
+    align-items: baseline;
+    gap: .12rem;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .homepage-personal__time-value b {
+    min-width: 0;
+    font-size: 1.18rem;
+    font-weight: 750;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+  .homepage-personal__time-value small,
+  .homepage-personal__approx {
+    flex: 0 0 auto;
+    color: #5f7380;
+    font-size: .65rem;
+  }
+  .homepage-personal__stat--time .homepage-personal__stat-hint {
+    margin-top: auto;
+    padding-top: .45rem;
+  }
+  .theme--dark .homepage-personal__stat {
+    border-color: #3c4c61;
+    background: #253142;
+  }
+  .theme--dark .homepage-personal__stat--compact {
+    border-color: transparent;
+    background: #273445;
+  }
+  .theme--dark .homepage-personal__stat--weekly {
+    border-color: #42597a;
+    background: linear-gradient(115deg, #293e5c, #27364c);
+  }
+  .theme--dark .homepage-personal__stat--time {
+    border-color: #39544c;
+    background: #263c36;
+  }
+  .theme--dark .homepage-personal__stat--average {
+    border-color: #504664;
+    background: #363044;
+  }
+  .theme--dark .homepage-personal__stat strong,
+  .theme--dark .homepage-personal__time-value {
+    color: #e7eef8;
+  }
+  .theme--dark .homepage-personal__weekly-value > strong {
+    color: #acd0ff;
+  }
+  .theme--dark .homepage-personal__stat-label,
+  .theme--dark .homepage-personal__weekly-heading .homepage-personal__stat-label,
+  .theme--dark .homepage-personal__time-value small,
+  .theme--dark .homepage-personal__approx,
+  .theme--dark .homepage-personal__stat-hint {
+    color: #adbbcb;
+  }
+  .theme--dark .homepage-personal__time-icon {
+    background: #365448;
+    color: #a7cfb9;
+  }
+  .theme--dark .homepage-personal__stat--average .homepage-personal__time-icon {
+    background: #51445f;
+    color: #d2bde7;
+  }
+  .theme--dark .homepage-personal__week-tag {
+    background: #344e72;
+    color: #bed5f6;
+  }
   .theme--dark .homepage-personal__weekly-top {
     border-color: #695530;
     background: #392f21;
@@ -304,11 +516,6 @@
   }
   .theme--dark .homepage-personal__weekly-gap b {
     color: #93c5fd;
-  }
-  @media screen and (max-width: 700px) {
-    .homepage-personal__stats {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
   }
   @media (prefers-reduced-motion: reduce) {
     .homepage-personal__badge:not(.user-profile-badge--more)::after {

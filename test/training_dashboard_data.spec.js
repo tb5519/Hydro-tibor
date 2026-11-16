@@ -58,7 +58,7 @@ function submission(uid, domainId, pid, status = 1, contest = null, day = '2026-
 }
 before(async () => {
     moment.now = () => fixedNow;
-    mongod = await MongoMemoryServer.create();
+    mongod = await MongoMemoryServer.create({ instance: { args: ['--nounixsocket'] } });
     client = await MongoClient.connect(mongod.getUri());
     db = client.db('training_dashboard');
     daily = db.collection('daily'); records = db.collection('records'); domains = db.collection('domain.user');

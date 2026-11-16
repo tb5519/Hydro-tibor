@@ -67,6 +67,7 @@ try {
                 },
             };
             if (request === 'hydrooj/src/lib/automatic_badge') return automaticService;
+            if (request === 'hydrooj/src/lib/badge_image') return { getBadgeIconUrl: () => '' };
             if (request === 'hydrooj/src/model/system') return { get: (key) => (key === 'timeZone' ? platformTimeZone : undefined) };
             if (request === 'hydrooj/src/model/workspace') return {
                 LEGACY_WORKSPACE_ID: 'tang',

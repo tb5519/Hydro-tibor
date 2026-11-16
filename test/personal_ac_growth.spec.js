@@ -86,7 +86,7 @@ async function addStudent(uid, domainId = 'cpp', role = 'default', extra = {}) {
 }
 
 before(async () => {
-    server = await MongoMemoryServer.create();
+    server = await MongoMemoryServer.create({ instance: { args: ['--nounixsocket'] } });
     client = await MongoClient.connect(server.getUri());
     database = client.db('personal-ac-growth-test');
 });
@@ -133,12 +133,12 @@ describe('personal AC growth using actual MongoDB aggregates', () => {
             ac(11, 2), ac(11, 3), ac(11, 4), ac(11, 5),
         ]);
         assert.deepEqual(await getGrowth(), {
-            newAc7: 2, newAc30: 3,
+            newAcWeek: 2, newAc7: 2, newAc30: 3,
             weeklyAc: { eligible: true, isTop: false, topCount: 4, gap: 2, scope: 'workspace' },
         });
     });
 
-    it('uses local calendar-day boundaries for both windows, including DST changes', async () => {
+    it('uses Monday natural-week and local calendar-day boundaries, including DST changes', async () => {
         await database.collection('record').insertMany([
             ac(10, 1, 'cpp', '2026-09-06T15:59:59Z'),
             ac(10, 2, 'cpp', '2026-09-06T16:00:00Z'),
@@ -155,8 +155,8 @@ describe('personal AC growth using actual MongoDB aggregates', () => {
         await database.collection('record').deleteMany({});
         growth.invalidatePersonalAcGrowth();
         await database.collection('record').insertMany([
-            ac(10, 1, 'cpp', '2026-03-07T04:59:59Z'),
-            ac(10, 2, 'cpp', '2026-03-07T05:00:00Z'),
+            ac(10, 1, 'cpp', '2026-03-09T03:59:59Z'),
+            ac(10, 2, 'cpp', '2026-03-09T04:00:00Z'),
         ]);
         const dst = await getGrowth(10, tangDomain, 'America/New_York', new Date('2026-03-13T12:00:00Z'));
         assert.equal(dst.newAc7, 1);
@@ -314,6 +314,71 @@ describe('personal AC growth using actual MongoDB aggregates', () => {
         assert.equal(afterMidnight.newAc7, 0);
         assert.equal(afterMidnight.newAc30, 1);
         assert.equal(aggregateCalls, 2);
+    });
+
+    it('starts Monday at 00:00 and freezes Sunday at the exact 22:00 cutoff until Monday resets', async () => {
+        await database.collection('record').insertMany([
+            ac(10, 1, 'cpp', '2026-09-06T15:59:59Z'),
+            ac(10, 2, 'cpp', '2026-09-06T16:00:00Z'),
+            ac(10, 3, 'cpp', '2026-09-13T13:59:59Z'),
+            ac(10, 4, 'cpp', '2026-09-13T14:00:00Z'),
+            ac(10, 5, 'cpp', '2026-09-13T15:59:59Z'),
+            ac(10, 6, 'cpp', '2026-09-13T16:00:00Z'),
+        ]);
+        const before = await getGrowth(10, tangDomain, 'Asia/Shanghai', new Date('2026-09-13T13:59:59Z'));
+        assert.equal(before.newAcWeek, 2);
+        assert.equal(before.newAc7, 2, 'older clients receive the same natural-week count');
+        growth.invalidatePersonalAcGrowth();
+        const cutoff = await getGrowth(10, tangDomain, 'Asia/Shanghai', new Date('2026-09-13T14:00:00Z'));
+        assert.equal(cutoff.newAcWeek, 2, '22:00:00 records are outside the settled week');
+        growth.invalidatePersonalAcGrowth();
+        const lateSunday = await getGrowth(10, tangDomain, 'Asia/Shanghai', new Date('2026-09-13T15:59:59Z'));
+        assert.equal(lateSunday.newAcWeek, 2, 'the last two hours do not move the deadline or start a new week');
+        const monday = await getGrowth(10, tangDomain, 'Asia/Shanghai', new Date('2026-09-13T16:00:00Z'));
+        assert.equal(monday.newAcWeek, 1, 'the following Monday starts a fresh natural week');
+    });
+
+    it('returns every tied positive badge champion from the same first-AC leaderboard without a candidate limit', async () => {
+        const admins = Array.from({ length: 55 }, (_, index) => 100 + index);
+        await database.collection('user').insertMany(admins.map((_id) => ({ _id, priv: PRIV.PRIV_USER_PROFILE | PRIV.PRIV_EDIT_SYSTEM })));
+        await database.collection('domain.user').insertMany(admins.map((uid) => ({ uid, domainId: 'cpp', join: true, role: 'default' })));
+        await database.collection('record').insertMany([
+            ac(10, 1, 'cpp', '2026-08-01T00:00:00Z'),
+            ...Array.from({ length: 70 }, () => ac(10, 1)),
+            ac(10, 2), ac(11, 2),
+            ac(2, 1), ac(2, 2), ac(2, 3),
+            ...admins.flatMap((uid) => [ac(uid, 1), ac(uid, 2), ac(uid, 3)]),
+        ]);
+        const closing = new Date('2026-09-13T14:00:00Z');
+        assert.deepEqual(await growth.getWeeklyAcChampionUids(ctx, tangDomain, closing), [10, 11]);
+        const tenth = await getGrowth(10, tangDomain, 'Asia/Shanghai', closing);
+        const eleventh = await getGrowth(11, tangDomain, 'Asia/Shanghai', closing);
+        assert.equal(tenth.newAcWeek, 1); assert.equal(tenth.weeklyAc.isTop, true);
+        assert.equal(eleventh.newAcWeek, 1); assert.equal(eleventh.weeklyAc.isTop, true);
+        await database.collection('record').deleteMany({});
+        assert.deepEqual(await growth.getWeeklyAcChampionUids(ctx, tangDomain, closing), []);
+    });
+
+    it('drops the live visit cache at Sunday 22:00 so the final second is visible immediately', async () => {
+        await database.collection('record').insertMany([
+            ac(10, 1, 'cpp', '2026-09-13T13:59:58Z'), ac(10, 2, 'cpp', '2026-09-13T13:59:59Z'),
+        ]);
+        const before = await getGrowth(10, tangDomain, 'Asia/Shanghai', new Date('2026-09-13T13:59:58Z'));
+        assert.equal(before.newAcWeek, 1);
+        const closed = await getGrowth(10, tangDomain, 'Asia/Shanghai', new Date('2026-09-13T14:00:00Z'));
+        assert.equal(closed.newAcWeek, 2);
+        assert.equal(aggregateCalls, 2);
+    });
+
+    it('settlement refreshes a warm visitor cache so the last pre-deadline AC is counted', async () => {
+        await database.collection('record').insertOne(ac(10, 1));
+        const closing = new Date('2026-09-13T14:00:00Z');
+        assert.equal((await getGrowth(11)).weeklyAc.topCount, 1);
+        await database.collection('record').insertMany([
+            ac(11, 1, 'cpp', '2026-09-13T13:59:58Z'), ac(11, 2, 'cpp', '2026-09-13T13:59:59Z'),
+        ]);
+        assert.deepEqual(await growth.getWeeklyAcChampionUids(ctx, tangDomain, closing), [11]);
+        assert.equal((await getGrowth(11, tangDomain, 'Asia/Shanghai', closing)).newAcWeek, 2);
     });
 
     it('removes rejected aggregates from cache so a transient database failure can recover', async () => {

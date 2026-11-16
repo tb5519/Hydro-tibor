@@ -5,10 +5,11 @@ import type { DomainDoc } from '../interface';
 import { BUILTIN_ROLES, PERM, PRIV, STATUS } from '../model/builtin';
 import record from '../model/record';
 import workspace from '../model/workspace';
+import { calendarWeek } from './calendar_week';
 
 interface AcCounts {
     _id: number;
-    newAc7: number;
+    newAcWeek: number;
     newAc30: number;
 }
 
@@ -25,9 +26,13 @@ export function invalidatePersonalAcGrowth() {
     growthCache = new WeakMap();
 }
 
-export function personalAcGrowthPipeline(domainIds: string[], uids: number[], start7: Date, start30: Date, now: Date) {
-    const first7 = ObjectId.createFromTime(Math.floor(start7.getTime() / 1000));
+export function personalAcGrowthPipeline(
+    domainIds: string[], uids: number[], startWeek: Date, start30: Date, now: Date,
+    cutoff = calendarWeek(now).acCutoff,
+) {
+    const firstWeek = ObjectId.createFromTime(Math.floor(startWeek.getTime() / 1000));
     const first30 = ObjectId.createFromTime(Math.floor(start30.getTime() / 1000));
+    const weekEnd = ObjectId.createFromTime(Math.floor(cutoff.getTime() / 1000));
     return [
         {
             $match: {
@@ -54,7 +59,9 @@ export function personalAcGrowthPipeline(domainIds: string[], uids: number[], st
             $group: {
                 _id: '$_id.uid',
                 newAc30: { $sum: 1 },
-                newAc7: { $sum: { $cond: [{ $gte: ['$firstRecordId', first7] }, 1, 0] } },
+                newAcWeek: { $sum: { $cond: [{ $and: [
+                    { $gte: ['$firstRecordId', firstWeek] }, { $lt: ['$firstRecordId', weekEnd] },
+                ] }, 1, 0] } },
             },
         },
     ];
@@ -66,9 +73,9 @@ function isDomainAdministrator(ddoc: Pick<DomainDoc, 'roles'>, role = 'default')
     return !!(permissions & PERM.PERM_EDIT_DOMAIN);
 }
 
-export async function getPersonalAcGrowth(
-    ctx: Context, currentDomain: Pick<DomainDoc, '_id' | 'workspaceId'>, uid: number,
-    timeZone = 'Asia/Shanghai', now = new Date(),
+async function growthSnapshot(
+    ctx: Context, currentDomain: Pick<DomainDoc, '_id' | 'workspaceId'>, uid: number | undefined,
+    timeZone: string, now: Date, fresh = false,
 ) {
     const workspaceId = workspace.resolveDomainWorkspaceId(currentDomain);
     const legacy = workspaceId === workspace.LEGACY_WORKSPACE_ID;
@@ -103,24 +110,23 @@ export async function getPersonalAcGrowth(
         && !staff.has(account._id)
         && !excluded.has(account._id)
     )).map((account) => account._id);
-    const eligible = studentUids.includes(uid);
     // An administrator can still see their own progress, without setting the student target.
-    const countUids = [...new Set([...studentUids, uid])].sort((a, b) => a - b);
+    const countUids = [...new Set([...studentUids, ...(uid === undefined ? [] : [uid])])].sort((a, b) => a - b);
     const localNow = moment(now).tz(timeZone);
-    const start7 = localNow.clone().subtract(6, 'days').startOf('day').toDate();
+    const week = calendarWeek(now, timeZone);
     const start30 = localNow.clone().subtract(29, 'days').startOf('day').toDate();
-    const key = JSON.stringify([domainIds, countUids, start7, start30]);
+    const key = JSON.stringify([domainIds, countUids, week.start, week.acCutoff, now >= week.acCutoff, start30]);
     let cache = growthCache.get(ctx.db);
     if (!cache) {
         cache = new Map();
         growthCache.set(ctx.db, cache);
     }
     let entry = cache.get(key);
-    if (!entry || entry.expiresAt <= Date.now()) {
+    if (fresh || !entry || entry.expiresAt <= Date.now()) {
         entry = {
             expiresAt: Date.now() + 30_000,
             rows: ctx.db.collection('record').aggregate<AcCounts>(
-                personalAcGrowthPipeline(domainIds, countUids, start7, start30, now),
+                personalAcGrowthPipeline(domainIds, countUids, week.start, start30, now, week.acCutoff),
                 { allowDiskUse: true },
             ).toArray(),
         };
@@ -135,18 +141,39 @@ export async function getPersonalAcGrowth(
         throw error;
     }
     const counts = new Map(rows.map((row) => [row._id, row]));
+    const topCount = studentUids.reduce((top, studentUid) => Math.max(top, counts.get(studentUid)?.newAcWeek || 0), 0);
+    return { counts, studentUids, topCount, scope: legacy ? 'workspace' : 'domain' };
+}
+
+export async function getPersonalAcGrowth(
+    ctx: Context, currentDomain: Pick<DomainDoc, '_id' | 'workspaceId'>, uid: number,
+    timeZone = 'Asia/Shanghai', now = new Date(),
+) {
+    const { counts, studentUids, topCount, scope } = await growthSnapshot(ctx, currentDomain, uid, timeZone, now);
     const own = counts.get(uid);
-    const newAc7 = own?.newAc7 || 0;
-    const topCount = studentUids.reduce((top, studentUid) => Math.max(top, counts.get(studentUid)?.newAc7 || 0), 0);
+    const newAcWeek = own?.newAcWeek || 0;
+    const eligible = studentUids.includes(uid);
     return {
-        newAc7,
+        newAcWeek,
+        // Retain the old payload key for clients updating independently of the
+        // server. Its value now follows the same natural-week deadline.
+        newAc7: newAcWeek,
         newAc30: own?.newAc30 || 0,
         weeklyAc: {
             eligible,
-            isTop: eligible && topCount > 0 && newAc7 === topCount,
+            isTop: eligible && topCount > 0 && newAcWeek === topCount,
             topCount,
-            gap: Math.max(0, topCount - newAc7),
-            scope: legacy ? 'workspace' : 'domain',
+            gap: Math.max(0, topCount - newAcWeek),
+            scope,
         },
     };
+}
+
+// The badge worker uses exactly the homepage's first-AC, scope and eligibility
+// rules. Bypass the visit cache so the final seconds before the cutoff count.
+export async function getWeeklyAcChampionUids(
+    ctx: Context, currentDomain: Pick<DomainDoc, '_id' | 'workspaceId'>, now = new Date(),
+) {
+    const { counts, studentUids, topCount } = await growthSnapshot(ctx, currentDomain, undefined, 'Asia/Shanghai', now, true);
+    return topCount > 0 ? studentUids.filter((uid) => counts.get(uid)?.newAcWeek === topCount).sort((a, b) => a - b) : [];
 }
