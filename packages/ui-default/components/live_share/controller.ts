@@ -17,8 +17,9 @@ type Controllers<Identity = number> = {
   getDrawingGeometry?(anchor: DrawingAnchor): DrawingGeometry | null;
 };
 type Adapters = typeof import('./mirror') & typeof import('./editor') & typeof import('./frames') & typeof import('./drawing') & typeof import('./ide');
+type ShareMode = 'assist' | 'observe';
 interface Student { uid: number; name: string; online: boolean; tabs?: { tabId: string; title: string; visible: boolean }[] }
-interface Session { sessionId: string; connectionId?: string; pageId: string; pageUrl?: string; studentUid?: number; studentName?: string; teacherName?: string; tabId?: string }
+interface Session { sessionId: string; connectionId?: string; pageId: string; pageUrl?: string; studentUid?: number; studentName?: string; teacherName?: string; tabId?: string; mode?: ShareMode }
 let installed: (() => void) | undefined;
 
 export function installLiveShare(config: LiveShareConfig, options: {
@@ -62,7 +63,15 @@ export function installLiveShare(config: LiveShareConfig, options: {
   let pageRetryAttempt = 0;
   const resumeKey = `onebyone.live-share.resume:${uid}`;
   const backupKey = `onebyone.live-share.unsynced:${uid}`;
+  const stoppedObserveKey = `onebyone.live-share.stopped-observe:${uid}`;
   const closedSessions = new Set<string>();
+  const stoppedObserveConnections = new Set<string>();
+  try {
+    const stopped = JSON.parse(sessionStorage?.getItem(stoppedObserveKey) || 'null');
+    const ids = (items: unknown) => Array.isArray(items) ? items.filter((id) => typeof id === 'string' && id.length <= 128).slice(-32) : [];
+    for (const id of ids(stopped?.sessions)) closedSessions.add(id);
+    for (const id of ids(stopped?.connections)) stoppedObserveConnections.add(id);
+  } catch { /* A current-tab cancellation remains effective without storage. */ }
   const switchedSessions = new Set<string>();
   const connectionVersions = new Map<string, number>();
   const pendingEdits = new Map<string, number>();
@@ -73,9 +82,10 @@ export function installLiveShare(config: LiveShareConfig, options: {
   let backupNotice: HTMLElement | null = null;
   let backups: any[] = [];
   try { const saved = JSON.parse(sessionStorage?.getItem(backupKey) || '[]'); if (Array.isArray(saved)) backups = saved.slice(-10); } catch { /* Optional recovery. */ }
-  let resume: { studentUid: number; tabId?: string; connectionId?: string } | null = null;
+  let resume: { studentUid: number; tabId?: string; connectionId?: string; mode?: ShareMode } | null = null;
   try { resume = JSON.parse(sessionStorage?.getItem(resumeKey) || 'null'); } catch { /* Bad saved state is ignored. */ }
   if (!Number.isSafeInteger(resume?.studentUid) || resume.studentUid <= 0) resume = null;
+  if (resume) resume.mode = resume.mode === 'observe' ? 'observe' : 'assist';
   let socket: WebSocket | null = null;
   let ready = false;
   let disposed = false;
@@ -90,10 +100,15 @@ export function installLiveShare(config: LiveShareConfig, options: {
   let rosterTimer = 0;
   let generation = 0;
   let pendingStart = 0;
-  let deferredStart: { studentUid: number; tabId?: string } | null = null;
+  let pendingStartMode: ShareMode = 'assist';
+  let rosterMode: ShareMode = 'assist';
+  let deferredStart: { studentUid: number; tabId?: string; mode?: ShareMode } | null = null;
+  let lastObserveSyncKey = '';
+  let lastObserveSyncAt = 0;
   let lastPong = Date.now();
   let adaptersPromise: Promise<Adapters> | undefined;
   let source: Session | null = null;
+  let sourceObservation: Session | null = null;
   let viewing: Session | null = null;
   let broadcast: ReturnType<typeof installBroadcastController> | null = null;
   let lessonLink: { lessonId: string; studentUid: number; owns: boolean; connectionId?: string; cancelled?: boolean } | null = null;
@@ -176,7 +191,19 @@ export function installLiveShare(config: LiveShareConfig, options: {
   }
   function relay(session: Session, kind: string, data: any) {
     if (!ready || disposed || !session || (session !== viewing && session !== source)) return false;
+    // A read-only view has no teacher edit, click, focus, pen or command path.
+    // Snapshot recovery uses its own narrowly scoped control message below.
+    if (session === viewing && session.mode === 'observe') return false;
     return send({ type: 'relay', sessionId: session.sessionId, pageId: session.pageId, kind, data });
+  }
+  function requestObserveSnapshot(session: Session) {
+    if (!ready || disposed || viewing !== session || session.mode !== 'observe') return;
+    const key = `${session.sessionId}:${session.pageId}`;
+    const now = Date.now();
+    if (lastObserveSyncKey === key && now - lastObserveSyncAt < 1000) return;
+    if (send({ type: 'observe:sync', sessionId: session.sessionId, pageId: session.pageId })) {
+      lastObserveSyncKey = key; lastObserveSyncAt = now;
+    }
   }
   function saveResume(value: typeof resume) {
     resume = value;
@@ -191,6 +218,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     updateControls();
   }
   function connected(value: boolean) {
+    if (!value) { lastObserveSyncKey = ''; lastObserveSyncAt = 0; }
     broadcast?.setConnected(value);
     sourceMirror?.setConnected(value); sourceEditors?.setConnected(value);
     sourceFrames?.setConnected(value); sourceDrawing?.setConnected(value); sourceIde?.setConnected(value);
@@ -198,8 +226,10 @@ export function installLiveShare(config: LiveShareConfig, options: {
     viewerFrames?.setConnected(value); viewerDrawing?.setConnected(value); viewerIde?.setConnected(value);
     overlay?.classList.toggle('is-disconnected', !value);
     if (!value && viewing) setStatus('连接中断，正在重新连接…', true);
-    if (notice && source) notice.querySelector('span')!.textContent = value
-      ? `${source.teacherName || '老师'}正在协助` : '共享连接中断，正在重新连接…';
+    const observed = source || sourceObservation;
+    if (notice && observed) notice.querySelector('span')!.textContent = value && source
+      ? `${observed.teacherName || '老师'}${observed.mode === 'observe' ? '正在查看' : '正在协助'}`
+      : observed.mode === 'observe' ? `${observed.teacherName || '老师'}查看已暂停` : '共享连接中断，正在重新连接…';
     updateControls();
   }
   function drawingRoot(doc = document) {
@@ -225,14 +255,18 @@ export function installLiveShare(config: LiveShareConfig, options: {
       updateLocalDrawing();
     }).catch(() => { /* The local pen must not interrupt the page. */ });
   }
-  function clearSource() {
+  function clearSource(keepObservation = false) {
     sourceMirror?.dispose(); sourceEditors?.dispose();
     sourceFrames?.dispose(); sourceFrames = null;
     sourceDrawing?.dispose(); sourceDrawing = null;
     sourceIde?.dispose(); sourceIde = null;
     sourceDrawingRoot?.remove(); sourceDrawingRoot = null;
     sourceMirror = null; sourceEditors = null; source = null;
-    notice?.remove(); notice = null;
+    if (keepObservation && sourceObservation && notice) {
+      notice.querySelector('span')!.textContent = `${sourceObservation.teacherName || '老师'}查看已暂停`;
+    } else {
+      sourceObservation = null; notice?.remove(); notice = null;
+    }
     updateLocalDrawing();
   }
   function clearViewAdapters() {
@@ -280,7 +314,13 @@ export function installLiveShare(config: LiveShareConfig, options: {
   }
   function finishEnding() {
     clearTimeout(endTimer); ending = false; afterSync = null; preservePending();
-    const current = viewing || source;
+    const current = viewing || source || sourceObservation;
+    if (current?.mode === 'observe') {
+      stoppedObserveConnections.add(current.connectionId || current.sessionId);
+      try { sessionStorage?.setItem(stoppedObserveKey, JSON.stringify({
+        sessions: [...closedSessions, current.sessionId].slice(-32), connections: [...stoppedObserveConnections].slice(-32),
+      })); } catch { /* Do not reopen a stopped observer in this live host. */ }
+    }
     if (current) { closedSessions.add(current.sessionId); send({ type: 'stop', sessionId: current.sessionId }); }
     saveResume(null); pendingStart = 0; deferredStart = null;
     closeView(); clearSource(); closeRoster();
@@ -313,13 +353,13 @@ export function installLiveShare(config: LiveShareConfig, options: {
     userId: uid,
     onSwitch: switchMode,
     onEnd: () => { if (viewing) endSharing(); else broadcast?.stopSharing(); },
-    onChooseStudent: openRoster,
+    onChooseStudent: () => openRoster(viewing?.mode === 'observe' ? 'observe' : 'assist'),
   }) : null;
   function updateControls() {
     if (!controls) return;
     const room = broadcast?.teacherRoom;
     const busy = !!switching || ending;
-    if (viewing) controls.update({ mode: 'assist', studentName: viewing.studentName, busy,
+    if (viewing) controls.update({ mode: viewing.mode === 'observe' ? 'observe' : 'assist', studentName: viewing.studentName, busy,
       status: switching ? '正在切换画面…' : statusMessage || '画面已同步',
       switchDisabled: !ready || !contentReady || !config.pageGrant,
       canChooseStudent: !viewing.connectionId || viewing.connectionId === viewing.sessionId });
@@ -327,7 +367,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
       status: switching ? '正在切换画面…' : broadcast?.teacherStatus,
       switchDisabled: !ready });
     else if (!switching) controls.update(null);
-    if (lessonLink && !lessonLink.cancelled && (viewing || room)) {
+    if (lessonLink && !lessonLink.cancelled && (viewing?.mode !== 'observe') && (viewing || room)) {
       const participant = viewing?.studentUid ?? (room?.studentUids?.length === 1 ? room.studentUids[0] : undefined);
       if (participant === lessonLink.studentUid) window.dispatchEvent(new CustomEvent('onebyone:lesson-share-state', {
         detail: { lessonId: lessonLink.lessonId, state: 'active', mode: viewing ? 'assist' : 'broadcast' },
@@ -340,6 +380,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
   }
   function switchMode(studentUid?: number) {
     const current = viewing || broadcast?.teacherRoom;
+    if (viewing?.mode === 'observe') return;
     if (!ready || !current || switching || ending || (viewing && (!contentReady || !config.pageGrant))) return;
     const change = { sessionId: current.sessionId, connectionId: current.connectionId || current.sessionId,
       requestId: randomId(), mode: viewing ? 'broadcast' as const : 'assist' as const };
@@ -487,16 +528,29 @@ export function installLiveShare(config: LiveShareConfig, options: {
   }
   async function startView(next: Session) {
     if (!next.sessionId || !next.pageId) return;
-    if (closedSessions.has(next.sessionId)) { send({ type: 'stop', sessionId: next.sessionId }); return; }
+    if (closedSessions.has(next.sessionId) || stoppedObserveConnections.has(next.connectionId || next.sessionId)) {
+      closedSessions.add(next.sessionId); send({ type: 'stop', sessionId: next.sessionId }); return;
+    }
+    const mode = next.mode === 'observe' ? 'observe' : 'assist';
+    const expected = pendingStart === next.studentUid ? pendingStartMode
+      : resume?.studentUid === next.studentUid ? resume.mode : undefined;
+    if (expected === 'observe' && mode !== 'observe'
+      || viewing?.sessionId === next.sessionId && (viewing.mode === 'observe') !== (mode === 'observe')) {
+      closedSessions.add(next.sessionId); send({ type: 'stop', sessionId: next.sessionId });
+      pendingStart = 0; setStatus('只读查看状态不匹配，请停止后重新连接。', true); return;
+    }
+    pendingStart = 0;
     if (viewing?.sessionId === next.sessionId && viewing.pageId === next.pageId && viewerMirror && viewerEditors) {
-      connected(true); return;
+      connected(true); requestObserveSnapshot(viewing); return;
     }
     if (viewing?.sessionId !== next.sessionId) { clearTimeout(endTimer); ending = false; afterSync = null; }
     const currentGeneration = ++generation;
     preservePending(); clearViewAdapters(); viewing = next; updateLocalDrawing();
     createOverlay();
+    overlay?.classList.toggle('is-observing', mode === 'observe');
+    overlay?.setAttribute('aria-label', mode === 'observe' ? '学员只读画面' : '学员实时共享界面');
     setStatus('正在同步学员画面…', true);
-    saveResume({ studentUid: next.studentUid!, tabId: next.tabId, connectionId: next.connectionId });
+    saveResume({ studentUid: next.studentUid!, tabId: next.tabId, connectionId: next.connectionId, mode });
     closeRoster();
     document.querySelector<HTMLButtonElement>('[data-assistant-close]')?.click();
     try {
@@ -511,10 +565,16 @@ export function installLiveShare(config: LiveShareConfig, options: {
         ? `classroom:${uid}:${lessonLink.lessonId}` : next.connectionId || next.sessionId;
       const annotationScope = next.pageUrl ? { sessionId: `${annotationId}:assist:${next.studentUid}`, url: next.pageUrl } : undefined;
       viewerMirror = adapters.attachViewerMirror({ pageId: next.pageId, container: mirrorRoot,
-        annotationScope,
-        onDocument: adapters.attachIdeCapacityMirror,
+        readOnly: mode === 'observe', title: mode === 'observe' ? '学员只读画面' : undefined,
+        annotationScope: mode === 'observe' ? undefined : annotationScope,
+        onDocument: mode === 'observe' ? undefined : adapters.attachIdeCapacityMirror,
         sendCommand: (data) => relay(next, 'command', data),
         onViewZoom: wheelZoom, onViewPan: panView,
+        onViewWheel: mode === 'observe' ? (event) => {
+          const wheel = event as WheelEvent;
+          if (wheel.ctrlKey || wheel.metaKey) wheelZoom({ delta: event.deltaY, clientX: wheel.clientX, clientY: wheel.clientY });
+          else panView({ dx: -event.deltaX, dy: -event.deltaY });
+        } : undefined,
         onViewport: (size: any) => {
           studentWidth = Math.max(320, Math.min(7680, size.width || 1440));
           studentHeight = Math.max(240, Math.min(4320, size.height || 900)); sizeStage();
@@ -526,14 +586,18 @@ export function installLiveShare(config: LiveShareConfig, options: {
         },
       });
       viewerFrames = adapters.attachViewerFrames?.({ pageId: next.pageId, container: frameRoot,
+        readOnly: mode === 'observe',
         getNodeRect: (id) => viewerMirror?.getFrameRect?.(id) || null,
         sendCommand: (data) => relay(next, 'command', data), onViewZoom: wheelZoom, onViewPan: panView,
         onStatus: (message: string) => { if (message && viewing === next) setStatus(message); },
       }) || null;
       viewerEditors = adapters.attachViewerEditors({ pageId: next.pageId, container: editorRoot,
-        annotationScope,
+        readOnly: mode === 'observe', annotationScope: mode === 'observe' ? undefined : annotationScope,
         getNodeRect: (id) => viewerMirror?.getEditorRect?.(id) || undefined,
-        send: (data) => relay(next, 'editor', data),
+        send: (data) => {
+          if (mode === 'observe' && data?.type === 'edit:sync') requestObserveSnapshot(next);
+          else relay(next, 'editor', data);
+        },
         onStatus: (status: any) => {
           pendingEdits.set(status.editorId, status.pending || 0);
           if (ending && ![...pendingEdits.values()].some((count) => count > 0)) { queueMicrotask(finishSync); return; }
@@ -542,7 +606,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
           else if (status.connected && status.ready && !overlay?.classList.contains('is-disconnected')) setStatus('');
         },
       });
-      viewerDrawing = adapters.attachTemporaryDrawing?.({ pageId: next.pageId, container: stage, teacher: true,
+      viewerDrawing = mode !== 'observe' ? adapters.attachTemporaryDrawing?.({ pageId: next.pageId, container: stage, teacher: true,
         annotationScope, annotationDocument: (frameId?: string) => (frameId
           ? viewerFrames?.getDrawingDocument?.(frameId) || null : viewerMirror?.getDrawingDocument?.() || null),
         anchors: {
@@ -554,8 +618,9 @@ export function installLiveShare(config: LiveShareConfig, options: {
             : viewerMirror?.getDrawingNode?.(identity.nodeId) || null,
         },
         send: (drawing) => relay(next, 'command', { id: randomId(), pageId: next.pageId, nodeId: 1, action: 'draw', drawing }),
-      }) || null;
+      }) || null : null;
       viewerIde = adapters.attachViewerIde?.({ pageId: next.pageId, container: stage,
+        readOnly: mode === 'observe',
         sendCommand: (data) => relay(next, 'command', data),
       }) || null;
       const waiting = buffered.splice(0); bufferedBytes = 0;
@@ -563,18 +628,27 @@ export function installLiveShare(config: LiveShareConfig, options: {
       viewerMirror.setConnected(ready); viewerEditors.setConnected(ready);
       viewerFrames?.setConnected(ready);
       viewerDrawing?.setConnected(ready); viewerIde?.setConnected(ready);
+      requestObserveSnapshot(next);
     } catch {
       if (viewing === next) setStatus('共享组件加载失败，请断开后重试。', true);
     }
   }
   async function startSource(next: Session) {
+    if (closedSessions.has(next.sessionId) || stoppedObserveConnections.has(next.connectionId || next.sessionId)) {
+      closedSessions.add(next.sessionId); send({ type: 'stop', sessionId: next.sessionId }); return;
+    }
     if (!contentReady || next.pageId !== pageId || !config.pageGrant) return;
     if (source?.sessionId === next.sessionId && source.pageId === next.pageId && sourceMirror && sourceEditors) {
       connected(true); return;
     }
     clearSource(); source = next; updateLocalDrawing();
-    notice = el('div', 'live-share-notice'); notice.dataset.liveSharePrivate = '';
-    notice.setAttribute('role', 'status'); notice.append(el('i', 'live-share-dot'), el('span', '', `${next.teacherName || '老师'}正在协助`));
+    if (next.mode === 'observe') sourceObservation = next;
+    notice = el('div', `live-share-notice${next.mode === 'observe' ? ' is-observing' : ''}`); notice.dataset.liveSharePrivate = '';
+    notice.setAttribute('role', 'status'); notice.append(el('i', 'live-share-dot'), el('span', '', `${next.teacherName || '老师'}${next.mode === 'observe' ? '正在查看' : '正在协助'}`));
+    if (next.mode === 'observe') {
+      const stop = button('停止查看', 'live-share-notice__stop', endSharing); stop.dataset.liveObserveStop = '';
+      notice.append(stop);
+    }
     document.body.append(notice);
     const sourceStatus = (message: string) => {
       if (source !== next) return;
@@ -592,7 +666,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
       sourceFrames = adapters.attachSourceFrames?.({ pageId,
         send: (data) => relay(next, 'mirror', data), sendAck: (data) => relay(next, 'ack', data), onStatus: sourceStatus,
       }) || null;
-      if (adapters.attachTemporaryDrawing) {
+      if (next.mode !== 'observe' && adapters.attachTemporaryDrawing) {
         sourceDrawingRoot = drawingRoot(contentWindow()!.document);
         sourceDrawing = adapters.attachTemporaryDrawing({ pageId, container: sourceDrawingRoot, teacher: false,
           anchors: {
@@ -646,6 +720,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
         setStatus(reason, reason.includes('已暂停'));
       }
     } else {
+      if (source?.mode === 'observe') return;
       if (message.kind === 'command') {
         if (message.data?.action === 'ide') sourceIde?.receiveCommand?.(message.data);
         else if (message.data?.action === 'frame') sourceFrames?.receiveCommand?.(message.data);
@@ -657,6 +732,12 @@ export function installLiveShare(config: LiveShareConfig, options: {
   }
   function onMessage(message: any) {
     if (!message || typeof message !== 'object') return;
+    if (message.type === 'observe:sync') {
+      if (source?.mode === 'observe' && ready && message.sessionId === source.sessionId && message.pageId === source.pageId) {
+        sourceMirror?.snapshot?.(); sourceEditors?.snapshot?.(); sourceFrames?.snapshot?.(); sourceIde?.snapshot?.();
+      }
+      return;
+    }
     if (lessonLink?.owns && ['started', 'broadcast:started'].includes(message.type)) {
       const sameStudent = message.type === 'started' ? message.studentUid === lessonLink.studentUid
         : message.studentUids?.length === 1 && message.studentUids[0] === lessonLink.studentUid;
@@ -683,7 +764,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     const connectionId = message.connectionId || message.sessionId;
     if (message.type === 'connection:ended' && connectionId) {
       connectionVersions.set(connectionId, Infinity);
-      const assist = viewing || source;
+      const assist = viewing || source || sourceObservation;
       if (assist && (assist.connectionId || assist.sessionId) === connectionId) retireAssist();
       const room = broadcast?.currentRoom;
       if (room && (room.connectionId || room.sessionId) === connectionId) {
@@ -740,8 +821,8 @@ export function installLiveShare(config: LiveShareConfig, options: {
       if (roster) send({ type: 'list' });
       if (config.canTeach && deferredStart) {
         const target = deferredStart; deferredStart = null;
-        chooseStudent(target.studentUid, target.tabId, true);
-      } else if (config.canTeach && resume && !resume.connectionId && !viewing && !switching) chooseStudent(resume.studentUid, resume.tabId);
+        chooseStudent(target.studentUid, target.tabId, true, target.mode);
+      } else if (config.canTeach && resume && !resume.connectionId && !viewing && !switching) chooseStudent(resume.studentUid, resume.tabId, false, resume.mode);
       updateControls();
       return;
     }
@@ -758,7 +839,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
         switchedSessions.add(room.sessionId);
         broadcast?.receive({ type: 'broadcast:ended', sessionId: room.sessionId, connectionId: message.connectionId, switched: true });
       }
-      pendingStart = 0; void startView(message); resumeMode(message, 'assist');
+      void startView(message); resumeMode(message, 'assist');
     }
     if (message.type === 'share-start') {
       const room = broadcast?.currentRoom;
@@ -769,12 +850,12 @@ export function installLiveShare(config: LiveShareConfig, options: {
       void startSource(message);
     }
     if (message.type === 'relay') receiveRelay(message);
-    if (message.type === 'paused' && (message.sessionId === viewing?.sessionId || message.sessionId === source?.sessionId)) {
+    if (message.type === 'paused' && (message.sessionId === viewing?.sessionId || message.sessionId === source?.sessionId || message.sessionId === sourceObservation?.sessionId)) {
       connected(false); setStatus(message.reason || '学员正在切换页面，稍候自动恢复…', true);
     }
     if (message.type === 'ended') {
       closedSessions.delete(message.sessionId);
-      if (message.sessionId === viewing?.sessionId || message.sessionId === source?.sessionId) retireAssist();
+      if (message.sessionId === viewing?.sessionId || message.sessionId === source?.sessionId || message.sessionId === sourceObservation?.sessionId) retireAssist();
       if (!message.followed && !message.switched) {
         clearSessionAnnotations(connectionId);
         if (switching?.connectionId === connectionId) clearSwitch();
@@ -788,7 +869,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
       if (/permission|forbidden|expired|scope/i.test(message.code || message.error || '')) {
         ready = false; connected(false); saveResume(null);
       }
-      if (/^(?:STALE_PAGE|PAUSED|BACKPRESSURE|RATE_LIMIT)$/.test(message.code || '')) {
+      if (/^(?:UNSUPPORTED_PAGE|INVALID_HELLO|NOT_READY|STALE_PAGE|PAUSED|BACKPRESSURE|RATE_LIMIT)$/.test(message.code || '')) {
         ready = false; connected(false); socket?.close();
       }
     }
@@ -804,6 +885,9 @@ export function installLiveShare(config: LiveShareConfig, options: {
     socket = ws;
     ws.addEventListener('open', () => {
       if (socket !== ws || disposed) return;
+      // The iframe can begin navigation after connect() but before OPEN. Never
+      // announce the cleared old grant and wait for the server's hello timeout.
+      if (platformShell && !config.canTeach && (!contentReady || !config.pageGrant)) { ws.close(); return; }
       lastPong = Date.now();
       // Simultaneously opened idle tabs can race on their first device ID write.
       // Use the settled browser-wide identity when the actual connection starts.
@@ -845,22 +929,22 @@ export function installLiveShare(config: LiveShareConfig, options: {
     });
     ws.addEventListener('error', () => { /* close drives reconnection and visible state. */ });
   }
-  async function chooseStudent(studentUid: number, selectedTabId?: string, skipWait = false) {
+  async function chooseStudent(studentUid: number, selectedTabId?: string, skipWait = false, mode: ShareMode = rosterMode) {
     if (broadcast?.active) { broadcast.showMessage('请先结束分享，再协助学员。'); return; }
     if (!ready) {
-      if (skipWait) { deferredStart = { studentUid, tabId: selectedTabId }; setStatus('等待恢复连接后自动切换学员…', true); }
+      if (skipWait) { deferredStart = { studentUid, tabId: selectedTabId, mode }; setStatus('等待恢复连接后自动切换学员…', true); }
       return;
     }
     if (pendingStart || ending) return;
-    if (!skipWait && viewing && waitForEdits(() => { void chooseStudent(studentUid, selectedTabId, true); }, '正在同步最后的修改，完成后自动切换学员…')) {
+    if (!skipWait && viewing && waitForEdits(() => { void chooseStudent(studentUid, selectedTabId, true, mode); }, '正在同步最后的修改，完成后自动切换学员…')) {
       closeRoster(); return;
     }
-    pendingStart = studentUid;
+    pendingStart = studentUid; pendingStartMode = mode;
     renderStudents();
     try {
       await loadAdapters();
       if (disposed || pendingStart !== studentUid) return;
-      if (!send({ type: 'start', studentUid, ...(selectedTabId ? { tabId: selectedTabId } : {}) })) throw new Error('offline');
+      if (!send({ type: 'start', studentUid, mode, ...(selectedTabId ? { tabId: selectedTabId } : {}) })) throw new Error('offline');
     } catch {
       pendingStart = 0;
       rosterList?.replaceChildren(el('p', 'live-share-empty', '连接准备失败，请稍后重试。'));
@@ -890,19 +974,24 @@ export function installLiveShare(config: LiveShareConfig, options: {
     roster?.remove(); roster = null; rosterList = null; search = null;
     clearInterval(rosterTimer);
   }
-  function openRoster() {
+  function openRoster(mode: ShareMode = 'assist') {
     if (broadcast?.active) { broadcast.showMessage('请先结束分享，再协助学员。'); return; }
     if (!config.canTeach || roster || ending) return;
+    if (viewing && (viewing.mode === 'observe') !== (mode === 'observe')) {
+      setStatus('请先停止当前查看或共享，再切换连接方式。'); return;
+    }
+    rosterMode = mode;
     document.querySelector<HTMLButtonElement>('[data-assistant-close]')?.click();
     roster = el('div', 'live-share-picker'); roster.dataset.liveSharePrivate = '';
     const dialog = el('section', 'live-share-picker__card'); dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true'); dialog.setAttribute('aria-labelledby', 'live-share-picker-title');
     const heading = el('header', 'live-share-picker__header');
-    const titles = el('div', ''); titles.append(el('span', 'live-share-picker__eyebrow', '一起解决，一个小问题'));
-    const title = el('h2', '', '连接一位学员'); title.id = 'live-share-picker-title'; titles.append(title);
+    const titles = el('div', ''); titles.append(el('span', 'live-share-picker__eyebrow', mode === 'observe' ? '看见学习，保留专注' : '一起解决，一个小问题'));
+    const title = el('h2', '', mode === 'observe' ? '查看学员画面' : '连接一位学员'); title.id = 'live-share-picker-title'; titles.append(title);
     const close = button('×', 'live-share-picker__close', closeRoster); close.setAttribute('aria-label', '关闭学员选择');
     heading.append(titles, close); dialog.append(heading);
-    dialog.append(el('p', 'live-share-picker__intro', '看见学员的当前页面，也能直接点击、编辑代码。'));
+    dialog.append(el('p', 'live-share-picker__intro', mode === 'observe'
+      ? '只看学员在平台内的当前页面，不点击、不编辑；学员可随时停止查看。' : '看见学员的当前页面，也能直接点击、编辑代码。'));
     search = document.createElement('input'); search.type = 'search'; search.className = 'live-share-picker__search';
     search.placeholder = '搜索姓名或 UID'; search.setAttribute('aria-label', '搜索学员'); search.autocomplete = 'off';
     search.addEventListener('input', renderStudents); dialog.append(search);
@@ -925,12 +1014,18 @@ export function installLiveShare(config: LiveShareConfig, options: {
     search.focus();
   }
   on(document, 'click', (event: MouseEvent) => {
+    if ((event.target as Element)?.closest?.('[data-live-observe-open]')) { event.preventDefault(); openRoster('observe'); return; }
     if ((event.target as Element)?.closest?.('[data-live-share-open]')) { event.preventDefault(); openRoster(); }
   });
   on(window, 'onebyone:lesson-share-start', (event: CustomEvent) => {
     const detail = event.detail;
     if (!config.canTeach || typeof detail?.lessonId !== 'string' || !Number.isSafeInteger(detail.studentUid) || detail.studentUid <= 1) return;
     const current = viewing || broadcast?.teacherRoom;
+    if (viewing?.mode === 'observe') {
+      event.stopImmediatePropagation();
+      window.dispatchEvent(new CustomEvent('onebyone:lesson-share-state', { detail: { lessonId: detail.lessonId,
+        state: 'error', message: '请先停止学员画面查看，再进入上课共享。' } })); return;
+    }
     const participant = viewing?.studentUid ?? (broadcast?.teacherRoom?.studentUids?.length === 1 ? broadcast.teacherRoom.studentUids[0] : undefined);
     const same = lessonLink?.lessonId === detail.lessonId && !lessonLink.cancelled;
     if (!same) lessonLink = { lessonId: detail.lessonId, studentUid: detail.studentUid, owns: !current };
@@ -947,8 +1042,8 @@ export function installLiveShare(config: LiveShareConfig, options: {
       else updateControls();
     } else if (target === 'assist') {
       event.stopImmediatePropagation();
-      if (!ready) { deferredStart = { studentUid: detail.studentUid }; connect(); }
-      else void chooseStudent(detail.studentUid);
+      if (!ready) { deferredStart = { studentUid: detail.studentUid, mode: 'assist' }; connect(); }
+      else void chooseStudent(detail.studentUid, undefined, false, 'assist');
     }
   });
   on(window, 'onebyone:lesson-share-stop', (event: CustomEvent) => {
@@ -997,7 +1092,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
   function pageLoading() {
     if (!platformShell || !contentReady) return;
     contentReady = false; pageId = randomId(); config.pageGrant = undefined;
-    clearSource(); broadcast?.pageLoading(); installLocalDrawing();
+    clearSource(true); broadcast?.pageLoading(); installLocalDrawing();
     updateControls();
     sendCurrentPage();
   }
@@ -1048,7 +1143,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
   });
   on(window, 'pageshow', (event: PageTransitionEvent) => {
     if (!event.persisted) return;
-    suspended = false; pageId = randomId(); clearSource();
+    suspended = false; pageId = randomId(); clearSource(true);
     if (!config.canTeach || viewing || roster || resume || broadcast?.wantsConnection()) connect();
   });
   const cleanup = () => {
@@ -1082,7 +1177,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     ready = false; connected(false);
     if (socket) socket.close(); else connect();
   }, pageId: () => pageId, sourceReady: () => contentReady, ready: () => ready,
-    sharing: () => !!viewing || !!source || !!pendingStart || !!switching || ending,
+    sharing: () => !!viewing || !!source || !!sourceObservation || !!pendingStart || !!switching || ending,
     onActiveChange: () => { updateLocalDrawing(); updateControls(); } },
   { loadAdapters: options.loadBroadcastAdapters,
     loadSourceAdapters: platformShell ? () => {

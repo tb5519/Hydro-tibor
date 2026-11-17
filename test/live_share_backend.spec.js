@@ -44,7 +44,7 @@ const ws = {
     ])],
 };
 before(async () => {
-    server = await MongoMemoryServer.create();
+    server = await MongoMemoryServer.create({ instance: { args: ['--nounixsocket'] } });
     client = await MongoClient.connect(server.getUri());
     database = client.db('live_share');
     memberships = database.collection('domain.user'); accounts = database.collection('user');
@@ -134,6 +134,128 @@ const settle = async () => {
     }
     assert.fail('Live-share delivery queues did not settle');
 };
+
+describe('read-only learner observation', () => {
+    async function observing() {
+        const teacher = connection(2); const student = connection(10); const other = connection(11);
+        await hello(teacher, 2); await hello(student, 10); await hello(other, 11);
+        await teacher.instance.message({ type: 'start', studentUid: 10, mode: 'observe' }); await settle();
+        const started = teacher.sent.find((message) => message.type === 'started');
+        assert.ok(started, JSON.stringify(teacher.sent));
+        assert.equal(started.mode, 'observe');
+        return { teacher, student, other, started };
+    }
+    it('validates observation modes and an exact snapshot-only control shape', () => {
+        for (const mode of ['assist', 'observe', undefined]) {
+            assert.equal(protocol.validateShareMessage({ type: 'start', studentUid: 10, ...(mode ? { mode } : {}) }).type, 'start');
+        }
+        for (const mode of ['broadcast', 'admin', 1, null, {}]) {
+            assert.throws(() => protocol.validateShareMessage({ type: 'start', studentUid: 10, mode }));
+        }
+        const sync = { type: 'observe:sync', sessionId: 'observation-testing', pageId: 'observed-page-testing' };
+        assert.equal(protocol.validateShareMessage(sync), sync);
+        for (const changes of [{ uid: 11 }, { url: '/d/other' }, { command: 'run' }, { state: 'YQ==' }, { pageId: '' }]) {
+            assert.throws(() => protocol.validateShareMessage({ ...sync, ...changes }), errorCode('INVALID_SYNC'));
+        }
+    });
+    it('relays learner snapshots, editor state and acknowledgments while rejecting every teacher control', async () => {
+        const { teacher, student, other, started } = await observing();
+        assert.equal(student.sent.find((message) => message.type === 'share-start').mode, 'observe');
+        for (const [kind, data] of [
+            ['mirror', { type: 'rrweb', sequence: 1, event: { type: 3, data: {} } }],
+            ['editor', { type: 'edit:init', pageId: started.pageId, editorId: 'observed-editor-testing', state: 'YQ==' }],
+            ['ack', { id: 'observed-ack-testing', pageId: started.pageId, ok: true }],
+        ]) await student.instance.message({ type: 'relay', sessionId: started.sessionId, pageId: started.pageId, kind, data });
+        await settle();
+        assert.equal(teacher.sent.filter((message) => message.type === 'relay').length, 3);
+        assert.equal(other.sent.filter((message) => message.type === 'relay').length, 0);
+        const received = student.sent.length;
+        for (const [kind, data] of [
+            ['editor', { type: 'edit:update', pageId: started.pageId, editorId: 'observed-editor-testing', update: 'YQ==' }],
+            ['editor', { type: 'edit:sync', pageId: started.pageId, editorId: '' }],
+            ['command', { id: 'observed-click-testing', pageId: started.pageId, nodeId: 1, action: 'click' }],
+            ['command', { id: 'observed-run-testing', pageId: started.pageId, nodeId: 1, action: 'ide', runId: 'observed-run-identifier', command: { type: 'run' } }],
+            ['command', { id: 'observed-draw-testing', pageId: started.pageId, nodeId: 1, action: 'draw', drawing: {} }],
+        ]) {
+            await teacher.instance.message({ type: 'relay', sessionId: started.sessionId, pageId: started.pageId, kind, data });
+            assert.equal(teacher.sent.at(-1).code, 'FORBIDDEN');
+        }
+        await settle(); assert.equal(student.sent.length, received);
+    });
+    it('allows only the observed learner to stop, releasing all reservations and rejecting late capture', async () => {
+        const { teacher, student, other, started } = await observing();
+        await other.instance.message({ type: 'stop', sessionId: started.sessionId });
+        assert.equal(other.sent.at(-1).code, 'FORBIDDEN');
+        await student.instance.message({ type: 'stop', sessionId: started.sessionId }); await settle();
+        assert.equal((await model.sessions.findOne({ _id: started.sessionId })).active, false);
+        assert.equal(await model.occupancy.countDocuments({ roomId: started.sessionId }), 0);
+        assert.equal(teacher.sent.at(-1).type, 'ended'); assert.equal(student.sent.at(-1).type, 'ended');
+        const received = teacher.sent.filter((message) => message.type === 'relay').length;
+        await student.instance.message({ type: 'relay', sessionId: started.sessionId, pageId: started.pageId,
+            kind: 'mirror', data: { type: 'rrweb', sequence: 2, event: { type: 3, data: {} } } });
+        await settle(); assert.equal(teacher.sent.filter((message) => message.type === 'relay').length, received);
+    });
+    it('never upgrades observation in-place or through direction switching, while a fresh explicit assistance start remains possible', async () => {
+        const { teacher, student, started } = await observing();
+        await teacher.instance.message({ type: 'start', studentUid: 10, mode: 'assist' });
+        assert.equal(teacher.sent.at(-1).code, 'MODE_CONFLICT');
+        for (const mode of ['assist', 'broadcast']) await assert.rejects(switches.switchDirection(teacher.instance.peer, {
+            sessionId: started.sessionId, requestId: `observe-switch-${mode}`, mode,
+        }, () => {}), errorCode('READ_ONLY'));
+        assert.equal((await model.sessions.findOne({ _id: started.sessionId })).mode, 'observe');
+        await student.instance.message({ type: 'stop', sessionId: started.sessionId }); await settle();
+        await teacher.instance.message({ type: 'start', studentUid: 10 }); await settle();
+        assert.equal(teacher.sent.filter((message) => message.type === 'started').at(-1).mode, 'assist');
+    });
+    it('preserves observation on authorized page changes and teacher reconnection', async () => {
+        const { teacher, student, started } = await observing();
+        const url = '/d/class-b/p/2000'; const pageGrant = await model.issuePageGrant(10, 'class-b', url);
+        await student.instance.message({ type: 'page', domainId: 'class-b', pageId: 'observed-new-page-testing',
+            pageGrant, url, title: '下一题', visible: true }); await settle();
+        const changed = teacher.sent.filter((message) => message.type === 'started').at(-1);
+        assert.equal(changed.sessionId, started.sessionId); assert.equal(changed.mode, 'observe');
+        assert.equal(changed.pageId, 'observed-new-page-testing');
+        await teacher.instance.cleanup();
+        const recovered = connection(2); await hello(recovered, 2); await settle();
+        const resumed = recovered.sent.find((message) => message.type === 'started');
+        assert.equal(resumed.sessionId, started.sessionId); assert.equal(resumed.mode, 'observe');
+        assert.equal(resumed.pageId, changed.pageId);
+    });
+    it('synchronizes sanitized snapshots only for the current observing teacher and coalesces duplicate requests', async () => {
+        const { teacher, student, other, started } = await observing();
+        const sync = { type: 'observe:sync', sessionId: started.sessionId, pageId: started.pageId };
+        for (const peer of [student, other]) {
+            await peer.instance.message(sync); assert.equal(peer.sent.at(-1).code, 'FORBIDDEN');
+        }
+        await teacher.instance.message({ ...sync, pageId: 'old-observed-page-testing' });
+        assert.equal(teacher.sent.at(-1).code, 'STALE_PAGE');
+        await teacher.instance.message(sync); await teacher.instance.message(sync); await settle();
+        assert.equal(student.sent.filter((message) => message.type === 'observe:sync').length, 1);
+        assert.equal(other.sent.filter((message) => message.type === 'observe:sync').length, 0);
+        teacher.instance.lastObservationSync.at = Date.now() - 1001;
+        await teacher.instance.message(sync); await settle();
+        assert.equal(student.sent.filter((message) => message.type === 'observe:sync').length, 2);
+        await memberships.updateOne({ uid: 10, domainId: 'class-a' }, { $set: { join: false } });
+        await teacher.instance.message(sync); await settle();
+        assert.equal((await model.sessions.findOne({ _id: started.sessionId })).active, false);
+        assert.equal(student.sent.filter((message) => message.type === 'observe:sync').length, 2);
+    });
+    it('does not deliver queued snapshot requests after the learner stops observation', async () => {
+        const { teacher, student, started } = await observing();
+        let release; student.instance.outgoing = new Promise((resolve) => { release = resolve; });
+        await teacher.instance.message({ type: 'observe:sync', sessionId: started.sessionId, pageId: started.pageId });
+        await student.instance.message({ type: 'stop', sessionId: started.sessionId });
+        release(); await settle();
+        assert.equal(student.sent.filter((message) => message.type === 'observe:sync').length, 0);
+        assert.equal(await model.occupancy.countDocuments({ roomId: started.sessionId }), 0);
+    });
+    it('never uses a snapshot request to revive an expired or mismatched page grant', async () => {
+        const { teacher, student, started } = await observing();
+        await model.grants.updateMany({ uid: 10 }, { $set: { expiresAt: new Date(0) } });
+        await teacher.instance.message({ type: 'observe:sync', sessionId: started.sessionId, pageId: started.pageId }); await settle();
+        assert.equal(student.sent.filter((message) => message.type === 'observe:sync').length, 0);
+    });
+});
 
 describe('teacher broadcast protocol and multi-learner isolation', () => {
     const stroke = { strokeId: 'learner-stroke-testing', phase: 'start', sequence: 0, points: [[40, 80]] };

@@ -58,6 +58,7 @@ interface SourceOptions {
 }
 interface ViewerOptions {
   readOnly?: boolean;
+  title?: string;
   pageId: string;
   annotationScope?: AnnotationScope;
   container: HTMLElement;
@@ -1251,7 +1252,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     cleanupDocument();
     // Never enable allow-scripts. A peer snapshot is untrusted display data.
     frame.setAttribute('sandbox', 'allow-same-origin');
-    frame.setAttribute('title', options.readOnly ? '老师分享画面' : '学员共享画面');
+    frame.setAttribute('title', options.title || (options.readOnly ? '老师分享画面' : '学员共享画面'));
     frame.style.border = '0';
     if (connected) player.enableInteract(); else player.disableInteract();
     const style = doc.createElement('style');

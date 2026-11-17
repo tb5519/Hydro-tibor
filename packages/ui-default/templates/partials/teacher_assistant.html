@@ -17,6 +17,7 @@
   {% elif name == 'phone' %}<path d="M7 3H4a1 1 0 0 0-1 1c0 9.4 7.6 17 17 17a1 1 0 0 0 1-1v-3l-5-2-2 2a14 14 0 0 1-7-7l2-2-2-5Z"/>
   {% elif name == 'settings' %}<path d="M4 7h16M4 17h16M8 4v6m8 4v6"/>
   {% elif name == 'book' %}<path d="M4 4h6a2 2 0 0 1 2 2v15a3 3 0 0 0-3-2H4V4Zm16 0h-6a2 2 0 0 0-2 2v15a3 3 0 0 1 3-2h5V4Z"/>
+  {% elif name == 'eye' %}<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>
   {% else %}<rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/>{% endif %}
 </svg>
 {% endmacro %}
@@ -76,6 +77,11 @@
       </button>
       {% endif %}
       {% if UiContext.liveShare and UiContext.liveShare.canTeach %}
+      <button type="button" class="teacher-assistant__link teacher-assistant__share" data-live-observe-open>
+        <span class="teacher-assistant__icon">{{ assistantIcon('eye') }}</span>
+        <span class="teacher-assistant__copy"><strong>学员画面</strong><span>只看页面，不打断操作</span></span>
+        <span class="teacher-assistant__arrow" aria-hidden="true">↗</span>
+      </button>
       <button type="button" class="teacher-assistant__link teacher-assistant__share" data-teacher-broadcast-open>
         <span class="teacher-assistant__icon">{{ assistantIcon('book') }}</span>
         <span class="teacher-assistant__copy"><strong>分享模式</strong><span>展示我的画面，一起看示范</span></span>

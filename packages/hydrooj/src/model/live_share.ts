@@ -1,7 +1,7 @@
 import { randomBytes } from 'crypto';
 import {
     LIVE_SHARE_GRANT_MS, LIVE_SHARE_LEASE_MS, LIVE_SHARE_RECONNECT_MS, LiveShareError,
-    ShareConnection, ShareParticipant, ShareSession, sharePage,
+    ShareConnection, ShareMode, ShareParticipant, ShareSession, sharePage,
 } from '../lib/live_share';
 import db from '../service/db';
 import { BUILTIN_ROLES, PERM, PRIV } from './builtin';
@@ -257,11 +257,13 @@ export async function livePresence(uid: number, tabId: string, now = Date.now())
 export function notifySession(session: ShareSession, emit: Emit) {
     emit({ uid: session.teacherUid, tabId: session.teacherTabId, message: {
         type: 'started', sessionId: session._id, studentUid: session.studentUid, studentName: session.studentName,
+        mode: session.mode || 'assist',
         ...connectionInfo(session),
         teacherName: session.teacherName, tabId: session.studentTabId, pageId: session.pageId, pageUrl: session.pageUrl,
     } });
     emit({ uid: session.studentUid, tabId: session.studentTabId, message: {
         type: 'share-start', sessionId: session._id, teacherUid: session.teacherUid, teacherName: session.teacherName,
+        mode: session.mode || 'assist',
         ...connectionInfo(session),
         tabId: session.studentTabId, pageId: session.pageId, pageUrl: session.pageUrl,
     } });
@@ -286,7 +288,11 @@ export async function sessionFor(item: SharePresence, now = Date.now()) {
     return session && await currentTransport(session) ? session : null;
 }
 
-export async function startSession(teacher: SharePresence, studentUid: number, tabId: string | undefined, emit: Emit, now = Date.now()) {
+export async function startSession(
+    teacher: SharePresence, studentUid: number, tabId: string | undefined, emit: Emit,
+    now = Date.now(), mode: ShareMode = 'assist',
+) {
+    if (!['assist', 'observe'].includes(mode)) throw new LiveShareError('INVALID_MODE', '请选择有效的画面模式。');
     await apply();
     const tabs = await presence.find({ uid: studentUid, canTeach: false, connected: true, workspaceId: teacher.workspaceId,
         expiresAt: { $gt: new Date(now) }, ...(tabId ? { tabId } : {}) }).sort({ visible: -1, expiresAt: -1 }).limit(1).toArray();
@@ -298,6 +304,9 @@ export async function startSession(teacher: SharePresence, studentUid: number, t
     // Expired leases must not keep the unique active-participant indexes occupied.
     await sessions.updateMany({ active: true, expiresAt: { $lte: new Date(now) } }, { $set: { active: false } });
     const old = await sessions.findOne({ teacherUid: teacher.uid, active: true });
+    if (old && (old.mode || 'assist') !== mode) {
+        throw new LiveShareError('MODE_CONFLICT', '请先结束当前连接，再开启其他画面模式。');
+    }
     if (old && old.teacherTabId === teacher.tabId && old.studentUid === studentUid && old.studentTabId === student.tabId) {
         const resumed = await refreshSession(old, emit, now);
         if (!resumed) throw new LiveShareError('OFFLINE', '学员正在切换页面，请稍后重试。');
@@ -310,7 +319,7 @@ export async function startSession(teacher: SharePresence, studentUid: number, t
         studentDeviceId: student.deviceId,
         teacherDeviceId: teacher.deviceId,
         workspaceId: teacher.workspaceId, domainId: student.domainId, pageId: student.pageId, pageUrl: student.url,
-        teacherName: scope.teacher.name, studentName: scope.student.name, active: true,
+        teacherName: scope.teacher.name, studentName: scope.student.name, active: true, mode,
         createdAt: new Date(now), expiresAt: new Date(now + LIVE_SHARE_RECONNECT_MS),
     };
     session.connectionId = session._id; session.connectionVersion = 0;

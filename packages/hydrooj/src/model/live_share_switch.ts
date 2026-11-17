@@ -28,6 +28,9 @@ export async function switchDirection(teacher: share.SharePresence, request: Swi
     const old = await findRoom(request.sessionId);
     if (!old || old.teacherUid !== teacher.uid || old.teacherTabId !== teacher.tabId
         || old.workspaceId !== teacher.workspaceId) throw new LiveShareError('FORBIDDEN', '不能切换其他连接。');
+    if (!isBroadcast(old) && old.mode === 'observe') {
+        throw new LiveShareError('READ_ONLY', '查看学员画面时不能切换为协助或分享，请先结束查看。');
+    }
     const teacherScope = await share.teacherScope(teacher.uid, teacher.domainId);
     if (teacherScope.workspaceId !== old.workspaceId) throw new LiveShareError('FORBIDDEN', '不能跨工作区切换。');
     const connectionId = share.connectionKey(old);

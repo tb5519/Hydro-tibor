@@ -35,7 +35,7 @@ after(async () => { await browser?.close(); });
 const test = (name, fn) => it(name, { skip: !executablePath && 'Install Playwright and Chromium' }, fn);
 const key = (uid) => `onebyone.teacher-assistant.position.v1:${uid}`;
 
-function render({ role = 'teacher', uid = 2, cppEditorMode } = {}) {
+function render({ role = 'teacher', uid = 2, cppEditorMode, liveShare } = {}) {
     const workspace = role.startsWith('workspace-') ? { code: 'classroom', legacy: false } : undefined;
     const member = workspace ? { role: role.slice('workspace-'.length) } : undefined;
     return env.renderString(template, {
@@ -52,7 +52,7 @@ function render({ role = 'teacher', uid = 2, cppEditorMode } = {}) {
             domain: { _id: 'C0001', domainType: 'oj' },
         },
         UserContext: { _id: role === 'guest' ? 0 : uid },
-        UiContext: { domainId: 'C0001' },
+        UiContext: { domainId: 'C0001', liveShare },
         workspace, workspaceMember: member, platformAdminMode: role === 'platform-admin',
         page_name: role === 'platform-admin' ? 'platform_dashboard' : workspace ? 'workspace_dashboard' : 'domain_dashboard',
         perm: { PERM_EDIT_DOMAIN: 'PERM_EDIT_DOMAIN', PERM_VIEW_HOMEWORK: 'PERM_VIEW_HOMEWORK' },
@@ -139,6 +139,20 @@ it('renders only for teachers and administrators and stays outside the transform
     const layout = read('packages/ui-default/templates/layout/html5.html');
     assert(layout.includes('partials/teacher_assistant.html'));
     assert(layout.indexOf('partials/teacher_assistant.html') > layout.indexOf('{% block body %}'));
+});
+
+it('offers a separate read-only learner view only to teachers with classroom sharing permission', () => {
+    const permitted = { enabled: true, canTeach: true };
+    const html = render({ liveShare: permitted });
+    assert.match(html, /data-live-observe-open/);
+    assert.match(html, /学员画面/);
+    assert.match(html, /只看页面，不打断操作/);
+    assert.match(html, /data-live-share-open/);
+    assert.match(html, /data-teacher-broadcast-open/);
+    assert(!render({ liveShare: { enabled: true, canTeach: false } }).includes('data-live-observe-open'));
+    for (const role of ['student', 'guest', 'workspace-assistant']) {
+        assert(!render({ role, liveShare: permitted }).includes('data-live-observe-open'));
+    }
 });
 
 test('opens on click or keyboard, closes with Escape and outside click, and supports repeated initialization', async () => {

@@ -783,6 +783,44 @@
   border-radius: 50%
   background: #61a98b
 
+.live-share-notice.is-observing
+  gap: 7px
+  padding: 6px 10px
+  border-color: #d2def0
+  background: #f4f8fff2
+  color: #45628d
+  .live-share-dot
+    background: #6c95cb
+  [data-live-observe-stop]
+    flex: 0 0 auto
+    padding: 3px 7px
+    border: 1px solid #c5d4e9
+    border-radius: 10px
+    background: #fff
+    color: inherit
+    font: inherit
+    cursor: pointer
+    pointer-events: auto
+    touch-action: manipulation
+    &:hover
+      background: #e9f1fc
+    &:focus-visible
+      outline: 2px solid #5c8dcd
+      outline-offset: 2px
+
+.teacher-share-controls.is-observing .teacher-share-controls__mode
+  color: #45628d
+
+.theme--dark .live-share-notice.is-observing
+  border-color: #405577
+  background: #1d2c43f2
+  color: #c4d5ef
+  [data-live-observe-stop]
+    border-color: #4b6487
+    background: #293e5d
+    &:hover
+      background: #354e73
+
 .live-share-annotation
   position: absolute
   inset: 0

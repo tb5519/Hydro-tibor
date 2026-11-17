@@ -61,6 +61,7 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
     private lastGrantRenewal = 0;
     private lastDiscovery = 0;
     private paused = false;
+    private lastObservationSync = { key: '', at: 0 };
     private checking = false;
     private disposed = false;
 
@@ -207,16 +208,36 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         } else if (payload.type === 'start') {
             if (!this.canTeach) throw new LiveShareError('FORBIDDEN', '只有老师可以发起共享。');
             await share.teacherScope(this.peer.uid, this.peer.domainId);
-            this.currentSession = await share.startSession(this.peer, payload.studentUid, payload.tabId, emitLiveShare);
+            this.currentSession = await share.startSession(this.peer, payload.studentUid, payload.tabId, emitLiveShare, undefined, payload.mode);
             this.lastAuthorization = Date.now();
         } else if (payload.type === 'stop') {
             const session = await share.sessions.findOne({ _id: payload.sessionId });
-            if (!session || sessionRole(session, this.peer.uid, this.peer.tabId) !== 'teacher') {
-                throw new LiveShareError('FORBIDDEN', '只有当前老师可以结束共享。');
+            const role = session && sessionRole(session, this.peer.uid, this.peer.tabId);
+            if (!session || (role !== 'teacher' && !(role === 'student' && session.mode === 'observe'))) {
+                throw new LiveShareError('FORBIDDEN', '没有权限结束这个画面连接。');
             }
-            if (session.active) await share.endSession(session, '老师已结束共享。', emitLiveShare);
+            if (session.active) await share.endSession(session, session.mode === 'observe'
+                ? role === 'student' ? '学员已停止画面查看。' : '老师已结束画面查看。' : '老师已结束共享。', emitLiveShare);
             else this.send({ type: 'ended', sessionId: session._id, ...await share.connectionDeparture(session), reason: '共享已结束。' });
-        } else if (payload.type === 'relay') await this.relay(payload);
+        } else if (payload.type === 'observe:sync') await this.synchronizeObservation(payload);
+        else if (payload.type === 'relay') await this.relay(payload);
+    }
+
+    /** Request sanitized source snapshots, never relay a teacher editing payload. */
+    private async synchronizeObservation(payload: { sessionId: string, pageId: string }) {
+        const session = await share.sessions.findOne({ _id: payload.sessionId, active: true });
+        if (!session || session.mode !== 'observe' || sessionRole(session, this.peer.uid, this.peer.tabId) !== 'teacher'
+            || !await share.currentTransport(session)) throw new LiveShareError('FORBIDDEN', '没有权限同步这个学员画面。');
+        const current = await share.refreshSession(session, emitLiveShare);
+        if (!current) throw new LiveShareError('PAUSED', '学员正在切换页面，请稍后重试。');
+        if (current.pageId !== payload.pageId) throw new LiveShareError('STALE_PAGE', '学员已切换页面，正在重新同步。');
+        const key = `${current._id}:${current.pageId}`;
+        if (this.lastObservationSync.key === key && Date.now() - this.lastObservationSync.at < 1000) return;
+        this.lastObservationSync = { key, at: Date.now() };
+        this.currentSession = current; this.lastAuthorization = Date.now();
+        emitLiveShare({ uid: current.studentUid, tabId: current.studentTabId, message: {
+            type: 'observe:sync', sessionId: current._id, pageId: current.pageId, mode: 'observe',
+        } });
     }
 
     private async relay(payload: any) {
@@ -421,6 +442,18 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
             if (!current || !await share.currentTransport(current)) return;
             this.currentSession = current;
             this.lastAuthorization = 0;
+        }
+        if (event.message.type === 'observe:sync') {
+            // Recheck the persisted mode and original page after asynchronous
+            // delivery, so a queued request cannot revive a stopped capture.
+            const current = await share.sessions.findOne({ _id: event.message.sessionId, active: true });
+            if (!current || current.mode !== 'observe' || current.pageId !== event.message.pageId
+                || sessionRole(current, this.peer.uid, this.peer.tabId) !== 'student'
+                || this.peer.pageId !== current.pageId || !this.peer.visible || !this.peer.url
+                || !await share.currentTransport(current)) return;
+            await this.checkLogin();
+            await share.authorizePair(current.teacherUid, current.studentUid, this.peer.domainId);
+            if (!await share.verifyPageGrant(this.peer.uid, this.peer.domainId, this.activePageGrant, this.peer.url)) return;
         }
         if (event.message.type === 'relay') {
             if (!this.currentSession || this.currentSession._id !== event.message.sessionId

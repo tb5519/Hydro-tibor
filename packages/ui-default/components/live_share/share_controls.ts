@@ -1,6 +1,6 @@
 export interface TeacherShareStudent { uid: number; name: string; online?: boolean }
 export interface TeacherShareControlState {
-  mode: 'assist' | 'broadcast';
+  mode: 'assist' | 'broadcast' | 'observe';
   studentName?: string;
   label?: string;
   status?: string;
@@ -108,8 +108,9 @@ export function createTeacherShareControls(actions: {
     collapse.setAttribute('aria-expanded', String(!collapsed));
     collapse.setAttribute('aria-label', collapsed ? '展开共享控制' : '收起共享控制');
     collapse.title = collapsed ? '展开共享控制' : '收起共享控制';
-    mode.textContent = state?.mode === 'assist' ? (collapsed ? '协助' : '正在协助') : (collapsed ? '分享' : '正在分享');
-    root.title = collapsed ? `${state?.mode === 'assist' ? '正在协助' : '正在分享'} · ${name.textContent}${status.textContent ? ` · ${status.textContent}` : ''}` : '';
+    const label = state?.mode === 'observe' ? '查看' : state?.mode === 'assist' ? '协助' : '分享';
+    mode.textContent = collapsed ? label : `正在${label}`;
+    root.title = collapsed ? `正在${label} · ${name.textContent}${status.textContent ? ` · ${status.textContent}` : ''}` : '';
     place();
   }
   collapse.addEventListener('click', () => {
@@ -178,7 +179,7 @@ export function createTeacherShareControls(actions: {
     }
   }
   switchButton.addEventListener('click', () => {
-    if (!state || state.busy || state.switchDisabled) return;
+    if (!state || state.mode === 'observe' || state.busy || state.switchDisabled) return;
     const students = availableStudents();
     if (state.mode === 'broadcast' && students.length > 1) {
       if (pickerOpen) { closePicker(); return; }
@@ -209,6 +210,7 @@ export function createTeacherShareControls(actions: {
       root.hidden = !state;
       if (!state) { dragEnd(); closePicker(); return; }
       root.dataset.mode = state.mode; root.classList.toggle('is-busy', !!state.busy);
+      root.classList.toggle('is-observing', state.mode === 'observe');
       root.setAttribute('aria-busy', String(!!state.busy));
       name.textContent = state.label || state.studentName || (state.mode === 'broadcast' ? '我的画面' : '学员');
       name.title = name.textContent;
@@ -217,6 +219,7 @@ export function createTeacherShareControls(actions: {
       status.title = nextStatus;
       status.hidden = !nextStatus;
       switchText.textContent = state.mode === 'assist' ? '分享我的画面' : '查看学员画面';
+      switchButton.hidden = state.mode === 'observe';
       switchButton.setAttribute('aria-label', switchText.textContent);
       const students = availableStudents();
       const nobodyOnline = state.mode === 'broadcast' && students.length > 0 && students.every((student) => student.online === false);
@@ -224,7 +227,7 @@ export function createTeacherShareControls(actions: {
       switchButton.title = nobodyOnline ? '学员上线后可查看画面' : state.switchDisabled ? '当前页面暂不能切换分享' : switchText.textContent;
       if (state.mode === 'broadcast' && students.length > 1) switchButton.setAttribute('aria-haspopup', 'true');
       else switchButton.removeAttribute('aria-haspopup');
-      end.setAttribute('aria-label', state.mode === 'assist' ? '断开共享' : '结束分享'); end.disabled = !!state.busy;
+      end.setAttribute('aria-label', state.mode === 'observe' ? '停止查看' : state.mode === 'assist' ? '断开共享' : '结束分享'); end.disabled = !!state.busy;
       if (state.mode === 'broadcast') end.dataset.broadcastStop = '';
       else delete end.dataset.broadcastStop;
       choose.hidden = !state.canChooseStudent || !actions.onChooseStudent; choose.disabled = !!state.busy;

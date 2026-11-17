@@ -49,9 +49,11 @@ export function checkShareOrigin(origin: unknown, host: string) {
 }
 
 export type ShareRole = 'teacher' | 'student';
+export type ShareMode = 'assist' | 'observe';
 export type ShareRelayKind = 'mirror' | 'editor' | 'command' | 'ack';
 
-export function relayAllowed(role: ShareRole, kind: unknown) {
+export function relayAllowed(role: ShareRole, kind: unknown, mode: ShareMode = 'assist') {
+    if (mode === 'observe' && role === 'teacher') return false;
     return role === 'teacher' ? kind === 'editor' || kind === 'command' : ['mirror', 'editor', 'ack'].includes(String(kind));
 }
 
@@ -329,7 +331,7 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
 
 export function validateShareMessage(payload: any) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)
-        || !['hello', 'page', 'list', 'start', 'stop', 'switch', 'relay', 'pulse'].includes(payload.type)) {
+        || !['hello', 'page', 'list', 'start', 'stop', 'switch', 'relay', 'pulse', 'observe:sync'].includes(payload.type)) {
         throw new LiveShareError('INVALID_MESSAGE', '无法识别共享消息。');
     }
     if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > LIVE_SHARE_MAX_BYTES) {
@@ -349,7 +351,8 @@ export function validateShareMessage(payload: any) {
         throw new LiveShareError('INVALID_PAGE', '共享页面信息不完整，请刷新页面。');
     }
     if (payload.type === 'start' && (!Number.isSafeInteger(payload.studentUid) || payload.studentUid <= 1
-        || (payload.tabId !== undefined && !shareId(payload.tabId)))) {
+        || (payload.tabId !== undefined && !shareId(payload.tabId))
+        || (payload.mode !== undefined && !['assist', 'observe'].includes(payload.mode)))) {
         throw new LiveShareError('INVALID_STUDENT', '请选择有效的学员。');
     }
     if (['stop', 'relay'].includes(payload.type) && !shareId(payload.sessionId)) {
@@ -363,6 +366,10 @@ export function validateShareMessage(payload: any) {
     if (payload.type === 'relay' && (!shareId(payload.pageId) || !['mirror', 'editor', 'command', 'ack'].includes(payload.kind)
         || payload.data === null || typeof payload.data !== 'object' || Array.isArray(payload.data))) {
         throw new LiveShareError('INVALID_RELAY', '共享内容格式不正确。');
+    }
+    if (payload.type === 'observe:sync' && (!shareId(payload.sessionId) || !shareId(payload.pageId)
+        || Object.keys(payload).some((key) => !['type', 'sessionId', 'pageId'].includes(key)))) {
+        throw new LiveShareError('INVALID_SYNC', '查看同步请求不正确。');
     }
     if (payload.type === 'pulse' && typeof payload.visible !== 'boolean') {
         throw new LiveShareError('INVALID_PULSE', '共享页面状态不正确。');
@@ -386,7 +393,7 @@ export class ShareRateLimit {
         this.bytes = Math.min(2 * 1024 * 1024, this.bytes + elapsed * 1024 * 1024);
         this.controls = Math.min(12, this.controls + elapsed * 2);
         const bytes = Buffer.byteLength(JSON.stringify(payload), 'utf8');
-        const control = ['list', 'start', 'stop', 'switch', 'hello', 'page', 'broadcast:start', 'broadcast:stop', 'broadcast:sync'].includes(payload.type);
+        const control = ['list', 'start', 'stop', 'switch', 'hello', 'page', 'observe:sync', 'broadcast:start', 'broadcast:stop', 'broadcast:sync'].includes(payload.type);
         if (this.events < 1 || this.bytes < bytes || (control && this.controls < 1)) {
             throw new LiveShareError('RATE_LIMIT', '共享操作过于频繁，请稍候。');
         }
@@ -417,6 +424,8 @@ export interface ShareSession extends ShareConnection {
     pageUrl?: string;
     teacherName: string;
     studentName: string;
+    /** Absent on older assistance rooms. Observation never permits teacher control. */
+    mode?: ShareMode;
     active: boolean;
     createdAt: Date;
     expiresAt: Date;
@@ -430,7 +439,9 @@ export function sessionRole(session: ShareSession, uid: number, tabId: string): 
 
 export function authorizeRelay(session: ShareSession, uid: number, tabId: string, pageId: string, kind: ShareRelayKind, now = Date.now()) {
     const role = sessionRole(session, uid, tabId);
-    if (!session.active || +session.expiresAt <= now || !role || !relayAllowed(role, kind)) {
+    if (!session.active || +session.expiresAt <= now || !role
+        || (session.mode !== undefined && !['assist', 'observe'].includes(session.mode))
+        || !relayAllowed(role, kind, session.mode || 'assist')) {
         throw new LiveShareError('FORBIDDEN', '没有权限操作这个共享会话。');
     }
     if (pageId !== session.pageId) throw new LiveShareError('STALE_PAGE', '学员已切换页面，正在重新同步。');
