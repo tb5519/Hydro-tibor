@@ -20,6 +20,54 @@ const dayString = (date: moment.Moment) => date.format('YYYY-MM-DD');
 const studentNames = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
 const PAGE_SIZE = 25;
 
+function trainingSubmissions(domainIds: string[]) {
+    return { pid: { $gt: 0 }, contest: { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] },
+        $or: [{ practiceEntryDomain: { $in: domainIds } },
+            { practiceEntryDomain: { $in: [null, ''] }, domainId: { $in: domainIds } }] };
+}
+
+async function recentRosterActivity(handler: Handler, workspaceId: string, domainIds: string[], uids: number[], now: Date) {
+    const latest = new Map<number, number>();
+    if (uids.length < 2) return latest;
+    const uid = { $in: uids };
+    const domainId = { $in: domainIds };
+    const today = moment(now).tz(TRAINING_TIME_ZONE).format('YYYY-MM-DD');
+    // Return only the latest positive training day per learner/classroom. The
+    // existing (uid, domainId, day) index supports this reverse traversal.
+    const [training, lessons, submissions] = await Promise.all([
+        handler.ctx.db.collection('training.time.daily').aggregate<{
+            _id: { uid: number }; day: string; startedAt?: Date; updatedAt?: Date;
+        }>([
+            { $match: { uid, domainId, seconds: { $gt: 0 }, day: { $lte: today } } },
+            { $sort: { uid: -1, domainId: -1, day: -1 } },
+            { $group: { _id: { uid: '$uid', domainId: '$domainId' }, day: { $first: '$day' },
+                startedAt: { $first: '$startedAt' }, updatedAt: { $first: '$updatedAt' } } },
+        ]).toArray(),
+        handler.ctx.db.collection('training.class').aggregate<{ _id: number; at: Date }>([
+            { $match: { uid, domainId, workspaceId, startAt: { $type: 'date', $lt: now }, endAt: { $type: 'date' },
+                $expr: { $gt: ['$endAt', '$startAt'] } } },
+            { $group: { _id: '$uid', at: { $max: { $min: ['$endAt', now] } } } },
+        ]).toArray(),
+        record.coll.aggregate<{ _id: number; at: Date }>([
+            { $match: { uid, ...trainingSubmissions(domainIds),
+                _id: { $lt: Time.getObjectID(new Date((Math.floor(+now / 1000) + 1) * 1000)) } } },
+            { $group: { _id: '$uid', last: { $max: '$_id' } } },
+            { $project: { at: { $toDate: '$last' } } },
+        ]).toArray(),
+    ]);
+    for (const row of [...lessons, ...submissions]) latest.set(row._id, Math.max(latest.get(row._id) || 0, +row.at));
+    for (const row of training) {
+        const day = moment.tz(row.day, 'YYYY-MM-DD', true, TRAINING_TIME_ZONE);
+        if (!day.isValid()) continue;
+        const end = Math.min(+now, +day.clone().add(1, 'day'));
+        // Legacy ledgers may carry only a day, or an import timestamp on an
+        // unrelated day. Their recorded day is still evidence of activity.
+        const at = [Number(row.updatedAt), Number(row.startedAt)].find((stamp) => stamp >= +day && stamp <= end) ?? +day;
+        latest.set(row._id.uid, Math.max(latest.get(row._id.uid) || 0, at));
+    }
+    return latest;
+}
+
 function presentTime(value: any = {}) {
     const seconds = value.seconds || 0;
     const trainingSeconds = value.trainingSeconds || 0;
@@ -102,8 +150,10 @@ export async function loadTrainingDashboard(
     if (requested !== null && !eligible.some((item) => item.uid === requested)) throw new PermissionError('所选课堂的学员');
     const search = q.toLowerCase();
     const filtered = eligible.filter((item) => !q || [item.name, item.uname, item.uid, ...(aliases.get(item.uid) || [])]
-        .some((value) => String(value).toLowerCase().includes(search)))
-        .sort((a, b) => studentNames.compare(a.name, b.name) || a.uid - b.uid);
+        .some((value) => String(value).toLowerCase().includes(search)));
+    const activity = await recentRosterActivity(handler, scope.workspaceId, ids, filtered.map((item) => item.uid), time);
+    filtered.sort((a, b) => (activity.get(b.uid) || 0) - (activity.get(a.uid) || 0)
+        || studentNames.compare(a.name, b.name) || a.uid - b.uid);
     const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     const index = filtered.findIndex((item) => item.uid === requested);
     const page = index >= 0 ? Math.floor(index / PAGE_SIZE) + 1 : Math.min(pageCount, Math.max(1, Math.floor(Number(query.page) || 1)));
@@ -153,8 +203,7 @@ export async function loadTrainingDashboard(
         }, time, { start: rangeStart, end: rangeEnd, recentStart: +trendStart, includeEarlierClasses: true }),
         record.coll.aggregate<ProblemRecord>([
             { $match: {
-                uid, pid: { $gt: 0 }, contest: { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] },
-                $or: [{ practiceEntryDomain: { $in: ids } }, { practiceEntryDomain: { $in: [null, ''] }, domainId: { $in: ids } }],
+                uid, ...trainingSubmissions(ids),
                 _id: { $gte: Time.getObjectID(start.toDate()), $lt: Time.getObjectID(new Date(submissionEnd)) },
             } },
             { $group: { _id: { domainId: '$domainId', pid: '$pid' }, submits: { $sum: 1 },

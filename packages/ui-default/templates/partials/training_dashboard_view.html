@@ -51,7 +51,7 @@
     <aside class="tdash-sidebar">
       <details id="training-roster" class="tdash-roster" open>
         <summary><strong><span class="tdash-roster-title">学员</span><span class="tdash-mobile-title">切换学员</span></strong>
-          <span class="tdash-count">{{ dashboard.pagination.total or 0 }}</span>{{ icon('chevron') }}</summary>
+          <span class="tdash-count">{{ dashboard.pagination.total or 0 }}</span><small class="tdash-roster-order">最近活跃优先</small>{{ icon('chevron') }}</summary>
         <form method="get" class="tdash-search" role="search">
           {% for key,value in dashboard.currentQuery %}{% if key != 'q' and key != 'page' and key != 'student' %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
           <input type="search" name="q" value="{{ dashboard.q or '' }}" aria-label="搜索学员姓名、账号或 UID" placeholder="姓名、账号或 UID" maxlength="80">

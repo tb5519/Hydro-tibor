@@ -26,6 +26,7 @@
               <span class="effort-trend__value">{{ point.shortLabel }}</span>
               <span class="effort-trend__dot" aria-hidden="true"></span>
               <span class="effort-trend__training-dot" aria-hidden="true"></span>
+              <span class="effort-trend__training-value">{{ point.trainingLabel }}</span>
               <span class="effort-trend__period">{{ point.label }}{% if point.partial and loop.last %}<small>本{{ unit }}至今</small>{% endif %}</span>
             </li>
           {% endfor %}
@@ -72,21 +73,23 @@
 .effort-trend__radio--weeks:checked ~ .effort-trend__series--weeks,
 .effort-trend__radio--months:checked ~ .effort-trend__series--months{display:block}
 .effort-trend__scroll{overflow-x:auto;direction:rtl;scrollbar-width:thin;scrollbar-color:#bfcece transparent}
-.effort-trend__canvas{position:relative;direction:ltr;min-width:calc(var(--effort-count) * 79px);height:178px}
+.effort-trend__canvas{position:relative;direction:ltr;min-width:calc(var(--effort-count) * 90px);height:211px}
 .effort-trend__line{position:absolute;display:block;inset:0 0 auto;pointer-events:none}
 .effort-trend__grid{fill:none;stroke:#e2ebeb;stroke-width:1;stroke-dasharray:3 5}
-.effort-trend__stroke{fill:none;stroke:#28857c;stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round}
-.effort-trend__stroke--training{stroke:#ad5517;stroke-width:2;stroke-dasharray:5 5}
-.effort-trend__training-dot{position:absolute;left:50%;top:var(--training-y);width:5px;height:5px;background:#ad5517;transform:translate(-50%,-50%) rotate(45deg)}
+.effort-trend__stroke{fill:none;stroke:#28857c;stroke-width:3;stroke-linejoin:round;stroke-linecap:round}
+.effort-trend__stroke--training{stroke:#ad5517;stroke-width:1.8;stroke-dasharray:5 6}
+.effort-trend__training-dot{position:absolute;left:50%;top:var(--training-y);width:4px;height:4px;background:#ad5517;transform:translate(-50%,-50%) rotate(45deg)}
 .effort-trend .effort-trend__points{position:relative;display:grid;grid-template-columns:repeat(var(--effort-count),minmax(0,1fr));margin:0;padding:0;height:100%;list-style:none}
 .effort-trend__point{position:relative;list-style:none;border-radius:6px;text-align:center;line-height:1;font-variant-numeric:tabular-nums}
 .effort-trend__point:focus-visible{outline:2px solid #28857c;outline-offset:-2px}
-.effort-trend__value,.effort-trend__dot,.effort-trend__period{position:absolute;left:50%;white-space:nowrap}
-.effort-trend__value{top:var(--effort-y);transform:translate(-50%,calc(-100% - 9px));padding:2px 4px;border-radius:4px;background:#fff;color:#30575c;font-size:12px;font-weight:600}
-.effort-trend__dot{top:var(--effort-y);box-sizing:border-box;width:9px;height:9px;transform:translate(-50%,-50%);border:2px solid #28857c;border-radius:50%;background:#fff}
-.effort-trend__point.is-current .effort-trend__dot{width:11px;height:11px;border-color:#fff;background:#18766e;box-shadow:0 0 0 1.5px #18766e}
+.effort-trend__value,.effort-trend__training-value,.effort-trend__dot,.effort-trend__period{position:absolute;left:50%;white-space:nowrap}
+.effort-trend__value,.effort-trend__training-value{padding:2px 4px;border-radius:4px;background:#fff;font-size:12px;font-weight:600}
+.effort-trend__value{top:var(--effort-y);transform:translate(-50%,calc(-100% - 9px));color:#176a63}
+.effort-trend__training-value{top:var(--training-y);transform:translate(-50%,8px);width:max-content;max-width:calc(100% - 4px);white-space:normal;line-height:1.15;color:#94440f}
+.effort-trend__dot{top:var(--effort-y);box-sizing:border-box;width:10px;height:10px;transform:translate(-50%,-50%);border:2px solid #28857c;border-radius:50%;background:#fff}
+.effort-trend__point.is-current .effort-trend__dot{width:12px;height:12px;border-color:#18766e}
 .effort-trend__point.is-current .effort-trend__value{color:#176a63}
-.effort-trend__period{top:140px;transform:translateX(-50%);color:#4f6872;font-size:11px;line-height:1.45}
+.effort-trend__period{top:172px;transform:translateX(-50%);color:#4f6872;font-size:11px;line-height:1.45}
 .effort-trend__period small{display:block;color:#176a63;font-size:10px}
 .effort-trend .effort-trend__empty{margin:0;padding:28px 0;color:#586f79;font-size:13px;text-align:center}
 @media(max-width:620px){.effort-trend{padding:14px 12px 9px}.effort-trend__switch label{min-height:33px}}

@@ -53,7 +53,13 @@ async function visit(t, intercept = () => {}, { shell = false, javaScriptEnabled
             data.detail.lifetimeEffort = { ...data.detail.lifetimeEffort, averageWeeklyTrainingLabel: '0 分钟',
                 trainingLabel: '0 分钟', totalLabel: '4 小时' };
             for (const points of Object.values(data.detail.trends)) {
-                for (const point of points) point.trainingSeconds = 0;
+                for (const point of points) {
+                    point.trainingSeconds = 0;
+                    point.trainingLabel = '0 分钟';
+                    point.value = point.classSeconds;
+                    point.timeLabel = point.classLabel;
+                    point.shortLabel = point.classLabel;
+                }
             }
         }
         if (request.method() === 'POST') data.integration.token = 'temporary-test-value';
@@ -174,4 +180,51 @@ test('a browser with JavaScript disabled can still follow dashboard links and su
     await page.locator('.tdash-search button').click();
     await page.waitForURL((url) => url.searchParams.get('q') === '方');
     assert.ok(visits.every((visit) => !visit.fragment));
+});
+
+test('weekly and monthly total and training point labels remain distinct for overlapping and close values on a phone', async (t) => {
+    const page = await browser.newPage({ viewport: { width: 320, height: 650 }, javaScriptEnabled: false });
+    t.after(() => page.close());
+    const data = fixture();
+    const readings = [
+        [0, 0, '0分', '0 分钟', '0 分钟'],
+        [1680, 1680, '28分', '28 分钟', '0 分钟'],
+        [1680, 0, '28分', '0 分钟', '28 分钟'],
+        [3600, 3599, '1时', '59 分钟', '不足 1 分钟'],
+        [111540, 107940, '约30时59分', '约 29 小时 59 分钟', '1 小时'],
+    ];
+    for (const series of ['weeks', 'months']) data.detail.trends[series] = readings.map(([total, training, shortLabel, trainingLabel, classLabel], i) => ({
+        ...data.detail.trends[series][0], value: total, classSeconds: total - training, trainingSeconds: training,
+        timeLabel: shortLabel, shortLabel, trainingLabel, classLabel, label: series === 'weeks' ? '11/' + (i + 1) : (i + 1) + '月',
+    }));
+    await page.setContent(render(data));
+    for (const series of ['weeks', 'months']) {
+        await page.locator(series === 'weeks' ? '.effort-trend__switch-week' : '.effort-trend__switch-month').click();
+        const points = page.locator('[data-effort-series=' + series + '] [data-effort-point]');
+        assert.equal(await points.count(), readings.length);
+        for (let i = 0; i < readings.length; i++) {
+            const point = points.nth(i);
+            await point.scrollIntoViewIfNeeded();
+            assert.equal(await point.locator('.effort-trend__value').textContent(), readings[i][2]);
+            assert.equal(await point.locator('.effort-trend__training-value').textContent(), readings[i][3]);
+            const layout = await point.evaluate((node) => {
+                const rect = (selector) => node.querySelector(selector).getBoundingClientRect();
+                const total = rect('.effort-trend__value');
+                const training = rect('.effort-trend__training-value');
+                const label = rect('.effort-trend__period');
+                const circle = rect('.effort-trend__dot');
+                const diamond = rect('.effort-trend__training-dot');
+                const column = node.getBoundingClientRect();
+                return { labelsSeparate: total.bottom < circle.top && training.top > diamond.bottom,
+                    labelsInColumn: [training, total].every((r) => r.left >= column.left && r.right <= column.right &&
+                        r.left >= 0 && r.right <= innerWidth && r.top >= column.top && r.bottom < label.top),
+                    totalY: (circle.top + circle.bottom) / 2 - column.top, trainingY: (diamond.top + diamond.bottom) / 2 - column.top,
+                    markersDistinct: diamond.width < circle.width - 3 };
+            });
+            assert.ok(layout.labelsSeparate && layout.labelsInColumn && layout.markersDistinct, series + ' ' + i);
+            const maxSeconds = 111540;
+            assert.ok(Math.abs(layout.totalY - (126 - 92 * readings[i][0] / maxSeconds)) < 0.1);
+            assert.ok(Math.abs(layout.trainingY - (126 - 92 * readings[i][1] / maxSeconds)) < 0.1);
+        }
+    }
 });

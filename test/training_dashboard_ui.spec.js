@@ -132,6 +132,7 @@ test('weekly and monthly trends expose each learner-specific period, including z
             const source = expected[i];
             assert.equal(p.tabIndex, 0);
             assert.equal(p.querySelector('.effort-trend__value').textContent.trim(), source.shortLabel);
+            assert.equal(p.querySelector('.effort-trend__training-value').textContent.trim(), source.trainingLabel);
             const accessible = p.getAttribute('aria-label') || '';
             for (const label of [source.rangeLabel, source.timeLabel, source.trainingLabel, source.classLabel]) {
                 assert.ok(accessible.includes(label), `${kind}[${i}] accessible label lacks ${label}: ${accessible}`);

@@ -500,14 +500,14 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         assert.equal(second.detail.periods.week.seconds, 1800);
         assert(!second.detail.problems.some((entry) => entry.title === '在线编程'));
     });
-    it('reads only the selected UID across training, lessons and submissions, and skips activity completely on empty or denied selections', async (t) => {
+    it('reads history only for the selected learner, aggregates roster timestamps in the database and skips empty or denied selections', async (t) => {
         const queries = [];
         for (const [collection, name] of [[daily, 'training'], [classes, 'lessons'], [records, 'submissions']]) {
             for (const op of ['find', 'aggregate', 'countDocuments', 'distinct']) {
                 const original = collection[op];
                 collection[op] = function (...args) {
                     const filter = op === 'aggregate' ? args[0][0]?.$match : op === 'distinct' ? args[1] : args[0];
-                    queries.push({ name, uid: filter?.uid });
+                    queries.push({ name, uid: filter?.uid, grouped: op === 'aggregate' && args[0].some((stage) => stage.$group) });
                     return original.apply(this, args);
                 };
                 t.after(() => { collection[op] = original; });
@@ -520,8 +520,10 @@ describe('teacher dashboard real data aggregation and authorization', () => {
             const names = new Set(queries.map((entry) => entry.name));
             assert.deepEqual([...names].sort(), ['lessons', 'submissions', 'training']);
             for (const call of queries) {
-                assert.deepEqual(call.uid?.$in ? Array.from(call.uid.$in) : [call.uid], [uid],
-                    'every ' + call.name + ' query must include only the selected authorized UID');
+                if (call.uid?.$in && call.uid.$in.length > 1) {
+                    assert.equal(call.grouped, true, 'roster reads must return grouped timestamps, never learner history');
+                    assert.deepEqual(Array.from(call.uid.$in).sort(), [101, 102, 103]);
+                } else assert.deepEqual(call.uid?.$in ? Array.from(call.uid.$in) : [call.uid], [uid]);
             }
         }
         queries.length = 0;
@@ -543,16 +545,40 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         assert.equal(limited.rows.length, 0);
         assert.equal(limited.detail, null);
     });
+    it('ranks by the latest credited practice, entered-classroom submission or attended class across all time', async () => {
+        const at = (hour) => new Date('2026-10-25T' + hour + ':00:00+08:00');
+        const submissionAt = (uid, domainId, hour, patch = {}) => ({ ...submission(uid, domainId, 3),
+            _id: ObjectId.createFromTime(+at(hour) / 1000), ...patch });
+        const order = async (query = {}, staff = 10) => Array.from(
+            (await model.loadTrainingDashboard(handler(query, staff))).rows, (row) => row.uid,
+        );
+        await daily.updateOne({ uid: 102, domainId: 'cpp', day: '2026-10-25' }, { $set: { updatedAt: at('14') } });
+        // A shared problem belongs to the classroom where the learner actually entered.
+        await records.insertOne(submissionAt(103, 'foreign', '15', { practiceEntryDomain: 'python' }));
+        await records.insertOne(submissionAt(101, 'python', '16', { practiceEntryDomain: 'foreign' }));
+        await records.insertOne(submissionAt(101, 'cpp', '17', { contest: 'pretest' }));
+        await classes.insertMany([
+            { workspaceId: 'school', domainId: 'cpp', uid: 101, startAt: at('15'), endAt: at('16') },
+            { workspaceId: 'foreign', domainId: 'cpp', uid: 102, startAt: at('16'), endAt: at('17') },
+            { workspaceId: 'school', domainId: 'cpp', uid: 102, startAt: at('19'), endAt: at('20') },
+        ]);
+        assert.deepEqual(await order(), [101, 103, 102]);
+        assert.deepEqual(await order({ period: 'custom', start: '2020-01-01', end: '2020-01-07' }), [101, 103, 102]);
+        assert.deepEqual(await order({ domains: 'python' }, 11), [103, 101]);
+        await classes.deleteMany({});
+        assert.deepEqual(await order(), [103, 102, 101]);
+    });
     it('sorts duplicate names consistently and defaults to the first visible learner on the second page', async () => {
         const extra = Array.from({ length: 27 }, (_, i) => ({ _id: 200 + i, uname: 'new' + i, displayName: '同名学生', priv: 2 }));
         await accounts.insertMany(extra.slice().reverse());
         await domains.insertMany(extra.map((row) => ({ uid: row._id, domainId: 'python', join: true })));
+        await daily.insertOne(timer(226, 'python', '2026-10-25', 60));
         const pageOne = await model.loadTrainingDashboard(handler({ q: '同名学生' }));
-        assert.deepEqual(Array.from(pageOne.rows, (row) => row.uid), extra.slice(0, 25).map((row) => row._id));
+        assert.deepEqual(Array.from(pageOne.rows, (row) => row.uid), [226, ...extra.slice(0, 24).map((row) => row._id)]);
         const next = new URL(pageOne.pagination.nextUrl, 'https://school.test');
         const pageTwo = await model.loadTrainingDashboard(handler(Object.fromEntries(next.searchParams)));
-        assert.deepEqual(Array.from(pageTwo.rows, (row) => row.uid), [225, 226]);
-        assert.equal(pageTwo.detail.uid, 225);
+        assert.deepEqual(Array.from(pageTwo.rows, (row) => row.uid), [224, 225]);
+        assert.equal(pageTwo.detail.uid, 224);
         assert.deepEqual(Array.from(pageTwo.rows, (row) => row.selected), [true, false]);
     });
     it('merges imported classes into all dashboard views and removes only precise training overlap', async () => {
