@@ -9,6 +9,8 @@ export const TRAINING_GRANT_MS = 24 * 60 * 60 * 1000;
 export interface TrainingSource {
     kind: 'problem' | 'daily' | 'ide';
     pid: number;
+    /** The source bank of a shared contest problem when it differs from the learner’s classroom. */
+    problemDomainId?: string;
 }
 
 /** Exact server-credited activity, retained so imported lessons can mask only
@@ -23,7 +25,7 @@ export function trainingDay(time: Date | number = Date.now()) {
 }
 
 export function trainingSourceKey(source: TrainingSource) {
-    return `${source.kind}:${source.pid}`;
+    return source.problemDomainId ? JSON.stringify([source.kind, source.problemDomainId, source.pid]) : `${source.kind}:${source.pid}`;
 }
 
 /** Split the bounded interval rather than assigning midnight's whole pulse

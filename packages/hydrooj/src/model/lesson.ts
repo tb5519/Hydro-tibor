@@ -1,7 +1,8 @@
 /* eslint-disable no-control-regex -- Reject control characters in lesson titles. */
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import moment from 'moment-timezone';
 import { LessonError, lessonId, LESSON_JOIN_MS, LESSON_LEASE_MS } from '../lib/lesson';
+import { trainingDay } from '../lib/training_time';
 import db from '../service/db';
 import { BUILTIN_ROLES, PERM } from './builtin';
 import domain from './domain';
@@ -16,6 +17,7 @@ export interface Lesson {
 export interface LessonMember {
     _id: number; lessonId: string; tabId: string; joinedAt: Date; expiresAt: Date;
     connectionId?: string; serverId?: string; connected?: boolean; ownerVersion?: number;
+    signalSince?: Date; lastSignalAt?: Date;
 }
 interface LessonResumption {
     _id: number; lessonId: string | null; domainId?: string; tabId?: string;
@@ -373,24 +375,56 @@ export async function bind(uid: number, domainId: string, id: string, tabId: str
     if (!intent) throw new LessonError('JOIN_REQUIRED', '请先点击上课按钮进入课堂。');
     if (intent.tabId !== tabId) throw new LessonError('REPLACED', '课堂已在另一个页面继续。');
     const peer = await members.findOneAndUpdate({ _id: uid, lessonId: id, tabId, ownerVersion: intent.version, expiresAt: { $gt: new Date(now) } },
-        { $set: { connectionId, serverId, connected: true, expiresAt: new Date(now + LESSON_LEASE_MS) } }, { returnDocument: 'after' });
+        { $set: { connectionId, serverId, connected: true, signalSince: new Date(now), lastSignalAt: new Date(now),
+            expiresAt: new Date(now + LESSON_LEASE_MS) } }, { returnDocument: 'after' });
     if (!peer) throw new LessonError('JOIN_REQUIRED', '请先点击上课按钮进入课堂。');
     return { room, peer };
 }
 
-export async function pulse(peer: LessonMember, domainId: string, now = Date.now()) {
+export async function pulse(peer: LessonMember, domainId: string, now = Date.now(), lastClientSignal = now) {
     const room = await authorize(peer._id, domainId, peer.lessonId, now);
     const intent = await resumptions.findOne({ _id: peer._id, lessonId: peer.lessonId, tabId: peer.tabId,
         accepted: true, version: peer.ownerVersion });
     if (!intent) throw new LessonError('REPLACED', '此课堂已在另一个连接中打开。');
+    // Timers renew a media lease even when a browser has stopped sending. Only
+    // a packet actually received from this client advances its attendance.
+    const lastSignalAt = new Date(Math.max(+(peer.lastSignalAt || 0), Math.min(lastClientSignal, now)));
+    const signalSince = !peer.signalSince || !peer.lastSignalAt || +lastSignalAt - +peer.lastSignalAt > LESSON_LEASE_MS
+        ? lastSignalAt : peer.signalSince;
     const updated = await members.updateOne({ _id: peer._id, lessonId: peer.lessonId, tabId: peer.tabId,
-        connectionId: peer.connectionId, connected: true }, { $set: { expiresAt: new Date(now + LESSON_LEASE_MS) } });
+        connectionId: peer.connectionId, connected: true }, { $max: { expiresAt: new Date(now + LESSON_LEASE_MS), lastSignalAt, signalSince } });
     if (!updated.matchedCount) {
         const owner = await members.findOne({ _id: peer._id, lessonId: peer.lessonId });
         if (!owner) throw new LessonError('JOIN_REQUIRED', '课堂连接已过期，正在重新恢复。');
         throw new LessonError('REPLACED', '此课堂已在另一个连接中打开。');
     }
+    peer.lastSignalAt = lastSignalAt;
+    peer.signalSince = signalSince;
     return room;
+}
+
+/** Persist only the intersection of the two live connections' confirmed spans.
+ * The same interval grows in place. Rebinding or resuming after a long silence
+ * starts a separate row, leaving single-party and disconnected time uncounted. */
+export async function recordAttendance(room: Lesson, student: LessonMember, teacher: LessonMember, recordedThrough: number) {
+    if (!student.signalSince || !student.lastSignalAt || !teacher.signalSince || !teacher.lastSignalAt
+        || student._id !== room.studentUid || teacher._id !== room.teacherUid || student.lessonId !== room._id || teacher.lessonId !== room._id
+        || !student.connected || !teacher.connected || !student.connectionId || !teacher.connectionId
+        || student.serverId !== teacher.serverId) return recordedThrough;
+    const start = Math.max(+student.signalSince, +teacher.signalSince);
+    const end = Math.min(+student.lastSignalAt, +teacher.lastSignalAt);
+    if (end <= start || end <= recordedThrough) return recordedThrough;
+    const key = JSON.stringify([room._id, teacher.connectionId, student.connectionId, start]);
+    // External imports accept at most 128 characters, keeping this ledger ID
+    // in a disjoint namespace even with the unique workspace/externalId index.
+    const id = `lesson:${createHash('sha512').update(key).digest('hex')}`;
+    await db.collection('training.class').updateOne({ _id: id }, {
+        $setOnInsert: { workspaceId: room.workspaceId, teacherUid: room.teacherUid, domainId: room.domainId, uid: room.studentUid,
+            source: 'lesson', lessonId: room._id, externalId: id, title: room.title, day: trainingDay(start),
+            startAt: new Date(start), createdAt: new Date() },
+        $max: { endAt: new Date(end), durationSeconds: (end - start) / 1000 },
+    }, { upsert: true });
+    return end;
 }
 
 export async function disconnect(peer: LessonMember) {

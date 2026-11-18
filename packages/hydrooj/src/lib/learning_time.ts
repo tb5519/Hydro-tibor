@@ -1,4 +1,4 @@
-import { trainingDay, TrainingInterval, TrainingSource } from './training_time';
+import { trainingDay, TrainingInterval, TrainingSource, trainingSourceKey } from './training_time';
 
 interface DailyTime {
     uid: number;
@@ -26,6 +26,7 @@ interface Span {
     domainId: string;
     kind?: TrainingSource['kind'];
     pid?: number;
+    problemDomainId?: string;
 }
 
 interface TimeStats {
@@ -53,7 +54,7 @@ const emptyStats = (): TimeStats => ({ seconds: 0, trainingSeconds: 0, trainingU
     overlapSeconds: 0, overlapUpperSeconds: 0, overlapEstimatedSeconds: 0,
     unattributedEstimatedSeconds: 0, unattributedClassTrainingEstimatedSeconds: 0, legacySeconds: 0, last: 0 });
 const duration = (value: number) => (Number.isFinite(value) ? Math.max(0, value) : 0);
-const spanKey = (span: Span) => JSON.stringify([span.domainId, span.kind || '', span.pid ?? 0]);
+const spanKey = (span: Span) => JSON.stringify([span.domainId, span.kind || '', span.pid ?? 0, span.problemDomainId || '']);
 
 /** Deterministic interval union. Attribution only breaks ties between
  * overlapping classrooms; it never increases a learner's elapsed time. */
@@ -140,10 +141,94 @@ function mergeMethod(previous?: EstimationMethod, next?: EstimationMethod): Esti
     return !previous || previous === next ? next : 'mixed';
 }
 
+interface LegacyAllocation {
+    seconds: number;
+    available: Span[];
+    autonomous: ReturnType<typeof counterBounds>;
+    overlap: ReturnType<typeof counterBounds>;
+    autonomousEstimate: number;
+    overlapEstimate: number;
+}
+
+/** Legacy counters share one learner lease even across classrooms. When
+ * complete counters have overlapping windows, their combined estimates must
+ * fit the available clock time on either side of the lessons. */
+function constrainLegacyEstimates(entries: LegacyAllocation[], lessons: Span[]) {
+    if (entries.length < 2) return;
+    const available = unionSpans(entries.flatMap((entry) => entry.available));
+    const capacity = spanSeconds(available);
+    const independent = subtractSpans(available, lessons);
+    const independentCapacity = spanSeconds(independent);
+    const total = entries.reduce((n, entry) => n + entry.seconds, 0);
+    const lowerSum = entries.reduce((n, entry) => n + entry.autonomous.lower, 0);
+    const upperSum = entries.reduce((n, entry) => n + entry.autonomous.upper, 0);
+    const lower = Math.max(lowerSum, total - (capacity - independentCapacity));
+    const upper = Math.min(upperSum, independentCapacity);
+    if (lower > upper + 0.000001) return; // Inconsistent input cannot justify tighter bounds.
+    const first = (entry: LegacyAllocation) => entry.available[0].start;
+    const last = (entry: LegacyAllocation) => entry.available[entry.available.length - 1].end;
+    const boundaries = [...new Set(entries.flatMap((entry) => [first(entry), last(entry)]))].sort((a, b) => a - b);
+    const slots = boundaries.slice(1).map((end, i) => {
+        const start = boundaries[i];
+        const all = spanSeconds(available, start, end);
+        const training = spanSeconds(independent, start, end);
+        return { start, end, all, training, lesson: all - training };
+    });
+    // Known intervals are excluded from every window. Between any two window
+    // endpoints, all covering counters can use the same three capacities.
+    // Earliest-deadline first assigns a feasible amount when one exists.
+    const allocate = (kind: 'training' | 'lesson' | 'all', backward = false) => {
+        const order = entries.map((_, i) => i).sort((a, b) => backward
+            ? first(entries[b]) - first(entries[a]) : last(entries[a]) - last(entries[b]));
+        const cells = (backward ? [...slots].reverse() : slots).map((slot) => ({ ...slot, free: slot[kind] }));
+        const allocated = entries.map(() => 0);
+        for (const i of order) {
+            const entry = entries[i];
+            let needed = kind === 'all' ? entry.seconds : kind === 'training' ? entry.autonomousEstimate : entry.overlapEstimate;
+            for (const cell of cells) {
+                if (!needed) break;
+                if (!cell.free || cell.start < first(entry) || cell.end > last(entry)) continue;
+                const use = Math.min(needed, cell.free);
+                // For 'all', keep the estimate proportional within this slot.
+                allocated[i] += use * cell.training / cell.all;
+                needed -= use;
+                cell.free -= use;
+            }
+            if (needed > 0.000001) return null;
+        }
+        return allocated;
+    };
+    if (!allocate('training') || !allocate('lesson')) {
+        const early = allocate('all');
+        const late = allocate('all', true);
+        if (!early || !late) return;
+        // Both allocations fit all window capacities. Their closest weighted
+        // average to the original estimates also fits, without storing or
+        // presenting a made-up activity timeline.
+        const delta = late.map((value, i) => value - early[i]);
+        const square = delta.reduce((n, d) => n + d * d, 0);
+        const weight = square ? Math.max(0, Math.min(1, entries.reduce((n, entry, i) => (
+            n + (entry.autonomousEstimate - early[i]) * delta[i]
+        ), 0) / square)) : 0;
+        entries.forEach((entry, i) => {
+            entry.autonomousEstimate = early[i] + delta[i] * weight;
+            entry.overlapEstimate = entry.seconds - entry.autonomousEstimate;
+        });
+    }
+    for (const entry of entries) {
+        const minimum = Math.max(entry.autonomous.lower, lower - (upperSum - entry.autonomous.upper));
+        const maximum = Math.max(minimum, Math.min(entry.autonomous.upper, upper - (lowerSum - entry.autonomous.lower)));
+        Object.assign(entry.autonomous, { lower: minimum, upper: maximum });
+        Object.assign(entry.overlap, { lower: entry.seconds - maximum, upper: entry.seconds - minimum });
+    }
+}
+
 interface MergeOptions {
     /** All lessons mask training, but only these classrooms contribute class
      * totals. This preserves cross-classroom de-duplication under a filter. */
     classDomainIds?: string[];
+    /** Counter-only activity in a live snapshot has already occurred by this time. */
+    observedAt?: number;
 }
 
 /** Merge server-measured training with imported class windows. Query bounds
@@ -154,7 +239,7 @@ export function mergeLearningTime(rows: DailyTime[], lessons: LearningLesson[], 
     const students = new Map<number, TimeStats & { _id: number }>();
     const domains = new Map<string, TimeStats & { _id: string }>();
     const days = new Map<string, TimeStats & { _id: string }>();
-    const sources = new Map<string, { uid: number, domainId: string, kind: TrainingSource['kind'], pid: number,
+    const sources = new Map<string, TrainingSource & { uid: number, domainId: string,
         seconds: number, trainingUpperSeconds: number, estimatedSeconds: number, hasEstimate: boolean,
         estimationMethod?: EstimationMethod, uncertainSeconds: number,
         classTrainingSeconds: number, classTrainingUpperSeconds: number, classTrainingEstimatedSeconds: number }>();
@@ -164,7 +249,7 @@ export function mergeLearningTime(rows: DailyTime[], lessons: LearningLesson[], 
     const countedClasses = new Map<number, Span[]>();
     const countedDomains = options.classDomainIds ? new Set(options.classDomainIds) : null;
     const historical: { row: DailyTime, seconds: number, dayStart: number, dayEnd: number,
-        sources: { kind: TrainingSource['kind'], pid: number, seconds: number }[] }[] = [];
+        sources: (TrainingSource & { seconds: number })[] }[] = [];
     const add = (uid: number, domainId: string, day: string, values: Partial<TimeStats>) => {
         const targets = [
             students.get(uid) || students.set(uid, { _id: uid, ...emptyStats() }).get(uid),
@@ -193,7 +278,7 @@ export function mergeLearningTime(rows: DailyTime[], lessons: LearningLesson[], 
     const addSource = (uid: number, domainId: string, source: TrainingSource, seconds: number, overlap = 0,
         upper = seconds, overlapUpper = overlap, estimate = seconds, overlapEstimate = overlap, method?: EstimationMethod,
         normalized = false) => {
-        const key = JSON.stringify([uid, domainId, source.kind, source.pid]);
+        const key = JSON.stringify([uid, domainId, trainingSourceKey(source)]);
         const entry = sources.get(key) || { uid, domainId, ...source, seconds: 0, trainingUpperSeconds: 0,
             estimatedSeconds: 0, hasEstimate: false, estimationMethod: undefined, uncertainSeconds: 0,
             classTrainingSeconds: 0, classTrainingUpperSeconds: 0, classTrainingEstimatedSeconds: 0 };
@@ -226,7 +311,7 @@ export function mergeLearningTime(rows: DailyTime[], lessons: LearningLesson[], 
             captured.set(row.uid, recorded);
             const milliseconds = span.end - span.start;
             capturedMilliseconds += milliseconds;
-            const key = `${span.kind}:${span.pid}`;
+            const key = trainingSourceKey(span);
             capturedBySource.set(key, (capturedBySource.get(key) || 0) + milliseconds);
             const start = Math.max(span.start, fromMs);
             const end = Math.min(span.end, toMs);
@@ -239,8 +324,9 @@ export function mergeLearningTime(rows: DailyTime[], lessons: LearningLesson[], 
         const legacy = Math.max(0, duration(row.seconds) - capturedMilliseconds / 1000);
         const oldSources = [];
         for (const source of row.sources || []) {
-            const unaligned = Math.max(0, duration(source.seconds) - (capturedBySource.get(`${source.kind}:${source.pid}`) || 0) / 1000);
-            if (unaligned) oldSources.push({ kind: source.kind, pid: source.pid, seconds: Math.min(unaligned, legacy) });
+            const unaligned = Math.max(0, duration(source.seconds) - (capturedBySource.get(trainingSourceKey(source)) || 0) / 1000);
+            if (unaligned) oldSources.push({ kind: source.kind, pid: source.pid, ...(source.problemDomainId && { problemDomainId: source.problemDomainId }),
+                seconds: Math.min(unaligned, legacy) });
         }
         if (legacy) historical.push({ row, seconds: legacy, dayStart, dayEnd, sources: oldSources });
     }
@@ -259,22 +345,23 @@ export function mergeLearningTime(rows: DailyTime[], lessons: LearningLesson[], 
     }
     for (const [uid, spans] of classes) classes.set(uid, unionSpans(spans));
     for (const [uid, spans] of captured) captured.set(uid, unionSpans(spans));
-    for (const { row, seconds, dayStart, dayEnd, sources: oldSources } of historical) {
-        const start = +row.startedAt;
-        const end = +row.updatedAt;
-        const hasEnvelope = Number.isFinite(start) && Number.isFinite(end) && start < end
-            && start < dayEnd && end > dayStart;
-        const support = (useEnvelope: boolean) => subtractSpans([{
-            start: useEnvelope ? Math.max(dayStart, start) : dayStart,
-            end: useEnvelope ? Math.min(dayEnd, end) : dayEnd,
-            domainId: row.domainId,
+    const prepared = historical.map(({ row, seconds, dayStart, dayEnd, sources: oldSources }) => {
+        const start = row.startedAt == null ? NaN : +row.startedAt;
+        const end = row.updatedAt == null ? NaN : +row.updatedAt;
+        const hasStart = Number.isFinite(start);
+        const hasEnd = Number.isFinite(end);
+        const observedEnd = Math.min(dayEnd, options.observedAt ?? dayEnd);
+        const support = (from: number, to: number) => subtractSpans([{
+            start: from, end: to, domainId: row.domainId,
         }], captured.get(row.uid) || []);
-        let reliableEnvelope = hasEnvelope;
-        let available = support(reliableEnvelope);
-        // Inconsistent timestamps cannot prove that all old time was in class.
+        // A missing first timestamp does not invalidate a known last heartbeat
+        // (or vice versa). Use both bounds for a uniform-window estimate only
+        // when the complete window can actually hold the recorded counter.
+        let reliableEnvelope = hasStart && hasEnd && start < end;
+        let available = support(hasStart ? Math.max(dayStart, start) : dayStart, hasEnd ? Math.min(dayEnd, end) : observedEnd);
         if (spanSeconds(available) + 0.000001 < seconds) {
             reliableEnvelope = false;
-            available = support(false);
+            available = support(dayStart, observedEnd);
         }
         const capacity = Math.max(seconds, spanSeconds(available));
         const inQuery = spanSeconds(available, fromMs, toMs);
@@ -284,8 +371,37 @@ export function mergeLearningTime(rows: DailyTime[], lessons: LearningLesson[], 
         const overlap = counterBounds(seconds, capacity, classCapacity);
         const autonomousEstimate = counterEstimate(autonomous, seconds, capacity, autonomousCapacity, reliableEnvelope);
         const overlapEstimate = counterEstimate(overlap, seconds, capacity, classCapacity, reliableEnvelope);
-        const needsEstimate = autonomous.upper - autonomous.lower > 0.000001;
         const method: EstimationMethod = reliableEnvelope ? 'activity-window' : 'bounds-midpoint';
+        return { row, seconds, dayStart, oldSources, available, capacity, autonomousCapacity, classCapacity, autonomous, overlap,
+            autonomousEstimate, overlapEstimate, method, inQuery, end,
+            complete: available.length > 0 && capacity - inQuery < 0.000001 && seconds <= inQuery + 0.000001 };
+    });
+    const byLearnerDay = new Map<string, typeof prepared>();
+    for (const entry of prepared) {
+        if (!entry.complete) continue;
+        const key = JSON.stringify([entry.row.uid, entry.row.day]);
+        if (!byLearnerDay.has(key)) byLearnerDay.set(key, []);
+        byLearnerDay.get(key).push(entry);
+    }
+    for (const entries of byLearnerDay.values()) {
+        if (entries.length < 2) continue;
+        entries.sort((a, b) => a.available[0].start - b.available[0].start || a.row.domainId.localeCompare(b.row.domainId));
+        let group: typeof prepared = [];
+        let groupEnd = -Infinity;
+        const masks = classes.get(entries[0].row.uid) || [];
+        for (const entry of entries) {
+            if (entry.available[0].start >= groupEnd) {
+                constrainLegacyEstimates(group, masks);
+                group = [];
+            }
+            group.push(entry);
+            groupEnd = Math.max(groupEnd, entry.available[entry.available.length - 1].end);
+        }
+        constrainLegacyEstimates(group, masks);
+    }
+    for (const { row, seconds, dayStart, oldSources, capacity, autonomousCapacity, classCapacity, autonomous, overlap, autonomousEstimate,
+        overlapEstimate, method, inQuery, end } of prepared) {
+        const needsEstimate = autonomous.upper - autonomous.lower > 0.000001;
         const sourceSeconds = oldSources.reduce((total, source) => total + source.seconds, 0);
         const sourceScale = sourceSeconds - seconds > 0.000001 ? seconds / sourceSeconds : 1;
         const unreportedSeconds = Math.max(0, seconds - sourceSeconds * sourceScale);
@@ -331,7 +447,8 @@ export function mergeLearningTime(rows: DailyTime[], lessons: LearningLesson[], 
             let index = classIndex;
             const credit = (start: number, end: number, overlap: boolean) => splitDays(start, end, (day, seconds, last) => {
                 add(uid, span.domainId, day, { trainingSeconds: overlap ? 0 : seconds, overlapSeconds: overlap ? seconds : 0, last });
-                addSource(uid, span.domainId, { kind: span.kind, pid: span.pid }, overlap ? 0 : seconds, overlap ? seconds : 0);
+                addSource(uid, span.domainId, { kind: span.kind, pid: span.pid,
+                    ...(span.problemDomainId && { problemDomainId: span.problemDomainId }) }, overlap ? 0 : seconds, overlap ? seconds : 0);
             });
             while (index < classSpans.length && classSpans[index].start < span.end) {
                 const lesson = classSpans[index++];

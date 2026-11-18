@@ -36,7 +36,7 @@ const workspaces = {
         ? { $or: [{ workspaceId: 'tang' }, { workspaceId: { $exists: false } }] } : { workspaceId: id }).toArray(),
 };
 const growth = load('packages/hydrooj/src/lib/personal_training_growth.ts', {
-    '../model/workspace': workspaces, './calendar_week': weeks, './learning_time': learning, './training_dashboard': dashboard,
+    '../model/workspace': workspaces, './domain_type': load('packages/hydrooj/src/lib/domain_type.ts'), './calendar_week': weeks, './learning_time': learning, './training_dashboard': dashboard,
 });
 const date = (value) => new Date(value + '+08:00');
 const now = date('2026-11-17T12:00:00');
@@ -107,6 +107,19 @@ describe('personal autonomous training growth', () => {
         assert.equal(result.thisWeekHasEstimate, false);
         assert.equal(result.days[1].seconds, 5400);
     });
+    it('legacy home excludes Scratch practice while a native Scratch lesson masks the learners OJ activity', async () => {
+        await database.collection('domain').insertOne({ _id: 'scratch', domainType: 'scratch' });
+        await database.collection('training.time.daily').insertMany([
+            row('2026-11-17', '09:00:00', '10:00:00'),
+            row('2026-11-17', '10:00:00', '11:00:00', { domainId: 'scratch' }),
+        ]);
+        await database.collection('training.class').insertOne(lesson('2026-11-17', '09:00:00', '09:30:00', { domainId: 'scratch', source: 'lesson' }));
+        const result = await get();
+        assert.equal(result.thisWeekSeconds, 1800);
+        assert.equal(result.averageWeekSeconds, 360);
+        assert(!queries.find((item) => item.name === 'training.time.daily').query.domainId.$in.includes('scratch'));
+        assert(queries.find((item) => item.name === 'training.class').query.domainId.$in.includes('scratch'));
+    });
     it('limits modern progress to the current classroom while other workspace lessons still mask it', async () => {
         await database.collection('training.time.daily').insertMany([
             row('2026-11-17', '09:00:00', '12:00:00', { domainId: 'modern-a' }),
@@ -165,6 +178,16 @@ describe('personal autonomous training growth', () => {
         const result = await get();
         assert.equal(result.averageWeeks, 5); assert.equal(result.averageWeekSeconds, 0);
         assert.equal(result.averageWeekHasEstimate, false);
+    });
+    it('keeps all already recorded counter-only time in the current day before the report clock', async () => {
+        await database.collection('training.time.daily').insertOne({
+            uid: 10, domainId: 'python', day: '2026-11-17', seconds: 600,
+        });
+        const result = await get();
+        assert.equal(result.thisWeekSeconds, 600);
+        assert.equal(result.days[1].seconds, 600);
+        assert.equal(result.averageWeekSeconds, 120);
+        assert.equal(result.thisWeekHasEstimate, false);
     });
     it('preserves uncertainty for historical counters instead of presenting estimated time as measured', async () => {
         const historical = { uid: 10, domainId: 'python', day: '2026-11-17', seconds: 3600,

@@ -123,6 +123,7 @@ async function run() {
         const responses = await Promise.all([get(), get(), get()]);
         for (const res of responses) status(res, 200);
         state = responses[0].body.state;
+        assert.equal(responses[0].body.trainingTime.contextKey, `${dids[0]}:daily:${ids[0]}`);
         assert.equal(state.total, 2);
         assert.equal(state.current.id, 1);
         assert.equal(state.required, true);
@@ -280,6 +281,7 @@ async function run() {
         const responses = await Promise.all([post('answer', args), post('answer', args), post('answer', args)]);
         responses.forEach((res) => status(res, 200));
         state = (await get()).body.state;
+        for (const res of responses) assert.equal(res.body.trainingTime.contextKey, `${dids[0]}:daily:${ids[0]}`);
         assert.equal(state.current.feedback.correct, true);
         assert.deepEqual(state.current.feedback.selectedAnswers, ['A']);
         assert.equal(state.earnedPoints, 5);
@@ -295,6 +297,7 @@ async function run() {
         const responses = await Promise.all([post('next', args), post('next', args)]);
         responses.forEach((res) => status(res, 200));
         state = (await get()).body.state;
+        for (const res of responses) assert.equal(res.body.trainingTime.contextKey, `${dids[1]}:daily:${ids[1]}`);
         assert.equal(state.current.id, 2);
         assert.equal(state.current.domainId, dids[1]);
         assert.equal(state.current.feedback, undefined);
@@ -303,6 +306,7 @@ async function run() {
         state = res.body.state;
         assert.equal(state.completed, true);
         assert.equal(state.required, false);
+        assert.equal(res.body.trainingTime.contextKey, `${dids[1]}:daily:${ids[1]}`);
         assert.equal(state.current.feedback.correct, false);
         assert.deepEqual(state.current.feedback.answers, ['A', 'C']);
         status(await student.get(`/d/${dids[0]}/p`).set('Accept', 'application/json'), 200);

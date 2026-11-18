@@ -211,6 +211,36 @@ async function run() {
         await contests.setStatus(domainId, shared, sharedUid, { attend: 1, startAt: new Date(Date.now() - 2 * 3600_000), entryDomainId: entry });
         const agent = supertest.agent(httpServer);
         status(await agent.post('/login').send({ uname: 'cp_shared', password: 'LocalTest123!' }), 302);
+        // Reopen an overnight study page through its real authorization. The learner
+        // belongs only to the entry classroom, and the numeric pid belongs to the bank.
+        const refreshGrant = async (url) => {
+            const refreshed = await agent.get(url).query({ __trainingTimeGrant: '1' })
+                .set('Accept', 'application/json').set('X-Requested-With', 'XMLHttpRequest');
+            status(refreshed, 200);
+            assert.deepEqual(Object.keys(refreshed.body), ['trainingTime']);
+            const config = refreshed.body.trainingTime;
+            assert.equal(config.scope, `${sharedUid}:${entry}`);
+            assert.equal(config.startUrl, `/d/${entry}/training-time/session`);
+            const grant = await db.collection('training.time.grant').findOne({ _id: config.sourceToken });
+            assert.equal(grant.domainId, entry);
+            assert.deepEqual(grant.source, { kind: 'problem', pid: pids[2], problemDomainId: domainId });
+            return config;
+        };
+        const exerciseUrl = `/d/${entry}/p/${pids[2]}?tid=${shared}`;
+        const exercise = await agent.get(exerciseUrl).set('Accept', 'text/html');
+        status(exercise, 200);
+        assert(exercise.text.includes(`/d/${entry}/training-time/session`));
+        const config = await refreshGrant(exerciseUrl);
+        const origin = `http://127.0.0.1:${httpServer.address().port}`;
+        const start = await agent.post(config.startUrl).set('Origin', origin).set('Accept', 'application/json')
+            .send({ sourceToken: config.sourceToken, requestId: 'shared-contest-study-session' });
+        status(start, 200);
+        assert.equal(start.body.accepted, true);
+        const release = await agent.post(config.heartbeatUrl).set('Origin', origin).set('Accept', 'application/json')
+            .send({ sessionId: start.body.sessionId, seq: 1, active: false });
+        status(release, 200);
+        assert.equal(release.body.accepted, true);
+        assert((await db.collection('training.time.daily').findOne({ uid: sharedUid, domainId: entry })).seconds > 0);
         const response = await agent.post(`/d/${entry}/p/${pids[2]}/submit?tid=${shared}`).set('Accept', 'application/json')
             .send({ lang: 'py.py3', code: 'print(1)' });
         status(response, 200);
@@ -221,6 +251,7 @@ async function run() {
         assert(record.practiceContest.equals(shared));
         assert.equal(record.practiceEntryDomain, entry);
         status(await agent.get(`/d/${entry}/record/${rid}?practiceResult=1`).set('Accept', 'text/html'), 200);
+        await refreshGrant(`/d/${entry}/record/${rid}?practiceResult=1`);
         const feedback = await agent.get(`/d/${entry}/contest-submit-feedback?rid=${rid}`).set('Accept', 'application/json');
         status(feedback, 200);
         assert.equal(feedback.body.rdoc.practiceContest, String(shared));

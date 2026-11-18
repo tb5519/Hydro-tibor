@@ -1,7 +1,7 @@
 import type { Context } from '../context';
 import { CsrfTokenError, PermissionError, ValidationError } from '../error';
 import { isScratchDomain } from '../lib/domain_type';
-import { TRAINING_HEARTBEAT_SECONDS, TRAINING_IDLE_SECONDS, TrainingSource } from '../lib/training_time';
+import { TRAINING_HEARTBEAT_SECONDS, TRAINING_IDLE_SECONDS, TrainingSource, trainingSourceKey } from '../lib/training_time';
 import { Logger } from '../logger';
 import { PERM, PRIV } from '../model/builtin';
 import * as dailyQuiz from '../model/daily_quiz';
@@ -53,7 +53,7 @@ export class TrainingTimeHandler extends Handler {
 export class TrainingTimeSessionHandler extends TrainingTimeHandler {
     async post() {
         strictBody(this.request.body, ['sourceToken', 'requestId']);
-        await this.limitRate('training_time_start', 60, 30);
+        await this.limitRate('training_time_start', 60, 30, '{{user}}');
         this.response.body = await training.startSession(this.user._id, this.domain._id,
             this.request.body.sourceToken, this.request.body.requestId);
     }
@@ -62,7 +62,7 @@ export class TrainingTimeSessionHandler extends TrainingTimeHandler {
 export class TrainingTimeHeartbeatHandler extends TrainingTimeHandler {
     async post() {
         strictBody(this.request.body, ['sessionId', 'seq', 'active', 'discard']);
-        await this.limitRate('training_time_pulse', 60, 30);
+        await this.limitRate('training_time_pulse', 60, 30, '{{user}}');
         const { sessionId, seq, active, discard = false } = this.request.body;
         this.response.body = await training.heartbeat(this.user._id, this.domain._id, sessionId, seq, active, discard);
     }
@@ -75,13 +75,21 @@ export async function trainingConfig(handler: Handler, domainId: string, source:
     return {
         enabled: true,
         scope: `${handler.user._id}:${domainId}`,
-        contextKey: `${domainId}:${source.kind}:${source.pid}`,
+        contextKey: `${domainId}:${trainingSourceKey(source)}`,
         startUrl: handler.url('training_time_session', { domainId }),
         heartbeatUrl: handler.url('training_time_heartbeat', { domainId }),
         sourceToken: await training.issueSourceGrant(handler.user._id, domainId, source),
         heartbeatSeconds: TRAINING_HEARTBEAT_SECONDS,
         idleSeconds: TRAINING_IDLE_SECONDS,
     };
+}
+
+function problemTrainingConfig(handler: Handler, domainId: string, pid: number) {
+    const entry = handler.contestEntryContext;
+    if (entry && entry.domain._id !== domainId && entry.contest.domainId === domainId && entry.contest.pids.includes(pid)) {
+        return trainingConfig(handler, entry.domain._id, { kind: 'problem', pid, problemDomainId: domainId });
+    }
+    return trainingConfig(handler, domainId, { kind: 'problem', pid });
 }
 
 export async function injectTrainingConfig(handler: Handler) {
@@ -114,7 +122,7 @@ export async function injectTrainingConfig(handler: Handler) {
             || typeof rdoc.domainId !== 'string' || !rdoc.domainId
             || !pdoc || pdoc.docId !== rdoc.pid || pdoc.domainId !== rdoc.domainId || isPretestRecord
             || [record.RECORD_PRETEST.toString(), record.RECORD_GENERATE.toString()].includes(rdoc.contest?.toString())) return;
-        handler.UiContext.trainingTime = await trainingConfig(handler, pdoc.domainId, { kind: 'problem', pid: pdoc.docId });
+        handler.UiContext.trainingTime = await problemTrainingConfig(handler, pdoc.domainId, pdoc.docId);
         return;
     }
     if (handler.response.template === 'online_ide.html') {
@@ -123,7 +131,7 @@ export async function injectTrainingConfig(handler: Handler) {
     }
     const pdoc = (handler as Handler & { pdoc?: { docId: number } }).pdoc;
     if (!pdoc?.docId) return;
-    handler.UiContext.trainingTime = await trainingConfig(handler, handler.domain._id, { kind: 'problem', pid: pdoc.docId });
+    handler.UiContext.trainingTime = await problemTrainingConfig(handler, handler.domain._id, pdoc.docId);
 }
 
 export function apply(ctx: Context) {
@@ -132,5 +140,18 @@ export function apply(ctx: Context) {
     ctx.on('handler/after', async (handler: Handler) => {
         // Learning must still work if optional analytics storage is unavailable.
         try { await injectTrainingConfig(handler); } catch (error) { logger.warn('Unable to prepare training clock', error); }
+    });
+    // A page left open overnight can renew its expired grant only by going
+    // through the original page's current authorization and source selection.
+    ctx.on('handler/finish', (handler: Handler) => {
+        if (handler.request.query?.__trainingTimeGrant !== '1' || handler.request.method.toUpperCase() !== 'GET'
+            || handler.response.redirect || handler.response.status >= 400
+            || !['problem_detail.html', 'problem_submit.html', 'online_ide.html', 'record_detail.html'].includes(handler.response.template)) return;
+        handler.response.body = { trainingTime: handler.UiContext.trainingTime || null };
+        handler.response.type = 'application/json';
+        handler.response.template = null;
+        handler.response.etag = null;
+        handler.response.addHeader('Cache-Control', 'private, no-store');
+        handler.response.addHeader('Vary', 'Cookie, Authorization');
     });
 }

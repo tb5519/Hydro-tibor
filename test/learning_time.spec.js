@@ -209,6 +209,78 @@ test('incomplete source attribution is explicit and inconsistent source counters
     assert.ok(inflated.sources.every((source) => source.estimatedSeconds === 1800 && source.hasEstimate));
 });
 
+test('old counters from different classrooms share the same available lesson and independent time', () => {
+    // The Python hour may fall anywhere between 09:00–11:00, but C++ already
+    // used 50 of the first 60 minutes. At most ten more fit in the same hour.
+    const old = (domainId, seconds, start, end) => row([], {
+        domainId, seconds, startedAt: new Date(at(start)), updatedAt: new Date(at(end)),
+        sources: [{ kind: 'problem', pid: 1, seconds }],
+    });
+    const rows = [old('python', 3600, 9, 11), old('cpp', 3000, 9, 10)];
+    for (const [start, end, expected] of [[9, 10, 3000], [10, 11, 3600]]) {
+        const result = merged(rows, [lesson(start, end)]);
+        const student = result.students[0];
+        assert.equal(student.trainingEstimatedSeconds, expected);
+        assert.equal(student.trainingEstimatedSeconds + student.overlapEstimatedSeconds, 6600);
+        assert.ok(student.overlapEstimatedSeconds <= student.classSeconds);
+        assert.equal(result.sources.reduce((total, item) => total + item.estimatedSeconds, 0), expected);
+        assert.equal(result.domains.reduce((total, item) => total + item.trainingEstimatedSeconds, 0), expected);
+        const python = result.sources.find((item) => item.domainId === 'python');
+        assert.ok(python.estimatedSeconds >= python.seconds && python.estimatedSeconds <= python.trainingUpperSeconds);
+        assert.equal(merged([...rows].reverse(), [lesson(start, end)]).students[0].trainingEstimatedSeconds, expected);
+    }
+});
+
+test('an unrelated afternoon lesson cannot provide capacity to two morning counters', () => {
+    const ledger = (domainId, seconds, start, end) => row([], {
+        domainId, seconds, startedAt: new Date(at(start)), updatedAt: new Date(at(end)),
+        sources: [{ kind: 'problem', pid: 1, seconds }],
+    });
+    const result = merged([
+        ledger('A', 3600, 9, 11), ledger('B', 3000, 9, 10),
+        ledger('C', 60, 10, 13), ledger('D', 600, 12, 15),
+    ], [lesson(9, 10), lesson(12, 15)]);
+    const morning = result.sources.filter((item) => ['A', 'B'].includes(item.domainId));
+    const inClass = morning.reduce((total, item) => total + item.classTrainingEstimatedSeconds, 0);
+    assert.ok(inClass <= 3600 + 0.000001);
+    assert.ok(inClass >= 3000);
+});
+
+test('multi-class historical estimates fit independently checked capacity for every subset of learners classrooms', () => {
+    let seed = 637;
+    const random = (n) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % n; };
+    const units = 16;
+    const unitSeconds = 300;
+    const hour = (unit) => 9 + unit / 12;
+    for (let attempt = 0; attempt < 100; attempt++) {
+        const owners = Array.from({ length: units }, () => random(5));
+        const inClass = Array.from({ length: units }, () => random(7) < 3);
+        const windows = [];
+        for (let id = 0; id < 4; id++) {
+            const first = owners.indexOf(id);
+            if (first === -1) continue;
+            const last = owners.lastIndexOf(id) + 1;
+            windows.push({ domainId: String(id), start: first - random(first + 1), end: last + random(units - last + 1),
+                seconds: owners.filter((v) => v === id).length * unitSeconds });
+        }
+        const rows = windows.map((w) => row([], { domainId: w.domainId, seconds: w.seconds,
+            startedAt: new Date(at(hour(w.start))), updatedAt: new Date(at(hour(w.end))),
+            sources: [{ kind: 'problem', pid: 1, seconds: w.seconds }] }));
+        const lessons = inClass.flatMap((value, unit) => value ? [lesson(hour(unit), hour(unit + 1))] : []);
+        const result = merged(rows, lessons);
+        for (let mask = 1; mask < (1 << windows.length); mask++) {
+            const selected = windows.filter((_, id) => (mask & (1 << id)) !== 0);
+            const estimates = result.sources.filter((source) => selected.some((w) => w.domainId === source.domainId));
+            const supported = inClass.filter((_, unit) => selected.some((w) => w.start <= unit && unit < w.end));
+            const overlap = estimates.reduce((n, source) => n + source.classTrainingEstimatedSeconds, 0);
+            const training = estimates.reduce((n, source) => n + source.estimatedSeconds, 0);
+            assert.ok(overlap <= supported.filter(Boolean).length * unitSeconds + 0.000001);
+            assert.ok(training <= supported.filter((isClass) => !isClass).length * unitSeconds + 0.000001);
+            assert.ok(Math.abs(training + overlap - selected.reduce((n, w) => n + w.seconds, 0)) < 0.000001);
+        }
+    }
+});
+
 test('known precise activity cannot be reused as capacity for unrecorded historical time', () => {
     const input = row([span(9, 10)], { seconds: 7200, startedAt: new Date(at(9)), updatedAt: new Date(at(12)),
         sources: [{ kind: 'problem', pid: 1, seconds: 7200 }] });
@@ -231,6 +303,18 @@ test('historical query clipping accounts for unknown activity outside the reques
     const large = merged([row([], { seconds: 9000, startedAt: new Date(at(9)), updatedAt: new Date(at(12)) })], [], 10, 11);
     assert.equal(large.students[0].trainingSeconds, 1800);
     assert.equal(large.students[0].trainingUpperSeconds, 3600);
+});
+
+test('a single trustworthy endpoint still rules out class or query overlap for an old counter', () => {
+    const ended = row([], { seconds: 600, updatedAt: new Date(at(10)) });
+    const result = merged([ended], [lesson(11, 12)], 0, 12).students[0];
+    assert.equal(result.trainingSeconds, 600);
+    assert.equal(result.trainingEstimatedSeconds, 600);
+    assert.equal(result.overlapUpperSeconds, 0);
+    assert.equal(result.hasEstimate, false);
+    const started = { ...ended, startedAt: new Date(at(14)), updatedAt: undefined };
+    assert.equal(merged([started], [lesson(12, 13)]).students[0].trainingSeconds, 600);
+    assert.equal(merged([started], [], 0, 12).students[0]?.trainingUpperSeconds || 0, 0);
 });
 
 test('missing or impossible historical envelopes never invent exact independent practice around lessons', () => {

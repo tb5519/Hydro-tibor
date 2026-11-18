@@ -28,7 +28,8 @@ interface ClassTimeToken {
 export interface ClassTime {
     _id: string; workspaceId: string; teacherUid: number; domainId: string; uid: number;
     externalId: string; startAt: Date; endAt: Date; day: string; durationSeconds: number;
-    title: string; fingerprint: string; createdAt: Date;
+    title: string; fingerprint?: string; createdAt: Date;
+    source?: 'lesson'; lessonId?: string;
 }
 declare module '../service/db' {
     interface Collections {

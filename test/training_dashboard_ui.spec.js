@@ -149,7 +149,9 @@ test('90-day charts preserve every day and reduce axis labels without dropping l
 });
 
 test('learning time distinguishes autonomous training and class time in summaries, charts, roster and details', (t) => {
-    const { document } = page(t, { detail: studentDetail() }).window;
+    const detail = studentDetail();
+    detail.lessons.push({ ...detail.lessons[0], title: '站内练习', sourceLabel: '站内课堂' });
+    const { document } = page(t, { detail }).window;
     assert.match(document.querySelector('.tdash-stat--training').textContent, /自主训练.*17 小时 20 分/s);
     assert.match(document.querySelector('.tdash-stat--class').textContent, /上课时长.*7 小时 30 分/s);
     const firstDay = document.querySelector('.tdash-trend__column');
@@ -162,6 +164,7 @@ test('learning time distinguishes autonomous training and class time in summarie
     assert.match(document.querySelector('.tdash-legend').textContent, /自主训练上课时间/);
     assert.match(document.querySelector('.tdash-table--roster tbody tr').textContent, /学员 10.*3 小时 30 分.*自主训练 2 小时.*上课 1 小时 30 分/s);
     assert.match(document.querySelector('.tdash-time-breakdown').textContent, /本期学习总时长.*2 小时 30 分.*自主训练.*1 小时 30 分.*上课时长.*1 小时.*已归入上课时间/s);
+    assert.match(document.querySelector('.tdash-lessons').textContent, /站内课堂站内练习/);
     assert.match(document.querySelector('.tdash-lessons').textContent, /外部课堂.*循环结构与课堂练习.*2026-10-24 10:00.*2026-10-24 11:00.*1 小时/s);
 });
 

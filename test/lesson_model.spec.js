@@ -62,7 +62,8 @@ async function setupDatabase() {
 async function startDatabase() {
     database = makeStore();
     model = load('packages/hydrooj/src/model/lesson.ts', {
-        '../lib/lesson': protocol, '../service/db': { collection: (name) => database.collection(name) }, './live_share': share,
+        '../lib/lesson': protocol, '../lib/training_time': load('packages/hydrooj/src/lib/training_time.ts'),
+        '../service/db': { collection: (name) => database.collection(name) }, './live_share': share,
         './builtin': { PERM, PRIV, BUILTIN_ROLES: { default: 1n } },
         './domain': { get: async (_id) => ({ _id, roles: { default: 1n } }), collUser: database.collection('domain.user') },
     });

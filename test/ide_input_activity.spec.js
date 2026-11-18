@@ -11,7 +11,7 @@ function fixture() {
   const timers = new Map(); const messages = [];
   const socket = { readyState: 1, send: (value) => messages.push(JSON.parse(value)), close() {} };
   const context = { console, URL, TextEncoder, crypto: webcrypto, location: { href: 'http://local/ide' },
-    window: { dispatchEvent() {} }, CustomEvent: class {}, Date: { now: () => now },
+    window: new EventTarget(), CustomEvent: class extends Event {}, Date: { now: () => now },
     requestAnimationFrame: () => 1, cancelAnimationFrame() {},
     setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, at: now + delay }); return id; },
     clearTimeout(id) { timers.delete(id); } };
@@ -23,7 +23,7 @@ function fixture() {
     return module.exports;
   }
   const types = load('types.ts');
-  const { createIdeRuntime } = load('runtime.ts', { './types': types });
+  const { createIdeRuntime } = load('runtime.ts', { './types': types, './fontSize': load('fontSize.ts') });
   const runtime = createIdeRuntime({ url: '/ide/conn', source: () => ({ lang: 'py.py3', code: 'input()' }), socketFactory: () => socket });
   const server = (value) => socket.onmessage({ data: JSON.stringify(value) });
   server({ type: 'ready' }); runtime.command({ type: 'run' });

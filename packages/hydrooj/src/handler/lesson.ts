@@ -310,6 +310,7 @@ export class LessonConnectionHandler extends ConnectionHandler {
     private lastAuthorization = 0;
     private lastLoginCheck = 0;
     private lastActivity = Date.now();
+    private attendanceThrough = 0;
     private canTeach = false;
     private authorizationVersion = 0;
     private sequences = { audio: -1, video: -1, screen: -1 };
@@ -435,7 +436,7 @@ export class LessonConnectionHandler extends ConnectionHandler {
         const version = this.authorizationVersion;
         try {
             await this.checkLogin();
-            const room = await lesson.pulse(this.peer, this.domain._id);
+            const room = await lesson.pulse(this.peer, this.domain._id, Date.now(), this.lastActivity);
             let other = await lesson.otherMember(room, this.user._id);
             if (this.closing || version !== this.authorizationVersion) return;
             // The other browser can still have a short lease from the previous
@@ -448,6 +449,10 @@ export class LessonConnectionHandler extends ConnectionHandler {
             if (announce) this.send({ type: 'ready', lesson: await lesson.snapshot(room), peerOnline: !!other,
                 ...(other ? { peerStreamId: other.connectionId } : {}) });
             else if (changed) this.send({ type: 'peer', online: !!other, ...(other ? { streamId: other.connectionId } : {}) });
+            if (other && this.peer._id === room.studentUid) {
+                try { this.attendanceThrough = await lesson.recordAttendance(room, this.peer, other, this.attendanceThrough); }
+                catch (error) { this.ctx.logger.warn('Unable to update lesson attendance for %s: %o', room._id, error); }
+            }
         } finally {
             this.checking = false;
             if (!this.closing && version !== this.authorizationVersion) {

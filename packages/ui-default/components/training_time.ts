@@ -11,16 +11,19 @@ export interface TrainingTimeConfig {
   idleSeconds?: number;
 }
 interface Clock { monotonic: number; wall: number }
-interface TrainingResponse { accepted?: boolean; sessionId?: string }
+interface TrainingResponse { accepted?: boolean; sessionId?: string; refreshSource?: boolean }
 type Payload = Record<string, string | number | boolean>;
 interface CollectorOptions {
   now: () => Clock;
   isForeground: () => boolean;
+  isOnline?: () => boolean;
+  refreshSource?: () => Promise<TrainingTimeConfig | null>;
   requestId: () => string;
   send: (url: string, payload: Payload, keepalive?: boolean) => Promise<TrainingResponse>;
 }
 interface Session { id: string; seq: number; config: TrainingTimeConfig }
-const contextIdentity = (config: TrainingTimeConfig) => config.contextKey || config.sourceToken;
+const sameContext = (a: TrainingTimeConfig, b: TrainingTimeConfig) =>
+  a.scope === b.scope && (a.contextKey || a.sourceToken) === (b.contextKey || b.sourceToken);
 
 export function createTrainingTimeCollector(options: CollectorOptions) {
   let config: TrainingTimeConfig | null = null;
@@ -33,7 +36,11 @@ export function createTrainingTimeCollector(options: CollectorOptions) {
   let starting = false;
   let sending = false;
   let disposed = false;
-  let waitingForActivity = false;
+  let pendingStartId = '';
+  let discardNextPulse = false;
+  let resetSeq = 0;
+  let offlineVersion = 0;
+  const online = () => options.isOnline?.() !== false;
   let releaseBarrier: Promise<unknown> = Promise.resolve();
 
   function release(current: Session, discard: boolean) {
@@ -53,8 +60,10 @@ export function createTrainingTimeCollector(options: CollectorOptions) {
     generation++;
     starting = false;
     sending = false;
-    waitingForActivity = true;
-    if (session) release(session, discard || invalidGap);
+    pendingStartId = '';
+    if (session) release(session, discard || invalidGap || discardNextPulse || !online());
+    discardNextPulse = false;
+    resetSeq = 0;
     session = null;
   }
 
@@ -74,22 +83,34 @@ export function createTrainingTimeCollector(options: CollectorOptions) {
   async function start() {
     if (disposed || !config?.enabled || starting || session || !options.isForeground()
       || options.now().monotonic < retryAfter) return;
-    const currentConfig = config;
+    pendingStartId ||= options.requestId();
+    if (!online()) return;
+    let currentConfig = config;
     const ticket = ++generation;
     starting = true;
-    waitingForActivity = false;
     try {
       // Switching daily questions must settle the short final interval before
       // acquiring another lease. Otherwise a fast next-question request could
       // overtake its release and discard the previous question's entire time.
       await releaseBarrier;
-      if (disposed || ticket !== generation || !options.isForeground()) return;
-      const result = await options.send(currentConfig.startUrl, {
-        sourceToken: currentConfig.sourceToken, requestId: options.requestId(),
-      });
+      if (disposed || ticket !== generation || !options.isForeground() || !online()) return;
+      const requestId = pendingStartId;
+      const request = () => options.send(currentConfig.startUrl, { sourceToken: currentConfig.sourceToken, requestId });
+      let result = await request();
+      // Long-lived IDE/problem tabs can outlive the page grant. The server
+      // reauthorizes the actual URL and the response must match the old source.
+      if (!result.accepted && result.refreshSource && ticket === generation && options.refreshSource) {
+        const fresh = await options.refreshSource();
+        if (ticket !== generation || disposed) return;
+        if (fresh?.enabled && sameContext(currentConfig, fresh) && options.isForeground() && online()) {
+          config = fresh;
+          currentConfig = fresh;
+          result = await request();
+        }
+      }
       if (!result.accepted || !result.sessionId) {
         if (ticket === generation) {
-          waitingForActivity = true;
+          pendingStartId = '';
           retryAfter = options.now().monotonic + 30000;
         }
         return;
@@ -99,11 +120,12 @@ export function createTrainingTimeCollector(options: CollectorOptions) {
         release(next, true);
         return;
       }
+      pendingStartId = '';
       session = next;
       lastSent = options.now().monotonic;
+      if (discardNextPulse && online()) tick();
     } catch {
       if (ticket === generation) {
-        waitingForActivity = true;
         retryAfter = options.now().monotonic + 30000;
       }
     } finally {
@@ -115,8 +137,13 @@ export function createTrainingTimeCollector(options: CollectorOptions) {
     if (disposed || !options.isForeground()) return;
     const current = sample();
     lastActivity = current.monotonic;
-    waitingForActivity = false;
     void start();
+  }
+
+  function disconnected() {
+    offlineVersion++;
+    resetSeq = 0;
+    if (session || starting || pendingStartId) discardNextPulse = true;
   }
 
   function tick() {
@@ -124,30 +151,47 @@ export function createTrainingTimeCollector(options: CollectorOptions) {
     const current = sample();
     if (current.discontinuity) return;
     if (!options.isForeground()) {
-      if (session || starting) pause();
+      if (session || starting || pendingStartId) pause();
       return;
     }
     const idleMs = Math.min(300, Math.max(30, config?.idleSeconds || 300)) * 1000;
     if (current.monotonic - lastActivity >= idleMs) {
-      if (session || starting) pause();
+      if (session || starting || pendingStartId) pause();
       return;
     }
-    // No automatic start here: a stolen/expired lease waits for actual activity,
-    // so two open tabs do not keep taking the session from one another.
-    if (!session || sending || waitingForActivity) return;
+    if (!online()) {
+      if (session || starting || pendingStartId) discardNextPulse = true;
+      return;
+    }
+    if (!session) {
+      // Replaying the same request ID cannot take back another device's lease.
+      if (pendingStartId) void start();
+      return;
+    }
+    if (sending || current.monotonic < retryAfter) return;
     const pulseMs = Math.min(60, Math.max(15, config?.heartbeatSeconds || 30)) * 1000;
-    if (current.monotonic - lastSent < pulseMs) return;
+    if (!discardNextPulse && current.monotonic - lastSent < pulseMs) return;
     const currentSession = session;
+    const network = offlineVersion;
     const ticket = generation;
     sending = true;
     lastSent = current.monotonic;
+    const seq = discardNextPulse && resetSeq ? resetSeq : ++currentSession.seq;
+    if (discardNextPulse) resetSeq = seq;
     void options.send(currentSession.config.heartbeatUrl, {
-      sessionId: currentSession.id, seq: ++currentSession.seq, active: true,
+      sessionId: currentSession.id, seq, active: true,
+      ...(discardNextPulse ? { discard: true } : {}),
     }).then((result) => {
-      if (ticket === generation && !result.accepted) pause(true);
+      if (ticket !== generation) return;
+      if (!result.accepted) {
+        pause();
+        if (result.refreshSource && options.refreshSource) void start();
+      } else if (network === offlineVersion) {
+        discardNextPulse = false;
+        resetSeq = 0;
+      }
     }).catch(() => {
       if (ticket === generation) {
-        pause(true);
         retryAfter = options.now().monotonic + 30000;
       }
     }).finally(() => {
@@ -157,17 +201,19 @@ export function createTrainingTimeCollector(options: CollectorOptions) {
 
   return {
     activity,
+    disconnected,
     tick,
     pause,
     setContext(next?: TrainingTimeConfig | null) {
       if (disposed) return;
       const enabled = next?.enabled && next.sourceToken && next.startUrl && next.heartbeatUrl ? next : null;
-      if (enabled && config && contextIdentity(enabled) === contextIdentity(config)) {
+      if (enabled && config && sameContext(enabled, config)) {
         config = enabled;
         return;
       }
       pause();
       config = enabled;
+      retryAfter = 0;
       lastTick = options.now();
       lastActivity = lastTick.monotonic;
       if (config && options.isForeground()) activity();
@@ -195,47 +241,70 @@ export function bindTrainingTime(initial: TrainingTimeConfig | null, win: Window
   const doc = win.document;
   let closed = false;
   const initialPath = win.location.pathname;
+  function isForeground() {
+    if (closed || doc.visibilityState !== 'visible' || win.location.pathname !== initialPath) return false;
+    const frame = win.frameElement as HTMLElement | null;
+    if (!frame?.matches('iframe[data-platform-page]')) return doc.hasFocus();
+    const shell = frame.ownerDocument;
+    if (!frame.isConnected || frame.inert || frame.hidden || frame.style.visibility === 'hidden'
+      || shell.visibilityState !== 'visible' || !shell.hasFocus()) return false;
+    // The browser can keep focus on the shell body while a learner reads or
+    // scrolls the visible study frame. A focused chat or other host control
+    // belongs to a separate activity.
+    return shell.activeElement === frame || shell.activeElement === shell.body || shell.activeElement === shell.documentElement;
+  }
   const anchor = doc.querySelector('[data-daily-quiz], .problem-content-container, #scratchpad, [data-online-ide]')
     || doc.querySelector('.main');
+  async function fetchJson(url: URL, init: RequestInit) {
+    if (url.origin !== win.location.origin) throw new Error('Invalid training endpoint');
+    const abort = new AbortController();
+    const timeout = win.setTimeout(() => abort.abort(), 8000);
+    try {
+      const response = await win.fetch(url.href, {
+        credentials: 'same-origin', cache: 'no-store', ...init, signal: abort.signal,
+      });
+      if (response.status === 429 || response.status >= 500) throw new Error('Training clock unavailable');
+      if (!response.ok || !/^application\/json/i.test(response.headers.get('Content-Type') || '')) return null;
+      return await response.json();
+    } finally {
+      win.clearTimeout(timeout);
+    }
+  }
   const controller = createTrainingTimeCollector({
     now: () => ({ monotonic: win.performance.now(), wall: Date.now() }),
-    isForeground: () => !closed && doc.visibilityState === 'visible' && doc.hasFocus()
-      && win.navigator.onLine !== false && win.location.pathname === initialPath,
+    isForeground,
+    isOnline: () => win.navigator.onLine !== false,
     requestId: () => {
       const bytes = new Uint8Array(16);
       win.crypto.getRandomValues(bytes);
       return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
     },
-    send: async (url, payload, keepalive = false) => {
-      const endpoint = new URL(url, win.location.href);
-      if (endpoint.origin !== win.location.origin) throw new Error('Invalid training endpoint');
-      const abort = new AbortController();
-      const timeout = win.setTimeout(() => abort.abort(), 8000);
-      try {
-        const response = await win.fetch(endpoint.href, {
-          method: 'POST', credentials: 'same-origin', cache: 'no-store', keepalive,
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-          body: JSON.stringify(payload), signal: abort.signal,
-        });
-        if (!response.ok || !/^application\/json/i.test(response.headers.get('Content-Type') || '')) {
-          return { accepted: false };
-        }
-        return await response.json();
-      } finally {
-        win.clearTimeout(timeout);
-      }
+    refreshSource: async () => {
+      if (doc.documentElement.dataset.page === 'daily_quiz' || win.location.pathname !== initialPath) return null;
+      const url = new URL(win.location.href);
+      url.searchParams.set('__trainingTimeGrant', '1');
+      const result = await fetchJson(url, {
+        method: 'GET', redirect: 'error', headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      return result?.trainingTime || null;
     },
+    send: async (url, payload, keepalive = false) => await fetchJson(new URL(url, win.location.href), {
+      method: 'POST', keepalive,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify(payload),
+    }) || { accepted: false },
   });
   const onActivity = (event: Event) => { if (event.isTrusted) controller.activity(); };
   const onVisibility = () => {
-    if (doc.visibilityState !== 'visible' || !doc.hasFocus()) controller.pause();
+    if (!isForeground()) controller.pause();
     else controller.activity();
   };
   const onBlur = () => controller.pause();
   const onFocus = () => controller.activity();
   const onPageHide = () => controller.pause();
   const onPageShow = () => controller.activity();
-  const onOffline = () => controller.pause(true);
+  const onOffline = () => controller.disconnected();
+  const onOnline = () => controller.tick();
   const onContext = (event: Event) => controller.setContext((event as CustomEvent).detail);
   const events = ['pointerdown', 'click', 'keydown', 'input', 'wheel', 'touchstart', 'touchmove'];
   events.forEach((name) => doc.addEventListener(name, onActivity, { passive: true, capture: true }));
@@ -245,6 +314,7 @@ export function bindTrainingTime(initial: TrainingTimeConfig | null, win: Window
   win.addEventListener('pagehide', onPageHide);
   win.addEventListener('pageshow', onPageShow);
   win.addEventListener('offline', onOffline);
+  win.addEventListener('online', onOnline);
   win.addEventListener(contextEvent, onContext);
   const timer = win.setInterval(() => controller.tick(), 5000);
   const staged = (win as TrainingWindow).__trainingTimeContext;
@@ -267,6 +337,7 @@ export function bindTrainingTime(initial: TrainingTimeConfig | null, win: Window
       win.removeEventListener('pagehide', onPageHide);
       win.removeEventListener('pageshow', onPageShow);
       win.removeEventListener('offline', onOffline);
+      win.removeEventListener('online', onOnline);
       win.removeEventListener(contextEvent, onContext);
     },
   };

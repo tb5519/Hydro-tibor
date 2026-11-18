@@ -63,7 +63,8 @@ async function startDatabase() {
     server = await MongoMemoryServer.create({ instance: { args: ['--nounixsocket'] } });
     client = await MongoClient.connect(server.getUri()); database = client.db('lesson_tests');
     model = load('packages/hydrooj/src/model/lesson.ts', {
-        '../lib/lesson': protocol, '../service/db': { collection: (name) => database.collection(name) }, './live_share': share,
+        '../lib/lesson': protocol, '../lib/training_time': load('packages/hydrooj/src/lib/training_time.ts'),
+        '../service/db': { collection: (name) => database.collection(name) }, './live_share': share,
         './builtin': { PERM, PRIV, BUILTIN_ROLES: { default: 1n } },
         './domain': { get: async (_id) => ({ _id, roles: { default: 1n } }), collUser: database.collection('domain.user') },
     });
@@ -85,7 +86,7 @@ beforeEach(async () => {
     logins = new Map([2, 3, 10, 11].map((uid) => [`login-${uid}`, { uid, scope: '3', expireAt: new Date(Date.now() + 60000) }]));
     if (!database) return;
     await Promise.all([model.rooms.deleteMany({}), model.members.deleteMany({}), model.bookingSlots.deleteMany({}), model.resumptions.deleteMany({}),
-        database.collection('domain.user').deleteMany({})]);
+        database.collection('domain.user').deleteMany({}), database.collection('training.class').deleteMany({})]);
     await database.collection('domain.user').insertMany([10, 11].map((uid) => ({ domainId: 'class-a', uid, role: 'default', join: true })));
 });
 after(async () => { await client?.close(); await server?.stop(); });
@@ -190,6 +191,69 @@ describe('lesson bookings and consent with real MongoDB', () => {
         await assert.rejects(model.join(10, 'class-a', room._id, tab(10), quiet), code('ENDED'));
         await model.create(2, 'class-a', value, quiet);
     });
+    it('deducts only confirmed joint native attendance and unions an overlapping external import', async () => {
+        const booked = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        const base = Date.now();
+        const time = (seconds) => base + seconds * 1000;
+        const ledger = database.collection('training.class');
+        const { room, peer: teacher } = await model.bind(2, 'class-a', booked._id, tab(2), 'teacher-1', 'server-a', base);
+        await model.join(10, 'class-a', booked._id, tab(10), quiet, time(30));
+        assert.equal(await ledger.countDocuments(), 0);
+        const { peer: student } = await model.bind(10, 'class-a', booked._id, tab(10), 'student-1', 'server-a', time(30));
+        await model.pulse(teacher, 'class-a', time(40), time(38));
+        await model.pulse(student, 'class-a', time(42), time(41));
+        await Promise.all([model.recordAttendance(room, student, teacher, 0), model.recordAttendance(room, student, teacher, 0)]);
+        // Server lease renewals alone cannot extend the earlier signal.
+        await model.pulse(teacher, 'class-a', time(55), time(38));
+        await model.recordAttendance(room, student, teacher, 0);
+        const row = await ledger.findOne();
+        assert.deepEqual([+row.startAt, +row.endAt, row.durationSeconds], [time(30), time(38), 8]);
+        assert.deepEqual([row.uid, row.teacherUid, row.workspaceId, row.domainId, row.lessonId, row.source],
+            [10, 2, 'a', 'class-a', room._id, 'lesson']);
+        await model.pulse(teacher, 'class-a', time(60), time(60));
+        await model.pulse(student, 'class-a', time(60), time(60));
+        await model.recordAttendance(room, student, teacher, time(38));
+        await model.recordAttendance(room, student, { ...teacher, lastSignalAt: new Date(time(35)) }, 0);
+        assert.equal(await ledger.countDocuments(), 1);
+        const result = await ledger.findOne();
+        assert.equal(result.durationSeconds, 30);
+        const clock = load('packages/hydrooj/src/lib/training_time.ts');
+        const { mergeLearningTime } = load('packages/hydrooj/src/lib/learning_time.ts', { './training_time': clock });
+        const practice = clock.trainingIntervals(time(10), time(70)).map((interval) => ({
+            uid: 10, domainId: 'class-a', day: interval.day, seconds: interval.milliseconds / 1000,
+            intervals: [{ start: interval.start, end: interval.end, kind: 'problem', pid: 5 }],
+        }));
+        const external = { ...result, externalId: 'classflow:example', startAt: new Date(time(35)), endAt: new Date(time(65)) };
+        const combined = mergeLearningTime(practice, [result, external], base, time(70)).students[0];
+        assert.deepEqual([combined.trainingSeconds, combined.classSeconds, combined.seconds], [25, 35, 60]);
+    });
+    it('does not bridge disconnect, silent sleep, or a different classroom media server', async () => {
+        const booked = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
+        const base = Date.now();
+        const time = (seconds) => base + seconds * 1000;
+        await model.join(10, 'class-a', booked._id, tab(10), quiet, base);
+        const { room, peer: student } = await model.bind(10, 'class-a', booked._id, tab(10), 'student', 'server-a', base);
+        let { peer: teacher } = await model.bind(2, 'class-a', booked._id, tab(2), 'teacher-1', 'server-a', base);
+        const pairPulse = async (s) => {
+            await Promise.all([model.pulse(teacher, 'class-a', time(s)), model.pulse(student, 'class-a', time(s))]);
+            await model.recordAttendance(room, student, teacher, 0);
+        };
+        await pairPulse(10);
+        await model.disconnect(teacher);
+        assert.equal(await model.otherMember(room, 10, time(11)), null);
+        teacher = (await model.bind(2, 'class-a', booked._id, tab(2), 'teacher-2', 'server-a', time(20))).peer;
+        await pairPulse(25);
+        // Both sockets survive a machine sleep longer than the media lease.
+        await pairPulse(100);
+        await pairPulse(106);
+        teacher = (await model.bind(2, 'class-a', booked._id, tab(2), 'teacher-3', 'different-server', time(107))).peer;
+        await pairPulse(112);
+        await model.finish(2, 'class-a', booked._id, 'ended', quiet, time(200));
+        const ledger = await database.collection('training.class').find({ lessonId: room._id }).sort({ startAt: 1 }).toArray();
+        assert.deepEqual(ledger.map((row) => [(+row.startAt - base) / 1000, (+row.endAt - base) / 1000]),
+            [[0, 10], [20, 25], [100, 106]]);
+        assert.equal(ledger.reduce((sum, row) => sum + row.durationSeconds, 0), 21);
+    });
     it('requires REST consent before binding and atomically allows only one media tab per user', async () => {
         const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
         await assert.rejects(model.bind(10, 'class-a', room._id, tab(10), 'connection-testing', 'server-a'), code('JOIN_REQUIRED'));
@@ -218,6 +282,15 @@ describe('lesson live media authorization', () => {
         const student = connection(10); await connect(student, 10, room._id);
         assert(student.closed.length); assert.equal(student.sent.at(-1).code, 'JOIN_REQUIRED');
         assert(!student.sent.some((item) => item.type === 'ready'));
+    });
+    it('writes native attendance through client pulses even with both cameras and microphones off', async () => {
+        const { room, teacher, student } = await activePair();
+        await teacher.instance.message({ type: 'pulse' });
+        await student.instance.message({ type: 'pulse' });
+        const rows = await database.collection('training.class').find({ lessonId: room._id }).toArray();
+        assert.equal(rows.length, 1);
+        assert.ok(rows[0].durationSeconds > 0);
+        assert.equal(rows[0].uid, 10);
     });
     it('relays only current participant frames, drops stale/oversized routing and never persists media', async () => {
         const { room, teacher, student } = await activePair();

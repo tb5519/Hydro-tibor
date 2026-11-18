@@ -18,15 +18,18 @@ const config = {
     sourceToken: 'server-grant-python-42', contextKey: 'python:problem:42', heartbeatSeconds: 30, idleSeconds: 300,
 };
 const settle = () => new Promise((resolve) => setImmediate(resolve));
-function harness(send) {
+function harness(send, refreshSource) {
     let mono = 0;
     let wall = 1000000;
     let foreground = true;
+    let online = true;
     let serial = 0;
     const calls = [];
     const collector = createTrainingTimeCollector({
         now: () => ({ monotonic: mono, wall }),
         isForeground: () => foreground,
+        isOnline: () => online,
+        refreshSource,
         requestId: () => `request-${++serial}`,
         send: async (url, data, keepalive) => {
             calls.push({ url, data, keepalive });
@@ -36,6 +39,11 @@ function harness(send) {
     return {
         collector, calls,
         foreground(value) { foreground = value; },
+        online(value) {
+            online = value;
+            if (value) collector.tick();
+            else collector.disconnected();
+        },
         jump(ms, wallMs = ms) { mono += ms; wall += wallMs; },
         async advance(ms) {
             for (let elapsed = 0; elapsed < ms; elapsed += 5000) {
@@ -186,17 +194,98 @@ test('next daily question cannot overtake the previous short question release', 
     assert.equal(h.calls.at(-1).data.sourceToken, 'next-grant');
 });
 
-test('failed network requests do not create per-keystroke retry storms or offline backlog', async () => {
-    const h = harness(() => { throw new Error('offline'); });
+test('reader retries a transient start failure after backoff with the very same request ID', async () => {
+    let attempts = 0;
+    const h = harness(() => {
+        if (++attempts === 1) throw new Error('temporarily unavailable');
+        return { accepted: true, sessionId: 'recovered' };
+    });
     h.collector.setContext(config);
     await settle();
     for (let i = 0; i < 20; i++) h.collector.activity();
+    await h.advance(25000);
     assert.equal(h.calls.length, 1);
-    await h.advance(30000);
-    assert.equal(h.calls.length, 1);
-    h.collector.activity();
-    await settle();
+    await h.advance(5000);
     assert.equal(h.calls.length, 2);
+    assert.deepEqual(h.calls[1].data, h.calls[0].data);
+    await h.advance(30000);
+    assert.deepEqual(h.calls.at(-1).data, { sessionId: 'recovered', seq: 1, active: true });
+});
+
+test('a transient pulse failure retries the existing lease while the learner is reading', async () => {
+    const h = harness((url, data) => {
+        if (data.seq === 1) throw new Error('unavailable');
+        return { accepted: true, sessionId: 'same-lease' };
+    });
+    h.collector.setContext(config);
+    await settle();
+    await h.advance(60000);
+    assert.equal(h.calls.length, 3);
+    assert.deepEqual(h.calls.at(-1).data, { sessionId: 'same-lease', seq: 2, active: true });
+});
+
+test('reconnection resets the original lease clock without crediting offline time or taking a new lease', async () => {
+    for (const stolen of [false, true]) {
+        const h = harness((url, data) => ({ accepted: !data.discard || !stolen, sessionId: 'original' }));
+        h.collector.setContext(config);
+        await settle();
+        await h.advance(30000);
+        h.online(false);
+        await h.advance(45000);
+        assert.equal(h.calls.length, 2);
+        h.online(true);
+        await settle();
+        assert.deepEqual(h.calls[2].data, { sessionId: 'original', seq: 2, active: true, discard: true });
+        await h.advance(30000);
+        assert.equal(h.calls.filter(call => call.url === config.startUrl).length, 1);
+        if (!stolen) assert.deepEqual(h.calls.at(-1).data, { sessionId: 'original', seq: 3, active: true });
+        else assert.equal(h.calls.filter(call => call.data.active).length, 2);
+    }
+});
+
+test('reconnecting a tab that went idle or blurred cannot restart its clock by itself', async () => {
+    for (const idle of [false, true]) {
+        const h = harness();
+        h.collector.setContext(config);
+        await settle();
+        h.online(false);
+        if (idle) await h.advance(300000);
+        else { h.foreground(false); h.collector.pause(); }
+        const before = h.calls.length;
+        h.online(true);
+        await h.advance(30000);
+        assert.equal(h.calls.length, before);
+    }
+});
+
+test('expired page grant is renewed only for the same authenticated study context', async () => {
+    for (const fresh of [null, { ...config, contextKey: 'other-problem' }, { ...config, scope: 'different-account' }, { ...config, sourceToken: 'new' }]) {
+        let renewals = 0;
+        const h = harness((url, data) => data.sourceToken === config.sourceToken
+            ? { accepted: false, refreshSource: true } : { accepted: true, sessionId: 'renewed' },
+        () => { renewals++; return fresh; });
+        h.collector.setContext(config);
+        await settle();
+        await h.advance(30000);
+        assert.equal(renewals, 1);
+        if (fresh?.sourceToken === 'new') {
+            assert.equal(h.calls[1].data.sourceToken, 'new');
+            assert.equal(h.calls.at(-1).data.sessionId, 'renewed');
+        } else {
+            assert.equal(h.calls.length, 1);
+        }
+    }
+});
+
+test('a delayed grant renewal after navigation cannot start the old page', async () => {
+    let finish;
+    const h = harness(() => ({ accepted: false, refreshSource: true }), () => new Promise(resolve => { finish = resolve; }));
+    h.collector.setContext(config);
+    await settle();
+    h.collector.setContext(null);
+    finish({ ...config, sourceToken: 'old-page-renewal' });
+    await settle();
+    assert.equal(h.calls.length, 1);
 });
 
 test('expired grants or permissions also back off instead of retrying every keystroke', async () => {
@@ -228,20 +317,23 @@ test('a slow heartbeat followed by blur sends an increasing stop sequence and ig
     assert.equal(h.calls.length, count);
 });
 
-function browser(t, initial = config) {
+function browser(t, initial = config, { page = 'problem_detail', url = 'https://onebyone.test/d/python/p/42', respond } = {}) {
     const dom = new JSDOM('<html data-page="problem_detail"><body><main class="main"><div class="problem-content-container">题目</div></main></body></html>', {
-        url: 'https://onebyone.test/d/python/p/42', runScripts: 'outside-only', pretendToBeVisual: true,
+        url, runScripts: 'outside-only', pretendToBeVisual: true,
     });
     t.after(() => dom.window.close());
     const { window } = dom;
+    window.document.documentElement.dataset.page = page;
     let focused = true;
     let visibility = 'visible';
     Object.defineProperty(window.document, 'hasFocus', { value: () => focused });
     Object.defineProperty(window.document, 'visibilityState', { get: () => visibility });
     const calls = [];
     window.fetch = async (url, options) => {
-        calls.push({ url, options, data: JSON.parse(options.body) });
-        return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ accepted: true, sessionId: 'browser-session' }) };
+        const data = options.body ? JSON.parse(options.body) : null;
+        calls.push({ url, options, data });
+        const body = respond ? respond(url, options, data) : { accepted: true, sessionId: 'browser-session' };
+        return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => body };
     };
     const module = exportsFor(window.Function);
     const binding = module.bindTrainingTime(initial, window);
@@ -300,4 +392,65 @@ test('no authorized config means no homepage/ranking telemetry; daily completion
     h.window.dispatchEvent(new h.window.Event('focus'));
     await settle();
     assert.equal(h.calls.length, count);
+});
+
+test('browser renews an expired problem grant with all original page parameters and no redirect or cache', async (t) => {
+    const h = browser(t, config, {
+        url: 'https://onebyone.test/d/python/p/42?tid=contest123',
+        respond(url, options, data) {
+            if (options.method === 'GET') return { trainingTime: { ...config, sourceToken: 'fresh-page-grant' } };
+            return data?.sourceToken === config.sourceToken ? { accepted: false, refreshSource: true }
+                : { accepted: true, sessionId: 'renewed-session' };
+        },
+    });
+    await settle();
+    assert.equal(h.calls.length, 3);
+    const renewal = h.calls[1];
+    assert.equal(renewal.url, 'https://onebyone.test/d/python/p/42?tid=contest123&__trainingTimeGrant=1');
+    assert.equal(renewal.options.credentials, 'same-origin');
+    assert.equal(renewal.options.redirect, 'error');
+    assert.equal(renewal.options.cache, 'no-store');
+    assert.equal(h.calls[2].data.sourceToken, 'fresh-page-grant');
+});
+
+test('expired daily-quiz grant does not issue an unsolicited GET for a new quiz', async (t) => {
+    const h = browser(t, config, {
+        page: 'daily_quiz', url: 'https://onebyone.test/d/python/daily-quiz',
+        respond: () => ({ accepted: false, refreshSource: true }),
+    });
+    await settle();
+    assert.equal(h.calls.length, 1);
+});
+
+test('a lost reconnect acknowledgment retries the same reset sequence only once on the ledger', async () => {
+    let resetAttempts = 0;
+    const h = harness((url, data) => {
+        if (data.discard && ++resetAttempts === 1) throw new Error('lost acknowledgment');
+        return { accepted: true, sessionId: 'original' };
+    });
+    h.collector.setContext(config);
+    await settle();
+    h.online(false);
+    await h.advance(30000);
+    h.online(true);
+    await settle();
+    await h.advance(60000);
+    assert.deepEqual(h.calls.filter(c => c.data.discard).map(c => c.data.seq), [1, 1]);
+    assert.deepEqual(h.calls.at(-1).data, { sessionId: 'original', seq: 2, active: true });
+});
+
+test('mid-read grant expiry reauthorizes an active owner without another click', async () => {
+    let oldStarts = 0;
+    const h = harness((url, data) => {
+        if (data.sourceToken === config.sourceToken && ++oldStarts === 1) return { accepted: true, sessionId: 'previous' };
+        if (data.sourceToken === 'renewed') return { accepted: true, sessionId: 'next' };
+        if (data.sessionId === 'next' || data.active === false) return { accepted: true };
+        return { accepted: false, refreshSource: true };
+    }, async () => ({ ...config, sourceToken: 'renewed' }));
+    h.collector.setContext(config);
+    await settle();
+    await h.advance(60000);
+    assert.equal(h.calls.at(-1).data.sessionId, 'next');
+    assert.equal(h.calls.at(-1).data.active, true);
+    assert.equal(oldStarts, 2);
 });

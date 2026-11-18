@@ -30,7 +30,7 @@ let mongod; let client; let database; let model; let handlers; let scopeModel; l
 const isScratchDomain = (doc) => doc?.domainType === 'scratch';
 
 before(async () => {
-    mongod = await MongoMemoryServer.create();
+    mongod = await MongoMemoryServer.create({ instance: { args: ['--nounixsocket'] } });
     client = await MongoClient.connect(mongod.getUri());
     database = client.db('class-time');
     const db = { collection: (name) => database.collection(name), ensureIndexes: (coll, ...indexes) => coll.createIndexes(indexes) };
@@ -64,7 +64,7 @@ before(async () => {
         '../lib/learning_time': {},
         '../lib/training_dashboard': load('packages/hydrooj/src/lib/training_dashboard.ts'),
         '../utils': { Time: {} }, './builtin': { PERM, PRIV, STATUS: {} }, './domain': domainModel,
-        './user': userModel, './workspace': workspaceModel, './record': {}, './problem': {}, './training_time': {}, './class_time': model,
+        '../lib/personal_training_growth': {}, './user': userModel, './workspace': workspaceModel, './record': {}, './problem': {}, './training_time': {}, './class_time': model,
     });
     await model.apply({ db });
     handlers = load('packages/hydrooj/src/handler/class_time.ts', {

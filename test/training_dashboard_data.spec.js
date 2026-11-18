@@ -36,7 +36,8 @@ const classrooms = [
 function account(id, domainId = 'python') {
     return { _id: id,
         hasPriv: (p) => p === PRIV.PRIV_USER_PROFILE || (id === 10 && p === PRIV.PRIV_EDIT_SYSTEM),
-        hasPerm: (p) => id === 10 || (id === 11 && domainId === 'python' && p === PERM.PERM_EDIT_DOMAIN),
+        hasPerm: (p) => id === 10 || (p === PERM.PERM_EDIT_DOMAIN && ((id === 11 && domainId === 'python')
+            || (id === 12 && ['python', 'scratch'].includes(domainId)) || (id === 13 && domainId === 'scratch'))),
     };
 }
 function handler(query = {}, id = 10) {
@@ -75,10 +76,11 @@ before(async () => {
     } } };
     personalGrowth = load('packages/hydrooj/src/lib/personal_training_growth.ts', {
         './calendar_week': load('packages/hydrooj/src/lib/calendar_week.ts'),
+        './domain_type': load('packages/hydrooj/src/lib/domain_type.ts'),
         './learning_time': learning, './training_dashboard': helper,
         '../model/workspace': {
             LEGACY_WORKSPACE_ID: 'legacy', resolveDomainWorkspaceId: (domain) => domain.workspaceId,
-            getDomains: async () => classrooms.filter((item) => item.domainType !== 'scratch'),
+            getDomains: async () => classrooms,
         },
     });
     model = load('packages/hydrooj/src/model/training_dashboard.ts', {
@@ -303,6 +305,28 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         assert.equal(result.detail.averageTraining.averageWeekSeconds, 0);
         assert.equal(result.detail.averageTraining.averageWeeks, 3);
     });
+    it('credits the entry classroom and separates shared contest problems with the same local pid', async () => {
+        const start = Date.parse('2026-10-25T10:00:00+08:00');
+        const local = { kind: 'problem', pid: 1 }, shared = { ...local, problemDomainId: 'cpp' };
+        const sharedTime = timer(103, 'python', '2026-10-25', 90);
+        sharedTime.sources = [{ ...local, seconds: 30 }, { ...shared, seconds: 60 }];
+        sharedTime.intervals = [{ ...local, start, end: start + 30000 }, { ...shared, start: start + 30000, end: start + 90000 }];
+        await daily.insertOne(sharedTime);
+        const query = { domains: 'python', student: 103 };
+        const admin = await model.loadTrainingDashboard(handler(query));
+        assert.equal(admin.detail.problems.length, 2);
+        const abroad = admin.detail.problems.find((item) => item.title === 'C++ 题目');
+        assert.equal(abroad.seconds, 60);
+        assert.equal(abroad.domainId, 'python');
+        assert.match(abroad.url, /cpp/);
+        assert.equal(admin.detail.problems.find((item) => item.title === 'Python 题目').seconds, 30);
+        const teacher = await model.loadTrainingDashboard(handler(query, 11));
+        const anonymized = teacher.detail.problems.find((item) => item.title === '跨课堂比赛');
+        assert.equal(anonymized.seconds, 60);
+        assert.equal(anonymized.pid, null);
+        assert.equal(anonymized.url, '');
+        assert(!JSON.stringify(teacher.detail.problems).includes('cpp'));
+    });
     it('hides restricted problem titles and links for limited domain teachers', async () => {
         await problems.updateOne({ domainId: 'python', docId: 1 }, { $set: { hidden: true, title: '未公开竞赛题目' } });
         const restricted = await model.loadTrainingDashboard(handler({ student: '101' }, 11));
@@ -389,6 +413,51 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         assert.equal(result.detail.averageTraining.averageWeekSeconds, 1400);
         assert.equal(restricted.detail.averageTraining.averageWeekSeconds, 1800, 'the lifetime average also excludes unauthorized class masks');
     });
+    it('masks a managed native Scratch lesson without exposing Scratch practice or granting its dashboard', async () => {
+        const start = Date.parse('2026-10-25T10:00:00+08:00');
+        await daily.deleteMany({ uid: 101 });
+        await daily.insertMany([
+            { ...timer(101, 'python', '2026-10-25', 2400),
+                intervals: [{ start, end: start + 2400_000, kind: 'problem', pid: 1 }] },
+            timer(101, 'scratch', '2026-10-25', 3600),
+        ]);
+        await classes.insertOne({ workspaceId: 'school', uid: 101, domainId: 'scratch', source: 'lesson',
+            externalId: 'native-scratch', title: 'Scratch 站内课', startAt: new Date(start), endAt: new Date(start + 900_000) });
+        const personal = await personalGrowth.getPersonalTrainingGrowth(dbContext, { _id: 'python', workspaceId: 'school' }, 101, new Date(fixedNow));
+        assert.equal(personal.thisWeekSeconds, 1500);
+        for (const teacher of [10, 12]) {
+            const result = await model.loadTrainingDashboard(handler({ period: 'today', domains: 'python', student: '101' }, teacher));
+            assert.equal(result.summary.trainingSeconds, 1500);
+            assert.equal(result.summary.overlapSeconds, 900);
+            assert.equal(result.summary.classSeconds, 0);
+            assert.equal(result.detail.averageTraining.averageWeekSeconds, personal.averageWeekSeconds);
+            assert.equal(result.detail.lessons.length, 0);
+            assert(!result.domains.some((item) => item.id === 'scratch'));
+            await assert.rejects(model.loadTrainingDashboard(handler({ domains: 'scratch' }, teacher)), ValidationError);
+        }
+        const restricted = await model.loadTrainingDashboard(handler({ period: 'today', domains: 'python', student: '101' }, 11));
+        assert.equal(restricted.summary.trainingSeconds, 2400);
+        assert.equal(restricted.summary.overlapSeconds, 0);
+        await assert.rejects(model.loadTrainingDashboard(handler({}, 13)), PermissionError);
+    });
+    it('uses the observation time for today, recent, month, source and class totals', async () => {
+        const start = fixedNow - 15 * 60_000;
+        const end = fixedNow + 45 * 60_000;
+        await daily.deleteMany({ uid: 101 });
+        await daily.insertOne({ ...timer(101, 'python', '2026-10-25', 3600),
+            intervals: [{ start, end, kind: 'problem', pid: 1 }] });
+        await classes.insertOne({ workspaceId: 'school', domainId: 'python', uid: 101, externalId: 'ongoing', source: 'lesson',
+            startAt: new Date(fixedNow - 5 * 60_000), endAt: new Date(end) });
+        const result = await model.loadTrainingDashboard(handler({ period: 'today', domains: 'python', student: '101' }));
+        assert.equal(result.detail.timeBreakdown.trainingSeconds, 600);
+        assert.equal(result.detail.timeBreakdown.classSeconds, 300);
+        assert.equal(result.summary.seconds, 900);
+        assert.equal(result.detail.daily[0].seconds, 900);
+        assert.equal(result.detail.problems[0].seconds, 600);
+        assert.equal(result.detail.lessons[0].timeLabel, '5 分钟');
+        assert.equal(result.detail.lessons[0].sourceLabel, '站内课堂');
+        assert.deepEqual(Array.from(result.detail.overview.slice(0, 3), (item) => item.value), Array(3).fill('15 分钟'));
+    });
     it('corrects classroom-bound legacy counters and displays one marked estimate for a historical lesson crossing', async () => {
         await daily.deleteMany({ uid: 101, day: '2026-10-25' });
         await daily.insertMany([
@@ -399,7 +468,8 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         ]);
         await classes.insertOne({ workspaceId: 'school', domainId: 'cpp', uid: 101, externalId: 'evening-lesson', title: '晚间课',
             startAt: new Date('2026-10-25T19:15:00+08:00'), endAt: new Date('2026-10-25T21:15:00+08:00') });
-        const result = await model.loadTrainingDashboard(handler({ period: 'today', student: '101' }));
+        const afterLesson = new Date('2026-10-25T22:00:00+08:00');
+        const result = await model.loadTrainingDashboard(handler({ period: 'today', student: '101' }), afterLesson);
         const time = result.detail.timeBreakdown;
         assert.equal(time.classSeconds, 7200);
         assert.ok(Math.abs(time.trainingSeconds - 181.882) < 0.001);
@@ -415,7 +485,7 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         const cpp = result.detail.problems.find((item) => item.domainId === 'cpp');
         assert.equal(cpp.timeLabel, '0 分钟');
         assert.equal(cpp.classTrainingLabel, '46 分钟');
-        const pythonOnly = await model.loadTrainingDashboard(handler({ period: 'today', domains: 'python', student: '101' }));
+        const pythonOnly = await model.loadTrainingDashboard(handler({ period: 'today', domains: 'python', student: '101' }), afterLesson);
         assert.equal(pythonOnly.detail.timeBreakdown.trainingLabel, '约 6 分钟');
         assert.equal(pythonOnly.detail.timeBreakdown.classSeconds, 0);
         assert.equal(pythonOnly.detail.lessons.length, 0);

@@ -3,6 +3,7 @@ import type { Context } from '../context';
 import type { DomainDoc } from '../interface';
 import workspace from '../model/workspace';
 import { calendarWeek } from './calendar_week';
+import { isScratchDomain } from './domain_type';
 import { mergeLearningTime } from './learning_time';
 import { TRAINING_TIME_ZONE } from './training_dashboard';
 
@@ -23,8 +24,8 @@ export async function getPersonalTrainingGrowth(
 ) {
     const workspaceId = workspace.resolveDomainWorkspaceId(currentDomain);
     const workspaceDomains = await workspace.getDomains(workspaceId);
-    const domainIds = workspaceId === workspace.LEGACY_WORKSPACE_ID
-        ? workspaceDomains.map((domain) => domain._id).sort() : [currentDomain._id];
+    const domainIds = workspaceDomains.filter((domain) => !isScratchDomain(domain)
+        && (workspaceId === workspace.LEGACY_WORKSPACE_ID || domain._id === currentDomain._id)).map((domain) => domain._id);
     return getScopedPersonalTrainingGrowth(ctx, {
         workspaceId, uid, domainIds, authorizedDomainIds: workspaceDomains.map((domain) => domain._id),
     }, now);
@@ -76,7 +77,7 @@ export async function getScopedPersonalTrainingGrowth(
         uid, workspaceId, domainId: { $in: classDomainIds },
         startAt: { $lt: new Date(to) }, endAt: { $gt: new Date(from) },
     }).toArray() : [];
-    const merge = (start: number, end: number) => mergeLearningTime(rows, lessons, start, end, { classDomainIds: domainIds });
+    const merge = (start: number, end: number) => mergeLearningTime(rows, lessons, start, end, { classDomainIds: domainIds, observedAt: to });
     const current = merge(+week.start, to);
     const currentStudent = current.students.find((student) => student._id === uid);
     const lifetime = averageWeeks ? merge(from, to).students.find((student) => student._id === uid) : null;

@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import type { Context } from '../context';
 import { ValidationError } from '../error';
 import {
-    TRAINING_GRANT_MS, trainingDay, TrainingInterval, trainingIntervals, TrainingSource, trainingSourceKey,
+    TRAINING_GRANT_MS, TRAINING_MAX_GAP_MS, trainingDay, TrainingInterval, trainingIntervals, TrainingSource, trainingSourceKey,
 } from '../lib/training_time';
 import { Logger } from '../logger';
 import db from '../service/db';
@@ -13,17 +13,21 @@ interface TrainingGrant {
 }
 interface TrainingBucket {
     domainId: string; day: string; milliseconds: number; startedAt: Date; updatedAt: Date;
-    sources: { key: string, kind: TrainingSource['kind'], pid: number, milliseconds: number }[];
+    sources: (TrainingSource & { key: string, milliseconds: number })[];
     intervals?: TrainingInterval[];
+}
+interface TrainingLease {
+    sessionId: string; domainId: string; source: TrainingSource; lastAt: Date; lastSeq: number; expiresAt: Date;
 }
 interface TrainingState {
     _id: number; version: number; dirty: boolean; buckets: TrainingBucket[]; updatedAt: Date;
-    lease: { sessionId: string, domainId: string, source: TrainingSource, lastAt: Date, lastSeq: number, expiresAt: Date } | null;
+    lease: TrainingLease | null;
+    replaced?: (TrainingLease & { replacedAt: Date })[];
     starts: { requestId: string, grant: string, sessionId: string }[];
 }
 export interface TrainingDaily {
     _id: string; uid: number; domainId: string; day: string; seconds: number; version: number;
-    sources: { key: string, kind: TrainingSource['kind'], pid: number, seconds: number }[];
+    sources: (TrainingSource & { key: string, seconds: number })[];
     startedAt: Date; updatedAt: Date;
     intervals?: TrainingInterval[];
 }
@@ -94,7 +98,10 @@ async function project(state: TrainingState) {
     try { await flushState(state); } catch (error) { logger.warn('Training snapshot will be retried', error); }
 }
 
-async function mutate<T>(uid: number, now: Date, update: (state: TrainingState) => T | null): Promise<T | null> {
+interface SessionReply { accepted: boolean; sessionId?: string; refreshSource?: boolean }
+type Transition = { reply: SessionReply, write: boolean } | null;
+
+async function mutate(uid: number, now: Date, update: (state: TrainingState) => Transition): Promise<SessionReply | null> {
     for (let attempt = 0; attempt < 8; attempt++) {
         const previous = await states.findOne({ _id: uid });
         const state: TrainingState = previous || {
@@ -102,12 +109,16 @@ async function mutate<T>(uid: number, now: Date, update: (state: TrainingState) 
         };
         // A flushed previous day's snapshot is now permanent in daily. Never
         // discard unflushed dates, including after a failed database write.
-        const openDay = state.lease ? trainingDay(Math.min(+state.lease.lastAt, +now)) : trainingDay(now);
+        state.replaced = (state.replaced || []).filter((lease) => +now - +lease.replacedAt <= TRAINING_MAX_GAP_MS);
+        // A displaced tab's final keepalive may arrive after the next page
+        // starts. Keep both sides of a midnight handoff in the outbox until
+        // its previous-day absolute projection can no longer be amended.
+        const openDay = trainingDay(Math.min(+now, +(state.lease?.lastAt || now), ...state.replaced.map((lease) => +lease.lastAt)));
         if (!state.dirty) state.buckets = state.buckets.filter((bucket) => bucket.day >= openDay);
-        const result = update(state);
-        if (result === null) {
+        const transition = update(state);
+        if (!transition?.write) {
             if (state.dirty) await project(state);
-            return null;
+            return transition?.reply || null;
         }
         const previousVersion = state.version;
         state.version++;
@@ -120,7 +131,7 @@ async function mutate<T>(uid: number, now: Date, update: (state: TrainingState) 
             }
         } else if (!(await states.replaceOne({ _id: uid, version: previousVersion }, state)).matchedCount) continue;
         await project(state);
-        return result;
+        return transition.reply;
     }
     // Contention drops this estimate rather than inflating another lease.
     return null;
@@ -129,19 +140,24 @@ async function mutate<T>(uid: number, now: Date, update: (state: TrainingState) 
 export async function startSession(uid: number, domainId: string, token: unknown, requestId: unknown, now = new Date()) {
     if (typeof requestId !== 'string' || !/^[a-zA-Z0-9_-]{16,80}$/.test(requestId)) throw new ValidationError('requestId');
     const grant = await getSourceGrant(uid, domainId, token, now);
-    if (!grant) return { accepted: false };
+    if (!grant) return { accepted: false, refreshSource: true };
     const result = await mutate(uid, now, (state) => {
         const prior = state.starts.find((start) => start.requestId === requestId && start.grant === grant._id);
         if (prior) {
             // Replayed start requests may never reclaim a newer tab/device.
-            return state.lease?.sessionId === prior.sessionId
-                ? { accepted: true, sessionId: prior.sessionId } : { accepted: false };
+            return { reply: state.lease?.sessionId === prior.sessionId
+                ? { accepted: true, sessionId: prior.sessionId } : { accepted: false }, write: false };
         }
         const sessionId = opaque();
+        const handoff = new Date(Math.max(+state.updatedAt, +now));
+        if (state.lease && +state.lease.lastAt < +handoff && +handoff < +state.lease.expiresAt
+            && +handoff - +state.lease.lastAt <= TRAINING_MAX_GAP_MS) {
+            state.replaced = [...state.replaced.slice(-63), { ...state.lease, replacedAt: handoff }];
+        }
         state.lease = { sessionId, domainId, source: grant.source,
-            lastAt: new Date(Math.max(+state.updatedAt, +now)), lastSeq: 0, expiresAt: grant.expiresAt };
+            lastAt: handoff, lastSeq: 0, expiresAt: grant.expiresAt };
         state.starts = [...state.starts.slice(-63), { requestId, grant: grant._id, sessionId }];
-        return { accepted: true, sessionId };
+        return { reply: { accepted: true, sessionId }, write: true };
     });
     return result || { accepted: false };
 }
@@ -150,16 +166,23 @@ export async function heartbeat(
     uid: number, domainId: string, sessionId: unknown, seq: unknown, active: unknown, discard = false, now = new Date(),
 ) {
     if (!isOpaque(sessionId) || !Number.isSafeInteger(seq) || (seq as number) < 1 || (seq as number) > 1_000_000_000
-        || typeof active !== 'boolean' || typeof discard !== 'boolean' || (discard && active)) throw new ValidationError('heartbeat');
+        || typeof active !== 'boolean' || typeof discard !== 'boolean') throw new ValidationError('heartbeat');
     const result = await mutate(uid, now, (state) => {
-        const lease = state.lease;
-        if (!lease || lease.domainId !== domainId || lease.sessionId !== sessionId || +lease.expiresAt <= +now) return null;
-        if ((seq as number) <= lease.lastSeq) return { accepted: true };
-        for (const interval of trainingIntervals(+lease.lastAt, +now, discard)) {
+        const ownsLease = state.lease?.sessionId === sessionId;
+        const replaced = !ownsLease && !active ? state.replaced.find((entry) => entry.sessionId === sessionId) : null;
+        const lease = ownsLease ? state.lease : replaced;
+        if (!lease || lease.domainId !== domainId) return null;
+        if (+lease.expiresAt <= +now) {
+            return ownsLease && active ? { reply: { accepted: false, refreshSource: true }, write: false } : null;
+        }
+        if ((seq as number) <= lease.lastSeq) return { reply: { accepted: true }, write: false };
+        const end = replaced ? Math.min(+now, +replaced.replacedAt) : +now;
+        const stale = +now - +lease.lastAt > TRAINING_MAX_GAP_MS;
+        for (const interval of trainingIntervals(+lease.lastAt, end, discard || stale)) {
             let bucket = state.buckets.find((entry) => entry.domainId === domainId && entry.day === interval.day);
             if (!bucket) {
                 if (state.buckets.length >= 100) continue;
-                bucket = { domainId, day: interval.day, milliseconds: 0, sources: [], startedAt: lease.lastAt,
+                bucket = { domainId, day: interval.day, milliseconds: 0, sources: [], startedAt: new Date(interval.start),
                     updatedAt: new Date(interval.end) };
                 state.buckets.push(bucket);
             }
@@ -175,21 +198,24 @@ export async function heartbeat(
             bucket.milliseconds += interval.milliseconds;
             bucket.intervals ||= [];
             const previous = bucket.intervals[bucket.intervals.length - 1];
-            if (previous?.end === interval.start && previous.kind === lease.source.kind && previous.pid === lease.source.pid) {
+            if (previous?.end === interval.start && trainingSourceKey(previous) === key) {
                 previous.end = interval.end;
             } else if (state.buckets.reduce((count, item) => count + (item.intervals?.length || 0), 0) < 10_000) {
                 // Bound the durable outbox even during prolonged projection
                 // failures. Counters beyond this cap remain explicitly
                 // unaligned, like historical daily-only measurements.
                 bucket.intervals.push({ start: interval.start, end: interval.end, ...lease.source });
+                if (replaced) bucket.intervals.sort((a, b) => a.start - b.start);
             }
-            bucket.updatedAt = new Date(interval.end);
+            bucket.startedAt = new Date(Math.min(+bucket.startedAt, interval.start));
+            bucket.updatedAt = new Date(Math.max(+(bucket.updatedAt || bucket.startedAt), interval.end));
         }
         // A backwards server clock never credits the intervening span.
         lease.lastAt = new Date(Math.max(+lease.lastAt, +now));
         lease.lastSeq = seq as number;
-        if (!active) state.lease = null;
-        return { accepted: true };
+        if (replaced) state.replaced = state.replaced.filter((entry) => entry.sessionId !== sessionId);
+        else if (!active) state.lease = null;
+        return { reply: { accepted: true }, write: true };
     });
     return result || { accepted: false };
 }

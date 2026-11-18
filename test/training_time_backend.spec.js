@@ -31,7 +31,7 @@ let uid;
 const clockLib = load('packages/hydrooj/src/lib/training_time.ts');
 const quietLogger = { Logger: class { warn() {} } };
 before(async () => {
-    mongod = await MongoMemoryServer.create();
+    mongod = await MongoMemoryServer.create({ instance: { args: ['--nounixsocket'] } });
     client = await MongoClient.connect(mongod.getUri());
     database = client.db('training');
     members = database.collection('domain.user');
@@ -148,6 +148,55 @@ describe('incremental training time ledger', () => {
         assert.equal(await total('python'), 30);
         assert.equal(await total('cpp'), 30);
     });
+    it('settles a late page-exit once up to the handoff, without releasing the new tab or rewinding its last activity', async () => {
+        const first = await start();
+        const second = await start('python', 10, { kind: 'problem', pid: 25 });
+        await pulse(second, 1, 15);
+        assert.equal((await pulse(first, 1, 16)).accepted, false);
+        await Promise.all(Array.from({ length: 4 }, () => pulse(first, 2, 19, false)));
+        assert.equal(await total(), 15);
+        const row = await model.daily.findOne({ uid });
+        assert.equal(+row.startedAt, +at(0));
+        assert.equal(+row.updatedAt, +at(15));
+        assert.deepEqual(row.intervals, [{ start: +at(0), end: +at(10), ...source },
+            { start: +at(10), end: +at(15), kind: 'problem', pid: 25 }]);
+        assert.equal((await pulse(second, 2, 40)).accepted, true);
+        assert.equal(await total(), 40);
+    });
+    it('a stale or discarded displaced tab cannot create retroactive credit', async () => {
+        const old = await start();
+        const next = await start('cpp', 30);
+        await pulse(old, 1, 31, false, true);
+        assert.equal(await total(), 0);
+        const latest = await start('python', 50);
+        await pulse(next, 1, 125, false);
+        assert.equal(await total('cpp'), 0);
+        await pulse(latest, 1, 125, false);
+        assert.equal(await total(), 60);
+    });
+    it('preserves the previous day bucket until an out-of-order midnight handoff settles', async () => {
+        const midnight = (Date.parse('2026-10-25T00:00:00+08:00') - startTime) / 1000;
+        const old = await start('python', midnight - 45);
+        await pulse(old, 1, midnight - 15);
+        const next = await start('python', midnight + 5, { kind: 'problem', pid: 25 });
+        await pulse(next, 1, midnight + 15);
+        await pulse(old, 2, midnight + 17, false);
+        await pulse(next, 2, midnight + 25);
+        const rows = await model.daily.find({ uid }).sort({ day: 1 }).toArray();
+        assert.deepEqual(rows.map((row) => row.seconds), [45, 25]);
+        assert.equal(+rows[1].startedAt, +at(midnight));
+    });
+    it('reanchors the current lease after a brief offline interval without crediting offline time or stealing another lease', async () => {
+        const session = await start();
+        await pulse(session, 1, 30);
+        assert.equal((await pulse(session, 2, 70, true, true)).accepted, true);
+        assert.equal(await total(), 30);
+        await pulse(session, 3, 80);
+        assert.equal(await total(), 40);
+        await start('cpp', 85);
+        assert.equal((await pulse(session, 4, 90, true, true)).accepted, false);
+        assert.equal(await total(), 40);
+    });
     it('another domain and duplicate retries never refresh a classroom last active timestamp', async () => {
         const python = await start();
         await pulse(python, 1, 30);
@@ -239,8 +288,19 @@ describe('incremental training time ledger', () => {
     });
     it('expired grants and leases reject new credit', async () => {
         const session = await start();
-        assert.equal((await model.startSession(uid, 'python', session.token, 'expired-request-12345678', at(86401))).accepted, false);
-        assert.equal((await pulse(session, 1, 86401)).accepted, false);
+        const expired = await model.startSession(uid, 'python', session.token, 'expired-request-12345678', at(86401));
+        assert.equal(expired.accepted, false);
+        assert.equal(expired.refreshSource, true);
+        const version = (await model.states.findOne({ _id: uid })).version;
+        const reply = await pulse(session, 1, 86401);
+        assert.equal(reply.accepted, false);
+        assert.equal(reply.refreshSource, true);
+        assert.equal((await pulse(session, 1, 86401, false)).refreshSource, undefined);
+        const otherDomain = await model.heartbeat(uid, 'cpp', session.sessionId, 1, true, false, at(86401));
+        assert.equal(otherDomain.refreshSource, undefined);
+        assert.equal((await model.states.findOne({ _id: uid })).version, version);
+        await start('cpp', 86402);
+        assert.equal((await pulse(session, 1, 86403)).refreshSource, undefined);
         assert.equal(await total(), 0);
     });
     it('rejects client-supplied malformed sequences and activity flags', async () => {
@@ -249,7 +309,7 @@ describe('incremental training time ledger', () => {
             await assert.rejects(() => model.heartbeat(uid, 'python', session.sessionId, seq, true, false, at(30)), ValidationError);
         }
         await assert.rejects(() => model.heartbeat(uid, 'python', session.sessionId, 1, 'true', false, at(30)), ValidationError);
-        await assert.rejects(() => model.heartbeat(uid, 'python', session.sessionId, 1, true, true, at(30)), ValidationError);
+        await assert.rejects(() => model.heartbeat(uid, 'python', session.sessionId, 1, true, 'true', at(30)), ValidationError);
         assert.equal(await total(), 0);
     });
     it('backwards server clock cannot create overlapping training intervals', async () => {
@@ -309,6 +369,46 @@ describe('training time authorization and private reporting boundary', () => {
         const h = handler();
         h.request.headers = { referer: 'https://school.test/d/python/p/17' };
         await h.prepare();
+    });
+    it('students sharing an IP have independent accounting request limits', async () => {
+        const limits = [];
+        const h = handler();
+        const grant = await model.issueSourceGrant(uid, 'python', source);
+        h.limitRate = async (...args) => limits.push(args);
+        h.request.body = { sourceToken: grant, requestId: 'shared-school-network' };
+        await h.prepare();
+        await h.post();
+        const beat = handler(handlers.TrainingTimeHeartbeatHandler);
+        beat.limitRate = h.limitRate;
+        beat.request.body = { sessionId: h.response.body.sessionId, seq: 1, active: true };
+        await beat.prepare();
+        await beat.post();
+        assert.deepEqual(limits, [['training_time_start', 60, 30, '{{user}}'], ['training_time_pulse', 60, 30, '{{user}}']]);
+    });
+    it('refreshes only the currently authorized study page as a private response', async () => {
+        const hooks = {};
+        handlers.apply({ Route() {}, on: (name, fn) => { hooks[name] = fn; } });
+        async function refresh(review = false) {
+            const h = handler();
+            const headers = {};
+            h.response.addHeader = (key, value) => { headers[key] = value; };
+            h.request.method = 'GET';
+            h.request.query = { __trainingTimeGrant: '1', ...(review ? { reviewUid: 42 } : {}) };
+            h.response.template = 'problem_detail.html';
+            h.pdoc = { docId: 17 };
+            await hooks['handler/after'](h);
+            await hooks['handler/finish'](h);
+            assert.equal(headers['Cache-Control'], 'private, no-store');
+            assert.equal(h.response.type, 'application/json');
+            assert.deepEqual(Object.keys(h.response.body), ['trainingTime']);
+            return h.response.body.trainingTime;
+        }
+        const config = await refresh();
+        assert.equal(config.contextKey, 'python:problem:17');
+        assert((await model.getSourceGrant(uid, 'python', config.sourceToken)));
+        assert.equal(await refresh(true), null);
+        await members.deleteOne({ uid, domainId: 'python' });
+        assert.equal(await refresh(), null);
     });
     it('rejects unjoined or blocked accounts immediately', async () => {
         await members.updateOne({ uid }, { $set: { blockedByStudentManagement: true } });
