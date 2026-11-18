@@ -15,7 +15,7 @@ const errors = { PermissionError, CsrfTokenError, ValidationError };
 const load = (name, dependencies = {}) => {
     const module = { exports: {} };
     vm.runInNewContext(transformSync(fs.readFileSync(path.join(root, name), 'utf8'), { loader: 'ts', format: 'cjs' }).code,
-        { module, exports: module.exports, Buffer, URL, Date, process, require: (id) => dependencies[id] ?? require(id) });
+        { module, exports: module.exports, Buffer, URL, URLSearchParams, Date, process, require: (id) => dependencies[id] ?? require(id) });
     return module.exports;
 };
 let mongod; let client; let database; let model; let handlers; let members; let quiz;
@@ -30,19 +30,23 @@ const nowUid = () => ++uidCounter;
 let uid;
 const clockLib = load('packages/hydrooj/src/lib/training_time.ts');
 const quietLogger = { Logger: class { warn() {} } };
+function loadLedger() {
+    const db = { collection: (name) => database.collection(name), ensureIndexes: (coll, ...indexes) => coll.createIndexes(indexes) };
+    return load('packages/hydrooj/src/model/training_time.ts', {
+        '../error': errors, '../lib/training_time': clockLib, '../service/db': db, '../logger': quietLogger,
+    });
+}
 before(async () => {
     mongod = await MongoMemoryServer.create({ instance: { args: ['--nounixsocket'] } });
     client = await MongoClient.connect(mongod.getUri());
     database = client.db('training');
     members = database.collection('domain.user');
     quiz = database.collection('daily.quiz.session');
-    const db = { collection: (name) => database.collection(name), ensureIndexes: (coll, ...indexes) => coll.createIndexes(indexes) };
-    model = load('packages/hydrooj/src/model/training_time.ts', {
-        '../error': errors, '../lib/training_time': clockLib, '../service/db': db, '../logger': quietLogger,
-    });
+    model = loadLedger();
     await model.apply({ interval: (fn) => { interval = fn; } });
     handlers = load('packages/hydrooj/src/handler/training_time.ts', {
         '../error': errors, '../lib/training_time': clockLib, '../model/training_time': model,
+        '../lib/daily_quiz': load('packages/hydrooj/src/lib/daily_quiz.ts', { '../error': errors }),
         '../lib/domain_type': { isScratchDomain: (domain) => domain?.domainType === 'scratch' },
         '../model/domain': { collUser: members, get: async (id) => ({ _id: id, domainType: id === 'scratch' ? 'scratch' : 'oj' }) },
         '../model/user': { getById: async (domainId, id) => student(id) },
@@ -303,6 +307,81 @@ describe('incremental training time ledger', () => {
         assert.equal((await pulse(session, 1, 86403)).refreshSource, undefined);
         assert.equal(await total(), 0);
     });
+    it('settles the recent authorized tail at grant expiry, exactly once', async () => {
+        const session = await start();
+        await pulse(session, 1, 86385);
+        assert.equal((await pulse(session, 2, 86408)).refreshSource, true);
+        assert.equal(await total(), 15);
+        await pulse(session, 2, 86412);
+        await pulse(session, 3, 86415, false);
+        assert.equal(await total(), 15);
+        assert.equal(+(await model.daily.findOne({ uid })).updatedAt, +at(86400));
+    });
+
+    it('settles a displaced tab through grant expiry when the new tab starts just afterwards', async () => {
+        const old = await start();
+        await pulse(old, 1, 86385);
+        const fresh = await start('cpp', 86402);
+        await pulse(old, 2, 86403, false);
+        await pulse(fresh, 1, 86412, false);
+        assert.equal(await total(), 15);
+        assert.equal(await total('cpp'), 10);
+        assert.equal(+(await model.daily.findOne({ uid, domainId: 'python' })).updatedAt, +at(86400));
+    });
+
+    it('signals transient write contention instead of retiring the correct lease', async () => {
+        const session = await start();
+        const replace = model.states.replaceOne.bind(model.states);
+        model.states.replaceOne = async () => ({ matchedCount: 0 });
+        try { await assert.rejects(() => pulse(session, 1, 30)); }
+        finally { model.states.replaceOne = replace; }
+        assert.equal((await pulse(session, 1, 35)).accepted, true);
+        assert.equal(await total(), 35);
+    });
+
+    it('keeps measured seconds when the per-day source breakdown reaches its cap', async () => {
+        const session = await start('python', 3, { kind: 'problem', pid: 3001 });
+        const sources = Array.from({ length: 2000 }, (_, i) => ({ kind: 'problem', pid: i + 1, key: 'problem:' + (i + 1), milliseconds: 1 }));
+        await model.states.updateOne({ _id: uid }, { $set: { buckets: [{
+            domainId: 'python', day: clockLib.trainingDay(at(3)), startedAt: at(0), updatedAt: at(2), milliseconds: 2000, sources,
+        }] } });
+        await pulse(session, 1, 33, false);
+        const row = await model.daily.findOne({ uid, domainId: 'python' });
+        assert.equal(row.seconds, 32);
+        assert.equal(row.intervals[0].pid, 3001);
+        assert.equal(row.intervals[0].end - row.intervals[0].start, 30000);
+    });
+
+    it('evicts and reloads a projected day at the outbox bucket limit without losing earlier totals', async () => {
+        const old = await start('python');
+        await pulse(old, 1, 10, false);
+        const session = await start('next', 10);
+        const day = clockLib.trainingDay(at(0));
+        const idleBuckets = Array.from({ length: 99 }, (_, i) => ({
+            domainId: 'other-' + i, day, startedAt: at(0), updatedAt: at(0), milliseconds: 0, sources: [], intervals: [],
+        }));
+        await model.states.updateOne({ _id: uid }, { $push: { buckets: { $each: idleBuckets } } });
+        await pulse(session, 1, 20, false);
+        const back = await start('python', 20);
+        await pulse(back, 1, 30, false);
+        assert.equal(await total('next'), 10);
+        assert.equal(await total('python'), 20);
+        assert((await model.states.findOne({ _id: uid })).buckets.length <= 100);
+    });
+
+    it('continues counting a recovered daily snapshot with a higher ledger version', async () => {
+        const old = await start();
+        await pulse(old, 1, 10);
+        await pulse(old, 2, 30, false);
+        await model.states.deleteOne({ _id: uid });
+        const fresh = await start('python', 40);
+        await pulse(fresh, 1, 50, false);
+        const row = await model.daily.findOne({ uid, domainId: 'python' });
+        assert.equal(row.seconds, 40);
+        assert.equal(row.sources[0].seconds, 40);
+        assert.deepEqual(row.intervals.map(({ start, end }) => [start, end]), [[+at(0), +at(30)], [+at(40), +at(50)]]);
+    });
+
     it('rejects client-supplied malformed sequences and activity flags', async () => {
         const session = await start();
         for (const seq of [-1, 0, 1.5, '1', Infinity, 1000000001]) {
@@ -343,6 +422,37 @@ describe('incremental training time ledger', () => {
         await model.drainPending();
         assert.equal(await total(), 30);
     });
+    it('does not mark a rejected projection clean until the same or newer version is actually stored', async () => {
+        const session = await start();
+        await pulse(session, 1, 30);
+        const replace = model.daily.replaceOne.bind(model.daily);
+        model.daily.replaceOne = async () => { throw Object.assign(new Error('racing unique key'), { code: 11000 }); };
+        try { await pulse(session, 2, 60); } finally { model.daily.replaceOne = replace; }
+        assert.equal((await model.states.findOne({ _id: uid })).dirty, true);
+        await model.drainPending();
+        assert.equal(await total(), 60);
+    });
+
+    it('a repeatedly failing projection does not starve the next learner in a bounded drain', async () => {
+        const first = await start();
+        const blockedUid = uid;
+        const replace = model.daily.replaceOne.bind(model.daily);
+        model.daily.replaceOne = async () => { throw new Error('write not ready'); };
+        try {
+            await pulse(first, 1, 10, false);
+            uid = nowUid();
+            const second = await start();
+            await pulse(second, 1, 15, false);
+            model.daily.replaceOne = async (filter, row, options) => {
+                if (row.uid === blockedUid) throw new Error('persistent failure for first learner');
+                return replace(filter, row, options);
+            };
+            await model.drainPending(1);
+            await model.drainPending(1);
+            assert.equal(await total(), 15);
+        } finally { model.daily.replaceOne = replace; await model.drainPending(); }
+    });
+
     it('unflushed historical snapshot survives day rollover and process replacement', async () => {
         const session = await start();
         const replace = model.daily.replaceOne.bind(model.daily);
@@ -360,6 +470,83 @@ describe('incremental training time ledger', () => {
         assert.equal(+await model.getTrackingStartedAt(), +first);
         assert.equal(typeof interval, 'function');
     });
+});
+
+describe('reconciles two devices, a Beijing week boundary and projection recovery', () => {
+    const midnight = Date.parse('2026-10-26T00:00:00+08:00');
+    const when = (seconds) => new Date(midnight + seconds * 1000);
+    const request = (device, n) => device.repeat(32) + '_' + String(n).padStart(10, '0');
+    for (const handoff of [-2, 0, 5]) {
+        for (const finalFirst of [false, true]) {
+            for (const failure of ['none', 'before write', 'after write', 'duplicate key']) {
+                it(`handoff ${handoff}s, ${finalFirst ? 'release' : 'new pulse'} arrives first, ${failure}`, async () => {
+                    const python = await model.issueSourceGrant(uid, 'python', { kind: 'problem', pid: 11 }, when(-45));
+                    const cpp = await model.issueSourceGrant(uid, 'cpp', { kind: 'problem', pid: 12 }, when(-45));
+                    const next = await model.issueSourceGrant(uid, 'python', { kind: 'problem', pid: 13 }, when(-45));
+                    const begin = (domain, grant, id, t) => model.startSession(uid, domain, grant, id, when(t));
+                    const a = await begin('python', python, request('a', 2), -44);
+                    const beat = (domain, session, seq, t, active = true, delay = 0) =>
+                        model.heartbeat(uid, domain, session.sessionId, seq, active, false, when(t), delay * 1000);
+                    await beat('python', a, 1, -27);
+                    const older = await model.states.findOne({ _id: uid });
+                    older.dirty = true;
+                    const replace = model.daily.replaceOne.bind(model.daily);
+                    model.daily.replaceOne = async (...args) => {
+                        if (failure === 'before write') throw new Error('write unavailable');
+                        if (failure === 'duplicate key') throw Object.assign(new Error('competing insert'), { code: 11000 });
+                        const written = await replace(...args);
+                        if (failure === 'after write') throw new Error('acknowledgement lost');
+                        return written;
+                    };
+                    try {
+                        const b = await begin('cpp', cpp, request('b', 1), handoff);
+                        assert.equal(b.accepted, true);
+                        const release = (t) => beat('python', a, 2, t, false, t - (handoff - 2));
+                        if (finalFirst) await release(handoff + 5);
+                        await beat('cpp', b, 1, handoff + 10);
+                        if (!finalFirst) await release(handoff + 11);
+                        await release(handoff + 12);
+                        assert.equal((await begin('python', python, request('a', 1), handoff + 13)).accepted, false);
+                        assert.equal((await begin('python', python, request('a', 2), handoff + 14)).accepted, false);
+                        await beat('cpp', b, 1, handoff + 16);
+                        await beat('cpp', b, 2, handoff + 29, false);
+                        await model.closePendingStart(uid, 'cpp', cpp, request('b', 3), false, when(handoff + 30));
+                        assert.equal((await begin('cpp', cpp, request('b', 3), handoff + 31)).accepted, false);
+                        const c = await begin('python', next, request('a', 3), handoff + 35);
+                        assert.equal(c.accepted, true);
+                        await beat('python', c, 1, handoff + 45);
+                        await beat('python', c, 2, handoff + 50, false);
+                        if (failure !== 'none') assert.equal((await model.states.findOne({ _id: uid })).dirty, true);
+                    } finally { model.daily.replaceOne = replace; }
+
+                    const restarted = loadLedger();
+                    await restarted.flushState(older);
+                    await restarted.drainPending();
+                    await restarted.drainPending();
+                    await restarted.flushState(older);
+                    assert.equal((await restarted.states.findOne({ _id: uid })).dirty, false);
+                    const rows = await restarted.daily.find({ uid }).sort({ day: 1, domainId: 1 }).toArray();
+                    // Independent oracle: seconds of known foreground activity,
+                    // intersected directly with Sunday/Monday using the fixed boundary.
+                    const expected = [];
+                    const spans = [['python', 11, -44, handoff - 2], ['cpp', 12, handoff, handoff + 29],
+                        ['python', 13, handoff + 35, handoff + 50]];
+                    for (const [day, from, to] of [['2026-10-25', -86400, 0], ['2026-10-26', 0, 86400]]) {
+                        for (const domain of ['cpp', 'python']) {
+                            const intervals = spans.filter(([owner]) => owner === domain).map(([, pid, start, end]) =>
+                                [pid, Math.max(start, from), Math.min(end, to)]).filter(([, start, end]) => end > start);
+                            if (intervals.length) expected.push([day, domain, intervals.reduce((n, [, start, end]) => n + end - start, 0),
+                                intervals, intervals.map(([pid, start, end]) => [pid, end - start])]);
+                        }
+                    }
+                    const relative = (ms) => (ms - midnight) / 1000;
+                    assert.deepEqual(rows.map((row) => [row.day, row.domainId, row.seconds,
+                        row.intervals.map((span) => [span.pid, relative(span.start), relative(span.end)]),
+                        row.sources.map((item) => [item.pid, item.seconds]).sort(([a], [b]) => a - b)]), expected);
+                });
+            }
+        }
+    }
 });
 
 describe('training time authorization and private reporting boundary', () => {
@@ -545,5 +732,125 @@ describe('training time authorization and private reporting boundary', () => {
         await pulse(session, 1, 30);
         const row = await model.daily.findOne({ uid });
         assert.equal(row.sources[0].key, 'ide:0');
+    });
+});
+
+describe('server-timed closure before start acknowledgement and delayed terminal retry', () => {
+    it('credits a short foreground study before its START acknowledgement and never extends through a retry', async () => {
+        const first = await start();
+        const stop = (seconds, delayed = 0) => model.closePendingStart(uid, first.domainId, first.token, first.requestId, false, at(seconds), delayed);
+        assert.equal((await stop(8, 3000)).accepted, true);
+        assert.equal(await total(), 5);
+        await stop(12, 7000);
+        assert.equal(await total(), 5);
+    });
+
+    it('honours a terminal request that overtakes START without taking the other tab or minting time', async () => {
+        const token = await model.issueSourceGrant(uid, 'python', source, at(0));
+        const requestId = 'pending-request-id-12345';
+        const other = await start('cpp', 1);
+        await model.closePendingStart(uid, 'python', token, requestId, false, at(2));
+        assert.equal((await model.startSession(uid, 'python', token, requestId, at(4))).accepted, false);
+        assert.equal((await pulse(other, 1, 10)).accepted, true);
+        assert.equal(await total('cpp'), 9);
+        assert.equal(await total(), 0);
+    });
+
+    it('an older START arriving between a newer question and its own STOP cannot displace the learner', async () => {
+        const shared = '1'.repeat(32);
+        const firstId = shared + '_0000000001';
+        const secondId = shared + '_0000000002';
+        const oldToken = await model.issueSourceGrant(uid, 'python', source, at(0));
+        const nextToken = await model.issueSourceGrant(uid, 'cpp', source, at(0));
+        const next = await model.startSession(uid, 'cpp', nextToken, secondId, at(5));
+        assert.equal(next.accepted, true);
+        assert.equal((await model.startSession(uid, 'python', oldToken, firstId, at(6))).accepted, false);
+        await model.closePendingStart(uid, 'python', oldToken, firstId, false, at(7));
+        await model.heartbeat(uid, 'cpp', next.sessionId, 1, true, false, at(15));
+        assert.equal(await total(), 0);
+        assert.equal(await total('cpp'), 10);
+        const other = await model.startSession(uid, 'python', oldToken, '2'.repeat(32) + '_0000000001', at(16));
+        assert.equal(other.accepted, true, 'an independent tab can still take over');
+    });
+
+    it('all six delivery orders and replays of old START, old STOP and new START keep the new page crediting exactly once', async () => {
+        for (const order of ['acb', 'abc', 'cab', 'cba', 'bac', 'bca']) {
+            uid = nowUid();
+            const prefix = '1'.repeat(32);
+            const oldId = prefix + '_0000000001';
+            const nextId = prefix + '_0000000002';
+            const first = await model.issueSourceGrant(uid, 'python', source, at(0));
+            const next = await model.issueSourceGrant(uid, 'cpp', source, at(0));
+            const requests = {
+                a: time => model.startSession(uid, 'python', first, oldId, at(time)),
+                c: time => model.closePendingStart(uid, 'python', first, oldId, false, at(time)),
+                b: time => model.startSession(uid, 'cpp', next, nextId, at(time)),
+            };
+            for (const [index, packet] of [...order].entries()) await requests[packet](5 + index);
+            const newOwner = await requests.b(8);
+            assert.equal(newOwner.accepted, true, order);
+            for (const packet of order) await requests[packet](9);
+            await model.heartbeat(uid, 'cpp', newOwner.sessionId, 1, true, false, at(20));
+            assert.equal(await total('cpp'), 15 - order.indexOf('b'), order);
+            assert.equal(await total(), order[0] === 'a' ? 1 : 0, order);
+        }
+    });
+
+    it('a newer terminal tombstone prevents even an older different-grant START in the same stream', async () => {
+        const idPrefix = 'e'.repeat(32);
+        const first = await model.issueSourceGrant(uid, 'python', source, at(0));
+        const next = await model.issueSourceGrant(uid, 'cpp', source, at(0));
+        await model.closePendingStart(uid, 'cpp', next, idPrefix + '_0000000002', false, at(2));
+        const previous = await model.startSession(uid, 'python', first, idPrefix + '_0000000001', at(3));
+        assert.equal(previous.accepted, false);
+        assert.equal((await model.states.findOne({ _id: uid })).lease, null);
+        assert.equal(await total(), 0);
+    });
+
+    it('settles a previous page only to its exit and protects the new owner for either delivery order', async () => {
+        const old = await start();
+        const next = await start('cpp', 10);
+        assert.equal((await model.closePendingStart(uid, old.domainId, old.token, old.requestId, false, at(14), 5000)).accepted, true);
+        assert.equal(await total(), 9);
+        await pulse(next, 1, 20);
+        assert.equal(await total('cpp'), 10);
+    });
+
+    it('a delayed terminal packet can only shorten a server-observed window, never erase credited activity', async () => {
+        const old = await start();
+        await pulse(old, 1, 30);
+        await model.heartbeat(uid, old.domainId, old.sessionId, 2, false, false, at(35), 7000);
+        assert.equal(await total(), 30);
+        for (const delay of [-1, '5', 1.5, 100000]) {
+            await assert.rejects(model.heartbeat(uid, old.domainId, old.sessionId, 2, false, false, at(35), delay));
+        }
+        await assert.rejects(model.heartbeat(uid, old.domainId, old.sessionId, 3, true, false, at(35), 2));
+    });
+
+    for (const displaced of [false, true]) {
+        for (const receiptMs of [90000, 90001]) {
+            it(`bounds a delayed STOP for the ${displaced ? 'displaced' : 'current'} device at ${receiptMs}ms of server silence`, async () => {
+                const old = await start();
+                const next = displaced ? await start('cpp', 45) : null;
+                if (next) await pulse(next, 1, 70);
+                const receipt = new Date(+at(0) + receiptMs);
+                await model.heartbeat(uid, 'python', old.sessionId, 1, false, false, receipt, receiptMs - 40_000);
+                assert.equal(await total(), receiptMs === 90000 ? 40 : 0);
+                if (next) {
+                    await pulse(next, 2, 95, false);
+                    assert.equal(await total('cpp'), 50);
+                }
+            });
+        }
+    }
+
+    it('a request ID plus token cannot close another learner or classroom or open a lease with a guessed token', async () => {
+        const current = await start();
+        for (const [claimedUid, claimedDomain] of [[uid + 200, current.domainId], [uid, 'foreign']]) {
+            assert.equal((await model.closePendingStart(claimedUid, claimedDomain, current.token, current.requestId, false, at(5))).accepted, false);
+        }
+        assert.equal((await model.closePendingStart(uid, current.domainId, 'f'.repeat(48), current.requestId, false, at(5))).accepted, false);
+        await pulse(current, 1, 13);
+        assert.equal(await total(), 13);
     });
 });

@@ -86,7 +86,8 @@ beforeEach(async () => {
     logins = new Map([2, 3, 10, 11].map((uid) => [`login-${uid}`, { uid, scope: '3', expireAt: new Date(Date.now() + 60000) }]));
     if (!database) return;
     await Promise.all([model.rooms.deleteMany({}), model.members.deleteMany({}), model.bookingSlots.deleteMany({}), model.resumptions.deleteMany({}),
-        database.collection('domain.user').deleteMany({}), database.collection('training.class').deleteMany({})]);
+        database.collection('domain.user').deleteMany({}), database.collection('training.class').deleteMany({}),
+        database.collection('lesson.attendance.pending').deleteMany({})]);
     await database.collection('domain.user').insertMany([10, 11].map((uid) => ({ domainId: 'class-a', uid, role: 'default', join: true })));
 });
 after(async () => { await client?.close(); await server?.stop(); });
@@ -227,6 +228,56 @@ describe('lesson bookings and consent with real MongoDB', () => {
         const combined = mergeLearningTime(practice, [result, external], base, time(70)).students[0];
         assert.deepEqual([combined.trainingSeconds, combined.classSeconds, combined.seconds], [25, 35, 60]);
     });
+    for (const transition of ['end', 'leave', 'resume', 'rebind', 'silence']) {
+        it(`preserves confirmed signals across midnight before ${transition}`, async () => {
+            const midnight = Date.UTC(new Date().getUTCFullYear() + 1, 0, 7, 16);
+            const at = (seconds) => midnight + seconds * 1000;
+            const booked = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet, at(-10));
+            await model.join(10, 'class-a', booked._id, tab(10), quiet, at(-10));
+            const { peer: student } = await model.bind(10, 'class-a', booked._id, tab(10), 's', 'old-process', at(-10));
+            const { peer: teacher } = await model.bind(2, 'class-a', booked._id, tab(2), 't', 'old-process', at(-10));
+            await model.pulse(student, 'class-a', at(8));
+            await model.pulse(teacher, 'class-a', at(12));
+            if (transition === 'end') await model.finish(2, 'class-a', booked._id, 'ended', quiet, at(30));
+            if (transition === 'leave') await model.leave(10, 'class-a', booked._id, tab(10), quiet, at(30));
+            if (transition === 'resume') await model.resume(2, tab(3), quiet, at(100));
+            if (transition === 'rebind') await model.bind(2, 'class-a', booked._id, tab(2), 't2', 'new-process', at(30));
+            if (transition === 'silence') await model.pulse(teacher, 'class-a', at(61));
+            const row = await database.collection('training.class').findOne({ lessonId: booked._id });
+            assert.ok(row, 'the already observed pair interval survived the transition');
+            assert.deepEqual([+row.startAt, +row.endAt, row.durationSeconds], [at(-10), at(8), 18]);
+            const clock = load('packages/hydrooj/src/lib/training_time.ts');
+            const { mergeLearningTime } = load('packages/hydrooj/src/lib/learning_time.ts', { './training_time': clock });
+            const imported = { ...row, externalId: 'independent', startAt: new Date(at(-4)), endAt: new Date(at(4)) };
+            for (const [start, end, seconds] of [[-10, 0, 10], [0, 15, 8]]) {
+                assert.equal(mergeLearningTime([], [row, imported], at(start), at(end)).students[0].classSeconds, seconds);
+            }
+        });
+    }
+    it('recovers the final interval after a ledger failure even after both leases are deleted', async () => {
+        const base = Date.now();
+        const { _id } = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet, base);
+        await model.join(10, 'class-a', _id, tab(10), quiet, base);
+        const { peer: student } = await model.bind(10, 'class-a', _id, tab(10), 's', 'process', base);
+        const { peer: teacher } = await model.bind(2, 'class-a', _id, tab(2), 't', 'process', base);
+        await model.pulse(student, 'class-a', base + 5500);
+        await model.pulse(teacher, 'class-a', base + 6000);
+        const ledger = database.collection('training.class');
+        await ledger.createIndex({ lessonId: 1 });
+        await database.command({ collMod: 'training.class', validator: { temporarilyUnavailable: true } });
+        try {
+            await model.finish(2, 'class-a', _id, 'ended', quiet);
+            assert.equal(await model.members.countDocuments({ lessonId: _id }), 0);
+            assert.equal(await ledger.countDocuments({ lessonId: _id }), 0);
+            assert.equal(await database.collection('lesson.attendance.pending').countDocuments({ lessonId: _id }), 1);
+        } finally {
+            await database.command({ collMod: 'training.class', validator: {} });
+        }
+        await Promise.all([model.retryAttendance(), model.retryAttendance()]);
+        assert.equal(await database.collection('lesson.attendance.pending').countDocuments(), 0);
+        const rows = await ledger.find({ lessonId: _id }).toArray();
+        assert.deepEqual(rows.map((row) => [+row.startAt, +row.endAt, row.durationSeconds]), [[base, base + 5500, 5.5]]);
+    });
     it('does not bridge disconnect, silent sleep, or a different classroom media server', async () => {
         const booked = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
         const base = Date.now();
@@ -254,6 +305,112 @@ describe('lesson bookings and consent with real MongoDB', () => {
             [[0, 10], [20, 25], [100, 106]]);
         assert.equal(ledger.reduce((sum, row) => sum + row.durationSeconds, 0), 21);
     });
+    for (const first of [2, 10]) {
+        for (const outage of [false, true]) {
+            it(`reconciles a multi-connection classroom against per-second evidence, first uid ${first}, outage ${outage}`, async (test) => {
+                const base = Date.UTC(new Date().getUTCFullYear() + 1, 0, 7, 16) - 12_000;
+                const at = (tick) => base + tick * 1000;
+                const second = first === 2 ? 10 : 2;
+                const booked = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet, base);
+                await model.join(10, 'class-a', booked._id, tab(10), quiet, base);
+                const ledger = database.collection('training.class');
+                await ledger.createIndex({ lessonId: 1 });
+                const bindings = new Map();
+                // The independent oracle colors each confirmed second by media server and
+                // participant. A bind/leave/recovery never proves the unobserved gap.
+                const evidence = new Map([[2, new Set()], [10, new Set()]]);
+                let seed = first * 7919 + Number(outage);
+                const choose = (max) => {
+                    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+                    return Math.floor(seed / 2 ** 32 * max);
+                };
+                let endTick = 85;
+                const bind = async (uid, tick, worker) => {
+                    const joined = await model.bind(uid, 'class-a', booked._id, tab(uid), `conn-${uid}-${tick}`, worker, at(tick));
+                    bindings.set(uid, { ...joined, worker, last: tick });
+                };
+                const pulse = async (uid, tick) => {
+                    const binding = bindings.get(uid);
+                    if (tick - binding.last <= 45) {
+                        for (let t = binding.last; t < tick; t++) evidence.get(uid).add(`${binding.worker}:${t}`);
+                    }
+                    binding.last = tick;
+                    const room = await model.pulse(binding.peer, 'class-a', at(tick));
+                    const other = await model.otherMember(room, uid, at(tick));
+                    if (other) {
+                        const pair = uid === 2 ? [other, binding.peer] : [binding.peer, other];
+                        await Promise.all([model.recordAttendance(room, ...pair, 0), model.recordAttendance(room, ...pair, 0)]);
+                    }
+                };
+                const recover = async (uid, tick, worker) => {
+                    await model.resume(uid, tab(uid), quiet, at(tick));
+                    await bind(uid, tick, worker);
+                };
+                const leave = async (uid, tick) => {
+                    await model.leave(uid, 'class-a', booked._id, tab(uid), quiet, at(tick));
+                    bindings.delete(uid);
+                };
+                await bind(first, 0, 'a'); await bind(second, 0, 'a');
+                if (outage) await database.command({ collMod: 'training.class', validator: { temporarilyUnavailable: true } });
+                try {
+                    await pulse(first, 2); await pulse(second, 4); await pulse(second, 6);
+                    await recover(second, 7, 'b');
+                    assert.equal(Object.keys((await model.members.findOne({ _id: first })).retiredPeers).length, 1);
+                    await pulse(first, 9);
+                    assert.deepEqual(Object.keys((await model.members.findOne({ _id: first })).retiredPeers || {}), []);
+                    await pulse(second, 10); await pulse(first, 13);
+                    await recover(first, 14, 'b'); await pulse(first, 16); await pulse(second, 19);
+                    const retiring = bindings.get(first);
+                    await model.disconnect(retiring.peer, retiring.room); bindings.delete(first);
+                    await pulse(second, 22); await recover(first, 23, 'b');
+                    await Promise.all([pulse(first, 28), pulse(second, 28)]);
+                    await pulse(first, 74); await pulse(second, 75);
+                    await pulse(second, 77); await pulse(first, 80);
+                    await leave(first, 81); await pulse(second, 84);
+                    // Fixed seeds explore further interleavings. Timers carry a prior
+                    // timestamp, and gaps on either side of the 45-second cutoff recur.
+                    for (let step = 0; step < 48; step++) {
+                        endTick += [1, 2, 3, 5, 45, 46][choose(6)];
+                        const uid = choose(2) ? first : second;
+                        const worker = choose(2) ? 'a' : 'b';
+                        if (!bindings.has(uid)) {
+                            await model.join(uid, 'class-a', booked._id, tab(uid), quiet, at(endTick));
+                            await bind(uid, endTick, worker);
+                            continue;
+                        }
+                        const binding = bindings.get(uid);
+                        const action = choose(10);
+                        if (action === 0) await leave(uid, endTick);
+                        else if (action <= 2) await recover(uid, endTick, worker);
+                        else if (action === 3) await model.pulse(binding.peer, 'class-a', at(endTick), at(binding.last));
+                        else if (action === 4 && bindings.size === 2) await Promise.all([pulse(first, endTick), pulse(second, endTick)]);
+                        else await pulse(uid, endTick);
+                    }
+                    await model.finish(2, 'class-a', booked._id, 'ended', quiet, at(++endTick));
+                    await model.finish(2, 'class-a', booked._id, 'ended', quiet, at(++endTick));
+                } finally {
+                    if (outage) await database.command({ collMod: 'training.class', validator: {} });
+                }
+                await Promise.all([model.retryAttendance(), model.retryAttendance()]);
+                const rows = await ledger.find({ lessonId: booked._id }).toArray();
+                const seconds = Array.from({ length: endTick }, (_, t) => t);
+                const expected = seconds.map((t) => Number(['a', 'b'].some((worker) => {
+                    const key = `${worker}:${t}`;
+                    return evidence.get(2).has(key) && evidence.get(10).has(key);
+                })));
+                test.diagnostic(`Compared ${endTick} seconds, ${expected.reduce((sum, value) => sum + value, 0)} confirmed joint seconds`);
+                const actual = seconds.map((t) => rows.filter((row) => +row.startAt <= at(t) && at(t) < +row.endAt).length);
+                assert.deepEqual(seconds.filter((t) => actual[t] !== expected[t]), [], 'mismatched seconds');
+                const clock = load('packages/hydrooj/src/lib/training_time.ts');
+                const { mergeLearningTime } = load('packages/hydrooj/src/lib/learning_time.ts', { './training_time': clock });
+                const imported = { ...rows[0], externalId: 'separate-class', startAt: new Date(at(9)), endAt: new Date(at(17)) };
+                for (const [begin, end] of [[0, 12], [12, endTick], [0, endTick]]) {
+                    const total = seconds.filter((t) => t >= begin && t < end && (expected[t] || (t >= 9 && t < 17))).length;
+                    assert.equal(mergeLearningTime([], [...rows, imported], at(begin), at(end)).students[0].classSeconds, total);
+                }
+            });
+        }
+    }
     it('requires REST consent before binding and atomically allows only one media tab per user', async () => {
         const room = await model.create(2, 'class-a', { studentUid: 10, tabId: tab(2) }, quiet);
         await assert.rejects(model.bind(10, 'class-a', room._id, tab(10), 'connection-testing', 'server-a'), code('JOIN_REQUIRED'));
@@ -291,6 +448,32 @@ describe('lesson live media authorization', () => {
         assert.equal(rows.length, 1);
         assert.ok(rows[0].durationSeconds > 0);
         assert.equal(rows[0].uid, 10);
+    });
+    it('checkpoints attendance when the teacher sends the final heartbeat', async () => {
+        const { room, teacher, student } = await activePair();
+        await student.instance.message({ type: 'pulse' });
+        const confirmedThrough = +student.instance.peer.lastSignalAt;
+        await settle();
+        await teacher.instance.message({ type: 'pulse' });
+        const row = await database.collection('training.class').findOne({ lessonId: room._id });
+        assert.equal(+row.endAt, confirmedThrough);
+    });
+    it('flushes the last received frames when both sockets close between heartbeat checks', async () => {
+        const { room, teacher, student } = await activePair();
+        await teacher.instance.message({ type: 'video', lessonId: room._id, seq: 0, data: jpeg() });
+        const confirmedThrough = teacher.instance.lastActivity;
+        await settle();
+        await student.instance.message({ type: 'video', lessonId: room._id, seq: 0, data: jpeg() });
+        await Promise.all([teacher.instance.cleanup(), student.instance.cleanup()]);
+        const row = await database.collection('training.class').findOne({ lessonId: room._id });
+        assert.equal(+row.endAt, confirmedThrough);
+    });
+    it('ignores media from a different classroom when computing the last activity', async () => {
+        const { teacher, student } = await activePair();
+        const previous = teacher.instance.lastActivity;
+        await teacher.instance.message({ type: 'video', lessonId: 'different-classroom', seq: 0, data: jpeg() });
+        assert.equal(teacher.instance.lastActivity, previous);
+        await Promise.all([teacher.instance.cleanup(), student.instance.cleanup()]);
     });
     it('relays only current participant frames, drops stale/oversized routing and never persists media', async () => {
         const { room, teacher, student } = await activePair();

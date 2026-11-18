@@ -12,7 +12,8 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hydro-daily-quiz-'));
 os.homedir = () => home;
 fs.mkdirSync(path.join(home, '.hydro'));
 fs.writeFileSync(path.join(home, '.hydro/addon.json'), JSON.stringify([path.resolve(__dirname, '../packages/ui-default')]));
-process.argv.push('--port', process.env.DAILY_QUIZ_PORT || '18895', '--host', '127.0.0.1');
+// All simulated accounts share one loopback address and the integration suite runs at machine speed.
+process.argv.push('--port', process.env.DAILY_QUIZ_PORT || '18895', '--host', '127.0.0.1', '--ignored-limit', 'global');
 const timer = setTimeout(() => process.exit(2), 120000);
 const results = [];
 async function check(name, fn) {
@@ -79,6 +80,7 @@ async function run() {
         status(await agent.get(sudo.headers.location).set('Accept', 'text/html'), 302);
     };
     let state;
+    let firstTrainingGrantUrl;
     await check('Disabled by default; configuration strictly validates domains, limits and rewards', async () => {
         assert.equal((await quiz.getPolicy(uid)).enabled, false);
         assert.throws(() => lib.parsePolicy({ ...policy, domains: [{ ...policy.domains[0], domainId: 'foreign' }] }, dids));
@@ -124,6 +126,24 @@ async function run() {
         for (const res of responses) status(res, 200);
         state = responses[0].body.state;
         assert.equal(responses[0].body.trainingTime.contextKey, `${dids[0]}:daily:${ids[0]}`);
+        firstTrainingGrantUrl = responses[0].body.trainingTime.refreshUrl;
+        const beforeRenewal = await quizSnapshot(uid);
+        const getGrant = (agent, url) => agent.get(url).set('Accept', 'application/json');
+        const renewed = await getGrant(student, firstTrainingGrantUrl);
+        status(renewed, 200);
+        assert.equal(renewed.body.trainingTime.contextKey, responses[0].body.trainingTime.contextKey);
+        assert.notEqual(renewed.body.trainingTime.sourceToken, responses[0].body.trainingTime.sourceToken);
+        assert.equal((await getGrant(teacherPreview, firstTrainingGrantUrl)).body.trainingTime, null);
+        assert.equal((await getGrant(other, firstTrainingGrantUrl)).body.trainingTime, null);
+        assert.equal((await getGrant(student, firstTrainingGrantUrl.replace('questionId=1', 'questionId=2'))).body.trainingTime, null);
+        const staleId = `${uid}-${lib.beijingDay(new Date(Date.now() - 86400000))}`;
+        assert.equal((await getGrant(student, firstTrainingGrantUrl.replace(state.sessionId, staleId))).body.trainingTime, null);
+        assert.deepEqual(await quizSnapshot(uid), beforeRenewal);
+        const gated = await student.get(`/d/${dids[0]}/p/${ids[0]}?__trainingTimeGrant=1`)
+            .set('X-Requested-With', 'XMLHttpRequest').set('Accept', 'application/json');
+        status(gated, 403);
+        assert.equal(gated.body.error.code, 'daily_quiz_required');
+        assert.equal(gated.body.trainingTime, undefined);
         assert.equal(state.total, 2);
         assert.equal(state.current.id, 1);
         assert.equal(state.required, true);
@@ -132,6 +152,29 @@ async function run() {
         assert.equal(state.current.feedback, undefined);
         assert.equal(await quiz.sessionColl.countDocuments({ uid }), 1);
         assert(responses.every((res) => res.body.state.sessionId === state.sessionId));
+    });
+    await check('Daily source lookup retries read-only and stops when quiz access is revoked', async () => {
+        const original = quiz.sessionColl.findOne.bind(quiz.sessionColl);
+        quiz.sessionColl.findOne = (...args) => {
+            if (args[1]?.projection?.items?.$elemMatch) throw new Error('simulated snapshot lookup failure');
+            return original(...args);
+        };
+        try {
+            const pending = await get();
+            status(pending, 200);
+            assert.equal(pending.body.trainingTime.pendingSource, true);
+            assert.equal(pending.body.trainingTime.sourceToken, '');
+            assert.equal(pending.body.trainingTime.refreshUrl, firstTrainingGrantUrl);
+        } finally { quiz.sessionColl.findOne = original; }
+        const renewed = await student.get(firstTrainingGrantUrl).set('Accept', 'application/json');
+        status(renewed, 200);
+        assert(renewed.body.trainingTime.sourceToken);
+        await quiz.savePolicy(uid, { ...policy, enabled: false }, admin);
+        try {
+            const revoked = await student.get(firstTrainingGrantUrl).set('Accept', 'application/json');
+            status(revoked, 200);
+            assert.equal(revoked.body.trainingTime, null);
+        } finally { await quiz.savePolicy(uid, policy, admin); }
     });
     await check('Teacher preview cannot answer, advance or read an existing learner quiz while the real learner still sees it', async () => {
         const before = await quizSnapshot(uid);
@@ -307,6 +350,10 @@ async function run() {
         assert.equal(state.completed, true);
         assert.equal(state.required, false);
         assert.equal(res.body.trainingTime.contextKey, `${dids[1]}:daily:${ids[1]}`);
+        const renewal = await student.get(res.body.trainingTime.refreshUrl).set('Accept', 'application/json');
+        status(renewal, 200);
+        assert.equal(renewal.body.trainingTime.contextKey, res.body.trainingTime.contextKey);
+        assert.equal((await student.get(firstTrainingGrantUrl).set('Accept', 'application/json')).body.trainingTime, null);
         assert.equal(state.current.feedback.correct, false);
         assert.deepEqual(state.current.feedback.answers, ['A', 'C']);
         status(await student.get(`/d/${dids[0]}/p`).set('Accept', 'application/json'), 200);
@@ -317,6 +364,39 @@ async function run() {
         assert.equal(summary.recentMistakes.length, 1);
         status(await student.get(`/d/${dids[0]}/p/${ids[0]}`).set('Accept', 'application/json'), 403);
         assert.equal((await quiz.getAdminDay(uid)).items.length, 2);
+    });
+    await check('A transient issue on an authorized exercise or its solution can recover without refreshing the browser', async () => {
+        const training = require('../packages/hydrooj/src/model/training_time');
+        const solutions = require('../packages/hydrooj/src/model/solution').default;
+        const did = dids[0];
+        const pid = await problems.add(did, 'TTCLOCK', 'Clock exercise', 'Read the problem', admin, []);
+        const url = `/d/${did}/p/${pid}`;
+        const getGrant = (path) => student.get(path).query({ __trainingTimeGrant: '1' })
+            .set('Accept', 'application/json').set('X-Requested-With', 'XMLHttpRequest');
+        const insert = training.grants.insertOne.bind(training.grants);
+        training.grants.insertOne = async () => { throw new Error('simulated temporary grant outage'); };
+        try {
+            const page = await student.get(url).set('Accept', 'text/html');
+            status(page, 200);
+            assert(page.text.includes('pendingSource'));
+            const pending = await getGrant(url);
+            status(pending, 200);
+            assert.equal(pending.body.trainingTime.pendingSource, true);
+            assert.equal(pending.body.trainingTime.sourceToken, '');
+        } finally { training.grants.insertOne = insert; }
+        const recovered = await getGrant(url);
+        status(recovered, 200);
+        assert.equal(recovered.body.trainingTime.contextKey, `${did}:problem:${pid}`);
+        assert(await training.grants.findOne({ _id: recovered.body.trainingTime.sourceToken }));
+        const empty = await getGrant(`${url}/solution`);
+        status(empty, 200);
+        assert.equal(empty.body.trainingTime, null);
+        const sid = await solutions.add(did, pid, admin, 'Try splitting the sum into odd and even terms.');
+        for (const path of [`${url}/solution`, `${url}/solution/${sid}`]) {
+            const explanation = await getGrant(path);
+            status(explanation, 200);
+            assert.equal(explanation.body.trainingTime.contextKey, recovered.body.trainingTime.contextKey);
+        }
     });
     await check('Correct sources stay mastered, wrong sources cool down through empty rounds and return later', async () => {
         const now = new Date();

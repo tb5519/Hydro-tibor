@@ -37,6 +37,14 @@ export async function getPersonalTrainingGrowth(
 export async function getScopedPersonalTrainingGrowth(
     ctx: Context, scope: PersonalTrainingGrowthScope, now = new Date(),
 ) {
+    return (await loadPersonalTrainingSnapshot(ctx, scope, now)).growth;
+}
+
+/** Keep the selected learner's roster, charts and lifetime average on the
+ * same ledger read, even when a heartbeat is persisted during the request. */
+export async function loadPersonalTrainingSnapshot(
+    ctx: Context, scope: PersonalTrainingGrowthScope, now: Date, detail?: { start: number, end: number, recentStart: number },
+) {
     if (!scope || !Number.isSafeInteger(scope.uid) || scope.uid <= 0
         || typeof scope.workspaceId !== 'string' || !scope.workspaceId
         || !Array.isArray(scope.domainIds) || !Array.isArray(scope.authorizedDomainIds)
@@ -73,9 +81,13 @@ export async function getScopedPersonalTrainingGrowth(
     const averageStart = Number.isFinite(firstRecordedAt) ? moment(firstRecordedAt).tz(TRAINING_TIME_ZONE).startOf('isoWeek') : null;
     const averageWeeks = averageStart ? Math.max(1, moment(week.start).diff(averageStart, 'weeks') + 1) : 0;
     const from = averageStart ? Math.min(+week.start, +averageStart) : +week.start;
+    const historyFrom = Math.min(from, detail?.recentStart ?? from);
+    const classWindow = (start: number, end: number) => ({ startAt: { $lt: new Date(end) }, endAt: { $gt: new Date(start) } });
+    const windows = detail && detail.end < historyFrom
+        ? { $or: [classWindow(detail.start, detail.end), classWindow(historyFrom, to)] }
+        : classWindow(Math.min(historyFrom, detail?.start ?? historyFrom), to);
     const lessons = domainIds.length && classDomainIds.length ? await ctx.db.collection('training.class').find({
-        uid, workspaceId, domainId: { $in: classDomainIds },
-        startAt: { $lt: new Date(to) }, endAt: { $gt: new Date(from) },
+        uid, workspaceId, domainId: { $in: classDomainIds }, ...windows,
     }).toArray() : [];
     const merge = (start: number, end: number) => mergeLearningTime(rows, lessons, start, end, { classDomainIds: domainIds, observedAt: to });
     const current = merge(+week.start, to);
@@ -87,7 +99,7 @@ export async function getScopedPersonalTrainingGrowth(
         const row = currentDays.get(date);
         return { date, seconds: row?.trainingEstimatedSeconds ?? row?.trainingSeconds ?? 0, hasEstimate: !!row?.hasEstimate };
     });
-    return {
+    const growth = {
         thisWeekSeconds: currentStudent?.trainingEstimatedSeconds ?? currentStudent?.trainingSeconds ?? 0,
         thisWeekHasEstimate: !!currentStudent?.hasEstimate,
         averageWeekSeconds: averageWeeks
@@ -98,4 +110,5 @@ export async function getScopedPersonalTrainingGrowth(
         averageEnd: lastDay,
         days,
     };
+    return { rows, lessons, growth };
 }

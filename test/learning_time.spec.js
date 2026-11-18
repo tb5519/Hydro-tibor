@@ -360,34 +360,108 @@ test('sources retain separate autonomous and teacher-led practice durations', ()
     assert.deepEqual(actual, { 'problem:7': [1800, 1800], 'daily:7': [0, 3600], 'ide:0': [1800, 1800] });
 });
 
-test('union and overlap match a discrete independent oracle across randomized schedules', () => {
-    let seed = 217393;
-    const random = (limit) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % limit; };
-    for (let run = 0; run < 150; run++) {
-        const intervals = Array.from({ length: 6 }, (_, pid) => {
-            const from = random(40);
-            return span(from / 12, (from + 1 + random(8)) / 12, 'problem', pid + 1);
-        });
-        const classes = Array.from({ length: 8 }, () => {
-            const from = random(40);
-            return lesson(from / 12, (from + 1 + random(8)) / 12, random(2) ? 'cpp' : 'python');
-        });
-        const result = merged([row(intervals)], classes, 1, 3);
-        let autonomous = 0; let classroom = 0; let overlap = 0;
-        for (let unit = 12; unit < 36; unit++) {
-            const point = at((unit + 0.5) / 12);
-            const train = intervals.some((interval) => interval.start <= point && point < interval.end);
-            const learn = classes.some((entry) => +entry.startAt <= point && point < +entry.endAt);
-            if (learn) classroom += 300;
-            if (train && !learn) autonomous += 300;
-            if (train && learn) overlap += 300;
+test('1,000 seeded schedules reconcile exact and historical ledgers against independent second-by-second activity', () => {
+    const anchors = ['2026-05-31', '2026-11-01', '2023-12-31', '2026-11-18'];
+    const domains = ['python', 'cpp'];
+    const learners = [101, 102];
+    for (let run = 0; run < 1000; run++) {
+        let seed = Math.imul(20261118 + run, 0x9e3779b1) >>> 0;
+        const random = (n) => {
+            seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+            return Math.floor(seed * n / 0x100000000);
+        };
+        // Includes a Sunday/Monday month rollover and a Sunday/Monday year rollover.
+        const start = Date.parse(anchors[run % anchors.length] + 'T23:59:30+08:00');
+        const stamp = (second) => start + second * 1000;
+        const dayAt = (second) => new Date(stamp(second) + 8 * 3600_000).toISOString().slice(0, 10);
+        const selected = [[0], [1], [0, 1]][run % 3];
+        const [from, to] = [[0, 60], [0, 30], [30, 60], [random(29), 31 + random(30)]][Math.floor(run / 4) % 4];
+        const lessons = [];
+        const traces = new Map();
+        for (const uid of learners) {
+            const classes = Array.from({ length: 60 }, () => new Set());
+            const addLesson = (domain, begin, end) => {
+                lessons.push({ uid, domainId: domains[domain], startAt: new Date(stamp(begin)), endAt: new Date(stamp(end)) });
+                for (let t = begin; t < end; t++) classes[t].add(domain);
+            };
+            addLesson(0, 26, 34);
+            addLesson(0, 26, 34);
+            addLesson(1, 28, 32);
+            for (let i = 0; i < 5; i++) {
+                const begin = random(55);
+                addLesson(random(2), begin, Math.min(60, begin + 1 + random(16)));
+            }
+            let owner = random(3);
+            const activity = Array.from({ length: 60 }, () => {
+                if (random(4) === 0) owner = random(3);
+                return owner; // 0 and 1 are classrooms, 2 is idle.
+            });
+            traces.set(uid, { activity, classes });
         }
-        const student = result.students[0];
-        assert.equal(Math.round(student.trainingSeconds), autonomous);
-        assert.equal(Math.round(student.classSeconds), classroom);
-        assert.equal(Math.round(student.overlapSeconds), overlap);
-        assert.equal(Math.round(student.seconds), classroom + autonomous);
-        assert.equal(Math.round(result.domains.reduce((sum, domain) => sum + domain.seconds, 0)), classroom + autonomous);
+        for (const legacy of [false, true]) {
+            const rows = [];
+            const totals = new Map();
+            const addSecond = (key, training, overlap, classroom) => {
+                const value = totals.get(key) || { training: 0, overlap: 0, classroom: 0 };
+                value.training += Number(training); value.overlap += Number(overlap); value.classroom += Number(classroom);
+                totals.set(key, value);
+            };
+            for (const [uid, { activity, classes }] of traces) {
+                // Exact ledgers also include simultaneous readings from different tabs.
+                // Historical counters use a single owner so the hidden ground truth is physically possible.
+                const active = (domain, t) => activity[t] === domain || (!legacy && uid === 101 && t >= 25 && t < 35);
+                for (let t = from; t < to; t++) {
+                    const training = selected.some((domain) => active(domain, t));
+                    const inClass = classes[t].size > 0;
+                    const visibleClass = selected.some((domain) => classes[t].has(domain));
+                    for (const key of [uid, dayAt(t)]) addSecond(key, training && !inClass, training && inClass, visibleClass);
+                }
+                for (const domain of selected) for (const begin of [0, 30]) {
+                    const end = begin + 30;
+                    const spans = [];
+                    for (let t = begin; t < end;) {
+                        if (!active(domain, t)) { t++; continue; }
+                        const first = t++;
+                        while (t < end && active(domain, t)) t++;
+                        spans.push({ kind: 'problem', pid: 1, start: stamp(first), end: stamp(t) });
+                    }
+                    if (!spans.length) continue;
+                    const seconds = spans.reduce((n, s) => n + (s.end - s.start) / 1000, 0);
+                    const intervals = legacy ? spans.filter(() => random(3) === 0) : spans;
+                    rows.push(row(intervals, {
+                        uid, domainId: domains[domain], day: dayAt(begin), seconds,
+                        sources: [{ kind: 'problem', pid: 1, seconds }],
+                        startedAt: legacy && random(4) === 0 ? undefined : new Date(stamp(begin)),
+                        updatedAt: legacy && random(4) === 0 ? null : new Date(stamp(end)),
+                    }));
+                }
+            }
+            const result = mergeLearningTime(rows, lessons, stamp(from), stamp(to), {
+                classDomainIds: selected.map((d) => domains[d]), observedAt: stamp(60),
+            });
+            for (const [key, expected] of totals) {
+                const group = typeof key === 'number' ? result.students : result.days;
+                const actual = group.find((entry) => entry._id === key) || {};
+                const context = 'seed ' + (20261118 + run) + ', legacy ' + legacy + ', key ' + key;
+                assert.equal(actual.classSeconds || 0, expected.classroom, context);
+                for (const [metric, groundTruth] of [['training', expected.training], ['overlap', expected.overlap]]) {
+                    const lower = actual[metric + 'Seconds'] || 0;
+                    const upper = actual[metric + 'UpperSeconds'] || 0;
+                    const estimate = actual[metric + 'EstimatedSeconds'] || 0;
+                    if (legacy) {
+                        assert.ok(lower <= groundTruth + 1e-7 && groundTruth <= upper + 1e-7, context + ' ' + metric + ' bounds');
+                        assert.ok(lower <= estimate + 1e-7 && estimate <= upper + 1e-7, context + ' ' + metric + ' estimate');
+                    } else {
+                        assert.deepEqual([lower, upper, estimate], [groundTruth, groundTruth, groundTruth], context + ' ' + metric);
+                    }
+                }
+            }
+            const total = learners.reduce((n, uid) => n + totals.get(uid).classroom + totals.get(uid).training, 0);
+            const perDomain = (metric) => result.domains.reduce((n, d) => n + d[metric], 0);
+            const context = 'domain totals for seed ' + (20261118 + run);
+            if (legacy) assert.ok(perDomain('seconds') <= total && total <= perDomain('classSeconds') + perDomain('trainingUpperSeconds'), context);
+            else assert.equal(perDomain('seconds'), total, context);
+        }
     }
 });
 

@@ -146,6 +146,47 @@ beforeEach(async () => {
 after(async () => { moment.now = priorNow; await client?.close(); await mongod?.stop(); });
 
 describe('teacher dashboard real data aggregation and authorization', () => {
+    it('carries a late quick-exit through the real ledger, a week boundary and both reporting surfaces', async () => {
+        const uid = 103;
+        const domainId = 'python';
+        const midnight = Date.parse('2026-10-19T00:00:00+08:00');
+        const at = (seconds) => new Date(midnight + seconds * 1000);
+        const ledger = load('packages/hydrooj/src/model/training_time.ts', {
+            '../lib/training_time': load('packages/hydrooj/src/lib/training_time.ts'),
+            '../service/db': { collection: (name) => name === 'training.time.daily' ? daily : db.collection(name) },
+            '../error': { ValidationError }, '../logger': { Logger: class { warn() {} } },
+        });
+        const problem = await ledger.issueSourceGrant(uid, domainId, { kind: 'problem', pid: 1 }, at(-10));
+        const ide = await ledger.issueSourceGrant(uid, domainId, { kind: 'ide', pid: 0 }, at(-10));
+        const request = 'quick-problem-before-midnight';
+        await ledger.startSession(uid, domainId, problem, request, at(-9));
+        const next = await ledger.startSession(uid, domainId, ide, 'next-ide-at-midnight', at(-4));
+        // The browser has already moved on when the first exit arrives. Its
+        // original stop preceded midnight, and its duplicate cannot add time.
+        for (let copy = 0; copy < 2; copy++) {
+            await ledger.closePendingStart(uid, domainId, problem, request, false, at(1), 5000);
+        }
+        await ledger.heartbeat(uid, domainId, next.sessionId, 1, false, false, at(10));
+        const byDay = await daily.find({ uid }).sort({ day: 1 }).toArray();
+        assert.deepEqual(byDay.map((day) => [day.day, day.seconds]), [['2026-10-18', 9], ['2026-10-19', 10]]);
+
+        await classes.insertMany(['lesson', 'import'].map((source) => ({
+            uid, domainId, workspaceId: 'school', externalId: source, source,
+            startAt: at(-2), endAt: at(5),
+        })));
+        const home = await personalGrowth.getPersonalTrainingGrowth(dbContext, { _id: domainId, workspaceId: 'school' }, uid, new Date(fixedNow));
+        const report = await model.loadTrainingDashboard(handler({ domains: domainId, student: String(uid), period: 'thisWeek' }));
+        assert.equal(home.thisWeekSeconds, 5);
+        assert.equal(report.rows.find((row) => row.uid === uid).trainingSeconds, 5);
+        assert.equal(report.detail.timeBreakdown.trainingSeconds, 5);
+        assert.equal(report.detail.timeBreakdown.classSeconds, 5);
+        assert.equal(report.detail.daily.reduce((sum, day) => sum + day.seconds, 0), 10);
+        // 19 recorded seconds - 7 taught seconds, across three calendar weeks.
+        assert.equal(home.averageWeekSeconds, 4);
+        assert.equal(report.detail.averageTraining.averageWeekSeconds, 4);
+        assert.equal(home.thisWeekHasEstimate, false);
+        assert.equal(report.detail.timeBreakdown.hasEstimate, false);
+    });
     it('administrator merges only OJ classrooms in current workspace', async () => {
         const result = await model.loadTrainingDashboard(handler());
         assert.deepEqual(Array.from(result.selectedDomainIds), ['python', 'cpp']);
@@ -221,7 +262,7 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         assert.equal(result.detail.domains.find((entry) => entry.id === 'python').seconds, 1500);
         assert.equal(result.detail.domains.find((entry) => entry.id === 'cpp').seconds, 1200);
     });
-    it('lifetime averages read only the selected learner and authorized classrooms while detail windows remain bounded', async (t) => {
+    it('one history read supplies the selected learner while all other roster reads stay within the selected dates', async (t) => {
         await daily.insertMany([
             timer(101, 'python', '2024-01-10', 60),
             timer(101, 'python', '2025-07-01', 999999),
@@ -249,16 +290,53 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         assert.equal(result.detail.overview[1].value, '45 分钟');
         assert.equal(result.detail.overview[2].value, '3 小时 45 分钟');
         const cumulative = reads.find((read) => read.query.uid === 101 && read.query.day?.$lte && !read.query.day.$gte);
-        assert.ok(cumulative, 'a separate lifetime query supplies the cumulative average');
+        assert.ok(cumulative, 'the selected learner history supplies the cumulative average');
         assert.deepEqual(Array.from(cumulative.query.domainId.$in), ['cpp', 'python']);
         assert(cumulative.documents.some((item) => item.day === '2025-07-01'));
         assert(cumulative.documents.every((item) => item.uid === 101 && ['python', 'cpp'].includes(item.domainId)));
-        const bounded = reads.find((read) => read.query.uid === 101 && read.query.$or);
-        assert.ok(bounded);
-        assert(bounded.documents.some((item) => item.day === '2024-01-10'));
-        assert(bounded.documents.some((item) => item.day === '2026-10-25'));
-        assert(!bounded.documents.some((item) => item.day === '2025-07-01'));
+        assert(cumulative.documents.some((item) => item.day === '2024-01-10'));
+        assert(cumulative.documents.some((item) => item.day === '2026-10-25'));
+        assert.equal(reads.filter((read) => read.query.uid === 101 || read.query.uid?.$in?.includes(101)).length, 1);
         assert(reads.every((read) => read.query.uid === 101 || read.query.day?.$gte), 'other students are only queried inside the bounded roster window');
+    });
+    it('a heartbeat committed during the report appears consistently in the roster, chart, detail and weekly average', async (t) => {
+        await daily.deleteMany({});
+        startedAt = new Date('2026-10-25T00:00:00+08:00');
+        const day = '2026-10-25';
+        const source = timer(101, 'python', day, 30);
+        const start = +new Date(day + 'T11:00:00+08:00');
+        source.intervals = [{ kind: 'problem', pid: 1, start, end: start + 30000 }];
+        await daily.insertOne(source);
+        const find = daily.find;
+        let committed = false;
+        daily.find = function (query, ...args) {
+            const cursor = find.call(this, query, ...args);
+            if (query.uid === 101 || query.uid?.$in?.includes(101)) {
+                const toArray = cursor.toArray.bind(cursor);
+                cursor.toArray = async () => {
+                    const result = await toArray();
+                    if (!committed) {
+                        committed = true;
+                        await daily.updateOne({ _id: source._id }, { $set: {
+                            seconds: 60, 'intervals.0.end': start + 60000, 'sources.0.seconds': 60,
+                        } });
+                    }
+                    return result;
+                };
+            }
+            return cursor;
+        };
+        t.after(() => { daily.find = find; });
+        const read = () => model.loadTrainingDashboard(handler({ student: '101' }));
+        for (const expected of [30, 60]) {
+            const page = await read();
+            assert.equal(committed, true);
+            assert.equal(page.rows.find((r) => r.uid === 101).trainingSeconds, expected);
+            assert.equal(page.summary.trainingSeconds, expected);
+            assert.equal(page.detail.timeBreakdown.trainingSeconds, expected);
+            assert.equal(page.detail.daily.reduce((total, d) => total + d.trainingSeconds, 0), expected);
+            assert.equal(page.detail.averageTraining.averageWeekSeconds, expected);
+        }
     });
     it('detail selected-domain metrics never reintroduce unselected classroom totals', async () => {
         const result = await model.loadTrainingDashboard(handler({ student: '101', domains: 'python' }));

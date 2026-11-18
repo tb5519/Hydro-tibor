@@ -359,11 +359,15 @@ export class LessonConnectionHandler extends ConnectionHandler {
 
     async message(payload: any) {
         if (this.closing) return;
+        const receivedAt = Date.now();
         try {
             validateLessonMessage(payload);
             if (!this.limiter.accept(payload.type, payload.data?.length || 0)) return;
-            this.lastActivity = Date.now();
-            if (['video', 'audio', 'screen'].includes(payload.type)) { this.relay(payload); return; }
+            if (['video', 'audio', 'screen'].includes(payload.type)) {
+                if (this.peer?.lessonId === payload.lessonId && payload.seq > this.sequences[payload.type]
+                    && (payload.type !== 'screen' || this.screenSharing)) this.lastActivity = receivedAt;
+                this.relay(payload); return;
+            }
             if (this.pending >= 6) throw new LessonError('RATE_LIMIT', '请等待课堂连接准备完成。');
         } catch (error) { this.send({ type: 'error', ...errorBody(error) }); return; }
         this.pending++;
@@ -374,7 +378,7 @@ export class LessonConnectionHandler extends ConnectionHandler {
                 if (this.peer) throw new LessonError('CONFLICT', '课堂已经连接。');
                 const bound = await lesson.bind(this.user._id, this.domain._id, payload.lessonId, payload.tabId, this.connectionId, serverId);
                 if (this.closing) { await lesson.disconnect(bound.peer); return; }
-                this.peer = bound.peer; this.room = bound.room;
+                this.peer = bound.peer; this.room = bound.room; this.lastActivity = Math.max(this.lastActivity, receivedAt);
                 this.lastLoginCheck = 0; await this.checkSession(true);
                 emitLesson({ uid: this.user._id, lessonId: this.room._id,
                     message: { type: 'owner', connectionId: this.connectionId, ownerVersion: this.peer.ownerVersion } });
@@ -382,9 +386,10 @@ export class LessonConnectionHandler extends ConnectionHandler {
                 emitLesson({ uid: otherUid, lessonId: this.room._id, message: { type: 'peer', online: true, streamId: this.connectionId } });
             } else {
                 if (!this.peer) throw new LessonError('JOIN_REQUIRED', '请先点击上课按钮。');
+                if (payload.type === 'pulse') this.lastActivity = Math.max(this.lastActivity, receivedAt);
                 await this.checkSession();
                 if (!this.closing) {
-                    if (payload.type === 'screen-view' || payload.type === 'screen-state') this.screenControl(payload);
+                    if (payload.type === 'screen-view' || payload.type === 'screen-state') this.screenControl(payload, receivedAt);
                     else this.send({ type: 'pulse' });
                 }
             }
@@ -412,7 +417,7 @@ export class LessonConnectionHandler extends ConnectionHandler {
         this.otherScreenControlVersion = -1;
     }
 
-    private screenControl(payload: any) {
+    private screenControl(payload: any, receivedAt: number) {
         if (!this.room || !this.peer || payload.lessonId !== this.room._id) {
             throw new LessonError('JOIN_REQUIRED', '请先进入当前课堂。');
         }
@@ -421,6 +426,7 @@ export class LessonConnectionHandler extends ConnectionHandler {
             throw new LessonError('INVALID_MESSAGE', '课堂屏幕操作身份不正确。');
         }
         if (this.closing || Date.now() - this.lastAuthorization > 6500 || Date.now() - this.lastLoginCheck > 6500) return;
+        this.lastActivity = Math.max(this.lastActivity, receivedAt);
         if (payload.type === 'screen-view') this.screenWatching = payload.watching;
         else this.screenSharing = payload.state === 'sharing';
         if (!this.other || this.other.serverId !== serverId) return;
@@ -449,8 +455,9 @@ export class LessonConnectionHandler extends ConnectionHandler {
             if (announce) this.send({ type: 'ready', lesson: await lesson.snapshot(room), peerOnline: !!other,
                 ...(other ? { peerStreamId: other.connectionId } : {}) });
             else if (changed) this.send({ type: 'peer', online: !!other, ...(other ? { streamId: other.connectionId } : {}) });
-            if (other && this.peer._id === room.studentUid) {
-                try { this.attendanceThrough = await lesson.recordAttendance(room, this.peer, other, this.attendanceThrough); }
+            if (other) {
+                const [student, teacher] = this.peer._id === room.studentUid ? [this.peer, other] : [other, this.peer];
+                try { this.attendanceThrough = await lesson.recordAttendance(room, student, teacher, this.attendanceThrough); }
                 catch (error) { this.ctx.logger.warn('Unable to update lesson attendance for %s: %o', room._id, error); }
             }
         } finally {
@@ -530,10 +537,19 @@ export class LessonConnectionHandler extends ConnectionHandler {
     onDomainPermissionsChanged() { this.authorizationVersion++; this.lastAuthorization = 0; }
 
     async cleanup() {
+        const flushReceived = !this.closing && this.lastActivity > +(this.peer?.lastSignalAt || 0);
         this.closing = true; this.lastAuthorization = 0; this.resetScreen();
         if (!this.peer || !this.room) return;
+        if (flushReceived) {
+            try {
+                await this.checkLogin();
+                await lesson.pulse(this.peer, this.room.domainId, Date.now(), this.lastActivity);
+            } catch (error) {
+                if (!knownError(error)) this.ctx.logger.warn('Unable to flush final classroom signal for %s: %o', this.room._id, error);
+            }
+        }
         const current = await lesson.members.findOne({ _id: this.user._id, lessonId: this.room._id, connectionId: this.connectionId });
-        await lesson.disconnect(this.peer);
+        await lesson.disconnect(this.peer, this.room);
         if (current) emitLesson({ uid: this.user._id === this.room.teacherUid ? this.room.studentUid : this.room.teacherUid,
             lessonId: this.room._id, message: { type: 'peer', online: false } });
     }
@@ -579,4 +595,7 @@ export function apply(ctx: Context) {
     ctx.Connection('lesson_notifications', '/lesson/notifications', LessonNotificationHandler, PRIV.PRIV_USER_PROFILE);
     ctx.Connection('lesson_conn', '/lesson/conn', LessonConnectionHandler, PRIV.PRIV_USER_PROFILE);
     ctx.on('handler/after', injectLesson);
+    if (!process.env.NODE_APP_INSTANCE || process.env.NODE_APP_INSTANCE === '0') {
+        ctx.interval(() => lesson.retryAttendance().catch((error) => ctx.logger.warn('Classroom attendance retry failed: %o', error)), 30_000);
+    }
 }
