@@ -1,0 +1,51 @@
+  {% if dashboard.integration %}
+  <details class="tdash-integration" data-class-integration{% if dashboard.integration.token %} open{% endif %}>
+    <summary>{{ icon('code') }}上课数据同步<span class="tdash-integration__status">{% if dashboard.integration.status.active %}Token 已启用{% else %}尚未启用{% endif %}</span>{{ icon('chevron') }}</summary>
+    <div class="tdash-integration__body">
+      <p>将上课平台的已完成课程同步到这里。按学员 UID 对应本站学员，上课时间与站内训练自动合并。</p>
+      <p><label for="training-class-endpoint">上课数据接口 · POST</label><input class="tdash-endpoint" id="training-class-endpoint" readonly value="{{ dashboard.integration.url }}" spellcheck="false"></p>
+      {% if dashboard.integration.status.active %}<p class="tdash-token-meta">当前 Token：{{ dashboard.integration.status.prefix or '已设置' }}…{% if dashboard.integration.status.expiresLabel %} · 有效期至 {{ dashboard.integration.status.expiresLabel }}{% endif %}。完整 Token 仅在生成时显示。</p>{% endif %}
+      {% if dashboard.integration.status.active %}<p class="tdash-token-meta">当前授权课堂：{% for item in dashboard.integration.domains %}{% if item.id in dashboard.integration.status.domainIds %}<span class="tdash-scope-chip">{{ item.name }}</span> {% endif %}{% endfor %}</p>{% endif %}
+      {% if dashboard.integration.token %}<div class="tdash-token-once" data-live-share-private><p><strong>Token 已生成，请现在保存。</strong>离开此页后不再显示；重新生成后，旧 Token 立即失效。</p><label class="sr-only" for="training-class-token">新生成的上课同步 Token</label><textarea id="training-class-token" readonly spellcheck="false" autocomplete="off">{{ dashboard.integration.token }}</textarea><button type="button" class="tdash-button" data-copy-class-token>复制 Token</button><span class="tdash-copy-status" data-copy-class-status role="status" aria-live="polite"></span></div>{% endif %}
+      <form method="post" action="{{ dashboard.integration.manageUrl }}" class="tdash-token-form" data-class-token-form><input type="hidden" name="operation" value="issueClassToken"><fieldset><legend>生成 Token 的课堂范围</legend><div class="tdash-token-domains">{% for item in dashboard.integration.domains %}<label><input type="checkbox" name="domains" value="{{ item.id }}"{% if not dashboard.integration.status.active or item.id in dashboard.integration.status.domainIds %} checked{% endif %}>{{ item.name }} <span>({{ item.id }})</span></label>{% endfor %}</div></fieldset><button type="submit" class="tdash-button">{% if dashboard.integration.status.active %}重新生成 Token{% else %}生成 Token{% endif %}</button></form>
+      <div class="tdash-token-actions">{% if dashboard.integration.status.active %}<form method="post" action="{{ dashboard.integration.manageUrl }}"><input type="hidden" name="operation" value="revokeClassToken"><button type="submit" class="tdash-token-revoke">停用 Token</button></form>{% endif %}<span class="tdash-token-meta">重新生成或停用只影响后续同步，已导入的上课记录仍会保留。</span></div>
+      <details class="tdash-api-help"><summary>查看接口格式与同步规则</summary><pre><code>POST {{ dashboard.integration.url }}
+Authorization: Bearer &lt;TOKEN&gt;
+Content-Type: application/json
+
+{
+  "externalId": "classflow-lesson-123-student-101",
+  "domainId": "{% if dashboard.integration.domains|length %}{{ dashboard.integration.domains[0].id }}{% else %}python{% endif %}",
+  "uid": 101,
+  "startAt": "2026-10-27T10:00:00+08:00",
+  "durationHours": 1.5,
+  "title": "Python 课堂"
+}</code></pre><p>uid 使用上方学员列表中的学员编号，domainId 使用授权课堂的括号内编号。开始时间必须带时区；durationHours 是实际小时数，支持小数，须大于 0 且不超过 24，只接收已经结束的课程。</p><p>externalId 是本工作区内唯一的学员课程记录编号，建议包含来源平台、课程编号和学员编号。同一节课有多名学员时，每名学员需使用各自的记录编号。同一编号、同一内容重复推送不会重复累计；同一编号内容改变会返回冲突。更换 Token 后也无需更换记录编号。</p><p>建议通过 Authorization 请求头携带 Token，也可以放在 JSON 的 token 字段中；不要放在 URL 中。Token 只能向授权课堂同步，调用时仍会检查教师权限和学员归属。</p></details>
+    </div>
+  </details>
+  {% endif %}
+<script>
+(function () {
+  var root = document.querySelector('[data-class-integration]');
+  if (!root) return;
+  var tokenForm = root.querySelector('[data-class-token-form]');
+  if (tokenForm) {
+    var tokenDomains = Array.prototype.slice.call(tokenForm.querySelectorAll('input[name=domains]'));
+    tokenDomains.forEach(function (item) { item.addEventListener('change', function () { if (tokenDomains[0]) tokenDomains[0].setCustomValidity(''); }); });
+    tokenForm.addEventListener('submit', function (event) {
+      if (!tokenDomains.some(function (item) { return item.checked; })) {
+        event.preventDefault();
+        if (tokenDomains[0]) { tokenDomains[0].setCustomValidity('请至少选择一个允许同步的课堂'); tokenDomains[0].reportValidity(); }
+      }
+    });
+  }
+  var copyToken = root.querySelector('[data-copy-class-token]');
+  if (copyToken) copyToken.addEventListener('click', function () {
+    var token = root.querySelector('#training-class-token');
+    var status = root.querySelector('[data-copy-class-status]');
+    token.focus(); token.select();
+    if (!navigator.clipboard || !navigator.clipboard.writeText) { status.textContent = '已选中，请复制并妥善保存'; return; }
+    navigator.clipboard.writeText(token.value).then(function () { status.textContent = '已复制'; }, function () { status.textContent = '已选中，请手动复制'; });
+  });
+})();
+</script>

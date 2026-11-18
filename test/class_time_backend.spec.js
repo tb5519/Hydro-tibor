@@ -61,7 +61,7 @@ before(async () => {
     });
     scopeModel = load('packages/hydrooj/src/model/training_dashboard.ts', {
         '../error': errors, '../lib/domain_type': { isScratchDomain },
-        '../lib/learning_time': {},
+        '../lib/learning_time': {}, '../lib/training_problem_details': {},
         '../lib/training_dashboard': load('packages/hydrooj/src/lib/training_dashboard.ts'),
         '../utils': { Time: {} }, './builtin': { PERM, PRIV, STATUS: {} }, './domain': domainModel,
         '../lib/personal_training_growth': {}, './user': userModel, './workspace': workspaceModel, './record': {}, './problem': {}, './training_time': {}, './class_time': model,

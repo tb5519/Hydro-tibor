@@ -43,7 +43,7 @@ export async function getScopedPersonalTrainingGrowth(
 /** Keep the selected learner's roster, charts and lifetime average on the
  * same ledger read, even when a heartbeat is persisted during the request. */
 export async function loadPersonalTrainingSnapshot(
-    ctx: Context, scope: PersonalTrainingGrowthScope, now: Date, detail?: { start: number, end: number, recentStart: number },
+    ctx: Context, scope: PersonalTrainingGrowthScope, now: Date, detail?: { start: number, end: number, recentStart: number, includeEarlierClasses?: boolean },
 ) {
     if (!scope || !Number.isSafeInteger(scope.uid) || scope.uid <= 0
         || typeof scope.workspaceId !== 'string' || !scope.workspaceId
@@ -83,7 +83,8 @@ export async function loadPersonalTrainingSnapshot(
     const from = averageStart ? Math.min(+week.start, +averageStart) : +week.start;
     const historyFrom = Math.min(from, detail?.recentStart ?? from);
     const classWindow = (start: number, end: number) => ({ startAt: { $lt: new Date(end) }, endAt: { $gt: new Date(start) } });
-    const windows = detail && detail.end < historyFrom
+    const windows = detail?.includeEarlierClasses ? { startAt: { $lt: new Date(to) } }
+        : detail && detail.end < historyFrom
         ? { $or: [classWindow(detail.start, detail.end), classWindow(historyFrom, to)] }
         : classWindow(Math.min(historyFrom, detail?.start ?? historyFrom), to);
     const lessons = domainIds.length && classDomainIds.length ? await ctx.db.collection('training.class').find({
@@ -110,5 +111,5 @@ export async function loadPersonalTrainingSnapshot(
         averageEnd: lastDay,
         days,
     };
-    return { rows, lessons, growth };
+    return { rows, lessons, growth, collectionStartedAt: Number.isFinite(firstRecordedAt) ? firstRecordedAt : null };
 }

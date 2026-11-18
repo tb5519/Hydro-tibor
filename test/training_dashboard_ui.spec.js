@@ -3,257 +3,239 @@ const { test } = require('node:test');
 const { JSDOM } = require('jsdom');
 const { fixture, studentDetail, render } = require('./fixtures/training_dashboard');
 
-function page(t, overrides = {}) {
-    const dom = new JSDOM(render(fixture(overrides)), { url: 'https://onebyone.test/manage/training-dashboard', runScripts: 'dangerously' });
+function page(t, data = fixture(), width, savedTrend) {
+    const dom = new JSDOM(render(data), {
+        url: 'https://onebyone.test/d/python/manage/training-dashboard', runScripts: 'dangerously',
+        beforeParse(window) {
+            if (savedTrend) window.sessionStorage.setItem('onebyone:training-dashboard:trend', savedTrend);
+            if (width) window.Element.prototype.getBoundingClientRect = () => ({ width });
+        },
+    });
     t.after(() => dom.window.close());
-    return dom;
+    return dom.window;
 }
 
-test('teacher dashboard provides coherent summaries and server-paged roster without a public ranking', (t) => {
-    const { document } = page(t).window;
+test('the roster links to individual learners and the selected learner owns the period cards, trend and problems', (t) => {
+    const data = fixture();
+    const { document } = page(t, data);
+    const roster = document.querySelector('#training-roster');
+    const links = [...roster.querySelectorAll('[data-training-student-link]')];
+    assert.deepEqual(links.map(a => new URL(a.href).searchParams.get('student')), data.rows.map(r => String(r.uid)));
+    assert.equal(links.filter(a => a.getAttribute('aria-current') === 'page').length, 1);
+    assert.match(links.find(a => a.getAttribute('aria-current') === 'page').textContent, /方全然/);
     assert.match(document.querySelector('h1').textContent, /学员训练看板/);
-    assert.equal(document.querySelectorAll('.tdash-stat').length, 6);
-    assert.match(document.querySelector('.tdash-private').textContent, /仅教师可见/);
-    assert.match(document.querySelector('.tdash-stat--time').textContent, /24 小时 50 分/);
-    assert.equal(document.querySelectorAll('.tdash-table--roster tbody tr').length, 6);
-    assert.match(document.querySelector('.tdash-roster__foot').textContent, /共 24 名学员/);
-    assert.equal(new URL(document.querySelector('.tdash-pagination a').href).searchParams.get('page'), '2');
-    assert.ok(!document.querySelector('[data-training-dashboard]').textContent.includes('进步最快'));
-    assert.equal(document.querySelector('.tdash-periods [aria-current=page]').textContent, '近 7 天');
+    assert.equal(document.querySelector('[data-heading-student]').textContent.trim(), data.detail.name);
+    assert.equal(document.querySelectorAll('[data-study-period]').length, 2);
+    for (const [key, values] of Object.entries(data.detail.periods)) {
+        const card = document.querySelector(`[data-study-period=${key}]`);
+        assert.ok(card.textContent.includes(values.dateLabel), `date range for ${key}`);
+        assert.equal(card.querySelector('[data-time=total]').textContent.trim(), values.timeLabel);
+        assert.equal(card.querySelector('[data-time=independent]').textContent.trim(), values.trainingLabel);
+        assert.equal(card.querySelector('[data-time=class]').textContent.trim(), values.classLabel);
+    }
+    assert(document.querySelector('[data-effort-trend]'));
+    assert(document.querySelector('#training-problems'));
+    const next = [...roster.querySelectorAll('.tdash-pagination a')].find(a => new URL(a.href).searchParams.get('page') === '2');
+    assert(next);
+    assert.equal(new URL(next.href).searchParams.has('student'), false, 'the next roster page can select its own learner');
+    assert.equal(document.querySelector('.tdash-stats'), null);
 });
 
-test('domain checkbox picker supports multiple scopes, mutual exclusivity and safe empty fallback', (t) => {
-    const dom = page(t, { allDomains: true });
-    const { document, Event, FormData } = dom.window;
+test('the monthly view stays selected when moving between learners in this tab', (t) => {
+    const first = page(t);
+    const key = 'onebyone:training-dashboard:trend';
+    first.document.querySelector('.effort-trend__radio--months').click();
+    const second = page(t, fixture({ detail: studentDetail({ uid: 13 }) }), 900, first.sessionStorage.getItem(key));
+    assert.equal(second.document.querySelector('.effort-trend__radio--months').checked, true);
+    second.document.querySelector('.effort-trend__radio--weeks').click();
+    assert.equal(second.sessionStorage.getItem(key), 'weeks');
+});
+
+test('learner search keeps the classroom scope and drops the previous selection and page', (t) => {
+    const { document, FormData } = page(t, fixture({ q: '秦', currentQuery: { page: '3', student: '13', domains: 'python' } }));
+    const form = document.querySelector('.tdash-search');
+    assert.equal(form.method, 'get');
+    const search = new FormData(form);
+    assert.equal(search.get('q'), '秦');
+    assert.deepEqual(search.getAll('domains'), ['python']);
+    assert.equal(search.has('student'), false);
+    assert.equal(search.has('page'), false);
+});
+
+test('a domain selection can combine classrooms, reset a previous learner and return safely to all classrooms', (t) => {
+    const { document, Event, FormData } = page(t, fixture({ allDomains: true }));
     const form = document.querySelector('#training-dashboard-filters');
     const all = form.querySelector('[data-training-domain-all]');
     const picks = [...form.querySelectorAll('[data-training-domain]')];
-    assert.ok(all.checked);
-    picks[0].checked = true;
-    picks[0].dispatchEvent(new Event('change'));
+    assert.equal(all.checked, true);
+    for (const input of picks) {
+        input.checked = true;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
     assert.equal(all.checked, false);
-    picks[1].checked = true;
-    picks[1].dispatchEvent(new Event('change'));
     assert.deepEqual(new FormData(form).getAll('domains'), ['python', 'cpp']);
+    assert.equal(new FormData(form).has('student'), false);
     all.checked = true;
-    all.dispatchEvent(new Event('change'));
+    all.dispatchEvent(new Event('change', { bubbles: true }));
     assert.deepEqual(new FormData(form).getAll('domains'), ['all']);
     all.checked = false;
     form.dispatchEvent(new Event('submit', { cancelable: true }));
     assert.equal(all.checked, true);
 });
 
-test('search and sort retain date and domain filters while resetting stale pagination', (t) => {
-    const currentQuery = { domains: 'python,cpp', period: 'custom', start: '2026-10-01', end: '2026-10-24', page: '3', student: '12', q: '小禾', sort: 'time', attention: 'stuck' };
-    const { document, FormData } = page(t, { currentQuery }).window;
-    const search = new FormData(document.querySelector('.tdash-search'));
-    assert.equal(search.get('domains'), 'python,cpp');
-    assert.equal(search.get('start'), '2026-10-01');
-    assert.equal(search.has('page'), false);
-    assert.equal(search.has('student'), false);
-    const sort = new FormData(document.querySelector('.tdash-sort'));
-    assert.equal(sort.get('domains'), 'python,cpp');
-    assert.equal(sort.get('q'), '小禾');
-    assert.equal(sort.has('page'), false);
+test('problem-period links retain learner and classroom, and problem links lead to their own classrooms', (t) => {
+    const data = fixture();
+    const { document } = page(t, data);
+    const section = document.querySelector('#training-problems');
+    const periods = [...section.querySelectorAll('[data-problem-period]')];
+    assert.deepEqual(periods.map(a => new URL(a.href).searchParams.get('period')), ['7d', 'thisWeek']);
+    assert.equal(periods[0].getAttribute('aria-current'), 'page');
+    for (const a of periods) {
+        const params = new URL(a.href).searchParams;
+        assert.equal(params.get('student'), String(data.detail.uid));
+        assert.equal(params.get('domains'), 'python,cpp');
+    }
+    const rows = [...section.querySelectorAll('tbody tr[data-training-problem]')];
+    assert.equal(rows.length, data.detail.problems.length);
+    for (const [index, row] of rows.entries()) {
+        const problem = data.detail.problems[index];
+        const anchor = row.querySelector('a');
+        assert.match(row.textContent, new RegExp(problem.title));
+        if (problem.url) {
+            assert.equal(new URL(anchor.href).pathname, problem.url);
+            const displayId = row.querySelector('.tdash-problem-name small').textContent.trim().split(/\s*·\s*/)[0];
+            assert.equal(displayId, String(problem.pid), 'display the real problem ID as stored');
+        } else assert.equal(anchor, null, 'a question the teacher cannot open has no title link');
+        assert.match(row.querySelector('[data-problem-time]').textContent, new RegExp(problem.timeLabel));
+        assert.match(row.querySelector('[data-problem-submits]').textContent, new RegExp(String(problem.submits)));
+    }
+    const bars = rows.map(row => parseFloat(row.querySelector('.tdash-bar i').style.width));
+    assert.ok(bars[0] > bars[1] && bars[1] > bars[2] && bars[2] > 0, 'the duration bars reflect actual relative time');
+    assert.match(rows[0].querySelector('[data-problem-result]').textContent, /未通过/);
+    assert.match(rows[1].querySelector('[data-problem-result]').textContent, /(?:已通过|AC)/);
 });
 
-test('custom date selection validates chronology and the inclusive 90-day range', (t) => {
-    const dom = page(t);
-    const { document, Event } = dom.window;
-    const form = document.querySelector('#training-dashboard-filters');
-    const custom = form.querySelector('[data-training-custom]');
-    custom.click();
-    assert.equal(document.querySelector('#training-dashboard-dates').hidden, false);
-    assert.equal(custom.getAttribute('aria-expanded'), 'true');
-    form.querySelector('[name=period]').value = 'custom';
-    const start = form.querySelector('[name=start]');
-    const end = form.querySelector('[name=end]');
-    start.value = '2026-10-24'; end.value = '2026-10-23';
-    let event = new Event('submit', { cancelable: true });
-    form.dispatchEvent(event);
-    assert.equal(event.defaultPrevented, true);
-    assert.match(end.validationMessage, /早于/);
-    start.value = '2026-01-01'; end.value = '2026-04-01';
-    event = new Event('submit', { cancelable: true }); form.dispatchEvent(event);
-    assert.equal(event.defaultPrevented, true);
-    assert.match(end.validationMessage, /90 天/);
-    end.value = '2026-03-31'; end.dispatchEvent(new Event('input'));
-    event = new Event('submit', { cancelable: true }); form.dispatchEvent(event);
-    assert.equal(event.defaultPrevented, false);
+test('weekly and monthly trends expose each learner-specific period, including zero, to keyboard and pointer users', (t) => {
+    const data = fixture();
+    const { document } = page(t, data);
+    const chart = document.querySelector('[data-effort-trend]');
+    const radios = [...chart.querySelectorAll('input[type=radio]')];
+    assert.equal(radios.length, 2);
+    assert.equal(radios.filter(input => input.checked).length, 1);
+    radios.find(input => !input.checked).click();
+    assert.equal(radios.filter(input => input.checked).length, 1);
+    for (const [kind, expected] of Object.entries(data.detail.trends)) {
+        const series = chart.querySelector(`[data-effort-series=${kind}]`);
+        const points = [...series.querySelectorAll('[data-effort-point]')];
+        assert.equal(points.length, expected.length, kind);
+        for (const [i, p] of points.entries()) {
+            const source = expected[i];
+            assert.equal(p.tabIndex, 0);
+            assert.equal(p.querySelector('.effort-trend__value').textContent.trim(), source.shortLabel);
+            const accessible = p.getAttribute('aria-label') || '';
+            for (const label of [source.rangeLabel, source.timeLabel, source.trainingLabel, source.classLabel]) {
+                assert.ok(accessible.includes(label), `${kind}[${i}] accessible label lacks ${label}: ${accessible}`);
+            }
+        }
+    }
 });
 
-test('selected learner shows cross-period duration, classroom breakdown and effort before AC', (t) => {
-    const { document } = page(t, { detail: studentDetail() }).window;
-    const panel = document.querySelector('#training-student');
-    assert.equal(panel.querySelector('h2').textContent, '方全然');
-    assert.equal(panel.querySelectorAll('.tdash-student__stats>div').length, 4);
-    assert.match(panel.textContent, /平均周自主训练/);
-    assert.match(panel.textContent, /有记录以来/);
-    assert.doesNotMatch(panel.textContent, /最近 \d+ 个完整自然周/);
-    assert.equal(panel.querySelectorAll('.tdash-domain-stat').length, 2);
-    const rows = [...panel.querySelectorAll('.tdash-problem-table tbody tr')];
-    assert.equal(rows.length, 3);
-    assert.match(rows[0].textContent, /数字替换.*45 分钟.*课堂练习 30 分钟.*4.*未通过/s);
-    assert.match(rows[1].textContent, /已通过/);
-    assert.equal(rows[2].querySelector('a'), null);
-    assert.match(rows[2].textContent, /每日一练.*练习记录/s);
-    assert.equal(document.querySelectorAll('.tdash-table--roster tr.is-selected').length, 1);
+test('a learner without activity sees zero measurements and an empty problem list while an unmatched search has no learner panel', (t) => {
+    const zero = { dateLabel: '11/16—11/18', seconds: 0, timeLabel: '0 分钟', trainingSeconds: 0, trainingLabel: '0 分钟', classSeconds: 0, classLabel: '0 分钟', hasEstimate: false };
+    const data = fixture({ detail: studentDetail({ periods: { week: zero, recent: zero }, problems: [], trends: { weeks: [], months: [] } }) });
+    const { document } = page(t, data);
+    assert.equal(document.querySelectorAll('[data-study-period] [data-time]').length, 6);
+    for (const item of document.querySelectorAll('[data-study-period] [data-time]')) assert.match(item.textContent, /0\s*分钟/);
+    assert(document.querySelector('[data-empty-problems]'));
+    assert.equal(document.querySelectorAll('tr[data-training-problem]').length, 0);
+    const empty = page(t, fixture({ q: '无此学生', rows: [], detail: null, pagination: { total: 0, page: 1, pageCount: 1, prevUrl: '', nextUrl: '' } })).document;
+    assert(empty.querySelector('[data-empty-roster]'));
+    assert.equal(empty.querySelector('[data-study-period]'), null);
+    assert.equal(empty.querySelector('[data-effort-trend]'), null);
+    assert.equal(empty.querySelector('.tdash-pagination a'), null);
 });
 
-test('empty measured time is presented as missing data without judging the learner', (t) => {
-    const { document } = page(t, { summary: { seconds: 0, timeLabel: '暂无记录', activeStudents: 0, studentCount: 0, acceptedProblems: 0, submits: 0 }, rows: [], pagination: { total: 0, page: 1, pageCount: 1, prevUrl: '', nextUrl: '' } }).window;
-    assert.match(document.querySelector('.tdash-empty-note').textContent, /上线后/);
-    assert.match(document.querySelector('.tdash-method').textContent, /不代表没有学习/);
-    assert.match(document.querySelector('.tdash-empty').textContent, /还没有学员/);
-    assert.equal(document.querySelectorAll('.tdash-pagination a').length, 0);
+test('a narrow viewport prioritizes the selected learner and keeps the roster available when a search finds no learner', (t) => {
+    const narrow = page(t, fixture(), 375).document;
+    const picker = narrow.querySelector('#training-roster');
+    assert.equal(picker.open, false);
+    picker.querySelector('summary').click();
+    assert.equal(picker.open, true);
+    assert(narrow.querySelector('[data-training-student-link]'));
+    const missing = page(t, fixture({ q: '无人匹配', rows: [], detail: null }), 375).document;
+    assert.equal(missing.querySelector('#training-roster').open, true);
+    const wide = page(t, fixture(), 1000).document;
+    assert.equal(wide.querySelector('#training-roster').open, true);
 });
 
-test('names, search terms and problem titles are escaped in labels, input values and details', (t) => {
+test('historical estimates stay marked in the cards and question list and unattributed practice remains separate', (t) => {
+    const data = fixture();
+    Object.assign(data.detail.periods.recent, { hasEstimate: true, trainingLabel: '约 6 分钟', timeLabel: '约 36 分钟' });
+    Object.assign(data.detail.problems[0], { hasEstimate: true, timeLabel: '约 6 分钟' });
+    data.detail.otherPracticeLabel = '约 2 分钟';
+    const { document } = page(t, data);
+    const recent = document.querySelector('[data-study-period=recent]');
+    assert.equal(recent.querySelector('[data-time=independent]').textContent.trim(), '约 6 分钟');
+    assert.equal(recent.querySelector('[data-time=total]').textContent.trim(), '约 36 分钟');
+    assert.equal(document.querySelector('[data-problem-time]').textContent.trim(), '约 6 分钟');
+    assert.match(document.querySelector('#training-problems').textContent, /其他练习\s*约 2 分钟/);
+});
+
+test('learner names, usernames, question titles and searches remain escaped', (t) => {
     const unsafe = '<img src=x onerror=alert(1)>';
-    const data = fixture();
+    const detail = studentDetail({ name: unsafe });
+    detail.problems[0].title = unsafe;
+    const data = fixture({ detail, q: '"><script>alert(1)</script>' });
     data.rows[0].name = unsafe;
-    data.q = '\"><script>alert(1)</script>';
-    data.detail = studentDetail({ name: unsafe, problems: [{ domainName: unsafe, pid: 'P1', title: unsafe, url: '/d/python/p/P1', seconds: 50, timeLabel: '不足 1 分钟', accepted: false, submits: 0 }] });
-    const dom = new JSDOM(render(data)); t.after(() => dom.window.close());
-    const document = dom.window.document;
+    data.rows[0].uname = unsafe;
+    const { document } = page(t, data);
     assert.equal(document.querySelectorAll('[onerror]').length, 0);
-    assert.equal(document.querySelectorAll('script').length, 1);
-    assert.equal(document.querySelector('.tdash-search input[name=q]').value, data.q);
-    assert.equal(document.querySelector('#training-student-title').textContent, unsafe);
-    assert.equal(document.querySelector('.tdash-problem-title').textContent, `P1 · ${unsafe}`);
+    assert.equal(document.querySelector('.tdash-search [name=q]').value, data.q);
+    assert.equal(document.querySelector('[data-heading-student]').textContent.trim(), unsafe);
+    assert.ok(document.querySelector('tr[data-training-problem]').textContent.includes(unsafe));
+    assert.ok(document.querySelector('[data-training-student-link]').textContent.includes(unsafe));
 });
 
-test('changing domain scope clears selected student while date and sort controls preserve it', (t) => {
-    const { document, FormData, Event } = page(t, { detail: studentDetail() }).window;
-    const form = document.querySelector('#training-dashboard-filters');
-    assert.equal(new FormData(form).get('student'), '12');
-    assert.equal(new FormData(document.querySelector('.tdash-sort')).get('student'), '12');
-    const end = form.querySelector('[name=end]');
-    end.dispatchEvent(new Event('input'));
-    assert.equal(new FormData(form).get('student'), '12');
-    assert.equal(new FormData(form).get('period'), 'custom');
-    form.querySelector('[data-training-domain]').dispatchEvent(new Event('change'));
-    assert.equal(new FormData(form).has('student'), false);
-});
-
-test('90-day charts preserve every day and reduce axis labels without dropping last date', (t) => {
-    const daily = Array.from({ length: 90 }, (_, index) => ({ date: `day-${index}`, label: String(index + 1), seconds: index * 60, timeLabel: `${index} 分钟`, barPercent: index }));
-    const { document } = page(t, { daily }).window;
-    const chart = document.querySelector('.tdash-trend');
-    assert.ok(chart.classList.contains('is-dense'));
-    assert.equal(chart.querySelectorAll('[tabindex="0"]').length, 90);
-    const labels = [...chart.querySelectorAll('.tdash-trend__date:not(.is-quiet)')].map((item) => item.textContent);
-    assert.equal(labels[0], '1');
-    assert.equal(labels.at(-1), '90');
-    assert.ok(labels.length <= 8);
-});
-
-test('learning time distinguishes autonomous training and class time in summaries, charts, roster and details', (t) => {
-    const detail = studentDetail();
-    detail.lessons.push({ ...detail.lessons[0], title: '站内练习', sourceLabel: '站内课堂' });
-    const { document } = page(t, { detail }).window;
-    assert.match(document.querySelector('.tdash-stat--training').textContent, /自主训练.*17 小时 20 分/s);
-    assert.match(document.querySelector('.tdash-stat--class').textContent, /上课时长.*7 小时 30 分/s);
-    const firstDay = document.querySelector('.tdash-trend__column');
-    assert.match(firstDay.getAttribute('aria-label'), /总计 180 分钟，自主训练 150 分钟，上课 30 分钟/);
-    const stack = firstDay.querySelector('.tdash-trend__stack');
-    const classPart = parseFloat(stack.querySelector('.is-class').style.height);
-    const trainingPart = parseFloat(stack.querySelector('.is-training').style.height);
-    assert.equal(classPart + trainingPart, 100);
-    assert.ok(classPart > 0 && classPart < 100);
-    assert.match(document.querySelector('.tdash-legend').textContent, /自主训练上课时间/);
-    assert.match(document.querySelector('.tdash-table--roster tbody tr').textContent, /学员 10.*3 小时 30 分.*自主训练 2 小时.*上课 1 小时 30 分/s);
-    assert.match(document.querySelector('.tdash-time-breakdown').textContent, /本期学习总时长.*2 小时 30 分.*自主训练.*1 小时 30 分.*上课时长.*1 小时.*已归入上课时间/s);
-    assert.match(document.querySelector('.tdash-lessons').textContent, /站内课堂站内练习/);
-    assert.match(document.querySelector('.tdash-lessons').textContent, /外部课堂.*循环结构与课堂练习.*2026-10-24 10:00.*2026-10-24 11:00.*1 小时/s);
-});
-
-test('integration shows a single-use secret only after issuance and uses scoped POST management forms', async (t) => {
+test('sync settings stay folded until requested and a just-issued token can be read and copied without entering any URL', async (t) => {
     const data = fixture();
-    assert.ok(!render(data).includes('test-secret-once'));
-    data.integration.token = 'test-secret-once-<escaped>';
-    const dom = new JSDOM(render(data), { url: 'https://onebyone.test/manage/training-dashboard', runScripts: 'dangerously' });
-    t.after(() => dom.window.close());
-    const { document, FormData } = dom.window;
+    const normal = page(t, data);
+    assert.equal(normal.document.querySelector('[data-class-integration]').open, false);
+    assert.equal(normal.document.querySelector('#training-class-token'), null);
+    normal.document.querySelector('[data-class-integration] > summary').click();
+    assert.equal(normal.document.querySelector('[data-class-integration]').open, true);
+    data.integration.token = 'one-use-<value>';
+    const { document, navigator, FormData } = page(t, data);
     assert.equal(document.querySelector('[data-class-integration]').open, true);
     const token = document.querySelector('#training-class-token');
+    assert.ok(token.closest('[data-live-share-private]'));
     assert.equal(token.readOnly, true);
     assert.equal(token.value, data.integration.token);
+    let copied;
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: async v => { copied = v; } } });
+    document.querySelector('[data-copy-class-token]').click();
+    await Promise.resolve();
+    assert.equal(copied, data.integration.token);
     const issue = document.querySelector('[data-class-token-form]');
     assert.equal(issue.method, 'post');
     assert.equal(new FormData(issue).get('operation'), 'issueClassToken');
     assert.deepEqual(new FormData(issue).getAll('domains'), ['python', 'cpp']);
-    assert.equal(new FormData(issue).has('token'), false);
-    const revoke = document.querySelector('.tdash-token-actions form');
-    assert.equal(revoke.method, 'post');
-    assert.equal(new FormData(revoke).get('operation'), 'revokeClassToken');
-    for (const form of document.querySelectorAll('form[method=get]')) assert.equal(new FormData(form).has('token'), false);
-    let copied;
-    Object.defineProperty(dom.window.navigator, 'clipboard', { value: { writeText: async (value) => { copied = value; } } });
-    document.querySelector('[data-copy-class-token]').click();
-    await Promise.resolve();
-    assert.equal(copied, data.integration.token);
-    assert.equal(document.querySelector('[data-copy-class-status]').textContent, '已复制');
-    assert.match(document.querySelector('.tdash-api-help').textContent, /externalId.*domainId.*uid.*startAt.*durationHours/s);
-    assert.match(document.querySelector('.tdash-api-help').textContent, /classflow-lesson-123-student-101/);
-    assert.match(document.querySelector('.tdash-api-help').textContent, /每名学员需使用各自的记录编号/);
-    assert.match(document.querySelector('.tdash-api-help').textContent, /同一编号、同一内容重复推送不会重复累计/);
+    const revoke = [...document.querySelectorAll('form[method=post]')].find(form => new FormData(form).get('operation') === 'revokeClassToken');
+    assert(revoke);
+    for (const form of document.querySelectorAll('form')) {
+        assert(!form.action.includes(data.integration.token));
+        assert.equal(new FormData(form).has('token'), false);
+    }
 });
 
-test('token generation requires a selected classroom and clearing the error allows valid submission', (t) => {
-    const { document, Event } = page(t).window;
+test('token generation requires a selected classroom and accepts a valid choice after correction', (t) => {
+    const { document, Event } = page(t);
     const form = document.querySelector('[data-class-token-form]');
-    const domains = [...form.querySelectorAll('input[name=domains]')];
-    domains.forEach((input) => { input.checked = false; });
-    let event = new Event('submit', { cancelable: true });
-    form.dispatchEvent(event);
-    assert.equal(event.defaultPrevented, true);
-    assert.match(domains[0].validationMessage, /至少选择一个/);
+    const domains = [...form.querySelectorAll('[name=domains]')];
+    for (const input of domains) input.checked = false;
+    assert.equal(form.dispatchEvent(new Event('submit', { cancelable: true })), false);
+    assert.match(domains[0].validationMessage, /课堂/);
     domains[1].checked = true;
-    domains[1].dispatchEvent(new Event('change'));
-    event = new Event('submit', { cancelable: true });
-    form.dispatchEvent(event);
-    assert.equal(event.defaultPrevented, false);
+    domains[1].dispatchEvent(new Event('change', { bubbles: true }));
+    assert.equal(form.dispatchEvent(new Event('submit', { cancelable: true })), true);
     assert.equal(domains[0].validationMessage, '');
-});
-
-test('historical daily-only caveat appears with imported classes and untrusted course content is escaped', (t) => {
-    const data = fixture();
-    data.summary.legacySeconds = 60;
-    data.summary.uncertainSeconds = 60;
-    data.summary.hasEstimate = true;
-    data.detail = studentDetail();
-    data.detail.lessons[0].title = '<img src=x onerror=alert(1)>';
-    const dom = new JSDOM(render(data));
-    t.after(() => dom.window.close());
-    const { document } = dom.window;
-    assert.match(document.querySelector('.tdash-legacy-note').textContent, /历史估算.*有效训练累计.*新记录/s);
-    assert.equal(document.querySelectorAll('[onerror]').length, 0);
-    assert.match(document.querySelector('.tdash-lessons strong').textContent, /<img src=x onerror=alert\(1\)>/);
-    const noClass = fixture();
-    noClass.summary.classSeconds = 0;
-    const clean = new JSDOM(render(noClass));
-    t.after(() => clean.window.close());
-    assert.equal(clean.window.document.querySelector('.tdash-legacy-note'), null);
-});
-
-test('historical durations display a marked single estimate throughout the original dashboard', (t) => {
-    const data = fixture();
-    Object.assign(data.summary, { timeLabel: '约 2 小时 6 分钟', trainingLabel: '约 6 分钟', uncertainSeconds: 264, hasEstimate: true });
-    data.detail = studentDetail();
-    Object.assign(data.detail.timeBreakdown, { timeLabel: '约 2 小时 6 分钟', trainingLabel: '约 6 分钟', uncertainSeconds: 264, hasEstimate: true });
-    Object.assign(data.detail.problems[0], { timeLabel: '约 6 分钟', uncertainSeconds: 480, hasEstimate: true });
-    Object.assign(data.rows[0], { seconds: 0, secondsUpper: 600, estimatedSeconds: 300, timeLabel: '约 5 分钟', trainingLabel: '约 5 分钟' });
-    data.detail.unattributedTrainingLabel = '约 2 分钟';
-    const dom = new JSDOM(render(data));
-    t.after(() => dom.window.close());
-    const { document } = dom.window;
-    assert.match(document.querySelector('.tdash-stat--time').textContent, /约 2 小时 6 分钟/);
-    assert.match(document.querySelector('.tdash-stat--training').textContent, /约 6 分钟/);
-    assert.match(document.querySelector('.tdash-time-breakdown').textContent, /包含历史估算/);
-    assert.match(document.querySelector('.tdash-problem-table').textContent, /约 6 分钟.*历史估算/s);
-    assert.match(document.querySelector('.tdash-table--roster tbody tr').textContent, /约 5 分钟/);
-    assert.match([...document.querySelectorAll('.tdash-problem-more')].map((item) => item.textContent).join('\n'), /缺少题目明细.*约 2 分钟/s);
-    assert.doesNotMatch(document.querySelector('.tdash-stat--time').textContent, /～/);
-    assert.match(document.querySelector('.tdash-method').textContent, /无论属于 Python 还是 C\+\+ 课堂/);
 });

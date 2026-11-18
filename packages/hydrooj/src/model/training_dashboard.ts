@@ -4,27 +4,21 @@ import { isScratchDomain } from '../lib/domain_type';
 import { mergeLearningTime } from '../lib/learning_time';
 import { loadPersonalTrainingSnapshot } from '../lib/personal_training_growth';
 import {
-    TRAINING_PERIODS, TRAINING_TIME_ZONE, trainingAttention, trainingDailyBars,
-    trainingDomainSelection, trainingDuration, trainingDurationEstimate, trainingRange,
+    TRAINING_PERIODS, TRAINING_TIME_ZONE, trainingDomainSelection, trainingDuration, trainingDurationEstimate,
+    trainingRange, trainingStudentPeriods,
 } from '../lib/training_dashboard';
+import { loadTrainingProblemDetails, type ProblemRecord } from '../lib/training_problem_details';
 import type { Handler } from '../service/server';
 import { Time } from '../utils';
 import { PERM, PRIV, STATUS } from './builtin';
-import { classes } from './class_time';
 import domain from './domain';
-import problem from './problem';
 import record from './record';
-import * as training from './training_time';
 import user from './user';
 import workspace from './workspace';
 
-const COLORS = ['#60a7b1', '#7e8cc7', '#ba91b1', '#c8a66b', '#79a990', '#839ba9'];
-const SORTS = { time: '学习总时长', accepted: '通过题目', submit: '提交次数', lastActive: '最近活跃' };
-const ATTENTION = { all: '全部学员', stuck: '投入较多，待了解', quiet: '暂无记录' };
-const sum = (items: any[], key = 'seconds') => items.reduce((total, item) => total + (Number(item[key]) || 0), 0);
 const dayString = (date: moment.Moment) => date.format('YYYY-MM-DD');
-const timestamp = (value: any) => value?.getTimestamp ? +value.getTimestamp() : value ? +new Date(value) : 0;
-const activityLabel = (value: number) => (value ? moment(value).tz(TRAINING_TIME_ZONE).format('MM-DD HH:mm') : '暂无记录');
+const studentNames = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
+const PAGE_SIZE = 25;
 
 function presentTime(value: any = {}) {
     const seconds = value.seconds || 0;
@@ -46,12 +40,6 @@ function presentTime(value: any = {}) {
         classLabel: trainingDuration(classSeconds), overlapLabel: trainingDurationEstimate(overlapEstimatedSeconds, overlapUpperSeconds - overlapSeconds > 0.001) };
 }
 
-function dailyBars(start: moment.Moment, end: moment.Moment, stats: any[]) {
-    const byDay = new Map(stats.map((item) => [item._id, item]));
-    return trainingDailyBars(start, end, Object.fromEntries(stats.map((item) => [item._id, item.estimatedSeconds ?? item.seconds])))
-        .map((item) => ({ ...item, ...presentTime(byDay.get(item.date)), barPercent: item.barPercent }));
-}
-
 export async function trainingDashboardScope(handler: Handler) {
     if (handler.session?.sudoUid || !handler.user.hasPriv(PRIV.PRIV_USER_PROFILE)) throw new PermissionError('教师训练看板');
     const workspaceId = workspace.resolveDomainWorkspaceId(handler.domain);
@@ -69,24 +57,10 @@ export async function trainingDashboardScope(handler: Handler) {
     return { workspaceId, domains, classDomainIds: authorized.map((item) => item._id) };
 }
 
-function recordMatch(ids: string[], uids: number[], start: moment.Moment, end: moment.Moment) {
-    return {
-        domainId: { $in: ids }, uid: { $in: uids }, pid: { $gt: 0 },
-        contest: { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] },
-        _id: { $gte: Time.getObjectID(start.toDate()), $lt: Time.getObjectID(end.clone().add(1, 'day').toDate()) },
-    };
-}
-
-function domainBreakdown(domains: any[], ids: string[], stats: any[]) {
-    const max = Math.max(1, ...stats.map((item) => item.estimatedSeconds ?? item.seconds ?? 0));
-    return domains.map((item, index) => {
-        const time = presentTime(stats.find((row) => row._id === item.id));
-        return { ...item, ...time, selected: ids.includes(item.id), color: COLORS[index % COLORS.length], barPercent: Math.round(time.estimatedSeconds / max * 100) };
-    });
-}
-
-export async function loadTrainingDashboard(handler: Handler, time = new Date()) {
-    const scope = await trainingDashboardScope(handler);
+export async function loadTrainingDashboard(
+    handler: Handler, time = new Date(), resolvedScope?: Awaited<ReturnType<typeof trainingDashboardScope>>,
+) {
+    const scope = resolvedScope ?? await trainingDashboardScope(handler);
     const now = moment(time).tz(TRAINING_TIME_ZONE);
     const query = handler.request.query || {};
     let range: ReturnType<typeof trainingRange>;
@@ -98,20 +72,11 @@ export async function loadTrainingDashboard(handler: Handler, time = new Date())
     const { start, end, period } = range;
     const { ids } = selection;
     const q = typeof query.q === 'string' ? query.q.trim().slice(0, 80) : '';
-    const sort = typeof query.sort === 'string' && Object.hasOwn(SORTS, query.sort) ? query.sort : 'time';
-    const attention = typeof query.attention === 'string' && Object.hasOwn(ATTENTION, query.attention) ? query.attention : 'all';
-    const student = query.student === undefined ? null : Number(query.student);
-    if (student !== null && (!Number.isSafeInteger(student) || student <= 1)) throw new ValidationError('student');
-    const currentQuery = { period, start: dayString(start), end: dayString(end), domains: selection.all ? 'all' : ids.join(','), q, sort, attention };
-    const url = (updates: Record<string, any> = {}, anchor = '') => {
-        const params = { ...currentQuery, ...(student ? { student } : {}), ...updates };
-        const search = new URLSearchParams();
-        for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== null && value !== '') search.set(key, `${value}`);
-        return `${handler.url('manage_training_dashboard')}?${search}${anchor}`;
-    };
+    const requested = query.student === undefined ? null : Number(query.student);
+    if (requested !== null && (!Number.isSafeInteger(requested) || requested <= 1)) throw new ValidationError('student');
     const [joined, members, excluded] = await Promise.all([
         ids.length ? domain.collUser.find({ domainId: { $in: ids }, uid: { $gt: 1 }, join: true, blockedByStudentManagement: { $ne: true } })
-            .project({ uid: 1, role: 1 }).toArray() : [],
+            .project({ uid: 1, domainId: 1, displayName: 1 }).toArray() : [],
         workspace.getMembers(scope.workspaceId),
         scope.workspaceId === workspace.LEGACY_WORKSPACE_ID ? workspace.getExcludedLegacyUids() : new Set<number>(),
     ]);
@@ -120,175 +85,115 @@ export async function loadTrainingDashboard(handler: Handler, time = new Date())
     const accounts = candidateUids.length ? await user.getMulti({ _id: { $in: candidateUids } }, ['_id', 'priv', 'uname', 'displayName']).toArray() : [];
     const students = accounts.filter((item) => (item.priv & PRIV.PRIV_USER_PROFILE)
         && !(item.priv & PRIV.PRIV_EDIT_SYSTEM) && !(item.priv & PRIV.PRIV_JUDGE));
-    const uids = students.map((item) => item._id);
-    if (student !== null && !uids.includes(student)) throw new PermissionError('所选课堂的学员');
-    const otherUids = student ? uids.filter((uid) => uid !== student) : uids;
-    const dailyMatch = { domainId: { $in: ids }, uid: { $in: otherUids }, day: { $gte: dayString(start), $lte: dayString(end) } };
-    const recentStart = now.clone().subtract(6, 'days').startOf('day');
-    const monthStart = now.clone().startOf('month');
-    const recentHistoryStart = moment.min(recentStart, monthStart);
+    const aliases = new Map<number, string[]>();
+    // A student can have different names in two classrooms. Prefer the current
+    // classroom, then a stable classroom order; all visible aliases are searchable.
+    const namedMembers = joined.filter((entry) => typeof entry.displayName === 'string' && entry.displayName.trim())
+        .sort((a, b) => Number(b.domainId === handler.domain._id) - Number(a.domainId === handler.domain._id)
+            || a.domainId.localeCompare(b.domainId));
+    for (const entry of namedMembers) {
+        const names = aliases.get(entry.uid) || [];
+        names.push(entry.displayName.trim());
+        aliases.set(entry.uid, names);
+    }
+    const eligible = students.map((item) => ({
+        uid: item._id, name: aliases.get(item._id)?.[0] || item.displayName || item.uname, uname: item.uname,
+    }));
+    if (requested !== null && !eligible.some((item) => item.uid === requested)) throw new PermissionError('所选课堂的学员');
+    const search = q.toLowerCase();
+    const filtered = eligible.filter((item) => !q || [item.name, item.uname, item.uid, ...(aliases.get(item.uid) || [])]
+        .some((value) => String(value).toLowerCase().includes(search)))
+        .sort((a, b) => studentNames.compare(a.name, b.name) || a.uid - b.uid);
+    const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    const index = filtered.findIndex((item) => item.uid === requested);
+    const page = index >= 0 ? Math.floor(index / PAGE_SIZE) + 1 : Math.min(pageCount, Math.max(1, Math.floor(Number(query.page) || 1)));
+    const visible = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    const selected = index >= 0 ? filtered[index] : visible[0];
+    const currentQuery = {
+        period, start: dayString(start), end: dayString(end), domains: selection.all ? 'all' : ids.join(','), q, page,
+        ...(selected && { student: selected.uid }),
+    };
+    const url = (updates: Record<string, any>, anchor = '') => {
+        const params = new URLSearchParams();
+        for (const [key, value] of Object.entries({ ...currentQuery, ...updates })) {
+            if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+        }
+        return `${handler.url('manage_training_dashboard')}?${params}${anchor}`;
+    };
+    const periodIds = [...new Set(['7d', 'thisWeek', period])];
+    const periodLinks = periodIds.map((id) => ({
+        id, label: TRAINING_PERIODS[id], active: period === id,
+        url: url({ period: id, ...(id !== 'custom' && { start: null, end: null }) }, '#training-problems'),
+    }));
+    const dashboard: any = {
+        ...currentQuery, currentQuery, periodLabel: range.label, periodLinks,
+        allDomains: selection.all, scopeLabel: selection.all ? '全部课堂' : '所选课堂',
+        selectedDomainIds: ids, queryDomains: selection.all ? ['all'] : ids,
+        domains: scope.domains.map((item) => ({ ...item, selected: ids.includes(item.id) })),
+        rows: visible.map((item) => ({ ...item, selected: item.uid === selected?.uid, detailUrl: url({ student: item.uid }, '#training-student') })),
+        pagination: {
+            page, pageCount, total: filtered.length,
+            prevUrl: page > 1 ? url({ page: page - 1, student: null }, '#training-roster') : '',
+            nextUrl: page < pageCount ? url({ page: page + 1, student: null }, '#training-roster') : '',
+        },
+        detail: null,
+    };
+    if (!selected) return dashboard;
+
+    const uid = selected.uid;
+    const trendStart = now.clone().startOf('month').subtract(5, 'months');
     const rangeStart = +start;
     const rangeEnd = Math.min(+end.clone().add(1, 'day'), +now);
-    // Every authorized classroom can mask teacher-led practice, even when the
-    // teacher filters the visible statistics to another language/classroom.
-    const classMatch = { workspaceId: scope.workspaceId, domainId: { $in: scope.classDomainIds }, uid: { $in: otherUids } };
-    const mergeTimes = (trainingRows: any[], classRows: any[], from: number, to: number) => (
-        mergeLearningTime(trainingRows, classRows, from, to, { classDomainIds: ids, observedAt: +now })
-    );
-    const [timeRows, lessonRows, snapshot, recordRows] = await Promise.all([
-        otherUids.length ? training.daily.find(dailyMatch).toArray() : [],
-        otherUids.length ? classes.find({ ...classMatch, startAt: { $lt: new Date(rangeEnd) }, endAt: { $gt: new Date(rangeStart) } }).toArray() : [],
-        student ? loadPersonalTrainingSnapshot(handler.ctx, {
-            workspaceId: scope.workspaceId, uid: student, domainIds: ids, authorizedDomainIds: scope.classDomainIds,
-        }, time, { start: rangeStart, end: rangeEnd, recentStart: +recentHistoryStart }) : null,
-        uids.length ? record.coll.aggregate([
-            { $match: recordMatch(ids, uids, start, end) },
-            { $group: { _id: { uid: '$uid', domainId: '$domainId', pid: '$pid' }, submits: { $sum: 1 },
-                accepted: { $max: { $cond: [{ $eq: ['$status', STATUS.STATUS_ACCEPTED] }, 1, 0] } }, last: { $max: '$_id' } } },
-            { $group: { _id: '$_id.uid', submits: { $sum: '$submits' }, accepted: { $sum: '$accepted' }, last: { $max: '$last' } } },
-        ]).toArray() : [],
+    // ObjectIds have second precision. Include the observation second for today's records
+    // while keeping the next calendar midnight exclusive for a completed range.
+    const submissionEnd = Math.min(+end.clone().add(1, 'day'), (Math.floor(+now / 1000) + 1) * 1000);
+    const [snapshot, submissions] = await Promise.all([
+        loadPersonalTrainingSnapshot(handler.ctx, {
+            workspaceId: scope.workspaceId, uid, domainIds: ids, authorizedDomainIds: scope.classDomainIds,
+        }, time, { start: rangeStart, end: rangeEnd, recentStart: +trendStart, includeEarlierClasses: true }),
+        record.coll.aggregate<ProblemRecord>([
+            { $match: {
+                uid, pid: { $gt: 0 }, contest: { $nin: [record.RECORD_PRETEST, record.RECORD_GENERATE] },
+                $or: [{ practiceEntryDomain: { $in: ids } }, { practiceEntryDomain: { $in: [null, ''] }, domainId: { $in: ids } }],
+                _id: { $gte: Time.getObjectID(start.toDate()), $lt: Time.getObjectID(new Date(submissionEnd)) },
+            } },
+            { $group: { _id: { domainId: '$domainId', pid: '$pid' }, submits: { $sum: 1 },
+                accepted: { $max: { $cond: [{ $eq: ['$status', STATUS.STATUS_ACCEPTED] }, 1, 0] } } } },
+        ]).toArray(),
     ]);
-    const selectedHistory = snapshot?.rows.filter((row) => row.day >= dailyMatch.day.$gte && row.day <= dailyMatch.day.$lte) || [];
-    const selectedLessonsInRange = snapshot?.lessons.filter((lesson) => +lesson.startAt < rangeEnd && +lesson.endAt > rangeStart) || [];
-    const times = mergeTimes(timeRows.concat(selectedHistory), lessonRows.concat(selectedLessonsInRange), rangeStart, rangeEnd);
-    const timeMap = new Map(times.students.map((item) => [item._id, item]));
-    const recordMap = new Map(recordRows.map((item) => [item._id, item] as const));
-    const rows = students.map((item) => {
-        const time: any = timeMap.get(item._id) || {};
-        const records: any = recordMap.get(item._id) || {};
-        const timeView = presentTime(time);
-        const submits = records.submits || 0;
-        const acceptedProblems = records.accepted || 0;
-        const lastActive = Math.max(timestamp(time.last), timestamp(records.last));
-        const observation = trainingAttention(timeView.trainingEstimatedSeconds, submits, acceptedProblems);
-        if (timeView.classSeconds && observation.kind === 'quiet') Object.assign(observation, { kind: 'normal', label: '有上课记录' });
-        else if (timeView.overlapSeconds && observation.kind === 'quiet') Object.assign(observation, { kind: 'normal', label: '有课堂练习' });
-        else if (timeView.hasEstimate && observation.kind === 'quiet') Object.assign(observation, { kind: 'normal', label: '有历史训练估算' });
-        return { uid: item._id, name: item.displayName || item.uname, uname: item.uname, ...timeView,
-            timeLabel: timeView.secondsUpper || timeView.overlapUpperSeconds ? timeView.timeLabel : '暂无记录',
-            submits, acceptedProblems, lastActive, lastActiveLabel: activityLabel(lastActive),
-            attentionKind: observation.kind, attentionLabel: observation.label,
-            detailUrl: url({ student: item._id }, '#training-student') };
-    });
-    const counts = { all: rows.length, stuck: rows.filter((item) => item.attentionKind === 'stuck').length, quiet: rows.filter((item) => item.attentionKind === 'quiet').length };
-    const filtered = rows.filter((item) => (!q || [item.name, item.uname, item.uid].some((value) => `${value}`.toLowerCase().includes(q.toLowerCase())))
-        && (attention === 'all' || item.attentionKind === attention));
-    const sortField = { time: 'estimatedSeconds', accepted: 'acceptedProblems', submit: 'submits', lastActive: 'lastActive' }[sort];
-    filtered.sort((a, b) => b[sortField] - a[sortField] || b.lastActive - a.lastActive || a.uid - b.uid);
-    const pageCount = Math.max(1, Math.ceil(filtered.length / 25));
-    const page = Math.min(pageCount, Math.max(1, Math.floor(Number(query.page) || 1)));
-    const dashboard: any = {
-        ...currentQuery, periodLabel: range.label, allDomains: selection.all, scopeLabel: selection.all ? '全部课堂' : '所选课堂',
-        selectedDomainIds: ids, queryDomains: selection.all ? ['all'] : ids, currentQuery,
-        domains: domainBreakdown(scope.domains, ids, times.domains),
-        summary: { ...presentTime({ seconds: sum(rows), trainingSeconds: sum(rows, 'trainingSeconds'),
-            trainingUpperSeconds: sum(rows, 'trainingUpperSeconds'), classSeconds: sum(rows, 'classSeconds'),
-            trainingEstimatedSeconds: sum(rows, 'trainingEstimatedSeconds'), overlapEstimatedSeconds: sum(rows, 'overlapEstimatedSeconds'),
-            hasEstimate: rows.some((item) => item.hasEstimate), overlapSeconds: sum(rows, 'overlapSeconds'),
-            overlapUpperSeconds: sum(rows, 'overlapUpperSeconds'), legacySeconds: sum(rows, 'legacySeconds') }),
-        activeStudents: rows.filter((item) => item.secondsUpper || item.overlapUpperSeconds || item.submits).length,
-            studentCount: rows.length, acceptedProblems: sum(rows, 'acceptedProblems'), submits: sum(rows, 'submits') },
-        daily: dailyBars(start, end, times.days),
-        rows: filtered.slice((page - 1) * 25, page * 25),
-        pagination: { page, pageCount, total: filtered.length, prevUrl: page > 1 ? url({ page: page - 1 }) : '', nextUrl: page < pageCount ? url({ page: page + 1 }) : '' },
-        periodLinks: Object.entries(TRAINING_PERIODS).map(([id, label]) => ({ id, label, url: url({ period: id }), active: period === id })),
-        sortLinks: Object.entries(SORTS).map(([id, label]) => ({ id, label, url: url({ sort: id }), active: sort === id })),
-        attentionLinks: Object.entries(ATTENTION).map(([id, label]) => ({ id, label, url: url({ attention: id }), active: attention === id, count: counts[id] })),
-        closeDetailUrl: url({ student: null }, '#training-roster'), detail: null,
-    };
-    if (!student || !snapshot) return dashboard;
-    const { rows: history, lessons: lessonHistory, growth } = snapshot;
-    const problemRecords = await record.coll.aggregate([
-        { $match: recordMatch(ids, [student], start, end) },
-        { $group: { _id: { domainId: '$domainId', pid: '$pid' }, submits: { $sum: 1 },
-            accepted: { $max: { $cond: [{ $eq: ['$status', STATUS.STATUS_ACCEPTED] }, 1, 0] } }, last: { $max: '$_id' } } },
-    ]).toArray();
-    const studentRow = rows.find((item) => item.uid === student);
-    const selectedTimes = mergeTimes(selectedHistory, selectedLessonsInRange, rangeStart, rangeEnd);
-    const problems = new Map<string, any>();
-    const authorizedBanks = new Set(scope.domains.map((item) => item.id));
-    for (const source of selectedTimes.sources) {
-        // Keep the learner's entry classroom as the time owner. For a bank outside
-        // this teacher's scope, only its combined contest time can be displayed.
-        const hiddenBank = source.problemDomainId && !authorizedBanks.has(source.problemDomainId);
-        const kind = hiddenBank ? 'sharedContest' : source.kind;
-        const pid = kind === 'problem' ? source.pid : null;
-        const problemDomainId = hiddenBank ? undefined : source.problemDomainId;
-        const key = JSON.stringify([source.domainId, kind, pid, problemDomainId]);
-        const entry = problems.get(key) || { domainId: source.domainId, kind, pid, problemDomainId,
-            seconds: 0, estimatedSeconds: 0, trainingUpperSeconds: 0, hasEstimate: false,
-            classTrainingSeconds: 0, classTrainingEstimatedSeconds: 0, classTrainingUpperSeconds: 0, submits: 0, accepted: false };
-        entry.seconds += source.seconds;
-        entry.estimatedSeconds += source.estimatedSeconds ?? source.seconds;
-        entry.hasEstimate ||= source.hasEstimate;
-        entry.trainingUpperSeconds += source.trainingUpperSeconds ?? source.seconds;
-        entry.classTrainingSeconds += source.classTrainingSeconds || 0;
-        entry.classTrainingEstimatedSeconds += source.classTrainingEstimatedSeconds ?? source.classTrainingSeconds ?? 0;
-        entry.classTrainingUpperSeconds += source.classTrainingUpperSeconds ?? source.classTrainingSeconds ?? 0;
-        problems.set(key, entry);
+    // A lesson in any authorized classroom masks simultaneous practice; only selected
+    // classrooms contribute visible class time or establish the learner's chart history.
+    const merge = (firstDay: string, lastDay: string, from: number, to: number) => mergeLearningTime(
+        snapshot.rows.filter((row) => row.day >= firstDay && row.day <= lastDay),
+        snapshot.lessons.filter((lesson) => +lesson.startAt < to && +lesson.endAt > from),
+        from, to, { classDomainIds: ids, observedAt: +now },
+    );
+    const measured = merge(dayString(trendStart), dayString(now), +trendStart, +now);
+    const selectedTimes = merge(dayString(start), dayString(end), rangeStart, rangeEnd);
+    const selectedLessons = snapshot.lessons.filter((lesson) => ids.includes(lesson.domainId)
+        && +lesson.startAt < +lesson.endAt && +lesson.startAt < +now);
+    let firstRecordedAt = snapshot.collectionStartedAt;
+    for (const lesson of selectedLessons) {
+        if (firstRecordedAt === null || +lesson.startAt < firstRecordedAt) firstRecordedAt = +lesson.startAt;
     }
-    for (const item of problemRecords) {
-        const key = JSON.stringify([item._id.domainId, 'problem', item._id.pid, null]);
-        const entry = problems.get(key) || { ...item._id, kind: 'problem', seconds: 0 };
-        Object.assign(entry, { submits: item.submits, accepted: !!item.accepted, lastActiveLabel: activityLabel(timestamp(item.last)) });
-        problems.set(key, entry);
-    }
-    const orderedProblems = [...problems.values()].sort((a, b) => (b.estimatedSeconds ?? b.seconds) - (a.estimatedSeconds ?? a.seconds)
-        || b.submits - a.submits).slice(0, 50);
-    const banks = [...new Set<string>(orderedProblems.filter((item) => item.kind === 'problem')
-        .map((item) => item.problemDomainId || item.domainId))];
-    const domainViewers = new Map(await Promise.all(banks.map(async (id) => [id, await user.getById(id, handler.user._id)] as const)));
-    const problemRows = await Promise.all(orderedProblems.map(async (item) => {
-        const problemDomain = item.problemDomainId || item.domainId;
-        const found = item.kind === 'problem'
-            ? await problem.get(problemDomain, item.pid, ['docId', 'pid', 'title', 'hidden', 'owner', 'maintainer', 'objectiveKind']) : null;
-        const pdoc = found && problem.canViewBy(found, domainViewers.get(problemDomain)) ? found : null;
-        return { ...item, domainName: scope.domains.find((d) => d.id === item.domainId)?.name,
-            pid: pdoc?.pid || item.pid, title: pdoc?.title || (item.kind === 'daily' ? '每日一练' : item.kind === 'ide' ? '在线编程'
-                : item.kind === 'sharedContest' ? '跨课堂比赛' : found ? '暂不可查看的题目' : '题目已移除'),
-            url: pdoc ? handler.url('problem_detail', { domainId: problemDomain, pid: pdoc.pid || pdoc.docId }) : '',
-            timeLabel: trainingDurationEstimate(item.estimatedSeconds ?? item.seconds, item.hasEstimate),
-            uncertainSeconds: Math.max(0, (item.trainingUpperSeconds ?? item.seconds) - item.seconds),
-            classTrainingLabel: item.classTrainingEstimatedSeconds ? trainingDurationEstimate(item.classTrainingEstimatedSeconds,
-                (item.classTrainingUpperSeconds ?? item.classTrainingSeconds) - item.classTrainingSeconds > 0.001) : '' };
-    }));
-    const firstRecentDay = dayString(recentHistoryStart);
-    const recentHistory = history.filter((row) => row.day >= firstRecentDay);
-    const recentLessons = lessonHistory.filter((lesson) => +lesson.endAt > +recentHistoryStart);
-    const recentTime = presentTime(mergeTimes(recentHistory, recentLessons, +recentStart, +now).students[0]);
-    const monthTime = presentTime(mergeTimes(recentHistory, recentLessons, +monthStart, +now).students[0]);
-    const averageLabel = growth.averageWeekSeconds === null ? '—'
-        : trainingDurationEstimate(growth.averageWeekSeconds, growth.averageWeekHasEstimate);
-    const selectedLessons = selectedLessonsInRange.filter((item) => ids.includes(item.domainId))
+    const { periods, trends } = trainingStudentPeriods(measured.days, firstRecordedAt, time);
+    const { averageWeekSeconds, averageWeekHasEstimate, averageWeeks, averageStart, averageEnd } = snapshot.growth;
+    const lessonsInRange = selectedLessons.filter((lesson) => +lesson.startAt < rangeEnd && +lesson.endAt > rangeStart)
         .sort((a, b) => +b.startAt - +a.startAt || a.externalId.localeCompare(b.externalId));
     dashboard.detail = {
-        uid: student, name: studentRow.name,
-        averageTraining: {
-            averageWeekSeconds: growth.averageWeekSeconds, averageWeekHasEstimate: growth.averageWeekHasEstimate,
-            averageWeeks: growth.averageWeeks, averageStart: growth.averageStart, averageEnd: growth.averageEnd,
-        },
+        ...selected, periods, trends, periodLinks,
         timeBreakdown: presentTime(selectedTimes.students[0]),
-        lessons: selectedLessons.slice(0, 100).map((item) => ({ externalId: item.externalId, title: item.title || '编程课堂',
-            sourceLabel: item.source === 'lesson' ? '站内课堂' : '外部课堂',
-            domainName: scope.domains.find((d) => d.id === item.domainId)?.name || item.domainId,
-            startLabel: moment(item.startAt).tz(TRAINING_TIME_ZONE).format('YYYY-MM-DD HH:mm'),
-            endLabel: moment(item.endAt).tz(TRAINING_TIME_ZONE).format('YYYY-MM-DD HH:mm'),
-            timeLabel: trainingDuration((Math.min(+item.endAt, rangeEnd) - Math.max(+item.startAt, rangeStart)) / 1000) })),
-        lessonLimit: selectedLessons.length > 100,
-        overview: [
-            { label: range.label, value: studentRow.timeLabel, helper: '自主训练与上课合并后的学习总时长' },
-            { label: '最近 7 天', value: recentTime.timeLabel, helper: `${dayString(recentStart)} 至今 · 学习总时长` },
-            { label: '本月已记录', value: monthTime.timeLabel, helper: `${now.format('M')} 月 · 学习总时长` },
-            { label: '平均周自主训练', value: averageLabel,
-                helper: growth.averageWeeks ? `${growth.averageStart} 至今 · 共 ${growth.averageWeeks} 个自然周（含本周和无训练周）` : '暂无自主训练记录' },
-        ],
-        daily: dailyBars(start, end, selectedTimes.days),
-        domains: domainBreakdown(scope.domains, ids, selectedTimes.domains),
-        problems: problemRows, problemLimit: problems.size > 50 ? 50 : null,
-        unattributedTrainingLabel: sum(selectedTimes.domains, 'unattributedEstimatedSeconds')
-            ? trainingDurationEstimate(sum(selectedTimes.domains, 'unattributedEstimatedSeconds'), true) : '',
-        unattributedClassTrainingLabel: sum(selectedTimes.domains, 'unattributedClassTrainingEstimatedSeconds')
-            ? trainingDurationEstimate(sum(selectedTimes.domains, 'unattributedClassTrainingEstimatedSeconds'), true) : '',
+        averageTraining: { averageWeekSeconds, averageWeekHasEstimate, averageWeeks, averageStart, averageEnd },
+        domains: selectedTimes.domains.map((item) => ({ ...presentTime(item), id: item._id, name: scope.domains.find((d) => d.id === item._id)?.name })),
+        lessons: lessonsInRange.slice(0, 100).map((lesson) => ({
+            title: lesson.title || '编程课堂', sourceLabel: lesson.source === 'lesson' ? '站内课堂' : '外部课堂',
+            domainName: scope.domains.find((d) => d.id === lesson.domainId)?.name || lesson.domainId,
+            startLabel: moment(lesson.startAt).tz(TRAINING_TIME_ZONE).format('YYYY-MM-DD HH:mm'),
+            endLabel: moment(lesson.endAt).tz(TRAINING_TIME_ZONE).format('YYYY-MM-DD HH:mm'),
+            timeLabel: trainingDuration((Math.min(+lesson.endAt, rangeEnd) - Math.max(+lesson.startAt, rangeStart)) / 1000),
+        })),
+        lessonCount: lessonsInRange.length, lessonLimit: lessonsInRange.length > 100,
+        ...await loadTrainingProblemDetails(handler, selectedTimes, submissions, scope.domains),
     };
     return dashboard;
 }

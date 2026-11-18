@@ -75,3 +75,65 @@ test('daily chart fills missing dates and has stable zero-length bars', () => {
     assert.equal(rows[5].seconds, 0);
     assert.equal(rows[5].barPercent, 0);
 });
+
+test('student periods reuse measured daily splits across a Sunday, month end and a lesson still in progress', () => {
+    function loadLearning(name, dependencies = {}) {
+        const mod = { exports: {} };
+        const code = transformSync(fs.readFileSync(path.resolve(__dirname, '../packages/hydrooj/src/lib', name), 'utf8'), {
+            loader: 'ts', format: 'cjs',
+        }).code;
+        vm.runInNewContext(code, { module: mod, exports: mod.exports, Date, require: (id) => dependencies[id] || require(id) });
+        return mod.exports;
+    }
+    const { mergeLearningTime } = loadLearning('learning_time.ts', { './training_time': loadLearning('training_time.ts') });
+    const boundary = Date.parse('2026-06-01T00:00:00+08:00'); // Monday
+    const asOf = new Date('2026-06-02T10:00:00+08:00');
+    const measured = (day, start, end) => ({ uid: 20, domainId: 'python', day, seconds: (end - start) / 1000,
+        intervals: [{ start, end, kind: 'ide', pid: 0 }] });
+    const rows = [measured('2026-05-31', boundary - 120_000, boundary), measured('2026-06-01', boundary, boundary + 120_000)];
+    const lessons = [[boundary - 60_000, boundary + 60_000], [+asOf - 60_000, +asOf + 3600_000]].map(([start, end]) => ({
+        uid: 20, domainId: 'python', startAt: new Date(start), endAt: new Date(end),
+    }));
+    const { days } = mergeLearningTime(rows, lessons, boundary - 7 * 86400_000, +asOf, { observedAt: +asOf });
+    const { periods, trends } = rules.trainingStudentPeriods(days, boundary - 120_000, asOf);
+    assert.deepEqual([periods.recent.seconds, periods.recent.trainingSeconds, periods.recent.classSeconds], [300, 120, 180]);
+    assert.deepEqual([periods.week.seconds, periods.week.trainingSeconds, periods.week.classSeconds], [180, 60, 120]);
+    assert.equal(periods.recent.rangeLabel, '2026-05-27 至 2026-06-02');
+    assert.equal(periods.week.rangeLabel, '2026-06-01 至 2026-06-02');
+    for (const series of [trends.weeks, trends.months]) {
+        assert.deepEqual(Array.from(series, (point) => point.value), [120, 180]);
+        assert.equal(series[0].rangeLabel, '2026-05-31');
+        assert.equal(series[1].partial, true);
+        assert.equal(series[1].shortLabel, '3分');
+    }
+});
+
+test('student charts fill empty calendar periods only since observation and cap history to eight weeks and six months', () => {
+    const reportAt = new Date('2026-06-01T00:00:00+08:00');
+    const empty = rules.trainingStudentPeriods([], null, reportAt);
+    assert.equal(empty.periods.week.timeLabel, '0 分钟');
+    assert.equal(empty.trends.weeks.length, 0);
+    const { trends } = rules.trainingStudentPeriods([], new Date('2020-01-01T00:00:00+08:00'), reportAt);
+    assert.equal(trends.weeks.length, 8);
+    assert.equal(trends.months.length, 6);
+    assert.equal(trends.months[0].label, '1月');
+    assert(trends.weeks.every((item) => item.value === 0));
+    assert.equal(trends.weeks.at(-2).rangeLabel, '2026-05-25 至 2026-05-31');
+    assert.equal(trends.months.at(-2).rangeLabel, '2026-05-01 至 2026-05-31');
+    assert.equal(trends.months.at(-2).partial, false);
+    assert.equal(trends.weeks.at(-1).rangeLabel, '2026-06-01');
+    assert.equal(trends.weeks.at(-1).partial, true);
+});
+
+test('earlier imported classes extend the chart, while uncertain historical training keeps its estimate in every label', () => {
+    const { trends, periods } = rules.trainingStudentPeriods([
+        { _id: '2026-08-20', trainingSeconds: 0, trainingEstimatedSeconds: 0, classSeconds: 7200, hasEstimate: false },
+        { _id: '2026-10-24', trainingSeconds: 100, trainingEstimatedSeconds: 345, classSeconds: 60, hasEstimate: true },
+    ], new Date('2026-10-01T00:00:00+08:00'), now);
+    assert.deepEqual(Array.from(trends.months, ({ label, value }) => [label, value]), [['8月', 7200], ['9月', 0], ['10月', 405]]);
+    assert.equal(periods.recent.trainingLabel, '约 6 分钟');
+    assert.equal(periods.week.timeLabel, '约 7 分钟');
+    assert.equal(trends.weeks.at(-1).shortLabel, '约7分');
+    assert.equal(trends.months.at(-1).classLabel, '1 分钟');
+    assert.equal(trends.months.at(-1).hasEstimate, true);
+});

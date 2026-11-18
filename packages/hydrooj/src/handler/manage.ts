@@ -163,21 +163,30 @@ class SystemDashboardHandler extends SystemHandler {
 }
 
 class SystemTrainingDashboardHandler extends Handler {
+    private scopePromise?: ReturnType<typeof trainingDashboardScope>;
+
+    private dashboardScope() {
+        this.scopePromise ||= trainingDashboardScope(this);
+        return this.scopePromise;
+    }
+
     async prepare() {
-        await trainingDashboardScope(this);
+        await this.dashboardScope();
         this.response.addHeader('Cache-Control', 'private, no-store');
         this.response.addHeader('Vary', 'Cookie, Authorization');
     }
 
     async showClassIntegration(issued?: { token: string, status: Awaited<ReturnType<typeof classTime.tokenStatus>> }) {
-        const scope = await trainingDashboardScope(this);
-        const dashboard = await loadTrainingDashboard(this);
-        const status = issued?.status || await classTime.tokenStatus(this.user._id, scope.workspaceId);
+        const scope = await this.dashboardScope();
+        const [dashboard, status] = await Promise.all([
+            loadTrainingDashboard(this, new Date(), scope),
+            issued?.status || classTime.tokenStatus(this.user._id, scope.workspaceId),
+        ]);
         const endpoint = this.url('training_time_classes', { domainId: this.domain._id });
         dashboard.integration = {
             // Koa's origin is the optional incoming Origin header, absent on normal navigation.
             url: new URL(endpoint, `${this.context.protocol}://${this.request.host}`).toString(),
-            manageUrl: this.url('manage_training_dashboard'), domains: scope.domains,
+            manageUrl: this.url('manage_training_dashboard', { query: dashboard.currentQuery }), domains: scope.domains,
             status: { ...status, expiresLabel: status.expiresAt ? moment(status.expiresAt).tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm') : '' },
             token: issued?.token || '',
         };
@@ -199,7 +208,7 @@ class SystemTrainingDashboardHandler extends Handler {
     async postIssueClassToken() {
         this.verifyClassTokenOrigin();
         await this.limitRate('class_time_token', 60, 10);
-        const scope = await trainingDashboardScope(this);
+        const scope = await this.dashboardScope();
         const raw = this.request.body.domains;
         if (!raw || (Array.isArray(raw) && !raw.length)) throw new ValidationError('请选择需要同步的课堂');
         let selection: ReturnType<typeof trainingDomainSelection>;
@@ -212,7 +221,7 @@ class SystemTrainingDashboardHandler extends Handler {
     async postRevokeClassToken() {
         this.verifyClassTokenOrigin();
         await this.limitRate('class_time_token', 60, 10);
-        const scope = await trainingDashboardScope(this);
+        const scope = await this.dashboardScope();
         await classTime.revokeToken(this.user._id, scope.workspaceId);
         await this.showClassIntegration();
     }

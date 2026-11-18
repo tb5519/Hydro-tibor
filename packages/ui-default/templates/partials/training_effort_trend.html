@@ -1,0 +1,85 @@
+{% macro effortSeries(points, period, unit, chartId) %}
+<div class="effort-trend__series effort-trend__series--{{ period }}" id="{{ chartId }}-{{ period }}-plot" data-effort-series="{{ period }}">
+  {% if points|length %}
+    {% set count = points|length %}
+    {% set maximum = points|sort(true, false, 'value')|first %}
+    {% set scale = maximum.value or 1 %}
+    {% set coordinates %}{% for point in points %}{{ loop.index0 * 100 + 50 }},{{ 126 - 92 * point.value / scale }} {% endfor %}{% endset %}
+    <div class="effort-trend__scroll">
+      <div class="effort-trend__canvas" style="--effort-count: {{ count }}">
+        <svg class="effort-trend__line" viewBox="0 0 {{ count * 100 }} 138" width="100%" height="138" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+          <defs><linearGradient id="{{ chartId }}-{{ period }}-fill" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#39a798" stop-opacity=".19"/><stop offset="100%" stop-color="#39a798" stop-opacity=".025"/>
+          </linearGradient></defs>
+          <path d="M0 34H{{ count * 100 }} M0 80H{{ count * 100 }} M0 126H{{ count * 100 }}" class="effort-trend__grid" vector-effect="non-scaling-stroke"/>
+          {% if count > 1 %}
+          <polygon points="50,126 {{ coordinates }}{{ count * 100 - 50 }},126" fill="url(#{{ chartId }}-{{ period }}-fill)"/>
+          <polyline points="{{ coordinates }}" class="effort-trend__stroke" vector-effect="non-scaling-stroke"/>
+          {% endif %}
+        </svg>
+        <ol class="effort-trend__points" role="list" aria-label="各{{ unit }}编程投入时长">
+          {% for point in points %}
+            {% set description %}{{ point.rangeLabel }}{% if point.partial and loop.last %}，本{{ unit }}至今{% elif point.partial %}，已记录时段{% endif %}，共 {{ point.timeLabel }}，自主训练 {{ point.trainingLabel }}，上课 {{ point.classLabel }}{% endset %}
+            <li class="effort-trend__point{% if loop.last %} is-current{% endif %}" data-effort-point tabindex="0" aria-label="{{ description }}" title="{{ description }}" style="--effort-y: {{ 126 - 92 * point.value / scale }}px">
+              <span class="effort-trend__value">{{ point.shortLabel }}</span>
+              <span class="effort-trend__dot" aria-hidden="true"></span>
+              <span class="effort-trend__period">{{ point.label }}{% if point.partial and loop.last %}<small>本{{ unit }}至今</small>{% endif %}</span>
+            </li>
+          {% endfor %}
+        </ol>
+      </div>
+    </div>
+  {% else %}
+    <p class="effort-trend__empty">暂无可展示的{{ unit }}记录</p>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% set chartId = 'effort-trend-' ~ dashboard.detail.uid %}
+<section class="effort-trend" data-effort-trend aria-labelledby="{{ chartId }}-title">
+  <input class="effort-trend__radio effort-trend__radio--weeks" type="radio" name="{{ chartId }}-period" id="{{ chartId }}-weeks" aria-controls="{{ chartId }}-weeks-plot" checked>
+  <input class="effort-trend__radio effort-trend__radio--months" type="radio" name="{{ chartId }}-period" id="{{ chartId }}-months" aria-controls="{{ chartId }}-months-plot">
+  <div class="effort-trend__head">
+    <div><h3 id="{{ chartId }}-title">编程投入趋势</h3><p>自主训练 + 上课</p></div>
+    <div class="effort-trend__switch">
+      <label for="{{ chartId }}-weeks" class="effort-trend__switch-week">按周</label>
+      <label for="{{ chartId }}-months" class="effort-trend__switch-month">按月</label>
+    </div>
+  </div>
+  {{ effortSeries(dashboard.detail.trends.weeks or [], 'weeks', '周', chartId) }}
+  {{ effortSeries(dashboard.detail.trends.months or [], 'months', '月', chartId) }}
+</section>
+
+<style>
+.effort-trend{box-sizing:border-box;min-width:0;border:1px solid #d8e5e8;border-radius:14px;background:#fff;color:#244d57;padding:18px 20px 12px}
+.effort-trend__head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.effort-trend .effort-trend__head h3{margin:0;color:#264855;font-size:16px;font-weight:650;line-height:1.4}
+.effort-trend .effort-trend__head p{margin:4px 0 0;font-size:12px;color:#57717b;line-height:1.5}
+.effort-trend__switch{display:inline-flex;flex:none;padding:3px;border:1px solid #d8e5e8;border-radius:9px;background:#f3f7f8}
+.effort-trend__switch label{display:grid;place-items:center;box-sizing:border-box;min-width:41px;min-height:29px;margin:0;border-radius:6px;color:#506770;font:inherit;font-size:12px;line-height:1.35;cursor:pointer}
+.effort-trend__radio{position:absolute!important;width:1px!important;height:1px!important;margin:0!important;clip-path:inset(50%);overflow:hidden;white-space:nowrap}
+.effort-trend__radio--weeks:checked ~ .effort-trend__head .effort-trend__switch-week,
+.effort-trend__radio--months:checked ~ .effort-trend__head .effort-trend__switch-month{background:#fff;color:#17635e;font-weight:650;box-shadow:0 1px 4px #1d45451c}
+.effort-trend__radio--weeks:focus-visible ~ .effort-trend__head .effort-trend__switch-week,
+.effort-trend__radio--months:focus-visible ~ .effort-trend__head .effort-trend__switch-month{outline:2px solid #197b74;outline-offset:1px}
+.effort-trend__series{display:none;margin-top:12px}
+.effort-trend__radio--weeks:checked ~ .effort-trend__series--weeks,
+.effort-trend__radio--months:checked ~ .effort-trend__series--months{display:block}
+.effort-trend__scroll{overflow-x:auto;direction:rtl;scrollbar-width:thin;scrollbar-color:#bfcece transparent}
+.effort-trend__canvas{position:relative;direction:ltr;min-width:calc(var(--effort-count) * 79px);height:178px}
+.effort-trend__line{position:absolute;display:block;inset:0 0 auto;pointer-events:none}
+.effort-trend__grid{fill:none;stroke:#e2ebeb;stroke-width:1;stroke-dasharray:3 5}
+.effort-trend__stroke{fill:none;stroke:#28857c;stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round}
+.effort-trend .effort-trend__points{position:relative;display:grid;grid-template-columns:repeat(var(--effort-count),minmax(0,1fr));margin:0;padding:0;height:100%;list-style:none}
+.effort-trend__point{position:relative;list-style:none;border-radius:6px;text-align:center;line-height:1;font-variant-numeric:tabular-nums}
+.effort-trend__point:focus-visible{outline:2px solid #28857c;outline-offset:-2px}
+.effort-trend__value,.effort-trend__dot,.effort-trend__period{position:absolute;left:50%;white-space:nowrap}
+.effort-trend__value{top:var(--effort-y);transform:translate(-50%,calc(-100% - 9px));padding:2px 4px;border-radius:4px;background:#fff;color:#30575c;font-size:12px;font-weight:600}
+.effort-trend__dot{top:var(--effort-y);box-sizing:border-box;width:9px;height:9px;transform:translate(-50%,-50%);border:2px solid #28857c;border-radius:50%;background:#fff}
+.effort-trend__point.is-current .effort-trend__dot{width:11px;height:11px;border-color:#fff;background:#18766e;box-shadow:0 0 0 1.5px #18766e}
+.effort-trend__point.is-current .effort-trend__value{color:#176a63}
+.effort-trend__period{top:140px;transform:translateX(-50%);color:#4f6872;font-size:11px;line-height:1.45}
+.effort-trend__period small{display:block;color:#176a63;font-size:10px}
+.effort-trend .effort-trend__empty{margin:0;padding:28px 0;color:#586f79;font-size:13px;text-align:center}
+@media(max-width:620px){.effort-trend{padding:14px 12px 9px}.effort-trend__switch label{min-height:33px}}
+</style>

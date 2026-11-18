@@ -90,3 +90,74 @@ export function trainingDailyBars(start: moment.Moment, end: moment.Moment, valu
     const max = Math.max(1, ...rows.map((row) => row.seconds));
     return rows.map((row) => ({ ...row, barPercent: Math.round(row.seconds / max * 100) }));
 }
+
+interface StudentLearningDay {
+    _id: string;
+    trainingSeconds: number;
+    trainingEstimatedSeconds: number;
+    classSeconds: number;
+    hasEstimate: boolean;
+}
+
+/** A single learner's merged Shanghai days already exclude classroom overlap
+ * and stop at observedAt. Sum the same days for both cards and both charts. */
+export function trainingStudentPeriods(days: StudentLearningDay[], startedAt: Date | number | null, now: Date) {
+    const stop = moment(now).tz(TRAINING_TIME_ZONE);
+    const today = stop.clone().startOf('day');
+    const lastDay = today.format('YYYY-MM-DD');
+    const byDay = new Map(days.map((day) => [day._id, day]));
+    const start = startedAt != null && Number.isFinite(+startedAt) && +startedAt <= +stop
+        ? moment(+startedAt).tz(TRAINING_TIME_ZONE) : null;
+    let first = start;
+    for (const day of days) {
+        if (day._id > lastDay || !(day.trainingEstimatedSeconds || day.classSeconds)) continue;
+        if (!first || day._id < first.format('YYYY-MM-DD')) first = moment.tz(day._id, 'YYYY-MM-DD', TRAINING_TIME_ZONE);
+    }
+
+    function summarize(from: moment.Moment, until: moment.Moment, endDay = until) {
+        let trainingSeconds = 0;
+        let classSeconds = 0;
+        let hasEstimate = false;
+        for (const day = from.clone().startOf('day'); day.isBefore(until); day.add(1, 'day')) {
+            const row = byDay.get(day.format('YYYY-MM-DD'));
+            if (!row) continue;
+            trainingSeconds += row.trainingEstimatedSeconds ?? row.trainingSeconds;
+            classSeconds += row.classSeconds;
+            hasEstimate ||= row.hasEstimate;
+        }
+        const seconds = trainingSeconds + classSeconds;
+        const dateLabel = from.isSame(endDay, 'day') ? from.format('M/D') : `${from.format('M/D')}–${endDay.format('M/D')}`;
+        const rangeLabel = from.isSame(endDay, 'day') ? from.format('YYYY-MM-DD')
+            : `${from.format('YYYY-MM-DD')} 至 ${endDay.format('YYYY-MM-DD')}`;
+        return {
+            seconds, timeLabel: trainingDurationEstimate(seconds, hasEstimate),
+            trainingSeconds, trainingLabel: trainingDurationEstimate(trainingSeconds, hasEstimate),
+            classSeconds, classLabel: trainingDuration(classSeconds), hasEstimate, dateLabel, rangeLabel,
+        };
+    }
+    function points(unit: 'week' | 'month', count: number) {
+        if (!first) return [];
+        const floor = unit === 'week' ? 'isoWeek' : 'month';
+        const earliest = stop.clone().startOf(floor).subtract(count - 1, unit);
+        const result = [];
+        for (const period = moment.max(earliest, first.clone().startOf(floor)); !period.isAfter(stop); period.add(1, unit)) {
+            const end = period.clone().add(1, unit);
+            const from = moment.max(period, first);
+            // Completed ranges end at an exclusive midnight, even when the
+            // report opens at the very first instant of a new week or month.
+            const complete = !end.isAfter(stop);
+            const data = summarize(from, complete ? end : stop, complete ? end.clone().subtract(1, 'millisecond') : stop);
+            result.push({
+                ...data, value: data.seconds, label: period.format(unit === 'week' ? 'M/D' : 'M月'),
+                shortLabel: data.timeLabel.replace('不足 1 分钟', '<1分').replace(/\s+/g, '').replace('小时', '时').replace('分钟', '分'),
+                partial: from.isAfter(period) || end.isAfter(stop),
+            });
+        }
+        return result;
+    }
+
+    return {
+        periods: { recent: summarize(today.clone().subtract(6, 'days'), stop), week: summarize(today.clone().startOf('isoWeek'), stop) },
+        trends: { weeks: points('week', 8), months: points('month', 6) },
+    };
+}

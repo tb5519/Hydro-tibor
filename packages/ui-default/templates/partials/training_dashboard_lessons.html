@@ -1,0 +1,36 @@
+<details class="tdash-lessons" data-training-lessons>
+  <summary>
+    <strong>上课记录</strong>
+    <span>{{ dashboard.periodLabel }} · {{ student.lessonCount or 0 }} 条</span>
+    {{ icon('next') }}
+  </summary>
+  {% if student.lessons and student.lessons|length %}
+    <p class="tdash-lesson-scope">{{ dashboard.start }} 至 {{ dashboard.end }} · 北京时间 · 重叠时段合并计时</p>
+    <ul class="tdash-lesson-list">
+      {% for lesson in student.lessons %}
+        <li>
+          <div><strong>{{ lesson.title }}</strong>
+            <p>{{ lesson.domainName }} · {{ lesson.sourceLabel }}</p>
+            <p>{{ lesson.startLabel }} 至 {{ lesson.endLabel }}</p>
+          </div>
+          <span>本期计入 <b>{{ lesson.timeLabel }}</b></span>
+        </li>
+      {% endfor %}
+    </ul>
+    {% if student.lessonLimit %}<p class="tdash-footnote">显示最近 100 条，全部记录均计入统计。</p>{% endif %}
+  {% else %}<p class="tdash-empty">本期暂无上课记录</p>{% endif %}
+</details>
+<style>
+.tdash-lessons { min-width: 0; padding: 0 16px; border: 1px solid var(--td-line); border-radius: 12px; background: var(--td-paper); }
+.tdash-lessons summary { display: flex; align-items: center; gap: 8px; padding: 12px 0; }
+.tdash-lessons summary strong { font-size: 15px; margin-right: auto; }
+.tdash-lessons summary span,.tdash-lesson-scope,.tdash-lesson-list p,.tdash-lesson-list span { color: var(--td-muted); font-size: 12px; }
+.tdash-lessons summary .td-icon { width: 14px; }
+.tdash-lessons[open] summary .td-icon { transform: rotate(90deg); }
+.tdash-lesson-scope { margin: 0 0 6px; }
+.tdash-lesson-list { margin: 0; padding: 0; list-style: none; }
+.tdash-lesson-list li { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 3px 12px; padding: 9px 0; border-top: 1px solid var(--td-line); }
+.tdash-lesson-list li div { min-width: 0; overflow-wrap: anywhere; }
+.tdash-lesson-list p { margin: 2px 0 0; }
+.tdash-lesson-list b { color: var(--td-ink); }
+</style>
