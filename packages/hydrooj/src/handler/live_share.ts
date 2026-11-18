@@ -61,8 +61,9 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
     private lastGrantRenewal = 0;
     private lastDiscovery = 0;
     private paused = false;
+    private announcedAssist = '';
     private lastObservationSync = { key: '', at: 0 };
-    private checking = false;
+    private sessionCheck: Promise<void>;
     private disposed = false;
 
     async prepare() {
@@ -153,6 +154,7 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
             await share.followStudentTab(this.peer, emitLiveShare);
             await broadcast.follow(this.peer, emitLiveShare);
             this.currentSession = await share.sessionFor(this.peer);
+            if (!this.currentSession) this.send({ type: 'assist:idle' });
             this.currentBroadcast = await broadcast.roomFor(this.peer);
             await this.checkSession(true);
             return;
@@ -176,6 +178,7 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
             return;
         }
         if (payload.type === 'pulse') {
+            const wasVisible = this.peer.visible;
             await share.pulsePresence(this.peer, payload.visible && (!!this.peer.url || this.canTeach));
             if (this.activePageGrant && Date.now() - this.lastGrantRenewal >= 60 * 60 * 1000) {
                 if (!await share.renewPageGrant(this.peer, this.activePageGrant)) this.activePageGrant = undefined;
@@ -183,10 +186,10 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
             }
             const followed = await broadcast.follow(this.peer, emitLiveShare);
             if (followed) this.currentBroadcast = followed;
-            if (!this.canTeach && !payload.visible && this.currentSession) {
+            if (!this.canTeach && wasVisible && !this.peer.visible && this.currentSession) {
                 for (const [uid, tabId] of [[this.currentSession.teacherUid, this.currentSession.teacherTabId],
                     [this.currentSession.studentUid, this.currentSession.studentTabId]] as [number, string][]) {
-                    emitLiveShare({ uid, tabId, message: { type: 'paused', sessionId: this.currentSession._id,
+                    emitLiveShare({ uid, tabId, message: { type: 'paused', sessionId: this.currentSession._id, pageId: this.currentSession.pageId,
                         reason: '学员已切换标签页，等待当前学习页面。' } });
                 }
             }
@@ -356,36 +359,59 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         finally { this.checkingBroadcast = false; }
     }
 
-    private async checkSession(announce = false) {
-        if (!this.peer || this.checking || this.disposed) return;
+    private async checkSession(announce = false): Promise<void> {
+        if (!this.peer || this.disposed) return;
+        if (this.sessionCheck) {
+            // A page acknowledgement must publish the new binding even when a
+            // periodic check was already reading the previous page.
+            if (!announce) return;
+            await this.sessionCheck;
+            return this.checkSession(true);
+        }
+        this.sessionCheck = this.refreshConnection(announce);
+        try { await this.sessionCheck; } finally { this.sessionCheck = undefined; }
+    }
+
+    private async refreshConnection(announce: boolean) {
         await this.checkLogin();
         await this.checkBroadcast(announce);
         if (!this.currentSession && !announce && Date.now() - this.lastDiscovery < 30000) return;
-        this.checking = true;
-        try {
-            this.lastDiscovery = Date.now();
-            const stored = this.currentSession ? await share.sessions.findOne({ _id: this.currentSession._id, active: true })
-                : await share.sessionFor(this.peer);
-            if (!stored) {
-                if (this.currentSession) this.send({ type: 'ended', sessionId: this.currentSession._id,
-                    ...await share.connectionDeparture(this.currentSession), reason: '共享已结束。' });
+        this.lastDiscovery = Date.now();
+        const previous = this.currentSession;
+        const stored = previous ? await share.sessions.findOne({ _id: previous._id, active: true }) : await share.sessionFor(this.peer);
+        if (this.currentSession !== previous || this.disposed) return;
+        if (!stored) {
+            if (this.currentSession) this.send({ type: 'ended', sessionId: this.currentSession._id,
+                ...await share.connectionDeparture(this.currentSession), reason: '共享已结束。' });
+            this.currentSession = null;
+            return;
+        }
+        if (!sessionRole(stored, this.peer.uid, this.peer.tabId)) { this.currentSession = null; return; }
+        if (+stored.expiresAt <= Date.now()) {
+            const reason = '共享连接已超时，请重新选择学员。';
+            if (!await share.endSession(stored, reason, emitLiveShare) && this.currentSession?._id === stored._id) {
+                // The occupancy lease can already have been removed by Mongo's TTL index.
                 this.currentSession = null;
-                return;
+                this.send({ type: 'ended', sessionId: stored._id, ...await share.connectionDeparture(stored), reason });
             }
-            if (!sessionRole(stored, this.peer.uid, this.peer.tabId)) { this.currentSession = null; return; }
-            if (+stored.expiresAt <= Date.now()) { await share.endSession(stored, '共享连接已超时，请重新选择学员。', emitLiveShare); return; }
-            this.currentSession = stored;
-            const refreshed = await share.refreshSession(stored, emitLiveShare);
-            this.lastAuthorization = Date.now();
-            if (!refreshed) {
-                if (!this.paused) this.send({ type: 'paused', sessionId: stored._id, reason: '对方正在切换页面或暂时离线，等待重新连接。' });
-                this.paused = true;
-                return;
-            }
-            if (announce || this.paused || stored.pageId !== refreshed.pageId) share.notifySession(refreshed, emitLiveShare);
-            this.paused = false;
-            this.currentSession = refreshed;
-        } finally { this.checking = false; }
+            return;
+        }
+        this.currentSession = stored;
+        const refreshed = await share.refreshSession(stored, emitLiveShare);
+        if (this.currentSession !== stored || this.disposed) return;
+        this.lastAuthorization = refreshed ? Date.now() : 0;
+        if (!refreshed) {
+            if (!this.paused) this.send({ type: 'paused', sessionId: stored._id, reason: '对方正在切换页面或暂时离线，等待重新连接。' });
+            this.paused = true;
+            return;
+        }
+        // A concurrent relay can refresh the database page binding before the
+        // periodic check runs. Compare against the page actually sent to this tab.
+        if (announce || this.paused || this.announcedAssist !== `${refreshed._id}:${refreshed.pageId}`) {
+            share.notifySession(refreshed, emitLiveShare);
+        }
+        this.paused = false;
+        this.currentSession = refreshed;
     }
 
     @subscribe('live-share/event')
@@ -433,14 +459,23 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         }
         if (['ended', 'paused'].includes(event.message.type)) {
             if (event.message.switched) share.retireTransport(event.message.sessionId);
-            if (this.currentSession?._id === event.message.sessionId) this.currentSession = null;
+            if (event.message.type === 'paused') {
+                if (this.currentSession?._id !== event.message.sessionId
+                    || (event.message.pageId && this.currentSession.pageId !== event.message.pageId)) return;
+                this.paused = true;
+            } else if (this.currentSession?._id === event.message.sessionId) {
+                this.currentSession = null;
+                this.paused = false;
+            }
             this.lastAuthorization = 0; this.lastDiscovery = 0;
-            if (event.message.type === 'paused') this.paused = true;
         }
         if (['started', 'share-start'].includes(event.message.type)) {
             const current = await share.sessions.findOne({ _id: event.message.sessionId, active: true });
-            if (!current || !await share.currentTransport(current)) return;
+            if (!current || current.pageId !== event.message.pageId || current.studentTabId !== event.message.tabId
+                || !sessionRole(current, this.peer.uid, this.peer.tabId) || !await share.currentTransport(current)) return;
             this.currentSession = current;
+            this.announcedAssist = `${current._id}:${current.pageId}`;
+            this.paused = false;
             this.lastAuthorization = 0;
         }
         if (event.message.type === 'observe:sync') {
@@ -456,7 +491,7 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
             if (!await share.verifyPageGrant(this.peer.uid, this.peer.domainId, this.activePageGrant, this.peer.url)) return;
         }
         if (event.message.type === 'relay') {
-            if (!this.currentSession || this.currentSession._id !== event.message.sessionId
+            if (this.paused || !this.currentSession || this.currentSession._id !== event.message.sessionId
                 || this.currentSession.pageId !== event.message.pageId) return;
         }
         this.send(event.message);
@@ -483,7 +518,7 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
                 const teacher = session.teacherUid === this.peer.uid;
                 emitLiveShare({ uid: teacher ? session.studentUid : session.teacherUid,
                     tabId: teacher ? session.studentTabId : session.teacherTabId,
-                    message: { type: 'paused', sessionId: session._id, reason: '对方正在切换页面或暂时离线，等待重新连接。' } });
+                    message: { type: 'paused', sessionId: session._id, pageId: session.pageId, reason: '对方正在切换页面或暂时离线，等待重新连接。' } });
             }
         }
     }

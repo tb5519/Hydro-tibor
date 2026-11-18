@@ -153,4 +153,13 @@
   --td-light: #293b46; --td-teal: #83c8bf; --td-teal-soft: #294341;
 }
 [data-mantine-color-scheme=dark] .tdash-button { color: #172a29; }
+.tdash-lifetime-value { display: block; margin: 7px 0; color: var(--td-ink); font-size: clamp(17px,2.9cqi,24px); }
+.tdash-lifetime-total input { margin: 0; accent-color: var(--td-teal); }
+.tdash-lifetime-total label { width: fit-content; cursor: pointer; }
+.tdash-lifetime-total:has(input:checked) [data-lifetime-training],
+.tdash-lifetime-total:has(input:not(:checked)) [data-lifetime-total] { display: none; }
+.tdash[data-restoring] :is(.tdash-workspace, .tdash-integration, #training-dashboard-filters) { display: none; }
+.tdash-feedback:has([data-loading-message]:empty) { display: none; }
+.tdash-feedback { color: var(--td-muted); padding: 6px 0; }
+.tdash-feedback button { margin-left: 10px; color: var(--td-teal); text-decoration: underline; cursor: pointer; }
 </style>

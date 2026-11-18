@@ -185,3 +185,15 @@ test('normal dashboard requests resolve the teacher scope once and keep the lear
     assert.match(headers.get('Cache-Control'), /private.*no-store/);
     assert.match(headers.get('Vary'), /Cookie.*Authorization/);
 });
+
+test('a dashboard fragment uses the same authorized report and private cache rules as a full visit', async () => {
+    const { handler, scopeLookups } = setup();
+    const headers = new Map();
+    handler.response.addHeader = (key, value) => headers.set(key, value);
+    handler.request.headers['x-training-dashboard'] = 'fragment';
+    await handler.prepare();
+    await handler.get();
+    assert.equal(handler.response.template, 'partials/training_dashboard_view.html');
+    assert.deepEqual(scopeLookups, [handler.user._id]);
+    assert.match(headers.get('Cache-Control'), /private.*no-store/);
+});

@@ -190,7 +190,8 @@ class SystemTrainingDashboardHandler extends Handler {
             status: { ...status, expiresLabel: status.expiresAt ? moment(status.expiresAt).tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm') : '' },
             token: issued?.token || '',
         };
-        this.response.template = 'manage_training_dashboard.html';
+        this.response.template = this.request.headers['x-training-dashboard'] === 'fragment'
+            ? 'partials/training_dashboard_view.html' : 'manage_training_dashboard.html';
         this.response.body = { dashboard };
     }
 

@@ -9,7 +9,7 @@ const views = new nunjucks.Environment(new nunjucks.FileSystemLoader(templates),
 
 function point(label, value, shortLabel, partial = false) {
     return { label, value, shortLabel, partial, rangeLabel: '2026/11/16 – 2026/11/18', timeLabel: shortLabel,
-        trainingLabel: '3 小时', classLabel: '2 小时' };
+        trainingSeconds: value * 0.6, trainingLabel: '3 小时', classLabel: '2 小时' };
 }
 function render(t, trends) {
     const html = views.render('partials/training_effort_trend.html', { dashboard: { detail: { uid: 18, trends } } });
@@ -58,4 +58,20 @@ test('renders every dense or zero-valued period and distinguishes missing histor
     const missing = render(t, undefined).document;
     assert.equal(missing.querySelectorAll('.effort-trend__empty').length, 2);
     assert.ok(!missing.querySelector('[data-effort-point]'));
+});
+
+test('total and independent training use one scale even when their peaks and slopes differ', (t) => {
+    const values = (total, training) => ({ ...point('观察期', total, String(total)), trainingSeconds: training });
+    const { document } = render(t, {
+        weeks: [values(200, 100), values(160, 160), values(100, 0)],
+        months: [values(400, 200), values(0, 0)],
+    });
+    assert.match(document.querySelector('.effort-trend__legend').textContent, /总时长（自主训练 \+ 上课）.*自主训练/);
+    const ys = (series, line) => document.querySelector(`[data-effort-series="${series}"] [data-effort-line="${line}"]`)
+        .getAttribute('points').trim().split(/\s+/).map((xy) => Math.round(Number(xy.split(',')[1])));
+    assert.deepEqual(ys('weeks', 'total'), [34, 52, 80]);
+    assert.deepEqual(ys('weeks', 'training'), [80, 52, 126]);
+    assert.deepEqual(ys('months', 'total'), [34, 126]);
+    assert.deepEqual(ys('months', 'training'), [80, 126]);
+    assert.equal(document.querySelectorAll('.effort-trend__training-dot').length, 5);
 });

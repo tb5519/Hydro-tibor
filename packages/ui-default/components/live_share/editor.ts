@@ -33,9 +33,10 @@ export interface SharedEditorTheme {
   encodedTokensColors?: string[];
 }
 export interface EditorMessage {
-  type: 'edit:init' | 'edit:update' | 'edit:ack' | 'edit:cursor' | 'edit:layout' | 'edit:remove' | 'edit:sync' | 'edit:scroll' | 'edit:focus';
+  type: 'edit:init' | 'edit:update' | 'edit:ack' | 'edit:cursor' | 'edit:layout' | 'edit:remove' | 'edit:sync' | 'edit:scroll' | 'edit:focus' | 'edit:inventory';
   pageId: string;
   editorId: string;
+  editors?: { id: string; revision: string }[];
   update?: string;
   state?: string;
   opId?: string;
@@ -58,7 +59,7 @@ export interface EditorMessage {
   textStyle?: SharedTextareaStyle;
 }
 
-export interface EditorStatus { editorId: string; pending: number; connected: boolean; ready: boolean; error?: string }
+export interface EditorStatus { editorId: string; pending: number; connected: boolean; ready: boolean; error?: string; confirmed?: boolean }
 interface CommonOptions {
   pageId: string;
   annotationScope?: AnnotationScope;
@@ -143,6 +144,24 @@ export class CollaborativeText {
     const writable = this.options.role === 'source' ? this.options.localWritable || this.options.canWrite : this.options.canWrite;
     return !this.disposed && (this.options.role === 'source' || this.connected && this.ready && !this.unsent && this.pending.size < 128) && writable?.() !== false;
   }
+  // Reload recovery stores only this teacher's unacknowledged operations.
+  // Restoring a whole snapshot would reintroduce unrelated student text.
+  get pendingUpdate() {
+    if (this.unsent || !this.pendingCount) return undefined;
+    const updates = [...this.pending.values()].map((message) => decodeUpdate(message.update!));
+    const packed = encodeUpdate(Y.mergeUpdates([...updates, ...this.queuedUpdates]));
+    return packed.length <= MAX_UPDATE ? packed : undefined;
+  }
+  restorePending(update: string) {
+    if (this.options.role !== 'viewer' || !this.ready || this.options.canWrite?.() === false) return;
+    try {
+      const bytes = decodeUpdate(update);
+      Y.applyUpdate(this.doc, bytes, REMOTE);
+      this.queuedUpdates.push(bytes);
+      this.flushOutgoing();
+    } catch { this.status('无法恢复未确认的代码修改，请下载保留的副本'); }
+  }
+  get initialized() { return this.ready; }
   get value() { return this.text.toString(); }
   get pendingCount() { return this.options.role === 'viewer' ? this.pending.size + (this.queuedUpdates.length || this.unsent ? 1 : 0) : 0; }
   get snapshot() { return encodeUpdate(Y.encodeStateAsUpdate(this.doc)); }
@@ -161,9 +180,9 @@ export class CollaborativeText {
   private transmit(message: EditorMessage) {
     try { this.options.send({ ...message, ...(this.options.document ? { document: this.options.document } : {}) }); } catch { this.setConnected(false); }
   }
-  private status(error?: string) {
+  private status(error?: string, confirmed = false) {
     this.options.onStatus?.({
-      editorId: this.options.editorId, pending: this.pendingCount, connected: this.connected, ready: this.ready, ...(error ? { error } : {}),
+      editorId: this.options.editorId, pending: this.pendingCount, connected: this.connected, ready: this.ready, ...(error ? { error } : {}), ...(confirmed ? { confirmed } : {}),
     });
   }
   flushOutgoing() {
@@ -197,8 +216,8 @@ export class CollaborativeText {
     if (this.disposed || message.pageId !== this.options.pageId || message.editorId !== this.options.editorId
       || message.document !== this.options.document) return false;
     if (message.type === 'edit:ack' && this.options.role === 'viewer') {
-      this.pending.delete(message.opId!);
-      this.status();
+      const confirmed = this.pending.delete(message.opId!);
+      this.status(undefined, confirmed);
       return true;
     }
     if (message.type !== 'edit:update' && !(message.type === 'edit:init' && this.options.role === 'viewer')) return false;
@@ -1004,13 +1023,23 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
       else binding.layout();
     }
   };
+  // Removals and final keystrokes can be lost while either peer is away.
+  // A page-scoped inventory also detects an entirely missing editor. Only
+  // mismatches need to transfer a full Yjs snapshot.
+  const inventory = () => {
+    if (!disposed && connected && !options.teacherSource) safeSend(options, {
+      type: 'edit:inventory', pageId: options.pageId, editorId: '',
+      editors: [...bindings.values()].map(({ id, shared }) => ({ id, revision: shared.revision })),
+    });
+  };
   scan();
   const timer = window.setInterval(scan, 100);
+  const inventoryTimer = options.teacherSource ? 0 : window.setInterval(inventory, 3000);
   return {
-    snapshot() { if (connected && !disposed) for (const binding of bindings.values()) binding.announce(); },
+    snapshot() { if (connected && !disposed) { for (const binding of bindings.values()) binding.announce(); inventory(); } },
     receive(message) {
       if (disposed || !connected || !message || message.pageId !== options.pageId) return;
-      if (message.type === 'edit:sync' && !message.editorId) { for (const binding of bindings.values()) binding.announce(); return; }
+      if (message.type === 'edit:sync' && !message.editorId) { for (const binding of bindings.values()) binding.announce(); inventory(); return; }
       for (const binding of bindings.values()) if (binding.id === message.editorId) binding.receive(message);
     },
     setConnected(value) {
@@ -1019,9 +1048,10 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
         binding.shared.setConnected(value); binding.notes.setConnected(value); binding.resetCursor();
         if (value) binding.announce();
       }
+      if (value) inventory();
     },
     dispose() {
-      disposed = true; window.clearInterval(timer);
+      disposed = true; window.clearInterval(timer); window.clearInterval(inventoryTimer);
       for (const binding of bindings.values()) binding.dispose();
       bindings.clear(); style.remove();
     },
@@ -1040,8 +1070,11 @@ interface ViewerBinding {
   resetCursor: () => void;
   dispose: () => void;
 }
-export function attachViewerEditors(options: CommonOptions & { container: HTMLElement; getNodeRect?: (id: string) => EditorRect | undefined }): EditorController & {
-  getPendingDrafts: () => Array<{ editorId: string; language?: string; value: string }>;
+export function attachViewerEditors(options: CommonOptions & {
+  container: HTMLElement; getNodeRect?: (id: string) => EditorRect | undefined;
+  recovery?: { editorId: string; update: string }[];
+}): EditorController & {
+  getPendingDrafts: () => Array<{ editorId: string; language?: string; value: string; update?: string }>;
 } {
   const bindings = new Map<string, ViewerBinding>();
   let annotationSerial = 0;
@@ -1084,6 +1117,7 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
       options.container.appendChild(node);
       if (options.readOnly) { node.tabIndex = -1; node.setAttribute('aria-readonly', 'true'); }
       let readOnly = !!options.readOnly || !!initial.readOnly;
+      let recovery = options.recovery?.find((draft) => draft.editorId === initial.editorId);
       let refresh = () => {};
       const shared = new CollaborativeText({
         ...options, editorId: initial.editorId, role: 'viewer', canWrite: () => !readOnly,
@@ -1254,6 +1288,10 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
         if (remoteCursor && editor) decorations = cursorDecoration(shared, editor, remoteCursor, decorations, false);
         refresh();
         applyingScroll = false;
+        if (recovery && shared.editable) {
+          const saved = recovery; recovery = undefined;
+          shared.restorePending(saved.update);
+        }
       };
       const result: ViewerBinding = {
         shared, notes, node, editor, readOnly, update, refresh, layout,
@@ -1273,6 +1311,7 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
       pendingNotes.delete(initial.editorId);
       creating.delete(initial.editorId);
       for (const message of queue) update(message);
+
     } catch {
       creating.delete(initial.editorId);
       options.onStatus?.({ editorId: initial.editorId, pending: 0, connected, ready: false, error: '共享编辑器暂未打开，请重新连接' });
@@ -1284,18 +1323,34 @@ export function attachViewerEditors(options: CommonOptions & { container: HTMLEl
     geometryFrame = window.requestAnimationFrame(refreshGeometry);
   };
   if (options.getNodeRect) geometryFrame = window.requestAnimationFrame(refreshGeometry);
+  function removeEditor(id: string) {
+    const binding = bindings.get(id);
+    if (binding) { preserveDraft(id, binding); binding.dispose(); bindings.delete(id); }
+    creating.delete(id); pendingNotes.delete(id);
+  }
   return {
     getPendingDrafts() {
       return [...detachedDrafts.values(), ...[...bindings].filter(([, binding]) => binding.shared.pendingCount > 0).map(([editorId, binding]) => ({
-        editorId, language: binding.editor?.getModel()?.getLanguageId?.() || 'plaintext', value: binding.shared.value,
+        editorId, language: binding.editor?.getModel()?.getLanguageId?.() || 'plaintext', value: binding.shared.value, update: binding.shared.pendingUpdate,
       }))];
     },
     receive(message) {
       if (disposed || !message || message.pageId !== options.pageId) return;
-      if (message.type === 'edit:remove') {
-        const binding = bindings.get(message.editorId);
-        if (binding) { preserveDraft(message.editorId, binding); binding.dispose(); bindings.delete(message.editorId); }
-        creating.delete(message.editorId); pendingNotes.delete(message.editorId); return;
+      if (message.type === 'edit:remove') { removeEditor(message.editorId); return; }
+      if (message.type === 'edit:inventory') {
+        if (!connected || !Array.isArray(message.editors)) return;
+        const active = new Set(message.editors.map(({ id }) => id));
+        for (const id of [...bindings.keys(), ...creating.keys(), ...pendingNotes.keys()]) {
+          if (!active.has(id)) removeEditor(id);
+        }
+        for (const { id, revision } of message.editors) {
+          if (creating.has(id)) continue;
+          const binding = bindings.get(id);
+          if (!binding?.shared.initialized || binding.shared.revision !== revision || binding.shared.pendingCount || binding.notes.pendingCount) {
+            safeSend(options, { type: 'edit:sync', pageId: options.pageId, editorId: id });
+          }
+        }
+        return;
       }
       const binding = bindings.get(message.editorId);
       if (binding) binding.update(message);

@@ -157,10 +157,9 @@ it('real Monaco peers merge concurrent edits, persist source drafts, selectively
 });
 
 async function editorPair(t, settings = {}) {
-    const context = await browser.newContext({ viewport: { width: 900, height: 650 } });
-    t.after(() => context.close());
-    const student = await context.newPage();
-    const teacher = await context.newPage();
+    const contexts = await Promise.all([0, 1].map(() => browser.newContext({ viewport: { width: 900, height: 650 } })));
+    t.after(() => Promise.all(contexts.map((context) => context.close())));
+    const [student, teacher] = await Promise.all(contexts.map((context) => context.newPage()));
     const errors = [];
     student.on('pageerror', (error) => errors.push(`student: ${error.stack || error.message}`));
     teacher.on('pageerror', (error) => errors.push(`teacher: ${error.stack || error.message}`));
@@ -204,6 +203,79 @@ async function editorPair(t, settings = {}) {
     await flush(); await teacher.waitForFunction(() => !!sharedEditor());
     return { student, teacher, flush };
 }
+
+it('recovers an in-flight teacher edit rejected while the student tab is hidden and merges the student edit once', {
+    skip: !executablePath && 'Install Playwright and Chromium', timeout: 40000,
+}, async (t) => {
+    const { student, teacher, flush } = await editorPair(t);
+    await teacher.evaluate(() => sharedEditor().executeEdits('teacher', [{ range: new monaco.Range(1, 1, 1, 1), text: 'teacher\n' }]));
+    await teacher.waitForFunction(() => outbox.some((message) => message.type === 'edit:update'));
+    const inFlight = await teacher.evaluate(() => outbox.splice(0));
+    await student.evaluate((messages) => {
+        Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+        document.dispatchEvent(new Event('visibilitychange'));
+        messages.forEach((message) => controller.receive(message));
+        editor.executeEdits('student', [{ range: new monaco.Range(1, 5, 1, 5), text: '\nstudent' }]);
+        delete document.hidden;
+        document.dispatchEvent(new Event('visibilitychange'));
+    }, inFlight);
+    const expected = 'teacher\nbase\nstudent';
+    const deadline = Date.now() + 22000;
+    let observed;
+    do {
+        await flush();
+        observed = await Promise.all([student.evaluate(() => editor.getValue()),
+            teacher.evaluate(() => sharedEditor().getValue()), teacher.evaluate(() => controller.getPendingDrafts().length)]);
+        if (observed[0] === expected && observed[1] === expected && !observed[2]) break;
+    } while (Date.now() < deadline);
+    assert.deepEqual(observed, [expected, expected, 0]);
+});
+
+it('reconnecting after a student switches models offline removes the retired editor and keeps its unsent draft separate', {
+    skip: !executablePath && 'Install Playwright and Chromium', timeout: 30000,
+}, async (t) => {
+    const { student, teacher, flush } = await editorPair(t);
+    await teacher.evaluate(() => sharedEditor().executeEdits('teacher', [{ range: new monaco.Range(1, 5, 1, 5), text: ' old draft' }]));
+    await teacher.waitForFunction(() => outbox.some((message) => message.type === 'edit:update'));
+    const lost = await teacher.evaluate(() => outbox.splice(0).find((message) => message.type === 'edit:update'));
+    await Promise.all([student, teacher].map((page) => page.evaluate(() => controller.setConnected(false))));
+    await student.evaluate(() => {
+        const oldModel = editor.getModel();
+        editor.setModel(monaco.editor.createModel('second problem', 'python'));
+        oldModel.dispose();
+    });
+    await student.waitForFunction((oldId) => {
+        const current = editor.getDomNode().getAttribute('data-live-share-editor');
+        return current && current !== oldId;
+    }, lost.editorId);
+    await Promise.all([student, teacher].map((page) => page.evaluate(() => controller.setConnected(true))));
+    await flush();
+    // Even a delivery delayed until after the handshake is limited to the retired editor.
+    await student.evaluate((message) => controller.receive(message), lost);
+    assert.equal(await student.evaluate(() => editor.getValue()), 'second problem');
+    assert.deepEqual(await teacher.evaluate(() => monaco.editor.getEditors().map((e) => e.getValue())), ['second problem']);
+    assert.deepEqual(await teacher.evaluate(() => controller.getPendingDrafts().map((draft) => draft.value)), ['base old draft']);
+    await teacher.evaluate(() => sharedEditor().executeEdits('teacher', [{ range: new monaco.Range(1, 1, 1, 1), text: 'new: ' }]));
+    await flush();
+    assert.equal(await student.evaluate(() => editor.getValue()), 'new: second problem');
+    assert.equal(await teacher.evaluate(() => sharedEditor().getValue()), 'new: second problem');
+});
+
+it('repairs a missed student deletion even with no further typing or disconnect event', {
+    skip: !executablePath && 'Install Playwright and Chromium', timeout: 30000,
+}, async (t) => {
+    const { student, teacher, flush } = await editorPair(t, { value: 'keep obsolete' });
+    await student.evaluate(() => editor.executeEdits('student', [{ range: new monaco.Range(1, 5, 1, 14), text: '' }]));
+    await student.waitForFunction(() => outbox.some((msg) => msg.type === 'edit:update'));
+    await student.evaluate(() => { window.outbox = outbox.filter((msg) => msg.type !== 'edit:update'); });
+    assert.equal(await teacher.evaluate(() => sharedEditor().getValue()), 'keep obsolete');
+    const deadline = Date.now() + 18000;
+    do {
+        await flush();
+        if (await teacher.evaluate(() => sharedEditor().getValue() === 'keep')) break;
+    } while (Date.now() < deadline);
+    assert.equal(await teacher.evaluate(() => sharedEditor().getValue()), 'keep');
+});
 
 it('single-line Windows code remains identical after peers insert lines and edit later offsets concurrently', {
     skip: !executablePath && 'Install Playwright and Chromium', timeout: 30000,

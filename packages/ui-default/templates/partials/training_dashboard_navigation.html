@@ -1,0 +1,177 @@
+<script>
+(function () {
+  var root = document.querySelector('[data-training-dashboard]');
+  if (!root || root.dataset.initialized) return;
+  root.dataset.initialized = '1';
+
+  function bindIntegration(root) {
+    if (!root) return;
+    var tokenForm = root.querySelector('[data-class-token-form]');
+    if (tokenForm) {
+      var tokenDomains = Array.prototype.slice.call(tokenForm.querySelectorAll('input[name=domains]'));
+      tokenDomains.forEach(function (item) { item.addEventListener('change', function () { if (tokenDomains[0]) tokenDomains[0].setCustomValidity(''); }); });
+      tokenForm.addEventListener('submit', function (event) {
+        if (!tokenDomains.some(function (item) { return item.checked; })) {
+          event.preventDefault();
+          if (tokenDomains[0]) { tokenDomains[0].setCustomValidity('请至少选择一个允许同步的课堂'); tokenDomains[0].reportValidity(); }
+        }
+      });
+    }
+    var copyToken = root.querySelector('[data-copy-class-token]');
+    if (copyToken) copyToken.addEventListener('click', function () {
+      var token = root.querySelector('#training-class-token');
+      var status = root.querySelector('[data-copy-class-status]');
+      token.focus(); token.select();
+      if (!navigator.clipboard || !navigator.clipboard.writeText) { status.textContent = '已选中，请复制并妥善保存'; return; }
+      navigator.clipboard.writeText(token.value).then(function () { status.textContent = '已复制'; }, function () { status.textContent = '已选中，请手动复制'; });
+    });
+  }
+
+  var narrow;
+  function updateRoster(width, keepOpen) {
+    if (!width || (keepOpen === undefined && narrow === (width <= 690))) return;
+    narrow = width <= 690;
+    root.querySelector('#training-roster').open = !narrow || keepOpen || !root.querySelector('#training-student')
+      || !!root.querySelector('.tdash-search input[name=q]').value;
+  }
+  if (window.ResizeObserver) {
+    var observer = new ResizeObserver(function (entries) { updateRoster(entries[0].contentRect.width); });
+    observer.observe(root);
+    window.addEventListener('pagehide', function () { observer.disconnect(); });
+    window.addEventListener('pageshow', function () { observer.observe(root); });
+  }
+  var includeClassKey = 'onebyone:training-dashboard:include-class';
+  var trendKey = 'onebyone:training-dashboard:trend';
+  function bindView(keepRosterOpen) {
+    updateRoster(root.getBoundingClientRect().width, keepRosterOpen);
+    var month = root.querySelector('.effort-trend__radio--months');
+    if (month) {
+      try { if (sessionStorage.getItem(trendKey) === 'months') month.checked = true; } catch (error) { /* Optional preference. */ }
+    }
+    var includeClass = root.querySelector('[data-include-class-time]');
+    if (includeClass) {
+      try { includeClass.checked = sessionStorage.getItem(includeClassKey) !== 'false'; } catch (error) { /* Optional preference. */ }
+    }
+    var filter = root.querySelector('#training-dashboard-filters');
+    if (filter) {
+      filter.addEventListener('submit', function () {
+        if (!filter.querySelector('[data-training-domain]:checked')) filter.querySelector('[data-training-domain-all]').checked = true;
+      });
+    }
+    bindIntegration(root.querySelector('[data-class-integration]'));
+  }
+  bindView(false);
+  root.addEventListener('change', function (event) {
+    var item = event.target;
+    if (item.matches('.effort-trend__radio')) {
+      try { sessionStorage.setItem(trendKey, item.matches('.effort-trend__radio--months') ? 'months' : 'weeks'); } catch (error) { /* Optional preference. */ }
+    }
+    if (item.matches('[data-include-class-time]')) {
+      try { sessionStorage.setItem(includeClassKey, String(item.checked)); } catch (error) { /* Optional preference. */ }
+    }
+    if (!item.checked) return;
+    if (item.matches('[data-training-domain]')) root.querySelector('[data-training-domain-all]').checked = false;
+    if (item.matches('[data-training-domain-all]')) root.querySelectorAll('[data-training-domain]').forEach(function (input) { input.checked = false; });
+  });
+  document.addEventListener('click', function (event) {
+    var picker = root.querySelector('[data-training-domains][open]');
+    if (picker && !picker.contains(event.target)) picker.open = false;
+  });
+  root.addEventListener('keydown', function (event) {
+    var picker = event.target.closest('[data-training-domains][open]');
+    if (picker && event.key === 'Escape') { picker.open = false; picker.querySelector('summary').focus(); }
+  });
+
+  if (!window.fetch || !window.AbortController) return;
+  var activeRequest;
+  var pendingMutation;
+  var retryNavigation;
+  var initialPath = location.pathname;
+  function isDashboardUrl(url) {
+    return url.origin === location.origin && (url.pathname === initialPath || url.pathname.endsWith('/manage/training-dashboard'));
+  }
+  function feedback(message, canRetry) {
+    root.querySelector('[data-loading-message]').textContent = message;
+    root.querySelector('[data-retry-dashboard]').hidden = !canRetry;
+  }
+  async function navigate(url, mode, focus, body) {
+    if (activeRequest) activeRequest.abort();
+    var controller = new AbortController();
+    activeRequest = controller;
+    root.setAttribute('aria-busy', 'true');
+    feedback(body ? '正在更新同步设置…' : '正在加载…', false);
+    try {
+      var response = await fetch(url, {
+        method: body ? 'POST' : 'GET', body: body, credentials: 'same-origin', cache: 'no-store',
+        headers: { Accept: 'text/html', 'X-Training-Dashboard': 'fragment' }, signal: controller.signal,
+      });
+      if (!response.ok || response.redirected) throw new Error('Dashboard unavailable');
+      var parsed = new DOMParser().parseFromString(await response.text(), 'text/html');
+      var view = parsed.querySelector('[data-training-dashboard]');
+      if (!view) throw new Error('Dashboard unavailable');
+      if (activeRequest !== controller) return;
+      var lessonsOpen = !!root.querySelector('[data-training-lessons][open]');
+      var integrationOpen = !!root.querySelector('[data-class-integration][open]');
+      var helpOpen = !!root.querySelector('.tdash-api-help[open]');
+      root.replaceChildren(...view.childNodes);
+      root.removeAttribute('data-restoring');
+      bindView(focus === 'roster' || focus === 'search');
+      if (lessonsOpen && root.querySelector('[data-training-lessons]')) root.querySelector('[data-training-lessons]').open = true;
+      if (integrationOpen && root.querySelector('[data-class-integration]')) root.querySelector('[data-class-integration]').open = true;
+      if (helpOpen && root.querySelector('.tdash-api-help')) root.querySelector('.tdash-api-help').open = true;
+      if (mode === 'push' && url.href !== location.href) history.pushState({ trainingDashboard: true }, '', url.href);
+      var target = { student: narrow ? '[data-heading-student]' : '[data-training-student-link][aria-current]',
+        period: '[data-problem-period][aria-current]', roster: '#training-roster summary', search: '.tdash-search input[name=q]',
+        filter: '[data-training-domains] summary', token: root.querySelector('#training-class-token') ? '#training-class-token' : '[data-class-integration] summary' }[focus];
+      var element = target && root.querySelector(target);
+      if (element) {
+        if (element.matches('[data-heading-student]')) element.tabIndex = -1;
+        element.focus({ preventScroll: true });
+      }
+    } catch (error) {
+      if (activeRequest !== controller) return;
+      retryNavigation = function () { return navigate(url, mode, focus); };
+      feedback(body ? '未能确认同步设置是否已更新，请重新加载查看。' : '加载失败，请检查网络后重试。', true);
+    } finally {
+      if (activeRequest === controller) { activeRequest = null; root.removeAttribute('aria-busy'); }
+    }
+  }
+  root.addEventListener('click', function (event) {
+    if (event.defaultPrevented || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (event.target.closest('[data-retry-dashboard]') && retryNavigation) { retryNavigation(); return; }
+    var link = event.target.closest('[data-training-student-link], [data-problem-period], .tdash-pagination a');
+    if (!link) return;
+    var url = new URL(link.href);
+    if (!isDashboardUrl(url)) return;
+    event.preventDefault();
+    if (pendingMutation) return;
+    var focus = 'roster';
+    if (link.hasAttribute('data-training-student-link')) focus = 'student';
+    if (link.hasAttribute('data-problem-period')) focus = 'period';
+    navigate(url, 'push', focus);
+  });
+  root.addEventListener('submit', function (event) {
+    if (event.defaultPrevented) return;
+    var form = event.target;
+    var url = new URL(form.action || location.href);
+    if (!isDashboardUrl(url)) return;
+    event.preventDefault();
+    if (pendingMutation) return;
+    var data = new URLSearchParams(new FormData(form));
+    if (form.method === 'post') {
+      pendingMutation = navigate(url, 'stay', 'token', data).finally(function () { pendingMutation = null; });
+    } else {
+      url.search = data.toString();
+      url.hash = '';
+      navigate(url, 'push', form.matches('.tdash-search') ? 'search' : 'filter');
+    }
+  });
+  window.addEventListener('popstate', async function () {
+    var url = new URL(location.href);
+    if (!isDashboardUrl(url)) return;
+    root.setAttribute('data-restoring', '');
+    if (pendingMutation) await pendingMutation;
+    if (location.href === url.href) navigate(url, 'stay');
+  });
+})();
+</script>

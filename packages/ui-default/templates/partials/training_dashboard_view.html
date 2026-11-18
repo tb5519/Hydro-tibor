@@ -1,0 +1,146 @@
+{% macro icon(name) %}
+<svg class="td-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  {% if name == 'search' %}<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>
+  {% elif name == 'filter' %}<path d="M3 6h18M6 12h12m-9 6h6"/>
+  {% elif name == 'chevron' %}<path d="m8 10 4 4 4-4"/>
+  {% elif name == 'next' %}<path d="m9 6 6 6-6 6"/>
+  {% elif name == 'prev' %}<path d="m15 6-6 6 6 6"/>
+  {% elif name == 'calendar' %}<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 10h18"/>
+  {% elif name == 'clock' %}<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/>
+  {% elif name == 'check' %}<path d="m5 12 4 4L19 6"/>
+  {% elif name == 'code' %}<path d="m7 7-4 5 4 5m10-10 4 5-4 5m-4-14-2 18"/>
+  {% endif %}
+</svg>
+{% endmacro %}
+
+{% macro periodCard(period, key, name) %}
+<article class="tdash-period" data-study-period="{{ key }}">
+  <header>
+    <h3>{{ icon('calendar') }}{{ name }}</h3>
+    {% if period.dateLabel %}<span class="tdash-date" title="{{ period.rangeLabel or period.dateLabel }}">{{ period.dateLabel }}</span>{% endif %}
+  </header>
+  <dl class="tdash-metrics">
+    <div><dt>编程投入</dt><dd data-time="total">{{ period.timeLabel or '—' }}</dd></div>
+    <div><dt>自主训练</dt><dd data-time="independent">{{ period.trainingLabel or '—' }}</dd></div>
+  </dl>
+  <div class="tdash-class">{{ icon('clock') }}上课 <span data-time="class">{{ period.classLabel or '—' }}</span></div>
+</article>
+{% endmacro %}
+
+<div class="tdash" data-training-dashboard>
+  <header class="tdash-head">
+    <h1 data-heading>学员训练看板</h1>
+    {% if dashboard.domains|length %}
+    <form method="get" id="training-dashboard-filters">
+      {% for key,value in dashboard.currentQuery %}{% if key != 'domains' and key != 'page' and key != 'student' %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
+      <details class="tdash-domain-picker" data-training-domains>
+        <summary>{{ icon('filter') }}{{ dashboard.scopeLabel or '课堂范围' }}{{ icon('chevron') }}</summary>
+        <div class="tdash-options">
+          <fieldset><legend class="sr-only">课堂范围</legend>
+            <label><input type="checkbox" name="domains" value="all" data-training-domain-all{% if dashboard.allDomains %} checked{% endif %}>全部课堂</label>
+            {% for item in dashboard.domains %}<label><input type="checkbox" name="domains" value="{{ item.id }}" data-training-domain{% if item.selected and not dashboard.allDomains %} checked{% endif %}>{{ item.name }}</label>{% endfor %}
+          </fieldset>
+          <button type="submit" class="tdash-button">应用</button>
+        </div>
+      </details>
+    </form>
+    {% endif %}
+  </header>
+  <div class="tdash-feedback" role="status" aria-live="polite"><span data-loading-message></span><button type="button" data-retry-dashboard hidden>重新加载</button></div>
+  <div class="tdash-workspace">
+    <aside class="tdash-sidebar">
+      <details id="training-roster" class="tdash-roster" open>
+        <summary><strong><span class="tdash-roster-title">学员</span><span class="tdash-mobile-title">切换学员</span></strong>
+          <span class="tdash-count">{{ dashboard.pagination.total or 0 }}</span>{{ icon('chevron') }}</summary>
+        <form method="get" class="tdash-search" role="search">
+          {% for key,value in dashboard.currentQuery %}{% if key != 'q' and key != 'page' and key != 'student' %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
+          <input type="search" name="q" value="{{ dashboard.q or '' }}" aria-label="搜索学员姓名、账号或 UID" placeholder="姓名、账号或 UID" maxlength="80">
+          <button aria-label="搜索学员" type="submit">{{ icon('search') }}</button>
+        </form>
+        {% if dashboard.rows|length %}
+          <nav class="tdash-students" aria-label="选择学员">
+          {% for row in dashboard.rows %}
+            <a href="{{ row.detailUrl }}" data-training-student-link{% if dashboard.detail and dashboard.detail.uid == row.uid %} aria-current="page"{% endif %}>
+              <span class="tdash-avatar" aria-hidden="true">{% if row.avatar %}<img src="{{ row.avatar }}" alt="" loading="lazy">{% else %}{{ row.name|first }}{% endif %}</span>
+              <span class="tdash-roster-name">{{ row.name }}</span><small>#{{ row.uid }}</small>
+            </a>
+          {% endfor %}
+          </nav>
+        {% else %}<p class="tdash-empty" data-empty-roster>{% if dashboard.q %}没有匹配的学员{% else %}该课堂暂无学员{% endif %}</p>{% endif %}
+        {% if dashboard.pagination.pageCount > 1 %}
+          <nav class="tdash-pagination" aria-label="学员列表分页">
+            {% if dashboard.pagination.prevUrl %}<a href="{{ dashboard.pagination.prevUrl }}" aria-label="上一页">{{ icon('prev') }}</a>{% else %}<span aria-hidden="true">{{ icon('prev') }}</span>{% endif %}
+            <span>{{ dashboard.pagination.page }} / {{ dashboard.pagination.pageCount }}</span>
+            {% if dashboard.pagination.nextUrl %}<a href="{{ dashboard.pagination.nextUrl }}" aria-label="下一页">{{ icon('next') }}</a>{% else %}<span aria-hidden="true">{{ icon('next') }}</span>{% endif %}
+          </nav>
+        {% endif %}
+      </details>
+    </aside>
+
+    {% set student = dashboard.detail %}
+    {% if student %}
+    <section class="tdash-student" id="training-student" aria-labelledby="training-student-title">
+      <header class="tdash-student-heading">
+        <span class="tdash-avatar" aria-hidden="true">{% if student.avatar %}<img src="{{ student.avatar }}" alt="">{% else %}{{ student.name|first }}{% endif %}</span>
+        <div><h2 id="training-student-title" data-heading-student>{{ student.name }}</h2>
+          <p>{% if student.uname and student.uname != student.name %}{{ student.uname }} · {% endif %}UID {{ student.uid }}</p></div>
+      </header>
+      {% if student.lifetimeEffort %}
+      {% set effort = student.lifetimeEffort %}
+      <section class="tdash-periods tdash-lifetime" aria-label="长期训练统计">
+        <article class="tdash-period">
+          <header><h3>平均每周自主训练</h3></header>
+          <strong class="tdash-lifetime-value" data-average-weekly-training>{{ effort.averageWeeklyTrainingLabel }}</strong>
+          <p class="tdash-class" title="{{ effort.averageStart or '' }} 至 {{ effort.averageEnd or '' }}">统计以来共 {{ effort.weekCount }} 个自然周</p>
+        </article>
+        <article class="tdash-period tdash-lifetime-total">
+          <header><h3>累计投入时长</h3></header>
+          <strong class="tdash-lifetime-value" aria-live="polite"><span data-lifetime-total>{{ effort.totalLabel }}</span><span data-lifetime-training>{{ effort.trainingLabel }}</span></strong>
+          <label class="tdash-class"><input type="checkbox" data-include-class-time checked>包含上课时长</label>
+        </article>
+      </section>
+      {% endif %}
+      {% if student.periods %}
+      <section class="tdash-periods" aria-label="个人训练时长">
+        {{ periodCard(student.periods.recent, 'recent', '近 7 天') }}
+        {{ periodCard(student.periods.week, 'week', '本周') }}
+      </section>
+      {% endif %}
+      {% include 'partials/training_effort_trend.html' %}
+      <section class="tdash-problems" id="training-problems" aria-labelledby="training-problems-title">
+        <header class="tdash-section-head"><h2 id="training-problems-title">题目用时</h2>
+          <nav class="tdash-range" aria-label="题目用时范围">
+            {% for period in dashboard.periodLinks %}{% if period.id == '7d' or period.id == 'thisWeek' or period.active %}
+              <a href="{{ period.url }}" data-problem-period="{{ period.id }}"{% if period.active %} aria-current="page"{% endif %}>{{ period.label }}</a>
+            {% endif %}{% endfor %}
+          </nav>
+        </header>
+        {% if student.problems|length %}
+        {% set longest = student.problems[0].estimatedSeconds or 0 %}
+        <table class="tdash-problem-table">
+          <thead><tr><th scope="col">题目</th><th scope="col">做题用时</th><th scope="col">提交</th><th scope="col">结果</th></tr></thead>
+          <tbody>
+          {% for item in student.problems %}
+            <tr data-training-problem>
+              <td><div class="tdash-problem-name">
+                {% if item.url %}<a href="{{ item.url }}">{{ item.title }}</a>{% else %}<span>{{ item.title }}</span>{% endif %}
+                <small>{% if item.pid %}{{ item.pid }}{% if item.domainName %} · {% endif %}{% endif %}{{ item.domainName or '' }}</small>
+              </div></td>
+              <td class="tdash-problem-time"><strong data-problem-time>{{ item.timeLabel }}</strong>
+                <span class="tdash-bar" aria-hidden="true"><i style="width:{% if longest %}{{ 100 * (item.estimatedSeconds or 0) / longest }}{% else %}0{% endif %}%"></i></span></td>
+              <td data-problem-submits>{{ item.submits or 0 }}</td>
+              <td data-problem-result>{% if item.accepted %}<span class="tdash-ac">{{ icon('check') }}AC</span>{% elif item.submits %}未通过{% else %}—{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% else %}<p class="tdash-empty" data-empty-problems>本期暂无题目记录</p>{% endif %}
+        {% if student.problemLimit %}<p class="tdash-footnote">显示用时最多的 {{ student.problemLimit }} 项。</p>{% endif %}
+        {% if student.otherPracticeLabel %}<p class="tdash-footnote">其他练习 <strong>{{ student.otherPracticeLabel }}</strong></p>{% endif %}
+      </section>
+      {% include 'partials/training_dashboard_lessons.html' %}
+    </section>
+    {% else %}<p class="tdash-no-selection">暂无可查看的学员</p>{% endif %}
+  </div>
+  {% if dashboard.integration %}{% include "partials/training_dashboard_sync.html" %}{% endif %}
+</div>

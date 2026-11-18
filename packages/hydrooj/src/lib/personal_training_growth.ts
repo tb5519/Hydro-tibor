@@ -93,7 +93,18 @@ export async function loadPersonalTrainingSnapshot(
     const merge = (start: number, end: number) => mergeLearningTime(rows, lessons, start, end, { classDomainIds: domainIds, observedAt: to });
     const current = merge(+week.start, to);
     const currentStudent = current.students.find((student) => student._id === uid);
-    const lifetime = averageWeeks ? merge(from, to).students.find((student) => student._id === uid) : null;
+    // Imported classes may predate the autonomous ledger. Include their full
+    // duration in dashboard totals without moving the autonomous average's baseline.
+    let lifetimeStart = from;
+    if (detail?.includeEarlierClasses) {
+        for (const lesson of lessons) {
+            if (domainIds.includes(lesson.domainId) && +lesson.startAt < +lesson.endAt) {
+                lifetimeStart = Math.min(lifetimeStart, +lesson.startAt);
+            }
+        }
+    }
+    const lifetime = averageWeeks || detail?.includeEarlierClasses
+        ? merge(lifetimeStart, to).students.find((student) => student._id === uid) : null;
     const currentDays = new Map(current.days.map((day) => [day._id, day]));
     const days = Array.from({ length: 7 }, (_, index) => {
         const date = moment(week.start).tz(TRAINING_TIME_ZONE).add(index, 'days').format('YYYY-MM-DD');
@@ -111,5 +122,5 @@ export async function loadPersonalTrainingSnapshot(
         averageEnd: lastDay,
         days,
     };
-    return { rows, lessons, growth, collectionStartedAt: Number.isFinite(firstRecordedAt) ? firstRecordedAt : null };
+    return { rows, lessons, growth, lifetime, collectionStartedAt: Number.isFinite(firstRecordedAt) ? firstRecordedAt : null };
 }

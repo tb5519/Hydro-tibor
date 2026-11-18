@@ -178,11 +178,17 @@ export async function loadTrainingDashboard(
     }
     const { periods, trends } = trainingStudentPeriods(measured.days, firstRecordedAt, time);
     const { averageWeekSeconds, averageWeekHasEstimate, averageWeeks, averageStart, averageEnd } = snapshot.growth;
+    const lifetime = presentTime(snapshot.lifetime || undefined);
     const lessonsInRange = selectedLessons.filter((lesson) => +lesson.startAt < rangeEnd && +lesson.endAt > rangeStart)
         .sort((a, b) => +b.startAt - +a.startAt || a.externalId.localeCompare(b.externalId));
     dashboard.detail = {
         ...selected, periods, trends, periodLinks,
         timeBreakdown: presentTime(selectedTimes.students[0]),
+        lifetimeEffort: {
+            trainingSeconds: lifetime.trainingEstimatedSeconds, classSeconds: lifetime.classSeconds, totalSeconds: lifetime.estimatedSeconds,
+            trainingLabel: lifetime.trainingLabel, totalLabel: lifetime.timeLabel, weekCount: averageWeeks, averageStart, averageEnd,
+            averageWeeklyTrainingLabel: averageWeekSeconds === null ? '暂无记录' : trainingDurationEstimate(averageWeekSeconds, averageWeekHasEstimate),
+        },
         averageTraining: { averageWeekSeconds, averageWeekHasEstimate, averageWeeks, averageStart, averageEnd },
         domains: selectedTimes.domains.map((item) => ({ ...presentTime(item), id: item._id, name: scope.domains.find((d) => d.id === item._id)?.name })),
         lessons: lessonsInRange.slice(0, 100).map((lesson) => ({

@@ -30,6 +30,8 @@ function studentDetail(overrides = {}) {
             recent: { dateLabel: '11/12–11/18', rangeLabel: '2026-11-12 至 2026-11-18', trainingSeconds: 5400, trainingLabel: '1 小时 30 分', classSeconds: 3600, classLabel: '1 小时', seconds: 9000, timeLabel: '2 小时 30 分', hasEstimate: false },
             week: { dateLabel: '11/16–11/18', rangeLabel: '2026-11-16 至 2026-11-18', trainingSeconds: 1200, trainingLabel: '20 分钟', classSeconds: 600, classLabel: '10 分钟', seconds: 1800, timeLabel: '30 分钟', hasEstimate: false },
         },
+        lifetimeEffort: { averageWeeklyTrainingLabel: '30 分钟', trainingLabel: '2 小时', totalLabel: '3 小时',
+            weekCount: 4, averageStart: '2026-10-26', averageEnd: '2026-11-18' },
         trends: {
             weeks: [
                 point('11/2', '2026-11-02 至 2026-11-08', 0, 0),
@@ -77,7 +79,7 @@ function fixture(overrides = {}) {
     };
     return result;
 }
-function render(dashboard = fixture()) {
-    return env.render('manage_training_dashboard.html', { dashboard });
+function render(dashboard = fixture(), fragment = false) {
+    return env.render(fragment ? 'partials/training_dashboard_view.html' : 'manage_training_dashboard.html', { dashboard });
 }
 module.exports = { fixture, studentDetail, render };

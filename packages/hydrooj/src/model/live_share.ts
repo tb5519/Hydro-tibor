@@ -272,13 +272,14 @@ export function notifySession(session: ShareSession, emit: Emit) {
 export async function endSession(session: ShareSession, reason: string, emit: Emit) {
     const participants = session.returnAudience || [{ uid: session.studentUid, tabId: session.studentTabId,
         deviceId: session.studentDeviceId, domainId: session.domainId, name: session.studentName }];
-    if (!await closeConnection(session, participants, emit)) return;
+    if (!await closeConnection(session, participants, emit)) return false;
     const result = await sessions.updateOne({ _id: session._id, active: true },
         { $set: { active: false, expiresAt: new Date(Date.now() + LIVE_SHARE_RECONNECT_MS) } });
-    if (!result.modifiedCount) return;
+    if (!result.modifiedCount) return false;
     for (const [uid, tabId] of [[session.teacherUid, session.teacherTabId], [session.studentUid, session.studentTabId]] as [number, string][]) {
         emit({ uid, tabId, message: { type: 'ended', sessionId: session._id, reason, ...connectionInfo(session) } });
     }
+    return true;
 }
 
 export async function sessionFor(item: SharePresence, now = Date.now()) {

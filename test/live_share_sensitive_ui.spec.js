@@ -68,7 +68,7 @@ test('password, classroom invitation and generated integration tokens stay priva
     const cases = [
         ['home_profile.html', '[data-profile-password-form]'],
         ['domain_join_applications.html', '#domain-join-code-settings'],
-        ['manage_training_dashboard.html', '.tdash-token-once'],
+        ['partials/training_dashboard_sync.html', '.tdash-token-once'],
     ];
     for (const [file, selector] of cases) {
         const html = fs.readFileSync(path.join(root, 'packages/ui-default/templates', file), 'utf8');

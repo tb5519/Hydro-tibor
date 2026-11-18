@@ -195,6 +195,9 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         // 19 recorded seconds - 7 taught seconds, across three calendar weeks.
         assert.equal(home.averageWeekSeconds, 4);
         assert.equal(report.detail.averageTraining.averageWeekSeconds, 4);
+        assert.equal(report.detail.lifetimeEffort.trainingSeconds, 12);
+        assert.equal(report.detail.lifetimeEffort.classSeconds, 7);
+        assert.equal(report.detail.lifetimeEffort.totalSeconds, 19);
         assert.equal(home.thisWeekHasEstimate, false);
         assert.equal(report.detail.timeBreakdown.hasEstimate, false);
     });
@@ -339,6 +342,10 @@ describe('teacher dashboard real data aggregation and authorization', () => {
         const result = await model.loadTrainingDashboard(handler({ domains: 'python', student: '101' }));
         assert.deepEqual(Array.from(result.detail.trends.months, (month) => [month.trainingSeconds, month.classSeconds]),
             [[0, 1800], [0, 0], [5100, 0]]);
+        assert.equal(result.detail.lifetimeEffort.trainingSeconds, 5100);
+        assert.equal(result.detail.lifetimeEffort.totalSeconds, 6900);
+        assert.equal(result.detail.lifetimeEffort.weekCount, 3);
+        assert.equal(result.detail.lifetimeEffort.averageWeeklyTrainingLabel, '28 分钟');
         assert.equal(result.detail.trends.months[0].partial, true);
         assert.equal(result.detail.trends.months[1].partial, false);
         assert.equal(result.detail.trends.weeks.length, 8);

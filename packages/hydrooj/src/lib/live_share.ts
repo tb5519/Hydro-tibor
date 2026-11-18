@@ -238,9 +238,17 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
             || (data.reason !== undefined && !short(data.reason, 512))) invalid();
     } else if (kind === 'editor') {
         const allowed = role === 'teacher' ? ['edit:update', 'edit:cursor', 'edit:sync', 'edit:scroll']
-            : ['edit:init', 'edit:layout', 'edit:remove', 'edit:update', 'edit:cursor', 'edit:ack', 'edit:focus'];
+            : ['edit:init', 'edit:layout', 'edit:remove', 'edit:update', 'edit:cursor', 'edit:ack', 'edit:focus', 'edit:inventory'];
         if (!allowed.includes(data.type) || data.pageId !== pageId || !short(data.editorId, 128)
-            || (!data.editorId && data.type !== 'edit:sync')) invalid();
+            || (!data.editorId && !['edit:sync', 'edit:inventory'].includes(data.type))) invalid();
+        if (data.type === 'edit:inventory') {
+            if (data.editorId !== '' || !Array.isArray(data.editors) || data.editors.length > 256
+                || Object.keys(data).some((key) => !['type', 'pageId', 'editorId', 'editors'].includes(key))
+                || data.editors.some((entry) => !entry || Object.keys(entry).length !== 2
+                    || !short(entry.id, 128) || !/^[\w-]+$/.test(entry.id)
+                    || !short(entry.revision, 4096) || !/^[a-zA-Z0-9+/=:]+$/.test(entry.revision))) invalid();
+            return;
+        }
         if (data.type === 'edit:focus') {
             const focus = data.focus;
             if (Object.keys(data).some((key) => !['type', 'pageId', 'editorId', 'focus'].includes(key))

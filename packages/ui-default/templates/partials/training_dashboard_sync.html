@@ -24,28 +24,3 @@ Content-Type: application/json
     </div>
   </details>
   {% endif %}
-<script>
-(function () {
-  var root = document.querySelector('[data-class-integration]');
-  if (!root) return;
-  var tokenForm = root.querySelector('[data-class-token-form]');
-  if (tokenForm) {
-    var tokenDomains = Array.prototype.slice.call(tokenForm.querySelectorAll('input[name=domains]'));
-    tokenDomains.forEach(function (item) { item.addEventListener('change', function () { if (tokenDomains[0]) tokenDomains[0].setCustomValidity(''); }); });
-    tokenForm.addEventListener('submit', function (event) {
-      if (!tokenDomains.some(function (item) { return item.checked; })) {
-        event.preventDefault();
-        if (tokenDomains[0]) { tokenDomains[0].setCustomValidity('请至少选择一个允许同步的课堂'); tokenDomains[0].reportValidity(); }
-      }
-    });
-  }
-  var copyToken = root.querySelector('[data-copy-class-token]');
-  if (copyToken) copyToken.addEventListener('click', function () {
-    var token = root.querySelector('#training-class-token');
-    var status = root.querySelector('[data-copy-class-status]');
-    token.focus(); token.select();
-    if (!navigator.clipboard || !navigator.clipboard.writeText) { status.textContent = '已选中，请复制并妥善保存'; return; }
-    navigator.clipboard.writeText(token.value).then(function () { status.textContent = '已复制'; }, function () { status.textContent = '已选中，请手动复制'; });
-  });
-})();
-</script>

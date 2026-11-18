@@ -1587,6 +1587,55 @@ describe('live share websocket integration', () => {
         assert.equal(reconnected.sent.find((message) => message.type === 'started').sessionId, started.sessionId);
         assert.ok(student.sent.filter((message) => message.type === 'share-start').length >= 2);
     });
+    it('closes a paused viewer after the disconnected room and its occupancy have expired', async () => {
+        const teacher = connection(2); const student = connection(10);
+        await hello(teacher, 2); await hello(student, 10);
+        await teacher.instance.message({ type: 'start', studentUid: 10 }); await settle();
+        const { sessionId } = teacher.sent.find((message) => message.type === 'started');
+        await student.instance.cleanup(); await settle();
+        assert.equal(teacher.sent.at(-1).type, 'paused');
+        await model.sessions.updateOne({ _id: sessionId }, { $set: { expiresAt: new Date(0) } });
+        await database.collection('live.share.occupancy').deleteMany({ roomId: sessionId });
+        await teacher.instance.checkSession(); await settle();
+        assert.ok(teacher.sent.some((message) => message.type === 'ended' && message.sessionId === sessionId));
+        const reconnected = connection(2); await hello(reconnected, 2); await settle();
+        assert.ok(reconnected.sent.some((message) => message.type === 'assist:idle'));
+        assert.equal(reconnected.sent.some((message) => message.type === 'started'), false);
+    });
+
+    it('discards delayed room notifications for the page a student has left', async () => {
+        const teacher = connection(2); const student = connection(10);
+        await hello(teacher, 2); await hello(student, 10);
+        await teacher.instance.message({ type: 'start', studentUid: 10 }); await settle();
+        const initial = teacher.sent.find((message) => message.type === 'started');
+        const url = '/d/class-a/p/1002';
+        const pageId = 'new-problem-page';
+        const pageGrant = await model.issuePageGrant(10, 'class-a', url);
+        await student.instance.message({ type: 'page', pageId, pageGrant, url, title: '下一题', visible: true });
+        await settle();
+        assert.equal(teacher.sent.at(-1).pageId, pageId);
+        const count = teacher.sent.length;
+        for (const message of [initial, { type: 'paused', sessionId: initial.sessionId, pageId: initial.pageId }]) {
+            await teacher.instance.onShareEvent({ uid: 2, tabId: 'tab-2-testing', message });
+        }
+        assert.equal(teacher.sent.length, count);
+    });
+
+    it('announces a recovered page even if a concurrent relay already refreshed the stored binding', async () => {
+        const teacher = connection(2); const student = connection(10);
+        await hello(teacher, 2); await hello(student, 10);
+        await teacher.instance.message({ type: 'start', studentUid: 10 }); await settle();
+        const original = teacher.sent.find((message) => message.type === 'started');
+        const url = '/d/class-a/p/1003';
+        const pageGrant = await model.issuePageGrant(10, 'class-a', url);
+        await model.updatePresencePage(student.instance.peer, { pageId: 'recovered-page-1003', pageGrant, url, title: '下一题', visible: true });
+        const session = await model.sessions.findOne({ _id: original.sessionId });
+        await model.refreshSession(session, () => {});
+        await teacher.instance.checkSession();
+        await settle();
+        assert.equal(teacher.sent.filter((message) => message.type === 'started').at(-1).pageId, 'recovered-page-1003');
+    });
+
     it('an old socket cleanup cannot pause its replacement page', async () => {
         const teacher = connection(2); const oldStudent = connection(10);
         await hello(teacher, 2); await hello(oldStudent, 10);

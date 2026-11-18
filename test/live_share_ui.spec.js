@@ -37,9 +37,9 @@ const notify = (room) => {
     const student = peers.get(room.student);
     if (!teacher || !student) return;
     room.pageId = student.pageId;
-    send(teacher, { type: 'started', sessionId: room.id, studentUid: student.uid, studentName: `学员${student.uid}`,
+    send(teacher, { type: 'started', sessionId: room.id, connectionId: room.id, studentUid: student.uid, studentName: `学员${student.uid}`,
         teacherName: '唐老师', tabId: student.tabId, pageId: room.pageId });
-    send(student, { type: 'share-start', sessionId: room.id, teacherUid: teacher.uid,
+    send(student, { type: 'share-start', sessionId: room.id, connectionId: room.id, teacherUid: teacher.uid,
         teacherName: '唐老师', tabId: student.tabId, pageId: room.pageId });
 };
 const followForeground = (peer) => {
@@ -311,6 +311,85 @@ it('follows student navigation through contest and personal pages, foreground ta
         assert.equal(await teacher.locator('#panel').evaluate((node) => node.inert), false);
         assert.deepEqual(errors, []);
     } finally { await Promise.all(contexts.map((context) => context.close())); }
+});
+
+it('recovers concurrent code changes after both sockets drop and isolates delayed edits across navigation', { timeout: 60000 }, async (t) => {
+    const contexts = await Promise.all([2, 75].map(() => browser.newContext({ viewport: { width: 1280, height: 900 } })));
+    t.after(() => Promise.all(contexts.map((ctx) => ctx.close())));
+    const [teacher, student] = await Promise.all(contexts.map((ctx) => ctx.newPage()));
+    // Capture one in-flight edit at the network boundary, just before the server receives it.
+    await teacher.addInitScript(() => {
+        const send = WebSocket.prototype.send;
+        WebSocket.prototype.send = function (raw) {
+            if (window.dropNextCode && typeof raw === 'string' && raw.startsWith('{')) {
+                const msg = JSON.parse(raw);
+                if (msg.type === 'relay' && msg.data?.type === 'edit:update' && !msg.data.document) {
+                    window.droppedCode = msg;
+                    window.dropNextCode = false;
+                    return;
+                }
+            }
+            return send.call(this, raw);
+        };
+    });
+    await Promise.all([teacher.goto(`${origin}/teacher?uid=2`), student.goto(`${origin}/p/1?uid=75`)]);
+    await teacher.locator('[data-assistant-toggle]').click();
+    await teacher.locator('[data-live-share-open]').click();
+    await teacher.getByRole('button', { name: /学员75/ }).click();
+    const code = teacher.locator('.live-share-editors textarea');
+    await code.waitFor();
+    await teacher.evaluate(() => { window.dropNextCode = true; });
+    await code.fill('teacher\nprint("student")');
+    await teacher.waitForFunction(() => !!window.droppedCode);
+    const staleEdit = await teacher.evaluate(() => window.droppedCode);
+    const room = rooms.get(staleEdit.sessionId);
+    const originalSockets = [room.teacher, room.student].map((key) => peers.get(key).ws);
+    originalSockets.forEach((socket) => socket.terminate());
+    await student.locator('#code').fill('print("student")\nstudent offline');
+    const merged = 'teacher\nprint("student")\nstudent offline';
+    await Promise.all([
+        teacher.waitForFunction((value) => document.querySelector('.live-share-editors textarea')?.value === value, merged),
+        student.waitForFunction((value) => document.querySelector('#code').value === value, merged),
+    ]);
+    assert.equal(await student.evaluate(() => localStorage.getItem('fixture-draft')), merged);
+    assert(originalSockets.every((socket, i) => socket !== peers.get([room.teacher, room.student][i]).ws));
+    // Browser offline/online events can arrive before a TCP close, including on a second outage.
+    await teacher.context().setOffline(true);
+    await teacher.waitForFunction(() => document.querySelector('.live-share-editors textarea')?.readOnly);
+    const newer = merged + '\nstudent continued';
+    await student.locator('#code').fill(newer);
+    await teacher.context().setOffline(false);
+    await teacher.waitForFunction((value) => {
+        const field = document.querySelector('.live-share-editors textarea');
+        return field && !field.readOnly && field.value === value;
+    }, newer);
+    // A full teacher reload discards the JS heap. Replay only the missing CRDT
+    // edit into this same learner document, preserving the learner's later input.
+    await teacher.evaluate(() => { window.droppedCode = null; window.dropNextCode = true; });
+    await code.fill('before reload\n' + newer);
+    await teacher.waitForFunction(() => !!window.droppedCode);
+    await student.locator('#code').fill(newer + '\nafter reload');
+    await teacher.reload();
+    const recovered = 'before reload\n' + newer + '\nafter reload';
+    await Promise.all([
+        teacher.waitForFunction((value) => document.querySelector('.live-share-editors textarea')?.value === value, recovered),
+        student.waitForFunction((value) => document.querySelector('#code').value === value, recovered),
+    ]);
+    await teacher.waitForFunction(() => !JSON.parse(sessionStorage.getItem('onebyone.live-share.unsynced:2') || '[]').length);
+    await student.locator('#next').click();
+    await teacher.frameLocator('.live-share-mirror iframe').locator('h1').filter({ hasText: '题目 2' }).waitFor();
+    await teacher.waitForFunction(() => document.querySelector('.live-share-editors textarea')?.value === 'print("student")');
+    assert.notEqual(room.pageId, staleEdit.pageId);
+    send(peers.get(room.student), staleEdit);
+    await code.press('Control+End');
+    await code.press('End');
+    await code.pressSequentially(' # next');
+    await student.waitForFunction(() => document.querySelector('#code').value === 'print("student") # next');
+    await student.locator('#code').fill('next problem confirmed');
+    await teacher.waitForFunction(() => document.querySelector('.live-share-editors textarea')?.value === 'next problem confirmed');
+    assert.equal(await teacher.locator('#code').inputValue(), '# teacher draft');
+    await teacher.getByRole('button', { name: '断开共享', exact: true }).click();
+    await teacher.locator('.live-share-overlay').waitFor({ state: 'detached' });
 });
 
 it('keeps local teacher drawing private, shares identical strokes across resolutions, and clears them when sharing ends', { timeout: 60000 }, async () => {
