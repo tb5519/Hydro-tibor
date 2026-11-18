@@ -62,6 +62,10 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
     private lastDiscovery = 0;
     private paused = false;
     private announcedAssist = '';
+    // A cached learner page can display its code without supporting
+    // learner-priority conflict resolution. Track only the current page.
+    private editorScope = '';
+    private versionedEditors = new Set<string>();
     private lastObservationSync = { key: '', at: 0 };
     private sessionCheck: Promise<void>;
     private disposed = false;
@@ -258,6 +262,10 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         if (!session) throw new LiveShareError('ENDED', '共享已结束。');
         const role = authorizeRelay(session, this.peer.uid, this.peer.tabId, payload.pageId, payload.kind);
         validateRelayData(role, payload.kind, payload.data, payload.pageId);
+        if (role === 'teacher' && payload.kind === 'editor' && payload.data.type === 'edit:update' && !payload.data.document
+            && (this.editorScope !== `${session._id}:${session.pageId}` || !this.versionedEditors.has(payload.data.editorId))) {
+            throw new LiveShareError('EDITOR_NOT_READY', '请等待学员编辑器同步。如仍为只读，请学员刷新页面。');
+        }
         if (this.disposed || share.transportRetired(session._id)) return;
         emitLiveShare({ uid: role === 'teacher' ? session.studentUid : session.teacherUid,
             tabId: role === 'teacher' ? session.studentTabId : session.teacherTabId, message: {
@@ -493,6 +501,19 @@ export class LiveShareConnectionHandler extends ConnectionHandler {
         if (event.message.type === 'relay') {
             if (this.paused || !this.currentSession || this.currentSession._id !== event.message.sessionId
                 || this.currentSession.pageId !== event.message.pageId) return;
+            const { data, kind } = event.message;
+            if (this.canTeach && this.currentSession.mode !== 'observe' && kind === 'editor' && !data.document) {
+                const scope = `${event.message.sessionId}:${event.message.pageId}`;
+                if (scope !== this.editorScope) { this.editorScope = scope; this.versionedEditors.clear(); }
+                if (data.type === 'edit:init') {
+                    if (Number.isSafeInteger(data.studentVersion) && this.versionedEditors.size < 256) this.versionedEditors.add(data.editorId);
+                    else if (data.studentVersion === undefined) this.versionedEditors.delete(data.editorId);
+                } else if (data.type === 'edit:remove') this.versionedEditors.delete(data.editorId);
+                if (['edit:init', 'edit:layout'].includes(data.type) && !this.versionedEditors.has(data.editorId)) {
+                    this.send({ ...event.message, data: { ...data, readOnly: true } });
+                    return;
+                }
+            }
         }
         this.send(event.message);
     }

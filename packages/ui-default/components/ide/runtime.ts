@@ -9,7 +9,8 @@ export interface IdeRuntimeOptions {
 export interface IdeRuntime {
   snapshot(): IdeSnapshot;
   subscribe(listener: (snapshot: IdeSnapshot) => void): () => void;
-  command(command: IdeCommand): void;
+  command(command: IdeCommand, origin?: 'share'): void;
+  draftVersion(target: 'terminal' | 'dialog'): number;
   dispose(): void;
 }
 const OUTPUT_LIMIT = 96000;
@@ -25,6 +26,7 @@ export function setActiveIdeRuntime(runtime: IdeRuntime | null) {
 /** One owner connection. A shared teacher view only forwards commands to this instance. */
 export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
   let state = emptyIdeSnapshot();
+  const draftVersions = { terminal: 0, dialog: 0 };
   state.fontSize = getIdeFontSize();
   let socket: WebSocket | null = null;
   let sequence = 0;
@@ -157,10 +159,12 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
           break;
         case 'output': output(String(message.text || ''), message.stream === 'stderr' ? 'stderr' : 'stdout'); break;
         case 'input-request':
+          draftVersions.terminal++;
           state.inputPending = true; state.state = 'waiting-input'; state.activeWindow = 'terminal';
           state.windows.terminal.visible = true; state.windows.terminal.minimized = false;
           break;
         case 'input-end':
+          draftVersions.terminal++;
           if (draftActivity?.requestId === null) clearDraftActivity();
           state.inputPending = false; if (state.state === 'waiting-input') state.state = 'running'; break;
         case 'turtle':
@@ -235,6 +239,7 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
         if (reserveDrawing(command.points, state.shapes[command.name])) state.shapes = { ...state.shapes, [command.name]: command.points };
         break;
       case 'request':
+        draftVersions.dialog++;
         clearDraftActivity(); state.activeWindow = 'graphics'; state.request = command; state.windows.graphics.minimized = false; break;
       case 'update': state.primitives = [...drawing.values()]; state.turtles = [...turtles.values()]; break;
       case 'close': state.windows.graphics.visible = false; break;
@@ -244,7 +249,8 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
   const runtime: IdeRuntime = {
     snapshot: () => state,
     subscribe(listener) { listeners.add(listener); listener(state); return () => { listeners.delete(listener); }; },
-    command(command) {
+    draftVersion: (target) => draftVersions[target],
+    command(command, origin) {
       if (disposed) return;
       if (command.type === 'run') {
         if (isIdeRunning(state.state)) return;
@@ -266,10 +272,12 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
         const text = String(command.text).slice(0, command.target === 'dialog' ? 4096 : 16000);
         if (command.target === 'dialog') {
           if (!state.request || state.request.id !== command.requestId || state.request.draft === text) return;
+          if (origin !== 'share') draftVersions.dialog++;
           state.request = { ...state.request, draft: text };
           noteDraftActivity(text, state.request.id);
         } else {
           if (state.inputDraft === text) return;
+          if (origin !== 'share') draftVersions.terminal++;
           state.inputDraft = text; noteDraftActivity(text, null);
         }
         emit(); return;
@@ -280,6 +288,7 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
         send({ type: 'stop', runId: state.runId }); state.state = 'stopping'; emit();
       } else if (command.type === 'input') {
         if (!['running', 'waiting-input'].includes(state.state)) return;
+        draftVersions.terminal++;
         const text = String(command.text);
         const rejectInput = (message: string) => {
           state.inputDraft = text.slice(0, 16000);
@@ -299,6 +308,8 @@ export function createIdeRuntime(options: IdeRuntimeOptions): IdeRuntime {
         if (state.state === 'waiting-input') state.state = 'running';
         emit();
       } else if (command.type === 'turtle-event') {
+        if (command.event.type === 'response' && (!state.request || command.event.id !== state.request.id)) return;
+        if (command.event.type === 'response') draftVersions.dialog++;
         send({ type: 'turtle-event', runId: state.runId, seq: ++sequence, event: command.event });
         if (command.event.type === 'response') { clearDraftActivity(); state.request = null; emit(); }
       }

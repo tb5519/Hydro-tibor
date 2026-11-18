@@ -789,6 +789,35 @@ it('teacher can follow ordinary personal-center and contest-page links without n
     }
 });
 
+it('keeps the learner’s language and search when earlier teacher commands arrive late', async () => {
+    const f = await fixture();
+    try {
+        await f.teacher.evaluate(() => {
+            window.heldFields = [];
+            const send = window.sendCommand;
+            window.sendCommand = (command) => ['select', 'search'].includes(command.action)
+                ? window.heldFields.push(command) : send(command);
+        });
+        await f.frame().locator('#lang').selectOption('cpp');
+        await f.frame().locator('#search').fill('teacher query');
+        await f.frame().locator('#search').press('Enter');
+        const stale = await f.teacher.evaluate(() => window.heldFields.splice(0));
+        assert.deepEqual(stale.map((command) => command.action), ['select', 'search']);
+        await f.student.locator('#lang').selectOption('cpp');
+        await f.student.locator('#lang').selectOption('py');
+        await f.student.locator('#search').fill('student query');
+        const results = await f.student.evaluate((commands) => commands.map((command) => window.source.receiveCommand(command).ok), stale);
+        assert.deepEqual(results, [false, false]);
+        assert.equal(await f.student.locator('#lang').inputValue(), 'py');
+        assert.equal(await f.student.locator('#search').inputValue(), 'student query');
+        await f.teacher.waitForFunction(() => document.querySelector('#mirror iframe')?.contentDocument?.querySelector('#search')?.value === 'student query');
+        await f.frame().locator('#lang').selectOption('cpp');
+        const fresh = await f.teacher.evaluate(() => window.heldFields.pop());
+        assert.equal(await f.student.evaluate((command) => window.source.receiveCommand(command).ok, fresh), true);
+        assert.equal(await f.student.locator('#lang').inputValue(), 'cpp');
+    } finally { await f.close(); }
+});
+
 it('opens the named online editor without replaying javascript links and supports safe GET problem searches', async () => {
     const f = await fixture();
     try {

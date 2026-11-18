@@ -183,11 +183,17 @@ test('different screen sizes and DPR preserve source editor geometry, concurrent
         await student.waitForFunction(() => runs === 1);
         await Promise.all([
             student.evaluate(() => editor.executeEdits('student', [{ range: new monaco.Range(1, 1, 1, 1), text: '# student\n' }])),
-            teacher.evaluate(() => sharedEditor().executeEdits('teacher', [{ range: new monaco.Range(1, 1, 1, 1), text: '# teacher\n' }])),
+            teacher.evaluate(() => {
+                const editor = sharedEditor();
+                const end = editor.getModel().getFullModelRange().getEndPosition();
+                editor.executeEdits('teacher', [{ range: monaco.Range.fromPositions(end), text: '\n# teacher' }]);
+            }),
         ]);
-        await student.waitForFunction(() => editor.getValue().includes('# teacher') && editor.getValue().includes('# student'));
-        await teacher.waitForFunction(() => sharedEditor().getValue().includes('# teacher') && sharedEditor().getValue().includes('# student'));
-        assert.equal(await teacher.evaluate(() => sharedEditor().getValue()), await student.evaluate(() => editor.getValue()));
+        const expectedCode = '# student\nprint("student")\n# teacher';
+        await Promise.all([
+            student.waitForFunction(expected => editor.getValue() === expected, expectedCode),
+            teacher.waitForFunction(expected => sharedEditor().getValue() === expected, expectedCode),
+        ]);
         const sourceViewBeforeZoom = await student.evaluate(() => ({ width: innerWidth, height: innerHeight, x: scrollX, y: scrollY,
             font: editor.getOption(monaco.editor.EditorOption.fontInfo).fontSize, layoutWidth: editor.getLayoutInfo().width }));
         assert.equal(await teacher.locator('[data-share-zoom-fit]').getAttribute('aria-pressed'), 'true');

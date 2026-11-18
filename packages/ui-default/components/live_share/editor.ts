@@ -1,4 +1,5 @@
 import { Y, MonacoBinding } from './vendor';
+import { LearnerPriority } from './learner_priority';
 import { attachAnnotationSurface, ShareAnnotation } from './annotation';
 import { registerDrawingEditor } from './drawing_anchor';
 import { AnnotationScope, annotationFingerprint, readAnnotationCache, writeAnnotationCache } from './annotation_cache';
@@ -40,6 +41,7 @@ export interface EditorMessage {
   update?: string;
   state?: string;
   opId?: string;
+  studentVersion?: number;
   kind?: 'monaco' | 'textarea';
   language?: string;
   rect?: EditorRect;
@@ -59,6 +61,8 @@ export interface EditorMessage {
   textStyle?: SharedTextareaStyle;
 }
 
+interface PendingCode { update: string; studentVersion: number }
+interface CodeRecovery { update?: string; studentVersion?: number; updates?: PendingCode[] }
 export interface EditorStatus { editorId: string; pending: number; connected: boolean; ready: boolean; error?: string; confirmed?: boolean }
 interface CommonOptions {
   pageId: string;
@@ -77,6 +81,7 @@ export interface EditorController {
 }
 
 const REMOTE = Symbol('live-share-remote');
+const RECONCILED = Symbol('live-share-learner-resolution');
 // Leave headroom for the relay envelope within its 384 KiB message budget.
 const MAX_UPDATE = 320 * 1024;
 const MAX_TEXT = 64 * 1024;
@@ -113,6 +118,12 @@ export class CollaborativeText {
   private incomingPaused = false;
   private incoming: EditorMessage[] = [];
   private readonly writer = uniqueId();
+  private learner?: LearnerPriority;
+  private seenStudentVersion = 0;
+  private queuedVersion = 0;
+  private deferred = new Map<string, EditorMessage>();
+  private draining = false;
+  get studentVersion() { return this.learner?.version ?? this.seenStudentVersion; }
   private listener: (update: Uint8Array, origin: unknown) => void;
   private revisionValue?: string;
 
@@ -125,6 +136,7 @@ export class CollaborativeText {
     document?: 'annotations';
   }) {
     this.ready = options.role === 'source';
+    if (this.ready && !options.document && !options.teacherSource) this.learner = new LearnerPriority();
     if (options.role === 'source' && options.value) this.text.insert(0, options.value);
     this.undoManager = new Y.UndoManager(this.text, { trackedOrigins: new Set([this.localOrigin]), captureTimeout: 350 });
     this.listener = (update, origin) => {
@@ -132,6 +144,8 @@ export class CollaborativeText {
       this.revisionValue = undefined;
       this.changed = true;
       if (origin === REMOTE) return;
+      if (this.learner && origin !== RECONCILED && this.editable) this.learner.record(update);
+      if (!this.queuedUpdates.length) this.queuedVersion = this.seenStudentVersion;
       if (options.role === 'source' && !this.connected) return;
       this.queuedUpdates.push(update);
       this.outgoingTimer ||= setTimeout(() => this.flushOutgoing(), 40);
@@ -146,17 +160,36 @@ export class CollaborativeText {
   }
   // Reload recovery stores only this teacher's unacknowledged operations.
   // Restoring a whole snapshot would reintroduce unrelated student text.
-  get pendingUpdate() {
-    if (this.unsent || !this.pendingCount) return undefined;
-    const updates = [...this.pending.values()].map((message) => decodeUpdate(message.update!));
-    const packed = encodeUpdate(Y.mergeUpdates([...updates, ...this.queuedUpdates]));
-    return packed.length <= MAX_UPDATE ? packed : undefined;
+  private pendingGroups(): PendingCode[] {
+    const groups: PendingCode[] = [];
+    let base = 0;
+    let length = 0;
+    let parts: Uint8Array[] = [];
+    const flush = () => {
+      if (parts.length) groups.push({ studentVersion: base, update: encodeUpdate(Y.mergeUpdates(parts)) });
+      length = 0; parts = [];
+    };
+    const add = (bytes: Uint8Array, version: number) => {
+      if (version !== base || (length + bytes.length) * 4 / 3 > MAX_UPDATE - 32) flush();
+      base = version; parts.push(bytes); length += bytes.length;
+    };
+    for (const message of this.pending.values()) add(decodeUpdate(message.update!), message.studentVersion ?? 0);
+    for (const bytes of this.queuedUpdates) add(bytes, this.queuedVersion);
+    flush();
+    return groups;
   }
-  restorePending(update: string) {
+  get recovery(): CodeRecovery {
+    if (this.unsent || !this.pendingCount) return {};
+    const groups = this.pendingGroups();
+    if (groups.reduce((length, group) => length + group.update.length, 0) > MAX_UPDATE) return {};
+    return groups.length === 1 ? groups[0] : { updates: groups };
+  }
+  restorePending(update: string, studentVersion = 0) {
     if (this.options.role !== 'viewer' || !this.ready || this.options.canWrite?.() === false) return;
     try {
       const bytes = decodeUpdate(update);
       Y.applyUpdate(this.doc, bytes, REMOTE);
+      this.queuedVersion = studentVersion;
       this.queuedUpdates.push(bytes);
       this.flushOutgoing();
     } catch { this.status('无法恢复未确认的代码修改，请下载保留的副本'); }
@@ -198,6 +231,7 @@ export class CollaborativeText {
     const message: EditorMessage = {
       type: 'edit:update', pageId: this.options.pageId, editorId: this.options.editorId,
       opId: `${this.writer}:${++this.sequence}`, update,
+      ...(!this.options.document && !this.options.teacherSource && { studentVersion: this.learner?.version ?? this.queuedVersion }),
     };
     if (this.options.role === 'viewer') this.pending.set(message.opId!, message);
     if (this.connected && this.ready) this.transmit(message);
@@ -205,11 +239,15 @@ export class CollaborativeText {
   }
   private retryPending() {
     if (!this.connected || !this.pending.size) return;
-    // One merged CRDT update makes reconnect idempotent without flooding the relay with old keystrokes.
-    const updates = [...this.pending.values()].map((message) => decodeUpdate(message.update!));
+    // Keep the causal boundary from typing time, even across reconnection.
+    const groups = this.pendingGroups();
     this.pending.clear();
-    this.queuedUpdates.push(...updates);
-    this.flushOutgoing();
+    this.queuedUpdates = [];
+    for (const group of groups) {
+      this.queuedVersion = group.studentVersion;
+      this.queuedUpdates.push(decodeUpdate(group.update));
+      this.flushOutgoing();
+    }
   }
 
   receive(message: EditorMessage) {
@@ -225,13 +263,38 @@ export class CollaborativeText {
     if (message.type === 'edit:update' && (!this.connected || this.options.role === 'source' && this.options.canWrite?.() === false)) return false;
     try {
       const update = decodeUpdate(message.type === 'edit:init' ? message.state! : message.update!);
-      Y.applyUpdate(this.doc, update, REMOTE);
+      if (this.learner && message.type === 'edit:update') {
+        const result = this.learner.apply(this.doc, this.text, update, message.studentVersion ?? 0, REMOTE, RECONCILED);
+        if (result === 'deferred') {
+          if (message.opId && this.deferred.size < 128) this.deferred.set(message.opId, message);
+          return false;
+        }
+        this.deferred.delete(message.opId!);
+        if (result === 'resolved') this.flushOutgoing();
+      } else {
+        if (message.studentVersion !== undefined && message.studentVersion > this.seenStudentVersion) {
+          // A queued keystroke was authored before this learner change.
+          this.flushOutgoing();
+          this.seenStudentVersion = message.studentVersion;
+        }
+        Y.applyUpdate(this.doc, update, REMOTE);
+      }
       if (message.type === 'edit:init') {
         this.ready = true;
         // Retry only after the source has restored this exact document and page epoch.
         this.retryPending();
       } else if (this.options.role === 'source' && message.opId) {
         this.transmit({ type: 'edit:ack', pageId: this.options.pageId, editorId: this.options.editorId, opId: message.opId });
+        if (this.deferred.size && !this.draining) {
+          this.draining = true;
+          try {
+            let size;
+            do {
+              size = this.deferred.size;
+              for (const pending of [...this.deferred.values()]) this.receive(pending);
+            } while (this.deferred.size && this.deferred.size < size);
+          } finally { this.draining = false; }
+        }
       }
       this.status();
       return true;
@@ -281,7 +344,7 @@ export class CollaborativeText {
     this.doc.off('update', this.listener);
     this.undoManager.destroy();
     this.doc.destroy();
-    this.pending.clear();
+    this.pending.clear(); this.deferred.clear();
     this.incoming.length = 0;
     this.queuedUpdates.length = 0;
     clearTimeout(this.outgoingTimer);
@@ -927,7 +990,7 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
       }
       if (connected) {
         const data = metadata(); lastTheme = JSON.stringify(data.theme);
-        safeSend(options, { type: 'edit:init', pageId: options.pageId, editorId: id, state, ...data });
+        safeSend(options, { type: 'edit:init', pageId: options.pageId, editorId: id, state, ...(!options.teacherSource && { studentVersion: shared.studentVersion }), ...data });
         safeSend(options, { type: 'edit:init', pageId: options.pageId, editorId: id, state: notes.snapshot, document: 'annotations' });
         if (options.teacherSource) {
           const cursor = editor ? cursorMessage(shared, editor, options.pageId, id)
@@ -1072,9 +1135,9 @@ interface ViewerBinding {
 }
 export function attachViewerEditors(options: CommonOptions & {
   container: HTMLElement; getNodeRect?: (id: string) => EditorRect | undefined;
-  recovery?: { editorId: string; update: string }[];
+  recovery?: ({ editorId: string } & CodeRecovery)[];
 }): EditorController & {
-  getPendingDrafts: () => Array<{ editorId: string; language?: string; value: string; update?: string }>;
+  getPendingDrafts: () => Array<{ editorId: string; language?: string; value: string } & CodeRecovery>;
 } {
   const bindings = new Map<string, ViewerBinding>();
   let annotationSerial = 0;
@@ -1290,7 +1353,10 @@ export function attachViewerEditors(options: CommonOptions & {
         applyingScroll = false;
         if (recovery && shared.editable) {
           const saved = recovery; recovery = undefined;
-          shared.restorePending(saved.update);
+          if (saved.update) shared.restorePending(saved.update, saved.studentVersion);
+          else if (Array.isArray(saved.updates) && saved.updates.length <= 129) {
+            for (const group of saved.updates) shared.restorePending(group.update, group.studentVersion);
+          }
         }
       };
       const result: ViewerBinding = {
@@ -1331,7 +1397,7 @@ export function attachViewerEditors(options: CommonOptions & {
   return {
     getPendingDrafts() {
       return [...detachedDrafts.values(), ...[...bindings].filter(([, binding]) => binding.shared.pendingCount > 0).map(([editorId, binding]) => ({
-        editorId, language: binding.editor?.getModel()?.getLanguageId?.() || 'plaintext', value: binding.shared.value, update: binding.shared.pendingUpdate,
+        editorId, language: binding.editor?.getModel()?.getLanguageId?.() || 'plaintext', value: binding.shared.value, ...binding.shared.recovery,
       }))];
     },
     receive(message) {

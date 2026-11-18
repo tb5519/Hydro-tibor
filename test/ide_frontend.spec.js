@@ -232,7 +232,15 @@ it('shares one real runtime with a differently sized teacher viewport and reject
   const count = clients.length;
   await teacher.goto(`${origin}?teacher`);
   await page.exposeFunction('relayToTeacher', (message) => teacher.evaluate((data) => window.shareViewer?.receive(data), message));
-  await teacher.exposeFunction('relayToStudent', (message) => page.evaluate((data) => window.shareSource?.receiveCommand(data), message));
+  let held = null;
+  await teacher.exposeFunction('relayToStudent', (message) => {
+    if (held) { held.push(message); return; }
+    return page.evaluate((data) => window.shareSource?.receiveCommand(data), message);
+  });
+  async function deliverHeld() {
+    const packets = held; held = null;
+    await page.evaluate((data) => data.forEach((packet) => shareSource.receiveCommand(packet)), packets);
+  }
   await teacher.evaluate(() => {
     view.dispose();
     const host = document.createElement('div'); host.id = 'teacher-stage';
@@ -287,6 +295,26 @@ it('shares one real runtime with a differently sized teacher viewport and reject
   await page.evaluate((data) => { shareSource.receiveCommand(data); shareSource.receiveCommand({ ...data, id: 'stale_command_test', runId: 'old_run' }); }, transmitted);
   await page.waitForTimeout(100);
   assert.equal(received.filter((v) => v.ws === ws && v.data.type === 'input').length, 1, 'duplicate and old-run input never repeats');
+  // Delay both a draft and Enter until after the learner has written newer input.
+  held = [];
+  await input.fill('stale teacher line'); await input.press('Enter');
+  await wait(() => held.some((data) => data.command.type === 'input'));
+  const studentInput = page.getByRole('textbox', { name: '终端输入' });
+  await studentInput.fill('student latest');
+  await deliverHeld();
+  await teacher.waitForFunction(() => document.querySelector('.ide-terminal__input').textContent === 'student latest');
+  assert.equal(await studentInput.textContent(), 'student latest');
+  assert.equal(received.filter((v) => v.ws === ws && v.data.type === 'input').length, 1);
+  await studentInput.press('Enter');
+  await wait(() => received.some((v) => v.ws === ws && v.data.text === 'student latest\n'));
+  await teacher.waitForFunction(() => document.querySelector('.ide-terminal__input').textContent === '');
+  // A fresh connection with identical visible text still invalidates in-flight drafts.
+  held = []; await input.fill('from previous connection');
+  await wait(() => held.some((data) => data.command.type === 'input-draft'));
+  await page.evaluate(() => { shareSource.setConnected(false); shareSource.setConnected(true); });
+  await deliverHeld();
+  await teacher.waitForFunction(() => document.querySelector('.ide-terminal__input').textContent === '');
+  assert.equal(await studentInput.textContent(), '');
   await teacher.locator('.ide-window--terminal').getByRole('button', { name: '收起窗口' }).click();
   await page.locator('.ide-window--terminal').waitFor({ state: 'hidden' });
   await teacher.getByRole('img', { name: '海龟绘图画布，点击后可使用键盘控制' }).click({ position: { x: 280, y: 210 } });
@@ -294,6 +322,13 @@ it('shares one real runtime with a differently sized teacher viewport and reject
   await wait(() => received.some((v) => v.ws === ws && v.data.event?.key === 'ArrowRight'));
   send(ws, { type: 'turtle', runId, seq: 4, commands: [{ op: 'request', id: 29, kind: 'text', title: '绘图标题', prompt: '写一句话' }] });
   const dialogField = teacher.getByRole('textbox', { name: '写一句话' }); await dialogField.waitFor({ state: 'visible' });
+  held = []; await dialogField.fill('stale answer'); await dialogField.press('Enter');
+  await wait(() => held.some((data) => data.command.event?.type === 'response'));
+  await page.getByRole('textbox', { name: '写一句话' }).fill('student answer');
+  await deliverHeld();
+  await teacher.waitForFunction(() => document.querySelector('.ide-graphics__dialog-input').value === 'student answer');
+  assert.equal(received.filter((v) => v.ws === ws && v.data.event?.type === 'response').length, 0);
+  await dialogField.fill('');
   await dialogField.pressSequentially('teacher label', { delay: 35 });
   await page.waitForFunction(() => document.querySelector('.ide-graphics__dialog-input').value === 'teacher label');
   assert.equal(await dialogField.inputValue(), 'teacher label', 'old shared acknowledgements do not overwrite a local dialog draft');
@@ -380,6 +415,9 @@ it('rejects malformed shared snapshots without DOM errors or poisoning later val
       viewer.receive({ type: 'ide', sequence, index: 0, total: 1, chunk });
     }
     receive(state, 1);
+    if (document.querySelector('.ide-terminal__input').isContentEditable || !document.querySelector('.ide-terminal__send').disabled) {
+      throw new Error('Input from an older source without a revision must stay read-only');
+    }
     const before = document.querySelector('.ide-terminal__output').textContent;
     const patches = [
       { screen: { ...state.screen, width: -1 } }, { screen: { ...state.screen, world: [1, 1, 1, 1] } },

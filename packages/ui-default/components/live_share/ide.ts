@@ -1,12 +1,20 @@
 import { getActiveIdeRuntime } from '../ide/runtime';
 import { createIdeView } from '../ide/view';
 import { isValidIdeSnapshot } from '../ide/validation';
-import { emptyIdeSnapshot, IdeSnapshot } from '../ide/types';
+import { emptyIdeSnapshot, IdeCommand, IdeSnapshot } from '../ide/types';
 
 export { attachIdeCapacityMirror } from '../ide/IdeCapacityBadge';
 
 const CHUNK = 24000;
 const MAX_STATE = 4 * 1024 * 1024;
+type DraftTarget = 'terminal' | 'dialog';
+type DraftTokens = Record<DraftTarget, string>;
+const inputTarget = (command: IdeCommand): DraftTarget | null => {
+  if (command.type === 'input-draft') return command.target || 'terminal';
+  if (command.type === 'input') return 'terminal';
+  return command.type === 'turtle-event' && command.event?.type === 'response' ? 'dialog' : null;
+};
+const nonce = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (n) => n.toString(16).padStart(2, '0')).join('');
 const bounds = () => {
   const node = document.querySelector<HTMLElement>('[data-ide-runtime]:not([data-live-share-ui])');
   const rect = node?.getBoundingClientRect();
@@ -22,8 +30,11 @@ export function attachSourceIde(options: {
   let previous: any = null; let timer = 0; let dirty = true; let lastBounds = '';
   const observeBounds = () => { const current = JSON.stringify(bounds()); if (current !== lastBounds) { lastBounds = current; dirty = true; } };
   const seen = new Set<string>();
+  let epoch = nonce();
+  const draftToken = (target: DraftTarget) => runtime?.draftVersion
+    ? `${epoch}-${runtime.draftVersion(target)}` : null;
   function bind() {
-    clearTimeout(timer); unsubscribe?.(); runtime = getActiveIdeRuntime(); previous = null; last = ''; dirty = true;
+    clearTimeout(timer); unsubscribe?.(); epoch = nonce(); runtime = getActiveIdeRuntime(); previous = null; last = ''; dirty = true;
     unsubscribe = runtime?.subscribe(() => { dirty = true; });
     timer = window.setTimeout(pump, 0);
   }
@@ -33,7 +44,7 @@ export function attachSourceIde(options: {
     if (!connected || !dirty) { timer = window.setTimeout(pump, 200); return; }
     dirty = false;
     const snapshot = runtime?.snapshot(); const rect = bounds();
-    const current = snapshot && rect ? { snapshot, rect } : null;
+    const current = snapshot && rect ? { snapshot, rect, draftTokens: { terminal: draftToken('terminal'), dialog: draftToken('dialog') } } : null;
     const serialized = JSON.stringify(current);
     if (serialized === last) { timer = window.setTimeout(pump, 200); return; }
     // Clone here: owner arrays are mutable between animation frames.
@@ -48,7 +59,7 @@ export function attachSourceIde(options: {
       for (const key of Object.keys(now)) {
         if (key !== 'primitives' && JSON.stringify(old[key]) !== JSON.stringify(now[key])) changed[key] = now[key];
       }
-      packet = { reset: false, base: old.revision, snapshot: changed, rect: next.rect,
+      packet = { reset: false, base: old.revision, snapshot: changed, rect: next.rect, draftTokens: next.draftTokens,
         upsert: now.primitives.filter((item: any) => oldItems.get(item.id) !== JSON.stringify(item)),
         remove: old.primitives.filter((item: any) => !currentIds.has(item.id)).map((item: any) => item.id) };
     }
@@ -71,14 +82,25 @@ export function attachSourceIde(options: {
   window.addEventListener('resize', layout); window.addEventListener('scroll', layout, true);
   return {
     setConnected(value: boolean) {
+      if (connected !== value) epoch = nonce();
       clearTimeout(timer); connected = value; previous = null; last = ''; dirty = true; timer = window.setTimeout(pump, 0);
     },
     snapshot() { clearTimeout(timer); previous = null; last = ''; dirty = true; timer = window.setTimeout(pump, 0); },
     receiveCommand(data: any) {
       if (!connected || disposed || data?.action !== 'ide' || data.pageId !== options.pageId || !runtime || seen.has(data.id)) return;
       seen.add(data.id); if (seen.size > 512) seen.delete(seen.values().next().value!);
-      if (data.runId !== runtime.snapshot().runId) return;
-      runtime.command(data.command);
+      const current = runtime.snapshot();
+      if (data.runId !== current.runId) return;
+      const target = inputTarget(data.command);
+      if (target && (!current.ready || !data.draftToken || data.draftToken !== draftToken(target)
+        || (target === 'terminal' && !['running', 'waiting-input'].includes(current.state))
+        || (target === 'dialog' && (data.command.requestId ?? data.command.event?.id) !== current.request?.id))) {
+        // Even an empty submitted line or a change back to the same text
+        // invalidates commands issued against the previous input.
+        options.sendAck({ id: data.id, pageId: options.pageId, ok: false, reason: '学员的输入已更新，请以当前输入框为准。' });
+        return;
+      }
+      runtime.command(data.command, 'share');
       options.sendAck({ id: data.id, pageId: options.pageId, ok: true });
     },
     dispose() {
@@ -94,11 +116,15 @@ export function attachViewerIde(options: { pageId: string; container: HTMLElemen
   host.style.cssText = 'position:absolute;pointer-events:none;display:none;z-index:12';
   options.container.append(host);
   let connected = false; let disposed = false; let sequence = -1; let assembly: { sequence: number; total: number; chunks: string[]; size: number } | null = null;
+  let tokens: DraftTokens | null = null;
+  let paused = false;
   let state: IdeSnapshot = emptyIdeSnapshot();
   const view = createIdeView(host, { shared: true, onCommand: (command) => {
     if (options.readOnly || !connected || disposed || host.style.display === 'none') return;
-    options.sendCommand({ id: Array.from(crypto.getRandomValues(new Uint8Array(16)), (n) => n.toString(16).padStart(2, '0')).join(''), pageId: options.pageId, nodeId: 1,
-      action: 'ide', runId: state.runId, command });
+    const target = inputTarget(command);
+    if (target && !tokens) return;
+    options.sendCommand({ id: nonce(), pageId: options.pageId, nodeId: 1, action: 'ide', runId: state.runId,
+      ...(target && { draftToken: tokens![target] }), command });
   } });
   const root = host.querySelector<HTMLElement>('[data-ide-runtime]')!;
   root.style.inset = '0';
@@ -110,11 +136,12 @@ export function attachViewerIde(options: { pageId: string; container: HTMLElemen
   }
   return {
     setConnected(value: boolean) {
-      if (connected !== value) { sequence = -1; assembly = null; }
-      connected = value; host.inert = !!options.readOnly || !value;
+      paused = !value;
+      if (paused) { sequence = -1; assembly = null; tokens = null; }
+      connected = value; host.inert = !!options.readOnly || paused || sequence < 0;
     },
     receive(data: any) {
-      if (disposed || data?.type !== 'ide' || !Number.isSafeInteger(data.sequence) || data.sequence < 0 || data.sequence <= sequence || !Number.isInteger(data.total)
+      if (paused || disposed || data?.type !== 'ide' || !Number.isSafeInteger(data.sequence) || data.sequence < 0 || data.sequence <= sequence || !Number.isInteger(data.total)
         || data.total < 1 || data.total > 180 || !Number.isInteger(data.index) || data.index < 0 || data.index >= data.total
         || typeof data.chunk !== 'string' || data.chunk.length > CHUNK) return;
       if (!assembly || data.sequence > assembly.sequence) assembly = { sequence: data.sequence, total: data.total, chunks: [], size: 0 };
@@ -127,6 +154,7 @@ export function attachViewerIde(options: { pageId: string; container: HTMLElemen
       assembly = null;
       if (!packet || typeof packet !== 'object' || Array.isArray(packet)) return;
       if (packet.reset && packet.snapshot === null) { sequence = data.sequence; host.style.display = 'none'; state = emptyIdeSnapshot(); return; }
+      if (sequence < 0 && !packet.reset) return;
       if (!packet.snapshot || typeof packet.snapshot !== 'object' || Array.isArray(packet.snapshot)
         || typeof packet.reset !== 'boolean' || (!packet.reset && packet.base !== state.revision)) return;
       const next = packet.reset ? packet.snapshot : { ...state, ...packet.snapshot };
@@ -141,9 +169,13 @@ export function attachViewerIde(options: { pageId: string; container: HTMLElemen
       const rect = packet.rect;
       if (!isValidIdeSnapshot(next) || !rect || !['x', 'y', 'width', 'height'].every((key) => Number.isFinite(rect[key]) && Math.abs(rect[key]) <= 32768)
         || rect.width <= 0 || rect.height <= 0) return;
-      sequence = data.sequence; state = next;
+      sequence = data.sequence; state = next; host.inert = !!options.readOnly || !connected;
       Object.assign(host.style, { display: 'block', left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.width}px`, height: `${rect.height}px` });
-      view.render(state);
+      const nextTokens: DraftTokens | null = ['terminal', 'dialog'].every((target) =>
+        typeof packet.draftTokens?.[target] === 'string' && /^[a-zA-Z0-9_-]{8,96}$/.test(packet.draftTokens[target])) ? packet.draftTokens : null;
+      view.render(state, { writable: !!nextTokens || !!options.readOnly,
+        terminal: !tokens || nextTokens?.terminal !== tokens.terminal, dialog: !tokens || nextTokens?.dialog !== tokens.dialog });
+      tokens = nextTokens;
     },
     dispose() { disposed = true; assembly = null; view.dispose(); host.remove(); },
   };

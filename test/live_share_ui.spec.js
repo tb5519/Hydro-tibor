@@ -376,11 +376,49 @@ it('recovers concurrent code changes after both sockets drop and isolates delaye
         student.waitForFunction((value) => document.querySelector('#code').value === value, recovered),
     ]);
     await teacher.waitForFunction(() => !JSON.parse(sessionStorage.getItem('onebyone.live-share.unsynced:2') || '[]').length);
+    // Both edit an empty document while the teacher's first packet is in flight.
+    // Reconnecting must not join two independently typed programs into one.
+    await student.locator('#code').fill('');
+    await teacher.waitForFunction(() => document.querySelector('.live-share-editors textarea')?.value === '');
+    await teacher.evaluate(() => { window.droppedCode = null; window.dropNextCode = true; });
+    await code.fill('print("teacher program")');
+    await teacher.waitForFunction(() => !!window.droppedCode);
+    const conflictingEdit = await teacher.evaluate(() => window.droppedCode);
+    for (const key of [room.teacher, room.student]) peers.get(key).ws.terminate();
+    const winningCode = 'print("student program")';
+    await student.locator('#code').fill(winningCode);
+    await teacher.waitForFunction((value) => {
+        const el = document.querySelector('.live-share-editors textarea');
+        return el && !el.readOnly && el.value === value;
+    }, winningCode);
+    send(peers.get(room.student), conflictingEdit);
+    await code.press('End');
+    await code.pressSequentially(' # reviewed');
+    const reviewed = winningCode + ' # reviewed';
+    await student.waitForFunction((value) => document.querySelector('#code').value === value, reviewed);
+    assert.equal(await student.evaluate(() => localStorage.getItem('fixture-draft')), reviewed);
+    // Leaving and returning recreates the teacher editor from storage. A saved operation
+    // keeps the student version it was based on, even if the first snapshot is newer.
+    await teacher.evaluate(() => { window.droppedCode = null; window.dropNextCode = true; });
+    await code.fill('teacher rewrite');
+    await teacher.waitForFunction(() => !!window.droppedCode);
+    const teacherUrl = teacher.url();
+    await teacher.goto('about:blank');
+    const revised = 'learner revision while teacher is away';
+    await student.locator('#code').fill(revised);
+    await teacher.goto(teacherUrl);
+    await teacher.waitForFunction((value) => {
+        const el = document.querySelector('.live-share-editors textarea');
+        return el && !el.readOnly && el.value === value;
+    }, revised);
+    await teacher.waitForFunction(() => !JSON.parse(sessionStorage.getItem('onebyone.live-share.unsynced:2') || '[]').length);
+    assert.equal(await student.locator('#code').inputValue(), revised);
     await student.locator('#next').click();
     await teacher.frameLocator('.live-share-mirror iframe').locator('h1').filter({ hasText: '题目 2' }).waitFor();
     await teacher.waitForFunction(() => document.querySelector('.live-share-editors textarea')?.value === 'print("student")');
     assert.notEqual(room.pageId, staleEdit.pageId);
     send(peers.get(room.student), staleEdit);
+    send(peers.get(room.student), conflictingEdit);
     await code.press('Control+End');
     await code.press('End');
     await code.pressSequentially(' # next');

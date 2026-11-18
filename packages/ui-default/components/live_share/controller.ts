@@ -318,10 +318,10 @@ export function installLiveShare(config: LiveShareConfig, options: {
     const drafts = viewerEditors?.getPendingDrafts?.() || [];
     if (!viewing || !drafts.length) return;
     const session = viewing;
-    for (const { update, ...draft } of drafts) {
+    for (const { update, updates, ...draft } of drafts) {
       backups = backups.filter((saved) => !sameDraft(saved, session, draft.editorId));
       backups.push({ ...draft, sessionId: session.sessionId, pageId: session.pageId, studentUid: session.studentUid,
-        studentName: session.studentName, time: new Date().toISOString(), ...(forReload && update ? { update } : {}) });
+        studentName: session.studentName, time: new Date().toISOString(), ...(forReload && { update, updates }) });
     }
     backups = backups.slice(-10); saveBackups();
   }
@@ -606,7 +606,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
       }) || null;
       viewerEditors = adapters.attachViewerEditors({ pageId: next.pageId, container: editorRoot,
         readOnly: mode === 'observe', annotationScope: mode === 'observe' ? undefined : annotationScope,
-        recovery: mode === 'observe' ? undefined : backups.filter((draft) => draft.update && sameDraft(draft, next, draft.editorId)),
+        recovery: mode === 'observe' ? undefined : backups.filter((draft) => (draft.update || draft.updates?.length) && sameDraft(draft, next, draft.editorId)),
         getNodeRect: (id) => viewerMirror?.getEditorRect?.(id) || undefined,
         send: (data) => {
           if (mode === 'observe' && data?.type === 'edit:sync') requestObserveSnapshot(next);
@@ -615,7 +615,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
         onStatus: (status: any) => {
           pendingEdits.set(status.editorId, status.pending || 0);
           if (status.confirmed && !status.pending && backups.length) {
-            const keep = backups.filter((draft) => !draft.update || !sameDraft(draft, next, status.editorId));
+            const keep = backups.filter((draft) => (!draft.update && !draft.updates?.length) || !sameDraft(draft, next, status.editorId));
             if (keep.length !== backups.length) { backups = keep; saveBackups(); }
           }
           if (ending && ![...pendingEdits.values()].some((count) => count > 0)) { queueMicrotask(finishSync); return; }

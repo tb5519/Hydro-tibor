@@ -31,7 +31,7 @@ function pair(t, value = 'print("hello")', sourceOptions = {}) {
     const common = { pageId: 'page-1', editorId: 'editor-1' };
     const student = new CollaborativeText({ ...common, role: 'source', value, send: (data) => events.push(['teacher', data]), ...sourceOptions });
     const teacher = new CollaborativeText({ ...common, role: 'viewer', send: (data) => events.push(['student', data]), onStatus: (data) => status.push(data) });
-    const init = () => teacher.receive({ ...common, type: 'edit:init', state: student.snapshot });
+    const init = () => teacher.receive({ ...common, type: 'edit:init', state: student.snapshot, studentVersion: student.studentVersion });
     const flush = () => {
         let iterations = 0;
         student.flushOutgoing(); teacher.flushOutgoing();
@@ -67,14 +67,52 @@ it('simultaneous student code and teacher comments converge without replacing ea
     assert.equal(p.teacher.pendingCount, 0);
 });
 
-it('concurrent inserts at the same position retain both contributions', (t) => {
-    const p = pair(t, 'xy');
-    p.student.replace('x学生y');
-    p.teacher.replace('x老师y');
+for (const [base, student, teacher] of [
+    ['xy', 'x学生y', 'x老师y'],
+    ['', 'print("student")', 'print("teacher")'],
+    ['', 'print(1)', 'print(1)'],
+]) it(`keeps only the learner insertion at the same position (base ${JSON.stringify(base)}, teacher ${JSON.stringify(teacher)})`, (t) => {
+    const p = pair(t, base);
+    p.student.replace(student);
+    p.teacher.replace(teacher);
     p.flush();
-    assert.equal(p.student.value, p.teacher.value);
-    assert.match(p.student.value, /^x(?:学生老师|老师学生)y$/);
+    assert.equal(p.student.value, student);
+    assert.equal(p.teacher.value, student);
+    assert.equal(p.teacher.pendingCount, 0);
 });
+
+for (const studentValue of ['score = 2;', 'score = ;']) {
+    for (const studentFirst of [true, false]) {
+        it(`keeps the student version "${studentValue}" across conflicting replacements (student packet first: ${studentFirst})`, (t) => {
+            const p = pair(t, 'score = 0;');
+            p.student.replace(studentValue);
+            p.teacher.replace('score = 9;');
+            p.student.flushOutgoing();
+            p.teacher.flushOutgoing();
+            const initial = p.events.splice(0);
+            const studentEdit = initial.find(([to]) => to === 'teacher')[1];
+            const teacherEdit = initial.find(([to]) => to === 'student')[1];
+            if (studentFirst) {
+                p.teacher.receive(studentEdit);
+                p.student.receive(teacherEdit);
+            } else {
+                p.student.receive(teacherEdit);
+                p.teacher.receive(studentEdit);
+            }
+            p.flush();
+            assert.equal(p.student.value, studentValue);
+            assert.equal(p.teacher.value, studentValue);
+            assert.equal(p.teacher.pendingCount, 0);
+            // A fresh teacher decision after observing the student's edit is valid.
+            assert.equal(p.teacher.replace('score = 42;'), true);
+            p.flush();
+            p.student.receive(teacherEdit);
+            p.flush();
+            assert.equal(p.student.value, 'score = 42;');
+            assert.equal(p.teacher.value, p.student.value);
+        });
+    }
+}
 
 it('each participant can undo and redo only their own contribution', (t) => {
     const p = pair(t, 'base');
@@ -87,6 +125,67 @@ it('each participant can undo and redo only their own contribution', (t) => {
     assert.equal(p.student.value, 'student\nbase\nteacher');
     p.student.undo(); p.flush();
     assert.equal(p.teacher.value, 'base\nteacher');
+});
+
+it('later keystrokes from the same stale teacher draft cannot reappear after its conflicting replacement was discarded', (t) => {
+    const p = pair(t, 'score = 0;');
+    p.teacher.replace('score = 9;');
+    p.teacher.flushOutgoing();
+    p.teacher.replace('score = 91;');
+    p.teacher.flushOutgoing();
+    p.student.replace('score = 2;');
+    p.flush();
+    assert.equal(p.student.value, 'score = 2;');
+    assert.equal(p.teacher.value, p.student.value);
+    assert.equal(p.teacher.pendingCount, 0);
+});
+
+it('a stale teacher paste over the whole document keeps the learner’s current code, including unchanged surrounding lines', (t) => {
+    const p = pair(t, 'start\nscore = 0\nfinish');
+    const current = 'start\nscore = 2\nfinish';
+    p.student.replace(current);
+    p.teacher.replace('completely different program');
+    p.flush();
+    assert.equal(p.student.value, current);
+    assert.equal(p.teacher.value, current);
+});
+
+it('a teacher replacement spanning a student deletion preserves surrounding learner text in order', (t) => {
+    const p = pair(t, 'abcdef');
+    p.student.replace('acdef'); // Delete b, leaving a and c adjacent in the learner's view.
+    p.teacher.replace('LONGdef'); // Simultaneously replace abc in the old document.
+    p.flush();
+    assert.equal(p.student.value, 'acdef');
+    assert.equal(p.teacher.value, p.student.value);
+});
+
+it('delayed teacher packets delivered in reverse cannot expose even a transient losing value to the learner’s draft writer', (t) => {
+    const p = pair(t, 'score = 0');
+    p.teacher.replace('score = 9'); p.teacher.flushOutgoing();
+    p.teacher.replace('score = 91'); p.teacher.flushOutgoing();
+    const teacherPackets = p.events.splice(0).map(([, message]) => message);
+    assert.equal(teacherPackets.length, 2);
+    p.student.replace('score = 2');
+    const writes = [];
+    p.student.text.observe(() => writes.push(p.student.value));
+    p.student.receive(teacherPackets[1]);
+    p.student.receive(teacherPackets[0]);
+    p.flush();
+    assert.deepEqual(writes.filter((value) => value !== 'score = 2'), [], 'the learner draft writer must never persist the losing program');
+    assert.equal(p.student.value, 'score = 2');
+    assert.equal(p.teacher.value, p.student.value);
+    assert.equal(p.teacher.pendingCount, 0);
+});
+
+it('a conflicting full paste preserves text previously authored by both peers in its original order', (t) => {
+    const p = pair(t, 'middle');
+    p.teacher.replace('first\nmiddle\nlast'); p.flush();
+    p.student.replace('first\nmiddle\nbody\nlast'); p.flush();
+    p.student.replace('first\nmi\nbody\nlast');
+    p.teacher.replace('teacher replacement');
+    p.flush();
+    assert.equal(p.student.value, 'first\nmi\nbody\nlast');
+    assert.equal(p.teacher.value, p.student.value);
 });
 
 it('teacher changes remain pending until the student applies and acknowledges them', (t) => {
@@ -121,6 +220,24 @@ it('lost acknowledgements retry idempotently after a reconnect and preserve offl
     assert.equal(p.teacher.value, p.student.value);
     assert.equal(p.teacher.pendingCount, 0);
     assert.equal(p.teacher.editable, true);
+});
+
+it('replaying an accepted teacher correction whose ACK was lost cannot restore the text the learner subsequently replaced', (t) => {
+    const p = pair(t, 'answer = 0');
+    p.teacher.replace('answer = 7');
+    p.teacher.flushOutgoing();
+    const accepted = p.events.shift()[1];
+    p.student.receive(accepted);
+    assert.equal(p.student.value, 'answer = 7');
+    p.events.length = 0;
+    p.student.setConnected(false); p.teacher.setConnected(false);
+    p.student.replace('answer = 12');
+    p.student.setConnected(true); p.teacher.setConnected(true);
+    p.init(); p.flush();
+    p.student.receive(accepted); p.flush();
+    assert.equal(p.student.value, 'answer = 12');
+    assert.equal(p.teacher.value, p.student.value);
+    assert.equal(p.teacher.pendingCount, 0);
 });
 
 it('old page/editor operations and teacher init attempts cannot overwrite source code', (t) => {
@@ -222,6 +339,59 @@ it('editor removal retains unacknowledged teacher work for recovery instead of s
     assert.equal(viewer.getPendingDrafts()[0].value, 'base\n# 尚未确认');
     viewer.dispose();
     assert.equal(viewer.getPendingDrafts()[0].value, 'base\n# 尚未确认');
+});
+
+function restoreTeacherPage(t, p, saved) {
+    const dom = new JSDOM('<div id="viewer"></div>', { url: 'https://example.test/p/1' });
+    t.after(() => dom.window.close());
+    const { window } = dom;
+    const api = load({ window, document: window.document, Event: window.Event, getComputedStyle: window.getComputedStyle });
+    const viewer = api.attachViewerEditors({
+        pageId: p.common.pageId, container: window.document.querySelector('#viewer'),
+        recovery: [{ editorId: p.common.editorId, ...saved }], send: (message) => p.events.push(['student', message]),
+    });
+    t.after(() => viewer.dispose());
+    viewer.receive({ ...p.common, type: 'edit:init', kind: 'textarea', state: p.student.snapshot, studentVersion: p.student.studentVersion });
+    let exchanges = 0;
+    while (p.events.length) {
+        assert(++exchanges < 30, 'recovery and acknowledgements must settle');
+        const [recipient, message] = p.events.shift();
+        (recipient === 'student' ? p.student : viewer).receive(message);
+        p.student.flushOutgoing();
+    }
+    assert.equal(viewer.getPendingDrafts().length, 0);
+    return window.document.querySelector('textarea').value;
+}
+
+it('teacher reload keeps the distinct learner versions behind pending edits across a lost connection', (t) => {
+    const p = pair(t, 'abc');
+    p.teacher.replace('tbc'); p.teacher.flushOutgoing();
+    p.events.length = 0; // The learner never received this early replacement of a.
+    p.student.doc.transact(() => {
+        p.student.text.delete(0, 1); p.student.text.insert(0, 'A');
+        p.student.text.delete(2, 1); p.student.text.insert(2, 'C');
+    }, p.student.localOrigin);
+    p.student.flushOutgoing();
+    p.teacher.receive(p.events.shift()[1]);
+    assert.ok(p.teacher.value.endsWith('C'));
+    p.teacher.replace(p.teacher.value.slice(0, -1) + 'Q'); // The teacher has now seen C.
+    const saved = JSON.parse(JSON.stringify(p.teacher.recovery));
+    assert.deepEqual(saved.updates.map(group => group.studentVersion), [0, p.student.studentVersion]);
+    p.teacher.dispose();
+    assert.equal(restoreTeacherPage(t, p, saved), 'AbQ');
+    assert.equal(p.student.value, 'AbQ');
+});
+
+it('a pre-upgrade teacher backup with a single update restores disjoint work and preserves the current learner text', (t) => {
+    const p = pair(t, 'abc');
+    p.teacher.replace('Xbc'); p.teacher.replace('Xbc!');
+    const { update } = p.teacher.recovery;
+    assert.equal(typeof update, 'string');
+    p.teacher.dispose();
+    p.student.replace('Abc'); p.student.flushOutgoing();
+    p.events.length = 0; // The restored viewer will receive the current learner snapshot.
+    assert.equal(restoreTeacherPage(t, p, { update }), 'Abc!');
+    assert.equal(p.student.value, 'Abc!');
 });
 
 it('oversized Monaco and textarea drafts report once instead of leaving an unexplained blank mirror', async (t) => {

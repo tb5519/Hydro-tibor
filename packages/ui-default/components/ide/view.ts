@@ -122,6 +122,7 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
   form.append(input, submit);
   consoleBody.append(output, form); windows.terminal.body.append(consoleBody);
   let composing = false;
+  let terminalCompositionStale = false;
   let pendingDraft: string | null = null;
   let draftRunId = '';
   let inputErrorSeq = 0;
@@ -137,14 +138,18 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
     }
   };
   const sendDraft = () => {
+    if (terminalCompositionStale) { input.textContent = state.inputDraft; return; }
     pendingDraft = draftText();
     // Browsers leave a <br> after deleting the last character. Keep an empty
     // editable target with the same visible caret size as a fresh prompt.
     if (!composing && !pendingDraft && input.childNodes.length) input.textContent = '';
     command({ type: 'input-draft', text: pendingDraft }); followInput();
   };
-  input.addEventListener('compositionstart', () => { composing = true; });
-  input.addEventListener('compositionend', () => { composing = false; sendDraft(); });
+  input.addEventListener('compositionstart', () => { composing = true; terminalCompositionStale = false; });
+  input.addEventListener('compositionend', () => {
+    composing = false; sendDraft();
+    if (terminalCompositionStale) window.setTimeout(() => { terminalCompositionStale = false; }, 0);
+  });
   input.addEventListener('input', sendDraft);
   input.addEventListener('beforeinput', (event: InputEvent) => { if (event.inputType.startsWith('format')) event.preventDefault(); });
   input.addEventListener('keydown', (event) => {
@@ -218,14 +223,19 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
   const dialogInput = element('input', 'ide-graphics__dialog-input'); dialogInput.maxLength = 4096;
   let pendingDialogDraft: string | null = null;
   let dialogComposing = false;
+  let dialogCompositionStale = false;
   const sendDialogDraft = () => {
     if (!state.request) return;
+    if (dialogCompositionStale) { dialogInput.value = String(state.request.draft ?? state.request.default ?? ''); return; }
     pendingDialogDraft = dialogInput.value;
     command({ type: 'input-draft', target: 'dialog', requestId: state.request.id, text: pendingDialogDraft });
   };
   dialogInput.addEventListener('input', sendDialogDraft);
-  dialogInput.addEventListener('compositionstart', () => { dialogComposing = true; });
-  dialogInput.addEventListener('compositionend', () => { dialogComposing = false; sendDialogDraft(); });
+  dialogInput.addEventListener('compositionstart', () => { dialogComposing = true; dialogCompositionStale = false; });
+  dialogInput.addEventListener('compositionend', () => {
+    dialogComposing = false; sendDialogDraft();
+    if (dialogCompositionStale) window.setTimeout(() => { dialogCompositionStale = false; }, 0);
+  });
   dialogInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && (dialogComposing || event.isComposing || event.keyCode === 229)) event.preventDefault();
   });
@@ -276,8 +286,28 @@ export function createIdeView(container: HTMLElement, options: IdeViewOptions) {
   });
   observer.observe(root); if (toolbar) observer.observe(toolbar);
   cleanup.push(() => observer.disconnect());
-  function render(next: IdeSnapshot) {
+  const editableMode = input.contentEditable;
+  function render(next: IdeSnapshot, sharedDrafts?: { writable: boolean; terminal: boolean; dialog: boolean }) {
     state = next;
+    if (sharedDrafts) {
+      input.contentEditable = sharedDrafts.writable ? editableMode : 'false';
+      submit.disabled = !sharedDrafts.writable;
+      dialogInput.readOnly = !sharedDrafts.writable;
+      accept.disabled = cancel.disabled = !sharedDrafts.writable;
+      if (sharedDrafts.terminal) {
+        pendingDraft = null;
+        terminalCompositionStale = composing;
+        if (composing) input.textContent = state.inputDraft;
+      }
+      if (sharedDrafts.dialog) {
+        pendingDialogDraft = null;
+        dialogCompositionStale = dialogComposing;
+        if (state.request) dialogInput.value = String(state.request.draft ?? state.request.default ?? '');
+      }
+    } else if (!options.shared) {
+      // The owner's runtime already applied native input synchronously.
+      pendingDraft = null; pendingDialogDraft = null;
+    }
     const fontSize = `${state.fontSize ?? IDE_FONT_DEFAULT}px`;
     const fontChanged = consoleBody.style.fontSize !== fontSize;
     const followOutput = consoleBody.scrollHeight - consoleBody.scrollTop - consoleBody.clientHeight < 64;

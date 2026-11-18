@@ -21,6 +21,7 @@ const CHUNK_CHARS = 16 * 1024;
 const FRAGMENT_IDLE_MS = 8000;
 const MIRROR_BYTES_PER_SECOND = 256 * 1024;
 const EDITOR_MARKER = 'data-live-share-editor';
+const FIELD_REVISION = 'data-live-share-field-revision';
 const FRAME_MARKER = 'data-live-share-frame';
 const CANVAS_FRAME_BYTES = 48 * 1024;
 const CANVAS_BYTES_PER_SECOND = 128 * 1024;
@@ -248,7 +249,7 @@ function targetFingerprint(element: Element) {
     element.getAttribute('aria-describedby') || '',
     ...['data-learning-action', 'data-learning-session', 'data-learning-view', 'data-category', 'data-student-unac-filter', 'data-problem-record-picker']
       .map((key) => element.getAttribute(key) || ''),
-    href, element.textContent?.trim().slice(0, 160) || ''].join('|');
+    href, element.textContent?.trim().slice(0, 160) || ''].join('|') + (element.getAttribute(FIELD_REVISION) || '');
   let hash = 2166136261;
   for (let at = 0; at < text.length; at++) hash = Math.imul(hash ^ text.charCodeAt(at), 16777619);
   return (hash >>> 0).toString(16);
@@ -626,6 +627,17 @@ export function attachSourceMirror(options: SourceOptions) {
   let mediaStates = new WeakMap<Element, string>();
   let canvasCopy: HTMLCanvasElement | null = null;
   const commands = new Map<string, MirrorAck>();
+  let fieldRevision = 0;
+  let applyingSelect: Element | null = null;
+  const localFieldEdit = (event: Event) => {
+    const field = closestElement(event.target);
+    if (!field || field === applyingSelect || blocked(field) || !(allowedSelect(field) || allowedSearch(field))) return;
+    // rrweb mirrors this marker along with the control. A delayed selection or
+    // search made against an older learner value then fails the normal target check.
+    field.setAttribute(FIELD_REVISION, `:${++fieldRevision}`);
+  };
+  document.addEventListener('input', localFieldEdit, true);
+  document.addEventListener('change', localFieldEdit, true);
   const scratchControl = options.scratchControls ? attachSourceScratchControl() : null;
   const editorPlaceholders = new Map<number, string>();
   const newlyBlockedEditors = new WeakSet<Element>();
@@ -1038,14 +1050,20 @@ export function attachSourceMirror(options: SourceOptions) {
     }
     const element = interactive(raw);
     if (blocked(element) || disabled(element)) return deny('此处不能远程操作');
-    if (command.target !== targetFingerprint(element)) return deny('页面内容已变化，请等待同步后重试');
+    if (command.target !== targetFingerprint(element)) {
+      if (allowedSelect(element) || allowedSearch(element)) requestSnapshot();
+      return deny('页面内容已变化，请等待同步后重试');
+    }
     if (command.action === 'select') {
       if (!allowedSelect(element) || typeof command.value !== 'string' || command.value.length > 100
         || !Array.from(element.options).some((option) => option.value === command.value && !option.disabled)) return deny('选项不可用');
       const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
-      setter?.call(element, command.value);
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-      element.dispatchEvent(new Event('change', { bubbles: true }));
+      applyingSelect = element;
+      try {
+        setter?.call(element, command.value);
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+      } finally { applyingSelect = null; }
       return acknowledge({ id: command.id, pageId: options.pageId, ok: true });
     }
     if (command.action === 'search') {
@@ -1113,6 +1131,9 @@ export function attachSourceMirror(options: SourceOptions) {
       scratchControl?.dispose();
       clearInterval(editorGeometryTimer); editorPlaceholders.clear();
       clearInterval(canvasTimer); clearInterval(mediaTimer); cancelAnimationFrame(canvasFrame); canvasCopy = null;
+      document.removeEventListener('input', localFieldEdit, true);
+      document.removeEventListener('change', localFieldEdit, true);
+      document.querySelectorAll(`[${FIELD_REVISION}]`).forEach((field) => field.removeAttribute(FIELD_REVISION));
       window.removeEventListener('wheel', localScrollInput, true);
       window.removeEventListener('touchstart', localScrollInput, true);
       window.removeEventListener('pointerdown', localScrollInput, true);
@@ -1273,6 +1294,25 @@ export function attachViewerMirror(options: ViewerOptions) {
       ready = connected; renderAnnotations(); if (connected) options.onViewport?.(currentViewport); return;
     }
     const localControls = options.onDocument?.(doc);
+    const fieldBases = new WeakMap<Element, string>();
+    const beginFieldEdit = (event: Event) => {
+      const field = closestElement(event.target);
+      if (field && (allowedSelect(field) || allowedSearch(field)) && !fieldBases.has(field)) {
+        fieldBases.set(field, targetFingerprint(field));
+      }
+    };
+    const sendFieldEdit = (field: HTMLSelectElement | HTMLInputElement, action: 'select' | 'search') => {
+      command(field, action, { value: field.value, target: fieldBases.get(field) || targetFingerprint(field) });
+      fieldBases.delete(field);
+    };
+    const endFieldEdit = (event: Event) => {
+      const field = closestElement(event.target);
+      if (field) fieldBases.delete(field);
+    };
+    doc.addEventListener('beforeinput', beginFieldEdit, true);
+    doc.addEventListener('pointerdown', beginFieldEdit, true);
+    doc.addEventListener('keydown', beginFieldEdit, true);
+    doc.addEventListener('focusout', endFieldEdit, true);
     let holdingSpace = false;
     let dragging: { id: number; x: number; y: number };
     let resizing: { id: number; sash: HTMLElement; position: number; dirty: boolean } | null = null;
@@ -1357,7 +1397,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     const submit = (event: Event) => { event.preventDefault(); event.stopImmediatePropagation(); };
     const change = (event: Event) => {
       const element = closestElement(event.target);
-      if (element && allowedSelect(element)) command(element, 'select', { value: element.value });
+      if (element && allowedSelect(element)) sendFieldEdit(element, 'select');
     };
     const keydown = (event: KeyboardEvent) => {
       if (localControls?.owns(event.target)) return;
@@ -1380,7 +1420,7 @@ export function attachViewerMirror(options: ViewerOptions) {
       if (event.key !== 'Enter') return;
       event.preventDefault(); event.stopImmediatePropagation();
       const element = closestElement(event.target);
-      if (element && allowedSearch(element)) command(element, 'search', { value: element.value });
+      if (element && allowedSearch(element)) sendFieldEdit(element, 'search');
     };
     const keyup = (event: KeyboardEvent) => {
       if (event.code === 'Space' || event.key === ' ') resetPan();
@@ -1530,6 +1570,10 @@ export function attachViewerMirror(options: ViewerOptions) {
     doc.addEventListener('wheel', wheel, { capture: true, passive: false });
     cleanupDocument = () => {
       localControls?.dispose();
+      doc.removeEventListener('beforeinput', beginFieldEdit, true);
+      doc.removeEventListener('pointerdown', beginFieldEdit, true);
+      doc.removeEventListener('keydown', beginFieldEdit, true);
+      doc.removeEventListener('focusout', endFieldEdit, true);
       cleanupScratch();
       resetScrolls();
       finishResize();

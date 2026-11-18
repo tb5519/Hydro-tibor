@@ -117,12 +117,14 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
         if (data.action === 'ide') {
             if (role !== 'teacher' || data.nodeId !== 1 || !short(data.runId, 80)
                 || (data.runId && !/^[a-zA-Z0-9_-]{16,80}$/.test(data.runId))
-                || Object.keys(data).some((key) => !['id', 'pageId', 'nodeId', 'action', 'runId', 'command'].includes(key))) invalid();
+                || Object.keys(data).some((key) => !['id', 'pageId', 'nodeId', 'action', 'runId', 'command', 'draftToken'].includes(key))) invalid();
             const c = data.command;
             const fields = { run: ['type'], stop: ['type'], input: ['type', 'text'], 'input-draft': ['type', 'text', 'target', 'requestId'],
                 window: ['type', 'window', 'patch'], 'turtle-event': ['type', 'event'] };
             if (!c || typeof c !== 'object' || !Object.hasOwn(fields, c.type)
                 || Object.keys(c).some((key) => !fields[c.type].includes(key))) invalid();
+            const editsInput = ['input', 'input-draft'].includes(c.type) || c.type === 'turtle-event' && c.event?.type === 'response';
+            if (editsInput ? !shareId(data.draftToken) : data.draftToken !== undefined) invalid();
             if (['input', 'input-draft'].includes(c.type) && (!short(c.text, 16000) || c.text.includes('\0'))) invalid();
             if (c.type === 'input-draft' && ((c.target !== undefined && c.target !== 'dialog')
                 || (c.target === 'dialog' && (!Number.isSafeInteger(c.requestId) || c.requestId < 1 || c.text.length > 4096))
@@ -241,6 +243,9 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
             : ['edit:init', 'edit:layout', 'edit:remove', 'edit:update', 'edit:cursor', 'edit:ack', 'edit:focus', 'edit:inventory'];
         if (!allowed.includes(data.type) || data.pageId !== pageId || !short(data.editorId, 128)
             || (!data.editorId && !['edit:sync', 'edit:inventory'].includes(data.type))) invalid();
+        if (data.studentVersion !== undefined && (data.document !== undefined
+            || !['edit:init', 'edit:update'].includes(data.type)
+            || !Number.isSafeInteger(data.studentVersion) || data.studentVersion < 0)) invalid();
         if (data.type === 'edit:inventory') {
             if (data.editorId !== '' || !Array.isArray(data.editors) || data.editors.length > 256
                 || Object.keys(data).some((key) => !['type', 'pageId', 'editorId', 'editors'].includes(key))

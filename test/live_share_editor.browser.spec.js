@@ -204,6 +204,40 @@ async function editorPair(t, settings = {}) {
     return { student, teacher, flush };
 }
 
+it('a delayed teacher replacement cannot overwrite a conflicting Monaco draft or return after reconnect', {
+    skip: !executablePath && 'Install Playwright and Chromium', timeout: 30000,
+}, async (t) => {
+    const { student, teacher, flush } = await editorPair(t, { value: 'score = 0\nprint(score)' });
+    await student.evaluate(() => {
+        window.savedDrafts = [];
+        editor.onDidChangeModelContent(() => {
+            savedDrafts.push(editor.getValue());
+            localStorage.setItem('score-draft', editor.getValue());
+        });
+        editor.executeEdits('student', [{ range: new monaco.Range(1, 9, 1, 10), text: '2' }]);
+    });
+    await teacher.evaluate(() => sharedEditor().executeEdits('teacher', [{ range: new monaco.Range(1, 9, 1, 10), text: '9' }]));
+    await teacher.waitForFunction(() => outbox.some((msg) => msg.type === 'edit:update' && !msg.document));
+    const stale = await teacher.evaluate(() => outbox.find((msg) => msg.type === 'edit:update' && !msg.document));
+    await flush();
+    const studentText = 'score = 2\nprint(score)';
+    assert.equal(await student.evaluate(() => editor.getValue()), studentText);
+    assert.equal(await student.evaluate(() => localStorage.getItem('score-draft')), studentText);
+    assert.deepEqual(await student.evaluate(() => [...new Set(savedDrafts)]), [studentText]);
+    assert.equal(await teacher.evaluate(() => sharedEditor().getValue()), studentText);
+    await Promise.all([student, teacher].map((page) => page.evaluate(() => controller.setConnected(false))));
+    await student.evaluate(() => editor.executeEdits('offline-student', [{ range: new monaco.Range(1, 9, 1, 10), text: '3' }]));
+    await Promise.all([student, teacher].map((page) => page.evaluate(() => controller.setConnected(true))));
+    await student.evaluate((msg) => controller.receive(msg), stale);
+    await flush();
+    assert.equal(await teacher.evaluate(() => sharedEditor().getValue()), 'score = 3\nprint(score)');
+    assert.equal(await teacher.evaluate(() => sharedEditor().getRawOptions().readOnly), false);
+    await teacher.evaluate(() => sharedEditor().executeEdits('new-teacher-edit', [{ range: new monaco.Range(1, 9, 1, 10), text: '4' }]));
+    await flush();
+    assert.equal(await student.evaluate(() => localStorage.getItem('score-draft')), 'score = 4\nprint(score)');
+    assert.equal(await teacher.evaluate(() => sharedEditor().getValue()), 'score = 4\nprint(score)');
+});
+
 it('recovers an in-flight teacher edit rejected while the student tab is hidden and merges the student edit once', {
     skip: !executablePath && 'Install Playwright and Chromium', timeout: 40000,
 }, async (t) => {

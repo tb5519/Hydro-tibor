@@ -135,6 +135,38 @@ const settle = async () => {
     assert.fail('Live-share delivery queues did not settle');
 };
 
+it('mirrors legacy learner code read-only and allows editing only the upgraded learner model in the same room', async () => {
+    const teacher = connection(2); const student = connection(10);
+    await hello(teacher, 2); await hello(student, 10);
+    await teacher.instance.message({ type: 'start', studentUid: 10 }); await settle();
+    const { sessionId, pageId } = teacher.sent.find((message) => message.type === 'started');
+    const relay = async (from, data) => {
+        await from.instance.message({ type: 'relay', sessionId, pageId, kind: 'editor', data: { ...data, pageId } });
+        await settle();
+    };
+    const editorId = 'legacy-editor';
+    await relay(student, { type: 'edit:init', editorId, state: 'YQ==', readOnly: false });
+    assert.equal(teacher.sent.at(-1).data.readOnly, true);
+    await relay(student, { type: 'edit:layout', editorId, readOnly: false });
+    assert.equal(teacher.sent.at(-1).data.readOnly, true);
+    const update = { type: 'edit:update', editorId, opId: 'teacher-operation', update: 'YQ==' };
+    const before = student.sent.length;
+    await relay(teacher, update); await relay(teacher, { ...update, studentVersion: 0 });
+    assert.equal(teacher.sent.at(-1).code, 'EDITOR_NOT_READY');
+    assert.equal(student.sent.length, before, 'neither an old nor a new teacher may overwrite a legacy model');
+    await relay(teacher, { ...update, document: 'annotations' });
+    assert.equal(student.sent.at(-1).data.document, 'annotations');
+    await relay(student, { ...update, opId: 'learner-own-edit' });
+    assert.equal(teacher.sent.at(-1).data.opId, 'learner-own-edit');
+    await relay(student, { type: 'edit:init', editorId: 'upgraded', state: 'YQ==', studentVersion: 0, readOnly: false });
+    assert.equal(teacher.sent.at(-1).data.readOnly, false);
+    await relay(teacher, { ...update, studentVersion: 0, editorId: 'upgraded' });
+    assert.equal(student.sent.at(-1).data.editorId, 'upgraded');
+    await relay(student, { type: 'edit:remove', editorId: 'upgraded' });
+    await relay(teacher, { ...update, studentVersion: 0, editorId: 'upgraded' });
+    assert.equal(teacher.sent.at(-1).code, 'EDITOR_NOT_READY');
+});
+
 describe('read-only learner observation', () => {
     async function observing() {
         const teacher = connection(2); const student = connection(10); const other = connection(11);
@@ -716,9 +748,25 @@ describe('one logical connection across assistance and broadcast directions', ()
 });
 
 describe('live share protocol boundaries', () => {
+    it('allows a bounded learner edit version only on code snapshots and code updates', () => {
+        const fields = { pageId: 'version-page', editorId: 'version-editor' };
+        const validate = (role, message) => protocol.validateRelayData(role, 'editor', { ...fields, ...message }, fields.pageId);
+        const update = { type: 'edit:update', update: 'YQ==', opId: 'version-edit' };
+        for (const role of ['student', 'teacher']) {
+            validate(role, update); validate(role, { ...update, studentVersion: 0 });
+            for (const value of [-1, 0.5, '1', null, 2 ** 53]) {
+                assert.throws(() => validate(role, { ...update, studentVersion: value }), errorCode('INVALID_RELAY'));
+            }
+            assert.throws(() => validate(role, { ...update, studentVersion: 1, document: 'annotations' }), errorCode('INVALID_RELAY'));
+        }
+        validate('student', { type: 'edit:init', state: 'YQ==', studentVersion: 5 });
+        assert.throws(() => validate('teacher', { type: 'edit:init', state: 'YQ==', studentVersion: 5 }), errorCode('INVALID_RELAY'));
+        assert.throws(() => validate('student', { type: 'edit:ack', opId: 'version-edit', studentVersion: 1 }), errorCode('INVALID_RELAY'));
+    });
     it('limits IDE controls to the teacher, current page and scoped run identifiers', () => {
         const base = { id: 'ide-command-testing', pageId: 'ide-page-testing', nodeId: 1, action: 'ide', runId: 'ide_run_testing_1234' };
-        const validate = (command, patch = {}) => protocol.validateRelayData('teacher', 'command', { ...base, command, ...patch }, base.pageId);
+        const validate = (command, patch = {}) => protocol.validateRelayData('teacher', 'command', { ...base,
+            ...(['input', 'input-draft'].includes(command.type) && { draftToken: 'draft-lease-1' }), command, ...patch }, base.pageId);
         for (const command of [{ type: 'run' }, { type: 'stop' }, { type: 'input', text: '小明' }, { type: 'input-draft', text: '草稿' },
             { type: 'window', window: 'terminal', patch: { x: 0.4, y: 0.6, width: 640, height: 300, minimized: false } }]) {
             validate(command);
@@ -726,6 +774,10 @@ describe('live share protocol boundaries', () => {
             assert.throws(() => protocol.validateRelayData('teacher', 'command', { ...base, command }, 'other-page'), errorCode('INVALID_RELAY'));
         }
         validate({ type: 'run' }, { runId: '' });
+        for (const token of [null, undefined, '', {}, 'x'.repeat(100)]) {
+            assert.throws(() => validate({ type: 'input-draft', text: 'late' }, { draftToken: token }), errorCode('INVALID_RELAY'));
+        }
+        assert.throws(() => validate({ type: 'run' }, { draftToken: 'draft-lease-1' }), errorCode('INVALID_RELAY'));
         for (const patch of [{ runId: '../other' }, { runId: 'x'.repeat(81) }, { runId: null }, { nodeId: 2 }, { target: 'other' }]) {
             assert.throws(() => validate({ type: 'run' }, patch), errorCode('INVALID_RELAY'));
         }
@@ -736,7 +788,8 @@ describe('live share protocol boundaries', () => {
     });
     it('rejects unsafe IDE window geometry and executable turtle event fields', () => {
         const base = { id: 'ide-command-testing', pageId: 'ide-page-testing', nodeId: 1, action: 'ide', runId: 'ide_run_testing_1234' };
-        const validate = (command) => protocol.validateRelayData('teacher', 'command', { ...base, command }, base.pageId);
+        const validate = (command) => protocol.validateRelayData('teacher', 'command', { ...base, command,
+            ...(command.event?.type === 'response' && { draftToken: 'draft-lease-1' }) }, base.pageId);
         for (const patch of [{ x: -1 }, { y: 1.1 }, { x: Infinity }, { width: NaN }, { height: 8193 }, { minimized: 'true' },
             { position: 'fixed' }, { style: 'background:url(javascript:alert(1))' }, { __proto__: null, script: 'alert(1)' }]) {
             assert.throws(() => validate({ type: 'window', window: 'graphics', patch }), errorCode('INVALID_RELAY'));
