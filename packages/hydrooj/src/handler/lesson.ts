@@ -313,7 +313,7 @@ export class LessonConnectionHandler extends ConnectionHandler {
     private attendanceThrough = 0;
     private canTeach = false;
     private authorizationVersion = 0;
-    private sequences = { audio: -1, video: -1, screen: -1 };
+    private sequences = { audio: -1, video: -1, screen: -1, 'camera-window': -1, 'screen-window': -1 };
     // Ephemeral, connection-scoped agreement: requesting a view never grants
     // capture consent, and consent never authorizes an unwanted transmission.
     private screenWatching = false;
@@ -363,9 +363,10 @@ export class LessonConnectionHandler extends ConnectionHandler {
         try {
             validateLessonMessage(payload);
             if (!this.limiter.accept(payload.type, payload.data?.length || 0)) return;
-            if (['video', 'audio', 'screen'].includes(payload.type)) {
+            if (['video', 'audio', 'screen', 'camera-window', 'screen-window'].includes(payload.type)) {
                 if (this.peer?.lessonId === payload.lessonId && payload.seq > this.sequences[payload.type]
-                    && (payload.type !== 'screen' || this.screenSharing)) this.lastActivity = receivedAt;
+                    && (payload.type !== 'screen' || this.screenSharing)
+                    && (payload.type !== 'screen-window' || this.screenWatching && this.otherScreenSharing)) this.lastActivity = receivedAt;
                 this.relay(payload); return;
             }
             if (this.pending >= 6) throw new LessonError('RATE_LIMIT', '请等待课堂连接准备完成。');
@@ -406,6 +407,8 @@ export class LessonConnectionHandler extends ConnectionHandler {
             || payload.seq <= this.sequences[payload.type] || this.other.serverId !== serverId) return;
         if (payload.type === 'screen' && (this.user._id !== this.room.studentUid
             || !this.screenSharing || !this.otherScreenWatching)) return;
+        if (payload.type === 'screen-window' && (this.user._id !== this.room.teacherUid
+            || !this.screenWatching || !this.otherScreenSharing)) return;
         this.sequences[payload.type] = payload.seq;
         emitLesson({ uid: this.other._id, lessonId: this.room._id, connectionId: this.other.connectionId,
             sentAt: Date.now(), message: { ...payload, uid: this.user._id, streamId: this.connectionId } });
@@ -452,7 +455,7 @@ export class LessonConnectionHandler extends ConnectionHandler {
             const changed = this.other?.connectionId !== other?.connectionId;
             if (changed) this.resetScreen();
             this.room = room; this.other = other; this.lastAuthorization = Date.now();
-            if (announce) this.send({ type: 'ready', lesson: await lesson.snapshot(room), peerOnline: !!other,
+            if (announce) this.send({ type: 'ready', cameraFlow: true, screenFlow: true, lesson: await lesson.snapshot(room), peerOnline: !!other,
                 ...(other ? { peerStreamId: other.connectionId } : {}) });
             else if (changed) this.send({ type: 'peer', online: !!other, ...(other ? { streamId: other.connectionId } : {}) });
             if (other) {
@@ -493,15 +496,20 @@ export class LessonConnectionHandler extends ConnectionHandler {
             this.otherScreenControlVersion = message.controlVersion;
             this.send(message); return;
         }
-        if (message.type === 'video' || message.type === 'audio' || message.type === 'screen') {
-            if (!event.sentAt || Date.now() - event.sentAt > LESSON_MEDIA_MAX_AGE_MS
-                || this.conn.bufferedAmount > (message.type === 'audio' ? 16 : 512) * 1024
+        if (['video', 'audio', 'screen', 'camera-window', 'screen-window'].includes(message.type)) {
+            // Discard video first on a slow downlink. Old clients still accept their original frame sizes.
+            const bufferLimit = message.type === 'screen' && message.ticket !== undefined ? 4
+                : message.type === 'video' && message.ticket !== undefined ? 8
+                    : ['audio', 'camera-window', 'screen-window'].includes(message.type) ? 16 : 96;
+            if (event.connectionId !== this.connectionId || message.lessonId !== this.room._id
+                || !event.sentAt || event.sentAt > Date.now() + 1000 || Date.now() - event.sentAt > LESSON_MEDIA_MAX_AGE_MS
+                || this.conn.bufferedAmount > bufferLimit * 1024
                 || Date.now() - this.lastAuthorization > 6500 || Date.now() - this.lastLoginCheck > 6500
                 || !this.other || message.streamId !== this.other.connectionId || message.uid !== this.other._id) return;
-            if (message.type === 'screen' && (event.connectionId !== this.connectionId || message.lessonId !== this.room._id
-                || this.user._id !== this.room.teacherUid || message.uid !== this.room.studentUid
-                || event.sentAt > Date.now() + 1000
+            if (message.type === 'screen' && (this.user._id !== this.room.teacherUid || message.uid !== this.room.studentUid
                 || !this.screenWatching || !this.otherScreenSharing)) return;
+            if (message.type === 'screen-window' && (this.user._id !== this.room.studentUid || message.uid !== this.room.teacherUid
+                || !this.screenSharing || !this.otherScreenWatching)) return;
             this.send(message); return;
         }
         if (message.type === 'owner') {

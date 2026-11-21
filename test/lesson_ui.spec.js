@@ -155,6 +155,7 @@ async function fixture(t, options = {}) {
         releaseExit: data => heldExit?.(data),
         get hint() { return JSON.parse(window.localStorage.getItem(`onebyone.lesson.recovery:${uid}`)); },
         click, refresh, advance, navigate, exports: module.exports, cleanup, leaveMedia: confirmation => mediaCallbacks.onLeave(confirmation),
+        sleepWithoutTimers(milliseconds) { clockNow += milliseconds; },
         holdNextRead: () => { delayRead = true; }, releaseRead: () => heldRead?.(),
         holdNextInbox: () => { delayInbox = true; }, releaseInbox: () => heldInbox?.(),
         get mediaStarts() { return mediaStarts; }, get mediaStops() { return mediaStops; }, get mediaDisposes() { return mediaDisposes; } };
@@ -220,6 +221,23 @@ it('a connection recovers after more than six transient failures without reopeni
     assert.equal(f.shareEvents.filter(event => event.type.endsWith('share-stop')).length, 0);
 });
 
+it('returning to a still-visible classroom after Mac sleep reconnects without waiting for network or visibility events', async t => {
+    for (const student of [true, false]) {
+        const row = makeLesson({ status: 'active' });
+        const f = await fixture(t, { student, lessons: [row], resumeLessonId: row._id });
+        await f.advance();
+        const reads = f.requests.length;
+        f.window.dispatchEvent(new f.window.Event('focus'));
+        assert.equal(f.requests.length, reads);
+        f.sleepWithoutTimers(45_000);
+        f.window.dispatchEvent(new f.window.Event('focus'));
+        assert.equal(f.mediaConnections.at(-1), false);
+        await f.advance(2000); await f.advance();
+        assert.equal(f.sockets.length, 2);
+        assert.equal(f.mediaConnections.at(-1), true); assert.equal(f.mediaStarts, 1); assert.equal(f.mediaStops, 0);
+    }
+});
+
 it('handshake and heartbeat silence recover half-open sockets, while pulse acknowledgements keep healthy ones', async t => {
     const row = makeLesson({ status: 'active', startAt: new Date(initialNow - 60000).toISOString() });
     for (const failure of ['noReady', 'noAck']) {
@@ -235,6 +253,28 @@ it('handshake and heartbeat silence recover half-open sockets, while pulse ackno
         assert.equal(f.sockets.length, 2, 'acknowledged heartbeat does not create reconnect churn');
         f.cleanup();
     }
+});
+
+it('reconnects a one-way classroom connection even while incoming camera frames keep arriving', async t => {
+    const room = makeLesson({ status: 'active', startAt: new Date(initialNow - 60000).toISOString() });
+    const f = await fixture(t, { lessons: [room], resumeLessonId: room._id, noAck: true });
+    await f.advance();
+    const stalled = f.sockets[0];
+    for (let n = 0; n < 5; n++) {
+        stalled.deliver({ type: 'video', lessonId: room._id, uid: room.studentUid, seq: n, data: 'frame' });
+        await f.advance(5000);
+    }
+    assert.equal(stalled.readyState, 3, 'continuing downlink traffic cannot conceal a dead uplink');
+    f.options.noAck = false;
+    await f.advance(2000); await f.advance();
+    assert.equal(f.mediaConnections.at(-1), true);
+    assert.equal(f.mediaStarts, 1, 'reconnecting a socket keeps the participant’s authorised devices');
+    const next = f.sockets.at(-1);
+    f.window.dispatchEvent(new f.window.Event('offline'));
+    assert.equal(next.readyState, 3);
+    f.window.dispatchEvent(new f.window.Event('online')); await f.advance(); await f.advance();
+    assert.equal(f.mediaConnections.at(-1), true);
+    assert.equal(f.mediaStarts, 1);
 });
 
 it('a replaced tab releases its devices and never steals recovery ownership back', async t => {

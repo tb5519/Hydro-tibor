@@ -170,7 +170,8 @@ export function registerAction(
     const action = editor.getAction('editor.action.format') || editor.getAction('editor.action.formatDocument');
     if (action) action.run();
   });
-  editor.onDidChangeConfiguration(() => {
+  editor.onDidChangeConfiguration((event) => {
+    if (UiContext.ideMode || !event.hasChanged(monaco.editor.EditorOption.fontSize)) return;
     const current = editor.getOption(monaco.editor.EditorOptions.fontSize.id);
     customOptions.fontSize = current;
     saveCustomOptions();

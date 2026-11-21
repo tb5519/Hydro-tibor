@@ -21,6 +21,30 @@ vm.runInNewContext(transformSync(fs.readFileSync(path.join(root, 'packages/hydro
     loader: 'ts', format: 'cjs',
 }).code, { module: protocolModule, exports: protocolModule.exports, require, URL, Buffer });
 
+const fillButton = frame => frame.locator('label').filter({ hasText: /^填充/ }).locator('[class*="color-button_color-button_"]');
+const colorField = frame => frame.locator('.Popover input[placeholder="#123abc"]');
+async function checkCostumeMirror(child, replay) {
+    await colorField(replay).waitFor();
+    const hiddenTools = await child.locator('iframe,object.resize-sensor').evaluateAll(nodes => ({
+        hiddenFrames: nodes.filter(node => node.tagName === 'IFRAME' && !node.getClientRects().length).length,
+        sensors: nodes.filter(node => node.matches('object.resize-sensor') && node.data === 'about:blank'
+            && getComputedStyle(node).pointerEvents === 'none' && Number(getComputedStyle(node).zIndex) < 0).length,
+    }));
+    assert(hiddenTools.hiddenFrames >= 1 && hiddenTools.sensors >= 2, 'the real paint editor has hidden frames and sensors on its fill button and popover');
+    const visiblePlaceholders = await replay.locator('[data-live-share-unavailable]').evaluateAll(nodes => nodes.filter(node => {
+        const bounds = node.getBoundingClientRect();
+        return bounds.width && bounds.height && getComputedStyle(node).visibility === 'visible';
+    }).map(node => node.getBoundingClientRect().toJSON()));
+    assert.deepEqual(visiblePlaceholders, [], 'invisible Scratch helpers must never add a visible unavailable panel');
+    for (const caption of ['颜色', '饱和度', '亮度', '不透明度']) {
+        const bounds = frame => frame.locator('.Popover').getByText(caption, { exact: true }).boundingBox();
+        const [sourceBox, replayBox] = await Promise.all([bounds(child), bounds(replay)]);
+        assert(sourceBox && replayBox, `both participants can see ${caption}`);
+        for (const coordinate of ['x', 'y']) assert(Math.abs(sourceBox[coordinate] - replayBox[coordinate]) < 3,
+            `${caption} ${coordinate}: learner ${sourceBox[coordinate]}, teacher ${replayBox[coordinate]}`);
+    }
+}
+
 test('the prepared Scratch runtime renders its real default project through the opaque capture bridge within relay budgets', { timeout: 90000 }, async () => {
     assert(executablePath, 'Chromium is required for the actual Scratch runtime regression');
     const prebuiltCapture = process.env.LIVE_SHARE_PREBUILT_CAPTURE === '1';
@@ -88,7 +112,8 @@ test('the prepared Scratch runtime renders its real default project through the 
     const source = await context.newPage(); const viewer = await viewerContext.newPage();
     const errors = []; const badResponses = [];
     for (const page of [source, viewer]) {
-        page.on('pageerror', (error) => errors.push(error.message));
+        page.on('pageerror', error => errors.push({ side: page === source ? 'learner' : 'teacher', message: error.message,
+            caller: error.stack?.split('\n')[1]?.trim() }));
         page.on('response', (response) => { if (response.status() >= 400) badResponses.push(`${response.status()} ${response.url()}`); });
     }
     let pump;
@@ -97,6 +122,18 @@ test('the prepared Scratch runtime renders its real default project through the 
         await source.waitForFunction(() => childLoaded, null, { timeout: 45000 });
         const child = source.frames().find((frame) => frame.url().includes('/scratch-editor/editor.html'));
         assert(child, 'actual prepared Scratch editor is open');
+        // Establish the opaque Scratch runtime's own sensor errors before either recorder starts.
+        await child.getByRole('tab', { name: '造型', exact: true }).click();
+        await fillButton(child).click();
+        await colorField(child).waitFor();
+        await child.getByRole('tab', { name: '代码', exact: true }).click();
+        await colorField(child).waitFor({ state: 'detached' });
+        const unsharedPaintErrors = errors.splice(0);
+        for (const error of unsharedPaintErrors) {
+            assert.equal(error.side, 'learner');
+            assert.equal(error.message, "Cannot read properties of null (reading 'defaultView')");
+            assert.match(error.caller, /\.onload \(http:\/\/127\.0\.0\.1:\d+\/scratch-editor\/js\/pentapod\/editor\.[a-f0-9]+\.js:\d+:\d+\)$/);
+        }
         const realStage = await child.evaluate(() => {
             const canvases = [...document.querySelectorAll('canvas')];
             const renderer = window.ReduxStore?.getState?.().scratchGui?.vm?.renderer;
@@ -191,12 +228,47 @@ test('the prepared Scratch runtime renders its real default project through the 
         await titleField.click(); await titleField.fill('老师和学员一起创作'); await titleField.press('Enter');
         await child.waitForFunction(() => document.querySelector('[data-test-real-title]')?.value === '老师和学员一起创作');
         // Exercise the actual inert teacher replay, never source-side test clicks.
+        const errorsBeforePaint = errors.length;
         await replay.getByRole('tab', { name: '造型', exact: true }).click();
         await child.waitForFunction(() => [...document.querySelectorAll('[role=tab]')].some(node => node.textContent === '造型' && node.getAttribute('aria-selected') === 'true'));
         await replay.getByRole('tab', { name: '造型', exact: true }).and(replay.locator('[aria-selected=true]')).waitFor();
+        await fillButton(replay).click();
+        await colorField(child).waitFor();
+        await checkCostumeMirror(child, replay);
+        const field = colorField(replay);
+        await field.click(); await field.fill('#fa6d23'); await field.press('Enter');
+        await child.waitForFunction(() => document.querySelector('.Popover input[type=color]')?.value === '#fa6d23');
+        // Drop both ends while the real popover is still open, then recover it from the new frame epoch.
+        const oldFrame = await source.locator('#source').getAttribute('data-live-share-frame');
+        await viewer.evaluate(() => viewerFrames.setConnected(false));
+        await source.evaluate(() => sourceFrames.setConnected(false));
+        await viewer.locator('[data-live-share-frame-viewer] iframe').waitFor({ state: 'detached' });
+        await viewer.evaluate(() => viewerFrames.setConnected(true));
+        await source.evaluate(() => sourceFrames.setConnected(true));
+        await source.waitForFunction(old => {
+            const id = document.querySelector('#source').getAttribute('data-live-share-frame');
+            return id && id !== old;
+        }, oldFrame);
+        await checkCostumeMirror(child, replay);
+        assert.equal(await colorField(replay).inputValue(), '#fa6d23');
+        await viewer.waitForFunction(() => {
+            const doc = document.querySelector('[data-live-share-frame-viewer] iframe')?.contentDocument;
+            return ['canvas[class*="paper-canvas"]', '[data-test-real-stage]'].every(selector =>
+                doc?.querySelector(selector)?.style.backgroundImage.includes('data:image/'));
+        }, null, { timeout: 15000 });
+        if (process.env.LIVE_SHARE_SCREENSHOTS === '1') {
+            await viewer.locator('[data-live-share-frame-viewer] iframe').screenshot({
+                path: path.join(os.tmpdir(), 'live-share-real-scratch-costume-teacher.png'), scale: 'css',
+            });
+        }
         await replay.getByRole('tab', { name: '代码', exact: true }).click();
         await child.waitForFunction(() => [...document.querySelectorAll('[role=tab]')].some(node => node.textContent === '代码' && node.getAttribute('aria-selected') === 'true'));
         await replay.getByRole('tab', { name: '代码', exact: true }).and(replay.locator('[aria-selected=true]')).waitFor();
+        for (const error of errors.splice(errorsBeforePaint)) {
+            const matched = unsharedPaintErrors.findIndex(known => known.side === error.side && known.message === error.message && known.caller === error.caller);
+            assert(matched >= 0, `unexpected shared paint error: ${JSON.stringify(error)}`);
+            unsharedPaintErrors.splice(matched, 1);
+        }
         const flyoutBefore = await child.evaluate(() => ScratchBlocks.getMainWorkspace().getFlyout().getWorkspace().scrollY);
         await replay.locator('.blocklyFlyout').hover({ position: { x: 160, y: 210 } });
         await viewer.mouse.wheel(0, 270);

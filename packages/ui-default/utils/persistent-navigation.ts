@@ -228,8 +228,8 @@ export function attachPlatformPage(win: Window = window) {
     return nativeOpen(value, target, features);
   }) as typeof win.open;
   for (const name of ['pushState', 'replaceState'] as const) {
-    const original = win.history[name].bind(win.history);
-    win.history[name] = (...args: Parameters<History[typeof name]>) => { original(...args); sync(); };
+    const original = win.history[name];
+    win.history[name] = (...args: Parameters<History[typeof name]>) => { Reflect.apply(original, win.history, args); sync(); };
   }
   win.addEventListener('popstate', sync);
   win.addEventListener('hashchange', sync);

@@ -1,3 +1,4 @@
+import { isCodeFontWheel } from '../ide/fontSize';
 import { installBroadcastController } from './broadcast_controller';
 import { clearSessionAnnotations } from './annotation_cache';
 import { createTeacherShareControls } from './share_controls';
@@ -516,6 +517,7 @@ export function installLiveShare(config: LiveShareConfig, options: {
     surface.append(stage); viewport.append(surface); overlay.append(viewport);
     viewport.addEventListener('wheel', (event) => {
       if (!event.ctrlKey && !event.metaKey) return;
+      if (isCodeFontWheel(event) && (event.target as Element)?.closest?.('.live-share-editors [data-code-font-wheel]')) return;
       event.preventDefault(); event.stopImmediatePropagation();
       wheelZoom({ delta: event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport!.clientHeight : 1), clientX: event.clientX, clientY: event.clientY });
     }, { capture: true, passive: false });

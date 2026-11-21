@@ -4,6 +4,8 @@ import { createCallRinger } from './ringtone';
 import { positionVoiceOverlays } from './position';
 import { positionIncomingVoiceCard } from './incoming_position';
 
+declare global { interface Window { __onebyoneVoiceAudioUid?: number } }
+
 interface VoiceConfig { enabled: boolean; uid: number; canTeach: boolean; socketUrl: string; windowUrl?: string }
 interface Student { uid: number; name: string; online: boolean; busy?: boolean }
 interface Call {
@@ -162,7 +164,13 @@ export function installVoiceCall(config: VoiceConfig, options: {
       row.append(avatar, text, action); row.addEventListener('click', () => launch('dial', student.uid)); list.append(row);
     }
   }
+  function setCallAudioActive(active: boolean) {
+    if ((window.__onebyoneVoiceAudioUid === config.uid) === active) return;
+    if (active) window.__onebyoneVoiceAudioUid = config.uid; else delete window.__onebyoneVoiceAudioUid;
+    window.dispatchEvent(new window.Event('onebyone:voice-audio-change'));
+  }
   function renderCard() {
+    setCallAudioActive(call?.status === 'active');
     card.hidden = !call || mediaShown;
     floating.hidden = !mediaShown;
     if (!call) {
@@ -198,9 +206,9 @@ export function installVoiceCall(config: VoiceConfig, options: {
     } else if (message.type === 'students') {
       students = Array.isArray(message.students) ? message.students.filter((student: Student) => Number.isSafeInteger(student.uid) && typeof student.name === 'string') : [];
       renderStudents();
-    } else if (message.type === 'snapshot') {
+    } else if (message.type === 'snapshot' || message.type === 'idle') {
       const next = message.callId ? message : message.call;
-      if (!next?.callId) { call = null; renderCard(); return; }
+      if (!next?.callId) { call = null; mediaShown = false; renderCard(); renderStudents(); return; }
       if (next.teacherUid !== config.uid && next.studentUid !== config.uid) return;
       call = next; pendingStudent = 0; accepting = false; error.hidden = cardError.hidden = true;
       mediaShown = !!next.isOwner; renderCard(); renderStudents();
@@ -230,7 +238,9 @@ export function installVoiceCall(config: VoiceConfig, options: {
     renderCard(); renderStudents();
   } };
   const transport = options.transportFactory ? options.transportFactory(config, handlers) : new VoiceTransport(config, handlers);
-  const controller = (options.controllerFactory || mountVoiceCallWindow)(mediaRoot, config, { transport, onEnded() {
+  const controller = (options.controllerFactory || mountVoiceCallWindow)(mediaRoot, config, { transport, onState(snapshot) {
+    if (!snapshot && call?.isOwner) { call = null; setCallAudioActive(false); }
+  }, onEnded() {
     mediaShown = false; call = null; pendingStudent = 0; accepting = false; renderCard(); renderStudents();
   } });
   const muteObserver = new MutationObserver(() => {
@@ -268,6 +278,7 @@ export function installVoiceCall(config: VoiceConfig, options: {
   }) as EventListener);
   const dispose = () => {
     if (disposed) return; disposed = true;
+    setCallAudioActive(false);
     window.clearInterval(rosterTimer); window.clearTimeout(messageTimer);
     for (const off of disposers) off(); releasePositioning(); ringer.dispose(); muteObserver.disconnect(); controller.dispose(); transport.dispose();
     picker.remove(); card.remove(); floating.remove(); notification.remove();

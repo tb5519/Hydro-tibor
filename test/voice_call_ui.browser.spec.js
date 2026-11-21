@@ -22,7 +22,7 @@ const css = fs.readFileSync(path.join(repo, 'packages/ui-default/public/theme-4.
 let browser;
 before(async () => {
     assert(executablePath, 'A Chromium runtime is required for voice interface tests');
-    browser = await playwright.chromium.launch({ executablePath, headless: true });
+    browser = await playwright.chromium.launch({ executablePath, headless: true, args: ['--use-fake-device-for-media-stream'] });
 });
 after(async () => browser?.close());
 
@@ -37,7 +37,7 @@ async function fixture(t, options = {}) {
       window.fakeAudio={ready:false,async start(){audioStarts++;this.ready=true},stop(){audioStops++;this.ready=false},setMuted(value){audioMuted=value},setTransmitting(){},resetReceive(){},receive(){}};
       window.cleanup=VoiceUI.installVoiceCall({enabled:true,uid:${options.student ? 5 : 2},canTeach:${!options.student},socketUrl:'/voice-call/conn'}, {
         transportFactory(config,handlers){window.handlers=handlers;window.transport={ready:true,start(){handlers.onConnection(true);handlers.onMessage({type:'ready'})},send(message){sent.push(message);return this.ready},dispose(){this.ready=false}};return transport},
-        controllerFactory(root,config,settings){return VoiceUI.mountVoiceCallWindow(root,config,{...settings,audioFactory:()=>fakeAudio})}
+        controllerFactory(root,config,settings){return VoiceUI.mountVoiceCallWindow(root,config,${options.realAudio ? 'settings' : '{...settings,audioFactory:()=>fakeAudio}'})}
       });
       window.deliver=(message)=>handlers.onMessage(message);
     </script></body></html>` }));
@@ -76,6 +76,19 @@ it('teacher can search and dial an available learner; mere presence never starts
     assert.deepEqual(errors, []);
 });
 
+it('ringing leaves classroom audio alone, and an ended-while-offline call releases it after reconnect', async t => {
+    const { page } = await fixture(t);
+    const held = () => page.evaluate(() => window.__onebyoneVoiceAudioUid || 0);
+    await page.evaluate(message => deliver(message), call({ status: 'ringing', isOwner: false }));
+    assert.equal(await held(), 0);
+    await page.evaluate(message => deliver(message), call({ status: 'active', isOwner: true }));
+    assert.equal(await held(), 2);
+    await page.evaluate(() => { handlers.onConnection(false); handlers.onConnection(true); deliver({ type: 'idle' }); });
+    assert.equal(await held(), 0);
+    assert.equal(await page.locator('.voice-call-floating').isVisible(), false);
+    assert.equal(await page.evaluate(() => fakeAudio.ready), false);
+});
+
 it('content navigation and a replaced assistant menu preserve the active call until the account ends', async (t) => {
     const { page, errors } = await fixture(t);
     await page.locator('[data-voice-call-open]').click();
@@ -102,6 +115,50 @@ it('content navigation and a replaced assistant menu preserve the active call un
     assert.equal(await page.evaluate(() => fakeAudio.ready), false);
     assert.equal(await page.evaluate(() => transport.ready), false);
     assert.equal(await page.locator('.voice-call-floating').count(), 0);
+    assert.deepEqual(errors, []);
+});
+
+it('a real microphone denial lets the learner reopen native settings and retry the same voice call', async t => {
+    const { page, errors } = await fixture(t, { student: true, realAudio: true });
+    const context = page.context(); const origin = 'https://voice-ui.test';
+    await context.grantPermissions([], { origin });
+    await page.evaluate(() => {
+        window.voiceRequests = 0; window.grantedTrack = null;
+        const Audio = window.AudioContext;
+        window.AudioContext = class extends Audio { constructor(...args) { super(...args); window.activeSpeech = this; } };
+        const native = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+        navigator.mediaDevices.getUserMedia = async constraints => {
+            voiceRequests++;
+            const stream = await native(constraints); grantedTrack = stream.getAudioTracks()[0]; return stream;
+        };
+    });
+    await page.evaluate(message => deliver(message), call());
+    assert.equal(await page.evaluate(() => voiceRequests), 0);
+    await page.getByRole('button', { name: '接听', exact: true }).click();
+    const help = page.locator('[data-voice-permission-guide][data-state=blocked]');
+    await help.waitFor();
+    const mac = await page.evaluate(() => navigator.platform.includes('Mac') && navigator.maxTouchPoints <= 1);
+    assert.match(await help.textContent(), mac ? /Chrome 地址栏左侧的网站信息图标/ : /地址栏旁的权限图标/);
+    if (mac) {
+        await help.locator('summary').click();
+        assert.match(await help.locator('details[open]').innerText(), /系统设置 → 隐私与安全.*麦克风/);
+        assert.equal(await page.evaluate(() => voiceRequests), 1);
+    }
+    assert.equal(await page.evaluate(() => sent.some(message => message.type === 'accept')), false);
+    await context.grantPermissions(['microphone'], { origin });
+    await help.getByRole('button', { name: '我已允许，重新连接' }).click();
+    await page.waitForFunction(() => sent.some(message => message.type === 'accept'));
+    assert.deepEqual(await page.evaluate(() => [voiceRequests, grantedTrack.readyState]), [2, 'live']);
+    assert.equal(await help.isVisible(), false);
+    await page.evaluate(message => deliver(message), call({ status: 'active', isOwner: true, acceptedAt: Date.now() }));
+    await page.getByRole('button', { name: '静音', exact: true }).click();
+    await page.evaluate(() => activeSpeech.suspend());
+    await page.getByRole('button', { name: '点一下，听通话声音' }).click();
+    await page.waitForFunction(() => activeSpeech.state === 'running');
+    assert.deepEqual(await page.evaluate(() => [voiceRequests, grantedTrack.enabled]), [2, false]);
+    await page.evaluate(() => { grantedTrack.stop(); window.dispatchEvent(new Event('pageshow')); });
+    await page.getByRole('button', { name: '重试麦克风' }).waitFor();
+    assert.equal(await page.evaluate(() => activeSpeech.state), 'running', 'losing the microphone leaves the active speaker connected');
     assert.deepEqual(errors, []);
 });
 

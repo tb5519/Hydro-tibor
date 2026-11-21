@@ -17,7 +17,8 @@ const css = stylus.render(fs.readFileSync(styleFile, 'utf8'), { filename: styleF
 let browser;
 before(async () => {
     assert(executablePath, 'A local Chromium runtime is required for lesson UI checks');
-    browser = await playwright.chromium.launch({ executablePath, headless: true });
+    browser = await playwright.chromium.launch({ executablePath, headless: true,
+        args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
 });
 after(async () => browser?.close());
 
@@ -30,6 +31,32 @@ const lesson = (changes = {}) => ({ _id: 'lesson-abcdefghijklmnop', domainId: 'C
 async function fixture(t, options = {}) {
     const context = await browser.newContext({ viewport: options.viewport || { width: 1360, height: 920 }, timezoneId: 'America/Los_Angeles' });
     t.after(() => context.close());
+    if (options.realMedia) await context.addInitScript(() => {
+        window.screenRequests = []; window.deviceTracks = [];
+        Object.defineProperty(window, 'documentPictureInPicture', { value: undefined });
+        const devices = navigator.mediaDevices;
+        const getDevices = devices.getUserMedia.bind(devices);
+        devices.getUserMedia = async (constraints) => {
+            const stream = await getDevices(constraints);
+            deviceTracks.push(...stream.getTracks());
+            return stream;
+        };
+        devices.getDisplayMedia = constraints => {
+            screenRequests.push({ constraints, activeClick: navigator.userActivation.isActive,
+                joined: requests.some(request => request.body?.operation === 'join') });
+            return new Promise((resolve, reject) => {
+                window.selectScreen = (surface = 'monitor') => {
+                    if (surface === 'cancel') { reject(new DOMException('Cancelled', 'NotAllowedError')); return; }
+                    const canvas = document.createElement('canvas'); canvas.width = 800; canvas.height = 450;
+                    const draw = canvas.getContext('2d'); draw.fillStyle = '#546ae8'; draw.fillRect(0, 0, 800, 450);
+                    const stream = canvas.captureStream(8); window.screenTrack = stream.getVideoTracks()[0];
+                    const settings = screenTrack.getSettings.bind(screenTrack);
+                    screenTrack.getSettings = () => ({ ...settings(), displaySurface: surface });
+                    resolve(stream);
+                };
+            });
+        };
+    });
     const page = await context.newPage();
     let allowExit = options.confirmExit !== false;
     const confirmations = [];
@@ -102,7 +129,7 @@ async function fixture(t, options = {}) {
               deliver(data){this.onmessage?.({data:JSON.stringify(data)})},close(){this.readyState=3},drop(){this.readyState=3;this.onclose?.({})}};
             connections.push(connection);setTimeout(()=>{connection.readyState=1;connection.onopen?.({})},10);return connection;
           };
-          window.cleanup=LessonUI.installLesson({enabled:true,uid,canTeach:${!options.student},apiUrl:'/d/'+pageDomain+'/lesson',socketUrl:'/d/'+pageDomain+'/lesson/conn',resumeUrl:'/d/'+pageDomain+'/lesson/resume',...(${!!options.notifications}?{notificationsUrl:'/d/'+pageDomain+'/lesson/notifications',inboxUrl:'/d/'+pageDomain+'/lesson/inbox'}:{})}, {fetch:fakeFetch,now:()=>fakeNow,pollIntervalMs:1000000,socketFactory:fakeSocket,mediaFactory:()=>media});
+          window.cleanup=LessonUI.installLesson({enabled:true,uid,canTeach:${!options.student},apiUrl:'/d/'+pageDomain+'/lesson',socketUrl:'/d/'+pageDomain+'/lesson/conn',resumeUrl:'/d/'+pageDomain+'/lesson/resume',...(${!!options.notifications}?{notificationsUrl:'/d/'+pageDomain+'/lesson/notifications',inboxUrl:'/d/'+pageDomain+'/lesson/inbox'}:{})}, {fetch:fakeFetch,now:()=>fakeNow,pollIntervalMs:1000000,socketFactory:fakeSocket,mediaFactory:${options.realMedia ? 'undefined' : '()=>media'}});
           window.refreshLessons=()=>document.dispatchEvent(new Event('visibilitychange'));
         </script></body></html>` });
     });
@@ -168,6 +195,67 @@ it('an invitation already active when a learner logs in shows the central join c
     await page.evaluate(() => { refreshLessons(); });
     assert.equal(await page.locator('.lesson-reminder').isVisible(), false);
     assert.equal(await page.evaluate(() => mediaStarts), 0);
+    assert.deepEqual(errors, []);
+});
+
+const activeLesson = () => lesson({ status: 'active', teacherJoined: true, startAt: new Date(now - 60000).toISOString() });
+const watchScreen = (page, watching) => page.evaluate(flag => connections[0].deliver({
+    type: 'screen-view', lessonId: rows[0]._id, uid: rows[0].teacherUid, streamId: 'teacher-stream', watching: flag,
+}), watching);
+
+it('opens the screen picker in the learner join click and reuses the authorized track only when the teacher is watching', async t => {
+    const { page, errors } = await fixture(t, { student: true, realMedia: true, lessons: [activeLesson()], holdMutation: true, peerOnline: true });
+    const join = page.locator('[data-lesson-reminder-join]'); await join.waitFor();
+    assert.deepEqual(await page.evaluate(() => [screenRequests.length, deviceTracks.length, messages.length]), [0, 0, 0]);
+    await join.click(); await page.waitForFunction(() => !!window.releaseMutation);
+    const calls = await page.evaluate(() => screenRequests);
+    assert.equal(calls.length, 1); assert.equal(calls[0].activeClick, true); assert.equal(calls[0].joined, false);
+    assert.equal(calls[0].constraints.video.displaySurface, 'monitor'); assert.equal(calls[0].constraints.audio, false);
+    await page.evaluate(() => selectScreen());
+    assert.deepEqual(await page.evaluate(() => [screenTrack.readyState, deviceTracks.length, messages.length]), ['live', 0, 0]);
+    await page.evaluate(() => { rows[0].studentJoined = true; releaseMutation({ lesson: rows[0] }); });
+    await page.waitForFunction(() => messages.some(m => m.type === 'video') && messages.some(m => m.type === 'audio'));
+    assert.equal(await page.evaluate(() => messages.some(m => m.type === 'screen')), false);
+    await watchScreen(page, true);
+    await page.waitForFunction(() => messages.some(m => m.type === 'screen' && m.data.startsWith('data:image/jpeg;base64,')));
+    await watchScreen(page, false);
+    const count = await page.evaluate(() => messages.filter(m => m.type === 'screen').length);
+    await page.waitForTimeout(380);
+    assert.equal(await page.evaluate(() => messages.filter(m => m.type === 'screen').length), count);
+    await watchScreen(page, true);
+    await page.waitForFunction(n => messages.filter(m => m.type === 'screen').length > n, count);
+    assert.equal(await page.evaluate(() => screenRequests.length), 1);
+    await page.evaluate(() => { rows[0].status = 'ended'; connections[0].deliver({ type: 'ended', lessonId: rows[0]._id }); });
+    await page.waitForFunction(() => screenTrack.readyState === 'ended' && deviceTracks.every(track => track.readyState === 'ended'));
+    assert.deepEqual(errors, []);
+});
+
+it('joins via the course card after screen consent is cancelled and leaves camera and microphone available', async t => {
+    const { page, errors } = await fixture(t, { student: true, realMedia: true, lessons: [activeLesson()], peerOnline: true });
+    await page.getByRole('button', { name: '稍后提醒' }).click();
+    await page.locator('[data-lesson-home] [data-lesson-join]').click();
+    assert.equal(await page.evaluate(() => screenRequests.length), 1);
+    await page.evaluate(() => selectScreen('cancel'));
+    await page.waitForFunction(() => messages.some(m => m.type === 'audio') && messages.some(m => m.type === 'video'));
+    await watchScreen(page, true);
+    await page.locator('[data-lesson-screen-share]').waitFor();
+    assert.deepEqual(await page.evaluate(() => [screenRequests.length, messages.some(m => m.type === 'screen')]), [1, false]);
+    await page.locator('[data-lesson-media-leave]').click();
+    await page.locator('[data-lesson-exit-confirm]').click();
+    await page.waitForFunction(() => requests.some(r => r.body?.operation === 'leave') && deviceTracks.every(t => t.readyState === 'ended'));
+    assert.deepEqual(errors, []);
+});
+
+it('releases a late screen selection when the learner leaves the classroom host before admission', async t => {
+    const { page, errors } = await fixture(t, { student: true, realMedia: true, lessons: [activeLesson()], holdMutation: true });
+    await page.locator('[data-lesson-reminder-join]').click();
+    await page.waitForFunction(() => !!window.releaseMutation);
+    await page.evaluate(() => {
+        window.dispatchEvent(new PageTransitionEvent('pagehide'));
+        selectScreen(); releaseMutation({ lesson: { ...rows[0], studentJoined: true } });
+    });
+    await page.waitForFunction(() => window.mutationReplyDelivered && screenTrack.readyState === 'ended');
+    assert.deepEqual(await page.evaluate(() => [deviceTracks.length, connections.length, messages.length]), [0, 0, 0]);
     assert.deepEqual(errors, []);
 });
 

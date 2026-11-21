@@ -3,13 +3,14 @@ import React from 'react';
 import { connect } from 'react-redux';
 import { load } from 'vj/components/monaco/loader';
 import { ctx } from 'vj/context';
-import { attachIdeEditorFont, getIdeFontSize } from '../ide/fontSize';
+import { attachCodeFontWheel, attachIdeEditorFont, getIdeFontSize, steppedCodeFont } from '../ide/fontSize';
 import { attachScratchpadMonacoTheme, currentScratchpadTheme, scratchpadMonacoThemeName } from './themes';
 
 interface ScratchpadOptions {
   value?: string;
   language?: string;
   handleUpdateCode?: (str: string, event?: monaco.editor.IModelContentChangedEvent) => void;
+  setFontSize?: (size: number) => void;
   settings?: any;
   pendingCommand?: string;
   commandDone?: () => void;
@@ -27,6 +28,7 @@ export default connect((state: any) => ({
   settings: state.ui.settings.config,
   pendingCommand: state.ui.pendingCommand,
 }), (dispatch) => ({
+  setFontSize: (value: number) => dispatch({ type: 'SCRATCHPAD_SETTING_UPDATE', payload: { setting: 'fontSize', value } }),
   handleUpdateCode: (code: string) => {
     dispatch({
       type: 'SCRATCHPAD_EDITOR_UPDATE_CODE',
@@ -47,7 +49,7 @@ export default connect((state: any) => ({
   editor: monaco.editor.IStandaloneCodeEditor;
   containerElement: HTMLElement;
   releaseTheme?: () => void;
-  releaseIdeFont?: () => void;
+  releaseFont?: () => void;
   unmounted = false;
 
   flushDailyQuizDraft = (event: Event) => {
@@ -92,7 +94,12 @@ export default connect((state: any) => ({
       // Keep the coding workspace on its own theme after that completes.
       monaco.editor.setTheme(scratchpadMonacoThemeName(currentScratchpadTheme()));
       if (UiContext.homeworkReview) this.editor.updateOptions({ readOnly: true });
-      if (UiContext.ideMode) this.releaseIdeFont = attachIdeEditorFont(this.editor);
+      this.releaseFont = UiContext.ideMode ? attachIdeEditorFont(this.editor)
+        : attachCodeFontWheel(this.editor.getDomNode()!, (direction) => {
+          const size = steppedCodeFont(this.editor.getOption(monaco.editor.EditorOption.fontSize), direction);
+          this.editor.updateOptions({ fontSize: size });
+          this.props.setFontSize?.(size);
+        });
       this.disposable.push(
         this.editor.onDidChangeModelContent((event) => {
           if (!UiContext.homeworkReview && !this.__prevent_trigger_change_event) {
@@ -167,7 +174,7 @@ export default connect((state: any) => ({
     if (this.model) this.model.dispose();
     this.disposable.map((i) => i.dispose());
     this.releaseTheme?.();
-    this.releaseIdeFont?.();
+    this.releaseFont?.();
   }
 
   assignRef = (component) => {

@@ -209,11 +209,12 @@ export class VoiceCallConnectionHandler extends ConnectionHandler {
             if (!stored) {
                 if (this.currentCall) this.send({ type: 'ended', callId: this.currentCall._id,
                     requestId: this.currentCall.dialRequestId, reason: '通话已结束。' });
+                else if (announce) this.send({ type: 'idle' });
                 this.currentCall = null; this.lastAuthorization = 0; return;
             }
             const call = await voice.refreshCall(stored, emitVoiceCall);
             if (this.disposed || this.closing) return;
-            if (!call) { this.currentCall = null; this.lastAuthorization = 0; return; }
+            if (!call) { this.currentCall = null; this.lastAuthorization = 0; if (announce) this.send({ type: 'idle' }); return; }
             const changed = !this.currentCall || this.currentCall._id !== call._id || this.currentCall.status !== call.status
                 || ownsVoice(this.currentCall, this.peer) !== ownsVoice(call, this.peer);
             if (!this.currentCall || this.currentCall._id !== call._id) this.lastSeq = -1;

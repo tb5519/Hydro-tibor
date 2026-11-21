@@ -242,6 +242,20 @@ it('Ctrl-wheel keeps the teacher cursor anchor stable and does not resize or scr
         document.querySelector('.live-share-editors').append(input);
         input.focus();
     });
+    const split = await page.evaluate(() => {
+        const input = document.querySelector('#local-editor');
+        input.setAttribute('data-code-font-wheel', '');
+        let steps = 0;
+        input.addEventListener('wheel', (e) => { steps++; e.preventDefault(); }, { passive: false });
+        const scale = () => document.querySelector('.live-share-stage').style.transform;
+        const before = scale();
+        const wheel = () => input.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -60 }));
+        wheel(); const onCode = scale();
+        input.removeAttribute('data-code-font-wheel'); wheel();
+        return { before, onCode, onOther: scale(), steps };
+    });
+    assert.equal(split.steps, 1); assert.equal(split.onCode, split.before);
+    assert.notEqual(split.onOther, split.before, 'outside an active code font control the whole view zooms');
     await page.keyboard.type('a b');
     assert.equal(await page.locator('#local-editor').inputValue(), 'a b', 'the pan shortcut must not consume spaces while editing');
 });

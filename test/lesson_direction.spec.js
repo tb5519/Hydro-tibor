@@ -48,7 +48,7 @@ async function fixture(t) {
         attachBroadcastViewer: () => { throw new Error('a teacher must never attach a broadcast viewer'); },
     };
     const globals = {
-        window, document: window.document, location: window.location, localStorage: window.localStorage, sessionStorage: window.sessionStorage,
+        window, navigator: window.navigator, document: window.document, location: window.location, localStorage: window.localStorage, sessionStorage: window.sessionStorage,
         URL, Uint8Array, WebSocket: Socket, HTMLElement: window.HTMLElement, Element: window.Element,
         Event: window.Event, CustomEvent: window.CustomEvent, MutationObserver: window.MutationObserver,
         Date: Clock, queueMicrotask, console: { ...console, warn: (...args) => warnings.push(args.map(String).join(' ')) },
@@ -65,6 +65,7 @@ async function fixture(t) {
             require: (name) => { if (dependencies[name]) return dependencies[name]; throw new Error(`Unexpected import ${name}`); } });
         return module.exports;
     };
+    dependencies['../ide/fontSize'] = evaluate(source('../ide/fontSize'));
     dependencies['./broadcast_controller'] = evaluate(broadcastCode);
     const cleanup = evaluate(controllerCode).installLiveShare({ enabled: true, canTeach: true, uid: 2,
         socketUrl: '/d/python/live-share/conn', pageGrant: 'page-grant' }, {

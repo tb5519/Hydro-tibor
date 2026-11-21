@@ -68,6 +68,45 @@ it('late getUserMedia resolution after hangup stops the newly returned track', a
     });
     assert.deepEqual(result, { track: 'ended', ready: false });
 });
+
+it('two browsers carry audible PCM through a microphone denial, input loss and speaker interruption without unmuting the listener', async t => {
+    const sender = await page(t); const listener = await page(t);
+    await listener.evaluate(async () => {
+        window.playbackChanges = []; window.captureCount = 0; window.sentByListener = 0;
+        navigator.mediaDevices.getUserMedia = async () => { captureCount++; throw new DOMException('declined', 'NotAllowedError'); };
+        window.audio = new Voice.VoiceAudio({ onFrame() { sentByListener++; }, onPlaybackPaused(value) { playbackChanges.push(value); } });
+        await audio.listen();
+        try { await audio.start(); } catch (error) { if (error.name !== 'NotAllowedError') throw error; }
+        audio.setMuted(true);
+        window.meter = audio.context.createAnalyser(); audio.processor.connect(meter);
+        window.hasSpeech = () => { const samples = new Float32Array(meter.fftSize); meter.getFloatTimeDomainData(samples); return samples.some(v => Math.abs(v) > .06); };
+    });
+    await sender.exposeFunction('relaySpeech', (seq, frame) => listener.evaluate(([s, value]) => audio.receive(s, value), [seq, frame]));
+    await sender.evaluate(async () => {
+        const toneContext = new AudioContext(); const oscillator = toneContext.createOscillator();
+        const streamNode = toneContext.createMediaStreamDestination(); oscillator.connect(streamNode); oscillator.start();
+        await toneContext.resume();
+        navigator.mediaDevices.getUserMedia = async () => streamNode.stream;
+        let sequence = 0; window.talker = new Voice.VoiceAudio({ onFrame(data) { void relaySpeech(++sequence, data); } });
+        await talker.start(); talker.setTransmitting(true);
+    });
+    try {
+        await listener.waitForFunction(() => hasSpeech());
+        await listener.evaluate(() => audio.context.suspend());
+        await listener.waitForFunction(() => playbackChanges.at(-1) === true);
+        await listener.evaluate(() => audio.listen());
+        await listener.waitForFunction(() => playbackChanges.at(-1) === false && hasSpeech());
+        assert.deepEqual(await listener.evaluate(() => [captureCount, sentByListener, audio.ready]), [1, 0, false]);
+        await listener.evaluate(async () => {
+            const mic = audio.context.createMediaStreamDestination(); navigator.mediaDevices.getUserMedia = async () => mic.stream;
+            await audio.start(); audio.setTransmitting(true);
+            if (mic.stream.getAudioTracks()[0].enabled) throw new Error('replacing the input silently undid the mute choice');
+            audio.releaseInput();
+        });
+        await listener.waitForFunction(() => hasSpeech());
+        assert.equal(await listener.evaluate(() => sentByListener), 0);
+    } finally { await sender.evaluate(() => talker.stop()); await listener.evaluate(() => audio.stop()); }
+});
 it('autoplay suspension resolves to a visible retry error instead of leaving microphone open indefinitely', async (t) => {
     const p = await page(t);
     const result = await p.evaluate(async () => {
@@ -80,7 +119,7 @@ it('autoplay suspension resolves to a visible retry error instead of leaving mic
         prototype.resume = oldResume;
         return { message, ready: audio.ready, stream: audio.stream, context: audio.context };
     });
-    assert.match(result.message, /点击下方按钮继续通话/);
+    assert.match(result.message, /点击下方按钮开启声音/);
     assert.equal(result.ready, false); assert.equal(result.stream, null); assert.equal(result.context, null);
 });
 it('real BroadcastChannel gives duplicated tabs a new identity while navigation retains the original owner', async (t) => {

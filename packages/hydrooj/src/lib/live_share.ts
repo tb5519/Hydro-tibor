@@ -239,10 +239,17 @@ export function validateRelayData(role: ShareRole, kind: ShareRelayKind, data: a
         if (!shareId(data.id) || data.pageId !== pageId || typeof data.ok !== 'boolean'
             || (data.reason !== undefined && !short(data.reason, 512))) invalid();
     } else if (kind === 'editor') {
-        const allowed = role === 'teacher' ? ['edit:update', 'edit:cursor', 'edit:sync', 'edit:scroll']
+        const allowed = role === 'teacher' ? ['edit:update', 'edit:cursor', 'edit:sync', 'edit:scroll', 'edit:font-step']
             : ['edit:init', 'edit:layout', 'edit:remove', 'edit:update', 'edit:cursor', 'edit:ack', 'edit:focus', 'edit:inventory'];
         if (!allowed.includes(data.type) || data.pageId !== pageId || !short(data.editorId, 128)
             || (!data.editorId && !['edit:sync', 'edit:inventory'].includes(data.type))) invalid();
+        if (data.type === 'edit:font-step') {
+            if (![1, -1].includes(data.direction)
+                || Object.keys(data).some((key) => !['type', 'pageId', 'editorId', 'direction'].includes(key))) invalid();
+            return;
+        }
+        if (data.fontWheel !== undefined && (data.fontWheel !== true || data.document !== undefined
+            || role !== 'student' || !['edit:init', 'edit:layout'].includes(data.type))) invalid();
         if (data.studentVersion !== undefined && (data.document !== undefined
             || !['edit:init', 'edit:update'].includes(data.type)
             || !Number.isSafeInteger(data.studentVersion) || data.studentVersion < 0)) invalid();

@@ -18,6 +18,9 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
 function fixture(t, options = {}) {
     const dom = new JSDOM('<main>学习页面</main>', { url: 'https://onebyone.test/', pretendToBeVisual: true });
     const { window } = dom;
+    if (options.mac) Object.defineProperties(window.navigator, {
+        platform: { value: 'MacIntel' }, userAgent: { value: options.mac },
+    });
     if (options.storageDenied) Object.defineProperty(window, 'localStorage', { get() { throw new Error('Storage disabled'); } });
     else for (const [key, value] of Object.entries(options.storage || {})) window.localStorage.setItem(key, value);
     const sent = []; const captures = []; const streams = []; const audioFrames = []; const encodes = [];
@@ -46,6 +49,7 @@ function fixture(t, options = {}) {
             this.ready = true;
         },
         stop() { audioStops++; this.ready = false; this.transmitting = false; },
+        releaseInput() { this.ready = false; this.transmitting = false; },
         setMuted(value) { this.muted = value; },
         setTransmitting(value) { this.transmitting = value; },
         resetReceive() { audioResets++; },
@@ -98,12 +102,21 @@ function fixture(t, options = {}) {
     const beautyModule = { exports: {} };
     vm.runInNewContext(transformSync(fs.readFileSync(path.join(path.dirname(source), 'beauty.ts'), 'utf8'), { loader: 'ts', format: 'cjs' }).code,
         { module: beautyModule, exports: beautyModule.exports, Float32Array });
+    const guideModule = { exports: {} };
+    vm.runInNewContext(transformSync(fs.readFileSync(path.join(path.dirname(source), '../voice_call/permission_guide.ts'), 'utf8'), { loader: 'ts', format: 'cjs' }).code,
+        { module: guideModule, exports: guideModule.exports });
     const code = transformSync(fs.readFileSync(source, 'utf8'), { loader: 'ts', format: 'cjs' }).code;
     const fixtureDate = options.manualClock ? class ClockDate extends Date { static now() { return now; } } : Date;
+    const recoveryModule = { exports: {} };
+    vm.runInNewContext(transformSync(fs.readFileSync(path.join(path.dirname(source), 'device_recovery.ts'), 'utf8'),
+        { loader: 'ts', format: 'cjs' }).code, { module: recoveryModule, exports: recoveryModule.exports, window, navigator: window.navigator, Date: fixtureDate });
+    const flowModule = { exports: {} };
+    vm.runInNewContext(transformSync(fs.readFileSync(path.join(path.dirname(source), 'camera_flow.ts'), 'utf8'),
+        { loader: 'ts', format: 'cjs' }).code, { module: flowModule, exports: flowModule.exports, performance: window.performance, Date: fixtureDate });
     const screenModule = { exports: {} };
     vm.runInNewContext(transformSync(fs.readFileSync(path.join(path.dirname(source), 'screen.ts'), 'utf8'), { loader: 'ts', format: 'cjs' }).code,
         { module: screenModule, exports: screenModule.exports, window, document: window.document, navigator: window.navigator,
-            Date: fixtureDate, console, setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window) });
+            require: () => flowModule.exports, Date: fixtureDate, console, setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window) });
     vm.runInNewContext(code, {
         module, exports: module.exports, window, document: window.document, navigator: window.navigator,
         HTMLElement: window.HTMLElement, HTMLVideoElement: window.HTMLVideoElement, Image: window.Image,
@@ -113,8 +126,11 @@ function fixture(t, options = {}) {
         setInterval: window.setInterval.bind(window), clearInterval: window.clearInterval.bind(window),
         Date: fixtureDate,
         require(name) {
+            if (name === '../voice_call/permission_guide') return guideModule.exports;
             if (name.includes('voice_call/audio')) return { VoiceAudio: function FakeAudio() {}, microphoneError: (error) => error.message };
             if (name === './beauty') return beautyModule.exports;
+            if (name === './camera_flow') return flowModule.exports;
+            if (name === './device_recovery') return recoveryModule.exports;
             if (name === './screen') return screenModule.exports;
             throw new Error(`Unexpected import: ${name}`);
         },
@@ -160,6 +176,46 @@ it('opening a classroom does not capture before an explicit join, then captures 
     assert.equal(f.sent.at(-1).lessonId, lesson._id); assert.equal(f.sent.at(-1).type, 'audio');
 });
 
+it('an accepted independent voice call pauses both classroom audio directions without ending video or losing mute', async t => {
+    const f = fixture(t, { manualClock: true });
+    await f.media.start(lesson); f.media.setConnected(true); await tick();
+    const mic = f.root.querySelector('[data-lesson-microphone]');
+    mic.click(); assert.equal(f.audio.muted, true);
+    f.window.__onebyoneVoiceAudioUid = lesson.teacherUid;
+    f.window.dispatchEvent(new f.window.Event('onebyone:voice-audio-change'));
+    assert.equal(f.audio.transmitting, false);
+    assert.match(f.root.textContent, /独立语音通话/);
+    const audio = { type: 'audio', lessonId: lesson._id, uid: lesson.studentUid, streamId: 'voice-peer', seq: 1, data: 'speech' };
+    const sent = f.sent.length;
+    f.sendAudio('private-conversation'); f.media.receive(audio);
+    assert.equal(f.audioFrames.length, 0);
+    assert.equal(f.sent.length, sent);
+    f.advance(200); assert(f.sent.some(frame => frame.type === 'video'));
+    assert.equal(f.streams[0].track.stopped, 0);
+    f.media.setConnected(false); f.media.setConnected(true); await tick();
+    assert.equal(f.audio.transmitting, false, 'automatic reconnect cannot mix active conversations');
+    delete f.window.__onebyoneVoiceAudioUid;
+    f.window.dispatchEvent(new f.window.Event('onebyone:voice-audio-change'));
+    f.media.receive({ ...audio, seq: 2 }); assert.equal(f.audioFrames.length, 1);
+    assert.equal(f.audio.muted, true); assert.equal(f.audioStarts, 1);
+});
+
+it('hanging up a separate call opens classroom playback even when its microphone was denied', async t => {
+    const f = fixture(t, { microphoneDenied: true });
+    let listens = 0;
+    f.audio.listen = async () => { listens++; };
+    f.window.__onebyoneVoiceAudioUid = lesson.teacherUid;
+    f.window.dispatchEvent(new f.window.Event('onebyone:voice-audio-change'));
+    await f.media.start(lesson); f.media.setConnected(true); await tick();
+    assert.equal(listens, 0);
+    f.media.setConnected(false);
+    delete f.window.__onebyoneVoiceAudioUid;
+    f.window.dispatchEvent(new f.window.Event('onebyone:voice-audio-change'));
+    f.media.setConnected(true);
+    await tick();
+    assert.equal(listens, 1); assert.equal(f.audio.transmitting, false); assert.equal(f.audioStarts, 1);
+});
+
 it('camera permission rejection leaves the classroom usable and keeps an independently permitted microphone', async (t) => {
     const f = fixture(t, { cameraDenied: true });
     await f.media.start(lesson); f.media.setConnected(true);
@@ -169,6 +225,60 @@ it('camera permission rejection leaves the classroom usable and keeps an indepen
     f.root.querySelector('[data-lesson-media-leave]').click();
     assert.equal(f.left, 0); f.root.querySelector('[data-lesson-exit-confirm]').click();
     assert.equal(f.left, 1, 'a denied camera cannot trap the learner in the room');
+});
+
+it('a working camera recovers at most twice from repeated OS track loss and explicitly retrying resets that budget', async t => {
+    const f = fixture(t, { manualClock: true });
+    Object.defineProperty(f.window.navigator, 'permissions', { value: { query: async () => ({ state: 'granted' }) } });
+    await f.media.start(lesson); f.media.setConnected(true);
+    for (let i = 0; i < 2; i++) {
+        f.streams.at(-1).track.end(); await tick();
+        assert.equal(f.streams.length, i + 2);
+    }
+    f.streams.at(-1).track.end(); await tick(); f.advance(60000);
+    f.window.dispatchEvent(new f.window.Event('pageshow')); await tick();
+    assert.equal(f.streams.length, 3, 'waking after a minute cannot buy more attempts for a persistently lost camera');
+    assert.match(f.root.querySelector('[data-lesson-media-status]').textContent, /点摄像头按钮/);
+    f.root.querySelector('[data-lesson-camera]').click(); await tick(); assert.equal(f.streams.length, 4);
+    f.root.querySelector('[data-lesson-camera]').click();
+    f.window.dispatchEvent(new f.window.Event('focus')); await tick();
+    assert.equal(f.streams.length, 4, 'an intentional camera-off choice survives wake');
+});
+
+it('a revoked or absent camera never prompts on wake; permission changes or user retries use the current room only', async t => {
+    const f = fixture(t);
+    let permission = 'granted'; let devices = [];
+    Object.defineProperty(f.window.navigator, 'permissions', { value: { query: async () => ({ state: permission }) } });
+    f.window.navigator.mediaDevices.enumerateDevices = async () => devices;
+    await f.media.start(lesson); f.media.setConnected(true);
+    f.streams[0].track.end(); await tick();
+    assert.equal(f.streams.length, 1, 'no camera input is available yet');
+    devices = [{ kind: 'videoinput' }];
+    f.window.dispatchEvent(new f.window.Event('focus')); await tick();
+    assert.equal(f.streams.length, 2);
+    permission = 'denied';
+    f.streams[1].track.end(); await tick();
+    const help = f.root.querySelector('[data-lesson-device-permission=camera]');
+    assert.equal(help.dataset.state, 'blocked'); assert.equal(help.hidden, false);
+    f.media.setConnected(false); f.media.setConnected(true);
+    assert.equal(f.streams.length, 2);
+    f.media.stop(); f.window.dispatchEvent(new f.window.Event('pageshow')); await tick();
+    assert.equal(f.streams.length, 2); assert.equal(help.hidden, true);
+});
+
+it('a delayed OS permission check from a lost camera cannot reopen input in a later lesson', async t => {
+    const f = fixture(t);
+    let pending; let delayed = false;
+    Object.defineProperty(f.window.navigator, 'permissions', { value: { query: () => delayed
+        ? new Promise(resolve => { pending = resolve; }) : Promise.resolve({ state: 'granted' }) } });
+    await f.media.start(lesson); f.media.setConnected(true);
+    delayed = true; f.streams[0].track.end();
+    assert.equal(typeof pending, 'function');
+    f.media.stop(); delayed = false;
+    await f.media.start({ ...lesson, _id: 'new-room' }); f.media.setConnected(true);
+    pending({ state: 'granted' }); await tick();
+    assert.equal(f.streams.length, 2);
+    assert.equal(f.streams[0].track.readyState, 'ended'); assert.equal(f.streams[1].track.readyState, 'live');
 });
 
 it('leave requests preserve both participants devices and desktop until the controller confirms exit', async (t) => {
@@ -732,6 +842,34 @@ it('video picture-in-picture composes the same processed teacher preview that is
     assert(f.draws.some(args => args[0] === preview && args[3] === 320 && args[4] === 180), 'the desktop composite uses that same filtered source');
 });
 
+it('opens Safari video PiP when the standard API rejects the format and keeps an older close event out of a new window', async t => {
+    const f = fixture(t, { manualClock: true });
+    const composites = []; const windows = [];
+    f.window.HTMLCanvasElement.prototype.captureStream = () => {
+        const track = { stopped: false, stop() { this.stopped = true; } }; composites.push(track);
+        return { getTracks: () => [track] };
+    };
+    const video = f.window.HTMLVideoElement.prototype;
+    video.requestPictureInPicture = async () => { throw Object.assign(new Error(), { name: 'NotSupportedError' }); };
+    video.webkitSupportsPresentationMode = mode => mode === 'picture-in-picture';
+    video.webkitSetPresentationMode = function(mode) { this.webkitPresentationMode = mode; if (mode === 'picture-in-picture') windows.push(this); };
+    await f.media.start(lesson); f.media.setConnected(true); await tick();
+    assert.equal(windows.length, 1); assert.equal(f.root.querySelector('[data-lesson-desktop]').hidden, true);
+    const close = element => {
+        element.webkitPresentationMode = 'inline';
+        element.dispatchEvent(new f.window.Event('webkitpresentationmodechanged'));
+    };
+    close(windows[0]); assert(composites[0].stopped); assert.equal(f.streams[0].track.stopped, 0);
+    f.root.querySelector('[data-lesson-desktop]').click(); await tick(); assert.equal(windows.length, 2);
+    close(windows[0]); assert.equal(composites[1].stopped, false);
+    f.root.querySelector('[data-lesson-microphone]').click(); assert.equal(f.root.querySelector('[data-lesson-microphone]').dataset.state, 'off');
+    close(windows[1]); assert(composites[1].stopped);
+    video.webkitSupportsPresentationMode = () => false;
+    f.root.querySelector('[data-lesson-desktop]').click(); await tick();
+    assert.equal(windows.length, 2); assert(!f.root.querySelector('[data-lesson-desktop]').hidden);
+    assert.equal(f.streams[0].track.stopped, 0, 'a rejected Safari window leaves the classroom camera available on the page');
+});
+
 async function connectScreenFixture(f) {
     await f.media.start(lesson); f.media.setConnected(true);
     f.media.receive({ type: 'peer', online: true, streamId: f.captures.length && f.root.querySelector('[data-lesson-participant="teacher"] [data-lesson-local-video]') ? 'student-screen-tab' : 'teacher-screen-tab' });
@@ -795,6 +933,20 @@ it('camera toggling never restarts permitted media and remote desktop pixels dis
     assert.equal(f.captures.length, 1); assert.equal(f.audioStarts, 1); assert.equal(f.streams[0].track.stopped, 0);
 });
 
+it('a learner can hear the teacher while the native entry screen picker is still open', async t => {
+    const f = fixture(t, { uid: lesson.studentUid, delayedScreen: true });
+    let listening = false;
+    f.audio.listen = async () => { listening = true; };
+    const entry = f.media.prepareEntryScreen(lesson);
+    const entering = f.media.start(lesson, undefined, entry); f.media.setConnected(true);
+    await tick();
+    assert.equal(listening, true); assert.equal(f.audioStarts, 0); assert.equal(f.captures.length, 0);
+    f.media.receive({ type: 'audio', uid: lesson.teacherUid, lessonId: lesson._id, streamId: 'teacher', seq: 1, data: 'guide' });
+    assert.deepEqual(f.audioFrames, [[1, 'guide']]);
+    f.resolveScreen(); await entering;
+    assert.equal(f.audioStarts, 1); assert.equal(f.captures.length, 1);
+});
+
 it('a screen picker resolving after class exit cannot revive capture or retain its track', async t => {
     const f = fixture(t, { uid: lesson.studentUid, manualClock: true, delayedScreen: true }); await connectScreenFixture(f);
     f.media.receive(screenMessage('screen-view', { watching: true })); f.root.querySelector('[data-lesson-screen-share]').click();
@@ -821,3 +973,31 @@ it('cancelling browser screen consent leaves the learner camera and microphone r
     assert.equal(f.streams[0].track.stopped, 0); assert.equal(f.audio.ready, true); assert.equal(f.root.hidden, false);
     assert.match(f.root.textContent, /授权/);
 });
+
+for (const [browser, ua] of [['Safari', 'Version/18.4 Safari/605.1.15'], ['Chrome', 'Chrome/140.0 Safari/537.36']]) {
+    it(`Mac ${browser} screen permission help stays folded after refusal and opens the picker only on explicit retry`, async t => {
+        const options = { uid: lesson.studentUid, manualClock: true, screenDenied: true, mac: ua };
+        const f = fixture(t, options); await connectScreenFixture(f);
+        const help = f.root.querySelector('details.lesson-media__screen-consent');
+        assert.equal(help.hidden, true);
+        f.media.receive(screenMessage('screen-view', { watching: true }));
+        const share = f.root.querySelector('[data-lesson-screen-share]');
+        share.click(); await tick();
+        assert.equal(help.hidden, false); assert.equal(help.open, false);
+        help.querySelector('summary').click();
+        assert.equal(help.open, true); assert.equal(f.screenCaptures.length, 1);
+        assert.match(help.textContent, /隐私与安全.*录屏与系统录音/);
+        assert(help.textContent.includes(browser));
+        if (browser === 'Safari') {
+            assert.match(help.textContent, /Safari 浏览器 → 设置 → 网站 → 屏幕共享/);
+            assert.doesNotMatch(help.textContent, /设为「允许」/);
+        }
+        options.screenDenied = false; share.click(); await tick();
+        assert.equal(f.screenCaptures.length, 2); assert.equal(help.hidden, true); assert.equal(help.open, false);
+        assert.equal(f.audio.ready, true); assert.equal(f.streams[0].track.stopped, 0);
+        const teacher = fixture(t, { mac: ua, manualClock: true }); await connectScreenFixture(teacher);
+        teacher.root.querySelector('[data-lesson-screen-toggle]').click();
+        assert.equal(teacher.root.querySelector('details.lesson-media__screen-consent').hidden, true);
+        assert.equal(teacher.screenCaptures.length, 0);
+    });
+}

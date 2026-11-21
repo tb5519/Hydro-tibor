@@ -427,6 +427,74 @@ describe('lesson bookings and consent with real MongoDB', () => {
 
 describe('lesson live media authorization', () => {
     before(setupDatabase);
+    it('routes camera windows with acknowledgements and tagged pictures only between the currently bound classroom peers', async () => {
+        const { room, teacher, student } = await activePair();
+        for (const fixture of [teacher, student]) assert.equal(fixture.sent.find(m => m.type === 'ready').cameraFlow, true);
+        const other = await model.create(3, 'class-a', { studentUid: 11, tabId: tab(3) }, quiet);
+        await model.join(11, 'class-a', other._id, tab(11), quiet);
+        const outsider = connection(11); await connect(outsider, 11, other._id);
+        const request = { type: 'camera-window', lessonId: room._id, seq: 1, level: 3, seen: 0 };
+        const frame = { type: 'video', lessonId: room._id, seq: 5, data: jpeg(), ticket: 1 };
+        const camera = fixture => fixture.sent.filter(message => ['camera-window', 'video'].includes(message.type));
+        await teacher.instance.message(request); await student.instance.message(frame); await settle();
+        assert.deepEqual(camera(student).map(m => [m.type, m.seen, m.level, m.uid]), [['camera-window', 0, 3, 2]]);
+        assert.deepEqual(camera(teacher).map(m => [m.type, m.seq, m.ticket, m.uid]), [['video', 5, 1, 10]]);
+        assert(camera(teacher)[0].streamId && camera(student)[0].streamId);
+        const events = busCalls.map(call => call.event).filter(e => ['camera-window', 'video'].includes(e.message.type));
+        for (const event of events) {
+            const receiver = event.uid === 10 ? student : teacher;
+            for (const values of [
+                { uid: 11 }, { lessonId: other._id }, { connectionId: undefined }, { connectionId: 'retired-connection' },
+                { sentAt: Date.now() - 3000 }, { sentAt: Date.now() + 3000 },
+                { message: { ...event.message, lessonId: other._id } }, { message: { ...event.message, uid: 11 } },
+                { message: { ...event.message, streamId: 'retired-source' } },
+            ]) await receiver.instance.onLessonEvent({ ...event, ...values });
+        }
+        await outsider.instance.message({ ...request, seq: 20 });
+        await teacher.instance.message({ ...frame, lessonId: other._id, seq: 900 });
+        await student.instance.message({ ...frame, seq: 5 });
+        await settle();
+        assert.equal(camera(teacher).length, 1); assert.equal(camera(student).length, 1); assert.equal(camera(outsider).length, 0);
+
+        const previous = { 2: teacher, 10: student }; const current = { ...previous };
+        for (const uid of [2, 10]) {
+            const nextTab = `replacement-camera-tab-${uid}`;
+            await model.resume(uid, nextTab, handlers.emitLesson); await settle();
+            current[uid] = connection(uid); await connect(current[uid], uid, room._id, nextTab);
+            await current[2].instance.message({ type: 'pulse' }); await current[10].instance.message({ type: 'pulse' }); await settle();
+            for (const event of events) await current[event.uid].instance.onLessonEvent(event);
+            await previous[uid].instance.message({ ...request, seq: 99 });
+            await previous[uid].instance.message({ ...frame, seq: 99 });
+            await settle(); assert.equal(camera(current[uid]).length, 0);
+        }
+        await current[2].instance.message(request); await current[10].instance.message({ ...frame, seq: 0 }); await settle();
+        assert.deepEqual(camera(current[10]).map(m => [m.seq, m.seen]), [[1, 0]]);
+        assert.deepEqual(camera(current[2]).map(m => [m.seq, m.ticket]), [[0, 1]]);
+        assert.equal(camera(previous[10]).length, 1); assert.equal(camera(previous[2]).length, 1);
+    });
+    it('drops tagged video ahead of speech on slow downlinks, then resumes only new pictures and camera requests', async () => {
+        const { room, teacher, student } = await activePair();
+        const send = message => teacher.instance.message({ lessonId: room._id, ...message });
+        const video = seq => send({ type: 'video', seq, ticket: 1, data: jpeg() });
+        student.instance.conn.bufferedAmount = 12 * 1024;
+        await video(1); await send({ type: 'audio', seq: 1, data: audio });
+        await send({ type: 'camera-window', seq: 1, level: 0, seen: 2 }); await settle();
+        assert(!student.sent.some(m => m.type === 'video'));
+        assert(student.sent.some(m => m.type === 'audio' && m.seq === 1));
+        assert(student.sent.some(m => m.type === 'camera-window' && m.seen === 2));
+        student.instance.conn.bufferedAmount = 32 * 1024;
+        await new Promise(resolve => setTimeout(resolve, 135));
+        await send({ type: 'audio', seq: 2, data: audio }); await send({ type: 'camera-window', seq: 2, level: 1 });
+        await video(2); await settle();
+        student.instance.conn.bufferedAmount = 0;
+        await new Promise(resolve => setTimeout(resolve, 135));
+        await video(3); await send({ type: 'camera-window', seq: 3, level: 2 }); await settle();
+        await new Promise(resolve => setTimeout(resolve, 135));
+        await send({ type: 'camera-window', seq: 2, level: 3, seen: 999 }); await settle();
+        assert.deepEqual(student.sent.filter(m => m.type === 'video').map(m => m.seq), [3]);
+        assert.deepEqual(student.sent.filter(m => m.type === 'audio').map(m => m.seq), [1]);
+        assert.deepEqual(student.sent.filter(m => m.type === 'camera-window').map(m => m.seq), [1, 3]);
+    });
     it('rejects forged origins, logged-out tokens and impersonation before joining', async () => {
         await assert.rejects(connection(2, { origin: 'https://attacker.test' }).instance.prepare(), code('ORIGIN'));
         logins.delete('login-2');
@@ -573,6 +641,37 @@ describe('learner whole-screen media authorization', () => {
         await settle();
     }
     const screenFrame = (pair, seq = 0) => ({ type: 'screen', lessonId: pair.room._id, seq, data: jpeg(1280, 720) });
+    it('requires the current teacher request and learner grant for screen windows, and drops desktop packets before camera and voice', async () => {
+        const pair = await activePair(); const { teacher, student, room } = pair;
+        assert.equal(teacher.sent.find(m => m.type === 'ready').screenFlow, true);
+        const request = seq => ({ type: 'screen-window', lessonId: room._id, seq, level: 2, seen: 0 });
+        const received = fixture => fixture.sent.filter(m => m.type === 'screen-window');
+        await teacher.instance.message(request(1)); await student.instance.message(request(1)); await settle();
+        assert.equal(received(student).length, 0); assert.equal(received(teacher).length, 0);
+        await teacher.instance.message({ type: 'screen-view', lessonId: room._id, watching: true, flow: true }); await settle();
+        await new Promise(resolve => setTimeout(resolve, 130));
+        await teacher.instance.message(request(2)); await settle(); assert.equal(received(student).length, 0);
+        await student.instance.message({ type: 'screen-state', lessonId: room._id, state: 'sharing', flow: true }); await settle();
+        assert(teacher.sent.some(m => m.type === 'screen-state' && m.flow === true));
+        await new Promise(resolve => setTimeout(resolve, 130));
+        await teacher.instance.message(request(3)); await settle(); assert.deepEqual(received(student).map(m => m.seq), [3]);
+        teacher.instance.conn.bufferedAmount = 6 * 1024;
+        await student.instance.message({ ...screenFrame(pair, 1), ticket: 3 });
+        await student.instance.message({ type: 'video', lessonId: room._id, seq: 1, data: jpeg(), ticket: 1 });
+        await student.instance.message({ type: 'audio', lessonId: room._id, seq: 1, data: audio }); await settle();
+        assert.equal(screens(teacher).length, 0); assert(teacher.sent.some(m => m.type === 'video')); assert(teacher.sent.some(m => m.type === 'audio'));
+        teacher.instance.conn.bufferedAmount = 0;
+        await student.instance.message({ ...screenFrame(pair, 2), ticket: 3 }); await settle();
+        assert.deepEqual(screens(teacher).map(m => [m.seq, m.ticket]), [[2, 3]]);
+        const envelope = busCalls.find(call => call.event.message.type === 'screen-window').event;
+        await teacher.instance.message({ type: 'screen-view', lessonId: room._id, watching: false }); await settle();
+        await student.instance.onLessonEvent({ ...envelope, sentAt: Date.now() });
+        await student.instance.message({ ...screenFrame(pair, 3), ticket: 3 }); await settle();
+        assert.equal(received(student).length, 1); assert.equal(screens(teacher).length, 1);
+        await student.instance.message({ type: 'screen-state', lessonId: room._id, state: 'stopped' });
+        await teacher.instance.message({ type: 'screen-view', lessonId: room._id, watching: true, flow: true }); await settle();
+        await teacher.instance.message(request(4)); await settle(); assert.equal(received(student).length, 1);
+    });
     it('requires both the teacher view request and learner sharing state before sending only to that teacher', async () => {
         const pair = await activePair();
         const teacherMember = await model.members.findOne({ _id: 2 });

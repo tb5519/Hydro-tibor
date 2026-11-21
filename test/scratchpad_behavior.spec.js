@@ -81,12 +81,13 @@ describe('scratchpad opening and formal submission behavior', () => {
     });
 
     it('preserves IDE and record-view permissions on initial entry and reentry', () => {
-        for (const context of [{ ideMode: true }, { canViewRecord: false }]) {
+        for (const [context, showsProblemPretest] of [[{ ideMode: true }, false], [{ canViewRecord: false }, true]]) {
             const reducer = load(sources.ui, context);
             const state = reducer();
-            assert.equal(state.pretest.visible, true);
+            assert.equal(state.pretest.visible, showsProblemPretest);
             assert.equal(state.records.visible, false);
             const reopened = reducer({ ...state, records: { ...state.records, visible: true } }, { type: 'SCRATCHPAD_UI_OPEN' });
+            assert.equal(reopened.pretest.visible, showsProblemPretest);
             assert.equal(reopened.records.visible, false);
         }
         const unsupported = load(sources.ui, { pdoc: { config: { type: 'objective' } } });

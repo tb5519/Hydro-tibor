@@ -26,6 +26,37 @@ function jpeg(width = 320, height = 240, padding = 0) {
 }
 const tab = (uid) => `lesson-tab-${uid}-testing`;
 describe('lesson media protocol', () => {
+    it('validates camera receive windows and JPEG tickets while accepting existing untagged frames', () => {
+        const window = { type: 'camera-window', lessonId: 'lesson-testing', seq: 1, level: 0 };
+        const frame = { type: 'video', lessonId: window.lessonId, seq: 0, data: jpeg() };
+        for (const level of [0, 1, 2, 3]) protocol.validateLessonMessage({ ...window, level });
+        for (const seen of [0, 1, Number.MAX_SAFE_INTEGER]) protocol.validateLessonMessage({ ...window, seen });
+        protocol.validateLessonMessage(frame);
+        protocol.validateLessonMessage({ ...frame, ticket: Number.MAX_SAFE_INTEGER });
+        const invalid = [
+            { ...window, lessonId: 'bad' }, { ...window, seq: 0 }, { ...window, seq: '1' }, { ...window, seq: 1.5 },
+            { ...window, level: -1 }, { ...window, level: 4 }, { ...window, level: '2' }, { ...window, level: null },
+            { ...window, uid: 2 }, { ...window, to: 10 }, { ...window, data: audio }, { ...window, streamId: 'elsewhere' },
+            ...[-1, '1', NaN, 1.25, null, Number.MAX_SAFE_INTEGER + 1].map(seen => ({ ...window, seen })),
+            ...[0, -1, '2', NaN, 1.25, null, Number.MAX_SAFE_INTEGER + 1].map(ticket => ({ ...frame, ticket })),
+            { ...frame, seen: 0 }, { ...window, ticket: 1 }, { ...frame, level: 2 },
+            { type: 'audio', lessonId: window.lessonId, seq: 1, data: audio, ticket: 0 },
+            { ...frame, type: 'screen', ticket: 0 },
+        ];
+        for (const message of invalid) assert.throws(() => protocol.validateLessonMessage(message), code('INVALID_MESSAGE'));
+    });
+    it('limits repeated camera requests independently from microphone, video and room heartbeats', () => {
+        const limiter = new protocol.LessonRateLimit();
+        for (let second = 0; second < 60; second++) {
+            const start = 100000 + second * 1000;
+            let accepted = 0;
+            for (let ms = 0; ms < 1000; ms += 5) if (limiter.accept('camera-window', 0, start + ms)) accepted++;
+            assert(accepted > 0 && accepted <= 8);
+            assert.equal(limiter.accept('audio', 856, start + 999), true);
+            assert.equal(limiter.accept('video', 24000, start + 999), true);
+            if (second % 5 === 0) assert.equal(limiter.accept('pulse', 0, start + 999), true);
+        }
+    });
     it('validates bounded screen pictures and only the narrow screen-view and screen-state controls', () => {
         protocol.validateLessonMessage({ type: 'screen-view', lessonId: 'lesson-testing', watching: true });
         protocol.validateLessonMessage({ type: 'screen-view', lessonId: 'lesson-testing', watching: false });
@@ -33,7 +64,16 @@ describe('lesson media protocol', () => {
             protocol.validateLessonMessage({ type: 'screen-state', lessonId: 'lesson-testing', state });
         }
         protocol.validateLessonMessage({ type: 'screen', lessonId: 'lesson-testing', seq: 0, data: jpeg(1280, 720) });
+        const request = { type: 'screen-window', lessonId: 'lesson-testing', seq: 1, level: 3, seen: 0 };
+        protocol.validateLessonMessage(request);
+        protocol.validateLessonMessage({ type: 'screen', lessonId: request.lessonId, seq: 0, data: jpeg(), ticket: 1 });
+        protocol.validateLessonMessage({ type: 'screen-view', lessonId: request.lessonId, watching: true, flow: true });
+        protocol.validateLessonMessage({ type: 'screen-state', lessonId: request.lessonId, state: 'sharing', flow: true });
         for (const value of [
+            { ...request, seq: 0 }, { ...request, seen: -1 }, { ...request, level: 4 }, { ...request, uid: 2 },
+            { type: 'screen-view', lessonId: request.lessonId, watching: false, flow: true },
+            { type: 'screen-state', lessonId: request.lessonId, state: 'stopped', flow: true },
+            { type: 'screen-state', lessonId: request.lessonId, state: 'sharing', flow: 'yes' },
             { type: 'screen-view', lessonId: 'lesson-testing', watching: 1 },
             { type: 'screen-view', lessonId: 'lesson-testing' },
             { type: 'screen-view', lessonId: 'lesson-testing', watching: true, uid: 10 },
@@ -49,6 +89,9 @@ describe('lesson media protocol', () => {
     });
     it('bounds screen frame and byte bursts independently of camera, microphone and control budgets', () => {
         const frameLimiter = new protocol.LessonRateLimit();
+        assert.equal(frameLimiter.accept('screen-window', 0, 100000), true);
+        assert.equal(frameLimiter.accept('screen-window', 0, 100001), false);
+        assert.equal(frameLimiter.accept('camera-window', 0, 100001), true);
         for (let i = 0; i < 3; i++) assert.equal(frameLimiter.accept('screen', 1024, 100000), true);
         assert.equal(frameLimiter.accept('screen', 1024, 100000), false);
         assert.equal(frameLimiter.accept('screen', 1024, 100090), true);

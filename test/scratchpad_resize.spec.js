@@ -139,6 +139,7 @@ describe('scratchpad live resizing', () => {
         const saved = [];
         const model = { dispose() {}, getValue: () => draft };
         const editor = {
+            getDomNode: () => dom.window.document.createElement('div'),
             getValue: () => `${draft}\n# final keystroke`,
             onDidChangeModelContent: () => ({ dispose() {} }),
             updateOptions: (options) => configurations.push(options),
@@ -158,7 +159,7 @@ describe('scratchpad live resizing', () => {
             UserContext: {}, UiContext: { pdoc: { pid: 'P1000' } },
             require(id) {
                 if (id === '../ide/IdeRuntimeWindows') return () => null;
-                if (id === '../ide/fontSize') return {}; // Standalone IDE preferences do not alter the problem editor.
+                if (id === '../ide/fontSize') return { attachCodeFontWheel: () => () => {} };
                 if (id === 'react-redux') return { connect: () => (component) => component };
                 if (id === './themes') return {
                     attachScratchpadMonacoTheme: () => () => {}, currentScratchpadTheme: () => ({}), scratchpadMonacoThemeName: () => 'cloud',

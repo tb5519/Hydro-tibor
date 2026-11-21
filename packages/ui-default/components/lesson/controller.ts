@@ -1,3 +1,4 @@
+import type { LessonEntryScreen } from './screen';
 import { mountLessonMedia, type LessonDesktopReservation } from './media';
 
 export interface Lesson {
@@ -87,6 +88,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   let recoveryQueued = false;
   let recoveryPaused = false;
   let lastServerMessageAt = 0;
+  let lastPulseReply = 0;
   let memoryHint: RecoveryHint | null = null;
   let hintStorageFailed = false;
   let allowNavigationUntil = 0;
@@ -113,6 +115,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   let currentMode: 'broadcast' | 'assist' = 'broadcast';
   let currentCardSignature = '';
   let invitationSignature = '';
+  let pendingEntryScreen: LessonEntryScreen | undefined;
   const pendingDesktop = new Set<LessonDesktopReservation>();
   const recoveryKey = `onebyone.lesson.recovery:${config.uid}`;
   // This read-only channel belongs to the account, independently of whichever
@@ -180,7 +183,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   const reminderHeading = el('h2', '', '上课时间到了'); reminderHeading.id = 'lesson-reminder-title';
   const reminderName = el('p', 'lesson-reminder__name');
   const reminderTime = el('p', 'lesson-reminder__time');
-  const reminderNote = el('p', 'lesson-reminder__note', '准备好了吗？点击后和老师一起上课。');
+  const reminderNote = el('p', 'lesson-reminder__note', '点「点击上课」后，选择「整个屏幕」并点「共享」，这节课老师就能查看。也可以取消，照常上课。');
   const reminderError = el('p', 'lesson-error'); reminderError.hidden = true; reminderError.setAttribute('role', 'alert');
   const reminderActions = el('div', 'lesson-reminder__actions');
   const later = button('稍后提醒', 'lesson-button', snooze);
@@ -210,10 +213,14 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
   lessonBarCopy.append(shareState); lessonBar.append(lessonBarCopy, shareModes, retryShare, leave, end);
   const toast = privateRoot(el('div', 'lesson-toast')); toast.hidden = true; toast.setAttribute('role', 'status');
   document.body.append(dialog, reminder, invitationNotice, lessonBar, toast);
-  const media = (options.mediaFactory || mountLessonMedia)(config, { send, onLeave: confirmation => {
-    if (confirmation?.confirmed && active?._id !== confirmation.lessonId) return;
-    void leaveLesson(active?.teacherUid === config.uid, !!confirmation?.confirmed);
-  } });
+  const media = (options.mediaFactory || mountLessonMedia)(config, {
+    send, canSendCamera: () => !!socket && socketReady && socket.readyState === 1 && socket.bufferedAmount <= 8 * 1024,
+    canSendScreen: () => !!socket && socketReady && socket.readyState === 1 && socket.bufferedAmount <= 4 * 1024,
+    onLeave(confirmation) {
+      if (confirmation?.confirmed && active?._id !== confirmation.lessonId) return;
+      void leaveLesson(active?.teacherUid === config.uid, !!confirmation?.confirmed);
+    },
+  });
 
   function safeRoute(value: unknown, ending: 'lesson' | 'lesson/conn' | 'lesson/resume' | 'lesson/inbox' | 'lesson/notifications') {
     if (typeof value !== 'string') return null;
@@ -443,6 +450,9 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     const name = doc.createElement('strong'); name.textContent = lesson.title || '一对一课堂';
     const meta = doc.createElement('span'); meta.textContent = `${timeText(lesson.startAt)} · ${config.uid === lesson.teacherUid ? lesson.studentName : lesson.teacherName}${lesson.domainName ? ` · ${lesson.domainName}` : ''}`;
     copy.append(name, meta);
+    if (config.uid === lesson.studentUid && !active && lessonIsDue(lesson, timestamp())) {
+      const note = doc.createElement('span'); note.textContent = '入课时可选择整个屏幕给老师看，也可以取消后继续上课。'; copy.append(note);
+    }
     const joinButton = doc.createElement('button'); joinButton.type = 'button'; joinButton.className = 'lesson-button is-primary';
     joinButton.textContent = active?._id === lesson._id ? '已在课堂中' : '点击上课'; joinButton.dataset.lessonJoin = lesson._id;
     joinButton.disabled = !!active || joining || (lesson.teacherUid !== config.uid && !lessonIsDue(lesson, timestamp()));
@@ -665,7 +675,10 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     }
   }
   function send(message: any) {
-    if (!socket || socket.readyState !== 1 || !socketReady || !active || socket.bufferedAmount > 128 * 1024) return false;
+    if (!socket || socket.readyState !== 1 || !socketReady || !active) return false;
+    const bufferLimit = message.type === 'screen' ? (message.ticket !== undefined ? 4 : 16)
+      : message.type === 'video' && message.ticket !== undefined ? 8 : 128;
+    if (socket.bufferedAmount > bufferLimit * 1024) return false;
     try { socket.send(JSON.stringify(message)); return true; } catch { return false; }
   }
   function closeSocket() {
@@ -679,6 +692,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     return reservation;
   }
   function cancelPendingDesktop() {
+    pendingEntryScreen?.cancel(); pendingEntryScreen = undefined;
     for (const reservation of pendingDesktop) media.cancelDesktop(reservation);
     pendingDesktop.clear();
   }
@@ -785,8 +799,10 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
           if (message.lesson?._id !== lessonId) return;
           clearTimeout(handshakeTimer);
           recoveryQueued = false;
+          lastPulseReply = now();
           socketReady = true; peerOnline = !!message.peerOnline; reconnectAttempt = 0;
-          media.setConnected(true); media.receive({ type: 'peer', online: peerOnline, streamId: message.peerStreamId });
+          media.setConnected(true); media.receive({ type: 'peer', online: peerOnline, streamId: message.peerStreamId,
+            cameraFlow: message.cameraFlow === true, screenFlow: message.screenFlow === true });
           replaceLesson(message.lesson); renderActive(); updateSharing(true);
         } else if (message.type === 'lesson' && message.lesson?._id === lessonId) replaceLesson(message.lesson);
         else if (message.type === 'ended' && (!message.lessonId || message.lessonId === lessonId)) {
@@ -801,6 +817,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
           } else if (/^(NOT_JOINED|JOIN_REQUIRED|OFFLINE|UNAVAILABLE|RATE_LIMIT|TOO_EARLY)$/.test(message.code || '')) reconnect();
           else { showMessage(message.message || '课堂连接暂时不可用'); renderActive(message.message); }
         } else {
+          if (message.type === 'pulse') lastPulseReply = now();
           media.receive(message);
           if (message.type === 'peer') {
             peerOnline = !!message.online; updateSharing(peerOnline);
@@ -817,7 +834,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
       reconnect();
     }
   }
-  async function enterLesson(lesson: Lesson, desktop?: LessonDesktopReservation) {
+  async function enterLesson(lesson: Lesson, desktop?: LessonDesktopReservation, entryScreen?: LessonEntryScreen) {
     if (disposed) return false;
     dataRevision++;
     recoveryPaused = false;
@@ -826,7 +843,7 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     if (reminder.open) reminder.close(); if (dialog.open) dialog.close();
     renderActive(); renderSchedules();
     // This follows either an explicit join or a server-confirmed recovery of it.
-    void media.start(lesson, desktop).catch(cause => { if (active?._id === lesson._id) showMessage(errorText(cause)); });
+    void media.start(lesson, desktop, entryScreen).catch(cause => { if (active?._id === lesson._id) showMessage(errorText(cause)); });
     connect();
     return true;
   }
@@ -841,7 +858,11 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     joining = true; enter.disabled = true; enter.textContent = '正在进入…';
     reminderError.hidden = true; renderSchedules();
     const version = generation;
-    const desktop = prepareDesktop();
+    // Display capture and desktop PiP both need a fresh user gesture. On a
+    // learner's explicit join, use it for the screen picker before the REST call.
+    const entryScreen = config.uid === lesson.studentUid ? media.prepareEntryScreen?.(lesson) : undefined;
+    pendingEntryScreen = entryScreen;
+    const desktop = entryScreen ? undefined : prepareDesktop();
     let transferred = false;
     try {
       const result = await api({ operation: 'join', lessonId: lesson._id }, targetApiUrl);
@@ -850,13 +871,15 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
         scopeGeneration++; lessons = []; students = [];
         config = { ...config, apiUrl: targetApiUrl, socketUrl: `${targetApiUrl}/conn`, canTeach: result.lesson.teacherUid === config.uid };
       }
-      replaceLesson(result.lesson); transferred = await enterLesson(result.lesson, desktop);
+      replaceLesson(result.lesson); transferred = await enterLesson(result.lesson, desktop, entryScreen);
     } catch (cause) {
       if (disposed) return;
       const text = errorText(cause); showMessage(text);
       reminderError.textContent = text; reminderError.hidden = false;
     } finally {
       if (desktop) { pendingDesktop.delete(desktop); if (!transferred) media.cancelDesktop(desktop); }
+      if (pendingEntryScreen === entryScreen) pendingEntryScreen = undefined;
+      if (!transferred) entryScreen?.cancel();
       joining = false; enter.disabled = false; enter.textContent = '点击上课';
       if (!disposed) { renderSchedules(); applyPageScope(); }
       if (recoveryQueued && !active && !socket) scheduleRecovery();
@@ -1044,11 +1067,19 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
     else if (!notificationSocket) scheduleNotifications(true);
     void refreshInbox();
     if (recoveryPaused) return;
-    if (socketReady && now() - lastServerMessageAt > 30000) reconnect();
+    if (socketReady && (now() - lastServerMessageAt > 30000 || now() - lastPulseReply > 30000)) reconnect();
     else if (!socket) scheduleRecovery(true);
     void refresh(); updateReminder();
   };
   on(document, 'visibilitychange', () => { if (!document.hidden) wake(); });
+  // Returning from another Mac app or unlocking a visible Safari window may
+  // restore focus without a network or document visibility transition.
+  const checkOnReturn = () => {
+    if (!document.hidden && active && (!socket || now() - lastPulseReply > 30000)) wake();
+  };
+  on(window, 'focus', checkOnReturn);
+  on(window, 'pageshow', checkOnReturn);
+  on(window, 'offline', () => { if (socket && active) reconnect(); });
   on(window, 'online', wake);
   on(window, 'storage', event => {
     if ((event as StorageEvent).key !== recoveryKey || disposed) return;
@@ -1066,7 +1097,10 @@ export function installLesson(config: LessonConfig, options: LessonOptions = {})
       }
     }
     if (!socketReady) return;
-    if (now() - lastServerMessageAt > (document.hidden ? 120000 : 30000)) reconnect();
+    // Media may still arrive over a half-open downlink even when the uplink
+    // cannot deliver a single control. Require a round trip as well as traffic.
+    if (now() - lastServerMessageAt > (document.hidden ? 120000 : 30000)
+      || now() - lastPulseReply > (document.hidden ? 120000 : 20000)) reconnect();
     else send({ type: 'pulse' });
   }, 5000);
   const clock = window.setInterval(() => {

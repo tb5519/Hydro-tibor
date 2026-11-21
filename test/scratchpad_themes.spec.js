@@ -240,6 +240,7 @@ describe('scratchpad workspace themes', () => {
             const draft = 'print("keep my draft")';
             const model = { dispose() {}, getValue: () => draft };
             const editor = {
+                getDomNode: () => dom.window.document.createElement('div'),
                 onDidChangeModelContent: () => ({ dispose() {} }),
                 updateOptions: ({ theme }) => { currentTheme = theme; },
                 dispose: () => { disposed = true; },
@@ -257,7 +258,7 @@ describe('scratchpad workspace themes', () => {
                 module: mod, exports: mod.exports, window: dom.window, UserContext: user,
                 UiContext: { pdoc: { pid: 'P1000' } },
                 require(id) {
-                if (id === '../ide/fontSize') return {}; // Standalone IDE preferences do not alter the problem editor.
+                    if (id === '../ide/fontSize') return { attachCodeFontWheel: () => () => {} };
                     if (id === 'react-redux') return { connect: () => (component) => component };
                     if (id === './themes') return themes;
                     if (id === 'vj/context') return { ctx: { scratchpad: { init() {} } } };

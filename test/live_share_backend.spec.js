@@ -939,13 +939,19 @@ describe('live share protocol boundaries', () => {
         assert.throws(() => protocol.validateRelayData('teacher', 'editor', { ...common, type: 'edit:init', state: 'YQ==' }, common.pageId), errorCode('INVALID_RELAY'));
     });
     it('relays editor scrolling and source appearance while rejecting invalid options and directions', () => {
+        const step = { type: 'edit:font-step', pageId: 'page-testing', editorId: 'editor-testing', direction: 1 };
+        for (const direction of [1, -1]) protocol.validateRelayData('teacher', 'editor', { ...step, direction }, 'page-testing');
+        for (const change of [{ direction: 0 }, { direction: 2 }, { direction: '1' }, { editorId: '' }, { pageId: 'old-page' }, { fontSize: 28 }, { update: 'YQ==' }]) {
+            assert.throws(() => protocol.validateRelayData('teacher', 'editor', { ...step, ...change }, 'page-testing'), errorCode('INVALID_RELAY'));
+        }
+        assert.throws(() => protocol.validateRelayData('student', 'editor', step, 'page-testing'), errorCode('INVALID_RELAY'));
         const scroll = { type: 'edit:scroll', pageId: 'page-testing', editorId: 'editor-testing', scrollTop: 172.5, scrollLeft: 0, scrollSeq: 3 };
         protocol.validateRelayData('teacher', 'editor', scroll, 'page-testing');
         for (const change of [{ scrollTop: -1 }, { scrollTop: Infinity }, { scrollLeft: '0' }, { scrollSeq: 0 }, { scrollSeq: 0.5 }, { scrollSeq: undefined }]) {
             assert.throws(() => protocol.validateRelayData('teacher', 'editor', { ...scroll, ...change }, 'page-testing'), errorCode('INVALID_RELAY'));
         }
         assert.throws(() => protocol.validateRelayData('student', 'editor', scroll, 'page-testing'), errorCode('INVALID_RELAY'));
-        const layout = { type: 'edit:layout', pageId: 'page-testing', editorId: 'editor-testing', scrollSeq: 3,
+        const layout = { type: 'edit:layout', pageId: 'page-testing', editorId: 'editor-testing', scrollSeq: 3, fontWheel: true,
             view: { wordWrap: 'bounded', wordWrapColumn: 80, tabSize: 4, insertSpaces: true, glyphMargin: true,
                 lineNumbers: 'on', lineNumbersMinChars: 5, lineDecorationsWidth: '2ch', scrollBeyondLastLine: false,
                 letterSpacing: 0.5, fontWeight: '500', padding: { top: 4, bottom: 8 },

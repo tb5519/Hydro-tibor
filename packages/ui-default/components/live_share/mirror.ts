@@ -272,6 +272,16 @@ function safePlaceholderStyle(style: unknown) {
   return result.join(';');
 }
 
+const embeddedTags = new Set(['iframe', 'object', 'embed']);
+function hideEmbedPlaceholder(node: Element) {
+  // Scratch's paint controls insert a blank document behind the control to
+  // measure its size. Its bounding box can be as large as the entire palette.
+  if (node.matches('object.resize-sensor[type="text/html"][tabindex="-1"]')
+    && (!node.getAttribute('data') || node.getAttribute('data') === 'about:blank')) return true;
+  const rect = node.getBoundingClientRect();
+  return !rect.width || !rect.height;
+}
+
 /** Remove executable payloads even if a malformed peer bypassed the normal recorder. */
 export function sanitizeMirrorEvent(event: any): RREvent | null {
   if (!event || !Number.isInteger(event.type) || ![0, 1, 2, 3, 4].includes(event.type)
@@ -315,8 +325,10 @@ export function sanitizeMirrorEvent(event: any): RREvent | null {
     if (['iframe', 'object', 'embed', 'script', 'base', 'meta'].includes(tagName)) {
       const frameId = tagName === 'iframe' && attributes[FRAME_MARKER];
       const frameStyle = validEditorId(frameId) ? safePlaceholderStyle(attributes.style) : '';
+      const hidden = embeddedTags.has(tagName) && attributes.hidden != null;
       for (const key of Object.keys(attributes)) delete attributes[key];
       if (frameStyle) { attributes[FRAME_MARKER] = frameId; attributes.style = frameStyle; }
+      else if (hidden) attributes.hidden = '';
     }
     if (['video', 'audio'].includes(tagName)) {
       attributes.rr_mediaMuted = true; attributes.rr_mediaVolume = 0; attributes.muted = '';
@@ -340,11 +352,12 @@ export function sanitizeMirrorEvent(event: any): RREvent | null {
     if (['script', 'base', 'meta', 'iframe', 'object', 'embed'].includes(tagName)) {
       node.tagName = 'div';
       node.childNodes = [];
-      if (['iframe', 'object', 'embed'].includes(tagName)) {
+      if (embeddedTags.has(tagName)) {
         const frameId = node.attributes[FRAME_MARKER];
         node.attributes = validEditorId(frameId)
           ? { [FRAME_MARKER]: frameId, style: `background:#f1f5f9;${node.attributes.style}` }
-          : { 'data-live-share-unavailable': 'true', style: 'min-height:96px;background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:12px' };
+          : { 'data-live-share-unavailable': 'true', ...(node.attributes.hidden != null && { hidden: '' }),
+            style: 'min-height:96px;background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:12px' };
       }
     }
     if (Array.isArray(node.childNodes)) stack.push(...node.childNodes);
@@ -640,6 +653,7 @@ export function attachSourceMirror(options: SourceOptions) {
   document.addEventListener('change', localFieldEdit, true);
   const scratchControl = options.scratchControls ? attachSourceScratchControl() : null;
   const editorPlaceholders = new Map<number, string>();
+  const embedPlaceholders = new Map<number, { node: Element; hidden: boolean }>();
   const newlyBlockedEditors = new WeakSet<Element>();
   const editorGeometry = (node: Element) => {
     const rect = node.getBoundingClientRect();
@@ -657,10 +671,9 @@ export function attachSourceMirror(options: SourceOptions) {
   };
   const placeholderSignature = (marker: string, layout: Record<string, string>) => JSON.stringify([marker, layout]);
   function preserveEditorMarkers(event: RREvent) {
-    // rrweb intentionally strips all attributes except class and dimensions on
-    // blocked nodes. Retain only our opaque ID so the separate editor can track
-    // its empty placeholder while the teacher scrolls, without exposing code.
-    if (event.type === 2) editorPlaceholders.clear();
+    // rrweb strips attributes on blocked nodes. Restore the marker and layout
+    // for a shared editor, or just visibility for an unsupported embed.
+    if (event.type === 2) { editorPlaceholders.clear(); embedPlaceholders.clear(); }
     const stack = event.type === 2 ? [event.data.node] : event.type === 3 && event.data.source === 0
       ? (event.data.adds || []).map((entry) => entry.node) : [];
     while (stack.length) {
@@ -686,6 +699,10 @@ export function attachSourceMirror(options: SourceOptions) {
           serialized.attributes[markerName] = marker;
           serialized.attributes.style = Object.entries(layout).map(([property, value]) => `${property}:${value}`).join(';');
           editorPlaceholders.set(serialized.id, placeholderSignature(marker, layout));
+        } else if (embeddedTags.has(serialized.tagName) && node?.ownerDocument === document) {
+          const hidden = hideEmbedPlaceholder(node);
+          if (hidden) serialized.attributes.hidden = '';
+          embedPlaceholders.set(serialized.id, { node, hidden });
         }
       }
       if (Array.isArray(serialized.childNodes)) stack.push(...serialized.childNodes);
@@ -967,6 +984,16 @@ export function attachSourceMirror(options: SourceOptions) {
   const editorGeometryTimer = setInterval(() => {
     if (disposed || !connected || !hasSnapshot) return;
     const attributes = [];
+    // rrweb blocks embed mutations. Track visibility separately so a real
+    // external frame can appear again when its owner shows or resizes it.
+    for (const [id, entry] of embedPlaceholders) {
+      if (!entry.node.isConnected || sourceMirror()?.getId(entry.node) !== id) { embedPlaceholders.delete(id); continue; }
+      const hidden = !entry.node.hasAttribute(FRAME_MARKER) && hideEmbedPlaceholder(entry.node);
+      if (hidden !== entry.hidden) {
+        attributes.push({ id, attributes: { hidden: hidden ? '' : null } });
+        entry.hidden = hidden;
+      }
+    }
     const found = new Set<number>();
     for (const node of document.querySelectorAll(`[${EDITOR_MARKER}],iframe[${FRAME_MARKER}]`)) {
       const markerName = node.tagName === 'IFRAME' ? FRAME_MARKER : EDITOR_MARKER;
@@ -1129,7 +1156,7 @@ export function attachSourceMirror(options: SourceOptions) {
       disposed = true; generation++; stop?.(); stop = undefined; queue = []; queuedBytes = 0; commands.clear(); stopScrolling();
       clearAnnotations(); localAnnotations?.dispose(); annotationRoot.remove();
       scratchControl?.dispose();
-      clearInterval(editorGeometryTimer); editorPlaceholders.clear();
+      clearInterval(editorGeometryTimer); editorPlaceholders.clear(); embedPlaceholders.clear();
       clearInterval(canvasTimer); clearInterval(mediaTimer); cancelAnimationFrame(canvasFrame); canvasCopy = null;
       document.removeEventListener('input', localFieldEdit, true);
       document.removeEventListener('change', localFieldEdit, true);
@@ -1279,7 +1306,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     const style = doc.createElement('style');
     // rrweb captures the outer box of a blocked editor. Its empty placeholder
     // must not add the textarea's padding and border to those dimensions again.
-    style.textContent = '[data-live-share-editor]{box-sizing:border-box!important} [data-live-share-unavailable]::after{content:"此区域暂不支持实时共享";display:block;padding:32px;color:#64748b;font:14px system-ui;text-align:center} [data-teacher-assistant],[data-live-share-ui]{visibility:hidden!important} .live-share-annotation-source,.live-share-code-focus-layer,.teacher-broadcast-bar,.teacher-broadcast-picker,.teacher-broadcast-flash,.teacher-assistant,.voice-call-toast,.voice-call-card,.voice-call-floating{display:none!important}';
+    style.textContent = '[data-live-share-editor]{box-sizing:border-box!important} [data-live-share-unavailable][hidden]{display:none!important} [data-live-share-unavailable]::after{content:"此区域暂不支持实时共享";display:block;padding:32px;color:#64748b;font:14px system-ui;text-align:center} [data-teacher-assistant],[data-live-share-ui]{visibility:hidden!important} .live-share-annotation-source,.live-share-code-focus-layer,.teacher-broadcast-bar,.teacher-broadcast-picker,.teacher-broadcast-flash,.teacher-assistant,.voice-call-toast,.voice-call-card,.voice-call-floating{display:none!important}';
     doc.head?.appendChild(style);
     const cleanupScratch = options.scratchControls
       ? attachViewerScratchControl({ document: doc, send: (node, input) => command(node, 'scratch', { input, target: scratchTargetFingerprint(node) }) }) : () => {};

@@ -41,12 +41,16 @@ function fixture(t, options = {}) {
         const listeners = new Map();
         const track = {
             stopped: 0, readyState: 'live', enabled: true,
-            getSettings() { return { displaySurface: surface, width: options.width || 1920, height: options.height || 1080 }; },
+            getSettings() {
+                if (options.noSettings === 'throws') throw new TypeError('unavailable settings');
+                return { displaySurface: surface, width: options.width || 1920, height: options.height || 1080 };
+            },
             stop() { this.stopped++; this.readyState = 'ended'; },
             addEventListener(name, callback) { listeners.set(name, callback); },
             removeEventListener(name) { listeners.delete(name); },
             end() { this.readyState = 'ended'; listeners.get('ended')?.(); },
         };
+        if (options.noSettings === 'absent') delete track.getSettings;
         const audioTrack = { stopped: 0, stop() { this.stopped++; } };
         const value = { track, audioTrack, getTracks: () => [track, audioTrack],
             getVideoTracks: () => [track], getAudioTracks: () => [audioTrack] };
@@ -77,15 +81,22 @@ function fixture(t, options = {}) {
         return options.encode ? options.encode(this.width, this.height, quality) : jpeg;
     };
     const module = { exports: {} };
+    const fixtureDate = class extends Date { static now() { return now; } };
+    const flowModule = { exports: {} };
+    vm.runInNewContext(transformSync(fs.readFileSync(path.join(path.dirname(source), 'camera_flow.ts'), 'utf8'),
+        { loader: 'ts', format: 'cjs' }).code, { module: flowModule, exports: flowModule.exports, Date: fixtureDate });
+    Object.defineProperty(window.performance, 'now', { value: () => now });
     vm.runInNewContext(transformSync(fs.readFileSync(source, 'utf8'), { loader: 'ts', format: 'cjs' }).code, {
         module, exports: module.exports, window, document: window.document, navigator: window.navigator,
         HTMLVideoElement: window.HTMLVideoElement, Image: window.Image, console,
-        Date: class ClockDate extends Date { static now() { return now; } },
+        require: () => flowModule.exports, Date: fixtureDate,
         setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window),
         setInterval: window.setInterval.bind(window), clearInterval: window.clearInterval.bind(window),
     });
     const screen = module.exports.mountLessonScreen({ uid: options.teacher ? lesson.teacherUid : lesson.studentUid }, {
         send(message) { if (blocked) return false; sent.push(message); return true; },
+        canSendPicture: options.canSendPicture,
+        preparePicture: options.preparePicture,
         onChange() { changes++; },
     });
     screen.start(lesson); screen.setConnected(true); screen.setPeerOnline(true);
@@ -108,6 +119,76 @@ it('a teacher requests the learner screen without touching either capture API an
     assert.equal(f.sent.at(-1).watching, false);
 });
 
+it('a new screen view needs its own fresh window even when both devices and the socket are unchanged', t => {
+    const f = fixture(t, { teacher: true });
+    f.screen.setPeerOnline(true, 'student-tab-A', true);
+    const open = () => {
+        f.screen.toggleView();
+        assert.equal(f.sent.at(-1).flow, true);
+        f.screen.receive(state('sharing', { flow: true }));
+        const window = f.sent.findLast(m => m.type === 'screen-window');
+        assert(window, 'the consent event requests the first screen immediately, even with background timers paused');
+        return window.seq;
+    };
+    const first = open();
+    f.screen.receive(frame(1)); assert.equal(f.screen.snapshot().remoteSource, null);
+    f.screen.receive(frame(2, { ticket: first })); assert.equal(f.screen.snapshot().remoteSource, jpeg);
+    f.screen.toggleView(); assert.equal(f.screen.snapshot().remoteSource, null);
+    const second = open(); assert(second > first);
+    f.screen.receive(frame(3, { ticket: first })); assert.equal(f.screen.snapshot().remoteSource, null);
+    f.screen.receive(frame(4, { ticket: second })); assert.equal(f.screen.snapshot().remoteSource, jpeg);
+    f.advance(2500); f.screen.capture();
+    assert.equal(f.screen.snapshot().remoteSource, null); assert.equal(f.screen.snapshot().watching, true);
+    const fresh = f.sent.findLast(m => m.type === 'screen-window');
+    assert.equal(fresh.seen, 4);
+    f.screen.receive(frame(5, { ticket: second })); assert.equal(f.screen.snapshot().remoteSource, null);
+    f.screen.receive(frame(6, { ticket: fresh.seq })); assert.equal(f.screen.snapshot().remoteSource, jpeg);
+    f.screen.setConnected(false); f.screen.setConnected(true);
+    f.screen.setPeerOnline(true, 'student-tab-B', true);
+    f.screen.receive(state('sharing', { streamId: 'student-tab-B', flow: true }));
+    f.screen.receive(frame(7, { streamId: 'student-tab-B', ticket: fresh.seq }));
+    assert.equal(f.screen.snapshot().remoteSource, null);
+    f.screen.receive(state('stopped', { streamId: 'student-tab-B' }));
+    f.screen.capture(); assert.equal(f.screen.snapshot().watching, false);
+});
+
+it('avoids encoding a complex screen while the microphone and camera occupy the upload, and still serves an older teacher', async t => {
+    let writable = false;
+    const f = fixture(t, { canSendPicture: () => writable });
+    f.screen.setPeerOnline(true, 'teacher-tab-A', true);
+    f.screen.receive(request(true, { flow: true })); await f.screen.startSharing();
+    const window = { type: 'screen-window', uid: 2, lessonId: lesson._id, streamId: 'teacher-tab-A', seq: 1, level: 3 };
+    f.screen.receive(window); f.screen.capture();
+    assert.equal(f.encodes.length, 0);
+    writable = true; f.screen.capture();
+    assert.equal(f.sent.at(-1).ticket, 1);
+    f.screen.receive(request(false)); f.advance(1500); f.screen.receive({ ...window, seq: 2 }); f.screen.capture();
+    assert.equal(f.sent.filter(m => m.type === 'screen').length, 1);
+    f.screen.receive(request()); f.screen.capture();
+    assert.equal(f.sent.at(-1).type, 'screen'); assert.equal(f.sent.at(-1).ticket, undefined);
+});
+
+it('publishes only fresh decoded desktop images and cancels pending decodes on a camera switch', async t => {
+    const jobs = []; const displayed = [];
+    const f = fixture(t, { teacher: true, preparePicture: data => new Promise(resolve => {
+        jobs.push({ data, complete: () => resolve(() => displayed.push(data)) });
+    }) });
+    f.screen.setPeerOnline(true, 'student-tab-A', true); f.screen.toggleView();
+    f.screen.receive(state('sharing', { flow: true })); f.screen.capture();
+    const picture = seq => {
+        const ticket = f.sent.findLast(m => m.type === 'screen-window').seq;
+        const data = 'data:image/jpeg;base64,' + Buffer.from('desktop picture ' + seq).toString('base64');
+        f.screen.receive(frame(seq, { ticket, data })); return data;
+    };
+    picture(1); picture(2); f.advance(1050); f.screen.capture();
+    const latest = picture(3); assert.equal(jobs.length, 1);
+    jobs[0].complete(); await tick();
+    assert.equal(displayed.length, 0); assert.equal(jobs[1].data, latest, 'only the newest waiting picture is decoded');
+    jobs[1].complete(); await tick(); assert.deepEqual(displayed, [latest]);
+    picture(4); f.screen.toggleView(); jobs[2].complete(); await tick();
+    assert.deepEqual(displayed, [latest]); assert.equal(f.screen.snapshot().remoteSource, null);
+});
+
 it('a request alone keeps devices idle, then an explicit learner click synchronously opens the entire-screen picker', async t => {
     const f = fixture(t);
     await f.screen.startSharing(); assert.equal(f.captures.length, 0, 'cannot share without teacher request');
@@ -121,6 +202,34 @@ it('a request alone keeps devices idle, then an explicit learner click synchrono
     assert.equal(f.screen.snapshot().sharing, true);
     assert(f.sent.some(message => message.type === 'screen-state' && message.state === 'sharing'));
     assert.equal(f.userMediaCalls, 0);
+});
+
+it('a join picker resolving after cancellation or for different participants releases its desktop track', async t => {
+    const f = fixture(t, { delayed: true });
+    f.screen.stop();
+    const failedJoin = f.screen.prepareEntryScreen(lesson);
+    failedJoin.cancel(); f.resolve(); await tick();
+    assert(f.streams[0].track.stopped);
+    const differentTeacher = f.screen.prepareEntryScreen(lesson);
+    f.screen.start({ ...lesson, teacherUid: lesson.teacherUid + 1 }, differentTeacher);
+    f.resolve(); await tick();
+    assert(f.streams[1].track.stopped);
+    assert.equal(f.screen.snapshot().sharing, false);
+    assert.equal(f.sent.filter(message => message.type === 'screen').length, 0);
+});
+
+it('a learner can retry a cancelled join picker before the teacher arrives and revoke it on leaving', async t => {
+    const options = { denied: true }; const f = fixture(t, options);
+    f.screen.stop();
+    await f.screen.start(lesson, f.screen.prepareEntryScreen(lesson));
+    assert.equal(f.screen.snapshot().entryRetry, true);
+    assert.equal(f.screen.snapshot().sharing, false);
+    options.denied = false;
+    await f.screen.startSharing();
+    assert.equal(f.screen.snapshot().sharing, true);
+    assert.equal(f.screen.snapshot().entryRetry, false);
+    f.screen.capture(); assert.equal(f.sent.filter(message => message.type === 'screen').length, 0);
+    f.screen.stop(); assert(f.streams[0].track.stopped);
 });
 
 it('refusing screen permission reports the refusal without affecting camera or microphone', async t => {
@@ -162,9 +271,20 @@ for (const surface of ['window', 'browser', undefined]) {
         assert.equal(f.screen.snapshot().sharing, false);
         assert.equal(f.streams.length, 1);
         assert(f.streams[0].track.stopped > 0); assert(f.streams[0].audioTrack.stopped > 0);
-        assert(f.screen.snapshot().error);
+        assert.match(f.screen.snapshot().error, surface ? /请选择「整个屏幕」/ : /浏览器没有报告共享类型/);
+        f.screen.capture(); assert.equal(f.sent.filter(item => item.type === 'screen').length, 0);
     });
 }
+for (const noSettings of ['throws', 'absent']) it(`a browser whose track settings are ${noSettings} releases both tracks without blaming the learner`, async t => {
+    const f = fixture(t, { noSettings });
+    f.screen.receive(request()); await f.screen.startSharing();
+    assert.match(f.screen.snapshot().error, /浏览器没有报告共享类型/);
+    assert.equal(f.screen.snapshot().permissionHelp, false, 'this is not a permission denial');
+    assert.equal(f.screen.snapshot().sharing, false);
+    assert.equal(f.streams[0].track.stopped, 1); assert.equal(f.streams[0].audioTrack.stopped, 1);
+    f.screen.capture();
+    assert.equal(f.sent.filter(item => item.type === 'screen' || item.state === 'sharing').length, 0);
+});
 
 it('leaving while permission is pending closes a late stream and cannot revive the old lesson', async t => {
     const f = fixture(t, { delayed: true }); f.screen.receive(request());

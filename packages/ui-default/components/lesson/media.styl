@@ -1,14 +1,15 @@
 .lesson-media
+  --lesson-dock-bottom: 86px
   position: fixed
   right: 22px
-  bottom: 86px
+  bottom: var(--lesson-dock-bottom)
   z-index: 2147483005
   box-sizing: border-box
   display: flex
   flex-direction: column
   width: 220px
   max-width: calc(100vw - 16px)
-  max-height: calc(100vh - 16px)
+  max-height: calc(100vh - var(--lesson-dock-bottom) - 8px)
   overflow: hidden
   border: 1px solid #34435b
   border-radius: 16px
@@ -30,14 +31,13 @@
     align-items: center
     justify-content: space-between
     gap: 8px
-    padding: 8px 10px
+    padding: 5px 8px
     cursor: move
     touch-action: none
     user-select: none
 
     strong
-      display: block
-      margin-top: 2px
+      margin-left: 6px
       font-size: 13px
       line-height: 1.4
       color: #f8fafc
@@ -53,9 +53,8 @@
 
   &__grid
     display: grid
-    grid-template-columns: 1fr
-    gap: 6px
-    padding: 0 8px
+    grid-template-columns: minmax(0, 1fr)
+    gap: 1px
 
   &__content
     min-height: 0
@@ -69,7 +68,6 @@
     place-items: center
     aspect-ratio: 16 / 9
     overflow: hidden
-    border-radius: 10px
     background: #243044
 
     video, img, canvas
@@ -87,6 +85,31 @@
       object-fit: contain
       transform: none
       background: #0b1220
+
+    &.is-compact
+      height: 40px
+      aspect-ratio: auto
+
+      .lesson-media__name, .lesson-media__placeholder
+        position: absolute
+        left: 6px
+        right: var(--controls-space, 6px)
+        max-width: none
+        padding: 0
+        overflow: hidden
+        line-height: 14px
+        text-align: left
+        text-overflow: ellipsis
+        white-space: nowrap
+
+      .lesson-media__name
+        top: 4px
+        bottom: auto
+        background: transparent
+
+      .lesson-media__placeholder
+        bottom: 4px
+        font-size: 10px
 
   &__beauty
     display: grid
@@ -346,8 +369,12 @@
 @media (max-width: 520px)
   .lesson-media
     right: 8px
-    bottom: 76px
+    --lesson-dock-bottom: 76px
     width: 220px
+
+@media (max-height: 500px)
+  .lesson-media
+    --lesson-dock-bottom: 8px
 
 @media (prefers-reduced-motion: reduce)
   .lesson-media

@@ -606,15 +606,19 @@ it('scaled note dragging and resizing synchronize dimensions, and anchors follow
         await selectText(f);
         await f.teacher.keyboard.press('Shift+Enter');
         await f.teacher.locator(selectors.input).fill('看这里，先写出正确的输出格式。');
-        await f.student.locator(selectors.bubble).waitFor({ state: 'visible' });
+        await f.student.locator(selectors.bubble).getByText('看这里，先写出正确的输出格式。', { exact: true }).waitFor();
         const teacherBubble = await f.teacher.locator(selectors.bubble).boundingBox();
         const studentBubble = await f.student.locator(selectors.bubble).boundingBox();
         const handle = await f.teacher.locator(selectors.handle).boundingBox();
         await f.teacher.mouse.move(handle.x + 20, handle.y + handle.height / 2); await f.teacher.mouse.down();
         await f.teacher.mouse.move(handle.x + 60, handle.y + handle.height / 2 + 30, { steps: 10 }); await f.teacher.mouse.up();
-        await f.student.waitForFunction(({ selector, x }) => document.querySelector(selector).getBoundingClientRect().x > x + 60,
-            { selector: selectors.bubble, x: studentBubble.x });
         const movedTeacher = await f.teacher.locator(selectors.bubble).boundingBox();
+        await f.student.waitForFunction(({ selector, x, y }) => {
+            const rect = document.querySelector(selector).getBoundingClientRect();
+            return Math.abs(rect.x - x) < 3 && Math.abs(rect.y - y) < 3;
+        }, { selector: selectors.bubble, x: studentBubble.x + 2 * (movedTeacher.x - teacherBubble.x),
+            y: studentBubble.y + 2 * (movedTeacher.y - teacherBubble.y) });
+        assert(Math.abs(movedTeacher.x - teacherBubble.x - 40) < 2 && Math.abs(movedTeacher.y - teacherBubble.y - 30) < 2);
         const movedStudent = await f.student.locator(selectors.bubble).boundingBox();
         assert(Math.abs((movedTeacher.x - teacherBubble.x) * 2 - (movedStudent.x - studentBubble.x)) < 3,
             'teacher pointer coordinates map through the 0.5 scale without using DPR');
@@ -624,9 +628,11 @@ it('scaled note dragging and resizing synchronize dimensions, and anchors follow
         await f.teacher.mouse.down();
         await f.teacher.mouse.move(resizeHandle.x + resizeHandle.width / 2 + 65, resizeHandle.y + resizeHandle.height / 2 + 45, { steps: 10 });
         await f.teacher.mouse.up();
-        await f.student.waitForFunction(({ selector, width }) => document.querySelector(selector).getBoundingClientRect().width > width + 100,
-            { selector: selectors.bubble, width: movedStudent.width });
         const resizedTeacher = await f.teacher.locator(selectors.bubble).boundingBox();
+        await f.student.waitForFunction(({ selector, width, height }) => {
+            const rect = document.querySelector(selector).getBoundingClientRect();
+            return Math.abs(rect.width - width) < 3 && Math.abs(rect.height - height) < 3;
+        }, { selector: selectors.bubble, width: 2 * resizedTeacher.width, height: 2 * resizedTeacher.height });
         const resizedStudent = await f.student.locator(selectors.bubble).boundingBox();
         assert(Math.abs(resizedTeacher.width * 2 - resizedStudent.width) < 3 && Math.abs(resizedTeacher.height * 2 - resizedStudent.height) < 3,
             'both peers show the same manually resized bubble in learner CSS pixels');

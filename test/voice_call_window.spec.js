@@ -10,8 +10,11 @@ const code = transformSync(fs.readFileSync(file, 'utf8'), { loader: 'ts', format
 const guideFile = path.join(__dirname, '../packages/ui-default/components/voice_call/permission_guide.ts');
 const snapshot = { type: 'snapshot', callId: 'voice-call-1', status: 'active', teacherUid: 1, teacherName: '唐老师',
     studentUid: 2, studentName: '橙子', createdAt: Date.now(), acceptedAt: Date.now(), ringExpiresAt: Date.now() + 45000, isOwner: true };
-function fixture(t, { delayed = false, uid = 1, setup = false, startError = null } = {}) {
+function fixture(t, { delayed = false, uid = 1, setup = false, startError = null, mac = false } = {}) {
     const dom = new JSDOM('<div id="voice"></div>', { url: 'https://onebyone.test/' });
+    if (mac) Object.defineProperties(dom.window.navigator, {
+        platform: { value: 'MacIntel' }, userAgent: { value: 'Version/18 Safari/605' },
+    });
     const module = { exports: {} };
     const sent = []; const frames = []; let stopped = 0; let reset = 0; let started = 0; let pending; let callbacks;
     const guideModule = { exports: {} };
@@ -140,6 +143,20 @@ it('permission revocation or connection replacement immediately stops an active 
 
 const waitForGuide = () => new Promise((resolve) => setTimeout(resolve, 530));
 const visibleGuide = (f) => f.document.querySelector('[data-voice-permission-guide]:not([hidden])');
+for (const uid of [1, 2]) it(`Mac user ${uid} can retry a denied microphone exactly once in their own call role`, async t => {
+    const f = fixture(t, { uid, setup: true, mac: true, startError: Object.assign(new Error('denied'), { name: 'NotAllowedError' }) });
+    if (uid === 1) f.controller.dial(2); else f.controller.accept(snapshot.callId);
+    await tick();
+    const guide = visibleGuide(f);
+    assert.equal(guide.dataset.state, 'blocked');
+    assert.equal(guide.querySelector('[data-voice-permission-cancel]').textContent, uid === 1 ? '取消呼叫' : '取消接听');
+    assert.match(guide.textContent, /Safari 浏览器 → 设置 → 网站/);
+    guide.querySelector('summary').click();
+    assert.equal(f.started, 1); assert.equal(f.sent.length, 0);
+    f.clearStartError(); guide.querySelector('[data-voice-permission-retry]').click(); await tick();
+    assert.equal(f.started, 2); assert.equal(visibleGuide(f), null);
+    assert.deepEqual(f.sent.map(message => message.type), [uid === 1 ? 'dial' : 'accept']);
+});
 it('student acceptance shows the pending guide and granting the microphone removes it before accepting', async (t) => {
     const f = fixture(t, { uid: 2, delayed: true, setup: true });
     f.controller.accept(snapshot.callId);

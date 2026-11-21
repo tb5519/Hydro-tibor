@@ -48,12 +48,19 @@ export function validateLessonMessage(value: any) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
     const fields: Record<string, string[]> = {
         join: ['type', 'lessonId', 'tabId'], pulse: ['type'],
-        video: ['type', 'lessonId', 'seq', 'data'], audio: ['type', 'lessonId', 'seq', 'data'],
-        screen: ['type', 'lessonId', 'seq', 'data'],
-        'screen-view': ['type', 'lessonId', 'watching'], 'screen-state': ['type', 'lessonId', 'state'],
+        video: ['type', 'lessonId', 'seq', 'data', 'ticket'],
+        'camera-window': ['type', 'lessonId', 'seq', 'level', 'seen'], audio: ['type', 'lessonId', 'seq', 'data', 'ticket'],
+        'screen-window': ['type', 'lessonId', 'seq', 'level', 'seen'],
+        screen: ['type', 'lessonId', 'seq', 'data', 'ticket'],
+        'screen-view': ['type', 'lessonId', 'watching', 'flow'], 'screen-state': ['type', 'lessonId', 'state', 'flow'],
     };
     if (!Object.hasOwn(fields, value.type) || Object.keys(value).some((key) => !fields[value.type].includes(key))) invalid();
     if (value.type === 'join' && (!lessonId(value.lessonId) || !lessonId(value.tabId))) invalid();
+    if (['camera-window', 'screen-window'].includes(value.type) && (!lessonId(value.lessonId) || !Number.isSafeInteger(value.seq) || value.seq <= 0
+        || !Number.isInteger(value.level) || value.level < 0 || value.level > 3
+        || (value.seen !== undefined && (!Number.isSafeInteger(value.seen) || value.seen < 0)))) invalid();
+    if (value.ticket !== undefined && (!Number.isSafeInteger(value.ticket) || value.ticket <= 0)) invalid();
+    if (value.flow !== undefined && (value.flow !== true || !(value.watching === true || value.state === 'sharing'))) invalid();
     if (['screen-view', 'screen-state'].includes(value.type) && !lessonId(value.lessonId)) invalid();
     if (value.type === 'screen-view' && typeof value.watching !== 'boolean') invalid();
     if (value.type === 'screen-state' && !['sharing', 'stopped', 'declined'].includes(value.state)) invalid();
@@ -80,8 +87,13 @@ export class LessonRateLimit {
     private bytes = { tokens: 512 * 1024, at: 0 };
     private screen = { tokens: 3, at: 0 };
     private screenBytes = { tokens: 512 * 1024, at: 0 };
+    private lastWindow = { 'camera-window': -Infinity, 'screen-window': -Infinity };
     private controls: number[] = [];
     accept(type: string, length = 0, now = Date.now()) {
+        if (type === 'camera-window' || type === 'screen-window') {
+            if (now - this.lastWindow[type] < 125) return false;
+            this.lastWindow[type] = now; return true;
+        }
         if (type === 'audio' || type === 'video' || type === 'screen') {
             const bucket = this[type]; const rate = type === 'audio' ? .03 : type === 'screen' ? .012 : .04;
             bucket.tokens = Math.min(type === 'audio' ? 8 : 3, bucket.tokens + Math.max(0, now - bucket.at) * rate);

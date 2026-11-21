@@ -1,4 +1,5 @@
 import { Y, MonacoBinding } from './vendor';
+import { attachCodeFontWheel, codeFontWheelHandler } from '../ide/fontSize';
 import { LearnerPriority } from './learner_priority';
 import { attachAnnotationSurface, ShareAnnotation } from './annotation';
 import { registerDrawingEditor } from './drawing_anchor';
@@ -34,7 +35,7 @@ export interface SharedEditorTheme {
   encodedTokensColors?: string[];
 }
 export interface EditorMessage {
-  type: 'edit:init' | 'edit:update' | 'edit:ack' | 'edit:cursor' | 'edit:layout' | 'edit:remove' | 'edit:sync' | 'edit:scroll' | 'edit:focus' | 'edit:inventory';
+  type: 'edit:init' | 'edit:update' | 'edit:ack' | 'edit:cursor' | 'edit:layout' | 'edit:remove' | 'edit:sync' | 'edit:scroll' | 'edit:font-step' | 'edit:focus' | 'edit:inventory';
   pageId: string;
   editorId: string;
   editors?: { id: string; revision: string }[];
@@ -47,6 +48,8 @@ export interface EditorMessage {
   rect?: EditorRect;
   readOnly?: boolean;
   fontSize?: number;
+  fontWheel?: true;
+  direction?: 1 | -1;
   fontFamily?: string;
   lineHeight?: number;
   scrollTop?: number;
@@ -407,7 +410,8 @@ function editorView(editor: any, model: any): SharedEditorView | undefined {
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') (view as any)[name] = value;
   }
   const numbers = option('lineNumbers');
-  view.lineNumbers = typeof numbers === 'string' ? numbers : ['off', 'on', 'relative', 'interval'][numbers?.renderType] as SharedEditorView['lineNumbers'];
+  const lineNumberModes = ['off', 'on', 'relative', 'interval'] as const;
+  view.lineNumbers = typeof numbers === 'string' ? lineNumberModes.find(mode => mode === numbers) : lineNumberModes[numbers?.renderType];
   const minimap = option('minimap');
   if (minimap) view.minimap = Object.fromEntries(['enabled', 'side', 'size', 'showSlider', 'renderCharacters', 'maxColumn', 'scale']
     .filter((key) => minimap[key] !== undefined).map((key) => [key, minimap[key]]));
@@ -973,6 +977,7 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
       return {
         kind: editor ? 'monaco' as const : 'textarea' as const, language: model?.getLanguageId?.() || 'plaintext',
         rect: rectangle(node), readOnly: !writable(), fontSize: Number(font.fontSize) || parseFloat(style.fontSize) || 14,
+        ...(!options.teacherSource && !options.readOnly && codeFontWheelHandler(node) ? { fontWheel: true as const } : {}),
         fontFamily: typeof font.fontFamily === 'string' ? font.fontFamily : style.fontFamily,
         lineHeight: Number(font.lineHeight) || parseFloat(style.lineHeight) || 20,
         scrollTop: editor ? editor.getScrollTop() : node.scrollTop,
@@ -1029,6 +1034,13 @@ export function attachSourceEditors(options: CommonOptions): EditorController {
       receive(message) {
         if (message.type === 'edit:sync') { announce(); return; }
         if (message.document === 'annotations') { notes.receive(message); return; }
+        if (message.type === 'edit:font-step') {
+          if (!options.teacherSource && !options.readOnly && writable() && (message.direction === 1 || message.direction === -1)) {
+            codeFontWheelHandler(node)?.(message.direction);
+            scheduleLayout();
+          }
+          return;
+        }
         if (message.type === 'edit:scroll') {
           if (document.hidden || !Number.isSafeInteger(message.scrollSeq) || message.scrollSeq! <= scrollSeq) return;
           scrollSeq = message.scrollSeq!;
@@ -1180,6 +1192,8 @@ export function attachViewerEditors(options: CommonOptions & {
       options.container.appendChild(node);
       if (options.readOnly) { node.tabIndex = -1; node.setAttribute('aria-readonly', 'true'); }
       let readOnly = !!options.readOnly || !!initial.readOnly;
+      let fontWheel = initial.fontWheel === true;
+      let releaseFont: (() => void) | undefined;
       let recovery = options.recovery?.find((draft) => draft.editorId === initial.editorId);
       let refresh = () => {};
       const shared = new CollaborativeText({
@@ -1298,7 +1312,14 @@ export function attachViewerEditors(options: CommonOptions & {
         editor?.layout({ width: Math.max(0, rect.width), height: Math.max(0, rect.height) });
         applyingScroll = previousApplying;
       };
-      refresh = () => { if (editor) editor.updateOptions({ readOnly: !shared.editable }); else (node as HTMLTextAreaElement).readOnly = !shared.editable; };
+      refresh = () => {
+        if (editor) editor.updateOptions({ readOnly: !shared.editable }); else (node as HTMLTextAreaElement).readOnly = !shared.editable;
+        if (fontWheel && shared.editable) {
+          releaseFont ||= attachCodeFontWheel(node, (direction) =>
+            safeSend(options, { type: 'edit:font-step', pageId: options.pageId, editorId: initial.editorId, direction }));
+        } else { releaseFont?.(); releaseFont = undefined; }
+      };
+      cleanups.push(() => releaseFont?.());
       const update = (message: EditorMessage) => {
         if (message.document === 'annotations') { notes.receive(message); annotations.refresh(); return; }
         if (message.type === 'edit:focus') { sourceFocus = message.focus; return; }
@@ -1306,6 +1327,7 @@ export function attachViewerEditors(options: CommonOptions & {
         if (message.type === 'edit:cursor') { remoteCursor = message; if (options.readOnly) focus.set(message); }
         else shared.receive(message);
         if (message.type === 'edit:init' || message.type === 'edit:layout') {
+          fontWheel = message.fontWheel === true;
           if (typeof message.readOnly === 'boolean') readOnly = !!options.readOnly || message.readOnly;
           if (message.rect) sourceRect = message.rect;
           layout();

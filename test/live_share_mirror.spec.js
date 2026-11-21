@@ -390,6 +390,89 @@ it('mirrors ordinary DOM changes, blocks private/editor content, and does not ru
     } finally { await f.close(); }
 });
 
+it('keeps Scratch resize sensors out of the replay layout while real embedded documents retain an inert placeholder', async () => {
+    // This is the object created by the resize listener in the shipped Scratch GUI.
+    const sensor = '<object class="resize-sensor" tabindex="-1" type="text/html" data="about:blank" '
+        + 'style="display:block;position:absolute;top:0;left:0;height:100%;width:100%;overflow:hidden;pointer-events:none;z-index:-1"></object>';
+    const embedded = '<object class="resize-sensor" type="text/html" data="data:text/html,embedded-lesson-document"></object>';
+    const f = await fixture({ editorMarkup: `<div id="scratch-stage" style="position:relative;width:280px">
+        <button id="costume-tool" style="margin:0">选择造型</button>
+        <div id="sprite-title" style="height:28px">舞台</div>${sensor}</div>
+        <div id="following-content" style="height:18px">角色</div>
+        <div id="foreign-lesson">${embedded}</div>
+        <div id="foreign-frame"><iframe sandbox="" srcdoc="private lesson contents"></iframe></div>` });
+    try {
+        const frame = f.frame();
+        const stage = frame.locator('#scratch-stage');
+        const sourceStage = f.student.locator('#scratch-stage');
+        const visibleBoxes = stage.locator('[data-live-share-unavailable]:visible');
+        const checkStage = async () => {
+            assert.equal(await visibleBoxes.count(), 0, 'a size listener must never turn into a visible dashed box');
+            assert.equal(await stage.locator('iframe, object, embed').count(), 0, 'the sensor must stay inert in the replay');
+            assert.equal((await stage.boundingBox()).height, (await sourceStage.boundingBox()).height);
+            const gapToSibling = async (locator) => locator.evaluate((node) =>
+                node.nextElementSibling.getBoundingClientRect().top - node.getBoundingClientRect().top);
+            assert.equal(await gapToSibling(stage), await gapToSibling(sourceStage));
+            assert.equal(await stage.locator('#costume-tool').evaluate((button) => {
+                const { x, y, width, height } = button.getBoundingClientRect();
+                return button.ownerDocument.elementFromPoint(x + width / 2, y + height / 2) === button;
+            }), true, 'the collapsed placeholder leaves the costume control reachable');
+        };
+
+        for (const selector of ['#foreign-lesson', '#foreign-frame']) {
+            const external = frame.locator(selector);
+            await external.locator('[data-live-share-unavailable]:visible').waitFor();
+            assert.equal(await external.locator('iframe, object, embed').count(), 0);
+        }
+        await checkStage();
+
+        // Reuse the same stage and surrounding nodes while the GUI replaces its
+        // sensor, first with a real frame, then with a newly mounted listener.
+        const thirdPartyUrl = 'https://embedded-class.test/lesson';
+        const replayLoads = [];
+        await f.student.context().route(thirdPartyUrl, (route) =>
+            route.fulfill({ contentType: 'text/html', body: '<p>private replacement contents</p>' }));
+        await f.teacher.context().route(thirdPartyUrl, (route) => { replayLoads.push(route.request().url()); return route.abort(); });
+        await f.student.evaluate((url) => {
+            const replacement = document.createElement('iframe');
+            replacement.src = url;
+            replacement.style.cssText = 'display:block;border:0;width:0;height:0';
+            const stage = document.querySelector('#scratch-stage');
+            stage.querySelector('object').replaceWith(replacement);
+            stage.dataset.frameState = 'collapsed';
+        }, thirdPartyUrl);
+        await f.student.frameLocator('#scratch-stage iframe').getByText('private replacement contents').waitFor({ state: 'attached' });
+        await frame.locator('#scratch-stage[data-frame-state=collapsed]').waitFor();
+        await checkStage();
+        const embeddedFrame = sourceStage.locator('iframe');
+        await embeddedFrame.evaluate((node) => { node.style.width = '100%'; node.style.height = '96px'; });
+        await visibleBoxes.waitFor();
+        const actualBox = await embeddedFrame.boundingBox();
+        const replayBox = await visibleBoxes.boundingBox();
+        const stageTop = await sourceStage.boundingBox();
+        const replayTop = await stage.boundingBox();
+        assert.ok(Math.abs((actualBox.y - stageTop.y) - (replayBox.y - replayTop.y)) <= 1, 'visible embed stays below the costume controls');
+        await embeddedFrame.evaluate((node) => { node.style.width = '0'; node.style.height = '0'; });
+        await visibleBoxes.waitFor({ state: 'hidden' });
+        await checkStage();
+        assert.equal(await stage.locator('iframe').count(), 0);
+        assert.deepEqual(replayLoads, [], 'a third-party document is never fetched from the teacher browser');
+        await f.student.evaluate((markup) => {
+            const parent = document.querySelector('#scratch-stage');
+            parent.querySelector('iframe').remove();
+            parent.insertAdjacentHTML('afterbegin', markup);
+            const row = document.createElement('div'); row.id = 'new-sprite'; row.textContent = '新角色';
+            row.style.height = '19px'; parent.append(row);
+            document.querySelector('#sprite-title').textContent = '舞台已更新';
+        }, sensor);
+        await stage.locator('#new-sprite').waitFor();
+        assert.equal(await stage.locator('#sprite-title').textContent(), '舞台已更新');
+        await checkStage();
+        assert.equal(await frame.locator('#following-content').textContent(), '角色');
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
 it('shares bounded 2D canvas rasters without mutating the source and never captures private canvases or TOTP secrets', async () => {
     const f = await fixture({ editorMarkup: '<canvas id="drawing" width="1600" height="1000" style="width:320px;height:200px"></canvas><div data-private><canvas id="private-drawing"></canvas></div><p id="secret">PRIVATE-TOTP-SECRET</p><canvas id="qrcode"></canvas>' });
     try {
