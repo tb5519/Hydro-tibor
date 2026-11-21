@@ -36,6 +36,12 @@ async function checkCostumeMirror(child, replay) {
         return bounds.width && bounds.height && getComputedStyle(node).visibility === 'visible';
     }).map(node => node.getBoundingClientRect().toJSON()));
     assert.deepEqual(visiblePlaceholders, [], 'invisible Scratch helpers must never add a visible unavailable panel');
+    // The source opens the popover before its final position reaches the
+    // replay. Compare the settled panels rather than two animation frames.
+    for (const frame of [child, replay]) {
+        const popover = await frame.locator('.Popover').elementHandle();
+        await popover.waitForElementState('stable');
+    }
     for (const caption of ['颜色', '饱和度', '亮度', '不透明度']) {
         const bounds = frame => frame.locator('.Popover').getByText(caption, { exact: true }).boundingBox();
         const [sourceBox, replayBox] = await Promise.all([bounds(child), bounds(replay)]);

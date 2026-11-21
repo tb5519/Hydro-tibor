@@ -9,7 +9,7 @@
       {% set navActive = false %}
     {% endif %}
   {% endif %}
-  <a href="{{ url('manage_training_dashboard' if item.name == 'manage_dashboard' else item.name, item.args, query=navQuery) }}" class="nav__item{% if navActive %} nav--active{% endif %}">
+  <a href="{{ url('manage_training_dashboard' if item.name == 'manage_dashboard' else item.name, item.args, query=navQuery) }}" title="{{ _(item.displayName or item.name) }}" class="nav__item{% if navActive %} nav--active{% endif %}">
     {{ _(item.displayName or item.name) }}
   </a>
 </li>
@@ -32,7 +32,8 @@
   color: #2563eb;
 }
 
-@media screen and (max-width: 767px) {
+@media screen and (max-width: 600px) {
+  :root { --navigation-mobile-height: 62px; }
   .nav.slideout-menu {
     background: #fff;
     bottom: 0;
@@ -40,11 +41,11 @@
     display: none;
     height: auto;
     left: auto;
-    min-height: calc(100vh - 62px);
+    min-height: calc(100vh - var(--navigation-mobile-height));
     overflow-y: auto;
     position: fixed;
     right: 0;
-    top: 62px;
+    top: var(--navigation-mobile-height);
     width: min(72vw, 280px);
     -webkit-overflow-scrolling: touch;
     z-index: 100001;

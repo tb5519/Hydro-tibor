@@ -33,7 +33,7 @@ import { isScratchDomain } from '../lib/domain_type';
 import {
     authorizeHomeworkReview, loadHomeworkReviewRecord, loadHomeworkReviewRecords, publicHomeworkReviewRecord, rejectHomeworkReviewMutation,
 } from '../lib/homework_review';
-import { isInlineRasterImage } from '../lib/inline_image';
+import { isInlineRasterImage, serveSharedRaster } from '../lib/inline_image';
 import { IDE_LANGUAGES } from '../lib/ide_protocol';
 import { isMediaCacheRequest } from '../lib/media_cache';
 import { canAccessHomeworkProblem, loadMistakeHomework } from '../lib/mistake_access';
@@ -1501,6 +1501,7 @@ export class ProblemFileDownloadHandler extends ProblemDetailHandler {
             target,
             size: file?.size || 0,
         });
+        if (type === 'additional_file' && await serveSharedRaster(this, filename, file, () => storage.get(target, undefined, file))) return;
         if (type === 'additional_file' && noDisposition && file
             && (isInlineRasterImage(filename, file) || isMediaCacheRequest(this) || this.request.query?.__media_version)
             && await tryRedirectAsset(this, { path: target, meta: file })) return;

@@ -175,6 +175,12 @@
 .domain-switcher__trigger[aria-expanded='true'] .domain-switcher__chevron
   transform: rotate(180deg)
 
+// A hidden tab can pause the transitionend that removes a closed Drop.
+// Dismissed menus must immediately release both pointer and keyboard access.
+.drop.domain-switcher-dropdown:not(.drop-open),
+.drop.nav-more-dropdown:not(.drop-open)
+  visibility: hidden
+
 .drop.nav__dropdown.domain-switcher-dropdown
   overflow: hidden
   max-height: none
@@ -348,6 +354,46 @@
 
   +mobile()
     display: none
+
+// Reserve the right-hand controls inside the header while the primary links
+// move into More. Pre-layout and exceptionally long active titles stay on one row.
+@media not all and (max-width: rupture.mobile-cutoff)
+  .nav > .row > .columns,
+  .nav__list--main,
+  .nav__list--secondary
+    display: flex
+    align-items: center
+
+  .nav__list--main
+    flex: 1 1 0%
+    min-width: 0
+    overflow: hidden
+
+  .nav__list--main > .nav__list-item
+    flex: 0 0 auto
+
+  .nav__list--main > .nav__list-item:has(> .nav--active)
+    flex-shrink: 1
+    min-width: 0
+
+  .nav__list--secondary
+    flex: 0 1 auto
+    max-width: 44%
+    min-width: 0
+
+  .nav__list--secondary > .nav__list-item
+    min-width: 0
+
+  .nav .domain-switcher__trigger
+    width: 100%
+
+  .nav__list .nav__item
+    white-space: nowrap
+
+  .nav .nav--active,
+  .nav .nav__profile-link
+    overflow: hidden
+    text-overflow: ellipsis
 
 // For Mobile: show a slideout vertical arranged menu
 +mobile()

@@ -49,6 +49,12 @@ async function handlerSwitchAccount(ev) {
 
 let $trigger;
 let $menu;
+let navItems;
+
+function isMobileLayout() {
+  return window.matchMedia?.(`(max-width: ${responsiveCutoff.mobile}px)`).matches
+    ?? document.documentElement.clientWidth <= responsiveCutoff.mobile;
+}
 
 export function bindDomainSwitcher() {
   const $domainTrigger = $('.domain-switcher');
@@ -62,9 +68,8 @@ export function bindDomainSwitcher() {
   }
   if (!$domainMenu.length) return;
   $button.data('domain-switcher-bound', true);
-  const isMobile = () => $(document).width() <= responsiveCutoff.mobile;
-  const dropdown = () => (isMobile() ? null : Dropdown.getOrConstruct($domainTrigger)?.dropInstance);
-  const syncExpanded = () => $button.attr('aria-expanded', String(isMobile() || !!Dropdown.get($domainTrigger)?.dropInstance?.isOpened()));
+  const dropdown = () => (isMobileLayout() ? null : Dropdown.getOrConstruct($domainTrigger)?.dropInstance);
+  const syncExpanded = () => $button.attr('aria-expanded', String(isMobileLayout() || !!Dropdown.get($domainTrigger)?.dropInstance?.isOpened()));
   const open = () => {
     dropdown()?.open();
     syncExpanded();
@@ -74,11 +79,15 @@ export function bindDomainSwitcher() {
     syncExpanded();
   };
 
-  $domainTrigger.on('vjDropdownShow vjDropdownHide', syncExpanded);
+  $domainTrigger.on('vjDropdownShow', () => {
+    // Safari leaves focus on the document when a button is clicked.
+    $button[0].focus({ preventScroll: true });
+    syncExpanded();
+  }).on('vjDropdownHide', syncExpanded);
   // The click-only Drop instance handles pointer/native button activation and
   // outside clicks. Focus and hover must never open the classroom switcher.
   $button.add($domainMenu).on('keydown', (event) => {
-    if (event.key === 'Escape' && !isMobile()) {
+    if (event.key === 'Escape' && !isMobileLayout()) {
       event.preventDefault();
       close();
       $button[0].focus();
@@ -99,7 +108,7 @@ export function bindDomainSwitcher() {
     }, 0);
   });
   const updateViewport = () => {
-    if (isMobile()) {
+    if (isMobileLayout()) {
       const instance = Dropdown.get($domainTrigger);
       if (instance) {
         instance.detach();
@@ -115,56 +124,45 @@ export function bindDomainSwitcher() {
 }
 
 function handleNavbar() {
-  let fromHide = false;
-  if ($(document).width() <= responsiveCutoff.mobile) {
-    $menu.children().each(function () {
-      const $ele = $(this);
-      $ele.addClass('nav__list-item').removeClass('menu__item');
-      $ele.children('a').addClass('nav__item').removeClass('menu__link');
-      $ele.insertBefore($trigger, null);
-    });
-    $trigger.hide();
+  if (!navItems?.length) return;
+  const main = $trigger[0].parentElement;
+  const mobile = isMobileLayout();
+  // Restore each link beside its original neighbour, including the active title.
+  let next = $trigger[0];
+  for (const item of [...navItems].reverse()) {
+    if (item.parentElement !== main) {
+      item.classList.replace('menu__item', 'nav__list-item');
+      item.firstElementChild.classList.replace('menu__link', 'nav__item');
+      main.insertBefore(item, next);
+    }
+    next = item;
+  }
+  $trigger.hide();
+  if (mobile) {
+    Dropdown.get($trigger)?.dropInstance?.close();
     return;
   }
-  $trigger.show();
 
-  const base = 70;
-
-  let navItems = $('.nav__list--main > .nav__list-item');
-  let navItem = navItems.length - 2;
-  while (navItem && $('#menu').children('div').height() > base) {
-    if (!$(navItems[navItem]).children('a').hasClass('nav--active')) {
-      $(navItems[navItem]).removeClass('nav__list-item').addClass('menu__item');
-      $(navItems[navItem]).children('a').removeClass('nav__item').addClass('menu__link');
-      $menu.prepend($(navItems[navItem]));
-    }
-    navItem--;
-    fromHide = true;
-  }
-
-  if (!fromHide && $menu.children().length) {
-    while ($('#menu').children('div').height() <= base && $menu.children().length) {
-      const $ele = $menu.children().first();
-      $ele.addClass('nav__list-item').removeClass('menu__item');
-      $ele.children('a').addClass('nav__item').removeClass('menu__link');
-      $ele.insertBefore($trigger, null);
+  const clipped = () => main.scrollWidth > main.clientWidth
+    || navItems.some((item) => {
+      const link = item.firstElementChild;
+      return item.parentElement === main && link.classList.contains('nav--active') && link.scrollWidth > link.clientWidth;
+    });
+  if (clipped()) {
+    $trigger.show();
+    for (const item of [...navItems].reverse()) {
+      const link = item.firstElementChild;
+      if (link.matches('.nav--active, .nav__logo')) continue;
+      item.classList.replace('nav__list-item', 'menu__item');
+      link.classList.replace('nav__item', 'menu__link');
+      $menu.prepend(item);
+      if (!clipped()) break;
     }
   }
-
-  navItems = $('.nav__list--main > .nav__list-item');
-  navItem = navItems.length - 2;
-  if ($('#menu').children('div').height() > base) {
-    while (navItem && $('#menu').children('div').height() > base) {
-      if (!$(navItems[navItem]).children('a').hasClass('nav--active')) {
-        $(navItems[navItem]).removeClass('nav__list-item').addClass('menu__item');
-        $(navItems[navItem]).children('a').removeClass('nav__item').addClass('menu__link');
-        $menu.prepend($(navItems[navItem]));
-      }
-      navItem--;
-    }
+  if (!$menu.children().length) {
+    $trigger.hide();
+    Dropdown.get($trigger)?.dropInstance?.close();
   }
-
-  if (!$menu.children().length) $trigger.hide();
 }
 
 const navigationPage = new AutoloadPage('navigationPage', () => {
@@ -180,10 +178,6 @@ const navigationPage = new AutoloadPage('navigationPage', () => {
   const $hamburger = $('.header__hamburger .hamburger');
   const PADDING = 200;
   const TOLERANCE = 70;
-
-  function isMobileLayout() {
-    return $(document).width() <= responsiveCutoff.mobile;
-  }
 
   function setTranslateX(x) {
     panel.style.transform = x ? `translateX(${x}px)` : '';
@@ -264,16 +258,22 @@ const navigationPage = new AutoloadPage('navigationPage', () => {
     isSwiping = false;
   });
 
+  const dismissMenus = () => {
+    close();
+    Dropdown.get($('.domain-switcher'))?.dropInstance?.close();
+    Dropdown.get($trigger)?.dropInstance?.close();
+  };
+  $(window).on('blur', dismissMenus);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) dismissMenus(); });
   $slideoutOverlay.on('click', close);
   $('.header__hamburger').on('click', () => (isOpen ? close() : open()));
   $(window).on('resize', () => {
     handleNavbar();
     if (!isMobileLayout()) close();
   });
-  setInterval(handleNavbar, 3000);
 }, () => {
   $trigger = $(tpl`
-    <li class="nav__list-item nav_more" data-dropdown-pos="bottom right" data-dropdown-target="#menu-nav-more">
+    <li class="nav__list-item nav_more" data-dropdown-pos="bottom right" data-dropdown-custom-class="nav-more-dropdown" data-dropdown-target="#menu-nav-more">
       <a href="javascript:;" class="nav__item">
         ${i18n('More')} <span class="icon icon-expand_more"></span>
       </a>
@@ -281,9 +281,13 @@ const navigationPage = new AutoloadPage('navigationPage', () => {
   `);
   $menu = $('<ol class="dropdown-target menu menu_more" id="menu-nav-more">');
   $trigger.append($menu);
-  $('.nav__list--main').append($trigger);
-
+  const $main = $('.nav__list--main');
+  navItems = $main.children('.nav__list-item').get();
+  $main.append($trigger);
+  if (!$main.length) return;
   handleNavbar();
+  if (window.ResizeObserver) new ResizeObserver(handleNavbar).observe($main[0]);
+  document.fonts?.ready.then(handleNavbar);
 });
 
 export default navigationPage;

@@ -7,7 +7,7 @@ import {
     ValidationError,
 } from '../error';
 import { tryRedirectAsset } from '../lib/asset_delivery';
-import { isInlineRasterImage } from '../lib/inline_image';
+import { isInlineRasterImage, serveSharedRaster } from '../lib/inline_image';
 import { isMediaCacheRequest, setMediaCacheHeaders } from '../lib/media_cache';
 import { PRIV } from '../model/builtin';
 import * as oplog from '../model/oplog';
@@ -104,6 +104,7 @@ export class FSDownloadHandler extends Handler {
         });
         // Download attachments retain their original disposition. Inline raster
         // images and account avatars use the same authenticated delivery path.
+        if (await serveSharedRaster(this, filename, file, () => storage.get(target, undefined, file))) return;
         if ((noDisposition || /^\.avatar\.(?:jpg|jpeg|png)$/.test(filename)) && file
             && (isInlineRasterImage(filename, file) || isMediaCacheRequest(this) || this.request.query?.__media_version)
             && await tryRedirectAsset(this, { path: target, meta: file })) return;

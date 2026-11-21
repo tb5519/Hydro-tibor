@@ -11,7 +11,7 @@
 #scratchpad
   position: absolute
   left: 0
-  top: $nav-item-height
+  top: rem($nav-item-height)
   width: 100%
   bottom: 0
   min-width: 0
@@ -41,6 +41,22 @@
   .split-view
     min-width: 0
     min-height: 0
+
++mobile()
+  body.mode--scratchpad .header--mobile
+    position: fixed
+    inset: 0 0 auto
+    z-index: 100002
+    display: flex
+    align-items: center
+    height: var(--navigation-mobile-height, 62px)
+    padding: 0
+
+    > .row
+      width: 100%
+
+  .mode--scratchpad #scratchpad
+    top: var(--navigation-mobile-height, 62px)
 
 .scratchpad__problem
   position: absolute

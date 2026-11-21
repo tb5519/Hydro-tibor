@@ -4,6 +4,8 @@ import { sharedSash, resizeSharedSash, SHARED_SPLIT_SELECTOR } from './splitter'
 import { attachSourceScratchControl, attachViewerScratchControl, scratchTargetFingerprint, ScratchInput } from './scratch_control';
 import { AnnotationScope, TextBookmark, bookmarkText, resolveTextBookmark, readAnnotationCache, writeAnnotationCache } from './annotation_cache';
 import { attachRemotePointer, attachSourcePointer } from './pointer';
+import { attachProblemImages, missingProblemImageStyle } from './problem_images';
+import { attachReplayImageInput } from './replay_image_input';
 
 /** The replay is a display surface. Its scripts, forms and links never run. */
 const BLOCK = [
@@ -655,6 +657,10 @@ export function attachSourceMirror(options: SourceOptions) {
   const editorPlaceholders = new Map<number, string>();
   const embedPlaceholders = new Map<number, { node: Element; hidden: boolean }>();
   const newlyBlockedEditors = new WeakSet<Element>();
+  const problemImageUpdate = Symbol('problem-image');
+  const problemImages = attachProblemImages(blocked, (id, attributes) => {
+    emit({ type: 3, timestamp: Date.now(), data: { source: 0, adds: [], removes: [], texts: [], attributes: [{ id, attributes }] } }, problemImageUpdate);
+  });
   const editorGeometry = (node: Element) => {
     const rect = node.getBoundingClientRect();
     const computed = getComputedStyle(node);
@@ -673,12 +679,15 @@ export function attachSourceMirror(options: SourceOptions) {
   function preserveEditorMarkers(event: RREvent) {
     // rrweb strips attributes on blocked nodes. Restore the marker and layout
     // for a shared editor, or just visibility for an unsupported embed.
-    if (event.type === 2) { editorPlaceholders.clear(); embedPlaceholders.clear(); }
+    if (event.type === 2) { editorPlaceholders.clear(); embedPlaceholders.clear(); problemImages.reset(); }
     const stack = event.type === 2 ? [event.data.node] : event.type === 3 && event.data.source === 0
       ? (event.data.adds || []).map((entry) => entry.node) : [];
     while (stack.length) {
       const serialized = stack.pop();
       if (!serialized) continue;
+      if (serialized.tagName === 'img' || serialized.tagName === 'source' || serialized.tagName === 'a') {
+        problemImages.rewrite((record as any).mirror?.getNode(serialized.id), serialized.id, serialized.attributes ||= {}, true);
+      }
       // maskAllInputs removes option.selected even when maskInputFn allows a
       // language selector. Restore only that allowlisted control's actual state
       // so the first replay does not fall back to its first option.
@@ -752,7 +761,7 @@ export function attachSourceMirror(options: SourceOptions) {
     motion.frame = requestAnimationFrame(step);
   }
   const message = (text: string) => options.onStatus?.(text);
-  const emit = (event: RREvent) => {
+  const emit = (event: RREvent, origin?: symbol) => {
     if (!connected || disposed) return;
     // rrweb also observes same-origin frames. None of their content belongs in this stream:
     // Scratch and other embedded apps need their own explicit bridge, not a DOM side channel.
@@ -781,6 +790,7 @@ export function attachSourceMirror(options: SourceOptions) {
       // A source inline-style replacement can remove the replay's raster layer.
       for (const entry of event.data.attributes || []) {
         const node = (record as any).mirror?.getNode(entry.id);
+        if (origin !== problemImageUpdate) problemImages.rewrite(node, entry.id, entry.attributes, false);
         if (['CANVAS', 'IMG'].includes(node?.tagName) && (entry.attributes?.style !== undefined || entry.attributes?.src !== undefined
           || entry.attributes?.width !== undefined || entry.attributes?.height !== undefined)) canvasImages.delete(node);
       }
@@ -901,6 +911,7 @@ export function attachSourceMirror(options: SourceOptions) {
   function captureCanvases() {
     canvasFrame = 0;
     if (disposed || !connected || !hasSnapshot || document.hidden) return;
+    problemImages.capture();
     const now = performance.now();
     canvasBudget = Math.min(CANVAS_BYTES_PER_SECOND, canvasBudget + (now - canvasBudgetAt) * CANVAS_BYTES_PER_SECOND / 1000);
     canvasBudgetAt = now;
@@ -1147,6 +1158,7 @@ export function attachSourceMirror(options: SourceOptions) {
       stopScrolling();
       cancelAnimationFrame(canvasFrame); canvasFrame = 0;
       generation++;
+      problemImages.reset();
       stop?.(); stop = undefined;
       queue = []; queuedBytes = 0; snapshotRequested = false;
       if (value) start();
@@ -1158,6 +1170,7 @@ export function attachSourceMirror(options: SourceOptions) {
       scratchControl?.dispose();
       clearInterval(editorGeometryTimer); editorPlaceholders.clear(); embedPlaceholders.clear();
       clearInterval(canvasTimer); clearInterval(mediaTimer); cancelAnimationFrame(canvasFrame); canvasCopy = null;
+      problemImages.reset();
       document.removeEventListener('input', localFieldEdit, true);
       document.removeEventListener('change', localFieldEdit, true);
       document.querySelectorAll(`[${FIELD_REVISION}]`).forEach((field) => field.removeAttribute(FIELD_REVISION));
@@ -1307,6 +1320,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     // rrweb captures the outer box of a blocked editor. Its empty placeholder
     // must not add the textarea's padding and border to those dimensions again.
     style.textContent = '[data-live-share-editor]{box-sizing:border-box!important} [data-live-share-unavailable][hidden]{display:none!important} [data-live-share-unavailable]::after{content:"此区域暂不支持实时共享";display:block;padding:32px;color:#64748b;font:14px system-ui;text-align:center} [data-teacher-assistant],[data-live-share-ui]{visibility:hidden!important} .live-share-annotation-source,.live-share-code-focus-layer,.teacher-broadcast-bar,.teacher-broadcast-picker,.teacher-broadcast-flash,.teacher-assistant,.voice-call-toast,.voice-call-card,.voice-call-floating{display:none!important}';
+    style.textContent += missingProblemImageStyle;
     doc.head?.appendChild(style);
     const cleanupScratch = options.scratchControls
       ? attachViewerScratchControl({ document: doc, send: (node, input) => command(node, 'scratch', { input, target: scratchTargetFingerprint(node) }) }) : () => {};
@@ -1408,12 +1422,12 @@ export function attachViewerMirror(options: ViewerOptions) {
       doc.documentElement.style.removeProperty('cursor');
     };
     const resetPan = () => { finishResize(); holdingSpace = false; endPan(); };
-    const click = (event: MouseEvent) => {
-      if (localControls?.owns(event.target)) return;
+    const click = (event: MouseEvent, hit = event.target) => {
+      if (localControls?.owns(hit)) return;
       if (holdingSpace || Date.now() < suppressClickUntil) {
         event.preventDefault(); event.stopImmediatePropagation(); return;
       }
-      const target = interactive(event.target);
+      const target = interactive(hit);
       // Keep the browser's ordinary focus/select behaviour for these safe controls.
       if (target && (allowedSelect(target) || allowedSearch(target))) { event.stopImmediatePropagation(); return; }
       event.preventDefault(); event.stopImmediatePropagation();
@@ -1528,16 +1542,16 @@ export function attachViewerMirror(options: ViewerOptions) {
       if (!node.muted) node.muted = true;
       if (node.volume !== 0) node.volume = 0;
     };
-    const wheel = (event: WheelEvent) => {
+    const wheel = (event: WheelEvent, hit = event.target) => {
       if (options.onViewZoom && (event.ctrlKey || event.metaKey)) {
         event.preventDefault(); event.stopImmediatePropagation();
-        const point = teacherPoint(event);
+        const point = hit === event.target ? teacherPoint(event) : { x: event.clientX, y: event.clientY };
         const multiplier = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? frame.clientHeight : 1;
         options.onViewZoom({ delta: event.deltaY * multiplier, clientX: point.x, clientY: point.y });
         return;
       }
       if (!connected || !ready || disposed) { event.preventDefault(); return; }
-      let element = closestElement(event.target);
+      let element = closestElement(hit);
       while (element && element !== doc.body && element !== doc.documentElement) {
         const style = doc.defaultView.getComputedStyle(element);
         const vertical = event.deltaY && element.scrollHeight > element.clientHeight + 1 && /(auto|scroll|overlay)/.test(style.overflowY);
@@ -1576,6 +1590,7 @@ export function attachViewerMirror(options: ViewerOptions) {
       // Throttle rather than debounce: trackpad momentum can last seconds.
       wheelTimer ||= setTimeout(flushScrolls, 32);
     };
+    const cleanupImageInput = attachReplayImageInput(frame, host, () => connected && ready && !disposed, click, wheel);
     doc.addEventListener('click', click, true);
     doc.addEventListener('submit', submit, true);
     doc.addEventListener('change', change, true);
@@ -1596,6 +1611,7 @@ export function attachViewerMirror(options: ViewerOptions) {
     doc.addEventListener('volumechange', silenceMedia, true);
     doc.addEventListener('wheel', wheel, { capture: true, passive: false });
     cleanupDocument = () => {
+      cleanupImageInput();
       localControls?.dispose();
       doc.removeEventListener('beforeinput', beginFieldEdit, true);
       doc.removeEventListener('pointerdown', beginFieldEdit, true);

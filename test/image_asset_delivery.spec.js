@@ -20,7 +20,7 @@ function load(source, globals = {}, dependencies = {}) {
     return module.exports;
 }
 const read = (file) => fs.readFileSync(path.join(hydro, file), 'utf8');
-const { isInlineRasterImage } = load(read('lib/inline_image.ts'));
+const { isInlineRasterImage, serveSharedRaster } = load(read('lib/inline_image.ts'));
 const mediaCache = load(read('lib/media_cache.ts'));
 const { isPublicHomePosterPath } = load(read('lib/decorative_image_access.ts'));
 class NotFoundError extends Error {}
@@ -45,7 +45,7 @@ function handlers(options = {}) {
         async signDownloadLink(...args) { calls.signed.push(args); return '/storage?existing-signature'; },
     };
     const shared = {
-        Handler, NotFoundError, storage, isPublicHomePosterPath, param: () => () => {}, Types: { Range: () => [] }, isInlineRasterImage,
+        Handler, NotFoundError, storage, isPublicHomePosterPath, param: () => () => {}, Types: { Range: () => [] }, isInlineRasterImage, serveSharedRaster,
         ...mediaCache,
         lookup: () => 'image/png',
         tryRedirectAsset(handler, source) {
@@ -218,6 +218,30 @@ describe('authorized image handler delivery', () => {
         assert.deepEqual(denied.calls.metadata, []);
         assert.deepEqual(denied.calls.delivery, []);
         assert.deepEqual(denied.calls.signed, []);
+    });
+
+    it('reads only authorized raster attachments for a learner snapshot without disclosing CDN URLs', async () => {
+        const h = handlers({ ready: true, reference: true, type: 'image/jpeg' });
+        const userImage = new h.FSDownloadHandler();
+        const problemImage = new h.ProblemFileDownloadHandler();
+        for (const handler of [userImage, problemImage]) handler.request.headers['x-hydro-media-cache'] = 'share-raster-v1';
+        await userImage.get('class-a', 2, 'gesp-scratch-202503-t2-c043027e3ce60bf5.jpeg', true);
+        await problemImage.get({}, 'additional_file', 'orbits.jpg', true);
+        for (const handler of [userImage, problemImage]) {
+            assert.equal(handler.response.body, h.bytes); assert.equal(handler.response.type, 'image/jpeg');
+            assert.equal(handler.response.redirect, undefined); assert.match(handler.response.headers['Cache-Control'], /private, no-store/);
+            assert.equal(handler.response.headers['X-Content-Type-Options'], 'nosniff');
+        }
+        assert.equal(h.calls.read.length, 2); assert.equal(h.calls.log.length, 2);
+        assert.equal(h.calls.delivery.length, 0); assert.equal(h.calls.signed.length, 0);
+        const denied = handlers({ denied: true }); const restricted = new denied.ProblemFileDownloadHandler();
+        restricted.request.headers['x-hydro-media-cache'] = 'share-raster-v1';
+        await assert.rejects(restricted.get({}, 'additional_file', 'orbits.png', true), /Permission denied/);
+        assert.equal(denied.calls.read.length, 0);
+        for (const [filename, type, size] of [['orbits.png', 'image/svg+xml', 100], ['orbits.html', 'image/png', 100],
+            ['orbits.png', 'image/png', 10 * 1024 * 1024 + 1]]) {
+            assert.equal(await serveSharedRaster(userImage, filename, { 'Content-Type': type, size }, () => assert.fail('unexpected read')), false);
+        }
     });
 
     it('resolves inline audio and video after authorization and changes cache identity when a filename is replaced', async () => {

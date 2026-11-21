@@ -3,6 +3,7 @@ import {
 } from './drawing_anchor';
 import type { DrawingAnchor, DrawingAnchorBinding, DrawingAnchorResolvers, DrawingClip, DrawingGeometry, DrawingMatrix } from './drawing_anchor';
 import { AnnotationScope, ElementBookmark, annotationFingerprint, bookmarkElement, resolveElementBookmark, readAnnotationCache, writeAnnotationCache } from './annotation_cache';
+import { replayImageTarget } from './replay_image_input';
 
 /** Points retain the initial learner viewport coordinates; an optional content anchor follows scrolling. */
 export interface DrawingPacket {
@@ -105,7 +106,6 @@ export function attachTemporaryDrawing(options: {
 }) {
   const canAnnotate = options.teacher && options.allowNotes !== false;
   const inputButton = options.inputButton ?? 2;
-  const buttonMask = inputButton === 0 ? 1 : 2;
   const doc = options.container.ownerDocument;
   const win = doc.defaultView!;
   const originalTabIndex = options.container.getAttribute('tabindex');
@@ -216,7 +216,7 @@ export function attachTemporaryDrawing(options: {
   let noteTimer = 0;
   const pendingNotes = new Set<string>();
   const composing = new Set<Window>();
-  let active: { id: string; pointer: number; sequence: number; pending: Point[]; count: number; last: Point; started: number } | null = null;
+  let active: { id: string; pointer: number; button: number; sequence: number; pending: Point[]; count: number; last: Point; started: number } | null = null;
   const now = () => win.performance.now();
 
   function viewportClip(): DrawingClip { return { x: 0, y: 0, width: options.container.clientWidth, height: options.container.clientHeight }; }
@@ -564,15 +564,20 @@ export function attachTemporaryDrawing(options: {
   function cancelEvent(event: Event) { event.preventDefault(); event.stopImmediatePropagation(); }
   function bind(eventWindow: Window) {
     const down = (event: PointerEvent) => {
-      if (event.button !== inputButton || !connected || !within(event, eventWindow)) return;
+      if (!connected || !within(event, eventWindow)) return;
+      const image = eventWindow === win ? replayImageTarget(event) : undefined;
+      if (image === null) return;
+      const secondaryClick = image && inputButton === 2 && event.button === 0 && event.ctrlKey;
+      if (event.button !== inputButton && !secondaryClick) return;
       const point = pointFrom(event, eventWindow);
       if (!point) return;
       options.onStart?.();
       cancelEvent(event); finish();
       if (strokes.size >= MAX_STROKES && [...strokes.values()].every((stroke) => stroke.note)) return;
       const id = Array.from(win.crypto.getRandomValues(new Uint8Array(12)), (value) => value.toString(16).padStart(2, '0')).join('');
-      const binding = options.captureAnchor ? options.captureAnchor(event.target, point, id)
-        : captureDrawingAnchor(event.target, options.container, options.anchors);
+      const target = image || event.target;
+      const binding = options.captureAnchor ? options.captureAnchor(target, point, id)
+        : captureDrawingAnchor(target, options.container, options.anchors);
       // An explicitly scoped surface must not turn a private/unresolved target
       // into an unanchored viewport stroke that can neither follow nor save.
       if (options.captureAnchor && !binding) return;
@@ -580,7 +585,11 @@ export function attachTemporaryDrawing(options: {
       receive(packet, options.penRole ?? 'teacher');
       if (!strokes.has(id)) return;
       if (binding) { strokes.get(id)!.binding = binding; refreshGeometry(id, strokes.get(id)!, true); }
-      active = { id, pointer: event.pointerId, sequence: 0, pending: [], count: 1, last: point, started: now() };
+      active = { id, pointer: event.pointerId, button: event.button, sequence: 0, pending: [], count: 1, last: point, started: now() };
+      if (image) {
+        try { (event.target as HTMLElement).setPointerCapture(event.pointerId); }
+        catch { /* The pointer or its element may already have left the window. */ }
+      }
       // Right drawing is an explicit new gesture, including when a previous
       // label still had focus. Keep its shortcut within this drawing surface.
       options.container.focus({ preventScroll: true });
@@ -588,7 +597,7 @@ export function attachTemporaryDrawing(options: {
     };
     const move = (event: PointerEvent) => {
       if (!active || event.pointerId !== active.pointer) return;
-      if (!(event.buttons & buttonMask)) { finish(); return; }
+      if (!(event.buttons & (active.button === 0 ? 1 : 2))) { finish(); return; }
       cancelEvent(event);
       const currentPoint = pointFrom(event, eventWindow);
       const drawing = strokes.get(active.id);
@@ -607,7 +616,7 @@ export function attachTemporaryDrawing(options: {
       else if (!flushTimer) flushTimer = win.setTimeout(flush, 32);
     };
     const up = (event: PointerEvent) => {
-      if (!active || event.pointerId !== active.pointer || (event.type === 'pointerup' && event.button !== inputButton)) return;
+      if (!active || event.pointerId !== active.pointer || (event.type === 'pointerup' && event.button !== active.button)) return;
       cancelEvent(event); finish();
     };
     const suppressMenu = (event: MouseEvent) => {

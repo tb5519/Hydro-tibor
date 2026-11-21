@@ -17,6 +17,7 @@ let script;
 let splitterScript;
 let splitterCss;
 let studyChoicesScript;
+let drawingScript;
 before(async () => {
     assert(executablePath, 'Chromium is required for live sharing interaction tests');
     const result = await esbuild.build({ entryPoints: [path.join(root, 'packages/ui-default/components/live_share/mirror.ts')],
@@ -30,6 +31,8 @@ before(async () => {
         } }],
     });
     script = result.outputFiles[0].text;
+    drawingScript = (await esbuild.build({ entryPoints: [path.join(root, 'packages/ui-default/components/live_share/drawing.ts')],
+        bundle: true, format: 'iife', globalName: 'Drawing', write: false })).outputFiles[0].text;
     // Render the installed Allotment implementation: sash ancestry and its
     // imperative resize behavior must not be substituted with a test DOM stub.
     splitterScript = (await esbuild.build({ stdin: { resolveDir: root, contents: `
@@ -81,14 +84,16 @@ before(async () => {
         }
         createRoot(document.querySelector('#study-choices')).render(h(Choices));
     ` }, bundle: true, format: 'iife', write: false, define: { 'process.env.NODE_ENV': '"production"' } })).outputFiles[0].text;
-    browser = await playwright.chromium.launch({ executablePath, headless: true });
+    browser = process.env.HYDRO_WEBKIT === '1' ? await playwright.webkit.launch({ headless: true })
+        : await playwright.chromium.launch({ executablePath, headless: true });
 });
 after(async () => { await browser?.close(); });
 
 async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = false, showNonSensitiveInputs = false, videoData = null,
-    viewGestures = false, teacherDpr = 1, studentDpr = 1, splitPanes = false, studyChoices = false, localControls = false, readOnly = false } = {}) {
-    const studentContext = await browser.newContext({ viewport: { width: 1000, height: 700 }, deviceScaleFactor: studentDpr });
-    const teacherContext = await browser.newContext({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: teacherDpr });
+    viewGestures = false, teacherDpr = 1, studentDpr = 1, splitPanes = false, studyChoices = false, localControls = false, readOnly = false,
+    serveImage, origin = 'https://sharing.test', proxy } = {}) {
+    const studentContext = await browser.newContext({ viewport: { width: 1000, height: 700 }, deviceScaleFactor: studentDpr, proxy });
+    const teacherContext = await browser.newContext({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: teacherDpr, proxy });
     const student = await studentContext.newPage();
     const teacher = await teacherContext.newPage();
     student.setDefaultTimeout(7000); teacher.setDefaultTimeout(7000);
@@ -100,8 +105,9 @@ async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = fal
     student.on('pageerror', (e) => errors.push(`student: ${e.message}`));
     teacher.on('pageerror', (e) => errors.push(`teacher: ${e.message}`));
     for (const context of [studentContext, teacherContext]) {
-        await context.route('https://sharing.test/**', async (route) => {
+        await context.route(`${origin}/**`, async (route) => {
             const pathname = new URL(route.request().url()).pathname;
+            if (serveImage && (pathname.includes('/figures/') || pathname.startsWith('/d/S0001/file/'))) return serveImage(route, context === teacherContext);
             if (pathname === '/sample.webm' && videoData) {
                 const range = /bytes=(\d+)-(\d*)/.exec(route.request().headers().range || '');
                 const start = range ? Number(range[1]) : 0;
@@ -131,8 +137,8 @@ async function fixture({ latency = 0, editorMarkup = '', inlineLocalImages = fal
             return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;font:16px system-ui;background:#f1f5f9}header{background:white;padding:18px}h1{font-size:24px}button,a,select{margin:8px;padding:8px}#mirror{background:white}</style></head><body>${body}<script>${script}</script></body></html>` });
         });
     }
-    await teacher.goto('https://sharing.test/teacher');
-    await student.goto('https://sharing.test/d/C0001/p/P1');
+    await teacher.goto(`${origin}/teacher`);
+    await student.goto(`${origin}/d/C0001/p/P1`);
     if (studyChoices) {
         await student.addScriptTag({ content: studyChoicesScript });
         await student.locator('#scratch-choice-label').waitFor();
@@ -1122,4 +1128,371 @@ it('safe navigation covers ordinary platform pages while rejecting account actio
         assert.equal(urls.permitted.length, 12);
         assert(urls.permitted.every((url) => url?.startsWith('https://sharing.test/')));
     } finally { await page.close(); }
+});
+
+async function problemImageFixture(t, { protectedImage = false, late = false } = {}) {
+    // The source URL belongs to the learner. A second browser cannot reuse their
+    // cookie or a one-time download, even when it is on the same website.
+    const generator = await browser.newPage();
+    const images = await generator.evaluate(() => ['#269444', '#e08022'].map(color => {
+        const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 320;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#172d52'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = color; ctx.fillRect(290, 130, 60, 60);
+        return canvas.toDataURL('image/png').split(',')[1];
+    }));
+    await generator.close();
+    const urls = []; let openGate;
+    const gate = new Promise(resolve => { openGate = resolve; });
+    t.after(openGate);
+    const url = './figures/stage.png?expires=1690000000&signature=learner-only-example';
+    const f = await fixture({ teacherDpr: 2, studentDpr: 1, editorMarkup: `
+        <aside id="question-panel" class="scratch-problem-question" style="width:380px;height:435px;overflow:auto">
+        <h1>GESP Scratch一级 · 躲避陨石</h1><div class="scratch-problem-description typo">
+        <h2>舞台示例</h2><p><picture><source id="stage-source"><img id="stage-example"
+            alt="躲避陨石：原卷舞台与角色示例" ${late ? '' : `src="${url}"`} style="max-width:100%;height:auto"></picture></p>
+        <h2 id="prepare">准备工作</h2><ol><li>添加角色 Rocks 和 Rocketship。</li><li>添加背景 Moon。</li></ol>
+        <div style="height:850px"></div></div></aside>`,
+        async serveImage(route, teacher) {
+            const request = route.request().url();
+            urls.push({ request, teacher });
+            if (teacher && protectedImage) return route.fulfill({ status: 403, body: '已过期' });
+            if (late && !teacher && !request.includes('replacement')) await gate;
+            return route.fulfill({ contentType: 'image/png', headers: { 'Cache-Control': 'no-store' },
+                body: Buffer.from(images[request.includes('replacement') ? 1 : 0], 'base64') });
+        } });
+    t.after(f.close);
+    return { ...f, urls, openGate, url };
+}
+
+async function installProblemDrawing(f) {
+    await Promise.all([f.teacher, f.student].map(page => page.addScriptTag({ content: drawingScript })));
+    await f.teacher.exposeFunction('relayInk', packet => f.student.evaluate(value => ink.receive(value, 'teacher'), packet));
+    for (const [page, teacher] of [[f.student, false], [f.teacher, true]]) await page.evaluate(teacher => {
+        const mirror = teacher ? viewer : source;
+        const stage = teacher ? document.querySelector('#mirror') : document.createElement('div');
+        if (!teacher) {
+            stage.dataset.liveShareUi = ''; stage.dataset.liveSharePrivate = '';
+            stage.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147482000';
+            document.body.append(stage);
+        }
+        window.ink = Drawing.attachTemporaryDrawing({ pageId: 'page-1', teacher, container: stage,
+            ...(teacher && { send: packet => relayInk(packet), annotationScope: { sessionId: 'lesson-figure', url: 'https://sharing.test/d/C0001/p/P1' },
+                annotationDocument: () => viewer.getDrawingDocument() }),
+            anchors: { identify(node) { const nodeId = mirror.getDrawingNodeId(node); return nodeId ? { nodeId } : null; },
+                resolve: identity => mirror.getDrawingNode(identity.nodeId) } });
+    }, teacher);
+}
+
+async function imageLayout(locator) {
+    return locator.evaluate(img => {
+        const bounds = img.getBoundingClientRect();
+        const next = img.ownerDocument.querySelector('#prepare').getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height, below: next.top - bounds.top,
+            widthAttr: img.getAttribute('width'), heightAttr: img.getAttribute('height') };
+    });
+}
+
+async function expectProblemFigure(f, color = [38, 148, 68]) {
+    for (const [page, teacher] of [[f.student, false], [f.teacher, true]]) {
+        await page.waitForFunction(({ teacher, color }) => {
+            const doc = teacher ? document.querySelector('#mirror iframe')?.contentDocument : document;
+            const img = doc?.querySelector('#stage-example');
+            if (!img?.complete || !img.naturalWidth || !img.naturalHeight) return false;
+            const canvas = doc.createElement('canvas'); canvas.width = canvas.height = 1;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, Math.floor(img.naturalWidth / 2), Math.floor(img.naturalHeight / 2), 1, 1, 0, 0, 1, 1);
+            const pixel = ctx.getImageData(0, 0, 1, 1).data;
+            return color.every((value, i) => Math.abs(pixel[i] - value) < 16);
+        }, { teacher, color }, { timeout: 6500 }).catch(async error => {
+            const status = await (teacher ? f.frame() : f.student).locator('#stage-example').evaluate(img => ({
+                width: img.naturalWidth, height: img.naturalHeight, layoutHeight: img.getBoundingClientRect().height,
+                nextHeadingTop: img.ownerDocument.querySelector('#prepare').getBoundingClientRect().top,
+            }));
+            throw new Error(`${teacher ? 'teacher' : 'learner'} did not render the expected image pixel: ${JSON.stringify(status)}, viewer image requests: ${f.urls.filter(item => item.teacher).length}`, { cause: error });
+        });
+    }
+    const learner = await imageLayout(f.student.locator('#stage-example'));
+    const teacher = await imageLayout(f.frame().locator('#stage-example'));
+    assert.equal(learner.width, 380); assert.equal(learner.height, 190);
+    for (const key of ['width', 'height', 'below']) assert(Math.abs(learner[key] - teacher[key]) < 1,
+        `figure and next paragraph keep learner geometry: ${key}, ${JSON.stringify(learner)} vs ${JSON.stringify(teacher)}`);
+}
+
+async function expectProblemInk(f) {
+    for (const [page, img] of [[f.teacher, f.frame().locator('#stage-example')], [f.student, f.student.locator('#stage-example')]]) {
+        const path = page.locator('[data-share-drawing-stroke] path:nth-child(2)');
+        await path.waitFor();
+        const box = await img.boundingBox();
+        const expected = [box.x + box.width / 4, box.y + box.height / 4, box.x + box.width * .75, box.y + box.height * .75];
+        const actual = await path.evaluate(path => [0, path.getTotalLength()].flatMap(distance => {
+            const point = path.getPointAtLength(distance).matrixTransform(path.getScreenCTM());
+            return [point.x, point.y];
+        }));
+        actual.forEach((value, index) => assert(Math.abs(value - expected[index]) < 2,
+            `ink keeps its endpoints on the same figure pixels: ${actual} vs ${expected}`));
+    }
+}
+
+async function drawProblemInk(f) {
+    const image = await f.frame().locator('#stage-example').boundingBox();
+    await f.teacher.mouse.move(image.x + image.width / 4, image.y + image.height / 4);
+    await f.teacher.mouse.down({ button: 'right' });
+    await f.teacher.mouse.move(image.x + image.width * .75, image.y + image.height * .75, { steps: 5 });
+    await f.teacher.mouse.up({ button: 'right' });
+    await expectProblemInk(f);
+}
+
+it('a teacher draws across the same Scratch problem image pixels on both devices through panel scroll and stage zoom', async t => {
+    const f = await problemImageFixture(t); await expectProblemFigure(f); await installProblemDrawing(f);
+    await f.teacher.evaluate(() => { const stage = document.querySelector('#mirror'); stage.style.transform = 'scale(.77)'; stage.style.transformOrigin = 'top left'; });
+    await drawProblemInk(f);
+    await f.teacher.keyboard.press('Shift+Enter');
+    await f.teacher.locator('[data-share-drawing-note-input]').fill('看图中心');
+    await f.student.locator('[data-share-drawing-note-input]').waitFor();
+    await f.student.locator('#question-panel').evaluate(node => { node.scrollTop = 60; });
+    await f.teacher.waitForFunction(() => document.querySelector('#mirror iframe').contentDocument.querySelector('#question-panel').scrollTop === 60);
+    await f.teacher.evaluate(() => { document.querySelector('#mirror').style.transform = 'scale(1.12)'; });
+    await expectProblemInk(f);
+    assert.deepEqual(f.errors, []);
+});
+
+it('a Scratch figure keeps its normal left click and routes teacher wheel movement only to the learner question panel', async t => {
+    const f = await problemImageFixture(t); await expectProblemFigure(f); await installProblemDrawing(f);
+    const figure = f.frame().locator('#stage-example');
+    const box = await figure.boundingBox();
+    await f.teacher.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    assert.equal(await f.teacher.locator('[data-share-drawing-stroke]').count(), 0);
+    assert.equal(f.commands.filter(c => c.action === 'click').length, 0, 'a plain picture has no click command');
+    await f.teacher.mouse.wheel(0, 65);
+    await f.student.waitForFunction(() => document.querySelector('#question-panel').scrollTop > 45);
+    await f.teacher.waitForFunction(() => document.querySelector('#mirror iframe').contentDocument.querySelector('#question-panel').scrollTop > 45);
+    assert.equal(await f.student.evaluate(() => window.scrollY), 0);
+    assert(f.commands.some(c => c.action === 'scroll'));
+    await f.student.evaluate(() => {
+        const image = document.querySelector('#stage-example');
+        const link = document.createElement('a'); link.id = 'next-from-stage'; link.href = '/d/C0001/p/P2';
+        image.after(link); link.append(image);
+    });
+    await f.frame().locator('#next-from-stage #stage-example').waitFor();
+    const linked = await figure.boundingBox();
+    const x = linked.x + linked.width / 3; const y = linked.y + linked.height / 2;
+    await f.teacher.mouse.move(x, y);
+    // A drag can leave the underlying image while the secondary button is held.
+    await f.teacher.mouse.down({ button: 'right' });
+    await f.teacher.mouse.move(linked.x + linked.width + 25, y + 4, { steps: 8 });
+    await f.teacher.mouse.up({ button: 'right' });
+    const stroke = f.student.locator('[data-share-drawing-stroke] path:nth-child(2)');
+    await stroke.waitFor();
+    assert(await stroke.evaluate(path => path.getTotalLength()) > linked.width * .68);
+    assert.equal(f.commands.filter(c => c.action === 'click').length, 0, 'a secondary drag on the linked figure never navigates');
+    if (process.env.HYDRO_WEBKIT === '1') {
+        await f.teacher.keyboard.down('Control');
+        await f.teacher.mouse.move(x, y); await f.teacher.mouse.down();
+        await f.teacher.mouse.move(x + 28, y + 14, { steps: 3 }); await f.teacher.mouse.up();
+        await f.teacher.keyboard.up('Control');
+        await f.student.waitForFunction(() => document.querySelectorAll('[data-share-drawing-stroke]').length === 2);
+        assert.equal(f.commands.filter(c => c.action === 'click').length, 0, 'Mac Control-click can also draw without opening the picture link');
+    }
+    await f.teacher.mouse.click(x, y);
+    await f.student.waitForURL('**/d/C0001/p/P2');
+    assert.equal(f.commands.filter(c => c.action === 'click').length, 1);
+    assert.equal(await f.teacher.evaluate(() => location.pathname), '/teacher');
+    assert.deepEqual(f.errors, []);
+});
+
+it('a late learner-only Scratch figure survives a signed URL expiring, picture source replacement and reconnect', async t => {
+    const f = await problemImageFixture(t, { protectedImage: true, late: true });
+    await f.student.locator('#stage-source').evaluate((source, url) => { source.srcset = url; }, f.url);
+    await f.student.waitForFunction(() => document.querySelector('#stage-example').complete === false);
+    f.openGate(); await expectProblemFigure(f);
+    await f.student.locator('#stage-source').evaluate(node => { node.srcset = './figures/replacement.png?signature=second-learner-only-example'; });
+    await expectProblemFigure(f, [224, 128, 34]);
+    await installProblemDrawing(f); await drawProblemInk(f);
+    await f.teacher.keyboard.press('Shift+Enter');
+    await f.teacher.locator('[data-share-drawing-note-input]').fill('看替换后的舞台');
+    await f.student.waitForFunction(() => document.querySelector('[data-share-drawing-note-input]')?.value === '看替换后的舞台');
+    await Promise.all([f.teacher.evaluate(() => { ink.setConnected(false); viewer.setConnected(false); }),
+        f.student.evaluate(() => { ink.setConnected(false); source.setConnected(false); })]);
+    await f.teacher.evaluate(() => {
+        window.previousReplay = document.querySelector('#mirror iframe');
+        window.previousImageInput = document.querySelector('[data-live-share-image-input]');
+        viewer.setConnected(true); ink.setConnected(true);
+    });
+    await f.student.evaluate(() => { source.setConnected(true); ink.setConnected(true); });
+    await f.teacher.waitForFunction(() => viewer.getDrawingDocument() && document.querySelector('#mirror iframe') !== previousReplay);
+    await expectProblemFigure(f, [224, 128, 34]);
+    await f.student.waitForFunction(() => document.querySelector('[data-share-drawing-note-input]')?.value === '看替换后的舞台');
+    await expectProblemInk(f);
+    if (process.env.HYDRO_WEBKIT === '1') {
+        await f.teacher.waitForFunction(() => previousImageInput && !previousImageInput.isConnected
+            && document.querySelectorAll('[data-live-share-image-input]:not([hidden])').length === 1);
+    }
+    assert.equal(f.urls.filter(({ teacher }) => teacher).length, 0, 'viewers never need to request learner-only URLs');
+    assert.deepEqual(f.errors, []);
+});
+
+it('replays the 2025-03 meteor problem layout after its protected Hydro attachment redirects', async t => {
+    // Run the same route and geometry test on every machine. Local acceptance
+    // can supply the archived exam JPEG without shipping the question bank.
+    let bytes;
+    if (process.env.LIVE_SHARE_PROBLEM_FIGURE) {
+        bytes = fs.readFileSync(process.env.LIVE_SHARE_PROBLEM_FIGURE);
+        assert.equal(require('node:crypto').createHash('sha256').update(bytes).digest('hex'), 'c043027e3ce60bf5da68761b15374de63c3256e63fadde4f027124870fa3f0b5');
+    } else {
+        const generator = await browser.newPage();
+        const image = await generator.evaluate(() => {
+            const canvas = document.createElement('canvas'); canvas.width = 969; canvas.height = 1109;
+            const ctx = canvas.getContext('2d');
+            const gradient = ctx.createLinearGradient(0, 0, 969, 1109);
+            gradient.addColorStop(0, '#e98225'); gradient.addColorStop(.5, '#3e7050'); gradient.addColorStop(1, '#ecf3fc');
+            ctx.fillStyle = gradient; ctx.fillRect(0, 0, 969, 1109);
+            return canvas.toDataURL('image/jpeg').split(',')[1];
+        });
+        await generator.close(); bytes = Buffer.from(image, 'base64');
+    }
+    const resource = '/d/S0001/file/2/gesp-scratch-202503-t2-c043027e3ce60bf5.jpeg?noDisposition=1';
+    const hits = [];
+    // The browser itself follows the redirect to another origin with no CORS
+    // header. Playwright does not route redirected requests a second time.
+    const cdn = require('node:http').createServer((request, response) => {
+        response.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store' }); response.end(bytes);
+    });
+    await new Promise(resolve => cdn.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise(resolve => { cdn.closeAllConnections(); cdn.close(resolve); }));
+    const cdnOrigin = `http://127.0.0.1:${cdn.address().port}`;
+    const attachment = require('node:http').createServer((req, response) => {
+        if (req.headers['x-hydro-media-cache'] === 'share-raster-v1') {
+            response.writeHead(200, { 'Content-Type': 'image/jpeg' }); response.end(bytes);
+        } else {
+            response.writeHead(302, { Location: cdnOrigin + '/protected/meteor.jpg?expires=120' }); response.end();
+        }
+    });
+    await new Promise(resolve => attachment.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise(resolve => { attachment.closeAllConnections(); attachment.close(resolve); }));
+    const f = await fixture({ teacherDpr: 2, studentDpr: 1, origin: `http://127.0.0.1:${attachment.address().port}`, editorMarkup: `
+        <aside id="question-panel" class="scratch-problem-question" style="height:580px;overflow:auto;width:380px">
+            <h1>GESP Scratch一级 · 躲避陨石</h1><div class="scratch-problem-description typo">
+            <p><strong>题目难度：3 / 10</strong></p><h3>舞台示例</h3>
+            <p><img id="stage-example" alt="躲避陨石：原卷舞台与角色示例" src="${resource}" style="max-width:100%;height:auto"></p>
+            <h3 id="prepare">准备工作</h3><ol><li>删除默认小猫角色。</li><li>添加角色 Rocks 和 Rocketship。</li></ol></div>
+            <div style="height:620px"></div></aside>`,
+        async serveImage(route, teacher) {
+            const req = route.request();
+            const url = new URL(req.url());
+            hits.push({ teacher, host: url.host, type: req.resourceType() });
+            if (teacher) return route.fulfill({ status: 403, body: 'Attachment unavailable to viewer' });
+            return route.continue();
+        } });
+    t.after(f.close);
+    await f.student.waitForFunction(() => document.querySelector('#stage-example').naturalHeight === 1109);
+    // The native cross-origin picture really is opaque to the student's canvas.
+    assert.equal(await f.student.locator('#stage-example').evaluate(img => {
+        const ctx = document.createElement('canvas').getContext('2d');
+        ctx.drawImage(img, 0, 0); try { ctx.getImageData(0, 0, 1, 1); } catch (err) { return err.name; }
+    }), 'SecurityError');
+    await f.teacher.waitForFunction(() => document.querySelector('#mirror iframe').contentDocument.querySelector('#stage-example')?.naturalHeight > 0);
+    const averageError = await f.frame().locator('#stage-example').evaluate(async (img, data) => {
+        const reference = new Image(); reference.src = 'data:image/jpeg;base64,' + data; await reference.decode();
+        function samples(image) {
+            const canvas = document.createElement('canvas'); canvas.width = canvas.height = 160;
+            const ctx = canvas.getContext('2d'); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(image, 0, 0, 160, 160);
+            const pixels = ctx.getImageData(0, 0, 160, 160).data; const blocks = new Float64Array(16 * 16 * 3);
+            for (let y = 0; y < 160; y++) for (let x = 0; x < 160; x++) {
+                const block = (Math.floor(y / 10) * 16 + Math.floor(x / 10)) * 3;
+                for (let c = 0; c < 3; c++) blocks[block + c] += pixels[(y * 160 + x) * 4 + c] / 100;
+            }
+            return blocks;
+        }
+        const actual = samples(img); const expected = samples(reference);
+        let sum = 0;
+        for (let i = 0; i < actual.length; ++i) sum += Math.abs(actual[i] - expected[i]);
+        return sum / actual.length;
+    }, bytes.toString('base64'));
+    assert(averageError < 6, `teacher sees the same original diagram, mean RGB error was ${averageError}`);
+    const studentLayout = await imageLayout(f.student.locator('#stage-example'));
+    const teacherLayout = await imageLayout(f.frame().locator('#stage-example'));
+    for (const key of ['width', 'height', 'below']) assert(Math.abs(studentLayout[key] - teacherLayout[key]) < 1,
+        `${key} must match the original exam figure: ${JSON.stringify(studentLayout)} vs ${JSON.stringify(teacherLayout)}`);
+    assert.equal(hits.filter(hit => hit.teacher).length, 0);
+    assert(hits.some(hit => !hit.teacher && hit.type === 'fetch'), 'the learner can read their authorized Hydro attachment');
+    await installProblemDrawing(f);
+    await f.student.locator('#question-panel').evaluate(panel => { panel.scrollTop = 110; });
+    await f.teacher.waitForFunction(() => document.querySelector('#mirror iframe').contentDocument.querySelector('#question-panel').scrollTop === 110);
+    await drawProblemInk(f);
+    if (process.env.LIVE_SHARE_IMAGE_SCREENSHOT) await f.teacher.screenshot({ path: process.env.LIVE_SHARE_IMAGE_SCREENSHOT, clip: { x: 0, y: 36, width: 380, height: 570 } });
+    assert.deepEqual(f.errors, []);
+});
+
+it('keeps an ordinary public external problem figure visible without CORS and never hands its signed replacement to the viewer', async t => {
+    const host = 'http://lesson-figures.example';
+    const publicUrl = host + '/diagrams/meteor.png';
+    const token = 'learner-only-expiring-access';
+    const privateUrl = host + '/diagrams/meteor.png?signature=' + token;
+    let bytes;
+    // Both engines fetch the non-localhost image URL through this loopback
+    // proxy. The response actually omits CORS headers and needs no redirect.
+    const cdn = require('node:http').createServer((request, response) => {
+        if (!bytes || ![publicUrl, privateUrl].includes(request.url)) {
+            response.writeHead(404); response.end(); return;
+        }
+        response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' }); response.end(bytes);
+    });
+    await new Promise(resolve => cdn.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise(resolve => { cdn.closeAllConnections(); cdn.close(resolve); }));
+    const f = await fixture({ origin: 'http://classroom.sharing.test', proxy: { server: `http://127.0.0.1:${cdn.address().port}` },
+        editorMarkup: '<div class="scratch-problem-description"><img id="public-figure" width="250" height="125"></div>' });
+    t.after(f.close);
+    bytes = Buffer.from(await f.student.evaluate(() => {
+        const canvas = document.createElement('canvas'); canvas.width = 250; canvas.height = 125;
+        const ctx = canvas.getContext('2d'); ctx.fillStyle = '#40693d'; ctx.fillRect(0, 0, 250, 125);
+        return canvas.toDataURL('image/png').split(',')[1];
+    }), 'base64');
+    const requests = [];
+    for (const [page, viewer] of [[f.student, false], [f.teacher, true]]) {
+        page.context().on('request', request => {
+            if (!request.url().startsWith(host + '/')) return;
+            requests.push({ viewer, url: request.url(), kind: request.resourceType(), referrer: request.headers().referer });
+        });
+    }
+    await f.student.locator('#public-figure').evaluate((img, url) => { img.src = url; }, publicUrl);
+    await f.student.waitForFunction(() => document.querySelector('#public-figure').complete && document.querySelector('#public-figure').naturalWidth === 250);
+    assert.equal(await f.student.locator('#public-figure').evaluate(img => {
+        const ctx = document.createElement('canvas').getContext('2d');
+        ctx.drawImage(img, 0, 0); try { ctx.getImageData(0, 0, 1, 1); } catch (error) { return error.name; }
+    }), 'SecurityError');
+    assert.equal(await f.student.evaluate(async url => {
+        try { await fetch(url, { credentials: 'omit', mode: 'cors' }); return 'readable'; } catch { return 'blocked'; }
+    }, publicUrl), 'blocked');
+    await f.teacher.waitForFunction(url => {
+        const img = document.querySelector('#mirror iframe').contentDocument.querySelector('#public-figure');
+        return img.currentSrc === url && img.complete && img.naturalWidth === 250;
+    }, publicUrl);
+    assert(requests.some(hit => hit.viewer && hit.url === publicUrl && hit.kind === 'image' && !hit.referrer));
+    await f.student.locator('#public-figure').evaluate((img, url) => { img.src = url; }, privateUrl);
+    await f.student.waitForFunction(url => {
+        const img = document.querySelector('#public-figure');
+        return img.currentSrc === url && img.complete && img.naturalWidth === 250;
+    }, privateUrl);
+    await f.teacher.waitForFunction(() => {
+        const img = document.querySelector('#mirror iframe').contentDocument.querySelector('#public-figure');
+        return !img.hasAttribute('src') && img.naturalWidth === 0 && img.alt === '题目图片暂时无法共享';
+    });
+    const box = await f.frame().locator('#public-figure').evaluate(img => {
+        const rect = img.getBoundingClientRect(); return [rect.width, rect.height];
+    });
+    assert.deepEqual(box, [250, 125], await f.frame().locator('#public-figure').evaluate(img => img.outerHTML));
+    assert(!requests.some(hit => hit.viewer && hit.url.includes(token)));
+    assert(!JSON.stringify(f.packets).includes(token));
+    assert(!await f.frame().locator('html').evaluate((html, value) => html.outerHTML.includes(value), token));
+    await f.student.locator('#public-figure').evaluate((img, url) => { img.src = url; }, publicUrl);
+    await f.teacher.waitForFunction(url => {
+        const img = document.querySelector('#mirror iframe').contentDocument.querySelector('#public-figure');
+        return img.currentSrc === url && img.complete && img.naturalWidth === 250 && !img.hasAttribute('alt');
+    }, publicUrl);
+    // WebKit reports even caught access-control failures as pageerror events.
+    // Both learner reads are intentionally denied by this server.
+    const expectedCorsErrors = new Set([publicUrl, privateUrl].map(url =>
+        'student: ' + url.replace('http:/', '') + ' due to access control checks.'));
+    assert.deepEqual(f.errors.filter(message => !expectedCorsErrors.has(message)), []);
 });
